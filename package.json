@@ -28,7 +28,8 @@
     "validate": "bun cli.ts validate",
     "explain": "bun cli.ts explain",
     "selftest": "bun selftest.ts",
-    "fetch-examples": "bash scripts/fetch-examples.sh"
+    "fetch-examples": "bash scripts/fetch-examples.sh",
+    "bench:usage": "bun bench/count_features.ts"
   },
   "dependencies": {
     "@esotericsoftware/spine-core": "4.3.13"

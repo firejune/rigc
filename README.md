@@ -62,6 +62,15 @@ per-example licence terms).
 > is wired up today; there is no comparison runner, no scoring, no reported
 > numbers. This section describes the intended measure, not a result.
 
+### Benchmark ladder — what the rungs need
+
+[docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md) surveys the full Spine 4.3 export surface against what
+rigc emits and against what the nine examples measurably use (`bun run bench:usage` regenerates the
+counts). Three blockers sit *before* rung 1: the bone tree is code in `archetype.ts` rather than data,
+so no example can be expressed at all; `A16`'s `/^4\.3(\.\d+)?$/` rejects the `"4.3.75-beta"` that
+every example declares; and every example ships a **packed** atlas (13–50 regions per page) against
+rigc's one-part-per-page model, which `A06` enforces. Ordered gap list in Part 4 of that document.
+
 ## What exists today
 
 **Inputs — two files per cut.**
