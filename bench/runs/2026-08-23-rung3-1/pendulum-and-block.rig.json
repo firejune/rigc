@@ -1,0 +1,54 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "pendulum-and-block",
+  "note": "Two loose plates on two bones: the bar pivots about the small ball, the block is struck by the large one. Units are pendulum.png pixels; the origin is the pivot.",
+  "images": "../../../examples/3-timing-and-spacing/images",
+  "skeleton": {
+    "x": -750,
+    "y": -800,
+    "width": 2200,
+    "height": 1550
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "pendulum",
+      "parent": "root"
+    },
+    {
+      "name": "block",
+      "parent": "root",
+      "x": 180.44,
+      "y": -634.75
+    }
+  ],
+  "slots": [
+    {
+      "name": "pendulum",
+      "bone": "pendulum",
+      "attachment": "pendulum"
+    },
+    {
+      "name": "block",
+      "bone": "block",
+      "attachment": "square"
+    }
+  ],
+  "skins": {
+    "default": {
+      "pendulum": {
+        "pendulum": {
+          "image": "pendulum.png",
+          "x": -317
+        }
+      },
+      "block": {
+        "square": {
+          "image": "square.png"
+        }
+      }
+    }
+  }
+}

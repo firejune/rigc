@@ -1,0 +1,409 @@
+{
+  "spec": "rigc-motion/1",
+  "archetype": "pendulum-and-block",
+  "cut": "3-timing-and-spacing",
+  "note": "Same rig, same event, two weights. Everything that separates the two animations is key times and spacing: heavy takes 64 frames at 12 fps to stop, light 20.",
+  "easings": {
+    "heave": [
+      0.85,
+      0.0,
+      0.53,
+      1.0
+    ],
+    "drop": [
+      0.76,
+      0.03,
+      0.65,
+      1.0
+    ],
+    "arc": [
+      0.47,
+      0.04,
+      0.47,
+      0.98
+    ],
+    "shove": [
+      0.14,
+      0.25,
+      0.68,
+      0.56
+    ],
+    "skid": [
+      0.48,
+      1.0,
+      0.68,
+      0.97
+    ],
+    "tumble": [
+      0.51,
+      0.34,
+      0.46,
+      1.0
+    ],
+    "toss": [
+      0.6,
+      0.79,
+      0.0,
+      1.0
+    ],
+    "accel": [
+      0.34,
+      0.0,
+      0.69,
+      0.72
+    ],
+    "settle": [
+      0.24,
+      0.0,
+      1.0,
+      0.47
+    ]
+  },
+  "animations": {
+    "heavy": {
+      "duration": 5.333333,
+      "loop": false,
+      "note": "Slow out of the raised pose, hard through the bottom, the block thrown most of a frame width, then four shrinking swings that creep to a stop. Ends hanging.",
+      "tracks": [
+        {
+          "bone": "pendulum",
+          "property": "rotate",
+          "keys": [
+            {
+              "t": 0.0,
+              "v": [
+                0.0
+              ],
+              "ease": "heave"
+            },
+            {
+              "t": 1.0,
+              "v": [
+                130.58
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 1.791667,
+              "v": [
+                61.75
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 2.583333,
+              "v": [
+                105.08
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 3.041667,
+              "v": [
+                80.71
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 3.5,
+              "v": [
+                93.41
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 3.833333,
+              "v": [
+                87.68
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 4.25,
+              "v": [
+                90.37
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 4.75,
+              "v": [
+                89.97
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 5.333333,
+              "v": [
+                90.0
+              ]
+            }
+          ]
+        },
+        {
+          "bone": "block",
+          "property": "translatex",
+          "keys": [
+            {
+              "t": 0.666667,
+              "v": [
+                0.0
+              ],
+              "ease": "shove"
+            },
+            {
+              "t": 0.833333,
+              "v": [
+                385.5
+              ],
+              "ease": "skid"
+            },
+            {
+              "t": 2.416667,
+              "v": [
+                1064.9
+              ]
+            }
+          ]
+        },
+        {
+          "bone": "block",
+          "property": "translatey",
+          "keys": [
+            {
+              "t": 0.666667,
+              "v": [
+                0.0
+              ],
+              "ease": "accel"
+            },
+            {
+              "t": 0.833333,
+              "v": [
+                125.5
+              ],
+              "ease": "skid"
+            },
+            {
+              "t": 1.0,
+              "v": [
+                175.9
+              ],
+              "ease": "accel"
+            },
+            {
+              "t": 1.25,
+              "v": [
+                34.2
+              ],
+              "ease": "toss"
+            },
+            {
+              "t": 1.375,
+              "v": [
+                68.0
+              ],
+              "ease": "accel"
+            },
+            {
+              "t": 1.583333,
+              "v": [
+                39.9
+              ],
+              "ease": "accel"
+            },
+            {
+              "t": 1.916667,
+              "v": [
+                5.3
+              ],
+              "ease": "toss"
+            },
+            {
+              "t": 2.166667,
+              "v": [
+                11.8
+              ],
+              "ease": "settle"
+            },
+            {
+              "t": 2.416667,
+              "v": [
+                0.0
+              ]
+            }
+          ]
+        },
+        {
+          "bone": "block",
+          "property": "rotate",
+          "keys": [
+            {
+              "t": 0.666667,
+              "v": [
+                0.0
+              ],
+              "ease": "tumble"
+            },
+            {
+              "t": 0.833333,
+              "v": [
+                -21.75
+              ],
+              "ease": "tumble"
+            },
+            {
+              "t": 2.166667,
+              "v": [
+                -188.75
+              ],
+              "ease": "settle"
+            },
+            {
+              "t": 2.416667,
+              "v": [
+                -180.0
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "light": {
+      "duration": 1.666667,
+      "loop": false,
+      "note": "The same event with no weight in it: away at once, one overshoot, the block nudged a body width and square again in three frames. Ends hanging in the same pose heavy does.",
+      "tracks": [
+        {
+          "bone": "pendulum",
+          "property": "rotate",
+          "keys": [
+            {
+              "t": 0.0,
+              "v": [
+                0.0
+              ],
+              "ease": "drop"
+            },
+            {
+              "t": 0.333333,
+              "v": [
+                97.95
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 0.625,
+              "v": [
+                83.88
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 0.875,
+              "v": [
+                91.66
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 1.083333,
+              "v": [
+                88.64
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 1.333333,
+              "v": [
+                90.0
+              ],
+              "ease": "arc"
+            },
+            {
+              "t": 1.666667,
+              "v": [
+                90.0
+              ]
+            }
+          ]
+        },
+        {
+          "bone": "block",
+          "property": "translatex",
+          "keys": [
+            {
+              "t": 0.25,
+              "v": [
+                0.0
+              ],
+              "ease": "skid"
+            },
+            {
+              "t": 0.416667,
+              "v": [
+                108.29
+              ]
+            },
+            {
+              "t": 0.5,
+              "v": [
+                103.12
+              ]
+            }
+          ]
+        },
+        {
+          "bone": "block",
+          "property": "translatey",
+          "keys": [
+            {
+              "t": 0.25,
+              "v": [
+                0.0
+              ]
+            },
+            {
+              "t": 0.333333,
+              "v": [
+                19.46
+              ],
+              "ease": "settle"
+            },
+            {
+              "t": 0.5,
+              "v": [
+                0.0
+              ]
+            }
+          ]
+        },
+        {
+          "bone": "block",
+          "property": "rotate",
+          "keys": [
+            {
+              "t": 0.25,
+              "v": [
+                0.0
+              ],
+              "ease": "tumble"
+            },
+            {
+              "t": 0.416667,
+              "v": [
+                -11.25
+              ]
+            },
+            {
+              "t": 0.5,
+              "v": [
+                0.0
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
