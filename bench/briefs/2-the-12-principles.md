@@ -1,5 +1,25 @@
 # Rung 2 brief — `2-the-12-principles`
 
+> **Revision 3 — 2026-08-23.** Corrected against the contact sheets, by Claude
+> Sonnet 5, Claude Code / Agent SDK, re-verifying a finding from
+> [`bench/runs/2026-08-23-rung2-2/`](../runs/2026-08-23-rung2-2/) rather than
+> transcribing it. Revision 2 said the hanging rings and the hinged panel run
+> "regardless of which ball it is" and that the panel is "frame-for-frame
+> identical in all four animations." That holds for three of the four —
+> `basketball`, `billiard-ball`, `bowling-ball` — and not for `tennis-ball`.
+> Re-measured directly off `bench/reference/2-the-12-principles/*/contact.png`,
+> tracking the small paint marker on the upper ring by frame and the panel's own
+> pixel column separately for each of the four shots: the tennis-ball shot's upper
+> ring turns measurably faster than the other three (its unwrapped rotation gains
+> on theirs at roughly 1–1.5 % over the shot) and comes to a full stop before the
+> last frame — its last several sampled frames sit at one unchanging angle where
+> the other three shots' upper ring is still turning every frame. Its panel matches
+> the other three's phase for the first three drops (the two series agree to
+> antialiasing noise through about frame 83, three periods of the ~27½-frame cycle)
+> and then runs measurably ahead of them for the rest of the shot. The corrected
+> paragraphs are below; the rest of revision 2 stood up to the same check and is
+> unchanged.
+
 > **Revision 2 — 2026-08-23.** Verified against the contact sheets by Claude Opus 5
 > (1M context), Claude Code / Agent SDK, independently of the run that first
 > disputed it. Revision 1 asserted six things the frames do not show: the water
@@ -136,20 +156,28 @@ and settles on the floor of the basin**.
 
 **The panel is not waiting for the ball.** It drops and springs back on a cycle of
 its own, about every 27½ frames (≈2.3 s), roughly eleven times over the shot,
-frame-for-frame identical in all four animations — including the two whose ball
-never gets near it. It does not swing flat, either: it collapses to about 40–45 % of
-its standing height over a couple of frames, stays down for 16 frames, and takes
-about 11 back up. In the bowling shot the ball happens to arrive while the panel is
-down, **rests on the lowered panel for six frames, and is thrown nearly half the
-height of the frame in four when it springs back** — that launch is what puts it in
-the basin. Nothing the ball does changes when the panel moves.
+frame-for-frame identical across the basketball, billiard-ball and bowling-ball
+shots — including the two of those three whose ball never gets near it. It does not
+swing flat, either: it collapses to about 40–45 % of its standing height over a
+couple of frames, stays down for 16 frames, and takes about 11 back up. In the
+bowling shot the ball happens to arrive while the panel is down, **rests on the
+lowered panel for six frames, and is thrown nearly half the height of the frame in
+four when it springs back** — that launch is what puts it in the basin. Nothing the
+ball does changes when the panel moves.
+
+**The tennis-ball shot's set is not the other three's.** Its panel keeps the common
+phase for the first three drops (to about frame 83) and then runs a few frames
+ahead of the other three for the rest of the shot; frame-for-frame identity is
+correct for three shots out of four, not all four. Its upper ring is the same
+exception — see below.
 
 The two small balls are a few pixels across at this framing. Find them on a contact
 sheet before you try to track them, and see §8 of the guide about what a
 whole-silhouette estimator does to a small thing next to a big static one.
 
-Two things run for the whole 25.8 seconds regardless of which ball it is, and they
-are why the frames never stop changing after the ball has stopped:
+Two things run for the whole 25.8 seconds in the basketball, billiard-ball and
+bowling-ball shots, and are why the frames never stop changing after the ball has
+stopped:
 
 - the two hanging rings **spin, fast and steadily**, from the first frame to the
   last: **a full revolution every 15 frames** — 1¼ s a turn, about 20⅔ turns over
@@ -158,6 +186,14 @@ are why the frames never stop changing after the ball has stopped:
   the first and last: the endpoints alone give a plausible-looking ~163°, which is
   the residue of the real spin taken mod 360;
 - the **hinged panel** cycles down and back up, as described above.
+
+**The tennis-ball shot's upper ring does not match those three.** It runs about
+1.3 % faster than the other three shots' matching rings, and it does not spin for
+the whole shot: it comes to a stop before the last frame, its final few frames all
+sitting at the same angle where the other three shots' upper ring is still turning.
+The lower ring and the panel's basic cycle (period and collapsed height) are shared
+by all four shots; only the tennis-ball shot's upper-ring speed and stopping point,
+and the panel's phase after its third drop, differ from the other three.
 
 The **water does not move at all.** Its surface sits on the same rows in the first
 and last frame of every shot, and in the two shots where nothing enters the basin
