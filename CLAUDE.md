@@ -6,7 +6,7 @@ Guidance for AI-assisted sessions working on this repository.
 
 rigc compiles a **rig spec** plus a motion spec — and, for a cut with measured art
 behind it, a cut manifest — into Spine 4.3 skeleton data and a one-part-per-page
-atlas, then round-trips the result through `@esotericsoftware/spine-core` and 31
+atlas, then round-trips the result through `@esotericsoftware/spine-core` and 32
 named assertions before anything is written. Read [README.md](README.md) for the
 formats, the CLI and the assertion list; [`src/rig.ts`](src/rig.ts) is the rig
 spec's own documentation.
