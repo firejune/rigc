@@ -174,7 +174,7 @@ quoted text, not for the number.
 
 ### 4. `selftest.ts` — fixture-bound, and the fixtures are that game's art
 
-This is the largest item, and it grew: the suite is now 4 positive controls, 44
+This is the largest item, and it grew: the suite is now 4 positive controls, 46
 artifact mutants and 7 rig-spec refusals, and all of them are hand-aimed at the same
 fixtures. The rig-spec suite added a dependency of its own — it reads the `rig` path
 out of the cuts table and edits that file, so it needs the rig specs as well as the
