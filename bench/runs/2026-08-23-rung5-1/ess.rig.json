@@ -1,0 +1,98 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "ess",
+  "note": "Rung 5 — one course, one ball, one hooded runner. Authored from the reference frames only.",
+  "images": "../../../examples/5-squash-and-stretch/images",
+  "skeleton": {
+    "x": -1746,
+    "y": -134,
+    "width": 3411,
+    "height": 2209,
+    "fps": 30
+  },
+  "bones": [
+    { "name": "root" },
+
+    { "name": "course", "parent": "root", "x": 0, "y": 0 },
+
+    { "name": "ball", "parent": "root", "x": -1501.5, "y": 1298.5 },
+
+    { "name": "hip", "parent": "root", "x": -1476, "y": 1222 },
+
+    { "name": "leg-left", "parent": "hip", "x": -18, "y": 46, "rotation": -90, "length": 46 },
+    { "name": "foot-left", "parent": "leg-left", "x": 46, "y": 0, "rotation": 90, "length": 40, "inherit": "noScale" },
+    { "name": "leg-right", "parent": "hip", "x": 18, "y": 46, "rotation": -90, "length": 46 },
+    { "name": "foot-right", "parent": "leg-right", "x": 46, "y": 0, "rotation": 90, "length": 40, "inherit": "noScale" },
+
+    { "name": "torso", "parent": "hip", "x": 0, "y": 44, "length": 84 },
+
+    { "name": "arm-left", "parent": "torso", "x": -30, "y": 66, "rotation": -115, "length": 34 },
+    { "name": "hand-left", "parent": "arm-left", "x": 34, "y": 0, "rotation": 115, "length": 24, "inherit": "noScale" },
+    { "name": "arm-right", "parent": "torso", "x": 30, "y": 66, "rotation": -65, "length": 34 },
+    { "name": "hand-right", "parent": "arm-right", "x": 34, "y": 0, "rotation": 65, "length": 24, "inherit": "noScale" },
+
+    { "name": "belt", "parent": "torso", "x": -16, "y": 20, "rotation": -100, "length": 44 },
+
+    { "name": "head", "parent": "torso", "x": 0, "y": 105, "length": 110 },
+    { "name": "hair", "parent": "head", "x": 22, "y": 52, "rotation": 25, "length": 60 },
+    { "name": "hood-end1", "parent": "head", "x": -44, "y": 14, "rotation": 200, "length": 76 },
+    { "name": "hood-end2", "parent": "head", "x": -40, "y": -18, "rotation": 205, "length": 68 }
+  ],
+  "slots": [
+    { "name": "course", "bone": "course", "attachment": "course" },
+    { "name": "hood-end1", "bone": "hood-end1", "attachment": null },
+    { "name": "hood-end2", "bone": "hood-end2", "attachment": null },
+    { "name": "hair", "bone": "hair", "attachment": null },
+    { "name": "left-hand", "bone": "hand-left", "attachment": null },
+    { "name": "left-foot", "bone": "foot-left", "attachment": null },
+    { "name": "belt-ends", "bone": "belt", "attachment": null },
+    { "name": "torso", "bone": "torso", "attachment": null },
+    { "name": "head", "bone": "head", "attachment": null },
+    { "name": "right-foot", "bone": "foot-right", "attachment": null },
+    { "name": "right-hand", "bone": "hand-right", "attachment": null },
+    { "name": "ball", "bone": "ball", "attachment": "ball" }
+  ],
+  "skins": {
+    "default": {
+      "course": { "course": { "image": "course.png", "x": 0, "y": 821, "scaleX": 2, "scaleY": 2 } },
+      "ball": { "ball": { "image": "ball.png" } },
+      "torso": { "torso": { "image": "torso.png", "x": 0, "y": 38 } },
+      "head": { "head": { "image": "head.png", "x": 0, "y": 38 } },
+      "hair": {
+        "hair-1": { "image": "hair-1.png", "x": 26, "y": 0, "rotation": -25 },
+        "hair-2": { "image": "hair-2.png", "x": 24, "y": 0, "rotation": -25 }
+      },
+      "hood-end1": {
+        "hood-end1a": { "image": "hood-end1a.png", "x": 42, "y": 0, "rotation": 90 },
+        "hood-end1b": { "image": "hood-end1b.png", "x": 39, "y": 0, "rotation": 90 },
+        "hood-end1c": { "image": "hood-end1c.png", "x": 35, "y": 0, "rotation": 90 },
+        "hood-end1d": { "image": "hood-end1d.png", "x": 41, "y": 0, "rotation": 90 },
+        "hood-end1e": { "image": "hood-end1e.png", "x": 39, "y": 0, "rotation": 90 },
+        "hood-end1f": { "image": "hood-end1f.png", "x": 35, "y": 0, "rotation": 90 }
+      },
+      "hood-end2": {
+        "hood-end2a": { "image": "hood-end2a.png", "x": 38, "y": 0, "rotation": 90 },
+        "hood-end2b": { "image": "hood-end2b.png", "x": 35, "y": 0, "rotation": 90 },
+        "hood-end2c": { "image": "hood-end2c.png", "x": 32, "y": 0, "rotation": 90 },
+        "hood-end2d": { "image": "hood-end2d.png", "x": 38, "y": 0, "rotation": 90 },
+        "hood-end2e": { "image": "hood-end2e.png", "x": 37, "y": 0, "rotation": 90 },
+        "hood-end2f": { "image": "hood-end2f.png", "x": 35, "y": 0, "rotation": 90 }
+      },
+      "belt-ends": { "belt-ends": { "image": "belt-ends.png", "x": 28, "y": 0, "rotation": 90 } },
+      "left-hand": { "left-hand": { "image": "left-hand.png", "x": 18, "y": 0, "rotation": -115 } },
+      "right-hand": { "right-hand": { "image": "right-hand.png", "x": 18, "y": 0, "rotation": -65 } },
+      "left-foot": {
+        "left-foot": { "image": "left-foot.png", "x": 4, "y": 22 },
+        "left-foot-side": { "image": "left-foot-side.png", "x": 4, "y": 22 },
+        "left-foot-bent01": { "image": "left-foot-bent01.png", "x": 4, "y": 22 },
+        "left-foot-bent02": { "image": "left-foot-bent02.png", "x": 4, "y": 22 }
+      },
+      "right-foot": {
+        "right-foot": { "image": "right-foot.png", "x": 4, "y": 22 },
+        "right-foot-side": { "image": "right-foot-side.png", "x": 4, "y": 22 },
+        "right-foot-bent01": { "image": "right-foot-bent01.png", "x": 4, "y": 22 },
+        "right-foot-bent02": { "image": "right-foot-bent02.png", "x": 4, "y": 22 }
+      }
+    }
+  }
+}
