@@ -221,6 +221,8 @@ src/
   types.ts      manifest, motion spec, and emitted-JSON shapes
 tools/          measurement and plate helpers (see below)
 scripts/        fetch-examples.sh
+bench/          count_features.ts — what the example corpus actually uses
+docs/           SPEC_COVERAGE.md (format survey), feature_matrix.{csv,json}
 ```
 
 `tools/` are standalone utilities, each taking its paths as arguments:

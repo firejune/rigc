@@ -10,11 +10,19 @@
 #
 # The file list comes from the GitHub contents API rather than from guessed
 # names — the examples do not share a naming scheme (some ship -ess exports,
-# some -pro, spineboy ships a second `-run` atlas), and a guessed name that 404s
-# is indistinguishable from an example that changed shape upstream.
+# some -pro, 7-anticipation's skeleton is called sack-pro, spineboy ships a
+# second `-run` atlas), and a guessed name that 404s is indistinguishable from
+# an example that changed shape upstream.
 #
 # Unauthenticated API calls are rate-limited to 60/hour. Export GITHUB_TOKEN to
-# lift that if you hit it.
+# lift that; when the limit is hit anyway, `known_files` below is used as a static
+# fallback so a rate-limited machine can still fetch from raw.githubusercontent.
+#
+# 🚨 The script must never report success on an empty download. A listing that
+# 403s produces no URLs, and a loop over no URLs does nothing at all — which is
+# how this script used to print "examples ready" and exit 0 with an empty
+# examples/ directory. Every example is verified to hold at least one skeleton
+# JSON before the exit status is allowed to be 0.
 set -euo pipefail
 
 REF="4.3"
@@ -36,56 +44,122 @@ EXAMPLES=(
   spineboy
 )
 
+# Static fallback, recorded from a successful contents-API fetch on 2026-08-22
+# (branch 4.3). It is deliberately second: a hardcoded list cannot notice that an
+# example changed shape upstream, so it is only consulted when the API refuses to
+# answer. `-pma` variants are omitted here for the same reason they are filtered
+# out of the API listing — rigc emits straight-alpha pages and comparing against a
+# premultiplied export would compare two different colour conventions.
+known_files() { # known_files <example> <export|images>
+  case "$1/$2" in
+    1-weight-and-mass/export) echo "1-weight-and-mass-balls-ess.json 1-weight-and-mass-drop-ess.json 1-weight-and-mass.atlas 1-weight-and-mass.png" ;;
+    1-weight-and-mass/images) echo "beach-ball.png blue-rubber-ball.png cast-shadow-beach.png cast-shadow-blue.png cast-shadow-iron.png cast-shadow-red.png ground-bg.png ground-cover.png red-rubber-ball.png rock.png steel-ball.png stick.png sword.png" ;;
+    2-the-12-principles/export) echo "2-the-12-principles-ess.json 2-the-12-principles.atlas 2-the-12-principles.png" ;;
+    2-the-12-principles/images) echo "basket-ball.png basket-lambertian.png billiard-ball.png billiard-lambertian.png billiard-specular.png bowling-ball.png bowling-lambertian.png bowling-specular.png obstacle-course.png platform.png ring-big.png ring-small.png tennis-ball.png tennis-lambertian.png water.png" ;;
+    3-timing-and-spacing/export) echo "3-timing-and-spacing-ess.json 3-timing-and-spacing.atlas 3-timing-and-spacing.png" ;;
+    3-timing-and-spacing/images) echo "pendulum.png square.png" ;;
+    4-wave-principle/export) echo "4-wave-principle-ess.json 4-wave-principle.atlas 4-wave-principle.png" ;;
+    4-wave-principle/images) echo "basket-ball.png basket-lambertian.png chain-1.png chain-2.png chain-3.png chain-4.png chain-end.png platform.png" ;;
+    5-squash-and-stretch/export) echo "5-squash-and-stretch-ess.json 5-squash-and-stretch.atlas 5-squash-and-stretch.png" ;;
+    5-squash-and-stretch/images) echo "ball.png belt-ends.png course.png hair-1.png hair-2.png head.png hood-end1a.png hood-end1b.png hood-end1c.png hood-end1d.png hood-end1e.png hood-end1f.png hood-end2a.png hood-end2b.png hood-end2c.png hood-end2d.png hood-end2e.png hood-end2f.png left-foot-bent01.png left-foot-bent02.png left-foot-side.png left-foot.png left-hand.png right-foot-bent01.png right-foot-bent02.png right-foot-side.png right-foot.png right-hand.png torso.png" ;;
+    6-arcs/export) echo "6-arcs-pro.json 6-arcs.atlas 6-arcs.png" ;;
+    6-arcs/images) echo "arc-tracker.png ball.png platform.png tail.png" ;;
+    7-anticipation/export) echo "7-anticipation.atlas 7-anticipation.png sack-pro.json" ;;
+    7-anticipation/images) echo "cape-back.png cape-front.png sack.png" ;;
+    8-follow-through/export) echo "8-follow-through-pro-ball.json 8-follow-through-pro-pendulum.json 8-follow-through.atlas 8-follow-through.png" ;;
+    8-follow-through/images) echo "ball.png chain-1.png chain-2.png chain-3.png chain-4.png chain-end.png platform.png tail.png" ;;
+    spineboy/export) echo "spineboy-ess.json spineboy-pro.json spineboy-run.atlas spineboy-run.png spineboy.atlas spineboy.png" ;;
+    spineboy/images) echo "crosshair.png eye-indifferent.png eye-surprised.png front-bracer.png front-fist-closed.png front-fist-open.png front-foot.png front-shin.png front-thigh.png front-upper-arm.png goggles.png gun.png head.png hoverboard-board.png hoverboard-thruster.png hoverglow-small.png mouth-grind.png mouth-oooo.png mouth-smile.png muzzle-glow.png muzzle-ring.png muzzle01.png muzzle02.png muzzle03.png muzzle04.png muzzle05.png neck.png portal-bg.png portal-flare1.png portal-flare2.png portal-flare3.png portal-shade.png portal-streaks1.png portal-streaks2.png rear-bracer.png rear-foot.png rear-shin.png rear-thigh.png rear-upper-arm.png torso.png" ;;
+    *) echo "" ;;
+  esac
+}
+
 # bash 3.2 (the macOS system shell) treats an empty array as unset under
 # `set -u`, so the expansion below is guarded rather than written "${auth[@]}".
+#
+# The header goes to api.github.com only. That is the host with the 60/hour
+# unauthenticated limit; raw.githubusercontent.com serves this public repository
+# without credentials, and sending a token there only adds a way to fail.
 auth=()
 if [ -n "${GITHUB_TOKEN:-}" ]; then auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}"); fi
 
 # Idempotent: an already-downloaded, non-empty file is kept, so this is safe to
 # re-run and safe as a pre-task hook (a fresh clone has no examples — they are
-# gitignored).
+# gitignored). Returns non-zero when the file could not be obtained, so a caller
+# can count misses instead of the script dying mid-example.
 fetch() { # fetch <url> <path>
   if [ -s "$2" ]; then
     echo "    have $(basename "$2")"
-  else
-    echo "    get  $(basename "$2")"
-    mkdir -p "$(dirname "$2")"
-    curl -fsSL "$1" -o "$2"
+    return 0
   fi
+  mkdir -p "$(dirname "$2")"
+  if curl -fsSL "$1" -o "$2"; then
+    echo "    get  $(basename "$2")"
+    return 0
+  fi
+  rm -f "$2"
+  echo "    MISS $(basename "$2")  <- $1"
+  return 1
 }
 
 # Every `download_url` in one contents-API listing. `null` (directories) does not
-# match the quoted pattern, so it drops out on its own.
+# match the quoted pattern, so it drops out on its own. `pipefail` is on, so a
+# 403 from curl and a grep that matched nothing both come back non-zero — and
+# both mean the same thing to the caller: this listing yielded no files.
 list_urls() { # list_urls <api-url>
   curl -fsSL ${auth[@]+"${auth[@]}"} "$1" | grep -o '"download_url": *"[^"]*"' | sed 's/.*"\(https[^"]*\)"$/\1/'
 }
 
 missing_license=()
+api_fallbacks=()
+misses=0
+
+# One directory of one example, by API listing if that works and by the static
+# list if it does not.
+fetch_dir() { # fetch_dir <example> <export|images>
+  local name="$1" dir="$2" urls file url
+  local out="$DEST/$name/$dir"
+  if urls="$(list_urls "$API/$name/$dir?ref=$REF")" && [ -n "$urls" ]; then
+    for url in $urls; do
+      file="$(basename "$url")"
+      case "$file" in
+        *-pma.atlas | *-pma.png | *-pma_*.png) continue ;;
+      esac
+      case "$dir/$file" in
+        export/*.json | export/*.atlas | export/*.png) fetch "$url" "$out/$file" || misses=$((misses + 1)) ;;
+        images/*) fetch "$url" "$out/$file" || misses=$((misses + 1)) ;;
+      esac
+    done
+    return 0
+  fi
+  api_fallbacks+=("$name/$dir")
+  echo "    ..   contents API gave no listing for $dir/ (rate limit?) — using the recorded file list"
+  local known
+  known="$(known_files "$name" "$dir")"
+  if [ -z "$known" ]; then
+    echo "    WARN no recorded file list for $name/$dir either"
+    return 0
+  fi
+  for file in $known; do
+    fetch "$RAW/$name/$dir/$file" "$out/$file" || misses=$((misses + 1))
+  done
+}
 
 for name in "${EXAMPLES[@]}"; do
   echo "$name"
   out="$DEST/$name"
   mkdir -p "$out"
 
-  # export/ — the reference skeleton data and its atlas. The premultiplied-alpha
-  # variants are skipped: rigc emits `pma: false` pages, and comparing against a
-  # pma export would compare two different colour conventions.
-  for url in $(list_urls "$API/$name/export?ref=$REF"); do
-    file="$(basename "$url")"
-    case "$file" in
-      *-pma.atlas | *-pma.png | *-pma_*.png) continue ;;
-      *.json | *.atlas | *.png) fetch "$url" "$out/export/$file" ;;
-    esac
-  done
-
+  # export/ — the reference skeleton data and its atlas.
+  fetch_dir "$name" export
   # images/ — the source art the atlas was packed from.
-  for url in $(list_urls "$API/$name/images?ref=$REF"); do
-    fetch "$url" "$out/images/$(basename "$url")"
-  done
+  fetch_dir "$name" images
 
   # license.txt — the redistribution condition for the images above. Its absence
   # is reported rather than swallowed: it changes what may be done with the art.
-  if curl -fsSL -o "$out/license.txt.tmp" "$RAW/$name/license.txt" 2>/dev/null; then
+  if [ -s "$out/license.txt" ]; then
+    echo "    have license.txt"
+  elif curl -fsSL -o "$out/license.txt.tmp" "$RAW/$name/license.txt" 2>/dev/null; then
     mv "$out/license.txt.tmp" "$out/license.txt"
     echo "    ok   license.txt"
   else
@@ -95,8 +169,43 @@ for name in "${EXAMPLES[@]}"; do
   fi
 done
 
+# ---------------------------------------------------------------------------
+# Verification. Everything above can be a no-op — an empty listing loops zero
+# times, a 404 leaves the directory untouched — so the exit status is decided
+# here, by what is on disk, and not by whether the loops ran.
+# ---------------------------------------------------------------------------
+empty=()
+for name in "${EXAMPLES[@]}"; do
+  count=0
+  for f in "$DEST/$name/export"/*.json; do
+    if [ -s "$f" ]; then count=$((count + 1)); fi
+  done
+  if [ "$count" -eq 0 ]; then empty+=("$name"); fi
+done
+
+if [ ${#empty[@]} -gt 0 ]; then
+  echo
+  echo "✗ no skeleton JSON was fetched for: ${empty[*]}"
+  echo "  Both the GitHub contents API and the recorded file list failed for these."
+  echo "  The usual cause is the unauthenticated 60/hour rate limit — export a"
+  echo "  GITHUB_TOKEN and re-run:  GITHUB_TOKEN=<token> bun run fetch-examples"
+  exit 1
+fi
+
 echo
 echo "examples ready → $DEST"
+if [ ${#api_fallbacks[@]} -gt 0 ]; then
+  echo
+  echo "ℹ️  the contents API did not answer for: ${api_fallbacks[*]}"
+  echo "    Those came from the recorded file list instead, which cannot see a"
+  echo "    file that was added upstream. Re-run with GITHUB_TOKEN set to confirm."
+fi
+if [ "$misses" -gt 0 ]; then
+  echo
+  echo "⚠️  $misses file(s) could not be downloaded (listed as MISS above)."
+  echo "    Every example still has a skeleton, so this is not fatal, but the"
+  echo "    corpus is incomplete — re-run before relying on a measurement."
+fi
 if [ ${#missing_license[@]} -gt 0 ]; then
   echo
   echo "⚠️  no license.txt upstream for: ${missing_license[*]}"
