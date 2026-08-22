@@ -7,10 +7,17 @@
  *   bun cli.ts explain --rig <path> --motion <path> --out <dir>
  *   bun cli.ts explain --cut <name> --cuts <cuts.json>
  *   bun cli.ts validate <dir>            re-run the gate on artifacts on disk
+ *   bun cli.ts check --candidate <dir> --frames <dir>   compare against pictures
  *
  * `build` emits ONLY if validate is green. That ordering is the point: the
  * compiler is allowed to be wrong, it is not allowed to leave the wrong thing
  * on disk (plan 04 section 4-3 step 7).
+ *
+ * ⚠️ Green is a claim about VALIDITY and about nothing else. The gate has no way
+ * to know whether the animation is the one that was asked for — a build with
+ * every easing reversed passes it — so `check` is the other half of the loop, and
+ * it is a separate command because it needs something the gate does not have: a
+ * picture of what the result is supposed to look like.
  *
  * rigc knows nothing about any particular project. A cut is a rig spec, a motion
  * spec and an output directory — plus a cut manifest when there is measured art
@@ -26,6 +33,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type CheckReport } from './src/check.ts';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
 import { diffLines, diffSkeletons, type DiffReport } from './src/diff.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
@@ -57,6 +65,15 @@ class UsageError extends Error {}
 // argument parsing
 // ---------------------------------------------------------------------------
 
+/**
+ * The flags that are switches rather than `--flag value` pairs.
+ *
+ * Listed by name rather than inferred from "the next argument looks like a
+ * flag": inferring it would turn `--out --json report.json` — a real typo, a
+ * missing value — into a silently accepted switch plus a stray positional.
+ */
+const BOOLEAN_FLAGS = new Set(['all-frames']);
+
 /** `--flag value` pairs plus the leftover positionals, in order. */
 function parseArgs(argv: string[]): { flags: Record<string, string>; positional: string[] } {
   const flags: Record<string, string> = {};
@@ -67,6 +84,8 @@ function parseArgs(argv: string[]): { flags: Record<string, string>; positional:
       const eq = arg.indexOf('=');
       if (eq !== -1) {
         flags[arg.slice(2, eq)] = arg.slice(eq + 1);
+      } else if (BOOLEAN_FLAGS.has(arg.slice(2))) {
+        flags[arg.slice(2)] = 'true';
       } else {
         const next = argv[i + 1];
         if (next === undefined || next.startsWith('--')) throw new UsageError(`${arg} needs a value`);
@@ -313,18 +332,77 @@ function cmdDiff(flags: Record<string, string>, positional: string[]): void {
   console.log('rigc diff');
   for (const line of diffLines(report, { candidate: candidatePath, reference: referencePath })) console.log(line);
   if (flags.json !== undefined) {
-    const out = resolve(flags.json);
-    mkdirSync(dirname(out), { recursive: true });
-    writeFileSync(
-      out,
-      // ⚠️ `...report` carries its OWN `candidate` and `reference` — the raw
-      // per-side counts. Spelling the paths under those two names put them on
-      // the losing side of the spread, so the written report named neither file
-      // it compared. The paths get their own keys.
-      `${JSON.stringify({ candidatePath, referencePath, ...report }, null, 2)}\n`,
-    );
-    console.log(`rigc: wrote ${out}`);
+    // ⚠️ `...report` carries its OWN `candidate` and `reference` — the raw
+    // per-side counts. Spelling the paths under those two names put them on
+    // the losing side of the spread, so the written report named neither file
+    // it compared. The paths get their own keys.
+    writeJson(flags.json, { candidatePath, referencePath, ...report });
   }
+}
+
+/**
+ * check — how close does the candidate LOOK to the reference frames?
+ *
+ * ⭐ The gate cannot see a wrong animation. It parses, it steps, it refuses the
+ * degenerate — and a rig whose easings are all reversed passes it green, which is
+ * not a hypothetical: ladder rung 1's first honest run shipped exactly that build
+ * and the validator was structurally incapable of noticing. `diff` cannot see it
+ * either, because it compares structure and a reversed curve is the same curve
+ * count. The only thing that can is a picture, so this renders the candidate into
+ * the reference's own frame and compares pixels.
+ *
+ * 🔒 It never reads the reference skeleton — see `src/check.ts`. That is what
+ * keeps it usable **inside** an authoring loop rather than at the finish line the
+ * way `bench` is: an author may run it as often as they like without their run
+ * stopping being an authoring run.
+ *
+ * There is no pass mark, for the same reason `diff` has none.
+ */
+function readCheckFlags(flags: Record<string, string>): Pick<CheckOptions, 'fps' | 'viewport' | 'as'> {
+  const out: Pick<CheckOptions, 'fps' | 'viewport' | 'as'> = {};
+  if (flags.fps !== undefined) {
+    const fps = Number(flags.fps);
+    if (!Number.isFinite(fps) || fps <= 0) throw new UsageError('--fps must be a positive number');
+    out.fps = fps;
+  }
+  if (flags.viewport !== undefined) {
+    const parts = flags.viewport.split(',').map((s) => Number(s.trim()));
+    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+      throw new UsageError('--viewport takes four numbers: <x>,<y>,<width>,<height> — the world box, y up');
+    }
+    if (parts[2] <= 0 || parts[3] <= 0) throw new UsageError('--viewport width and height must be positive');
+    out.viewport = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+  }
+  if (flags.as !== undefined) out.as = flags.as;
+  return out;
+}
+
+function runCheck(candidate: string, atlasFlag: string | undefined, framesDir: string, flags: Record<string, string>): CheckReport {
+  const { skeletonPath, atlasPath } = resolveArtifacts(candidate, atlasFlag);
+  return checkAgainstFrames({
+    skeletonText: readFileSync(skeletonPath, 'utf8'),
+    atlasText: readFileSync(atlasPath, 'utf8'),
+    atlasDir: dirname(atlasPath),
+    framesDir,
+    labels: { skeleton: skeletonPath, atlas: atlasPath },
+    ...readCheckFlags(flags),
+  });
+}
+
+function cmdCheck(flags: Record<string, string>): void {
+  if (flags.candidate === undefined) throw new UsageError('check needs --candidate <dir | skeleton.json>');
+  if (flags.frames === undefined) throw new UsageError('check needs --frames <dir> — a rendered reference frame set');
+  const report = runCheck(flags.candidate, flags.atlas, flags.frames, flags);
+  console.log('rigc check');
+  for (const line of checkLines(report, { allFrames: flags['all-frames'] !== undefined })) console.log(line);
+  if (flags.json !== undefined) writeJson(flags.json, report);
+}
+
+function writeJson(target: string, body: unknown): void {
+  const out = resolve(target);
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, `${JSON.stringify(body, null, 2)}\n`);
+  console.log(`rigc: wrote ${out}`);
 }
 
 /**
@@ -394,42 +472,58 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
     diffs.push({ skeleton, reference: referencePath, report: diff });
   }
 
+  // Third, optional and third for a reason: is it the same MOTION? `diff`
+  // compares structure, and a reversed easing is the same key count and the same
+  // curve kind — so a row of this ladder carrying only `validate` and `diff`
+  // records a rig that could be animated backwards. `--frames` folds `check`'s
+  // table into the report so a future row carries both.
+  let check: CheckReport | null = null;
+  if (flags.frames !== undefined) {
+    console.log(`  ── check vs frames ${resolve(flags.frames)} ──`);
+    check = runCheck(flags.candidate, flags.atlas, flags.frames, flags);
+    for (const line of checkLines(check, { allFrames: flags['all-frames'] !== undefined })) console.log(`  ${line}`);
+    console.log('');
+  }
+
   console.log('  ── summary ──');
   console.log(`  validate   ${report.failures.length === 0 ? 'green' : `${report.failures.length} FAILED`}  (profile ${profile})`);
   for (const d of diffs) {
     const means = d.report.sections.map((s) => `${s.name}=${s.ratio.toFixed(3)}`).join('  ');
     console.log(`  ${d.skeleton.label.padEnd(10)} ${means}${d.skeleton.role === 'stretch' ? '   [stretch]' : ''}`);
   }
+  if (check) {
+    for (const anim of check.animations) {
+      const drift = anim.worstDriftFrame < 0 ? 'no slot attributable' : `worst slot drift ${anim.worstDrift.toFixed(1)}px`;
+      console.log(
+        `  ${anim.dir.padEnd(10)} MAE mean=${anim.meanMae.toFixed(2)} worst=${anim.worstMae.toFixed(2)}  ${drift}  ` +
+          `(${anim.compared} frame(s))`,
+      );
+    }
+  } else {
+    console.log('  check      not run — pass --frames <dir> to compare against the rendered reference frames.');
+    console.log('             Without it this report says nothing about whether the ANIMATION is right.');
+  }
   console.log('  Section figures are means of their own measures. There is no rung score:');
   console.log('  a rung is cleared by a person reading the measures, and docs/LADDER.md records it.');
 
   if (flags.json !== undefined) {
-    const out = resolve(flags.json);
-    mkdirSync(dirname(out), { recursive: true });
-    writeFileSync(
-      out,
-      `${JSON.stringify(
-        {
-          rung: rung.id,
-          example: rung.example,
-          gates: rung.gates,
-          profile,
-          candidate: { skeleton: skeletonPath, atlas: atlasPath },
-          validate: report,
-          // `referencePath`, not `reference`: a DiffReport already has a
-          // `reference` of its own (the raw counts), and the spread wins.
-          diffs: diffs.map((d) => ({
-            label: d.skeleton.label,
-            role: d.skeleton.role,
-            referencePath: d.reference,
-            ...d.report,
-          })),
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    console.log(`rigc: wrote ${out}`);
+    writeJson(flags.json, {
+      rung: rung.id,
+      example: rung.example,
+      gates: rung.gates,
+      profile,
+      candidate: { skeleton: skeletonPath, atlas: atlasPath },
+      validate: report,
+      // `referencePath`, not `reference`: a DiffReport already has a
+      // `reference` of its own (the raw counts), and the spread wins.
+      diffs: diffs.map((d) => ({
+        label: d.skeleton.label,
+        role: d.skeleton.role,
+        referencePath: d.reference,
+        ...d.report,
+      })),
+      check,
+    });
   }
 
   if (report.failures.length > 0) {
@@ -557,11 +651,23 @@ const USAGE = [
   '  bun cli.ts explain  (same arguments as build)',
   '  bun cli.ts validate <dir | skeleton.json> [--atlas <path>]',
   '  bun cli.ts diff     <candidate.json> <reference.json> [--json <out>]',
-  `  bun cli.ts bench    <${RUNG_IDS.join(' | ')}> --candidate <dir | skeleton.json>`,
+  '  bun cli.ts check    --candidate <dir | skeleton.json> --frames <dir>',
+  `  bun cli.ts bench    <${RUNG_IDS.join(' | ')}> --candidate <dir | skeleton.json> [--frames <dir>]`,
   '',
   'build and validate take --profile spine|spine-html (default spine-html):',
   '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
   '  spine-html  the above, plus this project\'s renderer and archetype policy.',
+  '',
+  'check renders the candidate into the reference frames\' own viewport and compares',
+  'pixels. It reads the frames and never the reference skeleton, so it belongs INSIDE',
+  'an authoring loop — the validator cannot see a wrong animation and this can:',
+  '  --frames <dir>        a rendered frame set (a skeleton root, or one animation dir)',
+  '  --atlas <path>        the candidate\'s atlas, when it is not beside the skeleton',
+  '  --fps <n>             only for a frame set with no frames.json sidecar',
+  '  --viewport x,y,w,h    likewise: the world box, y up, that the frames show',
+  '  --as <name>           the candidate animation to play, when it is named differently',
+  '  --all-frames          print every frame, not just the worst by MAE',
+  '  --json <out>          the whole per-frame, per-slot report',
   '',
   'a cuts.json is { "<name>": { "rig": "...", "motion": "...", "out": "...",',
   '                             "manifest": "..." (optional) } }, with every path',
@@ -575,6 +681,7 @@ try {
   else if (command === 'validate') cmdValidate(flags, positional);
   else if (command === 'explain') cmdExplain(flags);
   else if (command === 'diff') cmdDiff(flags, positional);
+  else if (command === 'check') cmdCheck(flags);
   else if (command === 'bench') cmdBench(flags, positional);
   else {
     console.error(USAGE);
@@ -587,6 +694,10 @@ try {
   }
   if (err instanceof CompileError) {
     console.error(`rigc compile error: ${err.message}`);
+    process.exit(1);
+  }
+  if (err instanceof CheckError) {
+    console.error(`rigc check error: ${err.message}`);
     process.exit(1);
   }
   throw err;

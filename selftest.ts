@@ -27,6 +27,7 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { assertFrameReadable, checkAgainstFrames, type CheckReport } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedMeasures } from './src/diff.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
@@ -902,6 +903,190 @@ function runDiffSuite(): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// `rigc check` — the instrument for the thing the gate cannot see
+// ---------------------------------------------------------------------------
+//
+// The validator has no opinion about whether an animation is the RIGHT
+// animation: three honest ladder runs produced zero FAILs between them, and one
+// of them shipped a build with every easing reversed and came back green. `check`
+// is what closes that, so it needs the same discipline as every other measure
+// here — a positive control that says "right rig, nothing to report", and a
+// negative control that makes it fire.
+//
+// The pair below is deliberately the same rig twice. `bench/transcriptions/` is a
+// mechanical transcription of rung 3's export, so it scores 1.000 structurally;
+// reversing its key times leaves the structure untouched — same timelines, same
+// key count, same duration — and changes only what the shot LOOKS like. A tool
+// that can tell those two apart is measuring motion and not structure, and that
+// is the whole claim.
+//
+// ⚠️ The faithful control is not zero, and the reason is worth knowing before
+// reading its threshold. The reference frames were rendered from the example's
+// own packed atlas page, which ships at `scale: 0.5` — half resolution — while a
+// rigc rig is compiled from the loose full-size PNGs beside it. Identical
+// skeleton data, different pixels. The geometry agreement is exact to well under
+// a pixel, which is what the drift threshold asserts; the residual colour
+// difference is the resampling and nothing else.
+
+const CHECK_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/3-timing-and-spacing');
+const CHECK_FRAMES = resolve(import.meta.dir, 'bench/reference/3-timing-and-spacing');
+const CHECK_IMAGES = resolve(import.meta.dir, 'examples/3-timing-and-spacing/images');
+
+/** Compile the rung-3 transcription, optionally against a rewritten motion spec. */
+function compileTranscription(motionText: string | null): { skeletonText: string; atlasText: string; atlasDir: string } {
+  const outDir = mkdtempSync(join(tmpdir(), 'rigc-check-'));
+  let motionPath = join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.motion.json');
+  if (motionText !== null) {
+    motionPath = join(outDir, 'rewritten.motion.json');
+    writeFileSync(motionPath, motionText);
+  }
+  const result = compile({
+    rigPath: join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.rig.json'),
+    motionPath,
+    outDir,
+    imagesDir: CHECK_IMAGES,
+  });
+  return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir };
+}
+
+/**
+ * The same motion, played backwards: `t -> duration - t`, keys reversed.
+ *
+ * Every raw `curve` is dropped with them, because those control points are
+ * absolute `(time, value)` pairs and reversing the times would leave them
+ * pointing at moments that no longer exist. What is left is the same set of poses
+ * in the opposite order — legal, compilable, gate-green, and not the shot.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function reverseMotionTimes(text: string): string {
+  const motion = JSON.parse(text);
+  for (const animation of Object.values(motion.animations) as any[]) {
+    const duration: number = animation.duration;
+    for (const track of animation.tracks as any[]) {
+      track.keys = (track.keys as any[])
+        .map((key: any) => ({ t: Number((duration - key.t).toFixed(7)), v: key.v }))
+        .reverse();
+    }
+  }
+  return `${JSON.stringify(motion, null, 2)}\n`;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/** The two figures a check control asserts on, across every animation in the set. */
+function checkExtremes(report: CheckReport): { meanMae: number; frameMae: number; drift: number; sets: number } {
+  let meanMae = 0;
+  let frameMae = 0;
+  let drift = 0;
+  for (const anim of report.animations) {
+    meanMae = Math.max(meanMae, anim.meanMae);
+    frameMae = Math.max(frameMae, anim.meanMaeFrame);
+    drift = Math.max(drift, anim.worstDrift);
+  }
+  return { meanMae, frameMae, drift, sets: report.animations.length };
+}
+
+/** Returns the number of failures, or `null` when the example corpus is absent. */
+function runCheckSuite(): number | null {
+  console.log('\n── rigc check (fixture: the rung 3 transcription vs rung 3 reference frames) ──');
+  if (!existsSync(CHECK_IMAGES) || !existsSync(join(CHECK_FRAMES, 'frames.json'))) {
+    console.log('  SKIP  the check self-checks did not run.');
+    console.log(`          expected art at   ${CHECK_IMAGES}`);
+    console.log(`          expected frames at ${CHECK_FRAMES}/frames.json`);
+    console.log('          run `bun run fetch-examples`, then `bun bench/render_reference.ts --rung 3`.');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — `rigc check` was not exercised at all.');
+    return null;
+  }
+  let bad = 0;
+
+  // --- the honesty invariant, made to refuse ------------------------------
+  // `check` reading the reference skeleton would silently convert every future
+  // ladder run from authoring into transcription, so the guard that stops it
+  // gets a negative control like any other gate.
+  const refusals: Array<{ what: string; path: string }> = [
+    { what: 'a reference skeleton beside the frames', path: join(CHECK_FRAMES, '3-timing-and-spacing-ess.json') },
+    { what: 'anything at all outside --frames', path: resolve(import.meta.dir, 'examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json') },
+    { what: 'the licence text the frames ship with', path: join(CHECK_FRAMES, 'license.txt') },
+  ];
+  const accepted = { what: 'a frame', path: join(CHECK_FRAMES, 'heavy', 'f0000.png') };
+  const refused: string[] = [];
+  for (const { what, path } of refusals) {
+    try {
+      assertFrameReadable(CHECK_FRAMES, path);
+    } catch {
+      refused.push(what);
+    }
+  }
+  let acceptsFrames = true;
+  try {
+    assertFrameReadable(CHECK_FRAMES, accepted.path);
+  } catch {
+    acceptsFrames = false;
+  }
+  if (refused.length === refusals.length && acceptsFrames) {
+    console.log(`  PASS  C00_CHECK_READS_FRAMES_AND_NOTHING_ELSE  (refused ${refused.length}, accepted a .png)`);
+    console.log('          origin: the ladder honesty rule is the only thing that makes a rung number mean anything');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C00_CHECK_READS_FRAMES_AND_NOTHING_ELSE: refused ${refused.length}/${refusals.length}` +
+        `${acceptsFrames ? '' : ', and it also refused a real frame'}`,
+    );
+  }
+
+  // --- positive control ---------------------------------------------------
+  const faithful = compileTranscription(null);
+  const faithfulReport = checkAgainstFrames({ ...faithful, framesDir: CHECK_FRAMES });
+  const f = checkExtremes(faithfulReport);
+  // Sub-pixel geometry and a colour residual that is only the atlas resampling.
+  const faithfulOk = f.sets === 2 && f.drift < 1 && f.frameMae < 0.5 && f.meanMae < 10;
+  if (faithfulOk) {
+    console.log(
+      `  PASS  C01_A_FAITHFUL_TRANSCRIPTION_HAS_NOTHING_TO_REPORT  ` +
+        `(worst slot drift ${f.drift.toFixed(2)}px, whole-frame MAE ${f.frameMae.toFixed(3)}, union MAE ${f.meanMae.toFixed(2)})`,
+    );
+    console.log('          origin: a comparison tool that cannot recognise a right answer is reporting noise');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C01_A_FAITHFUL_TRANSCRIPTION_HAS_NOTHING_TO_REPORT: ${f.sets} set(s), drift ${f.drift.toFixed(2)}px, ` +
+        `whole-frame MAE ${f.frameMae.toFixed(3)}, union MAE ${f.meanMae.toFixed(2)}`,
+    );
+  }
+
+  // --- negative control ---------------------------------------------------
+  const reversedText = reverseMotionTimes(
+    readFileSync(join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.motion.json'), 'utf8'),
+  );
+  const reversed = compileTranscription(reversedText);
+  // The gate has to be green on it, or the control proves nothing about the
+  // gate's blindness — that blindness is the reason `check` exists.
+  const gate = validate({
+    skeletonText: reversed.skeletonText,
+    atlasText: reversed.atlasText,
+    atlasDir: reversed.atlasDir,
+    profile: 'spine',
+  });
+  const reversedReport = checkAgainstFrames({ ...reversed, framesDir: CHECK_FRAMES });
+  const r = checkExtremes(reversedReport);
+  const reversedOk = gate.failures.length === 0 && r.drift > 10 && r.meanMae > f.meanMae * 3;
+  if (reversedOk) {
+    console.log(
+      `  PASS  C02_A_TIME_REVERSED_MOTION_IS_LOUD  ` +
+        `(gate green, worst slot drift ${r.drift.toFixed(1)}px vs ${f.drift.toFixed(2)}px, union MAE ` +
+        `${r.meanMae.toFixed(1)} vs ${f.meanMae.toFixed(1)})`,
+    );
+    console.log('          origin: rung 1 shipped a build with every easing reversed and the validator passed it green');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C02_A_TIME_REVERSED_MOTION_IS_LOUD: gate ${gate.failures.length} FAIL(s), drift ${r.drift.toFixed(1)}px, ` +
+        `union MAE ${r.meanMae.toFixed(1)} against a faithful ${f.meanMae.toFixed(1)}`,
+    );
+  }
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // the rig spec — negative controls for the COMPILER, not for the validator
 // ---------------------------------------------------------------------------
 //
@@ -1469,6 +1654,8 @@ function main(): void {
   bad += runDrawOrderSuite();
   const diffBad = runDiffSuite();
   if (diffBad !== null) bad += diffBad;
+  const checkBad = runCheckSuite();
+  if (checkBad !== null) bad += checkBad;
 
   console.log('');
   if (bad > 0) {
@@ -1481,7 +1668,10 @@ function main(): void {
       `+ ${tolerances} legal edits the gate had to accept, + 3 static-rig controls, + 6 draw-order controls` +
       (diffBad === null
         ? '\n  ⚠️ but the rigc diff self-checks did NOT run (no example corpus) — this run does not cover them'
-        : `, + ${DIFF_CASES.length} diff measure controls`),
+        : `, + ${DIFF_CASES.length} diff measure controls`) +
+      (checkBad === null
+        ? '\n  ⚠️ and the rigc check self-checks did NOT run (no example corpus, or rung 3 frames unrendered)'
+        : ', + 3 check controls (frames-only reads, a faithful transcription, a time-reversed one)'),
   );
 }
 

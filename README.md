@@ -89,7 +89,52 @@ An assertion or measure with nothing to compare reports its `total` as 0 and say
 so, exactly as the validator's SKIP does — a vacuous 1.000 that looks earned is
 the same false green in a different costume.
 
+### Checking a rig against the pictures — `rigc check`
 
+```bash
+bun cli.ts check --candidate path/to/spine --frames bench/reference/3-timing-and-spacing
+```
+
+⭐ **Neither the gate nor `diff` can see a wrong animation.** The gate checks
+validity: it parses the skeleton, steps every animation and refuses anything
+degenerate, and it has no opinion about whether the animation is the one that was
+asked for. `diff` checks structure: a reversed easing is the same timeline, the
+same key count and the same curve kind. Three honest ladder runs have now produced
+**zero** validator FAILs between them, and one of them shipped a build in which
+every easing in the file was reversed — green, and sincerely reported as done.
+
+`check` is the instrument for that. It renders the candidate with the same
+rasteriser that drew the reference frames, onto the same pixel grid, and reports
+per animation and per frame:
+
+- **MAE over the union alpha** — the mean absolute RGB difference over the pixels
+  either side covers, 0..255. The whole-frame figure is printed beside it and never
+  instead of it: most of a frame is background on both sides, so that number is
+  small for every candidate and the gap between a good one and a bad one smaller
+  still.
+- **Per-slot drift** — where each of the candidate's own slots landed against the
+  connected component of the reference frame nearest it, in pixels. MAE says *how
+  wrong*; a slot's drift says *which part, which way, how far*. Where the reference
+  merged two parts into one blob — the trap [AUTHORING §8](docs/AUTHORING.md) opens
+  with — the match is reported as **ambiguous** rather than guessed at, because a
+  drift printed there is not a measurement of that slot.
+
+🔒 **It never reads the reference skeleton.** It opens the candidate and PNG
+frames, and nothing else: every reference-side read goes through one guard that
+refuses a path which is not a `.png` or the frame set's `frames.json`, and the
+selftest makes that guard fire. That is what lets `check` sit *inside* an
+authoring loop where `bench` cannot — running it as often as you like does not
+stop a run being an authoring run.
+
+The candidate is framed **by its own content**, not by the reference's world box.
+A candidate is authored in its own coordinate system and under the ladder's
+honesty rule could not be authored in any other, so the framing procedure — the
+union of the posed quads over every animation, padded, scaled to the reference's
+long side — is applied to each side separately. It is deterministic and
+content-derived, so two skeletons depicting the same shot land on the same pixels
+whatever coordinates they were authored in.
+
+There is no pass mark, for the same reason `diff` has none.
 
 ### Benchmark ladder — the rungs, and where they stand
 
@@ -104,7 +149,9 @@ bun cli.ts bench 3 --candidate path/to/candidate/spine
 
 `bench` validates the candidate under `--profile spine`, diffs it against that
 rung's reference export, and prints both. It exits non-zero only when validation
-fails: the diff has no threshold, because there is no rung score.
+fails: the diff has no threshold, because there is no rung score. Add
+`--frames <dir>` and it folds in the `check` table below, so a ladder row carries
+fidelity as well as structure.
 
 #### What the rungs need
 
@@ -291,6 +338,8 @@ bun cli.ts explain  --cut my_cut --cuts path/to/cuts.json   # the compiled rig a
 bun cli.ts validate path/to/spine                           # re-gate artifacts already on disk
 bun cli.ts validate --profile spine path/to/any/skeleton    # spec rules only (see Profiles)
 bun cli.ts diff candidate.json reference.json               # structural comparison
+bun cli.ts check --candidate path/to/spine \
+                 --frames bench/reference/3-timing-and-spacing   # against pictures
 bun cli.ts bench 3 --candidate path/to/spine                # one rung of the ladder
 ```
 
@@ -335,6 +384,15 @@ There is a positive control per suite as well: the pristine artifacts must come 
 with zero failures, because a validator that failed everything would otherwise look
 like a validator that worked.
 
+`rigc check` gets the same treatment, and its pair is deliberately the same rig
+twice: the rung 3 transcription against rung 3's frames, and then that transcription
+with every key time reversed. Reversing leaves the structure untouched — same
+timelines, same key count, same duration, and the gate stays green, which the
+control asserts — and changes only what the shot looks like. Faithful reads 0.67 px
+of slot drift; reversed reads 66.8 px. A third control makes the frames-only read
+guard refuse a reference skeleton, because an honesty invariant nobody has seen
+refuse anything is not an invariant.
+
 > ⚠️ The selftest is currently **fixture-bound**: its mutants name specific
 > attachments, bones and animations, so it needs a `cuts.json` supplying the three
 > cuts it was written against. Those fixtures are not in this repository. See
@@ -344,13 +402,16 @@ like a validator that worked.
 
 ```
 tsconfig.json   type-check config (noEmit); eslint.config.js — the no-any gate
-cli.ts          build / validate / explain / diff / bench
-selftest.ts     the validator's own negative controls, and diff's measure controls
+cli.ts          build / validate / explain / diff / check / bench
+selftest.ts     the validator's own negative controls, and diff's and check's
 src/
   compile.ts    rig + motion spec (+ manifest) -> skeleton JSON + atlas text (pure data assembly)
   rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
   validate.ts   spine-core round trip + the 32 assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure
+  render.ts     the region rasteriser, shared by the reference renderer and check
+  check.ts      a candidate against rendered frames — pixels and per-slot drift,
+                and it never opens the reference skeleton
   ladder.ts     which example is which rung, and which file in it is the reference
   timelines.ts  the 4.3 timeline catalogue and its walker (shared, pure JSON)
   mesh.ts       ring and ribbon mesh builders, weighted-vertex encoding

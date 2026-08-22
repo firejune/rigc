@@ -93,6 +93,7 @@ sincere about it. rigc exists to convert that silence into a named failure.
 | `bun run lint` | one rule: `@typescript-eslint/no-explicit-any` as an **error**. `eslint.config.js` says why it is only one |
 | `bun run selftest --cuts <cuts.json>` | the validator's own negative controls. **Fixture-bound** — see *PUBLIC GATE* item 4; a fresh clone cannot run it |
 | `bun cli.ts bench 3 --candidate <dir>` | the ladder still reproduces its rung. `docs/LADDER.md` carries the B1 proof to compare against |
+| `bun cli.ts check --candidate <dir> --frames <dir>` | the candidate still *looks* like the reference. The gate cannot see a wrong animation — it passed a build with every easing reversed — so a change to timelines, curves or the rasteriser is not verified until this has run |
 
 Neither of the first two existed before 2026-08-22, and both found real defects on
 their first run — a `let` assigned inside a callback that made 30 later reads
