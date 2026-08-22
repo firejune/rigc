@@ -28,7 +28,7 @@
  */
 import { Plate, type RGBA } from '../tools/plate.ts';
 import { backgroundDistance, isContent } from './framing.ts';
-import { pageFor, projector, rasteriseQuad, type Frame, type Footprint, type Viewport } from './render.ts';
+import { pageFor, projector, rasterisePiece, type Frame, type Footprint, type Viewport } from './render.ts';
 
 /** Components smaller than this are antialiasing crumbs, not parts. */
 const MIN_COMPONENT_PIXELS = 4;
@@ -426,7 +426,7 @@ interface Template {
 /**
  * The slot on its own, over the background, at the size it drew.
  *
- * Its own quads and nothing else — the point of the fallback is that the
+ * Its own pieces and nothing else — the point of the fallback is that the
  * reference merged this part with its neighbours, so the thing being looked for
  * has to be the part rather than the blob.
  */
@@ -445,9 +445,9 @@ function templateFor(slot: string, foot: Footprint, source: SlotSource): Templat
     return [px - ox, py - oy];
   };
   let drew = false;
-  for (const quad of source.frame.quads) {
-    if (quad.slot !== slot) continue;
-    rasteriseQuad(pageFor(source.pages, quad), quad, shifted, { width, height }, (px, py, r, g, b, a) => {
+  for (const piece of source.frame.pieces) {
+    if (piece.slot !== slot) continue;
+    rasterisePiece(pageFor(source.pages, piece), piece, shifted, { width, height }, (px, py, r, g, b, a) => {
       patch.blend(px, py, [r, g, b, a]);
       drew = true;
     });

@@ -38,7 +38,7 @@ import {
   fill,
   pageFor,
   projector,
-  rasteriseQuad,
+  rasterisePiece,
   viewportOfSize,
   type Frame,
   type Viewport,
@@ -236,16 +236,16 @@ function inset(mass: Float64Array, edge: number, towards: 1 | -1): number {
   return Math.max(0, Math.min(1, 1 - mass[edge] / inner));
 }
 
-/** Every pixel a frame's quads could touch, as an integer scan window. */
-function quadWindow(frame: Frame, viewport: Viewport): ScanWindow | null {
+/** Every pixel a frame's pieces could touch, as an integer scan window. */
+function pieceWindow(frame: Frame, viewport: Viewport): ScanWindow | null {
   const project = projector(viewport);
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const quad of frame.quads) {
-    for (let i = 0; i < 8; i += 2) {
-      const [px, py] = project(quad.world[i], quad.world[i + 1]);
+  for (const piece of frame.pieces) {
+    for (let i = 0; i < piece.world.length; i += 2) {
+      const [px, py] = project(piece.world[i], piece.world[i + 1]);
       if (px < minX) minX = px;
       if (px > maxX) maxX = px;
       if (py < minY) minY = py;
@@ -264,7 +264,7 @@ function quadWindow(frame: Frame, viewport: Viewport): ScanWindow | null {
 /**
  * The content box of one candidate frame, drawn into `viewport`.
  *
- * Composited rather than measured quad by quad: two nearly-transparent parts
+ * Composited rather than measured piece by piece: two nearly-transparent parts
  * overlapping at an extreme edge are content together and neither alone, and the
  * reference side is a composite, so this one has to be too.
  */
@@ -275,13 +275,13 @@ export function frameContentBox(
   background: RGBA,
   level: number,
 ): ContentBox | null {
-  const window = quadWindow(frame, viewport);
+  const window = pieceWindow(frame, viewport);
   if (!window) return null;
   const plate = new Plate(viewport.width, viewport.height);
   fill(plate, background);
   const project = projector(viewport);
-  for (const quad of frame.quads) {
-    rasteriseQuad(pageFor(pages, quad), quad, project, viewport, (px, py, r, g, b, a) => {
+  for (const piece of frame.pieces) {
+    rasterisePiece(pageFor(pages, piece), piece, project, viewport, (px, py, r, g, b, a) => {
       plate.blend(px, py, [r, g, b, a]);
     });
   }

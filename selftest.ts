@@ -42,9 +42,31 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { MeshAttachment, Physics, Skeleton, type SkeletonData } from '@esotericsoftware/spine-core';
 import { assertFrameReadable, checkAgainstFrames, type CheckReport } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedMeasures } from './src/diff.ts';
+import {
+  EMPTY_FOOTPRINT,
+  frameGeometry,
+  framingViewport,
+  loadPosable,
+  pageFor,
+  piecesOf,
+  posableFromText,
+  projector,
+  PROTOCOL_FPS,
+  rasterisePiece,
+  sampleAll,
+  sampleAnimation,
+  sampleSetupPose,
+  type Footprint,
+  type Frame,
+  type Mesh,
+  type Piece,
+  type Posable,
+  type Viewport,
+} from './src/render.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { Plate, readPlate, type RGBA } from './tools/plate.ts';
@@ -1806,6 +1828,229 @@ function runDrawOrderSuite(): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// the mesh rasteriser — the path `check` had no way to draw before #27
+// ---------------------------------------------------------------------------
+//
+// `src/render.ts` used to refuse a mesh attachment by name, which stopped the
+// whole frame-fidelity lane at rung 5: no reference frames for rungs 6, 7 or 8,
+// and therefore no `check` on them either. The controls below are the ones that
+// would have caught that refusal coming back, and the ones that say the
+// replacement actually draws something.
+//
+// Three of them run on a fixture this file generates and need no corpus. The
+// fourth needs `examples/6-arcs`, and reports a HOLE rather than a pass when it
+// is absent — an assertion with nothing to measure has measured nothing.
+//
+// The `MR` prefix keeps them apart from the overlay fixture's `M##` mutants,
+// which are numbered from an unrelated table and print in the same run.
+//
+// ⚠️ What these do NOT claim: that a mesh looks right. A checkerboard plate
+// cannot support a claim about appearance and none is made. They claim that a
+// mesh is posed at all, that its pixels reach the coverage mask `frameGeometry`
+// hands to `check`, that a deform moves them, and that two triangles sharing an
+// edge do not both draw it.
+
+/** How far M02's deform pushes the iris mesh, in the rig's own units. */
+const DEFORM_NUDGE = 12;
+
+/** The posed pieces of a compiled fixture's first animation, at the protocol rate. */
+function poseFixture(opts: Options): { posable: Posable; frames: Frame[] } {
+  const built = compile(opts);
+  const posable = posableFromText(built.skeletonText, built.atlasText, opts.outDir);
+  const animation = posable.data.animations[0];
+  const frames = animation
+    ? sampleAnimation(posable.data, animation.name, PROTOCOL_FPS)
+    : sampleSetupPose(posable.data);
+  return { posable, frames };
+}
+
+/**
+ * Pose one frame with every deform offset of `slotName`'s mesh set to `(dx, dy)`.
+ *
+ * ⭐ The skeleton pose is untouched — no bone moves, no timeline changes. That is
+ * what makes this a test of the *deform* path specifically: if the pixels move,
+ * the only thing that can have moved them is `SlotPose.deform` being read.
+ *
+ * The array's length is `influences x 2` either way. For an unweighted mesh the
+ * deform array REPLACES the local vertices, one `x, y` per vertex; for a weighted
+ * one it carries an offset per bone influence, and `vertices` holds one
+ * `x, y, weight` triple per influence. Same count, two meanings — which is why
+ * this derives it from the attachment rather than assuming either.
+ */
+function poseWithDeform(data: SkeletonData, slotName: string, dx: number, dy: number): Frame {
+  const skeleton = new Skeleton(data);
+  skeleton.setupPose();
+  const slot = skeleton.slots.find((s) => s.data.name === slotName);
+  if (!slot) throw new Error(`the fixture has no slot "${slotName}"`);
+  const attachment = slot.appliedPose.attachment;
+  if (!(attachment instanceof MeshAttachment)) {
+    throw new Error(`slot "${slotName}" does not show a mesh in the setup pose`);
+  }
+  const influences = attachment.bones ? attachment.vertices.length / 3 : attachment.worldVerticesLength / 2;
+  const deform = slot.appliedPose.deform;
+  deform.length = 0;
+  for (let i = 0; i < influences; i++) deform.push(dx, dy);
+  skeleton.update(0);
+  skeleton.updateWorldTransform(Physics.reset);
+  return { index: 0, time: 0, pieces: piecesOf(skeleton) };
+}
+
+/** The largest number of times any one destination pixel was drawn by one piece. */
+function worstOverdraw(piece: Piece, pages: Map<string, Plate>, viewport: Viewport): number {
+  const hits = new Map<number, number>();
+  rasterisePiece(pageFor(pages, piece), piece, projector(viewport), viewport, (px, py) => {
+    const key = py * viewport.width + px;
+    hits.set(key, (hits.get(key) ?? 0) + 1);
+  });
+  let worst = 0;
+  for (const n of hits.values()) worst = Math.max(worst, n);
+  return worst;
+}
+
+/**
+ * The slot the articulated fixture's manifest promotes to a ring mesh.
+ *
+ * `collar` rather than the overlay probe's `iris`, for one structural reason:
+ * `iris` has no setup attachment — its manifest gives it a `closed: null` state —
+ * so the setup pose and the `idle` animation both show nothing there, and a
+ * deform baseline needs a mesh that is on screen before anything is keyed.
+ */
+const MESH_SLOT = 'collar';
+
+function runMeshSuite(): number {
+  let bad = 0;
+  console.log('\n── mesh rasterising (fixture: the articulated probe\'s ring mesh) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): number => reportCase(name, ok, detail, why);
+
+  const opts = optsForFixture(ARTICULATED);
+  const { posable, frames } = poseFixture(opts);
+  const withMesh = frames.find((frame) => frame.pieces.some((p) => p.kind === 'mesh' && p.slot === MESH_SLOT));
+  const meshPiece = withMesh?.pieces.find((p): p is Mesh => p.kind === 'mesh' && p.slot === MESH_SLOT);
+
+  bad += say(
+    'MR00_CONTROL_A_MESH_RIG_POSES_A_MESH',
+    meshPiece !== undefined,
+    meshPiece
+      ? `slot "${MESH_SLOT}" posed a mesh of ${meshPiece.world.length / 2} vertices and ` +
+          `${meshPiece.triangles.length / 3} triangles`
+      : `no frame of the fixture posed a mesh on slot "${MESH_SLOT}" — everything below would be vacuous`,
+    'a suite that measures mesh pixels on a rig that poses no mesh reports green over nothing',
+  );
+  if (!meshPiece || !withMesh) return bad + 3;
+
+  // --- coverage ------------------------------------------------------------
+  // `frameGeometry`'s coverage mask and per-slot footprints are what `check`
+  // measures a candidate on. A mesh that draws to the plate but not into the mask
+  // would read as a part that is simply missing.
+  const viewport = framingViewport(posable.data, 256);
+  if (!viewport) return bad + 3 + say('MR01_A_POSED_MESH_COVERS_PIXELS', false, 'the fixture framed to nothing', '');
+  const geometry = frameGeometry(withMesh, posable.pages, viewport);
+  const footprint = geometry.footprints.get(MESH_SLOT);
+  let covered = 0;
+  for (const bit of geometry.coverage) covered += bit;
+  bad += say(
+    'MR01_A_POSED_MESH_COVERS_PIXELS',
+    (footprint?.pixels ?? 0) > 0 && covered > 0,
+    `slot "${MESH_SLOT}" weighs ${(footprint?.pixels ?? 0).toFixed(1)} px in its own footprint, ` +
+      `and the frame's coverage mask holds ${covered} px`,
+    'check reads a candidate through the coverage mask, so a mesh missing from it reads as a missing part',
+  );
+
+  // --- the deform path -----------------------------------------------------
+  // Paired on purpose. An empty deform must leave the pose exactly where the
+  // setup pose put it, or "the deform moved it" is not a claim about the deform.
+  const still = poseWithDeform(posable.data, MESH_SLOT, 0, 0);
+  const nudged = poseWithDeform(posable.data, MESH_SLOT, DEFORM_NUDGE, 0);
+  const centroid = (frame: Frame): Footprint =>
+    frameGeometry(frame, posable.pages, viewport).footprints.get(MESH_SLOT) ?? EMPTY_FOOTPRINT;
+  const base = centroid(still);
+  const moved = centroid(nudged);
+  const shift = Math.hypot(moved.cx - base.cx, moved.cy - base.cy);
+  const setupFootprint = centroid(sampleSetupPose(posable.data)[0]);
+  const emptyIsIdentity = Math.hypot(base.cx - setupFootprint.cx, base.cy - setupFootprint.cy) < 1e-9;
+  bad += say(
+    'MR02_A_VERTEX_DEFORM_MOVES_THE_CENTROID',
+    emptyIsIdentity && shift > 1,
+    emptyIsIdentity
+      ? `an all-zero deform left the centroid exactly where the setup pose put it, and a ${DEFORM_NUDGE}-unit ` +
+          `offset moved it ${shift.toFixed(2)} px`
+      : 'an all-zero deform already moved the centroid, so this measures the harness rather than the deform',
+    'a deform timeline that is stepped and ignored is invisible to every structural measure there is',
+  );
+
+  // --- the fill rule -------------------------------------------------------
+  // Two triangles that share an edge must cover the pixels along it exactly once;
+  // twice is a lattice of double-blended seams and none is a lattice of holes.
+  // The synthetic pair is the instrument's own control: it genuinely overlaps, so
+  // a counter that cannot see 2 there cannot report 1 anywhere as evidence.
+  const overlapping: Mesh = {
+    ...meshPiece,
+    world: [...meshPiece.world.slice(0, 6), ...meshPiece.world.slice(0, 6)],
+    uvs: [...Array.from(meshPiece.uvs).slice(0, 6), ...Array.from(meshPiece.uvs).slice(0, 6)],
+    triangles: [0, 1, 2, 3, 4, 5],
+  };
+  const shared = worstOverdraw(meshPiece, posable.pages, viewport);
+  const doubled = worstOverdraw(overlapping, posable.pages, viewport);
+  bad += say(
+    'MR03_SHARED_EDGES_ARE_DRAWN_ONCE',
+    shared === 1 && doubled === 2,
+    `the fixture's ${meshPiece.triangles.length / 3} triangles cover their worst pixel ${shared}x, ` +
+      `while two deliberately coincident triangles cover theirs ${doubled}x`,
+    'source-over blending makes a doubly-covered edge visible wherever the art is not opaque',
+  );
+  return bad;
+}
+
+/**
+ * Rung 6's own export, drawn — the rung the refusal used to stop dead.
+ *
+ * In process rather than by running `bench/render_reference.ts`: the refusal was
+ * never in that script, it was in `sampleAll` -> `piecesOf`, and these three calls
+ * are the ones the script makes. Shelling out would test the argument parser.
+ */
+function runMeshRungSuite(): number | null {
+  const dir = resolve(import.meta.dir, 'examples/6-arcs/export');
+  console.log('\n── mesh rasterising on a real rung (6-arcs) ──');
+  if (!existsSync(join(dir, '6-arcs-pro.json'))) {
+    console.log('  SKIP  the rung-6 render control did not run.');
+    console.log(`          expected an export at ${dir}`);
+    console.log('          run `bun run fetch-examples`.');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — the mesh path was not drawn on real geometry.');
+    return null;
+  }
+  const posable = loadPosable(join(dir, '6-arcs-pro.json'), join(dir, '6-arcs.atlas'), dir);
+  const viewport = framingViewport(posable.data, 256);
+  let meshes = 0;
+  let drawn = 0;
+  let detail = '';
+  let ok = false;
+  try {
+    const sets = sampleAll(posable.data, PROTOCOL_FPS);
+    for (const frames of sets.values()) {
+      for (const piece of frames[0].pieces) if (piece.kind === 'mesh') meshes++;
+    }
+    if (viewport) {
+      for (const frames of sets.values()) {
+        const geometry = frameGeometry(frames[Math.floor(frames.length / 2)], posable.pages, viewport);
+        for (const bit of geometry.coverage) drawn += bit;
+      }
+    }
+    ok = meshes > 0 && drawn > 0;
+    detail = ok
+      ? `posed ${meshes} mesh attachment(s) and drew ${drawn} px of a mid-shot frame at ${viewport?.width}x${viewport?.height}`
+      : `posed ${meshes} mesh(es) and drew ${drawn} px — the export loaded but nothing reached the plate`;
+  } catch (err) {
+    detail = `it still refuses: ${(err as Error).message}`;
+  }
+  return reportCase(
+    'MR04_A_RUNG_WITH_MESHES_RENDERS',
+    ok,
+    detail,
+    'the refusal stopped the frame-fidelity lane at rung 5 — no reference frames for 6, 7 or 8, and so no check',
+  );
+}
+
 interface Suite {
   name: string;
   opts: Options;
@@ -1982,6 +2227,13 @@ function main(): void {
   substantive += 4;
   bad += runDrawOrderSuite();
   substantive += 6;
+  bad += runMeshSuite();
+  substantive += 4;
+  const meshRungBad = runMeshRungSuite();
+  if (meshRungBad !== null) {
+    bad += meshRungBad;
+    substantive += 1;
+  }
   const diffBad = runDiffSuite();
   if (diffBad !== null) {
     bad += diffBad;
@@ -2013,11 +2265,17 @@ function main(): void {
       : `, + ${DIFF_CASES.length} diff measure controls, + 5 check controls (frames-only reads, a faithful ` +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         'the framing names)';
+  const meshRung =
+    meshRungBad === null
+      ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
+      : ', + 1 rung-6 mesh render';
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
-      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 6 draw-order controls` +
+      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 6 draw-order controls, ` +
+      `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       corpus +
+      (meshRung.startsWith(',') ? '' : meshRung) +
       (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : ''),
   );
 }

@@ -1,5 +1,5 @@
 /**
- * The region rasteriser — one code path for reference frames and for candidates.
+ * The rasteriser — one code path for reference frames and for candidates.
  *
  * ⭐ Why this is a module and not a script. `bench/render_reference.ts` renders
  * the official export to the PNG frames an authoring agent is allowed to see;
@@ -9,25 +9,53 @@
  * between two rigs — and the second is the only one anybody wants to read. So
  * there is exactly one rasteriser, and both callers are thin.
  *
- * ## What it draws, and what it refuses
+ * ## What it draws
  *
- * Region attachments only. For a region attachment a bone transform is a plain
- * affine map: `spine-core` computes the four world vertices on the CPU, a
- * destination pixel maps back into the region's rectangle by inverting one 2x2,
- * and there is no perspective divide and no triangle split. Sampling is bilinear
- * and the source is straight alpha.
+ * Region and mesh attachments, in draw order, tinted by slot colour x attachment
+ * colour. Both are **affine** texture maps and neither divides by w:
  *
- * 🚧 A mesh attachment needs a triangle rasteriser and a deform path, and this
- * **refuses it by name** rather than dropping it silently — the same rule the
- * compiler follows for a format feature it does not emit. A rung that ships
- * meshes cannot be rendered, and says so.
+ * - a **region** is one quad. `spine-core` computes its four world vertices on
+ *   the CPU, a destination pixel maps back into the region's rectangle by
+ *   inverting one 2x2, and there is no triangle split at all;
+ * - a **mesh** is a triangle list. `MeshAttachment.computeWorldVertices` does the
+ *   work — it is the runtime's own routine, so weighted vertices resolve through
+ *   their bones and a `deform` timeline's offsets are applied, exactly the way a
+ *   real runtime would. Each triangle is then filled with barycentric UV
+ *   interpolation.
+ *
+ * ⭐ **Sampling is bilinear on both paths, and the source is straight alpha.**
+ * One filter rather than two is not a detail: `check` measures a candidate
+ * against reference frames, and a mesh triangle sampled nearest against a
+ * reference sampled bilinear would put a filter difference into the residual
+ * where only a rig difference belongs. Bilinear rather than nearest because the
+ * region path was already bilinear and the five committed rungs are rendered
+ * with it — see `bilinear`.
+ *
+ * ⚠️ **Region rasterising is untouched by the mesh path**, deliberately. A region
+ * could be drawn as two triangles and very nearly the same pixels would come out;
+ * "very nearly" would have silently rewritten five rungs of committed reference
+ * frames. `rasteriseQuad` still owns regions, `rasteriseMesh` owns meshes, and
+ * `rasterisePiece` picks.
+ *
+ * ## The fill rule, and why a mesh needs one
+ *
+ * Two triangles that share an edge must cover the pixels along it exactly once.
+ * Include the boundary in both and every interior edge of a mesh blends twice —
+ * a visible lattice of seams wherever the art is not opaque. Exclude it in both
+ * and the seams become holes.
+ *
+ * So `rasteriseMesh` normalises each triangle's winding and applies the standard
+ * **top-left rule**: a pixel centre exactly on an edge belongs to the triangle
+ * only when that edge is a top or a left one. The two triangles sharing an edge
+ * traverse it in opposite directions, so exactly one of them calls it top-left —
+ * which is the property that makes the rule watertight without an epsilon.
  *
  * ## Two conventions this file owns
  *
  * - **Spine world is y up; an image is y down.** The projection from world to
  *   frame pixels lives in `projector` and nowhere else.
  * - **The framing box is measured at `FRAMING_FPS`, whatever rate frames are
- *   written at.** The union of the posed quads depends on WHICH TIMES you
+ *   written at.** The union of the posed vertices depends on WHICH TIMES you
  *   sample, so taking it at the output rate made the viewport a property of the
  *   rate: rung 1's `balls` framed to 256x240 at 12 fps and 256x239 at 24 fps.
  *   One pixel is enough to be a trap — the two sets look comparable, an author
@@ -143,24 +171,65 @@ export interface FramesSidecar {
 // posing
 // ---------------------------------------------------------------------------
 
-export interface Quad {
+/** What every drawable has in common, whatever shape it is. */
+export interface PieceCommon {
+  /**
+   * World-space vertex positions, `x, y` per vertex.
+   *
+   * ⭐ The one field the framing code reads, and the reason it is spelled the
+   * same on both shapes: a union over "every posed point" is a loop over this
+   * array in steps of two, and it does not need to know whether four numbers are
+   * a rectangle's corners or two hundred are a mesh's hull.
+   */
+  world: number[];
+  /** Slot colour x attachment colour, straight alpha, 0..1. */
+  tint: [number, number, number, number];
+  /** The slot this was drawn for — what per-slot tracking is keyed by. */
+  slot: string;
+  /** The atlas page name this samples, so a multi-page atlas resolves. */
+  page: string;
+}
+
+export interface Quad extends PieceCommon {
+  kind: 'region';
   /** World-space corners, in spine-core's region order: br, bl, ul, ur. */
   world: number[];
   /** Page UVs for the same four corners. */
   uvs: ArrayLike<number>;
-  /** Slot colour x attachment colour, straight alpha, 0..1. */
-  tint: [number, number, number, number];
-  /** The slot this quad was drawn for — what per-slot tracking is keyed by. */
-  slot: string;
-  /** The atlas page name this quad samples, so a multi-page atlas resolves. */
-  page: string;
 }
+
+/**
+ * A posed mesh attachment: world vertices, page UVs, and the triangulation.
+ *
+ * The vertices arrive from `MeshAttachment.computeWorldVertices`, which is the
+ * runtime's own routine and therefore the only place the weighting and deform
+ * arithmetic lives. Reimplementing either here would give `check` a second
+ * opinion about where a vertex is, and a second opinion is exactly what a gate
+ * must not have.
+ */
+export interface Mesh extends PieceCommon {
+  kind: 'mesh';
+  /** Page UVs, `u, v` per vertex, parallel to `world`. */
+  uvs: ArrayLike<number>;
+  /** Vertex index triplets. */
+  triangles: ArrayLike<number>;
+}
+
+/** One drawable in a posed frame. */
+export type Piece = Quad | Mesh;
 
 export interface Frame {
   /** Index within the sampled sequence — the number in `f0000.png`. */
   index: number;
   time: number;
-  quads: Quad[];
+  /**
+   * Everything the frame draws, in draw order.
+   *
+   * Named `pieces` rather than `quads` since meshes joined it: a mesh is not a
+   * quad, and a field that says otherwise is the kind of name a reader trusts
+   * and then indexes `world[6]` through.
+   */
+  pieces: Piece[];
 }
 
 /** Where the world sits in a frame: the four world numbers plus the scale. */
@@ -205,7 +274,7 @@ export function posableFromText(skeletonText: string, atlasText: string, atlasDi
 }
 
 /**
- * Sample one animation at a fixed rate and collect the posed quads per frame.
+ * Sample one animation at a fixed rate and collect the posed pieces per frame.
  *
  * The pose is driven through `AnimationState` rather than `Animation.apply`
  * because that is the path a runtime actually takes, and 4.3's `Animation.apply`
@@ -239,7 +308,7 @@ export function sampleAnimation(data: SkeletonData, name: string, fps: number): 
       skeleton.update(0);
       skeleton.updateWorldTransform(Physics.reset);
     }
-    frames.push({ index: i, time: i * step, quads: quadsOf(skeleton) });
+    frames.push({ index: i, time: i * step, pieces: piecesOf(skeleton) });
   }
   return frames;
 }
@@ -257,7 +326,7 @@ export function sampleSetupPose(data: SkeletonData): Frame[] {
   skeleton.setupPose();
   skeleton.update(0);
   skeleton.updateWorldTransform(Physics.reset);
-  return [{ index: 0, time: 0, quads: quadsOf(skeleton) }];
+  return [{ index: 0, time: 0, pieces: piecesOf(skeleton) }];
 }
 
 /**
@@ -272,25 +341,26 @@ export function sampleAll(data: SkeletonData, fps: number): Map<string, Frame[]>
   return out;
 }
 
-/** The posed region attachments of one frame, in draw order. */
-export function quadsOf(skeleton: Skeleton): Quad[] {
-  const quads: Quad[] = [];
+/**
+ * The posed drawables of one frame, in draw order.
+ *
+ * Regions and meshes take the same three steps — resolve the sequence index,
+ * ask `spine-core` for the world vertices, read the page UVs back off the same
+ * sequence — and differ only in which runtime call does step two. An attachment
+ * type that is neither is skipped rather than refused: a bounding box, a point
+ * and a clipping attachment are all things a rig legitimately carries and none
+ * of them draws a pixel.
+ */
+export function piecesOf(skeleton: Skeleton): Piece[] {
+  const pieces: Piece[] = [];
   for (const slot of skeleton.drawOrder.appliedPose) {
     const pose = slot.appliedPose;
     const attachment = pose.attachment;
     if (!attachment) continue;
-    if (attachment instanceof MeshAttachment) {
-      throw new Error(
-        `slot "${slot.data.name}" shows mesh attachment "${attachment.name}"; this renderer draws region ` +
-          'attachments only, so a rung with meshes needs a triangle rasteriser before it can be rendered',
-      );
-    }
-    if (!(attachment instanceof RegionAttachment)) continue;
-    const world = new Array<number>(8).fill(0);
+    const isMesh = attachment instanceof MeshAttachment;
+    if (!isMesh && !(attachment instanceof RegionAttachment)) continue;
+
     const index = attachment.sequence.resolveIndex(pose);
-    attachment.computeWorldVertices(slot, attachment.getOffsets(pose), world, 0, 2);
-    const colour = pose.color;
-    const own = attachment.color;
     const region = attachment.sequence.regions[index];
     if (!(region instanceof TextureAtlasRegion)) {
       throw new Error(
@@ -298,22 +368,45 @@ export function quadsOf(skeleton: Skeleton): Quad[] {
           'the attachment names a region the atlas does not have',
       );
     }
-    quads.push({
-      world,
-      uvs: attachment.sequence.getUVs(index),
-      tint: [colour.r * own.r, colour.g * own.g, colour.b * own.b, colour.a * own.a],
-      slot: slot.data.name,
-      page: region.page.name,
-    });
+    const colour = pose.color;
+    const own = attachment.color;
+    const tint: [number, number, number, number] = [
+      colour.r * own.r,
+      colour.g * own.g,
+      colour.b * own.b,
+      colour.a * own.a,
+    ];
+    const common = { tint, slot: slot.data.name, page: region.page.name };
+
+    if (isMesh) {
+      // `worldVerticesLength` is 2 per vertex whether or not the mesh is
+      // weighted — the weight runs live in `vertices`, not here — so this is the
+      // full output length and the whole mesh is computed in one call. Deform
+      // offsets, if the pose carries any, are applied inside it.
+      const world = new Array<number>(attachment.worldVerticesLength).fill(0);
+      attachment.computeWorldVertices(skeleton, slot, 0, attachment.worldVerticesLength, world, 0, 2);
+      pieces.push({ kind: 'mesh', ...common, world, uvs: attachment.sequence.getUVs(index), triangles: attachment.triangles });
+      continue;
+    }
+
+    const world = new Array<number>(8).fill(0);
+    attachment.computeWorldVertices(slot, attachment.getOffsets(pose), world, 0, 2);
+    pieces.push({ kind: 'region', ...common, world, uvs: attachment.sequence.getUVs(index) });
   }
-  return quads;
+  return pieces;
 }
 
 // ---------------------------------------------------------------------------
 // framing
 // ---------------------------------------------------------------------------
 
-/** The world-space box every posed quad of these frames fits inside. */
+/**
+ * The world-space box every posed vertex of these frames fits inside.
+ *
+ * `world.length` rather than a literal 8: a region contributes its four corners
+ * and a mesh every one of its vertices, and the loop does not need to know which
+ * it is holding.
+ */
 export function unionBounds(frameSets: Iterable<Frame[]>): { minX: number; minY: number; maxX: number; maxY: number } {
   let minX = Infinity;
   let minY = Infinity;
@@ -321,12 +414,12 @@ export function unionBounds(frameSets: Iterable<Frame[]>): { minX: number; minY:
   let maxY = -Infinity;
   for (const frames of frameSets) {
     for (const frame of frames) {
-      for (const quad of frame.quads) {
-        for (let i = 0; i < 8; i += 2) {
-          minX = Math.min(minX, quad.world[i]);
-          maxX = Math.max(maxX, quad.world[i]);
-          minY = Math.min(minY, quad.world[i + 1]);
-          maxY = Math.max(maxY, quad.world[i + 1]);
+      for (const piece of frame.pieces) {
+        for (let i = 0; i < piece.world.length; i += 2) {
+          minX = Math.min(minX, piece.world[i]);
+          maxX = Math.max(maxX, piece.world[i]);
+          minY = Math.min(minY, piece.world[i + 1]);
+          maxY = Math.max(maxY, piece.world[i + 1]);
         }
       }
     }
@@ -415,12 +508,21 @@ export function regionTrim(page: Plate, quad: Quad, cache: Map<string, RegionTri
 }
 
 /**
- * The world box every quad's **artwork** fits inside, over these frames.
+ * The world box every piece's **artwork** fits inside, over these frames.
  *
  * The same union as `unionBounds`, taken over the trimmed rectangles instead of
  * the quads. It is a starting box for `check`'s framing and nothing more — the
  * framing itself is fitted on rendered pixels — but the start has to be free of
  * transparent margins too, or the path the fit takes still depends on them.
+ *
+ * ⚠️ **A mesh contributes its raw vertices and is not trimmed.** The trim exists
+ * because a region attachment's quad is the whole PNG, transparent border and
+ * all, so its corners sit where no pixel is. A mesh's hull is authored *onto the
+ * drawing* — that is what makes it a mesh — so its vertices already are where the
+ * artwork is, and there is no rectangle to invert a margin out of. Passing a
+ * triangle fan through the rectangle trim would not be a better estimate of the
+ * same box; it would be a different box, computed from a rectangle the mesh does
+ * not have.
  */
 export function trimmedUnionBounds(
   frameSets: Iterable<Frame[]>,
@@ -439,7 +541,12 @@ export function trimmedUnionBounds(
   };
   for (const frames of frameSets) {
     for (const frame of frames) {
-      for (const quad of frame.quads) {
+      for (const piece of frame.pieces) {
+        if (piece.kind === 'mesh') {
+          for (let i = 0; i < piece.world.length; i += 2) see(piece.world[i], piece.world[i + 1]);
+          continue;
+        }
+        const quad = piece;
         const [brx, bry, blx, bly, ulx, uly] = quad.world;
         const trim = regionTrim(pageFor(pages, quad), quad, cache);
         if (!trim) {
@@ -579,14 +686,161 @@ export function rasteriseQuad(
   }
 }
 
-/** Blit one affine quad onto the plate, source-over. */
-export function blitQuad(
+/** A destination pixel and the straight-alpha colour a piece put there. */
+export type EmitPixel = (px: number, py: number, r: number, g: number, b: number, a: number) => void;
+
+/**
+ * Is this edge a top or a left one, for the winding `rasteriseMesh` normalises to?
+ *
+ * Derived rather than copied, because the answer depends on the sign convention
+ * of the edge function and the direction of y. With `edge(p) = dx·(py−y0) −
+ * dy·(px−x0)` and y pointing **down**, the triangle `(0,0) → (1,0) → (0,1)` has
+ * positive area, and its horizontal edge `(0,0) → (1,0)` — `dx > 0`, `dy = 0` —
+ * is the one along its top. Its `(0,1) → (0,0)` edge — `dy < 0`, going up — is
+ * the one down its left.
+ *
+ * What actually makes the rule watertight needs neither of those facts: the two
+ * triangles sharing an edge traverse it in opposite directions, so `dy < 0` holds
+ * for exactly one of them, and when `dy` is 0 for both, `dx > 0` holds for
+ * exactly one. Every shared edge is therefore claimed once. Getting the
+ * orientation right on top of that is what keeps the classic meaning — a pixel
+ * centre on a boundary belongs to the triangle below-right of it.
+ */
+function isTopLeftEdge(dx: number, dy: number): boolean {
+  return dy < 0 || (dy === 0 && dx > 0);
+}
+
+/**
+ * Walk the destination pixels one posed mesh covers, sampling the page.
+ *
+ * Each triangle is filled independently with barycentric UV interpolation and no
+ * perspective divide — a Spine mesh is a flat 2D deformation, so its UVs are
+ * affine in screen space and there is no `w` to divide by. The winding is
+ * normalised per triangle (a mesh's triangles are not guaranteed to agree, and a
+ * bone with negative scale flips them all anyway), and the top-left rule then
+ * makes every interior edge belong to exactly one of the two triangles that
+ * share it.
+ *
+ * `emit` has the same contract as `rasteriseQuad`'s — every covered pixel whose
+ * composited alpha clears the same 0.5 threshold — so "draw it" and "measure
+ * where it landed" stay one traversal for meshes exactly as they are for regions.
+ */
+export function rasteriseMesh(
+  page: Plate,
+  mesh: Mesh,
+  project: (wx: number, wy: number) => [number, number],
+  clip: { width: number; height: number },
+  emit: EmitPixel,
+): void {
+  const count = mesh.world.length / 2;
+  // Project once per vertex, not once per triangle: an interior vertex of a
+  // 40-vertex hull belongs to half a dozen triangles, and projecting it six times
+  // invites six answers the moment anything about `project` stops being exact.
+  const px = new Float64Array(count);
+  const py = new Float64Array(count);
+  for (let i = 0; i < count; i++) {
+    const [x, y] = project(mesh.world[i * 2], mesh.world[i * 2 + 1]);
+    px[i] = x;
+    py[i] = y;
+  }
+
+  for (let t = 0; t + 2 < mesh.triangles.length; t += 3) {
+    let i0 = mesh.triangles[t];
+    let i1 = mesh.triangles[t + 1];
+    const i2 = mesh.triangles[t + 2];
+    let area = (px[i1] - px[i0]) * (py[i2] - py[i0]) - (py[i1] - py[i0]) * (px[i2] - px[i0]);
+    if (area === 0) continue; // degenerate: a zero-height triangle covers nothing
+    if (area < 0) {
+      const swap = i0;
+      i0 = i1;
+      i1 = swap;
+      area = -area;
+    }
+
+    const x0 = px[i0];
+    const y0 = py[i0];
+    const x1 = px[i1];
+    const y1 = py[i1];
+    const x2 = px[i2];
+    const y2 = py[i2];
+    const minX = Math.max(0, Math.floor(Math.min(x0, x1, x2)));
+    const maxX = Math.min(clip.width - 1, Math.ceil(Math.max(x0, x1, x2)));
+    const minY = Math.max(0, Math.floor(Math.min(y0, y1, y2)));
+    const maxY = Math.min(clip.height - 1, Math.ceil(Math.max(y0, y1, y2)));
+    if (maxX < minX || maxY < minY) continue;
+
+    // Edge `k` is the one opposite vertex `k`, so its edge function IS the
+    // unnormalised barycentric weight of that vertex.
+    const topLeft0 = isTopLeftEdge(x2 - x1, y2 - y1);
+    const topLeft1 = isTopLeftEdge(x0 - x2, y0 - y2);
+    const topLeft2 = isTopLeftEdge(x1 - x0, y1 - y0);
+
+    const u0 = mesh.uvs[i0 * 2];
+    const v0 = mesh.uvs[i0 * 2 + 1];
+    const u1 = mesh.uvs[i1 * 2];
+    const v1 = mesh.uvs[i1 * 2 + 1];
+    const u2 = mesh.uvs[i2 * 2];
+    const v2 = mesh.uvs[i2 * 2 + 1];
+
+    for (let y = minY; y <= maxY; y++) {
+      const sy = y + 0.5;
+      for (let x = minX; x <= maxX; x++) {
+        const sx = x + 0.5;
+        const w0 = (x2 - x1) * (sy - y1) - (y2 - y1) * (sx - x1);
+        if (topLeft0 ? w0 < 0 : w0 <= 0) continue;
+        const w1 = (x0 - x2) * (sy - y2) - (y0 - y2) * (sx - x2);
+        if (topLeft1 ? w1 < 0 : w1 <= 0) continue;
+        const w2 = (x1 - x0) * (sy - y0) - (y1 - y0) * (sx - x0);
+        if (topLeft2 ? w2 < 0 : w2 <= 0) continue;
+
+        const b0 = w0 / area;
+        const b1 = w1 / area;
+        const b2 = w2 / area;
+        const u = b0 * u0 + b1 * u1 + b2 * u2;
+        const v = b0 * v0 + b1 * v1 + b2 * v2;
+        const sample = bilinear(page, u * page.width - 0.5, v * page.height - 0.5);
+        const alpha = sample[3] * mesh.tint[3];
+        if (alpha <= 0.5) continue;
+        emit(
+          x,
+          y,
+          Math.round(sample[0] * mesh.tint[0]),
+          Math.round(sample[1] * mesh.tint[1]),
+          Math.round(sample[2] * mesh.tint[2]),
+          Math.round(alpha),
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Rasterise whichever shape this piece is.
+ *
+ * ⭐ Every caller that used to reach for `rasteriseQuad` goes through here, so
+ * "what counts as a covered pixel" has one definition for both shapes — which is
+ * what lets `frameGeometry`, the framing box and the drawn frame agree about a
+ * mesh without any of them knowing what a triangle is.
+ */
+export function rasterisePiece(
+  page: Plate,
+  piece: Piece,
+  project: (wx: number, wy: number) => [number, number],
+  clip: { width: number; height: number },
+  emit: EmitPixel,
+): void {
+  if (piece.kind === 'mesh') rasteriseMesh(page, piece, project, clip, emit);
+  else rasteriseQuad(page, piece, project, clip, emit);
+}
+
+/** Blit one piece onto the plate, source-over. */
+export function blitPiece(
   dst: Plate,
   page: Plate,
-  quad: Quad,
+  piece: Piece,
   project: (wx: number, wy: number) => [number, number],
 ): void {
-  rasteriseQuad(page, quad, project, dst, (px, py, r, g, b, a) => dst.blend(px, py, [r, g, b, a]));
+  rasterisePiece(page, piece, project, dst, (px, py, r, g, b, a) => dst.blend(px, py, [r, g, b, a]));
 }
 
 export function bilinear(page: Plate, x: number, y: number): [number, number, number, number] {
@@ -617,11 +871,11 @@ export function fill(plate: Plate, colour: RGBA): void {
 }
 
 /** Look a page up by name, with a failure that names what the atlas did declare. */
-export function pageFor(pages: Map<string, Plate>, quad: Quad): Plate {
-  const page = pages.get(quad.page);
+export function pageFor(pages: Map<string, Plate>, piece: Piece): Plate {
+  const page = pages.get(piece.page);
   if (!page) {
     throw new Error(
-      `slot "${quad.slot}" samples atlas page "${quad.page}", which is not among [${[...pages.keys()].join(', ')}]`,
+      `slot "${piece.slot}" samples atlas page "${piece.page}", which is not among [${[...pages.keys()].join(', ')}]`,
     );
   }
   return page;
@@ -632,7 +886,7 @@ export function renderFrame(frame: Frame, pages: Map<string, Plate>, viewport: V
   const plate = new Plate(viewport.width, viewport.height);
   fill(plate, background);
   const project = projector(viewport);
-  for (const quad of frame.quads) blitQuad(plate, pageFor(pages, quad), quad, project);
+  for (const piece of frame.pieces) blitPiece(plate, pageFor(pages, piece), piece, project);
   return plate;
 }
 
@@ -652,7 +906,7 @@ export const EMPTY_FOOTPRINT: Footprint = { pixels: 0, cx: 0, cy: 0, minX: 0, mi
 
 /** Where a frame's pixels went: the coverage mask, and each slot's own footprint. */
 export interface FrameGeometry {
-  /** 1 where any quad drew, in `viewport.width * viewport.height` row-major order. */
+  /** 1 where any piece drew, in `viewport.width * viewport.height` row-major order. */
   coverage: Uint8Array;
   footprints: Map<string, Footprint>;
 }
@@ -673,7 +927,7 @@ export function frameGeometry(frame: Frame, pages: Map<string, Plate>, viewport:
   const coverage = new Uint8Array(viewport.width * viewport.height);
   const footprints = new Map<string, Footprint>();
   const project = projector(viewport);
-  for (const quad of frame.quads) {
+  for (const piece of frame.pieces) {
     let weight = 0;
     let sx = 0;
     let sy = 0;
@@ -681,7 +935,7 @@ export function frameGeometry(frame: Frame, pages: Map<string, Plate>, viewport:
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    rasteriseQuad(pageFor(pages, quad), quad, project, viewport, (px, py, _r, _g, _b, a) => {
+    rasterisePiece(pageFor(pages, piece), piece, project, viewport, (px, py, _r, _g, _b, a) => {
       coverage[py * viewport.width + px] = 1;
       const w = a / 255;
       weight += w;
@@ -692,15 +946,15 @@ export function frameGeometry(frame: Frame, pages: Map<string, Plate>, viewport:
       if (py < minY) minY = py;
       if (py > maxY) maxY = py;
     });
-    const previous = footprints.get(quad.slot);
+    const previous = footprints.get(piece.slot);
     const here: Footprint =
       weight === 0
         ? EMPTY_FOOTPRINT
         : { pixels: weight, cx: sx / weight, cy: sy / weight, minX, minY, maxX: maxX + 1, maxY: maxY + 1 };
     // A slot shows one attachment at a time, so this only merges when a caller
-    // hands us a frame with two quads on one slot; merging is still the honest
+    // hands us a frame with two pieces on one slot; merging is still the honest
     // answer, and it keeps the map keyed by slot the way the report reads it.
-    footprints.set(quad.slot, previous && previous.pixels > 0 ? mergeFootprints(previous, here) : here);
+    footprints.set(piece.slot, previous && previous.pixels > 0 ? mergeFootprints(previous, here) : here);
   }
   return { coverage, footprints };
 }
