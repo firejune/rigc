@@ -131,22 +131,23 @@ The written form of all this, per rung and per run:
 | 3 | **2** | `2-the-12-principles` | `ess` | slot `blend` (4 additive + 4 multiply); bone `inherit` ≠ Normal | ⬜ *attempted* |
 | 4 | **4** | `4-wave-principle` | `ess` | nothing structural — a volume test (9 bones, 9 slots, 3 animations, 470 bezier keys) | ⬜ *attempted* |
 | 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ⬜ *attempted* |
-| 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ⬜ *briefed — brief verified (third party)* |
+| 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ⬜ *attempted* |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ⬜ |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ⬜ |
 | 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (67 bones, 52 slots, 11 animations) | ⬜ |
 
-⬜ **but attempted.** Five runs across rungs 1, 2 and 4/5 were made on 2026-08-23,
+⬜ **but attempted.** Six runs across rungs 1, 2, 4/5 and 6 were made on 2026-08-23,
 and none cleared — [`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/),
 [`bench/runs/2026-08-23-rung2-1/`](../bench/runs/2026-08-23-rung2-1/),
 [`bench/runs/2026-08-23-rung4-1/`](../bench/runs/2026-08-23-rung4-1/),
-[`bench/runs/2026-08-23-rung5-1/`](../bench/runs/2026-08-23-rung5-1/) and, on the
-corrected brief, [`bench/runs/2026-08-23-rung2-2/`](../bench/runs/2026-08-23-rung2-2/).
-The figures and the commander's reading of each are below, under *Rung 1* through
-*Rung 2, attempt 2*.
+[`bench/runs/2026-08-23-rung5-1/`](../bench/runs/2026-08-23-rung5-1/), on the
+corrected brief, [`bench/runs/2026-08-23-rung2-2/`](../bench/runs/2026-08-23-rung2-2/),
+and [`bench/runs/2026-08-23-rung6-1/`](../bench/runs/2026-08-23-rung6-1/). The
+figures and the commander's reading of each are below, under *Rung 1* through
+*Rung 6*.
 
-**What the five runs say so far.** `validate` caught **0 FAILs** across all five —
-roughly 80 builds and `check` cycles combined — and that is the guide designing
+**What the six runs say so far.** `validate` caught **0 FAILs** across all six —
+roughly 100 builds and `check` cycles combined — and that is the guide designing
 invalid states out before a build is attempted, not a sign the rigs were right;
 validity was never the open question here. `check` is the instrument that carries
 the weight `validate` cannot, and every run used it in the loop rather than once at
@@ -155,10 +156,19 @@ the end. What it keeps finding, on a volume test (rung 4), a squash-and-stretch 
 same structural gap in two shapes every time — the author's own **slot strategy**
 (how many slots a shape gets folded into, and by what rule) and **key density**
 (denser than the reference in rung 4, sparser in rung 5 and rung 2) — never a
-validity defect. And the briefs keep turning out to be measurement artefacts rather
-than finished shot descriptions: three of the five runs found a brief claim wrong
-that a client watching the shot could have caught, and the fix each time was to
-re-measure the pixels, not to trust the prose.
+validity defect. Rung 6 adds two more to the list: **curve kind** (keyed linear
+against a reference a 4.3 editor exports bezier by default, `curve_kinds` 34/539)
+and **static-plateau fidelity** (greedy key reduction sloped a line through a run
+of frames the reference holds pixel-identical). And the briefs keep turning out to
+be measurement artefacts rather than finished shot descriptions: three of the six
+runs found a brief claim wrong that a client watching the shot could have caught,
+and the fix each time was to re-measure the pixels, not to trust the prose. Two
+runs' authors went further than `check` on their own initiative: rung 2's second
+attempt built a whole-shot contact-sheet comparator because `check` only reads
+`fNNNN.png` files and that rung's committed reference set is contact sheets, and
+rung 6's author rendered its own candidate back and diffed it frame by frame,
+catching a dropped one-frame event, a sloped static plateau and a squash clamp
+that never bound — three defects neither `validate` nor `check` had surfaced.
 
 Two facts the table does not repeat, both from SPEC_COVERAGE part 3:
 
@@ -363,6 +373,62 @@ claim: the tennis-ball shot's upper ring and panel are not frame-for-frame ident
 with the other three the way the brief said every shot was — corrected in
 [`bench/briefs/2-the-12-principles.md`](../bench/briefs/2-the-12-principles.md)
 revision 3.
+
+### Rung 6 — attempted, not cleared (2026-08-23)
+
+Run [`bench/runs/2026-08-23-rung6-1/`](../bench/runs/2026-08-23-rung6-1/), clean
+(PR #51, merged [`32dda40`](https://github.com/firejune/rigc/commit/32dda40540efcda72f22f8225957a91cc1a0ea35))
+— ~14 builds, one red (`A00_ROUNDTRIP_PARSE`: a mesh/atlas name mismatch — the
+placeholder was named `trail`, its image `tail.png`, and R5's auto-`path` fill
+turns out to be region-only, not mesh-aware). Authored by Claude Opus 5 (1M
+context), Claude Code / Agent SDK, from the brief (revision 3, third-party
+verified) and the rendered reference frames alone.
+
+Figures:
+
+```
+pro     bones=0.433  slots=0.306  attachments=0.321  constraints=0.000  animations=0.810  events=1.000
+```
+
+`animations`: `count`, `names`, `duration`, `draw_order` and `deform` all 1.000;
+`key_counts` 391/539; `curve_kinds` **34/539** — the author keyed linear, the
+reference's keys are overwhelmingly bezier. `constraints` 0/4 — the rung's four
+transform constraints leave no trace in rendered pixels, so none were guessed.
+`attachments` carries one mesh where the reference carries two.
+
+`check`: MAE **8.73** with the framing fit **not converging** (`x0.999505` after
+4 passes); pinned to `frames.json`'s own box, MAE **3.50**, worst attributable
+slot drift 4.1 px.
+
+**Reading — the commander's call, 2026-08-23.** Build choices: the ball is bone
+`scaleX`/`scaleY` with the product held to 1 (area-preserving), a sibling of the
+trail's root bone rather than its parent, so squashing the ball does not squash
+the trail. The trail is an **authored mesh with named weights on a six-bone
+chain** — the ribbon generator was ruled out rather than tried and dropped:
+`buildRibbonMesh` runs its rows along the part window's *height*, and
+`tail.png`'s long axis is its *width*, so the generator could not produce this
+shape without a rotated copy of the art that was never supplied. On that basis
+the rung's actual subject — a bend, not just a translation — was reproduced in
+one piece; the trail visibly bends. What is not: curve kind (linear against the
+reference's bezier), key density (391/539), the four constraints (unobservable
+from frames, and correctly left unguessed), and the f45–f52 hook, where the
+reference's trail curls into a ring whose interior shows the stone through it —
+confirmed a model limit rather than an optimiser failure (30,000 random poses
+per frame plus refinement found nothing better).
+
+**Tool findings** — three defects the gate never caught, all found only by the
+author rendering its own candidate back and diffing it frame by frame against
+the reference, none of them touched by `validate` or `check`: a key time rounded
+to 4 dp landed past the animation's last sample and silently dropped the
+one-frame `arc-tracker` reveal (`A09` compares declared duration to loaded
+duration, and both sides agreed — the loss was invisible to it); greedy key
+reduction sloped a line through the reference's frozen f64–f68 plateau, moving
+91 px across f67→f68 where the reference moves 3; and a squash clamp meant to
+hold the ball's proportion inside [0.72, 1.85] was written as "refuse a step
+that leaves the range," which bounds moves and not starts — every frame whose
+warm-started fit was already outside the range stayed there, a warm start that
+never pulled back, undetected until the emitted keys were read back after
+`bench` had already run.
 
 ---
 
