@@ -35,6 +35,83 @@ export interface Failure {
   detail: string;
 }
 
+/**
+ * Which body of rules to hold the artifact to.
+ *
+ * ⭐ The distinction this draws is the difference between "wrong" and "not how we
+ * do it here", and conflating the two is how a validator stops being usable on
+ * anybody else's data. Nine of the 31 assertions are policy for one renderer
+ * (`spine-html`) or for one project's canvas budget, and every one of them fires
+ * on real, correct, editor-produced Spine data — the official example projects
+ * carry clipping attachments, unweighted meshes, 116-triangle meshes and packed
+ * atlases, all of which are perfectly valid and none of which spine-html likes.
+ *
+ * - `spine`      — is this valid Spine 4.3 that any runtime will play correctly?
+ * - `spine-html` — the above, plus this project's renderer and archetype policy.
+ *
+ * ⚠️ `spine-html` is the DEFAULT and must stay the default: it is the behaviour
+ * every existing caller already has, and a switch that silently loosens a gate
+ * for callers who did not ask is worse than no switch at all.
+ */
+export type ValidateProfile = 'spine' | 'spine-html';
+
+export const VALIDATE_PROFILES: readonly ValidateProfile[] = ['spine', 'spine-html'];
+
+export const DEFAULT_PROFILE: ValidateProfile = 'spine-html';
+
+/**
+ * What kind of rule each assertion is. Every assertion has an entry, and
+ * `check()` throws on a name that has none — a new assertion must state its kind
+ * rather than defaulting into one, because the default would decide, silently,
+ * whether it runs on foreign data.
+ *
+ *   validity  — the file is wrong for any consumer. Runs under every profile.
+ *   renderer  — valid Spine that this project's renderer or frame budget refuses.
+ *   archetype — a structural rule about rigc's own formations, meaningless to a
+ *               skeleton rigc did not compile.
+ *
+ * Three assertions are MIXED and are marked `validity` here because their
+ * validity half must never stop running; their policy clauses are gated inside
+ * the assertion body against `profile`, and each such clause says so where it
+ * lives. They are A06 (size-vs-PNG is validity; pma / rotation / full-page
+ * coverage are policy), A08 (the attachment→region join is validity; requiring
+ * the two names to be identical is policy) and A20 (weight coherence is
+ * validity; requiring a mesh to be weighted at all is policy).
+ */
+const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
+  A00_ROUNDTRIP_PARSE: 'validity',
+  A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS: 'validity',
+  A02_NO_BONE_TRANSFORM_KEY: 'validity',
+  A03_REGION_WIDTH_HEIGHT_FINITE: 'validity',
+  A04_MESH_TRIANGLES_AND_ENCODING: 'validity',
+  A05_CURVE_ARRAY_LENGTH: 'validity',
+  A06_ATLAS_PAGE_SIZE_MATCHES_PNG: 'validity', // mixed — see above
+  A07_ATLAS_TEXT_SHAPE: 'validity',
+  A08_REGION_NAMES_MATCH_ATTACHMENTS: 'validity', // mixed — see above
+  A09_ANIMATION_DURATION_MATCHES_SPEC: 'validity',
+  A10_NO_NAN_AFTER_STEPPING: 'validity',
+  A11_NO_CLIPPING_ATTACHMENTS: 'renderer',
+  A12_NO_DARK_COLOR: 'renderer',
+  A13_MESH_BUDGET: 'renderer',
+  A14_NO_FULL_FRAME_MESH: 'renderer',
+  A15_IDLE_NO_MESH_BONE_KEYS: 'renderer',
+  A16_SKELETON_VERSION_4_3: 'validity',
+  A17_ATLAS_PAGE_FILES_EXIST: 'validity',
+  A18_DETERMINISTIC_EMIT: 'validity',
+  A19_OVERLAY_PNGS_HAVE_ALPHA: 'renderer',
+  A20_MESH_WEIGHTS_COHERENT: 'validity', // mixed — see above
+  A21_MESH_RIM_PINNED: 'archetype',
+  A22_MESH_UVS_IN_UNIT_RANGE: 'validity',
+  A23_PHYSICS_CONSTRAINT_EFFECTIVE: 'validity',
+  A24_AXIS_SPACE_STROKE: 'archetype',
+  A25_DETACHED_BONE_PARENTAGE: 'archetype',
+  A26_SLOT_DRAW_ORDER: 'archetype',
+  A27_REGION_NAME_MATCHES_PAGE_FILENAME: 'renderer',
+  A28_RIBBON_ROWS_SHARE_WEIGHTS: 'archetype',
+  A29_STROKE_WITHIN_CONTACT_DEPTH: 'archetype',
+  A30_STROKE_WITHIN_CAP_CONTAINMENT: 'archetype',
+};
+
 export interface ValidateInput {
   skeletonText: string;
   atlasText: string;
@@ -52,6 +129,8 @@ export interface ValidateInput {
    * stats line says `rig=absent` so a green run cannot be mistaken for a full one.
    */
   rig?: RigInfo;
+  /** Which body of rules to apply. Defaults to `spine-html`; see ValidateProfile. */
+  profile?: ValidateProfile;
 }
 
 export interface ValidateReport {
@@ -68,6 +147,17 @@ export interface ValidateReport {
    * SKIP and why, and `passed` does not count it.
    */
   skipped: Array<{ assertion: string; reason: string }>;
+  /** Which body of rules ran. */
+  profile: ValidateProfile;
+  /**
+   * Assertions this profile does not apply, with their kind.
+   *
+   * Kept separate from `skipped` on purpose: a SKIP means "there was nothing to
+   * look at", a profile skip means "this rule was deliberately out of scope".
+   * Reading a `--profile spine` green as though the renderer policy had passed
+   * is exactly the misreading the two lists exist to prevent.
+   */
+  profileSkipped: Array<{ assertion: string; kind: 'renderer' | 'archetype' }>;
   stats: Record<string, number | string>;
 }
 
@@ -133,13 +223,30 @@ export function validate(input: ValidateInput): ValidateReport {
   const failures: Failure[] = [];
   const passed: string[] = [];
   const skipped: ValidateReport['skipped'] = [];
+  const profileSkipped: ValidateReport['profileSkipped'] = [];
   const stats: Record<string, number | string> = {};
+  const profile = input.profile ?? DEFAULT_PROFILE;
+  /** True when this profile's rulebook includes the policy layer. */
+  const policy = profile === 'spine-html';
 
   const fail = (assertion: string, detail: string) => failures.push({ assertion, detail });
   /** Declare that an assertion had nothing to check, and why. */
   const skip = (assertion: string, reason: string) => skipped.push({ assertion, reason });
-  /** Run one assertion; record it as passed only if it neither failed nor skipped. */
+  /**
+   * Run one assertion; record it as passed only if it neither failed nor skipped,
+   * and do not run it at all when the profile does not carry that kind of rule.
+   *
+   * The unknown-assertion throw is deliberate: an assertion with no entry in
+   * ASSERTION_KIND would otherwise pick a profile by accident, and picking wrong
+   * means either a rule that never runs or a rule that fires on everybody's data.
+   */
   const check = (assertion: string, body: () => void) => {
+    const kind = ASSERTION_KIND[assertion];
+    if (!kind) throw new Error(`validate: assertion "${assertion}" has no ASSERTION_KIND entry`);
+    if (kind !== 'validity' && !policy) {
+      profileSkipped.push({ assertion, kind });
+      return;
+    }
     const before = failures.length;
     const skippedBefore = skipped.length;
     try {
@@ -450,7 +557,15 @@ export function validate(input: ValidateInput): ValidateReport {
     check('A20_MESH_WEIGHTS_COHERENT', () => {
       for (const mesh of meshAttachments) {
         if (!mesh.bones) {
-          fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" is unweighted; the ring tier drives meshes by bones`);
+          // 📐 PROFILE. An unweighted mesh is perfectly valid Spine — spineboy
+          // ships two — and the runtime poses it from the slot bone. What is
+          // NOT valid, in any profile, is a weighted mesh whose weights do not
+          // cohere, which is everything below this branch. So the requirement
+          // that a mesh be weighted at all is the policy half, and it is the
+          // only half gated here.
+          if (policy) {
+            fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" is unweighted; the ring tier drives meshes by bones`);
+          }
           continue;
         }
         const perVertex = meshWeights(mesh);
@@ -684,7 +799,13 @@ export function validate(input: ValidateInput): ValidateReport {
           if (!regionNames.has(lookup)) {
             fail('A08_REGION_NAMES_MATCH_ATTACHMENTS', `attachment "${entry.placeholder}" wants region "${lookup}", which the atlas does not have`);
           }
-          if (entry.placeholder !== lookup) {
+          // 📐 PROFILE. That the join RESOLVES is validity — an attachment
+          // pointing at a region the atlas does not have is a hole in the rig
+          // whoever loads it. That the two names are IDENTICAL is rigc's v0
+          // policy: it holds because there is no packer, and a real packer
+          // renames regions by design (spineboy's `path` differs from its
+          // placeholder in 26 attachments).
+          if (policy && entry.placeholder !== lookup) {
             fail('A08_REGION_NAMES_MATCH_ATTACHMENTS', `attachment "${entry.placeholder}" resolves to region "${lookup}"; v0 requires them identical`);
           }
         }
@@ -775,10 +896,18 @@ export function validate(input: ValidateInput): ValidateReport {
           `page "${page.name}" declares ${page.width}x${page.height} but the PNG is ${info.width}x${info.height}`,
         );
       }
-      if (page.pma) {
+      // 📐 PROFILE, from here down. `pma: false`, one region per page and no
+      // rotation are rigc's atlas CONVENTION, not the atlas format's rules — a
+      // packed page with `rotate: 90` is what the Spine packer produces and
+      // every official example ships one. The convention is what makes the
+      // attachment -> region -> file chain checkable exactly (A27), so it stays
+      // on for spine-html; under `spine` an atlas is judged only on whether its
+      // declared size matches the file it names.
+      if (policy && page.pma) {
         fail('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', `page "${page.name}" claims premultiplied alpha; parts are straight alpha`);
       }
     }
+    if (!policy) return;
     for (const region of atlas.regions) {
       if (region.u !== 0 || region.v !== 0 || region.u2 !== 1 || region.v2 !== 1) {
         fail(
@@ -826,6 +955,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // what the canonical draw order is, or which mesh is a ribbon.
   // -------------------------------------------------------------------------
   stats.rig = input.rig ? input.rig.archetype : 'absent';
+  stats.profile = profile;
 
   // --- A24: the stroke is authored in AXIS space ---------------------------
   //
@@ -1111,7 +1241,7 @@ export function validate(input: ValidateInput): ValidateReport {
     }
   });
 
-  return { failures, passed, skipped, stats };
+  return { failures, passed, skipped, profileSkipped, profile, stats };
 }
 
 /**
@@ -1246,8 +1376,20 @@ function meshWeightsOf(mesh: MeshAttachment): Array<Array<{ bone: number; weight
 
 export function reportLines(report: ValidateReport): string[] {
   const lines: string[] = [];
+  // The profile goes FIRST and names what it left out. A report that says
+  // "green" without saying which rulebook produced it is the one thing this
+  // switch could make worse than no switch: `--profile spine` green means
+  // "valid Spine", never "passes the renderer policy".
+  const renderer = report.profileSkipped.filter((p) => p.kind === 'renderer').length;
+  const archetype = report.profileSkipped.filter((p) => p.kind === 'archetype').length;
+  lines.push(
+    report.profileSkipped.length === 0
+      ? `  ..    profile ${report.profile} — every assertion applies`
+      : `  ..    profile ${report.profile} — ${renderer} renderer-policy and ${archetype} archetype assertion(s) do not apply`,
+  );
   for (const name of report.passed) lines.push(`  PASS  ${name}`);
   for (const s of report.skipped) lines.push(`  SKIP  ${s.assertion}: ${s.reason}`);
+  for (const p of report.profileSkipped) lines.push(`  PROF  ${p.assertion}: ${p.kind} rule, not in profile "${report.profile}"`);
   for (const f of report.failures) lines.push(`  FAIL  ${f.assertion}: ${f.detail}`);
   return lines;
 }

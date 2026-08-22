@@ -27,7 +27,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { compile } from './src/compile.ts';
-import { validate } from './src/validate.ts';
+import { validate, type ValidateProfile } from './src/validate.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
 interface CutEntry {
@@ -121,6 +121,13 @@ interface Mutant {
    * the edit must be accepted, its 4.2 and 5.x neighbours must not.
    */
   expect: string | null;
+  /**
+   * Which rulebook to run the break against. Defaults to `spine-html`, the
+   * profile every other mutant in this file was written for. A mutant that names
+   * a profile is asserting something about the SPLIT rather than about one
+   * assertion — see M36a/M36b, which are the same edit under both profiles.
+   */
+  profile?: ValidateProfile;
   mutate: (a: Artifacts) => Artifacts;
 }
 
@@ -275,6 +282,42 @@ const MUTANTS: Mutant[] = [
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
         (j as any).skeleton.spine = '4.3.75-beta';
+      }),
+    }),
+  },
+  {
+    // ⭐ The profile split's own control, and it takes two mutants because the
+    // claim is a difference: the SAME edit must be caught by one rulebook and
+    // waved through by the other. One mutant could only ever prove half of it,
+    // and the half it proved would look identical either way.
+    name: 'M36a_clipping_attachment_is_renderer_policy',
+    origin: 'SPEC_COVERAGE part 2-2 — A11 is renderer-profile: spine-html skips clipping attachments silently, spineboy-pro ships one',
+    expect: 'A11_NO_CLIPPING_ATTACHMENTS',
+    profile: 'spine-html',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).skins[0].attachments.face_base.face_clip = {
+          type: 'clipping',
+          vertexCount: 4,
+          vertices: [0, 0, 64, 0, 64, 64, 0, 64],
+        };
+      }),
+    }),
+  },
+  {
+    name: 'M36b_clipping_attachment_is_valid_spine',
+    origin: 'the same edit under --profile spine: a clipping attachment is legal Spine 4.3 and no runtime but ours objects',
+    expect: null,
+    profile: 'spine',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).skins[0].attachments.face_base.face_clip = {
+          type: 'clipping',
+          vertexCount: 4,
+          vertices: [0, 0, 64, 0, 64, 64, 0, 64],
+        };
       }),
     }),
   },
@@ -644,11 +687,13 @@ function runSuite(suite: Suite): number {
       atlasDir: suite.opts.outDir,
       declaredDurations: pristine.declaredDurations,
       rig: pristine.rig,
+      profile: mutant.profile,
     });
+    const where = mutant.profile ? `  [profile ${mutant.profile}]` : '';
     if (mutant.expect === null) {
       // A tolerance control: this edit is legal and the gate must let it past.
       if (report.failures.length === 0) {
-        console.log(`  PASS  ${mutant.name}  (accepted, as it must be)`);
+        console.log(`  PASS  ${mutant.name}${where}  (accepted, as it must be)`);
         console.log(`          origin: ${mutant.origin}`);
       } else {
         bad++;
@@ -661,7 +706,7 @@ function runSuite(suite: Suite): number {
     }
     const hit = report.failures.find((f) => f.assertion === mutant.expect);
     if (hit) {
-      console.log(`  PASS  ${mutant.name}`);
+      console.log(`  PASS  ${mutant.name}${where}`);
       console.log(`          caught by ${hit.assertion}: ${hit.detail}`);
       console.log(`          origin: ${mutant.origin}`);
     } else {

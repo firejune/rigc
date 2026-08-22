@@ -26,7 +26,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
-import { reportLines, validate } from './src/validate.ts';
+import { DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import type { CompileResult, MotionSpec } from './src/types.ts';
 
 /** One entry of a cuts.json: three paths, relative to the cuts.json file. */
@@ -127,7 +127,21 @@ function resolveCut(flags: Record<string, string>): { label: string; opts: Compi
 // commands
 // ---------------------------------------------------------------------------
 
-function runGate(result: CompileResult, opts: CompileOptions): number {
+/**
+ * Read `--profile`, defaulting to the profile every caller had before the flag
+ * existed. An unknown name is a usage error rather than a silent fallback: the
+ * fallback would be `spine-html`, so a typo would quietly re-apply the strictest
+ * rulebook to data the caller was trying to exempt.
+ */
+function readProfile(flags: Record<string, string>): ValidateProfile {
+  const raw = flags.profile;
+  if (raw === undefined) return DEFAULT_PROFILE;
+  const found = VALIDATE_PROFILES.find((p) => p === raw);
+  if (!found) throw new UsageError(`--profile ${JSON.stringify(raw)}; known profiles: ${VALIDATE_PROFILES.join(', ')}`);
+  return found;
+}
+
+function runGate(result: CompileResult, opts: CompileOptions, profile: ValidateProfile): number {
   // The determinism check compares a second, independent compile.
   const again = compile(opts);
   const report = validate({
@@ -137,6 +151,7 @@ function runGate(result: CompileResult, opts: CompileOptions): number {
     declaredDurations: result.declaredDurations,
     reEmit: { skeletonText: again.skeletonText, atlasText: again.atlasText },
     rig: result.rig,
+    profile,
   });
   for (const line of reportLines(report)) console.log(line);
   console.log(
@@ -149,6 +164,7 @@ function runGate(result: CompileResult, opts: CompileOptions): number {
 
 function cmdBuild(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
+  const profile = readProfile(flags);
   console.log(`rigc build ${label}`);
   const result = compile(opts);
 
@@ -177,8 +193,8 @@ function cmdBuild(flags: Record<string, string>): void {
     );
   }
 
-  console.log('  ..    validate (spine-core round trip + machine assertions)');
-  const failures = runGate(result, opts);
+  console.log(`  ..    validate (spine-core round trip + machine assertions, profile ${profile})`);
+  const failures = runGate(result, opts, profile);
   if (failures > 0) {
     console.error(`rigc: ${failures} assertion(s) failed — nothing written`);
     process.exit(1);
@@ -196,6 +212,7 @@ function cmdValidate(flags: Record<string, string>, positional: string[]): void 
   // gate re-derive the declared durations and the structural expectations, which
   // a directory alone cannot supply — and the report says which it had.
   const named = flags.cut !== undefined || flags.manifest !== undefined;
+  const profile = readProfile(flags);
   const derivedOpts = named ? resolveCut(flags).opts : null;
   const dir = derivedOpts ? derivedOpts.outDir : resolve(positional[0] ?? '.');
   console.log(`rigc validate ${dir}`);
@@ -209,6 +226,7 @@ function cmdValidate(flags: Record<string, string>, positional: string[]): void 
     atlasDir: dir,
     declaredDurations: derived?.declaredDurations,
     rig: derived?.rig,
+    profile,
   });
   for (const line of reportLines(report)) console.log(line);
   if (report.failures.length > 0) {
@@ -313,6 +331,10 @@ const USAGE = [
   '  bun cli.ts build    --cut <name> --cuts <cuts.json>',
   '  bun cli.ts explain  (same arguments as build)',
   '  bun cli.ts validate <dir>',
+  '',
+  'build and validate take --profile spine|spine-html (default spine-html):',
+  '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
+  '  spine-html  the above, plus this project\'s renderer and archetype policy.',
   '',
   'a cuts.json is { "<name>": { "manifest": "...", "motion": "...", "out": "..." } },',
   'with every path resolved relative to the cuts.json file itself.',
