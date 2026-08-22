@@ -446,7 +446,12 @@ function cmdExplain(flags: Record<string, string>): void {
   console.log(`rigc explain ${label}`);
   console.log(`\nstage  ${result.skeleton.skeleton.width} x ${result.skeleton.skeleton.height}  (spine ${result.skeleton.skeleton.spine})`);
 
-  console.log('\nbones  (crop y-down -> spine y-up, origin at the bottom-left of the crop)');
+  // The crop note describes where the numbers CAME from, and without a manifest
+  // they came from the rig spec's own literals — there is no crop to be relative
+  // to. Printing it anyway told a rung-3 author their bone positions were in a
+  // coordinate system that did not exist in their rig.
+  const frame = opts.manifestPath ? '  (crop y-down -> spine y-up, origin at the bottom-left of the crop)' : '  (spine world: y up)';
+  console.log(`\nbones${frame}`);
   for (const b of result.skeleton.bones) {
     // `rotation` is the axis keystone and the grips' radial facing, so it earns
     // a column even though it is absent on most bones.
@@ -467,8 +472,12 @@ function cmdExplain(flags: Record<string, string>): void {
     const spec = motion.animations[animName];
     console.log(`  ${animName}  declared=${spec.duration}s loop=${spec.loop}`);
     for (const [boneName, timelines] of Object.entries(anim.bones ?? {})) {
+      // "(mesh tier)" is a claim about what the bone DRIVES, and it was printed
+      // on every bone track regardless — which reads, on a rig with no mesh in
+      // it at all, as though the track were deforming one.
+      const drives = result.meshBones.includes(boneName) ? '  <- drives a mesh' : '';
       for (const [timelineName, keys] of Object.entries(timelines)) {
-        console.log(`    ${boneName}.${timelineName}  ${keys.length} key(s)  <- bone track (mesh tier)`);
+        console.log(`    ${boneName}.${timelineName}  ${keys.length} key(s)${drives}`);
         for (const key of keys) {
           const fields = Object.entries(key)
             .filter(([k]) => k !== 'time' && k !== 'curve')

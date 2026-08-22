@@ -12,6 +12,8 @@ checked against the code that implements it.
 - The rig spec's own source-level documentation: [`src/rig.ts`](../src/rig.ts)
 - The motion spec and emitted shapes: [`src/types.ts`](../src/types.ts)
 - What the format holds and rigc covers: [SPEC_COVERAGE.md](SPEC_COVERAGE.md)
+- Reproducing a shot you were given as pictures: **§8**, and read it *before* you
+  start measuring rather than after
 
 ## The vocabulary is Spine's
 
@@ -409,6 +411,9 @@ stepped.
 ### 4.5 `keys` — times, values, curves
 
 - `t` is in seconds and **must strictly increase** after `lag`/`stagger` are added.
+  Seconds, not frames: nothing requires a key to land on any frame grid, and a
+  reference rendered at some rate says nothing about where its keys are. Put keys
+  where the motion changes.
 - `ease` names an entry of `easings`, or the literal `"stepped"`. Absent = linear.
 - `curve` is the raw form: **four numbers per value channel**, concatenated in field
   order, as absolute `(time, value)` control points. A short array multiplies
@@ -596,9 +601,65 @@ Two more limits that are not errors but will shape what you can attempt:
 1. `build --profile <the one you meant>` exits 0 and the report has **no FAIL**.
 2. Read the `SKIP` lines. Each one is a check that did *not* run — make sure none of
    them is a check you were relying on.
+   ⚠️ Under `--profile spine` a foreign skeleton usually produces **no SKIP lines
+   at all**, and that is not a clean bill of health. The archetype assertions are
+   excluded by the profile before the missing `invariants` block could make them
+   skip, so they come back `PROF` instead. Do not go looking for a SKIP that the
+   profile already accounted for; read step 3 instead.
 3. Read the `PROF` lines. A green under `spine` has not been held to the renderer
    policy, and a green under `spine-html` has.
 4. Run `explain` and read the slots table: every slot you declared should be there
    (§3.3), in the order you meant, showing the setup attachment you meant.
 5. If you are reproducing a reference, run `diff` or `bench` and read **every**
    measure. There is no single score, and a `0/0` measure compared nothing.
+
+---
+
+## 8. Reading reference frames
+
+Only if you are reproducing a shot you were given as **rendered frames** — the
+benchmark ladder works that way, and so does any brief that hands you pictures
+instead of numbers. Skip this section if you are authoring from a manifest.
+
+The frames are the whole of what you know, so every number you author comes out of
+measuring them, and **a measurement artefact is indistinguishable from a fact about
+the animation** until something contradicts it. The three below are not
+hypothetical: all three were made, believed, and only then caught, on the first
+run of ladder rung 3. Each one had a tidy story attached, which is what made it
+survive.
+
+**Two things that touch become one thing.** An estimator that fits a shape to the
+whole silhouette — a PCA, a bounding box, a centroid — silently changes meaning on
+the frames where two parts overlap, because their pixels label as one blob and the
+mass of the second drags the fit. On rung 3 that put the swinging bar 11° off on
+exactly the frame where it struck the block, which read as a sharp deceleration *at
+contact*: an obvious energy transfer, and a key worth authoring. It was not there.
+Measured on a region that excludes the other part, the deceleration is smooth and
+has **no corner at contact at all**. ⇒ Measure each part on pixels that can only be
+that part — a connected component, an annulus, a colour key — and be most
+suspicious of your result on precisely the frames where the interesting event
+happens, because those are the frames where the parts are touching.
+
+**A symmetric shape hides a sign error.** The same run masked the block out of the
+bar's estimator by subtracting its rotated footprint, and rotated the test box the
+wrong way. A square is symmetric under 90°, so the error is `2θ mod 90`: invisible
+while the block is upright, and only leaking pixels once it has turned ~25°. One of
+the two shots stayed correct and the other quietly produced a **negative** render
+scale from the same script. ⇒ Run the same estimator over two shots and cross-check
+a quantity that must agree between them — the pixels-per-unit scale, a fixed
+pivot's position, the size of something that never changes. A single shot cannot
+tell you your estimator is wrong.
+
+**Draw order is read from what stays visible, not from what looks cut.** Where two
+parts overlap, the one in front usually looks like it is *clipping* the one behind —
+and a light seam along the edge makes that reading stronger. That seam is often a
+rendering artefact: a PNG with a fully transparent border whose RGB is white bleeds
+a halo under bilinear filtering, so the join is background-coloured rather than
+either part's colour, which reads as a hole. ⇒ Decide draw order by finding a frame
+where one part's **interior detail** — a marking, a highlight, anything not on its
+outline — lies inside the other part's area, and see which survives. Then write the
+slots in that order (R4), because there is no other place in the file to say it.
+
+And the general form of all three: **when a reading implies a key, look for a second
+way to get the same number before you author it.** A wrong measurement costs one
+spurious key; a wrong measurement you believed costs the shape of the whole shot.
