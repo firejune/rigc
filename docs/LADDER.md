@@ -73,25 +73,47 @@ it exists.** Do not report a per-frame figure until it does.
 
 ### The honesty rule
 
-⭐ **The authoring agent gets `images/` and a text brief. It does not get the
-reference JSON.**
+⭐ **The authoring agent gets `images/`, a text brief and rendered reference
+frames. It does not get the reference JSON.**
 
-The reference export is read by `bench`, and by nothing else. An agent that has
-seen the answer is not being measured on authoring a rig; it is being measured on
-transcription, and the resulting number would be worthless in exactly the way
-that is hardest to notice afterwards. This applies to the reference's derived
-facts too — bone names, key times, curve handles — however they reach the agent.
+The reference export is read by `bench` and by
+[`bench/render_reference.ts`](../bench/render_reference.ts), and by nothing else.
+An agent that has seen the answer is not being measured on authoring a rig; it is
+being measured on transcription, and the resulting number would be worthless in
+exactly the way that is hardest to notice afterwards. This applies to the
+reference's derived facts too — bone names, key times, curve handles — however
+they reach the agent.
+
+The line the rule draws is **what a client watching the finished animation could
+tell you**. A human animator is shown the shot; withholding it does not measure
+authoring, it measures guessing.
 
 Practically:
 
 - The brief may describe the shot in the terms a human animator would be given:
   what moves, roughly when, what the principle being demonstrated is.
+- The agent may look at **rendered frames of the reference**
+  ([`bench/reference/`](../bench/reference/), see its README): pixels of the shot
+  carry no bone name, key time or curve handle.
+- The brief may state each animation's **duration**, and whether the last frame
+  returns to the first. Both used to be listed as off limits, and durations
+  cannot be: the frames are rendered at a fixed rate over each animation's own
+  length, so the frame count states the duration exactly, and rigc requires a
+  declared duration anyway. Withholding the number while shipping the frames
+  would be theatre.
 - The brief may state the atlas, because rigc has no packer (B3) and the atlas is
   a supplied input rather than something the agent authors.
 - The brief may **not** carry bone counts, hierarchy, timeline listings, key
-  counts, durations or curve data taken from the reference.
+  counts, key values, curve data, slot names or the setup pose taken from the
+  reference.
+- **`bench` is the finish line, not a rung of the authoring loop.** Its measures
+  are derived from the reference, so editing a spec in response to them is tuning
+  against the answer; a run that does it is labelled *bench-assisted*.
 - A rung attempted with the reference in context is recorded as such, or not
   recorded at all.
+
+The written form of all this, per rung and per run:
+[`bench/briefs/`](../bench/briefs/) and [`bench/runs/README.md`](../bench/runs/README.md).
 
 ---
 
@@ -134,6 +156,12 @@ compiler.
 
 Nothing on this ladder has been **authored** yet. What exists is the B1 proof
 below, and the difference between the two is the whole of the honesty rule.
+
+**Rung 3 is briefed and ready to run** (2026-08-22): the brief is
+[`bench/briefs/3-timing-and-spacing.md`](../bench/briefs/3-timing-and-spacing.md),
+its reference frames are in [`bench/reference/3-timing-and-spacing/`](../bench/reference/3-timing-and-spacing/),
+and the protocol is [`bench/runs/README.md`](../bench/runs/README.md). It stays ⬜
+until a run happens: preparing a rung is not attempting one.
 
 ---
 
@@ -274,9 +302,14 @@ would be a licence problem rather than a tidiness problem.
 
 ```bash
 bun run fetch-examples                 # once; examples/ is gitignored
+bun bench/render_reference.ts --rung 3 # the frames the authoring agent may see
 bun cli.ts bench 3 --candidate path/to/candidate/spine
 bun cli.ts bench 3 --candidate candidate.json --atlas some.atlas --json report.json
 ```
+
+A rung is *run* rather than benched: a fresh agent, the brief in
+[`bench/briefs/`](../bench/briefs/), the frames in [`bench/reference/`](../bench/reference/),
+and the protocol in [`bench/runs/README.md`](../bench/runs/README.md).
 
 `bench <rung>` takes `1 … 8` or `spineboy`. Rungs 1 and 8 carry two skeletons and
 both are benched and reported. `spineboy-pro` is reported as a **stretch** figure

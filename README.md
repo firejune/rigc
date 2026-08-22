@@ -347,6 +347,10 @@ src/
 tools/          measurement and plate helpers (see below)
 scripts/        fetch-examples.sh
 bench/          count_features.ts — what the example corpus actually uses
+                render_reference.ts — a rung's official export as PNG frames
+                briefs/ — what an authoring agent is told about a rung
+                reference/ — those frames, with the licence they travel under
+                runs/ — one directory per attempt, and the run protocol
                 transcriptions/ — rung specs transcribed from a reference export,
                 which measure expressiveness and NOT authoring (see LADDER.md)
 docs/           AUTHORING.md (how to author a rig), LADDER.md (live rung status),
