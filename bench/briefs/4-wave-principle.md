@@ -1,5 +1,18 @@
 # Rung 4 brief — `4-wave-principle`
 
+> **Revision 2 — 2026-08-23.** Verified against the frames and contact sheets by
+> Claude Opus 5 (1M context), Claude Code / Agent SDK, under the protocol in
+> [`bench/runs/README.md`](../runs/README.md). This rung has not been attempted;
+> the pass was prompted by revision 1 of the rung 2 brief shipping claims that were
+> not in the pixels, and it found four here. Corrected below: the disc *tips* in the
+> two short shots (it slides sideways without visibly turning); the two short shots
+> differ "by a pixel or two at the widest part of the swing" (they differ most, by
+> about 7½ px, in the bottom links at the quarter points, and least at the widest
+> part); the ball bounces on a disc that stays put in `ball-catch` (the disc travels
+> most of the width of the frame to meet it); and the bounces "get smaller through
+> the shot" (the ball's highest point after it enters is near the end). The claims
+> that survived the pass are marked ✅ where they are easy to doubt.
+
 > ## The leakage rule this brief was written under
 >
 > ⭐ **Everything below is something a client watching the finished animation
@@ -52,8 +65,8 @@ of them that the other two never show.
 | File | What it is |
 | --- | --- |
 | `platform.png` | a flat dark disc seen nearly edge-on — a shallow saucer |
-| `chain-1.png` … `chain-4.png` | four short links, each a dark bar with a small orange bead on it. They are drawn to sit end to end |
-| `chain-end.png` | a fifth, slightly heavier link — the one that finishes the chain |
+| `chain-1.png` … `chain-4.png` | four links, each a narrow dark bar with a **large orange bead at one end** — the bead is as wide as the whole image and about a third of its length, and it marks the joint. They are drawn to sit end to end, and they get shorter down the chain (303, 252, 223, 196 px tall) |
+| `chain-end.png` | a fifth piece that finishes the chain: short and wide (126 × 120) rather than a bar — a dark ring with an orange disc in it |
 | `basket-ball.png` | a brown basketball with seams |
 | `basket-lambertian.png` | a soft light-and-shade disc that goes over that ball |
 
@@ -74,9 +87,10 @@ directly comparable.
   their weight, so the sheet is the whole of that set.
 
 ⚠️ **The subject sits in the bottom-right eighth of the frame and the rest is
-empty.** That is not a rendering fault: all three animations share one viewport, and
-`ball-catch` throws its ball far up and to the left, so the box that holds all three
-is mostly sky. The frames are rendered large (768 px on the long side) so the
+empty** — in the two short shots. That is not a rendering fault: all three
+animations share one viewport, and `ball-catch` moves the whole disc-and-chain rig a
+third of the way across the frame and throws its ball into the far corner, so the box
+that holds all three is mostly sky. The frames are rendered large (768 px on the long side) so the
 subject is still legible inside it. Every frame of every animation here uses the
 same box and the same scale, so a distance measured in one is a distance in
 another — which is the whole reason for framing them together.
@@ -95,40 +109,65 @@ the rest.
 
 One whip of the chain, and nothing else in the frame.
 
-The disc tips, and the chain swings out to the right and back. Each link starts
-after the one above it, so at the middle of the swing the chain is a curve rather
-than a line: the top has already turned back while the bottom link is still going
-out. The last link travels the furthest and arrives last.
+**The disc slides sideways** — it does not tip. It moves about 87 px to the right
+(rather more than its own width), reaches its far point at frame 8, and comes
+straight back; through all 17 frames it occupies exactly the same rows and keeps the
+same width, so nothing in the pixels says it turns.
 
-**Both loop exactly.** The last frame is pixel-identical to the first in both, so
+The chain follows it and lags. Each link starts after the one above it, so at the
+middle of the swing the chain is a curve rather than a line: ✅ the top has already
+turned back while the bottom link is still going out — the disc peaks at frame 8 and
+the chain's tip does not peak until frame 9–10. ✅ The last link travels the
+furthest: about 108 px against the disc's 87.
+
+✅ **Both loop exactly.** The last frame is pixel-identical to the first in both, so
 these two run continuously with no snap.
 
-⚠️ **The two are the same whip, twice.** Frame for frame they differ by a pixel or
-two at the widest part of the swing and by nothing at all at either end. You are not
-expected to tell them apart from the frames, and you are not being scored on
-telling them apart: reproduce the whip, give it to both, and let the diff say what
-the difference between them was worth.
+⚠️ **The two are the same whip, twice, but not to within a pixel.** They are
+identical at frames 0 and 16 and differ at every frame in between: the largest
+difference is about **7½ px**, in the bottom links, at frames 4–5 on the way out and
+about 6 px at frame 12 on the way back. At the widest part of the swing (frame 8)
+they differ by about 1½ px — the *least* of any intermediate frame. So the offset
+between them shows up in the accelerating and decelerating quarters, not at the
+extremes. You are not expected to reproduce that difference from the frames, and you
+are not being scored on it: reproduce the whip, give it to both, and let the diff say
+what the difference between them was worth.
 
 ### `ball-catch` — 121 frames, 10 seconds (120/12 s)
 
 The same disc and chain, plus a ball.
 
-A ball drops in from the upper left, lands on the disc and is bounced back up, over
-and over for the length of the shot. The disc tips under each landing and the chain
-starts moving a beat later, so between one landing and the next the chain is still
-settling from the last one — the wave never fully dies before it is set going again.
+⚠️ **It is the disc that does the travelling, not just the ball** — the shot is
+named for it. A ball drops in from the upper left; the disc rushes up and to the left
+to meet it, and from then on the two move together while the disc keeps the ball up.
+The disc's own centre runs from about x 628 at the start out to about x 386 by frame
+17 and back to about x 600 by frame 30 — a third of the width of a 768 px frame —
+and it tilts hard while it goes, which is what sets the chain going. ✅ The chain
+starts a beat later and is still settling from one throw when the next arrives, so
+the wave never fully dies.
 
-The bounces are big: several times the ball is sent far enough up and to the left
-to spend a few frames alone in the empty part of the frame, and that travel is what
-the shared viewport is sized to. They get smaller through the shot, and by the last
-two or three frames very little is moving.
+Through the middle of the shot — roughly frames 31 to 70 — the ball rides on the
+disc and the pair only rocks gently around x 600–625. Then the disc drops away and
+flicks the ball up: **that flick, around frame 79, is the ball's highest point in
+the whole shot after it enters**, higher than any earlier arc. The bounces do not
+simply decay.
 
-**Ends nowhere near where it began.** The last frame is not the first.
+After the last contact, around frame 84, the ball is thrown left across the empty
+part of the frame, comes to rest in the bottom-left corner by about frame 100, and
+does not move again. That empty part is what the shared viewport is sized to, and
+the ball crosses it **twice** — once coming in, once going out.
+
+✅ **By the last two or three frames very little is moving.** The ball has been
+parked for twenty frames; only the chain is still settling, and it is still settling
+at the final frame.
+
+✅ **Ends nowhere near where it began.** The last frame is not the first.
 
 ### The comparison, in one line
 
-The two short shots are the wave on its own, keyed to loop; the long one is the same
-wave being re-triggered by a ball that lands on the thing it hangs from.
+The two short shots are the wave on its own, keyed to loop, driven by a disc that
+slides one width sideways and back; the long one is the same wave set going over and
+over by a disc that chases a ball across the frame and keeps it in the air.
 
 ## How the result is read
 

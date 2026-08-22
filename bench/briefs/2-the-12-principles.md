@@ -1,5 +1,19 @@
 # Rung 2 brief — `2-the-12-principles`
 
+> **Revision 2 — 2026-08-23.** Verified against the contact sheets by Claude Opus 5
+> (1M context), Claude Code / Agent SDK, independently of the run that first
+> disputed it. Revision 1 asserted six things the frames do not show: the water
+> level falls (it never moves); the rings turn *slowly* (they turn once every 15
+> frames); the panel swings flat *because the ball reaches it* (it is on its own
+> clock and never goes flat); a ring PNG is used twice (the third ring is painted
+> into the set); every ball ends in the basin (two of the four do); and almost all
+> of the event happens in the first four seconds (4.6 s to 9.75 s, by ball). Each is
+> replaced below by what was measured. The rung 2 run
+> ([`bench/runs/2026-08-23-rung2-1/`](../runs/2026-08-23-rung2-1/)) lost two detours
+> to the first three of them before overruling the brief with its own measurements,
+> which is why [`bench/runs/README.md`](../runs/README.md) now requires a second
+> agent to check a brief against the frames before it is run.
+
 > ## The leakage rule this brief was written under
 >
 > ⭐ **Everything below is something a client watching the finished animation
@@ -43,8 +57,10 @@ Notes on the shape of the deliverable:
   side, precisely so that a rig built correctly under its own names is not called a
   total failure.
 - This is the **longest** rung on the ladder by a wide margin: four shots of nearly
-  26 seconds each. Budget accordingly, and note that almost all of the event
-  happens in the first four seconds of each.
+  26 seconds each. Budget accordingly. The ball's own run is a small part of that:
+  it reaches its final resting place at about **4.6 s** (basketball), **7.6 s**
+  (bowling), **7.8 s** (billiard) and **9.75 s** (tennis), and after that only the
+  rings and the panel are still moving.
 
 ## The art
 
@@ -56,8 +72,8 @@ redistributed in this repository.
 | `obstacle-course.png` | the whole set: a large L-shaped structure, a sloping wall down the left, a floor along the bottom, a deep U-shaped basin at the right |
 | `water.png` | a flat pale-blue sheet — the water sitting in the basin |
 | `platform.png` | a small upright panel on a hinge, standing beside the basin |
-| `ring-big.png`, `ring-small.png` | two open rings, each a circle with a gap in it. Three of them are on screen at once, so at least one is used twice |
-| `basket-ball.png`, `billiard-ball.png`, `bowling-ball.png`, `tennis-ball.png` | four balls, one per shot: a big brown basketball with seams, a very small pale billiard ball, a mid-sized dark blue bowling ball, a small yellow-green tennis ball |
+| `ring-big.png`, `ring-small.png` | two open rings, each a circle with a gap in it. Three rings are on screen; **the third one is painted into `obstacle-course.png`** and never moves, so these two PNGs account for the two that turn — one each |
+| `basket-ball.png`, `billiard-ball.png`, `bowling-ball.png`, `tennis-ball.png` | four balls, one per shot: a big brown basketball with seams, a very small dark billiard ball with a light patch on it, a mid-sized dark blue bowling ball, a small yellow-green tennis ball |
 | `basket-lambertian.png`, `billiard-lambertian.png`, `bowling-lambertian.png`, `tennis-lambertian.png` | a soft light-and-shade disc for each ball |
 | `billiard-specular.png`, `bowling-specular.png` | a second, harder highlight disc — the art carries one for two of the four |
 
@@ -88,28 +104,44 @@ different weight and bounce, so that timing, spacing, arcs, follow-through and t
 rest all fall out of what the ball is.
 
 The set, left to right: a sloping wall down the left side of an L, with a blue lamp
-on it; two large open rings hanging in the air above the middle of the L, one above
-the other; a third, smaller ring on a little lattice tower lower down; a floor
-running along the bottom; then a deep U-shaped basin at the right with water in it,
-and an upright hinged panel standing between the floor and the basin.
+on it; two open rings hanging in the air above the middle of the L, the upper one
+the larger and the smaller one below it and a little to the right; a third, smaller
+ring cradled on a little lattice tower lower down — **that one is part of the set
+art and never moves**; a floor running along the bottom; then a deep U-shaped basin
+at the right with water in it, and an upright hinged panel standing between the
+floor and the basin.
 
 Each shot starts with its ball at the very top-left corner of the sloping wall, and
-runs the same route:
+runs the same route as far as it gets:
 
 1. the ball rolls down the sloping wall from the corner;
 2. it drops through the upper ring, then the lower one;
-3. it goes through the small ring on the lattice tower;
-4. it comes down onto the floor and bounces along it towards the basin. As it
-   reaches the upright panel, the panel swings flat out of the way — and is back
-   upright a second later;
+3. it comes down over the small ring on the lattice tower;
+4. it lands and bounces along towards the basin, past the upright panel;
 5. one high bounce, and it comes down into the water in the basin.
 
+**Only two of the four finish the route.** The basketball and the bowling ball reach
+the basin; the billiard ball and the tennis ball come to rest **in the bowl of the
+small painted ring** — the billiard ball at frame 94, the tennis ball at frame 117 —
+and never touch the water. In their two shots the basin is bit-identical in all 311
+frames.
+
 **The four are not one shot at four speeds.** They part company almost immediately.
-One second in (frame 12): the basketball is already inside the upper ring; the
-bowling ball is barely past the corner of the wall; the tennis ball and the billiard
-ball have hardly left it. They differ at the end too — the basketball finishes
-**floating on the surface**, while the bowling ball **sinks and settles on the floor
-of the basin**.
+One second in (frame 12): the basketball is already at the centre of the upper ring;
+the bowling ball is about two thirds of the way down the sloping wall; the two small
+balls are slower still — at 2–3 px across, exactly where on the wall they are at
+that moment is below what a ¼-scale tile will tell you. They differ at the end too — the basketball finishes **floating on the
+surface**, while the bowling ball **sinks and settles on the floor of the basin**.
+
+**The panel is not waiting for the ball.** It drops and springs back on a cycle of
+its own, about every 27½ frames (≈2.3 s), roughly eleven times over the shot,
+frame-for-frame identical in all four animations — including the two whose ball
+never gets near it. It does not swing flat, either: it collapses to about 40–45 % of
+its standing height over a couple of frames, stays down for 16 frames, and takes
+about 11 back up. In the bowling shot the ball happens to arrive while the panel is
+down, **rests on the lowered panel for six frames, and is thrown almost the full
+height of the frame when it springs back** — that launch is what puts it in the
+basin. Nothing the ball does changes when the panel moves.
 
 The two small balls are a few pixels across at this framing. Find them on a contact
 sheet before you try to track them, and see §8 of the guide about what a
@@ -118,9 +150,17 @@ whole-silhouette estimator does to a small thing next to a big static one.
 Two things run for the whole 25.8 seconds regardless of which ball it is, and they
 are why the frames never stop changing after the ball has stopped:
 
-- the two large rings **turn slowly and continuously**, from the first frame to the
-  last;
-- the **water level in the basin falls** slowly over the length of the shot.
+- the two hanging rings **spin, fast and steadily**, from the first frame to the
+  last: **a full revolution every 15 frames** — 1¼ s a turn, about 20⅔ turns over
+  the shot — and **the two turn opposite ways**, the upper one clockwise on screen
+  and the lower one anticlockwise. Sample intermediate frames rather than comparing
+  the first and last: the endpoints alone give a plausible-looking ~163°, which is
+  the residue of the real spin taken mod 360;
+- the **hinged panel** cycles down and back up, as described above.
+
+The **water does not move at all.** Its surface sits on the same rows in the first
+and last frame of every shot, and in the two shots where nothing enters the basin
+the whole basin region is bit-identical across all 311 frames.
 
 Every ball is drawn with a **soft light-and-shade laid over its own markings** — the
 basketball's seams show through it — so each reads as a lit sphere rather than a
@@ -136,14 +176,17 @@ which is worth knowing before you decide a ball is one piece.
 | `bowling-ball` | 311 | 25⅚ s | no |
 | `tennis-ball` | 311 | 25⅚ s | no |
 
-None of them returns to its first frame: by the end the rings have turned, the
-water is lower, and the ball is in the basin.
+None of them returns to its first frame: by the end the rings have stopped on a
+different angle, the panel is at a different point in its cycle, and the ball is a
+long way from the corner it started in.
 
 ### The comparison, in one line
 
-Same course, same route, four balls — and the heavy one is through the upper ring
-before the light ones have left the corner, while the light ones are still bouncing
-long after the heavy one has sunk.
+Same course, four balls — the basketball is at the centre of the upper ring while
+the bowling ball is still on the wall and the two small ones are slower again; and
+only those two heavy balls finish the course, one floating in the basin and one on
+the bottom of it, while the light pair stall in the little painted ring on the tower
+and sit there for the rest of the shot.
 
 ## How the result is read
 

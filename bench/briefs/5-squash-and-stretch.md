@@ -1,5 +1,16 @@
 # Rung 5 brief — `5-squash-and-stretch`
 
+> **Revision 2 — 2026-08-23.** Verified against the frames and contact sheets by
+> Claude Opus 5 (1M context), Claude Code / Agent SDK, under the protocol in
+> [`bench/runs/README.md`](../runs/README.md). This rung has not been attempted; the
+> pass was prompted by revision 1 of the rung 2 brief shipping claims that were not
+> in the pixels. The ball measurements below all held. Two things did not: the
+> `speedy/f0058` ↔ `speedy/f0062` girder moment (at 192 px the character never covers
+> the girder at frame 58 — he is one pixel column clear of it — and the only frame in
+> the whole shot where any girder pixel changes is 62, by two pixels), and "still for
+> the last two frames" (the last **three** are pixel-identical). The route also gains
+> the bounce it was missing.
+
 > ## The leakage rule this brief was written under
 >
 > ⭐ **Everything below is something a client watching the finished animation
@@ -79,10 +90,11 @@ comparable.
   by luck; the 24 fps sheet is where you can see which side of a landing it is on.
 
 ⚠️ **The subject is small in these frames** — the set is wide and everything shares
-one viewport, so the ball is about **4 px** across and the character about 14 px
-tall. That is enough to *measure* a silhouette's proportions and not enough to
-eyeball them. Read the numbers below as what you should be able to reproduce from
-measurement, not as something the pictures will show you at a glance.
+one viewport, so the ball is about **4 px** across and the character about **16 px**
+tall standing — up to 24 px when he is stretched out. That is enough to *measure* a
+silhouette's proportions and not enough to eyeball them. Read the numbers below as
+what you should be able to reproduce from measurement, not as something the pictures
+will show you at a glance.
 
 ## What the shot is
 
@@ -98,22 +110,25 @@ and, hanging in the air above the right-hand block, a single orange lattice gird
 ### `ball` — 79 frames, 6½ seconds (78/12 s)
 
 A small orange ball crosses the whole set, left to right. It starts high at the left
-edge, drops, and bounces its way across — off the low left ledge, off the flat caps
-of the two pillars, off the right-hand ledge — and finishes on top of the right-hand
-block. It stays above the spike beds the whole way.
+edge, drops, and bounces its way across — first off the top of the tall left block
+itself, then off the low left ledge, off the flat caps of the two pillars, off the
+right-hand ledge — and finishes on top of the right-hand block. ✅ It stays above the
+spike beds the whole way, and by a wide margin: over open spikes it never comes
+within about 30 px of the tips.
 
 ⭐ **The ball's shape is the shot.** It draws out along its direction of travel
 while it is moving fast and flattens on the frame it lands. Measured off these
-frames, its silhouette runs about **4 wide × 5 tall** near the top of an arc,
-**2 × 5** part-way down a fast fall, and **5 × 3** on a landing frame — so the
-proportion swings by roughly a factor of two either side of round.
+frames, its silhouette runs **4 × 4 to 4 × 5** near the top of an arc, **2 × 5**
+part-way down a fast fall, and **5 × 3** on a landing frame — so the proportion
+swings by roughly a factor of two either side of round.
 
 - a drawn-out one: `ball/f0010.png`
 - a flattened one: `ball/f0026.png`
 - round, at rest: `ball/f0078.png`
 
 **Ends nowhere near where it began** — it starts at the top left and finishes at the
-top right — and it is completely still for the last two frames.
+top right — and the **last three frames are pixel-identical**: nothing at all moves
+after frame 76.
 
 ### `speedy` — 79 frames, 6½ seconds (78/12 s)
 
@@ -126,18 +141,18 @@ of each foot, two of the hair. A part that ships with six drawings of itself is 
 part that gets **swapped**, not one that gets posed — that is a decision to make in
 the rig before you start keying angles.
 
-⭐ **Watch the orange girder above the right-hand block as he goes up it.** At
-`speedy/f0058.png` he is drawn **in front of** the girder — the lattice disappears
-behind his body. Four frames later, at `speedy/f0062.png`, he is drawn **behind**
-it — the same lattice crosses over his chest. The girder is one piece and it does
-not move between those two frames: the only thing that changed is which of the two
-is nearer the viewer. Whatever order you put things in to start with, this shot does
-not keep it for its whole length.
+⚠️ **He never gets in front of the set, anywhere in this shot.** Across all 79
+frames his silhouette overwrites at most **6** of the set's 5,116 pixels, and those
+are antialiased edges. He runs along the tops of things, so there is almost nothing
+for him to cross: at the orange girder above the right-hand block he comes closest,
+standing one pixel column clear of it at `speedy/f0058.png` (the lattice is
+untouched) and covering **two** of its pixels at `speedy/f0062.png`. Nothing in these
+frames tells you anything about draw order beyond "the set is in front", and two
+pixels is not evidence of a change. Do not build a reordering out of it — and do not
+take the absence as evidence either way.
 
-(At 192 px the overlap is a couple of pixels wide. Open the two frames and compare
-that region directly rather than looking for it on the contact sheet.)
-
-**Ends nowhere near where it began.**
+**Ends nowhere near where it began.** Unlike `ball`, he is still moving on the last
+frame.
 
 ### `ball-ready-to-animate` — 0 seconds, a single pose
 
@@ -148,8 +163,7 @@ animation of that name with no tracks and `duration: 0`.
 ### The comparison, in one line
 
 Two crossings of one course — a ball that survives by changing shape, and a
-character who survives by changing which drawing of himself is on screen — and one
-moment where he goes from being in front of a girder to being behind it.
+character who survives by changing which drawing of himself is on screen.
 
 ## How the result is read
 
