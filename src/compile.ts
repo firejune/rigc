@@ -9,6 +9,7 @@
 import { basename, dirname, relative, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { readPngInfo } from './png.ts';
+import { CompileError } from './errors.ts';
 import { ARCHETYPES, cropToSpineY, type Archetype } from './archetype.ts';
 import { buildRibbonMesh, buildRingMesh, encodeWeightedVertices, MeshError, type MeshBoneRef } from './mesh.ts';
 import {
@@ -42,7 +43,7 @@ export const SPINE_VERSION = '4.3.13';
 
 const FRAME = 1 / 60;
 
-export class CompileError extends Error {}
+export { CompileError };
 
 // ---------------------------------------------------------------------------
 // number formatting — deterministic, and free of "-0"
