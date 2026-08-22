@@ -46,6 +46,7 @@ import type {
   EasingHandles,
   FaceManifest,
   FaceManifestPart,
+  MotionDrawOrderKey,
   MotionSpec,
   MotionTrack,
   RigInfo,
@@ -723,6 +724,9 @@ export function compile(opts: CompileOptions): CompileResult {
       });
     }
 
+    const drawOrder = anim.drawOrder ? compileDrawOrder(anim.drawOrder, animName, slots) : null;
+    if (drawOrder) for (const key of drawOrder) compiledDuration = Math.max(compiledDuration, key.time as number);
+
     // Rule 4: the declared duration is verified, because skeleton JSON does not
     // carry one — the loader takes the max key time (plan 04 section 1-6).
     if (Math.abs(compiledDuration - anim.duration) > FRAME) {
@@ -734,6 +738,7 @@ export function compile(opts: CompileOptions): CompileResult {
     if (Object.keys(slotTimelines).length) animations[animName].slots = slotTimelines;
     if (Object.keys(boneTimelines).length) animations[animName].bones = boneTimelines;
     if (Object.keys(physicsTimelines).length) animations[animName].physics = physicsTimelines;
+    if (drawOrder) animations[animName].drawOrder = drawOrder;
   }
 
   // -- 6. assemble -----------------------------------------------------------
@@ -1504,6 +1509,88 @@ function compileValueTrack(
       throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
     }
     out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * The whole-animation draw-order timeline (`animations.<a>.drawOrder`).
+ *
+ * ⭐ Four refusals here, and three of them exist because `readDrawOrder`
+ * (SkeletonJson.ts:1336-1374) rebuilds the permutation with a **forward-only**
+ * cursor over the setup order:
+ *
+ * ```
+ * while (originalIndex !== index) unchanged[unchangedIndex++] = originalIndex++;
+ * drawOrder[originalIndex + offsetMap.offset] = originalIndex++;
+ * ```
+ *
+ *   1. **Offsets are emitted in slot order.** An entry whose slot sits EARLIER
+ *      than the previous entry's can never make `originalIndex` equal `index`
+ *      again, so that loop runs away — an artifact that hangs the loader rather
+ *      than loading wrong. The author states a set of moves; the array order in
+ *      the file is the parser's requirement and not a decision, so rigc sorts
+ *      rather than making every caller remember. Deterministic: the key is the
+ *      emitted slot index.
+ *   2. **One slot per key.** Two entries for the same slot means two writes at
+ *      one cursor position; the second silently wins and the first slot's place
+ *      is left to the unchanged-fill.
+ *   3. **The destination must be inside the array.** `originalIndex + offset`
+ *      out of range writes past the end (or at −1), leaves a −1 hole behind, and
+ *      the fill loop then reads `unchanged[-1]` = `undefined`. Nothing throws:
+ *      the animation simply draws a slot that is not a slot.
+ *   4. A slot the skeleton does not have IS caught by the parser (`Draw order
+ *      slot not found`) — but in the consumer's process, which is late, so it is
+ *      refused here too.
+ *
+ * `A31_DRAW_ORDER_OFFSETS_RESOLVE` checks the same four properties from the
+ * other side, on the emitted file, because a hand-written or foreign skeleton
+ * never passed through this function.
+ */
+function compileDrawOrder(keys: MotionDrawOrderKey[], animName: string, slots: SpineSlot[]): SpineTimelineKey[] {
+  const where = `animation "${animName}" drawOrder`;
+  if (!keys.length) throw new CompileError(`${where}: no keys`);
+  const indexOf = new Map(slots.map((s, i) => [s.name, i]));
+
+  const out: SpineTimelineKey[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const time = r6(key.t);
+    if (i > 0 && time <= (out[i - 1].time as number)) {
+      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
+    }
+    // No offsets = "back to the setup draw order", which is the parser's own
+    // encoding for it. An empty array means the same thing and is written the
+    // same way, so that two spellings cannot emit two different files.
+    if (!key.offsets?.length) {
+      out.push({ time });
+      continue;
+    }
+    const seen = new Set<string>();
+    const entries: Array<{ slot: string; offset: number; index: number }> = [];
+    for (const off of key.offsets) {
+      const index = indexOf.get(off.slot);
+      if (index === undefined) {
+        throw new CompileError(`${where} at t=${key.t}: slot "${off.slot}" is not one this rig emits`);
+      }
+      if (seen.has(off.slot)) {
+        throw new CompileError(`${where} at t=${key.t}: slot "${off.slot}" is offset twice in one key`);
+      }
+      if (!Number.isInteger(off.offset)) {
+        throw new CompileError(`${where} at t=${key.t}: slot "${off.slot}" offset ${off.offset} is not a whole number`);
+      }
+      const landing = index + off.offset;
+      if (landing < 0 || landing >= slots.length) {
+        throw new CompileError(
+          `${where} at t=${key.t}: slot "${off.slot}" is at index ${index} and offset ${off.offset} puts it at ` +
+            `${landing}, outside the ${slots.length} emitted slots`,
+        );
+      }
+      seen.add(off.slot);
+      entries.push({ slot: off.slot, offset: off.offset, index });
+    }
+    entries.sort((a, b) => a.index - b.index);
+    out.push({ time, offsets: entries.map((e) => ({ slot: e.slot, offset: e.offset })) });
   }
   return out;
 }

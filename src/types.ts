@@ -278,6 +278,34 @@ export interface MotionTrack {
   keys: MotionKey[];
 }
 
+/**
+ * One slot moved, at one draw-order key: `offset` positions later in the array.
+ *
+ * ⚠️ The offset is counted against the SETUP order, not against wherever the
+ * slot ended up at the previous key — `readDrawOrder` rebuilds the whole
+ * permutation from the setup array every time (SkeletonJson.ts:1336-1374). A key
+ * is a complete statement of the change, not an edit to the one before it.
+ */
+export interface MotionDrawOrderOffset {
+  slot: string;
+  /** How many places later this slot is drawn. Negative moves it earlier. */
+  offset: number;
+}
+
+/**
+ * One key of the whole-animation draw-order timeline.
+ *
+ * A key with **no** `offsets` restores the setup draw order — that is the
+ * parser's own encoding (`readDrawOrder` returns null, and the timeline sets the
+ * setup array), and it is how an animation that has swapped two slots puts them
+ * back.
+ */
+export interface MotionDrawOrderKey {
+  /** Time in seconds. */
+  t: number;
+  offsets?: MotionDrawOrderOffset[];
+}
+
 export interface MotionAnimation {
   /** Declared, then verified against the compiled result (rule 4). */
   duration: number;
@@ -285,6 +313,16 @@ export interface MotionAnimation {
   loop: boolean;
   note?: string;
   tracks: MotionTrack[];
+  /**
+   * The draw-order timeline. **One per animation, and it names no target** —
+   * which is why it is not a `track`: 4.3 writes it as `animations.<a>.drawOrder`
+   * beside `bones` and `slots`, not inside either (SPEC_COVERAGE part 1-8).
+   *
+   * Draw order is the one thing about a slot that the slots array already
+   * states (rule R4), so this timeline is the only way to say it changes over
+   * time. First needed at ladder rung 5.
+   */
+  drawOrder?: MotionDrawOrderKey[];
 }
 
 /**
@@ -438,6 +476,8 @@ export interface SpineSkeletonJson {
       slots?: Record<string, Record<string, SpineTimelineKey[]>>;
       bones?: Record<string, Record<string, SpineTimelineKey[]>>;
       physics?: Record<string, Record<string, SpineTimelineKey[]>>;
+      /** Whole-animation timeline: no target name, one array per animation. */
+      drawOrder?: SpineTimelineKey[];
     }
   >;
 }

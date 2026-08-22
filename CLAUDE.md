@@ -221,5 +221,5 @@ to state the invariant without the citation.
 `bench/transcriptions/3-timing-and-spacing/` proves the rig spec can express a
 public skeleton, and it is public-domain data (that example's `license.txt` releases
 the project file). It is **not** a fixture the selftest can run on: a transcription
-exercises the compiler, not the 31 assertions, and item 4 still stands. Re-basing
+exercises the compiler, not the 32 assertions, and item 4 still stands. Re-basing
 the suite on public fixtures remains open.

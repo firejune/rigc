@@ -144,8 +144,9 @@ live status, and B1's proof, in [docs/LADDER.md](docs/LADDER.md).
   the axis bone, the forbidden parentage, the mesh budget.
 - A **motion spec** (`MotionSpec`, `spec: "rigc-motion/1"`) owns **time**: the rig
   it was authored against, named easing handles, setup overrides, a physics tuning
-  table, and the animations — each with a declared duration, a loop flag, and its
-  tracks.
+  table, and the animations — each with a declared duration, a loop flag, its
+  tracks, and optionally a `drawOrder` timeline (the one timeline that names no
+  target, so it sits on the animation rather than in `tracks`).
 
 **Outputs — two files per cut**, written to the cut's `out` directory:
 
@@ -171,7 +172,7 @@ model (what is pinned, what may move, how authority falls off), and the
 ### The validator
 
 [`src/validate.ts`](src/validate.ts) parses the emitted artifacts with `spine-core`
-and then runs 31 named assertions over the loaded skeleton. Each one exists because
+and then runs 32 named assertions over the loaded skeleton. Each one exists because
 the failure it catches is **silent**: the file loads, animates, and lies.
 
 Assertions whose data is absent are reported as **SKIP**, never folded into the pass
@@ -179,7 +180,7 @@ count — an assertion with nothing to check has not checked anything.
 
 #### Profiles — "wrong" versus "not how we do it here"
 
-Not all 31 rules are about Spine. Some are about **spine-html**, the renderer this
+Not all 32 rules are about Spine. Some are about **spine-html**, the renderer this
 compiler was built to feed, and about one project's frame budget; they fire on real,
 correct, editor-produced Spine data, because the official example projects carry
 clipping attachments, unweighted meshes, 116-triangle meshes and packed atlases —
@@ -192,8 +193,8 @@ So `validate` and `build` take a `--profile`:
 
 | Profile | Runs | For |
 | --- | --- | --- |
-| `spine-html` | all 31 | **the default.** Is this a rig this project can ship? |
-| `spine` | the 17 validity rules | Is this valid Spine 4.3 that any runtime plays correctly? |
+| `spine-html` | all 32 | **the default.** Is this a rig this project can ship? |
+| `spine` | the 18 validity rules | Is this valid Spine 4.3 that any runtime plays correctly? |
 
 The **Profile** column below says which is which — `both` = validity, `renderer` and
 `archetype` = `spine-html` only, and **`both ◑`** = a mixed assertion whose validity
@@ -236,6 +237,7 @@ the renderer policy*.
 | `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | both vertices of a ribbon row carry the same bones at the same weights, so the strip can lengthen and curve but never widen |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the stroke plus any inward keys stays within the cut's measured contact depth (skipped when the manifest declares none) |
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the stroke stays within the cut's measured containment ceiling, and nothing in the axis subtree scales — a scale key changes the contour the ceiling was measured on (skipped when the manifest declares none) |
+| `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | every draw-order key resolves to a real permutation: known slots, one entry per slot, each landing inside the slots array, offsets in ascending slot order. The **only assertion that runs before `A00`** — descending offsets make `readDrawOrder`'s forward-only cursor spin rather than return, so the round trip is refused by name instead of attempted |
 
 ## Usage
 
@@ -347,7 +349,7 @@ selftest.ts     the validator's own negative controls, and diff's measure contro
 src/
   compile.ts    rig + motion spec (+ manifest) -> skeleton JSON + atlas text (pure data assembly)
   rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
-  validate.ts   spine-core round trip + the 31 assertions
+  validate.ts   spine-core round trip + the 32 assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure
   ladder.ts     which example is which rung, and which file in it is the reference
   timelines.ts  the 4.3 timeline catalogue and its walker (shared, pure JSON)

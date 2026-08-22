@@ -500,6 +500,20 @@ function cmdExplain(flags: Record<string, string>): void {
         }
       }
     }
+    // The draw-order timeline names no target, so it hangs off the animation
+    // rather than off a slot — and a timeline `explain` did not print would be a
+    // timeline nobody could check without reading the emitted JSON.
+    if (anim.drawOrder) {
+      console.log(`    drawOrder  ${anim.drawOrder.length} key(s)  <- whole animation, offsets against the SETUP order`);
+      for (const key of anim.drawOrder) {
+        const offsets = Array.isArray(key.offsets)
+          ? (key.offsets as Array<{ slot: string; offset: number }>)
+              .map((o) => `${o.slot}${o.offset >= 0 ? '+' : ''}${o.offset}`)
+              .join(' ')
+          : 'back to the setup order';
+        console.log(`      t=${String(key.time).padEnd(7)} ${offsets}`);
+      }
+    }
   }
 
   if (result.physics.length) {

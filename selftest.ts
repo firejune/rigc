@@ -1071,6 +1071,18 @@ function runRigSuite(): number {
 // swallows a real mismatch would be a worse bug than the vacuous pass it fixed:
 // nothing to compare (SKIP), something to compare (PASS), a disagreement (FAIL).
 
+/** One line per case, in the same shape the fixture suites print. Returns 1 when it failed. */
+function reportCase(name: string, ok: boolean, detail: string, why: string): number {
+  if (ok) {
+    console.log(`  PASS  ${name}`);
+    console.log(`          ${detail}`);
+    console.log(`          origin: ${why}`);
+    return 0;
+  }
+  console.log(`  FAIL  ${name}: ${detail}`);
+  return 1;
+}
+
 /** A tiny opaque PNG. Size and colour are arbitrary; only "it is a real file" is load-bearing. */
 function writeProbePng(path: string, width: number, height: number, colour: RGBA): void {
   const plate = new Plate(width, height);
@@ -1132,13 +1144,14 @@ function gateProbe(dirs: ProbeDirs, motion: Record<string, unknown>): ReturnType
   });
 }
 
-/** Compile the static probe, then break the emitted skeleton and gate that. */
+/** Compile the probe, then break the emitted skeleton and gate THAT. */
 function gateProbeArtifacts(
   dirs: ProbeDirs,
+  motion: Record<string, unknown>,
   mutate: (skeleton: Record<string, unknown>) => void,
 ): ReturnType<typeof validate> {
   const motionPath = join(dirs.dir, 'probe.motion.json');
-  writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+  writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
   const opts: Options = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
   const result = compile(opts);
   const skeleton = JSON.parse(result.skeletonText) as Record<string, unknown>;
@@ -1151,6 +1164,18 @@ function gateProbeArtifacts(
     rig: result.rig,
     profile: 'spine',
   });
+}
+
+/** The message a compile was refused with, or null if it went through. */
+function refusal(dirs: ProbeDirs, motion: Record<string, unknown>): string | null {
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+  try {
+    compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return null;
+  } catch (err) {
+    return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+  }
 }
 
 const STATIC_MOTION = {
@@ -1168,14 +1193,7 @@ function runStaticRigSuite(): number {
 
   const report = gateProbe(dirs, STATIC_MOTION);
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
-    if (ok) {
-      console.log(`  PASS  ${name}`);
-      console.log(`          ${detail}`);
-      console.log(`          origin: ${why}`);
-    } else {
-      bad++;
-      console.log(`  FAIL  ${name}: ${detail}`);
-    }
+    bad += reportCase(name, ok, detail, why);
   };
 
   say(
@@ -1210,7 +1228,7 @@ function runStaticRigSuite(): number {
   // declares nothing and the skeleton carries one anyway. A skip keyed on the
   // spec side alone would swallow this, and "the artifact grew an animation
   // nobody declared" is exactly what A09's second loop is for.
-  const stray = gateProbeArtifacts(dirs, (skeleton) => {
+  const stray = gateProbeArtifacts(dirs, STATIC_MOTION, (skeleton) => {
     skeleton.animations = { stray: {} };
   });
   say(
@@ -1219,6 +1237,140 @@ function runStaticRigSuite(): number {
     stray.failures.find((f) => f.assertion === 'A09_ANIMATION_DURATION_MATCHES_SPEC')?.detail ??
       'A09 accepted an animation the motion spec never declared',
     'the skip is keyed on BOTH sides being empty; one side alone must still be compared',
+  );
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// draw-order timelines
+// ---------------------------------------------------------------------------
+//
+// The probe rig emits two slots, `block` (index 0) and `marker` (index 1), which
+// is the smallest skeleton in which a draw-order key can be both right and
+// wrong. Nothing in the owning project's fixtures keys draw order, so without
+// this suite the emitter would ship with no negative control at all.
+//
+// Three of the four breaks below load with no error in Spine's own parser, and
+// the fourth does not load at ALL — see A31's comment in `src/validate.ts`.
+
+/** `block` moves one place later; `marker` therefore moves one place earlier. */
+function drawOrderMotion(offsets: Array<{ slot: string; offset: number }>): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      swap: {
+        duration: 1,
+        loop: false,
+        drawOrder: [{ t: 0 }, { t: 0.5, offsets }, { t: 1 }],
+        tracks: [],
+      },
+    },
+  };
+}
+
+const LEGAL_SWAP = drawOrderMotion([{ slot: 'block', offset: 1 }]);
+
+/** The first `offsets` array in the emitted skeleton, for a mutant to break. */
+function firstOffsets(skeleton: Record<string, unknown>): Array<Record<string, unknown>> {
+  const animations = skeleton.animations as Record<string, { drawOrder?: Array<Record<string, unknown>> }>;
+  const keys = animations.swap.drawOrder;
+  if (!keys) throw new Error('the probe emitted no drawOrder timeline');
+  return keys[1].offsets as Array<Record<string, unknown>>;
+}
+
+function runDrawOrderSuite(): number {
+  const dirs = writeProbeRig();
+  let bad = 0;
+  console.log('\n── draw-order timelines (self-contained) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const green = gateProbe(dirs, LEGAL_SWAP);
+  say(
+    'CONTROL_A_DRAW_ORDER_TIMELINE_IS_GREEN',
+    green.failures.length === 0 && green.passed.includes('A31_DRAW_ORDER_OFFSETS_RESOLVE'),
+    green.failures.length === 0
+      ? 'A31 ran and held on a legal swap-and-restore'
+      : `[${green.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'without a positive control a suite of breaks cannot tell a working gate from one that fails everything',
+  );
+
+  // --- the compiler refuses, by name ---------------------------------------
+  for (const [name, motion, expect, why] of [
+    [
+      'O01_offset_leaves_the_slot_array',
+      drawOrderMotion([{ slot: 'block', offset: 4 }]),
+      'outside the 2 emitted slots',
+      'the parser writes past the end, leaves a −1 hole, and fills it from unchanged[-1] — undefined, silently',
+    ],
+    [
+      'O02_one_slot_offset_twice_in_one_key',
+      drawOrderMotion([
+        { slot: 'block', offset: 1 },
+        { slot: 'block', offset: 0 },
+      ]),
+      'is offset twice in one key',
+      'two writes at one cursor position: the second wins and the first move is simply lost',
+    ],
+    [
+      'O03_offsets_a_slot_the_rig_does_not_emit',
+      drawOrderMotion([{ slot: 'nowhere', offset: 1 }]),
+      'is not one this rig emits',
+      'SkeletonJson.ts:1345 throws `Draw order slot not found` — but in the consumer process, which is late',
+    ],
+  ] as Array<[string, Record<string, unknown>, string, string]>) {
+    const message = refusal(dirs, motion);
+    say(
+      name,
+      message !== null && message.includes(expect),
+      message === null ? 'the compile went through — the broken timeline was emitted' : `refused with: ${message}`,
+      why,
+    );
+  }
+
+  // --- the validator catches the same shapes in a foreign artifact ----------
+  const outOfRange = gateProbeArtifacts(dirs, LEGAL_SWAP, (skeleton) => {
+    firstOffsets(skeleton)[0].offset = 5;
+  });
+  say(
+    'O04_A31_catches_an_out_of_range_offset',
+    outOfRange.failures.some((f) => f.assertion === 'A31_DRAW_ORDER_OFFSETS_RESOLVE'),
+    outOfRange.failures.find((f) => f.assertion === 'A31_DRAW_ORDER_OFFSETS_RESOLVE')?.detail ??
+      'A31 accepted an offset that lands outside the slot array',
+    'a hand-written or foreign skeleton never went through the compiler, so the gate must find this from the file',
+  );
+
+  // Descending slot order does not load WRONG — it does not load. The round trip
+  // must therefore be refused rather than attempted, or this control hangs the
+  // suite that is supposed to prove the gate works.
+  const descending = gateProbeArtifacts(dirs, LEGAL_SWAP, (skeleton) => {
+    firstOffsets(skeleton).length = 0;
+    firstOffsets(skeleton).push({ slot: 'marker', offset: -1 }, { slot: 'block', offset: 1 });
+  });
+  const a00 = descending.failures.find((f) => f.assertion === 'A00_ROUNDTRIP_PARSE');
+  say(
+    'O05_A31_catches_descending_offsets_before_the_parser_hangs',
+    descending.failures.some((f) => f.assertion === 'A31_DRAW_ORDER_OFFSETS_RESOLVE') &&
+      a00 !== undefined &&
+      a00.detail.includes('not attempted'),
+    a00 ? `A31 named it and A00 reported: ${a00.detail}` : 'A00 was attempted anyway — this run got lucky, not correct',
+    'readDrawOrder walks a forward-only cursor, so an earlier slot after a later one spins until the process dies',
+  );
+
+  const curved = gateProbeArtifacts(dirs, LEGAL_SWAP, (skeleton) => {
+    const animations = skeleton.animations as Record<string, { drawOrder?: Array<Record<string, unknown>> }>;
+    animations.swap.drawOrder![1].curve = [0, 0, 1, 1];
+  });
+  say(
+    'O06_A05_reaches_the_draw_order_group',
+    curved.failures.some((f) => f.assertion === 'A05_CURVE_ARRAY_LENGTH'),
+    curved.failures.find((f) => f.assertion === 'A05_CURVE_ARRAY_LENGTH')?.detail ??
+      'A05 did not walk the drawOrder group — its curve arrays are unchecked',
+    'a draw order is stepped by nature; the parser ignores a stray curve rather than rejecting it',
   );
   return bad;
 }
@@ -1314,6 +1466,7 @@ function main(): void {
   }
   bad += runRigSuite();
   bad += runStaticRigSuite();
+  bad += runDrawOrderSuite();
   const diffBad = runDiffSuite();
   if (diffBad !== null) bad += diffBad;
 
@@ -1323,9 +1476,9 @@ function main(): void {
     process.exit(1);
   }
   console.log(
-    `rigc selftest: green — ${SUITES.length + 2} positive controls + ${breaks} deliberate breaks, each caught by its ` +
+    `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
-      `+ ${tolerances} legal edits the gate had to accept, + 3 static-rig controls` +
+      `+ ${tolerances} legal edits the gate had to accept, + 3 static-rig controls, + 6 draw-order controls` +
       (diffBad === null
         ? '\n  ⚠️ but the rigc diff self-checks did NOT run (no example corpus) — this run does not cover them'
         : `, + ${DIFF_CASES.length} diff measure controls`),

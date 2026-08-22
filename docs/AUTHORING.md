@@ -57,7 +57,7 @@ What the flags mean:
 | `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths are written relative to it |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
-| `--profile` | `spine` = the 17 validity rules · `spine-html` = all 31 (**the default**) |
+| `--profile` | `spine` = the 18 validity rules · `spine-html` = all 32 (**the default**) |
 
 Pick the profile deliberately. `spine-html` adds one renderer's policy and one
 project's canvas budget, and those rules fire on perfectly correct Spine data
@@ -182,8 +182,10 @@ from a manifest part **or** from a rig skin, never both. A constraint is declare
 the rig **or** in the motion spec's `physics` table, never both. Each of those is a
 compile error rather than a silent precedence rule.
 
-**R4 — The slots array *is* the draw order.** There is no separate draw-order field
-anywhere in the format. Index 0 is drawn first (furthest back).
+**R4 — The slots array *is* the setup draw order.** There is no separate
+draw-order field in the skeleton's structure. Index 0 is drawn first (furthest
+back). One animation *can* reorder them over time — that is the `drawOrder`
+timeline of §4.7, and its offsets are counted against this array.
 
 **R5 — `image` means "measure this PNG".** `width`/`height` have **no parser
 default** in Spine: omit them in raw JSON and they load as `NaN`, every UV
@@ -369,6 +371,7 @@ time puts it here.
 | `loop` | a **player hint only** — skeleton JSON has no loop field, so this is not emitted and no assertion or diff measure reads it |
 | `note` | free text |
 | `tracks` | the timelines |
+| `drawOrder` | the draw-order timeline — §4.7. Not a track: it names no target |
 
 `groups` (`name → [member, …]`) lets one track target several bones or slots at
 once; `lag` shifts every key of a track, and `stagger` adds a per-member delay in
@@ -425,6 +428,52 @@ never settles — both are `A23`.
 `mix` is a player-side `AnimationStateData` config and is **not** emitted into
 skeleton JSON.
 
+### 4.7 `drawOrder` — reordering the slots over time
+
+The one timeline that names no target, so it sits on the animation rather than in
+`tracks` — which is exactly where 4.3 writes it (`animations.<a>.drawOrder`,
+beside `bones` and `slots`).
+
+```json
+"animations": {
+  "duck": {
+    "duration": 2,
+    "loop": false,
+    "drawOrder": [
+      { "t": 0.5, "offsets": [{ "slot": "arm", "offset": 2 }] },
+      { "t": 1.5 }
+    ],
+    "tracks": []
+  }
+}
+```
+
+- `offset` is **how many places later** that slot is drawn; negative moves it
+  earlier. Counted against the **setup** order (§3.3's array), never against
+  wherever the previous key left it — each key is a complete statement of the
+  change, because the parser rebuilds the whole permutation from setup every time.
+- A key with **no `offsets`** restores the setup order. That is the format's own
+  encoding for it, and it is how you put a swap back.
+- Only slots that move need an entry.
+- Draw-order keys are **stepped by nature** and carry no `ease` or `curve`.
+- Its last key counts towards the declared duration like any other (R7).
+
+rigc refuses four things here, all of which the parser would take:
+
+| You wrote | You get |
+| --- | --- |
+| a slot this rig does not emit | `slot "X" is not one this rig emits` |
+| the same slot twice in one key | `slot "X" is offset twice in one key` |
+| an offset that lands outside the slots array | `slot "X" is at index 0 and offset 4 puts it at 4, outside the 2 emitted slots` |
+| offsets in any order | nothing — rigc **sorts** them into slot order for you |
+
+The last one is not a courtesy. `readDrawOrder` walks a forward-only cursor over
+the setup array, so a file whose offsets descend does not load *wrong* — it does
+not load at all, and the loader spins until the process dies. The array order in
+the emitted file is the parser's requirement rather than a decision of yours, so
+you state the set of moves and rigc writes them in the order the parser needs.
+`A31_DRAW_ORDER_OFFSETS_RESOLVE` checks all four from the other side.
+
 ---
 
 ## 5. Reading a failure
@@ -454,6 +503,7 @@ the frequent ones, verbatim:
 | `key times must strictly increase (at t=…)` | including after `lag` and `stagger` |
 | `animation "A" has two tracks on X.property; merge them into one track` | one timeline per target property |
 | `no stage size: give the rig spec a \`skeleton.width\`/\`skeleton.height\`` | §3.1 |
+| `drawOrder at t=…: slot "X" is not one this rig emits` / `is offset twice in one key` / `puts it at N, outside the … emitted slots` | §4.7 |
 | `bone "X" takes its position from …, which needs a cut manifest` | R8 — pass `--manifest`, or write literal `x`/`y` |
 
 ### 5.2 Assertions — the gate
@@ -508,6 +558,7 @@ The report prints one line per assertion:
 | `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | the two vertices of a ribbon row carry different weights, so the strip would change width |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the animation drives deeper than the manifest's measured contact depth |
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the animation drives past the measured containment ceiling, or scales a bone in the axis subtree |
+| `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | a draw-order key names a slot the skeleton does not have, offsets one slot twice, puts a slot outside the slots array, or lists its offsets out of slot order (§4.7). The only assertion that runs **before** `A00` — the last of those shapes makes the loader spin rather than return, so the round trip is refused instead of attempted |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
@@ -533,9 +584,10 @@ Two more limits that are not errors but will shape what you can attempt:
   region covers its whole page, `pma: false`. To reproduce a skeleton whose art
   ships as a packed atlas you either supply loose PNGs and let rigc build its own
   atlas, or hand the packed atlas to `validate`/`bench` alongside the candidate.
-- **Sequences, `drawOrder` timelines, `drawOrderFolder`, event timelines and deform
-  timelines** are walked by the validator but are not motion-spec properties: the
-  track table in §4.4 is the complete list of what you can key.
+- **Sequences, `drawOrderFolder`, event timelines and deform timelines** are walked
+  by the validator but are not motion-spec properties: the track table in §4.4 is
+  the complete list of what a *track* can key, and §4.7's `drawOrder` is the only
+  timeline outside it.
 
 ---
 

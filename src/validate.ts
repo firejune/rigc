@@ -111,6 +111,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A28_RIBBON_ROWS_SHARE_WEIGHTS: 'archetype',
   A29_STROKE_WITHIN_CONTACT_DEPTH: 'archetype',
   A30_STROKE_WITHIN_CAP_CONTAINMENT: 'archetype',
+  A31_DRAW_ORDER_OFFSETS_RESOLVE: 'validity',
 };
 
 export interface ValidateInput {
@@ -271,6 +272,78 @@ export function validate(input: ValidateInput): ValidateReport {
     }
   });
 
+  // --- A31: every draw-order offset lands on a real place -------------------
+  //
+  // 🚨 This one runs BEFORE the round trip, and it is the only assertion that
+  // does so for a reason other than "the parser is happy about it". A draw-order
+  // key whose offsets are not in ascending slot order does not load wrong — it
+  // does not load at all. `readDrawOrder` (SkeletonJson.ts:1336-1374) walks a
+  // forward-only cursor:
+  //
+  //   while (originalIndex !== index) unchanged[unchangedIndex++] = originalIndex++;
+  //
+  // and an entry naming an EARLIER slot than the one before it makes that
+  // condition unreachable, so the loader spins and grows an array until the
+  // process dies. So the check has to happen first, and when it finds that shape
+  // the round trip is not attempted at all — reported as such, not as a pass.
+  //
+  // The other two shapes are the format's usual silence. An offset that puts a
+  // slot outside the array writes past the end, leaves a −1 hole in the
+  // permutation, and the fill loop reads `unchanged[-1]` — `undefined` where a
+  // slot index belongs, with nothing thrown. Two entries for one slot write
+  // twice at one cursor position and the first move is simply lost.
+  let drawOrderIsUnparseable: string | null = null;
+  check('A31_DRAW_ORDER_OFFSETS_RESOLVE', () => {
+    if (!raw) return skip('A31_DRAW_ORDER_OFFSETS_RESOLVE', 'the skeleton JSON did not parse (A00 owns that failure)');
+    if (!Array.isArray(raw.slots) || !isObj(raw.animations)) {
+      return skip('A31_DRAW_ORDER_OFFSETS_RESOLVE', 'the skeleton declares no slots or no animations');
+    }
+    const slotIndex = new Map<string, number>();
+    (raw.slots as unknown[]).forEach((slot, i) => {
+      if (isObj(slot) && typeof slot.name === 'string') slotIndex.set(slot.name, i);
+    });
+    const slotCount = (raw.slots as unknown[]).length;
+    let sawATimeline = false;
+    for (const [animName, anim] of Object.entries(raw.animations as Json)) {
+      if (!isObj(anim) || !Array.isArray(anim.drawOrder)) continue;
+      sawATimeline = true;
+      (anim.drawOrder as unknown[]).forEach((key, k) => {
+        const at = `animation "${animName}" drawOrder key ${k}`;
+        if (!isObj(key) || !Array.isArray(key.offsets)) return; // no offsets = setup order
+        let previous = -1;
+        for (const entry of key.offsets as unknown[]) {
+          if (!isObj(entry) || typeof entry.slot !== 'string' || typeof entry.offset !== 'number') {
+            fail('A31_DRAW_ORDER_OFFSETS_RESOLVE', `${at}: an offset is not { slot: string, offset: number }`);
+            continue;
+          }
+          const index = slotIndex.get(entry.slot);
+          if (index === undefined) {
+            fail('A31_DRAW_ORDER_OFFSETS_RESOLVE', `${at}: slot "${entry.slot}" is not in the skeleton`);
+            continue;
+          }
+          if (index <= previous) {
+            const detail =
+              `${at}: slot "${entry.slot}" is at index ${index}, after an entry at index ${previous} — ` +
+              'offsets must be in ascending slot order or the loader never finishes reading them';
+            fail('A31_DRAW_ORDER_OFFSETS_RESOLVE', detail);
+            drawOrderIsUnparseable ??= detail;
+            continue;
+          }
+          previous = index;
+          const landing = index + entry.offset;
+          if (!Number.isInteger(entry.offset) || landing < 0 || landing >= slotCount) {
+            fail(
+              'A31_DRAW_ORDER_OFFSETS_RESOLVE',
+              `${at}: slot "${entry.slot}" is at index ${index} and offset ${entry.offset} puts it at ${landing}, ` +
+                `outside the ${slotCount} slots`,
+            );
+          }
+        }
+      });
+    }
+    if (!sawATimeline) return skip('A31_DRAW_ORDER_OFFSETS_RESOLVE', 'no animation carries a drawOrder timeline');
+  });
+
   // --- A: the round trip ----------------------------------------------------
   // The two loaded objects come back OUT of the assertion rather than being
   // assigned into it. Everything below reads them, and a `let` written inside a
@@ -278,6 +351,9 @@ export function validate(input: ValidateInput): ValidateReport {
   // `null` at the first guard and to `never` inside it, so `atlas.pages` stops
   // type-checking while working perfectly at runtime.
   const roundTrip = check('A00_ROUNDTRIP_PARSE', () => {
+    if (drawOrderIsUnparseable !== null) {
+      throw new Error(`not attempted — the loader would not return: ${drawOrderIsUnparseable}`);
+    }
     const parsedAtlas = new TextureAtlas(input.atlasText);
     const json = new SkeletonJson(new AtlasAttachmentLoader(parsedAtlas));
     return { atlas: parsedAtlas, data: json.readSkeletonData(JSON.parse(input.skeletonText)) };
