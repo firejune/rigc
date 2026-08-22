@@ -30,6 +30,7 @@ import { dirname, join, resolve } from 'node:path';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedMeasures } from './src/diff.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
+import { Plate, type RGBA } from './tools/plate.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
 interface CutEntry {
@@ -1053,6 +1054,175 @@ function runRigSuite(): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// static rigs — a skeleton with no animation at all
+// ---------------------------------------------------------------------------
+//
+// ⭐ This suite builds its own art and its own specs in a temp directory, so it
+// is the one suite here that is NOT aimed at the owning project's fixtures. It
+// exists because the ladder's first rung ships a **static rig** — an export
+// whose entire content is the setup pose — and rigc had no coverage of that
+// shape at all. What it found: `A09_ANIMATION_DURATION_MATCHES_SPEC` reported
+// PASS on it. Both of A09's loops iterate over animations, a static rig has
+// none, so the assertion ran, looked at nothing, and counted itself green. That
+// is the exact false green the SKIP channel was built for.
+//
+// The three cases below are one assertion's three states, because a skip that
+// swallows a real mismatch would be a worse bug than the vacuous pass it fixed:
+// nothing to compare (SKIP), something to compare (PASS), a disagreement (FAIL).
+
+/** A tiny opaque PNG. Size and colour are arbitrary; only "it is a real file" is load-bearing. */
+function writeProbePng(path: string, width: number, height: number, colour: RGBA): void {
+  const plate = new Plate(width, height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) plate.set(x, y, colour);
+  plate.writePng(path);
+}
+
+interface ProbeDirs {
+  dir: string;
+  rigPath: string;
+  outDir: string;
+}
+
+/** A two-slot rig spec plus its art, written fresh into a temp directory. */
+function writeProbeRig(): ProbeDirs {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-static-'));
+  writeProbePng(join(dir, 'block.png'), 12, 8, [40, 60, 90, 255]);
+  writeProbePng(join(dir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
+  const rigPath = join(dir, 'probe.rig.json');
+  writeFileSync(
+    rigPath,
+    `${JSON.stringify(
+      {
+        spec: 'rigc-rig/1',
+        name: 'static_probe',
+        skeleton: { width: 64, height: 64 },
+        bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }],
+        slots: [
+          { name: 'block', bone: 'block', attachment: 'block' },
+          { name: 'marker', bone: 'block', attachment: 'marker' },
+        ],
+        skins: {
+          default: {
+            block: { block: { image: 'block.png' } },
+            marker: { marker: { image: 'marker.png' } },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return { dir, rigPath, outDir: join(dir, 'spine') };
+}
+
+/** Compile one motion spec against the probe rig and gate the result. */
+function gateProbe(dirs: ProbeDirs, motion: Record<string, unknown>): ReturnType<typeof validate> {
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+  const opts: Options = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
+  const result = compile(opts);
+  return validate({
+    skeletonText: result.skeletonText,
+    atlasText: result.atlasText,
+    atlasDir: opts.outDir,
+    declaredDurations: result.declaredDurations,
+    rig: result.rig,
+    profile: 'spine',
+  });
+}
+
+/** Compile the static probe, then break the emitted skeleton and gate that. */
+function gateProbeArtifacts(
+  dirs: ProbeDirs,
+  mutate: (skeleton: Record<string, unknown>) => void,
+): ReturnType<typeof validate> {
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+  const opts: Options = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
+  const result = compile(opts);
+  const skeleton = JSON.parse(result.skeletonText) as Record<string, unknown>;
+  mutate(skeleton);
+  return validate({
+    skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
+    atlasText: result.atlasText,
+    atlasDir: opts.outDir,
+    declaredDurations: result.declaredDurations,
+    rig: result.rig,
+    profile: 'spine',
+  });
+}
+
+const STATIC_MOTION = {
+  spec: 'rigc-motion/1',
+  archetype: 'static_probe',
+  cut: 'static_probe',
+  easings: {},
+  animations: {},
+};
+
+function runStaticRigSuite(): number {
+  const dirs = writeProbeRig();
+  let bad = 0;
+  console.log('\n── static rigs (self-contained: this suite writes its own art) ──');
+
+  const report = gateProbe(dirs, STATIC_MOTION);
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    if (ok) {
+      console.log(`  PASS  ${name}`);
+      console.log(`          ${detail}`);
+      console.log(`          origin: ${why}`);
+    } else {
+      bad++;
+      console.log(`  FAIL  ${name}: ${detail}`);
+    }
+  };
+
+  say(
+    'CONTROL_A_RIG_WITH_NO_ANIMATIONS_IS_GREEN',
+    report.failures.length === 0,
+    report.failures.length === 0
+      ? `${report.passed.length} assertions ran, ${report.skipped.length} skipped`
+      : `[${report.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'a skeleton that exists to be posed is a deliverable, not a degenerate case — ladder rung 1 ships one',
+  );
+
+  const skip = report.skipped.find((s) => s.assertion === 'A09_ANIMATION_DURATION_MATCHES_SPEC');
+  say(
+    'S01_A09_SKIPS_INSTEAD_OF_PASSING_VACUOUSLY',
+    skip !== undefined && !report.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
+    skip ? `skipped: ${skip.reason}` : 'A09 did not skip — it looked at zero animations and called that a pass',
+    'both of A09’s loops iterate over animations; with none, "ran and held" and "never looked" are the same report',
+  );
+
+  const compared = gateProbe(dirs, {
+    ...STATIC_MOTION,
+    animations: { 'ready-to-animate': { duration: 0, loop: false, tracks: [] } },
+  });
+  say(
+    'S02_A09_STILL_RUNS_ON_A_NAMED_EMPTY_ANIMATION',
+    compared.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
+    'an animation with no tracks is still an animation: 0s declared against 0s loaded is a real comparison',
+    'the skip must be keyed on "there is nothing to compare", not on "the durations are zero"',
+  );
+
+  // The mismatch branch, with the skip's precondition HALF true: the spec
+  // declares nothing and the skeleton carries one anyway. A skip keyed on the
+  // spec side alone would swallow this, and "the artifact grew an animation
+  // nobody declared" is exactly what A09's second loop is for.
+  const stray = gateProbeArtifacts(dirs, (skeleton) => {
+    skeleton.animations = { stray: {} };
+  });
+  say(
+    'S03_A09_STILL_FAILS_ON_AN_ANIMATION_NOBODY_DECLARED',
+    stray.failures.some((f) => f.assertion === 'A09_ANIMATION_DURATION_MATCHES_SPEC'),
+    stray.failures.find((f) => f.assertion === 'A09_ANIMATION_DURATION_MATCHES_SPEC')?.detail ??
+      'A09 accepted an animation the motion spec never declared',
+    'the skip is keyed on BOTH sides being empty; one side alone must still be compared',
+  );
+  return bad;
+}
+
 interface Suite {
   name: string;
   opts: typeof OPTS;
@@ -1143,6 +1313,7 @@ function main(): void {
     }
   }
   bad += runRigSuite();
+  bad += runStaticRigSuite();
   const diffBad = runDiffSuite();
   if (diffBad !== null) bad += diffBad;
 
@@ -1152,9 +1323,9 @@ function main(): void {
     process.exit(1);
   }
   console.log(
-    `rigc selftest: green — ${SUITES.length + 1} positive controls + ${breaks} deliberate breaks, each caught by its ` +
+    `rigc selftest: green — ${SUITES.length + 2} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
-      `+ ${tolerances} legal edits the gate had to accept` +
+      `+ ${tolerances} legal edits the gate had to accept, + 3 static-rig controls` +
       (diffBad === null
         ? '\n  ⚠️ but the rigc diff self-checks did NOT run (no example corpus) — this run does not cover them'
         : `, + ${DIFF_CASES.length} diff measure controls`),

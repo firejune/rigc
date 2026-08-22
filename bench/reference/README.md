@@ -35,6 +35,11 @@ labelled with its frame index. Every animation of one skeleton shares one viewpo
 — framing each to its own extent would rescale the motion between them, and the
 relationship between two animations is the whole subject of some rungs.
 
+A **static rig** — a skeleton with no animation at all, which rung 1's second
+export is — writes its setup pose as one frame in a directory called `setup/`.
+Anything that renders to a single frame gets no contact sheet: a sheet of one tile
+is that frame again, with a border and a `0` on it.
+
 ## What is here
 
 | Rung | Example | Frames | Rate | Frame size |

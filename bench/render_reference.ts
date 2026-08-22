@@ -54,6 +54,14 @@ import { Plate, readPlate, type RGBA } from '../tools/plate.ts';
 const BACKGROUND: RGBA = [232, 232, 232, 255];
 /** Padding around the union bounding box, as a fraction of its long side. */
 const PAD = 0.04;
+/**
+ * Directory a skeleton with no animation writes its one frame into.
+ *
+ * It cannot collide with an animation's directory, because an animation named
+ * `setup` would have to live in a skeleton that has at least one animation, and
+ * this name is only ever used when there are none.
+ */
+const SETUP_POSE_DIR = 'setup';
 /** Contact sheet: tiles per row, tile long side, and the separator colour. */
 const SHEET_COLUMNS = 8;
 const SHEET_TILE = 128;
@@ -138,6 +146,25 @@ function sampleAnimation(data: ReturnType<SkeletonJson['readSkeletonData']>, nam
     frames.push({ time: i * step, quads: quadsOf(skeleton) });
   }
   return frames;
+}
+
+/**
+ * The setup pose as a single frame — what a skeleton with **no animation at all**
+ * looks like.
+ *
+ * ⭐ Not a degenerate case to be tolerated: a static rig is a deliverable. The
+ * ladder's first rung ships one (`1-weight-and-mass`'s second export), and its
+ * whole content is the setup pose. Falling over on it — which this file did,
+ * with `posed no drawable attachment in any animation`, because the union box
+ * was taken over `data.animations` and that list was empty — would have made the
+ * rung unpreparable for a reason that has nothing to do with the rung.
+ */
+function sampleSetupPose(data: ReturnType<SkeletonJson['readSkeletonData']>): Frame[] {
+  const skeleton = new Skeleton(data);
+  skeleton.setupPose();
+  skeleton.update(0);
+  skeleton.updateWorldTransform(Physics.reset);
+  return [{ time: 0, quads: quadsOf(skeleton) }];
 }
 
 /** The posed region attachments of one frame, in draw order. */
@@ -345,14 +372,17 @@ for (const skeletonEntry of rung.skeletons) {
   // every animation of one skeleton shares a viewport. Framing each animation
   // to its own extent would rescale the motion between them, which is the one
   // thing a timing-and-spacing reference must not do.
+  //
+  // A skeleton with no animation contributes its setup pose instead, under the
+  // reserved name `setup` — see `sampleSetupPose`.
   const sampled = new Map<string, Frame[]>();
+  if (data.animations.length === 0) sampled.set(SETUP_POSE_DIR, sampleSetupPose(data));
+  else for (const animation of data.animations) sampled.set(animation.name, sampleAnimation(data, animation.name, fps));
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const animation of data.animations) {
-    const frames = sampleAnimation(data, animation.name, fps);
-    sampled.set(animation.name, frames);
+  for (const frames of sampled.values()) {
     for (const frame of frames) {
       for (const quad of frame.quads) {
         for (let i = 0; i < 8; i += 2) {
@@ -364,7 +394,7 @@ for (const skeletonEntry of rung.skeletons) {
       }
     }
   }
-  if (!Number.isFinite(minX)) usage(`${skeletonPath} posed no drawable attachment in any animation`);
+  if (!Number.isFinite(minX)) usage(`${skeletonPath} posed no drawable attachment in any animation or in its setup pose`);
 
   const pad = Math.max(maxX - minX, maxY - minY) * PAD;
   minX -= pad;
@@ -377,7 +407,8 @@ for (const skeletonEntry of rung.skeletons) {
   // World is y up; an image is y down.
   const project = (wx: number, wy: number): [number, number] => [(wx - minX) * scale, (maxY - wy) * scale];
 
-  console.log(`  ${skeletonEntry.label}: ${width}x${height}px, ${sampled.size} animation(s)`);
+  const what = data.animations.length === 0 ? 'no animation — setup pose only' : `${sampled.size} animation(s)`;
+  console.log(`  ${skeletonEntry.label}: ${width}x${height}px, ${what}`);
   mkdirSync(outRoot, { recursive: true });
   copyFileSync(licencePath, join(outRoot, 'license.txt'));
   for (const [name, frames] of sampled) {
@@ -393,8 +424,13 @@ for (const skeletonEntry of rung.skeletons) {
     // One contact sheet beside the frames. Spacing — how far the thing moves
     // between two frames — is the whole subject of this rung, and it is visible
     // in a grid of every frame in a way it is not in 65 separate files.
-    contactSheet(frames, page, minX, maxY, scale, width, height).writePng(join(dir, 'contact.png'));
+    //
+    // A single frame has nothing to compare itself against, so it gets no sheet:
+    // the sheet would be that same frame with a border and a "0" on it, and the
+    // reader would have opened a second file to learn nothing.
+    if (frames.length > 1) contactSheet(frames, page, minX, maxY, scale, width, height).writePng(join(dir, 'contact.png'));
     const last = frames[frames.length - 1].time;
-    console.log(`    ${name.padEnd(16)} ${frames.length} frames, ${last.toFixed(3)}s at ${fps} fps -> ${dir}`);
+    const how = frames.length === 1 ? 'a single pose' : `${last.toFixed(3)}s at ${fps} fps`;
+    console.log(`    ${name.padEnd(16)} ${frames.length} frame(s), ${how} -> ${dir}`);
   }
 }

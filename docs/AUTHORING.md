@@ -153,7 +153,14 @@ one skeleton, and pairing it with another aims its keys at bones whose names hap
 to match and whose meaning does not.
 
 A motion spec with `"animations": {}` is legal and emits a skeleton with no
-animations at all.
+animations at all — a **static rig**, a skeleton that exists to be posed. That is
+a real deliverable and not a stepping stone: the ladder's first rung ships one.
+`A09_ANIMATION_DURATION_MATCHES_SPEC` then reports **SKIP**, because there is no
+duration on either side to compare; it is not a pass, and the report says so.
+
+An animation that declares `"tracks": []` is a different thing — a *named* empty
+animation, `duration: 0`, which is what the editor writes for a placeholder. That
+one A09 does compare.
 
 ---
 
@@ -479,7 +486,7 @@ The report prints one line per assertion:
 | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | the atlas `size:` disagrees with the PNG on disk. Under `spine-html` also: `pma`, rotation, and a region that does not cover its page |
 | `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file |
 | `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both ◑ | an attachment resolves to a region the atlas does not have — usually a `path`/`image` basename mismatch. Under `spine-html` the placeholder and the region name must also be *identical* |
-| `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the loaded duration ≠ the declared one, or the two sides disagree about which animations exist (R7) |
+| `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the loaded duration ≠ the declared one, or the two sides disagree about which animations exist (R7). **SKIP** when neither side has an animation at all — a static rig has no duration |
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping the animation produced a `NaN` pose. Look for a degenerate curve or a zero scale |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | a clipping attachment; the target renderer skips them silently |
 | `A12_NO_DARK_COLOR` | renderer | a slot `dark` colour or an `rgba2`/`rgb2` timeline; parsed, then ignored |

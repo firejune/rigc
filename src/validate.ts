@@ -808,12 +808,24 @@ export function validate(input: ValidateInput): ValidateReport {
     });
 
     // --- A09: compiled duration == declared duration (rule 4) --------------
-      check('A09_ANIMATION_DURATION_MATCHES_SPEC', () => {
+    check('A09_ANIMATION_DURATION_MATCHES_SPEC', () => {
       // Without the spec there is no declared duration to compare the compiled
       // one against, and returning here used to count as a PASS — a gate saying
       // it checked something it never looked at.
       if (!input.declaredDurations) {
         return skip('A09_ANIMATION_DURATION_MATCHES_SPEC', 'no motion spec supplied, so no declared duration to compare against');
+      }
+      // Same trap one level down. A **static rig** — a skeleton that exists to
+      // be posed and carries no animation at all, which is what
+      // `1-weight-and-mass`'s second export is — declares nothing and loads
+      // nothing, so both loops below iterate zero times and the assertion
+      // reported PASS. That is the vacuous green this report is built to refuse:
+      // there is no duration here, and saying so is the honest answer.
+      if (Object.keys(input.declaredDurations).length === 0 && data.animations.length === 0) {
+        return skip(
+          'A09_ANIMATION_DURATION_MATCHES_SPEC',
+          'the motion spec declares no animations and the skeleton has none — a static rig has no duration to compare',
+        );
       }
       for (const [name, declared] of Object.entries(input.declaredDurations)) {
         const anim = data.findAnimation(name);
