@@ -1490,7 +1490,7 @@ function compileValueTrack(
       if (key.ease === 'stepped') {
         entry.curve = 'stepped';
       } else {
-        const handles = motion.easings[key.ease];
+        const handles = motion.easings?.[key.ease];
         if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
         if (!Array.isArray(next.v)) throw new CompileError(`${where}: next key value must be an array`);
         const t2 = r6(next.t + shift);
@@ -1600,7 +1600,7 @@ function compileTrack(
       if (key.ease === 'stepped') {
         entry.curve = 'stepped';
       } else {
-        const handles = motion.easings[key.ease];
+        const handles = motion.easings?.[key.ease];
         if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
         if (!Array.isArray(next.v)) {
           throw new CompileError(`${where}: rgba key value must be [r,g,b,a]`);
