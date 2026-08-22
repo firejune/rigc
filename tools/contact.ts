@@ -1,22 +1,22 @@
 /**
- * Contact depth — how far the moving part may go in before the masses meet.
+ * Contact depth — how far one plate may advance before its body pixels meet
+ * another plate's.
  *
- * 🎯 Owner rule (2026-08-22): *"삼켜짐 깊이 기본으로는 최대 04 바디 소프트가 립에 닿을
- * 때 까지"* — the swallow depth goes, as the default, at most until `04_body_soft`
- * touches the `lip`. So the deepest inward amplitude stops being a number somebody
- * picks and becomes a fact about two plates.
+ * The rule it makes mechanical is "the advance goes at most until the moving
+ * mass touches the part that occludes it", which turns the deepest inward
+ * amplitude from a number somebody picks into a fact about two plates.
  *
- * ⭐ Why it is DERIVED and not a constant: this is the same principle as the axis
- * angle. One measured manifest fact, no per-cut code — a different cut with the
- * masses placed differently gets a different, correct depth for free.
+ * ⭐ Why it is DERIVED and not a constant: this is the same principle as the
+ * axis angle. One measured manifest fact, no per-cut code — a different cut with
+ * the masses placed differently gets a different, correct depth for free.
  *
  * The measurement is a 2-D one, not a projection of two edges, and it has to be:
- * the occluder is a HORSESHOE (plan 02 section 2-2), so along the axis centreline
- * there is nothing to collide with at all. The mass is far wider than the corridor,
- * so contact happens at the corridor's flanks. Reducing this to "leading edge
- * versus boundary" on the axis line would return infinity.
+ * an occluder is often a horseshoe, so along the axis centreline there may be
+ * nothing to collide with at all. A mass wider than the corridor meets the
+ * corridor's flanks instead. Reducing this to "leading edge versus boundary" on
+ * the axis line would return infinity.
  *
- * ⚠️ Both plates are static in the rig — the mass hangs off `cam` and does not
+ * ⚠️ Both plates are static in the rig — the mass rides a bone that does not
  * stroke. That is exactly why the gap between them IS the room: advancing the
  * inserting side by d moves the mass and the part together, so the largest d that
  * keeps the two footprints disjoint is the deepest the part may be driven.
@@ -36,8 +36,8 @@ export interface ContactResult {
   /**
    * Do the two footprints meet at all within the search range?
    *
-   * ⚠️ Not a formality. The two cuts of this lane share plates but differ in axis,
-   * and along the second axis the mass simply never reaches the occluder - it goes
+   * ⚠️ Not a formality. Two cuts may share plates and differ only in axis, and
+   * along one of those axes the mass can miss the occluder entirely — it goes
    * past it. `depth` is then the scan limit, which is a sentinel and not a
    * measurement, and writing it into a manifest as a number would hand that cut a
    * 4096px ceiling that reads as real. When this is false the correct manifest
@@ -49,10 +49,10 @@ export interface ContactResult {
   /** Overlapping body pixels at `depth` (must be 0) and at `depth + 1` (must be > 0). */
   overlapAtDepth: number;
   overlapPastDepth: number;
-  /** Where they first meet, in crop pixels — the mass pixel that lands on the lip. */
+  /** Where they first meet, in crop pixels — the mass pixel that lands on the other plate. */
   contactPoint: [number, number] | null;
   massPixels: number;
-  lipPixels: number;
+  againstPixels: number;
   alphaThreshold: number;
 }
 
@@ -84,9 +84,9 @@ export function measureContactDepth(
   threshold = BODY_ALPHA,
 ): ContactResult {
   const massPoints = bodyPixels(mass, threshold);
-  const lipPoints = bodyPixels(against, threshold);
+  const againstPoints = bodyPixels(against, threshold);
   const occupied = new Set<number>();
-  for (const [x, y] of lipPoints) occupied.add(y * 8192 + x);
+  for (const [x, y] of againstPoints) occupied.add(y * 8192 + x);
 
   const overlapAt = (d: number): { count: number; first: [number, number] | null } => {
     let count = 0;
@@ -120,7 +120,7 @@ export function measureContactDepth(
     overlapPastDepth: overlapAt(depth + 1).count,
     contactPoint: contact,
     massPixels: massPoints.length,
-    lipPixels: lipPoints.length,
+    againstPixels: againstPoints.length,
     alphaThreshold: threshold,
   };
 }

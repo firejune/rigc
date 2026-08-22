@@ -1,13 +1,12 @@
 /**
- * Procedural mesh geometry — the mesh tier of plan 04 section 7-1 step 4.
+ * Procedural mesh geometry.
  *
- * The shape this builds is the one plan 02 section 2-3 ① asks for and calls the
- * `lip` ring: **the rim is nailed down and only the inside moves.** On the face
- * cut that ring is the mouth aperture, and the rim already exists as data — the
- * mask polygon in the cut manifest is exactly the contour where the generated
- * part fades into untouched base pixels. Pin those vertices to the slot bone at
- * weight 1 and the seam cannot move, which is the whole reason a mesh is safe
- * here at all.
+ * The shape this builds is the one a deformable aperture asks for: **the rim is
+ * nailed down and only the inside moves.** For a face cut that ring is the mouth
+ * aperture, and the rim already exists as data — the mask polygon in the cut
+ * manifest is exactly the contour where the generated part fades into untouched
+ * base pixels. Pin those vertices to the slot bone at weight 1 and the seam
+ * cannot move, which is the whole reason a mesh is safe here at all.
  *
  * Three rings and a hub:
  *
@@ -27,9 +26,9 @@
  * polygon becomes an interior ring — pinned, because it is still the seam.
  *
  * The control bone carries every key, so key count is independent of vertex
- * count and a physics constraint could later be hung on the same bone for free
- * (plan 04 section 1-4, option ①). There are no deform timelines: option ② is
- * the fallback for when procedural weighting fails, and it has not.
+ * count and a physics constraint could later be hung on the same bone for free.
+ * There are no deform timelines: deforming the vertices directly is the fallback
+ * for when procedural weighting fails, and it has not.
  *
  * Everything here is pure and integer-stable: same manifest in, same floats out
  * (assertion A18 recompiles and compares bytes).
@@ -78,10 +77,9 @@ export interface MeshGeometry {
 }
 
 /**
- * A two-wide strip along a bone chain — the `fluid` drip of plan 02 section 2-3
- * item 2. A drip changes length without changing width and its path curves;
- * region scale cannot express either, because scaling a region longer also makes
- * it fatter.
+ * A two-wide strip along a bone chain — a trickle, a strap, a tail. It changes
+ * length without changing width and its path curves; region scale cannot express
+ * either, because scaling a region longer also makes it fatter.
  *
  * The width guarantee is structural, not a hope: the two vertices of a row carry
  * IDENTICAL weights, so whatever the chain does to one it does to the other, and
@@ -325,7 +323,7 @@ export function buildRingMesh(input: MeshSpecInput): MeshGeometry {
 }
 
 /**
- * Build the fluid ribbon.
+ * Build a ribbon strip.
  *
  * Vertices run in PERIMETER order — left side entry-to-tip, then right side
  * tip-to-entry — so the emitted `hull` is the real outline rather than a
@@ -408,7 +406,7 @@ export interface MeshBoneRef {
  * inverse transform — see `src/transform.ts` for why the old "world minus origin"
  * shortcut had to go and what it would have failed like.
  *
- * The encoding is chosen by a length comparison alone (plan 04 section 1-3), so
+ * The encoding is chosen by a length comparison alone, so
  * there is no field that says "weighted" — get the run lengths wrong and the
  * loader reads weights as coordinates without a word.
  */

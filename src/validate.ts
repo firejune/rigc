@@ -1,14 +1,15 @@
 /**
- * rigc validate — the other half of the tool (plan 04 section 4-4).
+ * rigc validate — the other half of the tool.
  *
- * The parser is forgiving, and that is the danger: plan 04 section 2-3 measured
- * six ways to write a wrong skeleton that loads with no error at all. So this
- * stage has two layers:
+ * The parser is forgiving, and that is the danger: there are at least six ways
+ * to write a wrong skeleton that loads with no error at all. So this stage has
+ * two layers:
  *
  *   A. Round-trip through the REAL spine-core. If TextureAtlas or SkeletonJson
- *      throws, the artifact is dead on arrival (cases 6d, 6e).
+ *      throws, the artifact is dead on arrival — those are the two failures the
+ *      parser does report.
  *   B. Assertions we make ourselves, because the parser will not. Every silent
- *      failure in plan 04 section 2-3 becomes one named machine check here.
+ *      failure becomes one named machine check here.
  *
  * A failure is a named assertion, and a named assertion is a nonzero exit.
  */
@@ -119,7 +120,7 @@ export interface ValidateInput {
   atlasText: string;
   /** Directory the atlas lives in; page names resolve against it. */
   atlasDir: string;
-  /** Declared durations from the motion spec (plan 04 section 4-2 rule 4). */
+  /** Declared durations from the motion spec. */
   declaredDurations?: Record<string, number>;
   /** Re-emitted artifacts, for the determinism check. */
   reEmit?: { skeletonText: string; atlasText: string };
@@ -237,7 +238,7 @@ export function validate(input: ValidateInput): ValidateReport {
   }
 
   // --- A07: atlas text shape ------------------------------------------------
-  // Two traps, both measured in plan 04 section 2-3: a region name is the RAW
+  // Two traps, both measured: a region name is the RAW
   // line (only the page name is trimmed), and a blank line closes the page
   // block, so a blank line between a page header and its regions turns the
   // regions into pages.
@@ -396,7 +397,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // --- A01: no legacy top-level constraint arrays ---------------------------
   // 4.3 folds every constraint into one `constraints` array with a `type`.
   // A 4.1/4.2-shaped `physics` array loads clean and the constraint just
-  // vanishes (plan 04 section 2-3 case 6a).
+  // vanishes.
   check('A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS', () => {
     for (const key of ['ik', 'transform', 'path', 'physics', 'slider']) {
       if (raw && key in raw) {
@@ -421,7 +422,7 @@ export function validate(input: ValidateInput): ValidateReport {
   });
 
   // --- A12: no dark / two-colour tint --------------------------------------
-  // Parsed, then silently ignored by spine-html (plan 02 section 7).
+  // Parsed, then silently ignored by spine-html.
   check('A12_NO_DARK_COLOR', () => {
     const slots = Array.isArray(raw?.slots) ? (raw.slots as unknown[]) : [];
     for (const slot of slots) {
@@ -526,7 +527,7 @@ export function validate(input: ValidateInput): ValidateReport {
           }
         }
         // Weighted vs unweighted is decided by a length comparison alone — a
-        // coincidental match reads weight data as coordinates (plan 04 s1-3).
+        // coincidental match reads weight data as coordinates.
         const weighted = !!mesh.bones;
         if (weighted && mesh.vertices.length % 3 !== 0) {
           fail('A04_MESH_TRIANGLES_AND_ENCODING', `mesh "${mesh.name}" weighted vertex run is not a multiple of 3`);
@@ -537,17 +538,38 @@ export function validate(input: ValidateInput): ValidateReport {
       }
     });
 
-    // --- A11 / A13 / A14: renderer + canvas budgets (plan 02 section 7) ----
+    // --- A11 / A13 / A14: renderer + canvas budgets ----
     check('A11_NO_CLIPPING_ATTACHMENTS', () => {
       if (clippingCount > 0) {
         fail('A11_NO_CLIPPING_ATTACHMENTS', `${clippingCount} clipping attachment(s); the renderer skips them silently`);
       }
     });
+    // 📐 The two numbers come from the rig spec's `invariants`, never from here.
+    // A mesh budget is one consumer's frame time written down — the editor's own
+    // example projects ship meshes many times denser and they are valid — so a
+    // constant in the validator would fail correct foreign data in the name of
+    // somebody else's canvas. A rig that declares no budget has nothing to be
+    // measured against, and the assertion says so instead of inventing a wall.
     check('A13_MESH_BUDGET', () => {
-      if (meshSlots.size > 4) fail('A13_MESH_BUDGET', `${meshSlots.size} mesh slots, budget is 4`);
+      const slotBudget = input.rig?.meshSlotBudget ?? null;
+      const triangleBudget = input.rig?.meshTriangleBudget ?? null;
+      if (slotBudget === null && triangleBudget === null) {
+        return skip(
+          'A13_MESH_BUDGET',
+          input.rig
+            ? `the rig "${input.rig.archetype}" declares no \`invariants.meshSlots\` or \`invariants.meshTriangles\` budget`
+            : 'no rig info (validating a bare directory), so no budget is declared',
+        );
+      }
+      if (slotBudget !== null && meshSlots.size > slotBudget) {
+        fail('A13_MESH_BUDGET', `${meshSlots.size} mesh slots, the rig budgets ${slotBudget}`);
+      }
+      if (triangleBudget === null) return;
       for (const mesh of meshAttachments) {
         const tris = (mesh.triangles?.length ?? 0) / 3;
-        if (tris > 80) fail('A13_MESH_BUDGET', `mesh "${mesh.name}" has ${tris} triangles, budget is 80`);
+        if (tris > triangleBudget) {
+          fail('A13_MESH_BUDGET', `mesh "${mesh.name}" has ${tris} triangles, the rig budgets ${triangleBudget}`);
+        }
       }
     });
     check('A14_NO_FULL_FRAME_MESH', () => {
@@ -690,11 +712,11 @@ export function validate(input: ValidateInput): ValidateReport {
           return null;
         })();
         // A ribbon's outer boundary is SUPPOSED to move — that is the whole point
-        // of a drip. So the rule splits by mesh kind rather than being relaxed:
-        // for a ribbon the invariant is that the ENTRY row cannot move, because
-        // that row is where the fluid leaves the body. Both rules protect the
-        // same thing (the part's join to the plate underneath); they just live at
-        // different edges of the mesh.
+        // of a strip that changes length. So the rule splits by mesh kind rather
+        // than being relaxed: for a ribbon the invariant is that the ENTRY row
+        // cannot move, because that row is where the strip joins the part it
+        // comes out of. Both rules protect the same thing (the mesh's join to the
+        // plate underneath); they just live at different edges of the mesh.
         if (kindOf(mesh) === 'ribbon') {
           const uvs = mesh.regionUVs ?? [];
           let entryRow = 0;
@@ -733,7 +755,7 @@ export function validate(input: ValidateInput): ValidateReport {
         }
         // The rim is the alpha contour where generated pixels meet untouched
         // base. One bone at weight 1, and that bone must be the slot's own —
-        // anything else and the seam can move (plan 02 section 2-3).
+        // anything else and the seam can move.
         const slotBone = (() => {
           for (const skin of data.skins) {
             for (const entry of skin.getAttachments()) {
@@ -784,8 +806,8 @@ export function validate(input: ValidateInput): ValidateReport {
         // here would be asserting on the wrong array (measured: length 0 after
         // a clean load). With one part per page the two are equal anyway —
         // computeUVs reduces to `u + regionUV * width` with u=0, width=1
-        // (MeshAttachment.js:173-174), which is the claim plan 04 section 1-3
-        // makes and this is where it is checked.
+        // (MeshAttachment.js:173-174), which is the claim this assertion rests
+        // on and this is where it is checked.
         const uvs = mesh.regionUVs;
         if (!uvs || uvs.length !== mesh.worldVerticesLength) {
           fail(
@@ -1004,8 +1026,8 @@ export function validate(input: ValidateInput): ValidateReport {
     }
   });
   // An overlay part must carry an alpha channel or it cannot be an overlay: it
-  // would paint an opaque rectangle over the untouched base (plan 05 s2-2, the
-  // formation whose whole claim is that the still frame has no seam). The base
+  // would paint an opaque rectangle over the untouched base, and an overlay
+  // formation's whole claim is that the still frame has no seam. The base
   // plate itself is the one page allowed to be opaque, and it identifies
   // itself structurally — it is the region that covers the whole stage.
   check('A19_OVERLAY_PNGS_HAVE_ALPHA', () => {
@@ -1033,25 +1055,31 @@ export function validate(input: ValidateInput): ValidateReport {
   });
 
   // -------------------------------------------------------------------------
-  // Tier-2 archetype assertions. These need `input.rig`, because skeleton JSON
-  // does not record which bone carries the axis, which parentage is forbidden,
-  // what the canonical draw order is, or which mesh is a ribbon.
+  // Archetype assertions — the invariants the RIG declares about itself.
+  //
+  // These need `input.rig`, because skeleton JSON does not record which bone
+  // carries the axis, which parentage is forbidden, what the canonical draw
+  // order is, or which mesh is a ribbon. Every one of them reads the rig spec's
+  // `invariants` block ([`src/rig.ts`](rig.ts)) and every one of them SKIPs when
+  // the field it needs is absent — a rig that declares nothing is not thereby
+  // certified, it is unmeasured, and the two must never print the same.
   // -------------------------------------------------------------------------
   stats.rig = input.rig ? input.rig.archetype : 'absent';
   stats.profile = profile;
 
-  // --- A24: the stroke is authored in AXIS space ---------------------------
+  // --- A24: motion under the axis bone stays in AXIS space -----------------
   //
-  // ⭐ The keystone of the joint archetype, and the exact bug the scaffold had:
-  // it wrote the stroke as screen-space x/y pairs (`x: 30, y: 8` -> `x: -45,
-  // y: -12`), so every key had to be re-recorded for a cut at a different camera
-  // angle — and plan 01 section 1-1 measured a ~40 degree difference between
-  // sibling variants of ONE cut. With the direction living in the axis bone's
-  // setup rotation, a screen-space y component on any bone in that subtree means
-  // somebody put the direction back into the keys.
+  // ⭐ The keystone of an articulated cut, and it exists because of a real bug:
+  // a generator wrote its travel as screen-space x/y pairs (`x: 30, y: 8` ->
+  // `x: -45, y: -12`), so every key had to be re-recorded for a cut framed at a
+  // different camera angle — and sibling variants of ONE cut can differ by tens
+  // of degrees. Put the direction in the axis bone's setup rotation instead and
+  // the keys become translateX along it, reusable across every variant. A
+  // screen-space y component on any bone in that subtree therefore means
+  // somebody has put the direction back into the keys.
   //
-  // The axis bone itself must carry no keys at all: it is a per-cut setup value,
-  // and animating it swings the whole formation.
+  // The axis bone itself must carry no keys at all: `invariants.axisBone` names
+  // a per-cut SETUP value, and animating it swings the whole formation.
   check('A24_AXIS_SPACE_STROKE', () => {
     const rig = input.rig;
     if (!rig) return skip('A24_AXIS_SPACE_STROKE', 'no rig info (validating a bare directory)');
@@ -1098,11 +1126,13 @@ export function validate(input: ValidateInput): ValidateReport {
 
   // --- A25: parentage that must never happen -------------------------------
   //
-  // ⚠️ `fluid_src` under `piston` is the scaffold's other structural bug
-  // (`spine_builder.py:49`): emitted fluid then gets dragged left and right with
-  // every stroke. Once released, fluid stays at the entry point and takes gravity.
-  // It is exactly the class of invariant this project puts in a machine guard
-  // instead of prose, because the rig still loads and animates — it just lies.
+  // ⚠️ Some bones are detached ON PURPOSE. An emitter that releases something
+  // into the world must not ride the part that released it, or what it emits
+  // gets dragged along with every stroke instead of staying where it left and
+  // taking gravity. The rig states each such pair in `invariants.detached`, with
+  // the reason it is tempting, because the wrong parentage still loads and still
+  // animates — it just lies. That is exactly the class of invariant that belongs
+  // in a machine guard rather than in prose.
   check('A25_DETACHED_BONE_PARENTAGE', () => {
     const rig = input.rig;
     if (!rig) return skip('A25_DETACHED_BONE_PARENTAGE', 'no rig info (validating a bare directory)');
@@ -1134,12 +1164,14 @@ export function validate(input: ValidateInput): ValidateReport {
     }
   });
 
-  // --- A26: draw order matches the archetype's slot table ------------------
+  // --- A26: draw order matches the rig's slot table ------------------------
   //
-  // The slots array IS the draw order (z-index = array index), and the illusion
-  // this archetype sells depends on one adjacency: `lip` must be drawn AFTER
-  // `piston`, or the entry point is not swallowed. Nothing in the file objects to
-  // the wrong order, and on a still frame it can even look plausible.
+  // The slots array IS the draw order (z-index = array index), so a formation
+  // whose illusion depends on one part occluding another depends on one
+  // adjacency in that array — and nothing in the file objects to the wrong
+  // order. On a still frame it can even look plausible. The rig's own slot list
+  // is the canonical table; a cut that fills only some of those slots emits a
+  // SUBSEQUENCE of it, which is what this checks.
   check('A26_SLOT_DRAW_ORDER', () => {
     if (!input.rig) return skip('A26_SLOT_DRAW_ORDER', 'no rig info (validating a bare directory)');
     const order = input.rig.slotOrder;
@@ -1173,7 +1205,7 @@ export function validate(input: ValidateInput): ValidateReport {
   //
   // The join key is a chain of three names — attachment -> atlas region -> file —
   // and A08 only holds the first link. The second was held by convention alone:
-  // an atlas could declare page `../plates/02_lip_overlay.png` with a region
+  // an atlas could declare page `../plates/02_overlay.png` with a region
   // called anything at all, every attachment could agree with it, and the rig
   // would load with the wrong pixels under the right name. One part per page (A06
   // forces it) makes the check exact.
@@ -1202,8 +1234,8 @@ export function validate(input: ValidateInput): ValidateReport {
   // a hope. Both vertices of a row carry the same bones at the same weights, so
   // whatever the chain does to one it does to the other and their separation can
   // only rotate — the strip curves and stretches, and never gets fatter. Give one
-  // side a different weight and the drip develops a taper that grows with the
-  // sag, which is the sort of thing that reads as bad art rather than as a bug.
+  // side a different weight and the strip develops a taper that grows with its
+  // travel, which is the sort of thing that reads as bad art rather than as a bug.
   check('A28_RIBBON_ROWS_SHARE_WEIGHTS', () => {
     if (!skeletonData) return skip('A28_RIBBON_ROWS_SHARE_WEIGHTS', 'the skeleton did not load (A00 owns that failure)');
     if (!input.rig) return skip('A28_RIBBON_ROWS_SHARE_WEIGHTS', 'no rig info (validating a bare directory), so no mesh is known to be a ribbon');
@@ -1239,21 +1271,25 @@ export function validate(input: ValidateInput): ValidateReport {
     }
   });
 
-  // --- A29: the stroke stops where the bodies meet -------------------------
+  // --- A29: inward travel stops where the two masses meet ------------------
   //
-  // 🎯 Owner rule, 2026-08-22: the swallow depth goes at most until the inserting
-  // mass touches the occluder. A stroke that drives past that point renders as two
-  // bodies interpenetrating, and NOTHING in skeleton JSON objects - the animation
-  // loads, plays, and is simply wrong. Exactly the shape of silent wrongness this
+  // 🎯 The rule: inward travel goes at most as far as the point where the moving
+  // mass touches the part that occludes it. That distance is MEASURED off the two
+  // plates (`tools/measure_contact_depth.ts`) and recorded in the manifest as
+  // `stroke.contact_depth`, so the ceiling is a fact about the art rather than a
+  // number somebody picked. Drive past it and the frame renders two bodies
+  // interpenetrating — and NOTHING in skeleton JSON objects: the animation loads,
+  // plays, and is simply wrong. Exactly the shape of silent wrongness this
   // validator exists for.
   //
   // Two things spend the same clearance and so are added together:
-  //   * the stroke, which is a translateX on a bone in the axis subtree (A24
+  //   * the travel itself, a translateX on a bone in the axis subtree (A24
   //     guarantees there is no hidden screen-space component to miss); and
-  //   * the mass bone's own inward keys. It hangs off `cam`, not off `axis`, so its
-  //     keys are screen-space by design - they get projected onto the axis rather
-  //     than read as axis coordinates. Ignoring them would let a rig pass while the
-  //     recoil closed the last few pixels of the gap.
+  //   * the mass bone's own inward keys. `invariants.massBone` typically hangs
+  //     outside the axis subtree, so its keys are screen-space by design — they
+  //     get projected onto the axis rather than read as axis coordinates.
+  //     Ignoring them would let a rig pass while a recoil key closed the last few
+  //     pixels of the gap.
   check('A29_STROKE_WITHIN_CONTACT_DEPTH', () => {
     const rig = input.rig;
     if (!rig) return skip('A29_STROKE_WITHIN_CONTACT_DEPTH', 'no rig info (validating a bare directory)');
@@ -1269,25 +1305,24 @@ export function validate(input: ValidateInput): ValidateReport {
     if (deep.total > rig.contactDepth + 1e-6) {
       fail(
         'A29_STROKE_WITHIN_CONTACT_DEPTH',
-        `${deep.describe()} but the masses meet at ${rig.contactDepth}px — the bodies would interpenetrate`,
+        `${deep.describe()} but the masses meet at ${rig.contactDepth}px — the two plates would interpenetrate`,
       );
     }
   });
 
-  // --- A30: the stroke stops where the drawn flesh runs out ----------------
+  // --- A30: inward travel stops where the drawn cover runs out -------------
   //
   // 🎯 The second ceiling, and it is NOT a restatement of A29. Contact asks when
-  // two masses collide; containment asks when the moving part's cap contour stops
-  // being covered by the occluder's opaque footprint. Past that point the cap is
-  // drawn in a place the art says is inside the body — the exact inverse of plan
-  // 02 section 8-8's defect, where the part was too short to reach the rim — and
-  // like every failure in this family it is completely silent: the animation
-  // loads, plays, and shows flesh passing through flesh.
+  // two masses collide; containment asks when the moving part's leading contour
+  // stops being covered by the occluder's opaque footprint. Past that point the
+  // part is drawn in a place the art says is hidden — and like every failure in
+  // this family it is completely silent: the animation loads, plays, and shows
+  // one plate passing through another.
   //
   // A cut can have either ceiling without the other, which is why they are two
-  // fields and two assertions. The real tier-2 cut has no contact ceiling at all
-  // (its mass and its occluder are complementary cuts of one anatomy, so they are
-  // adjacent at rest and never "meet") and a containment ceiling of 118px.
+  // manifest fields and two assertions. Two plates cut from ONE piece of art are
+  // adjacent at rest and never "meet", so that cut has no contact ceiling at all
+  // and only a containment one.
   //
   // ⚠️ Second half, and it is what keeps the first half true: the ceiling is
   // measured on the UNDEFORMED contour, by translating the plate along the axis.
@@ -1311,8 +1346,8 @@ export function validate(input: ValidateInput): ValidateReport {
     if (deep.total > rig.capContainmentCeiling + 1e-6) {
       fail(
         'A30_STROKE_WITHIN_CAP_CONTAINMENT',
-        `${deep.describe()} but the cap contour leaves the occluder's opaque footprint at ` +
-          `${rig.capContainmentCeiling}px — the cap would be drawn where it should be swallowed`,
+        `${deep.describe()} but the leading contour leaves the occluder's opaque footprint at ` +
+          `${rig.capContainmentCeiling}px — the part would be drawn where it should be covered`,
       );
     }
     const subtree = new Set(rig.axisSubtree);
@@ -1360,10 +1395,10 @@ export function validate(input: ValidateInput): ValidateReport {
  *
  *   * the stroke — a translateX on a bone in the axis subtree. A24 guarantees
  *     there is no hidden screen-space component to miss.
- *   * the mass bone's own inward keys. It hangs off `cam`, not off `axis`, so its
- *     keys are screen-space by design and get PROJECTED onto the axis rather than
- *     read as axis coordinates. Ignoring them would let a rig pass while the
- *     recoil closed the last few pixels.
+ *   * the mass bone's own inward keys. It typically hangs outside the axis
+ *     subtree, so its keys are screen-space by design and get PROJECTED onto the
+ *     axis rather than read as axis coordinates. Ignoring them would let a rig
+ *     pass while a recoil key closed the last few pixels.
  */
 function deepestInwardAdvance(
   raw: Json | null,
@@ -1413,7 +1448,7 @@ function deepestInwardAdvance(
  * Decode a weighted mesh's `vertices` run into per-vertex (boneIndex, weight).
  *
  * The encoding carries no marker at all — weighted versus unweighted is decided
- * by a length comparison (plan 04 section 1-3) — so every assertion that talks
+ * by a length comparison — so every assertion that talks
  * about weights has to walk the run itself.
  */
 function meshWeightsOf(mesh: MeshAttachment): Array<Array<{ bone: number; weight: number }>> {

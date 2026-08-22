@@ -2,18 +2,17 @@
  * Input and output shapes for rigc.
  *
  * Three inputs, one domain each:
- *   - the cut manifest (here the face-class manifest of plan 05 section 9 item 4),
- *     which owns measured geometry: crop, part offsets, part sizes, mask
+ *   - the cut manifest, which owns measured geometry: crop, part offsets, part sizes, mask
  *     polygons, the state machine, anchors, the axis and the measured ceilings.
  *     Optional — a foreign skeleton has none;
  *   - the **rig spec** ([`src/rig.ts`](rig.ts), `spec: "rigc-rig/1"`), which owns
  *     skeleton structure: bones, slots, skins, constraints, invariants. Required.
  *     It replaced the three hard-coded archetype tables that used to be code;
- *   - the motion spec (plan 04 section 4-2), which owns time: keys, named
+ *   - the motion spec, which owns time: keys, named
  *     easings, groups, declared durations.
  *
  * Nothing else is an input, and the compiler never invents a value that is in
- * none of them — plan 04 section 4-2 rule 5.
+ * none of them.
  */
 
 // ---------------------------------------------------------------------------
@@ -22,7 +21,7 @@
 
 /**
  * Mesh declaration for a part — geometry, so it belongs to the manifest and not
- * to the motion spec (plan 04 section 4-1). It says WHERE the deformable ring
+ * to the motion spec. It says WHERE the deformable ring
  * is; the motion spec says WHEN it moves, by keying the control bone.
  */
 export interface FaceManifestMesh {
@@ -74,10 +73,10 @@ export interface FaceManifestPart {
   /**
    * The archetype slot this part joins on, when it differs from `slot`.
    *
-   * ⚠️ A cut manifest is often ALSO its generating lane's record, and that lane
-   * names parts anatomically (`part`, `occluder`) while the archetype's table
-   * names them by role (`piston`, `lip`). The archetype table has to stay
-   * single-valued — the runtime, the probes and A26 all join on the emitted slot
+   * ⚠️ A cut manifest is often ALSO the record of the pipeline that generated
+   * the art, and that pipeline names parts after what they depict while a rig
+   * names them after the role they play. The rig's slot table has to stay
+   * single-valued — the runtime, the tooling and A26 all join on the emitted slot
    * name, and a second alias for one slot is how a slot vanishes with no error.
    * So the manifest carries the mapping and `slot` keeps meaning what its author
    * meant. Absent = the two are the same name.
@@ -112,14 +111,13 @@ export interface FaceManifest {
   state_machine?: Record<string, string[]>;
   parts: FaceManifestPart[];
 
-  // -- joint-closeup fields (plan 01 section 6.4's cut manifest) -------------
+  // -- articulated-cut fields ------------------------------------------------
   /**
-   * Entry point in crop pixels, y down. Named `insertion` because that is what
-   * plan 01 section 6.4 calls it.
+   * Entry point in crop pixels, y down — the origin of the cut's axis frame.
    */
   insertion?: [number, number];
   /**
-   * ⭐ The one value a new cut of this archetype changes (plan 02 section 2-1).
+   * ⭐ The one value a new cut of this archetype changes.
    * `deg` is SCREEN degrees, y down, the same convention as `mesh.bias.axis_deg`;
    * the compiler negates it into Spine's y-up CCW rotation. `unit` is the same
    * direction as a vector and is cross-checked against `deg`, because a manifest
@@ -167,7 +165,7 @@ export interface FaceManifest {
 }
 
 // ---------------------------------------------------------------------------
-// Motion spec  (spec: "rigc-motion/1", plan 04 section 4-2)
+// Motion spec  (spec: "rigc-motion/1")
 // ---------------------------------------------------------------------------
 
 /** Graph-view style normalised handles [hx1, hy1, hx2, hy2]. */
@@ -202,7 +200,7 @@ export interface MotionKey {
    *
    * ⚠️ Not the normalised graph-view handles `easings` takes. Those go through
    * `bezierForChannel`; writing them here loads clean and plays a different
-   * curve (plan 04 section 1-6 item 3).
+   * curve.
    */
   curve?: number[] | 'stepped';
 }
@@ -231,12 +229,11 @@ export type BoneProperty =
 export type PhysicsProperty = 'mix' | 'reset';
 
 /**
- * One physics constraint (plan 02 section 3, plan 04 section 1-5).
+ * One physics constraint.
  *
  * Structure, so it could argue for the manifest — but every field here is a
- * tuning number for motion over time, and plan 04 section 7-2 routes the
- * starting-parameter table into the motion spec. It lives with the keys it
- * competes against.
+ * tuning number for motion over time, so the starting-parameter table goes into
+ * the motion spec. It lives with the keys it competes against.
  *
  * ⚠️ The component fields (`x`/`y`/`rotate`/`scaleX`/`shearX`) all default to 0,
  * which means a constraint that names none of them parses cleanly and does
@@ -264,7 +261,7 @@ export interface MotionPhysics {
 export interface MotionTrack {
   /** Target one slot... */
   slot?: string;
-  /** ...or a named group of slots (plan 04 section 4-2 rule 3). */
+  /** ...or a named group of slots. */
   group?: string;
   /** ...or one bone, for the mesh tier: the control bone carries every key. */
   bone?: string;
@@ -405,7 +402,7 @@ export interface SpineSlot {
 
 export interface SpineRegionAttachment {
   path?: string;
-  /** Required. Omitting these yields NaN with no error — plan 04 section 2-3 case 6c. */
+  /** Required. Omitting these yields NaN with no error. */
   width: number;
   height: number;
   x?: number;
@@ -423,7 +420,7 @@ export interface SpineRegionAttachment {
 
 /**
  * Weighted mesh. `triangles` and `uvs` are not optional in practice: a missing
- * `triangles` loads as `undefined` (plan 04 section 2-3 case 6f) and `uvs` is
+ * `triangles` loads as `undefined` and `uvs` is
  * what decides `worldVerticesLength`.
  */
 export interface SpineMeshAttachment {
@@ -503,11 +500,11 @@ export interface CompiledImage {
  * Structural expectations the validator cannot read out of skeleton JSON.
  *
  * Some invariants of a rig are simply not written down in the artifact:
- * nothing in the file says "this mesh is a ribbon" or "the fluid emitter must
- * not hang off the moving part". The compiler knows, because the rig spec's
- * `invariants` block says so, and it hands the knowledge over rather than letting the validator
- * guess. Mutants stay honest because a mutant edits the ARTIFACT while this
- * block keeps saying what the rig was supposed to be.
+ * nothing in the file says "this mesh is a ribbon" or "this emitter must not
+ * hang off the part that released it". The compiler knows, because the rig
+ * spec's `invariants` block says so, and it hands the knowledge over rather than
+ * letting the validator guess. Mutants stay honest because a mutant edits the
+ * ARTIFACT while this block keeps saying what the rig was supposed to be.
  */
 export interface RigInfo {
   /** The rig spec's `name`. Reported by the validator so a green names its rig. */
@@ -516,12 +513,16 @@ export interface RigInfo {
   axisBone: string | null;
   /** Bones under the axis bone, whose translate keys must stay on the axis. */
   axisSubtree: string[];
-  /** [bone, ancestor it must never have] — the fluid emitter vs the moving part. */
+  /** [bone, ancestor it must never have] — see `invariants.detached`. */
   detached: Array<[string, string]>;
   /** Canonical draw order (the rig's slot array), or null if it declares none. */
   slotOrder: string[] | null;
   /** slot -> mesh generator, for the kind-aware mesh assertions. */
   meshKinds: Record<string, 'ring' | 'ribbon'>;
+  /** Mesh slots this rig budgets for, or null when it declares no budget. */
+  meshSlotBudget: number | null;
+  /** Triangles one mesh may carry, or null when the rig declares no budget. */
+  meshTriangleBudget: number | null;
   /** Deepest inward advance the two masses allow, from the manifest. */
   contactDepth: number | null;
   /**
@@ -544,7 +545,7 @@ export interface CompileResult {
   skeletonText: string;
   atlasText: string;
   images: CompiledImage[];
-  /** States listed in the manifest whose PNG is not on disk (plan 05 dropped `half`). */
+  /** States listed in the manifest whose PNG is not on disk. */
   droppedStates: Array<{ slot: string; state: string; path: string }>;
   /**
    * Parts the manifest declares and the cut does not carry (`image: null`, no

@@ -1,14 +1,16 @@
 /**
- * Minimal RGBA canvas + PNG writer for the placeholder plates.
+ * Minimal RGBA canvas + PNG writer.
  *
  * `src/png.ts` reads 26 bytes of header because that is all the compiler needs;
- * this writes whole files, because the rig lane has to render something and the
- * real parts are another squad's deliverable. Node's zlib is the only thing it
- * leans on, so the rigc package still has exactly one dependency.
+ * this writes whole files, because a rig has to have something to point at
+ * before its art exists — synthetic stand-in plates, reference frames, the
+ * selftest's own fixtures. Node's zlib is the only thing it leans on, so the
+ * rigc package still has exactly one dependency.
  *
- * Straight (non-premultiplied) alpha, colour type 6. Plan 02 section 5-2 makes
- * premultiplied alpha the single most important export setting to get wrong, and
- * a writer that cannot produce it is the cheapest possible guarantee.
+ * Straight (non-premultiplied) alpha, colour type 6. Premultiplied alpha is the
+ * single most consequential export setting to get wrong — the renderer does not
+ * un-premultiply, so every part gains a dark rim — and a writer that cannot
+ * produce it is the cheapest possible guarantee.
  */
 import { deflateSync, inflateSync } from 'node:zlib';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -218,7 +220,7 @@ export function encodePng(width: number, height: number, rgba: Uint8Array): Uint
  * Read an 8-bit RGB/RGBA PNG back into a `Plate`.
  *
  * `src/png.ts` parses 26 bytes because that is all the COMPILER needs, and it
- * stays that way: the compiler never re-measures art (plan 04 section 4-1). This
+ * stays that way: the compiler never re-measures art. This
  * decoder is for the measuring tools, which is where art measurement belongs -
  * the same division that puts `mesh.center` in the manifest as a measured number
  * rather than as something the compiler derives at build time.

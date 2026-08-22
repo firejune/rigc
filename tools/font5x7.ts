@@ -1,11 +1,11 @@
 /**
  * A 5x7 bitmap font, uppercase + digits + a little punctuation.
  *
- * It exists so the placeholder plate generator can burn a part's name into its
- * own pixels with no font file, no canvas and no dependency. That matters more
- * than it sounds: the whole point of a synthetic plate is that nobody can
- * mistake it for a generated part, and the strongest form of that is the words
- * PLACEHOLDER sitting in the image itself.
+ * It exists so a generated plate can burn its own name into its own pixels with
+ * no font file, no canvas and no dependency. That matters more than it sounds:
+ * the whole point of a synthetic stand-in plate is that nobody can mistake it
+ * for real art, and the strongest form of that is the word PLACEHOLDER sitting
+ * in the image itself.
  *
  * Each glyph is 7 rows of 5 bits, MSB = leftmost column.
  */

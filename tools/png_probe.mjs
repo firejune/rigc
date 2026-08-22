@@ -1,11 +1,11 @@
 /**
- * PNG reading for the pixel probes.
+ * PNG reading for pixel probes.
  *
- * Playwright hands back a PNG buffer and a pixel assertion has to look at
- * pixels, so 8-bit RGB/RGBA with the five standard filters is all that can come
- * out of a screenshot. This lived inside probe_axial_occlusion.mjs until a second
- * probe needed it; a copied decoder is the shape every drift in this project has
- * had, so it moved here instead of being duplicated.
+ * A browser screenshot comes back as a PNG buffer and a pixel assertion has to
+ * look at pixels, so 8-bit RGB/RGBA with the five standard filters is all that
+ * can come out of one. This started life inside a single probe; a copied decoder
+ * is the shape every drift in this project has had, so it lives here instead of
+ * being duplicated into the second one.
  *
  * `src/png.ts` reads 26 bytes (the compiler only needs the header) and
  * `tools/plate.ts` decodes into a writable canvas (the plate tools need to draw).

@@ -3,12 +3,11 @@
  *
  * The only thing rigc needs from a part PNG is its true pixel size and whether
  * it carries an alpha channel, and both live in the IHDR chunk that every PNG
- * puts first. Parsing 26 bytes keeps the compiler dependency-free — no sharp,
- * no NODE_PATH into the game repo (plan 04 section 4-1: "게임 본체 의존 0").
+ * puts first. Parsing 26 bytes keeps the compiler dependency-free: no image
+ * library, and nothing on the module path but rigc itself.
  *
- * Measuring instead of trusting is the whole point: plan 04 section 2-3 case 6h
- * showed that an atlas `size:` that disagrees with the file loads clean and
- * collapses the UVs silently.
+ * Measuring instead of trusting is the whole point: an atlas `size:` that
+ * disagrees with the file loads clean and collapses the UVs silently.
  */
 import { readFileSync } from 'node:fs';
 

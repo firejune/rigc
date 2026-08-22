@@ -2,17 +2,20 @@
 /**
  * Measure a cut's contact depth from its plates.
  *
- *   bun tools/measure_contact_depth.ts <manifest.json> [massSlot] [againstSlot]
+ *   bun tools/measure_contact_depth.ts <manifest.json> <massSlot> <againstSlot>
  *
- * 🎯 The owner's rule of 2026-08-22 — the swallow depth goes at most until the
- * inserting mass touches the occluder — turns the deepest inward amplitude into a
- * measured fact. This is the tool that measures it, and it exists separately from
- * the placeholder generator because REAL parts need it: the generator can measure
- * plates it just drew, but lane A's parts arrive as PNGs on disk.
+ * The rule it makes mechanical: inward travel goes at most until the moving mass
+ * touches the part that occludes it. That turns the deepest inward amplitude
+ * from a number somebody picks into a measured fact.
  *
- * The number goes into the manifest as `stroke.contact_depth`. It is not computed
- * at build time on purpose - the compiler never re-measures art (plan 04 section
- * 4-1), the same division that keeps `mesh.center` a measured manifest number.
+ * ⚠️ The two slot names are REQUIRED and the tool has no defaults for them. Which
+ * plate is the mass and which is the occluder is a fact about one cut's anatomy,
+ * and a default here would quietly measure the wrong pair on the next cut and
+ * still print a plausible number.
+ *
+ * The result goes into the manifest as `stroke.contact_depth`. It is not computed
+ * at build time on purpose — the compiler never re-measures art, the same
+ * division that keeps `mesh.center` a measured manifest number.
  *
  * Output includes the two-sided proof the depth has to satisfy: ZERO overlapping
  * body pixels at the depth, and MORE THAN ZERO one pixel past it. A depth with no
@@ -37,9 +40,11 @@ interface Manifest {
   parts: Part[];
 }
 
-const [manifestArg, massSlot = 'body_soft', againstSlot = 'lip'] = process.argv.slice(2);
-if (!manifestArg) {
-  console.error('usage: bun tools/measure_contact_depth.ts <manifest.json> [massSlot] [againstSlot]');
+const [manifestArg, massSlot, againstSlot] = process.argv.slice(2);
+if (!manifestArg || !massSlot || !againstSlot) {
+  console.error('usage: bun tools/measure_contact_depth.ts <manifest.json> <massSlot> <againstSlot>');
+  console.error('  massSlot    the part that advances');
+  console.error('  againstSlot the part it must not pass through');
   process.exit(2);
 }
 const manifestPath = resolve(manifestArg);
@@ -74,7 +79,7 @@ const result = measureContactDepth(
 console.log(`contact depth for ${manifestPath}`);
 console.log(`  axis            ${manifest.axis.deg} deg (screen, y down) -> inward unit [${inward.map((v) => v.toFixed(4)).join(', ')}]`);
 console.log(`  mass            ${massSlot.padEnd(12)} ${mass.plate.width}x${mass.plate.height} at ${JSON.stringify(mass.part.offset)}  ${result.massPixels} body px`);
-console.log(`  against         ${againstSlot.padEnd(12)} ${against.plate.width}x${against.plate.height} at ${JSON.stringify(against.part.offset)}  ${result.lipPixels} body px`);
+console.log(`  against         ${againstSlot.padEnd(12)} ${against.plate.width}x${against.plate.height} at ${JSON.stringify(against.part.offset)}  ${result.againstPixels} body px`);
 console.log(`  alpha threshold ${result.alphaThreshold} of 255`);
 const expected = result.touches ? result.depth : null;
 if (!result.touches) {

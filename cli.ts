@@ -11,7 +11,7 @@
  *
  * `build` emits ONLY if validate is green. That ordering is the point: the
  * compiler is allowed to be wrong, it is not allowed to leave the wrong thing
- * on disk (plan 04 section 4-3 step 7).
+ * on disk.
  *
  * ⚠️ Green is a claim about VALIDITY and about nothing else. The gate has no way
  * to know whether the animation is the one that was asked for — a build with
@@ -640,7 +640,7 @@ function cmdExplain(flags: Record<string, string>): void {
     for (const d of result.droppedStates) console.log(`  ${d.slot}/${d.state}  ${d.path}`);
   }
 
-  console.log('\nmix table (player config, not skeleton JSON — plan 02 section 4-5)');
+  console.log('\nmix table (player config, not skeleton JSON)');
   console.log(`  default=${motion.mix?.default ?? 0} pairs=${JSON.stringify(motion.mix?.pairs ?? [])}`);
 }
 

@@ -1,8 +1,7 @@
 /**
  * rigc compile — rig spec + motion spec (+ an optional cut manifest) -> Spine 4.3
  * skeleton JSON and a one-part-per-page atlas. Pure data assembly: no spine-core
- * here (that is the validator's job, plan 04 section 4-1), no clock, no
- * randomness.
+ * here (that is the validator's job), no clock, no randomness.
  *
  * Three inputs, one domain each — [`src/rig.ts`](rig.ts) states the split in
  * full. In one line: the **manifest** owns measured art, the **rig spec** owns
@@ -111,8 +110,8 @@ const BONE_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
 /**
  * Physics timelines. `mix` is the constraint's authority; `reset` is an event
  * with no value — one key at the entry frame stops the constraint from flying
- * in from whatever pose the previous animation left (plan 02 section 3 trap 2,
- * solved in DATA rather than in caller glue).
+ * in from whatever pose the previous animation left — solved in DATA rather
+ * than in caller glue.
  */
 const PHYSICS_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
   mix: { fields: ['value'], identity: [1] },
@@ -134,7 +133,7 @@ const PHYSICS_PARAMS: Array<[string, number]> = [
 ];
 
 // ---------------------------------------------------------------------------
-// curves — plan 04 section 1-6
+// curves
 // ---------------------------------------------------------------------------
 
 /**
@@ -143,7 +142,7 @@ const PHYSICS_PARAMS: Array<[string, number]> = [
  * `Animation.setBezier` samples the cubic in the (time, value) plane, so the
  * normalised handles an editor shows are NOT what the JSON holds. Writing the
  * handles straight into the file loads without error and produces a different
- * curve — plan 04 section 1-6 item 3.
+ * curve.
  *
  * Four numbers PER VALUE CHANNEL, concatenated in channel order. A short array
  * multiplies `undefined` and yields a NaN curve, silently (case 6g).
@@ -192,7 +191,7 @@ function partWindow(part: FaceManifestPart, manifest: FaceManifest): {
  * fact rather than a naming convention.
  *
  * It matters twice. A full-frame mesh is a full-frame canvas that can never
- * dirty-skip (plan 02 section 2-3, plan 02 section 7), so the base must never be
+ * dirty-skip, so the base must never be
  * a mesh — and the validator recognises the same shape from the other side, which
  * is why assertion A14 already covers this without a new check. And a full-frame
  * region is the one page allowed to be opaque (A19).
@@ -271,7 +270,7 @@ export function compile(opts: CompileOptions): CompileResult {
   const imagesDir = opts.imagesDir !== undefined ? resolve(opts.imagesDir) : resolve(dirname(rigPath), rig.images ?? '.');
 
   // -- 1. gather images ------------------------------------------------------
-  // Region name = attachment name = PNG basename (plan 04 section 4-3 step 2).
+  // Region name = attachment name = PNG basename.
   const images: CompiledImage[] = [];
   const droppedStates: CompileResult['droppedStates'] = [];
   const seenRegions = new Set<string>();
@@ -291,7 +290,8 @@ export function compile(opts: CompileOptions): CompileResult {
     const info = readPngInfo(absPath);
     // Page name is the PNG path *relative to the atlas file*, so the viewer
     // resolves it the way every Spine consumer does: against the atlas URL.
-    // The PNGs are not copied — plan 04 section 4-1 ("PNG는 그대로 통과").
+    // The PNGs are not copied: they pass through untouched, and the atlas points
+    // at wherever they already live.
     const page = relative(outDir, absPath).split('\\').join('/');
     const img: CompiledImage = {
       region,
@@ -307,13 +307,13 @@ export function compile(opts: CompileOptions): CompileResult {
     return img;
   };
 
-  // A manifest may name a part the cut does not carry. Plan 02 section 2-2 marks
-  // four of this formation's seven slots optional, and the real tier-2 cut
-  // delivers three plates: `03_fluid_overflow` is a scene-shared sprite sheet
-  // (plan 01 section 3.5) and the manifest records it as `image: null` with no
-  // window at all. That entry is a documented ABSENCE, not a part — and it used
-  // to crash the compiler on its missing `offset` rather than being tolerated, so
-  // "the optional slots are optional" needed this line to actually be true.
+  // A manifest may name a part the cut does not carry. A formation can declare
+  // more slots than any one cut fills, and a cut that shares a sprite with the
+  // scene around it has no plate of its own to point at — the manifest then
+  // records the part as `image: null` with no window at all. That entry is a
+  // documented ABSENCE, not a part — and it used to crash the compiler on its
+  // missing `offset` rather than being tolerated, so "the optional slots are
+  // optional" needed this line to actually be true.
   const absentParts: CompileResult['absentParts'] = [];
   const declaredParts = (manifest?.parts ?? []).filter((part) => {
     if (part.image === null && !part.states) {
@@ -322,12 +322,12 @@ export function compile(opts: CompileOptions): CompileResult {
     }
     return true;
   });
-  // ⚠️ `rig_slot` is the join key, not `slot`. A cut manifest that is also a parts
-  // lane record carries anatomical slot names of its own (`part`, `occluder`) and
-  // scripts select on them; the rig's slot table is what the runtime, the probes
+  // ⚠️ `rig_slot` is the join key, not `slot`. A cut manifest that doubles as the
+  // art pipeline's record carries slot names of its own and that pipeline's
+  // scripts select on them; the rig's slot table is what the runtime, the tooling
   // and the viewer join on. So the mapping is manifest data, and the rig's table
   // stays single-valued — one name per slot, which is the only way A26 and a
-  // `hide: ['lip']` probe can mean the same thing on every cut.
+  // "hide this slot" probe can mean the same thing on every cut.
   const parts = declaredParts
     .map((part) => (part.rig_slot && part.rig_slot !== part.slot ? { ...part, slot: part.rig_slot } : part))
     .sort((a, b) => a.draw_order - b.draw_order);
@@ -370,7 +370,7 @@ export function compile(opts: CompileOptions): CompileResult {
   }
   for (const part of meshParts) {
     if (isBasePlate(part, manifest!)) {
-      // A base plate mesh is a full-frame canvas every frame (plan 02 section 2-3).
+      // A base plate mesh is a full-frame canvas every frame.
       throw new CompileError(`slot "${part.slot}" is the base plate; it must never be a mesh`);
     }
     const spec = part.mesh!;
@@ -413,8 +413,8 @@ export function compile(opts: CompileOptions): CompileResult {
       if (relPath === null) continue; // base pixels show through; nothing to emit
       const absPath = resolve(manifestDir!, relPath);
       if (!existsSync(absPath)) {
-        // plan 05 section 5-3 rung 2 dropped the `half` state. The manifest still
-        // lists it, so the compiler reports it rather than pretending either way.
+        // A manifest can outlive a state whose art was dropped. It still lists
+        // it, so the compiler reports the gap rather than pretending either way.
         droppedStates.push({ slot: part.slot, state, path: relPath });
         continue;
       }
@@ -460,9 +460,9 @@ export function compile(opts: CompileOptions): CompileResult {
 
   // -- 2. atlas --------------------------------------------------------------
   // One part = one page. No packer, so no PMA trap, no rotation, no strip
-  // offsets (plan 04 section 7-3). Region covers the page exactly => u2=v2=1.
+  // offsets. Region covers the page exactly => u2=v2=1.
   //
-  // Two text-shape traps are load-bearing here (plan 04 section 2-3):
+  // Two text-shape traps are load-bearing here:
   //   * a region name is the RAW line, not a trimmed one -> no indentation;
   //   * a blank line closes the page block -> none between header and regions.
   const atlasLines: string[] = [];
@@ -514,7 +514,7 @@ export function compile(opts: CompileOptions): CompileResult {
   }
 
   // -- 4. slots + skins ------------------------------------------------------
-  // Draw order IS the slots array order (plan 04 section 1-1). No separate field,
+  // Draw order IS the slots array order. No separate field,
   // and the rig's array is that order.
   const slots: SpineSlot[] = [];
   const skinTables = new Map<string, Record<string, Record<string, SpineAttachment>>>();
@@ -574,7 +574,7 @@ export function compile(opts: CompileOptions): CompileResult {
         if (mesh) {
           // Every state of a mesh slot gets the SAME geometry. That is what makes
           // an attachment swap mid-deform safe: the control bone's pose means the
-          // same thing under all of them, so lip-sync and aperture do not fight.
+          // same thing under all of them, so the swap and the deform do not fight.
           perSlot[name] = { ...mesh.attachment };
           continue;
         }
@@ -728,7 +728,7 @@ export function compile(opts: CompileOptions): CompileResult {
     if (drawOrder) for (const key of drawOrder) compiledDuration = Math.max(compiledDuration, key.time as number);
 
     // Rule 4: the declared duration is verified, because skeleton JSON does not
-    // carry one — the loader takes the max key time (plan 04 section 1-6).
+    // carry one — the loader takes the max key time.
     if (Math.abs(compiledDuration - anim.duration) > FRAME) {
       throw new CompileError(
         `animation "${animName}" declares duration ${anim.duration}s but its last key is at ${compiledDuration}s`,
@@ -955,7 +955,7 @@ function buildRigRegion(
   const height = att.height ?? img?.height;
   if (width === undefined || height === undefined) {
     // No parser default: an omission loads as NaN and every UV collapses, with
-    // no error at all (plan 04 section 2-3 case 6c). So it is this or nothing.
+    // no error at all. So it is this or nothing.
     throw new CompileError(
       `${where}: a region needs width and height — give them, or give an "image" and rigc will measure the PNG`,
     );
@@ -1226,8 +1226,9 @@ function buildRigInfo(
   }
   const meshKinds: Record<string, 'ring' | 'ribbon'> = {};
   for (const mesh of meshes) meshKinds[mesh.slot] = mesh.kind;
-  // Inward, in Spine world. Off-axis keys (the mass hangs off `cam`, not `axis`)
-  // have to be projected onto it before they can be compared with a stroke.
+  // Inward, in Spine world. Off-axis keys (the mass bone usually hangs outside
+  // the axis subtree) have to be projected onto it before they can be compared
+  // with travel along the axis.
   const spineDeg = manifest?.axis ? screenToSpineDegrees(manifest.axis.deg) : null;
   const inwardUnit: [number, number] | null =
     spineDeg === null ? null : [r6(Math.cos((spineDeg * Math.PI) / 180)), r6(Math.sin((spineDeg * Math.PI) / 180))];
@@ -1248,6 +1249,8 @@ function buildRigInfo(
     detached: (rig.invariants?.detached ?? []).map((d) => [d.bone, d.notUnder] as [string, string]),
     slotOrder: rig.slots.length ? rig.slots.map((s) => s.name) : null,
     meshKinds,
+    meshSlotBudget: rig.invariants?.meshSlots ?? null,
+    meshTriangleBudget: rig.invariants?.meshTriangles ?? null,
     contactDepth,
     capContainmentCeiling: capCeiling,
     massBone: rig.invariants?.massBone ?? null,
@@ -1279,14 +1282,16 @@ function checkAxisSelfConsistency(manifest: FaceManifest): void {
  * Place a rigid region on its bone.
  *
  * Two offsets are folded in here. The attachment is centred on the part window
- * rather than on the bone, because several slots share one bone in the joint
- * formation (`piston` + `piston_blur`, `lip` + `fluid_pool`) and their windows
- * are in different places. And the attachment's own `rotation` cancels the bone's
- * world rotation, because a plate is authored in screen space: without it every
- * slot hanging off `axis` would render tilted by the cut's axis angle.
+ * rather than on the bone, because several slots may share one bone — a part and
+ * its motion-blur variant, an occluder and what pools against it — while their
+ * windows sit in different places. And the attachment's own `rotation` cancels
+ * the bone's world rotation, because a plate is authored in screen space:
+ * without it every slot hanging off a rotated axis bone would render tilted by
+ * the cut's axis angle.
  *
  * On an unrotated bone sitting at its window centre both terms are zero and the
- * fields are omitted, which is why the overlay formation's output is unchanged.
+ * fields are omitted, which is why a formation with no axis emits the same
+ * bytes it always did.
  */
 function placeRegion(
   part: FaceManifestPart,
@@ -1295,8 +1300,8 @@ function placeRegion(
   img: CompiledImage,
 ): SpineRegionAttachment {
   const win = partWindow(part, manifest);
-  // width/height are NOT optional: omitting them loads as NaN with no error
-  // (plan 04 section 2-3 case 6c). The compiler fills them from the PNG.
+  // width/height are NOT optional: omitting them loads as NaN with no error.
+  // The compiler fills them from the PNG.
   const att: SpineRegionAttachment = { width: img.width, height: img.height };
   const [ax, ay] = toBoneLocal(bone, win.x + win.w / 2, cropToSpineY(win.y + win.h / 2, manifest.crop.h));
   if (ax !== 0) att.x = ax;
@@ -1402,7 +1407,7 @@ function buildMesh(
 /**
  * The raw-curve escape hatch: absolute (time, value) control points, verbatim.
  *
- * ⭐ Named easings stay the recommended path (plan 04 rule 2): a handle set with
+ * ⭐ Named easings stay the recommended path: a handle set with
  * a name is reusable, reviewable and retargetable, and it is what makes a motion
  * spec readable as intent rather than as numbers. But a named easing can only say
  * "the same shape, everywhere", and an editor export says a different shape per
@@ -1418,7 +1423,7 @@ function buildMesh(
  *
  * ⚠️ These are ABSOLUTE (time, value) points, not the normalised graph-view
  * handles an editor shows. Writing the handles here would load without error and
- * produce a different curve (plan 04 section 1-6 item 3), which is exactly the
+ * produce a different curve, which is exactly the
  * trap `bezierForChannel` exists to keep authors out of.
  */
 function rawCurve(curve: number[] | 'stepped', channels: number, where: string, at: string): number[] | 'stepped' {
@@ -1694,7 +1699,7 @@ function compileTrack(
         }
         const t2 = r6(next.t + shift);
         // 4 numbers per channel, r g b a — 16 in total. Short arrays become NaN
-        // curves with no error (plan 04 section 2-3 case 6g).
+        // curves with no error.
         const curve: number[] = [];
         for (let c = 0; c < 4; c++) {
           curve.push(...bezierForChannel(handles, time, t2, key.v[c], next.v[c]));

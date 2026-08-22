@@ -514,6 +514,17 @@ export interface RigInvariants {
    */
   meshSlots?: number;
   /**
+   * How many triangles one of those meshes may carry. Also a budget, and also
+   * not a Spine rule — the editor's own example projects ship meshes several
+   * times this size and they are perfectly valid.
+   *
+   * ⚠️ Declare it or `A13_MESH_BUDGET` has nothing to measure against and SKIPs.
+   * A number baked into the validator would be one project's frame time
+   * masquerading as a property of the format, and would fail every foreign
+   * skeleton that is merely denser than that project can afford.
+   */
+  meshTriangles?: number;
+  /**
    * The bone whose setup rotation carries the cut's insertion axis. Its subtree
    * is authored in **axis space** — translateX only — which is what lets one set
    * of keys move to a cut at another camera angle (`A24`).

@@ -22,7 +22,7 @@ function isObj(v: unknown): v is Json {
 
 /**
  * How many value channels each timeline carries. A curve array holds exactly
- * four numbers PER channel (plan 04 section 1-6 item 2); anything shorter
+ * four numbers PER channel; anything shorter
  * multiplies `undefined` into the cubic and produces a NaN curve with no error
  * (case 6g). `null` means "this timeline takes no curve at all".
  */
@@ -123,7 +123,7 @@ export type TimelineKind =
  *
  * ⚠️ This function is the reach of A05 and A12, so a group it does not descend
  * is a group whose curve arrays nobody checks — and a short curve array is the
- * format's nastiest silent failure (plan 04 case 6g: `curve[i+3]` is
+ * format's nastiest silent failure (`curve[i+3]` is
  * `undefined`, the cubic yields NaN, nothing throws). It used to descend
  * `bones`, `slots`, `physics` and `attachments` only, which left `ik`,
  * `transform`, `path`, `slider`, `drawOrder`, `drawOrderFolder` and `events`
