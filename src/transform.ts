@@ -39,6 +39,21 @@ export class TransformError extends Error {}
 
 const DEG = Math.PI / 180;
 
+/**
+ * Crop pixels (y down, origin top-left) -> Spine world (y up, origin at the
+ * bottom-left of the crop).
+ *
+ * This is the whole coordinate contract, and it is also the viewer's: the
+ * renderer's root element sits at the BOTTOM-left of the stage because
+ * spine-html negates world Y (Spine is Y-up, CSS is Y-down).
+ *
+ * It lived in `src/archetype.ts` until the archetype tables left the code, which
+ * was the wrong home for it anyway — it is not a property of any formation.
+ */
+export function cropToSpineY(cropY: number, cropHeight: number): number {
+  return cropHeight - cropY;
+}
+
 /** Round to 6 decimals and never emit "-0" (byte-stable output). */
 function r6(n: number): number {
   const v = Math.round(n * 1e6) / 1e6;

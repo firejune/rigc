@@ -1,15 +1,19 @@
 /**
- * Input and output shapes for rigc v0.
+ * Input and output shapes for rigc.
  *
- * Two inputs, per plan 04 section 4-1:
+ * Three inputs, one domain each:
  *   - the cut manifest (here the face-class manifest of plan 05 section 9 item 4),
- *     which owns geometry: crop, part offsets, part sizes, the state machine;
+ *     which owns measured geometry: crop, part offsets, part sizes, mask
+ *     polygons, the state machine, anchors, the axis and the measured ceilings.
+ *     Optional — a foreign skeleton has none;
+ *   - the **rig spec** ([`src/rig.ts`](rig.ts), `spec: "rigc-rig/1"`), which owns
+ *     skeleton structure: bones, slots, skins, constraints, invariants. Required.
+ *     It replaced the three hard-coded archetype tables that used to be code;
  *   - the motion spec (plan 04 section 4-2), which owns time: keys, named
  *     easings, groups, declared durations.
  *
- * Nothing else is an input. The archetype tables are code (src/archetype.ts),
- * and the compiler never invents a value that is in neither file — plan 04
- * section 4-2 rule 5.
+ * Nothing else is an input, and the compiler never invents a value that is in
+ * none of them — plan 04 section 4-2 rule 5.
  */
 
 // ---------------------------------------------------------------------------
@@ -265,6 +269,16 @@ export interface MotionSetupSlot {
 
 export interface MotionSpec {
   spec: 'rigc-motion/1';
+  /**
+   * The rig this spec was authored against — it must equal the rig spec's
+   * `name`, and a mismatch is a compile error rather than a silent pairing.
+   *
+   * It named a hard-coded table until 2026-08-22; now it names a file's own
+   * name, and the file's path comes from the cuts table. The check is kept
+   * because the keys in here are aimed at bones by NAME: pair the spec with
+   * another rig whose names happen to overlap and every one of them lands on
+   * something that means something else.
+   */
   archetype: string;
   cut: string;
   note?: string;
@@ -282,13 +296,31 @@ export interface MotionSpec {
 // Emitted Spine 4.3 skeleton JSON
 // ---------------------------------------------------------------------------
 
+/**
+ * Field order here is the order the emitter writes them, and it is rigc's, not
+ * the editor's: Spine writes `length, rotation, x, y` and rigc writes
+ * `length, x, y, rotation`. Both load identically — key order carries no meaning
+ * in JSON — and rigc's order is the one every artifact on disk already has, so
+ * changing it would be a byte-level diff that says nothing.
+ *
+ * A field is present exactly when the rig spec declared it; see `src/rig.ts`.
+ */
 export interface SpineBone {
   name: string;
   parent?: string;
+  length?: number;
   x?: number;
   y?: number;
-  /** Spine degrees, CCW in a y-up world. Omitted when 0. */
+  /** Spine degrees, CCW in a y-up world. */
   rotation?: number;
+  scaleX?: number;
+  scaleY?: number;
+  shearX?: number;
+  shearY?: number;
+  /** 4.2+ name. 4.0/4.1's `transform` still loads and is silently ignored — A02. */
+  inherit?: string;
+  skin?: boolean;
+  color?: string;
 }
 
 export interface SpineSlot {
@@ -296,10 +328,15 @@ export interface SpineSlot {
   bone: string;
   attachment?: string;
   color?: string;
+  dark?: string;
+  blend?: string;
 }
 
 export interface SpineRegionAttachment {
   path?: string;
+  /** Required. Omitting these yields NaN with no error — plan 04 section 2-3 case 6c. */
+  width: number;
+  height: number;
   x?: number;
   y?: number;
   /**
@@ -308,9 +345,9 @@ export interface SpineRegionAttachment {
    * `axis` bone would render tilted by the axis angle.
    */
   rotation?: number;
-  /** Required. Omitting these yields NaN with no error — plan 04 section 2-3 case 6c. */
-  width: number;
-  height: number;
+  scaleX?: number;
+  scaleY?: number;
+  color?: string;
 }
 
 /**
@@ -320,6 +357,7 @@ export interface SpineRegionAttachment {
  */
 export interface SpineMeshAttachment {
   type: 'mesh';
+  path?: string;
   uvs: number[];
   triangles: number[];
   /** Weighted encoding: boneCount, (boneIndex, bindX, bindY, weight)*n, repeated. */
@@ -329,6 +367,9 @@ export interface SpineMeshAttachment {
   /** Nonessential, but they make the mesh budget assertions readable. */
   width: number;
   height: number;
+  /** Nonessential index pairs the editor draws; carried through when authored. */
+  edges?: number[];
+  color?: string;
 }
 
 export type SpineAttachment = SpineRegionAttachment | SpineMeshAttachment;
@@ -341,18 +382,22 @@ export type SpineTimelineKey = Record<string, unknown>;
  * (`physics: [...]`, `ik: [...]`) are not read at all — the constraint vanishes
  * with no error, which is assertion A01.
  */
-export interface SpinePhysicsConstraint {
-  name: string;
-  type: 'physics';
-  bone: string;
-  [param: string]: string | number;
-}
+export type SpineConstraint = { name: string; type: string } & Record<string, unknown>;
 
 export interface SpineSkeletonJson {
-  skeleton: { spine: string; x: number; y: number; width: number; height: number };
+  skeleton: {
+    spine: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    fps?: number;
+    referenceScale?: number;
+    images?: string;
+  };
   bones: SpineBone[];
   slots: SpineSlot[];
-  constraints?: SpinePhysicsConstraint[];
+  constraints?: SpineConstraint[];
   skins: Array<{ name: string; attachments: Record<string, Record<string, SpineAttachment>> }>;
   animations: Record<
     string,
@@ -384,22 +429,23 @@ export interface CompiledImage {
 /**
  * Structural expectations the validator cannot read out of skeleton JSON.
  *
- * Some invariants of an archetype are simply not written down in the artifact:
+ * Some invariants of a rig are simply not written down in the artifact:
  * nothing in the file says "this mesh is a ribbon" or "the fluid emitter must
- * not hang off the moving part". The compiler knows, because it knows the
- * archetype, so it hands the knowledge over rather than letting the validator
+ * not hang off the moving part". The compiler knows, because the rig spec's
+ * `invariants` block says so, and it hands the knowledge over rather than letting the validator
  * guess. Mutants stay honest because a mutant edits the ARTIFACT while this
  * block keeps saying what the rig was supposed to be.
  */
 export interface RigInfo {
+  /** The rig spec's `name`. Reported by the validator so a green names its rig. */
   archetype: string;
-  /** The bone whose setup rotation carries the cut's axis, if the archetype has one. */
+  /** The bone whose setup rotation carries the cut's axis, if the rig has one. */
   axisBone: string | null;
   /** Bones under the axis bone, whose translate keys must stay on the axis. */
   axisSubtree: string[];
   /** [bone, ancestor it must never have] — the fluid emitter vs the moving part. */
   detached: Array<[string, string]>;
-  /** Canonical draw order (the archetype's slot table), or null if it has none. */
+  /** Canonical draw order (the rig's slot array), or null if it declares none. */
   slotOrder: string[] | null;
   /** slot -> mesh generator, for the kind-aware mesh assertions. */
   meshKinds: Record<string, 'ring' | 'ribbon'>;

@@ -5,7 +5,7 @@
  *   bun tools/measure_joint_anchors.ts <manifest.json> [--axis-deg <insert deg>]
  *
  * ⭐ Why a tool and not a hand-typed block: the archetype needs a position for
- * all 17 non-root bones (`src/archetype.ts`), a missing one is a compile error by
+ * all 17 non-root bones (the rig spec's `bones`), a missing one is a compile error by
  * design, and the temptation at that point is to copy the numbers from the cut
  * that already compiles. Those numbers describe ANOTHER cut's art. So every
  * anchor this tool prints is derived from the real plates plus the manifest's own

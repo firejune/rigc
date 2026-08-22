@@ -2,9 +2,9 @@
 /**
  * rigc — the rig compiler.
  *
- *   bun cli.ts build --manifest <path> --motion <path> --out <dir>
+ *   bun cli.ts build --rig <path> --motion <path> --out <dir> [--manifest <path>]
  *   bun cli.ts build --cut <name> --cuts <cuts.json>
- *   bun cli.ts explain --manifest <path> --motion <path> --out <dir>
+ *   bun cli.ts explain --rig <path> --motion <path> --out <dir>
  *   bun cli.ts explain --cut <name> --cuts <cuts.json>
  *   bun cli.ts validate <dir>            re-run the gate on artifacts on disk
  *
@@ -12,12 +12,13 @@
  * compiler is allowed to be wrong, it is not allowed to leave the wrong thing
  * on disk (plan 04 section 4-3 step 7).
  *
- * rigc knows nothing about any particular project. A cut is three paths, and a
- * `cuts.json` is a named table of them:
+ * rigc knows nothing about any particular project. A cut is a rig spec, a motion
+ * spec and an output directory — plus a cut manifest when there is measured art
+ * behind it — and a `cuts.json` is a named table of them:
  *
  *   {
- *     "my_cut": { "manifest": "…/manifest.json", "motion": "…/my.motion.json",
- *                 "out": "…/spine" }
+ *     "my_cut": { "rig": "…/rigs/my_rig.rig.json", "motion": "…/my.motion.json",
+ *                 "out": "…/spine", "manifest": "…/manifest.json" }
  *   }
  *
  * Its paths resolve against the cuts.json file itself, so the table travels
@@ -31,11 +32,21 @@ import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
 import { DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import type { CompileResult, MotionSpec } from './src/types.ts';
 
-/** One entry of a cuts.json: three paths, relative to the cuts.json file. */
+/**
+ * One entry of a cuts.json, every path relative to the cuts.json file.
+ *
+ * `rig` is required — it is the skeleton's structure, and until it was a file
+ * that structure was three hard-coded tables in the compiler. `manifest` is
+ * optional: a skeleton with no measured art behind it has none, and then the rig
+ * spec carries its own attachments and stage size.
+ */
 export interface CutEntry {
-  manifest: string;
+  rig: string;
   motion: string;
   out: string;
+  manifest?: string;
+  /** Base directory for the rig spec's `image` references, if not the rig's own. */
+  images?: string;
 }
 
 export type CutTable = Record<string, CutEntry>;
@@ -85,14 +96,17 @@ function readCutTable(cutsPath: string): { dir: string; table: CutTable } {
 }
 
 function entryToOptions(dir: string, name: string, entry: CutEntry): CompileOptions {
-  for (const key of ['manifest', 'motion', 'out'] as const) {
+  for (const key of ['rig', 'motion', 'out'] as const) {
     if (typeof entry?.[key] !== 'string') throw new UsageError(`cut ${JSON.stringify(name)} has no "${key}" path`);
   }
-  return {
-    manifestPath: resolve(dir, entry.manifest),
+  const opts: CompileOptions = {
+    rigPath: resolve(dir, entry.rig),
     motionPath: resolve(dir, entry.motion),
     outDir: resolve(dir, entry.out),
   };
+  if (entry.manifest !== undefined) opts.manifestPath = resolve(dir, entry.manifest);
+  if (entry.images !== undefined) opts.imagesDir = resolve(dir, entry.images);
+  return opts;
 }
 
 /**
@@ -100,20 +114,25 @@ function entryToOptions(dir: string, name: string, entry: CutEntry): CompileOpti
  * line or looked up by name in a cuts.json.
  */
 function resolveCut(flags: Record<string, string>): { label: string; opts: CompileOptions } {
-  const explicit = flags.manifest !== undefined || flags.motion !== undefined || flags.out !== undefined;
+  const explicit =
+    flags.rig !== undefined || flags.manifest !== undefined || flags.motion !== undefined || flags.out !== undefined;
   if (explicit) {
     if (flags.cut !== undefined || flags.cuts !== undefined) {
-      throw new UsageError('--manifest/--motion/--out and --cut/--cuts are two ways to say the same thing; pick one');
+      throw new UsageError('--rig/--motion/--out and --cut/--cuts are two ways to say the same thing; pick one');
     }
-    for (const key of ['manifest', 'motion', 'out'] as const) {
+    for (const key of ['rig', 'motion', 'out'] as const) {
       if (flags[key] === undefined) throw new UsageError(`--${key} is required when the cut is spelled out`);
     }
-    return {
-      label: flags.manifest,
-      opts: { manifestPath: resolve(flags.manifest), motionPath: resolve(flags.motion), outDir: resolve(flags.out) },
+    const opts: CompileOptions = {
+      rigPath: resolve(flags.rig),
+      motionPath: resolve(flags.motion),
+      outDir: resolve(flags.out),
     };
+    if (flags.manifest !== undefined) opts.manifestPath = resolve(flags.manifest);
+    if (flags.images !== undefined) opts.imagesDir = resolve(flags.images);
+    return { label: flags.rig, opts };
   }
-  if (flags.cut === undefined) throw new UsageError('give either --cut <name> --cuts <cuts.json>, or --manifest/--motion/--out');
+  if (flags.cut === undefined) throw new UsageError('give either --cut <name> --cuts <cuts.json>, or --rig/--motion/--out');
   if (flags.cuts === undefined) throw new UsageError('--cut needs --cuts <cuts.json> to look the name up in');
   const { dir, table } = readCutTable(flags.cuts);
   const entry = table[flags.cut];
@@ -253,7 +272,7 @@ function cmdValidate(flags: Record<string, string>, positional: string[]): void 
   // A bare directory validates what is on disk. Naming the cut as well lets the
   // gate re-derive the declared durations and the structural expectations, which
   // a directory alone cannot supply — and the report says which it had.
-  const named = flags.cut !== undefined || flags.manifest !== undefined;
+  const named = flags.cut !== undefined || flags.rig !== undefined;
   const profile = readProfile(flags);
   const derivedOpts = named ? resolveCut(flags).opts : null;
   const { skeletonPath, atlasPath } = resolveArtifacts(derivedOpts ? derivedOpts.outDir : (positional[0] ?? '.'), flags.atlas);
@@ -499,7 +518,7 @@ function cmdExplain(flags: Record<string, string>): void {
 
 const USAGE = [
   'usage:',
-  '  bun cli.ts build    --manifest <path> --motion <path> --out <dir>',
+  '  bun cli.ts build    --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>]',
   '  bun cli.ts build    --cut <name> --cuts <cuts.json>',
   '  bun cli.ts explain  (same arguments as build)',
   '  bun cli.ts validate <dir | skeleton.json> [--atlas <path>]',
@@ -510,8 +529,9 @@ const USAGE = [
   '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
   '  spine-html  the above, plus this project\'s renderer and archetype policy.',
   '',
-  'a cuts.json is { "<name>": { "manifest": "...", "motion": "...", "out": "..." } },',
-  'with every path resolved relative to the cuts.json file itself.',
+  'a cuts.json is { "<name>": { "rig": "...", "motion": "...", "out": "...",',
+  '                             "manifest": "..." (optional) } }, with every path',
+  'resolved relative to the cuts.json file itself.',
 ].join('\n');
 
 const [command, ...rest] = process.argv.slice(2);

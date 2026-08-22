@@ -1,7 +1,19 @@
 /**
- * rigc compile — cut manifest + motion spec -> Spine 4.3 skeleton JSON + a
- * one-part-per-page atlas. Pure data assembly: no spine-core here (that is the
- * validator's job, plan 04 section 4-1), no clock, no randomness.
+ * rigc compile — rig spec + motion spec (+ an optional cut manifest) -> Spine 4.3
+ * skeleton JSON and a one-part-per-page atlas. Pure data assembly: no spine-core
+ * here (that is the validator's job, plan 04 section 4-1), no clock, no
+ * randomness.
+ *
+ * Three inputs, one domain each — [`src/rig.ts`](rig.ts) states the split in
+ * full. In one line: the **manifest** owns measured art, the **rig spec** owns
+ * skeleton structure, the **motion spec** owns time.
+ *
+ * ⭐ The rig spec is what this file used to hard-code. Until it existed the bone
+ * tree and the slot table were three tables in `src/archetype.ts`, a slot outside
+ * them was a compile error, and no skeleton anybody else owns could be stated at
+ * all (blocker B1). The two things that were genuinely code and stayed code are
+ * the **mesh generators** (`src/mesh.ts` — they encode a deformation model, not a
+ * table of numbers) and the **coordinate contract** (`src/transform.ts`).
  *
  * Determinism is a contract, not a habit: `validate` re-runs this and compares
  * the two emits byte for byte (assertion A18).
@@ -9,11 +21,19 @@
 import { basename, dirname, relative, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { readPngInfo } from './png.ts';
-import { CompileError } from './errors.ts';
-import { ARCHETYPES, cropToSpineY, type Archetype } from './archetype.ts';
+import { CompileError, NotImplementedError } from './errors.ts';
+import {
+  parseRigSpec,
+  type RigAttachment,
+  type RigBone,
+  type RigMeshAttachment,
+  type RigRegionAttachment,
+  type RigSpec,
+} from './rig.ts';
 import { buildRibbonMesh, buildRingMesh, encodeWeightedVertices, MeshError, type MeshBoneRef } from './mesh.ts';
 import {
   computeWorldTransforms,
+  cropToSpineY,
   normaliseDegrees,
   screenToSpineDegrees,
   toBoneLocal,
@@ -31,6 +51,7 @@ import type {
   RigInfo,
   SpineAttachment,
   SpineBone,
+  SpineConstraint,
   SpineMeshAttachment,
   SpineRegionAttachment,
   SpineSkeletonJson,
@@ -38,12 +59,12 @@ import type {
   SpineTimelineKey,
 } from './types.ts';
 
+export { CompileError, NotImplementedError };
+
 /** The spine-core line the validator round-trips through. */
 export const SPINE_VERSION = '4.3.13';
 
 const FRAME = 1 / 60;
-
-export { CompileError };
 
 // ---------------------------------------------------------------------------
 // number formatting — deterministic, and free of "-0"
@@ -173,7 +194,7 @@ function isBasePlate(part: FaceManifestPart, manifest: FaceManifest): boolean {
   return win.x === 0 && win.y === 0 && win.w === manifest.crop.w && win.h === manifest.crop.h;
 }
 
-/** The archetype slot a manifest part joins on. See the `parts` mapping below. */
+/** The rig slot a manifest part joins on. See the `parts` mapping below. */
 function rigSlotOf(part: FaceManifestPart): string {
   return part.rig_slot ?? part.slot;
 }
@@ -193,28 +214,53 @@ function meshControlBones(part: FaceManifestPart): string[] {
 // ---------------------------------------------------------------------------
 
 export interface CompileOptions {
-  manifestPath: string;
+  /** The rig spec. Required: it is the skeleton's structure. */
+  rigPath: string;
   motionPath: string;
   /** Directory the atlas + skeleton will be written to (page names are relative to it). */
   outDir: string;
+  /** The cut manifest. Absent for a skeleton with no measured art behind it. */
+  manifestPath?: string;
+  /** Overrides the rig spec's own `images` directory (CLI `--images <dir>`). */
+  imagesDir?: string;
 }
 
 export function compile(opts: CompileOptions): CompileResult {
-  const manifestPath = resolve(opts.manifestPath);
+  const rigPath = resolve(opts.rigPath);
   const motionPath = resolve(opts.motionPath);
   const outDir = resolve(opts.outDir);
-  const manifestDir = dirname(manifestPath);
+  const manifestPath = opts.manifestPath === undefined ? null : resolve(opts.manifestPath);
+  const manifestDir = manifestPath === null ? null : dirname(manifestPath);
 
-  const manifest = readJson<FaceManifest>(manifestPath);
+  const rig = parseRigSpec(readJson<unknown>(rigPath), rigPath);
   const motion = readJson<MotionSpec>(motionPath);
+  const manifest = manifestPath === null ? null : readJson<FaceManifest>(manifestPath);
 
   if (motion.spec !== 'rigc-motion/1') {
     throw new CompileError(`unknown motion spec version: ${String(motion.spec)}`);
   }
-  const archetype = ARCHETYPES[motion.archetype];
-  if (!archetype) throw new CompileError(`unknown archetype: ${motion.archetype}`);
+  // The motion spec was authored against one formation. Pairing it with another
+  // rig would aim its keys at bones whose names happen to match and whose meaning
+  // does not — the class of wrongness that loads, plays and lies.
+  if (motion.archetype !== rig.name) {
+    throw new CompileError(
+      `motion spec names archetype "${motion.archetype}" but the rig spec at ${rigPath} is called "${rig.name}"`,
+    );
+  }
 
-  const cropH = manifest.crop.h;
+  // The stage. The rig may state it outright (a foreign skeleton has no crop);
+  // otherwise the manifest's crop is it. With neither there is nothing to
+  // measure a full-frame mesh against, so the compile stops rather than guess.
+  const stageWidth = rig.skeleton?.width ?? manifest?.crop.w;
+  const stageHeight = rig.skeleton?.height ?? manifest?.crop.h;
+  if (stageWidth === undefined || stageHeight === undefined) {
+    throw new CompileError(
+      'no stage size: give the rig spec a `skeleton.width`/`skeleton.height`, or compile against a cut manifest whose `crop` states them',
+    );
+  }
+  /** Crop height, for the y-down -> y-up flip. Only manifest data uses it. */
+  const cropH = manifest?.crop.h ?? stageHeight;
+  const imagesDir = opts.imagesDir !== undefined ? resolve(opts.imagesDir) : resolve(dirname(rigPath), rig.images ?? '.');
 
   // -- 1. gather images ------------------------------------------------------
   // Region name = attachment name = PNG basename (plan 04 section 4-3 step 2).
@@ -222,11 +268,17 @@ export function compile(opts: CompileOptions): CompileResult {
   const droppedStates: CompileResult['droppedStates'] = [];
   const seenRegions = new Set<string>();
 
-  const addImage = (relPath: string, isBase: boolean): CompiledImage => {
-    const absPath = resolve(manifestDir, relPath);
+  const addImage = (relPath: string, baseDir: string, isBase: boolean): CompiledImage => {
+    const absPath = resolve(baseDir, relPath);
     const region = basename(relPath, '.png');
     if (seenRegions.has(region)) {
       throw new CompileError(`duplicate region name "${region}" (${relPath})`);
+    }
+    if (!existsSync(absPath)) {
+      // Left to `readFileSync` this arrives as a raw ENOENT with a stack, which
+      // is the tool telling an agent about its own internals instead of about
+      // the rig. The validator's messages are the UI, and so are these.
+      throw new CompileError(`image "${relPath}" is not on disk at ${absPath}`);
     }
     const info = readPngInfo(absPath);
     // Page name is the PNG path *relative to the atlas file*, so the viewer
@@ -248,14 +300,14 @@ export function compile(opts: CompileOptions): CompileResult {
   };
 
   // A manifest may name a part the cut does not carry. Plan 02 section 2-2 marks
-  // four of this archetype's seven slots optional, and the real tier-2 cut
+  // four of this formation's seven slots optional, and the real tier-2 cut
   // delivers three plates: `03_fluid_overflow` is a scene-shared sprite sheet
   // (plan 01 section 3.5) and the manifest records it as `image: null` with no
   // window at all. That entry is a documented ABSENCE, not a part — and it used
   // to crash the compiler on its missing `offset` rather than being tolerated, so
   // "the optional slots are optional" needed this line to actually be true.
   const absentParts: CompileResult['absentParts'] = [];
-  const declaredParts = manifest.parts.filter((part) => {
+  const declaredParts = (manifest?.parts ?? []).filter((part) => {
     if (part.image === null && !part.states) {
       absentParts.push({ slot: rigSlotOf(part), why: 'manifest declares `image: null` and no states' });
       return false;
@@ -264,27 +316,52 @@ export function compile(opts: CompileOptions): CompileResult {
   });
   // ⚠️ `rig_slot` is the join key, not `slot`. A cut manifest that is also a parts
   // lane record carries anatomical slot names of its own (`part`, `occluder`) and
-  // scripts select on them; the archetype's table is what the runtime, the
-  // probes and the viewer join on. So the mapping is manifest data, and the
-  // archetype table stays single-valued — one name per slot, which is the only
-  // way A26 and a `hide: ['lip']` probe can mean the same thing on every cut.
+  // scripts select on them; the rig's slot table is what the runtime, the probes
+  // and the viewer join on. So the mapping is manifest data, and the rig's table
+  // stays single-valued — one name per slot, which is the only way A26 and a
+  // `hide: ['lip']` probe can mean the same thing on every cut.
   const parts = declaredParts
     .map((part) => (part.rig_slot && part.rig_slot !== part.slot ? { ...part, slot: part.rig_slot } : part))
     .sort((a, b) => a.draw_order - b.draw_order);
 
+  const rigSlotIndex = new Map(rig.slots.map((slot, i) => [slot.name, i]));
+  for (const part of parts) {
+    if (!rigSlotIndex.has(part.slot)) {
+      throw new CompileError(
+        `the manifest binds a part to slot "${part.slot}" (via rig_slot), which the rig "${rig.name}" does not declare — add the slot to the rig rather than inventing one here`,
+      );
+    }
+  }
+  // 🔑 Two files now state a draw order — the manifest's `draw_order` numbers and
+  // the rig's slot array — and two sources for one fact is how they come to
+  // disagree. The rig's array wins (it IS the emitted order, which is Spine's own
+  // semantics), and a manifest that orders its parts differently is refused here
+  // rather than silently overruled.
+  let orderCursor = -1;
+  for (const part of parts) {
+    const at = rigSlotIndex.get(part.slot)!;
+    if (at < orderCursor) {
+      throw new CompileError(
+        `the manifest draws "${part.slot}" (draw_order ${part.draw_order}) out of the rig's slot order; the rig's slots array IS the draw order`,
+      );
+    }
+    orderCursor = at;
+  }
+
   /** slot -> [attachment names], in the order the manifest lists the states. */
   const slotAttachments = new Map<string, string[]>();
 
-  // Mesh parts, checked against the archetype budget before any geometry runs.
+  // Mesh parts, checked against the rig's budget before any geometry runs.
+  const meshBudget = rig.invariants?.meshSlots ?? 0;
   const meshParts = parts.filter((part) => part.mesh);
-  if (meshParts.length > archetype.maxMeshSlots) {
+  if (meshParts.length > meshBudget) {
     throw new CompileError(
-      `${meshParts.length} mesh slot(s) declared but archetype "${archetype.name}" allows ${archetype.maxMeshSlots}` +
-        (archetype.maxMeshSlots === 0 ? ' — move the cut to face_overlay_v2 to switch the mesh tier on' : ''),
+      `${meshParts.length} mesh slot(s) declared but the rig "${rig.name}" allows ${meshBudget}` +
+        ' — raise `invariants.meshSlots` in the rig spec if that budget is the thing being changed',
     );
   }
   for (const part of meshParts) {
-    if (isBasePlate(part, manifest)) {
+    if (isBasePlate(part, manifest!)) {
       // A base plate mesh is a full-frame canvas every frame (plan 02 section 2-3).
       throw new CompileError(`slot "${part.slot}" is the base plate; it must never be a mesh`);
     }
@@ -311,10 +388,10 @@ export function compile(opts: CompileOptions): CompileResult {
   }
 
   for (const part of parts) {
-    const win = partWindow(part, manifest);
+    const win = partWindow(part, manifest!);
     if (part.image) {
       // One unconditional attachment: the base plate, and every joint part.
-      const img = addImage(part.image, isBasePlate(part, manifest));
+      const img = addImage(part.image, manifestDir!, isBasePlate(part, manifest!));
       if (img.width !== win.w || img.height !== win.h) {
         throw new CompileError(
           `${part.image} is ${img.width}x${img.height} but the manifest window for "${part.slot}" is ${win.w}x${win.h}`,
@@ -326,14 +403,14 @@ export function compile(opts: CompileOptions): CompileResult {
     const names: string[] = [];
     for (const [state, relPath] of Object.entries(part.states ?? {})) {
       if (relPath === null) continue; // base pixels show through; nothing to emit
-      const absPath = resolve(manifestDir, relPath);
+      const absPath = resolve(manifestDir!, relPath);
       if (!existsSync(absPath)) {
         // plan 05 section 5-3 rung 2 dropped the `half` state. The manifest still
         // lists it, so the compiler reports it rather than pretending either way.
         droppedStates.push({ slot: part.slot, state, path: relPath });
         continue;
       }
-      const img = addImage(relPath, false);
+      const img = addImage(relPath, manifestDir!, false);
       if (img.width !== win.w || img.height !== win.h) {
         throw new CompileError(
           `${relPath} is ${img.width}x${img.height} but slot "${part.slot}" declares ${win.w}x${win.h}`,
@@ -342,6 +419,35 @@ export function compile(opts: CompileOptions): CompileResult {
       names.push(img.region);
     }
     slotAttachments.set(part.slot, names);
+  }
+
+  // Attachments the RIG declares. A cut with a manifest leaves `skins` empty and
+  // gets its attachments from the parts above; a foreign skeleton has no manifest
+  // and states them here. A slot filled from both is a compile error, because the
+  // two would then be two records of one thing.
+  const skinNames = Object.keys(rig.skins ?? {});
+  const rigAttachmentNames = new Map<string, string[]>();
+  for (const skinName of skinNames) {
+    for (const [slotName, placeholders] of Object.entries(rig.skins![skinName])) {
+      if (!rigSlotIndex.has(slotName)) {
+        throw new CompileError(`rig skin "${skinName}" gives attachments to slot "${slotName}", which the rig does not declare`);
+      }
+      if (slotAttachments.has(slotName)) {
+        throw new CompileError(
+          `slot "${slotName}" is filled by a manifest part AND by rig skin "${skinName}"; one slot, one source of attachments`,
+        );
+      }
+      const names = rigAttachmentNames.get(slotName) ?? [];
+      for (const [placeholder, att] of Object.entries(placeholders)) {
+        if (names.includes(placeholder)) continue;
+        names.push(placeholder);
+        const image = (att as RigRegionAttachment).image;
+        if (typeof image === 'string' && !seenRegions.has(basename(image, '.png'))) {
+          addImage(image, imagesDir, false);
+        }
+      }
+      rigAttachmentNames.set(slotName, names);
+    }
   }
 
   // -- 2. atlas --------------------------------------------------------------
@@ -366,94 +472,19 @@ export function compile(opts: CompileOptions): CompileResult {
   const atlasText = `${atlasLines.join('\n')}\n`;
 
   // -- 3. bones --------------------------------------------------------------
-  const bones: SpineBone[] = [];
-  /** slot -> the bone its attachments hang off. */
-  const slotBoneOf = new Map<string, string>();
-  const liveParts = parts.filter((part) => part.image || slotAttachments.get(part.slot)?.length);
+  //
+  // One path for every rig, because the two the archetype tables used to have
+  // (an explicit tree placed by manifest anchors, and one bone per slot at the
+  // part window's centre) are the same operation over a different crop point.
+  // What the rig spec chooses is WHERE the point comes from; the flip into Spine
+  // world and the inverse into the parent's local space are the same either way.
+  if (manifest) checkAxisSelfConsistency(manifest);
+  const axisSpineDeg = manifest?.axis ? screenToSpineDegrees(manifest.axis.deg) : null;
+  const partBySlot = new Map(parts.map((part) => [part.slot, part]));
 
-  if (archetype.bones) {
-    // Articulated archetype: the tree is declared in code because it is true of
-    // every cut, and the positions come from the manifest because they are not.
-    checkAxisSelfConsistency(manifest);
-    const axisSpineDeg = manifest.axis ? screenToSpineDegrees(manifest.axis.deg) : null;
-    for (const spec of archetype.bones) {
-      if (!spec.parent) {
-        bones.push({ name: spec.name });
-        continue;
-      }
-      const key = spec.anchor ?? spec.name;
-      const anchor = manifest.anchors?.[key];
-      if (!anchor || anchor.length < 2) {
-        throw new CompileError(
-          `manifest anchors has no [x, y] for "${key}" (bone "${spec.name}" of archetype "${archetype.name}")`,
-        );
-      }
-      let rotation = 0;
-      if (spec.rotationFrom === 'axis') {
-        if (axisSpineDeg === null) {
-          throw new CompileError(`archetype "${archetype.name}" needs manifest.axis to place bone "${spec.name}"`);
-        }
-        rotation = axisSpineDeg;
-      } else if (anchor.length > 2) {
-        // A facing angle: the bone's local +X points that way in screen space, so
-        // one shared translate key moves every grip radially outward.
-        rotation = screenToSpineDegrees(anchor[2]);
-      }
-      const soFar = computeWorldTransforms(bones);
-      const parent = soFar.get(spec.parent);
-      if (!parent) {
-        throw new CompileError(`archetype bone "${spec.name}" names parent "${spec.parent}", which is declared after it`);
-      }
-      const [lx, ly] = toBoneLocal(parent, anchor[0], cropToSpineY(anchor[1], cropH));
-      const bone: SpineBone = { name: spec.name, parent: spec.parent, x: lx, y: ly };
-      if (rotation !== 0) bone.rotation = rotation;
-      bones.push(bone);
-    }
-    for (const part of liveParts) {
-      const boneName = archetype.slotBone?.[part.slot];
-      if (!boneName) {
-        throw new CompileError(
-          `archetype "${archetype.name}" has no bone for slot "${part.slot}" — extend its slot table rather than inventing one`,
-        );
-      }
-      slotBoneOf.set(part.slot, boneName);
-    }
-    for (const part of liveParts) {
-      for (const name of meshControlBones(part)) {
-        if (!bones.some((b) => b.name === name)) {
-          throw new CompileError(`slot "${part.slot}" drives control bone "${name}", which is not in archetype "${archetype.name}"`);
-        }
-      }
-    }
-  } else {
-    // Overlay archetype: one bone per slot, pinned at the part window's centre.
-    archetype.rootChain.forEach((name, i) => {
-      bones.push(i === 0 ? { name } : { name, parent: archetype.rootChain[i - 1], x: 0, y: 0 });
-    });
-    const slotParent = archetype.rootChain[archetype.rootChain.length - 1];
-    for (const part of liveParts) {
-      const win = partWindow(part, manifest);
-      bones.push({
-        name: part.slot,
-        parent: slotParent,
-        x: r6(win.x + win.w / 2),
-        y: r6(cropToSpineY(win.y + win.h / 2, cropH)),
-      });
-      slotBoneOf.set(part.slot, part.slot);
-      const control = part.mesh?.control_bone;
-      if (control) {
-        // The control bone hangs off the slot bone, so its x/y are LOCAL. Placing
-        // it on the aperture is what makes the falloff radial about the opening
-        // rather than about the middle of the part window.
-        const [ax, ay] = part.mesh!.center!;
-        bones.push({
-          name: control,
-          parent: part.slot,
-          x: r6(ax - (win.x + win.w / 2)),
-          y: r6(cropToSpineY(ay, cropH) - cropToSpineY(win.y + win.h / 2, cropH)),
-        });
-      }
-    }
+  const bones: SpineBone[] = [];
+  for (const spec of rig.bones) {
+    bones.push(buildBone(spec, bones, { rig, manifest, cropH, axisSpineDeg, partBySlot }));
   }
   const boneNames = new Set(bones.map((b) => b.name));
   let transforms: Map<string, BoneTransform>;
@@ -464,77 +495,144 @@ export function compile(opts: CompileOptions): CompileResult {
     throw err;
   }
 
-  // -- 4. slots + skin -------------------------------------------------------
-  // Draw order IS the slots array order (plan 04 section 1-1). No separate field.
+  for (const part of parts) {
+    for (const name of meshControlBones(part)) {
+      if (!boneNames.has(name)) {
+        throw new CompileError(
+          `slot "${part.slot}" drives control bone "${name}", which the rig "${rig.name}" does not declare`,
+        );
+      }
+    }
+  }
+
+  // -- 4. slots + skins ------------------------------------------------------
+  // Draw order IS the slots array order (plan 04 section 1-1). No separate field,
+  // and the rig's array is that order.
   const slots: SpineSlot[] = [];
-  const skinAttachments: Record<string, Record<string, SpineAttachment>> = {};
+  const skinTables = new Map<string, Record<string, Record<string, SpineAttachment>>>();
+  const tableFor = (skinName: string): Record<string, Record<string, SpineAttachment>> => {
+    let table = skinTables.get(skinName);
+    if (!table) {
+      table = {};
+      skinTables.set(skinName, table);
+    }
+    return table;
+  };
+  tableFor('default'); // rigc always emits a default skin, even when it is empty
   const meshBones = new Set<string>();
   const meshes: CompileResult['meshes'] = [];
 
-  for (const part of parts) {
-    const names = slotAttachments.get(part.slot) ?? [];
+  for (const rigSlot of rig.slots) {
+    const part = partBySlot.get(rigSlot.name);
+    const names = slotAttachments.get(rigSlot.name) ?? rigAttachmentNames.get(rigSlot.name) ?? [];
     if (!names.length) continue;
 
-    const setup = motion.setup?.[part.slot];
-    if (setup === undefined) {
+    const setup = motion.setup?.[rigSlot.name];
+    if (setup !== undefined && rigSlot.attachment !== undefined) {
       throw new CompileError(
-        `motion spec has no setup entry for slot "${part.slot}" — the compiler will not guess a setup pose`,
+        `slot "${rigSlot.name}" has a setup attachment in the rig spec AND in the motion spec; the setup pose has one author`,
       );
     }
-    const setupAttachment = setup.attachment ?? null;
+    let setupAttachment: string | null;
+    if (setup !== undefined) setupAttachment = setup.attachment ?? null;
+    else if (rigSlot.attachment !== undefined) setupAttachment = rigSlot.attachment;
+    else {
+      throw new CompileError(
+        `no setup pose for slot "${rigSlot.name}": give the motion spec a \`setup\` entry or the rig slot an \`attachment\` — the compiler will not guess one`,
+      );
+    }
     if (setupAttachment !== null && !names.includes(setupAttachment)) {
       throw new CompileError(
-        `setup attachment "${setupAttachment}" for slot "${part.slot}" is not one of [${names.join(', ')}]`,
+        `setup attachment "${setupAttachment}" for slot "${rigSlot.name}" is not one of [${names.join(', ')}]`,
       );
     }
-    const boneName = slotBoneOf.get(part.slot);
-    if (!boneName) throw new CompileError(`internal: slot "${part.slot}" has no bone`);
-    const slot: SpineSlot = { name: part.slot, bone: boneName };
+    if (setup?.color && rigSlot.color !== undefined) {
+      throw new CompileError(`slot "${rigSlot.name}" has a setup colour in the rig spec AND in the motion spec`);
+    }
+    const slot: SpineSlot = { name: rigSlot.name, bone: rigSlot.bone };
     if (setupAttachment !== null) slot.attachment = setupAttachment;
-    if (setup.color) slot.color = rgbaHex(setup.color);
+    if (setup?.color) slot.color = rgbaHex(setup.color);
+    else if (rigSlot.color !== undefined) slot.color = rigSlot.color;
+    if (rigSlot.dark !== undefined) slot.dark = rigSlot.dark;
+    if (rigSlot.blend !== undefined) slot.blend = rigSlot.blend;
     slots.push(slot);
 
-    const perSlot: Record<string, SpineAttachment> = {};
-    const mesh = part.mesh ? buildMesh(part, manifest, bones, transforms, boneName) : null;
-    for (const name of names) {
-      const img = images.find((im) => im.region === name);
-      if (!img) throw new CompileError(`internal: no image for attachment ${name}`);
-      if (mesh) {
-        // Every state of a mesh slot gets the SAME geometry. That is what makes
-        // an attachment swap mid-deform safe: the control bone's pose means the
-        // same thing under all of them, so lip-sync and aperture do not fight.
-        perSlot[name] = { ...mesh.attachment };
-        continue;
+    if (part) {
+      const perSlot: Record<string, SpineAttachment> = {};
+      const mesh = part.mesh ? buildMesh(part, manifest!, bones, transforms, rigSlot.bone) : null;
+      for (const name of names) {
+        const img = images.find((im) => im.region === name);
+        if (!img) throw new CompileError(`internal: no image for attachment ${name}`);
+        if (mesh) {
+          // Every state of a mesh slot gets the SAME geometry. That is what makes
+          // an attachment swap mid-deform safe: the control bone's pose means the
+          // same thing under all of them, so lip-sync and aperture do not fight.
+          perSlot[name] = { ...mesh.attachment };
+          continue;
+        }
+        perSlot[name] = placeRegion(part, manifest!, transforms.get(rigSlot.bone)!, img);
       }
-      perSlot[name] = placeRegion(part, manifest, transforms.get(boneName)!, img);
+      if (mesh) {
+        const controls = meshControlBones(part);
+        meshBones.add(rigSlot.bone);
+        for (const name of controls) meshBones.add(name);
+        meshes.push({
+          slot: rigSlot.name,
+          kind: mesh.kind,
+          attachments: names,
+          vertices: mesh.attachment.uvs.length / 2,
+          triangles: mesh.attachment.triangles.length / 3,
+          bones: [rigSlot.bone, ...controls],
+        });
+      }
+      tableFor('default')[rigSlot.name] = perSlot;
+      continue;
     }
-    if (mesh) {
-      const controls = meshControlBones(part);
-      meshBones.add(boneName);
-      for (const name of controls) meshBones.add(name);
-      meshes.push({
-        slot: part.slot,
-        kind: mesh.kind,
-        attachments: names,
-        vertices: mesh.attachment.uvs.length / 2,
-        triangles: mesh.attachment.triangles.length / 3,
-        bones: [boneName, ...controls],
-      });
+
+    for (const skinName of skinNames) {
+      const placeholders = rig.skins![skinName][rigSlot.name];
+      if (!placeholders) continue;
+      const perSlot: Record<string, SpineAttachment> = {};
+      for (const [placeholder, att] of Object.entries(placeholders)) {
+        const where = `skin "${skinName}" slot "${rigSlot.name}" attachment "${placeholder}"`;
+        perSlot[placeholder] = buildRigAttachment(att, placeholder, where, {
+          images,
+          bones,
+          transforms,
+          meshBones,
+          meshes,
+          slotName: rigSlot.name,
+          anchorBone: rigSlot.bone,
+        });
+      }
+      tableFor(skinName)[rigSlot.name] = perSlot;
     }
-    skinAttachments[part.slot] = perSlot;
+  }
+  if (meshes.length > meshBudget) {
+    throw new CompileError(`${meshes.length} mesh slot(s) emitted but the rig "${rig.name}" allows ${meshBudget}`);
   }
 
-  // -- 4b. physics constraints ----------------------------------------------
-  // One top-level `constraints` array, `type` per entry. Defaults are omitted
-  // ONLY when the declared value equals the parser default, so the file says
-  // what it means and stays byte-stable.
-  const constraints: NonNullable<SpineSkeletonJson['constraints']> = [];
+  // -- 4b. constraints -------------------------------------------------------
+  // One top-level `constraints` array, `type` per entry. Rig-declared first
+  // (structure), then the motion spec's physics table (tuning). A name in both is
+  // refused: `mix` timelines resolve by name, and two constraints answering to
+  // one name is a timeline driving something nobody chose.
+  const constraints: SpineConstraint[] = [];
   const physicsReport: CompileResult['physics'] = [];
+  const constraintNames = new Set<string>();
+  for (const spec of rig.constraints ?? []) {
+    constraints.push(buildRigConstraint(spec as RigConstraintInput, boneNames));
+    constraintNames.add(spec.name);
+  }
   for (const [name, spec] of Object.entries(motion.physics ?? {})) {
+    if (constraintNames.has(name)) {
+      throw new CompileError(`constraint "${name}" is declared in both the rig spec and the motion spec's physics table`);
+    }
+    constraintNames.add(name);
     if (!boneNames.has(spec.bone)) {
       throw new CompileError(`physics constraint "${name}" targets unknown bone "${spec.bone}"`);
     }
-    const entry: NonNullable<SpineSkeletonJson['constraints']>[number] = {
+    const entry: SpineConstraint = {
       name,
       type: 'physics',
       bone: spec.bone,
@@ -587,7 +685,7 @@ export function compile(opts: CompileOptions): CompileResult {
       const targets = resolveTargets(track, motion, animName);
       targets.forEach((target, index) => {
         if (isPhysicsTrack) {
-          if (!motion.physics?.[target]) {
+          if (!constraintNames.has(target)) {
             throw new CompileError(`animation "${animName}" keys unknown physics constraint "${target}"`);
           }
         } else if (isBoneTrack) {
@@ -610,7 +708,7 @@ export function compile(opts: CompileOptions): CompileResult {
           ? compileValueTrack(track, motion, animName, target, shift, PHYSICS_TRACKS, 'physics constraint')
           : isBoneTrack
             ? compileValueTrack(track, motion, animName, target, shift, BONE_TRACKS, 'bone')
-            : compileTrack(track, motion, animName, target, shift, skinAttachments);
+            : compileTrack(track, motion, animName, target, shift, tableFor('default'));
         for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
         if (isPhysicsTrack) (physicsTimelines[target] ??= {})[track.property] = keys;
         else if (isBoneTrack) (boneTimelines[target] ??= {})[track.property] = keys;
@@ -632,17 +730,22 @@ export function compile(opts: CompileOptions): CompileResult {
   }
 
   // -- 6. assemble -----------------------------------------------------------
+  const header: SpineSkeletonJson['skeleton'] = {
+    spine: SPINE_VERSION,
+    x: rig.skeleton?.x ?? 0,
+    y: rig.skeleton?.y ?? 0,
+    width: stageWidth,
+    height: stageHeight,
+  };
+  if (rig.skeleton?.fps !== undefined) header.fps = rig.skeleton.fps;
+  if (rig.skeleton?.referenceScale !== undefined) header.referenceScale = rig.skeleton.referenceScale;
+  if (rig.skeleton?.images !== undefined) header.images = rig.skeleton.images;
+
   const skeleton: SpineSkeletonJson = {
-    skeleton: {
-      spine: SPINE_VERSION,
-      x: 0,
-      y: 0,
-      width: manifest.crop.w,
-      height: manifest.crop.h,
-    },
+    skeleton: header,
     bones,
     slots,
-    skins: [{ name: 'default', attachments: skinAttachments }],
+    skins: [...skinTables.entries()].map(([name, attachments]) => ({ name, attachments })),
     animations,
   };
   if (constraints.length) skeleton.constraints = constraints;
@@ -662,8 +765,421 @@ export function compile(opts: CompileOptions): CompileResult {
     meshBones: [...meshBones],
     meshes,
     physics: physicsReport,
-    rig: buildRigInfo(archetype, bones, meshes, manifest),
+    rig: buildRigInfo(rig, bones, meshes, manifest),
   };
+}
+
+// ---------------------------------------------------------------------------
+// bones
+// ---------------------------------------------------------------------------
+
+interface BoneContext {
+  rig: RigSpec;
+  manifest: FaceManifest | null;
+  cropH: number;
+  axisSpineDeg: number | null;
+  partBySlot: Map<string, FaceManifestPart>;
+}
+
+/**
+ * One rig bone -> one emitted bone.
+ *
+ * 🔑 A field is emitted exactly when the spec declared it. That is not Spine's
+ * own exporter convention (it omits anything equal to the default) and the
+ * difference is deliberate: a formation may need to say `x: 0` out loud, and
+ * deciding emission from the arithmetic rather than from the author's text makes
+ * the file depend on a rounding.
+ */
+function buildBone(spec: RigBone, soFar: SpineBone[], ctx: BoneContext): SpineBone {
+  const bone: SpineBone = { name: spec.name };
+  if (spec.parent !== undefined) bone.parent = spec.parent;
+  if (spec.length !== undefined) bone.length = r6(spec.length);
+
+  const crop = cropPointOf(spec, ctx);
+  if (crop) {
+    // Crop pixels (y down) -> Spine world (y up) -> the parent's local space. The
+    // inverse is the same one the mesh binder uses, so a rotated parent (the axis
+    // bone, a grip) is handled once rather than per call site.
+    const world: [number, number] = [crop[0], cropToSpineY(crop[1], ctx.cropH)];
+    if (spec.parent === undefined) {
+      bone.x = r6(world[0]);
+      bone.y = r6(world[1]);
+    } else {
+      const parent = computeWorldTransforms(soFar).get(spec.parent);
+      if (!parent) throw new CompileError(`bone "${spec.name}" names parent "${spec.parent}", which is declared after it`);
+      const [lx, ly] = toBoneLocal(parent, world[0], world[1]);
+      bone.x = lx;
+      bone.y = ly;
+    }
+  } else {
+    if (spec.x !== undefined) bone.x = r6(spec.x);
+    if (spec.y !== undefined) bone.y = r6(spec.y);
+  }
+
+  const rotation = rotationOf(spec, ctx);
+  if (rotation !== null) bone.rotation = r6(rotation);
+  if (spec.scaleX !== undefined) bone.scaleX = r6(spec.scaleX);
+  if (spec.scaleY !== undefined) bone.scaleY = r6(spec.scaleY);
+  if (spec.shearX !== undefined) bone.shearX = r6(spec.shearX);
+  if (spec.shearY !== undefined) bone.shearY = r6(spec.shearY);
+  if (spec.inherit !== undefined) bone.inherit = spec.inherit;
+  if (spec.skin !== undefined) bone.skin = spec.skin;
+  if (spec.color !== undefined) bone.color = spec.color;
+  return bone;
+}
+
+/** The crop-pixel point a bone's `from` names, or null when it declares none. */
+function cropPointOf(spec: RigBone, ctx: BoneContext): [number, number] | null {
+  const from = spec.from;
+  if (!from) return null;
+  const needManifest = (what: string): FaceManifest => {
+    if (!ctx.manifest) {
+      throw new CompileError(`bone "${spec.name}" takes its position from ${what}, which needs a cut manifest`);
+    }
+    return ctx.manifest;
+  };
+  if (from.anchor !== undefined) {
+    const manifest = needManifest(`the manifest anchor "${from.anchor}"`);
+    const anchor = manifest.anchors?.[from.anchor];
+    if (!anchor || anchor.length < 2) {
+      throw new CompileError(
+        `manifest anchors has no [x, y] for "${from.anchor}" (bone "${spec.name}" of rig "${ctx.rig.name}")`,
+      );
+    }
+    return [anchor[0], anchor[1]];
+  }
+  if (from.slotWindow !== undefined) {
+    const manifest = needManifest(`the window of slot "${from.slotWindow}"`);
+    const part = ctx.partBySlot.get(from.slotWindow);
+    if (!part) {
+      throw new CompileError(
+        `bone "${spec.name}" sits at the centre of slot "${from.slotWindow}", which this cut's manifest carries no part for`,
+      );
+    }
+    const win = partWindow(part, manifest);
+    return [win.x + win.w / 2, win.y + win.h / 2];
+  }
+  if (from.meshCenter !== undefined) {
+    needManifest(`the mesh centre of slot "${from.meshCenter}"`);
+    const centre = ctx.partBySlot.get(from.meshCenter)?.mesh?.center;
+    if (!centre) {
+      throw new CompileError(
+        `bone "${spec.name}" sits on the mesh centre of slot "${from.meshCenter}", which declares no mesh.center`,
+      );
+    }
+    return [centre[0], centre[1]];
+  }
+  return null;
+}
+
+/** The setup rotation a bone declares, in Spine degrees, or null for none. */
+function rotationOf(spec: RigBone, ctx: BoneContext): number | null {
+  const source = spec.from?.rotation;
+  if (source === 'axis') {
+    if (ctx.axisSpineDeg === null) {
+      throw new CompileError(`bone "${spec.name}" takes its rotation from the cut axis, which the manifest does not declare`);
+    }
+    return ctx.axisSpineDeg;
+  }
+  if (source === 'anchor') {
+    const key = spec.from!.anchor!;
+    const anchor = ctx.manifest?.anchors?.[key];
+    if (!anchor || anchor.length < 3) {
+      throw new CompileError(
+        `bone "${spec.name}" takes its rotation from anchor "${key}", which has no third element (a screen-space facing angle)`,
+      );
+    }
+    return screenToSpineDegrees(anchor[2]);
+  }
+  return spec.rotation ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// rig-declared attachments
+// ---------------------------------------------------------------------------
+
+interface AttachmentContext {
+  images: CompiledImage[];
+  bones: SpineBone[];
+  transforms: Map<string, BoneTransform>;
+  meshBones: Set<string>;
+  meshes: CompileResult['meshes'];
+  slotName: string;
+  anchorBone: string;
+}
+
+/**
+ * Build one attachment a rig spec authored, as opposed to one a manifest part
+ * produced.
+ *
+ * The types this refuses are refused BY NAME. The parser's own behaviour on an
+ * attachment type it does not know is to return null and drop it
+ * (`SkeletonJson.ts:653`), so passing an unimplemented type through would produce
+ * a skeleton missing an attachment nobody was told about.
+ */
+function buildRigAttachment(
+  att: RigAttachment,
+  placeholder: string,
+  where: string,
+  ctx: AttachmentContext,
+): SpineAttachment {
+  const type = att.type ?? 'region';
+  if (type === 'region') return buildRigRegion(att as RigRegionAttachment, placeholder, where, ctx);
+  if (type === 'mesh') return buildRigMesh(att as RigMeshAttachment, where, ctx);
+  throw new NotImplementedError(
+    `${where}: attachment type "${String(type)}" is in the Spine 4.3 format and rigc does not emit it yet. ` +
+      'Implemented: region, mesh. docs/SPEC_COVERAGE.md part 1-6 lists what the type would have to carry.',
+  );
+}
+
+function buildRigRegion(
+  att: RigRegionAttachment,
+  placeholder: string,
+  where: string,
+  ctx: AttachmentContext,
+): SpineRegionAttachment {
+  const img = att.image === undefined ? null : ctx.images.find((im) => im.region === basename(att.image!, '.png'));
+  const width = att.width ?? img?.width;
+  const height = att.height ?? img?.height;
+  if (width === undefined || height === undefined) {
+    // No parser default: an omission loads as NaN and every UV collapses, with
+    // no error at all (plan 04 section 2-3 case 6c). So it is this or nothing.
+    throw new CompileError(
+      `${where}: a region needs width and height — give them, or give an "image" and rigc will measure the PNG`,
+    );
+  }
+  const out: SpineRegionAttachment = { width: r6(width), height: r6(height) };
+  const region = att.image === undefined ? undefined : basename(att.image, '.png');
+  if (att.path !== undefined) out.path = att.path;
+  else if (region !== undefined && region !== placeholder) out.path = region;
+  if (att.x !== undefined) out.x = r6(att.x);
+  if (att.y !== undefined) out.y = r6(att.y);
+  if (att.rotation !== undefined) out.rotation = r6(att.rotation);
+  if (att.scaleX !== undefined) out.scaleX = r6(att.scaleX);
+  if (att.scaleY !== undefined) out.scaleY = r6(att.scaleY);
+  if (att.color !== undefined) out.color = att.color;
+  return out;
+}
+
+function buildRigMesh(att: RigMeshAttachment, where: string, ctx: AttachmentContext): SpineMeshAttachment {
+  const authored = att.uvs !== undefined || att.triangles !== undefined || att.vertices !== undefined;
+  if (authored && att.generator) {
+    throw new CompileError(`${where}: a mesh is either authored geometry or a generator, never both`);
+  }
+  if (att.generator) return buildGeneratedMesh(att, att.generator, where, ctx);
+  if (!att.uvs || !att.triangles || !att.vertices) {
+    throw new CompileError(`${where}: an authored mesh needs uvs, triangles and vertices (or a "generator")`);
+  }
+  const out: SpineMeshAttachment = {
+    type: 'mesh',
+    uvs: att.uvs.map(r6),
+    triangles: att.triangles,
+    vertices: att.vertices.map(r6),
+    hull: att.hull ?? 0,
+    width: r6(att.width ?? 0),
+    height: r6(att.height ?? 0),
+  };
+  if (att.path !== undefined) out.path = att.path;
+  if (att.edges !== undefined) out.edges = att.edges;
+  if (att.color !== undefined) out.color = att.color;
+  return out;
+}
+
+/**
+ * Invoke a `src/mesh.ts` builder from rig-spec data.
+ *
+ * ⚠️ This is the path a skeleton with NO cut manifest takes. A cut that has one
+ * invokes the same builders through the manifest's `mesh` block instead, because
+ * everything the builders need — the mask contour, the aperture centre, the part
+ * window — is measured art, and measured art has exactly one home.
+ */
+function buildGeneratedMesh(
+  att: RigMeshAttachment,
+  generator: NonNullable<RigMeshAttachment['generator']>,
+  where: string,
+  ctx: AttachmentContext,
+): SpineMeshAttachment {
+  if (generator.kind === 'contour') {
+    throw new NotImplementedError(
+      `${where}: the "contour" generator would triangulate a part's own alpha mask, and src/mesh.ts has no triangulator — ` +
+        'it holds buildRingMesh and buildRibbonMesh only',
+    );
+  }
+  const controls = generator.kind === 'ring' ? generator.controls : generator.chain;
+  const refFor = (name: string): MeshBoneRef => {
+    const index = ctx.bones.findIndex((b) => b.name === name);
+    if (index < 0) throw new CompileError(`${where}: mesh bone "${name}" is not in the rig's bone list`);
+    const m = ctx.transforms.get(name);
+    if (!m) throw new CompileError(`${where}: no setup transform for mesh bone "${name}"`);
+    return { index, toBind: (wx, wy) => toBoneLocal(m, wx, wy) };
+  };
+  let geometry;
+  try {
+    geometry =
+      generator.kind === 'ribbon'
+        ? buildRibbonMesh({ size: generator.size, rows: generator.rows, chainCount: generator.chain.length })
+        : buildRingMesh({
+            hull: generator.hull,
+            center: generator.center,
+            inner: generator.inner,
+            size: generator.size,
+            bias: generator.bias,
+          });
+  } catch (err) {
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
+    throw err;
+  }
+  // The generator works in part-local pixels, y down. Without a manifest there is
+  // no crop to flip against, so the part window is centred on its own slot bone.
+  const [w, h] = generator.size;
+  const anchor = ctx.transforms.get(ctx.anchorBone);
+  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  const vertices = encodeWeightedVertices(
+    geometry,
+    (px, py) => [r6(anchor.worldX + px - w / 2), r6(anchor.worldY + h / 2 - py)],
+    { anchor: refFor(ctx.anchorBone), controls: controls.map(refFor) },
+  );
+  ctx.meshBones.add(ctx.anchorBone);
+  for (const name of controls) ctx.meshBones.add(name);
+  ctx.meshes.push({
+    slot: ctx.slotName,
+    kind: geometry.kind,
+    attachments: [ctx.slotName],
+    vertices: geometry.uvs.length / 2,
+    triangles: geometry.triangles.length / 3,
+    bones: [ctx.anchorBone, ...controls],
+  });
+  const out: SpineMeshAttachment = {
+    type: 'mesh',
+    uvs: geometry.uvs,
+    triangles: geometry.triangles,
+    vertices,
+    hull: geometry.hullVertices,
+    width: r6(w),
+    height: r6(h),
+  };
+  if (att.path !== undefined) out.path = att.path;
+  if (att.color !== undefined) out.color = att.color;
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// rig-declared constraints
+// ---------------------------------------------------------------------------
+
+/** The rig-constraint shape as this file consumes it: a name, a type, and fields. */
+type RigConstraintInput = { name: string; type: string } & Record<string, unknown>;
+
+/** The six property names a transform constraint may map between (`:241`, `:521`). */
+const TRANSFORM_PROPERTIES = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'];
+
+/**
+ * 4.3 puts every constraint in one array and branches on `type`. An entry whose
+ * type matches no case is dropped with no error and no `default:` branch, so an
+ * unimplemented type is refused here by name rather than emitted and lost.
+ */
+function buildRigConstraint(spec: RigConstraintInput, boneNames: Set<string>): SpineConstraint {
+  const where = `rig constraint "${spec.name}"`;
+  const needBone = (name: unknown, field: string): string => {
+    if (typeof name !== 'string' || !boneNames.has(name)) {
+      throw new CompileError(`${where}: ${field} names ${JSON.stringify(name)}, which the rig does not declare as a bone`);
+    }
+    return name;
+  };
+  const out: SpineConstraint = { name: spec.name, type: spec.type };
+  const copy = (fields: readonly string[]) => {
+    for (const field of fields) {
+      const v = spec[field];
+      if (v !== undefined) out[field] = typeof v === 'number' ? r6(v) : v;
+    }
+  };
+  const boneList = (): string[] => {
+    const list = spec.bones;
+    if (!Array.isArray(list) || list.length === 0) {
+      throw new CompileError(`${where}: a ${spec.type} constraint needs a non-empty "bones" array`);
+    }
+    return list.map((name, i) => needBone(name, `bones[${i}]`));
+  };
+
+  if (spec.type === 'ik') {
+    out.bones = boneList();
+    out.target = needBone(spec.target, 'target');
+    copy(['scaleY', 'mix', 'softness', 'bendPositive', 'compress', 'stretch', 'skin']);
+    return out;
+  }
+  if (spec.type === 'transform') {
+    out.bones = boneList();
+    out.source = needBone(spec.source, 'source');
+    const properties = spec.properties as Record<string, { to?: Record<string, unknown> }> | undefined;
+    for (const [from, entry] of Object.entries(properties ?? {})) {
+      // The parser THROWS on a name outside the six, which is one of the few
+      // places in this format that does not fail silently — but it throws at load
+      // time, in the consumer's process, and that is late.
+      if (!TRANSFORM_PROPERTIES.includes(from)) {
+        throw new CompileError(`${where}: properties has "${from}"; known: ${TRANSFORM_PROPERTIES.join(', ')}`);
+      }
+      for (const to of Object.keys(entry?.to ?? {})) {
+        if (!TRANSFORM_PROPERTIES.includes(to)) {
+          throw new CompileError(`${where}: properties.${from}.to has "${to}"; known: ${TRANSFORM_PROPERTIES.join(', ')}`);
+        }
+      }
+    }
+    if (properties !== undefined) out.properties = properties;
+    copy([
+      'localSource',
+      'localTarget',
+      'additive',
+      'clamp',
+      'rotation',
+      'x',
+      'y',
+      'scaleX',
+      'scaleY',
+      'shearY',
+      'mixRotate',
+      'mixX',
+      'mixY',
+      'mixScaleX',
+      'mixScaleY',
+      'mixShearY',
+      'skin',
+    ]);
+    return out;
+  }
+  if (spec.type === 'physics') {
+    out.bone = needBone(spec.bone, 'bone');
+    copy([
+      'x',
+      'y',
+      'rotate',
+      'scaleX',
+      'shearX',
+      'scaleY',
+      'limit',
+      'fps',
+      'inertia',
+      'strength',
+      'damping',
+      'mass',
+      'wind',
+      'gravity',
+      'mix',
+      'inertiaGlobal',
+      'strengthGlobal',
+      'dampingGlobal',
+      'massGlobal',
+      'windGlobal',
+      'gravityGlobal',
+      'mixGlobal',
+      'skin',
+    ]);
+    return out;
+  }
+  throw new NotImplementedError(
+    `${where}: constraint type "${String(spec.type)}" is in the Spine 4.3 format and rigc does not emit it yet. ` +
+      'Implemented: ik, transform, physics. Neither path nor slider appears anywhere in the benchmark corpus ' +
+      '(docs/SPEC_COVERAGE.md part 4-2).',
+  );
 }
 
 /**
@@ -671,17 +1187,20 @@ export function compile(opts: CompileOptions): CompileResult {
  *
  * Nothing in skeleton JSON records that a mesh is a ribbon, that a bone's
  * subtree is authored in axis space, or that one parentage is forbidden. Those
- * are archetype facts, so the compiler hands them to the validator instead of
- * letting it guess — and a mutant stays honest because it edits the artifact
- * while this block keeps saying what the rig was supposed to be.
+ * are rig facts, so the compiler hands them to the validator instead of letting
+ * it guess — and a mutant stays honest because it edits the artifact while this
+ * block keeps saying what the rig was supposed to be.
  */
 function buildRigInfo(
-  archetype: Archetype,
+  rig: RigSpec,
   bones: SpineBone[],
   meshes: CompileResult['meshes'],
-  manifest: FaceManifest,
+  manifest: FaceManifest | null,
 ): RigInfo {
-  const axisBone = archetype.axisBone ?? null;
+  const axisBone = rig.invariants?.axisBone ?? null;
+  if (axisBone !== null && !bones.some((b) => b.name === axisBone)) {
+    throw new CompileError(`rig "${rig.name}" names "${axisBone}" as its axis bone, which it does not declare`);
+  }
   const axisSubtree: string[] = [];
   if (axisBone) {
     const parentOf = new Map(bones.map((b) => [b.name, b.parent ?? null]));
@@ -697,29 +1216,29 @@ function buildRigInfo(
   for (const mesh of meshes) meshKinds[mesh.slot] = mesh.kind;
   // Inward, in Spine world. Off-axis keys (the mass hangs off `cam`, not `axis`)
   // have to be projected onto it before they can be compared with a stroke.
-  const spineDeg = manifest.axis ? screenToSpineDegrees(manifest.axis.deg) : null;
+  const spineDeg = manifest?.axis ? screenToSpineDegrees(manifest.axis.deg) : null;
   const inwardUnit: [number, number] | null =
     spineDeg === null ? null : [r6(Math.cos((spineDeg * Math.PI) / 180)), r6(Math.sin((spineDeg * Math.PI) / 180))];
-  const contactDepth = manifest.stroke?.contact_depth ?? null;
+  const contactDepth = manifest?.stroke?.contact_depth ?? null;
   if (contactDepth !== null && !(contactDepth > 0)) {
     throw new CompileError(`manifest stroke.contact_depth is ${contactDepth}; it must be a positive number of axis pixels`);
   }
-  const capCeiling = manifest.stroke?.cap_containment_ceiling ?? null;
+  const capCeiling = manifest?.stroke?.cap_containment_ceiling ?? null;
   if (capCeiling !== null && !(capCeiling > 0)) {
     throw new CompileError(
       `manifest stroke.cap_containment_ceiling is ${capCeiling}; it must be a positive number of axis pixels (use null for "not measurable on this cut")`,
     );
   }
   return {
-    archetype: archetype.name,
+    archetype: rig.name,
     axisBone,
     axisSubtree,
-    detached: (archetype.detached ?? []).map((d) => [d.bone, d.notUnder] as [string, string]),
-    slotOrder: archetype.slotOrder ?? null,
+    detached: (rig.invariants?.detached ?? []).map((d) => [d.bone, d.notUnder] as [string, string]),
+    slotOrder: rig.slots.length ? rig.slots.map((s) => s.name) : null,
     meshKinds,
     contactDepth,
     capContainmentCeiling: capCeiling,
-    massBone: archetype.massBone ?? null,
+    massBone: rig.invariants?.massBone ?? null,
     inwardUnit,
   };
 }
@@ -749,13 +1268,13 @@ function checkAxisSelfConsistency(manifest: FaceManifest): void {
  *
  * Two offsets are folded in here. The attachment is centred on the part window
  * rather than on the bone, because several slots share one bone in the joint
- * archetype (`piston` + `piston_blur`, `lip` + `fluid_pool`) and their windows
+ * formation (`piston` + `piston_blur`, `lip` + `fluid_pool`) and their windows
  * are in different places. And the attachment's own `rotation` cancels the bone's
  * world rotation, because a plate is authored in screen space: without it every
  * slot hanging off `axis` would render tilted by the cut's axis angle.
  *
  * On an unrotated bone sitting at its window centre both terms are zero and the
- * fields are omitted, which is why the overlay archetype's output is unchanged.
+ * fields are omitted, which is why the overlay formation's output is unchanged.
  */
 function placeRegion(
   part: FaceManifestPart,
@@ -776,7 +1295,7 @@ function placeRegion(
 }
 
 /**
- * Build one mesh for a part and encode its weighted vertices.
+ * Build one mesh for a manifest part and encode its weighted vertices.
  *
  * Two generators, one call site. A `ring` pins its two outer rings and moves only
  * the aperture; a `ribbon` pins its entry row and lets the chain stretch the rest.
@@ -811,8 +1330,8 @@ function buildMesh(
     } else {
       const centre: [number, number] = [spec.center![0] - win.x, spec.center![1] - win.y];
       // Control bones enter the ring builder as ANGLES about the aperture, taken
-      // from where the archetype actually put them. The alternative — a per-bone
-      // angle in the manifest — would let the declared angle drift away from the
+      // from where the rig actually put them. The alternative — a per-bone angle
+      // in the manifest — would let the declared angle drift away from the
       // declared position, and then the ring would deform toward a bone that is
       // somewhere else.
       //
@@ -985,7 +1504,7 @@ function compileTrack(
   animName: string,
   target: string,
   shift: number,
-  skinAttachments: Record<string, Record<string, SpineRegionAttachment>>,
+  skinAttachments: Record<string, Record<string, SpineAttachment>>,
 ): SpineTimelineKey[] {
   const where = `animation "${animName}" slot "${target}" ${track.property}`;
   if (!track.keys.length) throw new CompileError(`${where}: no keys`);

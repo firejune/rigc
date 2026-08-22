@@ -24,24 +24,29 @@
  * GATE. Until they are, this file is a gate for the project that owns the art,
  * not a gate a fresh clone can run.
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { compile } from './src/compile.ts';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedMeasures } from './src/diff.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
 interface CutEntry {
-  manifest: string;
+  rig: string;
   motion: string;
   out: string;
+  manifest?: string;
+  images?: string;
 }
 type CutTable = Record<string, CutEntry>;
 
 interface Options {
-  manifestPath: string;
+  rigPath: string;
   motionPath: string;
   outDir: string;
+  manifestPath?: string;
+  imagesDir?: string;
 }
 
 /** Argument, then environment, then a cuts.json sitting next to this file. */
@@ -80,11 +85,14 @@ function optsFor(name: string): Options {
     console.error(`selftest: ${CUTS_FILE} has no cut named ${JSON.stringify(name)} — this suite cannot run without it`);
     process.exit(2);
   }
-  return {
-    manifestPath: resolve(CUTS_DIR, entry.manifest),
+  const opts: Options = {
+    rigPath: resolve(CUTS_DIR, entry.rig),
     motionPath: resolve(CUTS_DIR, entry.motion),
     outDir: resolve(CUTS_DIR, entry.out),
   };
+  if (entry.manifest !== undefined) opts.manifestPath = resolve(CUTS_DIR, entry.manifest);
+  if (entry.images !== undefined) opts.imagesDir = resolve(CUTS_DIR, entry.images);
+  return opts;
 }
 
 const OPTS = optsFor('face_trial');
@@ -892,6 +900,159 @@ function runDiffSuite(): number | null {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// the rig spec — negative controls for the COMPILER, not for the validator
+// ---------------------------------------------------------------------------
+//
+// The three suites above break an ARTIFACT and assert that a named assertion
+// fires. These break an INPUT and assert that the compile is refused by name,
+// which is a different gate with the same job: a rig spec is now the skeleton's
+// structure, and every one of the edits below produces a file that Spine's own
+// parser would accept while quietly meaning something else.
+//
+//   * a bone naming a parent declared after it loads as a SECOND ROOT — the
+//     parser resolves `parent` against the bones it has already read;
+//   * two bones with one name make every join by that name ambiguous, and the
+//     loser is whichever the runtime indexed second;
+//   * a slot naming a bone that does not exist is one of the format's few loud
+//     failures, but it throws in the CONSUMER's process, which is late;
+//   * an ik constraint pointing at an unknown bone likewise;
+//   * an attachment naming a PNG that is not there used to arrive as a raw
+//     ENOENT — the tool talking about its own internals instead of the rig;
+//   * a wrong `spec` field is how a v2 format would get read as a v1 one.
+//
+// ⚠️ There is a positive control first, and it is not symmetry: these cases
+// compile a COPY of the rig from a temp directory, so a harness bug (a bad copy,
+// a path that no longer resolves) would make every case "pass" by refusing a rig
+// for reasons that have nothing to do with the edit.
+
+interface RigMutant {
+  name: string;
+  origin: string;
+  /** A substring the refusal must contain. Whole messages are too brittle. */
+  expect: string;
+  mutate: (rig: Record<string, unknown>) => void;
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const RIG_MUTANTS: RigMutant[] = [
+  {
+    name: 'R01_bone_names_a_parent_declared_after_it',
+    origin: 'SkeletonJson.ts:90-118 — `parent` resolves against the bones already read, so a forward reference loads as a second root',
+    expect: 'is not declared before it',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'cam').parent = 'fluid_c';
+    },
+  },
+  {
+    name: 'R02_two_bones_share_one_name',
+    origin: 'bone names are the join key for slots, meshes and every timeline; a duplicate makes the join ambiguous with no error',
+    expect: 'two bones are called',
+    mutate: (rig) => {
+      (rig as any).bones.push({ name: 'piston', parent: 'root' });
+    },
+  },
+  {
+    name: 'R03_slot_names_a_bone_the_rig_does_not_have',
+    origin: "SkeletonJson.ts:127 — the parser throws `Couldn't find bone … for slot …`, but in the consumer's process",
+    expect: 'which this rig does not declare',
+    mutate: (rig) => {
+      (rig as any).slots.find((s: any) => s.name === 'lip').bone = 'rim_typo';
+    },
+  },
+  {
+    name: 'R04_attachment_image_is_not_on_disk',
+    origin: 'a rig-declared attachment naming a missing PNG used to surface as a raw ENOENT from readFileSync',
+    expect: 'is not on disk at',
+    mutate: (rig) => {
+      // `near` is a slot the joint manifest carries no part for, so filling it
+      // from the rig is the one place this cut can exercise the rig-skin path.
+      (rig as any).skins = { default: { near: { probe_missing: { image: 'nope_not_here.png' } } } };
+    },
+  },
+  {
+    name: 'R05_ik_constraint_targets_an_unknown_bone',
+    origin: 'SkeletonJson.ts:149-176 — ik `bones`/`target` resolve by name and throw on a miss, again in the consumer',
+    expect: 'which the rig does not declare as a bone',
+    mutate: (rig) => {
+      (rig as any).constraints = [{ name: 'probe_ik', type: 'ik', bones: ['piston'], target: 'nowhere' }];
+    },
+  },
+  {
+    name: 'R06_wrong_spec_version_field',
+    origin: 'the envelope is the only thing standing between a v1 reader and a v2 file',
+    expect: 'unknown rig spec version',
+    mutate: (rig) => {
+      rig.spec = 'rigc-rig/2';
+    },
+  },
+  {
+    name: 'R07_constraint_type_the_emitter_cannot_write',
+    origin: 'SkeletonJson.ts:148-367 — an entry whose `type` matches no case is dropped with no error and no default branch',
+    expect: 'rigc does not emit it yet',
+    mutate: (rig) => {
+      (rig as any).constraints = [{ name: 'probe_path', type: 'path', bones: ['piston'], slot: 'lip' }];
+    },
+  },
+];
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+function runRigSuite(): number {
+  const entry: CutEntry | undefined = CUT_TABLE.joint_dev;
+  if (!entry?.rig) {
+    console.log('\n── rig spec refusals ──');
+    console.log('  SKIP  the cuts table has no `rig` path for joint_dev, so the rig spec was not exercised at all.');
+    return 0;
+  }
+  const opts = optsFor('joint_dev');
+  const sourceText = readFileSync(opts.rigPath, 'utf8');
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-rigspec-'));
+  const rigPath = join(dir, 'probe.rig.json');
+  let bad = 0;
+  console.log('\n── rig spec refusals (joint_dev) ──');
+
+  // Positive control. The copy must compile to the same bytes as the original,
+  // or every refusal below could be the copy's fault rather than the edit's.
+  writeFileSync(rigPath, sourceText);
+  const pristine = compile(opts);
+  try {
+    const copied = compile({ ...opts, rigPath });
+    if (copied.skeletonText === pristine.skeletonText && copied.atlasText === pristine.atlasText) {
+      console.log('  PASS  CONTROL_RIG_COPY_COMPILES_IDENTICALLY');
+    } else {
+      bad++;
+      console.log('  FAIL  CONTROL_RIG_COPY_COMPILES_IDENTICALLY: the untouched copy emitted different bytes');
+    }
+  } catch (err) {
+    bad++;
+    console.log(`  FAIL  CONTROL_RIG_COPY_COMPILES_IDENTICALLY: ${(err as Error).message}`);
+  }
+
+  for (const mutant of RIG_MUTANTS) {
+    const rig = JSON.parse(sourceText) as Record<string, unknown>;
+    mutant.mutate(rig);
+    writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+    let message: string | null = null;
+    try {
+      compile({ ...opts, rigPath });
+    } catch (err) {
+      message = err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+    if (message !== null && message.includes(mutant.expect)) {
+      console.log(`  PASS  ${mutant.name}`);
+      console.log(`          refused with: ${message}`);
+      console.log(`          origin: ${mutant.origin}`);
+    } else {
+      bad++;
+      console.log(
+        `  FAIL  ${mutant.name}: expected a refusal naming ${JSON.stringify(mutant.expect)}, got ` +
+          (message === null ? 'a clean compile — the broken rig went through' : message),
+      );
+    }
+  }
+  return bad;
+}
+
 interface Suite {
   name: string;
   opts: typeof OPTS;
@@ -981,6 +1142,7 @@ function main(): void {
       else breaks++;
     }
   }
+  bad += runRigSuite();
   const diffBad = runDiffSuite();
   if (diffBad !== null) bad += diffBad;
 
@@ -990,8 +1152,9 @@ function main(): void {
     process.exit(1);
   }
   console.log(
-    `rigc selftest: green — ${SUITES.length} positive controls + ${breaks} deliberate breaks, each caught by its ` +
-      `named assertion, + ${tolerances} legal edits the gate had to accept` +
+    `rigc selftest: green — ${SUITES.length + 1} positive controls + ${breaks} deliberate breaks, each caught by its ` +
+      `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
+      `+ ${tolerances} legal edits the gate had to accept` +
       (diffBad === null
         ? '\n  ⚠️ but the rigc diff self-checks did NOT run (no example corpus) — this run does not cover them'
         : `, + ${DIFF_CASES.length} diff measure controls`),
