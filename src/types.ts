@@ -189,10 +189,43 @@ export interface MotionKey {
   v: number[] | string | null;
   /** Named easing from `easings`, or "stepped". Absent = linear. */
   ease?: string;
+  /**
+   * Escape hatch: this key's bezier written out, as ABSOLUTE (time, value)
+   * control points — four numbers per value channel, in field order, which is
+   * exactly what the emitted JSON holds.
+   *
+   * ⭐ `ease` stays the recommended path and a key may carry one or the other,
+   * never both. A named easing says "this shape, wherever it is used", which is
+   * what makes a motion spec readable as intent; this says "these numbers", which
+   * is what a transcription of an editor export needs, because an export has a
+   * different shape per key per channel.
+   *
+   * ⚠️ Not the normalised graph-view handles `easings` takes. Those go through
+   * `bezierForChannel`; writing them here loads clean and plays a different
+   * curve (plan 04 section 1-6 item 3).
+   */
+  curve?: number[] | 'stepped';
 }
 
-/** Bone timelines the compiler emits. Channel counts live in the validator. */
-export type BoneProperty = 'translate' | 'scale' | 'rotate';
+/**
+ * Bone timelines the compiler emits. Channel counts live in the validator.
+ *
+ * The single-axis forms are not sugar for the paired ones: Spine keys them as
+ * separate timelines, and an export that used `translatex` alone is not
+ * reproduced by a `translate` whose y channel happens to be flat — the key
+ * counts differ, and so does what a runtime blends against.
+ */
+export type BoneProperty =
+  | 'translate'
+  | 'translatex'
+  | 'translatey'
+  | 'scale'
+  | 'scalex'
+  | 'scaley'
+  | 'shear'
+  | 'shearx'
+  | 'sheary'
+  | 'rotate';
 
 /** Physics timelines the compiler emits. `reset` carries no value at all. */
 export type PhysicsProperty = 'mix' | 'reset';

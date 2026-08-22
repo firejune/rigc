@@ -96,7 +96,14 @@ function rgbaHex(v: number[]): string {
  */
 const BONE_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
   translate: { fields: ['x', 'y'], identity: [0, 0] },
+  translatex: { fields: ['value'], identity: [0] },
+  translatey: { fields: ['value'], identity: [0] },
   scale: { fields: ['x', 'y'], identity: [1, 1] },
+  scalex: { fields: ['value'], identity: [1] },
+  scaley: { fields: ['value'], identity: [1] },
+  shear: { fields: ['x', 'y'], identity: [0, 0] },
+  shearx: { fields: ['value'], identity: [0] },
+  sheary: { fields: ['value'], identity: [0] },
   rotate: { fields: ['value'], identity: [0] },
 };
 
@@ -1388,6 +1395,46 @@ function buildMesh(
 }
 
 /**
+ * The raw-curve escape hatch: absolute (time, value) control points, verbatim.
+ *
+ * ⭐ Named easings stay the recommended path (plan 04 rule 2): a handle set with
+ * a name is reusable, reviewable and retargetable, and it is what makes a motion
+ * spec readable as intent rather than as numbers. But a named easing can only say
+ * "the same shape, everywhere", and an editor export says a different shape per
+ * key per channel — rung 3 of the benchmark ladder carries 54 bezier keys and no
+ * two of them share handles. Refusing to express that would not make rigc's
+ * output better; it would make rigc unable to state what Spine's format holds,
+ * which is the same blocker as the bone tree being code, one layer down.
+ *
+ * So this is the escape hatch, and it is shaped like one: the numbers are the
+ * file's own, checked for length and finiteness and passed through. What it is
+ * NOT is a second way to write an easing — a key may carry `ease` or `curve`,
+ * never both.
+ *
+ * ⚠️ These are ABSOLUTE (time, value) points, not the normalised graph-view
+ * handles an editor shows. Writing the handles here would load without error and
+ * produce a different curve (plan 04 section 1-6 item 3), which is exactly the
+ * trap `bezierForChannel` exists to keep authors out of.
+ */
+function rawCurve(curve: number[] | 'stepped', channels: number, where: string, at: string): number[] | 'stepped' {
+  if (curve === 'stepped') return 'stepped';
+  if (!Array.isArray(curve)) throw new CompileError(`${where} (t=${at}): curve must be an array or "stepped"`);
+  if (curve.length !== channels * 4) {
+    // A short array multiplies `undefined` into the cubic and yields NaN with no
+    // error at all — case 6g, and the reason A05 exists.
+    throw new CompileError(
+      `${where} (t=${at}): raw curve has ${curve.length} numbers, this timeline needs ${channels} channel(s) x 4 = ${channels * 4}`,
+    );
+  }
+  for (const n of curve) {
+    if (typeof n !== 'number' || !Number.isFinite(n)) {
+      throw new CompileError(`${where} (t=${at}): raw curve holds a non-finite value ${JSON.stringify(n)}`);
+    }
+  }
+  return curve.map(r6);
+}
+
+/**
  * Bone timelines. Same curve rule as the slot tracks — four numbers per value
  * channel, in field order — but the identity value differs per property, so a
  * key that matches setup is still emitted explicitly rather than omitted. An
@@ -1433,7 +1480,13 @@ function compileValueTrack(
       if (!Number.isFinite(v[c])) throw new CompileError(`${where}: non-finite value ${String(v[c])}`);
       entry[field] = r6(v[c]);
     });
-    if (key.ease && next) {
+    if (key.ease !== undefined && key.curve !== undefined) {
+      throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
+    }
+    if (key.curve !== undefined) {
+      if (!next) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
+      entry.curve = rawCurve(key.curve, shape.fields.length, where, String(key.t));
+    } else if (key.ease && next) {
       if (key.ease === 'stepped') {
         entry.curve = 'stepped';
       } else {
@@ -1534,6 +1587,15 @@ function compileTrack(
     // rgba
     if (!Array.isArray(key.v)) throw new CompileError(`${where}: rgba key value must be [r,g,b,a]`);
     const entry: SpineTimelineKey = { time, color: rgbaHex(key.v) };
+    if (key.ease !== undefined && key.curve !== undefined) {
+      throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
+    }
+    if (key.curve !== undefined) {
+      if (!next) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
+      entry.curve = rawCurve(key.curve, 4, where, String(key.t));
+      out.push(entry);
+      continue;
+    }
     if (key.ease && next) {
       if (key.ease === 'stepped') {
         entry.curve = 'stepped';

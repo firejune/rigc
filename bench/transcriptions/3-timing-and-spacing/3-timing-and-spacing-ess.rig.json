@@ -1,0 +1,60 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "3-timing-and-spacing-ess",
+  "note": "Mechanical transcription of Spine's official 3-timing-and-spacing `ess` export (rung 3 of docs/LADDER.md), written to prove that a rig spec can express a foreign skeleton at all. It is NOT an authored rig: the numbers were copied out of the reference, so it says nothing about whether an agent could produce them. The example art is not redistributed here \u2014 `--images examples/3-timing-and-spacing/images` supplies it, and `examples/` is gitignored (see NOTICE.md).",
+  "images": "../../../examples/3-timing-and-spacing/images",
+  "skeleton": {
+    "x": -484.86945,
+    "y": -0.6404037,
+    "width": 945.1005,
+    "height": 815.4317
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "square",
+      "parent": "root",
+      "x": 380.7311,
+      "y": 78.8596
+    },
+    {
+      "name": "bone",
+      "parent": "root",
+      "length": 473,
+      "x": 204.753,
+      "y": 708.0989,
+      "rotation": 180
+    }
+  ],
+  "slots": [
+    {
+      "name": "pendulum",
+      "bone": "bone",
+      "attachment": "pendulum"
+    },
+    {
+      "name": "square",
+      "bone": "square",
+      "attachment": "square"
+    }
+  ],
+  "skins": {
+    "default": {
+      "pendulum": {
+        "pendulum": {
+          "image": "pendulum.png",
+          "x": 316.79,
+          "y": 0.4815389,
+          "rotation": -179.81934
+        }
+      },
+      "square": {
+        "square": {
+          "image": "square.png"
+        }
+      }
+    }
+  }
+}
