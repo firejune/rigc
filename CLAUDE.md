@@ -115,7 +115,7 @@ Where its fixtures come from, in three tiers:
 | --- | --- | --- |
 | **generated rigs** | [`fixtures/public.ts`](fixtures/public.ts), into a temp dir per run | `overlay_probe`, `articulated_probe`, `contained_probe` — between them: region attachments, attachment swaps, rgba fades, a ring mesh on a control bone, a ribbon on a bone chain, an axis bone, a detached emitter, physics constraints, and both measured ceilings |
 | **inline probes** | `selftest.ts` itself | the two-slot rig the static-rig and draw-order suites break |
-| **the example corpus** | `bun run fetch-examples` | the rung-3 transcription and its rendered reference frames, which the `diff` and `check` suites measure against |
+| **the example corpus** | `bun run fetch-examples` | the rung-3 and rung-6 transcriptions and their rendered reference frames, which the `diff`, `check` and mesh suites measure against |
 
 Three rules hold that together and none of them is optional:
 
