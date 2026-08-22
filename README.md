@@ -138,8 +138,8 @@ There is no pass mark, for the same reason `diff` has none.
 
 ### Benchmark ladder — the rungs, and where they stand
 
-**[docs/LADDER.md](docs/LADDER.md) is the live ledger**: the rung order the owner
-fixed (blockers → rung 3 first → 1 · 2 · 4 · 5 → 6 → 8 → 7 → spineboy), what each
+**[docs/LADDER.md](docs/LADDER.md) is the live ledger**: the rung order
+(blockers → rung 3 first → 1 · 2 · 4 · 5 → 6 → 8 → 7 → spineboy), what each
 rung gates on, how a rung is scored, the honesty rule that keeps the reference
 export away from the authoring agent, and a status table. Run one with:
 
@@ -351,27 +351,40 @@ the renderer and archetype policy; the default stays `spine-html`.
 ## Checks
 
 ```bash
-bun run typecheck    # bunx tsc --noEmit over cli.ts, selftest.ts, src/, bench/, tools/
+bun run typecheck    # bunx tsc --noEmit over cli.ts, selftest.ts, src/, bench/, tools/, fixtures/
 bun run lint         # one rule: @typescript-eslint/no-explicit-any, as an error
+bun run selftest     # the validator's own negative controls (next section)
 ```
 
-Bun runs the sources directly, so neither is on the path of anything — they exist
-because a convention nothing checks is a convention. `tsconfig.json` is
+All three run on every push and pull request —
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml). Bun runs the sources
+directly, so the first two are not on the path of anything; they exist because a
+convention nothing checks is a convention. `tsconfig.json` is
 `strict: false` with `strictNullChecks: true` and says in place why the rest is
 not on yet; `eslint.config.js` says why it carries exactly one rule.
 
 ## Selftest
 
 ```bash
-bun run selftest --cuts path/to/cuts.json
+bun run selftest                            # everything below; no arguments needed
+bun run selftest --cuts path/to/cuts.json   # …plus an extra suite over those cuts
 ```
 
-A gate nobody has seen fail is not a gate. The selftest takes real compiled
-artifacts, breaks them one way at a time — 46 deliberate breaks, each modelled on a
-mistake that was actually made or actually measured — and asserts that the **named**
-assertion fires for each. Two of the breaks are *tolerance* controls, edits the gate
-must let through, because a widened assertion can fail by firing too often as
-easily as by firing too rarely.
+A gate nobody has seen fail is not a gate. The selftest compiles a rig, breaks the
+result one way at a time — 45 deliberate breaks, each modelled on a mistake that was
+actually made or actually measured — and asserts that the **named** assertion fires
+for each. Two further edits are *tolerance* controls the gate must let through,
+because a widened assertion can fail by firing too often as easily as by firing too
+rarely.
+
+**The rigs it breaks are generated.** [`fixtures/public.ts`](fixtures/public.ts)
+writes three synthetic cuts into a temp directory on every run, and between them
+they carry every structure the assertions have an opinion about — region
+attachments, attachment swaps, rgba fades, a ring mesh on a control bone, a ribbon
+on a bone chain, an axis bone whose subtree travels along it, a detached emitter,
+physics constraints, and two measured ceilings. Every plate is a checkerboard with
+`PLACEHOLDER` burned into it: they exist to be structurally real, and no claim
+about appearance is made from any of them.
 
 A fifth suite breaks an **input** instead of an artifact: seven malformed rig specs
 that the compiler must refuse by name — a forward parent reference, a duplicate bone
@@ -393,10 +406,18 @@ of slot drift; reversed reads 66.8 px. A third control makes the frames-only rea
 guard refuse a reference skeleton, because an honesty invariant nobody has seen
 refuse anything is not an invariant.
 
-> ⚠️ The selftest is currently **fixture-bound**: its mutants name specific
-> attachments, bones and animations, so it needs a `cuts.json` supplying the three
-> cuts it was written against. Those fixtures are not in this repository. See
-> [CLAUDE.md](CLAUDE.md), *PUBLIC GATE*.
+Point the run at a `cuts.json` and an **extra suite** compiles every cut in it,
+gates the result, and compiles it a second time for `A18`. That one is a positive
+control on purpose: what real art adds is geometry a fixture cannot fake — measured
+offsets, a measured axis, a measured ceiling, a mesh built over a contour nobody
+drew by hand — so the question it asks is whether the whole gate still comes back
+green on it. Without a cuts file it says it was skipped and the run passes on the
+public suite alone; a cuts path that is *named and missing* exits 2.
+
+Two suites measure against the Spine example corpus, which is downloaded rather
+than redistributed. When `examples/` is absent they say so loudly and the summary
+repeats it — an absent corpus is a hole in the run, not a pass — and a run in which
+nothing substantive executed exits 2 rather than printing green.
 
 ## Layout
 
@@ -404,6 +425,7 @@ refuse anything is not an invariant.
 tsconfig.json   type-check config (noEmit); eslint.config.js — the no-any gate
 cli.ts          build / validate / explain / diff / check / bench
 selftest.ts     the validator's own negative controls, and diff's and check's
+fixtures/       public.ts — the three synthetic cuts the selftest breaks
 src/
   compile.ts    rig + motion spec (+ manifest) -> skeleton JSON + atlas text (pure data assembly)
   rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
@@ -432,18 +454,24 @@ bench/          count_features.ts — what the example corpus actually uses
 docs/           AUTHORING.md (how to author a rig), LADDER.md (live rung status),
                 SPEC_COVERAGE.md (format survey),
                 feature_matrix.{csv,json}
+.github/        workflows/ — ci.yml (the gates) and release.yml (release-please)
+CONTRIBUTING.md how to propose a change; RELEASING.md — how a version is cut
 ```
 
 `tools/` are standalone utilities, each taking its paths as arguments:
 
 | Tool | Does |
 | --- | --- |
-| `measure_contact_depth.ts` | measures a cut's contact depth from its plates, with the two-sided proof it has to satisfy |
-| `measure_joint_anchors.ts` | derives a joint cut's bone anchors from its own plates; prints, never writes |
-| `make_stroke_strip.ts` | composes a 1:1 contact sheet from frames a render probe captured (composition only — it cannot invent pixels) |
+| `measure_contact_depth.ts` | measures a cut's contact depth from its plates, with the two-sided proof it has to satisfy. Both slot names are required: which plate is the mass and which is the occluder is a fact about one cut, and a default would measure the wrong pair and still print a number |
+| `contact.ts` | plate-vs-plate overlap measurement — the largest advance that keeps two footprints disjoint |
 | `plate.ts` / `png_probe.mjs` | minimal PNG read/write and decode |
-| `contact.ts` | plate-vs-plate overlap measurement |
-| `font5x7.ts` | bitmap labels for the diagnostic images |
+| `font5x7.ts` | bitmap labels for diagnostic images and generated plates |
+
+## Contributing
+
+Issues are the ledger; see [CONTRIBUTING.md](CONTRIBUTING.md) for what a change
+has to clear before it lands. Releases are cut by release-please —
+[RELEASING.md](RELEASING.md).
 
 ## Licence
 
