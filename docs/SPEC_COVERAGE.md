@@ -33,6 +33,14 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 >   `referenceScale` / `images`. Part 2's coverage tables predate all of it.
 >
 > **The measurements of the CORPUS (Part 3) have not moved and stay as written.**
+>
+> 🔒 **Redacted for publication (2026-08-23), and nothing but names.** The note was written
+> inside the sandbox of the project rigc was split out of, and it enumerated that project's
+> archetype names, bone tree and slot table. Those are the consumer's, not this
+> repository's, so they are replaced by the SHAPE they stood for — counts, parentage,
+> structure — which is what every argument here actually rests on: §2.4's point is that
+> eighteen bones were hard-coded and *no example fits them*, and that survives the names
+> going. Where a number was measured it is still the measured number.
 
 ---
 
@@ -60,7 +68,7 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
    transform constraint, no path, no slider, no deform, no drawOrder, no events, no sequences.
 7. rigc's **input model is narrower than its emitter**: the bone tree is *code*
    (`src/archetype.ts`, three hard-coded archetypes), not data. That is the single largest blocker
-   for the example ladder — no example project fits `face_overlay_v1/v2` or `joint_closeup_v1`.
+   for the example ladder — **no example project fits any of the three.**
 8. rigc's 31 assertions split into two kinds that must be separated before the ladder:
    **Spine-validity rules** (A00–A05, A08, A17, A27 — these catch real silent corruption) and
    **renderer/canvas-profile rules for spine-html** (A06 no-rotate/no-PMA, A11 no clipping, A12 no
@@ -78,12 +86,13 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
     the one-part-per-page atlas model against nine packed atlases. **Nothing was implemented *at the
     time of writing*; see the banner above for what has been since.**
 
-**Prior work this document extends, not repeats:** `plan 04 section 1` (parse coverage, with the
-3.8-doc finding in section 1-0), `section 2` (the round-trip probe and its six silent-failure cases
-6a–6h, cited throughout below), `section 3` (the coverage matrix — "what the editor gave *our* cut").
-Those documents are not in this repository; see *Where the cited plan documents live* in
-[`CLAUDE.md`](../CLAUDE.md). This document asks the wider question the plan did not: what can the
-format hold at all, and what does the public benchmark corpus actually use.
+**Prior work this document extends, not repeats:** an earlier round of design notes covering parse
+coverage (including the finding that the official JSON documentation is still 3.8), the round-trip
+probe and the **six silent-failure cases** it measured — referred to below as cases 6a–6h — and a
+coverage matrix of what one editor export actually contained. Those notes are design records held
+by the project rigc was split out of, not files in this repository; every finding this document
+leans on is restated here rather than cited. The wider question they did not ask is the one below:
+what can the format hold at all, and what does the public benchmark corpus actually use.
 
 ---
 
@@ -181,7 +190,7 @@ Evidence: `root.ik` present in 4.0/4.1/4.2 and absent in 4.3; `root.constraints`
 4.0/4.1/4.2 and present in 4.3; `uniform` at `4.2 SkeletonJson.ts:161`, gone in 4.3; `target` at
 `4.2:182,222` vs `source` at `4.3:188`.
 
-⇒ **This is why plan 04 case 6a matters so much for the ladder.** Any example project exported by a
+⇒ **This is why case 6a matters so much for the ladder.** Any example project exported by a
 pre-4.3 editor carries the *legacy* shape, and the 4.3 parser drops those constraints on the floor
 with no error. Part 3 measures which shape each example actually ships.
 
@@ -432,7 +441,7 @@ rotate 4, translate 8, scale 8, shear 8, rgb 12, rgba 16, rgb2 24, rgba2 28, ik 
 path mix 12, alpha/scalex/deform/physics/slider 4.
 
 **A short array is the format's nastiest silent failure**: `curve[i+3]` is `undefined`, the product
-is `NaN`, and nothing throws (plan 04 §2-3 case 6g). Timelines with no curve at all (`attachment`,
+is `NaN`, and nothing throws (case 6g). Timelines with no curve at all (`attachment`,
 `inherit`, `sequence`, `drawOrder`, `events`, `physics reset`) ignore a `curve` key entirely.
 
 The X axis is **seconds** in 4.x. It was frames in 3.8 — one more reason the 3.8 doc is actively
@@ -443,7 +452,7 @@ dangerous as a spec.
 Reader rules (`:194-227`): entries are `key: v1, v2, v3, v4` with **at most four values**
 (`:224`); a line with no colon terminates the current block (`:214`). A **blank line closes a page
 block** (`:119-121`). Page names are `line.trim()` (`:123`) but **region names are the raw line**
-(`:131`) — leading whitespace becomes part of the name. Both traps are in plan 04 §2-3.
+(`:131`) — leading whitespace becomes part of the name. Both traps were measured in the probe.
 
 **Header entries before the first page are read and silently discarded** (`:106-111` — the comment
 says so literally).
@@ -592,7 +601,7 @@ chain). There is **no triangulator for arbitrary art** and no importer for edito
 (`compile.ts:917-918`); bezier is computed from **named easings** (`motion.easings`, four normalised
 handles) into **absolute (time, value) control points**, `bezierForChannel` (`compile.ts:121-135`),
 emitted 4 numbers × channel count in field order. This is the correct transform — writing the
-normalised handles straight in is plan 04 §1-6 item 3's silent bug.
+normalised handles straight in is the silent bug that costs an authoring loop.
 
 **Atlas** (`compile.ts:346-365`) — one part per page, no packer.
 
@@ -644,7 +653,7 @@ This is the split Part 4(c) needs. **Spine-validity** = the file is wrong for an
 | `A15_IDLE_NO_MESH_BONE_KEYS` | archetype | `idle` keying a mesh-driving bone |
 | `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | validity-ish | a physics constraint that parses and does nothing |
 | `A24_AXIS_SPACE_STROKE` | archetype | screen-space stroke keys |
-| `A25_DETACHED_BONE_PARENTAGE` | archetype | `fluid_src` under `piston` |
+| `A25_DETACHED_BONE_PARENTAGE` | archetype | a bone the rig declares detached, parented under the bone it must stay clear of |
 | `A26_SLOT_DRAW_ORDER` | archetype | draw order ≠ the archetype's slot table |
 | `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | policy | region name ≠ PNG basename |
 | `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | ribbon rows with divergent weights |
@@ -685,10 +694,14 @@ emits compared byte-for-byte (A18).
    validator`. That is good design, and it means new bone/slot/physics timelines cannot be added
    without touching the channel tables. It does **not** apply to the groups in item 1.
 
-`selftest.ts` runs 35 named mutants (M01–M35) across three fixtures (`face_trial`, `joint_dev`,
-`seam_trial`), each mutant asserting that a specific assertion fires. The mutant set mirrors the
-assertion set, so the same blind spots apply: there is no mutant for an IK or draw-order timeline
-because there is no emitter and no walker for one.
+`selftest.ts` runs 35 named mutants (M01–M35) across three fixtures, each mutant asserting that a
+specific assertion fires. The mutant set mirrors the assertion set, so the same blind spots apply:
+there is no mutant for an IK or draw-order timeline because there is no emitter and no walker for
+one.
+
+> 🔼 Both halves of that paragraph are now stale. The walker reaches all eleven groups and the
+> mutants that prove it exist; the suite runs on fixtures it **generates**, so it needs no
+> project's art. Current shape: [CLAUDE.md](../CLAUDE.md), *The selftest and its fixtures*.
 
 ### 2.4 The input model — where the rig actually comes from
 
@@ -703,9 +716,9 @@ Two data files in, per `types.ts:1-13`:
 
 | Archetype | Bone tree | Mesh budget | Slots |
 | --- | --- | --- | --- |
-| `face_overlay_v1` (`:65-71`) | `rootChain: ['root','face']`, then **one bone per slot**, auto-named after the slot, pinned at the part-window centre | 0 | derived from the manifest's parts |
-| `face_overlay_v2` (`:84-88`) | identical | 3 | identical |
-| `joint_closeup_v1` (`:109-161`) | **18 explicitly named bones**: `root, cam, base, body, body_soft_a, body_soft_b, axis, piston, piston_tip, rim, rim_grip_a..d, fluid_src, fluid_a..c` | 3 | fixed `slotBone` map of 9 slots (`base, body_soft, piston, piston_blur, lip, fluid, fluid_pool, near, grade`) with a fixed `slotOrder` |
+| overlay, tier 1 (`:65-71`) | a two-bone root chain, then **one bone per slot**, auto-named after the slot and pinned at the part-window centre | 0 | derived from the manifest's parts |
+| overlay, tier 2 (`:84-88`) | identical | 3 | identical |
+| articulated (`:109-161`) | **18 explicitly named bones**: a camera handle, a base, a mass with two soft-body controls, an axis bone carrying four subtrees (a travelling part and its tip, a rim with four grips, a detached emitter with a three-link chain) | 3 | a fixed `slotBone` map of **9 slots** with a fixed `slotOrder` |
 
 The manifest supplies *positions* for those bones (`anchors`), never their *names*, *parentage*, or
 *count*. Consequences, stated plainly:
@@ -738,7 +751,7 @@ Counted by [`bench/count_features.ts`](../bench/count_features.ts); full output 
 - **Every one of the 12 files reports `"spine": "4.3.75-beta"`.** No legacy exports in the corpus.
 - **Every file with constraints uses the flat 4.3 `constraints[]` shape**; all four transform-constraint
   users use the 4.3 `source` + `properties` model. **The legacy 4.0–4.2 array shape never appears**, so
-  this corpus does *not* exercise plan 04's case 6a — do not treat "the ladder is green" as evidence
+  this corpus does *not* exercise case 6a — do not treat "the ladder is green" as evidence
   that a legacy-shape importer works.
 - **Every atlas uses the 4.x compact `bounds:` / `offsets:` region form.** The deprecated
   `xy:`/`size:`/`orig:`/`offset:` region form never appears.
@@ -894,7 +907,7 @@ These are not per-rung; they gate the whole ladder and should be settled before 
 
 | # | Blocker | Category | Detail |
 | --- | --- | --- | --- |
-| **B1** | **The bone tree is code** | (b) | `archetype.ts` hard-codes `face_overlay_v1/v2` and `joint_closeup_v1`. A slot outside the archetype's `slotBone` table is a compile error (`compile.ts:412-417`); a control bone outside its tree likewise (`:420-426`). **No example fits any of the three.** rigc needs a "skeleton-as-data" input — bones with explicit names/parents/transforms — before any rung is reachable. |
+| **B1** | **The bone tree is code** | (b) | `archetype.ts` hard-codes all three archetypes. A slot outside the archetype's `slotBone` table is a compile error (`compile.ts:412-417`); a control bone outside its tree likewise (`:420-426`). **No example fits any of the three.** rigc needs a "skeleton-as-data" input — bones with explicit names/parents/transforms — before any rung is reachable. |
 | **B2** | **A16 rejects every example** | (c) | `A16_SKELETON_VERSION_4_3` tests `/^4\.3(\.\d+)?$/` (`validate.ts:216`). All twelve example files declare `"4.3.75-beta"`, which **fails**. One-line fix, but it fails on rung 1 file 1. |
 | **B3** | **The atlas model is one-part-per-page** | (a)+(c) | rigc emits `bounds: 0,0,w,h` per page and **A06** demands every region's UVs be exactly (0,0)-(1,1). Every example ships a **packed** atlas (13, 15, 29, 50 regions on one page). rigc has no packer *and* no importer for a pre-packed atlas. Reproducing a rung means either accepting a hand-supplied atlas or writing a packer. |
 

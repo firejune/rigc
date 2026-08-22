@@ -190,7 +190,7 @@ interface Artifacts {
 
 interface Mutant {
   name: string;
-  /** What plan 04 calls this failure, when it has a case number. */
+  /** The silent failure this break reproduces, and where it was first seen. */
   origin: string;
   /**
    * The assertion that must fire — or `null` for an edit the gate must ACCEPT.

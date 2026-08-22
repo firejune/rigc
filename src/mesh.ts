@@ -17,11 +17,12 @@
  *     hub         = the aperture centre             weight 1.0 -> control bone
  *
  * The rim ring is not decoration and the first cut of this code did not have it.
- * Measured on `mouth_wide_open`: 6138 pixels of non-zero alpha (up to 192/255)
- * lie OUTSIDE the mask polygon — that is the feather, the soft ramp that makes
- * generated pixels blend into the base at all. A mesh whose outer ring is the
- * polygon simply does not draw them, and the render probe caught it as a halo
- * of difference reaching ~6px past the polygon versus the rigid build. So the
+ * A generated part carries alpha well OUTSIDE its mask polygon — thousands of
+ * pixels of it, on the one this was measured against — and that band is the
+ * feather, the soft ramp that makes generated pixels blend into the base at all.
+ * A mesh whose outer ring is the polygon simply does not draw them, and a render
+ * probe caught exactly that: a halo of difference reaching several pixels past
+ * the polygon, versus the rigid build of the same part. So the
  * mesh covers the whole region (rim ring on the window edge, uv 0 and 1) and the
  * polygon becomes an interior ring — pinned, because it is still the seam.
  *
