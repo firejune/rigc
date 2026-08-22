@@ -75,6 +75,13 @@ const FRAME = 1 / 60;
 const STEP_FRAMES = 120;
 
 /**
+ * `4.3`, `4.3.<patch>`, or `4.3.<patch>-<suffix>` — the last of which is what the
+ * Spine editor writes for a pre-release (`"4.3.75-beta"` in all twelve official
+ * example exports). The major/minor pair is the load-bearing part; see A16.
+ */
+const SPINE_4_3_VERSION = /^4\.3(\.\d+(-[0-9A-Za-z][0-9A-Za-z.+-]*)?)?$/;
+
+/**
  * How many value channels each timeline carries. A curve array holds exactly
  * four numbers PER channel (plan 04 section 1-6 item 2); anything shorter
  * multiplies `undefined` into the cubic and produces a NaN curve with no error
@@ -211,10 +218,23 @@ export function validate(input: ValidateInput): ValidateReport {
   }
 
   // --- A16: version label ---------------------------------------------------
+  //
+  // The label must be on the 4.3 line, and the line includes its pre-releases:
+  // every one of the nine official example exports declares "4.3.75-beta", which
+  // the original `/^4\.3(\.\d+)?$/` rejected. That made the first file of the
+  // benchmark ladder fail on a cosmetic string. What the assertion is actually
+  // for is the MAJOR.MINOR pair — a 4.2 or 5.x label is portable-fragile because
+  // some runtimes refuse a version mismatch outright (spine-runtimes CHANGELOG
+  // line 1678), while spine-ts stores the string and never compares it. So the
+  // patch component and any pre-release suffix after it are free, and 4.2/5.x
+  // stay rejected.
   check('A16_SKELETON_VERSION_4_3', () => {
     const declared = isObj(raw?.skeleton) ? (raw.skeleton as Json).spine : undefined;
-    if (typeof declared !== 'string' || !/^4\.3(\.\d+)?$/.test(declared)) {
-      fail('A16_SKELETON_VERSION_4_3', `skeleton.spine is ${JSON.stringify(declared)}, expected 4.3.x`);
+    if (typeof declared !== 'string' || !SPINE_4_3_VERSION.test(declared)) {
+      fail(
+        'A16_SKELETON_VERSION_4_3',
+        `skeleton.spine is ${JSON.stringify(declared)}, expected 4.3, 4.3.<patch> or 4.3.<patch>-<suffix>`,
+      );
     }
   });
 

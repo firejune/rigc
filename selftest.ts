@@ -111,7 +111,16 @@ interface Mutant {
   name: string;
   /** What plan 04 calls this failure, when it has a case number. */
   origin: string;
-  expect: string;
+  /**
+   * The assertion that must fire — or `null` for an edit the gate must ACCEPT.
+   *
+   * ⚠️ The second kind is not decoration. Every time an assertion is WIDENED,
+   * the risk moves from "it fires too rarely" to "it fires too often" and then
+   * to "it no longer fires at all", and a suite made only of breaks cannot see
+   * either end of that. A16 widening to accept `4.3.75-beta` is the first case:
+   * the edit must be accepted, its 4.2 and 5.x neighbours must not.
+   */
+  expect: string | null;
   mutate: (a: Artifacts) => Artifacts;
 }
 
@@ -244,6 +253,28 @@ const MUTANTS: Mutant[] = [
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
         (j as any).skeleton.spine = '4.2.43';
+      }),
+    }),
+  },
+  {
+    name: 'M13a_version_label_from_the_next_major',
+    origin: 'the assertion is about the MAJOR.MINOR pair, and widening it for pre-releases must not widen it past 4.3',
+    expect: 'A16_SKELETON_VERSION_4_3',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).skeleton.spine = '5.0.13';
+      }),
+    }),
+  },
+  {
+    name: 'M13b_editor_pre_release_label_is_accepted',
+    origin: 'SPEC_COVERAGE part 3-0 — all twelve official example exports declare "4.3.75-beta", which the old regex rejected (blocker B2)',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).skeleton.spine = '4.3.75-beta';
       }),
     }),
   },
@@ -614,6 +645,20 @@ function runSuite(suite: Suite): number {
       declaredDurations: pristine.declaredDurations,
       rig: pristine.rig,
     });
+    if (mutant.expect === null) {
+      // A tolerance control: this edit is legal and the gate must let it past.
+      if (report.failures.length === 0) {
+        console.log(`  PASS  ${mutant.name}  (accepted, as it must be)`);
+        console.log(`          origin: ${mutant.origin}`);
+      } else {
+        bad++;
+        console.log(
+          `  FAIL  ${mutant.name}: this edit is legal and must be accepted, but [${report.failures.map((f) => f.assertion).join(', ')}] fired`,
+        );
+        for (const f of report.failures) console.log(`          ${f.assertion}: ${f.detail}`);
+      }
+      continue;
+    }
     const hit = report.failures.find((f) => f.assertion === mutant.expect);
     if (hit) {
       console.log(`  PASS  ${mutant.name}`);
@@ -631,10 +676,14 @@ function runSuite(suite: Suite): number {
 
 function main(): void {
   let bad = 0;
-  let mutants = 0;
+  let breaks = 0;
+  let tolerances = 0;
   for (const suite of SUITES) {
     bad += runSuite(suite);
-    mutants += suite.mutants.length;
+    for (const mutant of suite.mutants) {
+      if (mutant.expect === null) tolerances++;
+      else breaks++;
+    }
   }
 
   console.log('');
@@ -643,7 +692,8 @@ function main(): void {
     process.exit(1);
   }
   console.log(
-    `rigc selftest: green — ${SUITES.length} positive controls + ${mutants} deliberate breaks, each caught by its named assertion`,
+    `rigc selftest: green — ${SUITES.length} positive controls + ${breaks} deliberate breaks, each caught by its ` +
+      `named assertion, + ${tolerances} legal edits the gate had to accept`,
   );
 }
 
