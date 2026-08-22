@@ -127,14 +127,19 @@ The written form of all this, per rung and per run:
 | — | **B2** | — | — | A16 accepts pre-release labels | ✅ |
 | — | **B3** | — | — | packed-atlas handling (validator half done) | 🟨 |
 | 1 | **3** | `3-timing-and-spacing` | `ess` | nothing — smallest skeleton in the corpus | ✅ |
-| 2 | **1** | `1-weight-and-mass` | `balls`, `drop` | `translatex`/`translatey`/`shear`; bone setup `length`; a skeleton with **zero** animations (`drop`) | ⬜ |
-| 3 | **2** | `2-the-12-principles` | `ess` | slot `blend` (4 additive + 4 multiply); bone `inherit` ≠ Normal | ⬜ |
+| 2 | **1** | `1-weight-and-mass` | `balls`, `drop` | `translatex`/`translatey`/`shear`; bone setup `length`; a skeleton with **zero** animations (`drop`) | ⬜ *attempted* |
+| 3 | **2** | `2-the-12-principles` | `ess` | slot `blend` (4 additive + 4 multiply); bone `inherit` ≠ Normal | ⬜ *attempted* |
 | 4 | **4** | `4-wave-principle` | `ess` | nothing structural — a volume test (9 bones, 9 slots, 3 animations, 470 bezier keys) | ⬜ |
 | 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ⬜ |
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ⬜ |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ⬜ |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ⬜ |
 | 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (67 bones, 52 slots, 11 animations) | ⬜ |
+
+⬜ **but attempted.** Rungs 1 and 2 were each attempted once on 2026-08-23 and
+neither cleared — [`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/)
+and [`bench/runs/2026-08-23-rung2-1/`](../bench/runs/2026-08-23-rung2-1/). The
+figures and the commander's reading of each are in *Rung 1* and *Rung 2* below.
 
 Two facts the table does not repeat, both from SPEC_COVERAGE part 3:
 
@@ -191,6 +196,57 @@ the reference export, so no part of the score above): worst-frame 2.42° of
 pendulum rotation, about one frame pixel of block travel, and a re-render mean
 absolute pixel error of 3.4/255. Residual risk carried forward: key density — it
 is not a visible defect at this rung.
+
+### Rung 1 — attempted, not cleared (2026-08-23)
+
+Run [`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/), clean,
+9 + 2 builds, 0 validator FAILs. Authored by Claude Opus 5 (1M context) on
+Claude Code / Agent SDK from the brief and the rendered reference frames alone.
+
+Figures:
+
+```
+balls   bones=0.438  slots=0.143  attachments=0.778  constraints=1.000  animations=0.764  events=1.000
+drop    bones=0.650  slots=0.557  attachments=0.856  constraints=1.000  animations=1.000  events=1.000
+```
+
+**Reading — the commander's call, 2026-08-23.** Motion fidelity is good (author's
+spine-core self-check: worst 3.75 px after fixing reversed easings that the
+validator cannot see); `drop` is structurally right minus one invisible layer
+(`ground-cover` omitted: 4 vs 5 slots — the brief said "two layers" and a pixel
+measurement overruled it); `balls` low on naming + slot strategy; two measures are
+unwinnable from frames (`region_size_present` — rigc always emits width/height, the
+exporter omits them; `bones.length_present`/`inherit` unobservable). Residual: the
+validity gate is blind to wrong animation — an in-loop frame-fidelity check is
+being added as `rigc check` (separate issue).
+
+### Rung 2 — attempted, not cleared (2026-08-23)
+
+Run [`bench/runs/2026-08-23-rung2-1/`](../bench/runs/2026-08-23-rung2-1/), clean,
+1 build. Same agent, same conditions.
+
+Figures:
+
+```
+ess     bones=0.408  slots=0.288  attachments=0.805  constraints=1.000  animations=0.622  events=1.000
+```
+
+(candidate 7 bones / 8 slots vs reference 12 / 17)
+
+**Reading — the commander's call, 2026-08-23.** One structural bet (4 ball variants
+folded into 3 shared slots with attachment swaps vs one slot per image) moved the
+whole slots section; animations 4/4 names.
+
+**Brief defects found by the author**: "water level falls" (bit-identical), "rings
+turn slowly" (~24°/frame, ~20½ revolutions, counter-rotating), "panel swings flat
+when the ball reaches it" (periodic ~2.3 s cycle, collapses to ~40 %, bowling ball
+rides it and is catapulted) — retry after the brief is fixed.
+
+> The brief was corrected on 2026-08-23 against a second, independent pass over the
+> contact sheets: [`bench/briefs/2-the-12-principles.md`](../bench/briefs/2-the-12-principles.md)
+> revision 2. That pass found three further claims that were not in the pixels, and
+> `bench/runs/README.md` now requires a second agent to verify a brief before it is
+> run.
 
 ---
 
