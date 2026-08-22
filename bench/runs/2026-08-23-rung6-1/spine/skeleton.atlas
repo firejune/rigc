@@ -1,0 +1,35 @@
+../../../../examples/6-arcs/images/platform.png
+size: 1064, 396
+filter: Linear, Linear
+pma: false
+platform
+bounds: 0, 0, 1064, 396
+offsets: 0, 0, 1064, 396
+rotate: 0
+
+../../../../examples/6-arcs/images/ball.png
+size: 156, 156
+filter: Linear, Linear
+pma: false
+ball
+bounds: 0, 0, 156, 156
+offsets: 0, 0, 156, 156
+rotate: 0
+
+../../../../examples/6-arcs/images/tail.png
+size: 380, 111
+filter: Linear, Linear
+pma: false
+tail
+bounds: 0, 0, 380, 111
+offsets: 0, 0, 380, 111
+rotate: 0
+
+../../../../examples/6-arcs/images/arc-tracker.png
+size: 18, 18
+filter: Linear, Linear
+pma: false
+arc-tracker
+bounds: 0, 0, 18, 18
+offsets: 0, 0, 18, 18
+rotate: 0
