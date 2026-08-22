@@ -67,6 +67,7 @@ import {
   type Posable,
   type Viewport,
 } from './src/render.ts';
+import type { CompileResult } from './src/types.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { Plate, readPlate, type RGBA } from './tools/plate.ts';
@@ -1411,6 +1412,62 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
+    name: 'R08_authored_mesh_binds_a_bone_the_rig_does_not_have',
+    origin:
+      'issue #45 — an authored mesh used to bind bones by INDEX into the emitted bone array, ' +
+      'so a wrong binding had no name to be wrong and nothing could refuse it; by name it joins R01/R03/R05',
+    expect: 'which the rig does not declare as a bone',
+    mutate: (rig) => {
+      (rig as any).slots.find((sl: any) => sl.name === 'near').attachment = 'probe_mesh';
+      (rig as any).skins = {
+        default: {
+          near: {
+            probe_mesh: {
+              type: 'mesh',
+              uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+              triangles: [0, 1, 2, 0, 2, 3],
+              hull: 4,
+              width: 10,
+              height: 10,
+              weights: [
+                [{ bone: 'plunger', x: 0, y: 0, weight: 1 }],
+                [{ bone: 'plunger', x: 10, y: 0, weight: 1 }],
+                [{ bone: 'no_such_bone', x: 10, y: 10, weight: 1 }],
+                [{ bone: 'plunger', x: 0, y: 10, weight: 1 }],
+              ],
+            },
+          },
+        },
+      };
+    },
+  },
+  {
+    name: 'R09_authored_mesh_uses_raw_bone_indices_without_saying_so',
+    origin:
+      'issue #45 — the index form is still reachable, deliberately, but it costs silence: ' +
+      'inserting a bone rebinds every vertex. It has to be asked for by name.',
+    expect: 'boneIndexing',
+    mutate: (rig) => {
+      (rig as any).slots.find((sl: any) => sl.name === 'near').attachment = 'probe_mesh';
+      (rig as any).skins = {
+        default: {
+          near: {
+            probe_mesh: {
+              type: 'mesh',
+              uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+              triangles: [0, 1, 2, 0, 2, 3],
+              hull: 4,
+              width: 10,
+              height: 10,
+              // Spine's own run: boneCount, (boneIndex, bindX, bindY, weight) x n
+              vertices: [1, 1, 0, 0, 1, 1, 1, 10, 0, 1, 1, 1, 10, 10, 1, 1, 1, 0, 10, 1],
+            },
+          },
+        },
+      };
+    },
+  },
+  {
     name: 'R06_wrong_spec_version_field',
     origin: 'the envelope is the only thing standing between a v1 reader and a v2 file',
     expect: 'unknown rig spec version',
@@ -2014,6 +2071,7 @@ function compileMeshTranscription(rigText: string | null): {
   skeletonText: string;
   atlasText: string;
   atlasDir: string;
+  rig: CompileResult['rig'];
 } {
   const outDir = mkdtempSync(join(tmpdir(), 'rigc-mesh-'));
   let rigPath = join(MESH_TRANSCRIPTION, '6-arcs-pro.rig.json');
@@ -2027,7 +2085,7 @@ function compileMeshTranscription(rigText: string | null): {
     outDir,
     imagesDir: MESH_IMAGES,
   });
-  return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir };
+  return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir, rig: result.rig };
 }
 
 /** The median and worst drift of the mesh-bearing slots, over every frame compared. */
@@ -2049,39 +2107,56 @@ function meshDrift(report: CheckReport): { median: number; worst: number; sample
 }
 
 /**
- * Shift every bone index inside a rig spec's authored mesh weights by one.
+ * Rewrite a rig spec's by-name mesh `weights` back into Spine's raw index run,
+ * with every bone index shifted by one.
  *
- * ⚠️ This is not a synthetic break. An authored mesh's weights bind bones by
- * **index into the emitted bone array** — the one place the rig spec does not
- * resolve by name — so inserting a bone anywhere ahead of the meshes does exactly
- * this, in silence, on a rig nobody meant to change. The gate stays green because
- * every index is still in range and every vertex's weights still sum to 1, which
- * is all A04 and A20 can ask.
+ * ⚠️ This is the break issue #45 named, in the form it used to arrive in. An
+ * authored mesh's weights used to bind bones by **index into the emitted bone
+ * array** — the one place a rig spec did not resolve by name — so inserting a
+ * bone anywhere ahead of the meshes did exactly this, in silence, on a rig
+ * nobody meant to change. The gate stayed green because every index was still in
+ * range and every vertex's weights still summed to 1, which is all A04 and A20
+ * can ask of a number with no name attached to it.
  *
- * Editing the weights directly rather than inserting a bone keeps the skeleton's
- * shape identical, so `diff` and every structural measure stay at 1.000 and the
- * only instrument left is this one.
+ * `flag` decides which half of the fix is under test:
+ *   * `false` — the run arrives with no `boneIndexing`, and the compiler must
+ *     refuse it. That is MR06 now.
+ *   * `true`  — the spec says `"boneIndexing": "raw"` and gets the index form it
+ *     asked for, silence included. That escape hatch still has its old cost, and
+ *     MR07 holds the line there the way MR06 used to: gate green, `check` loud.
  */
-function shiftMeshBoneIndices(rigText: string): string {
+function rawShiftedMeshWeights(rigText: string, flag: boolean): string {
+  interface Binding {
+    bone: string;
+    x: number;
+    y: number;
+    weight: number;
+  }
+  interface Att {
+    type?: string;
+    uvs?: number[];
+    weights?: Binding[][];
+    vertices?: number[];
+    boneIndexing?: string;
+  }
   const rig = JSON.parse(rigText) as {
     bones: Array<{ name: string }>;
-    skins: Record<string, Record<string, Record<string, { type?: string; uvs?: number[]; vertices?: number[] }>>>;
+    skins: Record<string, Record<string, Record<string, Att>>>;
   };
+  const index = new Map(rig.bones.map((b, i) => [b.name, i]));
   const last = rig.bones.length - 1;
   for (const slots of Object.values(rig.skins)) {
     for (const atts of Object.values(slots)) {
       for (const att of Object.values(atts)) {
-        if (att.type !== 'mesh' || !att.vertices || !att.uvs) continue;
-        // The weighted run is `boneCount, (boneIndex, bindX, bindY, weight) x n`
-        // per vertex — walked rather than indexed, because the run length varies
-        // per vertex and a stride would be a guess.
-        if (att.vertices.length === att.uvs.length) continue; // unweighted: no indices to shift
-        for (let v = 0; v < att.vertices.length; ) {
-          const bones = att.vertices[v++];
-          for (let b = 0; b < bones; b++, v += 4) {
-            att.vertices[v] = Math.min(last, att.vertices[v] + 1);
-          }
+        if (att.type !== 'mesh' || !att.weights) continue;
+        const run: number[] = [];
+        for (const vertex of att.weights) {
+          run.push(vertex.length);
+          for (const b of vertex) run.push(Math.min(last, (index.get(b.bone) ?? 0) + 1), b.x, b.y, b.weight);
         }
+        delete att.weights;
+        att.vertices = run;
+        if (flag) att.boneIndexing = 'raw';
       }
     }
   }
@@ -2128,9 +2203,26 @@ function runMeshCheckSuite(): number | null {
     'a rasteriser that draws meshes in roughly the right place is not the same as one that draws them right',
   );
 
-  const shifted = compileMeshTranscription(shiftMeshBoneIndices(rigText));
-  // Green gate first, or the control proves nothing: the point is that the file is
-  // valid Spine 4.3 and plays a different shot, which is why `check` exists.
+  // MR06. The rebind used to arrive silently and `check` was the only instrument
+  // that could see it. It is now refused at compile, by name, so the control
+  // moved one gate earlier — it asserts a REFUSAL rather than a loud reading.
+  let refusal = '';
+  try {
+    compileMeshTranscription(rawShiftedMeshWeights(rigText, false));
+  } catch (err) {
+    refusal = (err as Error).message;
+  }
+  bad += say(
+    'MR06_A_SILENTLY_REBOUND_MESH_IS_REFUSED',
+    refusal.includes('boneIndexing'),
+    refusal ? `refused: ${refusal.split(' — ')[0]}` : 'the compiler accepted a raw index run with no boneIndexing flag',
+    'a weighted run whose bone indexes the spec never wrote is a rebinding waiting to happen; it has to be asked for out loud',
+  );
+
+  // MR07. The escape hatch still costs what it always cost. Green gate first, or
+  // the control proves nothing: the point is that the file is valid Spine 4.3 and
+  // plays a different shot, which is why `check` exists.
+  const shifted = compileMeshTranscription(rawShiftedMeshWeights(rigText, true));
   const gate = validate({
     skeletonText: shifted.skeletonText,
     atlasText: shifted.atlasText,
@@ -2139,17 +2231,41 @@ function runMeshCheckSuite(): number | null {
   });
   const shiftedReport = checkAgainstFrames({ ...shifted, framesDir: MESH_FRAMES });
   const sd = meshDrift(shiftedReport);
-  const s = checkExtremes(shiftedReport);
+  const s2 = checkExtremes(shiftedReport);
   bad += say(
-    'MR06_A_SILENTLY_REBOUND_MESH_IS_LOUD',
-    gate.failures.length === 0 && sd.worst > fd.worst * 3 && s.meanMae > f.meanMae * 2,
+    'MR07_THE_RAW_INDEXING_ESCAPE_HATCH_STILL_COSTS_SILENCE',
+    gate.failures.length === 0 && sd.worst > fd.worst * 3 && s2.meanMae > f.meanMae * 2,
     gate.failures.length === 0
       ? `gate green, mesh drift ${sd.worst.toFixed(1)}px against a faithful ${fd.worst.toFixed(2)}px, ` +
-          `union MAE ${s.meanMae.toFixed(1)} against ${f.meanMae.toFixed(1)}`
+          `union MAE ${s2.meanMae.toFixed(1)} against ${f.meanMae.toFixed(1)}`
       : `the shifted rig did not pass the gate — [${gate.failures.map((x) => x.assertion).join(', ')}] fired, ` +
           'so this measures the gate rather than check',
-    'an authored mesh binds bones by index, so inserting a bone rebinds every vertex and the gate cannot tell',
+    '"boneIndexing": "raw" opts back into index binding, and the gate still cannot see a rebind under it',
   );
+
+  // MR08. #44: the transcription is correct foreign geometry, and the DEFAULT
+  // profile has to say so. The generator-topology assertions have nothing to
+  // measure on a mesh rigc did not build, and nothing to measure is a SKIP.
+  const faithfulGate = validate({
+    skeletonText: faithful.skeletonText,
+    atlasText: faithful.atlasText,
+    atlasDir: faithful.atlasDir,
+    profile: 'spine-html',
+    rig: faithful.rig,
+  });
+  const skipped = new Map(faithfulGate.skipped.map((x) => [x.assertion, x.reason]));
+  const topology = ['A21_MESH_RIM_PINNED', 'A28_RIBBON_ROWS_SHARE_WEIGHTS'];
+  const missing = topology.filter((name) => !skipped.has(name));
+  bad += say(
+    'MR08_AUTHORED_MESHES_SKIP_THE_GENERATOR_TOPOLOGY_RULES',
+    faithfulGate.failures.length === 0 && missing.length === 0,
+    faithfulGate.failures.length === 0
+      ? `green under spine-html; ${topology.map((n) => `${n} SKIP (${skipped.get(n)?.slice(0, 48)}…)`).join('; ')}`
+      : `${faithfulGate.failures.length} failure(s) on correct foreign geometry: ` +
+          `[${[...new Set(faithfulGate.failures.map((x) => x.assertion))].join(', ')}]`,
+    'an assertion that calls correct foreign data broken is worse than one that says it has nothing to measure',
+  );
+
   return bad;
 }
 
@@ -2424,7 +2540,7 @@ function main(): void {
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
-      : `, + 1 rung-6 mesh render${meshCheckBad === null ? '' : ', + 2 mesh-fidelity controls'}`;
+      : `, + 1 rung-6 mesh render${meshCheckBad === null ? '' : ', + 4 mesh-fidelity controls'}`;
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +

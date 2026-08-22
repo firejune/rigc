@@ -280,14 +280,14 @@ the renderer policy*.
 | `A18_DETERMINISTIC_EMIT` | both | a second, independent compile of the same inputs is byte-identical. SKIPs when re-gating artifacts already on disk |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | every overlay page carries an alpha channel; only the base plate — identified structurally as the region covering the stage — may be opaque |
 | `A20_MESH_WEIGHTS_COHERENT` | both ◑ | every weighted vertex has at least one bone, no negative weight, bone indices in range, and each vertex's weights sum to 1. `spine-html` also requires that a mesh be weighted at all and that no binding sit at weight 0 |
-| `A21_MESH_RIM_PINNED` | archetype | a ring mesh's rim vertices are pinned to the anchor bone and its hull is a real ring; a ribbon's entry row stays put |
+| `A21_MESH_RIM_PINNED` | archetype | a ring mesh's rim vertices are pinned to the anchor bone and its hull is a real ring; a ribbon's entry row stays put. **SKIPs on authored geometry** — rigc did not place its rim |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | every UV lies inside its region |
 | `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | each physics constraint actually drives a component, is not muted by `mix: 0`, has non-zero mass, and has `damping < 1` so it settles |
 | `A24_AXIS_SPACE_STROKE` | archetype | the stroke is authored in **axis space** — no screen-space Y component anywhere in the axis subtree, and no keys at all on the axis bone (its rotation is the one per-cut setup value) |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | bones that must stay detached are not parented under a moving part |
 | `A26_SLOT_DRAW_ORDER` | archetype | the slots array — which *is* the draw order — matches the rig spec's slot table |
 | `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | renderer | each region's name equals its page's basename, closing the second link of the attachment → region → file chain |
-| `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | both vertices of a ribbon row carry the same bones at the same weights, so the strip can lengthen and curve but never widen |
+| `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | both vertices of a ribbon row carry the same bones at the same weights, so the strip can lengthen and curve but never widen. **SKIPs on authored geometry** — rigc did not pair its rows |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the stroke plus any inward keys stays within the cut's measured contact depth (skipped when the manifest declares none) |
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the stroke stays within the cut's measured containment ceiling, and nothing in the axis subtree scales — a scale key changes the contour the ceiling was measured on (skipped when the manifest declares none) |
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | every draw-order key resolves to a real permutation: known slots, one entry per slot, each landing inside the slots array, offsets in ascending slot order. The **only assertion that runs before `A00`** — descending offsets make `readDrawOrder`'s forward-only cursor spin rather than return, so the round trip is refused by name instead of attempted |

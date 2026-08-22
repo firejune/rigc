@@ -617,8 +617,44 @@ export function validate(input: ValidateInput): ValidateReport {
     // thing the whole generated-parts approach depends on not happening.
     const meshWeights = meshWeightsOf;
 
+    /** The slot a skin attachment belongs to; several assertions need it. */
+    const slotOfAttachment = (target: MeshAttachment): string | null => {
+      for (const skin of data.skins) {
+        for (const entry of skin.getAttachments()) {
+          if (entry.attachment === target) return data.slots[entry.slotIndex].name;
+        }
+      }
+      return null;
+    };
+    /**
+     * What built this mesh. ring unless the rig says otherwise; absent rig info
+     * reads as ring (legacy).
+     *
+     * 🚨 `authored` is not a third topology, it is the ABSENCE of one rigc may
+     * assume. Geometry that came in through the rig spec was drawn by somebody
+     * with an editor, and its rim, its row pairing and its entry edge are
+     * whatever that person made them. The `||` fallback below used to hand such
+     * a mesh the string `ring`, and A21 then checked ring topology on a shape
+     * that was never a ring — 40 failures on correct data (issue #44).
+     */
+    const kindOf = (target: MeshAttachment): 'ring' | 'ribbon' | 'authored' => {
+      const slot = slotOfAttachment(target);
+      return (slot && input.rig?.meshKinds[slot]) || 'ring';
+    };
+    /** Meshes rigc did not build, by name — the reason string several skips need. */
+    const authoredMeshNames = (list: MeshAttachment[]): string[] =>
+      list.filter((m) => kindOf(m) === 'authored').map((m) => `"${m.name}"`);
+
     check('A20_MESH_WEIGHTS_COHERENT', () => {
       for (const mesh of meshAttachments) {
+        // 🚨 Authored geometry is not rigc's to have opinions about. The two
+        // policy branches in this assertion are both statements about what a
+        // rigc GENERATOR is supposed to produce — "a mesh here is weighted",
+        // "a generated mesh binds only bones that move it" — and neither is a
+        // fact about Spine or about somebody else's mesh. Applying them to
+        // authored geometry failed correct data (issue #44). The coherence
+        // rules below the branch are unconditional and still apply.
+        const generated = kindOf(mesh) !== 'authored';
         if (!mesh.bones) {
           // 📐 PROFILE. An unweighted mesh is perfectly valid Spine — spineboy
           // ships two — and the runtime poses it from the slot bone. What is
@@ -626,7 +662,7 @@ export function validate(input: ValidateInput): ValidateReport {
           // cohere, which is everything below this branch. So the requirement
           // that a mesh be weighted at all is the policy half, and it is the
           // only half gated here.
-          if (policy) {
+          if (policy && generated) {
             fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" is unweighted; the ring tier drives meshes by bones`);
           }
           continue;
@@ -657,7 +693,7 @@ export function validate(input: ValidateInput): ValidateReport {
             // generator bound a bone that does nothing, which is a bug in the
             // generator and dead work in the runtime's inner loop. So it stays a
             // failure under spine-html and is not one under spine.
-            else if (policy && weight === 0) {
+            else if (policy && generated && weight === 0) {
               fail(
                 'A20_MESH_WEIGHTS_COHERENT',
                 `mesh "${mesh.name}" vertex ${i} is bound to bone index ${bone} at weight 0; a generated mesh binds only bones that move it`,
@@ -675,21 +711,6 @@ export function validate(input: ValidateInput): ValidateReport {
       }
     });
 
-    /** The slot a skin attachment belongs to; several assertions need it. */
-    const slotOfAttachment = (target: MeshAttachment): string | null => {
-      for (const skin of data.skins) {
-        for (const entry of skin.getAttachments()) {
-          if (entry.attachment === target) return data.slots[entry.slotIndex].name;
-        }
-      }
-      return null;
-    };
-    /** ring unless the rig says ribbon; absent rig info reads as ring (legacy). */
-    const kindOf = (target: MeshAttachment): 'ring' | 'ribbon' => {
-      const slot = slotOfAttachment(target);
-      return (slot && input.rig?.meshKinds[slot]) || 'ring';
-    };
-
     check('A21_MESH_RIM_PINNED', () => {
       // Without the rig, ring and ribbon cannot be told apart — and the two kinds
       // pin OPPOSITE edges, so guessing one would either check the wrong edge or
@@ -700,7 +721,19 @@ export function validate(input: ValidateInput): ValidateReport {
       if (!meshAttachments.some((m) => m.bones)) {
         return skip('A21_MESH_RIM_PINNED', 'the skeleton has no weighted mesh attachment, so there is no rim to find unpinned');
       }
-      for (const mesh of meshAttachments) {
+      // An authored mesh has no rim rigc drew and no entry row rigc placed, so
+      // there is nothing here to measure against. Nothing to measure is a SKIP —
+      // never a pass, and never a failure on somebody else's correct geometry.
+      const measurable = meshAttachments.filter((m) => m.bones && kindOf(m) !== 'authored');
+      if (measurable.length === 0) {
+        const authored = authoredMeshNames(meshAttachments.filter((m) => m.bones));
+        return skip(
+          'A21_MESH_RIM_PINNED',
+          `every weighted mesh here is authored geometry (${authored.join(', ')}), not a rigc ring or ribbon — ` +
+            'rigc did not place its rim, so it has no rim of its own to find unpinned',
+        );
+      }
+      for (const mesh of measurable) {
         if (!mesh.bones) continue;
         const perVertexAll = meshWeights(mesh);
         const slotBoneOf = (() => {
@@ -1241,7 +1274,19 @@ export function validate(input: ValidateInput): ValidateReport {
     if (!input.rig) return skip('A28_RIBBON_ROWS_SHARE_WEIGHTS', 'no rig info (validating a bare directory), so no mesh is known to be a ribbon');
     const kinds = input.rig.meshKinds;
     if (!Object.values(kinds).includes('ribbon')) {
-      return skip('A28_RIBBON_ROWS_SHARE_WEIGHTS', `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut`);
+      // Say WHICH kind of "no ribbon" this is. "declares no ribbon" is true of a
+      // cut with no mesh at all and of one whose meshes are authored geometry,
+      // and only the second is a case where a reader should know that a mesh
+      // went unmeasured on purpose.
+      const authored = Object.entries(kinds)
+        .filter(([, kind]) => kind === 'authored')
+        .map(([slot]) => `"${slot}"`);
+      return skip(
+        'A28_RIBBON_ROWS_SHARE_WEIGHTS',
+        authored.length
+          ? `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut — its mesh slot(s) ${authored.join(', ')} carry authored geometry, whose rows rigc did not pair`
+          : `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut`,
+      );
     }
     const data = skeletonData as NonNullable<typeof skeletonData>;
     for (const skin of data.skins) {

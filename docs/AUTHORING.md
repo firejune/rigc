@@ -327,13 +327,56 @@ the default `type`:
 | `scaleX`, `scaleY`, `color` | as Spine |
 
 **Mesh attachment** ([Spine: meshes](http://esotericsoftware.com/spine-meshes)) —
-either authored geometry (`uvs` + `triangles` + `vertices`, plus `hull`, `edges`,
+either authored geometry (`uvs` + `triangles` + geometry, plus `hull`, `edges`,
 `width`, `height`) **or** a `generator`, never both.
 
-⚠️ `vertices` carries **no encoding flag**. If its length equals `uvs.length` the
-parser reads unweighted x/y pairs; otherwise it reads the weighted run
-`boneCount, (boneIndex, bindX, bindY, weight) × n, …`. A coincidental length match
-reads weight data as coordinates, silently — that is `A04`.
+Geometry comes in one of two fields:
+
+| Field | Meaning |
+| --- | --- |
+| `vertices` | **unweighted**: one `x, y` per uv pair, so `vertices.length === uvs.length`. Nothing here names a bone |
+| `weights` | **weighted, by name**: one entry per vertex, each a list of `{ "bone": …, "x": …, "y": …, "weight": … }`. This is the form to use |
+
+```json
+"weights": [
+  [{ "bone": "tail3", "x": 184.91, "y": -2.83, "weight": 0.006 },
+   { "bone": "tail4", "x": 92.72,  "y": -2.83, "weight": 0.994 }],
+  [{ "bone": "tail4", "x": 84.66,  "y": -8.47, "weight": 1 }]
+]
+```
+
+⭐ **Weights bind bones by NAME, like everything else in a rig spec.** A bone's
+`parent`, a slot's `bone`, an ik constraint's `bones` and `target` and a draw-order
+key's `slot` all resolve by name and refuse a miss by name, and mesh weights now do
+too: an unknown name is a `CompileError` that says which vertex and which name, and
+the compiler resolves the names to indices on emit. So inserting a bone renumbers
+the emitted array and rebinds nothing.
+
+🚨 **The index form is still reachable and it still costs silence.** Spine's own
+encoding is a flat run — `boneCount, (boneIndex, bindX, bindY, weight) × n, …` —
+where `boneIndex` is a position in the **emitted** bone array, a list the rig spec
+never writes and cannot see. Put one bone ahead of the meshes and every vertex
+rebinds: the file still loads, every index is still in range, every vertex's weights
+still sum to 1, and `A04`, `A20` and `diff` are all quiet, because an index has no
+name to be wrong. (Measured, on the rung 6 transcription: union MAE 3.30 → 15.09,
+worst mesh-slot drift 0.09 px → 9.8 px, with a green gate throughout. Issue #45.)
+rigc therefore refuses a weighted `vertices` run unless the attachment says
+`"boneIndexing": "raw"` out loud — an opt-in, because what is being opted into is
+the silence.
+
+⚠️ `vertices` carries **no encoding flag** of its own, which is why the length rule
+above is load-bearing: if `vertices.length` equals `uvs.length` the parser reads
+unweighted x/y pairs, otherwise it reads the weighted run. A coincidental length
+match reads weight data as coordinates, silently — that is `A04`.
+
+⚠️ **Authored geometry is not a rigc generator, and the gate says so.** rigc built
+neither its rim nor its rows, so it gets to assume nothing about its topology:
+`A21_MESH_RIM_PINNED` and `A28_RIBBON_ROWS_SHARE_WEIGHTS` **SKIP** on an authored
+mesh with that as the reason, and `A20`'s two generator-policy branches (a mesh here
+is weighted; a generated mesh binds only bones that move it) do not apply to one.
+`A20`'s coherence rules — weights present, in range, summing to 1 — still do. Issue
+#44; before it was fixed, `A21` reported 40 failures on a correct 40-vertex editor
+mesh because an absent `meshKinds` entry read as `ring`.
 
 The two generators are `ring` and `ribbon` (see [`src/mesh.ts`](../src/mesh.ts));
 they encode a deformation model rather than a table of numbers, which is why they

@@ -26,6 +26,7 @@ import {
   type RigAttachment,
   type RigBone,
   type RigMeshAttachment,
+  type RigMeshBinding,
   type RigRegionAttachment,
   type RigSpec,
 } from './rig.ts';
@@ -616,8 +617,16 @@ export function compile(opts: CompileOptions): CompileResult {
       tableFor(skinName)[rigSlot.name] = perSlot;
     }
   }
-  if (meshes.length > meshBudget) {
-    throw new CompileError(`${meshes.length} mesh slot(s) emitted but the rig "${rig.name}" allows ${meshBudget}`);
+  // 📐 The implicit budget of 0 is a statement about rigc's own GENERATORS: a rig
+  // that declares no `invariants.meshSlots` has not asked rigc to build any mesh,
+  // so building one is a mistake. It is not a statement about geometry somebody
+  // else drew — `RigInvariants.meshTriangles` says the same thing in words:
+  // a number baked in here would be one project's frame time masquerading as a
+  // property of the format. So authored meshes count against a budget the rig
+  // states out loud, and against nothing when it states none.
+  const budgeted = rig.invariants?.meshSlots === undefined ? meshes.filter((m) => m.kind !== 'authored') : meshes;
+  if (budgeted.length > meshBudget) {
+    throw new CompileError(`${budgeted.length} mesh slot(s) emitted but the rig "${rig.name}" allows ${meshBudget}`);
   }
 
   // -- 4b. constraints -------------------------------------------------------
@@ -973,20 +982,100 @@ function buildRigRegion(
   return out;
 }
 
+/**
+ * Resolve an authored mesh's by-name weights into Spine's index run.
+ *
+ * 🚨 This is the whole point of the `weights` form. The run is
+ * `boneCount, (boneIndex, bindX, bindY, weight) x n` per vertex and those
+ * indices are positions in the emitted bone array — a thing the rig spec never
+ * writes. Resolving them here, from names, is what makes "insert a bone" a
+ * renumbering rather than a rebinding: the names still point at the same bones,
+ * so the emitted indices move and the mesh does not.
+ *
+ * An unknown name is a `CompileError`, the same as a bone's `parent`, a slot's
+ * `bone` or a constraint's `target`. The alternative — the raw form — cannot
+ * refuse anything, because an index has no name to be wrong.
+ */
+function encodeNamedWeights(weights: RigMeshBinding[][], where: string, ctx: AttachmentContext): number[] {
+  const out: number[] = [];
+  weights.forEach((vertex, i) => {
+    if (!Array.isArray(vertex) || vertex.length === 0) {
+      throw new CompileError(`${where}: vertex ${i} has no bone bindings; a weighted vertex names at least one bone`);
+    }
+    out.push(vertex.length);
+    for (const binding of vertex) {
+      const index = ctx.bones.findIndex((b) => b.name === binding.bone);
+      if (index < 0) {
+        throw new CompileError(
+          `${where}: vertex ${i} binds bone ${JSON.stringify(binding.bone)}, which the rig does not declare as a bone`,
+        );
+      }
+      out.push(index, r6(binding.x), r6(binding.y), r6(binding.weight));
+    }
+  });
+  return out;
+}
+
 function buildRigMesh(att: RigMeshAttachment, where: string, ctx: AttachmentContext): SpineMeshAttachment {
-  const authored = att.uvs !== undefined || att.triangles !== undefined || att.vertices !== undefined;
+  const authored =
+    att.uvs !== undefined || att.triangles !== undefined || att.vertices !== undefined || att.weights !== undefined;
   if (authored && att.generator) {
     throw new CompileError(`${where}: a mesh is either authored geometry or a generator, never both`);
   }
   if (att.generator) return buildGeneratedMesh(att, att.generator, where, ctx);
-  if (!att.uvs || !att.triangles || !att.vertices) {
-    throw new CompileError(`${where}: an authored mesh needs uvs, triangles and vertices (or a "generator")`);
+  if (att.vertices && att.weights) {
+    throw new CompileError(
+      `${where}: a mesh gives geometry as "vertices" or as "weights", never both — "weights" is the by-name form of the same data`,
+    );
+  }
+  if (!att.uvs || !att.triangles || !(att.vertices || att.weights)) {
+    throw new CompileError(`${where}: an authored mesh needs uvs, triangles and vertices or weights (or a "generator")`);
+  }
+  const uvCount = att.uvs.length;
+  let vertices: number[];
+  let boundBones: string[] = [];
+  if (att.weights) {
+    if (att.boneIndexing === 'raw') {
+      throw new CompileError(`${where}: "boneIndexing": "raw" describes a "vertices" run; "weights" always binds by name`);
+    }
+    if (att.weights.length !== uvCount / 2) {
+      throw new CompileError(
+        `${where}: weights cover ${att.weights.length} vertices but there are ${uvCount / 2} uv pairs`,
+      );
+    }
+    vertices = encodeNamedWeights(att.weights, where, ctx);
+    boundBones = [...new Set(att.weights.flat().map((b) => b.bone))];
+  } else {
+    const raw = att.vertices!;
+    // An unweighted mesh is one x,y per uv pair. It names no bone, so there is
+    // nothing here to rebind and nothing to opt into.
+    const weighted = raw.length !== uvCount;
+    if (weighted && att.boneIndexing !== 'raw') {
+      throw new CompileError(
+        `${where}: this mesh's "vertices" is a weighted run, whose bone INDEXES point into the emitted bone array — ` +
+          'a list the spec never writes, so inserting a bone rebinds every vertex in silence. ' +
+          'Give the bindings by name as "weights": [[{ "bone": …, "x": …, "y": …, "weight": … }, …], …], ' +
+          'or say "boneIndexing": "raw" on this attachment to keep the index form deliberately.',
+      );
+    }
+    vertices = raw.map(r6);
+    if (weighted) {
+      const names = new Set<string>();
+      for (let i = 0; i < raw.length; ) {
+        const n = raw[i++];
+        for (let k = 0; k < n; k++, i += 4) {
+          const bone = ctx.bones[raw[i]];
+          if (bone) names.add(bone.name);
+        }
+      }
+      boundBones = [...names];
+    }
   }
   const out: SpineMeshAttachment = {
     type: 'mesh',
     uvs: att.uvs.map(r6),
     triangles: att.triangles,
-    vertices: att.vertices.map(r6),
+    vertices,
     hull: att.hull ?? 0,
     width: r6(att.width ?? 0),
     height: r6(att.height ?? 0),
@@ -994,6 +1083,19 @@ function buildRigMesh(att: RigMeshAttachment, where: string, ctx: AttachmentCont
   if (att.path !== undefined) out.path = att.path;
   if (att.edges !== undefined) out.edges = att.edges;
   if (att.color !== undefined) out.color = att.color;
+  // Register it as `authored`: geometry rigc did not build and whose topology it
+  // therefore gets to assume nothing about. The generator-topology assertions
+  // read this and skip rather than measuring a ring that was never a ring.
+  ctx.meshBones.add(ctx.anchorBone);
+  for (const name of boundBones) ctx.meshBones.add(name);
+  ctx.meshes.push({
+    slot: ctx.slotName,
+    kind: 'authored',
+    attachments: [ctx.slotName],
+    vertices: uvCount / 2,
+    triangles: att.triangles.length / 3,
+    bones: boundBones.length ? boundBones : [ctx.anchorBone],
+  });
   return out;
 }
 
@@ -1224,7 +1326,7 @@ function buildRigInfo(
       }
     }
   }
-  const meshKinds: Record<string, 'ring' | 'ribbon'> = {};
+  const meshKinds: Record<string, 'ring' | 'ribbon' | 'authored'> = {};
   for (const mesh of meshes) meshKinds[mesh.slot] = mesh.kind;
   // Inward, in Spine world. Off-axis keys (the mass bone usually hangs outside
   // the axis subtree) have to be projected onto it before they can be compared
