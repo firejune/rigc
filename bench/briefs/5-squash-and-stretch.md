@@ -43,8 +43,8 @@ Notes on the shape of the deliverable:
   side, precisely so that a rig built correctly under its own names is not called a
   total failure.
 - This rung has the largest art set on the ladder so far — 29 files — and many of
-    them are alternates of one part rather than parts of their own. Read the art
-    table before you count parts.
+  them are alternates of one part rather than parts of their own. Read the art table
+  before you count parts.
 
 ## The art
 
