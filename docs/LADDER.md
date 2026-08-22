@@ -129,17 +129,36 @@ The written form of all this, per rung and per run:
 | 1 | **3** | `3-timing-and-spacing` | `ess` | nothing — smallest skeleton in the corpus | ✅ |
 | 2 | **1** | `1-weight-and-mass` | `balls`, `drop` | `translatex`/`translatey`/`shear`; bone setup `length`; a skeleton with **zero** animations (`drop`) | ⬜ *attempted* |
 | 3 | **2** | `2-the-12-principles` | `ess` | slot `blend` (4 additive + 4 multiply); bone `inherit` ≠ Normal | ⬜ *attempted* |
-| 4 | **4** | `4-wave-principle` | `ess` | nothing structural — a volume test (9 bones, 9 slots, 3 animations, 470 bezier keys) | ⬜ |
-| 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ⬜ |
+| 4 | **4** | `4-wave-principle` | `ess` | nothing structural — a volume test (9 bones, 9 slots, 3 animations, 470 bezier keys) | ⬜ *attempted* |
+| 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ⬜ *attempted* |
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ⬜ |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ⬜ |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ⬜ |
 | 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (67 bones, 52 slots, 11 animations) | ⬜ |
 
-⬜ **but attempted.** Rungs 1 and 2 were each attempted once on 2026-08-23 and
-neither cleared — [`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/)
-and [`bench/runs/2026-08-23-rung2-1/`](../bench/runs/2026-08-23-rung2-1/). The
-figures and the commander's reading of each are in *Rung 1* and *Rung 2* below.
+⬜ **but attempted.** Five runs across rungs 1, 2 and 4/5 were made on 2026-08-23,
+and none cleared — [`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/),
+[`bench/runs/2026-08-23-rung2-1/`](../bench/runs/2026-08-23-rung2-1/),
+[`bench/runs/2026-08-23-rung4-1/`](../bench/runs/2026-08-23-rung4-1/),
+[`bench/runs/2026-08-23-rung5-1/`](../bench/runs/2026-08-23-rung5-1/) and, on the
+corrected brief, [`bench/runs/2026-08-23-rung2-2/`](../bench/runs/2026-08-23-rung2-2/).
+The figures and the commander's reading of each are below, under *Rung 1* through
+*Rung 2, attempt 2*.
+
+**What the five runs say so far.** `validate` caught **0 FAILs** across all five —
+roughly 80 builds and `check` cycles combined — and that is the guide designing
+invalid states out before a build is attempted, not a sign the rigs were right;
+validity was never the open question here. `check` is the instrument that carries
+the weight `validate` cannot, and every run used it in the loop rather than once at
+the end. What it keeps finding, on a volume test (rung 4), a squash-and-stretch rig
+(rung 5) and two independent attempts at a twelve-principles rig (rung 2), is the
+same structural gap in two shapes every time — the author's own **slot strategy**
+(how many slots a shape gets folded into, and by what rule) and **key density**
+(denser than the reference in rung 4, sparser in rung 5 and rung 2) — never a
+validity defect. And the briefs keep turning out to be measurement artefacts rather
+than finished shot descriptions: three of the five runs found a brief claim wrong
+that a client watching the shot could have caught, and the fix each time was to
+re-measure the pixels, not to trust the prose.
 
 Two facts the table does not repeat, both from SPEC_COVERAGE part 3:
 
@@ -247,6 +266,103 @@ rides it and is catapulted) — retry after the brief is fixed.
 > revision 2. That pass found three further claims that were not in the pixels, and
 > `bench/runs/README.md` now requires a second agent to verify a brief before it is
 > run.
+
+### Rung 4 — attempted, not cleared (2026-08-23)
+
+Run [`bench/runs/2026-08-23-rung4-1/`](../bench/runs/2026-08-23-rung4-1/), clean
+(PR #33) — 1 build, green on the first compile, then about 40 `check` cycles in
+the loop. Authored by **Claude Opus 5 (1M context)**, Claude Code / Agent SDK, from
+the brief and the rendered reference frames alone.
+
+Figures:
+
+```
+ess     bones=0.499  slots=0.215  attachments=0.772  constraints=1.000  animations=0.854  events=1.000
+```
+
+`check` MAE: `ball-catch` mean 17.9 (worst 41.1 at f0082, the middle of the disc's
+360° flip between two 12 fps frames); the two whip shots (`wave-by-hand`,
+`wave-offset`) 14.3–14.5, flat across their frames.
+
+**Reading — the commander's call, 2026-08-23.** No slot drift was attributable
+anywhere in this run: the disc and its five-link chain are one connected component
+whenever the parts touch, which in this rig is always, so every frame reported `some
+slots ambiguous` and the run had an MAE and nothing else for that measure. Roughly
+half of the reported error was `check`'s own framing, not the rig's motion — pinning
+the viewport so both sides shared one grid took `wave-by-hand` from 49.45 to 22.96.
+Both findings fed directly into #34, closed the same day by
+[#39](https://github.com/firejune/rigc/pull/39) — the new framing fits drawn pixels
+instead of quad corners, and the new slot matcher's own description names this
+rung's drift table as one of the two cases it fixes. The author also over-keyed
+against the rung's own gate line — 639 keys against the 470 the gate line
+describes — because 12 fps reference frames cluster keys on the 12 fps grid; a
+sparser cut of the same measurements (471 keys) is in the run's own log as the more
+honest comparison. Neither the framing nor the matcher problem this run hit has
+been re-run against the fixed tool; the key-density finding stands regardless of
+either.
+
+### Rung 5 — attempted, not cleared (2026-08-23)
+
+Run [`bench/runs/2026-08-23-rung5-1/`](../bench/runs/2026-08-23-rung5-1/), clean
+(PR #32) — first build green, about 30 cycles in the loop. Same agent and
+conditions as rung 4.
+
+Figures:
+
+```
+ess     bones=0.452  slots=0.313  attachments=0.801  constraints=1.000  animations=0.697  events=1.000
+```
+
+Attachments 29/29 exact, animations 3/3 by name, key density 387 against the
+reference's 2,038, `drawOrder` 2 of 3. `check` MAE ≈4.3, at the rasteriser's own
+floor for this course plate (the plate alone, with nothing else in the skeleton,
+renders at 4.29 against these frames); the runner's own contribution, +2.06, would
+not come down across four different attempts (a four-parameter hip fit, bbox-driven
+scaling, limb lengthening, centroid alignment — all tried, all measured worse or no
+better, all reverted). The often-quoted "48 px ball drift" was a matcher artefact,
+not a rig defect: the ball has no connected component of its own on 29 of 79
+frames (touching a ledge, or nearest to the floating girder instead), and on the
+50 frames where it does have one, mean drift is 0.35 px — [#39](https://github.com/firejune/rigc/pull/39)'s
+own description names this exact number as gone under the new matcher.
+
+**Reading — the commander's call, 2026-08-23.** Residual: key density (387 vs
+2,038 — a hand-authored original keeps far more of its own curve shape than a
+greedy-insertion fit against 12 fps samples reproduces), and the framing's
+fragility — a content box 0.93 % narrower than the reference's moved the same
+build's MAE from 4.34 to 39.00 with no change to any key, by far the largest single
+effect measured in this run.
+
+### Rung 2, attempt 2 — attempted, not cleared (2026-08-23)
+
+Run [`bench/runs/2026-08-23-rung2-2/`](../bench/runs/2026-08-23-rung2-2/), clean
+(PR #35) — 5 builds, all green. Same agent, run against the corrected brief
+(revision 2 at the time of the run; revision 3 as of this entry — see below).
+
+Figures:
+
+```
+ess     bones=0.308  slots=0.156  attachments=0.762  constraints=1.000  animations=0.623  events=1.000
+```
+
+(candidate 10 bones / 15 slots vs reference 12 / 17.) `check` itself only saw
+`f0000` and `f0310` per animation — this rung's committed reference set is contact
+sheets plus two stills, and `check` reads `fNNNN.png` files only (issue #36). The
+run built its own whole-shot instrument instead
+([`sheetcheck.ts`](../bench/runs/2026-08-23-rung2-2/sheetcheck.ts)), sampling every
+animation at 12 fps and comparing each frame against its tile on the reference's own
+contact sheet: flat MAE 4.85–4.95 over all 1,244 frames of the four shots, no spikes
+anywhere.
+
+**Reading — the commander's call, 2026-08-23.** Findings from the run: the
+lambertian shading disc on each ball needs its own per-ball slot tint rather than a
+shared material; the lower ring's rotation is off-centre, its attachment sitting 18
+units from its bone, which produces a visible wobble as it turns; the panel's drop
+is not monotone — it overshoots to 0.365 of standing height for one frame at the
+bottom of the drop before settling at 0.405. Brief revision 2 was still wrong on one
+claim: the tennis-ball shot's upper ring and panel are not frame-for-frame identical
+with the other three the way the brief said every shot was — corrected in
+[`bench/briefs/2-the-12-principles.md`](../bench/briefs/2-the-12-principles.md)
+revision 3.
 
 ---
 

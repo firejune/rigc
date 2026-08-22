@@ -720,6 +720,20 @@ its skeleton, `--as <name>` when your animation is called something the frame
 directory is not, `--all-frames` to list every frame instead of the worst by MAE,
 `--json <out>` for the whole per-frame, per-slot report.
 
+⚠️ **A frame set may be contact-sheets-only.** `check` only reads `fNNNN.png`
+files — a committed reference set that ships a contact sheet plus a couple of
+stills (rung 2's does: `f0000.png` and `f0310.png` per animation, the rest folded
+into `contact.png` so a 311-frame shot does not commit 311 near-duplicate PNGs)
+reports `frames 2 on disk, candidate samples 311, 2 compared` and means it: `check`
+compared exactly the committed stills, not the shot. That is not a defect to author
+around — the frame count line says so rather than pretending a fuller comparison
+happened — but it does mean a clean `check` table on a contact-sheet-only set says
+nothing about the frames between the stills. Whole-shot fidelity against a contact
+sheet needs a tile-wise comparison against the sheet's own grid, which `check` does
+not do yet (issue #36);
+[`bench/runs/2026-08-23-rung2-2/sheetcheck.ts`](../bench/runs/2026-08-23-rung2-2/sheetcheck.ts)
+is a working prototype, built in-run for exactly this gap.
+
 `--fps <n>` exists for frame sets that have no `frames.json` beside them, which are
 sets rendered before the sidecar existed: it gives the rate those frames were
 sampled at, and without it the 12 fps protocol rate is assumed and the report says
@@ -727,16 +741,31 @@ so rather than letting the assumption look like a measurement. Passing `--fps` w
 a value the sidecar contradicts is an error, not an override.
 
 `--viewport <x>,<y>,<width>,<height>` pins your candidate's world box instead of
-fitting it. Two uses, and the second is the one to remember:
+fitting it. Three uses:
 
 - the derivation cannot work — a candidate deliberately missing a part has a
   different content box by construction, and pinning lets the rest of the shot
   still be measured;
+- you already know your candidate's world coordinates match the reference's own —
+  declared in `frames.json`, or measured directly against it, the way rung 5's
+  authoring scripts did. There is nothing for a fit to correct in that case, so
+  pinning skips one and reports the box you already know is right;
 - you want the framing **held still** between builds. The framing line is still
   measured and printed when the box is pinned, so a pinned run separates "my keys
   moved" from "my framing moved" without either hiding the other. On a shot whose
   MAE moves by more than a point for a fraction of a pixel, that separation is
   worth more than the absolute number.
+
+Pinning to paper over a **real** framing difference — rather than one of the three
+cases above — is the dishonest use: it makes a genuine mismatch between your
+candidate and the reference disappear from the report instead of showing up as
+`content`/`rms`/`union residual`. That used to be easy to do by accident, because
+the old quad-corner framing could be wrong by more than a pixel for reasons that had
+nothing to do with either side's motion — two honest ladder runs measured it costing
+30+ points of MAE with no key changed, which is why framing is now fitted to drawn
+pixels rather than quad corners (issue #34, closed by #39; see §9.2). Pin to a box
+you can name a reason for, and read the unpinned framing line first when you are not
+sure whether you have one.
 
 ⚠️ **The framing is over the frames you compare.** `--frames <root>` fits one
 framing across every set under it; `--frames <root>/<one-set>` fits one to that set

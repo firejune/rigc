@@ -8,6 +8,13 @@ Nothing in here is a rung's verdict. A rung is marked cleared by a person readin
 the measures, and [docs/LADDER.md](../../docs/LADDER.md) is where that judgement is
 written down.
 
+⚠️ **Concurrent agents use `git worktree`, never the shared checkout.** A run in
+progress is a working tree with in-flight edits — its own, and sometimes the
+repository's: rung 2's second attempt hit a `SyntaxError` mid-loop from a
+`src/check.ts` refactor landing in the same tree it was checking against, and lost
+~100 s waiting it out. A rung attempted from a separate worktree cannot collide with
+another agent's uncommitted work or with a tool mid-edit underneath it.
+
 ## Which rungs can be attempted
 
 A rung is attemptable when it has a brief and reference frames. This table says
@@ -95,7 +102,7 @@ agent started for that purpose.
 | the authoring guide | [docs/AUTHORING.md](../../docs/AUTHORING.md) — **including §8**, which is about reading reference frames and exists because the first run got three measurements wrong in ways that each looked like a fact about the animation |
 | the art | `examples/<example>/images/` |
 | the reference renders | `bench/reference/<example>/` — frames and contact sheets |
-| the CLI | this repository: `bun cli.ts build` / `explain` / `validate` / `diff` / `bench` |
+| the CLI | this repository: `bun cli.ts build` / `explain` / `validate` / `diff` / `check` / `bench` |
 
 Reading the repository's own source is fine — `src/rig.ts`, `src/types.ts` and the
 README are documentation of the input formats, and none of them says anything about
@@ -119,6 +126,12 @@ against the answer. Run the authoring loop against `build`'s own validator repor
 run `bench` once, at the end. If a run does read `bench` and then keeps editing, say
 so in the log and label the run **bench-assisted** — its measures are still worth
 recording, and they are not comparable to a clean run.
+
+✅ **`check` is not `bench` — it stays in the loop.** It never opens the reference
+skeleton, only the frames, so running it as often as you like does not make a run
+bench-assisted. See [docs/AUTHORING.md](../../docs/AUTHORING.md) §0 (where it sits
+in the loop, after `build`) and §9 (why it exists and how to read it) — every clean
+run recorded here used it this way, some of them dozens of times.
 
 ## The output
 
