@@ -51,6 +51,13 @@ function has(map: AnyMap | undefined | null, key: string): boolean {
 	return !!map && Object.prototype.hasOwnProperty.call(map, key) && map[key] !== undefined;
 }
 
+/**
+ * ⚠️ `T` is inferred from the DEFAULT, so `getValue(m, "skin", false)` is typed
+ * `false` and not `boolean` — and then a perfectly sensible `=== true` is a
+ * comparison the type checker calls impossible (TS2367). The value really comes
+ * out of arbitrary JSON, so the narrow type is the lie. Call sites that compare
+ * against something other than their default say the widened type out loud.
+ */
 function getValue<T>(map: AnyMap | undefined | null, key: string, def: T): T {
 	if (!map) return def;
 	return map[key] !== undefined ? map[key] : def;
@@ -192,7 +199,7 @@ function analyzeSkeletonJson(filePath: string, relPath: string): AnyMap {
 			bone_inherit_nonNormal++;
 			incr(inheritBreakdown, inherit);
 		}
-		if (getValue(b, "skin", false) === true) bone_skinRequired++;
+		if (getValue<boolean>(b, "skin", false) === true) bone_skinRequired++;
 		if (has(b, "color")) bone_color++;
 		if (has(b, "icon")) bone_icon++;
 		if (getValue(b, "length", 0) !== 0) bone_length_nonzero++;
@@ -230,7 +237,7 @@ function analyzeSkeletonJson(filePath: string, relPath: string): AnyMap {
 			incr(blendBreakdown, blend);
 		}
 		if (has(s, "attachment")) slot_attachment_set++;
-		if (getValue(s, "visible", true) === false) slot_visible_false++;
+		if (getValue<boolean>(s, "visible", true) === false) slot_visible_false++;
 		for (const k of Object.keys(s)) if (!KNOWN_SLOT_KEYS.has(k)) unknownSlotKeys.add(k);
 	}
 	detail.slot_color = slot_color;
@@ -282,7 +289,7 @@ function analyzeSkeletonJson(filePath: string, relPath: string): AnyMap {
 			const slotMap: AnyMap = attachmentsBySlot[slotName];
 			for (const entryName of Object.keys(slotMap)) {
 				const map: AnyMap = slotMap[entryName];
-				const type = getValue(map, "type", "region");
+				const type = getValue<string>(map, "type", "region");
 				const isLinked = (type === "mesh" || type === "linkedmesh") && has(map, "source");
 
 				for (const k of Object.keys(map)) if (!KNOWN_ATTACHMENT_KEYS.has(k)) unknownAttachmentKeys.add(k);

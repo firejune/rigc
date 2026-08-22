@@ -297,6 +297,18 @@ it re-derive the declared durations and the structural expectations too, and the
 report says which it had. `build` and `validate` both take `--profile spine` to drop
 the renderer and archetype policy; the default stays `spine-html`.
 
+## Checks
+
+```bash
+bun run typecheck    # bunx tsc --noEmit over cli.ts, selftest.ts, src/, bench/, tools/
+bun run lint         # one rule: @typescript-eslint/no-explicit-any, as an error
+```
+
+Bun runs the sources directly, so neither is on the path of anything — they exist
+because a convention nothing checks is a convention. `tsconfig.json` is
+`strict: false` with `strictNullChecks: true` and says in place why the rest is
+not on yet; `eslint.config.js` says why it carries exactly one rule.
+
 ## Selftest
 
 ```bash
@@ -329,6 +341,7 @@ like a validator that worked.
 ## Layout
 
 ```
+tsconfig.json   type-check config (noEmit); eslint.config.js — the no-any gate
 cli.ts          build / validate / explain / diff / bench
 selftest.ts     the validator's own negative controls, and diff's measure controls
 src/

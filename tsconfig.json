@@ -1,0 +1,32 @@
+{
+  // Type-check only. Bun runs the .ts sources directly, so nothing here emits —
+  // `bun run typecheck` exists to catch what the runtime would hit later, and to
+  // make `no-explicit-any` mean something (see eslint.config.js).
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["bun"],
+
+    // `.ts` in relative imports is this project's convention and Bun's default;
+    // TypeScript allows it only when nothing is emitted.
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    // ⚠️ Not full `strict`, on purpose. The code is written against
+    // `strictNullChecks` — the compiler leans on `x === undefined` narrowing all
+    // over — and turning on the rest (`noImplicitAny`, `strictFunctionTypes`,
+    // `strictPropertyInitialization`) would be a refactor, not a gate. Raise it
+    // when somebody is prepared to do that work; do not raise it silently.
+    "strict": false,
+    "strictNullChecks": true
+  },
+  "include": ["cli.ts", "selftest.ts", "src/**/*.ts", "bench/**/*.ts", "tools/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "examples"]
+}

@@ -1,7 +1,7 @@
 {
   "name": "rigc",
   "version": "0.1.0",
-  "description": "Rig compiler for Spine — declarative rig specs in, Spine 4.3 skeleton data out, verified by a spine-core round-trip. Built so AI agents can author rigs and check their own work.",
+  "description": "Rig compiler for Spine \u2014 declarative rig specs in, Spine 4.3 skeleton data out, verified by a spine-core round-trip. Built so AI agents can author rigs and check their own work.",
   "type": "module",
   "license": "MIT",
   "author": "firejune",
@@ -28,10 +28,18 @@
     "validate": "bun cli.ts validate",
     "explain": "bun cli.ts explain",
     "selftest": "bun selftest.ts",
+    "typecheck": "bunx tsc --noEmit",
+    "lint": "bunx eslint .",
     "fetch-examples": "bash scripts/fetch-examples.sh",
     "bench:usage": "bun bench/count_features.ts"
   },
   "dependencies": {
     "@esotericsoftware/spine-core": "4.3.13"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "eslint": "^10.9.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.67.0"
   }
 }

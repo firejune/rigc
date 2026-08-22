@@ -64,6 +64,9 @@ sincere about it. rigc exists to convert that silence into a named failure.
 - **No `any`, no `as any`, in `src/` or `cli.ts`.** `selftest.ts` is the one
   exception and it is scoped: the mutants deliberately forge malformed skeleton
   JSON, so they turn the rule off around the mutant tables and back on after.
+  Since 2026-08-22 `bun run lint` enforces this rather than a reader, which is
+  also what makes the scope of that exemption checkable — the file's
+  `eslint-disable` comments now have to actually bracket every `any` in it.
 
 ## Conventions
 
@@ -77,6 +80,24 @@ sincere about it. rigc exists to convert that silence into a named failure.
   `screenToSpineDegrees`). Do not open-code it anywhere else.
 - Conventional Commits, English subject and body. Commit each finished unit.
 - Pushing, tagging and publishing are the owner's call.
+
+## Verification — run these before you call a unit finished
+
+| Command | Checks |
+| --- | --- |
+| `bun run typecheck` | `bunx tsc --noEmit` over `cli.ts`, `selftest.ts`, `src/`, `bench/`, `tools/`. `strict: false` with `strictNullChecks: true` — see the comment in `tsconfig.json` before raising it |
+| `bun run lint` | one rule: `@typescript-eslint/no-explicit-any` as an **error**. `eslint.config.js` says why it is only one |
+| `bun run selftest --cuts <cuts.json>` | the validator's own negative controls. **Fixture-bound** — see *PUBLIC GATE* item 4; a fresh clone cannot run it |
+| `bun cli.ts bench 3 --candidate <dir>` | the ladder still reproduces its rung. `docs/LADDER.md` carries the B1 proof to compare against |
+
+Neither of the first two existed before 2026-08-22, and both found real defects on
+their first run — a `let` assigned inside a callback that made 30 later reads
+type-check against `never`, and a spread that quietly overwrote the file paths in
+`diff --json`'s and `bench --json`'s own reports. Assume the same of the next rule
+anybody adds: turn it on, read what it says, fix it, and only then commit it.
+
+Anything touching an input format, an error message or an assertion also changes
+[docs/AUTHORING.md](docs/AUTHORING.md).
 
 ## Where the cited plan documents live
 

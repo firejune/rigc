@@ -198,22 +198,30 @@ export function validate(input: ValidateInput): ValidateReport {
    * The unknown-assertion throw is deliberate: an assertion with no entry in
    * ASSERTION_KIND would otherwise pick a profile by accident, and picking wrong
    * means either a rule that never runs or a rule that fires on everybody's data.
+   *
+   * The body's return value is handed back — `undefined` when the assertion did
+   * not run or threw. Only A00 uses it, and it uses it so that the loaded atlas
+   * and skeleton can be `const`: assigning them from inside this callback leaves
+   * the type checker unable to see that they were ever set, and every later read
+   * of `atlas.pages` or `data.bones` becomes a property of `never`.
    */
-  const check = (assertion: string, body: () => void) => {
+  const check = <T>(assertion: string, body: () => T): T | undefined => {
     const kind = ASSERTION_KIND[assertion];
     if (!kind) throw new Error(`validate: assertion "${assertion}" has no ASSERTION_KIND entry`);
     if (kind !== 'validity' && !policy) {
       profileSkipped.push({ assertion, kind });
-      return;
+      return undefined;
     }
     const before = failures.length;
     const skippedBefore = skipped.length;
+    let result: T | undefined;
     try {
-      body();
+      result = body();
     } catch (err) {
       fail(assertion, `threw: ${(err as Error).message}`);
     }
     if (failures.length === before && skipped.length === skippedBefore) passed.push(assertion);
+    return result;
   };
 
   // -------------------------------------------------------------------------
@@ -264,13 +272,18 @@ export function validate(input: ValidateInput): ValidateReport {
   });
 
   // --- A: the round trip ----------------------------------------------------
-  let atlas: TextureAtlas | null = null;
-  let skeletonData: ReturnType<SkeletonJson['readSkeletonData']> | null = null;
-  check('A00_ROUNDTRIP_PARSE', () => {
-    atlas = new TextureAtlas(input.atlasText);
-    const json = new SkeletonJson(new AtlasAttachmentLoader(atlas));
-    skeletonData = json.readSkeletonData(JSON.parse(input.skeletonText));
+  // The two loaded objects come back OUT of the assertion rather than being
+  // assigned into it. Everything below reads them, and a `let` written inside a
+  // callback is a value the type checker cannot see being set: it narrows to
+  // `null` at the first guard and to `never` inside it, so `atlas.pages` stops
+  // type-checking while working perfectly at runtime.
+  const roundTrip = check('A00_ROUNDTRIP_PARSE', () => {
+    const parsedAtlas = new TextureAtlas(input.atlasText);
+    const json = new SkeletonJson(new AtlasAttachmentLoader(parsedAtlas));
+    return { atlas: parsedAtlas, data: json.readSkeletonData(JSON.parse(input.skeletonText)) };
   });
+  const atlas: TextureAtlas | null = roundTrip?.atlas ?? null;
+  const skeletonData: ReturnType<SkeletonJson['readSkeletonData']> | null = roundTrip?.data ?? null;
 
   if (atlas) {
     stats.pages = atlas.pages.length;

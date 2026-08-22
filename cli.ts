@@ -317,7 +317,11 @@ function cmdDiff(flags: Record<string, string>, positional: string[]): void {
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(
       out,
-      `${JSON.stringify({ candidate: candidatePath, reference: referencePath, ...report }, null, 2)}\n`,
+      // ⚠️ `...report` carries its OWN `candidate` and `reference` — the raw
+      // per-side counts. Spelling the paths under those two names put them on
+      // the losing side of the spread, so the written report named neither file
+      // it compared. The paths get their own keys.
+      `${JSON.stringify({ candidatePath, referencePath, ...report }, null, 2)}\n`,
     );
     console.log(`rigc: wrote ${out}`);
   }
@@ -412,7 +416,14 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
           profile,
           candidate: { skeleton: skeletonPath, atlas: atlasPath },
           validate: report,
-          diffs: diffs.map((d) => ({ label: d.skeleton.label, role: d.skeleton.role, reference: d.reference, ...d.report })),
+          // `referencePath`, not `reference`: a DiffReport already has a
+          // `reference` of its own (the raw counts), and the spread wins.
+          diffs: diffs.map((d) => ({
+            label: d.skeleton.label,
+            role: d.skeleton.role,
+            referencePath: d.reference,
+            ...d.report,
+          })),
         },
         null,
         2,
