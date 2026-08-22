@@ -321,6 +321,21 @@ export interface RigRegionAttachment {
  * coincidental length match reads weight data as coordinates, silently — which
  * is `A04_MESH_TRIANGLES_AND_ENCODING`.
  */
+/**
+ * One bone's pull on one vertex of an authored mesh, **named**.
+ *
+ * `x`/`y` are the vertex's position in that bone's own setup space — the same
+ * pair Spine's weighted run carries after the bone index. `weight` is its share;
+ * a vertex's weights sum to 1.
+ */
+export interface RigMeshBinding {
+  /** Resolved against the rig's bone list at emit. An unknown name is refused. */
+  bone: string;
+  x: number;
+  y: number;
+  weight: number;
+}
+
 export interface RigMeshAttachment {
   type: 'mesh';
   path?: string;
@@ -328,7 +343,40 @@ export interface RigMeshAttachment {
   /** Its length defines `worldVerticesLength`; required with authored geometry. */
   uvs?: number[];
   triangles?: number[];
+  /**
+   * Geometry, in one of two forms.
+   *
+   * **Unweighted** — one `x, y` pair per uv pair, and `vertices.length` equals
+   * `uvs.length`. Nothing here names a bone, so nothing here can be rebound.
+   *
+   * **Weighted, raw** — Spine's own encoding,
+   * `boneCount, (boneIndex, bindX, bindY, weight) x n` per vertex, where
+   * `boneIndex` is a position in the EMITTED bone array. 🚨 That array is not
+   * something a rig spec writes or can see, so those indices shift under any
+   * edit to the bone list and every vertex silently rebinds — the mesh still
+   * loads, every weight still sums to 1, and nothing in the file objects. rigc
+   * therefore refuses this form unless the attachment says `boneIndexing: "raw"`
+   * out loud. Use `weights` instead.
+   */
   vertices?: number[];
+  /**
+   * Weighted geometry that binds **by name**: one entry per vertex, each a list
+   * of `{ bone, x, y, weight }`. This is the default form and the one everything
+   * else in a rig spec already uses — a bone's `parent`, a slot's `bone`, a
+   * constraint's `bones` and `target` all resolve by name and refuse a miss by
+   * name. The compiler resolves these to indices on emit, so inserting a bone
+   * moves the indices and changes nothing about what the mesh is bound to.
+   *
+   * Mutually exclusive with `vertices`.
+   */
+  weights?: RigMeshBinding[][];
+  /**
+   * How a weighted `vertices` run names its bones. Default `"name"`, which means
+   * "there is no weighted run here — use `weights`". `"raw"` opts into the index
+   * encoding above, for a spec transcribed from an export that has not been
+   * migrated yet. It is an opt-in because the cost of it is silence.
+   */
+  boneIndexing?: 'name' | 'raw';
   /** Hull vertex count. The loader stores it doubled. */
   hull?: number;
   /** Edge index pairs; nonessential, editor-drawn. */

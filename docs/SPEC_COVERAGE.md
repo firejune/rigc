@@ -363,6 +363,12 @@ it is read as **unweighted** x/y pairs; otherwise as the **weighted** run-length
 weight data as coordinates. Plan 04 §1-3 already recorded this; it is restated here because the
 example corpus contains both encodings.
 
+🚨 The second risk in the same field is `boneIndex`: it is a position in the emitted bone array,
+so the run means something different the moment the bone list changes, and nothing in the file
+records what it used to mean. A rig spec therefore writes `weights` — the same data with the bones
+**named** — and rigc encodes this run on emit. The raw form stays reachable behind
+`"boneIndexing": "raw"` for transcribing an export verbatim. Issue #45.
+
 ### 1.7 Events — `root.events` (object, not array) (`:469-484`)
 
 `eventName → { int (0), float (0), string (""), audio (null), volume, balance }`.
@@ -978,9 +984,9 @@ Nothing structurally new (attachment timeline, blend, inherit all arrived by run
 | (a) | **Transform constraints** — 🔴 first appearance (4). Full 4.3 `source` + `properties{from→to}` model (§1.4), which is the least-documented constraint in the format. ✅ Expressible and round-trips exactly; `RigTransformConstraint` already carried the 4.3 shape |
 | (a) | **Weighted meshes from authored geometry** — 🔴 first appearance. ~~rigc can emit weighted meshes, but only from `buildRingMesh`/`buildRibbonMesh`. An arbitrary 40-vertex/38-triangle mesh cannot be expressed~~ ⚠️ **This was wrong.** `RigMeshAttachment` takes authored `uvs`/`triangles`/`vertices`/`hull`, and `buildRigMesh` copies them verbatim. Both of 6-arcs' meshes round-trip to 1e-5 |
 | (a) | Mesh **`edges`** key ~~(rigc emits `hull` but not `edges`)~~ ✅ emitted from `RigMeshAttachment.edges` and byte-identical to the reference. 🚨 But **nothing measures it** — deleting `edges` from the rig still scores 1.000 on all nine attachment measures, so this rung's own gating feature is invisible to `bench` (issue #46) |
-| (b) | Mesh geometry as data — vertices, triangles, uvs, per-vertex bone weights — instead of a generator name plus a polygon. ✅ Present. 🚨 But the weights bind bones by **index into the emitted bone array**, not by name — the one place the rig spec abandons name resolution. Inserting a bone rebinds every vertex with the gate still green (issue #45) |
-| (c) | **A20** (unweighted forbidden) is satisfied here. Under `--profile spine-html` its extra clause fires 11 times instead — the editor writes zero-weight bindings and that profile forbids them. Correctly profiled, not a defect |
-| (c) | **A21_MESH_RIM_PINNED** and **A28** encode ring/ribbon topology and will fire on an arbitrary mesh. ✅ **Confirmed**: A21 fires 40 times on the `tail` mesh under the default profile, because `meshKinds` has no entry for an authored mesh and the lookup falls back to `'ring'`. They must be gated on "this mesh came from a rigc generator" (issue #44) |
+| (b) | Mesh geometry as data — vertices, triangles, uvs, per-vertex bone weights — instead of a generator name plus a polygon. ✅ Present. ~~🚨 But the weights bind bones by **index into the emitted bone array**, not by name — inserting a bone rebinds every vertex with the gate still green (issue #45)~~ ✅ **Fixed.** Weights bind **by name** (`weights: [[{ bone, x, y, weight }, …], …]`) and the compiler resolves them at emit; an unknown name is a `CompileError` (selftest `R08`). Spine's index run survives behind an explicit `"boneIndexing": "raw"`, whose cost — silence — `MR07` still measures |
+| (c) | **A20** (unweighted forbidden) is satisfied here. ~~Under `--profile spine-html` its extra clause fires 11 times instead — the editor writes zero-weight bindings and that profile forbids them~~ ✅ **Fixed with #44**: both of A20's policy clauses are statements about what a rigc *generator* produces, so neither applies to authored geometry. Its coherence clauses — present, in range, summing to 1 — still do, in every profile |
+| (c) | **A21_MESH_RIM_PINNED** and **A28** encode ring/ribbon topology and will fire on an arbitrary mesh. ~~✅ **Confirmed**: A21 fires 40 times on the `tail` mesh under the default profile, because `meshKinds` has no entry for an authored mesh and the lookup falls back to `'ring'`~~ ✅ **Fixed** (issue #44): `meshKinds` has a third state, `authored`, and both assertions SKIP on one with that as the reason. The whole transcription is green under the default profile; selftest `MR08` holds it |
 | (c) | A13's mesh budget (≤4 slots, ≤80 tris) is **satisfied** at this rung (2 slots, max 38 tris) |
 | (d) | none |
 

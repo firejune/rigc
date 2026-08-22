@@ -30,6 +30,15 @@ sincere about it. rigc exists to convert that silence into a named failure.
   it acts on, so a failure detail must name the object, the value found and the
   value required. `A20_MESH_WEIGHTS_COHERENT: mesh "x" vertex 12 weights sum to
   0.9000` is the product. "invalid mesh" is not.
+- **Everything in a rig spec resolves by name, and a miss is refused by name.**
+  A bone's `parent`, a slot's `bone`, a constraint's `bones` and `target`, a
+  draw-order key's `slot`, and an authored mesh's vertex `weights`. The last of
+  those used to be the exception — weights carried raw indices into the *emitted*
+  bone array, so inserting a bone rebound every vertex of every mesh below it with
+  a green gate and an unmoved `diff` (issue #45, the third example in the
+  paragraph above, reproduced rather than caught). Spine's index encoding is still
+  reachable behind `"boneIndexing": "raw"`, because what it buys is exactly the
+  silence, and that has to be asked for.
 - **The compiler never invents a value that is not in the spec.** No defaults
   guessed from the art, no re-measuring of plates, no "reasonable" fallbacks. If a
   number is missing, that is a `CompileError` naming the field. A compiler that
@@ -163,7 +172,13 @@ what follows is what keeps it closed.
   data — the editor's own example projects ship meshes many times denser.
 - **An assertion with nothing to measure reports SKIP.** Never a pass. A rig that
   declares no invariant is unmeasured, not certified, and the two must not print
-  the same.
+  the same. ⚠️ The failure mode is subtler than forgetting to write the SKIP: an
+  assertion can have a *default* that quietly turns "nothing to measure" into a
+  measurement of the wrong thing. `A21_MESH_RIM_PINNED` resolved a mesh's kind as
+  `meshKinds[slot] || 'ring'`, so authored geometry — which has no entry, because
+  rigc did not build it — was checked as a ring and reported 40 failures on a
+  correct 40-vertex editor mesh. `meshKinds` now has a third state, `authored`,
+  and the generator-topology rules skip on it (issue #44).
 - **Design notes live with the consumer.** Comments state their invariant outright
   rather than citing a document a reader cannot open.
 
