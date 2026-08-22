@@ -27,6 +27,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { compile } from './src/compile.ts';
+import { diffSkeletons, movedMeasures } from './src/diff.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
@@ -759,6 +760,138 @@ const SEAM_MUTANTS: Mutant[] = [
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+// ---------------------------------------------------------------------------
+// `rigc diff` — the same discipline, applied to a comparison instead of a gate
+// ---------------------------------------------------------------------------
+//
+// A gate is proved by making it go red; a MEASURE is proved by making it move,
+// and by making the measures beside it stay still. A comparison tool whose
+// numbers all wobble together tells you a rig is wrong without telling you
+// where, which is the same as telling you nothing — so each case below states
+// the exact set of measures its edit may disturb, and the assertion is on the
+// whole set, not on membership.
+//
+// The fixture is a Spine example rather than one of our cuts on purpose: the
+// point of `diff` is comparing against editor output, and a fixture that only
+// ever sees rigc's own emitter would let a whole-format blind spot survive.
+// `examples/` is gitignored, so it may be absent — and then these cases say so
+// loudly instead of quietly not running.
+
+const DIFF_FIXTURE = resolve(import.meta.dir, 'examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json');
+
+interface DiffCase {
+  name: string;
+  why: string;
+  /** Every measure id this edit must move — exactly, no more and no fewer. */
+  expect: string[];
+  mutate: (skeleton: Record<string, unknown>) => void;
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const DIFF_CASES: DiffCase[] = [
+  {
+    name: 'D01_drop_a_bone',
+    why: 'the whole bones section moves and nothing else does — a slot still names the bone it named, so the binding figure is untouched and stays diagnostic',
+    expect: [
+      'bones.count',
+      'bones.names',
+      'bones.parent_by_name',
+      'bones.order',
+      'bones.length_present',
+      'bones.inherit_present',
+      'bones.depth_histogram',
+      'bones.degree_sequence',
+    ],
+    mutate: (j) => {
+      (j as any).bones = (j as any).bones.filter((b: any) => b.name !== 'square');
+    },
+  },
+  {
+    name: 'D02_reorder_two_slots',
+    why: 'the slots array IS the draw order, so this is a real defect — and it must move ONLY the order measure, or "wrong z-order" and "wrong rig" would read the same',
+    expect: ['slots.order'],
+    mutate: (j) => {
+      const slots = (j as any).slots;
+      (j as any).slots = [slots[1], slots[0], ...slots.slice(2)];
+    },
+  },
+  {
+    name: 'D03_remove_an_animation',
+    why: 'every animation measure that can see a missing animation moves; event_keys does not, because neither side has events and a vacuous measure must not manufacture a gap',
+    expect: [
+      'animations.count',
+      'animations.names',
+      'animations.duration',
+      'animations.timeline_kinds',
+      'animations.key_counts',
+      'animations.curve_kinds',
+      'animations.draw_order',
+      'animations.deform',
+    ],
+    mutate: (j) => {
+      delete (j as any).animations.light;
+    },
+  },
+  {
+    name: 'D04_change_a_curve_kind',
+    why: 'one bezier becomes stepped: same timelines, same key count, same duration. Only the curve histogram may notice, and that is the measure that carries timing quality',
+    expect: ['animations.curve_kinds'],
+    mutate: (j) => {
+      const keys = (j as any).animations.heavy.bones.bone.rotate;
+      const at = keys.findIndex((k: any) => Array.isArray(k.curve));
+      if (at < 0) throw new Error('fixture has no bezier key on heavy.bones.bone.rotate');
+      keys[at].curve = 'stepped';
+    },
+  },
+];
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/** Returns the number of failures, or `null` when the fixture is not on disk. */
+function runDiffSuite(): number | null {
+  if (!existsSync(DIFF_FIXTURE)) {
+    console.log('\n── rigc diff ──');
+    console.log('  SKIP  the diff self-checks did not run: no example corpus on disk.');
+    console.log(`          expected ${DIFF_FIXTURE}`);
+    console.log('          run `bun run fetch-examples` and re-run this suite.');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — `rigc diff` was not exercised at all.');
+    return null;
+  }
+  console.log('\n── rigc diff (fixture: 3-timing-and-spacing-ess) ──');
+  const text = readFileSync(DIFF_FIXTURE, 'utf8');
+  const reference: Record<string, unknown> = JSON.parse(text);
+  let bad = 0;
+
+  // Positive control. `diff X X` has to be 1.000 on every measure, or every
+  // number below it is being read against a baseline that is not zero.
+  const identity = diffSkeletons(JSON.parse(text), reference);
+  const drift = movedMeasures(identity);
+  if (drift.length === 0) {
+    const measures = identity.sections.reduce((n, sec) => n + sec.measures.length, 0);
+    console.log(`  PASS  CONTROL_DIFF_OF_A_FILE_WITH_ITSELF_IS_ONE  (${measures} measures, all 1.000)`);
+  } else {
+    bad++;
+    console.log(`  FAIL  CONTROL_DIFF_OF_A_FILE_WITH_ITSELF_IS_ONE: [${drift.join(', ')}] are below 1.000`);
+  }
+
+  for (const c of DIFF_CASES) {
+    const candidate: Record<string, unknown> = JSON.parse(text);
+    c.mutate(candidate);
+    const moved = movedMeasures(diffSkeletons(candidate, reference));
+    const want = [...c.expect].sort().join(', ');
+    const got = [...moved].sort().join(', ');
+    if (want === got) {
+      console.log(`  PASS  ${c.name}  (moved exactly ${moved.length} measure(s))`);
+      console.log(`          ${c.why}`);
+    } else {
+      bad++;
+      console.log(`  FAIL  ${c.name}`);
+      console.log(`          expected to move: [${want}]`);
+      console.log(`          actually moved:   [${got}]`);
+    }
+  }
+  return bad;
+}
+
 interface Suite {
   name: string;
   opts: typeof OPTS;
@@ -848,6 +981,8 @@ function main(): void {
       else breaks++;
     }
   }
+  const diffBad = runDiffSuite();
+  if (diffBad !== null) bad += diffBad;
 
   console.log('');
   if (bad > 0) {
@@ -856,7 +991,10 @@ function main(): void {
   }
   console.log(
     `rigc selftest: green — ${SUITES.length} positive controls + ${breaks} deliberate breaks, each caught by its ` +
-      `named assertion, + ${tolerances} legal edits the gate had to accept`,
+      `named assertion, + ${tolerances} legal edits the gate had to accept` +
+      (diffBad === null
+        ? '\n  ⚠️ but the rigc diff self-checks did NOT run (no example corpus) — this run does not cover them'
+        : `, + ${DIFF_CASES.length} diff measure controls`),
   );
 }
 

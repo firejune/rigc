@@ -58,9 +58,42 @@ timeline shape, mesh topology and posed vertex positions?
 directory (they are not redistributed here — see [NOTICE.md](NOTICE.md) for the
 per-example licence terms).
 
-> **The benchmark harness does not exist yet.** Fetching the examples is all that
-> is wired up today; there is no comparison runner, no scoring, no reported
-> numbers. This section describes the intended measure, not a result.
+### Comparing a rig against a reference — `rigc diff`
+
+```bash
+bun cli.ts diff candidate.json reference.json [--json report.json]
+```
+
+`diff` reads two skeletons and reports a ratio per **measure**, grouped into six
+sections — bones, slots, attachments, constraints, animations, events — and it
+does **not** combine them into a score. A single "87% match" cannot tell a rig
+with the right skeleton and the wrong timing apart from a rig with the right
+timing and the wrong skeleton, and those are opposite diagnoses.
+
+Three properties the measures are built to have:
+
+- **`diff X X` is 1.000 on every measure.** A comparison tool that cannot
+  recognise identity is reporting noise, and noise looks like a small honest gap.
+  The selftest asserts it.
+- **A difference moves as few measures as possible.** Reordering two slots moves
+  `slots.order` and nothing else — not the slot-to-bone bindings, not the setup
+  attachments — so the report says *where* a rig is wrong, not just *how much*.
+  Each selftest case names the exact set of measures its edit may disturb.
+- **Name-agnostic figures sit beside name-matched ones.** A candidate that builds
+  the right tree under its own bone names scores 0 on `bones.parent_by_name` and
+  1.000 on `bones.depth_histogram` and `bones.degree_sequence`. Reporting only the
+  first calls a correct rig a total failure; reporting only the second calls any
+  14-bone tree a match.
+
+An assertion or measure with nothing to compare reports its `total` as 0 and says
+so, exactly as the validator's SKIP does — a vacuous 1.000 that looks earned is
+the same false green in a different costume.
+
+> **There is still no benchmark runner.** `diff` measures two files against each
+> other; nothing yet drives a compile against a rung and reports the result. That
+> is `bench`, and it is not written.
+
+
 
 ### Benchmark ladder — what the rungs need
 
@@ -209,6 +242,7 @@ commands:
 bun cli.ts explain  --cut my_cut --cuts path/to/cuts.json   # the compiled rig as a table
 bun cli.ts validate path/to/spine                           # re-gate artifacts already on disk
 bun cli.ts validate --profile spine path/to/any/skeleton    # spec rules only (see Profiles)
+bun cli.ts diff candidate.json reference.json               # structural comparison
 ```
 
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
@@ -237,11 +271,13 @@ failed everything would otherwise look like a validator that worked.
 ## Layout
 
 ```
-cli.ts          build / validate / explain
-selftest.ts     the validator's own negative controls
+cli.ts          build / validate / explain / diff
+selftest.ts     the validator's own negative controls, and diff's measure controls
 src/
   compile.ts    manifest + motion spec -> skeleton JSON + atlas text (pure data assembly)
   validate.ts   spine-core round trip + the 31 assertions
+  diff.ts       structural comparison of two skeletons, one ratio per measure
+  timelines.ts  the 4.3 timeline catalogue and its walker (shared, pure JSON)
   archetype.ts  the named bone/slot formations
   mesh.ts       ring and ribbon mesh builders, weighted-vertex encoding
   transform.ts  crop pixels (y down) <-> Spine world (y up), world transforms

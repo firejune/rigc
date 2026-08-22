@@ -26,6 +26,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
+import { diffLines, diffSkeletons } from './src/diff.ts';
 import { DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import type { CompileResult, MotionSpec } from './src/types.ts';
 
@@ -277,6 +278,31 @@ function cmdValidate(flags: Record<string, string>, positional: string[]): void 
   console.log('rigc: green');
 }
 
+function cmdDiff(flags: Record<string, string>, positional: string[]): void {
+  const [candidate, reference] = positional;
+  if (!candidate || !reference) throw new UsageError('diff takes two paths: <candidate.json> <reference.json>');
+  const candidatePath = resolve(candidate);
+  const referencePath = resolve(reference);
+  for (const path of [candidatePath, referencePath]) {
+    if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
+  }
+  const report = diffSkeletons(
+    JSON.parse(readFileSync(candidatePath, 'utf8')),
+    JSON.parse(readFileSync(referencePath, 'utf8')),
+  );
+  console.log('rigc diff');
+  for (const line of diffLines(report, { candidate: candidatePath, reference: referencePath })) console.log(line);
+  if (flags.json !== undefined) {
+    const out = resolve(flags.json);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(
+      out,
+      `${JSON.stringify({ candidate: candidatePath, reference: referencePath, ...report }, null, 2)}\n`,
+    );
+    console.log(`rigc: wrote ${out}`);
+  }
+}
+
 function cmdExplain(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
   const result = compile(opts);
@@ -372,6 +398,7 @@ const USAGE = [
   '  bun cli.ts build    --cut <name> --cuts <cuts.json>',
   '  bun cli.ts explain  (same arguments as build)',
   '  bun cli.ts validate <dir | skeleton.json> [--atlas <path>]',
+  '  bun cli.ts diff     <candidate.json> <reference.json> [--json <out>]',
   '',
   'build and validate take --profile spine|spine-html (default spine-html):',
   '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
@@ -387,6 +414,7 @@ try {
   if (command === 'build') cmdBuild(flags);
   else if (command === 'validate') cmdValidate(flags, positional);
   else if (command === 'explain') cmdExplain(flags);
+  else if (command === 'diff') cmdDiff(flags, positional);
   else {
     console.error(USAGE);
     process.exit(2);
