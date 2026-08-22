@@ -56,7 +56,7 @@ redistributed in this repository.
 | `obstacle-course.png` | the whole set: a large L-shaped structure, a sloping wall down the left, a floor along the bottom, a deep U-shaped basin at the right |
 | `water.png` | a flat pale-blue sheet — the water sitting in the basin |
 | `platform.png` | a small upright panel on a hinge, standing beside the basin |
-| `ring-big.png`, `ring-small.png` | two open rings, each a circle with a gap in it |
+| `ring-big.png`, `ring-small.png` | two open rings, each a circle with a gap in it. Three of them are on screen at once, so at least one is used twice |
 | `basket-ball.png`, `billiard-ball.png`, `bowling-ball.png`, `tennis-ball.png` | four balls, one per shot: a big brown basketball with seams, a very small pale billiard ball, a mid-sized dark blue bowling ball, a small yellow-green tennis ball |
 | `basket-lambertian.png`, `billiard-lambertian.png`, `bowling-lambertian.png`, `tennis-lambertian.png` | a soft light-and-shade disc for each ball |
 | `billiard-specular.png`, `bowling-specular.png` | a second, harder highlight disc — the art carries one for two of the four |
@@ -96,12 +96,13 @@ and an upright hinged panel standing between the floor and the basin.
 Each shot starts with its ball at the very top-left corner of the sloping wall, and
 runs the same route:
 
-1. the ball rolls down the sloping wall;
-2. it drops through the upper ring, then through the lower one;
-3. it comes down onto the floor of the course and bounces along it;
-4. it knocks the upright panel open as it passes — the panel swings out of the way
-   and swings back afterwards;
-5. it goes into the water in the basin.
+1. the ball rolls down the sloping wall from the corner;
+2. it drops through the upper ring, then the lower one;
+3. it goes through the small ring on the lattice tower;
+4. it comes down onto the floor and bounces along it towards the basin. As it
+   reaches the upright panel, the panel swings flat out of the way — and is back
+   upright a second later;
+5. one high bounce, and it comes down into the water in the basin.
 
 **The four are not one shot at four speeds.** They part company almost immediately.
 One second in (frame 12): the basketball is already inside the upper ring; the

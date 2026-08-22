@@ -104,21 +104,37 @@ its own column for the whole shot.
 They are released together and reach the ground within a frame of each other
 (around **f5–f6**). From there they part completely:
 
-- the **steel ball** barely rebounds — one small hop, and it is at rest by **f12**,
-  a third of the way into the shot, and never moves again;
-- the **blue** and **red** rubber balls bounce four or five times in shrinking arcs
-  and are still settling in the last frames;
-- the **beach ball** bounces highest and longest — its first rebound takes it back
-  to about where it started — and comes to rest around **f33**.
+- the **steel ball** barely rebounds. Its one hop comes back about a sixth of the
+  way to where it was dropped from, and it is at rest by **f12** — a third of the
+  way into the shot — and never moves again;
+- the **beach ball** and the two rubber balls all rebound to a little over **half**
+  the height they fell from, and then again, and again: you can pick out three or
+  four arcs each, every one lower than the last;
+- they do not settle together either. The beach ball's silhouette stops changing
+  around **f33**; the two rubber balls are still moving a pixel at a time in the
+  final frames.
 
 Three of the four **change shape as they go.** The beach ball and both rubber balls
 draw out taller and narrower while they are falling fast, and flatten wider than
-they are tall on the frame they hit. The **steel ball never does**: it is the same
-circle in all 40 frames. That contrast is the shot.
+they are tall on the frame they hit. The **steel ball never does**: it stays the
+same circle throughout. That contrast is the shot.
 
-⭐ The flattening is a one-frame event and at 12 fps you will mostly miss it.
-Compare `balls/animation@24fps/f0012.png` (the beach ball at its most drawn-out)
-with `f0013.png` (the same ball flattened on the ground).
+⭐ **Each flattening lasts one frame, and it falls between two 12 fps frames** — the
+12 fps set does not contain a single one of them. That is what the 24 fps set is
+for. The red rubber ball is the clearest of the three:
+
+- `balls/animation@24fps/f0010.png` — drawn out, taller than wide, on the way down
+- `balls/animation@24fps/f0011.png` — flat and wide, on the ground
+- `balls/animation@24fps/f0012.png` — tall again, on the way back up
+
+The beach ball does the same one frame later (`f0012.png` round as it arrives,
+`f0013.png` flattened). Its silhouette measures 61 px across at rest, 57 px at its
+narrowest and 65 px at its widest, so the shape change is a little over ±6 % — small
+enough that it is worth measuring rather than judging by eye.
+
+The **steel ball** is round in every frame of its own impact — open the same four
+frames on its column and there is nothing to see. That is the point of it being
+there.
 
 Each shadow **widens as its ball comes down and narrows as it goes up**.
 
