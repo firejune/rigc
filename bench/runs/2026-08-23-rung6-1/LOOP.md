@@ -35,9 +35,10 @@ Two things came out of that and both changed the build:
   silver bands at the wrong end of every frame.
 - **The stone's 15 components fix its scale without any fitting.** The body is 1029
   art px wide and the brief's measured stone body is 176 frame px; at the frames'
-  0.08545789 px/unit that is a scale of **2.0009** — i.e. the plate is used at
-  **×2**. The same factor puts the detached 6×47 mark at frame x=450.9, y=109.3;
-  the brief measured x=451, y=109. Two independent facts from one number.
+  0.08545789 px/unit that is a scale of **2.0015**, i.e. the plate is used at **×2**
+  and the residual is the pixel the box was rounded to. The same factor puts the
+  detached 6×47 mark at frame x=450.9, y=109.3; the brief measured x=451, y=109.
+  Two independent facts from one number, and §9's fit later returned 1.99836 for it.
 
 `frames.json` gives the world box and scale, so every frame-pixel measurement
 below converts to the units the rig is authored in (1 px = 11.7017 units).
@@ -247,7 +248,7 @@ Cost +0.1 %, jitter gone.
 
 ## 11 — reading `check`, and the framing
 
-`check` was run ~20 times through the loop. The last two runs, on the same artifacts:
+`check` was run through the loop a dozen-odd times. The last two runs, on the same artifacts:
 
 | | framing | MAE (12 fps set) |
 | --- | --- | --- |
