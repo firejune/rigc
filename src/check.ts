@@ -36,6 +36,10 @@
  *
  * Per animation, per frame:
  *
+ * - **The framing** — where the candidate's drawn pixels sit against the
+ *   reference's drawn pixels, as a scale ratio and a residual. It is reported
+ *   first because it is upstream of everything else: get it wrong and every
+ *   number below carries the error, disguised as motion (issue #34).
  * - **MAE over the union alpha** — the mean absolute RGB difference between the
  *   candidate composited over the frames' background and the reference frame,
  *   averaged over the pixels either side covers. Over the union rather than the
@@ -43,38 +47,57 @@
  *   averaging that in makes every number small and every difference between
  *   numbers smaller.
  * - **Per-slot tracking** — where each of the candidate's own slots landed
- *   (centroid and bbox, in frame pixels) against the connected component of the
- *   reference frame nearest to it. This is the part an author acts on: MAE says
+ *   against the reference frame. This is the part an author acts on: MAE says
  *   *how wrong*, a slot's drift says *which part, which way, how far*.
  *
- * ⚠️ The matcher is cheap on purpose — nearest centroid, with the ambiguity
- * reported rather than resolved. Two parts that touch label as **one** component
- * (the trap `docs/AUTHORING.md` §8 opens with), and an occluded slot has no
- * component of its own at all. A matcher that guessed in those cases would
- * report drift where the honest answer is "these pixels cannot be attributed",
- * so it says so and the frame's MAE carries the signal instead.
+ * ⚠️ Both of the last two are bounded by what a picture can attribute, and
+ * `src/slots.ts` owns that judgement: a slot the reference merged into a
+ * neighbour is template-matched against its own pixels rather than guessed at,
+ * and a slot nothing in its search radius matches comes back as **no match**
+ * rather than as a number. A drift printed beside the wrong part is worse than a
+ * blank, because it is actionable and wrong.
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import {
   BACKGROUND,
   frameGeometry,
-  framingViewport,
   PROTOCOL_FPS,
   posableFromText,
   renderFrame,
   sampleAnimation,
   sampleSetupPose,
+  trimmedUnionBounds,
   viewportOfSize,
+  PAD,
   FRAMES_SIDECAR,
   FRAMES_SPEC,
-  type Footprint,
   type Frame,
   type FramesSidecar,
   type FrameSet,
   type Viewport,
 } from './render.ts';
+import {
+  applyFit,
+  boxHeight,
+  boxWidth,
+  contentBoxOfPlate,
+  ContrastHistogram,
+  fitDistance,
+  fitFraming,
+  fitIsSettled,
+  frameContentBox,
+  isContent,
+  BACKGROUND_TOLERANCE,
+  type BoxPair,
+  type ContentBox,
+  type FramingFit,
+} from './framing.ts';
+import { componentsOf, isAttributable, matchSlots, type SlotTrack } from './slots.ts';
 import { readPlate, type Plate, type RGBA } from '../tools/plate.ts';
+
+export { componentsOf, matchSlots, searchRadius, type Component, type MatchMethod, type SlotTrack } from './slots.ts';
+export type { BoxPair, ContentBox, FramingFit } from './framing.ts';
 
 // ---------------------------------------------------------------------------
 // the reference side — frames only, and mechanically so
@@ -172,100 +195,6 @@ function framesOnDisk(root: string, dir: string): Array<{ index: number; file: s
 // the measures
 // ---------------------------------------------------------------------------
 
-/** How far a channel must move for a pixel to count as "not background". */
-const BACKGROUND_TOLERANCE = 8;
-/** Components smaller than this are antialiasing crumbs, not parts. */
-const MIN_COMPONENT_PIXELS = 4;
-/** A second component this close to the nearest makes the match a guess. */
-const AMBIGUITY_RATIO = 1.25;
-
-function differsFromBackground(plate: Plate, x: number, y: number, background: RGBA): boolean {
-  const [r, g, b] = plate.get(x, y);
-  return (
-    Math.abs(r - background[0]) > BACKGROUND_TOLERANCE ||
-    Math.abs(g - background[1]) > BACKGROUND_TOLERANCE ||
-    Math.abs(b - background[2]) > BACKGROUND_TOLERANCE
-  );
-}
-
-export interface Component {
-  pixels: number;
-  cx: number;
-  cy: number;
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-}
-
-/**
- * Connected components of "not the background colour", 8-connected.
- *
- * 8-connected rather than 4: a thin diagonal — a bar, a stick, a shadow's edge —
- * breaks into a dotted line under 4-connectivity, and then one part reads as
- * twenty and every match is ambiguous for a reason that is about the labeller.
- */
-export function componentsOf(plate: Plate, background: RGBA): Component[] {
-  const { width, height } = plate;
-  const label = new Int32Array(width * height).fill(-1);
-  const out: Component[] = [];
-  const stack: number[] = [];
-  for (let y0 = 0; y0 < height; y0++) {
-    for (let x0 = 0; x0 < width; x0++) {
-      const seed = y0 * width + x0;
-      if (label[seed] !== -1 || !differsFromBackground(plate, x0, y0, background)) continue;
-      const id = out.length;
-      label[seed] = id;
-      stack.push(seed);
-      let pixels = 0;
-      let sx = 0;
-      let sy = 0;
-      let minX = width;
-      let minY = height;
-      let maxX = -1;
-      let maxY = -1;
-      while (stack.length > 0) {
-        const at = stack.pop() as number;
-        const x = at % width;
-        const y = (at - x) / width;
-        pixels++;
-        sx += x + 0.5;
-        sy += y + 0.5;
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            const nx = x + dx;
-            const ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-            const n = ny * width + nx;
-            if (label[n] !== -1 || !differsFromBackground(plate, nx, ny, background)) continue;
-            label[n] = id;
-            stack.push(n);
-          }
-        }
-      }
-      out.push({ pixels, cx: sx / pixels, cy: sy / pixels, minX, minY, maxX: maxX + 1, maxY: maxY + 1 });
-    }
-  }
-  return out.filter((c) => c.pixels >= MIN_COMPONENT_PIXELS).sort((a, b) => b.pixels - a.pixels);
-}
-
-export interface SlotTrack {
-  slot: string;
-  candidate: { cx: number; cy: number; width: number; height: number; pixels: number } | null;
-  /** The reference component this slot was matched to, if one could be. */
-  reference: { cx: number; cy: number; width: number; height: number; pixels: number } | null;
-  /** Centroid distance in frame pixels. */
-  drift: number | null;
-  widthDrift: number | null;
-  heightDrift: number | null;
-  /** Set when the match is a guess, saying why. Read this before the drift. */
-  ambiguity: string | null;
-}
-
 export interface FrameCheck {
   index: number;
   /** The reference PNG, so a worst-frame line is directly openable. */
@@ -286,10 +215,13 @@ export interface FrameCheck {
   candidatePixels: number;
   referencePixels: number;
   components: number;
-  /** Components no slot matched — something in the shot the candidate has not drawn. */
+  /** Components no slot reached — something in the shot the candidate has not drawn. */
   unmatchedComponents: number;
   worstSlot: string | null;
   worstDrift: number | null;
+  /** How many slots got an attributable drift, out of how many drew anything. */
+  attributed: number;
+  drawn: number;
   slots: SlotTrack[];
 }
 
@@ -311,6 +243,8 @@ export interface AnimationCheck {
   worstDrift: number;
   worstDriftFrame: number;
   worstDriftSlot: string | null;
+  /** Frames in which no slot at all could be attributed — the drift's denominator. */
+  framesWithoutDrift: number;
   frames: FrameCheck[];
   notes: string[];
 }
@@ -327,14 +261,54 @@ export interface Framing {
   pixelHeight: number;
 }
 
+/** What the framing pass concluded, and how sure it is of it. */
+export interface FramingReport {
+  /** The residual fit measured at the viewport that was used. */
+  fit: FramingFit;
+  /** How many render/measure/correct passes ran. */
+  passes: number;
+  /** Did the correction converge to the identity, or was it still moving? */
+  settled: boolean;
+  /**
+   * Whether the fit was APPLIED or only measured.
+   *
+   * `--viewport` pins the box, so the fit is reported and not used — which is the
+   * most useful thing about pinning it: it separates "my keys are wrong" from
+   * "my framing is wrong", and those are two different repairs.
+   */
+  applied: boolean;
+  /**
+   * The same two content boxes in **world units**, when the sidecar records the
+   * reference's scale.
+   *
+   * ⭐ This is the one place a difference of pure scale can show up at all. The
+   * framing deliberately absorbs it — a candidate is authored in its own
+   * coordinates, so "twice as big in world units" is a choice of units and not an
+   * error, and a tool that reported it as one would be reporting the thing it was
+   * built to be blind to. But an author who measured the shot off the frames IS
+   * working in the frames' units, and for them these two numbers are directly
+   * comparable and a 2 % disagreement is a real finding. So it is printed, with
+   * what it does and does not mean attached.
+   */
+  units: { candidate: Extent; reference: Extent; ratio: number } | null;
+}
+
+/** A width and a height in world units. */
+export interface Extent {
+  width: number;
+  height: number;
+}
+
 export interface CheckReport {
   candidate: { skeleton: string; atlas: string };
   framesDir: string;
   framesRoot: string;
   /** How the candidate's own world box was chosen. */
-  framing: 'candidate-content' | 'viewport-flag';
+  framing: 'candidate-pixels' | 'viewport-flag';
   /** The box the CANDIDATE was rendered into, at the reference's pixel size. */
   viewport: Framing;
+  /** Where the candidate's drawn pixels ended up against the reference's. */
+  framingFit: FramingReport | null;
   /**
    * The box the REFERENCE was rendered into, when the sidecar records one.
    *
@@ -361,11 +335,12 @@ export interface CheckOptions {
   /**
    * Pin the candidate's world box `x,y,width,height` instead of deriving it.
    *
-   * The default derivation is the right one almost always — see
-   * `checkAgainstFrames`. This is the escape hatch for the case where it is not:
-   * a candidate that is deliberately missing a part frames itself differently
-   * from the reference, and pinning the box lets the rest of the shot still be
-   * measured.
+   * Two uses, and the second is the one an authoring loop wants. It is the escape
+   * hatch when the derivation cannot work — a candidate deliberately missing a
+   * part has a different content box by construction, and pinning lets the rest
+   * of the shot still be measured. And it is the way to hold the framing FIXED
+   * across builds: the framing line is still reported, so a pinned run separates
+   * "my keys moved" from "my framing moved" without either hiding the other.
    */
   viewport?: { x: number; y: number; width: number; height: number };
   /** Play this candidate animation against the frames, when the names differ. */
@@ -377,7 +352,7 @@ export interface CheckOptions {
 /**
  * Compare a candidate against a set of reference frames.
  *
- * ## 🧭 Why the candidate is framed by its own content
+ * ## 🧭 Why the candidate is framed by its own pixels
  *
  * The obvious move — render the candidate into the world box the sidecar
  * records — is wrong, and wrong in a way that reads as a catastrophic failure
@@ -388,19 +363,35 @@ export interface CheckOptions {
  * authored in any other** — the reference's origin is in the file the author is
  * not allowed to open.
  *
- * So the candidate is framed the way the reference was framed: the union of its
- * posed quads over every animation at `FRAMING_FPS`, padded by `PAD`, scaled so
- * the long side is the reference's long side in pixels. That procedure is
- * content-derived and deterministic, so two skeletons that depict the same shot
- * land on the same pixels whatever coordinates they were authored in — which is
- * exactly the equivalence a frame comparison should be blind to.
+ * So the candidate is framed by its own content. What changed (issue #34) is what
+ * "content" means. It used to be the union of the **posed quad corners**, and a
+ * region attachment's quad extends past its own artwork wherever the art is
+ * transparent, so an outermost corner routinely sat where no pixel was. Combined
+ * with a mapping that read only `minX`, `maxY` and the long side, that let one
+ * corner of one quad in one frame set the scale for a whole run: rung 5's first
+ * correct build reported **MAE 39.00 instead of 4.35** on a box 0.93 % narrow, and
+ * rung 4 watched a rotation the pixels cannot see move the reported MAE from 27.6
+ * to 84.9 by swinging one corner in and out of the box.
  *
- * ⚠️ What it is *not* blind to: the framing box is the candidate's own content,
- * so a candidate that is missing a part, or that has an extra one, frames itself
- * differently and every pixel shifts. That shows up as a large MAE across the
- * whole set rather than at one moment, and the pixel dimensions printed beside
- * each other are where to look first. `--viewport` pins the box when the rest of
- * a shot is worth measuring anyway.
+ * Now both sides are measured the same way, **on drawn pixels**:
+ *
+ * 1. render the candidate at the frames' own rate and grid, and take the content
+ *    box of what it actually draws (`src/framing.ts`);
+ * 2. take the reference's content box off the PNGs with the same predicate;
+ * 3. fit the similarity transform — uniform scale plus translation, least squares
+ *    over **both** width and height — that carries one onto the other, and render
+ *    through it. No single corner can set the scale, and an invisible margin
+ *    cannot move it at all.
+ *
+ * The pass repeats until the correction is the identity, because the correction
+ * changes the pixels it was measured on.
+ *
+ * ⚠️ What this is still not blind to: a candidate that is missing a part, or has
+ * an extra one, genuinely has a different content box, and one uniform scale
+ * cannot make two different shapes agree. That is no longer silently spent on the
+ * framing — it is reported as the fit's **residual** and its aspect error, which
+ * is the number to read before reading a drift. `--viewport` pins the box outright
+ * when even that is not enough.
  */
 export function checkAgainstFrames(options: CheckOptions): CheckReport {
   const located = locateFrames(options.framesDir);
@@ -466,37 +457,63 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
 
   if (sets.length === 0) throw new CheckError(`no frame set to compare in ${options.framesDir}`);
 
+  // Pose every set once. Its frames are wanted twice — to frame the candidate and
+  // to compare it — and posing twice is both slower and a chance for the framing
+  // and the comparison to disagree about what they measured.
+  const prepared = sets.map((set) => prepareSet(located.root, set, posable, options.as));
+  const pairs = prepared.flatMap((p) => p.pairs);
+  if (pairs.length === 0) {
+    notes.push('no reference frame has a candidate frame at the same index — nothing below was measured');
+  }
+
   const maxSide = Math.max(pixelWidth, pixelHeight);
+  // One edge level for both sides, read off the reference frames — see
+  // `EDGE_FRACTION`. A handful of frames is enough: the level is a property of the
+  // palette, not of a pose, and reading every frame twice to learn it is waste.
+  const level = pairs.length === 0 ? BACKGROUND_TOLERANCE : edgeLevelOf(located.root, pairs, background);
+  const referenceBoxes =
+    pairs.length === 0 ? [] : referenceContentBoxes(located.root, pairs, background, level, pixelWidth, pixelHeight);
+
   let viewport: Viewport;
+  let framingFit: FramingReport | null = null;
   if (options.viewport) {
     const v = options.viewport;
     viewport = viewportOfSize(v.x, v.y, v.width, v.height, maxSide / Math.max(v.width, v.height), pixelWidth, pixelHeight);
     notes.push(
       `the candidate's world box was pinned by --viewport ${v.x},${v.y},${v.width},${v.height} rather than derived ` +
-        'from its own content — that is a claim about the candidate\'s coordinates, and nothing here checks it',
+        "from its own pixels — that is a claim about the candidate's coordinates, and nothing here checks it. The " +
+        'framing line below is still measured, so it says what the pin cost.',
     );
+    const boxes = pairUpBoxes(prepared, posable.pages, viewport, background, level, referenceBoxes);
+    if (boxes.length > 0) {
+      const fit = fitFraming(boxes);
+      framingFit = {
+        fit,
+        passes: 1,
+        settled: false,
+        applied: false,
+        units: extentsOf(fit, viewport.scale, referenceViewport),
+      };
+    }
   } else {
-    const own = framingViewport(posable.data, maxSide);
-    if (!own) throw new CheckError('the candidate posed no drawable attachment in any animation or in its setup pose');
-    viewport = viewportOfSize(own.minX, own.minY, own.maxX - own.minX, own.maxY - own.minY, own.scale, pixelWidth, pixelHeight);
-    const off = Math.max(Math.abs(own.width - pixelWidth), Math.abs(own.height - pixelHeight));
-    if (off > 0) {
-      const big = off > maxSide * 0.02;
+    if (referenceBoxes.every((b) => b === null)) {
+      throw new CheckError('no reference frame could be compared, so there is nothing to frame against');
+    }
+    const framed = frameByPixels(prepared, posable.pages, referenceBoxes, background, level, pixelWidth, pixelHeight);
+    viewport = framed.viewport;
+    framingFit = { ...framed.report, units: extentsOf(framed.report.fit, viewport.scale, referenceViewport) };
+    if (!framed.report.settled) {
       notes.push(
-        `the candidate frames itself to ${own.width}x${own.height}px where the reference frames are ` +
-          `${pixelWidth}x${pixelHeight}px (${off}px out). ` +
-          (big
-            ? 'That is too much to be rounding: something is in one shot and not the other, or is a different size, ' +
-              'and it shifts every pixel below. Read that before reading a drift.'
-            : 'That is within rounding of the art sizes; it costs up to that many pixels of drift at the far edge ' +
-              'of the frame and nothing at the near one.'),
+        `the framing did not settle in ${framed.report.passes} pass(es) — the correction below is what is left over ` +
+          'after the closest one, and it is at the level a pixel box can be measured to. A residual much larger than ' +
+          'a pixel means the two content boxes are different shapes, not that the fit failed.',
       );
     }
   }
 
   const animations: AnimationCheck[] = [];
-  for (const set of sets) {
-    animations.push(checkOneSet(located.root, set, posable, viewport, background, options.as));
+  for (const p of prepared) {
+    animations.push(checkOneSet(located.root, p, posable, viewport, background));
   }
 
   return {
@@ -506,7 +523,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     },
     framesDir: resolve(options.framesDir),
     framesRoot: located.root,
-    framing: options.viewport ? 'viewport-flag' : 'candidate-content',
+    framing: options.viewport ? 'viewport-flag' : 'candidate-pixels',
     viewport: {
       x: viewport.minX,
       y: viewport.minY,
@@ -516,6 +533,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       pixelWidth: viewport.width,
       pixelHeight: viewport.height,
     },
+    framingFit,
     referenceViewport,
     background,
     animations,
@@ -528,17 +546,238 @@ function readPlateFrom(root: string, file: string): Plate {
   return readPlate(file);
 }
 
-function checkOneSet(
+// ---------------------------------------------------------------------------
+// framing
+// ---------------------------------------------------------------------------
+
+/**
+ * How many render → measure → correct passes the framing is allowed.
+ *
+ * Measured: a faithful candidate settles on the first look, and the ladder's real
+ * candidates converge to a jitter floor of about 0.15 px by the third or fourth —
+ * which is the noise of the content-box statistic itself, not something more
+ * passes remove. Past that the loop stops and the report says so.
+ */
+const FRAMING_PASSES = 4;
+
+/**
+ * The two content boxes in world units, each divided by its own render scale.
+ *
+ * `null` without a sidecar: the reference's scale is the only thing that makes
+ * its pixels into units, and a frame set that predates `frames.json` does not
+ * record one. Inventing a default there would print a number that looks measured.
+ */
+function extentsOf(
+  fit: FramingFit,
+  candidateScale: number,
+  referenceViewport: Framing | null,
+): { candidate: Extent; reference: Extent; ratio: number } | null {
+  if (!referenceViewport || candidateScale <= 0 || referenceViewport.scale <= 0) return null;
+  const candidate = {
+    width: boxWidth(fit.candidate) / candidateScale,
+    height: boxHeight(fit.candidate) / candidateScale,
+  };
+  const reference = {
+    width: boxWidth(fit.reference) / referenceViewport.scale,
+    height: boxHeight(fit.reference) / referenceViewport.scale,
+  };
+  const area = reference.width * reference.height;
+  // Area rather than either side: one ratio for a shot whose two axes can differ.
+  const ratio = area > 0 ? Math.sqrt((candidate.width * candidate.height) / area) : 1;
+  return { candidate, reference, ratio };
+}
+
+/** How many reference frames the edge level is estimated from. */
+const LEVEL_SAMPLES = 8;
+
+/** The edge threshold both sides are measured with — see `EDGE_FRACTION`. */
+function edgeLevelOf(root: string, pairs: FramePair[], background: RGBA): number {
+  const histogram = new ContrastHistogram();
+  const step = Math.max(1, Math.ceil(pairs.length / LEVEL_SAMPLES));
+  for (let i = 0; i < pairs.length; i += step) histogram.add(readPlateFrom(root, pairs[i].file), background);
+  return histogram.level();
+}
+
+/** Each reference frame's own content box, and a check that they are one grid. */
+function referenceContentBoxes(
+  root: string,
+  pairs: FramePair[],
+  background: RGBA,
+  level: number,
+  pixelWidth: number,
+  pixelHeight: number,
+): Array<ContentBox | null> {
+  return pairs.map((pair) => {
+    const plate = readPlateFrom(root, pair.file);
+    if (plate.width !== pixelWidth || plate.height !== pixelHeight) {
+      throw new CheckError(
+        `${pair.file} is ${plate.width}x${plate.height} but the viewport says ${pixelWidth}x${pixelHeight}; ` +
+          'the frames and the sidecar disagree about their own size',
+      );
+    }
+    return contentBoxOfPlate(plate, background, level);
+  });
+}
+
+/**
+ * The two content boxes of every frame that has both, in one array.
+ *
+ * Per frame rather than unioned, because that is what the fit is made from — see
+ * `fitFraming`. `referenceBoxes` is indexed the same way `prepared.flatMap(pairs)`
+ * is, which is the order it was built in.
+ */
+function pairUpBoxes(
+  prepared: PreparedSet[],
+  pages: Map<string, Plate>,
+  viewport: Viewport,
+  background: RGBA,
+  level: number,
+  referenceBoxes: Array<ContentBox | null>,
+): BoxPair[] {
+  const out: BoxPair[] = [];
+  let at = 0;
+  for (const p of prepared) {
+    for (const pair of p.pairs) {
+      const reference = referenceBoxes[at++];
+      const candidate = frameContentBox(pair.frame, pages, viewport, background, level);
+      if (candidate && reference) out.push({ candidate, reference });
+    }
+  }
+  return out;
+}
+
+/**
+ * Put the candidate's drawn pixels on the reference's drawn pixels.
+ *
+ * ## Why it iterates
+ *
+ * The correction is measured on a render, and applying it changes the render it
+ * was measured on. One pass leaves the candidate close; a second measures what is
+ * left. It stops as soon as the correction is the identity to within
+ * `SETTLED_PIXELS`, which for a faithful candidate is the first look.
+ *
+ * ⚠️ It keeps the **closest** pass rather than the last. A content box read off
+ * pixels is quantised, so near the answer the correction can jitter by a fraction
+ * of a pixel instead of converging, and taking the last pass would hand back
+ * whichever side of the jitter the loop happened to stop on.
+ *
+ * ## And why the start is trimmed too
+ *
+ * The starting box is the union of the posed quads **trimmed to their opaque
+ * texels**, not the quads themselves. It is only a starting point — the framing is
+ * fitted on rendered pixels either way — but the fit's landing point depends on
+ * where it starts, so a start that moved with an invisible margin would leave the
+ * margin able to move the answer after all, by a fraction of a pixel instead of by
+ * two. With the trim, art padded on both sides is byte-identical work: same start,
+ * same passes, same numbers. `selftest` C03 asserts exactly that.
+ */
+function frameByPixels(
+  prepared: PreparedSet[],
+  pages: Map<string, Plate>,
+  referenceBoxes: Array<ContentBox | null>,
+  background: RGBA,
+  level: number,
+  pixelWidth: number,
+  pixelHeight: number,
+): { viewport: Viewport; report: Omit<FramingReport, 'units'> } {
+  const quads = trimmedUnionBounds(
+    prepared.map((p) => p.pairs.map((pair) => pair.frame)),
+    pages,
+  );
+  if (!Number.isFinite(quads.minX)) {
+    throw new CheckError('the candidate posed no drawable attachment in any frame that was compared');
+  }
+  const pad = Math.max(quads.maxX - quads.minX, quads.maxY - quads.minY) * PAD;
+  const world = {
+    minX: quads.minX - pad,
+    minY: quads.minY - pad,
+    maxX: quads.maxX + pad,
+    maxY: quads.maxY + pad,
+  };
+  const maxSide = Math.max(pixelWidth, pixelHeight);
+  let viewport = viewportOfSize(
+    world.minX,
+    world.minY,
+    world.maxX - world.minX,
+    world.maxY - world.minY,
+    maxSide / Math.max(world.maxX - world.minX, world.maxY - world.minY),
+    pixelWidth,
+    pixelHeight,
+  );
+
+  let best: { viewport: Viewport; fit: FramingFit; distance: number } | null = null;
+  let passes = 0;
+  let settled = false;
+  for (let pass = 1; pass <= FRAMING_PASSES; pass++) {
+    passes = pass;
+    const boxes = pairUpBoxes(prepared, pages, viewport, background, level, referenceBoxes);
+    if (boxes.length === 0) throw new CheckError('the candidate drew no pixel in any frame that was compared');
+    const fit = fitFraming(boxes);
+    const distance = fitDistance(fit);
+    if (!best || distance < best.distance) best = { viewport, fit, distance };
+    if (fitIsSettled(fit)) {
+      settled = true;
+      break;
+    }
+    viewport = applyFit(viewport, fit, pixelWidth, pixelHeight);
+  }
+  const chosen = best as { viewport: Viewport; fit: FramingFit; distance: number };
+  // The viewport handed back is one that was actually MEASURED, and the fit beside
+  // it is what it still leaves over — never a correction applied on the way out and
+  // never looked at. When the loop is jittering at a fraction of a pixel, applying
+  // one more unverified correction is a coin flip, and a report that describes a
+  // viewport nobody rendered is worse than a slightly worse viewport.
+  return { viewport: chosen.viewport, report: { fit: chosen.fit, passes, settled, applied: true } };
+}
+
+// ---------------------------------------------------------------------------
+// posing the candidate against one frame set
+// ---------------------------------------------------------------------------
+
+/** One reference frame and the candidate frame that shares its index. */
+interface FramePair {
+  index: number;
+  file: string;
+  frame: Frame;
+}
+
+/** One frame set, posed and paired up with the frames on disk. */
+interface PreparedSet {
+  set: FrameSet;
+  candidateAnimation: string | null;
+  candidateFrames: number;
+  referenceFrames: number;
+  pairs: FramePair[];
+  notes: string[];
+  /** Set when nothing could be compared at all, saying why. */
+  missing: string | null;
+}
+
+function prepareSet(
   root: string,
   set: FrameSet,
   posable: ReturnType<typeof posableFromText>,
-  viewport: Viewport,
-  background: RGBA,
   as: string | undefined,
-): AnimationCheck {
+): PreparedSet {
   const notes: string[] = [];
   const wanted = as ?? set.animation;
   const have = posable.data.animations.map((a) => a.name);
+  const disk = framesOnDisk(root, set.dir);
+
+  if (wanted !== null && !have.includes(wanted)) {
+    return {
+      set,
+      candidateAnimation: null,
+      candidateFrames: 0,
+      referenceFrames: disk.length,
+      pairs: [],
+      notes: [],
+      missing:
+        `the candidate has no animation called ${JSON.stringify(wanted)} — it has [${have.join(', ') || 'none'}]. ` +
+        'Nothing was compared for this set; name the candidate animation with --as <name> if it is called ' +
+        'something else.',
+    };
+  }
 
   let candidateFrames: Frame[];
   let candidateAnimation: string | null;
@@ -551,36 +790,11 @@ function checkOneSet(
     }
     candidateFrames = sampleSetupPose(posable.data);
     candidateAnimation = null;
-  } else if (!have.includes(wanted)) {
-    return {
-      dir: set.dir,
-      animation: set.animation,
-      candidateAnimation: null,
-      fps: set.fps,
-      referenceFrames: set.written,
-      candidateFrames: 0,
-      compared: 0,
-      meanMae: 0,
-      meanMaeFrame: 0,
-      worstMae: 0,
-      worstMaeFrame: -1,
-      worstDrift: 0,
-      worstDriftFrame: -1,
-      worstDriftSlot: null,
-      frames: [],
-      notes: [
-        `the candidate has no animation called ${JSON.stringify(wanted)} — it has [${have.join(', ') || 'none'}]. ` +
-          'Nothing was compared for this set; name the candidate animation with --as <name> if it is called ' +
-          'something else.',
-      ],
-    };
   } else {
     candidateFrames = sampleAnimation(posable.data, wanted, set.fps);
     candidateAnimation = wanted;
   }
 
-  const byIndex = new Map<number, Frame>();
-  for (const frame of candidateFrames) byIndex.set(frame.index, frame);
   if (candidateFrames.length !== set.sampled) {
     notes.push(
       `the candidate samples to ${candidateFrames.length} frame(s) at ${set.fps} fps where the reference sampled ` +
@@ -588,7 +802,56 @@ function checkOneSet(
     );
   }
 
-  const disk = framesOnDisk(root, set.dir);
+  const byIndex = new Map<number, Frame>();
+  for (const frame of candidateFrames) byIndex.set(frame.index, frame);
+  const pairs: FramePair[] = [];
+  for (const { index, file } of disk) {
+    const frame = byIndex.get(index);
+    if (frame) pairs.push({ index, file, frame });
+  }
+  if (pairs.length === 0 && disk.length > 0) {
+    notes.push(`none of the ${disk.length} reference frame(s) has a candidate frame at the same index`);
+  }
+  return {
+    set,
+    candidateAnimation,
+    candidateFrames: candidateFrames.length,
+    referenceFrames: disk.length,
+    pairs,
+    notes,
+    missing: null,
+  };
+}
+
+function checkOneSet(
+  root: string,
+  prepared: PreparedSet,
+  posable: ReturnType<typeof posableFromText>,
+  viewport: Viewport,
+  background: RGBA,
+): AnimationCheck {
+  const { set } = prepared;
+  const blank: AnimationCheck = {
+    dir: set.dir,
+    animation: set.animation,
+    candidateAnimation: prepared.candidateAnimation,
+    fps: set.fps,
+    referenceFrames: prepared.referenceFrames,
+    candidateFrames: prepared.candidateFrames,
+    compared: 0,
+    meanMae: 0,
+    meanMaeFrame: 0,
+    worstMae: 0,
+    worstMaeFrame: -1,
+    worstDrift: 0,
+    worstDriftFrame: -1,
+    worstDriftSlot: null,
+    framesWithoutDrift: 0,
+    frames: [],
+    notes: prepared.missing ? [prepared.missing] : prepared.notes,
+  };
+  if (prepared.missing !== null || prepared.pairs.length === 0) return blank;
+
   const frames: FrameCheck[] = [];
   let maeSum = 0;
   let maeFrameSum = 0;
@@ -597,21 +860,15 @@ function checkOneSet(
   let worstDrift = 0;
   let worstDriftFrame = -1;
   let worstDriftSlot: string | null = null;
+  let framesWithoutDrift = 0;
 
-  for (const { index, file } of disk) {
-    const candidate = byIndex.get(index);
-    if (!candidate) continue;
+  for (const { index, file, frame } of prepared.pairs) {
     const reference = readPlateFrom(root, file);
-    if (reference.width !== viewport.width || reference.height !== viewport.height) {
-      throw new CheckError(
-        `${file} is ${reference.width}x${reference.height} but the viewport says ${viewport.width}x${viewport.height}; ` +
-          'the frames and the sidecar disagree about their own size',
-      );
-    }
-    const check = checkOneFrame(index, file, candidate, posable.pages, viewport, background, reference);
+    const check = checkOneFrame(index, file, frame, posable.pages, viewport, background, reference);
     frames.push(check);
     maeSum += check.mae;
     maeFrameSum += check.maeFrame;
+    if (check.attributed === 0) framesWithoutDrift++;
     if (check.mae > worstMae) {
       worstMae = check.mae;
       worstMaeFrame = index;
@@ -623,27 +880,19 @@ function checkOneSet(
     }
   }
 
-  if (frames.length === 0 && disk.length > 0) {
-    notes.push(`none of the ${disk.length} reference frame(s) has a candidate frame at the same index`);
-  }
-
   return {
-    dir: set.dir,
-    animation: set.animation,
-    candidateAnimation,
-    fps: set.fps,
-    referenceFrames: disk.length,
-    candidateFrames: candidateFrames.length,
+    ...blank,
     compared: frames.length,
-    meanMae: frames.length === 0 ? 0 : maeSum / frames.length,
-    meanMaeFrame: frames.length === 0 ? 0 : maeFrameSum / frames.length,
+    meanMae: maeSum / frames.length,
+    meanMaeFrame: maeFrameSum / frames.length,
     worstMae,
     worstMaeFrame,
     worstDrift,
     worstDriftFrame,
     worstDriftSlot,
+    framesWithoutDrift,
     frames,
-    notes,
+    notes: prepared.notes,
   };
 }
 
@@ -667,7 +916,7 @@ function checkOneFrame(
   for (let y = 0; y < viewport.height; y++) {
     for (let x = 0; x < viewport.width; x++) {
       const inCandidate = coverage[y * viewport.width + x] === 1;
-      const inReference = differsFromBackground(reference, x, y, background);
+      const inReference = isContent(reference, x, y, background);
       if (inCandidate) candidatePixels++;
       if (inReference) referencePixels++;
       const a = rendered.get(x, y);
@@ -681,13 +930,23 @@ function checkOneFrame(
   }
 
   const components = componentsOf(reference, background);
-  const { tracks, matchedComponents } = matchSlots(footprints, components);
+  const { tracks, matchedComponents } = matchSlots(footprints, components, {
+    frame,
+    pages,
+    viewport,
+    background,
+    reference,
+  });
 
   let worstDrift: number | null = null;
   let worstSlot: string | null = null;
+  let attributed = 0;
+  let drawn = 0;
   for (const track of tracks) {
-    if (track.drift === null || track.ambiguity !== null) continue;
-    if (worstDrift === null || track.drift > worstDrift) {
+    if (track.candidate !== null) drawn++;
+    if (!isAttributable(track)) continue;
+    attributed++;
+    if (worstDrift === null || (track.drift as number) > worstDrift) {
       worstDrift = track.drift;
       worstSlot = track.slot;
     }
@@ -705,100 +964,10 @@ function checkOneFrame(
     unmatchedComponents: components.length - matchedComponents,
     worstSlot,
     worstDrift,
+    attributed,
+    drawn,
     slots: tracks,
   };
-}
-
-/**
- * Match each drawn slot to the nearest reference component by centroid.
- *
- * Nearest-centroid and nothing cleverer, because the cases a cleverer matcher
- * would have to get right are the cases where the honest answer is "cannot be
- * attributed": two touching parts are one component, and an occluded part is
- * inside somebody else's. Both come back as an `ambiguity` string, and a drift
- * printed beside one of those is not evidence.
- */
-export function matchSlots(
-  footprints: Map<string, Footprint>,
-  components: Component[],
-): { tracks: SlotTrack[]; matchedComponents: number } {
-  const tracks: SlotTrack[] = [];
-  const takenBy = new Map<Component, string[]>();
-
-  for (const [slot, foot] of [...footprints].sort((a, b) => a[0].localeCompare(b[0]))) {
-    if (foot.pixels === 0) {
-      tracks.push({
-        slot,
-        candidate: null,
-        reference: null,
-        drift: null,
-        widthDrift: null,
-        heightDrift: null,
-        ambiguity: 'the candidate draws nothing here — the slot is empty or entirely outside the frame',
-      });
-      continue;
-    }
-    const candidate = {
-      cx: foot.cx,
-      cy: foot.cy,
-      width: foot.maxX - foot.minX,
-      height: foot.maxY - foot.minY,
-      pixels: Math.round(foot.pixels),
-    };
-    if (components.length === 0) {
-      tracks.push({
-        slot,
-        candidate,
-        reference: null,
-        drift: null,
-        widthDrift: null,
-        heightDrift: null,
-        ambiguity: 'the reference frame is empty — nothing to match against',
-      });
-      continue;
-    }
-    const ranked = components
-      .map((c) => ({ c, d: Math.hypot(c.cx - foot.cx, c.cy - foot.cy) }))
-      .sort((a, b) => a.d - b.d);
-    const best = ranked[0];
-    const runnerUp = ranked[1];
-    let ambiguity: string | null = null;
-    if (runnerUp && runnerUp.d <= best.d * AMBIGUITY_RATIO) {
-      ambiguity = `two reference components are about equally near (${best.d.toFixed(1)} px and ${runnerUp.d.toFixed(1)} px)`;
-    }
-    const claimants = takenBy.get(best.c) ?? [];
-    claimants.push(slot);
-    takenBy.set(best.c, claimants);
-    tracks.push({
-      slot,
-      candidate,
-      reference: {
-        cx: best.c.cx,
-        cy: best.c.cy,
-        width: best.c.maxX - best.c.minX,
-        height: best.c.maxY - best.c.minY,
-        pixels: best.c.pixels,
-      },
-      drift: best.d,
-      widthDrift: candidate.width - (best.c.maxX - best.c.minX),
-      heightDrift: candidate.height - (best.c.maxY - best.c.minY),
-      ambiguity,
-    });
-  }
-
-  // A component two slots both claim is one blob the reference merged — the
-  // parts are touching, or one is drawn over the other. Neither slot's drift is
-  // a measurement of that slot, so both say so.
-  for (const [, claimants] of takenBy) {
-    if (claimants.length < 2) continue;
-    for (const track of tracks) {
-      if (!claimants.includes(track.slot)) continue;
-      const others = claimants.filter((s) => s !== track.slot);
-      const why = `shares one reference component with ${others.map((s) => JSON.stringify(s)).join(', ')} — they touch or overlap in this frame`;
-      track.ambiguity = track.ambiguity ? `${track.ambiguity}; ${why}` : why;
-    }
-  }
-  return { tracks, matchedComponents: takenBy.size };
 }
 
 // ---------------------------------------------------------------------------
@@ -818,7 +987,7 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   lines.push(`  atlas      ${report.candidate.atlas}`);
   lines.push(`  frames     ${report.framesDir}`);
   const v = report.viewport;
-  const how = report.framing === 'candidate-content' ? "the candidate's own content box" : '--viewport';
+  const how = report.framing === 'candidate-pixels' ? "fitted to the candidate's own drawn pixels" : '--viewport';
   lines.push(
     `  framed to  ${v.pixelWidth}x${v.pixelHeight}px  ${v.scale.toFixed(6)} px/unit  ` +
       `world x[${v.x.toFixed(1)} .. ${(v.x + v.width).toFixed(1)}] y[${v.y.toFixed(1)} .. ${(v.y + v.height).toFixed(1)}]  (${how})`,
@@ -831,6 +1000,7 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
     );
     lines.push('             ⤷ the two world boxes are different coordinate systems and do not compare; the pixel grid does.');
   }
+  for (const line of framingLines(report)) lines.push(line);
   for (const note of report.notes) lines.push(`  ⚠️ ${note}`);
   lines.push('');
 
@@ -854,10 +1024,15 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
       `     MAE        mean ${f2(anim.meanMae)}  worst ${f2(anim.worstMae)} at f${String(anim.worstMaeFrame).padStart(4, '0')}` +
         `   (0..255 over the union alpha; over the whole frame, mean ${f2(anim.meanMaeFrame)})`,
     );
+    const blind =
+      anim.framesWithoutDrift === 0
+        ? ''
+        : `   (${anim.framesWithoutDrift} of ${anim.compared} frame(s) attributed no slot at all)`;
     lines.push(
       anim.worstDriftFrame < 0
-        ? '     slot drift no slot could be attributed in any frame — read the MAE instead'
-        : `     slot drift worst ${anim.worstDrift.toFixed(1)} px  ${JSON.stringify(anim.worstDriftSlot)} at f${String(anim.worstDriftFrame).padStart(4, '0')}`,
+        ? `     slot drift no slot could be attributed in any of the ${anim.compared} frame(s) — read the MAE instead`
+        : `     slot drift worst ${anim.worstDrift.toFixed(1)} px  ${JSON.stringify(anim.worstDriftSlot)} at ` +
+          `f${String(anim.worstDriftFrame).padStart(4, '0')}${blind}`,
     );
     lines.push('');
 
@@ -868,18 +1043,22 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
     const heading =
       listed.length === anim.frames.length ? 'every frame' : `the ${listed.length} worst frames by MAE, in index order`;
     lines.push(`     ${heading}`);
-    lines.push('       frame      MAE   union px   worst slot            drift   note');
+    lines.push('       frame      MAE   union px   worst slot            drift   how       slots   note');
     for (const frame of listed) {
+      const worst = frame.slots.find((s) => s.slot === frame.worstSlot) ?? null;
       const drift = frame.worstDrift === null ? '    —' : `${frame.worstDrift.toFixed(1).padStart(5)}`;
-      const note =
-        frame.unmatchedComponents > 0
-          ? `${frame.unmatchedComponents} reference component(s) matched no slot`
-          : frame.slots.some((s) => s.ambiguity !== null)
-            ? 'some slots ambiguous'
-            : '';
+      const how =
+        worst === null
+          ? '—        '
+          : worst.method === 'template'
+            ? `tmpl ${(worst.confidence ?? 0).toFixed(2)}`
+            : 'component ';
+      const unmatched =
+        frame.unmatchedComponents > 0 ? `${frame.unmatchedComponents} reference component(s) no slot reaches` : '';
       lines.push(
         `       f${String(frame.index).padStart(4, '0')} ${f2(frame.mae).padStart(8)}  ${String(frame.unionPixels).padStart(9)}   ` +
-          `${(frame.worstSlot ?? '—').padEnd(20)} ${drift}   ${note}`,
+          `${(frame.worstSlot ?? '—').padEnd(20)} ${drift}   ${how.padEnd(9)} ${String(frame.attributed)}/${String(frame.drawn)}` +
+          `${unmatched ? `   ${unmatched}` : ''}`,
       );
     }
     lines.push('');
@@ -887,7 +1066,64 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
 
   lines.push('  MAE is the mean absolute RGB difference over the pixels either side covers, so it is');
   lines.push('  read against 255 and not against a threshold: there is no pass mark here any more than');
-  lines.push('  there is one in `diff`. A slot drift beside an ambiguity note is not a measurement of');
-  lines.push('  that slot — the reference merged it into another part, and the MAE carries that frame.');
+  lines.push('  there is one in `diff`. Read the framing line first: it is upstream of every number');
+  lines.push('  below, and a residual much wider than a pixel moves all of them at once.');
+  lines.push('  The slots column is how many of the drawn slots could be attributed at all. A drift');
+  lines.push('  marked `tmpl` was correlated against the slot’s own pixels because the reference');
+  lines.push('  merged it into a neighbour; the number beside it is how much better that match was');
+  lines.push('  than its best rival, and a slot that matched nothing at all is left out of the count.');
   return lines;
+}
+
+/** The framing, as the line an author reads before anything else. */
+function framingLines(report: CheckReport): string[] {
+  const framing = report.framingFit;
+  if (!framing) return [];
+  const { fit } = framing;
+  const c = fit.candidate;
+  const r = fit.reference;
+  const percent = (n: number): string => `${n >= 0 ? '+' : ''}${(n * 100).toFixed(2)}%`;
+  const box = (b: ContentBox): string =>
+    `${boxWidth(b).toFixed(1)}x${boxHeight(b).toFixed(1)}px at (${b.left.toFixed(1)}, ${b.top.toFixed(1)})`;
+  const signed = (n: number): string => `${n >= 0 ? '+' : ''}${n.toFixed(2)}`;
+  const out = [
+    `  content    candidate ${box(c)}   reference ${box(r)}   (union over ${fit.frames} frame(s))`,
+    `             ⤷ fit x${fit.scale.toFixed(6)}  offset ${signed(fit.dx)}, ${signed(fit.dy)} px   ` +
+      `rms ${fit.rms.toFixed(2)} px over ${fit.frames * 4} edge(s)   ` +
+      `union residual ${signed(fit.residualWidth)} x ${signed(fit.residualHeight)} px   ` +
+      `aspect ${percent(fit.aspectError)}` +
+      (framing.applied ? `  (applied, ${framing.passes} pass(es))` : '  (measured, NOT applied — --viewport pinned)'),
+  ];
+  const spread = Math.max(Math.abs(fit.residualWidth), Math.abs(fit.residualHeight));
+  if (spread > 1) {
+    const axis = fit.residualWidth > 0 ? 'wider' : 'narrower';
+    out.push(
+      `             ⚠️ after the fit your shot still covers ${Math.abs(fit.residualWidth).toFixed(1)} px ` +
+        `${axis} and ${Math.abs(fit.residualHeight).toFixed(1)} px ` +
+        `${fit.residualHeight > 0 ? 'taller' : 'shorter'} than the reference's. One uniform scale cannot absorb ` +
+        'that: something reaches somewhere nothing in the frames does, or is a different size. Read it before ' +
+        'reading a drift.',
+    );
+  }
+  if (fit.rms > 1) {
+    out.push(
+      `             ⚠️ the fit leaves ${fit.rms.toFixed(2)} px rms across the frames' edges, so no single ` +
+        'scale and offset puts the two shots on each other — they are different shapes, not the same shape ' +
+        'misframed.',
+    );
+  }
+  const units = framing.units;
+  if (units) {
+    out.push(
+      `  in units   candidate ${units.candidate.width.toFixed(1)} x ${units.candidate.height.toFixed(1)}   ` +
+        `reference ${units.reference.width.toFixed(1)} x ${units.reference.height.toFixed(1)}   ` +
+        `x${units.ratio.toFixed(4)}`,
+    );
+    out.push(
+      '             ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on ' +
+        'purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares ' +
+        'only if you measured the shot in the frames’ own units.',
+    );
+  }
+  return out;
 }

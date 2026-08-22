@@ -720,14 +720,28 @@ its skeleton, `--as <name>` when your animation is called something the frame
 directory is not, `--all-frames` to list every frame instead of the worst by MAE,
 `--json <out>` for the whole per-frame, per-slot report.
 
-Two more exist for frame sets that have no `frames.json` beside them, which are
-sets rendered before the sidecar existed. `--fps <n>` gives the rate those frames
-were sampled at — without it the 12 fps protocol rate is assumed, and the report
-says so rather than letting the assumption look like a measurement. `--viewport
-<x>,<y>,<width>,<height>` pins your candidate's world box instead of deriving it
-from its own content; you want that only when the derivation is wrong for a known
-reason, such as a part you have deliberately not authored yet. Passing `--fps` with
+`--fps <n>` exists for frame sets that have no `frames.json` beside them, which are
+sets rendered before the sidecar existed: it gives the rate those frames were
+sampled at, and without it the 12 fps protocol rate is assumed and the report says
+so rather than letting the assumption look like a measurement. Passing `--fps` with
 a value the sidecar contradicts is an error, not an override.
+
+`--viewport <x>,<y>,<width>,<height>` pins your candidate's world box instead of
+fitting it. Two uses, and the second is the one to remember:
+
+- the derivation cannot work — a candidate deliberately missing a part has a
+  different content box by construction, and pinning lets the rest of the shot
+  still be measured;
+- you want the framing **held still** between builds. The framing line is still
+  measured and printed when the box is pinned, so a pinned run separates "my keys
+  moved" from "my framing moved" without either hiding the other. On a shot whose
+  MAE moves by more than a point for a fraction of a pixel, that separation is
+  worth more than the absolute number.
+
+⚠️ **The framing is over the frames you compare.** `--frames <root>` fits one
+framing across every set under it; `--frames <root>/<one-set>` fits one to that set
+alone. Both are right and they are not the same number, so compare like with like
+across builds.
 
 ### 9.1 Why this exists
 
@@ -752,29 +766,69 @@ and [the ladder's honesty rule](LADDER.md) makes them a finish line you reach on
 ### 9.2 Reading the table
 
 ```
-  framed to  256x116px  0.116968 px/unit  world x[-778.6 .. 1410.0] y[-795.3 .. 200.7]
-  reference  256x116px  0.117628 px/unit  world x[-573.3 .. 1603.0] y[-81.2 .. 908.9]
+  framed to  256x116px  0.116677 px/unit  world x[-782.1 .. 1412.0] y[-794.7 .. 199.5]  (fitted to the candidate's own drawn pixels)
+  reference  256x116px  0.117628 px/unit  world x[-573.3 .. 1603.0] y[-81.2 .. 908.9]  (frames.json)
+  content    candidate 234.6x95.5px at (11.3, 11.5)   reference 234.7x95.3px at (11.2, 11.7)   (union over 86 frame(s))
+             ⤷ fit x0.999256  offset +0.05, -0.02 px   rms 0.42 px over 344 edge(s)   union residual -0.27 x +0.17 px   aspect -0.30%  (applied, 4 pass(es))
+  in units   candidate 1995.3 x 809.7   reference 1995.3 x 809.9   x0.9999
 
   ── heavy — candidate animation "heavy", 12 fps ──
      frames     65 on disk, candidate samples 65, 65 compared
-     MAE        mean 26.47  worst 50.20 at f0029   (0..255 over the union alpha; …)
-     slot drift worst 2.4 px  "pendulum" at f0029
+     MAE        mean 23.10  worst 43.36 at f0029   (0..255 over the union alpha; …)
+     slot drift worst 2.1 px  "pendulum" at f0029
 
      the 8 worst frames by MAE, in index order
-       frame      MAE   union px   worst slot            drift   note
-       f0029    50.20       1401   pendulum               2.4
+       frame      MAE   union px   worst slot            drift   how       slots   note
+       f0029    43.36       1409   pendulum               2.1   component  2/2
 ```
 
-**The two framing lines.** Your candidate is framed **by its own content**: the
-union of its posed quads over every animation, padded, scaled so the long side is
-the reference's long side in pixels. That is the same procedure that framed the
-reference, applied to each side separately — which is what lets a rig authored in
-its own coordinates be compared at all. The reference's world box is printed beside
-yours for orientation and for converting a pixel measurement into units; the two
-boxes are **different coordinate systems and do not compare term by term**. The
-pixel dimensions do, and a warning fires when they differ: a couple of pixels is
-rounding in the art sizes, more than that means something is in one shot and not in
-the other, and it shifts everything below.
+**Read the framing block first.** Everything below it is computed on the grid it
+chose, so an error there arrives disguised as motion — which is exactly what
+happened to two honest ladder runs before this was fixed (issue #34).
+
+Your candidate is framed **by its own drawn pixels**. `check` renders it at the
+frames' own rate and grid, takes the content box of what it actually draws, takes
+the reference's content box off the PNGs with the same rule, and fits the
+similarity transform — one uniform scale plus a translation, least squares over
+**every edge of every frame** — that carries one onto the other. Then it renders
+through that transform and measures again, until the correction is the identity.
+
+That procedure is blind to the two things it must be blind to. **An invisible
+margin cannot move it**: a region's quad runs past its own artwork wherever the art
+is transparent, and that used to set the scale; now nothing outside the drawing is
+looked at (the selftest proves art padded by 20 px on two sides reports numbers
+identical to the last decimal). **A choice of units cannot move it either**: a rig
+scaled by 2 % renders to the same pixels and reads the same MAE.
+
+The lines, in order:
+
+- `framed to` / `reference` — the two world boxes and their scales. They are
+  **different coordinate systems and do not compare term by term**; the reference's
+  is printed for orientation and for turning a pixel measurement into units.
+- `content` — the two boxes in **frame pixels**, which do compare, and the fit that
+  put one on the other. `fit x1.000000` with a small `offset` means the two shots
+  are the same size in the same place.
+- `rms` — what the fit could not explain, across every edge of every frame. Under a
+  pixel is the method's own noise. Over a pixel means no single scale and offset
+  puts these two shots on each other: they are different shapes, not the same shape
+  misframed.
+- `union residual` and `aspect` — the extent your shot covers that the reference's
+  does not, after the fit. This is the number that says *"something reaches
+  somewhere nothing in the frames does, or is a different size"*, and a warning
+  spells it out past a pixel.
+- `in units` — the same two boxes in world units. The framing absorbs a pure scale
+  on purpose, so this is the only place one shows; it compares only if you measured
+  the shot in the frames' own units.
+
+⚠️ **The framing is fitted to extent, and extent is not the same as alignment.**
+When your silhouette genuinely differs somewhere — a limb that overreaches, a part
+that is a little large — the best fit of the two extents is not quite the best
+alignment of the two pictures, and the fit spends a fraction of a pixel absorbing
+a difference that would have been cheaper to leave alone. Measured floor: about a
+third of a pixel on the ladder's shots. On most that is invisible; on a small
+high-contrast frame it is worth a point or two of MAE. The `union residual` and
+`rms` lines are how you tell that it is happening, and `--viewport` is how you stop
+it when you know your own coordinates.
 
 **MAE** is the mean absolute RGB difference, 0..255, over the pixels either side
 covers — the *union alpha*. It is not scored against a threshold, any more than a
@@ -788,18 +842,34 @@ measured so far it comes out ten to twenty-five times smaller and correspondingl
 blunter.
 
 **Slot drift** is what you act on. For each of your slots, `check` measures where
-it landed (centroid and bbox, in frame pixels) and compares it against the
-connected component of the reference frame nearest to it. That names the part, the
-frame and the distance, so "the beach ball is 4.7 px low at f0005" is a sentence
-you can take straight back to a key.
+it landed and how far that is from where the reference put it. That names the part,
+the frame and the distance, so "the beach ball is 4.7 px low at f0005" is a
+sentence you can take straight back to a key.
 
-⚠️ **A drift beside an `ambiguous` note is not a measurement.** Two parts that
-touch label as **one** component — §8's first trap, on exactly the frames the shot
-is about — and a slot drawn behind another has no component of its own at all. The
-matcher says so rather than guessing, and in those frames the MAE is the signal.
-Likewise `N reference component(s) matched no slot` means the reference frame
-contains something none of your slots landed near: a part you have not authored,
-or one you have put somewhere else entirely.
+There are two matchers and the `how` column says which one answered:
+
+- `component` — your slot sits on a connected component of the reference frame that
+  is its own size. The drift is the distance between the two centroids, and it is
+  the strongest answer available.
+- `tmpl 0.62` — the reference merged your slot into a neighbour (they touch, or one
+  is drawn over the other), so the fallback rendered **your slot on its own** and
+  correlated it against the reference around where you drew it. The number is the
+  confidence: how much better the winning position was than the best rival inside
+  the search window. This is what gives a shot like a chain of touching links any
+  drift at all — under connected components alone, every frame of it is ambiguous.
+
+⚠️ **Both matchers are capped, and a blank is a real answer.** A part can be
+displaced by about its own size and still be that part in the picture; past that,
+a match is another object, not this one moved. So `check` searches that far and no
+further, and reports **no match** rather than a number — a 4 px ball cannot report
+the 47 px course as its drift. The bar rises with the distance being claimed: a
+peak sitting where you already drew the slot only has to confirm it, a peak
+claiming the part moved most of a radius has to be distinctive to be believed.
+
+The `slots` column is how many of the slots you drew got an answer at all, and the
+summary line carries the same denominator. `N reference component(s) no slot
+reaches` means the reference frame contains something none of your slots overlaps:
+a part you have not authored, or one you have put somewhere else entirely.
 
 ### 9.3 What it still cannot see
 
