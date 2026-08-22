@@ -89,13 +89,24 @@ An assertion or measure with nothing to compare reports its `total` as 0 and say
 so, exactly as the validator's SKIP does — a vacuous 1.000 that looks earned is
 the same false green in a different costume.
 
-> **There is still no benchmark runner.** `diff` measures two files against each
-> other; nothing yet drives a compile against a rung and reports the result. That
-> is `bench`, and it is not written.
 
 
+### Benchmark ladder — the rungs, and where they stand
 
-### Benchmark ladder — what the rungs need
+**[docs/LADDER.md](docs/LADDER.md) is the live ledger**: the rung order the owner
+fixed (blockers → rung 3 first → 1 · 2 · 4 · 5 → 6 → 8 → 7 → spineboy), what each
+rung gates on, how a rung is scored, the honesty rule that keeps the reference
+export away from the authoring agent, and a status table. Run one with:
+
+```bash
+bun cli.ts bench 3 --candidate path/to/candidate/spine
+```
+
+`bench` validates the candidate under `--profile spine`, diffs it against that
+rung's reference export, and prints both. It exits non-zero only when validation
+fails: the diff has no threshold, because there is no rung score.
+
+#### What the rungs need
 
 [docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md) surveys the full Spine 4.3 export surface against what
 rigc emits and against what the nine examples measurably use (`bun run bench:usage` regenerates the
@@ -104,7 +115,7 @@ so no example can be expressed at all; **B2**, `A16`'s regex rejected the `"4.3.
 example declares; and **B3**, every example ships a **packed** atlas (13–50 regions per page) against
 rigc's one-part-per-page model, which `A06` enforced unconditionally. B2 is fixed and B3's validator
 half is: the packed-atlas clauses now live behind `--profile` (above). B1 is open. Ordered gap list in
-Part 4 of that document.
+Part 4 of that document; live status in [docs/LADDER.md](docs/LADDER.md).
 
 ## What exists today
 
@@ -243,6 +254,7 @@ bun cli.ts explain  --cut my_cut --cuts path/to/cuts.json   # the compiled rig a
 bun cli.ts validate path/to/spine                           # re-gate artifacts already on disk
 bun cli.ts validate --profile spine path/to/any/skeleton    # spec rules only (see Profiles)
 bun cli.ts diff candidate.json reference.json               # structural comparison
+bun cli.ts bench 3 --candidate path/to/spine                # one rung of the ladder
 ```
 
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
@@ -271,12 +283,13 @@ failed everything would otherwise look like a validator that worked.
 ## Layout
 
 ```
-cli.ts          build / validate / explain / diff
+cli.ts          build / validate / explain / diff / bench
 selftest.ts     the validator's own negative controls, and diff's measure controls
 src/
   compile.ts    manifest + motion spec -> skeleton JSON + atlas text (pure data assembly)
   validate.ts   spine-core round trip + the 31 assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure
+  ladder.ts     which example is which rung, and which file in it is the reference
   timelines.ts  the 4.3 timeline catalogue and its walker (shared, pure JSON)
   archetype.ts  the named bone/slot formations
   mesh.ts       ring and ribbon mesh builders, weighted-vertex encoding
@@ -286,7 +299,8 @@ src/
 tools/          measurement and plate helpers (see below)
 scripts/        fetch-examples.sh
 bench/          count_features.ts — what the example corpus actually uses
-docs/           SPEC_COVERAGE.md (format survey), feature_matrix.{csv,json}
+docs/           LADDER.md (live rung status), SPEC_COVERAGE.md (format survey),
+                feature_matrix.{csv,json}
 ```
 
 `tools/` are standalone utilities, each taking its paths as arguments:

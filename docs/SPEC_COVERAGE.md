@@ -8,6 +8,21 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 ([`bench/count_features.ts`](../bench/count_features.ts) → [`feature_matrix.csv`](feature_matrix.csv),
 [`feature_matrix.json`](feature_matrix.json)).
 
+> 🔼 **This note is dated and does not move; the measurements below are the corpus as it
+> stood on 2026-08-22 and stay as written. Its statements about what rigc *does* have gone
+> stale in three places, and the live ledger is [LADDER.md](LADDER.md):**
+>
+> - **B2 is fixed** — A16 accepts `4.3`, `4.3.N` and `4.3.N-<suffix>`, so all twelve example
+>   exports pass it.
+> - **The profile split exists** — `--profile spine | spine-html`, default `spine-html`, so the
+>   nine renderer-policy assertions of §2.2 no longer apply to foreign data. That closes the
+>   validator half of B3; the emitter half (no packer, no atlas importer) is untouched.
+> - **`walkTimelines` reaches all eleven groups** — §2.3 item 1 and §4.3 item 4 are done, so
+>   A05 is no longer blind to `ik` / `transform` / `path` / `slider` / `drawOrder` /
+>   `drawOrderFolder` / `events`.
+>
+> **B1 — the bone tree being code — is still open, and still gates every rung.**
+
 ---
 
 ## Executive summary (10 lines)
@@ -49,7 +64,8 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
     drawOrder at rung 5, transform constraints + weighted meshes at rung 6, physics + deform at
     rung 7, IK + clipping + events + bounding box + unweighted meshes only at spineboy. Three
     blockers precede rung 1 — the bone tree being code, `A16`'s regex rejecting `4.3.75-beta`, and
-    the one-part-per-page atlas model against nine packed atlases. **Nothing was implemented.**
+    the one-part-per-page atlas model against nine packed atlases. **Nothing was implemented *at the
+    time of writing*; see the banner above for what has been since.**
 
 **Prior work this document extends, not repeats:** `plan 04 section 1` (parse coverage, with the
 3.8-doc finding in section 1-0), `section 2` (the round-trip probe and its six silent-failure cases
@@ -857,7 +873,9 @@ Crossing Part 2 with Part 3. Categories, as requested:
 **(c) validator** — assertions that must become a profile switch or be widened ·
 **(d) JSON-inexpressible** — things the format genuinely cannot hold.
 
-**Nothing below is implemented. This is a survey.**
+**Nothing below was implemented when this was written. This is a survey.** Three of its items
+have been built since — see the banner at the top of this document and [LADDER.md](LADDER.md) for
+which; the requirement text itself is left exactly as surveyed.
 
 ### 4.0 Three blockers that precede rung 1
 

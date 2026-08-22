@@ -26,7 +26,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
-import { diffLines, diffSkeletons } from './src/diff.ts';
+import { diffLines, diffSkeletons, type DiffReport } from './src/diff.ts';
+import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
 import { DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import type { CompileResult, MotionSpec } from './src/types.ts';
 
@@ -303,6 +304,110 @@ function cmdDiff(flags: Record<string, string>, positional: string[]): void {
   }
 }
 
+/**
+ * bench — run one rung of the benchmark ladder against a candidate rig.
+ *
+ * Two questions, asked in this order and never merged:
+ *
+ *   1. Is the candidate valid Spine at all? That is `validate --profile spine`,
+ *      and it is the only part with a pass/fail. `spine-html` is not the default
+ *      here (it is everywhere else): the thing being reproduced is an editor
+ *      export, and holding it to this project's renderer policy would fail rungs
+ *      for reasons the rung is not about.
+ *   2. How close is it, structurally, to the reference? That is `diff`, and it
+ *      has no threshold at all. There is no score to pass, on purpose — see
+ *      `src/diff.ts`. A rung is called cleared by a human reading the measures,
+ *      and `docs/LADDER.md` records that judgement.
+ *
+ * ⚠️ The candidate is validated against the SPINE profile and compared against
+ * the reference; the reference is never validated here. It is editor output and
+ * is the definition of correct for this exercise, so gating it would be gating
+ * the yardstick with the ruler.
+ */
+function cmdBench(flags: Record<string, string>, positional: string[]): void {
+  const rungId = positional[0];
+  if (!rungId) throw new UsageError(`bench takes a rung: ${RUNG_IDS.join(' | ')}`);
+  const rung = findRung(rungId);
+  if (!rung) throw new UsageError(`unknown rung ${JSON.stringify(rungId)}; known: ${RUNG_IDS.join(', ')}`);
+  if (flags.candidate === undefined) throw new UsageError('bench needs --candidate <dir | skeleton.json>');
+
+  // bench judges a reproduction of editor output, so `spine` is the default.
+  const profile = flags.profile === undefined ? 'spine' : readProfile(flags);
+  const exportDir = resolve(import.meta.dir, 'examples', rung.example, 'export');
+  if (!existsSync(exportDir)) {
+    throw new UsageError(
+      `no example corpus at ${exportDir} — run \`bun run fetch-examples\` first (examples/ is gitignored, not shipped)`,
+    );
+  }
+
+  const { skeletonPath, atlasPath } = resolveArtifacts(flags.candidate, flags.atlas);
+  const skeletonText = readFileSync(skeletonPath, 'utf8');
+  const atlasText = readFileSync(atlasPath, 'utf8');
+
+  console.log(`rigc bench rung ${rung.id} — ${rung.example}`);
+  console.log(`  gates      ${rung.gates}`);
+  console.log(`  candidate  ${skeletonPath}`);
+  console.log(`  atlas      ${atlasPath}`);
+  console.log('');
+
+  console.log(`  ── validate (profile ${profile}) ──`);
+  const report = validate({ skeletonText, atlasText, atlasDir: dirname(atlasPath), profile });
+  for (const line of reportLines(report)) console.log(`  ${line}`);
+  console.log('');
+
+  const candidateJson: unknown = JSON.parse(skeletonText);
+  const diffs: Array<{ skeleton: RungSkeleton; reference: string; report: DiffReport }> = [];
+  for (const skeleton of rung.skeletons) {
+    const referencePath = join(exportDir, skeleton.file);
+    if (!existsSync(referencePath)) {
+      console.error(`  MISSING  ${referencePath} — re-run \`bun run fetch-examples\``);
+      continue;
+    }
+    const role = skeleton.role === 'stretch' ? ' (stretch — reported, does not count)' : '';
+    console.log(`  ── diff vs ${rung.example}/${skeleton.label}${role} ──`);
+    const diff = diffSkeletons(candidateJson, JSON.parse(readFileSync(referencePath, 'utf8')));
+    for (const line of diffLines(diff, { candidate: skeletonPath, reference: referencePath })) console.log(`  ${line}`);
+    console.log('');
+    diffs.push({ skeleton, reference: referencePath, report: diff });
+  }
+
+  console.log('  ── summary ──');
+  console.log(`  validate   ${report.failures.length === 0 ? 'green' : `${report.failures.length} FAILED`}  (profile ${profile})`);
+  for (const d of diffs) {
+    const means = d.report.sections.map((s) => `${s.name}=${s.ratio.toFixed(3)}`).join('  ');
+    console.log(`  ${d.skeleton.label.padEnd(10)} ${means}${d.skeleton.role === 'stretch' ? '   [stretch]' : ''}`);
+  }
+  console.log('  Section figures are means of their own measures. There is no rung score:');
+  console.log('  a rung is cleared by a person reading the measures, and docs/LADDER.md records it.');
+
+  if (flags.json !== undefined) {
+    const out = resolve(flags.json);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(
+      out,
+      `${JSON.stringify(
+        {
+          rung: rung.id,
+          example: rung.example,
+          gates: rung.gates,
+          profile,
+          candidate: { skeleton: skeletonPath, atlas: atlasPath },
+          validate: report,
+          diffs: diffs.map((d) => ({ label: d.skeleton.label, role: d.skeleton.role, reference: d.reference, ...d.report })),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    console.log(`rigc: wrote ${out}`);
+  }
+
+  if (report.failures.length > 0) {
+    console.error(`rigc: candidate is not valid Spine — ${report.failures.length} assertion(s) failed`);
+    process.exit(1);
+  }
+}
+
 function cmdExplain(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
   const result = compile(opts);
@@ -399,6 +504,7 @@ const USAGE = [
   '  bun cli.ts explain  (same arguments as build)',
   '  bun cli.ts validate <dir | skeleton.json> [--atlas <path>]',
   '  bun cli.ts diff     <candidate.json> <reference.json> [--json <out>]',
+  `  bun cli.ts bench    <${RUNG_IDS.join(' | ')}> --candidate <dir | skeleton.json>`,
   '',
   'build and validate take --profile spine|spine-html (default spine-html):',
   '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
@@ -415,6 +521,7 @@ try {
   else if (command === 'validate') cmdValidate(flags, positional);
   else if (command === 'explain') cmdExplain(flags);
   else if (command === 'diff') cmdDiff(flags, positional);
+  else if (command === 'bench') cmdBench(flags, positional);
   else {
     console.error(USAGE);
     process.exit(2);
