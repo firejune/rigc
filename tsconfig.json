@@ -27,6 +27,6 @@
     "strict": false,
     "strictNullChecks": true
   },
-  "include": ["cli.ts", "selftest.ts", "src/**/*.ts", "bench/**/*.ts", "tools/**/*.ts", "scripts/**/*.ts"],
+  "include": ["cli.ts", "selftest.ts", "src/**/*.ts", "bench/**/*.ts", "tools/**/*.ts", "fixtures/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "examples"]
 }

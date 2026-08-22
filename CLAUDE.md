@@ -89,9 +89,9 @@ sincere about it. rigc exists to convert that silence into a named failure.
 
 | Command | Checks |
 | --- | --- |
-| `bun run typecheck` | `bunx tsc --noEmit` over `cli.ts`, `selftest.ts`, `src/`, `bench/`, `tools/`. `strict: false` with `strictNullChecks: true` — see the comment in `tsconfig.json` before raising it |
+| `bun run typecheck` | `bunx tsc --noEmit` over `cli.ts`, `selftest.ts`, `src/`, `bench/`, `tools/`, `fixtures/`. `strict: false` with `strictNullChecks: true` — see the comment in `tsconfig.json` before raising it |
 | `bun run lint` | one rule: `@typescript-eslint/no-explicit-any` as an **error**. `eslint.config.js` says why it is only one |
-| `bun run selftest --cuts <cuts.json>` | the validator's own negative controls. **Fixture-bound** — see *PUBLIC GATE* item 4; a fresh clone cannot run it |
+| `bun run selftest` | the validator's own negative controls, on fixtures it generates. Add `--cuts <cuts.json>` to gate a project's real cuts as well — see *The selftest and its fixtures* |
 | `bun cli.ts bench 3 --candidate <dir>` | the ladder still reproduces its rung. `docs/LADDER.md` carries the B1 proof to compare against |
 | `bun cli.ts check --candidate <dir> --frames <dir>` | the candidate still *looks* like the reference. The gate cannot see a wrong animation — it passed a build with every easing reversed — so a change to timelines, curves or the rasteriser is not verified until this has run |
 
@@ -104,127 +104,72 @@ anybody adds: turn it on, read what it says, fix it, and only then commit it.
 Anything touching an input format, an error message or an assertion also changes
 [docs/AUTHORING.md](docs/AUTHORING.md).
 
-## Where the cited plan documents live
+## The selftest and its fixtures
 
-The comments throughout `src/`, `tools/` and `selftest.ts` cite design documents as
-`plan 01 …` through `plan 05 …` (roughly 95 citations). Those documents are **not in
-this repository** — they are in the blosharper repo at
-`sandbox/dlc/spine_pipeline/plan/`, where this code was developed before the split.
-They are the record of *why* each assertion exists, and most of them were written
-after a failure that the assertion now catches.
+`bun run selftest` is **self-contained**. It needs no arguments, no art and no
+private repository — a fresh clone can run it, and CI does.
 
-`spine_builder.py:49`, cited in `src/validate.ts`, `selftest.ts` and (since the
-archetype tables became data) that repo's `rigs/joint_closeup_v1.rig.json`, is
-likewise a file in that repo's `sandbox/dlc/spine_pipeline/_scaffold/` — the
-superseded generator whose two structural bugs became assertions `A24` and `A25`.
+Where its fixtures come from, in three tiers:
 
----
+| Tier | Built by | What it carries |
+| --- | --- | --- |
+| **generated rigs** | [`fixtures/public.ts`](fixtures/public.ts), into a temp dir per run | `overlay_probe`, `articulated_probe`, `contained_probe` — between them: region attachments, attachment swaps, rgba fades, a ring mesh on a control bone, a ribbon on a bone chain, an axis bone, a detached emitter, physics constraints, and both measured ceilings |
+| **inline probes** | `selftest.ts` itself | the two-slot rig the static-rig and draw-order suites break |
+| **the example corpus** | `bun run fetch-examples` | the rung-3 transcription and its rendered reference frames, which the `diff` and `check` suites measure against |
 
-## PUBLIC GATE
+Three rules hold that together and none of them is optional:
 
-This repository is a **snapshot** taken from a game project's sandbox on
-2026-08-22, and the split moved the *cut-specific files* out but deliberately did
-**not** sanitise the code. Everything below is a game-specific or cut-specific
-identifier that is still hardcoded and **must move from code to data before this
-repository goes public.** The list is an inventory, not a task order — it is here so
-that a session that opens this repo cannot mistake the current state for a clean one.
+- **The plates are checkerboards with `PLACEHOLDER` burned into them.** They exist
+  to be structurally real — a true size, a true alpha channel, in the place the
+  manifest says — so the compiler measures something and the atlas points
+  somewhere. No claim about seams, blending or appearance can come from any of
+  them, and none is made.
+- **No mutant hardcodes a measured number.** Vertex offsets are found by walking
+  the weight run (`weightRuns`, `firstBlendedRun`), atlas edits target the first
+  page or region structurally, and the two ceiling mutants state the *smallest*
+  whole-pixel edit that crosses the line — which is checkable only because
+  `fixtures/public.ts` chose the gap. Reintroducing a literal here is how the
+  suite became unrunnable outside one repository the first time.
+- **An absent corpus is a HOLE, not a pass.** When `examples/` is missing the
+  `diff` and `check` suites say so loudly, the summary repeats it, and a run where
+  *nothing* substantive executed exits 2 rather than printing green.
 
-### 1. ~~`src/archetype.ts` — the archetype tables are code~~ ✅ RESOLVED 2026-08-22
+`--cuts <cuts.json>` (or `RIGC_CUTS=<path>`) adds an **extra suite**: every cut in
+that table is compiled, gated and compiled again for `A18`. It is a positive
+control and deliberately nothing else — hand-aiming a second set of mutants at
+somebody's real art is what made this file unrunnable before. What real art adds
+is the geometry: measured offsets, a measured axis, a measured ceiling, a mesh
+built over a contour nobody drew by hand. So the question it asks is the one only
+those cuts can answer — *does the whole gate still come back green on them?*
 
-`src/archetype.ts` is **gone**. The three formations are rig spec files
-(`spec: "rigc-rig/1"`, [`src/rig.ts`](src/rig.ts)) in the owning project at
-`sandbox/dlc/spine_pipeline/rigs/`, and a cuts.json entry names one with a `rig`
-path. `face_overlay_v1` got no file: it and v2 were one formation and a mesh-tier
-flag, and that flag is `invariants.meshSlots` now. The acceptance test was
-byte-identity, and all four of that project's cuts still emit the same
-`skeleton.json` and `skeleton.atlas`.
+⚠️ A cuts path that is **named and missing** exits 2. Treating a typo as "no cuts
+file" would mean the one caller who asked for the extra suite is the one caller
+who silently does not get it. A path that is not named at all is a normal run.
 
-⚠️ **What that removed and what it did not.** The cut-specific *names* — `axis`,
-`piston`, `lip`, `fluid_src`, `rim_grip_a`…`d`, `body_soft`, `fluid_pool`, `near`,
-`grade` — left this repository with the tables. They are still all over `src/`,
-`tools/` and `selftest.ts` as examples, comments and mutant targets, and items 2, 4
-and 5 below are unchanged. The headline item is closed; the inventory is not.
+## Going public
 
-### 2. `src/validate.ts` — assertions whose meaning is that cut's anatomy
+The repository was a snapshot of a game project's sandbox, and the split moved the
+cut-specific *files* out without sanitising the *code*. That inventory is closed;
+what follows is what keeps it closed.
 
-The assertions read the rig spec's `invariants` block rather than the names
-directly, so they are mechanically general — but their doc comments, and their
-reason for existing, are that one formation:
+- **Cut-specific knowledge lives with the consumer, not here.** Slot names,
+  anatomy, plan documents, per-project budgets. If a comment, a default or an
+  assertion can only be understood by someone who has seen one particular set of
+  art, it is in the wrong repository.
+- **An archetype assertion reads the rig, never a name.** A24–A30 take everything
+  they know from the rig spec's `invariants` block, and `A13_MESH_BUDGET` takes
+  its two numbers from `invariants.meshSlots` / `invariants.meshTriangles`. A
+  budget baked in here would be one consumer's frame time failing correct foreign
+  data — the editor's own example projects ship meshes many times denser.
+- **An assertion with nothing to measure reports SKIP.** Never a pass. A rig that
+  declares no invariant is unmeasured, not certified, and the two must not print
+  the same.
+- **Design notes live with the consumer.** Comments state their invariant outright
+  rather than citing a document a reader cannot open.
 
-- `A24_AXIS_SPACE_STROKE` — "the stroke", "the axis bone", the ~40° sibling-variant
-  measurement.
-- `A25_DETACHED_BONE_PARENTAGE` — `fluid_src` must not be parented under `piston`.
-- `A26_SLOT_DRAW_ORDER` — `lip` must be drawn after `piston`, described in terms of
-  what that adjacency depicts.
-- `A28_RIBBON_ROWS_SHARE_WEIGHTS` — "the drip", "the sag".
-- `A29_STROKE_WITHIN_CONTACT_DEPTH` / `A30_STROKE_WITHIN_CAP_CONTAINMENT` — both are
-  stated as anatomical rules, and `A29` carries a dated owner quotation.
-- `A11` / `A12` / `A14` / `A15` are stated in terms of one specific renderer's
-  behaviour (`spine-html`, named at `src/validate.ts:249`). True of that renderer;
-  presented as though it were the only consumer.
-- `A13_MESH_BUDGET` hardcodes **4 mesh slots** and **80 triangles** — a budget from
-  the owning project's frame time, not a property of Spine. Should be configurable.
-
-### 3. `src/compile.ts`, `src/types.ts`, `src/png.ts`
-
-- `src/compile.ts:293` — Korean quotation.
-- `src/compile.ts:329` — comment cites `hide: ['lip']`, a probe belonging to the
-  owning project.
-- `src/types.ts:136` — cites `rigc/tools/contact.ts`, a path that only made sense
-  before the split.
-- `src/png.ts:7` — "no NODE_PATH into the game repo", plus a Korean quotation.
-
-⚠️ Line numbers in this section go stale on every edit to those files. Grep for the
-quoted text, not for the number.
-
-### 4. `selftest.ts` — fixture-bound, and the fixtures are that game's art
-
-This is the largest item, and it grew: the suite is now 4 positive controls, 46
-artifact mutants and 7 rig-spec refusals, and all of them are hand-aimed at the same
-fixtures. The rig-spec suite added a dependency of its own — it reads the `rig` path
-out of the cuts table and edits that file, so it needs the rig specs as well as the
-art.
-
-The mutants are hand-aimed:
-
-- **Cut ids** it requires a `cuts.json` to supply: `face_trial`, `joint_dev`,
-  `seam_trial`.
-- **Attachment / bone / animation names** it edits by hand: `eye_l`, `eye_r`,
-  `eye_l_closed`, `eye_r_closed`, `mouth`, `mouth_wide_open`, `mouth_aperture`,
-  `face_base`, `blink_once`, `blink_auto`, `talk`, `idle`, `piston`, `piston_slow`,
-  `piston_fast`, `axis`, `lip`, `occluder`, `base`, `fluid_src`, `fluid_pool`,
-  `00_base_body`, `03_fluid_overflow`, `05_fluid_pool`.
-- **Literal values from those artifacts**: `size: 277, 191`, `bounds: 0, 0, 136, 107`,
-  `../parts/eye_r_closed.png`, `pma: false`, and the deliberately minimal numeric
-  edits (+10px, +43px) calculated against a shipped rig's own margins (75.733 against
-  a ceiling of 118).
-- A dated owner quotation on `M32`.
-
-⇒ **A fresh clone cannot run `bun run selftest`.** It needs a `cuts.json` naming
-those three cuts, and the art they point at is not public. Until the suite is
-re-based on public fixtures — the official Spine examples are the obvious candidate,
-see README, *The yardstick* — this repository ships a gate it cannot demonstrate.
-
-### 5. `tools/`
-
-- `tools/contact.ts:4-5` — a dated owner quotation in Korean, plus `04_body_soft`
-  and `lip` named as the parts being measured.
-- `tools/measure_contact_depth.ts:40` — argument defaults `massSlot = 'body_soft'`,
-  `againstSlot = 'lip'`.
-- `tools/measure_joint_anchors.ts` — written for `joint_closeup_v1` specifically
-  (it derives that rig's 17 non-root anchors).
-
-### 6. Everything cited but absent
-
-~95 `plan 0X section Y` citations and 3 `spine_builder.py:49` citations point into
-the blosharper repo (see *Where the cited plan documents live* above). Before going
-public these need to either resolve to something a reader can open, or be rewritten
-to state the invariant without the citation.
-
-### 7. The rig-spec paths in `bench/transcriptions/` are not a substitute
-
-`bench/transcriptions/3-timing-and-spacing/` proves the rig spec can express a
-public skeleton, and it is public-domain data (that example's `license.txt` releases
-the project file). It is **not** a fixture the selftest can run on: a transcription
-exercises the compiler, not the 32 assertions, and item 4 still stands. Re-basing
-the suite on public fixtures remains open.
+Two tools moved out with the cuts they only made sense for
+(`measure_joint_anchors.ts`, `make_stroke_strip.ts`); they import rigc's generic
+helpers back through the owning project's symlink. The generic measuring tools
+stayed, minus their per-cut defaults — `tools/measure_contact_depth.ts` now
+requires both slot names, because a default would measure the wrong pair on the
+next cut and still print a plausible number.

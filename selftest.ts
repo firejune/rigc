@@ -2,27 +2,42 @@
 /**
  * rigc selftest — proof that the validator can go RED.
  *
- * A gate nobody has seen fail is not a gate. Plan 04 section 2-3 measured six
- * ways to write a wrong skeleton that the parser accepts without a murmur, so
- * this file takes real compiled artifacts, breaks them one way at a time, and
- * asserts that the named assertion fires for each break.
+ * A gate nobody has seen fail is not a gate. There are at least six ways to write
+ * a wrong skeleton that Spine's own parser accepts without a murmur, so this file
+ * takes real compiled artifacts, breaks them one way at a time, and asserts that
+ * the named assertion fires for each break.
  *
- * There is a positive control too (the pristine artifacts must come back with
- * zero failures) — without it a validator that failed everything would look
- * like a validator that worked. A check with no positive control manufactures
- * false greens.
+ * There is a positive control for every suite too (the pristine artifacts must
+ * come back with zero failures) — without it a validator that failed everything
+ * would look like a validator that worked. A check with no positive control
+ * manufactures false greens.
  *
- *   bun selftest.ts --cuts <cuts.json>
+ *   bun selftest.ts                      the public suite: everything below
+ *   bun selftest.ts --cuts <cuts.json>   plus an extra suite over those cuts
  *   RIGC_CUTS=<cuts.json> bun selftest.ts
- *   bun selftest.ts                      # falls back to ./cuts.json
  *
- * ⚠️ The mutants below name attachments, bones and animations by hand, because a
- * break has to be aimed at something real to be a break at all. That makes the
- * suite fixture-bound: the cuts.json it is pointed at must supply cuts named
- * `face_trial`, `joint_dev` and `seam_trial` with the geometry these edits
- * assume. Those fixtures are not in this repository — see CLAUDE.md, PUBLIC
- * GATE. Until they are, this file is a gate for the project that owns the art,
- * not a gate a fresh clone can run.
+ * ## The public suite runs on fixtures this file generates
+ *
+ * ⭐ A break has to be aimed at something real to be a break at all: a mutant
+ * names an attachment, a bone, an animation, and edits it. That used to make this
+ * suite fixture-bound to one private project's art — a gate a fresh clone could
+ * not run, which is the tool's central claim left undemonstrable by anybody who
+ * did not already have the fixtures.
+ *
+ * So the fixtures are written fresh into a temp directory on every run, by
+ * [`fixtures/public.ts`](fixtures/public.ts). Three of them, one per shape the
+ * assertions care about: `overlay_probe`, `articulated_probe` and
+ * `contained_probe`. Two further suites build their own even smaller rigs inline
+ * (static rigs, draw-order timelines), and two more measure against the official
+ * Spine example corpus that `bun run fetch-examples` downloads.
+ *
+ * ## What `--cuts` adds
+ *
+ * A cuts table is a project's own registry of cuts with measured art behind them.
+ * When one is supplied, an EXTRA suite compiles every cut in it and holds the
+ * result to the same gate — a regression test for the owning project, run against
+ * the real geometry the fixtures only stand in for. Without one, that suite says
+ * it was skipped and the run still passes on the public suite alone.
  */
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,6 +46,7 @@ import { assertFrameReadable, checkAgainstFrames, type CheckReport } from './src
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedMeasures } from './src/diff.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
+import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { Plate, type RGBA } from './tools/plate.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
@@ -51,67 +67,121 @@ interface Options {
   imagesDir?: string;
 }
 
-/** Argument, then environment, then a cuts.json sitting next to this file. */
-function cutsPath(): string {
+/**
+ * The cuts table, if one was named. `null` is a normal outcome, not a failure:
+ * the public suite does not need it and the extra suite says so out loud.
+ *
+ * ⚠️ A path that was NAMED and is not there is a different thing entirely, and it
+ * exits 2. Treating a typo as "no cuts file" would mean the one caller who asked
+ * for the extra suite is the one caller who silently does not get it.
+ */
+function readCutTable(): { file: string; dir: string; table: CutTable } | null {
   const argv = process.argv.slice(2);
   const flag = argv.indexOf('--cuts');
+  let named: string | null = null;
   if (flag !== -1) {
     const value = argv[flag + 1];
     if (!value) {
       console.error('selftest: --cuts needs a path');
       process.exit(2);
     }
-    return resolve(value);
+    named = resolve(value);
+  } else if (process.env.RIGC_CUTS) {
+    named = resolve(process.env.RIGC_CUTS);
   }
-  if (process.env.RIGC_CUTS) return resolve(process.env.RIGC_CUTS);
-  return resolve(import.meta.dir, 'cuts.json');
-}
-
-const CUTS_FILE = cutsPath();
-if (!existsSync(CUTS_FILE)) {
-  // Exiting 0 here would be the exact failure this file exists to prevent: a
-  // gate that checked nothing, reporting green.
-  console.error(
-    `selftest: no cuts file at ${CUTS_FILE}\n` +
-      '  point it at a cuts.json that registers face_trial, joint_dev and seam_trial:\n' +
-      '    bun selftest.ts --cuts <path>   (or RIGC_CUTS=<path>)',
-  );
-  process.exit(2);
-}
-const CUTS_DIR = dirname(CUTS_FILE);
-const CUT_TABLE = JSON.parse(readFileSync(CUTS_FILE, 'utf8')) as CutTable;
-
-function optsFor(name: string): Options {
-  const entry: CutEntry | undefined = CUT_TABLE[name];
-  if (!entry) {
-    console.error(`selftest: ${CUTS_FILE} has no cut named ${JSON.stringify(name)} — this suite cannot run without it`);
+  if (named === null) return null;
+  if (!existsSync(named)) {
+    console.error(`selftest: --cuts named ${named}, which does not exist`);
     process.exit(2);
   }
+  return { file: named, dir: dirname(named), table: JSON.parse(readFileSync(named, 'utf8')) as CutTable };
+}
+
+const CUTS = readCutTable();
+
+function optsForCut(dir: string, entry: CutEntry): Options {
   const opts: Options = {
-    rigPath: resolve(CUTS_DIR, entry.rig),
-    motionPath: resolve(CUTS_DIR, entry.motion),
-    outDir: resolve(CUTS_DIR, entry.out),
+    rigPath: resolve(dir, entry.rig),
+    motionPath: resolve(dir, entry.motion),
+    outDir: resolve(dir, entry.out),
   };
-  if (entry.manifest !== undefined) opts.manifestPath = resolve(CUTS_DIR, entry.manifest);
-  if (entry.images !== undefined) opts.imagesDir = resolve(CUTS_DIR, entry.images);
+  if (entry.manifest !== undefined) opts.manifestPath = resolve(dir, entry.manifest);
+  if (entry.images !== undefined) opts.imagesDir = resolve(dir, entry.images);
   return opts;
 }
 
-const OPTS = optsFor('face_trial');
+function optsForFixture(fixture: Fixture): Options {
+  return {
+    rigPath: fixture.rigPath,
+    motionPath: fixture.motionPath,
+    outDir: fixture.outDir,
+    manifestPath: fixture.manifestPath,
+  };
+}
+
 /**
- * Tier 2. The joint archetype's invariants live on bones the face rig does not
- * have — an axis, a detached emitter, a grip ring, a chain — so they need their
- * own artifacts to break. Same discipline, second suite.
+ * The overlay fixture: a base plate, two slots that fade, and one ring mesh.
+ * Everything the region, timeline, atlas, mesh and physics assertions look at.
  */
-const JOINT_OPTS = optsFor('joint_dev');
+const OVERLAY = overlayFixture();
 /**
- * The REAL tier-2 cut. It earns a third suite for two reasons, and neither is
- * symmetry: it is the only cut that declares a cap-containment ceiling, so A30 is
+ * The articulated fixture. Its invariants live on bones the overlay rig does not
+ * have — an axis, a detached emitter, a grip ring, a bone chain — so they need
+ * their own artifacts to break. Same discipline, second suite.
+ */
+const ARTICULATED = articulatedFixture();
+/**
+ * The third fixture earns its place the way its predecessor did, and not by
+ * symmetry: it is the only one that declares a cap-containment ceiling, so A30 is
  * VACUOUS on the other two and a break there would be caught by nothing; and it
- * is the only cut whose manifest names its slots something other than the
- * archetype does, so the mapping that resolves that is worth a break of its own.
+ * is the only one whose manifest names a slot something other than the rig does,
+ * so the mapping that resolves that is worth a break of its own.
  */
-const SEAM_OPTS = optsFor('seam_trial');
+const CONTAINED = containedFixture();
+
+// ---------------------------------------------------------------------------
+// locating things inside an artifact, so no mutant hardcodes a measured number
+// ---------------------------------------------------------------------------
+
+/**
+ * Start index of each vertex's run inside a weighted `vertices` array.
+ *
+ * ⚠️ The encoding is `boneCount, (boneIndex, bindX, bindY, weight) × n` repeated,
+ * with no marker and no fixed stride — so a mutant that wants "the first weight
+ * of the second vertex" has to walk the run to find it. Writing the index as a
+ * literal is how a suite comes to depend on one fixture's exact geometry.
+ */
+function weightRuns(vertices: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < vertices.length; ) {
+    out.push(i);
+    i += 1 + vertices[i] * 4;
+  }
+  return out;
+}
+
+/** Index of the first vertex bound to more than one bone — the first one that moves. */
+function firstBlendedRun(vertices: number[]): number {
+  const runs = weightRuns(vertices);
+  const at = runs.find((start) => vertices[start] > 1);
+  if (at === undefined) throw new Error('the fixture mesh has no multi-bone vertex to re-weight');
+  return at;
+}
+
+/** The first page line of an atlas: a path on a line of its own. */
+function firstPageLine(atlasText: string): string {
+  const line = atlasText.split('\n').find((l) => l.endsWith('.png'));
+  if (!line) throw new Error('the fixture atlas declares no page');
+  return line;
+}
+
+/** The first region name in an atlas: the line right after its page's `pma:`. */
+function firstRegionName(atlasText: string): string {
+  const lines = atlasText.split('\n');
+  const at = lines.findIndex((l) => l.startsWith('pma: '));
+  if (at < 0 || !lines[at + 1]) throw new Error('the fixture atlas declares no region');
+  return lines[at + 1];
+}
 
 interface Artifacts {
   skeletonText: string;
@@ -152,18 +222,18 @@ const editJson = (text: string, f: (j: Record<string, unknown>) => void): string
 const MUTANTS: Mutant[] = [
   {
     name: 'M01_legacy_toplevel_physics_array',
-    origin: 'plan 04 case 6a — the constraint vanishes, load is clean',
+    origin: 'the constraint vanishes and the load is clean',
     expect: 'A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).physics = [{ name: 'grip_phys', bone: 'face', inertia: 0.6 }];
+        (j as any).physics = [{ name: 'stray_phys', bone: 'panel', inertia: 0.6 }];
       }),
     }),
   },
   {
     name: 'M02_bone_transform_key',
-    origin: 'plan 04 case 6b — inheritance silently falls back to Normal',
+    origin: 'inheritance silently falls back to Normal',
     expect: 'A02_NO_BONE_TRANSFORM_KEY',
     mutate: (a) => ({
       ...a,
@@ -174,59 +244,62 @@ const MUTANTS: Mutant[] = [
   },
   {
     name: 'M03_region_missing_width',
-    origin: 'plan 04 case 6c — width/height load as NaN, no error',
+    origin: 'width/height load as NaN, with no error',
     expect: 'A03_REGION_WIDTH_HEIGHT_FINITE',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        delete (j as any).skins[0].attachments.eye_l.eye_l_closed.width;
+        delete (j as any).skins[0].attachments.lens_l.lens_l_shut.width;
       }),
     }),
   },
   {
     name: 'M04_short_curve_array',
-    origin: 'plan 04 case 6g — 4 numbers where 16 are needed; NaN curve, no error',
+    origin: '4 numbers where 16 are needed; a NaN curve, with no error',
     expect: 'A05_CURVE_ARRAY_LENGTH',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        const keys = (j as any).animations.blink_once.slots.eye_l.rgba;
+        const keys = (j as any).animations.shut_once.slots.lens_l.rgba;
         keys[0].curve = keys[0].curve.slice(0, 4);
       }),
     }),
   },
   {
     name: 'M05_curve_on_attachment_timeline',
-    origin: 'plan 04 section 1-6 — attachment timelines take no curve',
+    origin: 'attachment timelines take no curve',
     expect: 'A05_CURVE_ARRAY_LENGTH',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).animations.talk.slots.mouth.attachment[0].curve = 'stepped';
+        (j as any).animations.cycle.slots.iris.attachment[0].curve = 'stepped';
       }),
     }),
   },
   {
     name: 'M06_atlas_size_disagrees_with_png',
-    origin: 'plan 04 case 6h — UVs collapse; rigid looks fine, meshes do not',
+    origin: 'the UVs collapse; rigid attachments look fine and meshes do not',
     expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
-    mutate: (a) => ({ ...a, atlasText: a.atlasText.replace('size: 277, 191', 'size: 2048, 2048') }),
+    mutate: (a) => ({ ...a, atlasText: a.atlasText.replace(/^size: .*$/m, 'size: 2048, 2048') }),
   },
   {
     name: 'M07_atlas_region_name_indented',
-    origin: 'plan 04 section 2-3 — page names are trimmed, region names are not',
+    origin: 'page names are trimmed and region names are not, so an indent renames the region',
     expect: 'A07_ATLAS_TEXT_SHAPE',
-    mutate: (a) => ({ ...a, atlasText: a.atlasText.replace('\neye_l_closed\n', '\n  eye_l_closed\n') }),
+    mutate: (a) => {
+      const region = firstRegionName(a.atlasText);
+      return { ...a, atlasText: a.atlasText.replace(`\n${region}\n`, `\n  ${region}\n`) };
+    },
   },
   {
     name: 'M08_atlas_blank_line_inside_page_block',
-    origin: 'plan 04 section 2-3 — a blank line closes the page; regions become pages',
+    origin: 'a blank line closes the page block, so every region after it becomes a page',
     expect: 'A07_ATLAS_TEXT_SHAPE',
-    mutate: (a) => ({ ...a, atlasText: a.atlasText.replace('pma: false\nface_base', 'pma: false\n\nface_base') }),
+    mutate: (a) => ({ ...a, atlasText: a.atlasText.replace(/^(pma: .*)$/m, '$1\n') }),
   },
   {
     name: 'M09_dark_two_colour_tint',
-    origin: 'plan 02 section 7 — parsed, then silently ignored by the renderer',
+    origin: 'parsed, then silently ignored by the renderer',
     expect: 'A12_NO_DARK_COLOR',
     mutate: (a) => ({
       ...a,
@@ -237,35 +310,35 @@ const MUTANTS: Mutant[] = [
   },
   {
     name: 'M10_loop_truncated_by_a_missing_last_key',
-    origin: 'plan 04 rule 4 — JSON has no duration field; the last key IS the duration',
+    origin: 'skeleton JSON has no duration field; the last key IS the duration',
     expect: 'A09_ANIMATION_DURATION_MATCHES_SPEC',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        for (const slot of ['eye_l', 'eye_r']) (j as any).animations.blink_auto.slots[slot].rgba.pop();
+        for (const slot of ['lens_l', 'lens_r']) (j as any).animations.shut_auto.slots[slot].rgba.pop();
       }),
     }),
   },
   {
     name: 'M11_attachment_points_at_a_missing_region',
-    origin: 'plan 04 case 6d — one of the two things that DOES throw loudly',
+    origin: 'one of the two things that DOES throw loudly',
     expect: 'A00_ROUNDTRIP_PARSE',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).skins[0].attachments.mouth.mouth_wide_open.path = '99_typo';
+        (j as any).skins[0].attachments.iris.iris_wide.path = '99_typo';
       }),
     }),
   },
   {
     name: 'M12_page_png_not_on_disk',
-    origin: 'plan 03 section 2-0 — the shipped skeleton.atlas declared a page that never existed',
+    origin: 'a shipped skeleton.atlas once declared a page that never existed on disk',
     expect: 'A17_ATLAS_PAGE_FILES_EXIST',
-    mutate: (a) => ({ ...a, atlasText: a.atlasText.replace('../parts/eye_r_closed.png', '../parts/nope.png') }),
+    mutate: (a) => ({ ...a, atlasText: a.atlasText.replace(firstPageLine(a.atlasText), '../nope_not_here.png') }),
   },
   {
     name: 'M13_version_label_from_the_4_2_era',
-    origin: 'plan 04 section 7-3 — the label is never checked by the parser',
+    origin: 'the label is never checked by the parser',
     expect: 'A16_SKELETON_VERSION_4_3',
     mutate: (a) => ({
       ...a,
@@ -308,7 +381,7 @@ const MUTANTS: Mutant[] = [
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).skins[0].attachments.face_base.face_clip = {
+        (j as any).skins[0].attachments.stage.stage_clip = {
           type: 'clipping',
           vertexCount: 4,
           vertices: [0, 0, 64, 0, 64, 64, 0, 64],
@@ -324,7 +397,7 @@ const MUTANTS: Mutant[] = [
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).skins[0].attachments.face_base.face_clip = {
+        (j as any).skins[0].attachments.stage.stage_clip = {
           type: 'clipping',
           vertexCount: 4,
           vertices: [0, 0, 64, 0, 64, 64, 0, 64],
@@ -334,52 +407,55 @@ const MUTANTS: Mutant[] = [
   },
   {
     name: 'M14_region_does_not_cover_its_page',
-    origin: 'plan 04 section 7-3 — one part per page means u2=v2=1, always',
+    origin: 'one part per page means u2=v2=1, always',
     expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
-    mutate: (a) => ({ ...a, atlasText: a.atlasText.replace('bounds: 0, 0, 136, 107', 'bounds: 4, 4, 100, 100') }),
+    mutate: (a) => ({ ...a, atlasText: a.atlasText.replace(/^bounds: .*$/m, 'bounds: 4, 4, 12, 12') }),
   },
   {
     name: 'M16_rim_vertex_pinned_to_the_control_bone',
-    origin: 'plan 02 section 2-3 — if the rim can move, the seam can move',
+    origin: 'if the rim can move, the seam can move',
     expect: 'A21_MESH_RIM_PINNED',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        // vertex 0 is a hull vertex: [boneCount=1, boneIndex, bindX, bindY, 1].
-        // Repoint it at the control bone and the weight stays valid — sum is
+        // Vertex 0 is a rim vertex: [boneCount=1, boneIndex, bindX, bindY, 1].
+        // Repoint it at the control bone and the weight stays valid — the sum is
         // still 1, nothing throws, and the seam quietly gains a hinge.
-        const mesh = (j as any).skins[0].attachments.mouth.mouth_wide_open;
-        mesh.vertices[1] = (j as any).bones.findIndex((b: any) => b.name === 'mouth_aperture');
+        const mesh = (j as any).skins[0].attachments.iris.iris_wide;
+        mesh.vertices[weightRuns(mesh.vertices)[0] + 1] = (j as any).bones.findIndex(
+          (b: any) => b.name === 'iris_aperture',
+        );
       }),
     }),
   },
   {
     name: 'M17_weights_do_not_sum_to_one',
-    origin: 'plan 04 section 1-3 — weights are read, never checked',
+    origin: 'weights are read, never checked',
     expect: 'A20_MESH_WEIGHTS_COHERENT',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        const mesh = (j as any).skins[0].attachments.mouth.mouth_wide_open;
-        // First inner-ring vertex: [2, anchor, bx, by, w0, control, bx, by, w1].
-        mesh.vertices[84] = 0.9;
+        const mesh = (j as any).skins[0].attachments.iris.iris_wide;
+        // The first vertex that blends two bones: [2, b0, x, y, w0, b1, x, y, w1].
+        // Knock its first weight down and the pair no longer sums to 1.
+        mesh.vertices[firstBlendedRun(mesh.vertices) + 4] = 0.9;
       }),
     }),
   },
   {
     name: 'M18_uv_outside_the_region',
-    origin: 'plan 04 section 1-3 — uvs decide worldVerticesLength, not their own sanity',
+    origin: 'uvs decide worldVerticesLength, not their own sanity',
     expect: 'A22_MESH_UVS_IN_UNIT_RANGE',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).skins[0].attachments.mouth.mouth_wide_open.uvs[0] = 1.4;
+        (j as any).skins[0].attachments.iris.iris_wide.uvs[0] = 1.4;
       }),
     }),
   },
   {
     name: 'M19_idle_keys_the_mesh_control_bone',
-    origin: 'plan 02 section 2-3 — a mesh keyed in idle dirties its canvas forever',
+    origin: 'a mesh keyed in idle dirties its canvas forever',
     expect: 'A15_IDLE_NO_MESH_BONE_KEYS',
     mutate: (a) => ({
       ...a,
@@ -387,19 +463,19 @@ const MUTANTS: Mutant[] = [
         // The pre-mesh check looked at the slot's own bone only, so this exact
         // break used to pass: the control bone is a different bone.
         (j as any).animations.idle.bones = {
-          mouth_aperture: { scale: [{ time: 0, x: 1, y: 1 }] },
+          iris_aperture: { scale: [{ time: 0, x: 1, y: 1 }] },
         };
       }),
     }),
   },
   {
     name: 'M20_mesh_falls_back_to_unweighted',
-    origin: 'plan 04 section 1-3 — encoding is chosen by a length comparison alone',
+    origin: 'the encoding is chosen by a length comparison alone',
     expect: 'A20_MESH_WEIGHTS_COHERENT',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        const mesh = (j as any).skins[0].attachments.mouth.mouth_wide_open;
+        const mesh = (j as any).skins[0].attachments.iris.iris_wide;
         // Exactly uvs.length numbers => the loader reads them as raw positions
         // and the bone weights are gone. No error, and the mesh stops moving.
         mesh.vertices = new Array(mesh.uvs.length).fill(0);
@@ -408,7 +484,7 @@ const MUTANTS: Mutant[] = [
   },
   {
     name: 'M21_physics_drives_no_component',
-    origin: 'plan 04 section 1-5 — the five component fields all default to 0',
+    origin: 'the five component fields all default to 0',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
     mutate: (a) => ({
       ...a,
@@ -421,7 +497,7 @@ const MUTANTS: Mutant[] = [
   },
   {
     name: 'M22_physics_damping_never_settles',
-    origin: 'plan 02 section 3 — damping >= 1 keeps a mesh canvas alive forever',
+    origin: 'damping >= 1 keeps a mesh canvas alive forever',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
     mutate: (a) => ({
       ...a,
@@ -432,7 +508,7 @@ const MUTANTS: Mutant[] = [
   },
   {
     name: 'M23_physics_zero_mass',
-    origin: 'plan 04 section 1-5 — mass is stored as 1/mass, so 0 becomes Infinity',
+    origin: 'mass is stored as 1/mass, so 0 becomes Infinity',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
     mutate: (a) => ({
       ...a,
@@ -443,7 +519,7 @@ const MUTANTS: Mutant[] = [
   },
   {
     name: 'M15_premultiplied_alpha_flag',
-    origin: 'plan 02 section 5-2 — the renderer does not un-premultiply; every part gets a black rim',
+    origin: 'the renderer does not un-premultiply, so every part gains a black rim',
     expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
     mutate: (a) => ({ ...a, atlasText: a.atlasText.replace('pma: false', 'pma: true') }),
   },
@@ -470,8 +546,8 @@ const MUTANTS: Mutant[] = [
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).constraints.push({ type: 'ik', name: 'probe_ik', bones: ['face'], target: 'root' });
-        (j as any).animations.blink_once.ik = {
+        (j as any).constraints.push({ type: 'ik', name: 'probe_ik', bones: ['panel'], target: 'root' });
+        (j as any).animations.shut_once.ik = {
           probe_ik: [{ time: 0, mix: 1, curve: [0, 1, 0.1] }, { time: 0.1, mix: 0 }],
         };
       }),
@@ -488,11 +564,11 @@ const MUTANTS: Mutant[] = [
         (j as any).constraints.push({
           type: 'transform',
           name: 'probe_tf',
-          bones: ['face'],
+          bones: ['panel'],
           source: 'root',
           properties: { rotate: { to: { rotate: {} } } },
         });
-        (j as any).animations.blink_once.transform = {
+        (j as any).animations.shut_once.transform = {
           probe_tf: [{ time: 0, mixRotate: 1, curve: [0, 1, 0.1, 1] }, { time: 0.1, mixRotate: 0 }],
         };
       }),
@@ -505,8 +581,8 @@ const MUTANTS: Mutant[] = [
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).constraints.push({ type: 'path', name: 'probe_path', bones: ['face'], slot: 'face_base' });
-        (j as any).animations.blink_once.path = {
+        (j as any).constraints.push({ type: 'path', name: 'probe_path', bones: ['panel'], slot: 'stage' });
+        (j as any).animations.shut_once.path = {
           probe_path: { position: [{ time: 0, value: 0, curve: [0, 1] }, { time: 0.1, value: 1 }] },
         };
       }),
@@ -520,7 +596,7 @@ const MUTANTS: Mutant[] = [
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
         (j as any).constraints.push({ type: 'slider', name: 'probe_slider', animation: 'idle' });
-        (j as any).animations.blink_once.slider = {
+        (j as any).animations.shut_once.slider = {
           probe_slider: { time: [{ time: 0, value: 0, curve: [0, 1] }, { time: 0.1, value: 1 }] },
         };
       }),
@@ -534,8 +610,8 @@ const MUTANTS: Mutant[] = [
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).animations.blink_once.drawOrder = [
-          { time: 0, offsets: [{ slot: 'eye_l', offset: 1 }], curve: 'stepped' },
+        (j as any).animations.shut_once.drawOrder = [
+          { time: 0, offsets: [{ slot: 'lens_l', offset: 1 }], curve: 'stepped' },
         ];
       }),
     }),
@@ -547,8 +623,8 @@ const MUTANTS: Mutant[] = [
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).animations.blink_once.drawOrderFolder = [
-          { slots: ['eye_l', 'eye_r'], keys: [{ time: 0, curve: 'stepped' }] },
+        (j as any).animations.shut_once.drawOrderFolder = [
+          { slots: ['lens_l', 'lens_r'], keys: [{ time: 0, curve: 'stepped' }] },
         ];
       }),
     }),
@@ -561,7 +637,7 @@ const MUTANTS: Mutant[] = [
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
         (j as any).events = { probe_event: {} };
-        (j as any).animations.blink_once.events = [{ time: 0, name: 'probe_event', curve: 'stepped' }];
+        (j as any).animations.shut_once.events = [{ time: 0, name: 'probe_event', curve: 'stepped' }];
       }),
     }),
   },
@@ -570,10 +646,10 @@ const MUTANTS: Mutant[] = [
 
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const JOINT_MUTANTS: Mutant[] = [
+const ARTICULATED_MUTANTS: Mutant[] = [
   {
     name: 'M24_base_plate_promoted_to_a_mesh',
-    origin: 'plan 02 section 2-3 / section 7 — a full-frame mesh is a full-frame canvas that can never dirty-skip',
+    origin: 'a full-frame mesh is a full-frame canvas that can never dirty-skip',
     expect: 'A14_NO_FULL_FRAME_MESH',
     mutate: (a) => ({
       ...a,
@@ -582,27 +658,29 @@ const JOINT_MUTANTS: Mutant[] = [
         // spans the stage), so "base is never a mesh" needed a MUTANT, not a new
         // assertion. The compiler refuses it too, which is why this has to be
         // forged in the artifact to be tested at all.
-        const base = (j as any).bones.findIndex((b: any) => b.name === 'base');
-        (j as any).skins[0].attachments.base['00_base_body'] = {
+        const stage = (j as any).bones.findIndex((b: any) => b.name === 'stage');
+        const halfW = (j as any).skeleton.width / 2;
+        const halfH = (j as any).skeleton.height / 2;
+        (j as any).skins[0].attachments.stage['00_stage'] = {
           type: 'mesh',
           uvs: [0, 0, 1, 0, 1, 1, 0, 1],
           triangles: [0, 1, 2, 0, 2, 3],
           vertices: [
-            1, base, -960, 540, 1,
-            1, base, 960, 540, 1,
-            1, base, 960, -540, 1,
-            1, base, -960, -540, 1,
+            1, stage, -halfW, halfH, 1,
+            1, stage, halfW, halfH, 1,
+            1, stage, halfW, -halfH, 1,
+            1, stage, -halfW, -halfH, 1,
           ],
           hull: 4,
-          width: 1920,
-          height: 1080,
+          width: (j as any).skeleton.width,
+          height: (j as any).skeleton.height,
         };
       }),
     }),
   },
   {
-    name: 'M25_stroke_key_carries_a_screen_space_y',
-    origin: "plan 02 section 2-1 — the scaffold's `x: 30, y: 8` pairs, which is why its animation could not move to another cut",
+    name: 'M25_travel_key_carries_a_screen_space_y',
+    origin: "a generator's `x: 30, y: 8` pairs, which is why its animation could not move to another cut",
     expect: 'A24_AXIS_SPACE_STROKE',
     mutate: (a) => ({
       ...a,
@@ -610,13 +688,13 @@ const JOINT_MUTANTS: Mutant[] = [
         // Loads clean, animates, and looks right on THIS cut. It is wrong only in
         // the sense that the direction is now half in the keys and half in the
         // axis bone, so the next cut inherits a lie.
-        (j as any).animations.piston_slow.bones.piston.translate[1].y = 8;
+        (j as any).animations.advance_slow.bones.plunger.translate[1].y = 8;
       }),
     }),
   },
   {
     name: 'M26_axis_bone_is_animated',
-    origin: 'plan 02 section 2-1 — the axis angle is the one per-cut SETUP value; animating it swings the whole formation',
+    origin: 'the axis angle is the one per-cut SETUP value; animating it swings the whole formation',
     expect: 'A24_AXIS_SPACE_STROKE',
     mutate: (a) => ({
       ...a,
@@ -626,87 +704,111 @@ const JOINT_MUTANTS: Mutant[] = [
     }),
   },
   {
-    name: 'M27_fluid_src_reparented_under_the_moving_part',
-    origin: 'spine_builder.py:49 — emitted fluid gets dragged left and right with every stroke',
+    name: 'M27_emitter_reparented_under_the_moving_part',
+    origin: 'what the emitter released gets dragged left and right with every stroke',
     expect: 'A25_DETACHED_BONE_PARENTAGE',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        (j as any).bones.find((b: any) => b.name === 'fluid_src').parent = 'piston';
+        (j as any).bones.find((b: any) => b.name === 'emitter').parent = 'plunger';
       }),
     }),
   },
   {
     name: 'M28_occluder_drawn_before_the_moving_part',
-    origin: 'plan 01 section 2 — the entry point only reads as swallowed while the occluder is in front',
+    origin: 'the entry point only reads as covered while the occluder is drawn in front of it',
     expect: 'A26_SLOT_DRAW_ORDER',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
         const slots = (j as any).slots;
-        const lip = slots.findIndex((s: any) => s.name === 'lip');
-        const piston = slots.findIndex((s: any) => s.name === 'piston');
-        slots.splice(piston, 0, slots.splice(lip, 1)[0]);
+        const collar = slots.findIndex((s: any) => s.name === 'collar');
+        const plunger = slots.findIndex((s: any) => s.name === 'plunger');
+        slots.splice(plunger, 0, slots.splice(collar, 1)[0]);
       }),
     }),
   },
   {
     name: 'M29_region_name_diverges_from_its_page_filename',
-    origin: 'plan 02 section 2-2 — attachment = region = filename is the runtime join key, and a break makes the slot vanish silently',
+    origin: 'attachment = region = filename is the runtime join key, and a break makes the slot vanish silently',
     expect: 'A27_REGION_NAME_MATCHES_PAGE_FILENAME',
     mutate: (a) => ({
       // Renamed on BOTH sides, so the attachment still resolves and A08 stays
       // green. That is the hole: the first two links of the chain agreed with
       // each other while pointing at a file called something else.
-      atlasText: a.atlasText.replace('\n05_fluid_pool\n', '\n05_pool_typo\n'),
+      atlasText: a.atlasText.replace('\n05_pool\n', '\n05_pool_typo\n'),
       skeletonText: editJson(a.skeletonText, (j) => {
-        const atts = (j as any).skins[0].attachments.fluid_pool;
-        atts['05_pool_typo'] = atts['05_fluid_pool'];
-        delete atts['05_fluid_pool'];
+        const atts = (j as any).skins[0].attachments.pool;
+        atts['05_pool_typo'] = atts['05_pool'];
+        delete atts['05_pool'];
       }),
     }),
   },
   {
     name: 'M30_ribbon_row_weights_diverge',
-    origin: 'plan 02 section 2-3 item 2 — a drip changes length without changing width',
+    origin: 'a strip changes length without changing width',
     expect: 'A28_RIBBON_ROWS_SHARE_WEIGHTS',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        // Vertex 1 is the left side of row 1: [2, b0, x, y, w0, b1, x, y, w1]
-        // starting at index 5. Re-splitting 50/50 keeps the sum at 1, so A20 has
-        // nothing to say and the drip quietly develops a taper that grows with
-        // the sag.
-        const mesh = (j as any).skins[0].attachments.fluid['03_fluid_overflow'];
-        mesh.vertices[9] = 0.5;
-        mesh.vertices[13] = 0.5;
+        // The first blended vertex is one side of row 1: [2, b0, x, y, w0, b1, x,
+        // y, w1]. Re-splitting it 50/50 keeps the sum at 1, so A20 has nothing to
+        // say and the strip quietly develops a taper that grows with its travel.
+        const mesh = (j as any).skins[0].attachments.trail['03_trail'];
+        const run = firstBlendedRun(mesh.vertices);
+        mesh.vertices[run + 4] = 0.5;
+        mesh.vertices[run + 8] = 0.5;
       }),
     }),
   },
   {
     name: 'M31_ribbon_entry_row_rides_the_chain',
-    origin: 'plan 02 section 2-3 — a ribbon may move its tip, never its entry: that row is where the fluid leaves the body',
+    origin: 'a ribbon may move its tip, never its entry: that row is where the strip joins what it comes out of',
     expect: 'A21_MESH_RIM_PINNED',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        const mesh = (j as any).skins[0].attachments.fluid['03_fluid_overflow'];
-        mesh.vertices[1] = (j as any).bones.findIndex((b: any) => b.name === 'fluid_c');
+        const mesh = (j as any).skins[0].attachments.trail['03_trail'];
+        mesh.vertices[weightRuns(mesh.vertices)[0] + 1] = (j as any).bones.findIndex((b: any) => b.name === 'trail_c');
       }),
     }),
   },
   {
-    name: 'M32_stroke_drives_past_the_contact_point',
-    origin: "owner rule 2026-08-22 — the swallow goes at most until the inserting mass touches the occluder",
+    name: 'M44_one_mesh_slot_past_the_declared_budget',
+    origin:
+      'the budget is the RIG\'s (`invariants.meshTriangles` / `meshSlots`), not the validator\'s — so this mutant is what keeps the reading of it honest after the numbers stopped being constants',
+    expect: 'A13_MESH_BUDGET',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        // A fourth mesh slot, small enough that A14 has nothing to say and
+        // weighted correctly so A20 has nothing to say either. The only thing
+        // wrong with it is that the rig budgeted three.
+        const rim = (j as any).bones.findIndex((b: any) => b.name === 'rim');
+        (j as any).skins[0].attachments.pool['05_pool'] = {
+          type: 'mesh',
+          uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+          triangles: [0, 1, 2, 0, 2, 3],
+          vertices: [1, rim, -20, 10, 1, 1, rim, 20, 10, 1, 1, rim, 20, -10, 1, 1, rim, -20, -10, 1],
+          hull: 4,
+          width: 40,
+          height: 20,
+        };
+      }),
+    }),
+  },
+  {
+    name: 'M32_travel_drives_past_the_contact_point',
+    origin: 'inward travel goes at most until the moving mass touches the part that occludes it',
     expect: 'A29_STROKE_WITHIN_CONTACT_DEPTH',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        // +10px on the deepest key. Loads, plays, and renders two bodies passing
+        // +10px on the deepest key. Loads, plays, and renders two plates passing
         // through each other; nothing in the file has an opinion about it. The
-        // shipped rig sits 6.5px under the limit, so this is the smallest edit
-        // that crosses it.
-        const keys = (j as any).animations.piston_fast.bones.piston.translate;
+        // fixture's deepest key is 57 against a contact depth of 66, so +10 is the
+        // smallest whole-pixel edit that crosses the line and +9 is not.
+        const keys = (j as any).animations.advance_fast.bones.plunger.translate;
         keys[1].x += 10;
       }),
     }),
@@ -715,19 +817,18 @@ const JOINT_MUTANTS: Mutant[] = [
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const SEAM_MUTANTS: Mutant[] = [
+const CONTAINED_MUTANTS: Mutant[] = [
   {
-    name: 'M33_stroke_drives_past_the_cap_containment_ceiling',
-    origin:
-      'plan 01 section 4.5 — past the containment window the cap contour is drawn where the art says it is inside the body',
+    name: 'M33_travel_drives_past_the_containment_ceiling',
+    origin: 'past the containment window the leading contour is drawn where the art says it is covered',
     expect: 'A30_STROKE_WITHIN_CAP_CONTAINMENT',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        // The shipped rig's deepest key is 75.733 against a ceiling of 118, so
-        // +43 is the smallest whole-pixel edit that crosses it. Loads, plays,
-        // and renders the cap outside the flesh that should have swallowed it.
-        const keys = (j as any).animations.piston_fast.bones.piston.translate;
+        // The fixture's deepest key is 54 against a ceiling of 96, so +43 is the
+        // smallest whole-pixel edit that crosses it and +42 is not. Loads, plays,
+        // and renders the part outside the cover that should have hidden it.
+        const keys = (j as any).animations.advance_fast.bones.plunger.translate;
         keys[1].x += 43;
       }),
     }),
@@ -740,10 +841,11 @@ const SEAM_MUTANTS: Mutant[] = [
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
-        // Copied from the placeholder cut's own piston_slow, where it is correct.
-        // That is the point: this is the tempting edit, not an absurd one, and it
-        // silently takes the rig outside the evidence for its only ceiling.
-        (j as any).animations.piston_slow.bones.piston.scale = [
+        // Copied verbatim from the articulated fixture's own advance_slow, where
+        // it is correct. That is the point: this is the tempting edit, not an
+        // absurd one, and it silently takes the rig outside the evidence for its
+        // only ceiling.
+        (j as any).animations.advance_slow.bones.plunger.scale = [
           { time: 0, x: 1, y: 1 },
           { time: 0.2, x: 1.04, y: 0.97 },
           { time: 0.8, x: 1, y: 1 },
@@ -752,18 +854,18 @@ const SEAM_MUTANTS: Mutant[] = [
     }),
   },
   {
-    name: 'M35_slot_keeps_the_parts_lane_name',
+    name: 'M35_slot_keeps_the_manifest_name',
     origin:
-      'the manifest calls it `occluder` and the archetype calls it `lip`; the emitted name is the join key and a mismatch makes the slot vanish with no error',
+      'the manifest calls it `shroud` and the rig calls it `collar`; the emitted name is the join key and a mismatch makes the slot vanish with no error',
     expect: 'A26_SLOT_DRAW_ORDER',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
         const slots = (j as any).slots;
-        slots.find((s: any) => s.name === 'lip').name = 'occluder';
+        slots.find((s: any) => s.name === 'collar').name = 'shroud';
         const atts = (j as any).skins[0].attachments;
-        atts.occluder = atts.lip;
-        delete atts.lip;
+        atts.shroud = atts.collar;
+        delete atts.collar;
       }),
     }),
   },
@@ -1127,7 +1229,7 @@ const RIG_MUTANTS: RigMutant[] = [
     origin: 'SkeletonJson.ts:90-118 — `parent` resolves against the bones already read, so a forward reference loads as a second root',
     expect: 'is not declared before it',
     mutate: (rig) => {
-      (rig as any).bones.find((b: any) => b.name === 'cam').parent = 'fluid_c';
+      (rig as any).bones.find((b: any) => b.name === 'cam').parent = 'trail_c';
     },
   },
   {
@@ -1135,7 +1237,7 @@ const RIG_MUTANTS: RigMutant[] = [
     origin: 'bone names are the join key for slots, meshes and every timeline; a duplicate makes the join ambiguous with no error',
     expect: 'two bones are called',
     mutate: (rig) => {
-      (rig as any).bones.push({ name: 'piston', parent: 'root' });
+      (rig as any).bones.push({ name: 'plunger', parent: 'root' });
     },
   },
   {
@@ -1143,7 +1245,7 @@ const RIG_MUTANTS: RigMutant[] = [
     origin: "SkeletonJson.ts:127 — the parser throws `Couldn't find bone … for slot …`, but in the consumer's process",
     expect: 'which this rig does not declare',
     mutate: (rig) => {
-      (rig as any).slots.find((s: any) => s.name === 'lip').bone = 'rim_typo';
+      (rig as any).slots.find((s: any) => s.name === 'collar').bone = 'rim_typo';
     },
   },
   {
@@ -1151,8 +1253,8 @@ const RIG_MUTANTS: RigMutant[] = [
     origin: 'a rig-declared attachment naming a missing PNG used to surface as a raw ENOENT from readFileSync',
     expect: 'is not on disk at',
     mutate: (rig) => {
-      // `near` is a slot the joint manifest carries no part for, so filling it
-      // from the rig is the one place this cut can exercise the rig-skin path.
+      // `near` is a slot the manifest carries no part for, so filling it from the
+      // rig is the one place this fixture can exercise the rig-skin path.
       (rig as any).skins = { default: { near: { probe_missing: { image: 'nope_not_here.png' } } } };
     },
   },
@@ -1161,7 +1263,7 @@ const RIG_MUTANTS: RigMutant[] = [
     origin: 'SkeletonJson.ts:149-176 — ik `bones`/`target` resolve by name and throw on a miss, again in the consumer',
     expect: 'which the rig does not declare as a bone',
     mutate: (rig) => {
-      (rig as any).constraints = [{ name: 'probe_ik', type: 'ik', bones: ['piston'], target: 'nowhere' }];
+      (rig as any).constraints = [{ name: 'probe_ik', type: 'ik', bones: ['plunger'], target: 'nowhere' }];
     },
   },
   {
@@ -1177,25 +1279,19 @@ const RIG_MUTANTS: RigMutant[] = [
     origin: 'SkeletonJson.ts:148-367 — an entry whose `type` matches no case is dropped with no error and no default branch',
     expect: 'rigc does not emit it yet',
     mutate: (rig) => {
-      (rig as any).constraints = [{ name: 'probe_path', type: 'path', bones: ['piston'], slot: 'lip' }];
+      (rig as any).constraints = [{ name: 'probe_path', type: 'path', bones: ['plunger'], slot: 'collar' }];
     },
   },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 function runRigSuite(): number {
-  const entry: CutEntry | undefined = CUT_TABLE.joint_dev;
-  if (!entry?.rig) {
-    console.log('\n── rig spec refusals ──');
-    console.log('  SKIP  the cuts table has no `rig` path for joint_dev, so the rig spec was not exercised at all.');
-    return 0;
-  }
-  const opts = optsFor('joint_dev');
+  const opts = optsForFixture(ARTICULATED);
   const sourceText = readFileSync(opts.rigPath, 'utf8');
   const dir = mkdtempSync(join(tmpdir(), 'rigc-rigspec-'));
   const rigPath = join(dir, 'probe.rig.json');
   let bad = 0;
-  console.log('\n── rig spec refusals (joint_dev) ──');
+  console.log(`\n── rig spec refusals (${ARTICULATED.rig}) ──`);
 
   // Positive control. The copy must compile to the same bytes as the original,
   // or every refusal below could be the copy's fault rather than the edit's.
@@ -1252,9 +1348,11 @@ function runRigSuite(): number {
 // none, so the assertion ran, looked at nothing, and counted itself green. That
 // is the exact false green the SKIP channel was built for.
 //
-// The three cases below are one assertion's three states, because a skip that
+// Three of the cases below are one assertion's three states, because a skip that
 // swallows a real mismatch would be a worse bug than the vacuous pass it fixed:
 // nothing to compare (SKIP), something to compare (PASS), a disagreement (FAIL).
+// The fourth is a second assertion's skip, and it is here for the same reason —
+// this is the only rig in the file that declares no invariants at all.
 
 /** One line per case, in the same shape the fixture suites print. Returns 1 when it failed. */
 function reportCase(name: string, ok: boolean, detail: string, why: string): number {
@@ -1313,8 +1411,20 @@ function writeProbeRig(): ProbeDirs {
   return { dir, rigPath, outDir: join(dir, 'spine') };
 }
 
-/** Compile one motion spec against the probe rig and gate the result. */
-function gateProbe(dirs: ProbeDirs, motion: Record<string, unknown>): ReturnType<typeof validate> {
+/**
+ * Compile one motion spec against the probe rig and gate the result.
+ *
+ * ⚠️ The profile is a parameter and it matters. Under `spine` the renderer-policy
+ * assertions do not run AT ALL — they are reported on a third channel,
+ * `profileSkipped`, which is neither a pass nor a skip — so a control that wants
+ * to see one of them SKIP has to ask for the profile that runs it. Reading
+ * `skipped` alone under the wrong profile produces a confident, wrong answer.
+ */
+function gateProbe(
+  dirs: ProbeDirs,
+  motion: Record<string, unknown>,
+  profile: ValidateProfile = 'spine',
+): ReturnType<typeof validate> {
   const motionPath = join(dirs.dir, 'probe.motion.json');
   writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
   const opts: Options = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
@@ -1325,7 +1435,7 @@ function gateProbe(dirs: ProbeDirs, motion: Record<string, unknown>): ReturnType
     atlasDir: opts.outDir,
     declaredDurations: result.declaredDurations,
     rig: result.rig,
-    profile: 'spine',
+    profile,
   });
 }
 
@@ -1407,6 +1517,20 @@ function runStaticRigSuite(): number {
     compared.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
     'an animation with no tracks is still an animation: 0s declared against 0s loaded is a real comparison',
     'the skip must be keyed on "there is nothing to compare", not on "the durations are zero"',
+  );
+
+  // A13's other state, and it belongs in this suite because the probe rig is the
+  // only one here that declares no `invariants` at all. A mesh budget is one
+  // consumer's frame time, not a property of Spine, so a rig that never wrote one
+  // down has nothing for the assertion to measure against — and "nothing to
+  // measure" must report SKIP, never a pass.
+  const policy = gateProbe(dirs, STATIC_MOTION, 'spine-html');
+  const budget = policy.skipped.find((s) => s.assertion === 'A13_MESH_BUDGET');
+  say(
+    'S04_A13_SKIPS_WHEN_THE_RIG_DECLARED_NO_BUDGET',
+    budget !== undefined && !policy.passed.includes('A13_MESH_BUDGET'),
+    budget ? `skipped: ${budget.reason}` : 'A13 looked at a rig with no budget and called that a pass',
+    'the numbers used to be constants in the validator, which failed correct foreign data against one project\'s canvas',
   );
 
   // The mismatch branch, with the skip's precondition HALF true: the spec
@@ -1562,14 +1686,14 @@ function runDrawOrderSuite(): number {
 
 interface Suite {
   name: string;
-  opts: typeof OPTS;
+  opts: Options;
   mutants: Mutant[];
 }
 
 const SUITES: Suite[] = [
-  { name: 'face_trial', opts: OPTS, mutants: MUTANTS },
-  { name: 'joint_dev', opts: JOINT_OPTS, mutants: JOINT_MUTANTS },
-  { name: 'seam_trial', opts: SEAM_OPTS, mutants: SEAM_MUTANTS },
+  { name: OVERLAY.rig, opts: optsForFixture(OVERLAY), mutants: MUTANTS },
+  { name: ARTICULATED.rig, opts: optsForFixture(ARTICULATED), mutants: ARTICULATED_MUTANTS },
+  { name: `${CONTAINED.rig} (contained cut)`, opts: optsForFixture(CONTAINED), mutants: CONTAINED_MUTANTS },
 ];
 
 function runSuite(suite: Suite): number {
@@ -1638,40 +1762,140 @@ function runSuite(suite: Suite): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// the extra suite — a project's own cuts, when it points the run at them
+// ---------------------------------------------------------------------------
+//
+// ⭐ This suite is a POSITIVE control and deliberately nothing else. The mutant
+// tables above are aimed at generated fixtures because a break has to name
+// something, and hand-aiming a second set at somebody's real art is how this file
+// became unrunnable outside one repository in the first place. What real art adds
+// that a fixture cannot is the geometry itself: measured offsets, a measured
+// axis, a measured ceiling, a mesh built over a mask contour nobody drew by hand.
+// So the question this suite asks is the one only the real cuts can answer —
+// **does the whole gate still come back green on them, and does it still emit the
+// same bytes twice?**
+//
+// A cuts table names cuts; it does not have to name any particular ones. Every
+// entry in it is compiled and gated, so a project that adds a cut gets it covered
+// without editing this file.
+
+function runCutsSuite(): { failures: number; cuts: number } {
+  console.log('\n── extra suite: registered cuts ──');
+  if (CUTS === null) {
+    console.log('  INFO  no cuts file given, so the extra suite was skipped. The public suite above does not need one.');
+    console.log('        Point a run at a project\'s registry with --cuts <cuts.json> (or RIGC_CUTS=<path>).');
+    return { failures: 0, cuts: 0 };
+  }
+  const names = Object.keys(CUTS.table);
+  if (names.length === 0) {
+    console.log(`  FAIL  ${CUTS.file} registers no cuts at all`);
+    return { failures: 1, cuts: 0 };
+  }
+  let bad = 0;
+  console.log(`  from ${CUTS.file}`);
+  for (const name of names) {
+    const entry = CUTS.table[name];
+    for (const key of ['rig', 'motion', 'out'] as const) {
+      if (typeof entry?.[key] !== 'string') {
+        bad++;
+        console.log(`  FAIL  ${name}: the cuts table gives it no "${key}" path`);
+      }
+    }
+    if (typeof entry?.rig !== 'string' || typeof entry?.motion !== 'string' || typeof entry?.out !== 'string') continue;
+    const opts = optsForCut(CUTS.dir, entry);
+    try {
+      const result = compile(opts);
+      const report = validate({
+        skeletonText: result.skeletonText,
+        atlasText: result.atlasText,
+        atlasDir: opts.outDir,
+        declaredDurations: result.declaredDurations,
+        rig: result.rig,
+        // Compiling twice is what makes A18 mean anything here: on real art the
+        // determinism claim is worth more than on a fixture, because the manifest
+        // carries floats nobody chose.
+        reEmit: { skeletonText: compile(opts).skeletonText, atlasText: compile(opts).atlasText },
+      });
+      if (report.failures.length === 0) {
+        const skips = report.skipped.length ? `, ${report.skipped.length} skipped` : '';
+        console.log(`  PASS  CUT_IS_GREEN[${name}]  (${result.rig.archetype}: ${report.passed.length} assertions ran${skips})`);
+      } else {
+        bad++;
+        console.log(`  FAIL  CUT_IS_GREEN[${name}]`);
+        for (const f of report.failures) console.log(`          ${f.assertion}: ${f.detail}`);
+      }
+    } catch (err) {
+      bad++;
+      console.log(`  FAIL  CUT_IS_GREEN[${name}]: ${(err as Error).message}`);
+    }
+  }
+  return { failures: bad, cuts: names.length };
+}
+
 function main(): void {
   let bad = 0;
   let breaks = 0;
   let tolerances = 0;
+  // Every case that actually looked at something.
+  //
+  // ⚠️ Read this for what it is: a FLOOR, not a gate with a mutant behind it. It
+  // cannot fire while the tables above have entries in them, and if the fixture
+  // builder ever failed outright the process would die at import with a stack
+  // trace rather than reach here. What it does cover is attrition — a future run
+  // where the example corpus is gone, no cuts file is given and somebody has
+  // emptied a suite, which would otherwise print "green" over an empty gate.
+  let substantive = 0;
   for (const suite of SUITES) {
     bad += runSuite(suite);
+    substantive += 1 + suite.mutants.length;
     for (const mutant of suite.mutants) {
       if (mutant.expect === null) tolerances++;
       else breaks++;
     }
   }
   bad += runRigSuite();
+  substantive += 1 + RIG_MUTANTS.length;
   bad += runStaticRigSuite();
+  substantive += 4;
   bad += runDrawOrderSuite();
+  substantive += 6;
   const diffBad = runDiffSuite();
-  if (diffBad !== null) bad += diffBad;
+  if (diffBad !== null) {
+    bad += diffBad;
+    substantive += 1 + DIFF_CASES.length;
+  }
   const checkBad = runCheckSuite();
-  if (checkBad !== null) bad += checkBad;
+  if (checkBad !== null) {
+    bad += checkBad;
+    substantive += 3;
+  }
+  const cuts = runCutsSuite();
+  bad += cuts.failures;
+  substantive += cuts.cuts;
 
   console.log('');
+  if (substantive === 0) {
+    console.error('rigc selftest: nothing substantive ran — this is not a pass, it is an empty gate');
+    process.exit(2);
+  }
   if (bad > 0) {
     console.error(`rigc selftest: ${bad} control(s) failed`);
     process.exit(1);
   }
+  const corpus =
+    diffBad === null || checkBad === null
+      ? '\n  ⚠️ The example corpus is absent, so the ' +
+        [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
+        ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
+      : `, + ${DIFF_CASES.length} diff measure controls, + 3 check controls (frames-only reads, a faithful ` +
+        'transcription, a time-reversed one)';
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
-      `+ ${tolerances} legal edits the gate had to accept, + 3 static-rig controls, + 6 draw-order controls` +
-      (diffBad === null
-        ? '\n  ⚠️ but the rigc diff self-checks did NOT run (no example corpus) — this run does not cover them'
-        : `, + ${DIFF_CASES.length} diff measure controls`) +
-      (checkBad === null
-        ? '\n  ⚠️ and the rigc check self-checks did NOT run (no example corpus, or rung 3 frames unrendered)'
-        : ', + 3 check controls (frames-only reads, a faithful transcription, a time-reversed one)'),
+      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 6 draw-order controls` +
+      corpus +
+      (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : ''),
   );
 }
 
