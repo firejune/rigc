@@ -28,11 +28,23 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 | 2 | [`2-the-12-principles.md`](../briefs/2-the-12-principles.md) | rev 2, 2026-08-23 | 4 animations, 12 fps, **contact sheets + 2 stills each** | 1 | 4 × 25.8 s; the sheets *are* the frame set |
 | 4 | [`4-wave-principle.md`](../briefs/4-wave-principle.md) | rev 2, 2026-08-23 | 3 animations, 12 fps + 24 fps sheets | 1 | one shared viewport; in `ball-catch` the whole rig travels, not just the ball |
 | 5 | [`5-squash-and-stretch.md`](../briefs/5-squash-and-stretch.md) | rev 2, 2026-08-23 | 3 animations, 12 fps + 24 fps sheets | 1 | subject ~4–16 px; proportions are measured, not seen |
-| 6, 7, 8, spineboy | — | — | — | — | not prepared. 6 and 7 ship meshes, which `render_reference.ts` refuses by name; 7 has no upstream `license.txt` at all and must never be rendered |
+| 6 | [`6-arcs.md`](../briefs/6-arcs.md) | **yes (third party)**, rev 3, 2026-08-23 | 1 animation, 12 fps + 24 fps sheet | 1 | the subject **deforms**; ball ~14 px; proportions are measured, not seen |
+| 7, 8, spineboy | — | — | — | — | not prepared. `7-anticipation` has no upstream `license.txt` at all, so `render_reference.ts` refuses it and it must never be rendered |
 
 **Brief verified** is the header block described in the next section. Rungs 3 and 1
 were attempted before the rule existed; their briefs still need the pass, and until
-they get it a run against either of them carries the risk the section names.
+they get it a run against either of them carries the risk the section names. Rung 6
+is the first brief to carry the pass the protocol actually asks for — a **different**
+agent, not the one that wrote it; rungs 2, 4 and 5 were re-measured by their own
+author and their headers say so.
+
+⚠️ **"Re-measured twice" is not the same as "verified".** Rung 6's revision 2 was a
+second pass by the writing agent, with different machinery throughout, and it still
+left the brief asserting a one-piece stone that is two pieces, a ball flattened in
+free flight that is round, and a set of 24 fps figures measured on frames that were
+never committed — so nothing downstream could check them. Two of those survived
+*because* both passes shared the same working set. That is the whole reason this
+section names a different agent.
 
 ⚠️ **A rung with two skeletons needs two candidates, and `bench` does not know
 that.** `bench <N> --candidate <dir>` takes one candidate and diffs it against every
