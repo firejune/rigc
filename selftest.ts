@@ -2002,6 +2002,157 @@ function runMeshSuite(): number {
   return bad;
 }
 
+/** The rung-6 transcription and the frames it is measured against. */
+const MESH_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/6-arcs');
+const MESH_FRAMES = resolve(import.meta.dir, 'bench/reference/6-arcs');
+const MESH_IMAGES = resolve(import.meta.dir, 'examples/6-arcs/images');
+/** The slots whose attachments are meshes, which is what these two controls are about. */
+const MESH_SLOTS = ['ball', 'tail'];
+
+/** Compile the rung-6 transcription, optionally through a rewritten rig spec. */
+function compileMeshTranscription(rigText: string | null): {
+  skeletonText: string;
+  atlasText: string;
+  atlasDir: string;
+} {
+  const outDir = mkdtempSync(join(tmpdir(), 'rigc-mesh-'));
+  let rigPath = join(MESH_TRANSCRIPTION, '6-arcs-pro.rig.json');
+  if (rigText !== null) {
+    rigPath = join(outDir, 'rewritten.rig.json');
+    writeFileSync(rigPath, rigText);
+  }
+  const result = compile({
+    rigPath,
+    motionPath: join(MESH_TRANSCRIPTION, '6-arcs-pro.motion.json'),
+    outDir,
+    imagesDir: MESH_IMAGES,
+  });
+  return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir };
+}
+
+/** The median and worst drift of the mesh-bearing slots, over every frame compared. */
+function meshDrift(report: CheckReport): { median: number; worst: number; samples: number } {
+  const drifts: number[] = [];
+  for (const anim of report.animations) {
+    for (const frame of anim.frames) {
+      for (const slot of frame.slots) {
+        if (slot.drift !== null && MESH_SLOTS.includes(slot.slot)) drifts.push(slot.drift);
+      }
+    }
+  }
+  drifts.sort((a, b) => a - b);
+  return {
+    median: drifts.length ? drifts[drifts.length >> 1] : Infinity,
+    worst: drifts.length ? drifts[drifts.length - 1] : Infinity,
+    samples: drifts.length,
+  };
+}
+
+/**
+ * Shift every bone index inside a rig spec's authored mesh weights by one.
+ *
+ * ⚠️ This is not a synthetic break. An authored mesh's weights bind bones by
+ * **index into the emitted bone array** — the one place the rig spec does not
+ * resolve by name — so inserting a bone anywhere ahead of the meshes does exactly
+ * this, in silence, on a rig nobody meant to change. The gate stays green because
+ * every index is still in range and every vertex's weights still sum to 1, which
+ * is all A04 and A20 can ask.
+ *
+ * Editing the weights directly rather than inserting a bone keeps the skeleton's
+ * shape identical, so `diff` and every structural measure stay at 1.000 and the
+ * only instrument left is this one.
+ */
+function shiftMeshBoneIndices(rigText: string): string {
+  const rig = JSON.parse(rigText) as {
+    bones: Array<{ name: string }>;
+    skins: Record<string, Record<string, Record<string, { type?: string; uvs?: number[]; vertices?: number[] }>>>;
+  };
+  const last = rig.bones.length - 1;
+  for (const slots of Object.values(rig.skins)) {
+    for (const atts of Object.values(slots)) {
+      for (const att of Object.values(atts)) {
+        if (att.type !== 'mesh' || !att.vertices || !att.uvs) continue;
+        // The weighted run is `boneCount, (boneIndex, bindX, bindY, weight) x n`
+        // per vertex — walked rather than indexed, because the run length varies
+        // per vertex and a stride would be a guess.
+        if (att.vertices.length === att.uvs.length) continue; // unweighted: no indices to shift
+        for (let v = 0; v < att.vertices.length; ) {
+          const bones = att.vertices[v++];
+          for (let b = 0; b < bones; b++, v += 4) {
+            att.vertices[v] = Math.min(last, att.vertices[v] + 1);
+          }
+        }
+      }
+    }
+  }
+  return `${JSON.stringify(rig, null, 2)}\n`;
+}
+
+/**
+ * The mesh path measured end to end: a faithful mesh rig against real reference
+ * frames, and the silent break that only this instrument can see.
+ *
+ * ⭐ Why these are worth more than `MR00`–`MR03`. Those run on a generated
+ * checkerboard and answer "does a mesh reach the plate at all". These answer "does
+ * it reach the *right pixels*", against frames rendered from the example's own
+ * export — which is the only claim that would catch a mesh drawn with its UVs
+ * transposed, its triangles wound the other way, or its deform applied to the
+ * wrong vertices.
+ */
+function runMeshCheckSuite(): number | null {
+  console.log('\n── rigc check on meshes (fixture: the rung 6 transcription vs rung 6 reference frames) ──');
+  if (!existsSync(MESH_IMAGES) || !existsSync(join(MESH_FRAMES, 'frames.json'))) {
+    console.log('  SKIP  the mesh check self-checks did not run.');
+    console.log(`          expected art at   ${MESH_IMAGES}`);
+    console.log(`          expected frames at ${MESH_FRAMES}/frames.json`);
+    console.log('          run `bun run fetch-examples`.');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — the mesh rasteriser was never measured.');
+    return null;
+  }
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): number => reportCase(name, ok, detail, why);
+
+  const rigText = readFileSync(join(MESH_TRANSCRIPTION, '6-arcs-pro.rig.json'), 'utf8');
+  const faithful = compileMeshTranscription(null);
+  const faithfulReport = checkAgainstFrames({ ...faithful, framesDir: MESH_FRAMES });
+  const f = checkExtremes(faithfulReport);
+  const fd = meshDrift(faithfulReport);
+  // The colour residual is the atlas resampling and nothing else — the reference
+  // frames come from the example's packed page, which ships at `scale: 0.5`, and
+  // the candidate is compiled from the loose full-size PNGs beside it.
+  bad += say(
+    'MR05_A_FAITHFUL_MESH_RIG_LANDS_ON_THE_REFERENCE',
+    f.sets === 2 && fd.median < 0.5 && fd.worst < 3 && f.meanMae < 6,
+    `${fd.samples} mesh-slot drifts: median ${fd.median.toFixed(2)}px, worst ${fd.worst.toFixed(2)}px; ` +
+      `union MAE ${f.meanMae.toFixed(2)}, whole-frame ${f.frameMae.toFixed(2)}`,
+    'a rasteriser that draws meshes in roughly the right place is not the same as one that draws them right',
+  );
+
+  const shifted = compileMeshTranscription(shiftMeshBoneIndices(rigText));
+  // Green gate first, or the control proves nothing: the point is that the file is
+  // valid Spine 4.3 and plays a different shot, which is why `check` exists.
+  const gate = validate({
+    skeletonText: shifted.skeletonText,
+    atlasText: shifted.atlasText,
+    atlasDir: shifted.atlasDir,
+    profile: 'spine',
+  });
+  const shiftedReport = checkAgainstFrames({ ...shifted, framesDir: MESH_FRAMES });
+  const sd = meshDrift(shiftedReport);
+  const s = checkExtremes(shiftedReport);
+  bad += say(
+    'MR06_A_SILENTLY_REBOUND_MESH_IS_LOUD',
+    gate.failures.length === 0 && sd.worst > fd.worst * 3 && s.meanMae > f.meanMae * 2,
+    gate.failures.length === 0
+      ? `gate green, mesh drift ${sd.worst.toFixed(1)}px against a faithful ${fd.worst.toFixed(2)}px, ` +
+          `union MAE ${s.meanMae.toFixed(1)} against ${f.meanMae.toFixed(1)}`
+      : `the shifted rig did not pass the gate — [${gate.failures.map((x) => x.assertion).join(', ')}] fired, ` +
+          'so this measures the gate rather than check',
+    'an authored mesh binds bones by index, so inserting a bone rebinds every vertex and the gate cannot tell',
+  );
+  return bad;
+}
+
 /**
  * Rung 6's own export, drawn — the rung the refusal used to stop dead.
  *
@@ -2234,6 +2385,11 @@ function main(): void {
     bad += meshRungBad;
     substantive += 1;
   }
+  const meshCheckBad = runMeshCheckSuite();
+  if (meshCheckBad !== null) {
+    bad += meshCheckBad;
+    substantive += 2;
+  }
   const diffBad = runDiffSuite();
   if (diffBad !== null) {
     bad += diffBad;
@@ -2268,7 +2424,7 @@ function main(): void {
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
-      : ', + 1 rung-6 mesh render';
+      : `, + 1 rung-6 mesh render${meshCheckBad === null ? '' : ', + 2 mesh-fidelity controls'}`;
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +

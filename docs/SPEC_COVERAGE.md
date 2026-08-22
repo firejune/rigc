@@ -961,13 +961,26 @@ Nothing structurally new (attachment timeline, blend, inherit all arrived by run
 
 #### Rung 6 — `6-arcs`
 
+> ✅ **Measured, 2026-08-23.** The rows below were written as predictions; the
+> transcription in [`bench/transcriptions/6-arcs/`](../bench/transcriptions/6-arcs/)
+> settled them. It compiles green under `--profile spine` and `bench 6` reports
+> **1.000 on all 44 measures in all six sections**, so the rig spec expresses this
+> skeleton — weighted meshes, `edges` and the 4.3 transform constraints alike. A
+> field-by-field comparison against the reference export leaves 49 differences and
+> every one is benign: 39 are defaults rigc writes explicitly where the editor
+> omits them, 3 are editor bookkeeping (`hash`, `images`, `audio`), 1 is the runtime
+> version string, and **6 are bone `icon`** — an editor decoration the rig spec has
+> no field for and the only thing here it cannot say (issue #47). What did not
+> survive contact is noted per row.
+
 | Cat | Requirement |
 | --- | --- |
-| (a) | **Transform constraints** — 🔴 first appearance (4). Full 4.3 `source` + `properties{from→to}` model (§1.4), which is the least-documented constraint in the format |
-| (a) | **Weighted meshes from authored geometry** — 🔴 first appearance. rigc *can* emit weighted meshes, but only from `buildRingMesh`/`buildRibbonMesh`. An arbitrary 40-vertex/38-triangle mesh cannot be expressed |
-| (a) | Mesh **`edges`** key (rigc emits `hull` but not `edges`) |
-| (b) | Mesh geometry as data — vertices, triangles, uvs, per-vertex bone weights — instead of a generator name plus a polygon |
-| (c) | **A20** (unweighted forbidden) is satisfied here, but **A21_MESH_RIM_PINNED** and **A28** encode ring/ribbon topology and will fire on an arbitrary mesh. They must be gated on "this mesh came from a rigc generator", which `RigInfo.meshKinds` already almost expresses |
+| (a) | **Transform constraints** — 🔴 first appearance (4). Full 4.3 `source` + `properties{from→to}` model (§1.4), which is the least-documented constraint in the format. ✅ Expressible and round-trips exactly; `RigTransformConstraint` already carried the 4.3 shape |
+| (a) | **Weighted meshes from authored geometry** — 🔴 first appearance. ~~rigc can emit weighted meshes, but only from `buildRingMesh`/`buildRibbonMesh`. An arbitrary 40-vertex/38-triangle mesh cannot be expressed~~ ⚠️ **This was wrong.** `RigMeshAttachment` takes authored `uvs`/`triangles`/`vertices`/`hull`, and `buildRigMesh` copies them verbatim. Both of 6-arcs' meshes round-trip to 1e-5 |
+| (a) | Mesh **`edges`** key ~~(rigc emits `hull` but not `edges`)~~ ✅ emitted from `RigMeshAttachment.edges` and byte-identical to the reference. 🚨 But **nothing measures it** — deleting `edges` from the rig still scores 1.000 on all nine attachment measures, so this rung's own gating feature is invisible to `bench` (issue #46) |
+| (b) | Mesh geometry as data — vertices, triangles, uvs, per-vertex bone weights — instead of a generator name plus a polygon. ✅ Present. 🚨 But the weights bind bones by **index into the emitted bone array**, not by name — the one place the rig spec abandons name resolution. Inserting a bone rebinds every vertex with the gate still green (issue #45) |
+| (c) | **A20** (unweighted forbidden) is satisfied here. Under `--profile spine-html` its extra clause fires 11 times instead — the editor writes zero-weight bindings and that profile forbids them. Correctly profiled, not a defect |
+| (c) | **A21_MESH_RIM_PINNED** and **A28** encode ring/ribbon topology and will fire on an arbitrary mesh. ✅ **Confirmed**: A21 fires 40 times on the `tail` mesh under the default profile, because `meshKinds` has no entry for an authored mesh and the lookup falls back to `'ring'`. They must be gated on "this mesh came from a rigc generator" (issue #44) |
 | (c) | A13's mesh budget (≤4 slots, ≤80 tris) is **satisfied** at this rung (2 slots, max 38 tris) |
 | (d) | none |
 

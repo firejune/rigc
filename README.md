@@ -412,6 +412,15 @@ of slot drift; reversed reads 66.8 px. A third control makes the frames-only rea
 guard refuse a reference skeleton, because an honesty invariant nobody has seen
 refuse anything is not an invariant.
 
+The **mesh** path gets the same pair, on the rung 6 transcription against rung 6's
+frames. Faithful reads a median 0.08 px of drift on the mesh-bearing slots; the
+break is the one an authored mesh is actually exposed to — its weights bind bones
+by *index*, so inserting a bone anywhere ahead of them rebinds every vertex in
+silence — and it reads 31 px with the gate still green. Four further controls run
+on a generated fixture and need no corpus: a ring mesh is posed at all, its pixels
+reach the coverage mask `check` reads, an all-zero deform is the identity while a
+real one moves the centroid, and two triangles sharing an edge draw it once.
+
 Point the run at a `cuts.json` and an **extra suite** compiles every cut in it,
 gates the result, and compiles it a second time for `A18`. That one is a positive
 control on purpose: what real art adds is geometry a fixture cannot fake — measured
