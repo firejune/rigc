@@ -8,12 +8,19 @@ the only way to know a rig is right is to compile it and read what comes back.
 Two input files, one CLI loop, and a list of named failures. Everything below is
 checked against the code that implements it.
 
+🚨 **The gate cannot see a wrong animation, and it will not tell you so.** `build`
+is green when the file is *valid* — parseable, steppable, nothing degenerate in it.
+Whether the animation is the one you were asked for is a question it does not ask
+and has no way to answer. This is not a caveat: rung 1's first honest run shipped a
+build with **every easing in the file reversed** and the gate passed it green. If you were given pictures, `check` (**§9**) is the half of the loop
+that can see that, and a run that skips it has verified nothing about the motion.
+
 - Formats and CLI reference: [README.md](../README.md)
 - The rig spec's own source-level documentation: [`src/rig.ts`](../src/rig.ts)
 - The motion spec and emitted shapes: [`src/types.ts`](../src/types.ts)
 - What the format holds and rigc covers: [SPEC_COVERAGE.md](SPEC_COVERAGE.md)
 - Reproducing a shot you were given as pictures: **§8**, and read it *before* you
-  start measuring rather than after
+  start measuring rather than after; then **§9** for the loop that closes it
 
 ## The vocabulary is Spine's
 
@@ -43,12 +50,24 @@ bun cli.ts build \
   --profile spine
 
 # read the report → fix the spec → run it again
+
+bun cli.ts check \
+  --candidate path/to/spine \
+  --frames    path/to/reference/frames
+
+# read the table → fix the spec → build again → check again
 ```
 
 `build` compiles, round-trips the result through `@esotericsoftware/spine-core`,
 runs the named assertions, and **writes only if every one of them is green.** A red
 run leaves nothing on disk, so there is no half-written artifact to mistake for a
 result. There is no `--no-validate`, and there will not be one.
+
+`check` is the second half, and it is only skippable if nobody gave you pictures.
+Green from `build` means the file is valid; it says nothing at all about whether
+the animation is the one in the frames, and there is no assertion that could — see
+§9. The two run in that order because `check` needs artifacts on disk and `build`
+only writes them when the gate is green.
 
 What the flags mean:
 
@@ -74,7 +93,8 @@ The other commands:
 bun cli.ts explain  --rig … --motion … --out …   # the compiled rig as a table
 bun cli.ts validate path/to/spine                # re-gate artifacts already on disk
 bun cli.ts diff     candidate.json reference.json
-bun cli.ts bench    3 --candidate path/to/spine
+bun cli.ts check    --candidate path/to/spine --frames path/to/frames
+bun cli.ts bench    3 --candidate path/to/spine [--frames path/to/frames]
 ```
 
 - **`explain`** is the one to reach for when a rig compiles but looks wrong. It
@@ -86,8 +106,14 @@ bun cli.ts bench    3 --candidate path/to/spine
   deliberately does not combine them into a score: a rig with the right skeleton
   and the wrong timing and a rig with the right timing and the wrong skeleton call
   for opposite fixes. A measure with nothing to compare says `0/0` and says so.
+- **`check`** renders your candidate into the reference frames' own pixel grid and
+  compares pixels — the only thing here that can see a wrong animation. **§9.**
 - **`bench <rung>`** runs one rung of [the benchmark ladder](LADDER.md): validate
-  under `--profile spine`, then diff against that rung's reference export.
+  under `--profile spine`, then diff against that rung's reference export, and with
+  `--frames` the `check` table as well. Unlike the three above it is a **finish
+  line, not a loop**: it opens the reference export, so a run that consults it and
+  then edits is no longer an authoring run. `check` carries no such restriction —
+  see §9.
 
 ---
 
@@ -610,7 +636,11 @@ Two more limits that are not errors but will shape what you can attempt:
    policy, and a green under `spine-html` has.
 4. Run `explain` and read the slots table: every slot you declared should be there
    (§3.3), in the order you meant, showing the setup attachment you meant.
-5. If you are reproducing a reference, run `diff` or `bench` and read **every**
+5. If you were given **frames**, run `check` and read the table (§9). Steps 1–4 are
+   all about validity and structure; none of them can tell you the animation is
+   wrong, and this is the step that can. Do it before step 6, not after — `bench`
+   is a finish line.
+6. If you are reproducing a reference, run `diff` or `bench` and read **every**
    measure. There is no single score, and a `0/0` measure compared nothing.
 
 ---
@@ -663,3 +693,122 @@ slots in that order (R4), because there is no other place in the file to say it.
 And the general form of all three: **when a reading implies a key, look for a second
 way to get the same number before you author it.** A wrong measurement costs one
 spurious key; a wrong measurement you believed costs the shape of the whole shot.
+
+**A value is easier to get right than a curve.** The three traps above are all
+about measuring a *value*, and both ladder runs so far found that the values came
+out right early: rung 1's key values were exact at every keyframe on the second
+build. What was wrong was the *shape between* them — every accelerating segment
+had the decelerating curve and vice versa, from one inverted comparison. Nothing
+in a static reading of the file can find that, because both candidates for the
+shape are legal and the file reads fine either way, and a symmetric pair of easings
+looks the same in every listing. Curves are where the error lives; §9 is how you
+find it.
+
+---
+
+## 9. Checking against the frames — `rigc check`
+
+```bash
+bun cli.ts check --candidate path/to/spine --frames path/to/reference/frames
+```
+
+`--frames` takes either a **skeleton root** (the directory holding `frames.json`,
+which checks every animation of that shot) or **one animation directory** inside
+it. Everything else is optional: `--atlas` when the candidate's atlas is not beside
+its skeleton, `--as <name>` when your animation is called something the frame
+directory is not, `--all-frames` to list every frame instead of the worst by MAE,
+`--json <out>` for the whole per-frame, per-slot report.
+
+Two more exist for frame sets that have no `frames.json` beside them, which are
+sets rendered before the sidecar existed. `--fps <n>` gives the rate those frames
+were sampled at — without it the 12 fps protocol rate is assumed, and the report
+says so rather than letting the assumption look like a measurement. `--viewport
+<x>,<y>,<width>,<height>` pins your candidate's world box instead of deriving it
+from its own content; you want that only when the derivation is wrong for a known
+reason, such as a part you have deliberately not authored yet. Passing `--fps` with
+a value the sidecar contradicts is an error, not an override.
+
+### 9.1 Why this exists
+
+The validator has no way to know whether an animation is the right animation. It
+parses the skeleton, steps every timeline, and refuses what is degenerate — a
+`NaN` pose, a curve of the wrong length, a duration that disagrees with the last
+key. A rig whose motion is backwards is none of those things. **`diff` cannot see
+it either**: reversing every easing leaves the timeline count, the key count, the
+curve kinds and the duration exactly where they were, so every measure it reports
+is unmoved. The two tools together can tell you a file is valid Spine that closely
+matches a reference's structure, while it plays a different shot.
+
+So `check` compares pictures. It renders your candidate with the same rasteriser
+that drew the reference frames, onto the same pixel grid, and reports what differs.
+
+🔒 **It never opens the reference skeleton — only the frames.** That matters for
+you specifically: it means **you may run `check` as often as you like** without
+your run ceasing to be an honest authoring run. It is a loop, in the way `build` is
+a loop. `bench` and `diff` against a rung's export are not — they read the answer,
+and [the ladder's honesty rule](LADDER.md) makes them a finish line you reach once.
+
+### 9.2 Reading the table
+
+```
+  framed to  256x116px  0.116968 px/unit  world x[-778.6 .. 1410.0] y[-795.3 .. 200.7]
+  reference  256x116px  0.117628 px/unit  world x[-573.3 .. 1603.0] y[-81.2 .. 908.9]
+
+  ── heavy — candidate animation "heavy", 12 fps ──
+     frames     65 on disk, candidate samples 65, 65 compared
+     MAE        mean 26.47  worst 50.20 at f0029   (0..255 over the union alpha; …)
+     slot drift worst 2.4 px  "pendulum" at f0029
+
+     the 8 worst frames by MAE, in index order
+       frame      MAE   union px   worst slot            drift   note
+       f0029    50.20       1401   pendulum               2.4
+```
+
+**The two framing lines.** Your candidate is framed **by its own content**: the
+union of its posed quads over every animation, padded, scaled so the long side is
+the reference's long side in pixels. That is the same procedure that framed the
+reference, applied to each side separately — which is what lets a rig authored in
+its own coordinates be compared at all. The reference's world box is printed beside
+yours for orientation and for converting a pixel measurement into units; the two
+boxes are **different coordinate systems and do not compare term by term**. The
+pixel dimensions do, and a warning fires when they differ: a couple of pixels is
+rounding in the art sizes, more than that means something is in one shot and not in
+the other, and it shifts everything below.
+
+**MAE** is the mean absolute RGB difference, 0..255, over the pixels either side
+covers — the *union alpha*. It is not scored against a threshold, any more than a
+`diff` measure is. What it is good for is comparison: between two builds of your
+own rig, and between frames of one build. A shot whose MAE is flat across the set
+and a shot with two spikes are different diagnoses — the first is usually framing
+or art, the second is timing at those moments. The whole-frame figure printed
+beside it is the same difference averaged over the background as well; it is there
+because an ad-hoc re-render check naturally computes that one, and on every set
+measured so far it comes out ten to twenty-five times smaller and correspondingly
+blunter.
+
+**Slot drift** is what you act on. For each of your slots, `check` measures where
+it landed (centroid and bbox, in frame pixels) and compares it against the
+connected component of the reference frame nearest to it. That names the part, the
+frame and the distance, so "the beach ball is 4.7 px low at f0005" is a sentence
+you can take straight back to a key.
+
+⚠️ **A drift beside an `ambiguous` note is not a measurement.** Two parts that
+touch label as **one** component — §8's first trap, on exactly the frames the shot
+is about — and a slot drawn behind another has no component of its own at all. The
+matcher says so rather than guessing, and in those frames the MAE is the signal.
+Likewise `N reference component(s) matched no slot` means the reference frame
+contains something none of your slots landed near: a part you have not authored,
+or one you have put somewhere else entirely.
+
+### 9.3 What it still cannot see
+
+- **Anything a frame does not contain.** Bone `length`, the setup `inherit` mode,
+  a slot's name, a bone's parentage. Frames carry appearance, and these are not it.
+- **A difference smaller than the render scale.** At rung 3's 0.117 px per unit, a
+  key 4 units out moves nothing. Author to the frames' precision and record that
+  the rest was not checkable.
+- **Meshes.** The rasteriser draws region attachments and refuses a mesh by name.
+- **Which of two explanations is right.** A slot 3 px low every frame and a slot
+  3 px low at one frame have the same drift and opposite causes. The table gives
+  you the frame index; §8's rule still applies — look for a second way to get the
+  number before you author the key.
