@@ -362,8 +362,9 @@ Field lists are in [`src/rig.ts`](../src/rig.ts); three traps worth carrying her
 
 ### 3.6 `invariants` — what the artifact cannot say about itself
 
-Optional, and only meaningful for rigc's own formations: `meshSlots` (the mesh
-budget), `axisBone`, `massBone`, `detached`. Nothing in skeleton JSON records that a
+Optional, and only meaningful for rigc's own formations: `meshSlots` and
+`meshTriangles` (the two halves of the mesh budget `A13` measures against),
+`axisBone`, `massBone`, `detached`. Nothing in skeleton JSON records that a
 bone carries a cut's axis or that a parentage is forbidden, so the rig spec says it
 and the validator's archetype assertions read it. **An assertion whose field is
 absent reports SKIP, never a pass.** If you are reproducing a foreign skeleton,
@@ -571,7 +572,7 @@ The report prints one line per assertion:
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping the animation produced a `NaN` pose. Look for a degenerate curve or a zero scale |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | a clipping attachment; the target renderer skips them silently |
 | `A12_NO_DARK_COLOR` | renderer | a slot `dark` colour or an `rgba2`/`rgb2` timeline; parsed, then ignored |
-| `A13_MESH_BUDGET` | renderer | more than 4 mesh slots, or a mesh over 80 triangles |
+| `A13_MESH_BUDGET` | renderer | more mesh slots than the rig's `invariants.meshSlots`, or a mesh over its `invariants.meshTriangles`. Thin the mesh, or raise the budget in the rig spec. **SKIP** when the rig declares neither |
 | `A14_NO_FULL_FRAME_MESH` | renderer | a mesh spans the whole stage — a full-frame canvas that can never dirty-skip |
 | `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | the `idle` animation keys a bone that drives a mesh, directly or as a control bone |
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` label is not on the 4.3 line (`4.3`, `4.3.N`, `4.3.N-suffix`) |

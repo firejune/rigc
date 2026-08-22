@@ -266,7 +266,7 @@ the renderer policy*.
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping every animation frame by frame produces no NaN anywhere in the pose |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | no clipping attachments (the renderer skips them silently) |
 | `A12_NO_DARK_COLOR` | renderer | no dark / two-colour tint on slots or timelines — parsed, then ignored |
-| `A13_MESH_BUDGET` | renderer | at most 4 mesh slots, at most 80 triangles per mesh |
+| `A13_MESH_BUDGET` | renderer | no more mesh slots than the rig's `invariants.meshSlots`, and no mesh past its `invariants.meshTriangles`. SKIPs when the rig declares neither |
 | `A14_NO_FULL_FRAME_MESH` | renderer | no mesh spans the whole stage (a full-frame mesh is a full-frame canvas that can never dirty-skip) |
 | `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | `idle` keys no bone that drives a mesh, directly or as its control bone |
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` version label is on the 4.3 line (the parser never checks it) |
