@@ -28,11 +28,19 @@ byte for byte.
 
 [`bench/render_reference.ts`](../render_reference.ts) loads the example's own
 `export/` — the skeleton JSON, its atlas and its atlas page — poses it with
-`@esotericsoftware/spine-core`, and blits each posed region attachment with an
-affine map. No browser and no GPU: for a region attachment a bone transform is a
-plain affine map, and `tools/plate.ts` already reads and writes PNGs. Region
-attachments only; a rung that ships meshes is refused by name rather than rendered
-with something missing.
+`@esotericsoftware/spine-core`, and blits each posed attachment with an affine
+map. No browser and no GPU: a bone transform is a plain affine map, and
+`tools/plate.ts` already reads and writes PNGs.
+
+**Region and mesh attachments.** A region is one quad; a mesh is a triangle list
+whose world vertices come from `MeshAttachment.computeWorldVertices` — the
+runtime's own routine, so weighted vertices resolve through their bones and a
+`deform` timeline's offsets are applied — filled with barycentric UV
+interpolation and a top-left fill rule so two triangles sharing an edge draw it
+exactly once. Sampling is bilinear on both paths; the reference and the candidate
+go through the same code, so the filter cancels out of every number `check`
+reports. Until #27 a mesh was refused by name and the frame-fidelity lane stopped
+at rung 5.
 
 Per rung: `<example>/<animation>/f0000.png…` at a fixed frame rate, plus a
 `contact.png` contact sheet of every frame in that animation, row major, each tile

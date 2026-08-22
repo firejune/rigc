@@ -437,7 +437,7 @@ src/
   rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
   validate.ts   spine-core round trip + the 32 assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure
-  render.ts     the region rasteriser, shared by the reference renderer and check
+  render.ts     the rasteriser (regions + meshes), shared by the reference renderer and check
   check.ts      a candidate against rendered frames — pixels and per-slot drift,
                 and it never opens the reference skeleton
   ladder.ts     which example is which rung, and which file in it is the reference

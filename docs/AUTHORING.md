@@ -907,7 +907,12 @@ a part you have not authored, or one you have put somewhere else entirely.
 - **A difference smaller than the render scale.** At rung 3's 0.117 px per unit, a
   key 4 units out moves nothing. Author to the frames' precision and record that
   the rest was not checkable.
-- **Meshes.** The rasteriser draws region attachments and refuses a mesh by name.
+- **Whether a mesh is deformed or merely posed.** Since #27 the rasteriser draws
+  meshes — weighted, deformed, both — so a rung with meshes is measurable. What it
+  still cannot tell you is *how* a silhouette got its shape: a hull moved by a
+  bone chain and the same hull moved by deform keys render to the same pixels, and
+  the frames cannot separate them. Choose on what the rig has to do next, not on
+  what the frames appear to say.
 - **Which of two explanations is right.** A slot 3 px low every frame and a slot
   3 px low at one frame have the same drift and opposite causes. The table gives
   you the frame index; §8's rule still applies — look for a second way to get the

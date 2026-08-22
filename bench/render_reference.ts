@@ -19,17 +19,18 @@
  *
  * The obvious route is the sibling `spine-html` renderer under Playwright. It
  * would work, and it costs a vite build, a preview server and one browser
- * screenshot per frame. Nothing here needs a browser: for a **region
- * attachment** a bone transform is a plain affine map, `spine-core` computes the
- * four world vertices on the CPU, and `tools/plate.ts` already reads and writes
- * PNGs. The rasteriser itself now lives in [`src/render.ts`](../src/render.ts),
- * which `rigc check` shares — a candidate has to be drawn by the same code that
- * drew the reference or every number `check` reports carries the difference
- * between two renderers on top of the difference between two rigs.
+ * screenshot per frame. Nothing here needs a browser: `spine-core` computes the
+ * world vertices on the CPU — for a region and, since #27, for a weighted or
+ * deformed mesh — and `tools/plate.ts` already reads and writes PNGs. The
+ * rasteriser itself lives in [`src/render.ts`](../src/render.ts), which `rigc
+ * check` shares — a candidate has to be drawn by the same code that drew the
+ * reference or every number `check` reports carries the difference between two
+ * renderers on top of the difference between two rigs.
  *
- * 🚧 Region attachments only. A rung that ships meshes needs a triangle
- * rasteriser and a deform path, and `src/render.ts` refuses by name rather than
- * dropping the attachment silently.
+ * Region **and** mesh attachments; a mesh's triangles are filled with
+ * barycentric UV interpolation and no perspective divide, which is what a flat
+ * 2D deformation is. An attachment type that draws nothing — a bounding box, a
+ * point, a clipping shape — is skipped rather than refused.
  *
  * ```
  * bun bench/render_reference.ts --rung 3 [--fps 12] [--max 256] [--tile 128]
@@ -83,7 +84,7 @@ import { join, resolve } from 'node:path';
 import { findRung, RUNG_IDS } from '../src/ladder.ts';
 import {
   BACKGROUND,
-  blitQuad,
+  blitPiece,
   fill,
   FRAMES_SIDECAR,
   FRAMES_SPEC,
@@ -173,7 +174,7 @@ function contactSheet(
       const [px, py] = base(wx, wy);
       return [px * tileScale, py * tileScale];
     };
-    for (const quad of frame.quads) blitQuad(plate, pageFor(pages, quad), quad, project);
+    for (const piece of frame.pieces) blitPiece(plate, pageFor(pages, piece), piece, project);
     plate.text(String(i), 2, 2, 1, SHEET_LABEL);
     for (let y = 0; y < tileH; y++) for (let x = 0; x < tileW; x++) sheet.set(ox + x, oy + y, plate.get(x, y));
   });
@@ -265,7 +266,7 @@ for (const skeletonEntry of rung.skeletons) {
   const { data, pages } = loadPosable(skeletonPath, join(exportDir, skeletonEntry.atlas), exportDir);
 
   // Pass 1: pose everything at the framing rate and take the union of the posed
-  // quads, so that every animation of one skeleton — at every output rate —
+  // vertices, so that every animation of one skeleton — at every output rate —
   // shares a viewport. Framing each animation to its own extent would rescale
   // the motion between them, which is the one thing a timing-and-spacing
   // reference must not do. A skeleton with no animation contributes its setup
