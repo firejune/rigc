@@ -18,8 +18,13 @@ name, no key time, no curve handle and no timeline listing.
 ## How they are made
 
 ```bash
-bun bench/render_reference.ts --rung 3 [--fps 12] [--max 256]
+bun bench/render_reference.ts --rung 3 [--fps 12] [--max 256] [--tile 128] [--stride 1]
 ```
+
+`--tile` sets the contact sheet's tile size and `--stride` writes only every Nth
+frame — the sheet still shows all of them. The exact command each rung here was
+rendered with is in the table below, and re-running it reproduces the directory
+byte for byte.
 
 [`bench/render_reference.ts`](../render_reference.ts) loads the example's own
 `export/` — the skeleton JSON, its atlas and its atlas page — poses it with
@@ -42,9 +47,38 @@ is that frame again, with a border and a `0` on it.
 
 ## What is here
 
-| Rung | Example | Frames | Rate | Frame size |
-| --- | --- | --- | --- | --- |
-| 3 | `3-timing-and-spacing` | `heavy` 65, `light` 21 | 12 fps | 256×116 |
+12 fps is the protocol every brief is written against. A second rate lands beside
+the first under `<animation>@<fps>fps/`, and where the whole second set was not
+worth its weight only its contact sheet is kept — the sheets are far cheaper per
+frame than separate files, because one file lets deflate find the static set again
+in the next tile.
+
+| Rung | Example | Animations | Rendered with | Frame size | On disk |
+| --- | --- | --- | --- | --- | --- |
+| 3 | `3-timing-and-spacing` | `heavy` 65, `light` 21 | `--fps 12` | 256×116 | 465 KB |
+| 1 | `1-weight-and-mass` | `balls/animation` 40, `drop/ready-to-animate` 1 | `--fps 12`, then `--fps 24` | 256×239 / 256×191 | 1.6 MB |
+| 2 | `2-the-12-principles` | 4 × 311 | `--fps 12 --stride 999 --tile 64` | 256×228 | 1.4 MB |
+| 4 | `4-wave-principle` | `ball-catch` 121, `wave-by-hand` 17, `wave-offset` 17 | `--fps 12 --max 768 --tile 256`, then the same at `--fps 24 --stride 999` | 768×634 | 1.4 MB |
+| 5 | `5-squash-and-stretch` | `ball` 79, `speedy` 79, `ball-ready-to-animate` 1 | `--fps 12 --max 192`, then `--fps 24 --stride 999 --tile 96` | 192×124 | 2.8 MB |
+
+Three of those settings are not defaults, and each is a trade worth knowing:
+
+- **rung 2 keeps only the sheets.** 1,244 frames of a static obstacle course is
+  over sixty megabytes as separate files and about a seventeenth of that as four
+  contact sheets. The sheets hold every frame; `--stride 999` keeps the first and
+  last of each animation at full size for detail.
+- **rung 4 is rendered large.** Its three animations share one viewport (they must
+  — see above) and one of them throws a ball right across it, so the subject sits
+  in an eighth of the frame. 768 px is what makes that eighth legible; the sheet
+  tile is raised to match.
+- **rung 5 is rendered small.** Its set is wide and its subject is a 23-unit ball,
+  so at any size that fits a byte budget the ball is a few pixels. 192 px keeps the
+  whole rung under three megabytes and still resolves the ball's proportions, which
+  is what that rung is about.
+
+A rung with more than one skeleton nests them: `1-weight-and-mass/balls/…` and
+`1-weight-and-mass/drop/…`. They are two shots that share an atlas, they are framed
+independently, and pooling their frames in one directory would suggest otherwise.
 
 ## Licence — read before adding a rung
 
