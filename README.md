@@ -318,7 +318,7 @@ bun run selftest --cuts path/to/cuts.json
 ```
 
 A gate nobody has seen fail is not a gate. The selftest takes real compiled
-artifacts, breaks them one way at a time — 44 deliberate breaks, each modelled on a
+artifacts, breaks them one way at a time — 46 deliberate breaks, each modelled on a
 mistake that was actually made or actually measured — and asserts that the **named**
 assertion fires for each. Two of the breaks are *tolerance* controls, edits the gate
 must let through, because a widened assertion can fail by firing too often as
