@@ -1,0 +1,2022 @@
+{
+  "rung": "2",
+  "example": "2-the-12-principles",
+  "gates": "slot blend modes (4 additive + 4 multiply); bone inherit ≠ Normal",
+  "profile": "spine",
+  "candidate": {
+    "skeleton": "/Users/firejune/Workspace/Firejune/rigc/bench/runs/2026-08-23-rung2-2/spine/skeleton.json",
+    "atlas": "/Users/firejune/Workspace/Firejune/rigc/bench/runs/2026-08-23-rung2-2/spine/skeleton.atlas"
+  },
+  "validate": {
+    "failures": [],
+    "passed": [
+      "A07_ATLAS_TEXT_SHAPE",
+      "A00_ROUNDTRIP_PARSE",
+      "A16_SKELETON_VERSION_4_3",
+      "A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS",
+      "A02_NO_BONE_TRANSFORM_KEY",
+      "A05_CURVE_ARRAY_LENGTH",
+      "A03_REGION_WIDTH_HEIGHT_FINITE",
+      "A04_MESH_TRIANGLES_AND_ENCODING",
+      "A20_MESH_WEIGHTS_COHERENT",
+      "A22_MESH_UVS_IN_UNIT_RANGE",
+      "A23_PHYSICS_CONSTRAINT_EFFECTIVE",
+      "A08_REGION_NAMES_MATCH_ATTACHMENTS",
+      "A10_NO_NAN_AFTER_STEPPING",
+      "A17_ATLAS_PAGE_FILES_EXIST",
+      "A06_ATLAS_PAGE_SIZE_MATCHES_PNG"
+    ],
+    "skipped": [
+      {
+        "assertion": "A31_DRAW_ORDER_OFFSETS_RESOLVE",
+        "reason": "no animation carries a drawOrder timeline"
+      },
+      {
+        "assertion": "A09_ANIMATION_DURATION_MATCHES_SPEC",
+        "reason": "no motion spec supplied, so no declared duration to compare against"
+      },
+      {
+        "assertion": "A18_DETERMINISTIC_EMIT",
+        "reason": "no second compile to compare against (re-gating artifacts on disk)"
+      }
+    ],
+    "profileSkipped": [
+      {
+        "assertion": "A12_NO_DARK_COLOR",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A11_NO_CLIPPING_ATTACHMENTS",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A13_MESH_BUDGET",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A14_NO_FULL_FRAME_MESH",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A15_IDLE_NO_MESH_BONE_KEYS",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A21_MESH_RIM_PINNED",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A19_OVERLAY_PNGS_HAVE_ALPHA",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A24_AXIS_SPACE_STROKE",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A25_DETACHED_BONE_PARENTAGE",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A26_SLOT_DRAW_ORDER",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A27_REGION_NAME_MATCHES_PAGE_FILENAME",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A28_RIBBON_ROWS_SHARE_WEIGHTS",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A29_STROKE_WITHIN_CONTACT_DEPTH",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A30_STROKE_WITHIN_CAP_CONTAINMENT",
+        "kind": "archetype"
+      }
+    ],
+    "profile": "spine",
+    "stats": {
+      "pages": 15,
+      "regions": 15,
+      "bones": 10,
+      "slots": 15,
+      "animations": 4,
+      "version": "4.3.13",
+      "regionAttachments": 15,
+      "meshAttachments": 0,
+      "physicsConstraints": 0,
+      "rig": "absent",
+      "profile": "spine"
+    }
+  },
+  "diffs": [
+    {
+      "label": "ess",
+      "role": "rung",
+      "referencePath": "/Users/firejune/Workspace/Firejune/rigc/examples/2-the-12-principles/export/2-the-12-principles-ess.json",
+      "sections": [
+        {
+          "name": "bones",
+          "ratio": 0.3080357142857143,
+          "measures": [
+            {
+              "id": "bones.count",
+              "what": "how many bones",
+              "matched": 10,
+              "total": 12,
+              "ratio": 0.8333333333333334
+            },
+            {
+              "id": "bones.names",
+              "what": "the bone names themselves",
+              "matched": 1,
+              "total": 21,
+              "ratio": 0.047619047619047616
+            },
+            {
+              "id": "bones.parent_by_name",
+              "what": "each bone hangs off the same parent",
+              "matched": 1,
+              "total": 12,
+              "ratio": 0.08333333333333333
+            },
+            {
+              "id": "bones.order",
+              "what": "the bones are declared in the same order",
+              "matched": 1,
+              "total": 12,
+              "ratio": 0.08333333333333333
+            },
+            {
+              "id": "bones.length_present",
+              "what": "a setup `length` is present or absent alike",
+              "matched": 1,
+              "total": 12,
+              "ratio": 0.08333333333333333
+            },
+            {
+              "id": "bones.inherit_present",
+              "what": "a setup `inherit` is present or absent alike",
+              "matched": 1,
+              "total": 12,
+              "ratio": 0.08333333333333333
+            },
+            {
+              "id": "bones.depth_histogram",
+              "what": "NAME-AGNOSTIC: as many bones at each depth",
+              "matched": 8,
+              "total": 12,
+              "ratio": 0.6666666666666666
+            },
+            {
+              "id": "bones.degree_sequence",
+              "what": "NAME-AGNOSTIC: as many bones with each child count",
+              "matched": 7,
+              "total": 12,
+              "ratio": 0.5833333333333334
+            }
+          ]
+        },
+        {
+          "name": "slots",
+          "ratio": 0.15586879913255625,
+          "measures": [
+            {
+              "id": "slots.count",
+              "what": "how many slots",
+              "matched": 15,
+              "total": 17,
+              "ratio": 0.8823529411764706
+            },
+            {
+              "id": "slots.names",
+              "what": "the slot names themselves",
+              "matched": 1,
+              "total": 31,
+              "ratio": 0.03225806451612903
+            },
+            {
+              "id": "slots.order",
+              "what": "the slots array IS the draw order, so its order is data",
+              "matched": 1,
+              "total": 17,
+              "ratio": 0.058823529411764705
+            },
+            {
+              "id": "slots.bone",
+              "what": "each slot is bound to the same bone",
+              "matched": 0,
+              "total": 17,
+              "ratio": 0
+            },
+            {
+              "id": "slots.attachment",
+              "what": "each slot shows the same setup attachment",
+              "matched": 1,
+              "total": 17,
+              "ratio": 0.058823529411764705
+            },
+            {
+              "id": "slots.blend",
+              "what": "each slot uses the same blend mode",
+              "matched": 1,
+              "total": 17,
+              "ratio": 0.058823529411764705
+            },
+            {
+              "id": "slots.color_present",
+              "what": "a tint is present or absent alike",
+              "matched": 0,
+              "total": 17,
+              "ratio": 0
+            }
+          ]
+        },
+        {
+          "name": "attachments",
+          "ratio": 0.7617541640312039,
+          "measures": [
+            {
+              "id": "attachments.skins",
+              "what": "the skin names",
+              "matched": 1,
+              "total": 1,
+              "ratio": 1
+            },
+            {
+              "id": "attachments.count",
+              "what": "how many attachments",
+              "matched": 15,
+              "total": 17,
+              "ratio": 0.8823529411764706
+            },
+            {
+              "id": "attachments.names",
+              "what": "skin/slot/attachment keys",
+              "matched": 1,
+              "total": 31,
+              "ratio": 0.03225806451612903
+            },
+            {
+              "id": "attachments.type_counts",
+              "what": "as many of each attachment type",
+              "matched": 15,
+              "total": 17,
+              "ratio": 0.8823529411764706
+            },
+            {
+              "id": "attachments.mesh_vertices",
+              "what": "each mesh has the same vertex count",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "attachments.mesh_triangles",
+              "what": "each mesh has the same triangle count",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "attachments.mesh_weighted",
+              "what": "each mesh is weighted, or is not, alike",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "attachments.mesh_hull",
+              "what": "each mesh declares the same hull length",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "attachments.region_size_present",
+              "what": "each region states width and height, or does not, alike",
+              "matched": 1,
+              "total": 17,
+              "ratio": 0.058823529411764705
+            }
+          ]
+        },
+        {
+          "name": "constraints",
+          "ratio": 1,
+          "measures": [
+            {
+              "id": "constraints.count",
+              "what": "how many constraints",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "constraints.names",
+              "what": "the constraint names",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "constraints.type_counts",
+              "what": "as many of each constraint type",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "constraints.type_by_name",
+              "what": "each constraint is the same type",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "constraints.refs",
+              "what": "each constraint names the same bones and slots",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            }
+          ]
+        },
+        {
+          "name": "animations",
+          "ratio": 0.6232728313302265,
+          "measures": [
+            {
+              "id": "animations.count",
+              "what": "how many animations",
+              "matched": 4,
+              "total": 4,
+              "ratio": 1
+            },
+            {
+              "id": "animations.names",
+              "what": "the animation names",
+              "matched": 4,
+              "total": 4,
+              "ratio": 1
+            },
+            {
+              "id": "animations.duration",
+              "what": "each animation runs as long (last key time, within one frame)",
+              "matched": 0,
+              "total": 4,
+              "ratio": 0
+            },
+            {
+              "id": "animations.timeline_kinds",
+              "what": "the same timelines exist",
+              "matched": 22,
+              "total": 72,
+              "ratio": 0.3055555555555556
+            },
+            {
+              "id": "animations.key_counts",
+              "what": "those timelines carry as many keys",
+              "matched": 191,
+              "total": 1359,
+              "ratio": 0.14054451802796172
+            },
+            {
+              "id": "animations.curve_kinds",
+              "what": "as many linear / stepped / bezier keys",
+              "matched": 222,
+              "total": 1359,
+              "ratio": 0.16335540838852097
+            },
+            {
+              "id": "animations.event_keys",
+              "what": "as many event firings",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "animations.draw_order",
+              "what": "a draw-order timeline is present or absent alike",
+              "matched": 4,
+              "total": 4,
+              "ratio": 1
+            },
+            {
+              "id": "animations.deform",
+              "what": "a deform timeline is present or absent alike",
+              "matched": 4,
+              "total": 4,
+              "ratio": 1
+            }
+          ]
+        },
+        {
+          "name": "events",
+          "ratio": 1,
+          "measures": [
+            {
+              "id": "events.names",
+              "what": "the event names",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "events.payloads",
+              "what": "each event carries the same typed payload",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            }
+          ]
+        }
+      ],
+      "candidate": {
+        "bones": 10,
+        "slots": 15,
+        "skins": 1,
+        "attachments": 15,
+        "constraints": 0,
+        "animations": 4,
+        "events": 0
+      },
+      "reference": {
+        "bones": 12,
+        "slots": 17,
+        "skins": 1,
+        "attachments": 17,
+        "constraints": 0,
+        "animations": 4,
+        "events": 0
+      }
+    }
+  ],
+  "check": {
+    "candidate": {
+      "skeleton": "/Users/firejune/Workspace/Firejune/rigc/bench/runs/2026-08-23-rung2-2/spine/skeleton.json",
+      "atlas": "/Users/firejune/Workspace/Firejune/rigc/bench/runs/2026-08-23-rung2-2/spine/skeleton.atlas"
+    },
+    "framesDir": "/Users/firejune/Workspace/Firejune/rigc/bench/reference/2-the-12-principles",
+    "framesRoot": "/Users/firejune/Workspace/Firejune/rigc/bench/reference/2-the-12-principles",
+    "framing": "candidate-pixels",
+    "viewport": {
+      "x": -178.7581569380623,
+      "y": -179.15405887605266,
+      "width": 3515.988310690219,
+      "height": 3131.4270892084764,
+      "scale": 0.07281025344186795,
+      "pixelWidth": 256,
+      "pixelHeight": 228
+    },
+    "framingFit": {
+      "fit": {
+        "candidate": {
+          "left": 12.824210874732946,
+          "top": 18.87878787878788,
+          "right": 244.6805364789529,
+          "bottom": 214.98312386876387
+        },
+        "reference": {
+          "left": 12.891514500537056,
+          "top": 18.880382775119617,
+          "right": 244.6411641405998,
+          "bottom": 215
+        },
+        "frames": 8,
+        "scale": 0.9998243524056841,
+        "dx": 0.03649940169674437,
+        "dy": 0.015396921689969645,
+        "rms": 0.036859322846141504,
+        "residualWidth": 0.06595095833787923,
+        "residualHeight": -0.04972648975595462,
+        "aspectError": 0.0005382667780005068
+      },
+      "passes": 2,
+      "settled": true,
+      "applied": true
+    },
+    "referenceViewport": {
+      "x": -179.74006276980452,
+      "y": -181.24000245974094,
+      "width": 3516.4800664130057,
+      "height": 3133.6658441641594,
+      "scale": 0.07280007142515482,
+      "pixelWidth": 256,
+      "pixelHeight": 228
+    },
+    "background": [
+      232,
+      232,
+      232,
+      255
+    ],
+    "animations": [
+      {
+        "dir": "basketball",
+        "animation": "basketball",
+        "candidateAnimation": "basketball",
+        "fps": 12,
+        "referenceFrames": 2,
+        "candidateFrames": 311,
+        "compared": 2,
+        "meanMae": 4.395549240237323,
+        "meanMaeFrame": 1.6288291529605465,
+        "worstMae": 4.450419384902198,
+        "worstMaeFrame": 310,
+        "worstDrift": 11.355658973551947,
+        "worstDriftFrame": 310,
+        "worstDriftSlot": "course",
+        "framesWithoutDrift": 0,
+        "frames": [
+          {
+            "index": 0,
+            "file": "/Users/firejune/Workspace/Firejune/rigc/bench/reference/2-the-12-principles/basketball/f0000.png",
+            "mae": 4.340679095572448,
+            "maeFrame": 1.6105171783625922,
+            "unionPixels": 21509,
+            "candidatePixels": 21096,
+            "referencePixels": 21414,
+            "components": 2,
+            "unmatchedComponents": 0,
+            "worstSlot": "course",
+            "worstDrift": 10.987907496790461,
+            "attributed": 6,
+            "drawn": 7,
+            "slots": [
+              {
+                "slot": "basketball",
+                "candidate": {
+                  "cx": 18.104755131070924,
+                  "cy": 23.016206055679742,
+                  "width": 10,
+                  "height": 10,
+                  "pixels": 77
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.07185429440843288,
+                "driftX": 0.06456626165583504,
+                "driftY": 0.031531531531531966,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.3197986577181211,
+                "searchRadius": 8,
+                "ambiguity": null
+              },
+              {
+                "slot": "basketball-shade",
+                "candidate": {
+                  "cx": 18.141738574624505,
+                  "cy": 23.03835091083415,
+                  "width": 10,
+                  "height": 10,
+                  "pixels": 74
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.16710425292876852,
+                "driftX": -0.1350033400133598,
+                "driftY": -0.09847806624888104,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.844621916700364,
+                "searchRadius": 8,
+                "ambiguity": null
+              },
+              {
+                "slot": "course",
+                "candidate": {
+                  "cx": 91.0411678739863,
+                  "cy": 156.65146446687288,
+                  "width": 237,
+                  "height": 193,
+                  "pixels": 17066
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 101.88589743589743,
+                  "cy": 154.88342830009498,
+                  "width": 234,
+                  "height": 198,
+                  "pixels": 21060
+                },
+                "drift": 10.987907496790461,
+                "driftX": 10.844729561911137,
+                "driftY": -1.7680361667779039,
+                "widthDrift": 3,
+                "heightDrift": -5,
+                "confidence": null,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "panel",
+                "candidate": {
+                  "cx": 144.99570553341408,
+                  "cy": 148.81855452877664,
+                  "width": 23,
+                  "height": 59,
+                  "pixels": 806
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.02428322280919671,
+                "driftX": 0.010421836228287835,
+                "driftY": 0.021933085501858567,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8173471261553529,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-lower",
+                "candidate": {
+                  "cx": 90.49091907726107,
+                  "cy": 81.3821188819724,
+                  "width": 37,
+                  "height": 36,
+                  "pixels": 321
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 90.52824858757062,
+                  "cy": 81.64406779661017,
+                  "width": 37,
+                  "height": 37,
+                  "pixels": 354
+                },
+                "drift": 0.26459540098016904,
+                "driftX": 0.03732951030954723,
+                "driftY": 0.26194891463777026,
+                "widthDrift": 0,
+                "heightDrift": -1,
+                "confidence": null,
+                "searchRadius": 28,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-upper",
+                "candidate": {
+                  "cx": 69.67927752612387,
+                  "cy": 36.76213798629623,
+                  "width": 45,
+                  "height": 44,
+                  "pixels": 480
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.04743397748611211,
+                "driftX": 0.045388695469308585,
+                "driftY": 0.013778553761093968,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8873324477720083,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "water",
+                "candidate": {
+                  "cx": 189.00000000000753,
+                  "cy": 181.5000000000071,
+                  "width": 74,
+                  "height": 39,
+                  "pixels": 1562
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.06863725277113653,
+                "searchRadius": 32,
+                "ambiguity": "this slot is inside a reference component 13.5x its size and 234x198 px against its 74x39 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 29.6 against its own 105.5 of contrast, confidence 0.07)"
+              }
+            ]
+          },
+          {
+            "index": 310,
+            "file": "/Users/firejune/Workspace/Firejune/rigc/bench/reference/2-the-12-principles/basketball/f0310.png",
+            "mae": 4.450419384902198,
+            "maeFrame": 1.6471411275585008,
+            "unionPixels": 21460,
+            "candidatePixels": 21053,
+            "referencePixels": 21364,
+            "components": 1,
+            "unmatchedComponents": 0,
+            "worstSlot": "course",
+            "worstDrift": 11.355658973551947,
+            "attributed": 5,
+            "drawn": 7,
+            "slots": [
+              {
+                "slot": "basketball",
+                "candidate": {
+                  "cx": 221.85821201558332,
+                  "cy": 162.61349190075865,
+                  "width": 10,
+                  "height": 10,
+                  "pixels": 77
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.04017253044654956,
+                "searchRadius": 8,
+                "ambiguity": "this slot is inside a reference component 279.3x its size and 234x195 px against its 10x10 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 8 px either (best residual 48.5 against its own 171.4 of contrast, confidence 0.04)"
+              },
+              {
+                "slot": "basketball-shade",
+                "candidate": {
+                  "cx": 221.88072508849092,
+                  "cy": 162.6325753512818,
+                  "width": 10,
+                  "height": 10,
+                  "pixels": 73
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.19973774811765044,
+                "driftX": -0.0609557426011401,
+                "driftY": -0.19020926756352732,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.15742642026009568,
+                "searchRadius": 8,
+                "ambiguity": null
+              },
+              {
+                "slot": "course",
+                "candidate": {
+                  "cx": 91.0411678739863,
+                  "cy": 156.65146446687288,
+                  "width": 237,
+                  "height": 193,
+                  "pixels": 17066
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 102.14716345253697,
+                  "cy": 154.28337390001872,
+                  "width": 234,
+                  "height": 195,
+                  "pixels": 21364
+                },
+                "drift": 11.355658973551947,
+                "driftX": 11.105995578550676,
+                "driftY": -2.368090566854164,
+                "widthDrift": 3,
+                "heightDrift": -2,
+                "confidence": null,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "panel",
+                "candidate": {
+                  "cx": 144.99570553341408,
+                  "cy": 148.81855452877664,
+                  "width": 23,
+                  "height": 59,
+                  "pixels": 806
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.02428322280919671,
+                "driftX": 0.010421836228287835,
+                "driftY": 0.021933085501858567,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8173471261553529,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-lower",
+                "candidate": {
+                  "cx": 84.73470196092771,
+                  "cy": 74.98853789623782,
+                  "width": 36,
+                  "height": 37,
+                  "pixels": 322
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.03188558681735026,
+                "driftX": 0.01731770833333336,
+                "driftY": -0.02677288973511035,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8420400990494449,
+                "searchRadius": 28,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-upper",
+                "candidate": {
+                  "cx": 71.36772658359207,
+                  "cy": 45.58959568033856,
+                  "width": 45,
+                  "height": 41,
+                  "pixels": 484
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.018401770316950325,
+                "driftX": -0.014524657625168764,
+                "driftY": 0.011298649108164256,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8668094218415417,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "water",
+                "candidate": {
+                  "cx": 189.00000000000753,
+                  "cy": 181.5000000000071,
+                  "width": 74,
+                  "height": 39,
+                  "pixels": 1562
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.053381234150464696,
+                "searchRadius": 32,
+                "ambiguity": "this slot is inside a reference component 13.7x its size and 234x195 px against its 74x39 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 31.0 against its own 105.5 of contrast, confidence 0.05)"
+              }
+            ]
+          }
+        ],
+        "notes": []
+      },
+      {
+        "dir": "billiard-ball",
+        "animation": "billiard-ball",
+        "candidateAnimation": "billiard-ball",
+        "fps": 12,
+        "referenceFrames": 2,
+        "candidateFrames": 311,
+        "compared": 2,
+        "meanMae": 4.334304837664808,
+        "meanMaeFrame": 1.602427700109668,
+        "worstMae": 4.3453858355883686,
+        "worstMaeFrame": 0,
+        "worstDrift": 11.218593535498858,
+        "worstDriftFrame": 0,
+        "worstDriftSlot": "course",
+        "framesWithoutDrift": 0,
+        "frames": [
+          {
+            "index": 0,
+            "file": "/Users/firejune/Workspace/Firejune/rigc/bench/reference/2-the-12-principles/billiard-ball/f0000.png",
+            "mae": 4.3453858355883686,
+            "maeFrame": 1.6066223501462178,
+            "unionPixels": 21434,
+            "candidatePixels": 21022,
+            "referencePixels": 21339,
+            "components": 2,
+            "unmatchedComponents": 0,
+            "worstSlot": "course",
+            "worstDrift": 11.218593535498858,
+            "attributed": 5,
+            "drawn": 8,
+            "slots": [
+              {
+                "slot": "billiard",
+                "candidate": {
+                  "cx": 17,
+                  "cy": 27,
+                  "width": 2,
+                  "height": 2,
+                  "pixels": 4
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.04361370716510893,
+                "searchRadius": 4,
+                "ambiguity": "this slot is inside a reference component 5246.3x its size and 234x197 px against its 2x2 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 4 px either (best residual 51.2 against its own 192.3 of contrast, confidence 0.04)"
+              },
+              {
+                "slot": "billiard-gloss",
+                "candidate": {
+                  "cx": 17.1640625,
+                  "cy": 27.0859375,
+                  "width": 2,
+                  "height": 2,
+                  "pixels": 1
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.20833333333333337,
+                "searchRadius": 4,
+                "ambiguity": "this slot is inside a reference component 20985.0x its size and 234x197 px against its 2x2 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 4 px either (best residual 6.3 against its own 12.0 of contrast, confidence 0.21)"
+              },
+              {
+                "slot": "billiard-shade",
+                "candidate": {
+                  "cx": 17.012345679012345,
+                  "cy": 26.995884773662553,
+                  "width": 2,
+                  "height": 2,
+                  "pixels": 4
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.05231296798172317,
+                "driftX": 0.04289940828402369,
+                "driftY": -0.02993805918788713,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.6057906458797327,
+                "searchRadius": 4,
+                "ambiguity": null
+              },
+              {
+                "slot": "course",
+                "candidate": {
+                  "cx": 91.0411678739863,
+                  "cy": 156.65146446687288,
+                  "width": 237,
+                  "height": 193,
+                  "pixels": 17066
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 102.18467953299977,
+                  "cy": 155.3557064569931,
+                  "width": 234,
+                  "height": 197,
+                  "pixels": 20985
+                },
+                "drift": 11.218593535498858,
+                "driftX": 11.14351165901347,
+                "driftY": -1.2957580098797905,
+                "widthDrift": 3,
+                "heightDrift": -4,
+                "confidence": null,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "panel",
+                "candidate": {
+                  "cx": 144.99570553341408,
+                  "cy": 148.81855452877664,
+                  "width": 23,
+                  "height": 59,
+                  "pixels": 806
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.02428322280919671,
+                "driftX": 0.010421836228287835,
+                "driftY": 0.021933085501858567,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8173471261553529,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-lower",
+                "candidate": {
+                  "cx": 90.49091907726107,
+                  "cy": 81.3821188819724,
+                  "width": 37,
+                  "height": 36,
+                  "pixels": 321
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 90.52824858757062,
+                  "cy": 81.64406779661017,
+                  "width": 37,
+                  "height": 37,
+                  "pixels": 354
+                },
+                "drift": 0.26459540098016904,
+                "driftX": 0.03732951030954723,
+                "driftY": 0.26194891463777026,
+                "widthDrift": 0,
+                "heightDrift": -1,
+                "confidence": null,
+                "searchRadius": 28,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-upper",
+                "candidate": {
+                  "cx": 69.67927752612387,
+                  "cy": 36.76213798629623,
+                  "width": 45,
+                  "height": 44,
+                  "pixels": 480
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.04743397748611211,
+                "driftX": 0.045388695469308585,
+                "driftY": 0.013778553761093968,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8873324477720083,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "water",
+                "candidate": {
+                  "cx": 189.00000000000753,
+                  "cy": 181.5000000000071,
+                  "width": 74,
+                  "height": 39,
+                  "pixels": 1562
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.06863725277113653,
+                "searchRadius": 32,
+                "ambiguity": "this slot is inside a reference component 13.4x its size and 234x197 px against its 74x39 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 29.6 against its own 105.5 of contrast, confidence 0.07)"
+              }
+            ]
+          },
+          {
+            "index": 310,
+            "file": "/Users/firejune/Workspace/Firejune/rigc/bench/reference/2-the-12-principles/billiard-ball/f0310.png",
+            "mae": 4.323223839741247,
+            "maeFrame": 1.5982330500731186,
+            "unionPixels": 21432,
+            "candidatePixels": 21022,
+            "referencePixels": 21336,
+            "components": 1,
+            "unmatchedComponents": 0,
+            "worstSlot": "course",
+            "worstDrift": 11.176849940759187,
+            "attributed": 6,
+            "drawn": 8,
+            "slots": [
+              {
+                "slot": "billiard",
+                "candidate": {
+                  "cx": 105.50316957210777,
+                  "cy": 165.4928684627575,
+                  "width": 3,
+                  "height": 3,
+                  "pixels": 5
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.09266802443991862,
+                "searchRadius": 4,
+                "ambiguity": "this slot is inside a reference component 4311.2x its size and 234x195 px against its 3x3 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 4 px either (best residual 59.4 against its own 197.2 of contrast, confidence 0.09)"
+              },
+              {
+                "slot": "billiard-gloss",
+                "candidate": {
+                  "cx": 105.451871657754,
+                  "cy": 165.83155080213902,
+                  "width": 3,
+                  "height": 3,
+                  "pixels": 1
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 2.4870736787074605,
+                "driftX": 0.6224489795918366,
+                "driftY": -2.4079229122055676,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.25874125874125875,
+                "searchRadius": 4,
+                "ambiguity": null
+              },
+              {
+                "slot": "billiard-shade",
+                "candidate": {
+                  "cx": 105.50986842105263,
+                  "cy": 165.49671052631578,
+                  "width": 3,
+                  "height": 3,
+                  "pixels": 5
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.14088757412040612,
+                "driftX": -0.09838056680161938,
+                "driftY": 0.10084925690021239,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.5074309978768576,
+                "searchRadius": 4,
+                "ambiguity": null
+              },
+              {
+                "slot": "course",
+                "candidate": {
+                  "cx": 91.0411678739863,
+                  "cy": 156.65146446687288,
+                  "width": 237,
+                  "height": 193,
+                  "pixels": 17066
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 101.96283277090363,
+                  "cy": 154.27676227971503,
+                  "width": 234,
+                  "height": 195,
+                  "pixels": 21336
+                },
+                "drift": 11.176849940759187,
+                "driftX": 10.921664896917335,
+                "driftY": -2.374702187157851,
+                "widthDrift": 3,
+                "heightDrift": -2,
+                "confidence": null,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "panel",
+                "candidate": {
+                  "cx": 144.99570553341408,
+                  "cy": 148.81855452877664,
+                  "width": 23,
+                  "height": 59,
+                  "pixels": 806
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.02428322280919671,
+                "driftX": 0.010421836228287835,
+                "driftY": 0.021933085501858567,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8173471261553529,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-lower",
+                "candidate": {
+                  "cx": 84.73470196092771,
+                  "cy": 74.98853789623782,
+                  "width": 36,
+                  "height": 37,
+                  "pixels": 322
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.03188558681735026,
+                "driftX": 0.01731770833333336,
+                "driftY": -0.02677288973511035,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8420400990494449,
+                "searchRadius": 28,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-upper",
+                "candidate": {
+                  "cx": 71.36772658359207,
+                  "cy": 45.58959568033856,
+                  "width": 45,
+                  "height": 41,
+                  "pixels": 484
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.018401770316950325,
+                "driftX": -0.014524657625168764,
+                "driftY": 0.011298649108164256,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8668094218415417,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "water",
+                "candidate": {
+                  "cx": 189.00000000000753,
+                  "cy": 181.5000000000071,
+                  "width": 74,
+                  "height": 39,
+                  "pixels": 1562
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.06863725277113653,
+                "searchRadius": 32,
+                "ambiguity": "this slot is inside a reference component 13.7x its size and 234x195 px against its 74x39 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 29.6 against its own 105.5 of contrast, confidence 0.07)"
+              }
+            ]
+          }
+        ],
+        "notes": []
+      },
+      {
+        "dir": "bowling-ball",
+        "animation": "bowling-ball",
+        "candidateAnimation": "bowling-ball",
+        "fps": 12,
+        "referenceFrames": 2,
+        "candidateFrames": 311,
+        "compared": 2,
+        "meanMae": 4.3937575387319745,
+        "meanMaeFrame": 1.6255311129386154,
+        "worstMae": 4.412563587996503,
+        "worstMaeFrame": 310,
+        "worstDrift": 11.176533285516285,
+        "worstDriftFrame": 310,
+        "worstDriftSlot": "course",
+        "framesWithoutDrift": 0,
+        "frames": [
+          {
+            "index": 0,
+            "file": "/Users/firejune/Workspace/Firejune/rigc/bench/reference/2-the-12-principles/bowling-ball/f0000.png",
+            "mae": 4.374951489467446,
+            "maeFrame": 1.6204027320906622,
+            "unionPixels": 21473,
+            "candidatePixels": 21063,
+            "referencePixels": 21378,
+            "components": 2,
+            "unmatchedComponents": 0,
+            "worstSlot": "course",
+            "worstDrift": 11.0958381873363,
+            "attributed": 6,
+            "drawn": 8,
+            "slots": [
+              {
+                "slot": "bowling",
+                "candidate": {
+                  "cx": 18.47909162786612,
+                  "cy": 24.480497232715457,
+                  "width": 7,
+                  "height": 7,
+                  "pixels": 45
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.14081815929602176,
+                "driftX": 0.04554147740855879,
+                "driftY": 0.1332506203473946,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.4324455794722122,
+                "searchRadius": 5,
+                "ambiguity": null
+              },
+              {
+                "slot": "bowling-gloss",
+                "candidate": {
+                  "cx": 18.42972181551976,
+                  "cy": 25.12225475841874,
+                  "width": 7,
+                  "height": 7,
+                  "pixels": 3
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.22580645161290347,
+                "searchRadius": 5,
+                "ambiguity": "this slot is inside a reference component 7849.4x its size and 234x197 px against its 7x7 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 5 px either (best residual 6.7 against its own 5.8 of contrast, confidence 0.23)"
+              },
+              {
+                "slot": "bowling-shade",
+                "candidate": {
+                  "cx": 18.490010997067454,
+                  "cy": 24.499175219941357,
+                  "width": 7,
+                  "height": 7,
+                  "pixels": 43
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.2173336557439727,
+                "driftX": -0.16881720430107502,
+                "driftY": -0.1368746486790331,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.3735987953822989,
+                "searchRadius": 5,
+                "ambiguity": null
+              },
+              {
+                "slot": "course",
+                "candidate": {
+                  "cx": 91.0411678739863,
+                  "cy": 156.65146446687288,
+                  "width": 237,
+                  "height": 193,
+                  "pixels": 17066
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 102.02972792998477,
+                  "cy": 155.1122526636225,
+                  "width": 234,
+                  "height": 197,
+                  "pixels": 21024
+                },
+                "drift": 11.0958381873363,
+                "driftX": 10.988560055998477,
+                "driftY": -1.5392118032503674,
+                "widthDrift": 3,
+                "heightDrift": -4,
+                "confidence": null,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "panel",
+                "candidate": {
+                  "cx": 144.99570553341408,
+                  "cy": 148.81855452877664,
+                  "width": 23,
+                  "height": 59,
+                  "pixels": 806
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.02428322280919671,
+                "driftX": 0.010421836228287835,
+                "driftY": 0.021933085501858567,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8173471261553529,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-lower",
+                "candidate": {
+                  "cx": 90.49091907726107,
+                  "cy": 81.3821188819724,
+                  "width": 37,
+                  "height": 36,
+                  "pixels": 321
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 90.52824858757062,
+                  "cy": 81.64406779661017,
+                  "width": 37,
+                  "height": 37,
+                  "pixels": 354
+                },
+                "drift": 0.26459540098016904,
+                "driftX": 0.03732951030954723,
+                "driftY": 0.26194891463777026,
+                "widthDrift": 0,
+                "heightDrift": -1,
+                "confidence": null,
+                "searchRadius": 28,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-upper",
+                "candidate": {
+                  "cx": 69.67927752612387,
+                  "cy": 36.76213798629623,
+                  "width": 45,
+                  "height": 44,
+                  "pixels": 480
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.04743397748611211,
+                "driftX": 0.045388695469308585,
+                "driftY": 0.013778553761093968,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8873324477720083,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "water",
+                "candidate": {
+                  "cx": 189.00000000000753,
+                  "cy": 181.5000000000071,
+                  "width": 74,
+                  "height": 39,
+                  "pixels": 1562
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.06863725277113653,
+                "searchRadius": 32,
+                "ambiguity": "this slot is inside a reference component 13.5x its size and 234x197 px against its 74x39 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 29.6 against its own 105.5 of contrast, confidence 0.07)"
+              }
+            ]
+          },
+          {
+            "index": 310,
+            "file": "/Users/firejune/Workspace/Firejune/rigc/bench/reference/2-the-12-principles/bowling-ball/f0310.png",
+            "mae": 4.412563587996503,
+            "maeFrame": 1.6306594937865688,
+            "unionPixels": 21427,
+            "candidatePixels": 21018,
+            "referencePixels": 21331,
+            "components": 1,
+            "unmatchedComponents": 0,
+            "worstSlot": "course",
+            "worstDrift": 11.176533285516285,
+            "attributed": 5,
+            "drawn": 8,
+            "slots": [
+              {
+                "slot": "bowling",
+                "candidate": {
+                  "cx": 194.81273528601596,
+                  "cy": 193.49201175282343,
+                  "width": 8,
+                  "height": 7,
+                  "pixels": 43
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.24000053511470182,
+                "driftX": 0.23812423873325267,
+                "driftY": -0.029951690821256035,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.3797487286868083,
+                "searchRadius": 6,
+                "ambiguity": null
+              },
+              {
+                "slot": "bowling-gloss",
+                "candidate": {
+                  "cx": 194.9261275272162,
+                  "cy": 193.94634525660967,
+                  "width": 8,
+                  "height": 7,
+                  "pixels": 3
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0,
+                "searchRadius": 6,
+                "ambiguity": "this slot is inside a reference component 8459.4x its size and 234x195 px against its 8x7 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 6 px either (best residual 67.2 against its own 5.3 of contrast, confidence 0.00)"
+              },
+              {
+                "slot": "bowling-shade",
+                "candidate": {
+                  "cx": 194.8265091361331,
+                  "cy": 193.50564431263743,
+                  "width": 8,
+                  "height": 7,
+                  "pixels": 41
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.07526020816653345,
+                "searchRadius": 6,
+                "ambiguity": "this slot is inside a reference component 520.4x its size and 234x195 px against its 8x7 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 6 px either (best residual 41.8 against its own 122.5 of contrast, confidence 0.08)"
+              },
+              {
+                "slot": "course",
+                "candidate": {
+                  "cx": 91.0411678739863,
+                  "cy": 156.65146446687288,
+                  "width": 237,
+                  "height": 193,
+                  "pixels": 17066
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 101.96195677652243,
+                  "cy": 154.27422530589283,
+                  "width": 234,
+                  "height": 195,
+                  "pixels": 21331
+                },
+                "drift": 11.176533285516285,
+                "driftX": 10.920788902536131,
+                "driftY": -2.3772391609800536,
+                "widthDrift": 3,
+                "heightDrift": -2,
+                "confidence": null,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "panel",
+                "candidate": {
+                  "cx": 144.99570553341408,
+                  "cy": 148.81855452877664,
+                  "width": 23,
+                  "height": 59,
+                  "pixels": 806
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.02428322280919671,
+                "driftX": 0.010421836228287835,
+                "driftY": 0.021933085501858567,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8173471261553529,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-lower",
+                "candidate": {
+                  "cx": 84.73470196092771,
+                  "cy": 74.98853789623782,
+                  "width": 36,
+                  "height": 37,
+                  "pixels": 322
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.03188558681735026,
+                "driftX": 0.01731770833333336,
+                "driftY": -0.02677288973511035,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8420400990494449,
+                "searchRadius": 28,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-upper",
+                "candidate": {
+                  "cx": 71.36772658359207,
+                  "cy": 45.58959568033856,
+                  "width": 45,
+                  "height": 41,
+                  "pixels": 484
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.018401770316950325,
+                "driftX": -0.014524657625168764,
+                "driftY": 0.011298649108164256,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8668094218415417,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "water",
+                "candidate": {
+                  "cx": 189.00000000000753,
+                  "cy": 181.5000000000071,
+                  "width": 74,
+                  "height": 39,
+                  "pixels": 1562
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.06732123799359646,
+                "searchRadius": 32,
+                "ambiguity": "this slot is inside a reference component 13.7x its size and 234x195 px against its 74x39 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 30.2 against its own 105.5 of contrast, confidence 0.07)"
+              }
+            ]
+          }
+        ],
+        "notes": []
+      },
+      {
+        "dir": "tennis-ball",
+        "animation": "tennis-ball",
+        "candidateAnimation": "tennis-ball",
+        "fps": 12,
+        "referenceFrames": 2,
+        "candidateFrames": 311,
+        "compared": 2,
+        "meanMae": 4.339593823997502,
+        "meanMaeFrame": 1.604243763706159,
+        "worstMae": 4.341033538672194,
+        "worstMaeFrame": 310,
+        "worstDrift": 11.21530188613921,
+        "worstDriftFrame": 0,
+        "worstDriftSlot": "course",
+        "framesWithoutDrift": 0,
+        "frames": [
+          {
+            "index": 0,
+            "file": "/Users/firejune/Workspace/Firejune/rigc/bench/reference/2-the-12-principles/tennis-ball/f0000.png",
+            "mae": 4.33815410932281,
+            "maeFrame": 1.604149533991247,
+            "unionPixels": 21435,
+            "candidatePixels": 21025,
+            "referencePixels": 21340,
+            "components": 2,
+            "unmatchedComponents": 0,
+            "worstSlot": "course",
+            "worstDrift": 11.21530188613921,
+            "attributed": 5,
+            "drawn": 7,
+            "slots": [
+              {
+                "slot": "course",
+                "candidate": {
+                  "cx": 91.0411678739863,
+                  "cy": 156.65146446687288,
+                  "width": 237,
+                  "height": 193,
+                  "pixels": 17066
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 102.18064423901649,
+                  "cy": 155.3495187267702,
+                  "width": 234,
+                  "height": 197,
+                  "pixels": 20986
+                },
+                "drift": 11.21530188613921,
+                "driftX": 11.139476365030191,
+                "driftY": -1.301945740102667,
+                "widthDrift": 3,
+                "heightDrift": -4,
+                "confidence": null,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "panel",
+                "candidate": {
+                  "cx": 144.99570553341408,
+                  "cy": 148.81855452877664,
+                  "width": 23,
+                  "height": 59,
+                  "pixels": 806
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.02428322280919671,
+                "driftX": 0.010421836228287835,
+                "driftY": 0.021933085501858567,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8173471261553529,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-lower",
+                "candidate": {
+                  "cx": 90.49091907726107,
+                  "cy": 81.3821188819724,
+                  "width": 37,
+                  "height": 36,
+                  "pixels": 321
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 90.52824858757062,
+                  "cy": 81.64406779661017,
+                  "width": 37,
+                  "height": 37,
+                  "pixels": 354
+                },
+                "drift": 0.26459540098016904,
+                "driftX": 0.03732951030954723,
+                "driftY": 0.26194891463777026,
+                "widthDrift": 0,
+                "heightDrift": -1,
+                "confidence": null,
+                "searchRadius": 28,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-upper",
+                "candidate": {
+                  "cx": 69.67927752612387,
+                  "cy": 36.76213798629623,
+                  "width": 45,
+                  "height": 44,
+                  "pixels": 480
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.04743397748611211,
+                "driftX": 0.045388695469308585,
+                "driftY": 0.013778553761093968,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8873324477720083,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "tennis",
+                "candidate": {
+                  "cx": 17.40221402214022,
+                  "cy": 26.715867158671582,
+                  "width": 3,
+                  "height": 3,
+                  "pixels": 6
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.06666666666666676,
+                "searchRadius": 4,
+                "ambiguity": "this slot is inside a reference component 3291.2x its size and 234x197 px against its 3x3 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 4 px either (best residual 59.3 against its own 191.4 of contrast, confidence 0.07)"
+              },
+              {
+                "slot": "tennis-shade",
+                "candidate": {
+                  "cx": 17.39844760672704,
+                  "cy": 26.715394566623544,
+                  "width": 3,
+                  "height": 3,
+                  "pixels": 6
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.1916651869330996,
+                "driftX": 0.12438336856941512,
+                "driftY": 0.1458229114557279,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.49691358024691357,
+                "searchRadius": 4,
+                "ambiguity": null
+              },
+              {
+                "slot": "water",
+                "candidate": {
+                  "cx": 189.00000000000753,
+                  "cy": 181.5000000000071,
+                  "width": 74,
+                  "height": 39,
+                  "pixels": 1562
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.06863725277113653,
+                "searchRadius": 32,
+                "ambiguity": "this slot is inside a reference component 13.4x its size and 234x197 px against its 74x39 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 29.6 against its own 105.5 of contrast, confidence 0.07)"
+              }
+            ]
+          },
+          {
+            "index": 310,
+            "file": "/Users/firejune/Workspace/Firejune/rigc/bench/reference/2-the-12-principles/tennis-ball/f0310.png",
+            "mae": 4.341033538672194,
+            "maeFrame": 1.6043379934210713,
+            "unionPixels": 21428,
+            "candidatePixels": 21019,
+            "referencePixels": 21333,
+            "components": 1,
+            "unmatchedComponents": 0,
+            "worstSlot": "course",
+            "worstDrift": 11.160583513662983,
+            "attributed": 6,
+            "drawn": 7,
+            "slots": [
+              {
+                "slot": "course",
+                "candidate": {
+                  "cx": 91.0411678739863,
+                  "cy": 156.65146446687288,
+                  "width": 237,
+                  "height": 193,
+                  "pixels": 17066
+                },
+                "method": "component",
+                "reference": {
+                  "cx": 101.9501945342896,
+                  "cy": 154.29524680073126,
+                  "width": 234,
+                  "height": 196,
+                  "pixels": 21333
+                },
+                "drift": 11.160583513662983,
+                "driftX": 10.909026660303297,
+                "driftY": -2.3562176661416174,
+                "widthDrift": 3,
+                "heightDrift": -3,
+                "confidence": null,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "panel",
+                "candidate": {
+                  "cx": 144.99570553341408,
+                  "cy": 148.81855452877664,
+                  "width": 23,
+                  "height": 59,
+                  "pixels": 806
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.02428322280919671,
+                "driftX": 0.010421836228287835,
+                "driftY": 0.021933085501858567,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8173471261553529,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-lower",
+                "candidate": {
+                  "cx": 84.73470196092771,
+                  "cy": 74.98853789623782,
+                  "width": 36,
+                  "height": 37,
+                  "pixels": 322
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.03153135543428507,
+                "driftX": 0.0173962571196095,
+                "driftY": -0.02629822453610993,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8398266645067228,
+                "searchRadius": 28,
+                "ambiguity": null
+              },
+              {
+                "slot": "ring-upper",
+                "candidate": {
+                  "cx": 70.58167897006803,
+                  "cy": 45.57294813187524,
+                  "width": 45,
+                  "height": 43,
+                  "pixels": 486
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.08169433594029703,
+                "driftX": 0.06912951463987528,
+                "driftY": 0.04353245605730711,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.8365475907904105,
+                "searchRadius": 32,
+                "ambiguity": null
+              },
+              {
+                "slot": "tennis",
+                "candidate": {
+                  "cx": 105.03397341211227,
+                  "cy": 165.37001477104874,
+                  "width": 2,
+                  "height": 3,
+                  "pixels": 5
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.23927457018654152,
+                "driftX": 0.0340314136125654,
+                "driftY": 0.23684210526315772,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.2483847810480978,
+                "searchRadius": 4,
+                "ambiguity": null
+              },
+              {
+                "slot": "tennis-shade",
+                "candidate": {
+                  "cx": 105.03660377358491,
+                  "cy": 165.38150943396226,
+                  "width": 2,
+                  "height": 3,
+                  "pixels": 5
+                },
+                "method": "template",
+                "reference": null,
+                "drift": 0.1196409456798296,
+                "driftX": -0.1126582278481012,
+                "driftY": 0.04027504911591357,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.15019255455712466,
+                "searchRadius": 4,
+                "ambiguity": null
+              },
+              {
+                "slot": "water",
+                "candidate": {
+                  "cx": 189.00000000000753,
+                  "cy": 181.5000000000071,
+                  "width": 74,
+                  "height": 39,
+                  "pixels": 1562
+                },
+                "method": "none",
+                "reference": null,
+                "drift": null,
+                "driftX": null,
+                "driftY": null,
+                "widthDrift": null,
+                "heightDrift": null,
+                "confidence": 0.06863725277113653,
+                "searchRadius": 32,
+                "ambiguity": "this slot is inside a reference component 13.7x its size and 234x196 px against its 74x39 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 29.6 against its own 105.5 of contrast, confidence 0.07)"
+              }
+            ]
+          }
+        ],
+        "notes": []
+      }
+    ],
+    "notes": []
+  }
+}

@@ -1,0 +1,235 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "obstacle-course",
+  "images": "images",
+  "skeleton": {
+    "x": -50,
+    "y": -51,
+    "width": 3256,
+    "height": 2873
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "water",
+      "parent": "root",
+      "x": 2418.0,
+      "y": 457.0
+    },
+    {
+      "name": "panel",
+      "parent": "root",
+      "x": 1765.0,
+      "y": 540.0
+    },
+    {
+      "name": "course",
+      "parent": "root",
+      "x": 1578.5,
+      "y": 1274.0
+    },
+    {
+      "name": "ring-upper",
+      "parent": "root",
+      "x": 801.43,
+      "y": 2387.67
+    },
+    {
+      "name": "ring-lower",
+      "parent": "root",
+      "x": 1034.29,
+      "y": 1884.11
+    },
+    {
+      "name": "basketball",
+      "parent": "root",
+      "x": 70.2,
+      "y": 2636.0
+    },
+    {
+      "name": "billiard",
+      "parent": "root",
+      "x": 59.2,
+      "y": 2581.6
+    },
+    {
+      "name": "bowling",
+      "parent": "root",
+      "x": 73.8,
+      "y": 2617.0
+    },
+    {
+      "name": "tennis",
+      "parent": "root",
+      "x": 58.7,
+      "y": 2584.6
+    }
+  ],
+  "slots": [
+    {
+      "name": "water",
+      "bone": "water",
+      "attachment": "water",
+      "color": "ffffffc4"
+    },
+    {
+      "name": "panel",
+      "bone": "panel",
+      "attachment": "platform"
+    },
+    {
+      "name": "course",
+      "bone": "course",
+      "attachment": "obstacle-course"
+    },
+    {
+      "name": "ring-upper",
+      "bone": "ring-upper",
+      "attachment": "ring-big"
+    },
+    {
+      "name": "ring-lower",
+      "bone": "ring-lower",
+      "attachment": "ring-small"
+    },
+    {
+      "name": "basketball",
+      "bone": "basketball",
+      "attachment": null
+    },
+    {
+      "name": "basketball-shade",
+      "bone": "basketball",
+      "attachment": null,
+      "color": "ffb5a1ff"
+    },
+    {
+      "name": "billiard",
+      "bone": "billiard",
+      "attachment": null
+    },
+    {
+      "name": "billiard-shade",
+      "bone": "billiard",
+      "attachment": null
+    },
+    {
+      "name": "billiard-gloss",
+      "bone": "billiard",
+      "attachment": null
+    },
+    {
+      "name": "bowling",
+      "bone": "bowling",
+      "attachment": null
+    },
+    {
+      "name": "bowling-shade",
+      "bone": "bowling",
+      "attachment": null,
+      "color": "ecceffff"
+    },
+    {
+      "name": "bowling-gloss",
+      "bone": "bowling",
+      "attachment": null
+    },
+    {
+      "name": "tennis",
+      "bone": "tennis",
+      "attachment": null
+    },
+    {
+      "name": "tennis-shade",
+      "bone": "tennis",
+      "attachment": null,
+      "color": "fbffa7ff"
+    }
+  ],
+  "skins": {
+    "default": {
+      "water": {
+        "water": {
+          "image": "water.png"
+        }
+      },
+      "panel": {
+        "platform": {
+          "image": "platform.png",
+          "y": 406.5
+        }
+      },
+      "course": {
+        "obstacle-course": {
+          "image": "obstacle-course.png",
+          "scaleX": 2,
+          "scaleY": 2
+        }
+      },
+      "ring-upper": {
+        "ring-big": {
+          "image": "ring-big.png"
+        }
+      },
+      "ring-lower": {
+        "ring-small": {
+          "image": "ring-small.png",
+          "x": 0.17,
+          "y": -18.12
+        }
+      },
+      "basketball": {
+        "basket-ball": {
+          "image": "basket-ball.png"
+        }
+      },
+      "basketball-shade": {
+        "basket-lambertian": {
+          "image": "basket-lambertian.png"
+        }
+      },
+      "billiard": {
+        "billiard-ball": {
+          "image": "billiard-ball.png"
+        }
+      },
+      "billiard-shade": {
+        "billiard-lambertian": {
+          "image": "billiard-lambertian.png"
+        }
+      },
+      "billiard-gloss": {
+        "billiard-specular": {
+          "image": "billiard-specular.png"
+        }
+      },
+      "bowling": {
+        "bowling-ball": {
+          "image": "bowling-ball.png"
+        }
+      },
+      "bowling-shade": {
+        "bowling-lambertian": {
+          "image": "bowling-lambertian.png"
+        }
+      },
+      "bowling-gloss": {
+        "bowling-specular": {
+          "image": "bowling-specular.png"
+        }
+      },
+      "tennis": {
+        "tennis-ball": {
+          "image": "tennis-ball.png"
+        }
+      },
+      "tennis-shade": {
+        "tennis-lambertian": {
+          "image": "tennis-lambertian.png"
+        }
+      }
+    }
+  }
+}
