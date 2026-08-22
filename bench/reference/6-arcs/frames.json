@@ -1,0 +1,41 @@
+{
+  "spec": "rigc-frames/1",
+  "example": "6-arcs",
+  "rung": "6",
+  "skeleton": "pro",
+  "background": [
+    232,
+    232,
+    232,
+    255
+  ],
+  "viewport": {
+    "x": -446.32508201110414,
+    "y": -331.2056283473019,
+    "width": 5991.254866250566,
+    "height": 1599.0864548977252,
+    "scale": 0.08545789011316401,
+    "pixelWidth": 512,
+    "pixelHeight": 137
+  },
+  "sets": [
+    {
+      "dir": "arcs",
+      "animation": "arcs",
+      "fps": 12,
+      "sampled": 69,
+      "written": 69,
+      "stride": 1,
+      "duration": 5.666666666666666
+    },
+    {
+      "dir": "arcs@24fps",
+      "animation": "arcs",
+      "fps": 24,
+      "sampled": 137,
+      "written": 2,
+      "stride": 999,
+      "duration": 5.666666666666666
+    }
+  ]
+}

@@ -85,8 +85,9 @@ in the next tile.
 | 2 | `2-the-12-principles` | 4 × 311 | `--fps 12 --stride 999 --tile 64` | 256×228 | 1.4 MB |
 | 4 | `4-wave-principle` | `ball-catch` 121, `wave-by-hand` 17, `wave-offset` 17 | `--fps 12 --max 768 --tile 256`, then the same at `--fps 24 --stride 999` | 768×634 | 1.4 MB |
 | 5 | `5-squash-and-stretch` | `ball` 79, `speedy` 79, `ball-ready-to-animate` 1 | `--fps 12 --max 192`, then `--fps 24 --stride 999 --tile 96` | 192×124 | 2.8 MB |
+| 6 | `6-arcs` | `arcs` 69 | `--fps 12 --max 512 --tile 171`, then the same at `--fps 24 --stride 999` | 512×137 | 1.2 MB |
 
-Three of those settings are not defaults, and each is a trade worth knowing:
+Four of those settings are not defaults, and each is a trade worth knowing:
 
 - **rung 2 keeps only the sheets.** 1,244 frames of a static obstacle course is
   over sixty megabytes as separate files and about a seventeenth of that as four
@@ -100,6 +101,15 @@ Three of those settings are not defaults, and each is a trade worth knowing:
   so at any size that fits a byte budget the ball is a few pixels. 192 px keeps the
   whole rung under three megabytes and still resolves the ball's proportions, which
   is what that rung is about.
+- **rung 6 is rendered wide.** Its world box is nearly four times as wide as it is
+  tall, so the long side buys height slowly: 512 px gives a 137 px-tall frame in
+  which the ball is 12–13 px across — enough to measure the shape changes the rung
+  is about. 640 px was measured at 1.7 MB, over budget; 384 px puts the ball at
+  9 px and loses them.
+
+⚠️ **Rung 6 is the first set whose subject deforms**, and it exists because
+`src/render.ts` learned to rasterise mesh attachments (#27). Before that the
+renderer refused this rung by name and the frame-fidelity lane stopped at rung 5.
 
 A rung with more than one skeleton nests them: `1-weight-and-mass/balls/…` and
 `1-weight-and-mass/drop/…`. They are two shots that share an atlas, they are framed
