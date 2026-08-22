@@ -4,10 +4,12 @@ Guidance for AI-assisted sessions working on this repository.
 
 ## What this is
 
-rigc compiles a cut manifest plus a motion spec into Spine 4.3 skeleton data and a
-one-part-per-page atlas, then round-trips the result through `@esotericsoftware/spine-core`
-and 31 named assertions before anything is written. Read [README.md](README.md) for
-the format, the CLI and the assertion list.
+rigc compiles a **rig spec** plus a motion spec — and, for a cut with measured art
+behind it, a cut manifest — into Spine 4.3 skeleton data and a one-part-per-page
+atlas, then round-trips the result through `@esotericsoftware/spine-core` and 31
+named assertions before anything is written. Read [README.md](README.md) for the
+formats, the CLI and the assertion list; [`src/rig.ts`](src/rig.ts) is the rig
+spec's own documentation.
 
 ## The doctrine: a tool for AI, not for people
 
@@ -63,9 +65,9 @@ sincere about it. rigc exists to convert that silence into a named failure.
   trip belongs to `src/validate.ts` alone, and `src/compile.ts` must stay
   independent of it so the two are not checking each other's assumptions).
 - Coordinate contract: manifests are in **crop pixels, y down, origin top-left**;
-  Spine world is **y up, origin at the bottom-left of the crop**. The conversion
-  lives in `src/archetype.ts` (`cropToSpineY`) and `src/transform.ts`. Do not
-  open-code it anywhere else.
+  Spine world is **y up, origin at the bottom-left of the crop**. The whole
+  conversion lives in `src/transform.ts` (`cropToSpineY`, `toBoneLocal`,
+  `screenToSpineDegrees`). Do not open-code it anywhere else.
 - Conventional Commits, English subject and body. Commit each finished unit.
 - Pushing, tagging and publishing are the owner's call.
 
@@ -78,10 +80,10 @@ this repository** — they are in the blosharper repo at
 They are the record of *why* each assertion exists, and most of them were written
 after a failure that the assertion now catches.
 
-`spine_builder.py:49`, cited in `src/archetype.ts`, `src/validate.ts` and
-`selftest.ts`, is likewise a file in that repo's `sandbox/dlc/spine_pipeline/_scaffold/`
-— the superseded generator whose two structural bugs became assertions `A24` and
-`A25`.
+`spine_builder.py:49`, cited in `src/validate.ts`, `selftest.ts` and (since the
+archetype tables became data) that repo's `rigs/joint_closeup_v1.rig.json`, is
+likewise a file in that repo's `sandbox/dlc/spine_pipeline/_scaffold/` — the
+superseded generator whose two structural bugs became assertions `A24` and `A25`.
 
 ---
 
@@ -94,26 +96,27 @@ identifier that is still hardcoded and **must move from code to data before this
 repository goes public.** The list is an inventory, not a task order — it is here so
 that a session that opens this repo cannot mistake the current state for a clean one.
 
-### 1. `src/archetype.ts` — the archetype tables are code, and one of them is a cut
+### 1. ~~`src/archetype.ts` — the archetype tables are code~~ ✅ RESOLVED 2026-08-22
 
-`ARCHETYPES` is a hardcoded registry of three formations. A motion spec picks one by
-name; there is no way to supply a new one without editing this file. That is the
-headline item: **archetypes should be data the spec points at.**
+`src/archetype.ts` is **gone**. The three formations are rig spec files
+(`spec: "rigc-rig/1"`, [`src/rig.ts`](src/rig.ts)) in the owning project at
+`sandbox/dlc/spine_pipeline/rigs/`, and a cuts.json entry names one with a `rig`
+path. `face_overlay_v1` got no file: it and v2 were one formation and a mesh-tier
+flag, and that flag is `invariants.meshSlots` now. The acceptance test was
+byte-identity, and all four of that project's cuts still emit the same
+`skeleton.json` and `skeleton.atlas`.
 
-- `face_overlay_v1` / `face_overlay_v2` — root chain `['root', 'face']`, and `face`
-  is described as the handle that re-seats "the whole formation".
-- `joint_closeup_v1` — 18 bones and 9 slots named after one specific cut's anatomy:
-  `axis`, `cam`, `base`, `body`, `body_soft`, `body_soft_a`, `body_soft_b`,
-  `piston`, `piston_tip`, `piston_blur`, `lip`, `rim`, `rim_grip_a`…`rim_grip_d`,
-  `fluid`, `fluid_a`/`_b`/`_c`, `fluid_src`, `fluid_pool`, `near`, `grade`.
-  `slotOrder` fixes the draw order over those names.
-- Korean design quotation at `src/archetype.ts:3`.
+⚠️ **What that removed and what it did not.** The cut-specific *names* — `axis`,
+`piston`, `lip`, `fluid_src`, `rim_grip_a`…`d`, `body_soft`, `fluid_pool`, `near`,
+`grade` — left this repository with the tables. They are still all over `src/`,
+`tools/` and `selftest.ts` as examples, comments and mutant targets, and items 2, 4
+and 5 below are unchanged. The headline item is closed; the inventory is not.
 
 ### 2. `src/validate.ts` — assertions whose meaning is that cut's anatomy
 
-The assertions read the archetype table rather than the names directly, so they are
-mechanically general — but their doc comments, and their reason for existing, are
-that one formation:
+The assertions read the rig spec's `invariants` block rather than the names
+directly, so they are mechanically general — but their doc comments, and their
+reason for existing, are that one formation:
 
 - `A24_AXIS_SPACE_STROKE` — "the stroke", "the axis bone", the ~40° sibling-variant
   measurement.
@@ -131,17 +134,25 @@ that one formation:
 
 ### 3. `src/compile.ts`, `src/types.ts`, `src/png.ts`
 
-- `src/compile.ts:233` — Korean quotation.
-- `src/compile.ts:269` — comment cites `hide: ['lip']`, a probe belonging to the
+- `src/compile.ts:293` — Korean quotation.
+- `src/compile.ts:329` — comment cites `hide: ['lip']`, a probe belonging to the
   owning project.
-- `src/types.ts:132` — cites `rigc/tools/contact.ts`, a path that only made sense
+- `src/types.ts:136` — cites `rigc/tools/contact.ts`, a path that only made sense
   before the split.
 - `src/png.ts:7` — "no NODE_PATH into the game repo", plus a Korean quotation.
 
+⚠️ Line numbers in this section go stale on every edit to those files. Grep for the
+quoted text, not for the number.
+
 ### 4. `selftest.ts` — fixture-bound, and the fixtures are that game's art
 
-This is the largest item. The suite is 3 positive controls plus 35 mutants, and the
-mutants are hand-aimed:
+This is the largest item, and it grew: the suite is now 4 positive controls, 44
+artifact mutants and 7 rig-spec refusals, and all of them are hand-aimed at the same
+fixtures. The rig-spec suite added a dependency of its own — it reads the `rig` path
+out of the cuts table and edits that file, so it needs the rig specs as well as the
+art.
+
+The mutants are hand-aimed:
 
 - **Cut ids** it requires a `cuts.json` to supply: `face_trial`, `joint_dev`,
   `seam_trial`.
@@ -168,7 +179,7 @@ see README, *The yardstick* — this repository ships a gate it cannot demonstra
 - `tools/measure_contact_depth.ts:40` — argument defaults `massSlot = 'body_soft'`,
   `againstSlot = 'lip'`.
 - `tools/measure_joint_anchors.ts` — written for `joint_closeup_v1` specifically
-  (it derives that archetype's 17 non-root anchors).
+  (it derives that rig's 17 non-root anchors).
 
 ### 6. Everything cited but absent
 
@@ -176,3 +187,11 @@ see README, *The yardstick* — this repository ships a gate it cannot demonstra
 the blosharper repo (see *Where the cited plan documents live* above). Before going
 public these need to either resolve to something a reader can open, or be rewritten
 to state the invariant without the citation.
+
+### 7. The rig-spec paths in `bench/transcriptions/` are not a substitute
+
+`bench/transcriptions/3-timing-and-spacing/` proves the rig spec can express a
+public skeleton, and it is public-domain data (that example's `license.txt` releases
+the project file). It is **not** a fixture the selftest can run on: a transcription
+exercises the compiler, not the 31 assertions, and item 4 still stands. Re-basing
+the suite on public fixtures remains open.

@@ -110,27 +110,42 @@ fails: the diff has no threshold, because there is no rung score.
 
 [docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md) surveys the full Spine 4.3 export surface against what
 rigc emits and against what the nine examples measurably use (`bun run bench:usage` regenerates the
-counts). Three blockers sat *before* rung 1: **B1**, the bone tree is code in `archetype.ts` rather than data,
-so no example can be expressed at all; **B2**, `A16`'s regex rejected the `"4.3.75-beta"` that every
-example declares; and **B3**, every example ships a **packed** atlas (13–50 regions per page) against
-rigc's one-part-per-page model, which `A06` enforced unconditionally. B2 is fixed and B3's validator
-half is: the packed-atlas clauses now live behind `--profile` (above). B1 is open. Ordered gap list in
-Part 4 of that document; live status in [docs/LADDER.md](docs/LADDER.md).
+counts). Three blockers sat *before* rung 1: **B1**, the bone tree was code in `archetype.ts` rather
+than data, so no example could be expressed at all; **B2**, `A16`'s regex rejected the `"4.3.75-beta"`
+that every example declares; and **B3**, every example ships a **packed** atlas (13–50 regions per
+page) against rigc's one-part-per-page model, which `A06` enforced unconditionally. **B1 and B2 are
+closed**; B3's validator half is (the packed-atlas clauses live behind `--profile`, above) and its
+emitter half — no packer, no atlas importer — is not. Ordered gap list in Part 4 of that document;
+live status, and B1's proof, in [docs/LADDER.md](docs/LADDER.md).
 
 ## What exists today
 
-**Inputs — two files per cut.**
+**Inputs — three files, one domain each.** Only the middle one is required.
 
-- A **cut manifest** (`FaceManifest` in [`src/types.ts`](src/types.ts)): the
-  measured facts about the art. Crop rectangle, the base plate, one entry per part
-  with its offset and size, and — for the joint archetype — the entry point, the
-  insertion axis (`deg` in screen degrees plus a `unit` vector, cross-checked
-  against each other), stroke amplitudes, and any measured ceilings. The compiler
-  **never re-measures art**: every number here is produced by a measuring tool or
-  by the pipeline that cut the plates, and rigc only reads it.
-- A **motion spec** (`MotionSpec`, `spec: "rigc-motion/1"`): the archetype to build,
-  named easing handles, setup overrides, physics constraints by name, and the
-  animations — each with a declared duration, a loop flag, and its tracks.
+- A **cut manifest** (`FaceManifest` in [`src/types.ts`](src/types.ts)) owns
+  **measured art**. Crop rectangle, the base plate, one entry per part with its
+  offset and size, mask polygons, the state machine, bone anchors, and — for a
+  joint cut — the entry point, the insertion axis (`deg` in screen degrees plus a
+  `unit` vector, cross-checked against each other), stroke amplitudes and any
+  measured ceilings. The compiler **never re-measures art**: every number here is
+  produced by a measuring tool or by the pipeline that cut the plates, and rigc
+  only reads it. **Optional** — a skeleton with no measured art behind it (any of
+  the benchmark examples) has none.
+- A **rig spec** (`RigSpec` in [`src/rig.ts`](src/rig.ts), `spec: "rigc-rig/1"`)
+  owns **skeleton structure**: bones, slots, skins and their attachments, the 4.3
+  typed `constraints` array, and the invariants the emitted JSON cannot state
+  about itself. Its vocabulary is deliberately **Spine's own** — same concepts,
+  same field names, same defaults, cited to `SkeletonJson.ts` line numbers — so an
+  agent that has read Spine's documentation can author one without learning a
+  second vocabulary. rigc's additions sit on top and are namespaced: `from` on a
+  bone takes its position from the manifest instead of a literal that would drift
+  away from the art; `image` on an attachment names a PNG and rigc measures it;
+  `generator` on a mesh invokes a builder from `src/mesh.ts`; `invariants` carries
+  the axis bone, the forbidden parentage, the mesh budget.
+- A **motion spec** (`MotionSpec`, `spec: "rigc-motion/1"`) owns **time**: the rig
+  it was authored against, named easing handles, setup overrides, a physics tuning
+  table, and the animations — each with a declared duration, a loop flag, and its
+  tracks.
 
 **Outputs — two files per cut**, written to the cut's `out` directory:
 
@@ -140,11 +155,18 @@ Part 4 of that document; live status in [docs/LADDER.md](docs/LADDER.md).
   page, `pma: false`. That convention is what makes the region/attachment/filename
   join key checkable exactly rather than by convention.
 
-**Archetypes** ([`src/archetype.ts`](src/archetype.ts)) are the named bone/slot
-formations a spec can ask for: `face_overlay_v1`, `face_overlay_v2`,
-`joint_closeup_v1`. An archetype fixes the skeleton's shape and the draw order; the
-manifest supplies that cut's numbers. A missing anchor is a compile error by
-design — so that copying another cut's numbers is not the path of least resistance.
+**Where the three meet.** A manifest part joins a rig slot by its `rig_slot` field
+(falling back to `slot`), and that slot's position in the rig's `slots` array **is**
+the draw order — a manifest whose `draw_order` numbers disagree is a compile error
+rather than a silent overrule. A slot filled by both a manifest part and a rig skin
+is likewise refused, as is a setup pose declared in both the rig and the motion
+spec: one fact, one author. A missing anchor is a compile error by design, so that
+copying another cut's numbers is not the path of least resistance.
+
+Two things are code and stay code, because neither is a table of numbers: the
+**mesh generators** in [`src/mesh.ts`](src/mesh.ts), which encode a deformation
+model (what is pinned, what may move, how authority falls off), and the
+**coordinate contract** in [`src/transform.ts`](src/transform.ts).
 
 ### The validator
 
@@ -162,7 +184,9 @@ compiler was built to feed, and about one project's frame budget; they fire on r
 correct, editor-produced Spine data, because the official example projects carry
 clipping attachments, unweighted meshes, 116-triangle meshes and packed atlases —
 all valid, none of them things spine-html will draw. Others are about **rigc's own
-archetypes** and mean nothing at all on a skeleton rigc did not compile.
+rigs** and mean nothing at all on a skeleton rigc did not compile — they read the
+rig spec's `invariants` block, and they **SKIP** when it is absent rather than
+counting as passes.
 
 So `validate` and `build` take a `--profile`:
 
@@ -207,7 +231,7 @@ the renderer policy*.
 | `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | each physics constraint actually drives a component, is not muted by `mix: 0`, has non-zero mass, and has `damping < 1` so it settles |
 | `A24_AXIS_SPACE_STROKE` | archetype | the stroke is authored in **axis space** — no screen-space Y component anywhere in the axis subtree, and no keys at all on the axis bone (its rotation is the one per-cut setup value) |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | bones that must stay detached are not parented under a moving part |
-| `A26_SLOT_DRAW_ORDER` | archetype | the slots array — which *is* the draw order — matches the archetype's slot table |
+| `A26_SLOT_DRAW_ORDER` | archetype | the slots array — which *is* the draw order — matches the rig spec's slot table |
 | `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | renderer | each region's name equals its page's basename, closing the second link of the attachment → region → file chain |
 | `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | both vertices of a ribbon row carry the same bones at the same weights, so the strip can lengthen and curve but never widen |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the stroke plus any inward keys stays within the cut's measured contact depth (skipped when the manifest declares none) |
@@ -219,13 +243,16 @@ the renderer policy*.
 bun install
 ```
 
-Compile a cut by spelling out its three paths:
+Compile by spelling out the paths. `--manifest` is optional; `--images <dir>` says
+where a rig spec's `image` references live (it overrides the rig's own `images`
+field):
 
 ```bash
 bun cli.ts build \
-  --manifest path/to/manifest.json \
+  --rig      path/to/my_rig.rig.json \
   --motion   path/to/my.motion.json \
-  --out      path/to/spine
+  --out      path/to/spine \
+  [--manifest path/to/manifest.json] [--images path/to/images]
 ```
 
 …or register cuts in a `cuts.json` and build them by name. Every path in the table
@@ -235,6 +262,7 @@ project that owns the art:
 ```json
 {
   "my_cut": {
+    "rig": "rigs/my_rig.rig.json",
     "manifest": "output/my_cut/manifest.json",
     "motion": "specs/my_cut.motion.json",
     "out": "output/my_cut/spine"
@@ -269,11 +297,22 @@ bun run selftest --cuts path/to/cuts.json
 ```
 
 A gate nobody has seen fail is not a gate. The selftest takes real compiled
-artifacts, breaks them one way at a time — 35 deliberate breaks, each modelled on a
+artifacts, breaks them one way at a time — 44 deliberate breaks, each modelled on a
 mistake that was actually made or actually measured — and asserts that the **named**
-assertion fires for each. There is a positive control per suite as well: the
-pristine artifacts must come back with zero failures, because a validator that
-failed everything would otherwise look like a validator that worked.
+assertion fires for each. Two of the breaks are *tolerance* controls, edits the gate
+must let through, because a widened assertion can fail by firing too often as
+easily as by firing too rarely.
+
+A fifth suite breaks an **input** instead of an artifact: seven malformed rig specs
+that the compiler must refuse by name — a forward parent reference, a duplicate bone
+name, a slot naming a missing bone, an ik target that does not exist, an attachment
+image that is not on disk, a wrong `spec` field, and a constraint type the emitter
+cannot write. Each of those produces a file Spine's own parser would accept while
+quietly meaning something else.
+
+There is a positive control per suite as well: the pristine artifacts must come back
+with zero failures, because a validator that failed everything would otherwise look
+like a validator that worked.
 
 > ⚠️ The selftest is currently **fixture-bound**: its mutants name specific
 > attachments, bones and animations, so it needs a `cuts.json` supplying the three
@@ -286,19 +325,23 @@ failed everything would otherwise look like a validator that worked.
 cli.ts          build / validate / explain / diff / bench
 selftest.ts     the validator's own negative controls, and diff's measure controls
 src/
-  compile.ts    manifest + motion spec -> skeleton JSON + atlas text (pure data assembly)
+  compile.ts    rig + motion spec (+ manifest) -> skeleton JSON + atlas text (pure data assembly)
+  rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
   validate.ts   spine-core round trip + the 31 assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure
   ladder.ts     which example is which rung, and which file in it is the reference
   timelines.ts  the 4.3 timeline catalogue and its walker (shared, pure JSON)
-  archetype.ts  the named bone/slot formations
   mesh.ts       ring and ribbon mesh builders, weighted-vertex encoding
   transform.ts  crop pixels (y down) <-> Spine world (y up), world transforms
   png.ts        PNG header reader (size and colour type, no decode)
+  errors.ts     CompileError, and NotImplementedError for what the format holds
+                and the emitter does not write
   types.ts      manifest, motion spec, and emitted-JSON shapes
 tools/          measurement and plate helpers (see below)
 scripts/        fetch-examples.sh
 bench/          count_features.ts — what the example corpus actually uses
+                transcriptions/ — rung specs transcribed from a reference export,
+                which measure expressiveness and NOT authoring (see LADDER.md)
 docs/           LADDER.md (live rung status), SPEC_COVERAGE.md (format survey),
                 feature_matrix.{csv,json}
 ```

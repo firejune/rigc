@@ -10,7 +10,7 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 
 > 🔼 **This note is dated and does not move; the measurements below are the corpus as it
 > stood on 2026-08-22 and stay as written. Its statements about what rigc *does* have gone
-> stale in three places, and the live ledger is [LADDER.md](LADDER.md):**
+> stale in five places, and the live ledger is [LADDER.md](LADDER.md):**
 >
 > - **B2 is fixed** — A16 accepts `4.3`, `4.3.N` and `4.3.N-<suffix>`, so all twelve example
 >   exports pass it.
@@ -20,8 +20,19 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 > - **`walkTimelines` reaches all eleven groups** — §2.3 item 1 and §4.3 item 4 are done, so
 >   A05 is no longer blind to `ik` / `transform` / `path` / `slider` / `drawOrder` /
 >   `drawOrderFolder` / `events`.
+> - **B1 is closed (2026-08-22)** — the bone tree is no longer code. `src/archetype.ts` is gone
+>   and the skeleton is a **rig spec** (`spec: "rigc-rig/1"`, `src/rig.ts`): bones, slots, skins,
+>   attachments, the 4.3 typed constraint array and the invariants, all as data. So §2.4's
+>   "the bone tree is code, not data", §4.0's B1 row and executive-summary item 7 describe a
+>   state that no longer exists. Rung 3 transcribed into that format scores 1.000 on every
+>   measure of every section — figures in [LADDER.md](LADDER.md).
+> - Since that change rigc also emits **ik and transform constraints**, the **single-axis bone
+>   timelines** (`translatex`/`translatey`/`scalex`/`scaley`/`shear`/`shearx`/`sheary`), bone
+>   `length`/`scale`/`shear`/`inherit`/`skin`/`color` setup fields, slot `dark`/`blend`, region
+>   `path`/`scaleX`/`scaleY`/`color`, mesh `path`/`edges`/`color`, and the header's `fps` /
+>   `referenceScale` / `images`. Part 2's coverage tables predate all of it.
 >
-> **B1 — the bone tree being code — is still open, and still gates every rung.**
+> **The measurements of the CORPUS (Part 3) have not moved and stay as written.**
 
 ---
 
