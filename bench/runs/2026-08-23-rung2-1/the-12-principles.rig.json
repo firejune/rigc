@@ -1,0 +1,167 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "obstacle-course",
+  "images": "images",
+  "skeleton": {
+    "x": -126,
+    "y": -145,
+    "width": 3543,
+    "height": 3156,
+    "fps": 12
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "course",
+      "parent": "root",
+      "x": 1628,
+      "y": 1326,
+      "scaleX": 2,
+      "scaleY": 2
+    },
+    {
+      "name": "water",
+      "parent": "root",
+      "x": 2524,
+      "y": 224,
+      "scaleX": 2,
+      "scaleY": 2
+    },
+    {
+      "name": "ring-big",
+      "parent": "root",
+      "x": 861,
+      "y": 2442,
+      "rotation": 0
+    },
+    {
+      "name": "ring-small",
+      "parent": "root",
+      "x": 1106,
+      "y": 1917,
+      "rotation": 29
+    },
+    {
+      "name": "platform",
+      "parent": "root",
+      "x": 1835,
+      "y": 580
+    },
+    {
+      "name": "ball",
+      "parent": "root",
+      "x": 116,
+      "y": 2699
+    }
+  ],
+  "slots": [
+    {
+      "name": "ring-big",
+      "bone": "ring-big",
+      "attachment": "ring-big"
+    },
+    {
+      "name": "ring-small",
+      "bone": "ring-small",
+      "attachment": "ring-small"
+    },
+    {
+      "name": "platform",
+      "bone": "platform",
+      "attachment": "platform"
+    },
+    {
+      "name": "ball",
+      "bone": "ball",
+      "attachment": "basket-ball"
+    },
+    {
+      "name": "lambertian",
+      "bone": "ball",
+      "attachment": "basket-lambertian"
+    },
+    {
+      "name": "specular",
+      "bone": "ball",
+      "attachment": null
+    },
+    {
+      "name": "water",
+      "bone": "water",
+      "attachment": "water"
+    },
+    {
+      "name": "obstacle-course",
+      "bone": "course",
+      "attachment": "obstacle-course"
+    }
+  ],
+  "skins": {
+    "default": {
+      "ring-big": {
+        "ring-big": {
+          "image": "ring-big.png"
+        }
+      },
+      "ring-small": {
+        "ring-small": {
+          "image": "ring-small.png"
+        }
+      },
+      "platform": {
+        "platform": {
+          "image": "platform.png",
+          "y": 406.5
+        }
+      },
+      "obstacle-course": {
+        "obstacle-course": {
+          "image": "obstacle-course.png"
+        }
+      },
+      "water": {
+        "water": {
+          "image": "water.png"
+        }
+      },
+      "ball": {
+        "basket-ball": {
+          "image": "basket-ball.png"
+        },
+        "billiard-ball": {
+          "image": "billiard-ball.png"
+        },
+        "bowling-ball": {
+          "image": "bowling-ball.png"
+        },
+        "tennis-ball": {
+          "image": "tennis-ball.png"
+        }
+      },
+      "lambertian": {
+        "basket-lambertian": {
+          "image": "basket-lambertian.png"
+        },
+        "billiard-lambertian": {
+          "image": "billiard-lambertian.png"
+        },
+        "bowling-lambertian": {
+          "image": "bowling-lambertian.png"
+        },
+        "tennis-lambertian": {
+          "image": "tennis-lambertian.png"
+        }
+      },
+      "specular": {
+        "billiard-specular": {
+          "image": "billiard-specular.png"
+        },
+        "bowling-specular": {
+          "image": "bowling-specular.png"
+        }
+      }
+    }
+  }
+}

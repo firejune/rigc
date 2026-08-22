@@ -1,0 +1,134 @@
+../../../../examples/2-the-12-principles/images/ring-big.png
+size: 618, 611
+filter: Linear, Linear
+pma: false
+ring-big
+bounds: 0, 0, 618, 611
+offsets: 0, 0, 618, 611
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/ring-small.png
+size: 506, 478
+filter: Linear, Linear
+pma: false
+ring-small
+bounds: 0, 0, 506, 478
+offsets: 0, 0, 506, 478
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/platform.png
+size: 326, 813
+filter: Linear, Linear
+pma: false
+platform
+bounds: 0, 0, 326, 813
+offsets: 0, 0, 326, 813
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/obstacle-course.png
+size: 1628, 1325
+filter: Linear, Linear
+pma: false
+obstacle-course
+bounds: 0, 0, 1628, 1325
+offsets: 0, 0, 1628, 1325
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/water.png
+size: 1027, 544
+filter: Linear, Linear
+pma: false
+water
+bounds: 0, 0, 1027, 544
+offsets: 0, 0, 1027, 544
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/basket-ball.png
+size: 137, 137
+filter: Linear, Linear
+pma: false
+basket-ball
+bounds: 0, 0, 137, 137
+offsets: 0, 0, 137, 137
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/billiard-ball.png
+size: 34, 34
+filter: Linear, Linear
+pma: false
+billiard-ball
+bounds: 0, 0, 34, 34
+offsets: 0, 0, 34, 34
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/bowling-ball.png
+size: 106, 106
+filter: Linear, Linear
+pma: false
+bowling-ball
+bounds: 0, 0, 106, 106
+offsets: 0, 0, 106, 106
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/tennis-ball.png
+size: 41, 41
+filter: Linear, Linear
+pma: false
+tennis-ball
+bounds: 0, 0, 41, 41
+offsets: 0, 0, 41, 41
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/basket-lambertian.png
+size: 137, 137
+filter: Linear, Linear
+pma: false
+basket-lambertian
+bounds: 0, 0, 137, 137
+offsets: 0, 0, 137, 137
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/billiard-lambertian.png
+size: 34, 34
+filter: Linear, Linear
+pma: false
+billiard-lambertian
+bounds: 0, 0, 34, 34
+offsets: 0, 0, 34, 34
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/bowling-lambertian.png
+size: 106, 106
+filter: Linear, Linear
+pma: false
+bowling-lambertian
+bounds: 0, 0, 106, 106
+offsets: 0, 0, 106, 106
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/tennis-lambertian.png
+size: 41, 41
+filter: Linear, Linear
+pma: false
+tennis-lambertian
+bounds: 0, 0, 41, 41
+offsets: 0, 0, 41, 41
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/billiard-specular.png
+size: 34, 34
+filter: Linear, Linear
+pma: false
+billiard-specular
+bounds: 0, 0, 34, 34
+offsets: 0, 0, 34, 34
+rotate: 0
+
+../../../../examples/2-the-12-principles/images/bowling-specular.png
+size: 106, 106
+filter: Linear, Linear
+pma: false
+bowling-specular
+bounds: 0, 0, 106, 106
+offsets: 0, 0, 106, 106
+rotate: 0
