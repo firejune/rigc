@@ -1,0 +1,50 @@
+# CI: typecheck, lint, and the selftest suite.
+#
+# The selftest is the gate that matters. Every assertion has a mutant that makes
+# it fire, so a green run means the failures are still reachable — not merely
+# that nothing threw. Nothing here asserts timing, and no step is allowed to
+# report success on an empty corpus.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # A pull request opened by GITHUB_TOKEN — release-please's — starts no
+  # workflow, so the release branch can be tested on demand from the Actions
+  # tab instead. See RELEASING.md.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      # The Spine example projects are fetched, not redistributed — see
+      # NOTICE.md — so a fresh checkout has no examples/ and the suite has no
+      # yardstick to measure against.
+      #
+      # The script lists directories through the GitHub contents API, which
+      # allows 60 requests an hour unauthenticated; one run costs more than
+      # that on a bad day, and the script's own message for the rate limit is
+      # "export a GITHUB_TOKEN". It reads that variable directly, and sends it
+      # to api.github.com only.
+      #
+      # Deliberately not cached: the script keeps any file already on disk, so a
+      # restored cache would freeze the corpus and hide an example that changed
+      # shape upstream. A yardstick that is never re-measured is not a yardstick.
+      - name: Fetch the Spine example corpus
+        run: bun run fetch-examples
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run selftest

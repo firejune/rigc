@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-component-in-tag": false,
+  "bump-minor-pre-major": true,
+  "bootstrap-sha": "39e48357b914f723399a0e74051bcab51ff297ac",
+  "pull-request-title-pattern": "release: v${version}",
+  "packages": {
+    ".": {
+      "package-name": "rigc",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false
+    }
+  }
+}

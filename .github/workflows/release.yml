@@ -1,0 +1,45 @@
+# Release: the cut is one click, and no credential exists to leak.
+#
+# Every push to main hands the commits to release-please, which keeps a
+# "release: vX.Y.Z" pull request open — next version derived from the
+# conventional-commit subjects, CHANGELOG.md generated, package.json bumped.
+# Merging that pull request is the release: the resulting push runs this
+# workflow again, and release-please tags vX.Y.Z and cuts the GitHub release.
+#
+# There is deliberately no publish step. rigc is not on npm yet, and npm's
+# trusted publishing cannot be configured for a package that does not exist —
+# so the only automation available today would be a long-lived NPM_TOKEN, which
+# would be the sole persistent secret in this repository. The first publish is
+# therefore manual, from the tag; RELEASING.md has the command and the one edit
+# that replaces it once the name is taken.
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # release commit, tag, GitHub release
+      pull-requests: write # open and update the release PR
+      issues: write # release-please labels
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          # GITHUB_TOKEN is the intended default here. Its one limitation is
+          # that a PR it opens does not start other workflows, so the release
+          # PR carries no CI checks of its own — see RELEASING.md for why that
+          # is acceptable and how to opt into RELEASE_PLEASE_TOKEN if it ever
+          # is not. The fallback below needs no edit to this file.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
