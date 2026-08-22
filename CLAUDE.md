@@ -11,6 +11,13 @@ named assertions before anything is written. Read [README.md](README.md) for the
 formats, the CLI and the assertion list; [`src/rig.ts`](src/rig.ts) is the rig
 spec's own documentation.
 
+[docs/AUTHORING.md](docs/AUTHORING.md) is the guide an agent authors *from* — the
+two input files field by field, the emission rules, the CLI loop, and the map from
+each named failure to the file that has to change. It is a first-class deliverable,
+not a summary of this file: the guide and the validator's messages together are the
+only interface an agent that cannot see the rig actually has. **Anything that
+changes an input format, an error message or an assertion changes that guide too.**
+
 ## The doctrine: a tool for AI, not for people
 
 Everything below follows from one observation. An agent authoring a rig cannot see

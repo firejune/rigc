@@ -239,6 +239,13 @@ the renderer policy*.
 
 ## Usage
 
+📘 **Writing a spec? Read [docs/AUTHORING.md](docs/AUTHORING.md) first.** It is the
+guide an agent rigs from: both input files with a complete minimal example each,
+every field with its Spine meaning, the rules that decide what is emitted, the
+build → read the report → fix → repeat loop, the map from every named failure to
+the file that has to change, and the list of format features rigc refuses by name
+so you do not spend a loop discovering them.
+
 ```bash
 bun install
 ```
@@ -342,7 +349,8 @@ scripts/        fetch-examples.sh
 bench/          count_features.ts — what the example corpus actually uses
                 transcriptions/ — rung specs transcribed from a reference export,
                 which measure expressiveness and NOT authoring (see LADDER.md)
-docs/           LADDER.md (live rung status), SPEC_COVERAGE.md (format survey),
+docs/           AUTHORING.md (how to author a rig), LADDER.md (live rung status),
+                SPEC_COVERAGE.md (format survey),
                 feature_matrix.{csv,json}
 ```
 
