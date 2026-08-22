@@ -126,7 +126,7 @@ The written form of all this, per rung and per run:
 | — | **B1** | — | — | skeleton-as-data input model | ✅ |
 | — | **B2** | — | — | A16 accepts pre-release labels | ✅ |
 | — | **B3** | — | — | packed-atlas handling (validator half done) | 🟨 |
-| 1 | **3** | `3-timing-and-spacing` | `ess` | nothing — smallest skeleton in the corpus | ⬜ |
+| 1 | **3** | `3-timing-and-spacing` | `ess` | nothing — smallest skeleton in the corpus | ✅ |
 | 2 | **1** | `1-weight-and-mass` | `balls`, `drop` | `translatex`/`translatey`/`shear`; bone setup `length`; a skeleton with **zero** animations (`drop`) | ⬜ |
 | 3 | **2** | `2-the-12-principles` | `ess` | slot `blend` (4 additive + 4 multiply); bone `inherit` ≠ Normal | ⬜ |
 | 4 | **4** | `4-wave-principle` | `ess` | nothing structural — a volume test (9 bones, 9 slots, 3 animations, 470 bezier keys) | ⬜ |
@@ -154,14 +154,43 @@ unmodified — they are editor output, and that is the result the profile split 
 supposed to produce. That is a statement about the **validator**, not about rigc's
 compiler.
 
-Nothing on this ladder has been **authored** yet. What exists is the B1 proof
-below, and the difference between the two is the whole of the honesty rule.
+What exists below (B1's proof) is transcription, not authoring, and the
+difference between the two is the whole of the honesty rule.
 
-**Rung 3 is briefed and ready to run** (2026-08-22): the brief is
-[`bench/briefs/3-timing-and-spacing.md`](../bench/briefs/3-timing-and-spacing.md),
-its reference frames are in [`bench/reference/3-timing-and-spacing/`](../bench/reference/3-timing-and-spacing/),
-and the protocol is [`bench/runs/README.md`](../bench/runs/README.md). It stays ⬜
-until a run happens: preparing a rung is not attempting one.
+### Rung 3 — cleared (2026-08-23)
+
+The first honest authoring run: [`bench/runs/2026-08-23-rung3-1/`](../bench/runs/2026-08-23-rung3-1/),
+authored by Claude Opus 5 (1M context) on Claude Code / Agent SDK, from the brief
+([`bench/briefs/3-timing-and-spacing.md`](../bench/briefs/3-timing-and-spacing.md))
+and the rendered reference frames alone, under the honesty rule above — **1 build
+iteration, validator green on the first compile, clean run** (`bench` run once, at
+the end, nothing edited after).
+
+`bench 3`, from [`bench.json`](../bench/runs/2026-08-23-rung3-1/bench.json):
+
+```
+bones=0.567  slots=0.476  attachments=0.870  constraints=1.000  animations=0.911  events=1.000
+```
+
+**Reading — the commander's call, 2026-08-23.** `bones`/`slots` read low on
+**naming only**: bone `count` is 3/3, and both name-agnostic measures —
+`depth_histogram` 3/3, `degree_sequence` 3/3 — say the tree has the same number of
+bones at each depth and the same child counts, i.e. it is structurally identical;
+the tree is right and the vocabulary is different. `constraints`/`events` are
+1.000 by absence — vacuous, not evidence of anything. `attachments` (0.870) is as
+close as a differently-named rig can get: skin count, attachment count and type
+counts are all exact. `animations` (0.911) holds on everything structural —
+`count` 2/2, `names` 2/2, `duration` 2/2, `timeline_kinds` 8/8 — the agent
+independently chose single-axis `translatex`/`translatey` timelines for the block,
+matching the export. The one real gap is key density, `key_counts` 42/69: the
+author under-keys by about a third, because 12 fps reference frames cannot show
+where the editor split a curve.
+
+Frame-based fidelity (the author's self-check against the reference frames, not
+the reference export, so no part of the score above): worst-frame 2.42° of
+pendulum rotation, about one frame pixel of block travel, and a re-render mean
+absolute pixel error of 3.4/255. Residual risk carried forward: key density — it
+is not a visible defect at this rung.
 
 ---
 
