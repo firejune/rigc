@@ -111,7 +111,8 @@ agent started for that purpose.
 | Input | Where |
 | --- | --- |
 | the brief | `bench/briefs/<rung>.md` |
-| the authoring guide | [docs/AUTHORING.md](../../docs/AUTHORING.md) — **including §8**, which is about reading reference frames and exists because the first run got three measurements wrong in ways that each looked like a fact about the animation |
+| the authoring guide | [docs/AUTHORING.md](../../docs/AUTHORING.md) — **including §8**, which is about reading reference frames and exists because the first run got three measurements wrong in ways that each looked like a fact about the animation, and **§10**, the editor's own default conventions (standard input from 2026-08-23; see below) |
+| Spine's public documentation | esotericsoftware.com — the user guide, the JSON format page, the changelog. Allowed input; see below |
 | the art | `examples/<example>/images/` |
 | the reference renders | `bench/reference/<example>/` — frames and contact sheets |
 | the CLI | this repository: `bun cli.ts build` / `explain` / `validate` / `diff` / `check` / `bench` |
@@ -119,6 +120,31 @@ agent started for that purpose.
 Reading the repository's own source is fine — `src/rig.ts`, `src/types.ts` and the
 README are documentation of the input formats, and none of them says anything about
 any rung's answer.
+
+✅ **Spine's public documentation is allowed input, and always was.** The honesty
+rule forbids facts read out of *this repository's* reference exports. It does not
+forbid esotericsoftware.com. What the Spine editor does by default, what its user
+guide recommends, and what its JSON format page says a field means are public
+knowledge that any author sitting down to rig a shot already has — withholding them
+does not measure honesty, it measures whether the agent happened to know Spine.
+
+📌 **From 2026-08-23, [docs/AUTHORING.md](../../docs/AUTHORING.md) §10 is a standard
+input.** It collects those conventions with a citation on every line, marked 📗 for
+what a page states and 🧩 for what the guide infers, and it names in §10.6 the
+conventions it deliberately leaves out because no public page states them. It was
+written after six honest runs showed the same divergences — one slot per attachment
+image, key density, curve kind, draw order keyed rather than re-parented — none of
+which the gate can see and all of which `bench` measures.
+
+⚠️ **So runs are not all comparable.** A run dated **before 2026-08-23** was authored
+without §10; a run **on or after** it had those conventions in hand. Say which in the
+run's header block, and do not read a change in the convention measures across that
+boundary as a change in the model.
+
+🚫 The allowance is for **documentation about Spine**, not for anything about a
+rung. A forum post, blog comment or third-party article that describes one of the
+example projects — its bones, its timing, its key times — is the answer arriving by
+another route, and the rule against derived forms below covers it.
 
 ### What it must not read
 
@@ -172,6 +198,7 @@ that is the measurement this whole exercise exists for.
 - inputs:    brief, docs/AUTHORING.md, examples/3-timing-and-spacing/images/,
              bench/reference/3-timing-and-spacing/
 - reference: not read   ← or: read, and this run is void
+- guide:     AUTHORING.md §10 in hand   ← or: not yet written (runs before 2026-08-23)
 - profile:   spine
 
 ## Loop

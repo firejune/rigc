@@ -21,6 +21,9 @@ that can see that, and a run that skips it has verified nothing about the motion
 - What the format holds and rigc covers: [SPEC_COVERAGE.md](SPEC_COVERAGE.md)
 - Reproducing a shot you were given as pictures: **§8**, and read it *before* you
   start measuring rather than after; then **§9** for the loop that closes it
+- The conventions an editor user follows without being told — one image per
+  attachment, keying practice, curve kind, draw order — sourced from Spine's own
+  public documentation: **§10**
 
 ## The vocabulary is Spine's
 
@@ -687,6 +690,10 @@ Two more limits that are not errors but will shape what you can attempt:
 6. If you are reproducing a reference, run `diff` or `bench` and read **every**
    measure. There is no single score, and a `0/0` measure compared nothing.
 
+Then read **§10** against what you wrote. Steps 1–6 ask whether the rig is valid and
+whether it looks right; §10 asks whether it is built the way the editor builds one,
+which is a question none of them can reach and which the measures in `bench` do see.
+
 ---
 
 ## 8. Reading reference frames
@@ -960,3 +967,209 @@ a part you have not authored, or one you have put somewhere else entirely.
   3 px low at one frame have the same drift and opposite causes. The table gives
   you the frame index; §8's rule still applies — look for a second way to get the
   number before you author the key.
+
+---
+
+## 10. What the editor does by default
+
+Every reference in this repository was made in the Spine editor by a person, and a
+rig authored here is measured against one. rigc's own defaults are deliberately
+*absent* rather than opinionated (R1: a field is emitted exactly when you declare
+it), so nothing in the compiler will push you toward the shape an editor rig has.
+This section is that push, and it comes from **Spine's public documentation only** —
+what the editor does when nobody tells it otherwise, and what its user guide
+recommends.
+
+**Nothing here is the answer to any shot.** These are defaults to adopt *unless the
+shot says otherwise*, and each is overridable by something you can see in the
+frames. Every line is marked with where it comes from:
+
+- 📗 **stated** — quoted or paraphrased from the page linked in the line.
+- 🧩 **inferred** — this guide's reading of those pages. Spine does not say it.
+
+### 10.1 Structure
+
+📗 **One image, one attachment, one slot.** Dragging an image into the viewport makes
+the editor *"create a slot and a region attachment under the root bone for the
+image"*, and *"each part of the skeleton that will move independently needs to be a
+separate image file"* — [Images](http://esotericsoftware.com/spine-images). A shared
+slot is opt-in on the PSD path too: the `[slot]` tag is what places layers into one
+— [Import PSD](http://esotericsoftware.com/spine-import-psd). ⇒ in rigc: one entry
+in `slots` per image, one placeholder per slot in the `default` skin (§3.3, §3.4).
+
+📗 **A shared slot is for alternatives, not for economy.** *"Slots group attachments
+of the same type. For example, a weapon slot may have a knife, sword, axe, etc."*,
+and *"only one attachment (or none) can be visible at any given time"* —
+[Slots](http://esotericsoftware.com/spine-slots). So two parts that are ever on
+screen together **cannot** share a slot; two that never coexist may.
+
+🧩 **⇒ If nothing in the shot swaps between them, give them a slot each.** Folding
+parts into one slot with attachment keys to keep the slot list short is a decision
+the shot has to earn. It changes the emitted slots array, and §4.7's offsets are
+counted against that array.
+
+📗 **The attachment name is the image name.** Spine finds an image by *"taking the
+path specified under the Images node and appending the attachment name"*, and *"if
+an attachment has a Path set, the path is used to find the image file instead of the
+attachment name"* — [Images](http://esotericsoftware.com/spine-images). ⇒ in rigc:
+keep the placeholder equal to the PNG's basename and no `path` is written (R5). A
+`path` in the emitted file means the two disagreed.
+
+📗 **Housekeeping the format fixes for you.** The default skin *"always has the name
+`default`"* and *"bones are ordered so that the parent always comes before a child
+bone"* — [JSON format](http://esotericsoftware.com/spine-json-format). §3.4.
+
+### 10.2 Draw order
+
+📗 **An overlap change is a draw-order key.** The draw order *"can be keyed"*, and
+slots *"decouple bones from the draw order, allowing attachments on the same bone to
+be drawn above and below an attachment on a different bone"* —
+[Slots](http://esotericsoftware.com/spine-slots); its key button sits on the Draw
+Order node — [Keys](http://esotericsoftware.com/spine-keys).
+
+🧩 **⇒ There is no other way to say it.** The Keys page's list of keyable properties
+runs bone transforms, transform inheritance, slot attachment, slot colour, draw
+order, events, sequence, deform and the constraint families — **a bone's parent and
+a slot's bone are not on it.** An editor rig therefore cannot express *"this passes
+in front now"* by re-parenting or by reassigning a slot's bone; it has exactly one
+expression, and it is the timeline of §4.7. If you are reaching for a structural
+change to fix an overlap, you have left the editor's vocabulary.
+
+📗 **Offsets count from setup, and an empty key restores it.** Offsets are *"the
+number of draw order entries to shift the specified slot relative to its setup pose
+draw order index"*, and *"if `offsets` is omitted, the keyframe will set the draw
+order to the setup pose draw order"* —
+[JSON format](http://esotericsoftware.com/spine-json-format). That is §4.7 exactly.
+
+📗 **Hide with an attachment key, not with alpha.** *"Setting the alpha to zero to
+make an attachment invisible is not an efficient way to hide the attachment … It is
+better to hide an attachment by setting a slot attachment key. To avoid an abrupt
+disappearance, the slot color can be used to fade to transparent before hiding"* —
+[Slots](http://esotericsoftware.com/spine-slots). ⇒ in rigc: an `attachment` track
+keyed to `null`, with an `rgba` track ahead of it when the part has to fade first.
+
+### 10.3 Keys
+
+📗 **Both axes on one key.** *"By default, each translate, scale, and shear key for a
+bone sets both X and Y. This is sufficient for many animations and reduces the
+number of timelines … For animations that need it, X and Y can be keyed separately
+by checking the Separate checkbox"*; slot colour is the same — *"each color key for
+a slot sets both color (RGB) and alpha (A)"* —
+[Keys](http://esotericsoftware.com/spine-keys). ⇒ in rigc: `translate` / `scale` /
+`shear` / `rgba` are the default forms. §4.4's single-axis timelines **are** that
+Separate checkbox — for a bone whose axes need different times or different curves,
+not for one that merely happens to move on one axis.
+
+📗 **Times are seconds; frames are a convenience.** *"Frames exist only for
+convenience"*, the timeline defaults to *"30 frames per second"*, and keys may sit
+between them — *"a bone could have a translate key on frame 15, then another key on
+frame 15.01"* — [Keys](http://esotericsoftware.com/spine-keys). This is why §4.5
+takes `t` in seconds and pins nothing to a grid.
+
+📗 **The editor's habit is to key liberally, then delete the redundant ones.** Auto
+Key sets a key *"any time a change is made … it is common to have auto key enabled
+all the time"*, and Clean Up *"deletes all unnecessary keys … keying the same value
+multiple times in a row, keying the same values as the setup pose"*, because *"often
+it is convenient to set keys liberally when designing an animation, then use Clean
+Up afterward"* — [Keys](http://esotericsoftware.com/spine-keys). ⇒ a shipped export
+is dense, but it does not repeat a value.
+
+📗 **Add a key when a curve cannot carry the shape.** *"If a curve is not smooth
+enough, it is easily remedied by adding another key"*, and the **Bounce** handle
+preset exists for *"changing directions abruptly, such as when a ball bounces"* —
+[Graph](http://esotericsoftware.com/spine-graph).
+
+🧩 **⇒ Key every change of direction, not only the extremes.** Two keys and a curve
+describe a transition; they cannot describe a path that turns. So an editor rig
+carries a key wherever the motion changes direction, wherever a hold begins and
+ends, and wherever one Bezier span could not hold the shape — more keys than a
+minimal one-key-per-pose spec produces.
+
+🚫 **No public page gives a keys-per-second figure, and this guide does not invent
+one.** Reaching for a target density is guessing. The frames are the only thing that
+can say where the motion turns; §8 is how to read them.
+
+### 10.4 Curves
+
+📗 **Linear is what a *new* key gets, and it does not survive contact with a curve.**
+*"Normally new keys are assigned a linear curve type. However, if a key is placed
+between keys that are using Bezier or stepped, then the new key is assigned a Bezier
+or stepped curve type instead"* — [Graph](http://esotericsoftware.com/spine-graph).
+The editor has also carried a **default curve type** setting since 4.1.13-beta, with
+a *Last chosen* mode added in 4.3 —
+[Changelog](http://esotericsoftware.com/spine-changelog). ⇒ *"the editor defaults to
+linear"* is true only of the first key of an untouched curve.
+
+📗 **The guide's own advice is against constant speed.** *"Curves allow the animator
+to adjust the speed of a transition between keys. When all the parts of a skeleton
+are moving at a constant speed, the movement tends to be robotic and lifeless"* —
+[Animating](http://esotericsoftware.com/spine-animating).
+
+🧩 **⇒ Bezier is the default to adopt; linear is the exception you argue for.** Use
+linear where constant speed is the intent — a machine, a slide, a continuous drift —
+and stepped where a value must not tween at all. Anything that starts, stops,
+accelerates, settles or falls gets a curve.
+
+📗 **Automatic handles first, adjust after.** *"The angle of the handles is adjusted
+automatically based on the values of the keys before and after the key … Automatic
+handles often provide good results. It can be useful to first apply automatic
+handles, then adjust them manually only if necessary."* The named presets are
+**Flat**, **Bounce**, **Ease out** (*"the value changes more slowly near the key"*)
+and **Ease in** (*"the value changes more slowly near the next key"*) —
+[Graph](http://esotericsoftware.com/spine-graph).
+
+🧩 **⇒ That is what `easings` is for.** A handful of named shapes, reused by name
+across the file, is how an editor rig reads. Raw `curve` is R6's escape hatch — one
+key needing a shape no other key has — not the normal way to write a curve.
+
+📗 **Handles are normalised, and that is the shape an `easings` entry takes.** For a
+Bezier key, *"the X axis is from 0 to 1 and represents the percent of time between
+the two keyframes. The Y axis is from 0 to 1 and represents the percent of the
+difference between the keyframe's values"* —
+[JSON format](http://esotericsoftware.com/spine-json-format). Those four numbers are
+exactly an `easings` entry (§4.1), and rigc converts them per key into the absolute
+control points the emitted file holds. Writing them into a raw `curve` instead is
+the silent failure §4.1 warns about.
+
+📗 **Some keys have no curve at all.** No line is drawn between keys when *"the type
+of key does not have a transition, such as slot attachment or event keys"* —
+[Dopesheet](http://esotericsoftware.com/spine-dopesheet). This is why rigc refuses
+`ease` and `curve` on attachment keys (§4.4) and on draw-order keys (§4.7).
+
+### 10.5 What the export leaves out
+
+📗 **Nonessential data is off unless someone checked the box.** *"Data marked
+'nonessential' is only output when the Nonessential data export setting is checked"*
+— [JSON format](http://esotericsoftware.com/spine-json-format); the setting adds
+*"additional data … that is not usually needed at runtime"* —
+[Export](http://esotericsoftware.com/spine-export). What that page marks
+nonessential: the skeleton's `fps`, `images` and `audio`; a mesh's and a linked
+mesh's `width` and `height`; a mesh's `edges`; and the editor colours of bounding
+box, path, point and clipping attachments. ⇒ a mesh in an export made without that
+box carries **no** `width`/`height`. rigc's `image` supplies them from the PNG (R5),
+so you never write them by hand.
+
+⚠️ **A region's `width`/`height` are not on that list.** They are documented with no
+*"assume … if omitted"* default — the same fact R5 states from the parser's side:
+omit them in raw JSON and every UV collapses, in silence. Name an `image`.
+
+⚠️ **Do not imitate the exporter's omissions.** Spine's exporter drops fields equal
+to their default, which is why the format page is a long list of *"assume 0 if
+omitted"* — and **rigc deliberately does the opposite** (R1, §2). Writing `x: 0` is
+legitimate here. The habit worth carrying over is not *omit defaults*, it is
+*declare only what the shot needs*.
+
+### 10.6 What this section does not claim
+
+Conventions that are visible in reference exports but that **no public Spine page
+states** are deliberately absent. A guide that asserted them would be handing you an
+answer read off the exports:
+
+- any figure for keys per second, or for how key density scales with frame rate;
+- which curve type any particular example project or studio actually shipped;
+- whether a given export was made with Nonessential data checked;
+- how many bones, slots or timelines a rig of a given size ought to have;
+- whether a shipped rig prefers automatic Bezier handles or hand-placed ones.
+
+If one of those turns out to matter, it belongs in the run's `log.md` as something
+the frames had to teach you — not here.
