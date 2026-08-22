@@ -1,0 +1,87 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "drop",
+  "images": "../../../examples/1-weight-and-mass/images",
+  "skeleton": {
+    "x": -700,
+    "y": -60,
+    "width": 1400,
+    "height": 1020,
+    "fps": 24
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "ground",
+      "parent": "root",
+      "x": 0,
+      "y": 197.1
+    },
+    {
+      "name": "rock",
+      "parent": "root",
+      "x": -136.7,
+      "y": 764.8
+    },
+    {
+      "name": "stick",
+      "parent": "root",
+      "x": 0,
+      "y": 764.8
+    },
+    {
+      "name": "sword",
+      "parent": "root",
+      "x": 123.5,
+      "y": 770.1
+    }
+  ],
+  "slots": [
+    {
+      "name": "ground",
+      "bone": "ground",
+      "attachment": "ground-bg"
+    },
+    {
+      "name": "rock",
+      "bone": "rock",
+      "attachment": "rock"
+    },
+    {
+      "name": "stick",
+      "bone": "stick",
+      "attachment": "stick"
+    },
+    {
+      "name": "sword",
+      "bone": "sword",
+      "attachment": "sword"
+    }
+  ],
+  "skins": {
+    "default": {
+      "ground": {
+        "ground-bg": {
+          "image": "ground-bg.png"
+        }
+      },
+      "rock": {
+        "rock": {
+          "image": "rock.png"
+        }
+      },
+      "stick": {
+        "stick": {
+          "image": "stick.png"
+        }
+      },
+      "sword": {
+        "sword": {
+          "image": "sword.png"
+        }
+      }
+    }
+  }
+}

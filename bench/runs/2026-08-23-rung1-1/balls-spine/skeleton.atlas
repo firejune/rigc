@@ -1,0 +1,71 @@
+../../../../examples/1-weight-and-mass/images/cast-shadow-beach.png
+size: 572, 146
+filter: Linear, Linear
+pma: false
+cast-shadow-beach
+bounds: 0, 0, 572, 146
+offsets: 0, 0, 572, 146
+rotate: 0
+
+../../../../examples/1-weight-and-mass/images/cast-shadow-red.png
+size: 274, 101
+filter: Linear, Linear
+pma: false
+cast-shadow-red
+bounds: 0, 0, 274, 101
+offsets: 0, 0, 274, 101
+rotate: 0
+
+../../../../examples/1-weight-and-mass/images/cast-shadow-blue.png
+size: 219, 98
+filter: Linear, Linear
+pma: false
+cast-shadow-blue
+bounds: 0, 0, 219, 98
+offsets: 0, 0, 219, 98
+rotate: 0
+
+../../../../examples/1-weight-and-mass/images/cast-shadow-iron.png
+size: 219, 98
+filter: Linear, Linear
+pma: false
+cast-shadow-iron
+bounds: 0, 0, 219, 98
+offsets: 0, 0, 219, 98
+rotate: 0
+
+../../../../examples/1-weight-and-mass/images/beach-ball.png
+size: 571, 572
+filter: Linear, Linear
+pma: false
+beach-ball
+bounds: 0, 0, 571, 572
+offsets: 0, 0, 571, 572
+rotate: 0
+
+../../../../examples/1-weight-and-mass/images/red-rubber-ball.png
+size: 274, 274
+filter: Linear, Linear
+pma: false
+red-rubber-ball
+bounds: 0, 0, 274, 274
+offsets: 0, 0, 274, 274
+rotate: 0
+
+../../../../examples/1-weight-and-mass/images/blue-rubber-ball.png
+size: 206, 206
+filter: Linear, Linear
+pma: false
+blue-rubber-ball
+bounds: 0, 0, 206, 206
+offsets: 0, 0, 206, 206
+rotate: 0
+
+../../../../examples/1-weight-and-mass/images/steel-ball.png
+size: 206, 206
+filter: Linear, Linear
+pma: false
+steel-ball
+bounds: 0, 0, 206, 206
+offsets: 0, 0, 206, 206
+rotate: 0
