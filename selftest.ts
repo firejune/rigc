@@ -436,6 +436,124 @@ const MUTANTS: Mutant[] = [
     expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
     mutate: (a) => ({ ...a, atlasText: a.atlasText.replace('pma: false', 'pma: true') }),
   },
+
+  // ─── the timeline groups the walker used to skip ─────────────────────────
+  //
+  // ⚠️ Seven of the eleven 4.3 timeline groups were never visited by
+  // `walkTimelines`, so A05 could not see a curve array in any of them. That is
+  // the format's nastiest silent failure (a short bezier multiplies `undefined`
+  // into the cubic and yields NaN with no error) going completely unguarded on
+  // every group rigc does not itself emit yet — which is every group the
+  // benchmark ladder needs. These seven mutants are the proof that the walker
+  // now reaches them, one per group, and they are deliberately written against
+  // constraints and events the fixture does not have: a rig cannot be broken in
+  // a group it has no data in, so each mutant forges the minimum real structure
+  // (a constraint the parser will accept) and then breaks its timeline.
+  //
+  // Each key stays inside the animation's declared duration, so A09 does not
+  // fire alongside and the mutant proves exactly one thing.
+  {
+    name: 'M37_ik_timeline_short_curve',
+    origin: 'SPEC_COVERAGE part 1-8 — an ik timeline is 2 channels (mix, softness), so its bezier is 8 numbers',
+    expect: 'A05_CURVE_ARRAY_LENGTH',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).constraints.push({ type: 'ik', name: 'probe_ik', bones: ['face'], target: 'root' });
+        (j as any).animations.blink_once.ik = {
+          probe_ik: [{ time: 0, mix: 1, curve: [0, 1, 0.1] }, { time: 0.1, mix: 0 }],
+        };
+      }),
+    }),
+  },
+  {
+    name: 'M38_transform_timeline_short_curve_is_a_nan_curve',
+    origin:
+      'SPEC_COVERAGE part 1-8 — 6 channels, 24 numbers. ⭐ A10 does NOT catch this one: the NaN never reaches a bone world transform, so A05 is the only guard the format has here',
+    expect: 'A05_CURVE_ARRAY_LENGTH',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).constraints.push({
+          type: 'transform',
+          name: 'probe_tf',
+          bones: ['face'],
+          source: 'root',
+          properties: { rotate: { to: { rotate: {} } } },
+        });
+        (j as any).animations.blink_once.transform = {
+          probe_tf: [{ time: 0, mixRotate: 1, curve: [0, 1, 0.1, 1] }, { time: 0.1, mixRotate: 0 }],
+        };
+      }),
+    }),
+  },
+  {
+    name: 'M39_path_timeline_short_curve',
+    origin: 'SPEC_COVERAGE part 1-8 — path position is 1 channel, 4 numbers',
+    expect: 'A05_CURVE_ARRAY_LENGTH',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).constraints.push({ type: 'path', name: 'probe_path', bones: ['face'], slot: 'face_base' });
+        (j as any).animations.blink_once.path = {
+          probe_path: { position: [{ time: 0, value: 0, curve: [0, 1] }, { time: 0.1, value: 1 }] },
+        };
+      }),
+    }),
+  },
+  {
+    name: 'M40_slider_timeline_short_curve',
+    origin: 'SPEC_COVERAGE part 1-8 — the slider constraint is 4.3-only; its time timeline is 1 channel',
+    expect: 'A05_CURVE_ARRAY_LENGTH',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).constraints.push({ type: 'slider', name: 'probe_slider', animation: 'idle' });
+        (j as any).animations.blink_once.slider = {
+          probe_slider: { time: [{ time: 0, value: 0, curve: [0, 1] }, { time: 0.1, value: 1 }] },
+        };
+      }),
+    }),
+  },
+  {
+    name: 'M41_draw_order_key_carries_a_curve',
+    origin:
+      'a drawOrder timeline takes no curve and the parser ignores a stray one. ⚠️ The obvious break — an offset naming a slot that does not exist — is NOT this mutant: the parser throws "Draw order slot not found" on that, so it was never the blind spot',
+    expect: 'A05_CURVE_ARRAY_LENGTH',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).animations.blink_once.drawOrder = [
+          { time: 0, offsets: [{ slot: 'eye_l', offset: 1 }], curve: 'stepped' },
+        ];
+      }),
+    }),
+  },
+  {
+    name: 'M42_draw_order_folder_key_carries_a_curve',
+    origin: 'SPEC_COVERAGE part 1-8 — drawOrderFolder is 4.3-only and nests its keys one level deeper than drawOrder',
+    expect: 'A05_CURVE_ARRAY_LENGTH',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).animations.blink_once.drawOrderFolder = [
+          { slots: ['eye_l', 'eye_r'], keys: [{ time: 0, curve: 'stepped' }] },
+        ];
+      }),
+    }),
+  },
+  {
+    name: 'M43_event_key_carries_a_curve',
+    origin: 'SPEC_COVERAGE part 1-8 — an event timeline is a list of firings, and a curve on one is meaningless data the parser drops',
+    expect: 'A05_CURVE_ARRAY_LENGTH',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).events = { probe_event: {} };
+        (j as any).animations.blink_once.events = [{ time: 0, name: 'probe_event', curve: 'stepped' }];
+      }),
+    }),
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 

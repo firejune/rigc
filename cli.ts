@@ -23,7 +23,7 @@
  * Its paths resolve against the cuts.json file itself, so the table travels
  * with the project that owns the art rather than with this repository.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
 import { DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
@@ -207,6 +207,46 @@ function cmdBuild(flags: Record<string, string>): void {
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.atlas')}`);
 }
 
+/**
+ * Where a pair of artifacts lives, given what the caller pointed at.
+ *
+ * Two shapes, because rigc's own output and a foreign export are named
+ * differently and both have to be gateable. rigc writes `skeleton.json` +
+ * `skeleton.atlas` into a directory. Everybody else writes whatever the editor
+ * called the project, and the official examples are not even consistent with
+ * themselves — `7-anticipation/export/` holds `sack-pro.json`, `spineboy/export/`
+ * holds two skeletons and two atlases.
+ *
+ * ⚠️ When more than one atlas sits beside the skeleton, this refuses to choose.
+ * Guessing by name would be wrong on the corpus that motivated it: `spineboy-ess`
+ * shares a longer prefix with `spineboy-run.atlas` than with the `spineboy.atlas`
+ * it actually uses, so the plausible heuristic picks the wrong file and every
+ * attachment then resolves against the wrong pixels — silently, which is the
+ * exact failure mode this tool exists to remove.
+ */
+function resolveArtifacts(target: string, atlasFlag: string | undefined): { skeletonPath: string; atlasPath: string } {
+  const abs = resolve(target);
+  if (!existsSync(abs)) throw new UsageError(`nothing at ${abs}`);
+  if (statSync(abs).isDirectory()) {
+    return {
+      skeletonPath: join(abs, 'skeleton.json'),
+      atlasPath: atlasFlag ? resolve(atlasFlag) : join(abs, 'skeleton.atlas'),
+    };
+  }
+  if (!abs.endsWith('.json')) throw new UsageError(`${abs} is neither a directory nor a .json skeleton`);
+  if (atlasFlag) return { skeletonPath: abs, atlasPath: resolve(atlasFlag) };
+  const dir = dirname(abs);
+  const atlases = readdirSync(dir)
+    .filter((f) => f.endsWith('.atlas'))
+    .sort();
+  if (atlases.length === 1) return { skeletonPath: abs, atlasPath: join(dir, atlases[0]) };
+  if (atlases.length === 0) throw new UsageError(`no .atlas beside ${abs}; name one with --atlas <path>`);
+  throw new UsageError(
+    `${atlases.length} atlases beside ${abs} (${atlases.join(', ')}); name the right one with --atlas <path> ` +
+      '— guessing by filename is how an attachment quietly resolves against the wrong page',
+  );
+}
+
 function cmdValidate(flags: Record<string, string>, positional: string[]): void {
   // A bare directory validates what is on disk. Naming the cut as well lets the
   // gate re-derive the declared durations and the structural expectations, which
@@ -214,16 +254,17 @@ function cmdValidate(flags: Record<string, string>, positional: string[]): void 
   const named = flags.cut !== undefined || flags.manifest !== undefined;
   const profile = readProfile(flags);
   const derivedOpts = named ? resolveCut(flags).opts : null;
-  const dir = derivedOpts ? derivedOpts.outDir : resolve(positional[0] ?? '.');
-  console.log(`rigc validate ${dir}`);
-  const skeletonText = readFileSync(join(dir, 'skeleton.json'), 'utf8');
-  const atlasText = readFileSync(join(dir, 'skeleton.atlas'), 'utf8');
+  const { skeletonPath, atlasPath } = resolveArtifacts(derivedOpts ? derivedOpts.outDir : (positional[0] ?? '.'), flags.atlas);
+  console.log(`rigc validate ${skeletonPath}`);
+  console.log(`  ..    atlas ${atlasPath}`);
+  const skeletonText = readFileSync(skeletonPath, 'utf8');
+  const atlasText = readFileSync(atlasPath, 'utf8');
   const derived = derivedOpts ? compile(derivedOpts) : null;
 
   const report = validate({
     skeletonText,
     atlasText,
-    atlasDir: dir,
+    atlasDir: dirname(atlasPath),
     declaredDurations: derived?.declaredDurations,
     rig: derived?.rig,
     profile,
@@ -330,7 +371,7 @@ const USAGE = [
   '  bun cli.ts build    --manifest <path> --motion <path> --out <dir>',
   '  bun cli.ts build    --cut <name> --cuts <cuts.json>',
   '  bun cli.ts explain  (same arguments as build)',
-  '  bun cli.ts validate <dir>',
+  '  bun cli.ts validate <dir | skeleton.json> [--atlas <path>]',
   '',
   'build and validate take --profile spine|spine-html (default spine-html):',
   '  spine       is this valid Spine 4.3 that any runtime plays correctly?',

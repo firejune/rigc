@@ -142,11 +142,11 @@ the renderer policy*.
 | `A02_NO_BONE_TRANSFORM_KEY` | both | no bone uses 4.2's `transform`; 4.3 renamed it `inherit`, and the old key silently falls back to Normal inheritance |
 | `A03_REGION_WIDTH_HEIGHT_FINITE` | both | every region attachment loaded a finite, positive width and height (a missing field loads as NaN, with no error) |
 | `A04_MESH_TRIANGLES_AND_ENCODING` | both | triangles are a multiple of 3, indices are in range, and the vertex array's encoding agrees with the UV count |
-| `A05_CURVE_ARRAY_LENGTH` | both | curve arrays carry 4 numbers per value channel and hold no non-finite value; timelines that cannot take a curve do not carry one |
+| `A05_CURVE_ARRAY_LENGTH` | both | curve arrays carry 4 numbers per value channel and hold no non-finite value; timelines that cannot take a curve do not carry one. Covers all eleven 4.3 timeline groups — bone, slot, ik, transform, path, physics, slider, deform, drawOrder, drawOrderFolder, events |
 | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | each page's declared `size:` matches the PNG on disk, and its region covers the whole page |
 | `A07_ATLAS_TEXT_SHAPE` | both | the atlas text obeys the parser's whitespace rules — no stray indentation on region names, no blank line splitting a page block |
 | `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both ◑ | every attachment name resolves to a region of exactly that name |
-| `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the compiled duration equals the duration the spec declared (skeleton JSON has no duration field — the last key *is* the duration) |
+| `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the compiled duration equals the duration the spec declared (skeleton JSON has no duration field — the last key *is* the duration). SKIPs without a motion spec |
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping every animation frame by frame produces no NaN anywhere in the pose |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | no clipping attachments (the renderer skips them silently) |
 | `A12_NO_DARK_COLOR` | renderer | no dark / two-colour tint on slots or timelines — parsed, then ignored |
@@ -155,9 +155,9 @@ the renderer policy*.
 | `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | `idle` keys no bone that drives a mesh, directly or as its control bone |
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` version label is on the 4.3 line (the parser never checks it) |
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | every page the atlas declares is a file on disk |
-| `A18_DETERMINISTIC_EMIT` | both | a second, independent compile of the same inputs is byte-identical |
+| `A18_DETERMINISTIC_EMIT` | both | a second, independent compile of the same inputs is byte-identical. SKIPs when re-gating artifacts already on disk |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | every overlay page carries an alpha channel; only the base plate — identified structurally as the region covering the stage — may be opaque |
-| `A20_MESH_WEIGHTS_COHERENT` | both ◑ | meshes are bone-weighted, every vertex has at least one bone, weights are positive, bone indices are in range, and each vertex's weights sum to 1 |
+| `A20_MESH_WEIGHTS_COHERENT` | both ◑ | every weighted vertex has at least one bone, no negative weight, bone indices in range, and each vertex's weights sum to 1. `spine-html` also requires that a mesh be weighted at all and that no binding sit at weight 0 |
 | `A21_MESH_RIM_PINNED` | archetype | a ring mesh's rim vertices are pinned to the anchor bone and its hull is a real ring; a ribbon's entry row stays put |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | every UV lies inside its region |
 | `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | each physics constraint actually drives a component, is not muted by `mix: 0`, has non-zero mass, and has `damping < 1` so it settles |

@@ -212,6 +212,60 @@ const PHYSICS_CHANNELS: Record<string, number | null> = {
   mix: 1,
   reset: null,
 };
+const PATH_CHANNELS: Record<string, number | null> = {
+  position: 1,
+  spacing: 1,
+  mix: 3,
+};
+const SLIDER_CHANNELS: Record<string, number | null> = {
+  time: 1,
+  mix: 1,
+};
+/**
+ * `ik` and `transform` are ONE timeline per constraint with no sub-name — the
+ * group maps a constraint name straight to a key array. There is no name in the
+ * file to look up, so the walker passes the group's own name and these tables
+ * hold that single entry.
+ */
+const IK_CHANNELS: Record<string, number | null> = { ik: 2 };
+const TRANSFORM_CHANNELS: Record<string, number | null> = { transform: 6 };
+/** Whole-animation timelines. None of the three can carry a curve at all. */
+const DRAW_ORDER_CHANNELS: Record<string, number | null> = { drawOrder: null };
+const DRAW_ORDER_FOLDER_CHANNELS: Record<string, number | null> = { drawOrderFolder: null };
+const EVENT_CHANNELS: Record<string, number | null> = { events: null };
+
+/**
+ * Every timeline group `readAnimation` reads (SPEC_COVERAGE part 1-8), keyed by
+ * the walker's `kind`. A05 selects its channel table from here, so a group that
+ * is missing from this map is a group whose curves nobody checks.
+ */
+const CHANNELS_BY_KIND: Record<TimelineKind, Record<string, number | null>> = {
+  bone: BONE_CHANNELS,
+  slot: SLOT_CHANNELS,
+  ik: IK_CHANNELS,
+  transform: TRANSFORM_CHANNELS,
+  path: PATH_CHANNELS,
+  physics: PHYSICS_CHANNELS,
+  slider: SLIDER_CHANNELS,
+  attachment: ATTACHMENT_CHANNELS,
+  drawOrder: DRAW_ORDER_CHANNELS,
+  drawOrderFolder: DRAW_ORDER_FOLDER_CHANNELS,
+  event: EVENT_CHANNELS,
+};
+
+/** The eleven timeline groups one animation can hold in 4.3. */
+export type TimelineKind =
+  | 'bone'
+  | 'slot'
+  | 'ik'
+  | 'transform'
+  | 'path'
+  | 'physics'
+  | 'slider'
+  | 'attachment'
+  | 'drawOrder'
+  | 'drawOrderFolder'
+  | 'event';
 
 type Json = Record<string, unknown>;
 
@@ -391,14 +445,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // --- A05: curve arrays are 4 numbers per value channel --------------------
   check('A05_CURVE_ARRAY_LENGTH', () => {
     walkTimelines(raw, (path, kind, name, keys) => {
-      const table =
-        kind === 'bone'
-          ? BONE_CHANNELS
-          : kind === 'slot'
-            ? SLOT_CHANNELS
-            : kind === 'attachment'
-              ? ATTACHMENT_CHANNELS
-              : PHYSICS_CHANNELS;
+      const table = CHANNELS_BY_KIND[kind];
       if (!(name in table)) {
         fail('A05_CURVE_ARRAY_LENGTH', `${path}: unchecked ${kind} timeline "${name}" — extend the validator`);
         return;
@@ -581,8 +628,24 @@ export function validate(input: ValidateInput): ValidateReport {
           if (!vertex.length) fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" vertex ${i} has no bones`);
           let sum = 0;
           for (const { bone, weight } of vertex) {
-            if (!Number.isFinite(weight) || weight <= 0) {
+            if (!Number.isFinite(weight) || weight < 0) {
               fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" vertex ${i} has weight ${weight}`);
+            }
+            // 📐 PROFILE. A weight of exactly 0 is legal, harmless Spine: the
+            // runtime accumulates `(…) * weight` (Attachment.js:131), so the
+            // binding contributes nothing. The Spine editor writes them — the
+            // auto-weighted meshes in 6-arcs, 7-anticipation and 8-follow-through
+            // carry dozens, and their vertex weights still sum to 1. Treating one
+            // as corruption failed three rungs of the ladder on correct data.
+            // In a rigc-GENERATED ring or ribbon it is still a defect: the
+            // generator bound a bone that does nothing, which is a bug in the
+            // generator and dead work in the runtime's inner loop. So it stays a
+            // failure under spine-html and is not one under spine.
+            else if (policy && weight === 0) {
+              fail(
+                'A20_MESH_WEIGHTS_COHERENT',
+                `mesh "${mesh.name}" vertex ${i} is bound to bone index ${bone} at weight 0; a generated mesh binds only bones that move it`,
+              );
             }
             if (!(bone >= 0 && bone < data.bones.length)) {
               fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" vertex ${i} references bone index ${bone}`);
@@ -818,8 +881,13 @@ export function validate(input: ValidateInput): ValidateReport {
     });
 
     // --- A09: compiled duration == declared duration (rule 4) --------------
-    check('A09_ANIMATION_DURATION_MATCHES_SPEC', () => {
-      if (!input.declaredDurations) return;
+      check('A09_ANIMATION_DURATION_MATCHES_SPEC', () => {
+      // Without the spec there is no declared duration to compare the compiled
+      // one against, and returning here used to count as a PASS — a gate saying
+      // it checked something it never looked at.
+      if (!input.declaredDurations) {
+        return skip('A09_ANIMATION_DURATION_MATCHES_SPEC', 'no motion spec supplied, so no declared duration to compare against');
+      }
       for (const [name, declared] of Object.entries(input.declaredDurations)) {
         const anim = data.findAnimation(name);
         if (!anim) {
@@ -1232,7 +1300,12 @@ export function validate(input: ValidateInput): ValidateReport {
 
   // --- A18: determinism ----------------------------------------------------
   check('A18_DETERMINISTIC_EMIT', () => {
-    if (!input.reEmit) return;
+    // Same vacuous-pass trap as A09: re-gating artifacts already on disk hands
+    // this assertion no second compile, and there is nothing determinate about
+    // a comparison that never ran.
+    if (!input.reEmit) {
+      return skip('A18_DETERMINISTIC_EMIT', 'no second compile to compare against (re-gating artifacts on disk)');
+    }
     if (input.reEmit.skeletonText !== input.skeletonText) {
       fail('A18_DETERMINISTIC_EMIT', 'recompiling produced a different skeleton.json');
     }
@@ -1302,21 +1375,48 @@ function deepestInwardAdvance(
 }
 
 /**
- * Walks `animations.<anim>.{bones,slots,attachments,physics}` and hands each
- * timeline to the visitor. `drawOrder` and `events` carry no curves and no
- * per-channel data, so they are skipped by design.
+ * Walks every timeline group `readAnimation` reads and hands each timeline to
+ * the visitor.
+ *
+ * ⚠️ This function is the reach of A05 and A12, so a group it does not descend
+ * is a group whose curve arrays nobody checks — and a short curve array is the
+ * format's nastiest silent failure (plan 04 case 6g: `curve[i+3]` is
+ * `undefined`, the cubic yields NaN, nothing throws). It used to descend
+ * `bones`, `slots`, `physics` and `attachments` only, which left `ik`,
+ * `transform`, `path`, `slider`, `drawOrder`, `drawOrderFolder` and `events`
+ * completely unexamined. The comment that stood here claimed drawOrder and
+ * events were "skipped by design" because they carry no curves — but "carries
+ * no curve" is precisely a rule that has to be CHECKED, and the parser ignores
+ * a stray `curve` key on those timelines rather than rejecting it.
+ *
+ * The groups come in four shapes, and the shape is the whole reason this is not
+ * one loop (SPEC_COVERAGE part 1-8):
+ *
+ *   group.<target>.<timeline> = keys[]   bones, slots, path, physics, slider
+ *   group.<target>            = keys[]   ik, transform — one unnamed timeline
+ *   group                     = keys[]   drawOrder, events — one per animation
+ *   group                     = folders[] with .keys[]   drawOrderFolder
+ *
+ * plus `attachments.<skin>.<slot>.<attachment>.<timeline>`. For the shapes with
+ * no timeline name in the file, the walker passes the group's own name so that
+ * A05's table lookup and its "unchecked timeline" fail-closed branch both keep
+ * working unchanged.
  */
 function walkTimelines(
   raw: Json | null,
-  visit: (path: string, kind: 'bone' | 'slot' | 'attachment' | 'physics', name: string, keys: unknown[]) => void,
+  visit: (path: string, kind: TimelineKind, name: string, keys: unknown[]) => void,
 ): void {
   if (!raw || !isObj(raw.animations)) return;
   for (const [animName, anim] of Object.entries(raw.animations as Json)) {
     if (!isObj(anim)) continue;
+
+    // group.<target>.<timeline> = keys[]
     for (const [group, kind] of [
       ['bones', 'bone'],
       ['slots', 'slot'],
+      ['path', 'path'],
       ['physics', 'physics'],
+      ['slider', 'slider'],
     ] as const) {
       if (!isObj(anim[group])) continue;
       for (const [targetName, timelines] of Object.entries(anim[group] as Json)) {
@@ -1327,6 +1427,37 @@ function walkTimelines(
         }
       }
     }
+
+    // group.<constraint> = keys[] — the constraint IS the timeline
+    for (const [group, kind] of [
+      ['ik', 'ik'],
+      ['transform', 'transform'],
+    ] as const) {
+      if (!isObj(anim[group])) continue;
+      for (const [targetName, keys] of Object.entries(anim[group] as Json)) {
+        if (!Array.isArray(keys)) continue;
+        visit(`${animName}.${group}.${targetName}`, kind, group, keys);
+      }
+    }
+
+    // group = keys[] — one timeline for the whole animation
+    for (const [group, kind] of [
+      ['drawOrder', 'drawOrder'],
+      ['events', 'event'],
+    ] as const) {
+      const keys = anim[group];
+      if (!Array.isArray(keys)) continue;
+      visit(`${animName}.${group}`, kind, group, keys);
+    }
+
+    // drawOrderFolder = [ { slots: [...], keys: [...] } ] — one timeline per folder
+    if (Array.isArray(anim.drawOrderFolder)) {
+      (anim.drawOrderFolder as unknown[]).forEach((folder, i) => {
+        if (!isObj(folder) || !Array.isArray(folder.keys)) return;
+        visit(`${animName}.drawOrderFolder[${i}]`, 'drawOrderFolder', 'drawOrderFolder', folder.keys);
+      });
+    }
+
     // attachments.<skin>.<slot>.<attachment>.<timeline>
     if (isObj(anim.attachments)) {
       for (const [skinName, skinMap] of Object.entries(anim.attachments as Json)) {
