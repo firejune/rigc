@@ -1,0 +1,41 @@
+{
+  "spec": "rigc-frames/1",
+  "example": "1-weight-and-mass",
+  "rung": "1",
+  "skeleton": "drop",
+  "background": [
+    232,
+    232,
+    232,
+    255
+  ],
+  "viewport": {
+    "x": -675.5400049371178,
+    "y": -1221.1599003657122,
+    "width": 1351.0800098742357,
+    "height": 1009.0800412166423,
+    "scale": 0.1894780458070944,
+    "pixelWidth": 256,
+    "pixelHeight": 191
+  },
+  "sets": [
+    {
+      "dir": "ready-to-animate",
+      "animation": "ready-to-animate",
+      "fps": 12,
+      "sampled": 1,
+      "written": 1,
+      "stride": 1,
+      "duration": 0
+    },
+    {
+      "dir": "ready-to-animate@24fps",
+      "animation": "ready-to-animate",
+      "fps": 24,
+      "sampled": 1,
+      "written": 1,
+      "stride": 1,
+      "duration": 0
+    }
+  ]
+}

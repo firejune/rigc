@@ -1,0 +1,77 @@
+{
+  "spec": "rigc-frames/1",
+  "example": "5-squash-and-stretch",
+  "rung": "5",
+  "skeleton": "ess",
+  "background": [
+    232,
+    232,
+    232,
+    255
+  ],
+  "viewport": {
+    "x": -1746.2553475382363,
+    "y": -133.42505497503265,
+    "width": 3410.572860925112,
+    "height": 2208.310576492067,
+    "scale": 0.05629552800344525,
+    "pixelWidth": 192,
+    "pixelHeight": 124
+  },
+  "sets": [
+    {
+      "dir": "ball",
+      "animation": "ball",
+      "fps": 12,
+      "sampled": 79,
+      "written": 79,
+      "stride": 1,
+      "duration": 6.5
+    },
+    {
+      "dir": "ball-ready-to-animate",
+      "animation": "ball-ready-to-animate",
+      "fps": 12,
+      "sampled": 1,
+      "written": 1,
+      "stride": 1,
+      "duration": 0
+    },
+    {
+      "dir": "ball-ready-to-animate@24fps",
+      "animation": "ball-ready-to-animate",
+      "fps": 24,
+      "sampled": 1,
+      "written": 1,
+      "stride": 999,
+      "duration": 0
+    },
+    {
+      "dir": "ball@24fps",
+      "animation": "ball",
+      "fps": 24,
+      "sampled": 157,
+      "written": 2,
+      "stride": 999,
+      "duration": 6.5
+    },
+    {
+      "dir": "speedy",
+      "animation": "speedy",
+      "fps": 12,
+      "sampled": 79,
+      "written": 79,
+      "stride": 1,
+      "duration": 6.5
+    },
+    {
+      "dir": "speedy@24fps",
+      "animation": "speedy",
+      "fps": 24,
+      "sampled": 157,
+      "written": 2,
+      "stride": 999,
+      "duration": 6.5
+    }
+  ]
+}

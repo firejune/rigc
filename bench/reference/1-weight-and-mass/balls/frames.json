@@ -1,0 +1,41 @@
+{
+  "spec": "rigc-frames/1",
+  "example": "1-weight-and-mass",
+  "rung": "1",
+  "skeleton": "balls",
+  "background": [
+    232,
+    232,
+    232,
+    255
+  ],
+  "viewport": {
+    "x": -749.7692399215413,
+    "y": -151.02227820759964,
+    "width": 2376.6015116051904,
+    "height": 2216.3854517980117,
+    "scale": 0.10771683799321241,
+    "pixelWidth": 256,
+    "pixelHeight": 239
+  },
+  "sets": [
+    {
+      "dir": "animation",
+      "animation": "animation",
+      "fps": 12,
+      "sampled": 40,
+      "written": 40,
+      "stride": 1,
+      "duration": 3.25
+    },
+    {
+      "dir": "animation@24fps",
+      "animation": "animation",
+      "fps": 24,
+      "sampled": 79,
+      "written": 79,
+      "stride": 1,
+      "duration": 3.25
+    }
+  ]
+}

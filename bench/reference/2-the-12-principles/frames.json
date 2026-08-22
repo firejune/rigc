@@ -1,0 +1,59 @@
+{
+  "spec": "rigc-frames/1",
+  "example": "2-the-12-principles",
+  "rung": "2",
+  "skeleton": "ess",
+  "background": [
+    232,
+    232,
+    232,
+    255
+  ],
+  "viewport": {
+    "x": -179.74006276980452,
+    "y": -181.24000245974094,
+    "width": 3516.4800664130057,
+    "height": 3133.6658441641594,
+    "scale": 0.07280007142515482,
+    "pixelWidth": 256,
+    "pixelHeight": 228
+  },
+  "sets": [
+    {
+      "dir": "basketball",
+      "animation": "basketball",
+      "fps": 12,
+      "sampled": 311,
+      "written": 2,
+      "stride": 999,
+      "duration": 25.833333333333332
+    },
+    {
+      "dir": "billiard-ball",
+      "animation": "billiard-ball",
+      "fps": 12,
+      "sampled": 311,
+      "written": 2,
+      "stride": 999,
+      "duration": 25.833333333333332
+    },
+    {
+      "dir": "bowling-ball",
+      "animation": "bowling-ball",
+      "fps": 12,
+      "sampled": 311,
+      "written": 2,
+      "stride": 999,
+      "duration": 25.833333333333332
+    },
+    {
+      "dir": "tennis-ball",
+      "animation": "tennis-ball",
+      "fps": 12,
+      "sampled": 311,
+      "written": 2,
+      "stride": 999,
+      "duration": 25.833333333333332
+    }
+  ]
+}

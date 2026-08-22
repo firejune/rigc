@@ -1,0 +1,77 @@
+{
+  "spec": "rigc-frames/1",
+  "example": "4-wave-principle",
+  "rung": "4",
+  "skeleton": "ess",
+  "background": [
+    232,
+    232,
+    232,
+    255
+  ],
+  "viewport": {
+    "x": -7238.582100601831,
+    "y": -372.9880749605911,
+    "width": 8837.662342381724,
+    "height": 7300.934879018709,
+    "scale": 0.08690080818283744,
+    "pixelWidth": 768,
+    "pixelHeight": 634
+  },
+  "sets": [
+    {
+      "dir": "ball-catch",
+      "animation": "ball-catch",
+      "fps": 12,
+      "sampled": 121,
+      "written": 121,
+      "stride": 1,
+      "duration": 10
+    },
+    {
+      "dir": "ball-catch@24fps",
+      "animation": "ball-catch",
+      "fps": 24,
+      "sampled": 241,
+      "written": 2,
+      "stride": 999,
+      "duration": 10
+    },
+    {
+      "dir": "wave-by-hand",
+      "animation": "wave-by-hand",
+      "fps": 12,
+      "sampled": 17,
+      "written": 17,
+      "stride": 1,
+      "duration": 1.3333333333333333
+    },
+    {
+      "dir": "wave-by-hand@24fps",
+      "animation": "wave-by-hand",
+      "fps": 24,
+      "sampled": 33,
+      "written": 2,
+      "stride": 999,
+      "duration": 1.3333333333333333
+    },
+    {
+      "dir": "wave-offset",
+      "animation": "wave-offset",
+      "fps": 12,
+      "sampled": 17,
+      "written": 17,
+      "stride": 1,
+      "duration": 1.3333333333333333
+    },
+    {
+      "dir": "wave-offset@24fps",
+      "animation": "wave-offset",
+      "fps": 24,
+      "sampled": 33,
+      "written": 2,
+      "stride": 999,
+      "duration": 1.3333333333333333
+    }
+  ]
+}

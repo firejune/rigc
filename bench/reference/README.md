@@ -40,6 +40,23 @@ labelled with its frame index. Every animation of one skeleton shares one viewpo
 — framing each to its own extent would rescale the motion between them, and the
 relationship between two animations is the whole subject of some rungs.
 
+Beside them sits one **`frames.json`** per skeleton: the world box the frames show,
+the scale in pixels per unit, the background colour, and one entry per frame
+directory with its rate, its frame count and its stride. Three things need it.
+
+- An author measuring a distance in pixels can turn it into units without first
+  finding something of a known size in the shot.
+- `rigc check` reads the rate and the pixel grid from it, so a candidate is drawn
+  onto the same grid as the reference rather than onto one it invented.
+- A second render at another rate lands beside the first, and the sidecar records
+  both. If a run's framing differs from the one already on disk — a different
+  `--max`, say — the file is replaced outright and names the sets it dropped,
+  because those frames are at a scale it can no longer describe.
+
+⚠️ It deliberately does **not** list which frame indices are on disk. The directory
+is the only author of that fact, and a second copy of it could only ever be the
+stale one.
+
 A **static rig** — a skeleton with no animation at all, which rung 1's second
 export is — writes its setup pose as one frame in a directory called `setup/`.
 Anything that renders to a single frame gets no contact sheet: a sheet of one tile

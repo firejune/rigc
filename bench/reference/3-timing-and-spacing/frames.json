@@ -1,0 +1,41 @@
+{
+  "spec": "rigc-frames/1",
+  "example": "3-timing-and-spacing",
+  "rung": "3",
+  "skeleton": "ess",
+  "background": [
+    232,
+    232,
+    232,
+    255
+  ],
+  "viewport": {
+    "x": -573.317596743446,
+    "y": -81.24612352194185,
+    "width": 2176.3545350924305,
+    "height": 990.1468401930714,
+    "scale": 0.11762789374256415,
+    "pixelWidth": 256,
+    "pixelHeight": 116
+  },
+  "sets": [
+    {
+      "dir": "heavy",
+      "animation": "heavy",
+      "fps": 12,
+      "sampled": 65,
+      "written": 65,
+      "stride": 1,
+      "duration": 5.333333333333333
+    },
+    {
+      "dir": "light",
+      "animation": "light",
+      "fps": 12,
+      "sampled": 21,
+      "written": 21,
+      "stride": 1,
+      "duration": 1.6666666666666665
+    }
+  ]
+}

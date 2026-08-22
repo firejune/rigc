@@ -71,9 +71,13 @@ sincere about it. rigc exists to convert that silence into a named failure.
 ## Conventions
 
 - Bun + TypeScript, ESM, `.ts` extensions in relative imports.
-- `src/` is pure: no clock, no randomness, no network, no spine-core (the round
-  trip belongs to `src/validate.ts` alone, and `src/compile.ts` must stay
-  independent of it so the two are not checking each other's assumptions).
+- `src/` is pure: no clock, no randomness, no network. **Two** files link
+  spine-core and they are named here, because an unnamed exception is how a rule
+  erodes: `src/validate.ts` owns the round trip, and `src/render.ts` poses a
+  skeleton in order to draw it (posing *is* running the runtime; there is no
+  honest way to render one without it). What the rule protects has not moved —
+  `src/compile.ts` must stay independent of the runtime so the compiler and the
+  gate are not checking each other's assumptions.
 - Coordinate contract: manifests are in **crop pixels, y down, origin top-left**;
   Spine world is **y up, origin at the bottom-left of the crop**. The whole
   conversion lives in `src/transform.ts` (`cropToSpineY`, `toBoneLocal`,
