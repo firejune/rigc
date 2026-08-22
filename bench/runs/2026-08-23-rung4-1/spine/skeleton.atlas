@@ -1,0 +1,71 @@
+../../../../examples/4-wave-principle/images/chain-1.png
+size: 108, 303
+filter: Linear, Linear
+pma: false
+chain-1
+bounds: 0, 0, 108, 303
+offsets: 0, 0, 108, 303
+rotate: 0
+
+../../../../examples/4-wave-principle/images/chain-2.png
+size: 74, 252
+filter: Linear, Linear
+pma: false
+chain-2
+bounds: 0, 0, 74, 252
+offsets: 0, 0, 74, 252
+rotate: 0
+
+../../../../examples/4-wave-principle/images/chain-3.png
+size: 74, 223
+filter: Linear, Linear
+pma: false
+chain-3
+bounds: 0, 0, 74, 223
+offsets: 0, 0, 74, 223
+rotate: 0
+
+../../../../examples/4-wave-principle/images/chain-4.png
+size: 74, 196
+filter: Linear, Linear
+pma: false
+chain-4
+bounds: 0, 0, 74, 196
+offsets: 0, 0, 74, 196
+rotate: 0
+
+../../../../examples/4-wave-principle/images/chain-end.png
+size: 126, 120
+filter: Linear, Linear
+pma: false
+chain-end
+bounds: 0, 0, 126, 120
+offsets: 0, 0, 126, 120
+rotate: 0
+
+../../../../examples/4-wave-principle/images/basket-ball.png
+size: 206, 206
+filter: Linear, Linear
+pma: false
+basket-ball
+bounds: 0, 0, 206, 206
+offsets: 0, 0, 206, 206
+rotate: 0
+
+../../../../examples/4-wave-principle/images/basket-lambertian.png
+size: 206, 206
+filter: Linear, Linear
+pma: false
+basket-lambertian
+bounds: 0, 0, 206, 206
+offsets: 0, 0, 206, 206
+rotate: 0
+
+../../../../examples/4-wave-principle/images/platform.png
+size: 687, 106
+filter: Linear, Linear
+pma: false
+platform
+bounds: 0, 0, 687, 106
+offsets: 0, 0, 687, 106
+rotate: 0

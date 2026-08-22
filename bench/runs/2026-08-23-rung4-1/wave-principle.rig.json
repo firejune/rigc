@@ -1,0 +1,168 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "wave-principle",
+  "images": "images",
+  "skeleton": {
+    "x": -6600,
+    "y": -1400,
+    "width": 8300,
+    "height": 7300
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "platform",
+      "parent": "root",
+      "x": 0,
+      "y": 0,
+      "length": 343
+    },
+    {
+      "name": "chain1",
+      "parent": "platform",
+      "x": 2.31,
+      "y": -2.68,
+      "rotation": -90,
+      "length": 308.09
+    },
+    {
+      "name": "chain2",
+      "parent": "chain1",
+      "x": 308.09,
+      "y": 0,
+      "length": 237.56
+    },
+    {
+      "name": "chain3",
+      "parent": "chain2",
+      "x": 237.56,
+      "y": 0,
+      "length": 210.05
+    },
+    {
+      "name": "chain4",
+      "parent": "chain3",
+      "x": 210.05,
+      "y": 0,
+      "length": 211.28
+    },
+    {
+      "name": "chain5",
+      "parent": "chain4",
+      "x": 211.28,
+      "y": 0,
+      "rotation": 0.0,
+      "length": 120
+    },
+    {
+      "name": "ball",
+      "parent": "root",
+      "x": -3469.3,
+      "y": 5447.2
+    }
+  ],
+  "slots": [
+    {
+      "name": "chain1",
+      "bone": "chain1",
+      "attachment": "chain1"
+    },
+    {
+      "name": "chain2",
+      "bone": "chain2",
+      "attachment": "chain2"
+    },
+    {
+      "name": "chain3",
+      "bone": "chain3",
+      "attachment": "chain3"
+    },
+    {
+      "name": "chain4",
+      "bone": "chain4",
+      "attachment": "chain4"
+    },
+    {
+      "name": "chain5",
+      "bone": "chain5",
+      "attachment": "chain5"
+    },
+    {
+      "name": "ball",
+      "bone": "ball",
+      "attachment": "ball"
+    },
+    {
+      "name": "ball-shade",
+      "bone": "ball",
+      "attachment": "ball-shade",
+      "color": "ffffffb3"
+    },
+    {
+      "name": "platform",
+      "bone": "platform",
+      "attachment": "platform"
+    }
+  ],
+  "skins": {
+    "default": {
+      "chain1": {
+        "chain1": {
+          "image": "chain-1.png",
+          "x": 133.5,
+          "y": 0.0,
+          "rotation": 90
+        }
+      },
+      "chain2": {
+        "chain2": {
+          "image": "chain-2.png",
+          "x": 89.02,
+          "y": 0.45,
+          "rotation": 90
+        }
+      },
+      "chain3": {
+        "chain3": {
+          "image": "chain-3.png",
+          "x": 74.46,
+          "y": 0.45,
+          "rotation": 90
+        }
+      },
+      "chain4": {
+        "chain4": {
+          "image": "chain-4.png",
+          "x": 61.02,
+          "y": 0.45,
+          "rotation": 90
+        }
+      },
+      "chain5": {
+        "chain5": {
+          "image": "chain-end.png",
+          "x": -7.8,
+          "y": -1.3,
+          "rotation": 90
+        }
+      },
+      "ball": {
+        "ball": {
+          "image": "basket-ball.png"
+        }
+      },
+      "ball-shade": {
+        "ball-shade": {
+          "image": "basket-lambertian.png"
+        }
+      },
+      "platform": {
+        "platform": {
+          "image": "platform.png"
+        }
+      }
+    }
+  }
+}
