@@ -335,6 +335,134 @@ export function unionBounds(frameSets: Iterable<Frame[]>): { minX: number; minY:
 }
 
 /**
+ * The opaque sub-rectangle of one quad's region, in the quad's own `(s, t)`.
+ *
+ * `(0,0)` is the region's bottom-left corner and `(1,1)` its top-right, so a trim
+ * of `{0, 0, 1, 1}` is a region whose art fills it and anything smaller is the
+ * transparent margin the art was exported with.
+ */
+export interface RegionTrim {
+  minS: number;
+  minT: number;
+  maxS: number;
+  maxT: number;
+}
+
+/**
+ * Where a quad's artwork actually is, as opposed to where its rectangle is.
+ *
+ * ⭐ This is what stops an invisible margin from being able to move anything. A
+ * region attachment's quad is the whole PNG, transparent border included, so two
+ * exports of the same drawing with different margins pose to different quads and
+ * frame themselves differently — which is how rung 5 reported MAE 39.00 for a rig
+ * whose every key was right (issue #34). Trimming to the opaque texels makes the
+ * box a property of the drawing.
+ *
+ * Alpha above zero rather than the rasteriser's coverage threshold, deliberately:
+ * this is the box that has to CONTAIN the drawing, and a box that is a texel too
+ * generous costs nothing while one that is a texel short clips.
+ *
+ * `cache` is keyed by page and region rectangle, because a scan per quad per frame
+ * would be a scan per quad per frame.
+ */
+export function regionTrim(page: Plate, quad: Quad, cache: Map<string, RegionTrim | null>): RegionTrim | null {
+  const [ubr, vbr, ubl, vbl, uul, vul] = [quad.uvs[0], quad.uvs[1], quad.uvs[2], quad.uvs[3], quad.uvs[4], quad.uvs[5]];
+  const key = `${quad.page}|${ubr},${vbr},${ubl},${vbl},${uul},${vul}`;
+  const seen = cache.get(key);
+  if (seen !== undefined) return seen;
+
+  const ox = ubl * page.width;
+  const oy = vbl * page.height;
+  const ex = [(ubr - ubl) * page.width, (vbr - vbl) * page.height];
+  const ey = [(uul - ubl) * page.width, (vul - vbl) * page.height];
+  const det = ex[0] * ey[1] - ex[1] * ey[0];
+  if (Math.abs(det) < 1e-9) {
+    cache.set(key, null);
+    return null;
+  }
+  const corners = [
+    [ox, oy],
+    [ox + ex[0], oy + ex[1]],
+    [ox + ey[0], oy + ey[1]],
+    [ox + ex[0] + ey[0], oy + ex[1] + ey[1]],
+  ];
+  const x0 = Math.max(0, Math.floor(Math.min(...corners.map((c) => c[0]))));
+  const x1 = Math.min(page.width - 1, Math.ceil(Math.max(...corners.map((c) => c[0]))));
+  const y0 = Math.max(0, Math.floor(Math.min(...corners.map((c) => c[1]))));
+  const y1 = Math.min(page.height - 1, Math.ceil(Math.max(...corners.map((c) => c[1]))));
+
+  let minS = Infinity;
+  let minT = Infinity;
+  let maxS = -Infinity;
+  let maxT = -Infinity;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (page.get(x, y)[3] === 0) continue;
+      const rx = x + 0.5 - ox;
+      const ry = y + 0.5 - oy;
+      const s = (rx * ey[1] - ry * ey[0]) / det;
+      const t = (ex[0] * ry - ex[1] * rx) / det;
+      if (s < 0 || s > 1 || t < 0 || t > 1) continue;
+      if (s < minS) minS = s;
+      if (s > maxS) maxS = s;
+      if (t < minT) minT = t;
+      if (t > maxT) maxT = t;
+    }
+  }
+  const trim = Number.isFinite(minS) ? { minS, minT, maxS, maxT } : null;
+  cache.set(key, trim);
+  return trim;
+}
+
+/**
+ * The world box every quad's **artwork** fits inside, over these frames.
+ *
+ * The same union as `unionBounds`, taken over the trimmed rectangles instead of
+ * the quads. It is a starting box for `check`'s framing and nothing more — the
+ * framing itself is fitted on rendered pixels — but the start has to be free of
+ * transparent margins too, or the path the fit takes still depends on them.
+ */
+export function trimmedUnionBounds(
+  frameSets: Iterable<Frame[]>,
+  pages: Map<string, Plate>,
+): { minX: number; minY: number; maxX: number; maxY: number } {
+  const cache = new Map<string, RegionTrim | null>();
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const see = (x: number, y: number): void => {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  };
+  for (const frames of frameSets) {
+    for (const frame of frames) {
+      for (const quad of frame.quads) {
+        const [brx, bry, blx, bly, ulx, uly] = quad.world;
+        const trim = regionTrim(pageFor(pages, quad), quad, cache);
+        if (!trim) {
+          for (let i = 0; i < 8; i += 2) see(quad.world[i], quad.world[i + 1]);
+          continue;
+        }
+        const ex = [brx - blx, bry - bly];
+        const ey = [ulx - blx, uly - bly];
+        for (const [s, t] of [
+          [trim.minS, trim.minT],
+          [trim.maxS, trim.minT],
+          [trim.minS, trim.maxT],
+          [trim.maxS, trim.maxT],
+        ]) {
+          see(blx + s * ex[0] + t * ey[0], bly + s * ex[1] + t * ey[1]);
+        }
+      }
+    }
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/**
  * The viewport a skeleton is framed to: its union box at `FRAMING_FPS`, padded,
  * scaled so the long side is `maxSide` pixels.
  *

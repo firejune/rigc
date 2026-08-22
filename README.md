@@ -112,12 +112,16 @@ per animation and per frame:
   instead of it: most of a frame is background on both sides, so that number is
   small for every candidate and the gap between a good one and a bad one smaller
   still.
+- **The framing** — where the candidate's drawn pixels sit against the reference's,
+  as a scale, an offset and a residual. It is printed first because it is upstream
+  of everything else: get it wrong and the error arrives disguised as motion.
 - **Per-slot drift** — where each of the candidate's own slots landed against the
-  connected component of the reference frame nearest it, in pixels. MAE says *how
-  wrong*; a slot's drift says *which part, which way, how far*. Where the reference
-  merged two parts into one blob — the trap [AUTHORING §8](docs/AUTHORING.md) opens
-  with — the match is reported as **ambiguous** rather than guessed at, because a
-  drift printed there is not a measurement of that slot.
+  reference frame, in pixels. MAE says *how wrong*; a slot's drift says *which
+  part, which way, how far*. Where the reference merged two parts into one blob —
+  the trap [AUTHORING §8](docs/AUTHORING.md) opens with — the slot is
+  template-matched against its own rendered pixels instead, with a confidence; and
+  where nothing inside the distance that slot could plausibly have moved matches
+  it, the answer is **no match** rather than a number about some other part.
 
 🔒 **It never reads the reference skeleton.** It opens the candidate and PNG
 frames, and nothing else: every reference-side read goes through one guard that
@@ -126,13 +130,15 @@ selftest makes that guard fire. That is what lets `check` sit *inside* an
 authoring loop where `bench` cannot — running it as often as you like does not
 stop a run being an authoring run.
 
-The candidate is framed **by its own content**, not by the reference's world box.
-A candidate is authored in its own coordinate system and under the ladder's
-honesty rule could not be authored in any other, so the framing procedure — the
-union of the posed quads over every animation, padded, scaled to the reference's
-long side — is applied to each side separately. It is deterministic and
-content-derived, so two skeletons depicting the same shot land on the same pixels
-whatever coordinates they were authored in.
+The candidate is framed **by its own drawn pixels**, not by the reference's world
+box. A candidate is authored in its own coordinate system and under the ladder's
+honesty rule could not be authored in any other, so both sides are measured the
+same way — the content box of what each actually draws — and one similarity
+transform, fitted by least squares over every edge of every frame, carries the
+candidate's onto the reference's. Two skeletons depicting the same shot land on the
+same pixels whatever coordinates they were authored in, an invisible transparent
+margin cannot move the result, and no single quad corner in a single frame can set
+the scale for a run.
 
 There is no pass mark, for the same reason `diff` has none.
 

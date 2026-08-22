@@ -492,11 +492,27 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
     console.log(`  ${d.skeleton.label.padEnd(10)} ${means}${d.skeleton.role === 'stretch' ? '   [stretch]' : ''}`);
   }
   if (check) {
-    for (const anim of check.animations) {
-      const drift = anim.worstDriftFrame < 0 ? 'no slot attributable' : `worst slot drift ${anim.worstDrift.toFixed(1)}px`;
+    // The framing goes first because it is upstream of every MAE below it: a
+    // summary that reported those numbers without saying how the two shots were
+    // put on each other is how issue #34 stayed invisible for two ladder runs.
+    const framing = check.framingFit;
+    if (framing) {
+      const signed = (n: number): string => `${n >= 0 ? '+' : ''}${n.toFixed(2)}`;
       console.log(
-        `  ${anim.dir.padEnd(10)} MAE mean=${anim.meanMae.toFixed(2)} worst=${anim.worstMae.toFixed(2)}  ${drift}  ` +
-          `(${anim.compared} frame(s))`,
+        `  framing    fit x${framing.fit.scale.toFixed(6)}  rms ${framing.fit.rms.toFixed(2)}px  union residual ` +
+          `${signed(framing.fit.residualWidth)} x ${signed(framing.fit.residualHeight)}px  ` +
+          `(${framing.applied ? `fitted to the candidate's pixels, ${framing.passes} pass(es)` : 'measured only — --viewport pinned'})`,
+      );
+    }
+    for (const anim of check.animations) {
+      const attributed = anim.compared - anim.framesWithoutDrift;
+      const drift =
+        anim.worstDriftFrame < 0
+          ? 'no slot attributable in any of them'
+          : `worst slot drift ${anim.worstDrift.toFixed(1)}px, attributed in ${attributed}`;
+      console.log(
+        `  ${anim.dir.padEnd(10)} MAE mean=${anim.meanMae.toFixed(2)} worst=${anim.worstMae.toFixed(2)}  ` +
+          `over ${anim.compared} frame(s)  ${drift}`,
       );
     }
   } else {
@@ -658,13 +674,14 @@ const USAGE = [
   '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
   '  spine-html  the above, plus this project\'s renderer and archetype policy.',
   '',
-  'check renders the candidate into the reference frames\' own viewport and compares',
-  'pixels. It reads the frames and never the reference skeleton, so it belongs INSIDE',
-  'an authoring loop — the validator cannot see a wrong animation and this can:',
+  'check renders the candidate onto the reference frames\' own pixel grid, fitting it',
+  'there by its own drawn pixels, and compares. It reads the frames and never the',
+  'reference skeleton, so it belongs INSIDE an authoring loop — the validator cannot',
+  'see a wrong animation and this can:',
   '  --frames <dir>        a rendered frame set (a skeleton root, or one animation dir)',
   '  --atlas <path>        the candidate\'s atlas, when it is not beside the skeleton',
   '  --fps <n>             only for a frame set with no frames.json sidecar',
-  '  --viewport x,y,w,h    likewise: the world box, y up, that the frames show',
+  '  --viewport x,y,w,h    pin the candidate\'s world box, y up, instead of fitting it',
   '  --as <name>           the candidate animation to play, when it is named differently',
   '  --all-frames          print every frame, not just the worst by MAE',
   '  --json <out>          the whole per-frame, per-slot report',

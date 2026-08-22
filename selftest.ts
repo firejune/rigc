@@ -39,15 +39,15 @@
  * the real geometry the fixtures only stand in for. Without one, that suite says
  * it was skipped and the run still passes on the public suite alone.
  */
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { assertFrameReadable, checkAgainstFrames, type CheckReport } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedMeasures } from './src/diff.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
-import { Plate, type RGBA } from './tools/plate.ts';
+import { Plate, readPlate, type RGBA } from './tools/plate.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
 interface CutEntry {
@@ -1030,12 +1030,22 @@ function runDiffSuite(): number | null {
 // a pixel, which is what the drift threshold asserts; the residual colour
 // difference is the resampling and nothing else.
 
+/** Transparent columns C03 adds to each side of every plate. */
+const FRAMING_PAD = 20;
+/** How far C03 lets a number move before the framing is calling it a difference. */
+const FRAMING_TOLERANCE = 0.1;
+/** The whole-rig scale C04 asks the framing report to name. */
+const FRAMING_SCALE = 1.02;
+
 const CHECK_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/3-timing-and-spacing');
 const CHECK_FRAMES = resolve(import.meta.dir, 'bench/reference/3-timing-and-spacing');
 const CHECK_IMAGES = resolve(import.meta.dir, 'examples/3-timing-and-spacing/images');
 
 /** Compile the rung-3 transcription, optionally against a rewritten motion spec. */
-function compileTranscription(motionText: string | null): { skeletonText: string; atlasText: string; atlasDir: string } {
+function compileTranscription(
+  motionText: string | null,
+  imagesDir = CHECK_IMAGES,
+): { skeletonText: string; atlasText: string; atlasDir: string } {
   const outDir = mkdtempSync(join(tmpdir(), 'rigc-check-'));
   let motionPath = join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.motion.json');
   if (motionText !== null) {
@@ -1046,10 +1056,54 @@ function compileTranscription(motionText: string | null): { skeletonText: string
     rigPath: join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.rig.json'),
     motionPath,
     outDir,
-    imagesDir: CHECK_IMAGES,
+    imagesDir,
   });
   return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir };
 }
+
+/**
+ * The example art again, with `pad` transparent columns added on the left and the
+ * right of every plate.
+ *
+ * Left AND right, in equal measure, because that is what leaves the artwork where
+ * it was: a region attachment is centred on its own image, so padding one side
+ * moves the art and padding both does not. What it does move is every quad corner,
+ * outwards, into transparency — which is exactly the thing the old framing was
+ * measuring and the new one is not.
+ */
+function padImagesSideways(pad: number): string {
+  const outDir = mkdtempSync(join(tmpdir(), 'rigc-padded-'));
+  mkdirSync(outDir, { recursive: true });
+  for (const name of readdirSync(CHECK_IMAGES)) {
+    if (!name.endsWith('.png')) continue;
+    const source = readPlate(join(CHECK_IMAGES, name));
+    const padded = new Plate(source.width + pad * 2, source.height);
+    for (let y = 0; y < source.height; y++) {
+      for (let x = 0; x < source.width; x++) padded.set(x + pad, y, source.get(x, y));
+    }
+    padded.writePng(join(outDir, basename(name)));
+  }
+  return outDir;
+}
+
+/**
+ * The same skeleton with everything under a bone that scales it by `factor`.
+ *
+ * A whole-rig scale is not an error — a rig is authored in its own coordinates and
+ * `check` is built to be blind to the choice of units — so this exists to prove
+ * where it DOES surface: the framing report's world-unit line, and nowhere else.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function scaleWholeRig(skeletonText: string, factor: number, boneName = 'rigc-selftest-scale'): string {
+  const skeleton = JSON.parse(skeletonText);
+  const bones = skeleton.bones as any[];
+  for (const bone of bones) {
+    if (bone.parent === undefined) bone.parent = boneName;
+  }
+  bones.unshift({ name: boneName, scaleX: factor, scaleY: factor });
+  return `${JSON.stringify(skeleton, null, 2)}\n`;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 /**
  * The same motion, played backwards: `t -> duration - t`, keys reversed.
@@ -1183,6 +1237,74 @@ function runCheckSuite(): number | null {
     console.log(
       `  FAIL  C02_A_TIME_REVERSED_MOTION_IS_LOUD: gate ${gate.failures.length} FAIL(s), drift ${r.drift.toFixed(1)}px, ` +
         `union MAE ${r.meanMae.toFixed(1)} against a faithful ${f.meanMae.toFixed(1)}`,
+    );
+  }
+
+  // --- framing: an invisible margin must not move a single number ----------
+  // The defect this closes (issue #34): the candidate used to be framed by the
+  // union of its posed QUAD CORNERS, and a region's quad runs past its own artwork
+  // wherever the art is transparent. So art with a wider transparent margin framed
+  // itself differently and every pixel below moved — rung 5 measured MAE 39.00
+  // where the right answer was 4.35, with no key changed. Padding both sides of
+  // every plate leaves the picture pixel-identical and the quad corners 20 px out,
+  // so a framing that reads pixels reports the same numbers and one that reads
+  // corners cannot.
+  const paddedImages = padImagesSideways(FRAMING_PAD);
+  const padded = compileTranscription(null, paddedImages);
+  const p = checkExtremes(checkAgainstFrames({ ...padded, framesDir: CHECK_FRAMES }));
+  const maeMoved = Math.abs(p.meanMae - f.meanMae);
+  const driftMoved = Math.abs(p.drift - f.drift);
+  const paddedOk = p.sets === f.sets && maeMoved <= FRAMING_TOLERANCE && driftMoved <= FRAMING_TOLERANCE;
+  if (paddedOk) {
+    console.log(
+      `  PASS  C03_A_TRANSPARENT_MARGIN_DOES_NOT_MOVE_THE_FRAMING  ` +
+        `(+${FRAMING_PAD}px each side: MAE ${p.meanMae.toFixed(2)} vs ${f.meanMae.toFixed(2)}, drift ` +
+        `${p.drift.toFixed(2)}px vs ${f.drift.toFixed(2)}px)`,
+    );
+    console.log('          origin: quad corners sit where no pixel is, and they used to set the scale for a whole run');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C03_A_TRANSPARENT_MARGIN_DOES_NOT_MOVE_THE_FRAMING: MAE moved ${maeMoved.toFixed(2)} ` +
+        `(${f.meanMae.toFixed(2)} -> ${p.meanMae.toFixed(2)}), drift moved ${driftMoved.toFixed(2)}px ` +
+        `(${f.drift.toFixed(2)} -> ${p.drift.toFixed(2)}), tolerance ${FRAMING_TOLERANCE}`,
+    );
+  }
+
+  // --- framing: a scale difference is REPORTED, not absorbed in silence ----
+  // A whole-rig scale is not an error, and the framing corrects it on purpose: a
+  // candidate is authored in its own coordinates and no comparison of pictures may
+  // depend on the units it chose. The claim under test is the other half of that —
+  // that the correction is *visible*. It lands in the framing report's world-unit
+  // line, and it does NOT land in the MAE, where it would read as bad animation.
+  const scaledReport = checkAgainstFrames({
+    ...faithful,
+    skeletonText: scaleWholeRig(faithful.skeletonText, FRAMING_SCALE),
+    framesDir: CHECK_FRAMES,
+  });
+  const scaled = checkExtremes(scaledReport);
+  const units = scaledReport.framingFit?.units ?? null;
+  const baseline = faithfulReport.framingFit?.units ?? null;
+  const reported = units === null ? 0 : units.ratio;
+  const reportedOk =
+    units !== null &&
+    baseline !== null &&
+    Math.abs(reported - FRAMING_SCALE) <= 0.004 &&
+    Math.abs(baseline.ratio - 1) <= 0.004 &&
+    Math.abs(scaled.meanMae - f.meanMae) <= 0.5;
+  if (reportedOk) {
+    console.log(
+      `  PASS  C04_A_SCALE_DIFFERENCE_IS_REPORTED_NOT_HIDDEN  ` +
+        `(x${FRAMING_SCALE} rig reads x${reported.toFixed(4)} in units against a faithful ` +
+        `x${(baseline as { ratio: number }).ratio.toFixed(4)}, MAE ${scaled.meanMae.toFixed(2)} vs ${f.meanMae.toFixed(2)})`,
+    );
+    console.log('          origin: a framing that silently absorbs a scale reports it as motion instead');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C04_A_SCALE_DIFFERENCE_IS_REPORTED_NOT_HIDDEN: units ratio ${reported.toFixed(4)} ` +
+        `(faithful ${(baseline?.ratio ?? 0).toFixed(4)}) for a x${FRAMING_SCALE} rig, MAE ` +
+        `${scaled.meanMae.toFixed(2)} against a faithful ${f.meanMae.toFixed(2)}`,
     );
   }
   return bad;
@@ -1888,8 +2010,9 @@ function main(): void {
       ? '\n  ⚠️ The example corpus is absent, so the ' +
         [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
-      : `, + ${DIFF_CASES.length} diff measure controls, + 3 check controls (frames-only reads, a faithful ` +
-        'transcription, a time-reversed one)';
+      : `, + ${DIFF_CASES.length} diff measure controls, + 5 check controls (frames-only reads, a faithful ` +
+        'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
+        'the framing names)';
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
