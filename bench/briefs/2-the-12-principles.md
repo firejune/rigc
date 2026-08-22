@@ -139,9 +139,9 @@ frame-for-frame identical in all four animations — including the two whose bal
 never gets near it. It does not swing flat, either: it collapses to about 40–45 % of
 its standing height over a couple of frames, stays down for 16 frames, and takes
 about 11 back up. In the bowling shot the ball happens to arrive while the panel is
-down, **rests on the lowered panel for six frames, and is thrown almost the full
-height of the frame when it springs back** — that launch is what puts it in the
-basin. Nothing the ball does changes when the panel moves.
+down, **rests on the lowered panel for six frames, and is thrown nearly half the
+height of the frame in four when it springs back** — that launch is what puts it in
+the basin. Nothing the ball does changes when the panel moves.
 
 The two small balls are a few pixels across at this framing. Find them on a contact
 sheet before you try to track them, and see §8 of the guide about what a
