@@ -130,8 +130,9 @@ frames.
 One second in (frame 12): the basketball is already at the centre of the upper ring;
 the bowling ball is about two thirds of the way down the sloping wall; the two small
 balls are slower still — at 2–3 px across, exactly where on the wall they are at
-that moment is below what a ¼-scale tile will tell you. They differ at the end too — the basketball finishes **floating on the
-surface**, while the bowling ball **sinks and settles on the floor of the basin**.
+that moment is below what a ¼-scale tile will tell you. They differ at the end too —
+the basketball finishes **floating on the surface**, while the bowling ball **sinks
+and settles on the floor of the basin**.
 
 **The panel is not waiting for the ball.** It drops and springs back on a cycle of
 its own, about every 27½ frames (≈2.3 s), roughly eleven times over the shot,

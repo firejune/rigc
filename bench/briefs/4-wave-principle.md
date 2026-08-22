@@ -89,9 +89,9 @@ directly comparable.
 ⚠️ **The subject sits in the bottom-right eighth of the frame and the rest is
 empty** — in the two short shots. That is not a rendering fault: all three
 animations share one viewport, and `ball-catch` moves the whole disc-and-chain rig a
-third of the way across the frame and throws its ball into the far corner, so the box
-that holds all three is mostly sky. The frames are rendered large (768 px on the long side) so the
-subject is still legible inside it. Every frame of every animation here uses the
+third of the way across the frame and throws its ball into the far corner, so the
+box that holds all three is mostly sky. The frames are rendered large (768 px on the
+long side) so the subject is still legible inside it. Every frame of every animation here uses the
 same box and the same scale, so a distance measured in one is a distance in
 another — which is the whole reason for framing them together.
 
