@@ -1,0 +1,454 @@
+/**
+ * Input and output shapes for rigc v0.
+ *
+ * Two inputs, per plan 04 section 4-1:
+ *   - the cut manifest (here the face-class manifest of plan 05 section 9 item 4),
+ *     which owns geometry: crop, part offsets, part sizes, the state machine;
+ *   - the motion spec (plan 04 section 4-2), which owns time: keys, named
+ *     easings, groups, declared durations.
+ *
+ * Nothing else is an input. The archetype tables are code (src/archetype.ts),
+ * and the compiler never invents a value that is in neither file — plan 04
+ * section 4-2 rule 5.
+ */
+
+// ---------------------------------------------------------------------------
+// Cut manifest (face class)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mesh declaration for a part — geometry, so it belongs to the manifest and not
+ * to the motion spec (plan 04 section 4-1). It says WHERE the deformable ring
+ * is; the motion spec says WHEN it moves, by keying the control bone.
+ */
+export interface FaceManifestMesh {
+  /**
+   * Which generator builds this mesh. Absent means `ring`, so every manifest
+   * written before the joint archetype keeps its meaning.
+   *
+   *   ring   — three concentric rings + a hub. The outer two are pinned (region
+   *            border, then mask contour) and only the aperture ring moves.
+   *   ribbon — a two-wide strip along a bone chain. Length changes, width does
+   *            not, because paired vertices carry identical weights.
+   */
+  kind?: 'ring' | 'ribbon';
+  /** Ring only. The part's own mask polygon, which is the seam. */
+  hull?: 'polygon';
+  /** Ring only. Aperture centre in CROP pixels (y down) — measured, not guessed. */
+  center?: [number, number];
+  /** Ring only. Inner ring position between centre (0) and hull (1). */
+  inner?: number;
+  /**
+   * Ring only, legacy form: ONE control bone which the compiler CREATES as a
+   * child of the slot bone. Used by archetypes that have no explicit bone tree.
+   */
+  control_bone?: string;
+  /**
+   * Control bones that already exist in the archetype's bone tree — the ring's
+   * authority is split between them by angular position, so a four-grip ring
+   * can expand asymmetrically without a key per vertex.
+   */
+  control_bones?: string[];
+  /** Ribbon only. Number of cross rows; triangles = 2 * (rows - 1). */
+  rows?: number;
+  /** Ribbon only. The bone chain the strip rides, root first. */
+  chain?: string[];
+  /**
+   * Directional weighting. Without it the ring deforms symmetrically about the
+   * centre, which moves the upper lip and the upper teeth along with the jaw —
+   * anatomically wrong, and the owner spotted it on the first review.
+   *
+   * `axis_deg` is the mouth line measured on the art (screen degrees, y down).
+   * `ramp` is the signed distance across that axis, in part pixels, over which
+   * control authority goes 0 -> 1; positive is the jaw side.
+   */
+  bias?: { axis_deg: number; ramp: [number, number]; note?: string };
+}
+
+export interface FaceManifestPart {
+  slot: string;
+  /**
+   * The archetype slot this part joins on, when it differs from `slot`.
+   *
+   * ⚠️ A cut manifest is often ALSO its generating lane's record, and that lane
+   * names parts anatomically (`part`, `occluder`) while the archetype's table
+   * names them by role (`piston`, `lip`). The archetype table has to stay
+   * single-valued — the runtime, the probes and A26 all join on the emitted slot
+   * name, and a second alias for one slot is how a slot vanishes with no error.
+   * So the manifest carries the mapping and `slot` keeps meaning what its author
+   * meant. Absent = the two are the same name.
+   */
+  rig_slot?: string;
+  draw_order: number;
+  /**
+   * Base plate only: the unmodified crop. Explicit `null` (with no `states`)
+   * means the manifest is recording a part this cut does NOT carry, and the
+   * compiler skips it and reports the absence.
+   */
+  image?: string | null;
+  /** Top-left of the part window in crop pixels, y down. */
+  offset: [number, number];
+  /** Part window size in pixels. Absent on the base plate (= the crop size). */
+  size?: [number, number];
+  /** Which key of `state_machine` drives this slot. */
+  state_key?: string;
+  /** state name -> PNG path relative to the manifest, or null for "base pixels". */
+  states?: Record<string, string | null>;
+  /** Mask polygon in CROP pixels (y down). Required when `mesh` is present. */
+  polygon?: Array<[number, number]>;
+  /** Promote this part's attachments from regions to ring meshes. */
+  mesh?: FaceManifestMesh;
+}
+
+export interface FaceManifest {
+  schema: string;
+  crop: { x: number; y: number; w: number; h: number; resample: string };
+  base: string;
+  /** Overlay archetypes only; the joint archetype has no per-slot state list. */
+  state_machine?: Record<string, string[]>;
+  parts: FaceManifestPart[];
+
+  // -- joint-closeup fields (plan 01 section 6.4's cut manifest) -------------
+  /**
+   * Entry point in crop pixels, y down. Named `insertion` because that is what
+   * plan 01 section 6.4 calls it.
+   */
+  insertion?: [number, number];
+  /**
+   * ⭐ The one value a new cut of this archetype changes (plan 02 section 2-1).
+   * `deg` is SCREEN degrees, y down, the same convention as `mesh.bias.axis_deg`;
+   * the compiler negates it into Spine's y-up CCW rotation. `unit` is the same
+   * direction as a vector and is cross-checked against `deg`, because a manifest
+   * that disagrees with itself is the cheapest bug to catch and the worst to
+   * debug later.
+   */
+  axis?: { deg: number; unit: [number, number] };
+  /**
+   * One-way stroke amplitude in axis pixels, the extension the plate covers, and
+   * the DERIVED ceiling on inward travel.
+   *
+   * 🎯 `contact_depth` is the owner's rule of 2026-08-22 made mechanical: the
+   * swallow goes at most until the inserting mass touches the occluder. It is a
+   * MEASURED fact about two plates (rigc/tools/contact.ts), so it belongs in the
+   * manifest for exactly the reason `mesh.center` does — the compiler never
+   * re-measures art. Assertion A29 holds every animation to it.
+   */
+  stroke?: {
+    amplitude?: number;
+    extension?: number;
+    contact_depth?: number | null;
+    /**
+     * 🎯 The second, independent ceiling on inward travel: the deepest insert at
+     * which the moving part's cap contour is still entirely inside the occluder's
+     * opaque footprint. Past it the cap is DRAWN where it should be swallowed.
+     *
+     * It is not a restatement of `contact_depth`. Contact asks when two masses
+     * collide; containment asks when the drawn flesh runs out of patch to hide
+     * behind — and a cut can have one without the other. The real tier-2 cut has
+     * exactly that shape: no contact ceiling at all, and a containment ceiling of
+     * 118px. Measured, like every other art fact in this file. Assertion A30.
+     */
+    cap_containment_ceiling?: number | null;
+  };
+  /** ROI box, recorded for provenance; the compiler does not read it. */
+  roi?: { x: number; y: number; w: number; h: number };
+  /**
+   * Bone positions in crop pixels, y down: `[x, y]`, or `[x, y, facing_deg]`
+   * where the third element is a SCREEN-space facing angle that becomes the
+   * bone's setup rotation. A grip whose local +X points radially outward turns
+   * "expand the ring" into one shared translate key, which is the same trick the
+   * `axis` bone plays for the stroke.
+   */
+  anchors?: Record<string, number[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Motion spec  (spec: "rigc-motion/1", plan 04 section 4-2)
+// ---------------------------------------------------------------------------
+
+/** Graph-view style normalised handles [hx1, hy1, hx2, hy2]. */
+export type EasingHandles = [number, number, number, number];
+
+export interface MotionKey {
+  /** Time in seconds. */
+  t: number;
+  /**
+   * Value. Meaning depends on the track property:
+   *   rgba       -> [r, g, b, a] in 0..1
+   *   attachment -> attachment name, or null for "show nothing"
+   *   translate  -> [x, y] in pixels, relative to the bone's setup position
+   *   scale      -> [x, y] as multipliers (1 = setup)
+   *   rotate     -> [degrees]
+   *   mix        -> [0..1] physics authority
+   *   reset      -> null; the key is the event
+   */
+  v: number[] | string | null;
+  /** Named easing from `easings`, or "stepped". Absent = linear. */
+  ease?: string;
+}
+
+/** Bone timelines the compiler emits. Channel counts live in the validator. */
+export type BoneProperty = 'translate' | 'scale' | 'rotate';
+
+/** Physics timelines the compiler emits. `reset` carries no value at all. */
+export type PhysicsProperty = 'mix' | 'reset';
+
+/**
+ * One physics constraint (plan 02 section 3, plan 04 section 1-5).
+ *
+ * Structure, so it could argue for the manifest — but every field here is a
+ * tuning number for motion over time, and plan 04 section 7-2 routes the
+ * starting-parameter table into the motion spec. It lives with the keys it
+ * competes against.
+ *
+ * ⚠️ The component fields (`x`/`y`/`rotate`/`scaleX`/`shearX`) all default to 0,
+ * which means a constraint that names none of them parses cleanly and does
+ * absolutely nothing. That is assertion A23.
+ */
+export interface MotionPhysics {
+  bone: string;
+  x?: number;
+  y?: number;
+  rotate?: number;
+  scaleX?: number;
+  shearX?: number;
+  inertia?: number;
+  strength?: number;
+  damping?: number;
+  mass?: number;
+  wind?: number;
+  gravity?: number;
+  mix?: number;
+  fps?: number;
+  limit?: number;
+  note?: string;
+}
+
+export interface MotionTrack {
+  /** Target one slot... */
+  slot?: string;
+  /** ...or a named group of slots (plan 04 section 4-2 rule 3). */
+  group?: string;
+  /** ...or one bone, for the mesh tier: the control bone carries every key. */
+  bone?: string;
+  /** ...or one physics constraint, by name. */
+  physics?: string;
+  property: 'rgba' | 'attachment' | BoneProperty | PhysicsProperty;
+  /** Seconds added to every key time of this track. */
+  lag?: number;
+  /** Extra per-member delay inside a group, in member order. */
+  stagger?: number;
+  keys: MotionKey[];
+}
+
+export interface MotionAnimation {
+  /** Declared, then verified against the compiled result (rule 4). */
+  duration: number;
+  /** Player hint only; not expressible in skeleton JSON. */
+  loop: boolean;
+  note?: string;
+  tracks: MotionTrack[];
+}
+
+/**
+ * Setup pose per slot. Declared, never inferred — rule 5. It decides which of
+ * the two overlay mechanisms a slot uses:
+ *   - an attachment + alpha 0  => the lid tier, driven by rgba timelines;
+ *   - attachment null          => the swap tier, driven by attachment timelines
+ *                                 (null = the untouched base pixels show).
+ */
+export interface MotionSetupSlot {
+  attachment?: string | null;
+  /** [r, g, b, a] in 0..1. Omit for opaque white. */
+  color?: [number, number, number, number];
+}
+
+export interface MotionSpec {
+  spec: 'rigc-motion/1';
+  archetype: string;
+  cut: string;
+  note?: string;
+  easings: Record<string, EasingHandles>;
+  groups?: Record<string, string[]>;
+  setup?: Record<string, MotionSetupSlot>;
+  /** Physics constraints by name. Emitted into the 4.3 `constraints` array. */
+  physics?: Record<string, MotionPhysics>;
+  animations: Record<string, MotionAnimation>;
+  /** Player-side AnimationStateData config; not emitted into skeleton JSON. */
+  mix?: { default: number; pairs?: Array<[string, string, number]> };
+}
+
+// ---------------------------------------------------------------------------
+// Emitted Spine 4.3 skeleton JSON
+// ---------------------------------------------------------------------------
+
+export interface SpineBone {
+  name: string;
+  parent?: string;
+  x?: number;
+  y?: number;
+  /** Spine degrees, CCW in a y-up world. Omitted when 0. */
+  rotation?: number;
+}
+
+export interface SpineSlot {
+  name: string;
+  bone: string;
+  attachment?: string;
+  color?: string;
+}
+
+export interface SpineRegionAttachment {
+  path?: string;
+  x?: number;
+  y?: number;
+  /**
+   * Cancels the bone's world rotation so a plate authored in screen space stays
+   * screen-upright under a rotated bone. Without it every slot hanging off the
+   * `axis` bone would render tilted by the axis angle.
+   */
+  rotation?: number;
+  /** Required. Omitting these yields NaN with no error — plan 04 section 2-3 case 6c. */
+  width: number;
+  height: number;
+}
+
+/**
+ * Weighted mesh. `triangles` and `uvs` are not optional in practice: a missing
+ * `triangles` loads as `undefined` (plan 04 section 2-3 case 6f) and `uvs` is
+ * what decides `worldVerticesLength`.
+ */
+export interface SpineMeshAttachment {
+  type: 'mesh';
+  uvs: number[];
+  triangles: number[];
+  /** Weighted encoding: boneCount, (boneIndex, bindX, bindY, weight)*n, repeated. */
+  vertices: number[];
+  /** Hull vertex count. The loader stores this doubled. */
+  hull: number;
+  /** Nonessential, but they make the mesh budget assertions readable. */
+  width: number;
+  height: number;
+}
+
+export type SpineAttachment = SpineRegionAttachment | SpineMeshAttachment;
+
+export type SpineTimelineKey = Record<string, unknown>;
+
+/**
+ * 4.3 puts every constraint type in ONE top-level `constraints` array and
+ * branches on `type` (SkeletonJson.js:129-350). The 4.1-era per-type arrays
+ * (`physics: [...]`, `ik: [...]`) are not read at all — the constraint vanishes
+ * with no error, which is assertion A01.
+ */
+export interface SpinePhysicsConstraint {
+  name: string;
+  type: 'physics';
+  bone: string;
+  [param: string]: string | number;
+}
+
+export interface SpineSkeletonJson {
+  skeleton: { spine: string; x: number; y: number; width: number; height: number };
+  bones: SpineBone[];
+  slots: SpineSlot[];
+  constraints?: SpinePhysicsConstraint[];
+  skins: Array<{ name: string; attachments: Record<string, Record<string, SpineAttachment>> }>;
+  animations: Record<
+    string,
+    {
+      slots?: Record<string, Record<string, SpineTimelineKey[]>>;
+      bones?: Record<string, Record<string, SpineTimelineKey[]>>;
+      physics?: Record<string, Record<string, SpineTimelineKey[]>>;
+    }
+  >;
+}
+
+// ---------------------------------------------------------------------------
+// Compiler result
+// ---------------------------------------------------------------------------
+
+export interface CompiledImage {
+  /** Region name = attachment name = PNG basename. */
+  region: string;
+  /** Atlas page name: the PNG path relative to the atlas file. */
+  page: string;
+  /** Absolute path on disk, for the size assertions. */
+  absPath: string;
+  width: number;
+  height: number;
+  hasAlpha: boolean;
+  isBase: boolean;
+}
+
+/**
+ * Structural expectations the validator cannot read out of skeleton JSON.
+ *
+ * Some invariants of an archetype are simply not written down in the artifact:
+ * nothing in the file says "this mesh is a ribbon" or "the fluid emitter must
+ * not hang off the moving part". The compiler knows, because it knows the
+ * archetype, so it hands the knowledge over rather than letting the validator
+ * guess. Mutants stay honest because a mutant edits the ARTIFACT while this
+ * block keeps saying what the rig was supposed to be.
+ */
+export interface RigInfo {
+  archetype: string;
+  /** The bone whose setup rotation carries the cut's axis, if the archetype has one. */
+  axisBone: string | null;
+  /** Bones under the axis bone, whose translate keys must stay on the axis. */
+  axisSubtree: string[];
+  /** [bone, ancestor it must never have] — the fluid emitter vs the moving part. */
+  detached: Array<[string, string]>;
+  /** Canonical draw order (the archetype's slot table), or null if it has none. */
+  slotOrder: string[] | null;
+  /** slot -> mesh generator, for the kind-aware mesh assertions. */
+  meshKinds: Record<string, 'ring' | 'ribbon'>;
+  /** Deepest inward advance the two masses allow, from the manifest. */
+  contactDepth: number | null;
+  /**
+   * Deepest inward advance at which the cap contour is still covered, from the
+   * manifest. Null when the cut has not measured one — A30 then says nothing
+   * rather than inventing a wall.
+   */
+  capContainmentCeiling: number | null;
+  /**
+   * The bone the inserting mass hangs on. Its own inward keys spend the same
+   * clearance the stroke does: if both move in, both close the gap.
+   */
+  massBone: string | null;
+  /** Inward unit vector in SPINE world (y up), for projecting off-axis keys. */
+  inwardUnit: [number, number] | null;
+}
+
+export interface CompileResult {
+  skeleton: SpineSkeletonJson;
+  skeletonText: string;
+  atlasText: string;
+  images: CompiledImage[];
+  /** States listed in the manifest whose PNG is not on disk (plan 05 dropped `half`). */
+  droppedStates: Array<{ slot: string; state: string; path: string }>;
+  /**
+   * Parts the manifest declares and the cut does not carry (`image: null`, no
+   * states). Reported rather than swallowed: "the optional slots are optional" is
+   * a claim about the emit path, so the emit path says out loud which ones it
+   * left out.
+   */
+  absentParts: Array<{ slot: string; why: string }>;
+  /** Declared durations, carried into the validator (rule 4). */
+  declaredDurations: Record<string, number>;
+  /** Bones that drive a mesh attachment: the slot bone plus its control bone. */
+  meshBones: string[];
+  /** Mesh slots emitted, with triangle counts — reported by `build`. */
+  meshes: Array<{
+    slot: string;
+    kind: 'ring' | 'ribbon';
+    attachments: string[];
+    vertices: number;
+    triangles: number;
+    bones: string[];
+  }>;
+  /** Structural expectations handed to the validator. */
+  rig: RigInfo;
+  /** Physics constraints emitted, with the bone each one drives. */
+  physics: Array<{ name: string; bone: string; components: string[]; mix: number; drivesMesh: boolean }>;
+}

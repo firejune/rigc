@@ -1,0 +1,36 @@
+{
+  "name": "rigc",
+  "version": "0.1.0",
+  "description": "Rig compiler for Spine — declarative rig specs in, Spine 4.3 skeleton data out, verified by a spine-core round-trip. Built so AI agents can author rigs and check their own work.",
+  "type": "module",
+  "license": "MIT",
+  "author": "firejune",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/firejune/rigc.git"
+  },
+  "homepage": "https://github.com/firejune/rigc#readme",
+  "bugs": "https://github.com/firejune/rigc/issues",
+  "keywords": [
+    "spine",
+    "spine2d",
+    "skeletal-animation",
+    "rig",
+    "compiler",
+    "skeleton-json",
+    "atlas",
+    "validator",
+    "codegen",
+    "ai-agents"
+  ],
+  "scripts": {
+    "build": "bun cli.ts build",
+    "validate": "bun cli.ts validate",
+    "explain": "bun cli.ts explain",
+    "selftest": "bun selftest.ts",
+    "fetch-examples": "bash scripts/fetch-examples.sh"
+  },
+  "dependencies": {
+    "@esotericsoftware/spine-core": "4.3.13"
+  }
+}

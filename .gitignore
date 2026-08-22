@@ -1,0 +1,7 @@
+node_modules/
+# Spine example projects are fetched, not redistributed — see NOTICE.md
+examples/
+# The cut table is the owning project's, not this repository's: it names paths
+# into art that lives somewhere else. Drop one here to run the selftest locally.
+/cuts.json
+.DS_Store
