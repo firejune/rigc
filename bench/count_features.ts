@@ -843,8 +843,12 @@ function main() {
 	}
 
 	// ---- write feature_matrix.json ----
+	// ⚠️ No timestamp in the committed artifact. A `generatedAt` made every re-run
+	// dirty the working tree even when the corpus had not moved, which trains a
+	// reader to ignore a diff on this file — and a diff on this file is the only
+	// signal that the corpus DID move. The run time goes to stdout, where it
+	// describes the run rather than the data.
 	const matrixJson = {
-		generatedAt: new Date().toISOString(),
 		note: "atlas_* columns on each skeleton JSON row are aggregated (summed) across ALL .atlas files found in that example's directory -- the plain-text atlas format has no explicit back-reference to a specific skeleton JSON, so pairing is by directory convention only, not by content matching.",
 		files: fileDetails,
 		atlases: atlasDetails,
@@ -915,6 +919,7 @@ function main() {
 	}
 	fs.writeFileSync(path.join(OUT_DIR, "feature_matrix.csv"), csvLines.join("\n") + "\n");
 
+	console.log(`Generated at ${new Date().toISOString()} (not written into the artifacts — see above)`);
 	console.log(`Wrote docs/feature_matrix.json (${Object.keys(fileDetails).length} skeleton files, ${Object.keys(atlasDetails).length} atlas files)`);
 	console.log(`Wrote docs/feature_matrix.csv (${flatRows.length} rows, ${columns.length} columns)`);
 }

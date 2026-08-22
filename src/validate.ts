@@ -580,6 +580,15 @@ export function validate(input: ValidateInput): ValidateReport {
     };
 
     check('A21_MESH_RIM_PINNED', () => {
+      // Without the rig, ring and ribbon cannot be told apart — and the two kinds
+      // pin OPPOSITE edges, so guessing one would either check the wrong edge or
+      // check nothing while reporting a pass.
+      if (!input.rig) {
+        return skip('A21_MESH_RIM_PINNED', 'no rig info (validating a bare directory), so ring and ribbon cannot be told apart');
+      }
+      if (!meshAttachments.some((m) => m.bones)) {
+        return skip('A21_MESH_RIM_PINNED', 'the skeleton has no weighted mesh attachment, so there is no rim to find unpinned');
+      }
       for (const mesh of meshAttachments) {
         if (!mesh.bones) continue;
         const perVertexAll = meshWeights(mesh);
@@ -944,7 +953,13 @@ export function validate(input: ValidateInput): ValidateReport {
   // and animating it swings the whole formation.
   check('A24_AXIS_SPACE_STROKE', () => {
     const rig = input.rig;
-    if (!rig?.axisBone) return;
+    if (!rig) return skip('A24_AXIS_SPACE_STROKE', 'no rig info (validating a bare directory)');
+    if (!rig.axisBone) {
+      return skip(
+        'A24_AXIS_SPACE_STROKE',
+        `the rig "${rig.archetype}" declares no axis bone, so there is no axis space for a stroke to leave`,
+      );
+    }
     const subtree = new Set(rig.axisSubtree);
     const anims = isObj(raw?.animations) ? (raw.animations as Json) : {};
     for (const [animName, anim] of Object.entries(anims)) {
@@ -989,7 +1004,10 @@ export function validate(input: ValidateInput): ValidateReport {
   // instead of prose, because the rig still loads and animates — it just lies.
   check('A25_DETACHED_BONE_PARENTAGE', () => {
     const rig = input.rig;
-    if (!rig?.detached.length) return;
+    if (!rig) return skip('A25_DETACHED_BONE_PARENTAGE', 'no rig info (validating a bare directory)');
+    if (!rig.detached.length) {
+      return skip('A25_DETACHED_BONE_PARENTAGE', `the rig "${rig.archetype}" declares no forbidden parentage`);
+    }
     const parentOf = new Map<string, string | null>();
     for (const bone of Array.isArray(raw?.bones) ? (raw.bones as unknown[]) : []) {
       if (isObj(bone) && typeof bone.name === 'string') {
@@ -1022,8 +1040,14 @@ export function validate(input: ValidateInput): ValidateReport {
   // `piston`, or the entry point is not swallowed. Nothing in the file objects to
   // the wrong order, and on a still frame it can even look plausible.
   check('A26_SLOT_DRAW_ORDER', () => {
-    const order = input.rig?.slotOrder;
-    if (!order) return;
+    if (!input.rig) return skip('A26_SLOT_DRAW_ORDER', 'no rig info (validating a bare directory)');
+    const order = input.rig.slotOrder;
+    if (!order) {
+      return skip(
+        'A26_SLOT_DRAW_ORDER',
+        `the rig "${input.rig.archetype}" declares no canonical slot order, so the emitted order has nothing to disagree with`,
+      );
+    }
     const names = (Array.isArray(raw?.slots) ? (raw.slots as unknown[]) : [])
       .filter(isObj)
       .map((s) => String(s.name));
@@ -1080,7 +1104,12 @@ export function validate(input: ValidateInput): ValidateReport {
   // side a different weight and the drip develops a taper that grows with the
   // sag, which is the sort of thing that reads as bad art rather than as a bug.
   check('A28_RIBBON_ROWS_SHARE_WEIGHTS', () => {
-    if (!skeletonData || !input.rig) return;
+    if (!skeletonData) return skip('A28_RIBBON_ROWS_SHARE_WEIGHTS', 'the skeleton did not load (A00 owns that failure)');
+    if (!input.rig) return skip('A28_RIBBON_ROWS_SHARE_WEIGHTS', 'no rig info (validating a bare directory), so no mesh is known to be a ribbon');
+    const kinds = input.rig.meshKinds;
+    if (!Object.values(kinds).includes('ribbon')) {
+      return skip('A28_RIBBON_ROWS_SHARE_WEIGHTS', `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut`);
+    }
     const data = skeletonData as NonNullable<typeof skeletonData>;
     for (const skin of data.skins) {
       for (const entry of skin.getAttachments()) {
