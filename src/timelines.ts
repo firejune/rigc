@@ -87,11 +87,15 @@ const EVENT_CHANNELS: Record<string, number | null> = { events: null };
  * How far past an animation's declared `duration` a key time may land: one step
  * of the grid every key time is rounded onto.
  *
- * The compiler emits key times through `r6`, so 1e-6 s is the finest distinction
- * a key can make and half a step is the most a *correct* key can miss its target
- * by. A key the author put exactly ON a duration of 68/12 s emits as 5.666667 —
- * 3.3e-7 s late, and legal. Anything a whole step further was authored past the
- * end, not rounded onto it.
+ * The compiler quantises key times onto that grid with `keyTime`, which rounds
+ * DOWN (issue #99), so 1e-6 s is the finest distinction a key can make and a
+ * *correct* key now misses its target only on the early side: a key the author put
+ * exactly ON a duration of 68/12 s emits as 5.666666 rather than past it. What
+ * still needs the tolerance is the other side of the same rule — `validate` re-runs
+ * it on an emitted file read back through a **Float32Array**, whose steps are
+ * coarser than this one and round both ways, and on artifacts no rigc compile ever
+ * touched. Anything a whole step past a declared duration was authored there, not
+ * rounded onto it.
  *
  * ⚠️ `FRAME` (1/60 s) is the wrong tolerance for this, which is why the constant
  * is separate rather than reused: 1/60 s answers "is the DECLARED DURATION

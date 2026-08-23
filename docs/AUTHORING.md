@@ -589,6 +589,19 @@ stepped.
   Seconds, not frames: nothing requires a key to land on any frame grid, and a
   reference rendered at some rate says nothing about where its keys are. Put keys
   where the motion changes.
+- **Key times are quantised onto a 1e-6 s grid by rounding DOWN, never to
+  nearest.** A key time is a position against the sample grid a player will step,
+  and the two directions of a half-step error are not the same size. `2/12 s` and
+  `5/30 s` are both 0.16666666…; `0.166667` is *larger* than either, so a key
+  emitted there is applied at sample **3** of a 12 fps playback and not sample 2 —
+  a whole frame late, with nothing raised. On a **stepped** timeline (an attachment
+  timeline always is) that is the wrong picture rather than a slightly wrong value:
+  the spineboy run's muzzle flare fired a frame late for exactly this until the
+  run's own frame check caught it (issue #99). Rounding down cannot do that; the
+  worst it can do is put a key a millionth of a second early, on the sample it was
+  written for. ⚠️ What this does **not** protect you from is rounding your own
+  times before you write them — write `2/12`, not `0.1667`, and let the compiler
+  do the quantising.
 - **No key may land past the animation's `duration`.** Nothing that plays the
   animation for the duration it declares ever reaches such a key, so it is a
   compile error — checked on **every timeline**, not just on the latest key in the
