@@ -257,6 +257,14 @@ behind it writes literal `x`/`y` instead.
 `spec` must be exactly `"rigc-rig/1"`. `name` must be a non-empty string. `bones`
 must be non-empty. `slots` must be present (it may be empty).
 
+🚫 **Every example value below is invented.** Names, coordinates, vertex lists and
+payloads in this guide are written to illustrate a field, never copied out of a
+reference export — an example lifted from one would be handing an authoring agent an
+answer to the rung it is standing on, which is the rule §10.6 states and the honesty
+rule in [LADDER.md](LADDER.md) turns on. If a snippet here matches a reference file,
+that is a defect in this guide: report it. (It has happened — 2026-08-23, see
+[`bench/runs/README.md`](../bench/runs/README.md), *What a run may read*.)
+
 ### 3.1 `skeleton` — the header
 
 | Field | Spine meaning | Default |
@@ -349,9 +357,9 @@ Geometry comes in one of two fields:
 
 ```json
 "weights": [
-  [{ "bone": "tail3", "x": 184.91, "y": -2.83, "weight": 0.006 },
-   { "bone": "tail4", "x": 92.72,  "y": -2.83, "weight": 0.994 }],
-  [{ "bone": "tail4", "x": 84.66,  "y": -8.47, "weight": 1 }]
+  [{ "bone": "link_a", "x": 40, "y": 0,  "weight": 0.25 },
+   { "bone": "link_b", "x": -20, "y": 0, "weight": 0.75 }],
+  [{ "bone": "link_b", "x": -60, "y": 12, "weight": 1 }]
 ]
 ```
 
@@ -404,13 +412,17 @@ carrying it up to and including `end` is clipped to the polygon, so a window, a
 portal or a wipe is one attachment rather than a second set of art.
 
 ```json
-"head-bb": { "head": { "type": "boundingbox", "vertexCount": 6,
-                       "vertices": [-19.14, -70.3, 40.8, -118.07, 257.77, -115.62,
-                                    285.16, 57.18, 120.77, 164.95, -5.07, 76.95] } },
-"clipping": { "clipping": { "type": "clipping", "end": "head-bb", "vertexCount": 3,
-                            "vertices": [18.89, -228.46, 1471.52, 140.96, 34.01, 930.06],
-                            "color": "ce3a3aff" } }
+"hitbox_a": { "hitbox_a": { "type": "boundingbox", "vertexCount": 4,
+                            "vertices": [-30, -10, 30, -10, 30, 50, -30, 50] } },
+"mask_a": { "mask_a": { "type": "clipping", "end": "box", "vertexCount": 3,
+                        "vertices": [0, 0, 200, 0, 0, 160],
+                        "color": "ff00ffff" } }
 ```
+
+Both polygons above are invented — an axis-aligned rectangle and a right triangle,
+in round numbers, so that nothing here can be mistaken for a shape measured off a
+reference. A real one is measured off your own art (§8) or drawn to the volume the
+game needs.
 
 | Field | Meaning |
 | --- | --- |
@@ -474,8 +486,8 @@ The **firings** live in the motion spec (§4.8), because when they happen is tim
 
 ```json
 "events": {
-  "footstep": {},
-  "voiced": { "audio": "voiced.ogg", "volume": 0.8, "string": "line-01" }
+  "cue_a": {},
+  "cue_b": { "audio": "cue_b.ogg", "volume": 0.8, "string": "line-01" }
 }
 ```
 
@@ -484,8 +496,9 @@ is not an array. Every field is optional and each is the payload a firing
 **inherits** when it does not override it: `int` (0), `float` (0), `string`
 (`""`), `audio` (none), `volume` and `balance`.
 
-- The editor's own spineboy export declares exactly `{"footstep": {}}` — an empty
-  object is the normal case, not a stub.
+- **An empty object is the normal case, not a stub.** Most events carry no payload:
+  the name *is* the signal, and the declaration exists so the firings in §4.8 have
+  something to resolve against. Write `{}` and move on.
 - ⚠️ `volume` and `balance` are read **only when `audio` is set**. Without an
   audio path the parser drops them without a word, so rigc refuses that pairing
   rather than emitting two numbers no runtime will read.
@@ -670,8 +683,8 @@ same reason `drawOrder` does: 4.3 writes it as `animations.<a>.events`, beside
     "duration": 1.0666666,
     "loop": true,
     "events": [
-      { "t": 0, "name": "footstep" },
-      { "t": 0.5333333, "name": "footstep", "int": 2 }
+      { "t": 0, "name": "cue_a" },
+      { "t": 0.5333333, "name": "cue_a", "int": 2 }
     ],
     "tracks": []
   }

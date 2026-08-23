@@ -147,20 +147,70 @@ were authored from — but the rung is worth re-attempting from the corrected te
 looked at a reference export cannot un-look at it, so a rung is attempted by an
 agent started for that purpose.
 
-### What it is given
+### What a run may read
 
-| Input | Where |
+⭐ **The two lists below are the honesty rule in operational form, and the prompt
+handed to an authoring agent must quote them both.** Not link them — quote them. An
+agent cannot avoid a document it was never told to avoid, and every leak recorded on
+this ladder so far arrived through a document the run was *told* to read.
+
+**✅ Allowed — the complete list.**
+
+1. the rung's brief, `bench/briefs/<rung>.md`;
+2. the rendered reference frames and contact sheets under
+   `bench/reference/<example>/`, and their `frames.json` sidecars;
+3. the art, `examples/<example>/images/`;
+4. that example's **`.atlas`** — the atlas is a supplied input rather than something
+   the agent authors (rigc has no packer, B3), and it is packed *from* the loose PNGs
+   in (3). It is the one file under `examples/*/export/` a run may open, and the
+   skeleton JSON beside it stays the answer. A run that does not need it — rigc emits
+   its own atlas from the PNGs — should say so and skip it;
+5. [docs/AUTHORING.md](../../docs/AUTHORING.md) in full, §8, §9 and §10 included;
+6. Spine's public documentation at esotericsoftware.com;
+7. this repository's own source and README as documentation of the input formats —
+   `src/rig.ts`, `src/types.ts`, `src/render.ts`, `src/check.ts` and the rest;
+8. the CLI: `bun cli.ts build` / `explain` / `validate` / `diff` / `check`, and
+   `bench` **once, at the end**;
+9. earlier runs' `README.md` and `LOOP.md` **for process only** — how a loop is run
+   and what a log looks like — and **not** another attempt at the rung being
+   authored, whose measures and whose spec are the answer one step away.
+
+**🚫 Forbidden — and each of these has a reason beside it.**
+
+| Not this | Why |
 | --- | --- |
-| the brief | `bench/briefs/<rung>.md` |
-| the authoring guide | [docs/AUTHORING.md](../../docs/AUTHORING.md) — **including §8**, which is about reading reference frames and exists because the first run got three measurements wrong in ways that each looked like a fact about the animation, and **§10**, the editor's own default conventions (standard input from 2026-08-23; see below) |
-| Spine's public documentation | esotericsoftware.com — the user guide, the JSON format page, the changelog. Allowed input; see below |
-| the art | `examples/<example>/images/` |
-| the reference renders | `bench/reference/<example>/` — frames and contact sheets |
-| the CLI | this repository: `bun cli.ts build` / `explain` / `validate` / `diff` / `check` / `bench` |
+| `examples/*/export/*.json` | the reference skeleton. This is the answer |
+| `bench/transcriptions/**` | the same answer rewritten by a script that read it |
+| [docs/LADDER.md](../../docs/LADDER.md)'s **status table** and its **per-rung sections** | the table's *New at this rung* column publishes bone, slot and animation counts per skeleton, which the briefs withhold on purpose; the per-rung sections publish every previous run's measures. Both are the ladder's bookkeeping and stay where they are — a run simply does not read them. The two parts of that document a run *should* read are *How a rung is scored* and *The honesty rule* |
+| [docs/SPEC_COVERAGE.md](../../docs/SPEC_COVERAGE.md) | all of it. Part 3 inventories what the corpus actually uses and part 4 lists, rung by rung, the bones, slots, constraints, attachment kinds and timelines each example skeleton carries. It is a reference export in prose |
+| [`src/ladder.ts`](../../src/ladder.ts)'s **gate strings** | the same counts again, in code — `gates:` on each rung entry names the features and the sizes |
+| **issue bodies carrying counts or measures** | the per-rung issues (#10–#18) and any issue quoting a `bench` line. A number reaches an agent the same way whichever file it is in |
+| any **derived form** of the above | bone names, key times, curve handles, timeline listings, however they arrive — a previous session's summary, a commit message, a paste, a chat quote |
+| `bench/render_reference.ts` | it reads the export to produce the frames |
+| git history, `git log`, blame, tags | the transcription commits are in it |
 
-Reading the repository's own source is fine — `src/rig.ts`, `src/types.ts` and the
-README are documentation of the input formats, and none of them says anything about
-any rung's answer.
+⚠️ **This list is written down because it was breached, and by this repository's own
+documents.** The spineboy run of 2026-08-23
+([`2026-08-23-spineboy-1/`](2026-08-23-spineboy-1/)) read `docs/LADDER.md`'s status
+row for `ess` as a **sizing check** — it had been told to read the row — and read a
+§3.6 example in AUTHORING.md that stated the reference's `events` block outright.
+Both are recorded rather than hidden, in that run's README and `LOOP.md` §1, and both
+are sealed as of this revision. **Its name-matched figures carry that caveat**, and
+the rung is not discussed as cleared until an attempt after the seal.
+
+### Three of those entries carry a reason
+
+The list above is the whole of what a run is given; these three are the ones a
+prompt keeps getting wrong.
+
+**AUTHORING.md is read in full, §8 and §10 included.** §8 is about reading reference
+frames, and it exists because the first run got three measurements wrong in ways
+that each looked like a fact about the animation. §10 is the editor's own default
+conventions, a standard input from 2026-08-23 (below).
+
+**Reading this repository's own source is fine** — `src/rig.ts`, `src/types.ts` and
+the README are documentation of the input formats. `src/ladder.ts` is the exception
+and it is in the forbidden table: its `gates:` strings carry per-skeleton counts.
 
 ✅ **Spine's public documentation is allowed input, and always was.** The honesty
 rule forbids facts read out of *this repository's* reference exports. It does not
@@ -189,15 +239,13 @@ another route, and the rule against derived forms below covers it.
 
 ### What it must not read
 
-🚫 **`examples/*/export/**`** — the reference skeleton JSON, its atlas and its atlas
-page. This is the answer.
+**The forbidden list is the table in *What a run may read* above** — one copy, and
+that is the copy. It names `examples/*/export/*.json`, `bench/transcriptions/`,
+`docs/LADDER.md`'s status table and per-rung sections, `docs/SPEC_COVERAGE.md`,
+`src/ladder.ts`'s gate strings, issue bodies carrying counts, `render_reference.ts`,
+git history, and any derived form of any of them.
 
-🚫 **`bench/transcriptions/**`** — rig and motion specs written by a script that read
-a reference export and rewrote its numbers. Same answer, one file further away.
-
-🚫 Any derived form of either: bone names, key times, curve handles, timeline
-listings, however they reach the agent — a previous session's summary, a commit
-message, a paste.
+The two rules that decide the loop rather than the reading list are here:
 
 ⚠️ **`bench` is the finish line, not a rung of the loop.** Its diff measures are
 derived from the reference, so editing the spec in response to them is tuning
@@ -219,20 +267,31 @@ bench/runs/<YYYY-MM-DD>-rung<N>-<n>/     e.g. 2026-08-22-rung3-1/
   <name>.rig.json        the rig spec the agent wrote
   <name>.motion.json     the motion spec the agent wrote
   spine/                 the compiled candidate: skeleton.json + skeleton.atlas
-  log.md                 the loop log — see below
+  README.md              the figures and the reading — see below
+  LOOP.md                the loop log, one entry per turn — see below
   bench.json             the final `bench <N> --json` report
 ```
 
-`<n>` counts attempts at that rung on that date, from 1.
+`<n>` counts attempts at that rung on that date, from 1. A rung with two skeletons
+puts each candidate's specs and `spine/` in a subdirectory named for it.
 
-### `log.md`
+### `README.md` and `LOOP.md`
 
-Open it with a header block, then one entry per turn of the loop. The point of the
-log is that a reader can see **what the agent could not tell without compiling** —
-that is the measurement this whole exercise exists for.
+Two files, because they are read by different people at different times.
+**`README.md`** is the run's own account of itself — its header block, its inputs,
+what was built, the measures verbatim, the reading, what is known-wrong, and what the
+guide should have said. **`LOOP.md`** is the turns: every `build`, every `check`,
+every dead end, in order. A reader who wants the verdict stops at the first; a reader
+who wants to know **what the agent could not tell without compiling** — the
+measurement this whole exercise exists for — reads the second.
+
+Every run from rung 3's second attempt onwards ships both. The single `log.md` this
+template used to show was the shape of the first two runs only.
+
+Open `LOOP.md` with a header block, then one entry per turn:
 
 ```markdown
-# Rung 3 — attempt 1
+# Rung 3 — attempt 1, the loop
 
 - date:      2026-08-22
 - agent:     <model / harness>
@@ -263,7 +322,9 @@ have said and did not.
 
 Record **every** turn, including the ones that failed for a silly reason. A guide
 that leaves an agent to discover something by failing is a defect in the guide, and
-this log is the only place that shows up.
+this log is the only place that shows up. Record an honesty-rule incident here too,
+in §1 — a leak that is named costs the run some measures; a leak that is buried
+costs the ladder every figure it ever printed.
 
 ## After a run
 
