@@ -231,11 +231,17 @@ shape, wherever it is used" and is the recommended path. `curve` is the escape
 hatch: the absolute `(time, value)` control points, verbatim, for when every key
 needs a different shape.
 
-**R7 — `duration` is declared, and checked.** Skeleton JSON carries no duration
-field — the loader takes the largest key time. So you state the duration you meant
-and rigc compares it against the compiled result; a mismatch larger than one frame
-(1/60 s) is a compile error, and assertion `A09` re-checks it against the *loaded*
-skeleton afterwards.
+**R7 — `duration` is declared, and checked, twice over.** Skeleton JSON carries no
+duration field — the loader takes the largest key time. So you state the duration
+you meant and rigc compares it against the compiled result; a mismatch larger than
+one frame (1/60 s) is a compile error, and assertion `A09` re-checks it against the
+*loaded* skeleton afterwards.
+
+That frame of slack is for a duration declared *longer* than the motion — an
+animation may hold its final pose. In the other direction there is no slack to give:
+**no key may land past the declared duration**, and this is checked per timeline
+rather than per animation, within 1e-6 s. Both halves matter, and the second is not
+the first with a smaller number — see §4.5.
 
 **R8 — `from` needs a cut manifest.** `from.anchor` / `from.slotWindow` /
 `from.meshCenter` / `from.rotation` read measured art out of a manifest. Without
@@ -487,6 +493,18 @@ stepped.
   Seconds, not frames: nothing requires a key to land on any frame grid, and a
   reference rendered at some rate says nothing about where its keys are. Put keys
   where the motion changes.
+- **No key may land past the animation's `duration`.** Nothing that plays the
+  animation for the duration it declares ever reaches such a key, so it is a
+  compile error — checked on **every timeline**, not just on the latest key in the
+  animation. The tolerance is 1e-6 s, which is one step of the grid rigc rounds key
+  times onto, so a key you put exactly *on* a duration that is not a round number
+  of microseconds is fine. R7's frame of slack does not apply in this direction and
+  would not see this: rung 6 rounded its key times to 4 dp somewhere upstream, its
+  one-frame reveal landed 0.000034 s past a 68/12 s duration, another track was
+  already sitting on the declared duration so the animation's *longest* key time
+  looked right — and the reveal never appeared. If you want a key on the last
+  sample, write the duration's own value; if you want the animation to run longer,
+  say so in `duration`.
 - `ease` names an entry of `easings`, or the literal `"stepped"`. Absent = linear.
 - `curve` is the raw form: **four numbers per value channel**, concatenated in field
   order, as absolute `(time, value)` control points. A short array multiplies
@@ -574,6 +592,7 @@ the frequent ones, verbatim:
 | `duplicate region name "X"` | two PNGs share a basename; one part, one page, one name |
 | `motion spec names archetype "A" but the rig spec at … is called "B"` | make `archetype` equal the rig's `name` |
 | `animation "A" declares duration Ns but its last key is at Ms` | R7 — fix whichever of the two you meant |
+| `animation "A" slot "X" attachment: key at Ns is Ms past the declared duration Ds` | §4.5 — the key is past the end of the animation and nothing will sample it. Move the key onto `duration`, or raise `duration` |
 | `animation "A" keys unknown bone "X"` | the track's `bone` is not in the rig |
 | `animation "A" bone "X" translatex: key value must be an array of 1 number(s)` | the value shape must match the property (§4.4) |
 | `a key carries both a named easing and a raw curve; pick one` | R6 |
@@ -614,7 +633,7 @@ The report prints one line per assertion:
 | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | the atlas `size:` disagrees with the PNG on disk. Under `spine-html` also: `pma`, rotation, and a region that does not cover its page |
 | `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file |
 | `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both ◑ | an attachment resolves to a region the atlas does not have — usually a `path`/`image` basename mismatch. Under `spine-html` the placeholder and the region name must also be *identical* |
-| `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the loaded duration ≠ the declared one, or the two sides disagree about which animations exist (R7). **SKIP** when neither side has an animation at all — a static rig has no duration |
+| `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the loaded duration ≠ the declared one, or the two sides disagree about which animations exist (R7). Asymmetric by design: a frame of slack for an animation that ends early, and none worth the name for a key *past* the declared end, which is the same rule §4.5 states at compile time — held here against a skeleton the compiler never saw. **SKIP** when neither side has an animation at all — a static rig has no duration |
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping the animation produced a `NaN` pose. Look for a degenerate curve or a zero scale |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | a clipping attachment; the target renderer skips them silently |
 | `A12_NO_DARK_COLOR` | renderer | a slot `dark` colour or an `rgba2`/`rgb2` timeline; parsed, then ignored |

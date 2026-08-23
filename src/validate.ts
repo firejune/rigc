@@ -29,7 +29,7 @@ import {
   TextureAtlas,
 } from '@esotericsoftware/spine-core';
 import { readPngInfo } from './png.ts';
-import { CHANNELS_BY_KIND, walkTimelines } from './timelines.ts';
+import { CHANNELS_BY_KIND, KEY_TIME_EPSILON, walkTimelines } from './timelines.ts';
 import type { RigInfo } from './types.ts';
 
 export interface Failure {
@@ -166,6 +166,31 @@ export interface ValidateReport {
 
 const FRAME = 1 / 60;
 const STEP_FRAMES = 120;
+
+/**
+ * One step of the **float32** grid at `t`, which is the grid a loaded key time
+ * actually sits on: `spine-core` reads every timeline's frames into a
+ * `Float32Array`, so a time the compiler wrote as `32.366667` comes back as
+ * `32.366668701171875`.
+ *
+ * A09 needs this and the compiler does not, and that asymmetry is the reason it
+ * is a function rather than a constant. `KEY_TIME_EPSILON` is fixed because the
+ * compiler's own grid is fixed — `r6` puts every key time on 1e-6 s at any
+ * magnitude. A float32 step is not: 4.8e-7 s at 5 s, 3.8e-6 s at 32 s. Adding a
+ * flat epsilon to a comparison against a value that has been through float32
+ * would fail correct data for being long — 971 frames at 30 fps keyed exactly on
+ * its own declared duration arrives 2.0e-6 s late, twice the whole epsilon.
+ *
+ * The spacing of a normal float is 2^(exponent − 23), and `Math.log2` recovers
+ * the exponent. Zero takes the guard — a named empty animation declares
+ * `duration: 0` and A09 does compare it — and the magnitude is taken first, so a
+ * sign never reaches `log2`.
+ */
+function float32Step(t: number): number {
+  const magnitude = Math.abs(t);
+  if (!Number.isFinite(magnitude) || magnitude === 0) return 0;
+  return 2 ** (Math.floor(Math.log2(magnitude)) - 23);
+}
 
 /**
  * `4.3`, `4.3.<patch>`, or `4.3.<patch>-<suffix>` — the last of which is what the
@@ -964,7 +989,31 @@ export function validate(input: ValidateInput): ValidateReport {
           fail('A09_ANIMATION_DURATION_MATCHES_SPEC', `spec declares animation "${name}" but the skeleton has none`);
           continue;
         }
-        if (Math.abs(anim.duration - declared) > FRAME) {
+        // Two arms, and the asymmetry is the point.
+        //
+        // UNDERSHOOT is R7's question — is the declared duration wrong? An
+        // animation may hold its final pose, so a last key a little before the
+        // end is ordinary and a frame of that is slack.
+        //
+        // OVERSHOOT is a different question with a different tolerance.
+        // `anim.duration` IS the largest key time (`SkeletonJson.ts:1261` takes
+        // the max over every timeline's own duration), so a loaded duration past
+        // the declared one means a KEY is past it — and nothing that plays the
+        // animation for the duration it declares will ever reach that key. Rung
+        // 6 lost a one-frame attachment reveal to a key 3.4e-5 s past the end,
+        // 1/500 of FRAME, which this comparison read as agreement (issue #54).
+        // `compile.ts` refuses that per timeline now; this is the same rule held
+        // against a skeleton the compiler never saw.
+        const slack = KEY_TIME_EPSILON + float32Step(declared);
+        const past = anim.duration - declared;
+        if (past > slack) {
+          const late = anim.timelines.filter((t) => t.getDuration() - declared > slack).length;
+          fail(
+            'A09_ANIMATION_DURATION_MATCHES_SPEC',
+            `animation "${name}" has ${late} timeline(s) keyed past the declared duration ${declared}s — ` +
+              `the last key is at ${anim.duration}s, ${past.toFixed(6)}s late, so nothing ever samples it`,
+          );
+        } else if (declared - anim.duration > FRAME) {
           fail(
             'A09_ANIMATION_DURATION_MATCHES_SPEC',
             `animation "${name}" loaded duration ${anim.duration}s, spec declares ${declared}s`,

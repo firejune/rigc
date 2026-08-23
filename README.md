@@ -279,7 +279,7 @@ the renderer policy*.
 | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | each page's declared `size:` matches the PNG on disk, and its region covers the whole page |
 | `A07_ATLAS_TEXT_SHAPE` | both | the atlas text obeys the parser's whitespace rules — no stray indentation on region names, no blank line splitting a page block |
 | `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both ◑ | every attachment name resolves to a region of exactly that name |
-| `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the compiled duration equals the duration the spec declared (skeleton JSON has no duration field — the last key *is* the duration). SKIPs without a motion spec |
+| `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the compiled duration equals the duration the spec declared (skeleton JSON has no duration field — the last key *is* the duration). Two tolerances: a frame of slack for a duration declared long, but a key landing *past* the declared end is held to the grid the times are stored on, because nothing playing the animation ever reaches it. SKIPs without a motion spec |
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping every animation frame by frame produces no NaN anywhere in the pose |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | no clipping attachments (the renderer skips them silently) |
 | `A12_NO_DARK_COLOR` | renderer | no dark / two-colour tint on slots or timelines — parsed, then ignored |
@@ -403,12 +403,23 @@ physics constraints, and two measured ceilings. Every plate is a checkerboard wi
 `PLACEHOLDER` burned into it: they exist to be structurally real, and no claim
 about appearance is made from any of them.
 
-A fifth suite breaks an **input** instead of an artifact: seven malformed rig specs
+A fifth suite breaks an **input** instead of an artifact: nine malformed rig specs
 that the compiler must refuse by name — a forward parent reference, a duplicate bone
 name, a slot naming a missing bone, an ik target that does not exist, an attachment
-image that is not on disk, a wrong `spec` field, and a constraint type the emitter
-cannot write. Each of those produces a file Spine's own parser would accept while
-quietly meaning something else.
+image that is not on disk, an authored mesh binding a bone the rig does not have,
+one that uses raw bone indices without asking for them, a wrong `spec` field, and a
+constraint type the emitter cannot write. Each of those produces a file Spine's own
+parser would accept while quietly meaning something else.
+
+A **motion** spec can be wrong the same way, and the shape that costs the most is
+the quietest: a key time that lands past the animation's declared duration is never
+sampled, so the motion it was meant to carry simply does not happen. Five controls
+hold that line — a key sitting exactly on a duration of 68/12 s is legal and must
+compile, a key that 4 dp rounding pushed 0.000034 s past one is refused by name, the
+same overshoot in an artifact the compiler never saw is caught by `A09`, an animation
+whose last key is a frame short of its declared end is still accepted because that
+direction is a different question, and a 32-second animation keyed exactly on its own
+duration is *not* failed for the float32 grid its times come back on.
 
 There is a positive control per suite as well: the pristine artifacts must come back
 with zero failures, because a validator that failed everything would otherwise look

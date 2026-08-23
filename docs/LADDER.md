@@ -619,7 +619,10 @@ author rendering its own candidate back and diffing it frame by frame against
 the reference, none of them touched by `validate` or `check`: a key time rounded
 to 4 dp landed past the animation's last sample and silently dropped the
 one-frame `arc-tracker` reveal (`A09` compares declared duration to loaded
-duration, and both sides agreed — the loss was invisible to it); greedy key
+duration, and both sides agreed — the loss was invisible to it; **that one is
+now caught**, as a per-timeline compile refusal and a tightened `A09`, issue
+\#54 — the other two are still only visible by rendering the candidate back);
+greedy key
 reduction sloped a line through the reference's frozen f64–f68 plateau, moving
 91 px across f67→f68 where the reference moves 3; and a squash clamp meant to
 hold the ball's proportion inside [0.72, 1.85] was written as "refuse a step

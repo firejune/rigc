@@ -84,6 +84,32 @@ const DRAW_ORDER_FOLDER_CHANNELS: Record<string, number | null> = { drawOrderFol
 const EVENT_CHANNELS: Record<string, number | null> = { events: null };
 
 /**
+ * How far past an animation's declared `duration` a key time may land: one step
+ * of the grid every key time is rounded onto.
+ *
+ * The compiler emits key times through `r6`, so 1e-6 s is the finest distinction
+ * a key can make and half a step is the most a *correct* key can miss its target
+ * by. A key the author put exactly ON a duration of 68/12 s emits as 5.666667 —
+ * 3.3e-7 s late, and legal. Anything a whole step further was authored past the
+ * end, not rounded onto it.
+ *
+ * ⚠️ `FRAME` (1/60 s) is the wrong tolerance for this, which is why the constant
+ * is separate rather than reused: 1/60 s answers "is the DECLARED DURATION
+ * wrong?", it is 16,667 times wider than this, and it hid the defect that put
+ * this here. Rung 6 rounded key times to 4 dp in its authoring tooling, so a
+ * one-frame attachment reveal landed 3.4e-5 s past a 68/12 s duration — 34 steps
+ * past this line but 1/500 of FRAME, with another track already sitting on the
+ * declared duration, so the compiler's Rule 4 and the validator's A09 both
+ * compared the animation's max key time and agreed. The reveal never fired
+ * (issue #54).
+ *
+ * It lives here, beside the timeline catalogue, for the reason the catalogue
+ * does: `compile.ts` refuses on it and `validate.ts` re-checks the emitted file
+ * against it, and a second copy of the number is a second copy that drifts.
+ */
+export const KEY_TIME_EPSILON = 1e-6;
+
+/**
  * Every timeline group `readAnimation` reads (SPEC_COVERAGE part 1-8), keyed by
  * the walker's `kind`. A05 selects its channel table from here, so a group that
  * is missing from this map is a group whose curves nobody checks.

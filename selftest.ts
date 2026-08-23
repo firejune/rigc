@@ -2009,6 +2009,148 @@ function runDrawOrderSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// key times against the declared duration
+// ---------------------------------------------------------------------------
+//
+// Rule 4 and `A09` each compare ONE number per animation — the largest key time
+// across every track — against the declared duration, within 1/60 s. Neither
+// ever looked at an individual timeline's own last key, and rung 6 fell straight
+// through the gap: its authoring tooling rounded key times to 4 dp, so a
+// one-frame attachment reveal landed at 5.6667 while the animation declared
+// 68/12 s (5.666666…). Being 0.000034 s past the end is nowhere near 1/60 s,
+// another track already sat on the declared duration, so the animation's max key
+// time was right and both checks read as agreeing. The reveal never fired, and
+// only re-rendering the animation and diffing the last two frames showed it
+// (issue #54).
+//
+// The probe declares 68/12 s on purpose. `r6` rounds a key placed exactly there
+// UP, to 5.666667 — past the declared duration by 3.3e-7 s — so the positive
+// control below is also the proof that `KEY_TIME_EPSILON` leaves room for the
+// compiler's own rounding, which is the whole reason it is a step of that grid
+// and not zero.
+
+/** The rung 6 duration: 68 frames at 12 fps, and not representable in decimal. */
+const SIXTY_EIGHT_TWELFTHS = 68 / 12;
+
+/** Rung 6's key time, as its authoring tooling rounded it. */
+const ROUNDED_TO_4DP = 5.6667;
+
+/**
+ * Two tracks, each with its own last key time.
+ *
+ * `anchor` is what made rung 6 invisible: a second track sitting on the declared
+ * duration keeps the animation's max key time — the only number Rule 4 and A09
+ * ever compared — correct no matter where `lastKey` lands.
+ */
+function keyTimeMotion(duration: number, anchor: number, lastKey: number): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      reveal: {
+        duration,
+        loop: false,
+        tracks: [
+          {
+            slot: 'block',
+            property: 'rgba',
+            keys: [
+              { t: 0, v: [1, 1, 1, 1] },
+              { t: anchor, v: [1, 1, 1, 1] },
+            ],
+          },
+          {
+            slot: 'marker',
+            property: 'attachment',
+            keys: [
+              { t: 0, v: null },
+              { t: lastKey, v: 'marker' },
+            ],
+          },
+        ],
+      },
+    },
+  };
+}
+
+function runKeyTimeSuite(): number {
+  const dirs = writeProbeRig();
+  let bad = 0;
+  console.log('\n── key times against the declared duration (self-contained) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const onGrid = keyTimeMotion(SIXTY_EIGHT_TWELFTHS, SIXTY_EIGHT_TWELFTHS, SIXTY_EIGHT_TWELFTHS);
+  const green = gateProbe(dirs, onGrid);
+  say(
+    'CONTROL_A_KEY_ON_THE_DECLARED_DURATION_IS_GREEN',
+    green.failures.length === 0 && green.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
+    green.failures.length === 0
+      ? `both tracks key ${SIXTY_EIGHT_TWELFTHS}s, which r6 emits as 5.666667 — past the declared duration, and legal`
+      : `[${green.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'an epsilon of zero would refuse every key the author put ON a duration that is not a round number of microseconds',
+  );
+
+  const rounded = refusal(dirs, keyTimeMotion(SIXTY_EIGHT_TWELFTHS, SIXTY_EIGHT_TWELFTHS, ROUNDED_TO_4DP));
+  say(
+    'K01_a_key_rounded_past_the_declared_duration_is_refused',
+    rounded !== null && rounded.includes('past the declared duration'),
+    rounded === null
+      ? 'the compile went through — the key that nothing will ever sample was emitted'
+      : `refused with: ${rounded}`,
+    'rung 6: 4 dp rounding put an attachment reveal 0.000034s past the end, 1/1000 of the tolerance Rule 4 compares with',
+  );
+
+  const artifact = gateProbeArtifacts(dirs, onGrid, (skeleton) => {
+    const animations = skeleton.animations as Record<
+      string,
+      { slots?: Record<string, Record<string, Array<Record<string, unknown>>>> }
+    >;
+    const attachment = animations.reveal.slots?.marker.attachment;
+    if (!attachment) throw new Error('the probe emitted no attachment timeline');
+    attachment[attachment.length - 1].time = ROUNDED_TO_4DP;
+  });
+  say(
+    'K02_A09_catches_the_same_overshoot_in_an_artifact_the_compiler_never_saw',
+    artifact.failures.some((f) => f.assertion === 'A09_ANIMATION_DURATION_MATCHES_SPEC'),
+    artifact.failures.find((f) => f.assertion === 'A09_ANIMATION_DURATION_MATCHES_SPEC')?.detail ??
+      'A09 accepted a loaded duration 0.000034s past the one the spec declares',
+    'the loaded duration IS the largest key time, so A09 sees this overshoot — it just used to tolerate 1/60 s of it',
+  );
+
+  const short = gateProbe(dirs, keyTimeMotion(1, 0.99, 0.99));
+  say(
+    'K03_a_last_key_inside_one_frame_of_the_end_is_still_accepted',
+    short.failures.length === 0 && short.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
+    short.failures.length === 0
+      ? 'declared 1s, last key 0.99s — an animation may hold its final pose, and 1/60 s of slack is R7'
+      : `[${short.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'only the OVERSHOOT arm is about the sample grid; tightening both would make R7 a frame-accurate duration rule',
+  );
+
+  // The compiler works in doubles on its own 1e-6 grid; the validator reads times
+  // back out of a Float32Array, whose steps grow with the value. 971 frames at 30
+  // fps is 32.366666… s, which `r6` emits as 32.366667 and float32 stores as
+  // 32.366668… — a legal key on the declared duration, arriving 2.0e-6 s late,
+  // twice the compiler's whole epsilon. A flat epsilon here would fail correct
+  // data for being long, which is why A09 adds one float32 step at the duration.
+  const long = 971 / 30;
+  const far = gateProbe(dirs, keyTimeMotion(long, long, long));
+  say(
+    'K04_a_long_animation_does_not_fail_for_float32_quantisation',
+    far.failures.length === 0 && far.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
+    far.failures.length === 0
+      ? `${long}s declared and keyed; the emitted 32.366667 loads back as ${Math.fround(32.366667)}`
+      : `[${far.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'the two layers read different grids: 1e-6 s is fixed, a float32 step at 32 s is 3.8e-6 s and at 5 s is 4.8e-7 s',
+  );
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // the mesh rasteriser — the path `check` had no way to draw before #27
 // ---------------------------------------------------------------------------
 //
@@ -2617,6 +2759,8 @@ function main(): void {
   substantive += 4;
   bad += runDrawOrderSuite();
   substantive += 6;
+  bad += runKeyTimeSuite();
+  substantive += 5;
   bad += runMeshSuite();
   substantive += 4;
   const meshRungBad = runMeshRungSuite();
@@ -2669,6 +2813,7 @@ function main(): void {
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
       `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 6 draw-order controls, ` +
+      '+ 5 key-time controls, ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
