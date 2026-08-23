@@ -949,15 +949,15 @@ it alone, then read how much of it survives in the reference and how much surviv
 in each build. If a part that measures 110 px on its own reads 100 px in the
 reference, the build that also reads 100 px is covering it the way the reference
 does and the build that reads 108 px is not, and that is the order. It costs two
-builds and it reaches edges the frames never show a marking on: rung 8's brief
-settled one edge of a chain from interior detail and said the frames did not show
-the rest, and rendering like-for-like settled three more of them — worth a measurable
-drop in window MAE and a full `slots.order` score in `bench`, a convention the gate
-cannot see and the measures can.
+builds and it reaches edges the frames never show a marking on: on the ladder a brief
+has settled a single edge of a chain from interior detail and said outright that the
+frames did not show the rest, and rendering like-for-like settled three more of them
+— worth a measurable drop in window MAE, a convention the gate cannot see and the
+measures can.
 
-⚠️ **The same test knows when to stay silent, and you have to let it.** Run on the
-same rung's other shot, the two orders came out **0.8 % apart over the whole shot
-and pointing opposite ways** — a gap well inside the objective's own scatter, which
+⚠️ **The same test knows when to stay silent, and you have to let it.** Run on
+another shot, two orders came out **0.8 % apart over the whole shot and pointing
+opposite ways** — a gap well inside the objective's own scatter, which
 is correctly *no answer*. A difference that small is not a quiet vote for the
 winner; it means the frames do not decide this edge, and you ship it on reasoning
 and say in the log that is what you did.
@@ -985,12 +985,14 @@ linear, stepped or bezier and never compares two handle shapes; `check` measures
 rendered result, so it can tell you a curve is *wrong* without telling you what it
 should have been. What does not follow is that omitting `ease` abstains. It authors
 constant speed on every span — the one shape a hand-animated reference almost never
-has (§10.4) — and the ladder has measured both sides of that bet. Rung 6 keyed
-everything linear for exactly the reasoning above and scored `curve_kinds` **34/539**,
-its single largest structural gap. Rung 3's second attempt — same brief, same frames —
-applied §10.4's rule instead and went 41/69 → 49/69, with `key_counts` rising beside
-it and every other section figure unchanged. ⇒ Take the curve *kind* from what the motion does — starts, stops,
-accelerates, settles, falls — rather than from how far apart the keys are; take its
+has (§10.4) — and the ladder has measured both sides of that bet. A run that keyed
+everything linear for exactly the reasoning above scored under a **sixteenth** of its
+`curve_kinds` measure, and that was its single largest structural gap. A second
+attempt at another rung — same brief, same frames, same model as its own first, with
+§10.4's rule added and nothing else — lifted `curve_kinds` by a fifth, with
+`key_counts` rising beside it and every other section figure unchanged. ⇒ Take the
+curve *kind* from what the motion does — starts, stops, accelerates, settles,
+falls — rather than from how far apart the keys are; take its
 shape from §10.4's automatic-handle advice and a small reused `easings` table; and
 leave `check` to catch the one thing no static reading can, an easing applied the
 wrong way round.
@@ -1327,17 +1329,20 @@ a part you have not authored, or one you have put somewhere else entirely.
   still cannot tell you is *how* a silhouette got its shape: a hull moved by a
   bone chain and the same hull moved by deform keys render to the same pixels, and
   the frames cannot separate them. Choose on what the rig has to do next, not on
-  what the frames appear to say. ⚠️ **But `bench` does see it**, in
-  `attachments.type_counts`, `attachments.mesh_weighted`, `attachments.region_size`
-  and the bone count that comes with the choice — rung 8's ball was posed as a region
-  scaled by its bone, on this bullet's own reasoning, and the reference builds the
-  same silhouette the other way, which cost most of that rig's `attachments` section
-  and left it short of the reference's bone count. `animations.deform` reads
-  **1.000** on both sides, so neither rig deforms with keys; the whole difference is
-  which machinery renders identical pixels. That is not an argument for guessing —
-  nothing in the frames could have chosen. It is an argument for **writing down which
-  way you went and why at the moment you decide it**, rather than meeting the
-  decision again in the measures after the run is over.
+  what the frames appear to say. ⚠️ **But `bench` does see it.** Take a disc that
+  squashes as it travels: a region on a bone that scales, and a grid mesh weighted
+  1.0 to that same bone, draw the same pixels on every frame — and they are
+  different files. One has a region and one bone; the other has a hull, a
+  triangulation and a weight per vertex, and a rig that meshes one part usually
+  meshes its neighbour and carries the bones to drive them. `attachments.type_counts`,
+  `attachments.mesh_weighted`, `attachments.region_size` and the bone count that
+  comes with the choice all move on that decision, while `animations.deform` moves
+  for neither, because neither one deforms with keys — the whole difference is which
+  machinery renders identical pixels. That is not an argument for guessing: the
+  frames cannot choose, and this guide will not tell you which way any reference
+  went. It is an argument for **writing down which way you went and why at the
+  moment you decide it**, rather than meeting the decision again in the measures
+  after the run is over.
 - **Which of two explanations is right.** A slot 3 px low every frame and a slot
   3 px low at one frame have the same drift and opposite causes. The table gives
   you the frame index; §8's rule still applies — look for a second way to get the
@@ -1406,10 +1411,10 @@ carry each part's own name straight through — PNG basename → slot → attach
 the bone that moves it — instead of inventing a scheme of your own.
 
 **Both directions are measured.** The one run whose art shipped a separate PNG per
-body part, each named for the part, applied this deliberately and matched the
-reference's slot names **exactly**, with nearly all of its attachment and bone names
-matching too — author and reference converging without either seeing the other.
-Every honest run before it read near zero on the same measures.
+body part, each named for the part, applied this deliberately and posted `names`
+measures **an order of magnitude** above anything on the ladder before it — without
+either side seeing the other. Every honest run before it read near zero on the same
+measures. It is the largest single thing any run has got out of a convention.
 
 ⚠️ **And the other half, which matters just as much: when the art is *not* named
 after the parts, no naming strategy beats any other and the measure is noise.** On a
@@ -1484,8 +1489,7 @@ repeat.** Clean Up's *"keying the same value multiple times in a row"* is about
 keys of equal value imply nothing: they are the only way to say *nothing moves here*
 on an interpolated timeline, and deleting either one ramps the value through the
 hold. Stillness is a thing a shot does, sometimes for a twelfth of a second and
-sometimes for nine frames (spineboy's `shoot` opens on the first and its `death`
-lies in the second), and it is authored, not omitted. ⇒ Key the start of a hold and
+sometimes for nine, and it is authored, not omitted. ⇒ Key the start of a hold and
 key its end, at the same value; drop the ones in between. This is §9.2's *"held pose
 that is not held"* from the other side, and the same place catches it — a sloped
 hold shows up in `check`'s per-frame column and nowhere else, because it is cheap in
