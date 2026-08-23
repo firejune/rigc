@@ -29,7 +29,7 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 | 4 | [`4-wave-principle.md`](../briefs/4-wave-principle.md) | rev 2, 2026-08-23 | 3 animations, 12 fps + 24 fps sheets | 1 | one shared viewport; in `ball-catch` the whole rig travels, not just the ball |
 | 5 | [`5-squash-and-stretch.md`](../briefs/5-squash-and-stretch.md) | rev 2, 2026-08-23 | 3 animations, 12 fps + 24 fps sheets | 1 | subject ~4–16 px; proportions are measured, not seen |
 | 6 | [`6-arcs.md`](../briefs/6-arcs.md) | **yes (third party)**, rev 3, 2026-08-23 | 1 animation, 12 fps + 24 fps sheet | 1 | the subject **deforms**; ball ~14 px; proportions are measured, not seen |
-| 8 | [`8-follow-through.md`](../briefs/8-follow-through.md) | **no** | 2 skeletons, 1 animation each, 12 **and** 24 fps in full | **2** | two shots that want opposite machinery — `pendulum` deforms nothing, `ball` deforms on most frames; the `ball` shot moves up to 155 px between two 12 fps frames, so read it at 24 fps |
+| 8 | [`8-follow-through.md`](../briefs/8-follow-through.md) | **yes (third party)**, rev 2, 2026-08-23 | 2 skeletons, 1 animation each, 12 **and** 24 fps in full | **2** | two shots that want opposite machinery — `pendulum` deforms nothing, `ball` deforms on most frames; the `ball` shot moves over 130 px between two 12 fps frames, so read it at 24 fps; the chain's lag is **horizontal only** |
 | 7, spineboy | — | — | — | — | not prepared. `7-anticipation` has no upstream `license.txt` at all, so `render_reference.ts` refuses it and it must never be rendered |
 
 **Brief verified** is the header block described in the next section. Rungs 3 and 1
@@ -37,10 +37,24 @@ were attempted before the rule existed; their briefs still need the pass, and un
 they get it a run against either of them carries the risk the section names. Rung 6
 is the first brief to carry the pass the protocol actually asks for — a **different**
 agent, not the one that wrote it; rungs 2, 4 and 5 were re-measured by their own
-author and their headers say so. Rung 8's brief is new and **unverified**: it states
-its estimators and their controls in its own header so that the verifying pass can
-attack the method as well as the digits, and it collects what the frames could not
-decide in a section of its own.
+author and their headers say so. **Rung 8 is the second to carry a third-party
+pass** (2026-08-23): its revision 1 stated its estimators and their controls in its
+own header, which is what let the verifying pass attack the method rather than only
+the digits — and that is where most of what it found came from. Of 79 claims, 61
+verified (many to the digit), 13 were corrected and 5 moved into the brief's
+"cannot tell you" section. Two claims went the other way: draw order in `pendulum`
+and area conservation in `ball` were listed as things the frames could not decide,
+and the frames decide them.
+
+⚠️ **Two of those findings are worth carrying forward as patterns, because neither
+was a wrong digit.** The first: a lag fitted to a 2-D velocity is meaningless when
+the axes lag differently — rung 8's chain is a third of a second late *horizontally*
+and not late at all *vertically*, and a combined correlation returns a third number
+that is true of neither. The second: rung 8 rev 1 quoted a `chord ÷ arc` floor of
+"0.924–1.027" for a **straight** shape, and a ratio of a chord to the arc it subtends
+cannot exceed 1 — the impossible value was itself the evidence that the two halves
+were measured off different curves. **A control that returns an impossible number
+has told you something; read the number, not just the pass/fail.**
 
 ⚠️ **"Re-measured twice" is not the same as "verified".** Rung 6's revision 2 was a
 second pass by the writing agent, with different machinery throughout, and it still
