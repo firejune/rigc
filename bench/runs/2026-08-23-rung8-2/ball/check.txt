@@ -1,0 +1,73 @@
+rigc check
+  candidate  /Users/firejune/Workspace/Firejune/rigc-wt-rung8b/bench/runs/2026-08-23-rung8-2/ball/spine/skeleton.json
+  atlas      /Users/firejune/Workspace/Firejune/rigc-wt-rung8b/bench/runs/2026-08-23-rung8-2/ball/spine/skeleton.atlas
+  frames     /Users/firejune/Workspace/Firejune/rigc-wt-rung8b/bench/reference/8-follow-through/ball
+  scope      the framing decided per frame set (--framing shared measures every set in one shared framing)
+  reference  512x413px  0.142758 px/unit  world x[-1710.9 .. 1875.6] y[-149.5 .. 2741.2]  (frames.json)
+             ⤷ the two world boxes are different coordinate systems and do not compare; the pixel grid does.
+  shared box one box for all 2 set(s) leaves x0.999440  offset +0.56, +0.18 px   rms 1.13 px over 532 edge(s)  (declared; used for every set that could not take the frames' own box)
+             ⤷ how far one shared framing is from serving every set. A set below that took the frames' own box instead is measured with no such correction at all; --framing shared measures every set here.
+  ⚠️ the framing was decided per frame set: 2 of 2 set(s) were measured in frames.json's own box because their own pixels land there, and the rest in the one shared framing on the "shared box" line. A set framed by the frames' own box cannot be moved by any other set. --framing shared measures every set in the shared framing instead, which is a different measurement and not comparable with this one.
+
+  ── follow-through — candidate animation "follow-through", 12 fps ──
+     frames     45 on disk, candidate samples 45, 45 compared
+     framed to  512x413px  0.142758 px/unit  world x[-1710.9 .. 1875.6] y[-149.5 .. 2741.2]  (frames.json's own box — the candidate measured into it)
+     content    candidate 458.7x364.9px at (30.9, 25.5)   reference 458.6x364.9px at (30.9, 25.5)   (union over 45 frame(s))
+                ⤷ fit x0.999495  offset +0.54, +0.17 px   rms 1.11 px over 180 edge(s)   union residual -0.16 x -0.19 px   aspect +0.02%  (declared, 1 pass(es), coincident)
+                ⚠️ the fit leaves 1.11 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 3213.2 x 2555.9   reference 3212.7 x 2555.9   x1.0001
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     ⚠️ the candidate's world box was taken from frames.json rather than fitted, because rendering it into that box put its own drawn pixels on the reference's to within 1.11 px rms — so the candidate is authored in the frames' own coordinates, measured rather than assumed, and the box they were rendered at is exact where a fit of it is an estimate. The framing line below is still measured; what it leaves over is the extent fit's own floor, which is why it does not read as the identity. Pass --viewport to override.
+     MAE        mean 17.26  worst 35.25 at f0015   (0..255 over the union alpha; over the whole frame, mean 0.08)
+     slot drift worst 4.2 px  "ball" at f0042
+     per-frame all 44 adjacent pair(s) change by as much as the reference's own frames do
+
+     the 8 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0006    27.61        980    1482   1469   ball                   1.0   tmpl 0.54 2/2
+       f0007    26.46       1005    1843   1769   tail                   2.4   tmpl 0.74 2/2
+       f0012    31.57        945    1709   1738   ball                   3.1   tmpl 0.65 2/2
+       f0015    35.25        836    1455   1609   tail                   0.1   tmpl 0.82 1/2
+       f0016    32.49       1051    1585   1696   tail                   2.7   tmpl 0.75 1/2
+       f0026    23.13        979    1559   1586   tail                   2.1   tmpl 0.79 2/2
+       f0030    29.95        996    1779   1788   ball                   1.7   tmpl 0.86 2/2
+       f0032    25.07        972    1607   1565   ball                   3.1   tmpl 0.48 2/2
+
+  ── follow-through@24fps — candidate animation "follow-through", 24 fps ──
+     frames     88 on disk, candidate samples 88, 88 compared
+     framed to  512x413px  0.142758 px/unit  world x[-1710.9 .. 1875.6] y[-149.5 .. 2741.2]  (frames.json's own box — the candidate measured into it)
+     content    candidate 460.6x370.1px at (29.0, 20.3)   reference 458.7x369.6px at (30.9, 20.9)   (union over 88 frame(s))
+                ⤷ fit x0.999411  offset +0.57, +0.18 px   rms 1.14 px over 352 edge(s)   union residual +1.64 x +0.32 px   aspect +0.27%  (declared, 1 pass(es), coincident)
+                ⚠️ after the fit your shot still covers 1.6 px wider and 0.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 1.14 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 3226.4 x 2592.4   reference 3213.0 x 2588.7   x1.0028
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     ⚠️ the candidate's world box was taken from frames.json rather than fitted, because rendering it into that box put its own drawn pixels on the reference's to within 1.14 px rms — so the candidate is authored in the frames' own coordinates, measured rather than assumed, and the box they were rendered at is exact where a fit of it is an estimate. The framing line below is still measured; what it leaves over is the extent fit's own floor, which is why it does not read as the identity. Pass --viewport to override.
+     MAE        mean 18.00  worst 40.64 at f0031   (0..255 over the union alpha; over the whole frame, mean 0.08)
+     slot drift worst 4.2 px  "ball" at f0077
+     per-frame all 87 adjacent pair(s) change by as much as the reference's own frames do
+
+     the 8 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0013    31.03        997    1803   1769   ball                   2.7   tmpl 0.46 2/2
+       f0023    29.22        980    1445   1459   tail                   0.6   tmpl 0.63 1/2
+       f0024    31.57        945    1663   1652   ball                   3.1   tmpl 0.65 2/2
+       f0030    35.25        836    1490   1686   tail                   0.1   tmpl 0.82 1/2
+       f0031    40.64        920    1307   1654   tail                   0.1   tmpl 0.79 1/2
+       f0032    32.49       1051    1394   1479   tail                   2.7   tmpl 0.75 1/2
+       f0060    29.95        996    1641   1683   ball                   1.7   tmpl 0.86 2/2
+       f0061    31.54        970    1629   1669   tail                   2.4   tmpl 0.31 2/2
+
+  MAE is the mean absolute RGB difference over the pixels either side covers, so it is
+  read against 255 and not against a threshold: there is no pass mark here any more than
+  there is one in `diff`. Read the framing line first: it is upstream of every number
+  below, and a residual much wider than a pixel moves all of them at once.
+  The slots column is how many of the drawn slots could be attributed at all. A drift
+  marked `tmpl` was correlated against the slot’s own pixels because the reference
+  merged it into a neighbour; the number beside it is how much better that match was
+  than its best rival, and a slot that matched nothing at all is left out of the count.
+  `Δpx` and `ref Δ` are how many pixels each side moved since ITS OWN previous frame —
+  not against each other. They are the only columns that can see a held pose that is
+  not held, or a one-frame event that never fired: both are small in every frame and
+  wrong only in the relation between two, which is where the MAE cannot look.
+rigc: wrote /Users/firejune/Workspace/Firejune/rigc-wt-rung8b/bench/runs/2026-08-23-rung8-2/ball/check.json
