@@ -7,7 +7,7 @@
   "pull-request-title-pattern": "release: v${version}",
   "packages": {
     ".": {
-      "package-name": "rigc",
+      "package-name": "spine-rigc",
       "changelog-path": "CHANGELOG.md",
       "include-component-in-tag": false
     }

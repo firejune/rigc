@@ -67,6 +67,12 @@ package that is not there yet — so an automated publish today could only
 authenticate with a long-lived token, which would be the one persistent secret
 in this repository. Publish from the tag instead. The whole sequence, in order:
 
+**The package name is `spine-rigc`, not `rigc`** — do not retry the short one.
+The first publish of `rigc@0.2.0` was refused by the registry with
+`403 Package name too similar to existing packages rc,rfdc,bigi`, which is a
+registry-side rule no account setting or flag overrides. `bin` still installs
+the command as `rigc`, so only the registry entry changed.
+
 1. `npm login` — once per machine; `npm whoami` says whether it is still done.
 2. Cut the release: merge the `release: vX.Y.Z` pull request and wait for the
    second `release` run to tag it (steps 1–5 above).
@@ -90,7 +96,7 @@ published by accident. It is the same three commands CI runs on every push; the
 selftest needs no corpus and no arguments, and reports the example suites as
 HOLEs rather than passes when `examples/` is absent.
 
-Confirm afterwards: `npm view rigc version`.
+Confirm afterwards: `npm view spine-rigc version`.
 
 ### What the tarball contains
 
@@ -111,7 +117,7 @@ automation is in place.
 
 Once the package is on npm, the automation is one form and one edit:
 
-1. npmjs.com → **rigc** → **Settings** → **Trusted Publisher** → *GitHub
+1. npmjs.com → **spine-rigc** → **Settings** → **Trusted Publisher** → *GitHub
    Actions*. Organization or user `firejune`, repository `rigc`, workflow
    filename `release.yml`, environment name blank, allowed action
    `npm publish`. The fields are case-sensitive and npm does not validate them
