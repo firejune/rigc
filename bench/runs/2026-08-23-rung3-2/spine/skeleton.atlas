@@ -1,0 +1,17 @@
+../../../../examples/3-timing-and-spacing/images/square.png
+size: 159, 159
+filter: Linear, Linear
+pma: false
+square
+bounds: 0, 0, 159, 159
+offsets: 0, 0, 159, 159
+rotate: 0
+
+../../../../examples/3-timing-and-spacing/images/pendulum.png
+size: 745, 212
+filter: Linear, Linear
+pma: false
+pendulum
+bounds: 0, 0, 745, 212
+offsets: 0, 0, 745, 212
+rotate: 0
