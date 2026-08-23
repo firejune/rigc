@@ -1,0 +1,7574 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "spineboy-pro",
+  "note": "Mechanical transcription of Spine's official spineboy `pro` export (the spineboy rung of docs/LADDER.md, where it is the STRETCH figure and does not count towards the rung), written to prove that a rig spec can express a foreign skeleton that carries IK and transform constraints, twelve meshes (ten weighted, two not), a clipping attachment, a bounding box and events. It is NOT an authored rig: the numbers were copied out of the reference, so it says nothing about whether an agent could produce them. Weighted meshes are transcribed into the by-name `weights` form rather than Spine's index run — the compiler resolves the names back to the same indices, so it is a lossless change of vocabulary and not a change of geometry. The example art is not redistributed here — `--images examples/spineboy/images` supplies it, and `examples/` is gitignored (see NOTICE.md).",
+  "images": "../../../examples/spineboy/images",
+  "skeleton": {
+    "x": -188.6338,
+    "y": -7.939564,
+    "width": 418.4499,
+    "height": 686.2023,
+    "images": "./images/"
+  },
+  "bones": [
+    {
+      "name": "root",
+      "rotation": 0.04774475
+    },
+    {
+      "name": "hip",
+      "parent": "root",
+      "y": 247.26994
+    },
+    {
+      "name": "crosshair",
+      "parent": "root",
+      "x": 302.8308,
+      "y": 569.4487,
+      "color": "ff3f00ff",
+      "icon": "circle"
+    },
+    {
+      "name": "aim-constraint-target",
+      "parent": "hip",
+      "length": 26.241163,
+      "x": 1.0154866,
+      "y": 5.621841,
+      "rotation": 19.610935,
+      "color": "abe323ff"
+    },
+    {
+      "name": "rear-foot-target",
+      "parent": "root",
+      "x": 61.90829,
+      "y": 0.4211426,
+      "color": "ff3f00ff",
+      "icon": "ik"
+    },
+    {
+      "name": "rear-leg-target",
+      "parent": "rear-foot-target",
+      "x": -33.90897,
+      "y": 37.33794,
+      "color": "ff3f00ff",
+      "icon": "ik"
+    },
+    {
+      "name": "rear-thigh",
+      "parent": "hip",
+      "length": 85.7196,
+      "x": 8.913322,
+      "y": -5.626694,
+      "rotation": -72.541,
+      "color": "ff000dff"
+    },
+    {
+      "name": "rear-shin",
+      "parent": "rear-thigh",
+      "length": 121.87728,
+      "x": 86.1,
+      "y": -1.3253326,
+      "rotation": -19.83334,
+      "color": "ff000dff"
+    },
+    {
+      "name": "rear-foot",
+      "parent": "rear-shin",
+      "length": 51.58182,
+      "x": 121.45904,
+      "y": -0.7551935,
+      "rotation": 45.7786,
+      "color": "ff000dff"
+    },
+    {
+      "name": "back-foot-tip",
+      "parent": "rear-foot",
+      "length": 50.3016,
+      "x": 51.16588,
+      "y": 0.23815536,
+      "rotation": -0.8520164,
+      "inherit": "noRotationOrReflection",
+      "color": "ff000dff"
+    },
+    {
+      "name": "board-ik",
+      "parent": "root",
+      "x": -131.77533,
+      "y": 69.08683,
+      "color": "4c56ffff",
+      "icon": "arrows"
+    },
+    {
+      "name": "clipping",
+      "parent": "root"
+    },
+    {
+      "name": "hoverboard-controller",
+      "parent": "root",
+      "x": -329.6916,
+      "y": 69.8234,
+      "rotation": -0.28445435,
+      "color": "ff0004ff",
+      "icon": "arrowsB"
+    },
+    {
+      "name": "exhaust1",
+      "parent": "hoverboard-controller",
+      "x": -249.68484,
+      "y": 53.39082,
+      "rotation": 3.0205064
+    },
+    {
+      "name": "exhaust2",
+      "parent": "hoverboard-controller",
+      "x": -191.6049,
+      "y": -22.92239,
+      "rotation": 26.335474
+    },
+    {
+      "name": "exhaust3",
+      "parent": "hoverboard-controller",
+      "x": -236.02995,
+      "y": 80.54244,
+      "rotation": -12.341045,
+      "scaleX": 0.7846764,
+      "scaleY": 0.7846764
+    },
+    {
+      "name": "portal-root",
+      "parent": "root",
+      "x": 12.90161,
+      "y": 328.5393,
+      "scaleX": 2.033383,
+      "scaleY": 2.033383
+    },
+    {
+      "name": "flare1",
+      "parent": "portal-root",
+      "x": -6.344906,
+      "y": -161.57274,
+      "icon": "particles"
+    },
+    {
+      "name": "flare10",
+      "parent": "portal-root",
+      "x": -6.344906,
+      "y": -161.57274,
+      "icon": "particles"
+    },
+    {
+      "name": "flare2",
+      "parent": "portal-root",
+      "x": -6.344906,
+      "y": -161.57274,
+      "icon": "particles"
+    },
+    {
+      "name": "flare3",
+      "parent": "portal-root",
+      "x": -6.344906,
+      "y": -161.57274,
+      "icon": "particles"
+    },
+    {
+      "name": "flare4",
+      "parent": "portal-root",
+      "x": -6.344906,
+      "y": -161.57274,
+      "icon": "particles"
+    },
+    {
+      "name": "flare5",
+      "parent": "portal-root",
+      "x": -6.344906,
+      "y": -161.57274,
+      "icon": "particles"
+    },
+    {
+      "name": "flare6",
+      "parent": "portal-root",
+      "x": -6.344906,
+      "y": -161.57274,
+      "icon": "particles"
+    },
+    {
+      "name": "flare7",
+      "parent": "portal-root",
+      "x": -6.344906,
+      "y": -161.57274,
+      "icon": "particles"
+    },
+    {
+      "name": "flare8",
+      "parent": "portal-root",
+      "x": -6.344906,
+      "y": -161.57274,
+      "icon": "particles"
+    },
+    {
+      "name": "flare9",
+      "parent": "portal-root",
+      "x": -6.344906,
+      "y": -161.57274,
+      "icon": "particles"
+    },
+    {
+      "name": "torso",
+      "parent": "hip",
+      "length": 42.51916,
+      "x": -1.6175156,
+      "y": 4.904114,
+      "rotation": 103.82454,
+      "color": "e0da19ff"
+    },
+    {
+      "name": "torso2",
+      "parent": "torso",
+      "length": 42.51916,
+      "x": 42.51916,
+      "color": "e0da19ff"
+    },
+    {
+      "name": "torso3",
+      "parent": "torso2",
+      "length": 42.51916,
+      "x": 42.51916,
+      "color": "e0da19ff"
+    },
+    {
+      "name": "front-shoulder",
+      "parent": "torso3",
+      "x": 18.721344,
+      "y": 19.329266,
+      "rotation": 255.891,
+      "color": "00ff04ff"
+    },
+    {
+      "name": "front-upper-arm",
+      "parent": "front-shoulder",
+      "length": 69.45225,
+      "rotation": -87.51462,
+      "color": "00ff04ff"
+    },
+    {
+      "name": "front-bracer",
+      "parent": "front-upper-arm",
+      "length": 40.57009,
+      "x": 68.80316,
+      "y": -0.6838742,
+      "rotation": 18.2995,
+      "color": "00ff04ff"
+    },
+    {
+      "name": "front-fist",
+      "parent": "front-bracer",
+      "length": 65.3853,
+      "x": 40.56961,
+      "y": 0.1988964,
+      "rotation": 12.433234,
+      "color": "00ff04ff"
+    },
+    {
+      "name": "front-foot-target",
+      "parent": "root",
+      "x": -13.529625,
+      "y": 0.04014587,
+      "color": "ff3f00ff",
+      "icon": "ik"
+    },
+    {
+      "name": "front-leg-target",
+      "parent": "front-foot-target",
+      "x": -28.39997,
+      "y": 29.062645,
+      "color": "ff3f00ff",
+      "icon": "ik"
+    },
+    {
+      "name": "front-thigh",
+      "parent": "hip",
+      "length": 74.80652,
+      "x": -17.45899,
+      "y": -11.644302,
+      "rotation": -95.51192,
+      "color": "00ff04ff"
+    },
+    {
+      "name": "front-shin",
+      "parent": "front-thigh",
+      "length": 128.76756,
+      "x": 78.69012,
+      "y": 1.6017075,
+      "rotation": -2.213562,
+      "color": "00ff04ff"
+    },
+    {
+      "name": "front-foot",
+      "parent": "front-shin",
+      "length": 41.00884,
+      "x": 128.7557,
+      "y": -0.3393288,
+      "rotation": 51.26577,
+      "color": "00ff04ff"
+    },
+    {
+      "name": "front-foot-tip",
+      "parent": "front-foot",
+      "length": 56.02933,
+      "x": 41.42462,
+      "y": -0.08879948,
+      "rotation": -1.675728,
+      "inherit": "noRotationOrReflection",
+      "color": "00ff04ff"
+    },
+    {
+      "name": "back-shoulder",
+      "parent": "torso3",
+      "x": 7.318115,
+      "y": -19.22088,
+      "rotation": -104.109,
+      "color": "ff000dff"
+    },
+    {
+      "name": "rear-upper-arm",
+      "parent": "back-shoulder",
+      "length": 51.93936,
+      "rotation": -65.44643,
+      "color": "ff000dff"
+    },
+    {
+      "name": "rear-bracer",
+      "parent": "rear-upper-arm",
+      "length": 34.55841,
+      "x": 51.35799,
+      "rotation": 23.15295,
+      "color": "ff000dff"
+    },
+    {
+      "name": "gun",
+      "parent": "rear-bracer",
+      "length": 43.10579,
+      "x": 34.42189,
+      "y": -0.4539795,
+      "rotation": -5.427727,
+      "color": "ff000dff"
+    },
+    {
+      "name": "gun-tip",
+      "parent": "gun",
+      "x": 200.77574,
+      "y": 52.49873,
+      "rotation": 7.099831,
+      "color": "ff0000ff"
+    },
+    {
+      "name": "neck",
+      "parent": "torso3",
+      "length": 25.453945,
+      "x": 42.45889,
+      "y": -0.3085632,
+      "rotation": -31.53788,
+      "color": "e0da19ff"
+    },
+    {
+      "name": "head",
+      "parent": "neck",
+      "length": 131.79367,
+      "x": 27.66327,
+      "y": -0.25990295,
+      "rotation": 26.09855,
+      "color": "e0da19ff"
+    },
+    {
+      "name": "hair1",
+      "parent": "head",
+      "length": 47.22975,
+      "x": 149.82922,
+      "y": -59.77055,
+      "rotation": -49.1028,
+      "color": "e0da19ff"
+    },
+    {
+      "name": "hair2",
+      "parent": "hair1",
+      "length": 55.56698,
+      "x": 47.22934,
+      "y": 0.1868286,
+      "rotation": 50.41702,
+      "color": "e0da19ff"
+    },
+    {
+      "name": "hair3",
+      "parent": "head",
+      "length": 62.22058,
+      "x": 164.1381,
+      "y": 3.684761,
+      "rotation": -32.16711,
+      "color": "e0da19ff"
+    },
+    {
+      "name": "hair4",
+      "parent": "hair3",
+      "length": 80.28074,
+      "x": 62.22061,
+      "y": -0.03564453,
+      "rotation": 83.70933,
+      "color": "e0da19ff"
+    },
+    {
+      "name": "hoverboard-thruster-front",
+      "parent": "hoverboard-controller",
+      "x": 95.77119,
+      "y": -2.9910965,
+      "rotation": -29.20415,
+      "inherit": "noRotationOrReflection"
+    },
+    {
+      "name": "hoverboard-thruster-rear",
+      "parent": "hoverboard-controller",
+      "x": -76.4717,
+      "y": -4.877556,
+      "rotation": -29.20415,
+      "inherit": "noRotationOrReflection"
+    },
+    {
+      "name": "hoverglow-front",
+      "parent": "hoverboard-thruster-front",
+      "x": -1.775383,
+      "y": -37.78541,
+      "rotation": 0.17448044
+    },
+    {
+      "name": "hoverglow-rear",
+      "parent": "hoverboard-thruster-rear",
+      "x": 1.0581818,
+      "y": -35.65678,
+      "rotation": 0.17448044
+    },
+    {
+      "name": "muzzle",
+      "parent": "rear-bracer",
+      "x": 242.3435,
+      "y": 34.26361,
+      "rotation": 3.0575485,
+      "color": "ffb900ff",
+      "icon": "muzzleFlash"
+    },
+    {
+      "name": "muzzle-ring",
+      "parent": "muzzle",
+      "color": "ffb900ff"
+    },
+    {
+      "name": "muzzle-ring2",
+      "parent": "muzzle",
+      "color": "ffb900ff"
+    },
+    {
+      "name": "muzzle-ring3",
+      "parent": "muzzle",
+      "color": "ffb900ff"
+    },
+    {
+      "name": "muzzle-ring4",
+      "parent": "muzzle",
+      "color": "ffb900ff"
+    },
+    {
+      "name": "portal",
+      "parent": "portal-root"
+    },
+    {
+      "name": "portal-shade",
+      "parent": "portal-root"
+    },
+    {
+      "name": "portal-streaks1",
+      "parent": "portal-root"
+    },
+    {
+      "name": "portal-streaks2",
+      "parent": "portal-root"
+    },
+    {
+      "name": "side-glow1",
+      "parent": "hoverboard-controller",
+      "x": -110.55987,
+      "y": 2.619972,
+      "color": "000effff"
+    },
+    {
+      "name": "side-glow2",
+      "parent": "hoverboard-controller",
+      "x": -110.55987,
+      "y": 2.619972,
+      "scaleX": 0.738047,
+      "scaleY": 0.738047,
+      "color": "000effff"
+    },
+    {
+      "name": "head-control",
+      "parent": "head",
+      "x": 110.2114,
+      "color": "00a220ff",
+      "icon": "arrows"
+    }
+  ],
+  "slots": [
+    {
+      "name": "portal-bg",
+      "bone": "portal"
+    },
+    {
+      "name": "portal-shade",
+      "bone": "portal-shade"
+    },
+    {
+      "name": "portal-streaks2",
+      "bone": "portal-streaks2",
+      "blend": "additive"
+    },
+    {
+      "name": "portal-streaks1",
+      "bone": "portal-streaks1",
+      "blend": "additive"
+    },
+    {
+      "name": "portal-flare8",
+      "bone": "flare8",
+      "color": "c3cbffff",
+      "blend": "additive"
+    },
+    {
+      "name": "portal-flare9",
+      "bone": "flare9",
+      "color": "c3cbffff",
+      "blend": "additive"
+    },
+    {
+      "name": "portal-flare10",
+      "bone": "flare10",
+      "color": "c3cbffff",
+      "blend": "additive"
+    },
+    {
+      "name": "clipping",
+      "bone": "clipping"
+    },
+    {
+      "name": "exhaust3",
+      "bone": "exhaust3",
+      "color": "5eb4ffff",
+      "blend": "additive"
+    },
+    {
+      "name": "hoverboard-thruster-rear",
+      "bone": "hoverboard-thruster-rear"
+    },
+    {
+      "name": "hoverboard-thruster-front",
+      "bone": "hoverboard-thruster-front"
+    },
+    {
+      "name": "hoverboard-board",
+      "bone": "hoverboard-controller"
+    },
+    {
+      "name": "side-glow1",
+      "bone": "side-glow1",
+      "color": "ff8686ff",
+      "blend": "additive"
+    },
+    {
+      "name": "side-glow3",
+      "bone": "side-glow1",
+      "color": "ff8686ff",
+      "blend": "additive"
+    },
+    {
+      "name": "side-glow2",
+      "bone": "side-glow2",
+      "color": "ff8686ff",
+      "blend": "additive"
+    },
+    {
+      "name": "hoverglow-front",
+      "bone": "hoverglow-front",
+      "color": "5eb4ffff",
+      "blend": "additive"
+    },
+    {
+      "name": "hoverglow-rear",
+      "bone": "hoverglow-rear",
+      "color": "5eb4ffff",
+      "blend": "additive"
+    },
+    {
+      "name": "exhaust1",
+      "bone": "exhaust2",
+      "color": "5eb4ffff",
+      "blend": "additive"
+    },
+    {
+      "name": "exhaust2",
+      "bone": "exhaust1",
+      "color": "5eb4ffff",
+      "blend": "additive"
+    },
+    {
+      "name": "rear-upper-arm",
+      "bone": "rear-upper-arm",
+      "attachment": "rear-upper-arm"
+    },
+    {
+      "name": "rear-bracer",
+      "bone": "rear-bracer",
+      "attachment": "rear-bracer"
+    },
+    {
+      "name": "gun",
+      "bone": "gun",
+      "attachment": "gun"
+    },
+    {
+      "name": "rear-foot",
+      "bone": "rear-foot",
+      "attachment": "rear-foot"
+    },
+    {
+      "name": "rear-thigh",
+      "bone": "rear-thigh",
+      "attachment": "rear-thigh"
+    },
+    {
+      "name": "rear-shin",
+      "bone": "rear-shin",
+      "attachment": "rear-shin"
+    },
+    {
+      "name": "neck",
+      "bone": "neck",
+      "attachment": "neck"
+    },
+    {
+      "name": "torso",
+      "bone": "torso",
+      "attachment": "torso"
+    },
+    {
+      "name": "front-upper-arm",
+      "bone": "front-upper-arm",
+      "attachment": "front-upper-arm"
+    },
+    {
+      "name": "head",
+      "bone": "head",
+      "attachment": "head"
+    },
+    {
+      "name": "eye",
+      "bone": "head",
+      "attachment": "eye-indifferent"
+    },
+    {
+      "name": "front-thigh",
+      "bone": "front-thigh",
+      "attachment": "front-thigh"
+    },
+    {
+      "name": "front-foot",
+      "bone": "front-foot",
+      "attachment": "front-foot"
+    },
+    {
+      "name": "front-shin",
+      "bone": "front-shin",
+      "attachment": "front-shin"
+    },
+    {
+      "name": "mouth",
+      "bone": "head",
+      "attachment": "mouth-smile"
+    },
+    {
+      "name": "goggles",
+      "bone": "head",
+      "attachment": "goggles"
+    },
+    {
+      "name": "front-bracer",
+      "bone": "front-bracer",
+      "attachment": "front-bracer"
+    },
+    {
+      "name": "front-fist",
+      "bone": "front-fist",
+      "attachment": "front-fist-closed"
+    },
+    {
+      "name": "muzzle",
+      "bone": "muzzle"
+    },
+    {
+      "name": "head-bb",
+      "bone": "head"
+    },
+    {
+      "name": "portal-flare1",
+      "bone": "flare1",
+      "color": "c3cbffff",
+      "blend": "additive"
+    },
+    {
+      "name": "portal-flare2",
+      "bone": "flare2",
+      "color": "c3cbffff",
+      "blend": "additive"
+    },
+    {
+      "name": "portal-flare3",
+      "bone": "flare3",
+      "color": "c3cbffff",
+      "blend": "additive"
+    },
+    {
+      "name": "portal-flare4",
+      "bone": "flare4",
+      "color": "c3cbffff",
+      "blend": "additive"
+    },
+    {
+      "name": "portal-flare5",
+      "bone": "flare5",
+      "color": "c3cbffff",
+      "blend": "additive"
+    },
+    {
+      "name": "portal-flare6",
+      "bone": "flare6",
+      "color": "c3cbffff",
+      "blend": "additive"
+    },
+    {
+      "name": "portal-flare7",
+      "bone": "flare7",
+      "color": "c3cbffff",
+      "blend": "additive"
+    },
+    {
+      "name": "crosshair",
+      "bone": "crosshair"
+    },
+    {
+      "name": "muzzle-glow",
+      "bone": "gun-tip",
+      "color": "ffffff00",
+      "blend": "additive"
+    },
+    {
+      "name": "muzzle-ring",
+      "bone": "muzzle-ring",
+      "color": "d8baffff",
+      "blend": "additive"
+    },
+    {
+      "name": "muzzle-ring2",
+      "bone": "muzzle-ring2",
+      "color": "d8baffff",
+      "blend": "additive"
+    },
+    {
+      "name": "muzzle-ring3",
+      "bone": "muzzle-ring3",
+      "color": "d8baffff",
+      "blend": "additive"
+    },
+    {
+      "name": "muzzle-ring4",
+      "bone": "muzzle-ring4",
+      "color": "d8baffff",
+      "blend": "additive"
+    }
+  ],
+  "skins": {
+    "default": {
+      "clipping": {
+        "clipping": {
+          "type": "clipping",
+          "end": "head-bb",
+          "vertexCount": 3,
+          "vertices": [
+            18.89,
+            -228.46,
+            1471.52,
+            140.96,
+            34.01,
+            930.06
+          ],
+          "color": "ce3a3aff"
+        }
+      },
+      "crosshair": {
+        "crosshair": {
+          "image": "crosshair.png",
+          "width": 89,
+          "height": 89
+        }
+      },
+      "exhaust1": {
+        "hoverglow-small": {
+          "image": "hoverglow-small.png",
+          "rotation": -83.07078,
+          "scaleX": 0.4629046,
+          "scaleY": 0.8129372,
+          "width": 274,
+          "height": 75
+        }
+      },
+      "exhaust2": {
+        "hoverglow-small": {
+          "image": "hoverglow-small.png",
+          "x": 0.01145935,
+          "y": -0.762207,
+          "rotation": -89.24866,
+          "scaleX": 0.4208314,
+          "scaleY": 0.84027,
+          "width": 274,
+          "height": 75
+        }
+      },
+      "exhaust3": {
+        "hoverglow-small": {
+          "image": "hoverglow-small.png",
+          "rotation": -83.07078,
+          "scaleX": 0.4629046,
+          "scaleY": 0.8129372,
+          "width": 274,
+          "height": 75
+        }
+      },
+      "eye": {
+        "eye-indifferent": {
+          "type": "mesh",
+          "image": "eye-indifferent.png",
+          "uvs": [
+            1,
+            1,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0
+          ],
+          "triangles": [
+            1,
+            3,
+            0,
+            1,
+            2,
+            3
+          ],
+          "weights": [
+            [
+              {
+                "bone": "head-control",
+                "x": -36.8,
+                "y": -91.35,
+                "weight": 0.3
+              },
+              {
+                "bone": "head",
+                "x": 73.41,
+                "y": -91.35,
+                "weight": 0.7
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -87.05,
+                "y": -13.11,
+                "weight": 0.70968
+              },
+              {
+                "bone": "head",
+                "x": 23.16,
+                "y": -13.11,
+                "weight": 0.29032
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -12.18,
+                "y": 34.99,
+                "weight": 0.82818
+              },
+              {
+                "bone": "head",
+                "x": 98.03,
+                "y": 34.99,
+                "weight": 0.17182
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 38.07,
+                "y": -43.25,
+                "weight": 0.59781
+              },
+              {
+                "bone": "head",
+                "x": 148.28,
+                "y": -43.25,
+                "weight": 0.40219
+              }
+            ]
+          ],
+          "hull": 4,
+          "edges": [
+            0,
+            2,
+            2,
+            4,
+            4,
+            6,
+            0,
+            6
+          ],
+          "width": 93,
+          "height": 89
+        },
+        "eye-surprised": {
+          "type": "mesh",
+          "image": "eye-surprised.png",
+          "uvs": [
+            1,
+            1,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0
+          ],
+          "triangles": [
+            1,
+            2,
+            3,
+            1,
+            3,
+            0
+          ],
+          "weights": [
+            [
+              {
+                "bone": "head-control",
+                "x": -46.74,
+                "y": -89.7,
+                "weight": 0.3
+              },
+              {
+                "bone": "head",
+                "x": 63.47,
+                "y": -89.7,
+                "weight": 0.7
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -77.58,
+                "y": -1.97,
+                "weight": 0.71
+              },
+              {
+                "bone": "head",
+                "x": 32.63,
+                "y": -1.97,
+                "weight": 0.29
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 6.38,
+                "y": 27.55,
+                "weight": 0.83
+              },
+              {
+                "bone": "head",
+                "x": 116.59,
+                "y": 27.55,
+                "weight": 0.17
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 37.22,
+                "y": -60.19,
+                "weight": 0.6
+              },
+              {
+                "bone": "head",
+                "x": 147.44,
+                "y": -60.19,
+                "weight": 0.4
+              }
+            ]
+          ],
+          "hull": 4,
+          "edges": [
+            0,
+            2,
+            2,
+            4,
+            4,
+            6,
+            0,
+            6
+          ],
+          "width": 93,
+          "height": 89
+        }
+      },
+      "front-bracer": {
+        "front-bracer": {
+          "image": "front-bracer.png",
+          "x": 12.031342,
+          "y": -1.6766033,
+          "rotation": 79.59598,
+          "width": 58,
+          "height": 80
+        }
+      },
+      "front-fist": {
+        "front-fist-closed": {
+          "image": "front-fist-closed.png",
+          "x": 35.49588,
+          "y": 6.004703,
+          "rotation": 67.16275,
+          "width": 75,
+          "height": 82
+        },
+        "front-fist-open": {
+          "image": "front-fist-open.png",
+          "x": 39.56648,
+          "y": 7.764904,
+          "rotation": 67.16275,
+          "width": 86,
+          "height": 87
+        }
+      },
+      "front-foot": {
+        "front-foot": {
+          "type": "mesh",
+          "image": "front-foot.png",
+          "uvs": [
+            0.5941728,
+            0.2342187,
+            0.6225744,
+            0.3033564,
+            0.6500988,
+            0.370359,
+            0.6763742,
+            0.3840358,
+            0.7206807,
+            0.4070982,
+            0.762645,
+            0.4289414,
+            1,
+            0.70375,
+            1,
+            1,
+            0.6551704,
+            1,
+            0.4692325,
+            0.99999,
+            0,
+            1,
+            0,
+            0.39196765,
+            0.17845653,
+            0,
+            0.49795625,
+            0
+          ],
+          "triangles": [
+            8,
+            9,
+            3,
+            4,
+            8,
+            3,
+            5,
+            8,
+            4,
+            6,
+            8,
+            5,
+            8,
+            6,
+            7,
+            11,
+            1,
+            10,
+            0,
+            12,
+            13,
+            0,
+            11,
+            12,
+            0,
+            1,
+            11,
+            9,
+            2,
+            3,
+            1,
+            2,
+            10,
+            9,
+            10,
+            2
+          ],
+          "weights": [
+            [
+              {
+                "bone": "front-foot",
+                "x": 18.17,
+                "y": 41.57,
+                "weight": 0.7896
+              },
+              {
+                "bone": "front-foot-tip",
+                "x": 12.46,
+                "y": 46.05,
+                "weight": 0.2104
+              }
+            ],
+            [
+              {
+                "bone": "front-foot",
+                "x": 24.08,
+                "y": 40.76,
+                "weight": 0.71228
+              },
+              {
+                "bone": "front-foot-tip",
+                "x": 16.12,
+                "y": 41.34,
+                "weight": 0.28772
+              }
+            ],
+            [
+              {
+                "bone": "front-foot",
+                "x": 29.81,
+                "y": 39.98,
+                "weight": 0.55344
+              },
+              {
+                "bone": "front-foot-tip",
+                "x": 19.67,
+                "y": 36.78,
+                "weight": 0.44656
+              }
+            ],
+            [
+              {
+                "bone": "front-foot",
+                "x": 32.81,
+                "y": 41.67,
+                "weight": 0.38554
+              },
+              {
+                "bone": "front-foot-tip",
+                "x": 23,
+                "y": 35.89,
+                "weight": 0.61446
+              }
+            ],
+            [
+              {
+                "bone": "front-foot",
+                "x": 37.86,
+                "y": 44.52,
+                "weight": 0.25567
+              },
+              {
+                "bone": "front-foot-tip",
+                "x": 28.61,
+                "y": 34.4,
+                "weight": 0.74433
+              }
+            ],
+            [
+              {
+                "bone": "front-foot",
+                "x": 42.65,
+                "y": 47.22,
+                "weight": 0.17384
+              },
+              {
+                "bone": "front-foot-tip",
+                "x": 33.92,
+                "y": 32.99,
+                "weight": 0.82616
+              }
+            ],
+            [
+              {
+                "bone": "front-foot-tip",
+                "x": 64.15,
+                "y": 14.56,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "front-foot-tip",
+                "x": 64.51,
+                "y": -5.87,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "front-foot-tip",
+                "x": 21.08,
+                "y": -6.64,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "front-foot",
+                "x": 44.67,
+                "y": -6.77,
+                "weight": 0.5684
+              },
+              {
+                "bone": "front-foot-tip",
+                "x": -2.34,
+                "y": -6.97,
+                "weight": 0.4316
+              }
+            ],
+            [
+              {
+                "bone": "front-foot",
+                "x": 3.1,
+                "y": -48.81,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "front-foot",
+                "x": -26.73,
+                "y": -19.31,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "front-foot",
+                "x": -30.15,
+                "y": 15.69,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "front-foot",
+                "x": -1.84,
+                "y": 44.32,
+                "weight": 1
+              }
+            ]
+          ],
+          "hull": 14,
+          "edges": [
+            14,
+            16,
+            16,
+            18,
+            18,
+            20,
+            4,
+            18,
+            20,
+            22,
+            24,
+            26,
+            22,
+            24,
+            12,
+            14,
+            10,
+            12,
+            2,
+            4,
+            2,
+            20,
+            4,
+            6,
+            6,
+            16,
+            2,
+            0,
+            0,
+            26,
+            6,
+            8,
+            8,
+            10
+          ],
+          "width": 126,
+          "height": 69
+        }
+      },
+      "front-shin": {
+        "front-shin": {
+          "type": "mesh",
+          "image": "front-shin.png",
+          "uvs": [
+            0.9003066,
+            0.05784649,
+            1,
+            0.1282812,
+            1,
+            0.2161885,
+            0.9025038,
+            0.31002015,
+            0.7873623,
+            0.356837,
+            0.7808133,
+            0.3987374,
+            0.7721526,
+            0.4541477,
+            0.7709815,
+            0.5157218,
+            0.8409413,
+            0.6375107,
+            0.9309526,
+            0.7490994,
+            0.9553094,
+            0.779295,
+            0.7812642,
+            0.876786,
+            0.561297,
+            1,
+            0.2686955,
+            1,
+            0,
+            1,
+            0.002785478,
+            0.9611154,
+            0.013583113,
+            0.810383,
+            0.028220676,
+            0.6060464,
+            0.08324055,
+            0.45142215,
+            0.189084,
+            0.3188221,
+            0.2957713,
+            0.23980266,
+            0.30235705,
+            0.14941014,
+            0.3787467,
+            0.05902038,
+            0.5328437,
+            0,
+            0.70538,
+            0,
+            0.4109394,
+            0.7196821,
+            0.4074273,
+            0.5475082,
+            0.4109395,
+            0.4535952,
+            0.4724029,
+            0.3518559,
+            0.3336712,
+            0.2782907,
+            0.5022565,
+            0.3166385,
+            0.6532811,
+            0.6750735,
+            0.6076225,
+            0.5271604,
+            0.600598,
+            0.4512473,
+            0.6274673,
+            0.3754273,
+            0.6572972,
+            0.3384985,
+            0.2784303,
+            0.3292395,
+            0.18967116,
+            0.4520299,
+            0.16508563,
+            0.585856,
+            0.18264666,
+            0.768204,
+            0.5053195,
+            0.24634285,
+            0.594734,
+            0.1796745,
+            0.6016121,
+            0.10610936,
+            0.513917,
+            0.04327252,
+            0.7219777,
+            0.28848955,
+            0.8234288,
+            0.2026636,
+            0.8681361,
+            0.11377233,
+            0.7959167,
+            0.04633762,
+            0.4485757,
+            0.15515275,
+            0.2546583,
+            0.962187,
+            0.5316866,
+            0.9447962,
+            0.7531003,
+            0.8323971
+          ],
+          "triangles": [
+            24,
+            0,
+            47,
+            43,
+            23,
+            24,
+            47,
+            43,
+            24,
+            43,
+            22,
+            23,
+            42,
+            43,
+            47,
+            46,
+            47,
+            0,
+            42,
+            47,
+            46,
+            46,
+            0,
+            1,
+            48,
+            22,
+            43,
+            48,
+            43,
+            42,
+            21,
+            22,
+            48,
+            41,
+            48,
+            42,
+            45,
+            42,
+            46,
+            41,
+            42,
+            45,
+            46,
+            1,
+            2,
+            45,
+            46,
+            2,
+            40,
+            48,
+            41,
+            48,
+            20,
+            21,
+            29,
+            48,
+            40,
+            29,
+            20,
+            48,
+            44,
+            41,
+            45,
+            40,
+            41,
+            44,
+            3,
+            45,
+            2,
+            44,
+            45,
+            3,
+            30,
+            29,
+            40,
+            35,
+            30,
+            40,
+            36,
+            19,
+            20,
+            36,
+            20,
+            29,
+            44,
+            35,
+            40,
+            28,
+            29,
+            30,
+            4,
+            44,
+            3,
+            35,
+            44,
+            4,
+            34,
+            30,
+            35,
+            5,
+            35,
+            4,
+            34,
+            28,
+            30,
+            33,
+            28,
+            34,
+            37,
+            19,
+            36,
+            18,
+            19,
+            37,
+            27,
+            29,
+            28,
+            27,
+            28,
+            33,
+            36,
+            29,
+            27,
+            37,
+            36,
+            27,
+            5,
+            34,
+            35,
+            6,
+            34,
+            5,
+            33,
+            34,
+            6,
+            6,
+            32,
+            33,
+            7,
+            32,
+            6,
+            26,
+            37,
+            27,
+            38,
+            18,
+            37,
+            38,
+            37,
+            26,
+            17,
+            18,
+            38,
+            31,
+            32,
+            7,
+            31,
+            7,
+            8,
+            32,
+            25,
+            26,
+            38,
+            26,
+            25,
+            27,
+            33,
+            32,
+            32,
+            26,
+            27,
+            39,
+            38,
+            25,
+            17,
+            38,
+            39,
+            16,
+            17,
+            39,
+            51,
+            31,
+            8,
+            51,
+            8,
+            9,
+            11,
+            51,
+            9,
+            11,
+            9,
+            10,
+            31,
+            50,
+            25,
+            31,
+            25,
+            32,
+            50,
+            31,
+            51,
+            49,
+            39,
+            25,
+            49,
+            25,
+            50,
+            15,
+            16,
+            39,
+            49,
+            15,
+            39,
+            13,
+            49,
+            50,
+            14,
+            15,
+            49,
+            13,
+            14,
+            49,
+            12,
+            50,
+            51,
+            12,
+            51,
+            11,
+            13,
+            50,
+            12
+          ],
+          "vertices": [
+            -23.66,
+            19.37,
+            -11.73,
+            28.98,
+            4.34,
+            30.83,
+            22.41,
+            24.87,
+            32.05,
+            16.48,
+            39.77,
+            16.83,
+            49.98,
+            17.3,
+            61.25,
+            18.5,
+            82.85,
+            26.78,
+            102.4,
+            36.46,
+            107.69,
+            39.09,
+            127.15,
+            26.97,
+            151.74,
+            11.65,
+            154.49,
+            -12.18,
+            157.02,
+            -34.07,
+            149.89,
+            -34.66,
+            122.23,
+            -36.97,
+            84.75,
+            -40.09,
+            55.97,
+            -38.88,
+            30.73,
+            -33.05,
+            15.29,
+            -26.03,
+            -1.3,
+            -27.41,
+            -18.54,
+            -23.09,
+            -30.78,
+            -11.79,
+            -32.4,
+            2.27,
+            101.92,
+            -6.52,
+            70.48,
+            -10.44,
+            53.28,
+            -12.14,
+            34.11,
+            -9.28,
+            21.96,
+            -22.13,
+            27.39,
+            -7.59,
+            91.48,
+            12.28,
+            64.88,
+            5.44,
+            51.07,
+            3.26,
+            36.95,
+            3.85,
+            29.92,
+            5.5,
+            31.8,
+            -25.56,
+            55.08,
+            -30.19,
+            79.77,
+            -29.37,
+            112.93,
+            -24.09,
+            14.51,
+            -8.83,
+            1.48,
+            -2.95,
+            -12.03,
+            -3.94,
+            -22.69,
+            -12.41,
+            20.17,
+            9.71,
+            3.53,
+            16.16,
+            -13.14,
+            17.93,
+            -24.78,
+            10.62,
+            -1.62,
+            -15.37,
+            147.71,
+            -14.13,
+            141.93,
+            8.07,
+            119.3,
+            23.74
+          ],
+          "hull": 25,
+          "edges": [
+            8,
+            6,
+            6,
+            4,
+            4,
+            2,
+            2,
+            0,
+            0,
+            48,
+            46,
+            48,
+            46,
+            44,
+            44,
+            42,
+            42,
+            40,
+            40,
+            38,
+            38,
+            36,
+            36,
+            34,
+            32,
+            34,
+            50,
+            52,
+            52,
+            54,
+            54,
+            56,
+            40,
+            58,
+            58,
+            60,
+            8,
+            10,
+            20,
+            22,
+            22,
+            24,
+            62,
+            64,
+            64,
+            66,
+            66,
+            68,
+            8,
+            70,
+            70,
+            60,
+            68,
+            70,
+            58,
+            72,
+            72,
+            74,
+            74,
+            76,
+            76,
+            78,
+            24,
+            26,
+            26,
+            28,
+            58,
+            80,
+            80,
+            82,
+            82,
+            84,
+            84,
+            86,
+            86,
+            44,
+            70,
+            88,
+            88,
+            90,
+            90,
+            92,
+            92,
+            94,
+            94,
+            48,
+            80,
+            88,
+            88,
+            6,
+            82,
+            90,
+            90,
+            4,
+            84,
+            92,
+            92,
+            2,
+            86,
+            94,
+            94,
+            0,
+            56,
+            60,
+            10,
+            12,
+            12,
+            14,
+            14,
+            16,
+            28,
+            30,
+            30,
+            32,
+            26,
+            98,
+            98,
+            78,
+            30,
+            98,
+            24,
+            100,
+            100,
+            50,
+            98,
+            100,
+            22,
+            102,
+            102,
+            62,
+            100,
+            102,
+            16,
+            18,
+            18,
+            20,
+            102,
+            18
+          ],
+          "width": 82,
+          "height": 184
+        }
+      },
+      "front-thigh": {
+        "front-thigh": {
+          "image": "front-thigh.png",
+          "x": 42.4751,
+          "y": 4.449414,
+          "rotation": 84.86587,
+          "width": 45,
+          "height": 112
+        }
+      },
+      "front-upper-arm": {
+        "front-upper-arm": {
+          "image": "front-upper-arm.png",
+          "x": 28.306147,
+          "y": 7.371247,
+          "rotation": 97.89548,
+          "width": 46,
+          "height": 97
+        }
+      },
+      "goggles": {
+        "goggles": {
+          "type": "mesh",
+          "image": "goggles.png",
+          "uvs": [
+            0.5365332,
+            0.04113967,
+            0.7292194,
+            0.16035686,
+            0.9166696,
+            0.3322266,
+            0.9704648,
+            0.3132907,
+            1,
+            0.4805304,
+            0.9575552,
+            0.5732991,
+            0.8882532,
+            0.6327984,
+            0.868775,
+            0.7896234,
+            0.7740368,
+            0.867495,
+            0.7262804,
+            1,
+            0.6071384,
+            0.9386266,
+            0.4960078,
+            0.88138,
+            0.4155779,
+            0.7502696,
+            0.32547185,
+            0.700845,
+            0.278201,
+            0.5825681,
+            0.17209916,
+            0.6328146,
+            0.1722854,
+            0.7507118,
+            0.10780662,
+            0.798978,
+            0,
+            0.32304054,
+            0,
+            0.12475555,
+            0.07372671,
+            0.07343647,
+            0.15423247,
+            0.10733794,
+            0.2316526,
+            0.13994002,
+            0.3031334,
+            0.022563254,
+            0.3480239,
+            0,
+            0.42978895,
+            0.6918342,
+            0.3947595,
+            0.5104154,
+            0.3948817,
+            0.3151182,
+            0.4587819,
+            0.2319774,
+            0.5650132,
+            0.2810853,
+            0.6996078,
+            0.392161,
+            0.8203935,
+            0.5420369,
+            0.8573792,
+            0.623428,
+            0.911071,
+            0.5140726,
+            0.726388,
+            0.3214668,
+            0.5876366,
+            0.19609463,
+            0.4807451,
+            0.11268945,
+            0.3782299,
+            0.05501315,
+            0.3286954,
+            0.1786646,
+            0.3189974,
+            0.3049975,
+            0.3603568,
+            0.5379894,
+            0.40327474,
+            0.7007243,
+            0.3005859,
+            0.5583792,
+            0.2195666,
+            0.2815032,
+            0.09963368,
+            0.2894289,
+            0.5686289,
+            0.4368027,
+            0.4911002,
+            0.3715615,
+            0.5118472,
+            0.5209291,
+            0.6701805,
+            0.5930374,
+            0.7619046,
+            0.6857483,
+            0.7329629,
+            0.4335494
+          ],
+          "triangles": [
+            18,
+            44,
+            15,
+            21,
+            19,
+            20,
+            17,
+            18,
+            15,
+            44,
+            19,
+            21,
+            2,
+            3,
+            4,
+            18,
+            19,
+            44,
+            2,
+            33,
+            34,
+            33,
+            2,
+            4,
+            5,
+            33,
+            4,
+            5,
+            6,
+            33,
+            7,
+            32,
+            6,
+            31,
+            50,
+            33,
+            32,
+            31,
+            33,
+            6,
+            32,
+            33,
+            31,
+            49,
+            50,
+            49,
+            31,
+            32,
+            49,
+            32,
+            7,
+            8,
+            49,
+            7,
+            33,
+            50,
+            34,
+            17,
+            15,
+            16,
+            9,
+            48,
+            8,
+            49,
+            48,
+            50,
+            50,
+            48,
+            45,
+            47,
+            45,
+            48,
+            50,
+            45,
+            30,
+            45,
+            47,
+            46,
+            45,
+            46,
+            29,
+            30,
+            45,
+            29,
+            30,
+            29,
+            34,
+            30,
+            34,
+            50,
+            47,
+            26,
+            46,
+            25,
+            10,
+            11,
+            12,
+            25,
+            11,
+            41,
+            12,
+            42,
+            42,
+            44,
+            43,
+            43,
+            21,
+            22,
+            41,
+            40,
+            25,
+            41,
+            42,
+            40,
+            29,
+            35,
+            34,
+            40,
+            26,
+            25,
+            25,
+            26,
+            47,
+            37,
+            24,
+            0,
+            36,
+            37,
+            0,
+            42,
+            43,
+            39,
+            42,
+            39,
+            40,
+            28,
+            38,
+            36,
+            40,
+            39,
+            26,
+            28,
+            27,
+            38,
+            26,
+            39,
+            27,
+            37,
+            38,
+            23,
+            39,
+            43,
+            38,
+            38,
+            37,
+            36,
+            27,
+            39,
+            38,
+            43,
+            22,
+            38,
+            37,
+            23,
+            24,
+            22,
+            23,
+            38,
+            36,
+            0,
+            35,
+            28,
+            36,
+            35,
+            29,
+            28,
+            35,
+            27,
+            28,
+            46,
+            26,
+            27,
+            46,
+            35,
+            0,
+            1,
+            34,
+            35,
+            1,
+            12,
+            41,
+            25,
+            47,
+            10,
+            25,
+            44,
+            21,
+            43,
+            42,
+            14,
+            44,
+            14,
+            15,
+            44,
+            13,
+            14,
+            42,
+            12,
+            13,
+            42,
+            46,
+            28,
+            29,
+            47,
+            48,
+            10,
+            48,
+            9,
+            10,
+            49,
+            8,
+            48,
+            2,
+            34,
+            1
+          ],
+          "weights": [
+            [
+              {
+                "bone": "head-control",
+                "x": 61.88,
+                "y": 22.81,
+                "weight": 0.832
+              },
+              {
+                "bone": "head",
+                "x": 172.09,
+                "y": 22.81,
+                "weight": 0.168
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 59.89,
+                "y": -31.19,
+                "weight": 0.6855
+              },
+              {
+                "bone": "head",
+                "x": 170.1,
+                "y": -31.19,
+                "weight": 0.3145
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 49.2,
+                "y": -86.8,
+                "weight": 0.32635
+              },
+              {
+                "bone": "head",
+                "x": 159.41,
+                "y": -86.8,
+                "weight": 0.67365
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 56.82,
+                "y": -99.01,
+                "weight": 0.01217
+              },
+              {
+                "bone": "head",
+                "x": 167.03,
+                "y": -99.01,
+                "weight": 0.98783
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 143.4,
+                "y": -115.48,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 15,
+                "y": -110.14,
+                "weight": 0.0041
+              },
+              {
+                "bone": "head",
+                "x": 125.21,
+                "y": -110.14,
+                "weight": 0.9959
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -0.32,
+                "y": -96.36,
+                "weight": 0.07948
+              },
+              {
+                "bone": "head",
+                "x": 109.89,
+                "y": -96.36,
+                "weight": 0.92052
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -26.56,
+                "y": -100.19,
+                "weight": 0.01905
+              },
+              {
+                "bone": "head",
+                "x": 83.65,
+                "y": -100.19,
+                "weight": 0.98095
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -46.96,
+                "y": -81.16,
+                "weight": 0.4921
+              },
+              {
+                "bone": "head",
+                "x": 63.26,
+                "y": -81.16,
+                "weight": 0.50791
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -71.84,
+                "y": -76.69,
+                "weight": 0.56923
+              },
+              {
+                "bone": "head",
+                "x": 38.37,
+                "y": -76.69,
+                "weight": 0.43077
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -72.54,
+                "y": -43.98,
+                "weight": 0.74145
+              },
+              {
+                "bone": "head",
+                "x": 37.67,
+                "y": -43.98,
+                "weight": 0.25855
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -73.2,
+                "y": -13.47,
+                "weight": 0.87929
+              },
+              {
+                "bone": "head",
+                "x": 37.01,
+                "y": -13.47,
+                "weight": 0.12071
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -59.63,
+                "y": 13.55,
+                "weight": 0.864
+              },
+              {
+                "bone": "head",
+                "x": 50.58,
+                "y": 13.55,
+                "weight": 0.136
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -59.69,
+                "y": 38.45,
+                "weight": 0.85289
+              },
+              {
+                "bone": "head",
+                "x": 50.52,
+                "y": 38.45,
+                "weight": 0.14711
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -45.26,
+                "y": 56.6,
+                "weight": 0.74392
+              },
+              {
+                "bone": "head",
+                "x": 64.95,
+                "y": 56.6,
+                "weight": 0.25608
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -62.31,
+                "y": 79.96,
+                "weight": 0.624
+              },
+              {
+                "bone": "head",
+                "x": 47.9,
+                "y": 79.96,
+                "weight": 0.376
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -80.76,
+                "y": 73.42,
+                "weight": 0.616
+              },
+              {
+                "bone": "head",
+                "x": 29.45,
+                "y": 73.42,
+                "weight": 0.384
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -93.9,
+                "y": 86.64,
+                "weight": 0.288
+              },
+              {
+                "bone": "head",
+                "x": 16.31,
+                "y": 86.64,
+                "weight": 0.712
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 81.51,
+                "y": 139.38,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 112.56,
+                "y": 150.3,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 16.76,
+                "y": 134.97,
+                "weight": 0.02942
+              },
+              {
+                "bone": "head",
+                "x": 126.97,
+                "y": 134.97,
+                "weight": 0.97058
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 18.42,
+                "y": 113.28,
+                "weight": 0.36147
+              },
+              {
+                "bone": "head",
+                "x": 128.63,
+                "y": 113.28,
+                "weight": 0.63853
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 20.02,
+                "y": 92.43,
+                "weight": 0.7135
+              },
+              {
+                "bone": "head",
+                "x": 130.23,
+                "y": 92.43,
+                "weight": 0.2865
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 44.58,
+                "y": 81.29,
+                "weight": 0.69603
+              },
+              {
+                "bone": "head",
+                "x": 154.79,
+                "y": 81.29,
+                "weight": 0.30397
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 52,
+                "y": 71.48,
+                "weight": 0.848
+              },
+              {
+                "bone": "head",
+                "x": 162.21,
+                "y": 71.48,
+                "weight": 0.152
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -49.25,
+                "y": 13.27,
+                "weight": 0.8
+              },
+              {
+                "bone": "head",
+                "x": 60.96,
+                "y": 13.27,
+                "weight": 0.2
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -23.88,
+                "y": 31.88,
+                "weight": 0.896
+              },
+              {
+                "bone": "head",
+                "x": 86.33,
+                "y": 31.88,
+                "weight": 0.104
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 6.72,
+                "y": 42.6,
+                "weight": 0.928
+              },
+              {
+                "bone": "head",
+                "x": 116.93,
+                "y": 42.6,
+                "weight": 0.072
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 25.26,
+                "y": 31.44,
+                "weight": 0.8
+              },
+              {
+                "bone": "head",
+                "x": 135.47,
+                "y": 31.44,
+                "weight": 0.2
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 26.77,
+                "y": 2.59,
+                "weight": 0.75
+              },
+              {
+                "bone": "head",
+                "x": 136.98,
+                "y": 2.59,
+                "weight": 0.25
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 21.02,
+                "y": -36.66,
+                "weight": 0.54887
+              },
+              {
+                "bone": "head",
+                "x": 131.23,
+                "y": -36.66,
+                "weight": 0.45113
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 8.01,
+                "y": -74.65,
+                "weight": 0.36029
+              },
+              {
+                "bone": "head",
+                "x": 118.22,
+                "y": -74.65,
+                "weight": 0.63971
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -1.52,
+                "y": -88.24,
+                "weight": 0.1253
+              },
+              {
+                "bone": "head",
+                "x": 108.69,
+                "y": -88.24,
+                "weight": 0.8747
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 20.25,
+                "y": -95.44,
+                "weight": 0.08687
+              },
+              {
+                "bone": "head",
+                "x": 130.46,
+                "y": -95.44,
+                "weight": 0.91313
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 34.42,
+                "y": -39.36,
+                "weight": 0.72613
+              },
+              {
+                "bone": "head",
+                "x": 144.63,
+                "y": -39.36,
+                "weight": 0.27387
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 42.03,
+                "y": 1.7,
+                "weight": 0.824
+              },
+              {
+                "bone": "head",
+                "x": 152.25,
+                "y": 1.7,
+                "weight": 0.176
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 45.85,
+                "y": 32.6,
+                "weight": 0.856
+              },
+              {
+                "bone": "head",
+                "x": 156.06,
+                "y": 32.6,
+                "weight": 0.144
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 46.01,
+                "y": 61.02,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 22.35,
+                "y": 66.41,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 1.73,
+                "y": 61.84,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -31.17,
+                "y": 38.83,
+                "weight": 0.928
+              },
+              {
+                "bone": "head",
+                "x": 79.04,
+                "y": 38.83,
+                "weight": 0.072
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -52.94,
+                "y": 19.31,
+                "weight": 0.79073
+              },
+              {
+                "bone": "head",
+                "x": 57.27,
+                "y": 19.31,
+                "weight": 0.20927
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -39.54,
+                "y": 52.42,
+                "weight": 0.912
+              },
+              {
+                "bone": "head",
+                "x": 70.67,
+                "y": 52.42,
+                "weight": 0.088
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -3.2,
+                "y": 87.61,
+                "weight": 0.744
+              },
+              {
+                "bone": "head",
+                "x": 107.02,
+                "y": 87.61,
+                "weight": 0.256
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -14.82,
+                "y": 116.7,
+                "weight": 0.6368
+              },
+              {
+                "bone": "head",
+                "x": 95.4,
+                "y": 116.7,
+                "weight": 0.3632
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 2.7,
+                "y": -6.87,
+                "weight": 0.856
+              },
+              {
+                "bone": "head",
+                "x": 112.91,
+                "y": -6.87,
+                "weight": 0.144
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 6.21,
+                "y": 15.8,
+                "weight": 0.744
+              },
+              {
+                "bone": "head",
+                "x": 116.42,
+                "y": 15.8,
+                "weight": 0.256
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -15.39,
+                "y": 2.47,
+                "weight": 0.856
+              },
+              {
+                "bone": "head",
+                "x": 94.82,
+                "y": 2.47,
+                "weight": 0.144
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -12.98,
+                "y": -40.48,
+                "weight": 0.72102
+              },
+              {
+                "bone": "head",
+                "x": 97.24,
+                "y": -40.48,
+                "weight": 0.27898
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -19.55,
+                "y": -68.16,
+                "weight": 0.59162
+              },
+              {
+                "bone": "head",
+                "x": 90.66,
+                "y": -68.16,
+                "weight": 0.40838
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": 17.44,
+                "y": -47.15,
+                "weight": 0.53452
+              },
+              {
+                "bone": "head",
+                "x": 127.65,
+                "y": -47.15,
+                "weight": 0.46548
+              }
+            ]
+          ],
+          "hull": 25,
+          "edges": [
+            36,
+            34,
+            34,
+            32,
+            32,
+            30,
+            30,
+            28,
+            28,
+            26,
+            26,
+            24,
+            24,
+            22,
+            18,
+            16,
+            16,
+            14,
+            14,
+            12,
+            12,
+            10,
+            10,
+            8,
+            8,
+            6,
+            6,
+            4,
+            4,
+            2,
+            2,
+            0,
+            0,
+            48,
+            48,
+            46,
+            46,
+            44,
+            36,
+            38,
+            40,
+            38,
+            24,
+            50,
+            50,
+            52,
+            52,
+            54,
+            54,
+            56,
+            56,
+            58,
+            58,
+            60,
+            62,
+            64,
+            64,
+            12,
+            8,
+            66,
+            66,
+            68,
+            68,
+            70,
+            70,
+            72,
+            72,
+            74,
+            74,
+            76,
+            76,
+            78,
+            78,
+            80,
+            80,
+            82,
+            82,
+            24,
+            24,
+            84,
+            84,
+            86,
+            86,
+            44,
+            40,
+            42,
+            42,
+            44,
+            42,
+            88,
+            88,
+            30,
+            58,
+            90,
+            90,
+            92,
+            92,
+            94,
+            18,
+            20,
+            20,
+            22,
+            94,
+            20,
+            18,
+            96,
+            96,
+            98,
+            60,
+            100,
+            100,
+            62,
+            98,
+            100
+          ],
+          "width": 261,
+          "height": 166
+        }
+      },
+      "gun": {
+        "gun": {
+          "image": "gun.png",
+          "x": 77.30423,
+          "y": 16.40491,
+          "rotation": 60.8259,
+          "width": 210,
+          "height": 203
+        }
+      },
+      "head": {
+        "head": {
+          "type": "mesh",
+          "image": "head.png",
+          "uvs": [
+            0.7591877,
+            0.06107302,
+            0.883922,
+            0.1789253,
+            0.901741,
+            0.3085628,
+            0.9422393,
+            0.19660294,
+            1,
+            0.2658415,
+            1,
+            0.4219956,
+            0.9586356,
+            0.4699281,
+            0.9211802,
+            0.5133307,
+            0.8595705,
+            0.5346962,
+            0.7838808,
+            0.6560519,
+            0.7438444,
+            0.748384,
+            0.8511593,
+            0.7515119,
+            0.8482836,
+            0.8256396,
+            0.817809,
+            0.853675,
+            0.7559887,
+            0.859065,
+            0.7623688,
+            0.9046774,
+            0.6587524,
+            1,
+            0.3833651,
+            1,
+            0.18579765,
+            0.854039,
+            0.12741707,
+            0.810908,
+            0.0602479,
+            0.6920902,
+            0,
+            0.5855156,
+            0,
+            0.4102103,
+            0.08529866,
+            0.20691523,
+            0.24243174,
+            0.14504284,
+            0.4999999,
+            0.14209673,
+            0.5032388,
+            0.0743304,
+            0.4173836,
+            0,
+            0.5761362,
+            0,
+            0.8505914,
+            0.3608683,
+            0.734311,
+            0.43206275,
+            0.6848055,
+            0.31270725,
+            0.7216468,
+            0.1671771,
+            0.5593148,
+            0.04153975,
+            0.4476396,
+            0.2289488,
+            0.23925595,
+            0.2655932,
+            0.7127154,
+            0.440357,
+            0.5699295,
+            0.3829953,
+            0.4167824,
+            0.3351074,
+            0.2929996,
+            0.3149697,
+            0.7080164,
+            0.4450182,
+            0.5667631,
+            0.3897649,
+            0.41520515,
+            0.3441631,
+            0.2875353,
+            0.3301711,
+            0.8898812,
+            0.501767,
+            0.3038886,
+            0.7346256,
+            0.2646026,
+            0.6567476,
+            0.2141429,
+            0.6158368,
+            0.1461256,
+            0.6219387,
+            0.10315738,
+            0.6663608,
+            0.10357737,
+            0.7255686,
+            0.1450546,
+            0.7916364,
+            0.20263426,
+            0.8135515,
+            0.2787257,
+            0.8015873,
+            0.349468,
+            0.737601,
+            0.23073055,
+            0.5707305,
+            0.08878042,
+            0.607067,
+            0.2946068,
+            0.8129002,
+            0.7300557,
+            0.8788308,
+            0.6980495,
+            0.873483,
+            0.661655,
+            0.7968106,
+            0.2246777,
+            0.698241,
+            0.14552385,
+            0.6740475
+          ],
+          "triangles": [
+            50,
+            49,
+            62,
+            34,
+            25,
+            31,
+            39,
+            35,
+            34,
+            38,
+            39,
+            34,
+            37,
+            38,
+            34,
+            42,
+            39,
+            38,
+            43,
+            39,
+            42,
+            32,
+            2,
+            31,
+            31,
+            37,
+            34,
+            42,
+            38,
+            37,
+            41,
+            42,
+            37,
+            43,
+            22,
+            39,
+            30,
+            31,
+            29,
+            36,
+            37,
+            31,
+            30,
+            36,
+            31,
+            40,
+            41,
+            37,
+            36,
+            40,
+            37,
+            36,
+            30,
+            44,
+            55,
+            22,
+            43,
+            55,
+            48,
+            56,
+            47,
+            48,
+            55,
+            46,
+            55,
+            54,
+            42,
+            55,
+            43,
+            47,
+            55,
+            46,
+            62,
+            49,
+            48,
+            61,
+            47,
+            46,
+            62,
+            48,
+            47,
+            61,
+            62,
+            47,
+            46,
+            54,
+            45,
+            42,
+            41,
+            55,
+            61,
+            46,
+            45,
+            55,
+            41,
+            54,
+            61,
+            51,
+            50,
+            61,
+            50,
+            62,
+            60,
+            41,
+            40,
+            54,
+            41,
+            60,
+            53,
+            61,
+            45,
+            52,
+            51,
+            61,
+            57,
+            53,
+            45,
+            57,
+            45,
+            54,
+            53,
+            52,
+            61,
+            52,
+            19,
+            51,
+            57,
+            18,
+            52,
+            57,
+            52,
+            53,
+            17,
+            54,
+            60,
+            57,
+            54,
+            17,
+            18,
+            57,
+            17,
+            19,
+            50,
+            51,
+            33,
+            27,
+            28,
+            26,
+            27,
+            33,
+            0,
+            33,
+            28,
+            32,
+            33,
+            0,
+            32,
+            0,
+            1,
+            33,
+            25,
+            26,
+            33,
+            32,
+            25,
+            31,
+            25,
+            32,
+            2,
+            32,
+            1,
+            2,
+            3,
+            4,
+            29,
+            31,
+            2,
+            2,
+            4,
+            5,
+            29,
+            2,
+            5,
+            6,
+            29,
+            5,
+            30,
+            29,
+            6,
+            44,
+            30,
+            6,
+            18,
+            19,
+            52,
+            49,
+            56,
+            48,
+            34,
+            24,
+            25,
+            35,
+            23,
+            24,
+            35,
+            24,
+            34,
+            39,
+            22,
+            35,
+            22,
+            23,
+            35,
+            7,
+            44,
+            6,
+            8,
+            36,
+            44,
+            40,
+            36,
+            8,
+            8,
+            44,
+            7,
+            56,
+            21,
+            22,
+            55,
+            56,
+            22,
+            9,
+            40,
+            8,
+            20,
+            21,
+            56,
+            20,
+            56,
+            49,
+            9,
+            60,
+            40,
+            10,
+            60,
+            9,
+            20,
+            50,
+            19,
+            12,
+            10,
+            11,
+            13,
+            10,
+            12,
+            14,
+            60,
+            10,
+            13,
+            14,
+            10,
+            59,
+            60,
+            14,
+            58,
+            59,
+            14,
+            58,
+            14,
+            15,
+            16,
+            17,
+            60,
+            59,
+            16,
+            60,
+            15,
+            16,
+            59,
+            15,
+            59,
+            58,
+            20,
+            49,
+            50
+          ],
+          "weights": [
+            [
+              {
+                "bone": "hair4",
+                "x": 41.97,
+                "y": -41.8,
+                "weight": 0.94074
+              },
+              {
+                "bone": "head-control",
+                "x": 165.41,
+                "y": -22.6,
+                "weight": 0.05926
+              }
+            ],
+            [
+              {
+                "bone": "hair2",
+                "x": 73.47,
+                "y": 27.54,
+                "weight": 0.26795
+              },
+              {
+                "bone": "hair4",
+                "x": -5.75,
+                "y": -51.71,
+                "weight": 0.4738
+              },
+              {
+                "bone": "hair3",
+                "x": 112.99,
+                "y": -11.41,
+                "weight": 0.12255
+              },
+              {
+                "bone": "head-control",
+                "x": 143.5,
+                "y": -66.13,
+                "weight": 0.1357
+              }
+            ],
+            [
+              {
+                "bone": "hair2",
+                "x": 38.23,
+                "y": 10.99,
+                "weight": 0.6831
+              },
+              {
+                "bone": "hair4",
+                "x": -41.01,
+                "y": -35.22,
+                "weight": 0.07866
+              },
+              {
+                "bone": "hair3",
+                "x": 92.73,
+                "y": -44.66,
+                "weight": 0.04872
+              },
+              {
+                "bone": "head-control",
+                "x": 108.65,
+                "y": -83.49,
+                "weight": 0.18952
+              }
+            ],
+            [
+              {
+                "bone": "hair2",
+                "x": 73.35,
+                "y": 10.89,
+                "weight": 0.8455
+              },
+              {
+                "bone": "head-control",
+                "x": 143.77,
+                "y": -82.78,
+                "weight": 0.1545
+              }
+            ],
+            [
+              {
+                "bone": "hair2",
+                "x": 58.59,
+                "y": -10.38,
+                "weight": 0.91607
+              },
+              {
+                "bone": "head-control",
+                "x": 129.5,
+                "y": -104.39,
+                "weight": 0.08393
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 195.82,
+                "y": -119.82,
+                "weight": 0.104
+              },
+              {
+                "bone": "hair1",
+                "x": 75.49,
+                "y": -4.55,
+                "weight": 0.09191
+              },
+              {
+                "bone": "hair2",
+                "x": 14.36,
+                "y": -24.8,
+                "weight": 0.80409
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 178.62,
+                "y": -113.98,
+                "weight": 0.19022
+              },
+              {
+                "bone": "hair1",
+                "x": 59.82,
+                "y": -13.72,
+                "weight": 0.33409
+              },
+              {
+                "bone": "hair2",
+                "x": -2.7,
+                "y": -18.57,
+                "weight": 0.46643
+              },
+              {
+                "bone": "head-control",
+                "x": 68.41,
+                "y": -113.98,
+                "weight": 0.00926
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 163.06,
+                "y": -108.69,
+                "weight": 0.18724
+              },
+              {
+                "bone": "hair1",
+                "x": 45.64,
+                "y": -22.03,
+                "weight": 0.3133
+              },
+              {
+                "bone": "hair2",
+                "x": -18.14,
+                "y": -12.93,
+                "weight": 0.47469
+              },
+              {
+                "bone": "head-control",
+                "x": 52.84,
+                "y": -108.69,
+                "weight": 0.02477
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 151.52,
+                "y": -95.05,
+                "weight": 0.91122
+              },
+              {
+                "bone": "head-control",
+                "x": 41.31,
+                "y": -95.05,
+                "weight": 0.08878
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 110.61,
+                "y": -87.69,
+                "weight": 0.70564
+              },
+              {
+                "bone": "head-control",
+                "x": 0.4,
+                "y": -87.69,
+                "weight": 0.29436
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 81.05,
+                "y": -86.58,
+                "weight": 0.63951
+              },
+              {
+                "bone": "head-control",
+                "x": -29.16,
+                "y": -86.58,
+                "weight": 0.36049
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 89.82,
+                "y": -114.32,
+                "weight": 0.57
+              },
+              {
+                "bone": "head-control",
+                "x": -20.39,
+                "y": -114.32,
+                "weight": 0.43
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 68.72,
+                "y": -120.91,
+                "weight": 0.57
+              },
+              {
+                "bone": "head-control",
+                "x": -41.49,
+                "y": -120.91,
+                "weight": 0.43
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 58.1,
+                "y": -115.9,
+                "weight": 0.57
+              },
+              {
+                "bone": "head-control",
+                "x": -52.11,
+                "y": -115.9,
+                "weight": 0.43
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 51.03,
+                "y": -100.63,
+                "weight": 0.64242
+              },
+              {
+                "bone": "head-control",
+                "x": -59.18,
+                "y": -100.63,
+                "weight": 0.35758
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 38.79,
+                "y": -106.76,
+                "weight": 0.81659
+              },
+              {
+                "bone": "head-control",
+                "x": -71.43,
+                "y": -106.76,
+                "weight": 0.18341
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 2.68,
+                "y": -89.7,
+                "weight": 0.77801
+              },
+              {
+                "bone": "head-control",
+                "x": -107.53,
+                "y": -89.7,
+                "weight": 0.22199
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": -22.07,
+                "y": -19.3,
+                "weight": 0.823
+              },
+              {
+                "bone": "head-control",
+                "x": -132.28,
+                "y": -19.3,
+                "weight": 0.177
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 1.2,
+                "y": 45.63,
+                "weight": 0.51204
+              },
+              {
+                "bone": "head-control",
+                "x": -109.01,
+                "y": 45.63,
+                "weight": 0.48796
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 8.07,
+                "y": 64.81,
+                "weight": 0.60869
+              },
+              {
+                "bone": "head-control",
+                "x": -102.14,
+                "y": 64.81,
+                "weight": 0.39131
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 35.44,
+                "y": 93.73,
+                "weight": 0.80009
+              },
+              {
+                "bone": "head-control",
+                "x": -74.77,
+                "y": 93.73,
+                "weight": 0.19991
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 59.98,
+                "y": 119.66,
+                "weight": 0.93554
+              },
+              {
+                "bone": "head-control",
+                "x": -50.23,
+                "y": 119.66,
+                "weight": 0.06446
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 109.26,
+                "y": 136.99,
+                "weight": 0.99895
+              },
+              {
+                "bone": "head-control",
+                "x": -0.95,
+                "y": 136.99,
+                "weight": 0.00105
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 174.07,
+                "y": 135.27,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 205.59,
+                "y": 101.22,
+                "weight": 0.80778
+              },
+              {
+                "bone": "hair3",
+                "x": -16.84,
+                "y": 104.63,
+                "weight": 0.15658
+              },
+              {
+                "bone": "head-control",
+                "x": 95.38,
+                "y": 101.22,
+                "weight": 0.03564
+              }
+            ],
+            [
+              {
+                "bone": "hair4",
+                "x": 58.94,
+                "y": 30.5,
+                "weight": 0.43491
+              },
+              {
+                "bone": "hair3",
+                "x": 38.36,
+                "y": 61.89,
+                "weight": 0.28116
+              },
+              {
+                "bone": "head-control",
+                "x": 119.35,
+                "y": 35.65,
+                "weight": 0.28393
+              }
+            ],
+            [
+              {
+                "bone": "hair4",
+                "x": 75.56,
+                "y": 19.01,
+                "weight": 0.92164
+              },
+              {
+                "bone": "head-control",
+                "x": 138.68,
+                "y": 41.52,
+                "weight": 0.07836
+              }
+            ],
+            [
+              {
+                "bone": "hair4",
+                "x": 106.7,
+                "y": 26.9,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "hair4",
+                "x": 83.79,
+                "y": -9.51,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "hair1",
+                "x": 44.51,
+                "y": 27.24,
+                "weight": 0.15139
+              },
+              {
+                "bone": "hair2",
+                "x": 19.12,
+                "y": 19.33,
+                "weight": 0.44847
+              },
+              {
+                "bone": "hair4",
+                "x": -46.82,
+                "y": -15.19,
+                "weight": 0.05757
+              },
+              {
+                "bone": "hair3",
+                "x": 72.19,
+                "y": -48.24,
+                "weight": 0.1149
+              },
+              {
+                "bone": "head-control",
+                "x": 89.35,
+                "y": -75.58,
+                "weight": 0.22767
+              }
+            ],
+            [
+              {
+                "bone": "hair1",
+                "x": 7.42,
+                "y": 19.08,
+                "weight": 0.37772
+              },
+              {
+                "bone": "hair3",
+                "x": 34.32,
+                "y": -45.24,
+                "weight": 0.09918
+              },
+              {
+                "bone": "head-control",
+                "x": 58.9,
+                "y": -52.89,
+                "weight": 0.52311
+              }
+            ],
+            [
+              {
+                "bone": "hair3",
+                "x": 45.94,
+                "y": -9.07,
+                "weight": 0.4826
+              },
+              {
+                "bone": "head-control",
+                "x": 87.99,
+                "y": -28.45,
+                "weight": 0.5174
+              }
+            ],
+            [
+              {
+                "bone": "hair4",
+                "x": 20.62,
+                "y": -16.35,
+                "weight": 0.7435
+              },
+              {
+                "bone": "head-control",
+                "x": 132.21,
+                "y": -23.49,
+                "weight": 0.2565
+              }
+            ],
+            [
+              {
+                "bone": "hair4",
+                "x": 75.74,
+                "y": 0.94,
+                "weight": 0.97172
+              },
+              {
+                "bone": "head-control",
+                "x": 152.95,
+                "y": 30.42,
+                "weight": 0.02828
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 200.45,
+                "y": 40.46,
+                "weight": 0.18809
+              },
+              {
+                "bone": "hair4",
+                "x": 44.6,
+                "y": 56.29,
+                "weight": 0.05831
+              },
+              {
+                "bone": "hair3",
+                "x": 11.15,
+                "y": 50.46,
+                "weight": 0.14366
+              },
+              {
+                "bone": "head-control",
+                "x": 90.24,
+                "y": 40.46,
+                "weight": 0.60994
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 171.41,
+                "y": 90.12,
+                "weight": 0.48644
+              },
+              {
+                "bone": "head-control",
+                "x": 61.2,
+                "y": 90.12,
+                "weight": 0.51356
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 164.84,
+                "y": -48.18,
+                "weight": 0.43217
+              },
+              {
+                "bone": "head-control",
+                "x": 54.62,
+                "y": -48.18,
+                "weight": 0.56783
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 168.13,
+                "y": -6.02,
+                "weight": 0.01949
+              },
+              {
+                "bone": "hair1",
+                "x": -28.65,
+                "y": 49.02,
+                "weight": 0.02229
+              },
+              {
+                "bone": "hair3",
+                "x": 8.54,
+                "y": -6.09,
+                "weight": 0.12791
+              },
+              {
+                "bone": "head-control",
+                "x": 57.92,
+                "y": -6.02,
+                "weight": 0.83031
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 167.84,
+                "y": 37.87,
+                "weight": 0.15
+              },
+              {
+                "bone": "head-control",
+                "x": 57.63,
+                "y": 37.87,
+                "weight": 0.85
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 162.36,
+                "y": 71.5,
+                "weight": 0.24107
+              },
+              {
+                "bone": "head-control",
+                "x": 52.15,
+                "y": 71.5,
+                "weight": 0.75893
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 163.11,
+                "y": -47.44,
+                "weight": 0.41951
+              },
+              {
+                "bone": "head-control",
+                "x": 52.9,
+                "y": -47.44,
+                "weight": 0.58049
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 165.94,
+                "y": -5.87,
+                "weight": 0.16355
+              },
+              {
+                "bone": "head-control",
+                "x": 55.73,
+                "y": -5.87,
+                "weight": 0.83645
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 165.14,
+                "y": 37.38,
+                "weight": 0.15
+              },
+              {
+                "bone": "head-control",
+                "x": 54.93,
+                "y": 37.38,
+                "weight": 0.85
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 157.6,
+                "y": 71.4,
+                "weight": 0.21735
+              },
+              {
+                "bone": "head-control",
+                "x": 47.39,
+                "y": 71.4,
+                "weight": 0.78265
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 163.5,
+                "y": -99.54,
+                "weight": 0.61812
+              },
+              {
+                "bone": "hair1",
+                "x": 39.01,
+                "y": -15.71,
+                "weight": 0.30445
+              },
+              {
+                "bone": "head-control",
+                "x": 53.29,
+                "y": -99.54,
+                "weight": 0.07744
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 45.38,
+                "y": 27.24,
+                "weight": 0.16741
+              },
+              {
+                "bone": "head-control",
+                "x": -64.83,
+                "y": 27.24,
+                "weight": 0.83259
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 63.74,
+                "y": 44.98,
+                "weight": 0.15
+              },
+              {
+                "bone": "head-control",
+                "x": -46.47,
+                "y": 44.98,
+                "weight": 0.85
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 70.7,
+                "y": 61.92,
+                "weight": 0.22175
+              },
+              {
+                "bone": "head-control",
+                "x": -39.51,
+                "y": 61.92,
+                "weight": 0.77825
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 62.88,
+                "y": 78.71,
+                "weight": 0.38
+              },
+              {
+                "bone": "head-control",
+                "x": -47.34,
+                "y": 78.71,
+                "weight": 0.62
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 46.53,
+                "y": 85.3,
+                "weight": 0.51
+              },
+              {
+                "bone": "head-control",
+                "x": -63.68,
+                "y": 85.3,
+                "weight": 0.49
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 29.92,
+                "y": 79.34,
+                "weight": 0.388
+              },
+              {
+                "bone": "head-control",
+                "x": -80.29,
+                "y": 79.34,
+                "weight": 0.612
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 15.08,
+                "y": 62.21,
+                "weight": 0.38
+              },
+              {
+                "bone": "head-control",
+                "x": -95.13,
+                "y": 62.21,
+                "weight": 0.62
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 14.09,
+                "y": 45.32,
+                "weight": 0.41
+              },
+              {
+                "bone": "head-control",
+                "x": -96.12,
+                "y": 45.32,
+                "weight": 0.59
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 24.3,
+                "y": 27.06,
+                "weight": 0.192
+              },
+              {
+                "bone": "head-control",
+                "x": -85.91,
+                "y": 27.06,
+                "weight": 0.808
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -61.57,
+                "y": 15.3,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 84.87,
+                "y": 62.14,
+                "weight": 0.16757
+              },
+              {
+                "bone": "head-control",
+                "x": -25.34,
+                "y": 62.14,
+                "weight": 0.83243
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 61.9,
+                "y": 94.84,
+                "weight": 0.68145
+              },
+              {
+                "bone": "head-control",
+                "x": -48.31,
+                "y": 94.84,
+                "weight": 0.31855
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 22.54,
+                "y": 21.88,
+                "weight": 0.16
+              },
+              {
+                "bone": "head-control",
+                "x": -87.67,
+                "y": 21.88,
+                "weight": 0.84
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 43.15,
+                "y": -95.95,
+                "weight": 0.73445
+              },
+              {
+                "bone": "head-control",
+                "x": -67.06,
+                "y": -95.95,
+                "weight": 0.26555
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 41.77,
+                "y": -87.24,
+                "weight": 0.67858
+              },
+              {
+                "bone": "head-control",
+                "x": -68.44,
+                "y": -87.24,
+                "weight": 0.32142
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 60.05,
+                "y": -70.36,
+                "weight": 0.50195
+              },
+              {
+                "bone": "head-control",
+                "x": -50.16,
+                "y": -70.36,
+                "weight": 0.49805
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 48.49,
+                "y": 51.09,
+                "weight": 0.25
+              },
+              {
+                "bone": "head-control",
+                "x": -61.72,
+                "y": 51.09,
+                "weight": 0.75
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 48.17,
+                "y": 73.71,
+                "weight": 0.15634
+              },
+              {
+                "bone": "head-control",
+                "x": -62.04,
+                "y": 73.71,
+                "weight": 0.84366
+              }
+            ]
+          ],
+          "hull": 29,
+          "edges": [
+            10,
+            8,
+            8,
+            6,
+            6,
+            4,
+            4,
+            2,
+            2,
+            0,
+            0,
+            56,
+            54,
+            56,
+            54,
+            52,
+            52,
+            50,
+            50,
+            48,
+            48,
+            46,
+            46,
+            44,
+            42,
+            44,
+            32,
+            34,
+            4,
+            58,
+            58,
+            60,
+            62,
+            64,
+            64,
+            66,
+            66,
+            54,
+            50,
+            68,
+            68,
+            70,
+            70,
+            44,
+            60,
+            72,
+            62,
+            74,
+            72,
+            74,
+            74,
+            76,
+            76,
+            78,
+            78,
+            44,
+            16,
+            80,
+            80,
+            82,
+            82,
+            84,
+            84,
+            86,
+            86,
+            44,
+            14,
+            88,
+            88,
+            72,
+            14,
+            16,
+            10,
+            12,
+            12,
+            14,
+            12,
+            60,
+            90,
+            92,
+            92,
+            94,
+            94,
+            96,
+            96,
+            98,
+            98,
+            100,
+            100,
+            102,
+            102,
+            104,
+            104,
+            106,
+            106,
+            90,
+            108,
+            110,
+            110,
+            112,
+            38,
+            40,
+            40,
+            42,
+            112,
+            40,
+            34,
+            36,
+            36,
+            38,
+            36,
+            114,
+            114,
+            108,
+            30,
+            32,
+            30,
+            28,
+            24,
+            26,
+            28,
+            26,
+            22,
+            24,
+            22,
+            20,
+            20,
+            18,
+            18,
+            16,
+            28,
+            116,
+            116,
+            118,
+            118,
+            120,
+            120,
+            20
+          ],
+          "width": 271,
+          "height": 298
+        }
+      },
+      "head-bb": {
+        "head": {
+          "type": "boundingbox",
+          "vertexCount": 6,
+          "vertices": [
+            -19.14,
+            -70.3,
+            40.8,
+            -118.08,
+            257.78,
+            -115.62,
+            285.17,
+            57.18,
+            120.77,
+            164.95,
+            -5.07,
+            76.95
+          ]
+        }
+      },
+      "hoverboard-board": {
+        "hoverboard-board": {
+          "type": "mesh",
+          "image": "hoverboard-board.png",
+          "uvs": [
+            0.13864607,
+            0.5662393,
+            0.1142763,
+            0.5146078,
+            0.07618786,
+            0.5210682,
+            0.023639273,
+            0.5299812,
+            0.012808947,
+            0.5318183,
+            0,
+            0.3797923,
+            0,
+            0.2205953,
+            0.005191774,
+            0.10824845,
+            0.010375012,
+            0.10726268,
+            0.03834171,
+            0.10194385,
+            0.05091461,
+            0,
+            0.08326002,
+            0,
+            0.10932894,
+            0.04206121,
+            0.13820295,
+            0.08864832,
+            0.18915813,
+            0.24067438,
+            0.22233906,
+            0.4063021,
+            0.23886204,
+            0.4406347,
+            0.8341238,
+            0.44034415,
+            0.8844377,
+            0.3829573,
+            0.9259101,
+            0.32638615,
+            0.959957,
+            0.2884101,
+            0.9861191,
+            0.2854167,
+            1,
+            0.38675195,
+            0.9949444,
+            0.471042,
+            0.9788285,
+            0.5325082,
+            0.9440907,
+            0.62135,
+            0.9020624,
+            0.6949223,
+            0.8656917,
+            0.7109357,
+            0.8282192,
+            0.7079088,
+            0.8128592,
+            0.7712708,
+            0.629307,
+            0.772659,
+            0.61364,
+            0.7064525,
+            0.4716633,
+            0.7066431,
+            0.4590079,
+            0.7782668,
+            0.2774682,
+            0.769859,
+            0.2657999,
+            0.7037184,
+            0.24976107,
+            0.7138066,
+            0.246009,
+            0.7782668,
+            0.230418,
+            0.8493069,
+            0.2092619,
+            0.9095554,
+            0.17298914,
+            1,
+            0.15076564,
+            0.9996735,
+            0.1290571,
+            0.9019248,
+            0.10369129,
+            0.736925,
+            0.10198391,
+            0.6248198,
+            0.0913133,
+            0.4727209,
+            0.09133468,
+            0.41324735,
+            0.15081826,
+            0.41867685,
+            0.2199145,
+            0.518557,
+            0.0633089,
+            0.10816091,
+            0.08382638,
+            0.2169557,
+            0.08905153,
+            0.3753241,
+            0.15903135,
+            0.5872583,
+            0.1753802,
+            0.6570573,
+            0.20118096,
+            0.8029049,
+            0.1791791,
+            0.5564352,
+            0.22166404,
+            0.5802012,
+            0.862594,
+            0.5796152,
+            0.9234568,
+            0.4853438,
+            0.9669095,
+            0.3688111,
+            0.09450015,
+            0.13259096,
+            0.12687987,
+            0.17830575,
+            0.15985525,
+            0.24681903,
+            0.18035573,
+            0.3126794,
+            0.2060718,
+            0.4235007,
+            0.16074103,
+            0.8540321,
+            0.1362352,
+            0.7012158,
+            0.12096038,
+            0.6404868,
+            0.02395992,
+            0.2181119,
+            0.027316555,
+            0.3783871,
+            0.025566524,
+            0.4971959,
+            0.14475645,
+            0.4573603,
+            0.18019417,
+            0.5168893,
+            0.19692187,
+            0.5663605
+          ],
+          "triangles": [
+            10,
+            11,
+            12,
+            9,
+            10,
+            12,
+            49,
+            9,
+            12,
+            60,
+            49,
+            12,
+            13,
+            60,
+            12,
+            61,
+            60,
+            13,
+            50,
+            49,
+            60,
+            50,
+            60,
+            61,
+            68,
+            8,
+            9,
+            68,
+            9,
+            49,
+            68,
+            49,
+            50,
+            7,
+            8,
+            68,
+            6,
+            7,
+            68,
+            61,
+            13,
+            14,
+            62,
+            61,
+            14,
+            50,
+            61,
+            62,
+            63,
+            62,
+            14,
+            59,
+            20,
+            21,
+            19,
+            20,
+            59,
+            51,
+            50,
+            62,
+            51,
+            62,
+            63,
+            51,
+            69,
+            68,
+            51,
+            68,
+            50,
+            6,
+            68,
+            69,
+            5,
+            6,
+            69,
+            18,
+            19,
+            59,
+            15,
+            63,
+            14,
+            59,
+            21,
+            22,
+            47,
+            51,
+            63,
+            47,
+            46,
+            51,
+            47,
+            63,
+            64,
+            15,
+            64,
+            63,
+            64,
+            15,
+            16,
+            71,
+            46,
+            47,
+            23,
+            59,
+            22,
+            69,
+            51,
+            70,
+            45,
+            46,
+            71,
+            70,
+            51,
+            2,
+            58,
+            18,
+            59,
+            58,
+            59,
+            23,
+            17,
+            18,
+            58,
+            70,
+            5,
+            69,
+            2,
+            51,
+            46,
+            1,
+            45,
+            71,
+            47,
+            48,
+            71,
+            47,
+            64,
+            48,
+            48,
+            72,
+            71,
+            1,
+            71,
+            72,
+            16,
+            48,
+            64,
+            45,
+            2,
+            46,
+            2,
+            45,
+            1,
+            70,
+            4,
+            5,
+            3,
+            70,
+            2,
+            3,
+            4,
+            70,
+            24,
+            58,
+            23,
+            72,
+            0,
+            1,
+            73,
+            55,
+            72,
+            55,
+            0,
+            72,
+            48,
+            73,
+            72,
+            57,
+            17,
+            58,
+            25,
+            57,
+            58,
+            56,
+            48,
+            16,
+            73,
+            48,
+            56,
+            56,
+            16,
+            17,
+            56,
+            17,
+            57,
+            52,
+            0,
+            55,
+            24,
+            25,
+            58,
+            44,
+            0,
+            52,
+            67,
+            44,
+            52,
+            52,
+            56,
+            53,
+            73,
+            52,
+            55,
+            56,
+            52,
+            73,
+            67,
+            52,
+            53,
+            26,
+            57,
+            25,
+            66,
+            67,
+            53,
+            56,
+            32,
+            35,
+            53,
+            56,
+            35,
+            56,
+            57,
+            32,
+            28,
+            31,
+            57,
+            57,
+            31,
+            32,
+            57,
+            27,
+            28,
+            26,
+            27,
+            57,
+            36,
+            53,
+            35,
+            43,
+            44,
+            67,
+            43,
+            67,
+            66,
+            34,
+            35,
+            32,
+            29,
+            31,
+            28,
+            30,
+            31,
+            29,
+            53,
+            54,
+            66,
+            53,
+            36,
+            54,
+            33,
+            34,
+            32,
+            37,
+            54,
+            36,
+            65,
+            43,
+            66,
+            38,
+            54,
+            37,
+            54,
+            65,
+            66,
+            39,
+            65,
+            54,
+            42,
+            43,
+            65,
+            38,
+            39,
+            54,
+            40,
+            42,
+            65,
+            40,
+            41,
+            42,
+            65,
+            39,
+            40
+          ],
+          "vertices": [
+            -189.36,
+            15.62,
+            -201.35,
+            23.47,
+            -220.09,
+            22.49,
+            -245.95,
+            21.13,
+            -251.28,
+            20.86,
+            -257.58,
+            43.96,
+            -257.57,
+            68.16,
+            -255.02,
+            85.24,
+            -252.47,
+            85.39,
+            -238.71,
+            86.2,
+            -232.52,
+            101.69,
+            -216.61,
+            101.69,
+            -203.78,
+            95.3,
+            -189.58,
+            88.21,
+            -164.51,
+            65.1,
+            -148.19,
+            39.93,
+            -140.06,
+            34.71,
+            152.82,
+            34.73,
+            177.57,
+            43.45,
+            197.97,
+            52.05,
+            214.72,
+            57.82,
+            227.6,
+            58.27,
+            234.42,
+            42.87,
+            231.94,
+            30.06,
+            224.01,
+            20.72,
+            206.91,
+            7.21,
+            186.23,
+            -3.97,
+            168.34,
+            -6.4,
+            149.9,
+            -5.94,
+            142.35,
+            -15.57,
+            52.04,
+            -15.77,
+            44.33,
+            -5.71,
+            -25.52,
+            -5.73,
+            -31.75,
+            -16.62,
+            -121.07,
+            -15.34,
+            -126.81,
+            -5.28,
+            -134.7,
+            -6.81,
+            -136.54,
+            -16.61,
+            -144.22,
+            -27.41,
+            -154.63,
+            -36.57,
+            -172.47,
+            -50.31,
+            -183.41,
+            -50.26,
+            -194.09,
+            -35.4,
+            -206.56,
+            -10.32,
+            -207.4,
+            6.72,
+            -212.65,
+            29.84,
+            -212.64,
+            38.88,
+            -183.37,
+            38.05,
+            -149.38,
+            22.86,
+            -226.43,
+            85.25,
+            -216.33,
+            68.71,
+            -213.76,
+            44.64,
+            -179.34,
+            12.42,
+            -171.29,
+            1.81,
+            -158.6,
+            -20.36,
+            -169.42,
+            17.11,
+            -148.52,
+            13.49,
+            166.82,
+            13.56,
+            196.76,
+            27.89,
+            218.14,
+            45.6,
+            -211.08,
+            81.54,
+            -195.15,
+            74.59,
+            -178.93,
+            64.17,
+            -168.84,
+            54.16,
+            -156.19,
+            37.31,
+            -178.5,
+            -28.13,
+            -190.55,
+            -4.9,
+            -198.07,
+            4.33,
+            -245.79,
+            68.54,
+            -244.14,
+            44.18,
+            -245,
+            26.12,
+            -186.36,
+            32.17,
+            -168.92,
+            23.12,
+            -160.69,
+            15.6
+          ],
+          "hull": 45,
+          "edges": [
+            0,
+            2,
+            8,
+            10,
+            10,
+            12,
+            12,
+            14,
+            18,
+            20,
+            20,
+            22,
+            26,
+            28,
+            28,
+            30,
+            30,
+            32,
+            32,
+            34,
+            34,
+            36,
+            36,
+            38,
+            38,
+            40,
+            40,
+            42,
+            42,
+            44,
+            44,
+            46,
+            46,
+            48,
+            48,
+            50,
+            50,
+            52,
+            52,
+            54,
+            54,
+            56,
+            56,
+            58,
+            58,
+            60,
+            60,
+            62,
+            62,
+            64,
+            64,
+            66,
+            66,
+            68,
+            68,
+            70,
+            70,
+            72,
+            72,
+            74,
+            80,
+            82,
+            82,
+            84,
+            84,
+            86,
+            86,
+            88,
+            0,
+            88,
+            2,
+            90,
+            90,
+            92,
+            92,
+            94,
+            94,
+            96,
+            96,
+            32,
+            18,
+            98,
+            98,
+            100,
+            100,
+            102,
+            2,
+            4,
+            102,
+            4,
+            92,
+            102,
+            0,
+            104,
+            104,
+            106,
+            106,
+            108,
+            78,
+            80,
+            108,
+            78,
+            74,
+            76,
+            76,
+            78,
+            62,
+            56,
+            64,
+            70,
+            0,
+            110,
+            112,
+            114,
+            114,
+            116,
+            116,
+            118,
+            118,
+            42,
+            50,
+            116,
+            114,
+            34,
+            98,
+            120,
+            120,
+            122,
+            22,
+            24,
+            24,
+            26,
+            120,
+            24,
+            122,
+            124,
+            124,
+            126,
+            126,
+            128,
+            128,
+            96,
+            80,
+            130,
+            130,
+            132,
+            132,
+            134,
+            134,
+            88,
+            14,
+            16,
+            16,
+            18,
+            136,
+            16,
+            136,
+            138,
+            138,
+            140,
+            4,
+            6,
+            6,
+            8,
+            140,
+            6,
+            96,
+            112,
+            92,
+            142,
+            142,
+            144,
+            110,
+            146,
+            146,
+            112,
+            144,
+            146
+          ],
+          "width": 492,
+          "height": 152
+        }
+      },
+      "hoverboard-thruster-front": {
+        "hoverboard-thruster": {
+          "image": "hoverboard-thruster.png",
+          "x": 0.021476746,
+          "y": -7.079941,
+          "rotation": 0.17448044,
+          "width": 60,
+          "height": 64
+        }
+      },
+      "hoverboard-thruster-rear": {
+        "hoverboard-thruster": {
+          "image": "hoverboard-thruster.png",
+          "x": 1.099083,
+          "y": -6.286655,
+          "rotation": 0.17448044,
+          "width": 60,
+          "height": 64
+        }
+      },
+      "hoverglow-front": {
+        "hoverglow-small": {
+          "image": "hoverglow-small.png",
+          "x": 2.129986,
+          "y": -1.9999886,
+          "rotation": 0.1500038,
+          "scaleX": 0.303,
+          "scaleY": 0.495,
+          "width": 274,
+          "height": 75
+        }
+      },
+      "hoverglow-rear": {
+        "hoverglow-small": {
+          "image": "hoverglow-small.png",
+          "x": 1.389984,
+          "y": -2.089989,
+          "rotation": 0.609827,
+          "scaleX": 0.303,
+          "scaleY": 0.495,
+          "width": 274,
+          "height": 75
+        }
+      },
+      "mouth": {
+        "mouth-grind": {
+          "type": "mesh",
+          "image": "mouth-grind.png",
+          "uvs": [
+            1,
+            1,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0
+          ],
+          "triangles": [
+            1,
+            3,
+            0,
+            1,
+            2,
+            3
+          ],
+          "weights": [
+            [
+              {
+                "bone": "head-control",
+                "x": -98.93,
+                "y": -85.88,
+                "weight": 0.22
+              },
+              {
+                "bone": "head",
+                "x": 11.28,
+                "y": -85.88,
+                "weight": 0.78
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -129.77,
+                "y": 1.84,
+                "weight": 0.6
+              },
+              {
+                "bone": "head",
+                "x": -19.56,
+                "y": 1.84,
+                "weight": 0.4
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -74.12,
+                "y": 21.41,
+                "weight": 0.6
+              },
+              {
+                "bone": "head",
+                "x": 36.09,
+                "y": 21.41,
+                "weight": 0.4
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -43.28,
+                "y": -66.32,
+                "weight": 0.4
+              },
+              {
+                "bone": "head",
+                "x": 66.93,
+                "y": -66.32,
+                "weight": 0.6
+              }
+            ]
+          ],
+          "hull": 4,
+          "edges": [
+            0,
+            2,
+            2,
+            4,
+            4,
+            6,
+            0,
+            6
+          ],
+          "width": 93,
+          "height": 59
+        },
+        "mouth-oooo": {
+          "type": "mesh",
+          "image": "mouth-oooo.png",
+          "uvs": [
+            1,
+            1,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0
+          ],
+          "triangles": [
+            1,
+            3,
+            0,
+            1,
+            2,
+            3
+          ],
+          "weights": [
+            [
+              {
+                "bone": "head",
+                "x": 11.28,
+                "y": -85.89,
+                "weight": 0.22
+              },
+              {
+                "bone": "head-control",
+                "x": -98.93,
+                "y": -85.89,
+                "weight": 0.78
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": -19.56,
+                "y": 1.85,
+                "weight": 0.6
+              },
+              {
+                "bone": "head-control",
+                "x": -129.78,
+                "y": 1.85,
+                "weight": 0.4
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 36.1,
+                "y": 21.42,
+                "weight": 0.6
+              },
+              {
+                "bone": "head-control",
+                "x": -74.12,
+                "y": 21.42,
+                "weight": 0.4
+              }
+            ],
+            [
+              {
+                "bone": "head",
+                "x": 66.94,
+                "y": -66.32,
+                "weight": 0.4
+              },
+              {
+                "bone": "head-control",
+                "x": -43.27,
+                "y": -66.32,
+                "weight": 0.6
+              }
+            ]
+          ],
+          "hull": 4,
+          "edges": [
+            0,
+            2,
+            2,
+            4,
+            4,
+            6,
+            0,
+            6
+          ],
+          "width": 93,
+          "height": 59
+        },
+        "mouth-smile": {
+          "type": "mesh",
+          "image": "mouth-smile.png",
+          "uvs": [
+            1,
+            1,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0
+          ],
+          "triangles": [
+            1,
+            3,
+            0,
+            1,
+            2,
+            3
+          ],
+          "weights": [
+            [
+              {
+                "bone": "head-control",
+                "x": -98.93,
+                "y": -85.89,
+                "weight": 0.21075
+              },
+              {
+                "bone": "head",
+                "x": 11.28,
+                "y": -85.89,
+                "weight": 0.78925
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -129.77,
+                "y": 1.85,
+                "weight": 0.6
+              },
+              {
+                "bone": "head",
+                "x": -19.56,
+                "y": 1.85,
+                "weight": 0.4
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -74.11,
+                "y": 21.42,
+                "weight": 0.6
+              },
+              {
+                "bone": "head",
+                "x": 36.1,
+                "y": 21.42,
+                "weight": 0.4
+              }
+            ],
+            [
+              {
+                "bone": "head-control",
+                "x": -43.27,
+                "y": -66.32,
+                "weight": 0.40772
+              },
+              {
+                "bone": "head",
+                "x": 66.94,
+                "y": -66.32,
+                "weight": 0.59228
+              }
+            ]
+          ],
+          "hull": 4,
+          "edges": [
+            0,
+            2,
+            2,
+            4,
+            4,
+            6,
+            0,
+            6
+          ],
+          "width": 93,
+          "height": 59
+        }
+      },
+      "muzzle": {
+        "muzzle01": {
+          "image": "muzzle01.png",
+          "x": 151.9714,
+          "y": 5.807556,
+          "rotation": 0.15336847,
+          "scaleX": 3.736082,
+          "scaleY": 3.736082,
+          "width": 133,
+          "height": 79
+        },
+        "muzzle02": {
+          "image": "muzzle02.png",
+          "x": 187.2479,
+          "y": 5.901977,
+          "rotation": 0.15336847,
+          "scaleX": 4.062283,
+          "scaleY": 4.062283,
+          "width": 135,
+          "height": 84
+        },
+        "muzzle03": {
+          "image": "muzzle03.png",
+          "x": 231.96396,
+          "y": 6.021667,
+          "rotation": 0.15336847,
+          "scaleX": 4.132498,
+          "scaleY": 4.132498,
+          "width": 166,
+          "height": 106
+        },
+        "muzzle04": {
+          "image": "muzzle04.png",
+          "x": 231.964,
+          "y": 6.021667,
+          "rotation": 0.15336847,
+          "scaleX": 4.004575,
+          "scaleY": 4.004575,
+          "width": 149,
+          "height": 90
+        },
+        "muzzle05": {
+          "image": "muzzle05.png",
+          "x": 293.8012,
+          "y": 6.187192,
+          "rotation": 0.15336847,
+          "scaleX": 4.467276,
+          "scaleY": 4.467276,
+          "width": 135,
+          "height": 75
+        }
+      },
+      "muzzle-glow": {
+        "muzzle-glow": {
+          "image": "muzzle-glow.png",
+          "width": 50,
+          "height": 50
+        }
+      },
+      "muzzle-ring": {
+        "muzzle-ring": {
+          "image": "muzzle-ring.png",
+          "x": -1.304802,
+          "y": 0.3222961,
+          "scaleX": 0.3147263,
+          "scaleY": 0.3147263,
+          "width": 49,
+          "height": 209
+        }
+      },
+      "muzzle-ring2": {
+        "muzzle-ring": {
+          "image": "muzzle-ring.png",
+          "x": -1.304802,
+          "y": 0.3222961,
+          "scaleX": 0.3147263,
+          "scaleY": 0.3147263,
+          "width": 49,
+          "height": 209
+        }
+      },
+      "muzzle-ring3": {
+        "muzzle-ring": {
+          "image": "muzzle-ring.png",
+          "x": -1.304802,
+          "y": 0.3222961,
+          "scaleX": 0.3147263,
+          "scaleY": 0.3147263,
+          "width": 49,
+          "height": 209
+        }
+      },
+      "muzzle-ring4": {
+        "muzzle-ring": {
+          "image": "muzzle-ring.png",
+          "x": -1.304802,
+          "y": 0.3222961,
+          "scaleX": 0.3147263,
+          "scaleY": 0.3147263,
+          "width": 49,
+          "height": 209
+        }
+      },
+      "neck": {
+        "neck": {
+          "image": "neck.png",
+          "x": 9.7695,
+          "y": -3.0127716,
+          "rotation": -55.22381,
+          "width": 36,
+          "height": 41
+        }
+      },
+      "portal-bg": {
+        "portal-bg": {
+          "image": "portal-bg.png",
+          "x": -3.0979004,
+          "y": 7.247131,
+          "scaleX": 1.04917,
+          "scaleY": 1.04917,
+          "width": 266,
+          "height": 266
+        }
+      },
+      "portal-flare1": {
+        "portal-flare1": {
+          "image": "portal-flare1.png",
+          "width": 111,
+          "height": 60
+        },
+        "portal-flare2": {
+          "image": "portal-flare2.png",
+          "width": 114,
+          "height": 61
+        },
+        "portal-flare3": {
+          "image": "portal-flare3.png",
+          "width": 115,
+          "height": 59
+        }
+      },
+      "portal-flare2": {
+        "portal-flare1": {
+          "image": "portal-flare1.png",
+          "width": 111,
+          "height": 60
+        },
+        "portal-flare2": {
+          "image": "portal-flare2.png",
+          "width": 114,
+          "height": 61
+        },
+        "portal-flare3": {
+          "image": "portal-flare3.png",
+          "width": 115,
+          "height": 59
+        }
+      },
+      "portal-flare3": {
+        "portal-flare1": {
+          "image": "portal-flare1.png",
+          "width": 111,
+          "height": 60
+        },
+        "portal-flare2": {
+          "image": "portal-flare2.png",
+          "width": 114,
+          "height": 61
+        },
+        "portal-flare3": {
+          "image": "portal-flare3.png",
+          "width": 115,
+          "height": 59
+        }
+      },
+      "portal-flare4": {
+        "portal-flare1": {
+          "image": "portal-flare1.png",
+          "width": 111,
+          "height": 60
+        },
+        "portal-flare2": {
+          "image": "portal-flare2.png",
+          "width": 114,
+          "height": 61
+        },
+        "portal-flare3": {
+          "image": "portal-flare3.png",
+          "width": 115,
+          "height": 59
+        }
+      },
+      "portal-flare5": {
+        "portal-flare1": {
+          "image": "portal-flare1.png",
+          "width": 111,
+          "height": 60
+        },
+        "portal-flare2": {
+          "image": "portal-flare2.png",
+          "width": 114,
+          "height": 61
+        },
+        "portal-flare3": {
+          "image": "portal-flare3.png",
+          "width": 115,
+          "height": 59
+        }
+      },
+      "portal-flare6": {
+        "portal-flare1": {
+          "image": "portal-flare1.png",
+          "width": 111,
+          "height": 60
+        },
+        "portal-flare2": {
+          "image": "portal-flare2.png",
+          "width": 114,
+          "height": 61
+        },
+        "portal-flare3": {
+          "image": "portal-flare3.png",
+          "width": 115,
+          "height": 59
+        }
+      },
+      "portal-flare7": {
+        "portal-flare1": {
+          "image": "portal-flare1.png",
+          "width": 111,
+          "height": 60
+        },
+        "portal-flare2": {
+          "image": "portal-flare2.png",
+          "width": 114,
+          "height": 61
+        },
+        "portal-flare3": {
+          "image": "portal-flare3.png",
+          "width": 115,
+          "height": 59
+        }
+      },
+      "portal-flare8": {
+        "portal-flare1": {
+          "image": "portal-flare1.png",
+          "width": 111,
+          "height": 60
+        },
+        "portal-flare2": {
+          "image": "portal-flare2.png",
+          "width": 114,
+          "height": 61
+        },
+        "portal-flare3": {
+          "image": "portal-flare3.png",
+          "width": 115,
+          "height": 59
+        }
+      },
+      "portal-flare9": {
+        "portal-flare1": {
+          "image": "portal-flare1.png",
+          "width": 111,
+          "height": 60
+        },
+        "portal-flare2": {
+          "image": "portal-flare2.png",
+          "width": 114,
+          "height": 61
+        },
+        "portal-flare3": {
+          "image": "portal-flare3.png",
+          "width": 115,
+          "height": 59
+        }
+      },
+      "portal-flare10": {
+        "portal-flare1": {
+          "image": "portal-flare1.png",
+          "width": 111,
+          "height": 60
+        },
+        "portal-flare2": {
+          "image": "portal-flare2.png",
+          "width": 114,
+          "height": 61
+        },
+        "portal-flare3": {
+          "image": "portal-flare3.png",
+          "width": 115,
+          "height": 59
+        }
+      },
+      "portal-shade": {
+        "portal-shade": {
+          "image": "portal-shade.png",
+          "width": 266,
+          "height": 266
+        }
+      },
+      "portal-streaks1": {
+        "portal-streaks1": {
+          "image": "portal-streaks1.png",
+          "scaleX": 0.9773776,
+          "scaleY": 0.9773776,
+          "width": 252,
+          "height": 256
+        }
+      },
+      "portal-streaks2": {
+        "portal-streaks2": {
+          "image": "portal-streaks2.png",
+          "x": -1.6380005,
+          "y": 2.793793,
+          "width": 250,
+          "height": 249
+        }
+      },
+      "rear-bracer": {
+        "rear-bracer": {
+          "image": "rear-bracer.png",
+          "x": 11.151097,
+          "y": -2.2033694,
+          "rotation": 66.17306,
+          "width": 56,
+          "height": 72
+        }
+      },
+      "rear-foot": {
+        "rear-foot": {
+          "type": "mesh",
+          "image": "rear-foot.png",
+          "uvs": [
+            0.4836849,
+            0.13870415,
+            0.5199078,
+            0.2142364,
+            0.5509983,
+            0.2790666,
+            0.588384,
+            0.2981607,
+            0.6348886,
+            0.3219122,
+            0.773423,
+            0.3926665,
+            1,
+            0.7334662,
+            1,
+            1,
+            0.5483075,
+            0.9988311,
+            0.3116092,
+            1,
+            0,
+            1,
+            0,
+            0.4139664,
+            0.1363084,
+            0,
+            0.4171667,
+            0
+          ],
+          "triangles": [
+            8,
+            3,
+            4,
+            8,
+            4,
+            5,
+            8,
+            5,
+            6,
+            8,
+            6,
+            7,
+            11,
+            1,
+            10,
+            3,
+            9,
+            2,
+            2,
+            10,
+            1,
+            12,
+            13,
+            0,
+            0,
+            11,
+            12,
+            1,
+            11,
+            0,
+            2,
+            9,
+            10,
+            3,
+            8,
+            9
+          ],
+          "weights": [
+            [
+              {
+                "bone": "rear-foot",
+                "x": 10.45,
+                "y": 29.41,
+                "weight": 0.90802
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": -6.74,
+                "y": 49.62,
+                "weight": 0.09198
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": 16.56,
+                "y": 29.27,
+                "weight": 0.84259
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": -2.65,
+                "y": 45.09,
+                "weight": 0.15741
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": 21.8,
+                "y": 29.15,
+                "weight": 0.69807
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": 0.85,
+                "y": 41.2,
+                "weight": 0.30193
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": 25.53,
+                "y": 31.43,
+                "weight": 0.52955
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": 5.08,
+                "y": 40.05,
+                "weight": 0.47045
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": 30.18,
+                "y": 34.27,
+                "weight": 0.39303
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": 10.33,
+                "y": 38.62,
+                "weight": 0.60697
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": 44.02,
+                "y": 42.73,
+                "weight": 0.27525
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": 25.98,
+                "y": 34.36,
+                "weight": 0.72475
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": 76.47,
+                "y": 47.28,
+                "weight": 0.21597
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": 51.56,
+                "y": 13.9,
+                "weight": 0.78403
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": 88.09,
+                "y": 36.29,
+                "weight": 0.28719
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": 51.55,
+                "y": -2.09,
+                "weight": 0.71281
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": 52.94,
+                "y": -0.73,
+                "weight": 0.47576
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": 0.52,
+                "y": -1.98,
+                "weight": 0.52424
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": 34.63,
+                "y": -20.23,
+                "weight": 0.68757
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": -26.23,
+                "y": -2.03,
+                "weight": 0.31243
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": 10.44,
+                "y": -45.81,
+                "weight": 0.84141
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": -61.43,
+                "y": -2,
+                "weight": 0.15859
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": -15.11,
+                "y": -21.64,
+                "weight": 0.93283
+              },
+              {
+                "bone": "back-foot-tip",
+                "x": -61.4,
+                "y": 33.15,
+                "weight": 0.06717
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": -22.57,
+                "y": 6.61,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "rear-foot",
+                "x": -0.76,
+                "y": 29.67,
+                "weight": 1
+              }
+            ]
+          ],
+          "hull": 14,
+          "edges": [
+            14,
+            12,
+            10,
+            12,
+            14,
+            16,
+            16,
+            18,
+            18,
+            20,
+            4,
+            18,
+            20,
+            22,
+            24,
+            26,
+            22,
+            24,
+            4,
+            2,
+            2,
+            20,
+            4,
+            6,
+            6,
+            16,
+            6,
+            8,
+            8,
+            10,
+            2,
+            0,
+            0,
+            26
+          ],
+          "width": 113,
+          "height": 60
+        }
+      },
+      "rear-shin": {
+        "rear-shin": {
+          "image": "rear-shin.png",
+          "x": 58.29028,
+          "y": -2.754337,
+          "rotation": 92.37433,
+          "width": 75,
+          "height": 178
+        }
+      },
+      "rear-thigh": {
+        "rear-thigh": {
+          "image": "rear-thigh.png",
+          "x": 33.10798,
+          "y": -4.11312,
+          "rotation": 72.541,
+          "width": 55,
+          "height": 94
+        }
+      },
+      "rear-upper-arm": {
+        "rear-upper-arm": {
+          "image": "rear-upper-arm.png",
+          "x": 21.125124,
+          "y": 4.087035,
+          "rotation": 89.326,
+          "width": 40,
+          "height": 87
+        }
+      },
+      "side-glow1": {
+        "hoverglow-small": {
+          "image": "hoverglow-small.png",
+          "x": 2.0941744,
+          "scaleX": 0.2352714,
+          "scaleY": 0.41317555,
+          "width": 274,
+          "height": 75
+        }
+      },
+      "side-glow2": {
+        "hoverglow-small": {
+          "image": "hoverglow-small.png",
+          "x": 2.0941744,
+          "scaleX": 0.2352714,
+          "scaleY": 0.41317555,
+          "width": 274,
+          "height": 75
+        }
+      },
+      "side-glow3": {
+        "hoverglow-small": {
+          "image": "hoverglow-small.png",
+          "x": 2.0941744,
+          "scaleX": 0.358589,
+          "scaleY": 0.6297418,
+          "width": 274,
+          "height": 75
+        }
+      },
+      "torso": {
+        "torso": {
+          "type": "mesh",
+          "image": "torso.png",
+          "uvs": [
+            0.6250965,
+            0.12672493,
+            1,
+            0.2636083,
+            1,
+            0.2887058,
+            1,
+            0.660211,
+            1,
+            0.6824525,
+            0.923239,
+            0.692587,
+            0.951158,
+            0.8496525,
+            0.7712399,
+            1,
+            0.4965475,
+            1,
+            0.2718115,
+            1,
+            0.1384236,
+            0.7719636,
+            0.09886348,
+            0.6817047,
+            0.05634972,
+            0.584707,
+            0,
+            0.45614165,
+            0,
+            0.3377818,
+            0,
+            0.1943639,
+            0.1446278,
+            0,
+            0.2780154,
+            0,
+            0.725248,
+            0.2783501,
+            0.7609111,
+            0.462161,
+            0.8488804,
+            0.6796275,
+            0.6825737,
+            0.6324945,
+            0.5398596,
+            0.38469505,
+            0.2544315,
+            0.3216951,
+            0.3006293,
+            0.5517359,
+            0.3955271,
+            0.795069,
+            0.2638947,
+            0.1700697,
+            0.5240986,
+            0.18673615,
+            0.7149173,
+            0.766553,
+            0.8215117,
+            0.7295553,
+            0.2762614,
+            0.4303966,
+            0.62327,
+            0.5295234,
+            0.3454993,
+            0.66679,
+            0.5324313,
+            0.2913962
+          ],
+          "triangles": [
+            18,
+            1,
+            2,
+            19,
+            2,
+            3,
+            18,
+            0,
+            1,
+            23,
+            15,
+            26,
+            27,
+            26,
+            16,
+            14,
+            15,
+            23,
+            15,
+            16,
+            26,
+            17,
+            27,
+            16,
+            13,
+            14,
+            23,
+            0,
+            27,
+            17,
+            13,
+            23,
+            30,
+            11,
+            12,
+            24,
+            21,
+            31,
+            19,
+            12,
+            13,
+            30,
+            24,
+            22,
+            31,
+            31,
+            22,
+            19,
+            12,
+            30,
+            24,
+            32,
+            24,
+            31,
+            24,
+            30,
+            22,
+            3,
+            20,
+            19,
+            32,
+            31,
+            21,
+            11,
+            24,
+            32,
+            4,
+            5,
+            3,
+            8,
+            28,
+            7,
+            7,
+            29,
+            6,
+            7,
+            28,
+            29,
+            9,
+            25,
+            8,
+            8,
+            25,
+            28,
+            9,
+            10,
+            25,
+            29,
+            5,
+            6,
+            10,
+            32,
+            25,
+            25,
+            21,
+            28,
+            25,
+            32,
+            21,
+            10,
+            11,
+            32,
+            28,
+            21,
+            29,
+            29,
+            20,
+            5,
+            29,
+            21,
+            20,
+            5,
+            20,
+            3,
+            20,
+            21,
+            19,
+            33,
+            26,
+            27,
+            22,
+            18,
+            19,
+            19,
+            18,
+            2,
+            33,
+            27,
+            18,
+            30,
+            23,
+            22,
+            22,
+            33,
+            18,
+            23,
+            33,
+            22,
+            33,
+            23,
+            26,
+            27,
+            0,
+            18
+          ],
+          "weights": [
+            [
+              {
+                "bone": "torso3",
+                "x": 44.59,
+                "y": -10.39,
+                "weight": 0.88
+              },
+              {
+                "bone": "back-shoulder",
+                "x": -17.65,
+                "y": 33.99,
+                "weight": 0.12
+              }
+            ],
+            [
+              {
+                "bone": "torso2",
+                "x": 59.65,
+                "y": -45.08,
+                "weight": 0.12189
+              },
+              {
+                "bone": "torso3",
+                "x": 17.13,
+                "y": -45.08,
+                "weight": 0.26811
+              },
+              {
+                "bone": "back-shoulder",
+                "x": 22.68,
+                "y": 15.82,
+                "weight": 0.61
+              }
+            ],
+            [
+              {
+                "bone": "torso2",
+                "x": 55.15,
+                "y": -44.72,
+                "weight": 0.1345
+              },
+              {
+                "bone": "torso3",
+                "x": 12.63,
+                "y": -44.72,
+                "weight": 0.2555
+              },
+              {
+                "bone": "back-shoulder",
+                "x": 23.43,
+                "y": 11.37,
+                "weight": 0.61
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 31.01,
+                "y": -39.45,
+                "weight": 0.51133
+              },
+              {
+                "bone": "torso2",
+                "x": -11.51,
+                "y": -39.45,
+                "weight": 0.30867
+              },
+              {
+                "bone": "back-shoulder",
+                "x": 34.58,
+                "y": -54.57,
+                "weight": 0.18
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 27.01,
+                "y": -39.14,
+                "weight": 0.53492
+              },
+              {
+                "bone": "torso2",
+                "x": -15.5,
+                "y": -39.14,
+                "weight": 0.28508
+              },
+              {
+                "bone": "back-shoulder",
+                "x": 35.25,
+                "y": -58.52,
+                "weight": 0.18
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 25.79,
+                "y": -31.5,
+                "weight": 0.75532
+              },
+              {
+                "bone": "torso2",
+                "x": -16.73,
+                "y": -31.5,
+                "weight": 0.24468
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": -2.61,
+                "y": -32,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": -28.2,
+                "y": -12.29,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": -26.08,
+                "y": 14.55,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": -24.35,
+                "y": 36.5,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 17.6,
+                "y": 46.3,
+                "weight": 0.8332
+              },
+              {
+                "bone": "torso2",
+                "x": -24.92,
+                "y": 46.3,
+                "weight": 0.1668
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 34.1,
+                "y": 48.89,
+                "weight": 0.59943
+              },
+              {
+                "bone": "torso2",
+                "x": -8.42,
+                "y": 48.89,
+                "weight": 0.40058
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 51.83,
+                "y": 51.67,
+                "weight": 0.29262
+              },
+              {
+                "bone": "torso2",
+                "x": 9.32,
+                "y": 51.67,
+                "weight": 0.63181
+              },
+              {
+                "bone": "torso3",
+                "x": -33.2,
+                "y": 51.67,
+                "weight": 0.07557
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 75.34,
+                "y": 55.35,
+                "weight": 0.06656
+              },
+              {
+                "bone": "torso2",
+                "x": 32.82,
+                "y": 55.35,
+                "weight": 0.62298
+              },
+              {
+                "bone": "torso3",
+                "x": -9.7,
+                "y": 55.35,
+                "weight": 0.31046
+              }
+            ],
+            [
+              {
+                "bone": "torso2",
+                "x": 54.06,
+                "y": 53.67,
+                "weight": 0.37296
+              },
+              {
+                "bone": "torso3",
+                "x": 11.54,
+                "y": 53.67,
+                "weight": 0.62704
+              }
+            ],
+            [
+              {
+                "bone": "torso2",
+                "x": 79.79,
+                "y": 51.64,
+                "weight": 0.10373
+              },
+              {
+                "bone": "torso3",
+                "x": 37.27,
+                "y": 51.64,
+                "weight": 0.89627
+              }
+            ],
+            [
+              {
+                "bone": "torso3",
+                "x": 71.04,
+                "y": 34.76,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "torso3",
+                "x": 70.01,
+                "y": 21.72,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": 36.74,
+                "y": 7.06,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": 45.7,
+                "y": -24.98,
+                "weight": 0.67
+              },
+              {
+                "bone": "torso2",
+                "x": 25.87,
+                "y": -18.9,
+                "weight": 0.3012
+              },
+              {
+                "bone": "torso3",
+                "x": -16.65,
+                "y": -18.9,
+                "weight": 0.0288
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 28.69,
+                "y": -24.42,
+                "weight": 0.77602
+              },
+              {
+                "bone": "torso2",
+                "x": -13.83,
+                "y": -24.42,
+                "weight": 0.22398
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": 43.24,
+                "y": -56.49,
+                "weight": 0.064
+              },
+              {
+                "bone": "torso",
+                "x": 38.43,
+                "y": -8.84,
+                "weight": 0.67897
+              },
+              {
+                "bone": "torso2",
+                "x": -4.09,
+                "y": -8.84,
+                "weight": 0.25703
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": 22.02,
+                "y": -14.85,
+                "weight": 0.29
+              },
+              {
+                "bone": "torso2",
+                "x": 41.48,
+                "y": 1.59,
+                "weight": 0.53368
+              },
+              {
+                "bone": "torso3",
+                "x": -1.04,
+                "y": 1.59,
+                "weight": 0.17632
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": -7.45,
+                "y": -8.33,
+                "weight": 0.76
+              },
+              {
+                "bone": "torso2",
+                "x": 54.98,
+                "y": 28.59,
+                "weight": 0.06693
+              },
+              {
+                "bone": "torso3",
+                "x": 12.46,
+                "y": 28.59,
+                "weight": 0.17307
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": 3.91,
+                "y": -48.4,
+                "weight": 0.25
+              },
+              {
+                "bone": "torso",
+                "x": 55.87,
+                "y": 27.33,
+                "weight": 0.15843
+              },
+              {
+                "bone": "torso2",
+                "x": 13.35,
+                "y": 27.33,
+                "weight": 0.59157
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 11.47,
+                "y": 21.51,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": -11.09,
+                "y": 18.74,
+                "weight": 0.416
+              },
+              {
+                "bone": "torso3",
+                "x": 39.6,
+                "y": 25.51,
+                "weight": 0.584
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": 14.56,
+                "y": 20.03,
+                "weight": 0.53
+              },
+              {
+                "bone": "torso3",
+                "x": 34.6,
+                "y": 0.33,
+                "weight": 0.47
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 14.12,
+                "y": -10.1,
+                "weight": 1
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 19.94,
+                "y": -21.03,
+                "weight": 0.92029
+              },
+              {
+                "bone": "torso2",
+                "x": -22.58,
+                "y": -21.03,
+                "weight": 0.07971
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": -2.08,
+                "y": -27.26,
+                "weight": 0.29
+              },
+              {
+                "bone": "torso2",
+                "x": 35.31,
+                "y": 27.99,
+                "weight": 0.49582
+              },
+              {
+                "bone": "torso3",
+                "x": -7.21,
+                "y": 27.99,
+                "weight": 0.21418
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": 34.42,
+                "y": -39.19,
+                "weight": 0.25
+              },
+              {
+                "bone": "torso2",
+                "x": 14.84,
+                "y": -4.5,
+                "weight": 0.75
+              }
+            ],
+            [
+              {
+                "bone": "torso",
+                "x": 34.87,
+                "y": 24.58,
+                "weight": 0.67349
+              },
+              {
+                "bone": "torso2",
+                "x": -7.64,
+                "y": 24.58,
+                "weight": 0.32651
+              }
+            ],
+            [
+              {
+                "bone": "front-shoulder",
+                "x": 18.5,
+                "y": 1.59,
+                "weight": 0.76
+              },
+              {
+                "bone": "torso3",
+                "x": 15.76,
+                "y": 1,
+                "weight": 0.24
+              }
+            ]
+          ],
+          "hull": 18,
+          "edges": [
+            14,
+            12,
+            12,
+            10,
+            10,
+            8,
+            18,
+            20,
+            32,
+            34,
+            30,
+            32,
+            2,
+            4,
+            36,
+            4,
+            36,
+            38,
+            38,
+            40,
+            4,
+            6,
+            6,
+            8,
+            40,
+            6,
+            40,
+            42,
+            14,
+            16,
+            16,
+            18,
+            50,
+            16,
+            46,
+            52,
+            54,
+            36,
+            2,
+            0,
+            0,
+            34,
+            54,
+            0,
+            54,
+            32,
+            20,
+            50,
+            14,
+            56,
+            56,
+            42,
+            50,
+            56,
+            56,
+            58,
+            58,
+            40,
+            58,
+            10,
+            46,
+            60,
+            60,
+            48,
+            26,
+            60,
+            60,
+            44,
+            24,
+            26,
+            24,
+            48,
+            42,
+            62,
+            62,
+            44,
+            48,
+            62,
+            48,
+            64,
+            64,
+            50,
+            42,
+            64,
+            20,
+            22,
+            22,
+            24,
+            64,
+            22,
+            26,
+            28,
+            28,
+            30,
+            28,
+            46,
+            44,
+            66,
+            66,
+            54,
+            46,
+            66,
+            66,
+            36,
+            62,
+            38
+          ],
+          "width": 98,
+          "height": 180
+        }
+      }
+    }
+  },
+  "constraints": [
+    {
+      "type": "transform",
+      "name": "shoulder",
+      "source": "front-shoulder",
+      "bones": [
+        "back-shoulder"
+      ],
+      "x": 40.16696,
+      "y": -1.6619568,
+      "properties": {
+        "x": {
+          "to": {
+            "x": {
+              "max": 100
+            }
+          }
+        },
+        "y": {
+          "to": {
+            "y": {
+              "max": 100
+            }
+          }
+        }
+      },
+      "mixX": -1
+    },
+    {
+      "type": "ik",
+      "name": "board-ik",
+      "target": "board-ik",
+      "bones": [
+        "hoverboard-controller"
+      ]
+    },
+    {
+      "type": "transform",
+      "name": "front-foot-board-transform",
+      "source": "hoverboard-controller",
+      "bones": [
+        "front-foot-target"
+      ],
+      "x": -69.8,
+      "y": 20.7,
+      "properties": {
+        "rotate": {
+          "to": {
+            "rotate": {
+              "max": 100
+            }
+          }
+        },
+        "x": {
+          "to": {
+            "x": {
+              "max": 100
+            }
+          }
+        },
+        "y": {
+          "to": {
+            "y": {
+              "max": 100
+            }
+          }
+        },
+        "scaleX": {
+          "to": {
+            "scaleX": {}
+          }
+        },
+        "scaleY": {
+          "to": {
+            "scaleY": {}
+          }
+        },
+        "shearY": {
+          "to": {
+            "shearY": {
+              "max": 100
+            }
+          }
+        }
+      },
+      "mixRotate": 0,
+      "mixX": 0,
+      "mixScaleX": 0,
+      "mixShearY": 0
+    },
+    {
+      "type": "transform",
+      "name": "rear-foot-board-transform",
+      "source": "hoverboard-controller",
+      "bones": [
+        "rear-foot-target"
+      ],
+      "x": 86.6,
+      "y": 21.3,
+      "properties": {
+        "rotate": {
+          "to": {
+            "rotate": {
+              "max": 100
+            }
+          }
+        },
+        "x": {
+          "to": {
+            "x": {
+              "max": 100
+            }
+          }
+        },
+        "y": {
+          "to": {
+            "y": {
+              "max": 100
+            }
+          }
+        },
+        "scaleX": {
+          "to": {
+            "scaleX": {}
+          }
+        },
+        "scaleY": {
+          "to": {
+            "scaleY": {}
+          }
+        },
+        "shearY": {
+          "to": {
+            "shearY": {
+              "max": 100
+            }
+          }
+        }
+      },
+      "mixRotate": 0,
+      "mixX": 0,
+      "mixScaleX": 0,
+      "mixShearY": 0
+    },
+    {
+      "type": "ik",
+      "name": "front-leg-ik",
+      "target": "front-leg-target",
+      "bones": [
+        "front-thigh",
+        "front-shin"
+      ],
+      "bendPositive": false
+    },
+    {
+      "type": "ik",
+      "name": "rear-leg-ik",
+      "target": "rear-leg-target",
+      "bones": [
+        "rear-thigh",
+        "rear-shin"
+      ],
+      "bendPositive": false
+    },
+    {
+      "type": "ik",
+      "name": "front-foot-ik",
+      "target": "front-foot-target",
+      "bones": [
+        "front-foot"
+      ]
+    },
+    {
+      "type": "ik",
+      "name": "rear-foot-ik",
+      "target": "rear-foot-target",
+      "bones": [
+        "rear-foot"
+      ]
+    },
+    {
+      "type": "ik",
+      "name": "aim-torso-ik",
+      "target": "crosshair",
+      "bones": [
+        "aim-constraint-target"
+      ]
+    },
+    {
+      "type": "transform",
+      "name": "aim-torso-transform",
+      "source": "aim-constraint-target",
+      "bones": [
+        "torso"
+      ],
+      "rotation": 69.5,
+      "properties": {
+        "rotate": {
+          "to": {
+            "rotate": {
+              "max": 100
+            }
+          }
+        }
+      },
+      "mixRotate": 0
+    },
+    {
+      "type": "transform",
+      "name": "aim-head-transform",
+      "source": "aim-constraint-target",
+      "bones": [
+        "head"
+      ],
+      "rotation": 84.3,
+      "properties": {
+        "rotate": {
+          "to": {
+            "rotate": {
+              "max": 100
+            }
+          }
+        }
+      },
+      "mixRotate": 0
+    },
+    {
+      "type": "transform",
+      "name": "aim-front-arm-transform",
+      "source": "aim-constraint-target",
+      "bones": [
+        "front-upper-arm"
+      ],
+      "rotation": -180,
+      "properties": {
+        "rotate": {
+          "to": {
+            "rotate": {
+              "max": 100
+            }
+          }
+        }
+      },
+      "mixRotate": 0
+    },
+    {
+      "type": "ik",
+      "name": "aim-ik",
+      "target": "crosshair",
+      "bones": [
+        "rear-upper-arm"
+      ],
+      "mix": 0
+    },
+    {
+      "type": "transform",
+      "name": "toes-board",
+      "source": "hoverboard-controller",
+      "bones": [
+        "front-foot-tip",
+        "back-foot-tip"
+      ],
+      "properties": {
+        "rotate": {
+          "to": {
+            "rotate": {
+              "max": 100
+            }
+          }
+        }
+      },
+      "mixRotate": 0
+    }
+  ],
+  "events": {
+    "footstep": {}
+  }
+}
