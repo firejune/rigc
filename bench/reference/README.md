@@ -86,8 +86,9 @@ in the next tile.
 | 4 | `4-wave-principle` | `ball-catch` 121, `wave-by-hand` 17, `wave-offset` 17 | `--fps 12 --max 768 --tile 256`, then the same at `--fps 24 --stride 999` | 768×634 | 1.4 MB |
 | 5 | `5-squash-and-stretch` | `ball` 79, `speedy` 79, `ball-ready-to-animate` 1 | `--fps 12 --max 192`, then `--fps 24 --stride 999 --tile 96` | 192×124 | 2.8 MB |
 | 6 | `6-arcs` | `arcs` 69 | `--fps 12 --max 512 --tile 171`, then the same at `--fps 24 --stride 999` | 512×137 | 1.2 MB |
+| 8 | `8-follow-through` | `ball/follow-through` 45, `pendulum/follow-through` 45 | `--fps 12 --max 512 --tile 171`, then the same at `--fps 24` | 512×413 / 512×381 | 2.9 MB |
 
-Four of those settings are not defaults, and each is a trade worth knowing:
+Five of those settings are not defaults, and each is a trade worth knowing:
 
 - **rung 2 keeps only the sheets.** 1,244 frames of a static obstacle course is
   over sixty megabytes as separate files and about a seventeenth of that as four
@@ -106,14 +107,27 @@ Four of those settings are not defaults, and each is a trade worth knowing:
   which the ball is 12–13 px across — enough to measure the shape changes the rung
   is about. 640 px was measured at 1.7 MB, over budget; 384 px puts the ball at
   9 px and loses them.
+- **rung 8 keeps both rates in full** — no `--stride`, 88 written frames per
+  skeleton at 24 fps as well as 45 at 12. Two reasons, and the second is the more
+  important. ⓐ Its `ball` shot is the fastest on the ladder: the comet moves up to
+  **155 px between two consecutive 12 fps frames**, and its hardest event — a launch
+  covering 122 px in one 24 fps frame — falls between two 12 fps samples entirely,
+  so at 12 fps alone that shot cannot be read. ⓑ Rung 6's revision 2 shipped a set
+  of 24 fps figures measured on frames that were rendered at the time and never
+  committed, so nothing downstream could check them; committing the whole set is
+  what makes a 24 fps claim verifiable. 512 px puts the comet's ball at ~22 px and
+  the pendulum's discus at ~110 px, and the whole rung at 2.9 MB.
 
 ⚠️ **Rung 6 is the first set whose subject deforms**, and it exists because
 `src/render.ts` learned to rasterise mesh attachments (#27). Before that the
 renderer refused this rung by name and the frame-fidelity lane stopped at rung 5.
 
 A rung with more than one skeleton nests them: `1-weight-and-mass/balls/…` and
-`1-weight-and-mass/drop/…`. They are two shots that share an atlas, they are framed
-independently, and pooling their frames in one directory would suggest otherwise.
+`1-weight-and-mass/drop/…`, `8-follow-through/ball/…` and
+`8-follow-through/pendulum/…`. They are two shots that share an atlas, they are
+framed independently, and pooling their frames in one directory would suggest
+otherwise. The `license.txt` sits at the example root, above the skeleton
+directories, because the grant is the example's and not either shot's.
 
 ## Licence — read before adding a rung
 

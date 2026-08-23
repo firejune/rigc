@@ -1,0 +1,41 @@
+{
+  "spec": "rigc-frames/1",
+  "example": "8-follow-through",
+  "rung": "8",
+  "skeleton": "ball",
+  "background": [
+    232,
+    232,
+    232,
+    255
+  ],
+  "viewport": {
+    "x": -1710.9096116834667,
+    "y": -149.4929030720042,
+    "width": 3586.501004125695,
+    "height": 2890.693477805966,
+    "scale": 0.1427575231154337,
+    "pixelWidth": 512,
+    "pixelHeight": 413
+  },
+  "sets": [
+    {
+      "dir": "follow-through",
+      "animation": "follow-through",
+      "fps": 12,
+      "sampled": 45,
+      "written": 45,
+      "stride": 1,
+      "duration": 3.6666666666666665
+    },
+    {
+      "dir": "follow-through@24fps",
+      "animation": "follow-through",
+      "fps": 24,
+      "sampled": 88,
+      "written": 88,
+      "stride": 1,
+      "duration": 3.625
+    }
+  ]
+}

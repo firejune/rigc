@@ -29,14 +29,18 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 | 4 | [`4-wave-principle.md`](../briefs/4-wave-principle.md) | rev 2, 2026-08-23 | 3 animations, 12 fps + 24 fps sheets | 1 | one shared viewport; in `ball-catch` the whole rig travels, not just the ball |
 | 5 | [`5-squash-and-stretch.md`](../briefs/5-squash-and-stretch.md) | rev 2, 2026-08-23 | 3 animations, 12 fps + 24 fps sheets | 1 | subject ~4–16 px; proportions are measured, not seen |
 | 6 | [`6-arcs.md`](../briefs/6-arcs.md) | **yes (third party)**, rev 3, 2026-08-23 | 1 animation, 12 fps + 24 fps sheet | 1 | the subject **deforms**; ball ~14 px; proportions are measured, not seen |
-| 7, 8, spineboy | — | — | — | — | not prepared. `7-anticipation` has no upstream `license.txt` at all, so `render_reference.ts` refuses it and it must never be rendered |
+| 8 | [`8-follow-through.md`](../briefs/8-follow-through.md) | **no** | 2 skeletons, 1 animation each, 12 **and** 24 fps in full | **2** | two shots that want opposite machinery — `pendulum` deforms nothing, `ball` deforms on most frames; the `ball` shot moves up to 155 px between two 12 fps frames, so read it at 24 fps |
+| 7, spineboy | — | — | — | — | not prepared. `7-anticipation` has no upstream `license.txt` at all, so `render_reference.ts` refuses it and it must never be rendered |
 
 **Brief verified** is the header block described in the next section. Rungs 3 and 1
 were attempted before the rule existed; their briefs still need the pass, and until
 they get it a run against either of them carries the risk the section names. Rung 6
 is the first brief to carry the pass the protocol actually asks for — a **different**
 agent, not the one that wrote it; rungs 2, 4 and 5 were re-measured by their own
-author and their headers say so.
+author and their headers say so. Rung 8's brief is new and **unverified**: it states
+its estimators and their controls in its own header so that the verifying pass can
+attack the method as well as the digits, and it collects what the frames could not
+decide in a section of its own.
 
 ⚠️ **"Re-measured twice" is not the same as "verified".** Rung 6's revision 2 was a
 second pass by the writing agent, with different machinery throughout, and it still
