@@ -31,6 +31,7 @@ import {
   type RigSpec,
 } from './rig.ts';
 import { buildRibbonMesh, buildRingMesh, encodeWeightedVertices, MeshError, type MeshBoneRef } from './mesh.ts';
+import { KEY_TIME_EPSILON } from './timelines.ts';
 import {
   computeWorldTransforms,
   cropToSpineY,
@@ -74,6 +75,31 @@ const FRAME = 1 / 60;
 function r6(n: number): number {
   const v = Math.round(n * 1e6) / 1e6;
   return v === 0 ? 0 : v;
+}
+
+/**
+ * Rule 4, per timeline: no key may land past the animation's declared duration.
+ *
+ * Rule 4 itself compares one number per animation — the largest key time across
+ * every track — so a single track sitting on the declared duration answers for
+ * all of them, and a key past the end on some *other* track is invisible to it.
+ * That is exactly how rung 6 lost a one-frame attachment reveal; the tolerance
+ * story is in `KEY_TIME_EPSILON`.
+ *
+ * This is a refusal rather than an assertion because the key is the thing to
+ * change and the motion spec is the file it lives in: the message has to name
+ * the track and the key, and by gate time both are gone — the emitted skeleton
+ * carries no declared duration at all, which is why Rule 4 exists.
+ */
+function checkKeyTime(where: string, time: number, authored: number, duration: number): void {
+  const past = time - duration;
+  if (past <= KEY_TIME_EPSILON) return;
+  const at = time === authored ? `${time}s` : `t=${authored}, ${time}s after lag/stagger`;
+  throw new CompileError(
+    `${where}: key at ${at} is ${r6(past)}s past the declared duration ${duration}s — nothing that plays this ` +
+      `animation for the duration it declares ever reaches it. Move the key to ${duration}, or declare the ` +
+      `duration you meant.`,
+  );
 }
 
 function channelHex(v: number): string {
@@ -722,10 +748,10 @@ export function compile(opts: CompileOptions): CompileResult {
 
         const shift = (track.lag ?? 0) + (track.stagger ?? 0) * index;
         const keys = isPhysicsTrack
-          ? compileValueTrack(track, motion, animName, target, shift, PHYSICS_TRACKS, 'physics constraint')
+          ? compileValueTrack(track, motion, animName, anim.duration, target, shift, PHYSICS_TRACKS, 'physics constraint')
           : isBoneTrack
-            ? compileValueTrack(track, motion, animName, target, shift, BONE_TRACKS, 'bone')
-            : compileTrack(track, motion, animName, target, shift, tableFor('default'));
+            ? compileValueTrack(track, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
+            : compileTrack(track, motion, animName, anim.duration, target, shift, tableFor('default'));
         for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
         if (isPhysicsTrack) (physicsTimelines[target] ??= {})[track.property] = keys;
         else if (isBoneTrack) (boneTimelines[target] ??= {})[track.property] = keys;
@@ -733,11 +759,18 @@ export function compile(opts: CompileOptions): CompileResult {
       });
     }
 
-    const drawOrder = anim.drawOrder ? compileDrawOrder(anim.drawOrder, animName, slots) : null;
+    const drawOrder = anim.drawOrder ? compileDrawOrder(anim.drawOrder, animName, anim.duration, slots) : null;
     if (drawOrder) for (const key of drawOrder) compiledDuration = Math.max(compiledDuration, key.time as number);
 
     // Rule 4: the declared duration is verified, because skeleton JSON does not
     // carry one — the loader takes the max key time.
+    //
+    // This arm is about the DECLARED DURATION being wrong, so it compares one
+    // number per animation and tolerates a frame of it. The other arm —
+    // `checkKeyTime`, above, per key — is about a key landing past the end, and
+    // a frame is 16,667 times too coarse to see one. Both are needed: this one
+    // catches an animation that stops a second early, and only that one catches
+    // a key on a track whose neighbour already sits on the declared duration.
     if (Math.abs(compiledDuration - anim.duration) > FRAME) {
       throw new CompileError(
         `animation "${animName}" declares duration ${anim.duration}s but its last key is at ${compiledDuration}s`,
@@ -1557,6 +1590,7 @@ function compileValueTrack(
   track: MotionTrack,
   motion: MotionSpec,
   animName: string,
+  duration: number,
   target: string,
   shift: number,
   shapes: Record<string, { fields: string[]; identity: number[] }>,
@@ -1575,6 +1609,7 @@ function compileValueTrack(
     if (i > 0 && time <= (out[i - 1].time as number)) {
       throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
     }
+    checkKeyTime(where, time, key.t, duration);
     // A no-field timeline (`reset`) is an event: the key IS the value, so it
     // carries none. Anything else must match the field count exactly.
     if (shape.fields.length === 0) {
@@ -1654,7 +1689,12 @@ function compileValueTrack(
  * other side, on the emitted file, because a hand-written or foreign skeleton
  * never passed through this function.
  */
-function compileDrawOrder(keys: MotionDrawOrderKey[], animName: string, slots: SpineSlot[]): SpineTimelineKey[] {
+function compileDrawOrder(
+  keys: MotionDrawOrderKey[],
+  animName: string,
+  duration: number,
+  slots: SpineSlot[],
+): SpineTimelineKey[] {
   const where = `animation "${animName}" drawOrder`;
   if (!keys.length) throw new CompileError(`${where}: no keys`);
   const indexOf = new Map(slots.map((s, i) => [s.name, i]));
@@ -1666,6 +1706,7 @@ function compileDrawOrder(keys: MotionDrawOrderKey[], animName: string, slots: S
     if (i > 0 && time <= (out[i - 1].time as number)) {
       throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
     }
+    checkKeyTime(where, time, key.t, duration);
     // No offsets = "back to the setup draw order", which is the parser's own
     // encoding for it. An empty array means the same thing and is written the
     // same way, so that two spellings cannot emit two different files.
@@ -1749,6 +1790,7 @@ function compileTrack(
   track: MotionTrack,
   motion: MotionSpec,
   animName: string,
+  duration: number,
   target: string,
   shift: number,
   skinAttachments: Record<string, Record<string, SpineAttachment>>,
@@ -1764,6 +1806,7 @@ function compileTrack(
     if (i > 0 && time <= (out[i - 1].time as number)) {
       throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
     }
+    checkKeyTime(where, time, key.t, duration);
 
     if (track.property === 'attachment') {
       if (key.v !== null && typeof key.v !== 'string') {
