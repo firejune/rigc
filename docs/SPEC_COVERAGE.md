@@ -538,7 +538,9 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 | --- | --- |
 | `name`, `parent`, `x`, `y` | ✅ |
 | `rotation` | ✅ — emitted only when non-zero; comes from `manifest.axis.deg` or a per-anchor facing angle, screen→Spine converted (`transform.ts`) |
-| `length`, `scaleX`, `scaleY`, `shearX`, `shearY`, `inherit`, `skin`, `color`, `icon*` | ❌ |
+| `length`, `scaleX`, `scaleY`, `shearX`, `shearY`, `inherit`, `skin`, `color` | ✅ — copied from the rig spec when it gives them, omitted when it does not |
+| `icon` | ✅ — copied verbatim, unchecked; it is the editor's vocabulary, not rigc's (issue #47) |
+| `iconSize`, `iconRotation` | ❌ |
 | bone `visible` | ❌ (JSON-inexpressible anyway, §1.10) |
 
 **Slots** (`compile.ts:466-524`; type at `types.ts:294-299`)
@@ -975,8 +977,9 @@ Nothing structurally new (attachment timeline, blend, inherit all arrived by run
 > field-by-field comparison against the reference export leaves 49 differences and
 > every one is benign: 39 are defaults rigc writes explicitly where the editor
 > omits them, 3 are editor bookkeeping (`hash`, `images`, `audio`), 1 is the runtime
-> version string, and **6 are bone `icon`** — an editor decoration the rig spec has
-> no field for and the only thing here it cannot say (issue #47). What did not
+> version string, and **6 are bone `icon`** — an editor decoration the rig spec had
+> no field for and the only thing here it could not say. `RigBone.icon` carries it
+> since issue #47; the transcription itself has not been re-cut. What did not
 > survive contact is noted per row.
 
 | Cat | Requirement |

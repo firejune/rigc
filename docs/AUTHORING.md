@@ -292,6 +292,7 @@ it would simply be a second root.
 | `inherit` | `normal` · `onlyTranslation` · `noRotationOrReflection` · `noScale` · `noScaleOrReflection` | `normal` |
 | `skin` | `BoneData.skinRequired` | `false` |
 | `color` | `rrggbbaa`, editor affordance | — |
+| `icon` | the editor's icon for this bone, e.g. `arrowsB`; editor affordance, no rendering effect. Copied through verbatim — no assertion checks the name, because the icon vocabulary is the editor's and an unknown one is not an error | — |
 | `from` | **rigc extension** — take `x`/`y` (and optionally `rotation`) from a cut manifest | — |
 
 ⚠️ Spine 4.0/4.1 called `inherit` **`transform`**. That old key still *loads* in 4.3

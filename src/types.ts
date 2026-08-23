@@ -389,6 +389,8 @@ export interface SpineBone {
   inherit?: string;
   skin?: boolean;
   color?: string;
+  /** Editor-only affordance, read at `SkeletonJson.ts:121-126`. */
+  icon?: string;
 }
 
 export interface SpineSlot {
