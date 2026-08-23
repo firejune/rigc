@@ -505,7 +505,12 @@ stepped.
   looked right — and the reveal never appeared. If you want a key on the last
   sample, write the duration's own value; if you want the animation to run longer,
   say so in `duration`.
-- `ease` names an entry of `easings`, or the literal `"stepped"`. Absent = linear.
+- `ease` names an entry of `easings`, or the literal `"stepped"`. Absent = linear —
+  and that is **rigc's** default, not the editor's habit. A new key in the editor is
+  linear, but one placed between Bezier keys is not, and §10.4's rule from Spine's own
+  pages is that Bezier is the shape to adopt and linear the one you argue for. So
+  leaving `ease` off is a positive claim of constant speed, not a way of declining to
+  decide; §8 has what that bet cost on the ladder.
 - `curve` is the raw form: **four numbers per value channel**, concatenated in field
   order, as absolute `(time, value)` control points. A short array multiplies
   `undefined` into the cubic and yields `NaN` with no error, so rigc length- and
@@ -773,6 +778,25 @@ in a static reading of the file can find that, because both candidates for the
 shape are legal and the file reads fine either way, and a symmetric pair of easings
 looks the same in every listing. Curves are where the error lives; §9 is how you
 find it.
+
+**But linear is not the neutral option.** The frames genuinely underdetermine a
+curve: at rung 6's 12 fps, with keys landing every one to three frames, there is
+almost nothing left for a handle shape to be constrained by, and **there is no
+principled way to estimate one from frame spacing alone — rigc does not offer one and
+this guide does not invent one.** `diff`'s `curve_kinds` counts how many keys are
+linear, stepped or bezier and never compares two handle shapes; `check` measures the
+rendered result, so it can tell you a curve is *wrong* without telling you what it
+should have been. What does not follow is that omitting `ease` abstains. It authors
+constant speed on every span — the one shape a hand-animated reference almost never
+has (§10.4) — and the ladder has measured both sides of that bet. Rung 6 keyed
+everything linear for exactly the reasoning above and scored `curve_kinds` **34/539**,
+its single largest structural gap. Rung 3's second attempt — same brief, same frames —
+applied §10.4's rule instead and went 41/69 → 49/69, with `key_counts` rising beside
+it and every other section figure unchanged. ⇒ Take the curve *kind* from what the motion does — starts, stops,
+accelerates, settles, falls — rather than from how far apart the keys are; take its
+shape from §10.4's automatic-handle advice and a small reused `easings` table; and
+leave `check` to catch the one thing no static reading can, an easing applied the
+wrong way round.
 
 ---
 
