@@ -42,7 +42,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { MeshAttachment, Physics, Skeleton, type SkeletonData } from '@esotericsoftware/spine-core';
+import { EventTimeline, MeshAttachment, Physics, Skeleton, type SkeletonData } from '@esotericsoftware/spine-core';
 import { assertFrameReadable, checkAgainstFrames, type CheckReport, type FrameChange } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
@@ -425,6 +425,69 @@ const MUTANTS: Mutant[] = [
           vertexCount: 4,
           vertices: [0, 0, 64, 0, 64, 64, 0, 64],
         };
+      }),
+    }),
+  },
+  {
+    // The three event mutants are one claim in three parts, and they need each
+    // other: the accepted one proves the assertion is not simply refusing every
+    // event timeline, and the two breaks are the only failure modes of an event
+    // timeline that a runtime does not shout about.
+    name: 'M45a_event_timeline_is_accepted_when_it_resolves',
+    origin: 'the positive control for A32 — a declared event fired once in order is ordinary, correct Spine 4.3',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).events = { probe_step: { int: 2 } };
+        const anim = Object.values((j as any).animations)[0] as any;
+        anim.events = [{ time: 0, name: 'probe_step' }];
+      }),
+    }),
+  },
+  {
+    name: 'M45b_event_key_fires_an_undeclared_event',
+    origin: 'SkeletonJson.ts:1244 — findEvent returns null and readAnimation throws, in the CONSUMER’s process',
+    expect: 'A32_EVENT_KEYS_RESOLVE',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).events = { probe_step: {} };
+        const anim = Object.values((j as any).animations)[0] as any;
+        anim.events = [{ time: 0, name: 'probe_stpe' }];
+      }),
+    }),
+  },
+  {
+    name: 'M45c_event_key_times_go_backwards',
+    origin:
+      'SkeletonJson.ts:1241 — frames are filled in ARRAY order and never sorted, so a decreasing time builds ' +
+      'an EventTimeline whose earlier firing is unreachable, with a perfectly clean load',
+    expect: 'A32_EVENT_KEYS_RESOLVE',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).events = { probe_step: {} };
+        const anim = Object.values((j as any).animations)[0] as any;
+        anim.events = [
+          { time: 0.5, name: 'probe_step' },
+          { time: 0.25, name: 'probe_step' },
+        ];
+      }),
+    }),
+  },
+  {
+    name: 'M45d_event_key_sets_volume_on_a_silent_event',
+    origin:
+      'SkeletonJson.ts:1254-1257 — volume and balance are read only inside `if (event.data.audioPath)`, ' +
+      'so on an event with no audio path they are two numbers nothing will ever read',
+    expect: 'A32_EVENT_KEYS_RESOLVE',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).events = { probe_step: {} };
+        const anim = Object.values((j as any).animations)[0] as any;
+        anim.events = [{ time: 0, name: 'probe_step', volume: 0.5 }];
       }),
     }),
   },
@@ -1826,8 +1889,15 @@ interface ProbeDirs {
   outDir: string;
 }
 
-/** A two-slot rig spec plus its art, written fresh into a temp directory. */
-function writeProbeRig(): ProbeDirs {
+/**
+ * A two-slot rig spec plus its art, written fresh into a temp directory.
+ *
+ * `extra` is merged over the spec, so a suite that needs one more block — an
+ * `events` table, an attachment the base probe does not carry — states just that
+ * block instead of forking a second near-identical rig. The base spec stays the
+ * one every other suite already runs against.
+ */
+function writeProbeRig(extra: Record<string, unknown> = {}): ProbeDirs {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-static-'));
   writeProbePng(join(dir, 'block.png'), 12, 8, [40, 60, 90, 255]);
   writeProbePng(join(dir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
@@ -1850,6 +1920,7 @@ function writeProbeRig(): ProbeDirs {
             marker: { marker: { image: 'marker.png' } },
           },
         },
+        ...extra,
       },
       null,
       2,
@@ -2270,6 +2341,159 @@ function runKeyTimeSuite(): number {
       : `[${far.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'the two layers read different grids: 1e-6 s is fixed, a float32 step at 32 s is 3.8e-6 s and at 5 s is 4.8e-7 s',
   );
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// event definitions and event timelines
+// ---------------------------------------------------------------------------
+//
+// ⭐ An event is the one thing a skeleton emits that is not geometry and not a
+// pose: the name is structure (the rig spec declares it), the firing is time
+// (the motion spec keys it), and a game listens for it. Nothing in the owning
+// project's fixtures declares one, so without this suite the emitter would ship
+// with no control at all — and the spineboy rung of the ladder needs them.
+//
+// The round-trip case is the reason this is a suite and not four more refusals.
+// A compile refusal proves the compiler said no; it says nothing about whether
+// the thing it DOES emit arrives at the runtime intact. So the control below
+// loads the emitted skeleton through spine-core and reads the name, the time and
+// the int payload back off the `EventTimeline`.
+
+const EVENT_RIG = {
+  events: {
+    footfall: { int: 1 },
+    voiced: { audio: 'voiced.ogg', volume: 0.8 },
+  },
+};
+
+/** A motion spec whose single animation carries only an event timeline. */
+function eventMotion(duration: number, events: Array<Record<string, unknown>>): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: { step: { duration, loop: false, tracks: [], events } },
+  };
+}
+
+function runEventSuite(): number {
+  const dirs = writeProbeRig(EVENT_RIG);
+  let bad = 0;
+  console.log('\n── events (self-contained: declarations in the rig, firings in the motion) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  // --- the control: it survives the runtime ---------------------------------
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  const motion = eventMotion(0.75, [
+    { t: 0, name: 'footfall' },
+    { t: 0.75, name: 'footfall', int: 7 },
+  ]);
+  writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+  const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+  const gate = validate({
+    skeletonText: built.skeletonText,
+    atlasText: built.atlasText,
+    atlasDir: dirs.outDir,
+    declaredDurations: built.declaredDurations,
+    rig: built.rig,
+    profile: 'spine',
+  });
+  say(
+    'CONTROL_AN_EVENT_TIMELINE_IS_GREEN',
+    gate.failures.length === 0 && gate.passed.includes('A32_EVENT_KEYS_RESOLVE'),
+    gate.failures.length === 0
+      ? `${gate.passed.length} assertions ran; A32 ${gate.passed.includes('A32_EVENT_KEYS_RESOLVE') ? 'ran' : 'did NOT run'}`
+      : `[${gate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'a suite made only of refusals cannot tell a compiler that emits nothing from one that emits the right thing',
+  );
+
+  const posable = posableFromText(built.skeletonText, built.atlasText, dirs.outDir);
+  const declared = posable.data.events.map((e) => e.name);
+  say(
+    'V01_the_declaration_survives_the_round_trip',
+    declared.includes('footfall') && declared.includes('voiced'),
+    `spine-core loaded events [${declared.join(', ')}]`,
+    'root.events is an OBJECT keyed by name, the one top-level collection in the format that is not an array',
+  );
+
+  const timeline = posable.data
+    .findAnimation('step')
+    ?.timelines.find((t): t is EventTimeline => t instanceof EventTimeline);
+  const fired = timeline ? timeline.events.map((e) => ({ name: e.data.name, time: e.time, int: e.intValue })) : [];
+  say(
+    'V02_each_firing_loads_back_with_its_name_time_and_int',
+    fired.length === 2 &&
+      fired[0].name === 'footfall' &&
+      fired[0].time === 0 &&
+      // No override on the first key, so it inherits the declaration's int of 1.
+      fired[0].int === 1 &&
+      fired[1].name === 'footfall' &&
+      Math.abs(fired[1].time - 0.75) < 1e-6 &&
+      fired[1].int === 7,
+    `EventTimeline holds ${JSON.stringify(fired)}`,
+    'an override the parser dropped and an override that matched the default are the same object once loaded — so the numbers have to differ',
+  );
+
+  // --- the refusals ---------------------------------------------------------
+  const undeclaredEvent = refusal(dirs, eventMotion(0.5, [{ t: 0.5, name: 'footfalll' }]));
+  say(
+    'V03_a_firing_of_an_undeclared_event_is_refused',
+    undeclaredEvent !== null && undeclaredEvent.includes('is not declared in the rig spec'),
+    undeclaredEvent === null ? 'the compile went through' : `refused with: ${undeclaredEvent}`,
+    'SkeletonJson.ts:1244 throws `Event not found` — loud, but in the consumer’s process, which is late',
+  );
+
+  const backwards = refusal(
+    dirs,
+    eventMotion(0.5, [
+      { t: 0.5, name: 'footfall' },
+      { t: 0.25, name: 'footfall' },
+    ]),
+  );
+  say(
+    'V04_event_key_times_that_go_backwards_are_refused',
+    backwards !== null && backwards.includes('must not go backwards'),
+    backwards === null ? 'the compile went through' : `refused with: ${backwards}`,
+    'readAnimation fills frame i from key i in array order and never sorts, so the earlier firing becomes unreachable',
+  );
+
+  const together = refusal(
+    dirs,
+    eventMotion(0.5, [
+      { t: 0.5, name: 'footfall' },
+      { t: 0.5, name: 'voiced' },
+    ]),
+  );
+  say(
+    'V05_two_events_on_one_frame_are_accepted',
+    together === null,
+    together === null
+      ? 'equal times are not a contradiction the way two values at one time would be — two things can happen at once'
+      : `refused with: ${together}`,
+    'the ordering rule has to be non-decreasing, not strictly increasing, or a footfall and its sound could not share a frame',
+  );
+
+  const silent = refusal(dirs, eventMotion(0.5, [{ t: 0.5, name: 'footfall', volume: 0.5 }]));
+  say(
+    'V06_volume_on_an_event_with_no_audio_is_refused',
+    silent !== null && silent.includes('declares no "audio"'),
+    silent === null ? 'the compile went through' : `refused with: ${silent}`,
+    'SkeletonJson.ts:1254-1257 reads volume only inside `if (event.data.audioPath)` — otherwise it is dropped in silence',
+  );
+
+  const declaredSilently = writeProbeRig({ events: { footfall: { volume: 0.5 } } });
+  const badDeclaration = refusal(declaredSilently, eventMotion(0.5, [{ t: 0.5, name: 'footfall' }]));
+  say(
+    'V07_a_declaration_with_volume_and_no_audio_is_refused',
+    badDeclaration !== null && badDeclaration.includes('declares volume but no "audio"'),
+    badDeclaration === null ? 'the compile went through' : `refused with: ${badDeclaration}`,
+    'the same silence one level up: SkeletonJson.ts:478-481 reads the setup volume only when an audio path is set',
+  );
+
   return bad;
 }
 
@@ -3043,6 +3267,8 @@ function main(): void {
   substantive += 6;
   bad += runKeyTimeSuite();
   substantive += 5;
+  bad += runEventSuite();
+  substantive += 8;
   bad += runMeshSuite();
   substantive += 4;
   const meshRungBad = runMeshRungSuite();
@@ -3097,7 +3323,7 @@ function main(): void {
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
       `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 6 draw-order controls, ` +
-      '+ 5 key-time controls, ' +
+      '+ 5 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +

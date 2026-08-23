@@ -249,7 +249,7 @@ model (what is pinned, what may move, how authority falls off), and the
 ### The validator
 
 [`src/validate.ts`](src/validate.ts) parses the emitted artifacts with `spine-core`
-and then runs 32 named assertions over the loaded skeleton. Each one exists because
+and then runs 33 named assertions over the loaded skeleton. Each one exists because
 the failure it catches is **silent**: the file loads, animates, and lies.
 
 Assertions whose data is absent are reported as **SKIP**, never folded into the pass
@@ -257,7 +257,7 @@ count — an assertion with nothing to check has not checked anything.
 
 #### Profiles — "wrong" versus "not how we do it here"
 
-Not all 32 rules are about Spine. Some are about **spine-html**, the renderer this
+Not all 33 rules are about Spine. Some are about **spine-html**, the renderer this
 compiler was built to feed, and about one project's frame budget; they fire on real,
 correct, editor-produced Spine data, because the official example projects carry
 clipping attachments, unweighted meshes, 116-triangle meshes and packed atlases —
@@ -270,8 +270,8 @@ So `validate` and `build` take a `--profile`:
 
 | Profile | Runs | For |
 | --- | --- | --- |
-| `spine-html` | all 32 | **the default.** Is this a rig this project can ship? |
-| `spine` | the 18 validity rules | Is this valid Spine 4.3 that any runtime plays correctly? |
+| `spine-html` | all 33 | **the default.** Is this a rig this project can ship? |
+| `spine` | the 19 validity rules | Is this valid Spine 4.3 that any runtime plays correctly? |
 
 The **Profile** column below says which is which — `both` = validity, `renderer` and
 `archetype` = `spine-html` only, and **`both ◑`** = a mixed assertion whose validity
@@ -315,6 +315,7 @@ the renderer policy*.
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the stroke plus any inward keys stays within the cut's measured contact depth (skipped when the manifest declares none) |
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the stroke stays within the cut's measured containment ceiling, and nothing in the axis subtree scales — a scale key changes the contour the ceiling was measured on (skipped when the manifest declares none) |
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | every draw-order key resolves to a real permutation: known slots, one entry per slot, each landing inside the slots array, offsets in ascending slot order. The **only assertion that runs before `A00`** — descending offsets make `readDrawOrder`'s forward-only cursor spin rather than return, so the round trip is refused by name instead of attempted |
+| `A32_EVENT_KEYS_RESOLVE` | both | every event key fires an event the skeleton declares, no key sits earlier in time than the one before it, and `volume`/`balance` appear only on an event with an `audio` path. Only the first of those is loud in the parser; the other two load clean and drop the firing or the value in silence. SKIPs when no animation carries an event timeline |
 
 ## Install
 
@@ -508,7 +509,7 @@ fixtures/       public.ts — the three synthetic cuts the selftest breaks
 src/
   compile.ts    rig + motion spec (+ manifest) -> skeleton JSON + atlas text (pure data assembly)
   rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
-  validate.ts   spine-core round trip + the 32 assertions
+  validate.ts   spine-core round trip + the 33 assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure
   render.ts     the rasteriser (regions + meshes), shared by the reference renderer and check
   check.ts      a candidate against rendered frames — pixels and per-slot drift,

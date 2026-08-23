@@ -26,6 +26,7 @@ import {
   type RigAttachment,
   type RigBone,
   type RigMeshAttachment,
+  type RigEvent,
   type RigMeshBinding,
   type RigRegionAttachment,
   type RigSpec,
@@ -48,12 +49,14 @@ import type {
   FaceManifest,
   FaceManifestPart,
   MotionDrawOrderKey,
+  MotionEventKey,
   MotionSpec,
   MotionTrack,
   RigInfo,
   SpineAttachment,
   SpineBone,
   SpineConstraint,
+  SpineEvent,
   SpineMeshAttachment,
   SpineRegionAttachment,
   SpineSkeletonJson,
@@ -762,6 +765,12 @@ export function compile(opts: CompileOptions): CompileResult {
     const drawOrder = anim.drawOrder ? compileDrawOrder(anim.drawOrder, animName, anim.duration, slots) : null;
     if (drawOrder) for (const key of drawOrder) compiledDuration = Math.max(compiledDuration, key.time as number);
 
+    const eventKeys = anim.events ? compileEvents(anim.events, animName, anim.duration, rig.events ?? {}) : null;
+    // An event timeline counts towards the animation's length the same as any
+    // other: `readAnimation` takes the duration from the longest timeline it
+    // built, and `EventTimeline.getDuration()` is its last frame like the rest.
+    if (eventKeys) for (const key of eventKeys) compiledDuration = Math.max(compiledDuration, key.time as number);
+
     // Rule 4: the declared duration is verified, because skeleton JSON does not
     // carry one — the loader takes the max key time.
     //
@@ -781,6 +790,7 @@ export function compile(opts: CompileOptions): CompileResult {
     if (Object.keys(boneTimelines).length) animations[animName].bones = boneTimelines;
     if (Object.keys(physicsTimelines).length) animations[animName].physics = physicsTimelines;
     if (drawOrder) animations[animName].drawOrder = drawOrder;
+    if (eventKeys) animations[animName].events = eventKeys;
   }
 
   // -- 6. assemble -----------------------------------------------------------
@@ -795,11 +805,29 @@ export function compile(opts: CompileOptions): CompileResult {
   if (rig.skeleton?.referenceScale !== undefined) header.referenceScale = rig.skeleton.referenceScale;
   if (rig.skeleton?.images !== undefined) header.images = rig.skeleton.images;
 
+  // Event definitions. Emitted in the order the rig spec declares them — object
+  // key order is the spec's, not a set's, so A18 stays a contract.
+  const events: Record<string, SpineEvent> = {};
+  for (const [name, def] of Object.entries(rig.events ?? {})) {
+    const entry: SpineEvent = {};
+    if (def.int !== undefined) entry.int = def.int;
+    if (def.float !== undefined) entry.float = r6(def.float);
+    if (def.string !== undefined) entry.string = def.string;
+    if (def.audio !== undefined) entry.audio = def.audio;
+    if (def.volume !== undefined) entry.volume = r6(def.volume);
+    if (def.balance !== undefined) entry.balance = r6(def.balance);
+    events[name] = entry;
+  }
+
   const skeleton: SpineSkeletonJson = {
     skeleton: header,
     bones,
     slots,
     skins: [...skinTables.entries()].map(([name, attachments]) => ({ name, attachments })),
+    // Between `skins` and `animations`, which is where the editor writes it. A
+    // conditional spread rather than an assignment after the literal, so the key
+    // lands in that position instead of at the end.
+    ...(Object.keys(events).length ? { events } : {}),
     animations,
   };
   if (constraints.length) skeleton.constraints = constraints;
@@ -1740,6 +1768,100 @@ function compileDrawOrder(
     }
     entries.sort((a, b) => a.index - b.index);
     out.push({ time, offsets: entries.map((e) => ({ slot: e.slot, offset: e.offset })) });
+  }
+  return out;
+}
+
+/**
+ * The whole-animation event timeline (`animations.<a>.events`).
+ *
+ * Four refusals, and the reason each one is here is a different failure mode of
+ * `readAnimation`'s event branch (SkeletonJson.ts:1238-1261):
+ *
+ *   1. **The name must be declared.** `skeletonData.findEvent` returns null and
+ *      the parser throws `Event not found` — one of the format's few loud
+ *      failures, but it throws in the CONSUMER's process, which is late. Refused
+ *      here so the message can name the rig spec's `events` block instead.
+ *   2. **Key times must not go backwards.** The loop writes frame `i` from key
+ *      `i` in ARRAY order and never sorts, so a time that decreases produces an
+ *      `EventTimeline` whose frames are out of order. Nothing throws; the
+ *      timeline's search simply stops finding the firings behind the fold. Equal
+ *      times are legal and deliberate — two different events on the same frame is
+ *      an ordinary thing to want — so this is non-decreasing, not the strictly
+ *      increasing rule a value track lives under (a value track has one value per
+ *      time and two keys at one time is a contradiction; two firings are not).
+ *   3. **`volume`/`balance` need the event to carry `audio`.** `:1254-1257` reads
+ *      them only inside `if (event.data.audioPath)`, so on a silent event they
+ *      are dropped without a word.
+ *   4. **A key past the declared duration.** The same `checkKeyTime` every other
+ *      timeline goes through: a firing after the end never fires (issue #54 was
+ *      exactly this shape on an attachment reveal).
+ */
+function compileEvents(
+  keys: MotionEventKey[],
+  animName: string,
+  duration: number,
+  events: Record<string, RigEvent>,
+): SpineTimelineKey[] {
+  const where = `animation "${animName}" events`;
+  if (!keys.length) throw new CompileError(`${where}: no keys`);
+
+  const out: SpineTimelineKey[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (typeof key.name !== 'string' || key.name.length === 0) {
+      throw new CompileError(`${where}: key ${i} has no "name"; an event key fires an event by name`);
+    }
+    const declared = events[key.name];
+    if (declared === undefined) {
+      const known = Object.keys(events);
+      throw new CompileError(
+        `${where} at t=${key.t}: event "${key.name}" is not declared in the rig spec's "events" block; ` +
+          (known.length ? `declared: ${known.join(', ')}` : 'that block is empty or absent'),
+      );
+    }
+    if (!Number.isFinite(key.t)) throw new CompileError(`${where}: key ${i} has a non-finite time ${String(key.t)}`);
+    const time = r6(key.t);
+    if (i > 0 && time < (out[i - 1].time as number)) {
+      throw new CompileError(
+        `${where}: key times must not go backwards (at t=${key.t}, after t=${String(out[i - 1].time)}) — ` +
+          'the parser writes frames in array order and never sorts them',
+      );
+    }
+    checkKeyTime(where, time, key.t, duration);
+
+    const entry: SpineTimelineKey = { time, name: key.name };
+    if (key.int !== undefined) {
+      if (!Number.isInteger(key.int)) {
+        throw new CompileError(`${where} at t=${key.t}: int ${String(key.int)} is not an integer`);
+      }
+      entry.int = key.int;
+    }
+    if (key.float !== undefined) {
+      if (!Number.isFinite(key.float)) {
+        throw new CompileError(`${where} at t=${key.t}: float ${String(key.float)} is not finite`);
+      }
+      entry.float = r6(key.float);
+    }
+    if (key.string !== undefined) {
+      if (typeof key.string !== 'string') {
+        throw new CompileError(`${where} at t=${key.t}: string ${JSON.stringify(key.string)} is not a string`);
+      }
+      entry.string = key.string;
+    }
+    for (const field of ['volume', 'balance'] as const) {
+      const v = key[field];
+      if (v === undefined) continue;
+      if (declared.audio === undefined) {
+        throw new CompileError(
+          `${where} at t=${key.t}: ${field} is set but event "${key.name}" declares no "audio"; ` +
+            `the parser reads ${field} only for an event with an audio path, so it would be dropped in silence`,
+        );
+      }
+      if (!Number.isFinite(v)) throw new CompileError(`${where} at t=${key.t}: ${field} ${String(v)} is not finite`);
+      entry[field] = r6(v);
+    }
+    out.push(entry);
   }
   return out;
 }

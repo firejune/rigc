@@ -550,6 +550,43 @@ export type RigConstraint =
   | RigUnimplementedConstraint;
 
 // ---------------------------------------------------------------------------
+// events — `root.events` (SkeletonJson.ts:469-484), an OBJECT, not an array
+// ---------------------------------------------------------------------------
+
+/**
+ * One event **definition**: a name the skeleton owns, plus the payload a firing
+ * carries when the animation does not override it.
+ *
+ * ⭐ The declaration lives in the rig spec and the firings live in the motion
+ * spec, for the same reason slots live here and their colour keys live there:
+ * the name is structure — the runtime looks it up, the game listens for it —
+ * and *when* it fires is time. `skeletonData.findEvent` resolves an animation's
+ * key against this table and **throws** on a miss (`:1244`), so an animation
+ * that names an event nobody declared does not load at all. rigc refuses it at
+ * compile instead, where the message can name the file that has to change.
+ *
+ * ⚠️ `volume` and `balance` are read **only when `audio` is set** (`:478-481`).
+ * Declared without one they are dropped in silence, so rigc refuses that pairing
+ * rather than emitting two numbers the runtime will never look at.
+ */
+export interface RigEvent {
+  /** Default 0. The `int` payload every firing inherits unless it overrides it. */
+  int?: number;
+  /** Default 0. */
+  float?: number;
+  /** Default `""`. */
+  string?: string;
+  /**
+   * Audio path the editor recorded for this event. Nonessential to playback —
+   * no runtime here loads it — but it is what makes `volume`/`balance` legible.
+   */
+  audio?: string;
+  /** Only read when `audio` is set. */
+  volume?: number;
+  balance?: number;
+}
+
+// ---------------------------------------------------------------------------
 // invariants — what skeleton JSON cannot say about itself
 // ---------------------------------------------------------------------------
 
@@ -619,6 +656,13 @@ export interface RigSpec {
   /** At least `default`, which becomes `skeletonData.defaultSkin` (`:441`). */
   skins?: Record<string, RigSkin>;
   constraints?: RigConstraint[];
+  /**
+   * `eventName -> payload defaults`. Emitted as `root.events`, which is an
+   * OBJECT keyed by name and not an array. The motion spec's per-animation
+   * `events` timeline fires them; a firing whose name is not a key here is a
+   * compile error, because the parser throws on it at load.
+   */
+  events?: Record<string, RigEvent>;
   invariants?: RigInvariants;
 }
 
@@ -725,6 +769,44 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     }
     if (constraintNames.has(constraint.name)) throw new CompileError(`${where}: two constraints are called "${constraint.name}"`);
     constraintNames.add(constraint.name);
+  }
+
+  if (raw.events !== undefined) {
+    if (!isObj(raw.events)) {
+      throw new CompileError(
+        `${where}: "events" is an object keyed by event name (\`{ "footstep": {} }\`), not an array — the format's own shape`,
+      );
+    }
+    for (const [name, def] of Object.entries(raw.events)) {
+      if (name.length === 0) throw new CompileError(`${where}: an event has an empty name`);
+      if (!isObj(def)) {
+        throw new CompileError(`${where}: event "${name}" must be an object of payload defaults (use {} for none)`);
+      }
+      for (const field of ['int', 'float', 'volume', 'balance'] as const) {
+        const v = def[field];
+        if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v))) {
+          throw new CompileError(`${where}: event "${name}" has ${field} ${JSON.stringify(v)}, which is not a finite number`);
+        }
+      }
+      if (def.int !== undefined && !Number.isInteger(def.int)) {
+        throw new CompileError(`${where}: event "${name}" has int ${JSON.stringify(def.int)}; the payload is an integer`);
+      }
+      for (const field of ['string', 'audio'] as const) {
+        if (def[field] !== undefined && typeof def[field] !== 'string') {
+          throw new CompileError(`${where}: event "${name}" has ${field} ${JSON.stringify(def[field])}, which is not a string`);
+        }
+      }
+      // SkeletonJson.ts:478-481 reads these two ONLY inside `if (data.audioPath)`.
+      // Without an audio path they are dropped with no error, so a spec that
+      // wrote them down would carry a number no runtime ever reads.
+      for (const field of ['volume', 'balance'] as const) {
+        if (def[field] !== undefined && def.audio === undefined) {
+          throw new CompileError(
+            `${where}: event "${name}" declares ${field} but no "audio"; the parser reads ${field} only when an audio path is set, so it would be dropped in silence`,
+          );
+        }
+      }
+    }
   }
 
   return spec;

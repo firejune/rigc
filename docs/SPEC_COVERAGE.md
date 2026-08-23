@@ -602,7 +602,7 @@ chain). There is **no triangulator for arbitrary art** and no importer for edito
 | `attachments.<skin>.…deform` | ❌ (validator knows it: 1 channel, `validate.ts:104-107`) |
 | `attachments.…sequence` | ❌ |
 | `drawOrder`, `drawOrderFolder` | ❌ |
-| `events` (+ the `root.events` block) | ❌ |
+| `events` (+ the `root.events` block) | ✅ — the rig spec declares the names (`rig.ts` `RigEvent`), the motion spec's per-animation `events` array fires them, and **A32_EVENT_KEYS_RESOLVE** checks the three ways the timeline goes wrong quietly. `int`/`float`/`string` overrides and `audio`/`volume`/`balance` all round-trip |
 | animation `color` | ❌ |
 
 **Curves** — ✅ all three encodings. Linear = no `curve` key; `"stepped"` passes through as the string
@@ -663,6 +663,7 @@ This is the split Part 4(c) needs. **Spine-validity** = the file is wrong for an
 | `A24_AXIS_SPACE_STROKE` | archetype | screen-space stroke keys |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | a bone the rig declares detached, parented under the bone it must stay clear of |
 | `A26_SLOT_DRAW_ORDER` | archetype | draw order ≠ the archetype's slot table |
+| `A32_EVENT_KEYS_RESOLVE` | validity | an event key firing an undeclared name (parser throws), key times going backwards (silent — frames are filled in array order), `volume`/`balance` on an event with no `audio` (silent) |
 | `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | policy | region name ≠ PNG basename |
 | `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | ribbon rows with divergent weights |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | stroke past the measured contact depth |
