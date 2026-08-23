@@ -35,7 +35,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, join, resolve } from 'node:path';
 import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type CheckReport } from './src/check.ts';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
-import { diffLines, diffSkeletons, type DiffReport } from './src/diff.ts';
+import { diffLines, diffSkeletons, sectionFigures, type DiffReport } from './src/diff.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
 import { DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import type { CompileResult, MotionSpec } from './src/types.ts';
@@ -490,6 +490,13 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
   for (const d of diffs) {
     const means = d.report.sections.map((s) => `${s.name}=${s.ratio.toFixed(3)}`).join('  ');
     console.log(`  ${d.skeleton.label.padEnd(10)} ${means}${d.skeleton.role === 'stretch' ? '   [stretch]' : ''}`);
+    // Second line, not folded into the first: the figures above are the ones
+    // every bench.json on disk already carries, and a ladder record is worth
+    // less the moment its headline stops meaning what the older ones meant.
+    // The sections whose measures are dominated by name-keyed ones get their
+    // name-agnostic figure printed beside — issue #21.
+    const split = d.report.sections.filter((s) => s.nameAgnostic !== undefined);
+    if (split.length > 0) console.log(`  ${''.padEnd(10)} ${split.map(sectionFigures).join('   ')}`);
   }
   if (check) {
     // The framing goes first because it is upstream of every MAE below it: a

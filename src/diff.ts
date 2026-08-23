@@ -27,8 +27,28 @@
  *    second would call any 14-bone tree a match. Both, separately, or neither
  *    is honest.
  *
+ *    ⭐ That held at the MEASURE level and not at the SECTION level, which is
+ *    where a reader actually looks (issue #21). `bones` rolled eight measures
+ *    into one mean, five of them gated on the same one-name-in-common
+ *    condition — the naming figure counted five times, not five findings — so
+ *    a rig with a structurally identical tree and its own vocabulary read
+ *    `bones=0.567` and a reader who did not open the table under it read "the
+ *    skeleton is wrong" when the skeleton was right. So `bones` and `slots`
+ *    now carry a SECOND, independent comparison in `nameAgnostic`: the same
+ *    two skeletons compared with names thrown away entirely.
+ *
+ *    The two are not a partition of one mean. They are two comparisons of one
+ *    section, with their own measure sets, and neither is a subset of the
+ *    other — `section.ratio` is unchanged, to the digit, from what it has
+ *    always been, so every `bench.json` already on disk stays comparable.
+ *    Read them as a pair: name-agnostic 1.000 with name-matched low says the
+ *    shape is right and the vocabulary differs; both low says the rig is
+ *    wrong; name-agnostic low alone is impossible, since a wrong shape cannot
+ *    have right names.
+ *
  * Pure JSON reading — no spine-core, no filesystem. Validity is `validate.ts`'s
- * job and this file assumes nothing about it.
+ * job and this file assumes nothing about it. In particular the name-agnostic
+ * measures resolve nothing through the atlas: see `attachments.region_size`.
  */
 import { walkTimelines } from './timelines.ts';
 
@@ -67,11 +87,33 @@ export interface DiffMeasure {
   note?: string;
 }
 
+/**
+ * A second comparison of one section, made without consulting a name anywhere.
+ *
+ * Its `ratio` is an unweighted mean of its OWN measures and is not comparable,
+ * term for term, with the section's — the two sets overlap but neither contains
+ * the other. `count` / `depth_histogram` / `degree_sequence` appear in both,
+ * once under their section id and once under `<section>.agnostic.*`, so that
+ * each report reads on its own without the other open beside it.
+ */
+export interface DiffAgnostic {
+  /** Unweighted mean of the measures below. NOT a quality score either. */
+  ratio: number;
+  measures: DiffMeasure[];
+}
+
 export interface DiffSection {
   name: string;
   /** Unweighted mean of this section's measures. NOT a quality score. */
   ratio: number;
   measures: DiffMeasure[];
+  /**
+   * The same section compared with names thrown away — `bones` and `slots`
+   * only, because they are the two sections whose measures are dominated by
+   * name-keyed ones (#21). Absent elsewhere rather than empty: a section with
+   * no name-agnostic comparison defined should say so by having none.
+   */
+  nameAgnostic?: DiffAgnostic;
 }
 
 export interface DiffReport {
@@ -161,9 +203,31 @@ function agreement<T>(
   return measure(id, what, agree, Math.max(a.size, b.size));
 }
 
-function sectionOf(name: string, measures: DiffMeasure[]): DiffSection {
-  const ratio = measures.length === 0 ? 1 : measures.reduce((s, m) => s + m.ratio, 0) / measures.length;
-  return { name, ratio, measures };
+function meanRatio(measures: DiffMeasure[]): number {
+  return measures.length === 0 ? 1 : measures.reduce((s, m) => s + m.ratio, 0) / measures.length;
+}
+
+function sectionOf(name: string, measures: DiffMeasure[], nameAgnostic?: DiffMeasure[]): DiffSection {
+  return {
+    name,
+    ratio: meanRatio(measures),
+    measures,
+    ...(nameAgnostic === undefined ? {} : { nameAgnostic: { ratio: meanRatio(nameAgnostic), measures: nameAgnostic } }),
+  };
+}
+
+/**
+ * Order agreement over a sequence of SHAPES rather than names — the
+ * name-agnostic half of an `order` measure.
+ *
+ * LCS over the signatures, against the larger roster, exactly as the
+ * name-matched `order` measures do it, so the two read on the same scale. Two
+ * elements with the same signature are interchangeable here and swapping them
+ * is correctly invisible: name-agnostically they ARE the same element. The
+ * name-matched `order` measure is what catches that swap.
+ */
+function orderShape(id: string, what: string, a: string[], b: string[]): DiffMeasure {
+  return measure(id, what, lcs(a, b), Math.max(a.length, b.length));
 }
 
 // ---------------------------------------------------------------------------
@@ -215,36 +279,99 @@ function boneFacts(root: Json): BoneFacts {
   return { order, parent, hasLength, hasInherit, depths, children };
 }
 
+/**
+ * The shape of a bone nothing declares — a slot bound to a name no bone
+ * carries. A real answer rather than a gap: it says "this hangs off nothing".
+ */
+const UNDECLARED = '?';
+
+/**
+ * A bone's place in the tree, written without its name: how far it sits from a
+ * root, and how many children hang off it. `d1c3` is "one hop down, three
+ * children".
+ *
+ * Nothing else in a bone's declaration is name-free AND structural. `x`, `y`,
+ * `rotation`, `scale` are the setup pose, which this section does not compare
+ * on either side of the split; `length` and `inherit` are compared by name
+ * above and have no name-free counterpart, because there is no way to say
+ * WHICH bone is missing its length without naming one.
+ */
+function boneShape(facts: BoneFacts, name: string): string {
+  if (!facts.parent.has(name)) return UNDECLARED;
+  return `d${facts.depths.get(name) ?? 0}c${facts.children.get(name) ?? 0}`;
+}
+
+function boneShapes(facts: BoneFacts): string[] {
+  return facts.order.map((n) => boneShape(facts, n));
+}
+
 function diffBones(c: Json, r: Json): DiffSection {
   const a = boneFacts(c);
   const b = boneFacts(r);
   const shared = a.order.filter((n) => b.parent.has(n));
   const max = Math.max(a.order.length, b.order.length);
-  return sectionOf('bones', [
-    measure('bones.count', 'how many bones', Math.min(a.order.length, b.order.length), max),
-    jaccard('bones.names', 'the bone names themselves', new Set(a.order), new Set(b.order)),
-    agreement('bones.parent_by_name', 'each bone hangs off the same parent', a.parent, b.parent, (x, y) => x === y),
-    measure(
-      'bones.order',
-      'the bones are declared in the same order',
-      lcs(shared, b.order.filter((n) => a.parent.has(n))),
-      max,
-    ),
-    agreement('bones.length_present', 'a setup `length` is present or absent alike', a.hasLength, b.hasLength, (x, y) => x === y),
-    agreement('bones.inherit_present', 'a setup `inherit` is present or absent alike', a.hasInherit, b.hasInherit, (x, y) => x === y),
-    histogram(
-      'bones.depth_histogram',
-      'NAME-AGNOSTIC: as many bones at each depth',
-      counted([...a.depths.values()].map(String)),
-      counted([...b.depths.values()].map(String)),
-    ),
-    histogram(
-      'bones.degree_sequence',
-      'NAME-AGNOSTIC: as many bones with each child count',
-      counted([...a.children.values()].map(String)),
-      counted([...b.children.values()].map(String)),
-    ),
-  ]);
+  const aShapes = boneShapes(a);
+  const bShapes = boneShapes(b);
+  return sectionOf(
+    'bones',
+    [
+      measure('bones.count', 'how many bones', Math.min(a.order.length, b.order.length), max),
+      jaccard('bones.names', 'the bone names themselves', new Set(a.order), new Set(b.order)),
+      agreement('bones.parent_by_name', 'each bone hangs off the same parent', a.parent, b.parent, (x, y) => x === y),
+      measure(
+        'bones.order',
+        'the bones are declared in the same order',
+        lcs(shared, b.order.filter((n) => a.parent.has(n))),
+        max,
+      ),
+      agreement('bones.length_present', 'a setup `length` is present or absent alike', a.hasLength, b.hasLength, (x, y) => x === y),
+      agreement('bones.inherit_present', 'a setup `inherit` is present or absent alike', a.hasInherit, b.hasInherit, (x, y) => x === y),
+      histogram(
+        'bones.depth_histogram',
+        'NAME-AGNOSTIC: as many bones at each depth',
+        counted([...a.depths.values()].map(String)),
+        counted([...b.depths.values()].map(String)),
+      ),
+      histogram(
+        'bones.degree_sequence',
+        'NAME-AGNOSTIC: as many bones with each child count',
+        counted([...a.children.values()].map(String)),
+        counted([...b.children.values()].map(String)),
+      ),
+    ],
+    // The tree compared as a tree — no name is consulted anywhere below.
+    [
+      measure('bones.agnostic.count', 'how many bones', Math.min(a.order.length, b.order.length), max),
+      histogram(
+        'bones.agnostic.depth_histogram',
+        'as many bones at each depth',
+        counted([...a.depths.values()].map(String)),
+        counted([...b.depths.values()].map(String)),
+      ),
+      histogram(
+        'bones.agnostic.degree_sequence',
+        'as many bones with each child count',
+        counted([...a.children.values()].map(String)),
+        counted([...b.children.values()].map(String)),
+      ),
+      // Strictly stronger than the two above it, and it earns its place for
+      // that reason: two trees can hold the same depths and the same child
+      // counts while pairing them up differently — a deep leaf and a shallow
+      // fork against a shallow leaf and a deep fork. This asks for the pair.
+      histogram(
+        'bones.agnostic.shape_histogram',
+        'as many bones of each depth-and-child-count shape (`d1c3` = one hop down, three children)',
+        counted(aShapes),
+        counted(bShapes),
+      ),
+      orderShape(
+        'bones.agnostic.order_shape',
+        'the bones are declared in the same order of shapes',
+        aShapes,
+        bShapes,
+      ),
+    ],
+  );
 }
 
 interface SlotFacts {
@@ -253,6 +380,33 @@ interface SlotFacts {
   attachment: Map<string, string | null>;
   blend: Map<string, string>;
   hasColor: Map<string, boolean>;
+  /**
+   * `<slot>` -> the TYPE of what it shows in setup: `region`, `mesh`, and so
+   * on; `none` when the slot shows nothing; `absent` when it names an
+   * attachment no skin carries. The type is name-free — it is *what kind of
+   * thing is drawn here*, which survives every rename — while the attachment's
+   * own name is compared by `slots.attachment` above.
+   */
+  setupType: Map<string, string>;
+}
+
+/** `<slot>/<attachment>` -> type, over every skin. */
+function attachmentTypes(root: Json): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const skin of objs(root.skins)) {
+    if (!isObj(skin.attachments)) continue;
+    for (const [slotName, slotMap] of Object.entries(skin.attachments)) {
+      if (!isObj(slotMap)) continue;
+      for (const [attName, att] of Object.entries(slotMap)) {
+        if (!isObj(att)) continue;
+        // First skin wins. Every skeleton on the ladder has exactly one skin
+        // (`default`), and a per-skin type comparison would need a skin
+        // correspondence, which is a naming question by another route.
+        if (!out.has(`${slotName}/${attName}`)) out.set(`${slotName}/${attName}`, str(att.type) ?? 'region');
+      }
+    }
+  }
+  return out;
 }
 
 function slotFacts(root: Json): SlotFacts {
@@ -261,39 +415,84 @@ function slotFacts(root: Json): SlotFacts {
   const attachment = new Map<string, string | null>();
   const blend = new Map<string, string>();
   const hasColor = new Map<string, boolean>();
+  const setupType = new Map<string, string>();
+  const types = attachmentTypes(root);
   for (const s of objs(root.slots)) {
     const name = str(s.name);
     if (name === null) continue;
+    const setup = str(s.attachment);
     order.push(name);
     bone.set(name, str(s.bone));
-    attachment.set(name, str(s.attachment));
+    attachment.set(name, setup);
     blend.set(name, str(s.blend) ?? 'normal');
     hasColor.set(name, 'color' in s);
+    setupType.set(name, setup === null ? 'none' : (types.get(`${name}/${setup}`) ?? 'absent'));
   }
-  return { order, bone, attachment, blend, hasColor };
+  return { order, bone, attachment, blend, hasColor, setupType };
+}
+
+/** What a slot is, written without a name: what it draws, on what shape of bone. */
+function slotShapes(facts: SlotFacts, bones: BoneFacts): string[] {
+  return facts.order.map((n) => `${facts.setupType.get(n) ?? 'none'}@${boneShape(bones, facts.bone.get(n) ?? '')}`);
 }
 
 function diffSlots(c: Json, r: Json): DiffSection {
   const a = slotFacts(c);
   const b = slotFacts(r);
+  const ab = boneFacts(c);
+  const bb = boneFacts(r);
   const max = Math.max(a.order.length, b.order.length);
-  return sectionOf('slots', [
-    measure('slots.count', 'how many slots', Math.min(a.order.length, b.order.length), max),
-    jaccard('slots.names', 'the slot names themselves', new Set(a.order), new Set(b.order)),
-    measure(
-      'slots.order',
-      'the slots array IS the draw order, so its order is data',
-      lcs(
-        a.order.filter((n) => b.bone.has(n)),
-        b.order.filter((n) => a.bone.has(n)),
+  const aShapes = slotShapes(a, ab);
+  const bShapes = slotShapes(b, bb);
+  const byPosition = (f: SlotFacts): Map<string, number> =>
+    counted(f.order.map((n, i) => `${i}:${f.setupType.get(n) ?? 'none'}`));
+  const boundTo = (f: SlotFacts, bones: BoneFacts): Map<string, number> =>
+    counted(f.order.map((n) => boneShape(bones, f.bone.get(n) ?? '')));
+  return sectionOf(
+    'slots',
+    [
+      measure('slots.count', 'how many slots', Math.min(a.order.length, b.order.length), max),
+      jaccard('slots.names', 'the slot names themselves', new Set(a.order), new Set(b.order)),
+      measure(
+        'slots.order',
+        'the slots array IS the draw order, so its order is data',
+        lcs(
+          a.order.filter((n) => b.bone.has(n)),
+          b.order.filter((n) => a.bone.has(n)),
+        ),
+        max,
       ),
-      max,
-    ),
-    agreement('slots.bone', 'each slot is bound to the same bone', a.bone, b.bone, (x, y) => x === y),
-    agreement('slots.attachment', 'each slot shows the same setup attachment', a.attachment, b.attachment, (x, y) => x === y),
-    agreement('slots.blend', 'each slot uses the same blend mode', a.blend, b.blend, (x, y) => x === y),
-    agreement('slots.color_present', 'a tint is present or absent alike', a.hasColor, b.hasColor, (x, y) => x === y),
-  ]);
+      agreement('slots.bone', 'each slot is bound to the same bone', a.bone, b.bone, (x, y) => x === y),
+      agreement('slots.attachment', 'each slot shows the same setup attachment', a.attachment, b.attachment, (x, y) => x === y),
+      agreement('slots.blend', 'each slot uses the same blend mode', a.blend, b.blend, (x, y) => x === y),
+      agreement('slots.color_present', 'a tint is present or absent alike', a.hasColor, b.hasColor, (x, y) => x === y),
+    ],
+    [
+      measure('slots.agnostic.count', 'how many slots', Math.min(a.order.length, b.order.length), max),
+      // Positional on purpose, and paired with the LCS measure below for the
+      // same reason `slots.order` is paired with `slots.names`: this one says
+      // "position 3 draws a mesh on both sides", the LCS one degrades smoothly
+      // when a slot is inserted rather than counting every later slot wrong.
+      histogram(
+        'slots.agnostic.attachment_types_by_position',
+        'the same kind of attachment sits at each position in the draw order',
+        byPosition(a),
+        byPosition(b),
+      ),
+      histogram(
+        'slots.agnostic.bone_binding_shape',
+        'as many slots hang off a bone of each shape (`?` = no such bone is declared)',
+        boundTo(a, ab),
+        boundTo(b, bb),
+      ),
+      orderShape(
+        'slots.agnostic.order_shape',
+        'the draw order is the same order of `<attachment type>@<bone shape>`',
+        aShapes,
+        bShapes,
+      ),
+    ],
+  );
 }
 
 interface AttachmentFact {
@@ -303,7 +502,8 @@ interface AttachmentFact {
   triangles: number | null;
   weighted: boolean | null;
   hull: number | null;
-  sizePresent: boolean;
+  /** `<width>x<height>` as stated, or `unstated` — see `attachments.region_size`. */
+  size: string;
 }
 
 function attachmentFacts(root: Json): { skins: Set<string>; byKey: Map<string, AttachmentFact> } {
@@ -331,7 +531,7 @@ function attachmentFacts(root: Json): { skins: Set<string>; byKey: Map<string, A
           triangles: type === 'mesh' ? arr(att.triangles).length / 3 : null,
           weighted: type === 'mesh' ? weighted : null,
           hull: type === 'mesh' ? num(att.hull) : null,
-          sizePresent: 'width' in att && 'height' in att,
+          size: num(att.width) !== null && num(att.height) !== null ? `${num(att.width)}x${num(att.height)}` : 'unstated',
         });
       }
     }
@@ -367,7 +567,31 @@ function diffAttachments(c: Json, r: Json): DiffSection {
     agreement('attachments.mesh_triangles', 'each mesh has the same triangle count', am, bm, (x, y) => x.triangles === y.triangles),
     agreement('attachments.mesh_weighted', 'each mesh is weighted, or is not, alike', am, bm, (x, y) => x.weighted === y.weighted),
     agreement('attachments.mesh_hull', 'each mesh declares the same hull length', am, bm, (x, y) => x.hull === y.hull),
-    agreement('attachments.region_size_present', 'each region states width and height, or does not, alike', ar, br, (x, y) => x.sizePresent === y.sizePresent),
+    // Replaces `attachments.region_size_present` (issue #28), which asked
+    // whether each region STATED a size and read near zero on every honest run.
+    //
+    // The issue's diagnosis was that Spine's exporter omits `width`/`height`
+    // when they match the atlas region, so a rigc rig — which always states
+    // them (AUTHORING R1/R5) — could never agree. That is not what the corpus
+    // says: all twelve reference exports state a size on every one of their 168
+    // regions, so there is nothing for an atlas lookup to resolve and the
+    // `--atlas` plumbing the issue proposed would be dead code against every
+    // rung on the ladder.
+    //
+    // What the measure actually reported was the naming gap, a third time. It
+    // was keyed by `skin/slot/attachment`, so it could never exceed the name
+    // overlap: rung 1 read `0/8` where `attachments.names` read `0/16`, and
+    // `3/5` where three names matched. That is #21's defect in this section.
+    //
+    // So it is name-agnostic and numeric instead: do the two rigs agree about
+    // how big their regions are? A rig that states a size a differently-named
+    // rig also states now agrees, which is what a structural diff is for.
+    histogram(
+      'attachments.region_size',
+      'NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)',
+      counted([...ar.values()].map((f) => f.size)),
+      counted([...br.values()].map((f) => f.size)),
+    ),
   ]);
 }
 
@@ -550,12 +774,41 @@ export function diffSkeletons(candidate: unknown, reference: unknown): DiffRepor
   };
 }
 
-/** Every measure that is not a perfect match, by id. What a test asserts on. */
+/**
+ * Every NAME-MATCHED measure that is not a perfect match, by id. What a test
+ * asserts on.
+ *
+ * The name-agnostic reports are deliberately not folded in here. They are a
+ * separate comparison with its own measure set, and a single flattened list
+ * would make one edit's footprint depend on how many measures the other report
+ * happens to define — which is the opposite of what these assertions are for.
+ * `movedAgnosticMeasures` is the other half, and a case pins both.
+ */
 export function movedMeasures(report: DiffReport): string[] {
   return report.sections.flatMap((s) => s.measures.filter((m) => m.ratio < 1).map((m) => m.id));
 }
 
+/** The same, over the name-agnostic reports. Empty when every shape agrees. */
+export function movedAgnosticMeasures(report: DiffReport): string[] {
+  return report.sections.flatMap((s) => (s.nameAgnostic?.measures ?? []).filter((m) => m.ratio < 1).map((m) => m.id));
+}
+
 const fmt = (n: number): string => n.toFixed(3);
+
+/** `bones 0.567 (name-matched) · 1.000 (name-agnostic)`, or just the one figure. */
+export function sectionFigures(section: DiffSection): string {
+  const matched = `${fmt(section.ratio)} (name-matched)`;
+  return section.nameAgnostic === undefined
+    ? `${section.name} ${matched}`
+    : `${section.name} ${matched} · ${fmt(section.nameAgnostic.ratio)} (name-agnostic)`;
+}
+
+function measureLines(measures: DiffMeasure[], strip: number): string[] {
+  return measures.map((m) => {
+    const counts = `${m.matched}/${m.total}`;
+    return `      ${fmt(m.ratio)}  ${m.id.slice(strip).padEnd(28)} ${counts.padEnd(11)} ${m.what}${m.note ? `  — ${m.note}` : ''}`;
+  });
+}
 
 export function diffLines(report: DiffReport, labels: { candidate: string; reference: string }): string[] {
   const lines: string[] = [];
@@ -564,17 +817,31 @@ export function diffLines(report: DiffReport, labels: { candidate: string; refer
   const keys = Object.keys(report.reference);
   lines.push(`  ..         ${keys.map((k) => `${k}=${report.candidate[k]}/${report.reference[k]}`).join('  ')}   (candidate/reference)`);
   lines.push('');
+  // Wide enough for `<longest section> (name-agnostic)`, so that a section's two
+  // headings line their figures up under each other and read as a pair.
+  const head = (label: string, ratio: number, n: number): string =>
+    `  ${label.padEnd(21)} mean ${fmt(ratio)}  over ${n} measures`;
   for (const section of report.sections) {
-    lines.push(`  ${section.name.padEnd(13)} mean ${fmt(section.ratio)}  over ${section.measures.length} measures`);
-    for (const m of section.measures) {
-      const id = m.id.slice(section.name.length + 1);
-      const counts = `${m.matched}/${m.total}`;
-      lines.push(`      ${fmt(m.ratio)}  ${id.padEnd(22)} ${counts.padEnd(11)} ${m.what}${m.note ? `  — ${m.note}` : ''}`);
+    lines.push(head(section.name, section.ratio, section.measures.length));
+    lines.push(...measureLines(section.measures, section.name.length + 1));
+    const agnostic = section.nameAgnostic;
+    if (agnostic) {
+      lines.push('');
+      lines.push(
+        `${head(`${section.name} (name-agnostic)`, agnostic.ratio, agnostic.measures.length)}` +
+          '  — the same two skeletons compared with names thrown away',
+      );
+      lines.push(...measureLines(agnostic.measures, section.name.length + '.agnostic.'.length));
     }
     lines.push('');
   }
   lines.push('  There is no overall score, on purpose: a section mean is an average of the');
   lines.push('  measures printed under it, and averaging those together would hide which');
   lines.push('  half of a rig is wrong. Read the measures.');
+  lines.push('');
+  lines.push('  `bones` and `slots` carry two figures because most of their measures are');
+  lines.push('  keyed on names, and a candidate is entitled to its own. They are two');
+  lines.push('  comparisons, not two halves of one: name-agnostic 1.000 beside a low');
+  lines.push('  name-matched figure means the shape is right and the vocabulary differs.');
   return lines;
 }

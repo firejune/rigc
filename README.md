@@ -83,7 +83,18 @@ Three properties the measures are built to have:
   the right tree under its own bone names scores 0 on `bones.parent_by_name` and
   1.000 on `bones.depth_histogram` and `bones.degree_sequence`. Reporting only the
   first calls a correct rig a total failure; reporting only the second calls any
-  14-bone tree a match.
+  14-bone tree a match. That holds at the section level too: `bones` and `slots`
+  are the two sections whose measures are mostly name-keyed, so each reports **two
+  figures**, and the pair is the finding —
+
+  ```
+  bones 0.567 (name-matched) · 1.000 (name-agnostic)
+  ```
+
+  reads *"the tree is right and the vocabulary is different"*, which the single
+  mean on its own could not say. They are two comparisons with their own measure
+  sets rather than two halves of one; the name-matched figure is unchanged, so
+  older reports stay comparable. `sections[].nameAgnostic` in the JSON lists them.
 
 An assertion or measure with nothing to compare reports its `total` as 0 and says
 so, exactly as the validator's SKIP does — a vacuous 1.000 that looks earned is

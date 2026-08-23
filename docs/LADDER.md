@@ -62,6 +62,79 @@ timing from a rig with the right timing and the wrong skeleton, and those call
 for opposite fixes. **A rung is marked cleared by a person reading the measures,
 and this file is where that judgement is written down.**
 
+#### `bones` and `slots` carry two figures
+
+⭐ **A candidate is entitled to its own names, so those two sections are reported
+twice** — once name-matched, once name-agnostic (issue #21, 2026-08-23):
+
+```
+ess        bones=0.567  slots=0.476  attachments=0.926  constraints=1.000  animations=0.936  events=1.000
+           bones 0.567 (name-matched) · 1.000 (name-agnostic)   slots 0.476 (name-matched) · 1.000 (name-agnostic)
+```
+
+The reason is arithmetic. Five of `bones`'s eight measures — `names`,
+`parent_by_name`, `order`, `length_present`, `inherit_present` — are gated on the
+same one-name-in-common condition. They are the naming figure counted five times,
+not five findings, and they pull the section mean down far enough that a reader who
+does not open the table underneath reads *"the skeleton is wrong"* about a
+skeleton that is right. The name-agnostic figure is that same comparison made
+with names thrown away entirely.
+
+**They are two comparisons, not two halves of one.** The name-matched figure is
+unchanged, to the digit, from what it has always been — every `bench.json`
+already on disk stays comparable — and the name-agnostic figure has its own
+measure set, listed in the JSON under `sections[].nameAgnostic`:
+
+| section | name-agnostic measures |
+| --- | --- |
+| `bones` | `count`; `depth_histogram` (as many bones at each depth); `degree_sequence` (as many with each child count); `shape_histogram` (as many of each *depth-and-child-count* shape — stronger than the two before it, which can agree while pairing depths and degrees up differently); `order_shape` (the declaration order compared as a sequence of shapes) |
+| `slots` | `count`; `attachment_types_by_position` (the same kind of attachment at each position in the draw order); `bone_binding_shape` (as many slots hanging off a bone of each shape); `order_shape` (the draw order as a sequence of `<attachment type>@<bone shape>`) |
+
+A bone's *shape* is `d<depth>c<children>` — `d1c3` is one hop below a root with
+three children — and `?` is a bone that is not declared at all, which is a real
+answer rather than a gap: it says a slot hangs off nothing.
+
+**How to read the pair.** Name-agnostic 1.000 beside a low name-matched figure
+means the shape is right and the vocabulary differs. Both low means the rig is
+wrong. Name-agnostic low on its own cannot happen, because a wrong shape cannot
+have right names. And the pair is not a licence: two elements with the same shape
+are interchangeable name-agnostically, so swapping two same-shaped slots is
+correctly invisible there — the name-matched `slots.order` is the measure that
+catches it, and that is why both are printed.
+
+#### Measure changes, and what they do to a recorded figure
+
+A run's `bench.json` is that run's own record and is never rewritten. When a
+measure changes, the figures recorded before it stop being comparable with the
+ones after, and the change is recorded here with the recomputed figure for every
+run on this page, so that nothing above is silently stale.
+
+**2026-08-23 — `attachments.region_size_present` → `attachments.region_size`**
+(issue #28). The old measure asked whether each region *stated* a width and
+height. It was keyed by `skin/slot/attachment`, so it could never exceed the name
+overlap and reported the naming gap a third time: rung 1 read `0/8` where
+`attachments.names` read `0/16`. (The issue's own diagnosis — that Spine's
+exporter omits the fields when they match the atlas region, making the measure
+unwinnable — turned out not to hold: all twelve reference exports state a size on
+every one of their 168 regions.) It now asks, name-agnostically, whether the two
+rigs agree about **how big** their regions are. `attachments` moves as follows,
+and no other section is affected:
+
+| run | `attachments` as recorded | recomputed | the measure itself |
+| --- | ---: | ---: | --- |
+| rung 1 `balls` | 0.778 | **0.889** | `0/8` → `8/8` |
+| rung 1 `drop` | 0.856 | **0.878** | `3/5` → `4/5` |
+| rung 2 attempt 1 | 0.805 | **0.870** | `5/17` → `15/17` |
+| rung 2 attempt 2 | 0.762 | **0.853** | `1/17` → `15/17` |
+| rung 3 attempt 1 | 0.870 | **0.926** | `1/2` → `2/2` |
+| rung 3 attempt 2 | 0.870 | **0.926** | `1/2` → `2/2` |
+| rung 4 | 0.772 | **0.859** | `1/9` → `8/9` |
+| rung 5 | 0.801 | **0.897** | `4/29` → `29/29` |
+| rung 6 | 0.321 | **0.396** | `0/3` → `2/3` |
+
+Where the new measure still reads short it is naming a real disagreement about a
+size — four rigs out of nine — which is what the old one never could.
+
 **Stage 3 — per-frame pose distance. Named, not built.** The structural diff
 compares what the file *says*; it cannot see that two structurally identical rigs
 pose differently. The measure for that is **per-frame bone world-transform
@@ -224,6 +297,18 @@ the end, nothing edited after).
 bones=0.567  slots=0.476  attachments=0.870  constraints=1.000  animations=0.911  events=1.000
 ```
 
+With name-agnostic figures (added 2026-08-23, after this run; `attachments` moves
+with it — see *Measure changes* above):
+
+```
+ess        bones=0.567  slots=0.476  attachments=0.926  constraints=1.000  animations=0.911  events=1.000
+           bones 0.567 (name-matched) · 1.000 (name-agnostic)   slots 0.476 (name-matched) · 1.000 (name-agnostic)
+```
+
+Those two 1.000s are the reading below, made mechanical: *the tree is right and
+the vocabulary is different* is no longer a sentence a person has to assemble out
+of the measure table.
+
 **Reading — the commander's call, 2026-08-23.** `bones`/`slots` read low on
 **naming only**: bone `count` is 3/3, and both name-agnostic measures —
 `depth_histogram` 3/3, `degree_sequence` 3/3 — say the tree has the same number of
@@ -260,6 +345,22 @@ on the first compile**, `bench 3` run once at the end with nothing edited after.
 ```
 bones=0.567  slots=0.476  attachments=0.870  constraints=1.000  animations=0.936  events=1.000
 ```
+
+With name-agnostic figures (added 2026-08-23, after this run; `attachments` moves
+with it — see *Measure changes* above):
+
+```
+ess        bones=0.567  slots=0.476  attachments=0.926  constraints=1.000  animations=0.936  events=1.000
+           bones 0.567 (name-matched) · 1.000 (name-agnostic)   slots 0.476 (name-matched) · 1.000 (name-agnostic)
+```
+
+⚠️ **1.000 name-agnostic is not "every binding is right".** Both attempts draw the
+block and the pendulum in the opposite array order to the reference's, which is
+the opposite z-order — and name-agnostically those two slots are the same slot
+(one region each, on a bone of the same shape), so nothing in that report can see
+it. The name-matched `slots.order` is where a swap shows, and at this rung it
+reads 1/2 for the naming gap rather than for the swap. Read the pair, not either
+figure alone.
 
 | | attempt 1 | attempt 2 |
 | --- | ---: | ---: |
@@ -332,7 +433,17 @@ validator cannot see); `drop` is structurally right minus one invisible layer
 (`ground-cover` omitted: 4 vs 5 slots — the brief said "two layers" and a pixel
 measurement overruled it); `balls` low on naming + slot strategy; two measures are
 unwinnable from frames (`region_size_present` — rigc always emits width/height, the
-exporter omits them; `bones.length_present`/`inherit` unobservable). Residual: the
+exporter omits them; `bones.length_present`/`inherit` unobservable).
+
+> 🔴 **Correction, 2026-08-23.** The `region_size_present` half of that reading is
+> wrong, and the measure it names no longer exists. Spine's exporter does **not**
+> omit the fields: all twelve reference exports state a width and a height on every
+> one of their 168 regions. What made the measure read `0/8` was that it was keyed
+> by name — it could not exceed this run's `attachments.names`, which was `0/16`.
+> It has been replaced by the name-agnostic, numeric `attachments.region_size`
+> (issue #28), on which this run reads `8/8` and `4/5`; `attachments` recomputes to
+> 0.889 / 0.878. See *Measure changes* under **How a rung is scored**. The
+> `bones.length_present` / `inherit` half stands. Residual: the
 validity gate is blind to wrong animation — an in-loop frame-fidelity check is
 being added as `rigc check` (separate issue).
 
@@ -540,71 +651,91 @@ bun cli.ts build \
 bun cli.ts bench 3 --candidate <dir>
 ```
 
-`bench 3`, verbatim (2026-08-22):
+`bench 3`, verbatim — re-run 2026-08-23, after `bones`/`slots` gained their
+name-agnostic figures (#21) and `region_size_present` became `region_size` (#28):
 
 ```
   ── summary ──
   validate   green  (profile spine)
   ess        bones=1.000  slots=1.000  attachments=1.000  constraints=1.000  animations=1.000  events=1.000
+             bones 1.000 (name-matched) · 1.000 (name-agnostic)   slots 1.000 (name-matched) · 1.000 (name-agnostic)
 ```
 
 ```
-    bones         mean 1.000  over 8 measures
-        1.000  count                  3/3         how many bones
-        1.000  names                  3/3         the bone names themselves
-        1.000  parent_by_name         3/3         each bone hangs off the same parent
-        1.000  order                  3/3         the bones are declared in the same order
-        1.000  length_present         3/3         a setup `length` is present or absent alike
-        1.000  inherit_present        3/3         a setup `inherit` is present or absent alike
-        1.000  depth_histogram        3/3         NAME-AGNOSTIC: as many bones at each depth
-        1.000  degree_sequence        3/3         NAME-AGNOSTIC: as many bones with each child count
+    bones                 mean 1.000  over 8 measures
+        1.000  count                        3/3         how many bones
+        1.000  names                        3/3         the bone names themselves
+        1.000  parent_by_name               3/3         each bone hangs off the same parent
+        1.000  order                        3/3         the bones are declared in the same order
+        1.000  length_present               3/3         a setup `length` is present or absent alike
+        1.000  inherit_present              3/3         a setup `inherit` is present or absent alike
+        1.000  depth_histogram              3/3         NAME-AGNOSTIC: as many bones at each depth
+        1.000  degree_sequence              3/3         NAME-AGNOSTIC: as many bones with each child count
 
-    slots         mean 1.000  over 7 measures
-        1.000  count                  2/2         how many slots
-        1.000  names                  2/2         the slot names themselves
-        1.000  order                  2/2         the slots array IS the draw order, so its order is data
-        1.000  bone                   2/2         each slot is bound to the same bone
-        1.000  attachment             2/2         each slot shows the same setup attachment
-        1.000  blend                  2/2         each slot uses the same blend mode
-        1.000  color_present          2/2         a tint is present or absent alike
+    bones (name-agnostic) mean 1.000  over 5 measures  — the same two skeletons compared with names thrown away
+        1.000  count                        3/3         how many bones
+        1.000  depth_histogram              3/3         as many bones at each depth
+        1.000  degree_sequence              3/3         as many bones with each child count
+        1.000  shape_histogram              3/3         as many bones of each depth-and-child-count shape (`d1c3` = one hop down, three children)
+        1.000  order_shape                  3/3         the bones are declared in the same order of shapes
 
-    attachments   mean 1.000  over 9 measures
-        1.000  skins                  1/1         the skin names
-        1.000  count                  2/2         how many attachments
-        1.000  names                  2/2         skin/slot/attachment keys
-        1.000  type_counts            2/2         as many of each attachment type
-        1.000  mesh_vertices          0/0         each mesh has the same vertex count  — neither side has any
-        1.000  mesh_triangles         0/0         each mesh has the same triangle count  — neither side has any
-        1.000  mesh_weighted          0/0         each mesh is weighted, or is not, alike  — neither side has any
-        1.000  mesh_hull              0/0         each mesh declares the same hull length  — neither side has any
-        1.000  region_size_present    2/2         each region states width and height, or does not, alike
+    slots                 mean 1.000  over 7 measures
+        1.000  count                        2/2         how many slots
+        1.000  names                        2/2         the slot names themselves
+        1.000  order                        2/2         the slots array IS the draw order, so its order is data
+        1.000  bone                         2/2         each slot is bound to the same bone
+        1.000  attachment                   2/2         each slot shows the same setup attachment
+        1.000  blend                        2/2         each slot uses the same blend mode
+        1.000  color_present                2/2         a tint is present or absent alike
 
-    constraints   mean 1.000  over 5 measures
-        1.000  count                  0/0         how many constraints  — neither side has any
-        1.000  names                  0/0         the constraint names  — neither side has any
-        1.000  type_counts            0/0         as many of each constraint type  — neither side has any
-        1.000  type_by_name           0/0         each constraint is the same type  — neither side has any
-        1.000  refs                   0/0         each constraint names the same bones and slots  — neither side has any
+    slots (name-agnostic) mean 1.000  over 4 measures  — the same two skeletons compared with names thrown away
+        1.000  count                        2/2         how many slots
+        1.000  attachment_types_by_position 2/2         the same kind of attachment sits at each position in the draw order
+        1.000  bone_binding_shape           2/2         as many slots hang off a bone of each shape (`?` = no such bone is declared)
+        1.000  order_shape                  2/2         the draw order is the same order of `<attachment type>@<bone shape>`
 
-    animations    mean 1.000  over 9 measures
-        1.000  count                  2/2         how many animations
-        1.000  names                  2/2         the animation names
-        1.000  duration               2/2         each animation runs as long (last key time, within one frame)
-        1.000  timeline_kinds         8/8         the same timelines exist
-        1.000  key_counts             69/69       those timelines carry as many keys
-        1.000  curve_kinds            69/69       as many linear / stepped / bezier keys
-        1.000  event_keys             0/0         as many event firings  — neither side has any
-        1.000  draw_order             2/2         a draw-order timeline is present or absent alike
-        1.000  deform                 2/2         a deform timeline is present or absent alike
+    attachments           mean 1.000  over 9 measures
+        1.000  skins                        1/1         the skin names
+        1.000  count                        2/2         how many attachments
+        1.000  names                        2/2         skin/slot/attachment keys
+        1.000  type_counts                  2/2         as many of each attachment type
+        1.000  mesh_vertices                0/0         each mesh has the same vertex count  — neither side has any
+        1.000  mesh_triangles               0/0         each mesh has the same triangle count  — neither side has any
+        1.000  mesh_weighted                0/0         each mesh is weighted, or is not, alike  — neither side has any
+        1.000  mesh_hull                    0/0         each mesh declares the same hull length  — neither side has any
+        1.000  region_size                  2/2         NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)
 
-    events        mean 1.000  over 2 measures
-        1.000  names                  0/0         the event names  — neither side has any
-        1.000  payloads               0/0         each event carries the same typed payload  — neither side has any
+    constraints           mean 1.000  over 5 measures
+        1.000  count                        0/0         how many constraints  — neither side has any
+        1.000  names                        0/0         the constraint names  — neither side has any
+        1.000  type_counts                  0/0         as many of each constraint type  — neither side has any
+        1.000  type_by_name                 0/0         each constraint is the same type  — neither side has any
+        1.000  refs                         0/0         each constraint names the same bones and slots  — neither side has any
+
+    animations            mean 1.000  over 9 measures
+        1.000  count                        2/2         how many animations
+        1.000  names                        2/2         the animation names
+        1.000  duration                     2/2         each animation runs as long (last key time, within one frame)
+        1.000  timeline_kinds               8/8         the same timelines exist
+        1.000  key_counts                   69/69       those timelines carry as many keys
+        1.000  curve_kinds                  69/69       as many linear / stepped / bezier keys
+        1.000  event_keys                   0/0         as many event firings  — neither side has any
+        1.000  draw_order                   2/2         a draw-order timeline is present or absent alike
+        1.000  deform                       2/2         a deform timeline is present or absent alike
+
+    events                mean 1.000  over 2 measures
+        1.000  names                        0/0         the event names  — neither side has any
+        1.000  payloads                     0/0         each event carries the same typed payload  — neither side has any
 ```
 
-Four of those measures are **vacuous** and say so (`0/0`, "neither side has any"):
-the mesh figures and every constraint and event figure. A rung with meshes or
-constraints will not get them for free.
+Eleven of those measures are **vacuous** and say so (`0/0`, "neither side has
+any"): the four mesh figures and every constraint and event figure. A rung with
+meshes or constraints will not get them for free.
+
+The two name-agnostic blocks are 1.000 here for the least interesting reason
+available — a transcription has the reference's own names, so there is no gap for
+them to be measuring. They earn their keep on an authoring run, where the names
+are the author's; rung 3's two attempts are where to read them.
 
 ### What the transcription cost — two motion-spec extensions
 
