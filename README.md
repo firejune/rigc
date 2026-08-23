@@ -316,6 +316,32 @@ the renderer policy*.
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the stroke stays within the cut's measured containment ceiling, and nothing in the axis subtree scales — a scale key changes the contour the ceiling was measured on (skipped when the manifest declares none) |
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | every draw-order key resolves to a real permutation: known slots, one entry per slot, each landing inside the slots array, offsets in ascending slot order. The **only assertion that runs before `A00`** — descending offsets make `readDrawOrder`'s forward-only cursor spin rather than return, so the round trip is refused by name instead of attempted |
 
+## Install
+
+rigc runs on [Bun](https://bun.sh). The package ships its TypeScript sources and
+Bun runs them, so there is no build step and no `dist/` that can drift from the
+repository it was cut from.
+
+```bash
+bunx rigc --help    # run it without installing
+bun add -g rigc     # or install the command
+bun add -d rigc     # or pin it in a project
+```
+
+`npx rigc` works too, as long as Bun is on `PATH` — the executable is a Bun
+script, and npm only writes the shim that calls it.
+
+Installed, the command is `rigc`. The examples below spell it `bun cli.ts`
+because they are written from a clone of this repository (`bun install`, then run
+the CLI in place); the two are interchangeable — `rigc build …` is
+`bun cli.ts build …`.
+
+Two commands are repository workflows rather than package ones: `bench` and
+`check` measure against Spine's official example projects and the reference
+frames rendered from them, which are fetched rather than redistributed (see
+[NOTICE.md](NOTICE.md)). They need a clone and `bun run fetch-examples`, and say
+so by name when the corpus is absent.
+
 ## Usage
 
 📘 **Writing a spec? Read [docs/AUTHORING.md](docs/AUTHORING.md) first.** It is the
@@ -323,11 +349,9 @@ guide an agent rigs from: both input files with a complete minimal example each,
 every field with its Spine meaning, the rules that decide what is emitted, the
 build → read the report → fix → repeat loop, the map from every named failure to
 the file that has to change, and the list of format features rigc refuses by name
-so you do not spend a loop discovering them.
-
-```bash
-bun install
-```
+so you do not spend a loop discovering them. It travels **inside the npm package**
+too, so an agent working from an install has it on disk at
+`node_modules/rigc/docs/AUTHORING.md`.
 
 Compile by spelling out the paths. `--manifest` is optional; `--images <dir>` says
 where a rig spec's `image` references live (it overrides the rig's own `images`

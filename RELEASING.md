@@ -65,18 +65,49 @@ the commit that introduces these files, and is not maintained afterwards.
 published, and npm's trusted publishing (OIDC) cannot be configured for a
 package that is not there yet — so an automated publish today could only
 authenticate with a long-lived token, which would be the one persistent secret
-in this repository. Publish from the tag instead:
+in this repository. Publish from the tag instead. The whole sequence, in order:
+
+1. `npm login` — once per machine; `npm whoami` says whether it is still done.
+2. Cut the release: merge the `release: vX.Y.Z` pull request and wait for the
+   second `release` run to tag it (steps 1–5 above).
+3. Publish from that tag:
 
 ```sh
 git fetch --tags
-git checkout vX.Y.Z
+git checkout vX.Y.Z              # the tagged tree, never a working main
 bun install --frozen-lockfile
-bun run typecheck && bun run lint
-npm publish --access public
+npm publish                      # runs prepublishOnly, then asks for the OTP
 ```
 
 From the tag, never from a working `main`: the tarball has to be the tree the
-GitHub release names.
+GitHub release names. `npm publish` takes no flags here — `publishConfig.access`
+in `package.json` already says `public`, which is what an unscoped first publish
+needs.
+
+`prepublishOnly` runs `bun run typecheck && bun run lint && bun run selftest`
+before npm packs anything, so a tree that fails its own gates cannot be
+published by accident. It is the same three commands CI runs on every push; the
+selftest needs no corpus and no arguments, and reports the example suites as
+HOLEs rather than passes when `examples/` is absent.
+
+Confirm afterwards: `npm view rigc version`.
+
+### What the tarball contains
+
+`files` in `package.json` is an allowlist, so the published package is the
+runtime and nothing else: `cli.ts`, `src/`, the two `tools/` modules `src/`
+imports (`plate.ts`, `font5x7.ts`), `README.md`, `LICENSE`, `NOTICE.md`, and
+`docs/AUTHORING.md` plus `docs/SPEC_COVERAGE.md` — the first because it is the
+interface an authoring agent reads, the second because two `NotImplementedError`
+messages cite it by part number. The benchmark corpus, the reference frames, the
+selftest, the fixtures and the measuring tools stay in the repository: they are
+the yardstick, not the tool. Check before a publish with `npm pack --dry-run`,
+which prints the file list and the size.
+
+`publishConfig.provenance` is deliberately **not** set. Provenance can only be
+attested from a CI run with an OIDC token, so it would fail the manual publish
+above; trusted publishing generates the attestation on its own once the
+automation is in place.
 
 Once the package is on npm, the automation is one form and one edit:
 
