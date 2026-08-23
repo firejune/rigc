@@ -927,6 +927,31 @@ where one part's **interior detail** — a marking, a highlight, anything not on
 outline — lies inside the other part's area, and see which survives. Then write the
 slots in that order (R4), because there is no other place in the file to say it.
 
+**That reads the reference only, and it settles the edges the reference happens to
+show. There is a second test, and it decides more of them.** Build your candidate
+**both ways**, render each back, and measure the *same* interior feature on both
+sides. A composited part whose unoccluded size you can compute is a ruler: a bead
+that reads 99–109 px in the reference and 108–116 px in your build is being covered
+in one and not in the other, and that is the order. Rung 8's brief settled one edge
+of a four-link chain and said the frames did not show the rest; rendered
+like-for-like, three more came out —
+
+| | link 2 | link 3 | link 4 |
+| --- | ---: | ---: | ---: |
+| reference | 99–106 | 99–107 | 101–109 |
+| candidate, child in front | 108–116 | 109–116 | 109–116 |
+| candidate, **parent in front** | **99–107** | **96–104** | **95–104** |
+
+⇒ each link is drawn in front of the one below it. Worth 1.402 → 1.335 window MAE
+and `slots.order` **6/6** in `bench` — a convention the gate cannot see and the
+measures can.
+
+⚠️ **The same test knows when to stay silent, and you have to let it.** Run on the
+same rung's other shot, the two orders came out **0.8 % apart over the shot and
+pointing opposite ways** — a gap well inside the objective's own scatter, which is
+correctly no answer. A difference that small is not a quiet vote for the winner; it
+means the frames do not decide this edge, and you ship it on reasoning and say so.
+
 And the general form of all three: **when a reading implies a key, look for a second
 way to get the same number before you author it.** A wrong measurement costs one
 spurious key; a wrong measurement you believed costs the shape of the whole shot.
@@ -1062,6 +1087,20 @@ you specifically: it means **you may run `check` as often as you like** without
 your run ceasing to be an honest authoring run. It is a loop, in the way `build` is
 a loop. `bench` and `diff` against a rung's export are not — they read the answer,
 and [the ladder's honesty rule](LADDER.md) makes them a finish line you reach once.
+
+🚨 **If you drive the runtime yourself, a bone's local transform lives on
+`bone.pose`.** A shot whose poses have to be *fitted* rather than read sends you
+past `check` and into your own render loop over
+`@esotericsoftware/spine-core` — that is §8's *"look for a second way to get the
+same number"* applied to a whole pose, and it is a legitimate thing to build. The
+first thing it hits is not a subtlety. **spine-core 4.3 keeps a bone's local
+transform on `bone.pose`, not on the bone**, so `bone.rotation = …` — or `.x`,
+`.y`, `.scaleX` — is neither an error nor a rotation: it adds a property nothing
+reads, and every frame renders as the setup pose. Write `bone.pose.rotation`.
+⇒ **An MAE that is identical across every pose, and that does not move for any
+parameter you sweep, is this mistake and not a wrong animation.** Rung 8 lost a
+loop to it at a flat 17.3; driven through `bone.pose`, the same poses measured
+**2.76**.
 
 ### 9.2 Reading the table
 
@@ -1239,7 +1278,16 @@ a part you have not authored, or one you have put somewhere else entirely.
   still cannot tell you is *how* a silhouette got its shape: a hull moved by a
   bone chain and the same hull moved by deform keys render to the same pixels, and
   the frames cannot separate them. Choose on what the rig has to do next, not on
-  what the frames appear to say.
+  what the frames appear to say. ⚠️ **But `bench` does see it**, in
+  `attachments.type_counts`, `attachments.mesh_weighted`, `attachments.region_size`
+  and the bone count that comes with the choice — rung 8's ball is a region scaled
+  by its bone where the reference spends a mesh and three more bones, which read
+  `attachments` **0.444** (1/2, 1/2, 0/1) and `bones` **9 against 12**, while
+  `animations.deform` is **1.000** on both sides because neither rig deforms with
+  keys. That is not an argument for guessing: nothing in the frames could have
+  chosen. It is an argument for **writing down which way you went and why at the
+  moment you decide it**, rather than meeting the decision again in the measures
+  after the run is over.
 - **Which of two explanations is right.** A slot 3 px low every frame and a slot
   3 px low at one frame have the same drift and opposite causes. The table gives
   you the frame index; §8's rule still applies — look for a second way to get the
