@@ -596,7 +596,11 @@ transform constraints leave no trace in rendered pixels, so none were guessed.
 
 `check`: MAE **8.73** with the framing fit **not converging** (`x0.999505` after
 4 passes); pinned to `frames.json`'s own box, MAE **3.50**, worst attributable
-slot drift 4.1 px.
+slot drift 4.1 px. (Those are the figures the run reported and they stand as its
+record. The gap between them was `check`'s own, not the rig's: it is
+[issue #52](https://github.com/firejune/rigc/issues/52), and since it closed the
+same artifacts read **3.50 unpinned** — the frames' own box is now used whenever
+the candidate is measured to land in it.)
 
 **Reading — the commander's call, 2026-08-23.** Build choices: the ball is bone
 `scaleX`/`scaleY` with the product held to 1 (area-preserving), a sibling of the

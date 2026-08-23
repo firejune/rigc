@@ -86,9 +86,11 @@ import {
   fitDistance,
   fitFraming,
   fitIsSettled,
+  fitSeparation,
   frameContentBox,
   isContent,
   BACKGROUND_TOLERANCE,
+  CYCLE_PIXELS,
   type BoxPair,
   type ContentBox,
   type FramingFit,
@@ -261,6 +263,18 @@ export interface Framing {
   pixelHeight: number;
 }
 
+/**
+ * How the world box the candidate was rendered into was arrived at.
+ *
+ * - `derived` — fitted to the candidate's own drawn pixels, from a start taken
+ *   from its posed geometry. The default, and the only option without a sidecar.
+ * - `declared` — the box `frames.json` records, reached from that same box and
+ *   kept because the candidate's own pixels land on the reference's in it. See
+ *   `frameByDeclaredBox` for why a measured coincidence licenses it.
+ * - `pinned` — `--viewport`, which is a claim by the author and is not checked.
+ */
+export type FramingSource = 'derived' | 'declared' | 'pinned';
+
 /** What the framing pass concluded, and how sure it is of it. */
 export interface FramingReport {
   /** The residual fit measured at the viewport that was used. */
@@ -269,6 +283,26 @@ export interface FramingReport {
   passes: number;
   /** Did the correction converge to the identity, or was it still moving? */
   settled: boolean;
+  /** How the box was chosen — see `FramingSource`. */
+  source: FramingSource;
+  /**
+   * Did the correction fall into a repeating orbit instead of converging?
+   *
+   * When it did, `settled` is false and **more passes cannot help**: the loop is
+   * re-measuring states it has already been in. That is a fact about the fit
+   * having no fixed point on this shot, not about the pass budget, and the two
+   * used to print the same warning.
+   */
+  cycled: boolean;
+  /**
+   * Do the two content boxes agree, at the viewport that was used?
+   *
+   * `fitDistance` under `COINCIDENT_PIXELS`. This is what separates "the loop
+   * fell short of its own target and the two shots are nevertheless in the same
+   * place" from "the loop fell short because these are different shapes" — the
+   * first is the tool's floor and the second is a finding.
+   */
+  agrees: boolean;
   /**
    * Whether the fit was APPLIED or only measured.
    *
@@ -304,7 +338,7 @@ export interface CheckReport {
   framesDir: string;
   framesRoot: string;
   /** How the candidate's own world box was chosen. */
-  framing: 'candidate-pixels' | 'viewport-flag';
+  framing: 'candidate-pixels' | 'frames-viewport' | 'viewport-flag';
   /** The box the CANDIDATE was rendered into, at the reference's pixel size. */
   viewport: Framing;
   /** Where the candidate's drawn pixels ended up against the reference's. */
@@ -491,6 +525,9 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
         fit,
         passes: 1,
         settled: false,
+        source: 'pinned',
+        cycled: false,
+        agrees: fitDistance(fit) <= COINCIDENT_PIXELS,
         applied: false,
         units: extentsOf(fit, viewport.scale, referenceViewport),
       };
@@ -499,16 +536,19 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     if (referenceBoxes.every((b) => b === null)) {
       throw new CheckError('no reference frame could be compared, so there is nothing to frame against');
     }
-    const framed = frameByPixels(prepared, posable.pages, referenceBoxes, background, level, pixelWidth, pixelHeight);
+    const framed = frameCandidate(
+      prepared,
+      posable.pages,
+      referenceBoxes,
+      background,
+      level,
+      pixelWidth,
+      pixelHeight,
+      referenceViewport,
+    );
     viewport = framed.viewport;
     framingFit = { ...framed.report, units: extentsOf(framed.report.fit, viewport.scale, referenceViewport) };
-    if (!framed.report.settled) {
-      notes.push(
-        `the framing did not settle in ${framed.report.passes} pass(es) — the correction below is what is left over ` +
-          'after the closest one, and it is at the level a pixel box can be measured to. A residual much larger than ' +
-          'a pixel means the two content boxes are different shapes, not that the fit failed.',
-      );
-    }
+    notes.push(...framingNotes(framed.report));
   }
 
   const animations: AnimationCheck[] = [];
@@ -523,7 +563,11 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     },
     framesDir: resolve(options.framesDir),
     framesRoot: located.root,
-    framing: options.viewport ? 'viewport-flag' : 'candidate-pixels',
+    framing: options.viewport
+      ? 'viewport-flag'
+      : framingFit?.source === 'declared'
+        ? 'frames-viewport'
+        : 'candidate-pixels',
     viewport: {
       x: viewport.minX,
       y: viewport.minY,
@@ -553,12 +597,44 @@ function readPlateFrom(root: string, file: string): Plate {
 /**
  * How many render → measure → correct passes the framing is allowed.
  *
- * Measured: a faithful candidate settles on the first look, and the ladder's real
- * candidates converge to a jitter floor of about 0.15 px by the third or fourth —
- * which is the noise of the content-box statistic itself, not something more
- * passes remove. Past that the loop stops and the report says so.
+ * A faithful candidate settles on the first look. What the old ceiling of 4 read
+ * as "a jitter floor by the third or fourth pass" is, measured properly, an
+ * **orbit**: on rung 6 the correction repeats with period 4, so passes 4–7 come
+ * back as 8–11 and again as 12–15, to within 0.02 px. Stopping at 4 stopped
+ * mid-orbit, on whichever phase pass 4 happened to be — and that phase was the
+ * worst of the four, framed 0.063 % off the scale the frames were rendered at and
+ * worth **5 MAE points** on that shot (8.73 against a pinned 3.50, issue #52).
+ *
+ * One more pass reaches the orbit's closest phase and takes the same shot to 5.62;
+ * 6, 8, 12, 16 and 24 passes all return that same viewport, because `chosen`
+ * keeps the closest pass and the orbit has no better one. So the ceiling is raised
+ * to two full periods — enough to see every phase of an orbit this size — and
+ * `fitSeparation` stops the loop the moment it recognises one, which costs the
+ * cycling case one pass rather than four. A shot that is genuinely still
+ * converging is unaffected: it settles and breaks out first.
+ *
+ * ⚠️ This is not a way to reach the right framing. Nothing in an extent fit can
+ * be: at the box `frames.json` records — the one the frames were actually drawn
+ * at — rung 6's edge residual is 0.41 px rms, **worse** than the 0.23 px the orbit
+ * reaches, because the candidate's silhouette genuinely differs and the best fit
+ * of two extents is not the best alignment of two pictures (`fitFraming`, "the
+ * floor, stated plainly"). That is what `frameByDeclaredBox` is for.
  */
-const FRAMING_PASSES = 4;
+const FRAMING_PASSES = 8;
+
+/**
+ * How far the candidate's drawn pixels may sit from the reference's and still be
+ * called the same place, in pixels.
+ *
+ * One pixel, and the margin on either side of it is enormous rather than fine.
+ * What this threshold has to separate is a candidate authored in the frames' own
+ * world coordinates from one authored in its own, and those differ by an origin
+ * or a unit — tens to hundreds of pixels — not by a fraction of one. Rung 6's
+ * candidate reads 0.45 px in the declared box; rung 3's mechanical transcription
+ * reads 0.07; a rig scaled by 2 % reads about 5 before the scale is taken out and
+ * about 0.07 after. Nothing measured so far lands between 1 and 5.
+ */
+export const COINCIDENT_PIXELS = 1;
 
 /**
  * The two content boxes in world units, each divided by its own render scale.
@@ -646,8 +722,22 @@ function pairUpBoxes(
   return out;
 }
 
+/** One measured pass of the framing loop. */
+interface FramingPass {
+  viewport: Viewport;
+  fit: FramingFit;
+  distance: number;
+}
+
+/** A chain of passes and why it stopped. */
+interface FramingChain {
+  passes: FramingPass[];
+  settled: boolean;
+  cycled: boolean;
+}
+
 /**
- * Put the candidate's drawn pixels on the reference's drawn pixels.
+ * Render → measure → correct, from one starting viewport, until it stops.
  *
  * ## Why it iterates
  *
@@ -656,12 +746,76 @@ function pairUpBoxes(
  * left. It stops as soon as the correction is the identity to within
  * `SETTLED_PIXELS`, which for a faithful candidate is the first look.
  *
- * ⚠️ It keeps the **closest** pass rather than the last. A content box read off
- * pixels is quantised, so near the answer the correction can jitter by a fraction
- * of a pixel instead of converging, and taking the last pass would hand back
- * whichever side of the jitter the loop happened to stop on.
+ * ## And why it also watches for an orbit
  *
- * ## And why the start is trimmed too
+ * When the fit has no fixed point on a shot — which happens whenever the
+ * candidate's silhouette genuinely differs, because the fit registers extent and
+ * extent is not alignment — the sequence does not wander and does not converge. It
+ * **cycles**, and every further pass re-measures a state it has already been in at
+ * the cost of a full re-render of every frame. `fitSeparation` recognises that in
+ * one comparison per pass, so a cycling shot stops one pass after its orbit closes
+ * instead of burning the whole budget, and the report can say which of the two
+ * happened. Rung 6 cycles with period 4 (issue #52).
+ */
+function runFramingChain(
+  seed: Viewport,
+  prepared: PreparedSet[],
+  pages: Map<string, Plate>,
+  referenceBoxes: Array<ContentBox | null>,
+  background: RGBA,
+  level: number,
+  pixelWidth: number,
+  pixelHeight: number,
+  cap: number,
+): FramingChain {
+  let viewport = seed;
+  const passes: FramingPass[] = [];
+  for (let pass = 1; pass <= cap; pass++) {
+    const boxes = pairUpBoxes(prepared, pages, viewport, background, level, referenceBoxes);
+    // A viewport the candidate draws nothing into ends the chain rather than
+    // failing it, and both ways of reaching one are real. The declared box gets
+    // there on its first pass whenever the candidate is authored somewhere else
+    // entirely — rung 1's `drop` candidate is nowhere near the frames' own world
+    // box — which is the declared path being refused, not an error. And a chain
+    // that does not converge can walk its own box off its content later on, where
+    // the answer is the closest pass already measured. The caller decides what an
+    // empty chain means; only the fitted path treats it as a failure.
+    if (boxes.length === 0) return { passes, settled: false, cycled: false };
+    const fit = fitFraming(boxes);
+    const cycled = passes.some((seen) => fitSeparation(fit, seen.fit) < CYCLE_PIXELS);
+    passes.push({ viewport, fit, distance: fitDistance(fit) });
+    if (fitIsSettled(fit)) return { passes, settled: true, cycled: false };
+    if (cycled) return { passes, settled: false, cycled: true };
+    viewport = applyFit(viewport, fit, pixelWidth, pixelHeight);
+  }
+  return { passes, settled: false, cycled: false };
+}
+
+/**
+ * The pass whose correction is closest to the identity.
+ *
+ * ⚠️ The **closest** pass rather than the last, and the viewport handed back is
+ * therefore one that was actually MEASURED, with the fit beside it being what it
+ * still leaves over — never a correction applied on the way out and never looked
+ * at. Near the answer the correction can jitter or orbit instead of converging, so
+ * taking the last pass would hand back whichever phase the loop happened to stop
+ * on, and applying one more unverified correction is a coin flip. A report that
+ * describes a viewport nobody rendered is worse than a slightly worse viewport.
+ */
+function closestPass(chain: FramingChain): FramingPass {
+  let best = chain.passes[0];
+  for (const pass of chain.passes) if (pass.distance < best.distance) best = pass;
+  return best;
+}
+
+/**
+ * Put the candidate's drawn pixels on the reference's drawn pixels.
+ *
+ * Two ways in, and the second is tried first because when it applies it is exact
+ * rather than estimated — see `frameByDeclaredBox`. The fitted path is the general
+ * one and the only one available without a sidecar.
+ *
+ * ## Why the fitted start is trimmed
  *
  * The starting box is the union of the posed quads **trimmed to their opaque
  * texels**, not the quads themselves. It is only a starting point — the framing is
@@ -671,7 +825,7 @@ function pairUpBoxes(
  * two. With the trim, art padded on both sides is byte-identical work: same start,
  * same passes, same numbers. `selftest` C03 asserts exactly that.
  */
-function frameByPixels(
+function frameCandidate(
   prepared: PreparedSet[],
   pages: Map<string, Plate>,
   referenceBoxes: Array<ContentBox | null>,
@@ -679,7 +833,20 @@ function frameByPixels(
   level: number,
   pixelWidth: number,
   pixelHeight: number,
+  referenceViewport: Framing | null,
 ): { viewport: Viewport; report: Omit<FramingReport, 'units'> } {
+  const declared = frameByDeclaredBox(
+    prepared,
+    pages,
+    referenceBoxes,
+    background,
+    level,
+    pixelWidth,
+    pixelHeight,
+    referenceViewport,
+  );
+  if (declared) return declared;
+
   const quads = trimmedUnionBounds(
     prepared.map((p) => p.pairs.map((pair) => pair.frame)),
     pages,
@@ -695,7 +862,7 @@ function frameByPixels(
     maxY: quads.maxY + pad,
   };
   const maxSide = Math.max(pixelWidth, pixelHeight);
-  let viewport = viewportOfSize(
+  const seed = viewportOfSize(
     world.minX,
     world.minY,
     world.maxX - world.minX,
@@ -704,30 +871,165 @@ function frameByPixels(
     pixelWidth,
     pixelHeight,
   );
-
-  let best: { viewport: Viewport; fit: FramingFit; distance: number } | null = null;
-  let passes = 0;
-  let settled = false;
-  for (let pass = 1; pass <= FRAMING_PASSES; pass++) {
-    passes = pass;
-    const boxes = pairUpBoxes(prepared, pages, viewport, background, level, referenceBoxes);
-    if (boxes.length === 0) throw new CheckError('the candidate drew no pixel in any frame that was compared');
-    const fit = fitFraming(boxes);
-    const distance = fitDistance(fit);
-    if (!best || distance < best.distance) best = { viewport, fit, distance };
-    if (fitIsSettled(fit)) {
-      settled = true;
-      break;
-    }
-    viewport = applyFit(viewport, fit, pixelWidth, pixelHeight);
+  const chain = runFramingChain(
+    seed,
+    prepared,
+    pages,
+    referenceBoxes,
+    background,
+    level,
+    pixelWidth,
+    pixelHeight,
+    FRAMING_PASSES,
+  );
+  if (chain.passes.length === 0) {
+    throw new CheckError('the candidate drew no pixel in any frame that was compared');
   }
-  const chosen = best as { viewport: Viewport; fit: FramingFit; distance: number };
-  // The viewport handed back is one that was actually MEASURED, and the fit beside
-  // it is what it still leaves over — never a correction applied on the way out and
-  // never looked at. When the loop is jittering at a fraction of a pixel, applying
-  // one more unverified correction is a coin flip, and a report that describes a
-  // viewport nobody rendered is worse than a slightly worse viewport.
-  return { viewport: chosen.viewport, report: { fit: chosen.fit, passes, settled, applied: true } };
+  const chosen = closestPass(chain);
+  return {
+    viewport: chosen.viewport,
+    report: {
+      fit: chosen.fit,
+      passes: chain.passes.length,
+      settled: chain.settled,
+      source: 'derived',
+      cycled: chain.cycled,
+      agrees: chosen.distance <= COINCIDENT_PIXELS,
+      applied: true,
+    },
+  };
+}
+
+/**
+ * The box `frames.json` records, used as the candidate's own — when, and only
+ * when, the candidate's pixels are measured to land in it.
+ *
+ * ## 🔒 This is not reading the answer
+ *
+ * The thing the honesty rule protects is the reference **skeleton** — its bones,
+ * its keys, its curves — and none of that is here. `frames.json` is a sidecar
+ * `check` already reads, whose `viewport` it already prints, and which
+ * [`docs/AUTHORING.md`](../docs/AUTHORING.md) §9 already tells an author to hand
+ * back through `--viewport`. What changes is only that the tool now *checks* the
+ * condition the guide asks the author to assert, instead of requiring them to
+ * notice it and type it.
+ *
+ * ## Why a declared box beats a fitted one
+ *
+ * A fit is an estimate with a floor. `fitFraming` registers two shots by their
+ * **extent**, so when the candidate's silhouette genuinely differs the best fit of
+ * the extents is about a third of a pixel away from the best alignment of the
+ * pictures — and on a small high-contrast shot a third of a pixel is several MAE.
+ * Rung 6 measures that floor as a 5-point tax: 8.73 fitted against 3.50 in the box
+ * the frames were actually drawn at, with every content box, residual and rms
+ * under the method's own noise (issue #52).
+ *
+ * The declared box has no such floor. It is not an estimate of where the frames
+ * were drawn; it is where they were drawn. So the only question is whether it
+ * applies to *this* candidate, and that is one measurement: render the candidate
+ * into the declared box, fit, and keep the box when the correction it asks for is
+ * under `COINCIDENT_PIXELS`. Nothing is corrected and nothing is iterated —
+ * either the candidate is in the frames' coordinates or it is not.
+ *
+ * ⚠️ **Correcting the declared box makes it worse, measured.** The obvious extra
+ * step — accept it, then run the usual passes from there to polish — was written
+ * and measured, and it walks off the answer: rung 5's candidate, whose author
+ * matched the reference's world box by hand, reads **4.35** at the declared box and
+ * **6.24** after three refining passes, and 4.35 is the figure `fitFraming` records
+ * as this shot's correct framing. Rung 6 reads 3.50 at the box and drifts the same
+ * way. The refinement is the extent fit, and the extent fit is exactly what the
+ * declared box is here to avoid.
+ *
+ * A candidate authored in its own coordinates — the ordinary case, and the one the
+ * ladder's honesty rule guarantees — misses by a wide margin and is framed by the
+ * fitted path exactly as before. Rung 3's candidate put its origin on the pendulum's
+ * pivot and the reference put its own elsewhere; in the declared box that candidate
+ * reports MAE 146/255, and its fit says so long before the pixels are ever compared.
+ * Rung 1's `drop` candidate draws nothing at all in the declared box.
+ *
+ * ⚠️ So does a rig in the frames' coordinates at **different units**, which is a
+ * choice the framing must stay blind to (`selftest` C04). It is refused here and
+ * framed by the fitted path, where the blindness lives — and it therefore pays the
+ * fit's floor where a same-units candidate does not. Recovering the unit from the
+ * fit and scaling the declared box by it was measured too: on a rig scaled by 2 %
+ * it recovers 1.0196 against a true 1.02 and lands two thirds of the way back, which
+ * is more machinery for a case no candidate in the corpus has and still not exact.
+ */
+function frameByDeclaredBox(
+  prepared: PreparedSet[],
+  pages: Map<string, Plate>,
+  referenceBoxes: Array<ContentBox | null>,
+  background: RGBA,
+  level: number,
+  pixelWidth: number,
+  pixelHeight: number,
+  referenceViewport: Framing | null,
+): { viewport: Viewport; report: Omit<FramingReport, 'units'> } | null {
+  if (!referenceViewport || referenceViewport.scale <= 0) return null;
+  const viewport = viewportOfSize(
+    referenceViewport.x,
+    referenceViewport.y,
+    referenceViewport.width,
+    referenceViewport.height,
+    referenceViewport.scale,
+    pixelWidth,
+    pixelHeight,
+  );
+  const boxes = pairUpBoxes(prepared, pages, viewport, background, level, referenceBoxes);
+  // Nothing drawn in the declared box is the loudest possible "not these
+  // coordinates", not a failure: rung 1's `drop` candidate is nowhere near it.
+  if (boxes.length === 0) return null;
+  const fit = fitFraming(boxes);
+  const distance = fitDistance(fit);
+  if (distance > COINCIDENT_PIXELS) return null;
+  return {
+    viewport,
+    report: {
+      fit,
+      passes: 1,
+      settled: fitIsSettled(fit),
+      source: 'declared',
+      cycled: false,
+      agrees: true,
+      applied: true,
+    },
+  };
+}
+
+/**
+ * What the framing pass concluded, in the words that tell the three cases apart.
+ *
+ * The distinction the report used to be missing (issue #52): "did not settle, and
+ * the two shots are nevertheless in the same place" is the tool reaching its own
+ * floor, "did not settle, and they are not" is a finding about the candidate, and
+ * "the correction is cycling" says more passes cannot change either answer.
+ */
+function framingNotes(report: Omit<FramingReport, 'units'>): string[] {
+  if (report.source === 'declared') {
+    return [
+      `the candidate's world box was taken from ${FRAMES_SIDECAR} rather than fitted, because rendering it into ` +
+        `that box put its own drawn pixels on the reference's to within ${report.fit.rms.toFixed(2)} px rms — so ` +
+        "the candidate is authored in the frames' own coordinates, measured rather than assumed, and the box they " +
+        'were rendered at is exact where a fit of it is an estimate. The framing line below is still measured; what ' +
+        `it leaves over is the extent fit's own floor${report.settled ? '' : ', which is why it does not read as the identity'}. ` +
+        'Pass --viewport to override.',
+    ];
+  }
+  if (report.settled) return [];
+  const how = report.cycled
+    ? `the framing correction fell into a repeating orbit after ${report.passes} pass(es) rather than settling, so ` +
+      'more passes cannot help: the fit has no fixed point on this shot'
+    : `the framing did not settle in ${report.passes} pass(es)`;
+  return [
+    report.agrees
+      ? `${how}. The two content boxes nevertheless agree to within ${report.fit.rms.toFixed(2)} px rms, so this is ` +
+        "the fit's own floor and not a shape mismatch — the fit registers extent, and on a silhouette that differs " +
+        'anywhere the best fit of the extents is not the best alignment of the pictures. Pass --viewport to pin the ' +
+        'box when you know your own coordinates.'
+      : `${how}, and the two content boxes do not agree either — the correction below is what is left over after ` +
+        'the closest pass. A residual much larger than a pixel means the two shots are different shapes, which is ' +
+        'a finding about the candidate rather than about the loop.',
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -987,7 +1289,12 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   lines.push(`  atlas      ${report.candidate.atlas}`);
   lines.push(`  frames     ${report.framesDir}`);
   const v = report.viewport;
-  const how = report.framing === 'candidate-pixels' ? "fitted to the candidate's own drawn pixels" : '--viewport';
+  const how =
+    report.framing === 'candidate-pixels'
+      ? "fitted to the candidate's own drawn pixels"
+      : report.framing === 'frames-viewport'
+        ? `${FRAMES_SIDECAR}'s own box — the candidate measured into it`
+        : '--viewport';
   lines.push(
     `  framed to  ${v.pixelWidth}x${v.pixelHeight}px  ${v.scale.toFixed(6)} px/unit  ` +
       `world x[${v.x.toFixed(1)} .. ${(v.x + v.width).toFixed(1)}] y[${v.y.toFixed(1)} .. ${(v.y + v.height).toFixed(1)}]  (${how})`,
@@ -1075,6 +1382,18 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   return lines;
 }
 
+/**
+ * What the fit did, in one word.
+ *
+ * The declared box is never "unsettled" — it was not being iterated towards, it
+ * was measured and kept, and `coincident` says the measurement that kept it.
+ */
+function convergence(framing: FramingReport): string {
+  if (framing.settled) return 'settled';
+  if (framing.source === 'declared') return 'coincident';
+  return framing.cycled ? 'cycling' : 'unsettled';
+}
+
 /** The framing, as the line an author reads before anything else. */
 function framingLines(report: CheckReport): string[] {
   const framing = report.framingFit;
@@ -1092,7 +1411,9 @@ function framingLines(report: CheckReport): string[] {
       `rms ${fit.rms.toFixed(2)} px over ${fit.frames * 4} edge(s)   ` +
       `union residual ${signed(fit.residualWidth)} x ${signed(fit.residualHeight)} px   ` +
       `aspect ${percent(fit.aspectError)}` +
-      (framing.applied ? `  (applied, ${framing.passes} pass(es))` : '  (measured, NOT applied — --viewport pinned)'),
+      (framing.applied
+        ? `  (${framing.source}, ${framing.passes} pass(es), ${convergence(framing)})`
+        : '  (measured, NOT applied — --viewport pinned)'),
   ];
   const spread = Math.max(Math.abs(fit.residualWidth), Math.abs(fit.residualHeight));
   if (spread > 1) {

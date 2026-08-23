@@ -1182,6 +1182,10 @@ const FRAMING_PAD = 20;
 const FRAMING_TOLERANCE = 0.1;
 /** The whole-rig scale C04 asks the framing report to name. */
 const FRAMING_SCALE = 1.02;
+/** How far C05 lets the automatic framing differ from pinning the same box by hand. */
+const DECLARED_MAE_TOLERANCE = 0.01;
+/** The whole-rig translation C06 asks `check` to refuse the declared box for. */
+const FRAMING_MOVE = 300;
 
 const CHECK_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/3-timing-and-spacing');
 const CHECK_FRAMES = resolve(import.meta.dir, 'bench/reference/3-timing-and-spacing');
@@ -1252,6 +1256,27 @@ function scaleWholeRig(skeletonText: string, factor: number, boneName = 'rigc-se
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 /**
+ * The same skeleton with everything under a bone that moves it by `dx, dy`.
+ *
+ * The negative control for the declared-box framing (C06). A rig that draws the
+ * same picture somewhere else in the world is the ordinary case — an author cannot
+ * see the reference's origin and has no way to land on it — so `check` must refuse
+ * `frames.json`'s box for it and fit one instead. Without this, "the box was used"
+ * in C05 would be indistinguishable from "the box is always used".
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function moveWholeRig(skeletonText: string, dx: number, dy: number, boneName = 'rigc-selftest-move'): string {
+  const skeleton = JSON.parse(skeletonText);
+  const bones = skeleton.bones as any[];
+  for (const bone of bones) {
+    if (bone.parent === undefined) bone.parent = boneName;
+  }
+  bones.unshift({ name: boneName, x: dx, y: dy });
+  return `${JSON.stringify(skeleton, null, 2)}\n`;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
  * The same motion, played backwards: `t -> duration - t`, keys reversed.
  *
  * Every raw `curve` is dropped with them, because those control points are
@@ -1273,6 +1298,21 @@ function reverseMotionTimes(text: string): string {
   return `${JSON.stringify(motion, null, 2)}\n`;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
+ * The world box `frames.json` records for the rung-3 frames.
+ *
+ * The suite may read it; `check` reading it is the point of C05. It is what
+ * `--viewport` would be handed by an author following
+ * [`docs/AUTHORING.md`](docs/AUTHORING.md) §9's second case, and C05 asserts that
+ * the tool now reaches the same place without being told.
+ */
+function sidecarViewport(): { x: number; y: number; width: number; height: number } {
+  const sidecar: unknown = JSON.parse(readFileSync(join(CHECK_FRAMES, 'frames.json'), 'utf8'));
+  const { x, y, width, height } = (sidecar as { viewport: { x: number; y: number; width: number; height: number } })
+    .viewport;
+  return { x, y, width, height };
+}
 
 /** The two figures a check control asserts on, across every animation in the set. */
 function checkExtremes(report: CheckReport): { meanMae: number; frameMae: number; drift: number; sets: number } {
@@ -1417,18 +1457,43 @@ function runCheckSuite(): number | null {
     );
   }
 
-  // --- framing: a scale difference is REPORTED, not absorbed in silence ----
-  // A whole-rig scale is not an error, and the framing corrects it on purpose: a
-  // candidate is authored in its own coordinates and no comparison of pictures may
-  // depend on the units it chose. The claim under test is the other half of that —
-  // that the correction is *visible*. It lands in the framing report's world-unit
-  // line, and it does NOT land in the MAE, where it would read as bad animation.
+  // --- the same rig in its own coordinates: moved, and scaled --------------
+  // Two variants of the fixture that differ from it only in where and in what
+  // units it was authored — which is the ordinary case, and the one the ladder's
+  // honesty rule guarantees, because the reference's origin and units are in the
+  // file the author is not allowed to open. Both are compiled here because C04 and
+  // C06 need each other's: `check` frames both of them by FITTING, so they are
+  // each other's like-for-like baseline, while the untouched fixture is now framed
+  // by the frames' own declared box (C05) and is not.
+  const moved = compileTranscription(null);
+  const movedReport = checkAgainstFrames({
+    ...moved,
+    skeletonText: moveWholeRig(moved.skeletonText, FRAMING_MOVE, FRAMING_MOVE),
+    framesDir: CHECK_FRAMES,
+  });
+  const m = checkExtremes(movedReport);
   const scaledReport = checkAgainstFrames({
     ...faithful,
     skeletonText: scaleWholeRig(faithful.skeletonText, FRAMING_SCALE),
     framesDir: CHECK_FRAMES,
   });
   const scaled = checkExtremes(scaledReport);
+
+  // --- framing: a scale difference is REPORTED, not absorbed in silence ----
+  // A whole-rig scale is not an error, and the framing corrects it on purpose: a
+  // candidate is authored in its own coordinates and no comparison of pictures may
+  // depend on the units it chose. The claim under test is the other half of that —
+  // that the correction is *visible*. It lands in the framing report's world-unit
+  // line, and it does NOT land in the MAE, where it would read as bad animation.
+  //
+  // ⚠️ The MAE half is measured against the MOVED rig, not the untouched one, and
+  // the reason is issue #52. Both of these are framed by a fit, which has a floor
+  // of about 0.1 px; the untouched fixture is framed by the box `frames.json`
+  // records, which has none, and on this shot that difference is worth about 0.9
+  // MAE all by itself. Comparing the scaled rig against the untouched one would
+  // therefore be measuring the framing PATH and calling it the scale. Against
+  // another rig in its own coordinates the claim is exact, and it is the claim: the
+  // MAE must not depend on the coordinates a rig was authored in.
   const units = scaledReport.framingFit?.units ?? null;
   const baseline = faithfulReport.framingFit?.units ?? null;
   const reported = units === null ? 0 : units.ratio;
@@ -1437,20 +1502,78 @@ function runCheckSuite(): number | null {
     baseline !== null &&
     Math.abs(reported - FRAMING_SCALE) <= 0.004 &&
     Math.abs(baseline.ratio - 1) <= 0.004 &&
-    Math.abs(scaled.meanMae - f.meanMae) <= 0.5;
+    scaledReport.framing === 'candidate-pixels' &&
+    Math.abs(scaled.meanMae - m.meanMae) <= FRAMING_TOLERANCE;
   if (reportedOk) {
     console.log(
       `  PASS  C04_A_SCALE_DIFFERENCE_IS_REPORTED_NOT_HIDDEN  ` +
         `(x${FRAMING_SCALE} rig reads x${reported.toFixed(4)} in units against a faithful ` +
-        `x${(baseline as { ratio: number }).ratio.toFixed(4)}, MAE ${scaled.meanMae.toFixed(2)} vs ${f.meanMae.toFixed(2)})`,
+        `x${(baseline as { ratio: number }).ratio.toFixed(4)}, MAE ${scaled.meanMae.toFixed(2)} against ` +
+        `${m.meanMae.toFixed(2)} for the same rig merely moved)`,
     );
     console.log('          origin: a framing that silently absorbs a scale reports it as motion instead');
   } else {
     bad++;
     console.log(
       `  FAIL  C04_A_SCALE_DIFFERENCE_IS_REPORTED_NOT_HIDDEN: units ratio ${reported.toFixed(4)} ` +
-        `(faithful ${(baseline?.ratio ?? 0).toFixed(4)}) for a x${FRAMING_SCALE} rig, MAE ` +
-        `${scaled.meanMae.toFixed(2)} against a faithful ${f.meanMae.toFixed(2)}`,
+        `(faithful ${(baseline?.ratio ?? 0).toFixed(4)}) for a x${FRAMING_SCALE} rig framed by ` +
+        `${JSON.stringify(scaledReport.framing)}, MAE ${scaled.meanMae.toFixed(2)} against a moved ${m.meanMae.toFixed(2)}`,
+    );
+  }
+
+  // --- framing: the frames' own box is used when the candidate lands in it ---
+  // Issue #52. The fit is an estimate of where the frames were drawn and it has a
+  // floor — it registers EXTENT, so a silhouette that differs anywhere pulls the
+  // best fit away from the best alignment. `frames.json` records the box the frames
+  // were actually drawn at, which is not an estimate of anything. So a candidate
+  // whose own pixels are measured to land in that box is framed by it, and the
+  // claim under test is that doing so is worth exactly what pinning it by hand is
+  // worth: rung 6 read 8.73 fitted against 3.50 pinned, and an author had no way to
+  // tell "my keys are wrong" from "the fit did not finish" without running both.
+  const pinned = checkAgainstFrames({ ...faithful, framesDir: CHECK_FRAMES, viewport: sidecarViewport() });
+  const p2 = checkExtremes(pinned);
+  const declaredGap = Math.abs(f.meanMae - p2.meanMae);
+  const declaredOk =
+    faithfulReport.framing === 'frames-viewport' &&
+    faithfulReport.framingFit?.source === 'declared' &&
+    declaredGap <= DECLARED_MAE_TOLERANCE;
+  if (declaredOk) {
+    console.log(
+      `  PASS  C05_A_CANDIDATE_IN_THE_FRAMES_COORDINATES_IS_FRAMED_BY_THEIR_BOX  ` +
+        `(unpinned MAE ${f.meanMae.toFixed(2)} against ${p2.meanMae.toFixed(2)} pinned to the same box)`,
+    );
+    console.log('          origin: rung 6 read 8.73 fitted and 3.50 pinned, and the report could not say which was the shot');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C05_A_CANDIDATE_IN_THE_FRAMES_COORDINATES_IS_FRAMED_BY_THEIR_BOX: framing ` +
+        `${JSON.stringify(faithfulReport.framing)} via ${JSON.stringify(faithfulReport.framingFit?.source ?? null)}, ` +
+        `unpinned MAE ${f.meanMae.toFixed(2)} against ${p2.meanMae.toFixed(2)} pinned, tolerance ${DECLARED_MAE_TOLERANCE}`,
+    );
+  }
+
+  // --- and refused for a candidate that is somewhere else -------------------
+  // The negative control for C05. Under the ladder's honesty rule an author cannot
+  // see the reference's origin, so the ordinary candidate draws the same picture in
+  // its own place — and pinning THAT to the frames' box would report a rig that is
+  // right as catastrophically wrong (rung 3's own candidate reads MAE 146 there).
+  const movedOk =
+    movedReport.framing === 'candidate-pixels' &&
+    movedReport.framingFit?.source === 'derived' &&
+    m.drift < 1 &&
+    m.meanMae < 10;
+  if (movedOk) {
+    console.log(
+      `  PASS  C06_A_CANDIDATE_IN_ITS_OWN_COORDINATES_IS_NOT_PINNED_TO_THEIRS  ` +
+        `(+${FRAMING_MOVE} units: fitted, drift ${m.drift.toFixed(2)}px, union MAE ${m.meanMae.toFixed(2)})`,
+    );
+    console.log('          origin: the reference\'s origin is in the file the author is not allowed to open');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C06_A_CANDIDATE_IN_ITS_OWN_COORDINATES_IS_NOT_PINNED_TO_THEIRS: framing ` +
+        `${JSON.stringify(movedReport.framing)} via ${JSON.stringify(movedReport.framingFit?.source ?? null)}, ` +
+        `drift ${m.drift.toFixed(2)}px, union MAE ${m.meanMae.toFixed(2)}`,
     );
   }
   return bad;
@@ -2658,9 +2781,9 @@ function main(): void {
         [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
       : `, + 2 diff identity controls (name-matched and name-agnostic), + ${DIFF_CASES.length} diff measure controls, ` +
-        '+ 5 check controls (frames-only reads, a faithful ' +
+        '+ 7 check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
-        'the framing names)';
+        "the framing names, the frames' own box used when the candidate lands in it and refused when it does not)";
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'

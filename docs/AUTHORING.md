@@ -791,22 +791,38 @@ so rather than letting the assumption look like a measurement. Passing `--fps` w
 a value the sidecar contradicts is an error, not an override.
 
 `--viewport <x>,<y>,<width>,<height>` pins your candidate's world box instead of
-fitting it. Three uses:
+fitting it. Two uses:
 
 - the derivation cannot work — a candidate deliberately missing a part has a
   different content box by construction, and pinning lets the rest of the shot
   still be measured;
-- you already know your candidate's world coordinates match the reference's own —
-  declared in `frames.json`, or measured directly against it, the way rung 5's
-  authoring scripts did. There is nothing for a fit to correct in that case, so
-  pinning skips one and reports the box you already know is right;
 - you want the framing **held still** between builds. The framing line is still
   measured and printed when the box is pinned, so a pinned run separates "my keys
   moved" from "my framing moved" without either hiding the other. On a shot whose
   MAE moves by more than a point for a fraction of a pixel, that separation is
   worth more than the absolute number.
 
-Pinning to paper over a **real** framing difference — rather than one of the three
+There used to be a third — *"you already know your candidate's world coordinates
+match the reference's own, declared in `frames.json`"* — and **`check` now does
+that one for you** (issue #52). Before fitting anything it renders your candidate
+into the box `frames.json` records and measures where your pixels land. If they
+land on the reference's to within a pixel, that box is yours too, and it is used:
+it is not an *estimate* of where the frames were drawn, it is where they were
+drawn, and the framing line says `frames.json's own box — the candidate measured
+into it`. If they do not, the box is refused and your candidate is framed by its
+own pixels exactly as before — which is the ordinary case, because the reference's
+origin is in a file you are not allowed to open.
+
+That is worth a paragraph rather than a line because of what it costs when it is
+missing. The fit is registered on **extent**, and extent is not alignment (see the
+⚠️ in §9.2), so on a shot whose silhouette differs anywhere it lands a fraction of
+a percent away from the framing the frames were drawn at — and a fraction of a
+percent of scale is worth several MAE. Measured on rung 6: **8.73 fitted against
+3.50 in the frames' own box**, with every content box, residual and rms already
+under the method's noise. Rung 5 measured the same gap, 12.49 against 4.35. Neither
+author could tell that from a wrong animation without running the pin by hand.
+
+Pinning to paper over a **real** framing difference — rather than one of the two
 cases above — is the dishonest use: it makes a genuine mismatch between your
 candidate and the reference disappear from the report instead of showing up as
 `content`/`rms`/`union residual`. That used to be easy to do by accident, because
@@ -848,7 +864,7 @@ and [the ladder's honesty rule](LADDER.md) makes them a finish line you reach on
   framed to  256x116px  0.116677 px/unit  world x[-782.1 .. 1412.0] y[-794.7 .. 199.5]  (fitted to the candidate's own drawn pixels)
   reference  256x116px  0.117628 px/unit  world x[-573.3 .. 1603.0] y[-81.2 .. 908.9]  (frames.json)
   content    candidate 234.6x95.5px at (11.3, 11.5)   reference 234.7x95.3px at (11.2, 11.7)   (union over 86 frame(s))
-             ⤷ fit x0.999256  offset +0.05, -0.02 px   rms 0.42 px over 344 edge(s)   union residual -0.27 x +0.17 px   aspect -0.30%  (applied, 4 pass(es))
+             ⤷ fit x0.999256  offset +0.05, -0.02 px   rms 0.42 px over 344 edge(s)   union residual -0.27 x +0.17 px   aspect -0.30%  (derived, 4 pass(es), settled)
   in units   candidate 1995.3 x 809.7   reference 1995.3 x 809.9   x0.9999
 
   ── heavy — candidate animation "heavy", 12 fps ──
@@ -865,12 +881,30 @@ and [the ladder's honesty rule](LADDER.md) makes them a finish line you reach on
 chose, so an error there arrives disguised as motion — which is exactly what
 happened to two honest ladder runs before this was fixed (issue #34).
 
-Your candidate is framed **by its own drawn pixels**. `check` renders it at the
-frames' own rate and grid, takes the content box of what it actually draws, takes
-the reference's content box off the PNGs with the same rule, and fits the
-similarity transform — one uniform scale plus a translation, least squares over
-**every edge of every frame** — that carries one onto the other. Then it renders
-through that transform and measures again, until the correction is the identity.
+Unless the frames' own box already fits you (above), your candidate is framed **by
+its own drawn pixels**. `check` renders it at the frames' own rate and grid, takes
+the content box of what it actually draws, takes the reference's content box off
+the PNGs with the same rule, and fits the similarity transform — one uniform scale
+plus a translation, least squares over **every edge of every frame** — that carries
+one onto the other. Then it renders through that transform and measures again,
+until the correction is the identity.
+
+The parenthesis at the end of the `⤷ fit` line says which of those happened and how
+it ended: `derived` for the fit and `declared` for the frames' own box, then the
+pass count, then one of
+
+- `settled` — the correction converged to the identity. Nothing further to read.
+- `coincident` — the frames' own box was kept because your pixels landed in it.
+  The fit beside it is what a fit would still ask for, and on a shot whose
+  silhouette differs anywhere that is not zero; it is the fit's floor, not your
+  keys.
+- `cycling` — the correction fell into a repeating orbit instead of converging.
+  **More passes cannot help**: the fit has no fixed point here. Read the `⚠️` line
+  under it, which says whether the two content boxes agree anyway (the fit's own
+  floor, and the numbers below are usable) or do not (a real shape difference, and
+  that is the finding).
+- `unsettled` — it ran out of passes without either. Same two readings as
+  `cycling`, and the `⚠️` line tells you which.
 
 That procedure is blind to the two things it must be blind to. **An invisible
 margin cannot move it**: a region's quad runs past its own artwork wherever the art
@@ -883,7 +917,9 @@ The lines, in order:
 
 - `framed to` / `reference` — the two world boxes and their scales. They are
   **different coordinate systems and do not compare term by term**; the reference's
-  is printed for orientation and for turning a pixel measurement into units.
+  is printed for orientation and for turning a pixel measurement into units. Unless
+  `framed to` says `frames.json's own box`, in which case they are one box and one
+  coordinate system, because your candidate was measured into it.
 - `content` — the two boxes in **frame pixels**, which do compare, and the fit that
   put one on the other. `fit x1.000000` with a small `offset` means the two shots
   are the same size in the same place.
@@ -905,9 +941,10 @@ that is a little large — the best fit of the two extents is not quite the best
 alignment of the two pictures, and the fit spends a fraction of a pixel absorbing
 a difference that would have been cheaper to leave alone. Measured floor: about a
 third of a pixel on the ladder's shots. On most that is invisible; on a small
-high-contrast frame it is worth a point or two of MAE. The `union residual` and
-`rms` lines are how you tell that it is happening, and `--viewport` is how you stop
-it when you know your own coordinates.
+high-contrast frame it is worth a point or two of MAE — rung 6 measured five. This
+is the floor the frames' own box has no share in, which is why `check` prefers that
+box whenever your pixels are measured to land in it; `--viewport` is how you stop
+it in the cases that box does not cover.
 
 **MAE** is the mean absolute RGB difference, 0..255, over the pixels either side
 covers — the *union alpha*. It is not scored against a threshold, any more than a
