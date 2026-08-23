@@ -87,6 +87,13 @@ sincere about it. rigc exists to convert that silence into a named failure.
   honest way to render one without it). What the rule protects has not moved —
   `src/compile.ts` must stay independent of the runtime so the compiler and the
   gate are not checking each other's assumptions.
+- **A new runtime import that crosses a directory has to be added to `files` in
+  `package.json`.** The published package is an allowlist, not the repository:
+  `cli.ts`, `src/`, and the only two modules `src/` reaches outside itself
+  (`tools/plate.ts`, `tools/font5x7.ts`). Nothing in the tree fails if a third is
+  added and not listed — the repository still runs — but the installed package
+  throws `Cannot find module` on the command that needs it. `npm pack --dry-run`
+  lists what would ship; RELEASING.md says what belongs there and why.
 - Coordinate contract: manifests are in **crop pixels, y down, origin top-left**;
   Spine world is **y up, origin at the bottom-left of the crop**. The whole
   conversion lives in `src/transform.ts` (`cropToSpineY`, `toBoneLocal`,
