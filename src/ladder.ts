@@ -103,7 +103,7 @@ export const LADDER: readonly Rung[] = [
   {
     id: 'spineboy',
     example: 'spineboy',
-    gates: 'IK, events, bounding box, clipping, unweighted meshes — and scale: 67 bones, 52 slots, 11 animations',
+    gates: 'IK, events, bounding box, clipping, unweighted meshes — and scale: ess 18 bones/20 slots/8 animations, pro 67 bones/52 slots/11 animations',
     skeletons: [
       { label: 'ess', file: 'spineboy-ess.json', atlas: 'spineboy.atlas', role: 'rung' },
       // `-pro` is reported and does not count. It is a harder rig than the

@@ -522,6 +522,9 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 
 ### 2.1 Coverage against Part 1
 
+> 🔄 **Re-synced 2026-08-23** against `src/compile.ts`/`src/rig.ts` on `main`. Only the rows below
+> were touched; the rest of this table was not re-verified in this pass.
+
 **Header** (`compile.ts:634-646`)
 
 | Part-1 row | rigc | Note |
@@ -530,7 +533,8 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 | `x`, `y` | ✅ | always literal `0, 0` |
 | `width`, `height` | ✅ | from `manifest.crop.w/h` |
 | `hash` | ❌ | never emitted (harmless; the parser stores it and nothing reads it) |
-| `fps`, `images`, `audio`, `referenceScale` | ❌ | |
+| `fps`, `images`, `referenceScale` | ✅ | copied from `rig.skeleton` when the rig spec gives them, omitted when it does not (`compile.ts:810-812`, landed in `c5eda3b`) |
+| `audio` | ❌ | |
 
 **Bones** (`compile.ts:367-456`; type at `types.ts:285-292`)
 
@@ -551,7 +555,7 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 | `attachment` | ✅ — only when the motion spec's `setup` block names one; `null` means "show nothing" and the key is omitted |
 | `color` | ✅ — from `setup.color`, hex-encoded (`compile.ts:63-66`) |
 | `dark` | 🚫 **A12_NO_DARK_COLOR** (`validate.ts:250-262`) |
-| `blend` | ❌ |
+| `blend` | ✅ — copied from the rig spec's slot when it gives one (`compile.ts:600`, landed in `c5eda3b`) |
 | `visible` | ❌ |
 | draw order = slots array order | ✅, and **A26_SLOT_DRAW_ORDER** pins it to the archetype's `slotOrder` table |
 
@@ -580,8 +584,8 @@ chain). There is **no triangulator for arbitrary art** and no importer for edito
 | Part-1 type | rigc |
 | --- | --- |
 | `physics` | ✅ — full field set: `bone`, the five components `x`/`y`/`rotate`/`scaleX`/`shearX`, and `inertia`/`strength`/`damping`/`mass`/`wind`/`gravity`/`mix`/`fps`/`limit`. Values equal to the parser default are **omitted** (`compile.ts:555-559`). ❌ `scaleY` (ScaleYMode), ❌ the seven `*Global` flags, ❌ `skin` |
-| `ik` | ❌ |
-| `transform` | ❌ |
+| `ik` | ✅ — `bones`, `target`, `scaleY`/`mix`/`softness`/`bendPositive`/`compress`/`stretch`/`skin` (`compile.ts:1425-1430`, landed in `c5eda3b`) |
+| `transform` | ✅ — `bones`, `source`, the 4.3 `properties{from→to}` model, and the full field set (`compile.ts:1431-1462`, landed in `c5eda3b`) |
 | `path` | ❌ |
 | `slider` | ❌ |
 | flat `constraints[]` shape | ✅ — and **A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS** actively rejects the 4.1/4.2 shape (`validate.ts:225-235`), which is the machine form of case 6a |
