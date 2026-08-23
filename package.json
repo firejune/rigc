@@ -1,8 +1,14 @@
 {
   "name": "rigc",
   "version": "0.2.0",
-  "description": "Rig compiler for Spine — declarative rig specs in, Spine 4.3 skeleton data out, verified by a spine-core round-trip. Built so AI agents can author rigs and check their own work.",
+  "description": "Rig compiler for Spine \u2014 declarative rig specs in, Spine 4.3 skeleton data out, verified by a spine-core round-trip. Built so AI agents can author rigs and check their own work; the output imports into the Spine editor.",
   "type": "module",
+  "bin": {
+    "rigc": "./cli.ts"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  },
   "license": "MIT",
   "author": "firejune",
   "repository": {
@@ -21,8 +27,21 @@
     "atlas",
     "validator",
     "codegen",
-    "ai-agents"
+    "ai-agents",
+    "cli"
   ],
+  "files": [
+    "cli.ts",
+    "src",
+    "tools/plate.ts",
+    "tools/font5x7.ts",
+    "docs/AUTHORING.md",
+    "docs/SPEC_COVERAGE.md",
+    "NOTICE.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "bun cli.ts build",
     "validate": "bun cli.ts validate",
@@ -31,7 +50,8 @@
     "typecheck": "bunx tsc --noEmit",
     "lint": "bunx eslint .",
     "fetch-examples": "bash scripts/fetch-examples.sh",
-    "bench:usage": "bun bench/count_features.ts"
+    "bench:usage": "bun bench/count_features.ts",
+    "prepublishOnly": "bun run typecheck && bun run lint && bun run selftest"
   },
   "dependencies": {
     "@esotericsoftware/spine-core": "4.3.13"

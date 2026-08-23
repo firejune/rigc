@@ -7,3 +7,5 @@ examples/
 # convenient to keep here, so it stays ignored.
 /cuts.json
 .DS_Store
+# `npm pack` output, from checking what a publish would ship.
+/rigc-*.tgz
