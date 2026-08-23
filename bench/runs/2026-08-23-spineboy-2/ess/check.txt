@@ -1,0 +1,385 @@
+rigc check
+  candidate  /Users/firejune/Workspace/Firejune/rigc-wt-spineboy2/bench/runs/2026-08-23-spineboy-2/ess/spine/skeleton.json
+  atlas      /Users/firejune/Workspace/Firejune/rigc-wt-spineboy2/bench/runs/2026-08-23-spineboy-2/ess/spine/skeleton.atlas
+  frames     /Users/firejune/Workspace/Firejune/rigc-wt-spineboy2/bench/reference/spineboy/ess
+  scope      the framing decided per frame set (--framing shared measures every set in one shared framing)
+  reference  384x367px  0.222973 px/unit  world x[-795.4 .. 926.7] y[-138.0 .. 1506.7]  (frames.json)
+             ⤷ the two world boxes are different coordinate systems and do not compare; the pixel grid does.
+  shared box one box for all 16 set(s) leaves x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)  (derived; used for every set that could not take the frames' own box)
+             ⤷ how far one shared framing is from serving every set. A set below that took the frames' own box instead is measured with no such correction at all; --framing shared measures every set here.
+  ⚠️ the framing was decided per frame set: 3 of 16 set(s) were measured in frames.json's own box because their own pixels land there, and the rest in the one shared framing on the "shared box" line. A set framed by the frames' own box cannot be moved by any other set. --framing shared measures every set in the shared framing instead, which is a different measurement and not comparable with this one.
+
+  ── aim — candidate animation "aim", 12 fps ──
+     frames     1 on disk, candidate samples 1, 1 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 46.28  worst 46.28 at f0000   (0..255 over the union alpha; over the whole frame, mean 2.10)
+     slot drift worst 2.2 px  "goggles" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    46.28       6394       —      —   goggles                2.2   tmpl 0.47 5/18
+
+  ── aim@30fps — candidate animation "aim", 30 fps ──
+     frames     1 on disk, candidate samples 1, 1 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 46.28  worst 46.28 at f0000   (0..255 over the union alpha; over the whole frame, mean 2.10)
+     slot drift worst 2.2 px  "goggles" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    46.28       6394       —      —   goggles                2.2   tmpl 0.47 5/18
+
+  ── death — candidate animation "death", 12 fps ──
+     frames     60 on disk, candidate samples 60, 60 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 50.44  worst 59.56 at f0006   (0..255 over the union alpha; over the whole frame, mean 1.88)
+     slot drift worst 18.8 px  "front-shin" at f0055
+     per-frame 12 of 59 adjacent pair(s) change by a different amount than the reference does; worst f0018, yours moved 2155 px where the reference moved 0
+
+     the 20 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0002    55.88       6476    7414   7887   rear-shin             14.7   tmpl 0.46 6/18
+       f0003    54.18       5826    8666   9082   front-bracer           4.1   tmpl 0.34 4/18
+       f0005    58.57       5452    8184   8480   torso                  7.2   tmpl 0.27 1/18
+       f0006    59.56       5940    9202   9527   head                   3.8   tmpl 0.32 4/18
+       f0007    58.37       5872    7169   7264   goggles                2.8   tmpl 0.50 3/18
+       f0010    57.50       5599    4924   4801   goggles                3.9   tmpl 0.27 4/18
+       f0015    46.89       4855    1420    245   front-bracer           2.2   tmpl 0.26 4/18   yours moves 6x the reference
+       f0016    46.58       4876    1217    211   front-shin             8.1   tmpl 0.39 5/18   yours moves 6x the reference
+       f0017    45.37       4843    1990     70   front-shin             9.1   tmpl 0.30 5/18   yours moves 28x the reference
+       f0018    47.39       4914    2155      0   front-shin             9.1   tmpl 0.43 5/18   the reference holds still here and yours does not
+       f0019    46.93       4880    1481      0   front-shin            10.0   tmpl 0.36 5/18   the reference holds still here and yours does not
+       f0020    46.45       4865    1758      0   rear-shin              2.4   tmpl 0.27 4/18   the reference holds still here and yours does not
+       f0021    46.68       4878    1347      0   head                   2.3   tmpl 0.46 2/18   the reference holds still here and yours does not
+       f0022    48.12       4885    1972      0   head                   2.3   tmpl 0.46 4/18   the reference holds still here and yours does not
+       f0023    47.40       4870    1600      1   goggles                2.3   tmpl 0.62 5/18   yours moves 1600x the reference
+       f0024    46.38       4851    1391      0   front-shin            10.4   tmpl 0.35 6/18   the reference holds still here and yours does not
+       f0025    47.02       4860    1538      0   front-shin            10.5   tmpl 0.35 5/18   the reference holds still here and yours does not
+       f0026    47.06       4861    1317      0   front-shin            10.4   tmpl 0.32 4/18   the reference holds still here and yours does not
+       f0032    54.09       5352    3070   2035   goggles                2.5   tmpl 0.61 2/18
+       f0041    54.10       5325    2201    956   goggles                2.6   tmpl 0.59 5/18
+
+  ── death@30fps — candidate animation "death", 30 fps ──
+     frames     2 on disk, candidate samples 149, 2 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 46.81  worst 47.56 at f0000   (0..255 over the union alpha; over the whole frame, mean 1.79)
+     slot drift worst 2.7 px  "rear-shin" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    47.56       5894       —      —   rear-shin              2.7   tmpl 0.28 7/18
+       f0148    46.07       4853       —      —   torso                  2.2   tmpl 0.23 4/18
+
+  ── hit — candidate animation "hit", 12 fps ──
+     frames     5 on disk, candidate samples 5, 5 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 58.51  worst 63.07 at f0000   (0..255 over the union alpha; over the whole frame, mean 2.62)
+     slot drift worst 5.9 px  "torso" at f0002   (1 of 5 frame(s) attributed no slot at all)
+     per-frame all 4 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    63.07       6256       —      —   —                        —   —         0/18
+       f0001    52.32       5584    8107   7724   head                   1.8   tmpl 0.42 2/18
+       f0002    61.76       6496    8152   7998   torso                  5.9   tmpl 0.31 5/18
+       f0003    58.34       6539    7658   8416   torso                  2.6   tmpl 0.37 4/18
+       f0004    57.05       6634    7522   7571   gun                    3.2   tmpl 0.25 5/18
+
+  ── hit@30fps — candidate animation "hit", 30 fps ──
+     frames     2 on disk, candidate samples 11, 2 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 60.06  worst 63.07 at f0000   (0..255 over the union alpha; over the whole frame, mean 2.74)
+     slot drift worst 3.2 px  "gun" at f0010   (1 of 2 frame(s) attributed no slot at all)
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    63.07       6256       —      —   —                        —   —         0/18
+       f0010    57.05       6634       —      —   gun                    3.2   tmpl 0.25 5/18
+
+  ── idle — candidate animation "idle", 12 fps ──
+     frames     21 on disk, candidate samples 21, 21 compared
+     framed to  384x367px  0.222973 px/unit  world x[-795.4 .. 926.7] y[-138.0 .. 1506.7]  (frames.json's own box — the candidate measured into it)
+     content    candidate 102.7x145.8px at (141.0, 191.3)   reference 102.7x144.6px at (141.0, 191.4)   (union over 21 frame(s))
+                ⤷ fit x0.999924  offset -0.35, -0.00 px   rms 0.59 px over 84 edge(s)   union residual -0.01 x +1.14 px   aspect -0.80%  (declared, 1 pass(es), coincident)
+                ⚠️ after the fit your shot still covers 0.0 px narrower and 1.1 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+     in units   candidate 460.7 x 653.7   reference 460.7 x 648.5   x1.0040
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     ⚠️ the candidate's world box was taken from frames.json rather than fitted, because rendering it into that box put its own drawn pixels on the reference's to within 0.59 px rms — so the candidate is authored in the frames' own coordinates, measured rather than assumed, and the box they were rendered at is exact where a fit of it is an estimate. The framing line below is still measured; what it leaves over is the extent fit's own floor, which is why it does not read as the identity. Pass --viewport to override.
+     MAE        mean 23.53  worst 28.91 at f0017   (0..255 over the union alpha; over the whole frame, mean 1.07)
+     slot drift worst 3.7 px  "rear-thigh" at f0013
+     per-frame all 20 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    13.83       6287       —      —   rear-thigh             1.5   tmpl 0.38 11/18
+       f0001    24.08       6363    2788   2516   rear-thigh             1.5   tmpl 0.46 11/18
+       f0002    27.86       6405    2694   2888   rear-thigh             1.4   tmpl 0.47 12/18
+       f0003    23.72       6342    2652   2929   rear-thigh             2.9   tmpl 0.43 11/18
+       f0004    22.12       6355    2543   2823   rear-thigh             1.1   tmpl 0.34 10/18
+       f0005    21.73       6359    2656   2768   rear-thigh             1.2   tmpl 0.25 10/18
+       f0006    23.48       6392    2648   2632   rear-thigh             2.7   tmpl 0.26 12/18
+       f0007    24.80       6399    2790   2476   goggles                1.1   tmpl 0.51 10/18
+       f0008    23.07       6395    2948   2276   rear-foot              1.3   tmpl 0.28 9/18
+       f0009    23.12       6393    2352   2232   rear-thigh             2.8   tmpl 0.25 11/18
+       f0010    23.50       6379    2676   2348   rear-thigh             2.9   tmpl 0.34 11/18
+       f0011    23.97       6374    2987   2319   rear-thigh             1.7   tmpl 0.23 11/18
+       f0012    23.38       6348    2357   2061   rear-thigh             3.7   tmpl 0.32 10/18
+       f0013    23.15       6368    2608   2257   rear-thigh             3.7   tmpl 0.25 11/18
+       f0014    22.85       6357    2544   2542   front-foot             1.5   tmpl 0.29 9/18
+       f0015    25.24       6377    2692   2670   rear-thigh             2.3   tmpl 0.28 10/18
+       f0016    26.13       6378    2752   2916   torso                  1.1   tmpl 0.52 10/18
+       f0017    28.91       6400    2863   2994   rear-foot              1.7   tmpl 0.30 9/18
+       f0018    27.88       6403    2882   2900   rear-thigh             2.3   tmpl 0.22 11/18
+       f0019    22.98       6331    2897   2695   torso                  1.2   tmpl 0.51 9/18
+       f0020    18.36       6319    2869   2474   rear-thigh             2.2   tmpl 0.29 11/18
+
+  ── idle@30fps — candidate animation "idle", 30 fps ──
+     frames     2 on disk, candidate samples 51, 2 compared
+     framed to  384x367px  0.222973 px/unit  world x[-795.4 .. 926.7] y[-138.0 .. 1506.7]  (frames.json's own box — the candidate measured into it)
+     content    candidate 99.2x144.7px at (142.4, 191.3)   reference 99.4x144.6px at (142.0, 191.4)   (union over 2 frame(s))
+                ⤷ fit x1.001462  offset -0.57, -0.36 px   rms 0.13 px over 8 edge(s)   union residual -0.08 x +0.38 px   aspect -0.34%  (declared, 1 pass(es), coincident)
+     in units   candidate 444.9 x 649.1   reference 445.9 x 648.4   x0.9995
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     ⚠️ the candidate's world box was taken from frames.json rather than fitted, because rendering it into that box put its own drawn pixels on the reference's to within 0.13 px rms — so the candidate is authored in the frames' own coordinates, measured rather than assumed, and the box they were rendered at is exact where a fit of it is an estimate. The framing line below is still measured; what it leaves over is the extent fit's own floor, which is why it does not read as the identity. Pass --viewport to override.
+     MAE        mean 16.10  worst 18.36 at f0050   (0..255 over the union alpha; over the whole frame, mean 0.72)
+     slot drift worst 2.2 px  "rear-thigh" at f0050
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    13.83       6287       —      —   rear-thigh             1.5   tmpl 0.38 11/18
+       f0050    18.36       6319       —      —   rear-thigh             2.2   tmpl 0.29 11/18
+
+  ── jump — candidate animation "jump", 12 fps ──
+     frames     17 on disk, candidate samples 17, 17 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 52.39  worst 63.04 at f0014   (0..255 over the union alpha; over the whole frame, mean 2.41)
+     slot drift worst 6.8 px  "front-shin" at f0016
+     per-frame all 16 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    52.85       6521       —      —   rear-foot              2.5   tmpl 0.28 6/18
+       f0001    53.64       6672    9533   9827   front-shin             2.1   tmpl 0.60 5/18
+       f0002    52.15       6370    8470   9063   torso                  2.2   tmpl 0.24 7/18
+       f0003    49.07       6053    7868   8414   head                   3.2   tmpl 0.32 7/18
+       f0004    49.08       6109    7338   7673   rear-foot              4.8   tmpl 0.27 9/18
+       f0005    50.44       6194    7254   7370   torso                  4.7   tmpl 0.36 6/18
+       f0006    50.89       6345    7337   7357   torso                  3.4   tmpl 0.30 6/18
+       f0007    49.97       6437    6950   7234   front-shin             5.0   tmpl 0.32 8/18
+       f0008    52.78       6585    6878   6817   torso                  3.8   tmpl 0.37 9/18
+       f0009    47.81       6583    5443   5793   torso                  2.8   tmpl 0.23 8/18
+       f0010    52.03       6691    4351   5057   torso                  3.9   tmpl 0.25 10/18
+       f0011    46.86       6550    6766   6687   rear-shin              3.1   tmpl 0.43 8/18
+       f0012    52.83       6547    7669   7795   rear-shin              3.6   tmpl 0.32 7/18
+       f0013    54.85       6462    8691   8721   front-shin             4.8   tmpl 0.33 6/18
+       f0014    63.04       6753   10231  10666   front-bracer           2.5   tmpl 0.35 2/18
+       f0015    57.06       6630    8819   9107   gun                    3.5   tmpl 0.46 4/18
+       f0016    55.26       6581    6780   6106   front-shin             6.8   tmpl 0.40 7/18
+
+  ── jump@30fps — candidate animation "jump", 30 fps ──
+     frames     2 on disk, candidate samples 41, 2 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 54.06  worst 55.26 at f0040   (0..255 over the union alpha; over the whole frame, mean 2.51)
+     slot drift worst 6.8 px  "front-shin" at f0040
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    52.85       6521       —      —   rear-foot              2.5   tmpl 0.28 6/18
+       f0040    55.26       6581       —      —   front-shin             6.8   tmpl 0.40 7/18
+
+  ── run — candidate animation "run", 12 fps ──
+     frames     9 on disk, candidate samples 9, 9 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 57.28  worst 62.98 at f0002   (0..255 over the union alpha; over the whole frame, mean 2.62)
+     slot drift worst 11.5 px  "rear-shin" at f0005
+     per-frame all 8 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    51.99       6410       —      —   front-shin             7.1   tmpl 0.33 8/18
+       f0001    58.96       6004    6535   6997   front-bracer           4.0   tmpl 0.31 5/18
+       f0002    62.98       6350    5900   6636   goggles                2.0   tmpl 0.48 2/18
+       f0003    55.33       6590    6811   7305   front-shin             2.2   tmpl 0.53 5/18
+       f0004    54.65       6154    6412   6589   rear-foot              2.3   tmpl 0.20 4/18
+       f0005    55.24       5943    6009   6570   rear-shin             11.5   tmpl 0.45 5/18
+       f0006    60.72       7060    7076   7237   front-bracer           3.1   tmpl 0.31 5/18
+       f0007    59.82       6993    7441   7685   gun                    2.0   tmpl 0.53 3/18
+       f0008    55.82       6479    7473   7369   front-bracer           3.2   tmpl 0.31 5/18
+
+  ── run@30fps — candidate animation "run", 30 fps ──
+     frames     2 on disk, candidate samples 21, 2 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 53.90  worst 55.82 at f0020   (0..255 over the union alpha; over the whole frame, mean 2.47)
+     slot drift worst 7.1 px  "front-shin" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    51.99       6410       —      —   front-shin             7.1   tmpl 0.33 8/18
+       f0020    55.82       6479       —      —   front-bracer           3.2   tmpl 0.31 5/18
+
+  ── shoot — candidate animation "shoot", 12 fps ──
+     frames     6 on disk, candidate samples 6, 6 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 47.20  worst 52.71 at f0005   (0..255 over the union alpha; over the whole frame, mean 2.93)
+     slot drift worst 16.3 px  "front-shin" at f0003
+     per-frame 1 of 5 adjacent pair(s) change by a different amount than the reference does; worst f0001, yours moved 2061 px where the reference moved 0
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    49.42       6435       —      —   torso                  3.6   tmpl 0.25 7/18
+       f0001    49.26       6419    2061      0   rear-shin              3.0   tmpl 0.30 6/18   the reference holds still here and yours does not
+       f0002    41.31      10285    3927   4974   head                   2.2   tmpl 0.37 6/18
+       f0003    47.06      11142    3645   5878   front-shin            16.3   tmpl 0.40 7/21
+       f0004    43.42      12681    5703   5436   torso                  3.1   tmpl 0.38 6/21
+       f0005    52.71       6359    5258   5560   torso                  2.8   tmpl 0.42 6/18
+
+  ── shoot@30fps — candidate animation "shoot", 30 fps ──
+     frames     2 on disk, candidate samples 13, 2 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 45.30  worst 49.42 at f0000   (0..255 over the union alpha; over the whole frame, mean 2.50)
+     slot drift worst 3.6 px  "torso" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    49.42       6435       —      —   torso                  3.6   tmpl 0.25 7/18
+       f0012    41.18       9399       —      —   torso                  2.8   tmpl 0.42 6/21
+
+  ── walk — candidate animation "walk", 12 fps ──
+     frames     13 on disk, candidate samples 13, 13 compared
+     framed to  384x367px  0.222939 px/unit  world x[-803.6 .. 918.8] y[-141.9 .. 1504.3]  (fitted to the candidate's own drawn pixels)
+     content    candidate 283.3x331.3px at (26.4, 18.1)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+                ⤷ fit x0.999740  offset +0.05, +0.06 px   rms 6.12 px over 588 edge(s)   union residual -42.57 x +10.31 px   aspect -15.77%  (derived, 2 pass(es), settled)
+                ⚠️ after the fit your shot still covers 42.6 px narrower and 10.3 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                ⚠️ the fit leaves 6.12 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+     in units   candidate 1270.7 x 1486.0   reference 1461.1 x 1439.1   x0.9476
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     MAE        mean 47.81  worst 53.95 at f0012   (0..255 over the union alpha; over the whole frame, mean 2.09)
+     slot drift worst 5.9 px  "front-shin" at f0005
+     per-frame all 12 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    51.97       6662       —      —   gun                    2.1   tmpl 0.63 6/18
+       f0001    43.71       6583    6296   6345   front-shin             3.6   tmpl 0.24 6/18
+       f0002    48.89       6595    5280   5304   goggles                1.8   tmpl 0.55 6/18
+       f0003    42.48       6219    5790   5957   goggles                2.1   tmpl 0.50 7/18
+       f0004    43.05       5833    5622   5905   front-shin             3.0   tmpl 0.23 8/18
+       f0005    47.74       5887    4739   4727   front-shin             5.9   tmpl 0.28 9/18
+       f0006    49.93       5759    5187   5468   goggles                2.3   tmpl 0.52 5/18
+       f0007    43.84       6057    5820   5883   front-shin             3.3   tmpl 0.21 10/18
+       f0008    49.41       6010    4368   4851   rear-shin              2.3   tmpl 0.72 5/18
+       f0009    50.24       5763    4890   5396   rear-foot              4.1   tmpl 0.34 6/18
+       f0010    46.97       5445    5105   5131   head                   2.2   tmpl 0.41 4/18
+       f0011    49.30       6211    4137   4552   front-shin             4.3   tmpl 0.26 7/18
+       f0012    53.95       6759    6133   6333   front-shin             4.3   tmpl 0.30 7/18
+
+  ── walk@30fps — candidate animation "walk", 30 fps ──
+     frames     2 on disk, candidate samples 31, 2 compared
+     framed to  384x367px  0.222973 px/unit  world x[-795.4 .. 926.7] y[-138.0 .. 1506.7]  (frames.json's own box — the candidate measured into it)
+     content    candidate 99.7x148.4px at (142.2, 187.8)   reference 98.0x147.5px at (143.6, 188.0)   (union over 2 frame(s))
+                ⤷ fit x0.994787  offset +1.38, +1.16 px   rms 0.39 px over 8 edge(s)   union residual +1.17 x +0.15 px   aspect +1.09%  (declared, 1 pass(es), coincident)
+                ⚠️ after the fit your shot still covers 1.2 px wider and 0.2 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+     in units   candidate 447.1 x 665.6   reference 439.6 x 661.4   x1.0117
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     ⚠️ the candidate's world box was taken from frames.json rather than fitted, because rendering it into that box put its own drawn pixels on the reference's to within 0.39 px rms — so the candidate is authored in the frames' own coordinates, measured rather than assumed, and the box they were rendered at is exact where a fit of it is an estimate. The framing line below is still measured; what it leaves over is the extent fit's own floor, which is why it does not read as the identity. Pass --viewport to override.
+     MAE        mean 32.54  worst 33.94 at f0030   (0..255 over the union alpha; over the whole frame, mean 1.49)
+     slot drift worst 3.4 px  "front-shin" at f0030
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    31.13       6384       —      —   torso                  1.7   tmpl 0.33 5/18
+       f0030    33.94       6487       —      —   front-shin             3.4   tmpl 0.24 7/18
+
+  MAE is the mean absolute RGB difference over the pixels either side covers, so it is
+  read against 255 and not against a threshold: there is no pass mark here any more than
+  there is one in `diff`. Read the framing line first: it is upstream of every number
+  below, and a residual much wider than a pixel moves all of them at once.
+  The slots column is how many of the drawn slots could be attributed at all. A drift
+  marked `tmpl` was correlated against the slot’s own pixels because the reference
+  merged it into a neighbour; the number beside it is how much better that match was
+  than its best rival, and a slot that matched nothing at all is left out of the count.
+  `Δpx` and `ref Δ` are how many pixels each side moved since ITS OWN previous frame —
+  not against each other. They are the only columns that can see a held pose that is
+  not held, or a one-frame event that never fired: both are small in every frame and
+  wrong only in the relation between two, which is where the MAE cannot look.
