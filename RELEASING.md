@@ -46,8 +46,6 @@ the commit that introduces these files, and is not maintained afterwards.
 
 ## Cutting a release
 
-0. Once, before the first automated cut: the npmjs.com form in
-   [Publishing](#publishing).
 1. Land the work on `main` with conventional-commit subjects. CI runs on every
    push.
 2. Wait for the `release` run to open or update the `release: vX.Y.Z` pull
@@ -69,7 +67,8 @@ the commit that introduces these files, and is not maintained afterwards.
 trusted publishing): the runner exchanges a short-lived GitHub token for a
 publish grant, so there is no `NPM_TOKEN` in this repository and no OTP to type.
 That is what `id-token: write` in the job's permissions is for, and it is also
-what lets the publish carry `--provenance`.
+what lets the publish carry `--provenance`. The registry side of it is
+configured — the fields are recorded below, and nothing there is outstanding.
 
 **The package name is `spine-rigc`, not `rigc`** — do not retry the short one.
 The first publish of `rigc@0.2.0` was refused by the registry with
@@ -88,26 +87,29 @@ why the publish job does not fetch the Spine examples the way `ci.yml` does.
 There is no build step to guard: the package ships its TypeScript sources and
 bun runs them.
 
-### One-time setup (owner, npmjs.com)
+### The registry side (owner, npmjs.com)
 
-Do this once, before the first automated cut. It cannot be done from here — it
-needs the account.
+Already configured — nothing to do here, and it cannot be done from here anyway,
+since it needs the account. Recorded so the settings can be checked or rebuilt:
+npmjs.com → **spine-rigc** → **Settings** → **Trusted Publisher** → *GitHub
+Actions*, filled in as
 
-1. npmjs.com → **spine-rigc** → **Settings** → **Trusted Publisher** → *GitHub
-   Actions*.
-2. Fill in, exactly (the fields are case-sensitive, and npm does not validate
-   them on save — a typo only surfaces as a failed publish):
-   - Organization or user: `firejune`
-   - Repository: `rigc`
-   - Workflow filename: `release.yml`
-   - Environment name: *leave blank* (the workflow declares no environment; a
-     value here that the workflow does not match rejects the publish)
-   - Allowed actions: `npm publish`
-3. After the first successful automated publish — not before — set **Settings →
-   Publishing access → Require two-factor authentication and disallow tokens**.
-   Trusted publishing keeps working under that setting; it is what closes the
-   door behind the classic tokens. Setting it first would leave no way back if
-   the OIDC path needs a fix.
+- Organization or user: `firejune`
+- Repository: `rigc`
+- Workflow filename: `release.yml`
+- Environment name: *blank* (the workflow declares no environment; a value here
+  that the workflow does not match rejects the publish)
+- Allowed actions: `npm publish`
+
+The fields are case-sensitive and npm does not validate them on save, so a typo
+would only surface as a failed publish.
+
+**Settings → Publishing access → Require two-factor authentication and disallow
+tokens** is on. It costs the automation nothing: trusted publishing presents no
+token at all, so there is none for that setting to disallow. What it closes is
+the unattended path — a token sitting on a machine, publishing without a human.
+The interactive fallback below still works, because an OTP is exactly what the
+setting asks for.
 
 Two properties of that configuration are load-bearing in the workflow:
 
@@ -119,6 +121,17 @@ Two properties of that configuration are load-bearing in the workflow:
   machine.
 
 Confirm a cut afterwards: `npm view spine-rigc version`.
+
+**The next release is the first automated publish, and only that run can prove
+the exchange** — everything up to the registry is testable here, the token swap
+itself is not. Watch it: **Actions → release →** the run for the release commit,
+step *Publish to npm*. A rejection there names its own cause; a mismatch against
+the trusted publisher above is the first thing to re-read, since npm matches the
+`workflow_ref` claim — repository and workflow filename — and accepts no
+approximation of it. If it fails on authentication rather than on a mismatch,
+try dropping `registry-url` from the `setup-node` step: it exists only to write
+an `.npmrc`, and the `.npmrc` it writes carries a `NODE_AUTH_TOKEN` placeholder
+that nothing sets. The fallback below covers the release in the meantime.
 
 ### What the tarball contains
 
@@ -153,9 +166,10 @@ npm publish                      # runs prepublishOnly, then asks for the OTP
 
 `npm publish` takes no flags here — `publishConfig.access` in `package.json`
 already says `public`. This is how `spine-rigc@0.2.1` shipped. It authenticates
-with a classic token and a 2FA one-time password, which is why it stops being
-available the moment "require two-factor authentication and disallow tokens" is
-switched on. Fix the workflow instead.
+as a logged-in human with a one-time password, which "require two-factor
+authentication and disallow tokens" permits; what that setting rules out is
+doing this from a script, unattended. Reach for it when the automation is broken
+and a release cannot wait — then fix the workflow.
 
 ## Why the release pull request has no CI checks
 
