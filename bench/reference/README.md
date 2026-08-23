@@ -87,8 +87,9 @@ in the next tile.
 | 5 | `5-squash-and-stretch` | `ball` 79, `speedy` 79, `ball-ready-to-animate` 1 | `--fps 12 --max 192`, then `--fps 24 --stride 999 --tile 96` | 192×124 | 2.8 MB |
 | 6 | `6-arcs` | `arcs` 69 | `--fps 12 --max 512 --tile 171`, then the same at `--fps 24 --stride 999` | 512×137 | 1.2 MB |
 | 8 | `8-follow-through` | `ball/follow-through` 45, `pendulum/follow-through` 45 | `--fps 12 --max 512 --tile 171`, then the same at `--fps 24` | 512×413 / 512×381 | 2.9 MB |
+| spineboy | `spineboy` | `ess` 8 animations / 132 frames, `pro` 11 / 190 | `--fps 12 --max 384 --tile 128`, then the same at `--fps 30 --stride 999` | 384×367 / 384×358 | 7.7 MB |
 
-Five of those settings are not defaults, and each is a trade worth knowing:
+Six of those settings are not defaults, and each is a trade worth knowing:
 
 - **rung 2 keeps only the sheets.** 1,244 frames of a static obstacle course is
   over sixty megabytes as separate files and about a seventeenth of that as four
@@ -117,6 +118,27 @@ Five of those settings are not defaults, and each is a trade worth knowing:
   committed, so nothing downstream could check them; committing the whole set is
   what makes a 24 fps claim verifiable. 512 px puts the comet's ball at ~22 px and
   the pendulum's discus at ~110 px, and the whole rung at 2.9 MB.
+- **spineboy is the one set that overruns the three-megabyte shape of the others,
+  and its second rate is 30 fps rather than 24.** Three trades, in the order they
+  were decided.
+  ⓐ **Size.** Every animation of one skeleton shares a viewport, and this skeleton's
+  is the union of a shot that throws the figure to the left edge and one whose muzzle
+  flash reaches the right, so a standing figure sits in about a ninth of the frame —
+  rung 4's problem, and the same answer. 256 px was measured at 3.8 MB with the
+  figure 66 × 98, small enough to lose a foot; 512 px at 10 MB; **384 px puts him at
+  100 × 146** — about the size rung 8's discus was — and the rung at 7.7 MB.
+  ⓑ **Why that is affordable.** 7.7 MB buys **19 shots across two skeletons**, or
+  410 KB each, against rung 8's 1.45 MB per shot; and `bench/reference/` is not in
+  the package's `files` list, so it is clone weight and not install weight. It is the
+  last rung and the largest thing on the ladder by an order of magnitude.
+  ⓒ **30 fps, not 24.** `sampleAnimation` takes `Math.round(duration × fps) + 1`
+  frames, so a frame count brackets the duration in a window of width `1/fps`, and a
+  30 fps window contains **exactly one** multiple of 1/30 — the Spine editor's default
+  project rate. At 24 fps two of spineboy's durations still have three candidates
+  each; at 30 every one is pinned, and two that the 12 fps set reads wrong on its own
+  (`pro/idle-turn`, `pro/shoot`) come out right. The 30 fps sets ship `--stride 999`,
+  so a sheet plus the first and last frame: 2.0 MB of the 7.7, and the brief measures
+  distances only on the committed 12 fps frames.
 
 ⚠️ **Rung 6 is the first set whose subject deforms**, and it exists because
 `src/render.ts` learned to rasterise mesh attachments (#27). Before that the
@@ -124,10 +146,17 @@ renderer refused this rung by name and the frame-fidelity lane stopped at rung 5
 
 A rung with more than one skeleton nests them: `1-weight-and-mass/balls/…` and
 `1-weight-and-mass/drop/…`, `8-follow-through/ball/…` and
-`8-follow-through/pendulum/…`. They are two shots that share an atlas, they are
-framed independently, and pooling their frames in one directory would suggest
-otherwise. The `license.txt` sits at the example root, above the skeleton
-directories, because the grant is the example's and not either shot's.
+`8-follow-through/pendulum/…`, `spineboy/ess/…` and `spineboy/pro/…`. They are two
+shots that share an atlas, they are framed independently, and pooling their frames in
+one directory would suggest otherwise. The `license.txt` sits at the example root,
+above the skeleton directories, because the grant is the example's and not either
+shot's.
+
+⚠️ **Nesting says nothing about which skeleton counts.** spineboy's two are not
+peers — `ess` is the rung and `pro` is a stretch figure `bench` reports and does not
+score ([`src/ladder.ts`](../../src/ladder.ts) carries the roles). They are also at
+different scales here, 0.222973 against 0.186285 px/unit, so a pixel figure measured
+in one is not a pixel figure in the other.
 
 ## Licence — read before adding a rung
 

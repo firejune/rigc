@@ -30,11 +30,15 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 | 5 | [`5-squash-and-stretch.md`](../briefs/5-squash-and-stretch.md) | rev 2, 2026-08-23 | 3 animations, 12 fps + 24 fps sheets | 1 | subject ~4–16 px; proportions are measured, not seen |
 | 6 | [`6-arcs.md`](../briefs/6-arcs.md) | **yes (third party)**, rev 3, 2026-08-23 | 1 animation, 12 fps + 24 fps sheet | 1 | the subject **deforms**; ball ~14 px; proportions are measured, not seen |
 | 8 | [`8-follow-through.md`](../briefs/8-follow-through.md) | **yes (third party)**, rev 2, 2026-08-23 | 2 skeletons, 1 animation each, 12 **and** 24 fps in full | **2** | two shots that want opposite machinery — `pendulum` deforms nothing, `ball` deforms on most frames; the `ball` shot moves over 130 px between two 12 fps frames, so read it at 24 fps; the chain's lag is **horizontal only** |
-| 7, spineboy | — | — | — | — | not prepared. `7-anticipation` has no upstream `license.txt` at all, so `render_reference.ts` refuses it and it must never be rendered |
+| spineboy | [`spineboy.md`](../briefs/spineboy.md) | **no** | 2 skeletons, 19 animations, 12 fps in full **+ 30 fps sheets** | **1** (`ess`; `pro` is optional) | the rung clears on **`ess` alone**, and `ess` has **8** animations — the ladder row's "11" is `pro`'s count; `pro`'s line is printed *(stretch — does not count)*; the two skeletons are at different scales, so no pixel figure crosses between them; the second rate is **30 fps** and only two frames per animation are on disk at it, so the sheets are for timing and never for a distance |
+| 7 | — | — | — | — | not prepared. `7-anticipation` has no upstream `license.txt` at all, so `render_reference.ts` refuses it and it must never be rendered |
 
 **Brief verified** is the header block described in the next section. Rungs 3 and 1
 were attempted before the rule existed; their briefs still need the pass, and until
-they get it a run against either of them carries the risk the section names. Rung 6
+they get it a run against either of them carries the risk the section names.
+**spineboy's brief was written on 2026-08-23 and has not had its pass yet** — it is
+prepared, not ready, and the rung should not be attempted until a different agent has
+been over it. Rung 6
 is the first brief to carry the pass the protocol actually asks for — a **different**
 agent, not the one that wrote it; rungs 2, 4 and 5 were re-measured by their own
 author and their headers say so. **Rung 8 is the second to carry a third-party
@@ -70,6 +74,13 @@ reference skeleton of the rung, so it prints a line per skeleton whichever candi
 you give it. Build both, run `bench` once per candidate, and read only the matching
 line from each — then say in the log which line came from which run. Quoting the
 other line as though it were a measurement of anything is the failure mode here.
+
+⚠️ **spineboy is a two-skeleton rung where only one of them counts.** `ess` is the
+rung; `pro` is a **stretch** skeleton — `bench` labels its line *(stretch — reported,
+does not count)* — because it is a harder rig than the graduation exam and folding it
+in would make the exam unpassable for a reason unrelated to passing it. A run that
+builds only `ess` is a complete attempt at the rung. The `pro` line that `bench`
+prints from an `ess` candidate is still noise, and the same rule applies to it.
 
 ## Before a rung is attempted — the brief needs a second pair of eyes
 
