@@ -133,7 +133,11 @@ per animation and per frame:
   still.
 - **The framing** — where the candidate's drawn pixels sit against the reference's,
   as a scale, an offset and a residual. It is printed first because it is upstream
-  of everything else: get it wrong and the error arrives disguised as motion.
+  of everything else: get it wrong and the error arrives disguised as motion. On a
+  skeleton root it is decided **per animation directory**: a set whose own pixels
+  land in the box `frames.json` records is measured there, exactly, and the rest
+  share one fitted framing. `--framing shared` measures every set in the shared one
+  — the whole-root behaviour before issue #100, and worth 15–25 MAE on a character.
 - **Per-frame change** — how many pixels each side moved since **its own** previous
   frame, compared against each other. It is the only measure here that looks at the
   relation between two frames rather than at one, and it is what catches a held pose

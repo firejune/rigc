@@ -51,7 +51,15 @@ import {
   Skeleton,
   type SkeletonData,
 } from '@esotericsoftware/spine-core';
-import { assertFrameReadable, checkAgainstFrames, type CheckReport, type FrameChange } from './src/check.ts';
+import {
+  assertFrameReadable,
+  checkAgainstFrames,
+  type AnimationCheck,
+  type CheckReport,
+  type FrameChange,
+  type FramingHow,
+  type FramingSource,
+} from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
 import {
@@ -1323,6 +1331,12 @@ const FRAMING_SCALE = 1.02;
 const DECLARED_MAE_TOLERANCE = 0.01;
 /** The whole-rig translation C06 asks `check` to refuse the declared box for. */
 const FRAMING_MOVE = 300;
+/** The ONE-shot translation C07 offsets `light` by, in the rig's own units (~35 px). */
+const SHOT_OFFSET = 300;
+/** How far C07 lets the untouched shot's MAE move when another shot is offset. */
+const SCOPE_TOLERANCE = 0.01;
+/** How far C07 needs a SHARED framing to move it, for the per-shot claim to mean anything. */
+const SCOPE_MOVE = 10;
 
 const CHECK_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/3-timing-and-spacing');
 const CHECK_FRAMES = resolve(import.meta.dir, 'bench/reference/3-timing-and-spacing');
@@ -1462,6 +1476,54 @@ function checkExtremes(report: CheckReport): { meanMae: number; frameMae: number
     drift = Math.max(drift, anim.worstDrift);
   }
   return { meanMae, frameMae, drift, sets: report.animations.length };
+}
+
+/** Every set that was actually compared — each carries its own framing since #100. */
+function comparedSets(report: CheckReport): AnimationCheck[] {
+  return report.animations.filter((a) => a.compared > 0);
+}
+
+/**
+ * Did EVERY compared set reach this framing?
+ *
+ * The report's top-level framing fields are `null` under the default per-shot
+ * scope with more than one set, and rightly: there is no single answer then. So a
+ * control that used to read one field now asks the stronger question, which is
+ * also the one it always meant — *did every set land here?*
+ */
+function framedBy(report: CheckReport, how: FramingHow, source: FramingSource): boolean {
+  const sets = comparedSets(report);
+  return sets.length > 0 && sets.every((a) => a.framing === how && a.framingFit?.source === source);
+}
+
+/** One compared set's MAE by directory name. */
+function maeOf(report: CheckReport, dir: string): number | null {
+  return report.animations.find((a) => a.dir === dir)?.meanMae ?? null;
+}
+
+/**
+ * The same motion spec with ONE animation moved bodily, by a translate track on
+ * the root bone that holds one value for the whole shot.
+ *
+ * A whole-rig move (`moveWholeRig`) moves every shot and is the ordinary case that
+ * the framing exists to absorb. This moves one shot and leaves the others where
+ * they were, which is the case a SHARED framing cannot absorb: there is no one
+ * similarity that puts both on the reference.
+ */
+function offsetOneAnimation(motionText: string, name: string, dx: number, dy: number): string {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const spec = JSON.parse(motionText);
+  const anim = spec.animations[name] as any;
+  anim.tracks.push({
+    bone: 'root',
+    property: 'translate',
+    keys: [
+      { t: 0, v: [dx, dy] },
+      { t: anim.duration, v: [dx, dy] },
+    ],
+  });
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  return `${JSON.stringify(spec, null, 2)}\n`;
 }
 
 /** Returns the number of failures, or `null` when the example corpus is absent. */
@@ -1631,15 +1693,15 @@ function runCheckSuite(): number | null {
   // therefore be measuring the framing PATH and calling it the scale. Against
   // another rig in its own coordinates the claim is exact, and it is the claim: the
   // MAE must not depend on the coordinates a rig was authored in.
-  const units = scaledReport.framingFit?.units ?? null;
-  const baseline = faithfulReport.framingFit?.units ?? null;
+  const units = comparedSets(scaledReport)[0]?.framingFit?.units ?? null;
+  const baseline = comparedSets(faithfulReport)[0]?.framingFit?.units ?? null;
   const reported = units === null ? 0 : units.ratio;
   const reportedOk =
     units !== null &&
     baseline !== null &&
     Math.abs(reported - FRAMING_SCALE) <= 0.004 &&
     Math.abs(baseline.ratio - 1) <= 0.004 &&
-    scaledReport.framing === 'candidate-pixels' &&
+    framedBy(scaledReport, 'candidate-pixels', 'derived') &&
     Math.abs(scaled.meanMae - m.meanMae) <= FRAMING_TOLERANCE;
   if (reportedOk) {
     console.log(
@@ -1654,7 +1716,8 @@ function runCheckSuite(): number | null {
     console.log(
       `  FAIL  C04_A_SCALE_DIFFERENCE_IS_REPORTED_NOT_HIDDEN: units ratio ${reported.toFixed(4)} ` +
         `(faithful ${(baseline?.ratio ?? 0).toFixed(4)}) for a x${FRAMING_SCALE} rig framed by ` +
-        `${JSON.stringify(scaledReport.framing)}, MAE ${scaled.meanMae.toFixed(2)} against a moved ${m.meanMae.toFixed(2)}`,
+        `${JSON.stringify(comparedSets(scaledReport).map((a) => a.framing))}, MAE ${scaled.meanMae.toFixed(2)} ` +
+        `against a moved ${m.meanMae.toFixed(2)}`,
     );
   }
 
@@ -1670,10 +1733,7 @@ function runCheckSuite(): number | null {
   const pinned = checkAgainstFrames({ ...faithful, framesDir: CHECK_FRAMES, viewport: sidecarViewport() });
   const p2 = checkExtremes(pinned);
   const declaredGap = Math.abs(f.meanMae - p2.meanMae);
-  const declaredOk =
-    faithfulReport.framing === 'frames-viewport' &&
-    faithfulReport.framingFit?.source === 'declared' &&
-    declaredGap <= DECLARED_MAE_TOLERANCE;
+  const declaredOk = framedBy(faithfulReport, 'frames-viewport', 'declared') && declaredGap <= DECLARED_MAE_TOLERANCE;
   if (declaredOk) {
     console.log(
       `  PASS  C05_A_CANDIDATE_IN_THE_FRAMES_COORDINATES_IS_FRAMED_BY_THEIR_BOX  ` +
@@ -1684,7 +1744,7 @@ function runCheckSuite(): number | null {
     bad++;
     console.log(
       `  FAIL  C05_A_CANDIDATE_IN_THE_FRAMES_COORDINATES_IS_FRAMED_BY_THEIR_BOX: framing ` +
-        `${JSON.stringify(faithfulReport.framing)} via ${JSON.stringify(faithfulReport.framingFit?.source ?? null)}, ` +
+        `${JSON.stringify(comparedSets(faithfulReport).map((a) => `${a.dir}:${a.framing}/${a.framingFit?.source ?? null}`))}, ` +
         `unpinned MAE ${f.meanMae.toFixed(2)} against ${p2.meanMae.toFixed(2)} pinned, tolerance ${DECLARED_MAE_TOLERANCE}`,
     );
   }
@@ -1694,11 +1754,7 @@ function runCheckSuite(): number | null {
   // see the reference's origin, so the ordinary candidate draws the same picture in
   // its own place — and pinning THAT to the frames' box would report a rig that is
   // right as catastrophically wrong (rung 3's own candidate reads MAE 146 there).
-  const movedOk =
-    movedReport.framing === 'candidate-pixels' &&
-    movedReport.framingFit?.source === 'derived' &&
-    m.drift < 1 &&
-    m.meanMae < 10;
+  const movedOk = framedBy(movedReport, 'candidate-pixels', 'derived') && m.drift < 1 && m.meanMae < 10;
   if (movedOk) {
     console.log(
       `  PASS  C06_A_CANDIDATE_IN_ITS_OWN_COORDINATES_IS_NOT_PINNED_TO_THEIRS  ` +
@@ -1709,8 +1765,55 @@ function runCheckSuite(): number | null {
     bad++;
     console.log(
       `  FAIL  C06_A_CANDIDATE_IN_ITS_OWN_COORDINATES_IS_NOT_PINNED_TO_THEIRS: framing ` +
-        `${JSON.stringify(movedReport.framing)} via ${JSON.stringify(movedReport.framingFit?.source ?? null)}, ` +
+        `${JSON.stringify(comparedSets(movedReport).map((a) => `${a.dir}:${a.framing}/${a.framingFit?.source ?? null}`))}, ` +
         `drift ${m.drift.toFixed(2)}px, union MAE ${m.meanMae.toFixed(2)}`,
+    );
+  }
+
+  // --- framing scope: one bad shot may not move a good one -------------------
+  // Issue #100, and it is a pair rather than one assertion. The claim is that a
+  // per-shot framing keeps each set's numbers its own; the control that makes the
+  // claim mean anything is the SAME candidate under `--framing shared`, where the
+  // offset shot must visibly wreck the other one. Without that half, "the good
+  // shot did not move" would be indistinguishable from a report that cannot move.
+  //
+  // Measured on the spineboy rung, this is worth 15-25 MAE on a real character:
+  // `idle` read 18.77 on its own frames and 41.59 under one framing fitted over
+  // all 147, with not one key different. Here it is worth about 108.
+  const offset = compileTranscription(
+    offsetOneAnimation(readFileSync(join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.motion.json'), 'utf8'), 'light', SHOT_OFFSET, 0),
+  );
+  const perShot = checkAgainstFrames({ ...offset, framesDir: CHECK_FRAMES });
+  const shared = checkAgainstFrames({ ...offset, framesDir: CHECK_FRAMES, framing: 'shared' });
+  const baselineHeavy = maeOf(faithfulReport, 'heavy');
+  const perShotHeavy = maeOf(perShot, 'heavy');
+  const sharedHeavy = maeOf(shared, 'heavy');
+  const scopeOk =
+    baselineHeavy !== null &&
+    perShotHeavy !== null &&
+    sharedHeavy !== null &&
+    perShot.framingScope === 'per-shot' &&
+    perShot.viewport === null &&
+    perShot.sharedFraming !== null &&
+    Math.abs(perShotHeavy - baselineHeavy) <= SCOPE_TOLERANCE &&
+    sharedHeavy - baselineHeavy > SCOPE_MOVE;
+  if (scopeOk) {
+    console.log(
+      `  PASS  C07_ONE_OFFSET_SHOT_DOES_NOT_MOVE_ANOTHER_SHOTS_NUMBERS  ` +
+        `("light" moved +${SHOT_OFFSET} units: "heavy" reads ${(perShotHeavy as number).toFixed(2)} per shot against an ` +
+        `untouched ${(baselineHeavy as number).toFixed(2)}, and ${(sharedHeavy as number).toFixed(2)} under --framing shared)`,
+    );
+    console.log(
+      '          origin: a whole-root run fitted one framing over every set, so the spineboy rung read its best shot ' +
+        'as if it were its worst — idle 41.59 shared against 18.77 on its own frames (issue #100)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C07_ONE_OFFSET_SHOT_DOES_NOT_MOVE_ANOTHER_SHOTS_NUMBERS: "heavy" reads ` +
+        `${perShotHeavy?.toFixed(2) ?? 'n/a'} per shot against an untouched ${baselineHeavy?.toFixed(2) ?? 'n/a'} ` +
+        `(tolerance ${SCOPE_TOLERANCE}) and ${sharedHeavy?.toFixed(2) ?? 'n/a'} shared (needs +${SCOPE_MOVE}); ` +
+        `scope ${perShot.framingScope}, one box ${JSON.stringify(perShot.viewport)}`,
     );
   }
   return bad;
@@ -3711,9 +3814,10 @@ function main(): void {
         [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
       : `, + 2 diff identity controls (name-matched and name-agnostic), + ${DIFF_CASES.length} diff measure controls, ` +
-        '+ 7 check controls (frames-only reads, a faithful ' +
+        '+ 8 check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
-        "the framing names, the frames' own box used when the candidate lands in it and refused when it does not)";
+        "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +
+        "not, and one offset shot that must not move another shot's numbers)";
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'

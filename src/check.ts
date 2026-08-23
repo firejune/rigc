@@ -93,6 +93,7 @@ import {
   fitIsSettled,
   fitSeparation,
   frameContentBox,
+  unionBoxes,
   isContent,
   BACKGROUND_TOLERANCE,
   CYCLE_PIXELS,
@@ -312,6 +313,19 @@ export interface AnimationCheck {
   /** The widest of those disagreements, and `-1` when there is none. */
   worstChangeFrame: number;
   frames: FrameCheck[];
+  /**
+   * The box THIS set's candidate frames were rendered into.
+   *
+   * Under the default per-shot scope every set carries its own, and they are
+   * different boxes; under `--framing shared` they are all the same one. Either
+   * way it is here rather than only at the top of the report, because it is
+   * upstream of every number in this row.
+   */
+  viewport: Framing;
+  /** How this set's box was chosen — see `FramingSource`. */
+  framing: FramingHow;
+  /** Where this set's drawn pixels ended up against the reference's. */
+  framingFit: FramingReport | null;
   notes: string[];
 }
 
@@ -338,6 +352,44 @@ export interface Framing {
  * - `pinned` — `--viewport`, which is a claim by the author and is not checked.
  */
 export type FramingSource = 'derived' | 'declared' | 'pinned';
+
+/** The same three, named for the report line rather than for the code path. */
+export type FramingHow = 'candidate-pixels' | 'frames-viewport' | 'viewport-flag';
+
+/**
+ * Whether the framing is decided per frame set, or once across every set.
+ *
+ * ## What `per-shot` actually scopes, and why only that
+ *
+ * A framing is decided over the frames it is measured on, so pointing `check` at a
+ * skeleton root used to decide ONE for every set under it — and one badly-framed
+ * shot was then paid for by all the others. Measured on the spineboy rung, 8 shots
+ * and 147 frames: `idle` read **41.59** MAE at the root against the **18.77** it
+ * reads on its own frames, with not one key different (issue #100).
+ *
+ * `per-shot` moves exactly one decision into the set: **whether the box
+ * `frames.json` records is this set's box too.** That decision is a measurement
+ * with no floor — either the set's own drawn pixels land in the declared box or
+ * they do not — and over the union one shot that does not can put the pooled
+ * correction over `COINCIDENT_PIXELS` and take every other shot down with it. Per
+ * set, the ones that qualify read exactly what pinning by hand reads.
+ *
+ * ⚠️ It does NOT fit a separate chain per set, and that is a measured decision
+ * rather than a simplification. Per-set FITTING is worse: `fitFraming` registers
+ * extent, extent is not alignment, and one shot's frames do not constrain that
+ * enough — spineboy's `hit` reads 92.36 fitted on its own against 60.59 in the
+ * shared fit, and its two-frame `shoot@30fps` set reads 101.94 against 42.98. So a
+ * set that cannot take the declared box is measured in the shared framing, where
+ * every frame in the run constrains the answer.
+ *
+ * `shared` is the old behaviour, and it answers one question well: *does a single
+ * box serve every set?* The report prints that fit either way — see
+ * `CheckReport.sharedFraming`.
+ *
+ * ⚠️ The two are different measurements and their absolute numbers are not
+ * comparable across builds. The report says which one it did.
+ */
+export type FramingScope = 'per-shot' | 'shared';
 
 /** What the framing pass concluded, and how sure it is of it. */
 export interface FramingReport {
@@ -401,12 +453,35 @@ export interface CheckReport {
   candidate: { skeleton: string; atlas: string };
   framesDir: string;
   framesRoot: string;
-  /** How the candidate's own world box was chosen. */
-  framing: 'candidate-pixels' | 'frames-viewport' | 'viewport-flag';
+  /** One framing per set, or one across every set — see `FramingScope`. */
+  framingScope: FramingScope;
+  /**
+   * How the candidate's own world box was chosen, when ONE box covers the run.
+   *
+   * `null` under a per-shot scope with more than one set compared: there is no
+   * single answer then, and each `AnimationCheck` carries its own. A run that
+   * compared exactly one set fills these in whatever the scope, because for one
+   * set the two scopes are the same measurement.
+   */
+  framing: FramingHow | null;
   /** The box the CANDIDATE was rendered into, at the reference's pixel size. */
-  viewport: Framing;
+  viewport: Framing | null;
   /** Where the candidate's drawn pixels ended up against the reference's. */
   framingFit: FramingReport | null;
+  /**
+   * The framing ONE shared box gives across every set compared.
+   *
+   * Under `per-shot` it is both reported and used: every set that cannot take the
+   * frames' own declared box is measured in it. It is also the figure that says
+   * *why* a whole-root run is a different measurement — a set that reads well in
+   * the declared box and badly here is a set the old whole-root run was measuring
+   * through somebody else's silhouette, which is what `idle` reading 41.59 against
+   * 18.77 was (issue #100).
+   *
+   * `null` when the scope is already shared — `framingFit` is that number then —
+   * and when only one set was compared, where the two scopes are the same thing.
+   */
+  sharedFraming: FramingReport | null;
   /**
    * The box the REFERENCE was rendered into, when the sidecar records one.
    *
@@ -443,6 +518,15 @@ export interface CheckOptions {
   viewport?: { x: number; y: number; width: number; height: number };
   /** Play this candidate animation against the frames, when the names differ. */
   as?: string;
+  /**
+   * Fit one framing per frame set, or one across every set compared.
+   *
+   * Defaults to `per-shot`. See `FramingScope` for what the choice costs and why
+   * this is the default; it has no effect when only one set is compared, and none
+   * when `viewport` pins the box (a pin is a claim about the candidate's own
+   * coordinates, and those do not change between shots).
+   */
+  framing?: FramingScope;
 }
 
 // ---------------------------------------------------------------------------
@@ -572,34 +656,56 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   const referenceBoxes =
     pairs.length === 0 ? [] : referenceContentBoxes(located.root, pairs, background, level, pixelWidth, pixelHeight);
 
-  let viewport: Viewport;
-  let framingFit: FramingReport | null = null;
+  const scope: FramingScope = options.framing ?? 'per-shot';
+  const slices = sliceBySet(prepared, referenceBoxes);
+  /** One per prepared set, in `prepared` order. */
+  const framings: SetFraming[] = [];
+  let topViewport: Viewport | null = null;
+  let topHow: FramingHow | null = null;
+  let topFit: FramingReport | null = null;
+  let sharedFraming: FramingReport | null = null;
+
+  const reportFor = (fit: FramingFit, at: Viewport, over: Omit<FramingReport, 'units' | 'fit'>): FramingReport => ({
+    ...over,
+    fit,
+    units: extentsOf(fit, at.scale, referenceViewport),
+  });
+
   if (options.viewport) {
+    // A pin is a claim about the CANDIDATE's own coordinates, and those do not
+    // change between shots — so one box covers the run whatever the scope. The
+    // per-set fits below are free: every frame is measured in that one box once,
+    // and splitting the result per set costs nothing.
     const v = options.viewport;
-    viewport = viewportOfSize(v.x, v.y, v.width, v.height, maxSide / Math.max(v.width, v.height), pixelWidth, pixelHeight);
+    const pinned = viewportOfSize(v.x, v.y, v.width, v.height, maxSide / Math.max(v.width, v.height), pixelWidth, pixelHeight);
     notes.push(
       `the candidate's world box was pinned by --viewport ${v.x},${v.y},${v.width},${v.height} rather than derived ` +
         "from its own pixels — that is a claim about the candidate's coordinates, and nothing here checks it. The " +
         'framing line below is still measured, so it says what the pin cost.',
     );
-    const boxes = pairUpBoxes(prepared, posable.pages, viewport, background, level, referenceBoxes);
-    if (boxes.length > 0) {
-      const fit = fitFraming(boxes);
-      framingFit = {
-        fit,
-        passes: 1,
-        settled: false,
-        source: 'pinned',
-        cycled: false,
-        agrees: fitDistance(fit) <= COINCIDENT_PIXELS,
-        applied: false,
-        units: extentsOf(fit, viewport.scale, referenceViewport),
-      };
+    const pinnedShape = { passes: 1, settled: false, source: 'pinned' as const, cycled: false, applied: false };
+    const perSet = prepared.map((p, i) =>
+      pairUpBoxes([p], posable.pages, pinned, background, level, slices[i]),
+    );
+    for (const boxes of perSet) {
+      const fit = boxes.length === 0 ? null : fitFraming(boxes);
+      framings.push({
+        viewport: pinned,
+        how: 'viewport-flag',
+        fit: fit === null ? null : reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS }),
+        notes: [],
+      });
     }
-  } else {
-    if (referenceBoxes.every((b) => b === null)) {
-      throw new CheckError('no reference frame could be compared, so there is nothing to frame against');
+    const all = perSet.flat();
+    topViewport = pinned;
+    topHow = 'viewport-flag';
+    if (all.length > 0) {
+      const fit = fitFraming(all);
+      topFit = reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS });
     }
+  } else if (referenceBoxes.every((b) => b === null)) {
+    throw new CheckError('no reference frame could be compared, so there is nothing to frame against');
+  } else if (scope === 'shared' || prepared.length === 1) {
     const framed = frameCandidate(
       prepared,
       posable.pages,
@@ -610,14 +716,103 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       pixelHeight,
       referenceViewport,
     );
-    viewport = framed.viewport;
-    framingFit = { ...framed.report, units: extentsOf(framed.report.fit, viewport.scale, referenceViewport) };
+    const fit = { ...framed.report, units: extentsOf(framed.report.fit, framed.viewport.scale, referenceViewport) };
+    const how = HOW_BY_SOURCE[framed.report.source];
+    for (let i = 0; i < prepared.length; i++) framings.push({ viewport: framed.viewport, how, fit, notes: [] });
+    topViewport = framed.viewport;
+    topHow = how;
+    topFit = fit;
     notes.push(...framingNotes(framed.report));
+    if (prepared.length > 1) {
+      notes.push(
+        `one framing was fitted across all ${prepared.length} frame set(s) (--framing shared). Its absolute numbers ` +
+          'are not comparable with a per-shot run, and one badly-fitted set moves every other set in it.',
+      );
+    }
+  } else {
+    // Per shot: the DECLARED BOX is decided per set, and every set that does not
+    // qualify for it is measured in the one shared framing.
+    //
+    // ## Why the split falls exactly there, and not "fit each set on its own"
+    //
+    // The obvious reading of issue #100 is that each set should get its own fitted
+    // framing. It was written that way and measured, and it is worse — on the
+    // spineboy rung, per-set fitting reads `hit` **92.36** against the shared
+    // fit's 60.59 and `shoot@30fps` **101.94** against 42.98 (a two-frame set,
+    // framed 24 % off). The reason is `fitFraming`'s own: it registers **extent**,
+    // and extent is not alignment, so on a shot whose silhouette genuinely differs
+    // the chain has a local minimum of the correction that is not a minimum of the
+    // difference. More frames constrain that; one shot's worth does not.
+    //
+    // What actually produced the good column in that run is the other half — the
+    // box `frames.json` records, which is not an estimate of anything and has no
+    // floor. Over the union it was refused, because ONE badly-fitted shot put the
+    // pooled correction over `COINCIDENT_PIXELS` and the whole root fell back to a
+    // fit. Per set, the four sets that ARE in the frames' coordinates take it and
+    // read exactly what pinning by hand reads: `idle` **18.77** against 41.59,
+    // `walk` 32.00 against 45.33.
+    //
+    // So a set is framed by the frames' own box when its OWN pixels land there,
+    // and by the shared fit otherwise. Every set is then at least as well framed
+    // as a whole-root run framed it, and four of spineboy's sixteen much better.
+    const shared = frameCandidate(
+      prepared,
+      posable.pages,
+      referenceBoxes,
+      background,
+      level,
+      pixelWidth,
+      pixelHeight,
+      referenceViewport,
+    );
+    const sharedShape: SetFraming = {
+      viewport: shared.viewport,
+      how: HOW_BY_SOURCE[shared.report.source],
+      fit: { ...shared.report, units: extentsOf(shared.report.fit, shared.viewport.scale, referenceViewport) },
+      notes: [],
+    };
+    sharedFraming = sharedShape.fit;
+    let own = 0;
+    for (let i = 0; i < prepared.length; i++) {
+      const p = prepared[i];
+      const declared =
+        p.pairs.length === 0
+          ? null
+          : frameByDeclaredBox(
+              [p],
+              posable.pages,
+              slices[i],
+              background,
+              level,
+              pixelWidth,
+              pixelHeight,
+              referenceViewport,
+            );
+      if (!declared) {
+        framings.push({ ...sharedShape, notes: framingNotes(shared.report) });
+        continue;
+      }
+      own++;
+      framings.push({
+        viewport: declared.viewport,
+        how: HOW_BY_SOURCE[declared.report.source],
+        fit: { ...declared.report, units: extentsOf(declared.report.fit, declared.viewport.scale, referenceViewport) },
+        notes: framingNotes(declared.report),
+      });
+    }
+    notes.push(
+      `the framing was decided per frame set: ${own} of ${prepared.length} set(s) were measured in ` +
+        `${FRAMES_SIDECAR}'s own box because their own pixels land there, and the rest in the one shared framing on ` +
+        'the "shared box" line. A set framed by the frames\' own box cannot be moved by any other set. --framing ' +
+        'shared measures every set in the shared framing instead, which is a different measurement and not ' +
+        'comparable with this one.',
+    );
   }
 
   const animations: AnimationCheck[] = [];
-  for (const p of prepared) {
-    animations.push(checkOneSet(located.root, p, posable, viewport, background));
+  for (let i = 0; i < prepared.length; i++) {
+    const f = framings[i];
+    animations.push(checkOneSet(located.root, prepared[i], posable, f, background));
   }
 
   return {
@@ -627,25 +822,60 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     },
     framesDir: resolve(options.framesDir),
     framesRoot: located.root,
-    framing: options.viewport
-      ? 'viewport-flag'
-      : framingFit?.source === 'declared'
-        ? 'frames-viewport'
-        : 'candidate-pixels',
-    viewport: {
-      x: viewport.minX,
-      y: viewport.minY,
-      width: viewport.maxX - viewport.minX,
-      height: viewport.maxY - viewport.minY,
-      scale: viewport.scale,
-      pixelWidth: viewport.width,
-      pixelHeight: viewport.height,
-    },
-    framingFit,
+    framingScope: scope,
+    framing: topHow,
+    viewport: topViewport === null ? null : framingOfViewport(topViewport),
+    framingFit: topFit,
+    sharedFraming,
     referenceViewport,
     background,
     animations,
     notes,
+  };
+}
+
+/** The framing one prepared set was measured in. */
+interface SetFraming {
+  viewport: Viewport;
+  how: FramingHow;
+  fit: FramingReport | null;
+  notes: string[];
+}
+
+/** `FramingSource` said in the report's own words. */
+const HOW_BY_SOURCE: Record<FramingSource, FramingHow> = {
+  derived: 'candidate-pixels',
+  declared: 'frames-viewport',
+  pinned: 'viewport-flag',
+};
+
+/**
+ * `referenceBoxes` cut into one array per prepared set, in `prepared` order.
+ *
+ * The array is built by `prepared.flatMap((p) => p.pairs)`, so this is the inverse
+ * of that flatten and nothing else. It exists because a per-shot framing measures
+ * one set at a time and `frameCandidate` indexes its boxes the flat way.
+ */
+function sliceBySet(prepared: PreparedSet[], referenceBoxes: Array<ContentBox | null>): Array<Array<ContentBox | null>> {
+  const out: Array<Array<ContentBox | null>> = [];
+  let at = 0;
+  for (const p of prepared) {
+    out.push(referenceBoxes.slice(at, at + p.pairs.length));
+    at += p.pairs.length;
+  }
+  return out;
+}
+
+/** A rendering viewport as the report states it. */
+function framingOfViewport(v: Viewport): Framing {
+  return {
+    x: v.minX,
+    y: v.minY,
+    width: v.maxX - v.minX,
+    height: v.maxY - v.minY,
+    scale: v.scale,
+    pixelWidth: v.width,
+    pixelHeight: v.height,
   };
 }
 
@@ -793,6 +1023,12 @@ interface FramingPass {
   distance: number;
 }
 
+/** A framing for one run of sets: the box, and what it still leaves over. */
+interface FramedSets {
+  viewport: Viewport;
+  report: Omit<FramingReport, 'units'>;
+}
+
 /** A chain of passes and why it stopped. */
 interface FramingChain {
   passes: FramingPass[];
@@ -898,7 +1134,7 @@ function frameCandidate(
   pixelWidth: number,
   pixelHeight: number,
   referenceViewport: Framing | null,
-): { viewport: Viewport; report: Omit<FramingReport, 'units'> } {
+): FramedSets {
   const declared = frameByDeclaredBox(
     prepared,
     pages,
@@ -909,34 +1145,14 @@ function frameCandidate(
     pixelHeight,
     referenceViewport,
   );
+  // The declared-box probe measures every frame in `frames.json`'s own box
+  // whether or not it ends up being used, and that measurement is the only one
+  // taken in a box every set shares. Handing it back is what lets a per-shot run
+  // report `sharedFit` without a second render — see `CheckReport.sharedFit`.
   if (declared) return declared;
 
-  const quads = trimmedUnionBounds(
-    prepared.map((p) => p.pairs.map((pair) => pair.frame)),
-    pages,
-  );
-  if (!Number.isFinite(quads.minX)) {
-    throw new CheckError('the candidate posed no drawable attachment in any frame that was compared');
-  }
-  const pad = Math.max(quads.maxX - quads.minX, quads.maxY - quads.minY) * PAD;
-  const world = {
-    minX: quads.minX - pad,
-    minY: quads.minY - pad,
-    maxX: quads.maxX + pad,
-    maxY: quads.maxY + pad,
-  };
-  const maxSide = Math.max(pixelWidth, pixelHeight);
-  const seed = viewportOfSize(
-    world.minX,
-    world.minY,
-    world.maxX - world.minX,
-    world.maxY - world.minY,
-    maxSide / Math.max(world.maxX - world.minX, world.maxY - world.minY),
-    pixelWidth,
-    pixelHeight,
-  );
   const chain = runFramingChain(
-    seed,
+    seedFromGeometry(prepared, pages, referenceBoxes, pixelWidth, pixelHeight),
     prepared,
     pages,
     referenceBoxes,
@@ -962,6 +1178,88 @@ function frameCandidate(
       applied: true,
     },
   };
+}
+
+/**
+ * The starting viewport, from the candidate's own posed geometry laid onto the
+ * reference's own drawn extent.
+ *
+ * ## Why the reference's extent and not the frame
+ *
+ * The seed used to scale the candidate's trimmed quads to **fill the frame**, and
+ * that is an assumption about the reference: that the shot its frames show was
+ * framed around itself. Over a whole skeleton root it holds well enough, because
+ * the sidecar's one box was chosen to hold every set. Over one SHORT set it can be
+ * badly wrong — rung 3's `light` covers about half of the box its frames were
+ * rendered in, so filling the frame starts it near 2x too large, and the chain
+ * walks that back by only a few per cent a pass: `--frames <root>/light` on a
+ * candidate in its own coordinates read **MAE 141** with a framing 65 % off, after
+ * spending its whole pass budget (issue #100).
+ *
+ * The reference's own content box is already measured, on the same frames, with
+ * the same predicate — it is what the fit is trying to reach. Starting there costs
+ * nothing and starts the chain where it used to end up: the same shot now settles
+ * on the first or second pass.
+ *
+ * The scale matches the two boxes by **area** rather than by either side, because
+ * a candidate whose silhouette differs has two different side ratios and picking
+ * one of them would seed the chain with that difference as a scale error.
+ *
+ * ⚠️ Falls back to filling the frame when there is no reference box to aim at —
+ * every frame unreadable, or a set with nothing on disk.
+ */
+function seedFromGeometry(
+  prepared: PreparedSet[],
+  pages: Map<string, Plate>,
+  referenceBoxes: Array<ContentBox | null>,
+  pixelWidth: number,
+  pixelHeight: number,
+): Viewport {
+  const quads = trimmedUnionBounds(
+    prepared.map((p) => p.pairs.map((pair) => pair.frame)),
+    pages,
+  );
+  if (!Number.isFinite(quads.minX)) {
+    throw new CheckError('the candidate posed no drawable attachment in any frame that was compared');
+  }
+  const pad = Math.max(quads.maxX - quads.minX, quads.maxY - quads.minY) * PAD;
+  const world = {
+    minX: quads.minX - pad,
+    minY: quads.minY - pad,
+    maxX: quads.maxX + pad,
+    maxY: quads.maxY + pad,
+  };
+  const worldWidth = world.maxX - world.minX;
+  const worldHeight = world.maxY - world.minY;
+
+  let reference: ContentBox | null = null;
+  for (const box of referenceBoxes) reference = unionBoxes(reference, box);
+  if (reference !== null && boxWidth(reference) > 0 && boxHeight(reference) > 0) {
+    // The reference's box is the trimmed content, so pad it the same way the
+    // candidate's is before the two are matched — otherwise the pad is a scale
+    // error the chain then has to undo.
+    const refWidth = boxWidth(reference) * (1 + 2 * PAD);
+    const refHeight = boxHeight(reference) * (1 + 2 * PAD);
+    const scale = Math.sqrt((refWidth * refHeight) / (worldWidth * worldHeight));
+    const left = reference.left - boxWidth(reference) * PAD;
+    const top = reference.top - boxHeight(reference) * PAD;
+    // `projector` is px = (wx - minX)·k and py = (maxY - wy)·k, so putting the
+    // candidate's padded box on the reference's is one subtraction per axis.
+    const minX = world.minX - left / scale;
+    const maxY = world.maxY + top / scale;
+    return viewportOfSize(minX, maxY - pixelHeight / scale, pixelWidth / scale, pixelHeight / scale, scale, pixelWidth, pixelHeight);
+  }
+
+  const maxSide = Math.max(pixelWidth, pixelHeight);
+  return viewportOfSize(
+    world.minX,
+    world.minY,
+    worldWidth,
+    worldHeight,
+    maxSide / Math.max(worldWidth, worldHeight),
+    pixelWidth,
+    pixelHeight,
+  );
 }
 
 /**
@@ -1193,10 +1491,11 @@ function checkOneSet(
   root: string,
   prepared: PreparedSet,
   posable: ReturnType<typeof posableFromText>,
-  viewport: Viewport,
+  framing: SetFraming,
   background: RGBA,
 ): AnimationCheck {
   const { set } = prepared;
+  const viewport = framing.viewport;
   const blank: AnimationCheck = {
     dir: set.dir,
     animation: set.animation,
@@ -1217,7 +1516,10 @@ function checkOneSet(
     changeDisagreements: 0,
     worstChangeFrame: -1,
     frames: [],
-    notes: prepared.missing ? [prepared.missing] : prepared.notes,
+    viewport: framingOfViewport(viewport),
+    framing: framing.how,
+    framingFit: framing.fit,
+    notes: prepared.missing ? [prepared.missing] : [...framing.notes, ...prepared.notes],
   };
   if (prepared.missing !== null || prepared.pairs.length === 0) return blank;
 
@@ -1286,7 +1588,7 @@ function checkOneSet(
     changeDisagreements,
     worstChangeFrame,
     frames,
-    notes: prepared.notes,
+    notes: [...framing.notes, ...prepared.notes],
   };
 }
 
@@ -1487,17 +1789,15 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   lines.push(`  candidate  ${report.candidate.skeleton}`);
   lines.push(`  atlas      ${report.candidate.atlas}`);
   lines.push(`  frames     ${report.framesDir}`);
-  const v = report.viewport;
-  const how =
-    report.framing === 'candidate-pixels'
-      ? "fitted to the candidate's own drawn pixels"
-      : report.framing === 'frames-viewport'
-        ? `${FRAMES_SIDECAR}'s own box — the candidate measured into it`
-        : '--viewport';
   lines.push(
-    `  framed to  ${v.pixelWidth}x${v.pixelHeight}px  ${v.scale.toFixed(6)} px/unit  ` +
-      `world x[${v.x.toFixed(1)} .. ${(v.x + v.width).toFixed(1)}] y[${v.y.toFixed(1)} .. ${(v.y + v.height).toFixed(1)}]  (${how})`,
+    `  scope      ${
+      report.framingScope === 'per-shot'
+        ? "the framing decided per frame set (--framing shared measures every set in one shared framing)"
+        : "one framing across every frame set (--framing per-shot lets a set take frames.json's own box instead)"
+    }`,
   );
+  const v = report.viewport;
+  if (v !== null) lines.push(...framedToLines(v, report.framing));
   const r = report.referenceViewport;
   if (r) {
     lines.push(
@@ -1506,7 +1806,21 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
     );
     lines.push('             ⤷ the two world boxes are different coordinate systems and do not compare; the pixel grid does.');
   }
-  for (const line of framingLines(report)) lines.push(line);
+  for (const line of framingLines(report.framingFit)) lines.push(line);
+  if (report.sharedFraming) {
+    const shared = report.sharedFraming;
+    const f = shared.fit;
+    const signed = (n: number): string => `${n >= 0 ? '+' : ''}${n.toFixed(2)}`;
+    lines.push(
+      `  shared box one box for all ${report.animations.length} set(s) leaves x${f.scale.toFixed(6)}  offset ` +
+        `${signed(f.dx)}, ${signed(f.dy)} px   rms ${f.rms.toFixed(2)} px over ${f.frames * 4} edge(s)  ` +
+        `(${shared.source}; used for every set that could not take the frames' own box)`,
+    );
+    lines.push(
+      "             ⤷ how far one shared framing is from serving every set. A set below that took the frames' own " +
+        'box instead is measured with no such correction at all; --framing shared measures every set here.',
+    );
+  }
   for (const note of report.notes) lines.push(`  ⚠️ ${note}`);
   lines.push('');
 
@@ -1521,6 +1835,13 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
     lines.push(
       `     frames     ${anim.referenceFrames} on disk, candidate samples ${anim.candidateFrames}, ${anim.compared} compared`,
     );
+    // Only when this set has a framing of its own: under a shared scope, or a pin,
+    // the header already printed the one box every set was measured in, and
+    // repeating it per set would read as though they differed.
+    if (report.framingScope === 'per-shot' && report.viewport === null) {
+      for (const line of framedToLines(anim.viewport, anim.framing, '   ')) lines.push(line);
+      for (const line of framingLines(anim.framingFit, '   ')) lines.push(line);
+    }
     for (const note of anim.notes) lines.push(`     ⚠️ ${note}`);
     if (anim.compared === 0) {
       lines.push('');
@@ -1659,8 +1980,21 @@ function convergence(framing: FramingReport): string {
 }
 
 /** The framing, as the line an author reads before anything else. */
-function framingLines(report: CheckReport): string[] {
-  const framing = report.framingFit;
+/** The `framed to` line: the box that was rendered into, and how it was chosen. */
+function framedToLines(v: Framing, how: FramingHow | null, indent = ''): string[] {
+  const said =
+    how === 'candidate-pixels'
+      ? "fitted to the candidate's own drawn pixels"
+      : how === 'frames-viewport'
+        ? `${FRAMES_SIDECAR}'s own box — the candidate measured into it`
+        : '--viewport';
+  return [
+    `${indent}  framed to  ${v.pixelWidth}x${v.pixelHeight}px  ${v.scale.toFixed(6)} px/unit  ` +
+      `world x[${v.x.toFixed(1)} .. ${(v.x + v.width).toFixed(1)}] y[${v.y.toFixed(1)} .. ${(v.y + v.height).toFixed(1)}]  (${said})`,
+  ];
+}
+
+function framingLines(framing: FramingReport | null, indent = ''): string[] {
   if (!framing) return [];
   const { fit } = framing;
   const c = fit.candidate;
@@ -1670,8 +2004,8 @@ function framingLines(report: CheckReport): string[] {
     `${boxWidth(b).toFixed(1)}x${boxHeight(b).toFixed(1)}px at (${b.left.toFixed(1)}, ${b.top.toFixed(1)})`;
   const signed = (n: number): string => `${n >= 0 ? '+' : ''}${n.toFixed(2)}`;
   const out = [
-    `  content    candidate ${box(c)}   reference ${box(r)}   (union over ${fit.frames} frame(s))`,
-    `             ⤷ fit x${fit.scale.toFixed(6)}  offset ${signed(fit.dx)}, ${signed(fit.dy)} px   ` +
+    `${indent}  content    candidate ${box(c)}   reference ${box(r)}   (union over ${fit.frames} frame(s))`,
+    `${indent}             ⤷ fit x${fit.scale.toFixed(6)}  offset ${signed(fit.dx)}, ${signed(fit.dy)} px   ` +
       `rms ${fit.rms.toFixed(2)} px over ${fit.frames * 4} edge(s)   ` +
       `union residual ${signed(fit.residualWidth)} x ${signed(fit.residualHeight)} px   ` +
       `aspect ${percent(fit.aspectError)}` +
@@ -1683,7 +2017,7 @@ function framingLines(report: CheckReport): string[] {
   if (spread > 1) {
     const axis = fit.residualWidth > 0 ? 'wider' : 'narrower';
     out.push(
-      `             ⚠️ after the fit your shot still covers ${Math.abs(fit.residualWidth).toFixed(1)} px ` +
+      `${indent}             ⚠️ after the fit your shot still covers ${Math.abs(fit.residualWidth).toFixed(1)} px ` +
         `${axis} and ${Math.abs(fit.residualHeight).toFixed(1)} px ` +
         `${fit.residualHeight > 0 ? 'taller' : 'shorter'} than the reference's. One uniform scale cannot absorb ` +
         'that: something reaches somewhere nothing in the frames does, or is a different size. Read it before ' +
@@ -1692,7 +2026,7 @@ function framingLines(report: CheckReport): string[] {
   }
   if (fit.rms > 1) {
     out.push(
-      `             ⚠️ the fit leaves ${fit.rms.toFixed(2)} px rms across the frames' edges, so no single ` +
+      `${indent}             ⚠️ the fit leaves ${fit.rms.toFixed(2)} px rms across the frames' edges, so no single ` +
         'scale and offset puts the two shots on each other — they are different shapes, not the same shape ' +
         'misframed.',
     );
@@ -1700,12 +2034,12 @@ function framingLines(report: CheckReport): string[] {
   const units = framing.units;
   if (units) {
     out.push(
-      `  in units   candidate ${units.candidate.width.toFixed(1)} x ${units.candidate.height.toFixed(1)}   ` +
+      `${indent}  in units   candidate ${units.candidate.width.toFixed(1)} x ${units.candidate.height.toFixed(1)}   ` +
         `reference ${units.reference.width.toFixed(1)} x ${units.reference.height.toFixed(1)}   ` +
         `x${units.ratio.toFixed(4)}`,
     );
     out.push(
-      '             ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on ' +
+      `${indent}             ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on ` +
         'purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares ' +
         'only if you measured the shot in the frames’ own units.',
     );
