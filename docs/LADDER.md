@@ -240,30 +240,36 @@ The written form of all this, per rung and per run:
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ⬜ *attempted* |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | 🟨 `pendulum` ✅ · `ball` ⬜ *attempted* |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ⬜ |
-| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | ⬜ *attempted* |
+| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` *attempted, leak-caveated* · `pro` ⬜ |
 
-⬜ **but attempted.** Seven runs across rungs 1, 2, 4/5, 6 and 8 were made on
-2026-08-23, and none of them cleared a rung —
+⬜ **but attempted.** Eight runs across rungs 1, 2, 4/5, 6, 8 and spineboy were made
+on 2026-08-23, and none of them cleared a rung —
 [`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/),
 [`bench/runs/2026-08-23-rung2-1/`](../bench/runs/2026-08-23-rung2-1/),
 [`bench/runs/2026-08-23-rung4-1/`](../bench/runs/2026-08-23-rung4-1/),
 [`bench/runs/2026-08-23-rung5-1/`](../bench/runs/2026-08-23-rung5-1/), on the
 corrected brief, [`bench/runs/2026-08-23-rung2-2/`](../bench/runs/2026-08-23-rung2-2/),
-[`bench/runs/2026-08-23-rung6-1/`](../bench/runs/2026-08-23-rung6-1/), and
-[`bench/runs/2026-08-23-rung8-1/`](../bench/runs/2026-08-23-rung8-1/). Rung 8 is the
-one that came nearest and the reason its row is 🟨 rather than ⬜: **its `pendulum`
-candidate is cleared and its `ball` candidate is not**, and a rung with two
-skeletons clears when both do — rung 1's precedent. The figures and the commander's
-reading of each are below, under *Rung 1* through *Rung 8*.
+[`bench/runs/2026-08-23-rung6-1/`](../bench/runs/2026-08-23-rung6-1/),
+[`bench/runs/2026-08-23-rung8-1/`](../bench/runs/2026-08-23-rung8-1/), and
+[`bench/runs/2026-08-23-spineboy-1/`](../bench/runs/2026-08-23-spineboy-1/). **Two
+rows are 🟨 rather than ⬜, for different reasons.** Rung 8 came nearest: **its
+`pendulum` candidate is cleared and its `ball` candidate is not**, and a rung with two
+skeletons clears when both do — rung 1's precedent. spineboy is 🟨 because its `ess`
+candidate posted the highest structural figures on the ladder while two of this
+repository's own documents were leaking parts of the answer into it; those figures
+stand as recorded and carry the caveat, and the rung is re-attempted after the seal
+before clearing is discussed. The figures and the commander's reading of each are
+below, under *Rung 1* through *spineboy*.
 
-**What the eight runs say so far.** Eight, not seven: the seven above plus rung 3's
+**What the nine runs say so far.** Nine, not eight: the eight above plus rung 3's
 second attempt ([`bench/runs/2026-08-23-rung3-2/`](../bench/runs/2026-08-23-rung3-2/)),
 which did not change a rung's status but was the first run authored with
 [AUTHORING.md §10](AUTHORING.md) in hand. (Rung 3's first attempt is read in its own
-section and is not counted here.) `validate` caught **0 FAILs** across all eight —
-roughly 165 builds and `check` cycles combined; rung 8's single red was a compile
-error before the gate, not an assertion — and that is the guide designing
-invalid states out before a build is attempted, not a sign the rigs were right;
+section and is not counted here.) `validate` caught **0 FAILs** across all nine —
+roughly 165 builds and `check` cycles combined for the first eight, and a ninth whose
+gate was green on the first compile of both specs and never went red; rung 8's single
+red was a compile error before the gate, not an assertion — and that is the guide
+designing invalid states out before a build is attempted, not a sign the rigs were right;
 validity was never the open question here. `check` is the instrument that carries
 the weight `validate` cannot, and every run used it in the loop rather than once at
 the end. What it keeps finding, on a volume test (rung 4), a squash-and-stretch rig
@@ -426,6 +432,18 @@ order of magnitude more keys**: `curve_kinds` 165/302 and 344/501 against rung 6
 section, and key density still open — 135/302 and 307/501, missed this time from the
 *other* side, roughly twice as dense as the reference rather than half. §10.6's
 silence cuts both ways.
+
+**And §10 reaches the naming measures too, which nobody expected.** That is the ninth
+run's finding. Names are the section every honest run before it read near zero —
+rung 3's second attempt scored `bones.names` 1/5 and `attachments.names` 1/3 — and
+spineboy's `ess` candidate scored `slots.names` **20/20**, `bones.names` 17/19 and
+`attachments.names` 26/29 without ever seeing the reference. The lever is one line of
+§10.1: *one image → one slot → one attachment, named after the image*. It works when
+the art is named after the parts (`front-shin.png`, `rear-bracer.png`) and does
+nothing when it is not (rung 3's two parts are `square` and `pendulum`, where any name
+is as good as any other). The art table is a supplied input, so this is convergence
+rather than leakage — but see that rung's own entry: two documents **were** leaking,
+and the name-matched half of those figures is caveated because of it.
 
 **`bones` and `slots` did not move, and could not have.** Every measure under them
 that reads below 1.000 — `names`, `parent_by_name`, `order`, `slots.bone`,
@@ -835,11 +853,12 @@ directory: no input changed, the reference export was still never opened, and `b
 had not yet been run at that point. **The run stays clean** — it is recorded because
 a log that omits its own interruptions is not the record this protocol asks for.
 
-### spineboy — attempted, `ess` only (2026-08-23)
+### spineboy — attempted, not cleared: `ess` authored under a leak caveat, `pro` not built (2026-08-23)
 
 Run [`bench/runs/2026-08-23-spineboy-1/`](../bench/runs/2026-08-23-spineboy-1/),
-clean — `bench spineboy` run once at the end, with the brief's own command line, and
-neither spec touched after. `pro` was not attempted: rigc's motion spec has no `ik`,
+clean (PR [#96](https://github.com/firejune/rigc/pull/96), merged
+[`5e02159`](https://github.com/firejune/rigc/commit/5e02159)) — `bench spineboy` run
+once at the end, with the brief's own command line, and neither spec touched after. `pro` was not attempted: rigc's motion spec has no `ik`,
 `transform` or `deform` timelines yet ([#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)),
 so a `pro` candidate could not be complete, and the rung does not clear on it
 ([#16](https://github.com/firejune/rigc/issues/16)). Authored by Claude Opus 5 (1M
@@ -863,6 +882,17 @@ MAE means run **18.77** (`idle`), 24.27 (`shoot`), 26.17 (`aim`), 32.00 (`walk`)
 32.26 (`death`), 38.99 (`jump`), 42.30 (`run`) and **52.09** (`hit`) at 12 fps, with
 worst slot drift 2.8 px on `idle` and **18.2 px** on `hit`.
 
+**Reading — the commander's call, 2026-08-23. The graduation exam is attempted, not
+cleared.** `ess` was authored end to end and posted the best structural figures on the
+ladder; `pro` was not built at all, and neither of those is why the rung stays open.
+**It stays open because two of this repository's own documents were leaking parts of
+the answer into the run while it was being authored** — the guide's §3.6 events
+example and this document's own status row — so the name-matched half of the figures
+below cannot be read as a measurement of authoring. They are recorded, they are
+caveated, and **a second attempt after the seal (PR [#97](https://github.com/firejune/rigc/pull/97))
+comes before clearing is discussed.** Nothing here is withdrawn; what is withheld is
+the pass mark.
+
 **What this run establishes, whatever a reader makes of the pass mark.** These are
 the highest structural figures any honest run has recorded: `bones` name-agnostic
 **0.922** with `count`, `depth_histogram`, `degree_sequence` and `shape_histogram`
@@ -878,25 +908,87 @@ meshes in the row above are `pro`'s, and the run's refusal to author either (fra
 cannot show a constraint, and §9.3 says a mesh and a posed region render alike) cost
 nothing and gained the sections outright.
 
+**The motion is uneven, and the spread is the finding rather than the mean.** Every
+figure is pinned to `frames.json`'s own box, so none of it is framing. `idle` reads
+**18.8** MAE with **2.8 px** of worst slot drift and `hit` reads **52.1** with
+**18.2 px** on `front-shin` — the same rig, the same fitter, the same session, a
+factor of nearly three apart; `run` sits at 42.3 with 4.1 px and `jump` at 39.0 with
+4.4 px, so the drift and the MAE do not move together either. The run's own account
+of `hit` is that it is a fit failure and not a model one: the shot opens on a
+horizontal figure 148 × 80 against a standing setup pose of 100 × 146, and letting
+the parts off the hierarchy entirely recovers it only from 54.7 to 47.7. What that
+says about the ladder is that a coordinate descent over a character's worth of
+parameters is decided by its **starts**, not by its passes — and that a single mean
+over eight shots would have hidden every word of it.
+
+**`events` 0.500, and the honest reading is the awkward one.** The candidate declares
+two events against a reference that declares one, so both halves of the section read
+half — `animations.event_keys` is 5/6, meaning the firings themselves are nearly
+right and it is the second *name* that costs it. The author had four frame-pinned
+cues in the brief and declared what an animator would. **And the guide had leaked the
+reference's one event by name into the same run**, which is why this section is the
+one figure here that could have been bought for free: using the leak would have read
+1.000 and measured nothing. It reads 0.500 because the run refused it, and that is
+the section to look at first when the rung is re-attempted.
+
+🚨 **The name-matched figures are tainted, and the taint is this repository's fault,
+not the run's.** `bones` 0.869, `slots` 0.929, `attachments` 0.976 and every `names`
+measure under them were authored by an agent that had read this document's `ess` row
+(18 bones, 20 slots, 8 animations — used as a sizing check, which is contamination
+even when nothing is copied) and the guide's leaked events block. The name-agnostic
+figures — `bones` 0.922, `slots` 0.887 — are untouched by the counts and are the half
+a reader should weigh. **A second attempt, after the seal, is required before this
+rung's clearing is discussed at all.**
+
 **What is short.** `animations.key_counts` 639/1414 and `curve_kinds` 702/1414 sit
 under `timeline_kinds` 112/153 — the reference carries timelines this rig does not,
 which the run's own reading puts on §10.3's Separate checkbox. `draw_order` 7/8 says
 one animation in the reference reorders its slots and none of this candidate's does;
 the brief's own search for a draw-order *change* came up empty over both skeletons,
-so that one is invisible in the frames by both sides' account. `events` **0.500** is
-the run's most deliberate cost: it declares two events, from the brief's four
-frame-pinned cues, against the reference's one.
+so that one is invisible in the frames by both sides' account. `events` **0.500** has
+its own paragraph above; it is the run's most deliberate cost.
 
-⚠️ **Two leaks inside standard inputs, and the run names them rather than using
-them.** [AUTHORING.md](AUTHORING.md) §3.6 stated the reference's `events` block
-outright — quoting it by name, which is the answer to one of the six sections, in the
-document the protocol requires an authoring agent to read in full, and against
-§10.6's own rule. §3.4's bounding-box example was a second, and an audit found two
-more of the same kind beside it. And **this table's own spineboy row publishes
-`ess`'s bone and slot counts, which the brief withholds on purpose**; the run used
-them as a sizing check and says so. **All of it is sealed as of 2026-08-23** — the
-guide's examples are now synthetic, and the reading list above says out loud that
-this table is not a run's to read.
+**Three build choices worth recording, because each was made against something.**
+**The gun is on the far arm, and the brief says otherwise twice** — the run overruled
+it on art evidence (a fist is painted into `gun.png`, the art ships a separate fist
+only for the front arm, and swapping the two arms' art costs 5 % of the objective),
+and the brief's own `death` paragraph reaches the same conclusion its `idle` and
+`walk` paragraphs contradict. **The joints are solved, not guessed**: each is the
+point two neighbouring parts hold in common across all **132** frames, a linear
+least-squares fixed point, reweighted twice to drop frames where a part was covered.
+**Every pose is fitted as a composite through the reference's own rasteriser**, never
+per part — on a character every frame is a frame where parts touch, and per-part
+matching produced an upside-down far arm and a fist on a thigh before anything was
+built. The first of those is the one to notice: **the brief is a viewer's report, and
+a run that measures it and overrules it is doing the thing this protocol asks for.**
+
+**What was left unauthored, and what that cost.** Constraints and meshes: `ess` has
+none of either, so refusing to author them scored 1.000 twice at 0/0 — the same
+refusal that cost rung 8's `ball` its `constraints` section outright. A `drawOrder`
+timeline: 7/8, above — the reference has one and neither the brief's search nor the
+run's sweeps could find it in the frames. Clipping: nothing in `ess` is masked, and
+the row's *clipping* is almost certainly `pro`'s. And **`pro` itself**, which is not a
+judgement call: rigc's motion spec has no `ik`, `transform` or `deform` timeline
+([#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)),
+so a complete `pro` candidate is not expressible today. The rung does not clear on it
+([#16](https://github.com/firejune/rigc/issues/16)) and it is a stretch skeleton, so
+this costs the attempt nothing — but the ladder cannot say a word about IK, weighted
+meshes at scale or clipping until those three land.
+
+⚠️ **The leaks, and what was done about them** (PR [#97](https://github.com/firejune/rigc/pull/97),
+merged [`0263774`](https://github.com/firejune/rigc/commit/0263774)). The run named
+all three rather than using any of them, which is the only reason this entry can say
+what it says. [AUTHORING.md](AUTHORING.md) §3.6 stated the reference's `events` block
+outright, in the document the protocol requires an authoring agent to read **in
+full** and against §10.6's own rule; §3.4's bounding-box example was a second, and an
+audit of the whole guide against the corpus found two more of the same kind beside it
+— a clipping polygon and a mesh's bind data, both verbatim. The guide's examples are
+now synthetic, and §3 opens with the rule that they are. This table's counts are not
+moved — they are the ladder's bookkeeping — and instead *The honesty rule* above now
+names this document, [SPEC_COVERAGE.md](SPEC_COVERAGE.md), `src/ladder.ts`'s gate
+strings and issue bodies carrying counts as **things an authoring run does not
+read**, with the enumerated list in [`bench/runs/README.md`](../bench/runs/README.md)
+and a requirement that the prompt quote it.
 
 ---
 
