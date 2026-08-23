@@ -46,6 +46,11 @@
  *   whole frame because most of a frame is background on both sides, and
  *   averaging that in makes every number small and every difference between
  *   numbers smaller.
+ * - **Per-frame change** — how much each side moved since **its own** previous
+ *   frame, and whether those two agree. The only measure here that looks at a
+ *   relation between two frames rather than at one, and the only one that can see
+ *   a held pose that is not held or a one-frame event that never fired — see
+ *   `FrameChange`.
  * - **Per-slot tracking** — where each of the candidate's own slots landed
  *   against the reference frame. This is the part an author acts on: MAE says
  *   *how wrong*, a slot's drift says *which part, which way, how far*.
@@ -197,6 +202,57 @@ function framesOnDisk(root: string, dir: string): Array<{ index: number; file: s
 // the measures
 // ---------------------------------------------------------------------------
 
+/**
+ * How much a frame moved since the frame before it — on **each side separately**.
+ *
+ * ## Why this is not the MAE again
+ *
+ * Every other measure here compares the candidate against the reference *at one
+ * moment*. This one compares each side against **itself** a frame earlier, and
+ * then compares those two numbers. What that catches is a class of defect the
+ * aggregate MAE is structurally blind to, because it is small in every single
+ * frame and wrong in the relationship between them:
+ *
+ * - **A held pose that is not held.** Rung 6's reference is pixel-identical across
+ *   f64–f67. A greedy key reduction had sloped a line through that plateau —
+ *   legal under its own per-key tolerance, invisible to `validate`, invisible to
+ *   `diff`, and worth so little MAE per frame that nothing flagged it. Re-rendering
+ *   the candidate and diffing **its own** f67 against **its own** f68 showed 91 px
+ *   moving where the reference moves 3.
+ * - **A one-frame event that never fires.** The same run's tracker reveal landed a
+ *   fraction of a millisecond past the animation's last sample, so it never
+ *   happened. `diff` read `animations.deform` and `draw_order` as matching, the
+ *   gate was green, and only looking at the last two frames found it.
+ *
+ * Both were found by that run building its own render-diff outside the tool
+ * (`bench/runs/2026-08-23-rung6-1/LOOP.md` §10, issue #53). `check` has both frame
+ * sequences in hand already, so it is the tool's job and not the author's.
+ *
+ * ⚠️ Only between **adjacent** frames. A set that commits stills rather than every
+ * frame — rung 2's contact sheets ship `f0000` and `f0310` — has no frame-to-frame
+ * delta to report, and the difference between two frames 310 apart is not one. That
+ * is `null` here rather than a number about the wrong thing.
+ */
+export interface FrameChange {
+  /** The frame this one is measured against; always `index - 1`. */
+  previous: number;
+  /** Pixels the candidate moved since its own previous frame. */
+  candidate: number;
+  /** Pixels the reference moved since its own previous frame. */
+  reference: number;
+  /** The same two as a mean absolute RGB difference over the whole frame, 0..255. */
+  candidateMae: number;
+  referenceMae: number;
+  /**
+   * How the two compare — see `CHANGE_RATIO`.
+   *
+   * `moves` means the candidate changed materially more than the reference did
+   * here, `holds` materially less. Both are diagnoses the per-frame MAE cannot
+   * give: a frame that is merely off by a constant offset agrees on this measure.
+   */
+  verdict: 'agrees' | 'moves' | 'holds';
+}
+
 export interface FrameCheck {
   index: number;
   /** The reference PNG, so a worst-frame line is directly openable. */
@@ -225,6 +281,8 @@ export interface FrameCheck {
   attributed: number;
   drawn: number;
   slots: SlotTrack[];
+  /** This frame against the one before it, on each side — `null` unless adjacent. */
+  change: FrameChange | null;
 }
 
 export interface AnimationCheck {
@@ -247,6 +305,12 @@ export interface AnimationCheck {
   worstDriftSlot: string | null;
   /** Frames in which no slot at all could be attributed — the drift's denominator. */
   framesWithoutDrift: number;
+  /** Adjacent frame pairs a frame-to-frame change could be measured across. */
+  changePairs: number;
+  /** How many of those the candidate's own change disagrees with the reference's. */
+  changeDisagreements: number;
+  /** The widest of those disagreements, and `-1` when there is none. */
+  worstChangeFrame: number;
   frames: FrameCheck[];
   notes: string[];
 }
@@ -1149,6 +1213,9 @@ function checkOneSet(
     worstDriftFrame: -1,
     worstDriftSlot: null,
     framesWithoutDrift: 0,
+    changePairs: 0,
+    changeDisagreements: 0,
+    worstChangeFrame: -1,
     frames: [],
     notes: prepared.missing ? [prepared.missing] : prepared.notes,
   };
@@ -1163,14 +1230,36 @@ function checkOneSet(
   let worstDriftFrame = -1;
   let worstDriftSlot: string | null = null;
   let framesWithoutDrift = 0;
+  let changePairs = 0;
+  let changeDisagreements = 0;
+  let worstChangeFrame = -1;
+  let worstChangeGap = 0;
+  // The previous frame's two plates, kept so each side can be compared against
+  // ITSELF a frame earlier. Both are already rendered or read for this frame, so
+  // holding one frame of each costs one extra plate and no extra work.
+  let previous: { index: number; candidate: Plate; reference: Plate } | null = null;
 
   for (const { index, file, frame } of prepared.pairs) {
     const reference = readPlateFrom(root, file);
-    const check = checkOneFrame(index, file, frame, posable.pages, viewport, background, reference);
+    const rendered = renderFrame(frame, posable.pages, viewport, background);
+    const check = checkOneFrame(index, file, frame, posable.pages, viewport, background, reference, rendered);
+    check.change = previous && previous.index === index - 1 ? frameChange(previous, rendered, reference) : null;
+    previous = { index, candidate: rendered, reference };
     frames.push(check);
     maeSum += check.mae;
     maeFrameSum += check.maeFrame;
     if (check.attributed === 0) framesWithoutDrift++;
+    if (check.change) {
+      changePairs++;
+      if (check.change.verdict !== 'agrees') {
+        changeDisagreements++;
+        const gap = Math.abs(check.change.candidate - check.change.reference);
+        if (gap > worstChangeGap) {
+          worstChangeGap = gap;
+          worstChangeFrame = index;
+        }
+      }
+    }
     if (check.mae > worstMae) {
       worstMae = check.mae;
       worstMaeFrame = index;
@@ -1193,9 +1282,115 @@ function checkOneSet(
     worstDriftFrame,
     worstDriftSlot,
     framesWithoutDrift,
+    changePairs,
+    changeDisagreements,
+    worstChangeFrame,
     frames,
     notes: prepared.notes,
   };
+}
+
+/**
+ * How far a channel must move for a pixel to count as having **changed**.
+ *
+ * The same threshold `isContent` uses to decide there is anything there at all,
+ * and for the same reason: below it the difference is the rasteriser's own last
+ * bit, and a measure that counts those reports every frame as moving.
+ */
+export const CHANGE_TOLERANCE = BACKGROUND_TOLERANCE;
+
+/**
+ * How many times more one side has to move than the other to be a disagreement,
+ * when **both** of them moved.
+ *
+ * Four, with `CHANGE_EXCESS` beside it, because a ratio alone means nothing on
+ * small counts. Together the two read: *four times as much, and at least two dozen
+ * pixels more.*
+ */
+export const CHANGE_RATIO = 4;
+
+/**
+ * ...and how many pixels more, when both sides moved.
+ *
+ * Measured rather than picked. Across the corpus's two mechanically faithful
+ * transcriptions — the same skeleton on both sides, where the true answer is
+ * "identical" — the largest excess between two adjacent frames that clears
+ * `CHANGE_RATIO` at all is **12 px**, on one pair out of 152. Twenty-four is double
+ * that, and the case it has to keep is rung 6's broken plateau at 91 against 3.
+ */
+export const CHANGE_EXCESS = 24;
+
+/**
+ * Did this side move materially more than that one?
+ *
+ * ⭐ **Stillness is categorical and gets no floor**, which is the reason this is a
+ * predicate and not a threshold. A held pose is held *exactly* — rung 6's reference
+ * is pixel-identical across f64-f67 — and a one-frame event is as small as the
+ * thing it reveals, which on that same shot is **three pixels**. A floor big enough
+ * to be safe about a moving frame would be big enough to hide both, so the two
+ * regimes are separated instead: against a still side, moving at all is the
+ * finding; against a moving side, `CHANGE_RATIO` and `CHANGE_EXCESS` apply.
+ * Measured: neither faithful transcription has a single pair where one side is
+ * still and the other is not.
+ */
+function disagrees(mine: number, theirs: number): boolean {
+  if (mine === 0) return false;
+  if (theirs === 0) return true;
+  return mine > theirs * CHANGE_RATIO && mine - theirs > CHANGE_EXCESS;
+}
+
+/**
+ * One frame against the frame before it, on each side, and what that says.
+ *
+ * ⚠️ Over the **whole frame**, and not over either side's content mask the way the
+ * MAE is. The omission is deliberate: a change is a change wherever it happens, and
+ * masking it would hide precisely the case where one side draws something the other
+ * does not — which is half of what this measure exists for. A one-frame reveal
+ * appears on background pixels by definition.
+ */
+function frameChange(
+  previous: { index: number; candidate: Plate; reference: Plate },
+  candidate: Plate,
+  reference: Plate,
+): FrameChange {
+  const mine = plateDelta(previous.candidate, candidate);
+  const theirs = plateDelta(previous.reference, reference);
+  return {
+    previous: previous.index,
+    candidate: mine.pixels,
+    reference: theirs.pixels,
+    candidateMae: mine.mae,
+    referenceMae: theirs.mae,
+    verdict: disagrees(mine.pixels, theirs.pixels)
+      ? 'moves'
+      : disagrees(theirs.pixels, mine.pixels)
+        ? 'holds'
+        : 'agrees',
+  };
+}
+
+/**
+ * Changed pixels and mean absolute RGB difference between two plates of one size.
+ *
+ * Straight over `Plate.data` rather than through `Plate.get`, because this runs
+ * twice per compared frame over the whole grid and `get` allocates a four-element
+ * array per pixel. On the ladder's largest set that difference is most of what this
+ * measure costs.
+ */
+function plateDelta(before: Plate, after: Plate): { pixels: number; mae: number } {
+  const a = before.data;
+  const b = after.data;
+  const count = after.width * after.height;
+  let pixels = 0;
+  let sum = 0;
+  for (let i = 0; i < count * 4; i += 4) {
+    const dr = Math.abs(a[i] - b[i]);
+    const dg = Math.abs(a[i + 1] - b[i + 1]);
+    const db = Math.abs(a[i + 2] - b[i + 2]);
+    sum += dr + dg + db;
+    if (dr > CHANGE_TOLERANCE || dg > CHANGE_TOLERANCE || db > CHANGE_TOLERANCE) pixels++;
+  }
+  return { pixels, mae: sum / 3 / count };
 }
 
 function checkOneFrame(
@@ -1206,8 +1401,9 @@ function checkOneFrame(
   viewport: Viewport,
   background: RGBA,
   reference: Plate,
+  /** The candidate's own frame, rendered by the caller — it needs it too. */
+  rendered: Plate,
 ): FrameCheck {
-  const rendered = renderFrame(frame, pages, viewport, background);
   const { coverage, footprints } = frameGeometry(frame, pages, viewport);
 
   let union = 0;
@@ -1269,6 +1465,9 @@ function checkOneFrame(
     attributed,
     drawn,
     slots: tracks,
+    // Filled in by the caller, which is the only place that has the frame before
+    // this one — see `frameChange`.
+    change: null,
   };
 }
 
@@ -1341,16 +1540,16 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
         : `     slot drift worst ${anim.worstDrift.toFixed(1)} px  ${JSON.stringify(anim.worstDriftSlot)} at ` +
           `f${String(anim.worstDriftFrame).padStart(4, '0')}${blind}`,
     );
+    lines.push(changeSummary(anim));
     lines.push('');
 
-    const listed =
-      opts?.allFrames || anim.frames.length <= LIST_EVERY
-        ? anim.frames
-        : [...anim.frames].sort((a, b) => b.mae - a.mae).slice(0, WORST_FRAMES).sort((a, b) => a.index - b.index);
+    const listed = framesToList(anim, opts?.allFrames === true);
     const heading =
-      listed.length === anim.frames.length ? 'every frame' : `the ${listed.length} worst frames by MAE, in index order`;
-    lines.push(`     ${heading}`);
-    lines.push('       frame      MAE   union px   worst slot            drift   how       slots   note');
+      listed.length === anim.frames.length
+        ? 'every frame'
+        : `the ${listed.length} frames worth reading — worst by MAE, plus every frame whose own change disagrees`;
+    lines.push(`     ${heading}, in index order`);
+    lines.push('       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note');
     for (const frame of listed) {
       const worst = frame.slots.find((s) => s.slot === frame.worstSlot) ?? null;
       const drift = frame.worstDrift === null ? '    —' : `${frame.worstDrift.toFixed(1).padStart(5)}`;
@@ -1360,12 +1559,16 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
           : worst.method === 'template'
             ? `tmpl ${(worst.confidence ?? 0).toFixed(2)}`
             : 'component ';
-      const unmatched =
-        frame.unmatchedComponents > 0 ? `${frame.unmatchedComponents} reference component(s) no slot reaches` : '';
+      const note = [changeNote(frame.change), frame.unmatchedComponents > 0 ? `${frame.unmatchedComponents} reference component(s) no slot reaches` : '']
+        .filter(Boolean)
+        .join('; ');
+      const change = frame.change
+        ? `${String(frame.change.candidate).padStart(7)}${String(frame.change.reference).padStart(7)}`
+        : `${'—'.padStart(7)}${'—'.padStart(7)}`;
       lines.push(
-        `       f${String(frame.index).padStart(4, '0')} ${f2(frame.mae).padStart(8)}  ${String(frame.unionPixels).padStart(9)}   ` +
+        `       f${String(frame.index).padStart(4, '0')} ${f2(frame.mae).padStart(8)}  ${String(frame.unionPixels).padStart(9)} ${change}   ` +
           `${(frame.worstSlot ?? '—').padEnd(20)} ${drift}   ${how.padEnd(9)} ${String(frame.attributed)}/${String(frame.drawn)}` +
-          `${unmatched ? `   ${unmatched}` : ''}`,
+          `${note ? `   ${note}` : ''}`,
       );
     }
     lines.push('');
@@ -1379,7 +1582,68 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   lines.push('  marked `tmpl` was correlated against the slot’s own pixels because the reference');
   lines.push('  merged it into a neighbour; the number beside it is how much better that match was');
   lines.push('  than its best rival, and a slot that matched nothing at all is left out of the count.');
+  lines.push('  `Δpx` and `ref Δ` are how many pixels each side moved since ITS OWN previous frame —');
+  lines.push('  not against each other. They are the only columns that can see a held pose that is');
+  lines.push('  not held, or a one-frame event that never fired: both are small in every frame and');
+  lines.push('  wrong only in the relation between two, which is where the MAE cannot look.');
   return lines;
+}
+
+/**
+ * The frames worth printing: the worst by MAE, plus every change disagreement.
+ *
+ * The union matters rather than being tidy. The defects `FrameChange` exists to
+ * catch are **cheap in MAE by construction** — a plateau sloped through by a
+ * fraction of a pixel, a three-pixel reveal that did not fire — so a listing
+ * ranked by MAE is exactly the listing that leaves them out. Rung 6's f65–f68 sit
+ * near the bottom of that ranking.
+ */
+function framesToList(anim: AnimationCheck, allFrames: boolean): FrameCheck[] {
+  if (allFrames || anim.frames.length <= LIST_EVERY) return anim.frames;
+  const chosen = new Set(
+    [...anim.frames]
+      .sort((a, b) => b.mae - a.mae)
+      .slice(0, WORST_FRAMES)
+      .map((f) => f.index),
+  );
+  for (const frame of anim.frames) if (frame.change && frame.change.verdict !== 'agrees') chosen.add(frame.index);
+  return anim.frames.filter((f) => chosen.has(f.index));
+}
+
+/** The per-frame change measure, as the animation's own summary line. */
+function changeSummary(anim: AnimationCheck): string {
+  if (anim.changePairs === 0) {
+    return (
+      '     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot ' +
+      'changes from frame to frame'
+    );
+  }
+  if (anim.changeDisagreements === 0) {
+    return `     per-frame all ${anim.changePairs} adjacent pair(s) change by as much as the reference's own frames do`;
+  }
+  const worst = anim.frames.find((f) => f.index === anim.worstChangeFrame);
+  const at =
+    worst && worst.change
+      ? `; worst f${String(worst.index).padStart(4, '0')}, yours moved ${worst.change.candidate} px where the ` +
+        `reference moved ${worst.change.reference}`
+      : '';
+  return (
+    `     per-frame ${anim.changeDisagreements} of ${anim.changePairs} adjacent pair(s) change by a different ` +
+    `amount than the reference does${at}`
+  );
+}
+
+/** What one frame's change disagreement says, in the words that name the defect. */
+function changeNote(change: FrameChange | null): string {
+  if (!change || change.verdict === 'agrees') return '';
+  if (change.verdict === 'moves') {
+    return change.reference === 0
+      ? 'the reference holds still here and yours does not'
+      : `yours moves ${(change.candidate / Math.max(1, change.reference)).toFixed(0)}x the reference`;
+  }
+  return change.candidate === 0
+    ? 'the reference moves here and yours holds still'
+    : `yours moves ${(change.reference / Math.max(1, change.candidate)).toFixed(0)}x less than the reference`;
 }
 
 /**

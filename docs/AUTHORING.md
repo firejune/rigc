@@ -914,10 +914,13 @@ and [the ladder's honesty rule](LADDER.md) makes them a finish line you reach on
      frames     65 on disk, candidate samples 65, 65 compared
      MAE        mean 23.10  worst 43.36 at f0029   (0..255 over the union alpha; …)
      slot drift worst 2.1 px  "pendulum" at f0029
+     per-frame 1 of 64 adjacent pair(s) change by a different amount than the reference does; worst
+               f0018, yours moved 0 px where the reference moved 374
 
-     the 8 worst frames by MAE, in index order
-       frame      MAE   union px   worst slot            drift   how       slots   note
-       f0029    43.36       1409   pendulum               2.1   component  2/2
+     the 9 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0018     9.12       1402       0    374   pendulum               0.4   component  2/2   the reference moves here and yours holds still
+       f0029    43.36       1409     288    301   pendulum               2.1   component  2/2
 ```
 
 **Read the framing block first.** Everything below it is computed on the grid it
@@ -1000,6 +1003,38 @@ because an ad-hoc re-render check naturally computes that one, and on every set
 measured so far it comes out ten to twenty-five times smaller and correspondingly
 blunter.
 
+**`Δpx` and `ref Δ`** are the two columns that do **not** compare you against the
+reference. They compare each side against **itself one frame earlier**: how many
+pixels of your own frame moved since your own previous frame, and the same for the
+reference. Then the `per-frame` summary compares those two numbers.
+
+That is a different question from everything else in the report, and it catches a
+class of defect nothing else here can — because the defect is cheap in every single
+frame and wrong only in the relation between two:
+
+- **A held pose that is not held.** Rung 6's reference is pixel-identical across
+  f64–f67. A greedy key reduction had sloped a line through that plateau, legal
+  under its own per-key tolerance, and the candidate moved **91 px across f67→f68
+  where the reference moves 3**. The gate was green, `diff` was unmoved, and the
+  aggregate MAE did not shift by a tenth of a point. The column says `the reference
+  holds still here and yours does not`.
+- **A one-frame event that never fires.** The same run's tracker reveal landed a
+  fraction of a millisecond past the animation's last sample. `diff` read the
+  structure as matching. The column says `the reference moves here and yours holds
+  still`.
+
+Both of those were found by that run writing its own render-diff by hand. Read this
+line whenever the MAE is flat and something still looks wrong: a flat MAE says the
+framing and the art agree, and it says nothing at all about whether your shot holds
+and blinks where the reference does.
+
+⚠️ Only between **adjacent** frames. A set that ships stills rather than every frame
+— rung 2's contact-sheet sets — reports `no two compared frames are adjacent`, and
+means it: the difference between two frames 310 apart is not a frame-to-frame delta.
+A disagreement needs one side to hold *exactly* still while the other moves, or one
+side to move four times the other and at least two dozen pixels more; below that the
+two rasterisations differ by their own last bit and the column says nothing.
+
 **Slot drift** is what you act on. For each of your slots, `check` measures where
 it landed and how far that is from where the reference put it. That names the part,
 the frame and the distance, so "the beach ball is 4.7 px low at f0005" is a
@@ -1047,6 +1082,10 @@ a part you have not authored, or one you have put somewhere else entirely.
   3 px low at one frame have the same drift and opposite causes. The table gives
   you the frame index; §8's rule still applies — look for a second way to get the
   number before you author the key.
+- **What happens between two committed frames.** `Δpx` compares adjacent frames and
+  a set that ships stills has none, so a shot that is right at every committed frame
+  and wrong between them reads clean. That is the same gap `--frames` on a
+  contact-sheet set already has, and it is why the frame-count line is printed.
 
 ---
 

@@ -505,10 +505,14 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
     const framing = check.framingFit;
     if (framing) {
       const signed = (n: number): string => `${n >= 0 ? '+' : ''}${n.toFixed(2)}`;
+      const how = !framing.applied
+        ? 'measured only — --viewport pinned'
+        : framing.source === 'declared'
+          ? `frames.json's own box, the candidate measured into it`
+          : `fitted to the candidate's pixels, ${framing.passes} pass(es)${framing.settled ? '' : framing.cycled ? ', cycling' : ', unsettled'}`;
       console.log(
         `  framing    fit x${framing.fit.scale.toFixed(6)}  rms ${framing.fit.rms.toFixed(2)}px  union residual ` +
-          `${signed(framing.fit.residualWidth)} x ${signed(framing.fit.residualHeight)}px  ` +
-          `(${framing.applied ? `fitted to the candidate's pixels, ${framing.passes} pass(es)` : 'measured only — --viewport pinned'})`,
+          `${signed(framing.fit.residualWidth)} x ${signed(framing.fit.residualHeight)}px  (${how})`,
       );
     }
     for (const anim of check.animations) {
@@ -517,9 +521,16 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
         anim.worstDriftFrame < 0
           ? 'no slot attributable in any of them'
           : `worst slot drift ${anim.worstDrift.toFixed(1)}px, attributed in ${attributed}`;
+      // The per-frame change count is carried here and not only in `check`'s own
+      // table because it is the one figure a flat MAE cannot imply: a shot can be
+      // right at every frame and still hold or blink at the wrong moments.
+      const change =
+        anim.changeDisagreements === 0
+          ? ''
+          : `, ${anim.changeDisagreements}/${anim.changePairs} pair(s) change unlike the reference`;
       console.log(
         `  ${anim.dir.padEnd(10)} MAE mean=${anim.meanMae.toFixed(2)} worst=${anim.worstMae.toFixed(2)}  ` +
-          `over ${anim.compared} frame(s)  ${drift}`,
+          `over ${anim.compared} frame(s)  ${drift}${change}`,
       );
     }
   } else {
