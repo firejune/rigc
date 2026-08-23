@@ -430,8 +430,10 @@ movement.
 **No time extent** — one frame at 12 fps, one at 30. The figure stands with the gun
 held out level to the right, feet on the floor (lowest row 336). Against `idle/f0000`
 it is a genuinely different pose: 106 × 152 against 100 × 146, and 8,813 frame pixels
-differ. In `ess` nothing but the figure is drawn — the subject is a single connected
-component.
+differ. **Nothing but the figure is drawn**: under 8-connectivity the frame holds
+exactly one connected component of 20 px or more — and so does every one of the other
+131 committed `ess` frames bar `shoot/f0004`, where the dispersing flare breaks off.
+`pro/aim` is not like this; see below.
 
 ---
 
@@ -458,8 +460,11 @@ mark sits about **97 units beyond the muzzle and 47 above it**. At 17 px it is
 **≈ 91 units across**, and `crosshair.png` is 89 px — it is drawn at very close to
 life size.
 
-It is the only detached component anywhere in the reference that is not a muzzle
-flash or the vortex, and it appears in this one frame alone.
+Counting 8-connected components of 20 px or more, **28 of the 322 committed frames
+hold more than one** and they are all accounted for: 26 frames of `pro/portal`, where
+the vortex stands clear of the figure, `ess/shoot/f0004`, where the dispersing flare
+breaks off — and this one. **It is the only detached thing in the whole reference that
+is not a muzzle flash or the vortex, and it appears in this single frame.**
 
 ## `shoot` — a longer shot with a shorter flash
 
