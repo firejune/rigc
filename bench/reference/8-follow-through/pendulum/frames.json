@@ -1,0 +1,41 @@
+{
+  "spec": "rigc-frames/1",
+  "example": "8-follow-through",
+  "rung": "8",
+  "skeleton": "pendulum",
+  "background": [
+    232,
+    232,
+    232,
+    255
+  ],
+  "viewport": {
+    "x": 584.3293591551114,
+    "y": -104.88319575253126,
+    "width": 3107.9444975047195,
+    "height": 2311.799840193643,
+    "scale": 0.16473910663818814,
+    "pixelWidth": 512,
+    "pixelHeight": 381
+  },
+  "sets": [
+    {
+      "dir": "follow-through",
+      "animation": "follow-through",
+      "fps": 12,
+      "sampled": 45,
+      "written": 45,
+      "stride": 1,
+      "duration": 3.6666666666666665
+    },
+    {
+      "dir": "follow-through@24fps",
+      "animation": "follow-through",
+      "fps": 24,
+      "sampled": 88,
+      "written": 88,
+      "stride": 1,
+      "duration": 3.625
+    }
+  ]
+}
