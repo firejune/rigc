@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/rigc"><img src="https://img.shields.io/npm/v/rigc.svg?style=flat-square&color=FF6B4A" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/rigc"><img src="https://img.shields.io/npm/dm/rigc.svg?style=flat-square&color=A855F7" alt="npm downloads" /></a>
+  <a href="https://www.npmjs.com/package/spine-rigc"><img src="https://img.shields.io/npm/v/spine-rigc.svg?style=flat-square&color=FF6B4A" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/spine-rigc"><img src="https://img.shields.io/npm/dm/spine-rigc.svg?style=flat-square&color=A855F7" alt="npm downloads" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-38BDF8.svg?style=flat-square" alt="license" /></a>
 </p>
 
@@ -322,14 +322,19 @@ rigc runs on [Bun](https://bun.sh). The package ships its TypeScript sources and
 Bun runs them, so there is no build step and no `dist/` that can drift from the
 repository it was cut from.
 
+**The npm package is `spine-rigc`; the command it installs is `rigc`.** npm
+refuses the name `rigc` as too similar to packages that already exist, so the
+project, this repository and the executable keep their name and only the
+registry entry is spelled out.
+
 ```bash
-bunx rigc --help    # run it without installing
-bun add -g rigc     # or install the command
-bun add -d rigc     # or pin it in a project
+bunx spine-rigc --help    # run it without installing
+bun add -g spine-rigc     # or install the command
+bun add -d spine-rigc     # or pin it in a project
 ```
 
-`npx rigc` works too, as long as Bun is on `PATH` — the executable is a Bun
-script, and npm only writes the shim that calls it.
+`npx spine-rigc` works too, as long as Bun is on `PATH` — the executable is a
+Bun script, and npm only writes the shim that calls it.
 
 Installed, the command is `rigc`. The examples below spell it `bun cli.ts`
 because they are written from a clone of this repository (`bun install`, then run
@@ -351,7 +356,7 @@ build → read the report → fix → repeat loop, the map from every named fail
 the file that has to change, and the list of format features rigc refuses by name
 so you do not spend a loop discovering them. It travels **inside the npm package**
 too, so an agent working from an install has it on disk at
-`node_modules/rigc/docs/AUTHORING.md`.
+`node_modules/spine-rigc/docs/AUTHORING.md`.
 
 Compile by spelling out the paths. `--manifest` is optional; `--images <dir>` says
 where a rig spec's `image` references live (it overrides the rig's own `images`
