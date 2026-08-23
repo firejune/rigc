@@ -462,7 +462,34 @@ export function fitIsSettled(fit: FramingFit): boolean {
  * anything actually moves.
  */
 export function fitDistance(fit: FramingFit): number {
-  const { left, top, right, bottom } = fit.candidate;
+  return cornerSpread(fit.candidate, (x, y) => [fit.scale * x + fit.dx - x, fit.scale * y + fit.dy - y]);
+}
+
+/**
+ * How far apart two passes' corrections are, in pixels — the same corner measure
+ * as `fitDistance`, applied to the difference between the two transforms.
+ *
+ * This is what tells a framing loop that it is **cycling** rather than
+ * converging. The loop's passes are not independent samples: each one is measured
+ * on the render the previous one produced, so when the fit has no fixed point the
+ * sequence falls into a repeating orbit instead of wandering. Rung 6 does exactly
+ * that with period 4 — passes 4–7 repeat as 8–11 and again as 12–15, agreeing to
+ * within 0.02 px — and a loop that cannot tell that apart from slow convergence
+ * spends every remaining pass re-measuring states it has already seen.
+ *
+ * The boxes come from `a`, because the two fits are measured against the same
+ * reference frames and it is the candidate's own extent that the correction moves.
+ */
+export function fitSeparation(a: FramingFit, b: FramingFit): number {
+  return cornerSpread(a.candidate, (x, y) => [
+    a.scale * x + a.dx - (b.scale * x + b.dx),
+    a.scale * y + a.dy - (b.scale * y + b.dy),
+  ]);
+}
+
+/** The worst displacement a transform applies over a box's four corners. */
+function cornerSpread(box: ContentBox, displace: (x: number, y: number) => [number, number]): number {
+  const { left, top, right, bottom } = box;
   let worst = 0;
   for (const [x, y] of [
     [left, top],
@@ -470,10 +497,23 @@ export function fitDistance(fit: FramingFit): number {
     [left, bottom],
     [right, bottom],
   ]) {
-    worst = Math.max(worst, Math.hypot(fit.scale * x + fit.dx - x, fit.scale * y + fit.dy - y));
+    const [dx, dy] = displace(x, y);
+    worst = Math.max(worst, Math.hypot(dx, dy));
   }
   return worst;
 }
+
+/**
+ * How far two passes' corrections may differ and still be called the same state.
+ *
+ * Half of `SETTLED_PIXELS`, and the gap it has to live in was measured rather than
+ * picked: on rung 6 two passes one period apart differ by **0.018 px** while two
+ * adjacent passes of the same orbit differ by **0.110 px**. A detector at 0.05 px
+ * separates those by a factor of three either way. Loose enough to fire late, and
+ * a late cycle report costs a pass; tight enough that it never fires on a loop
+ * that is still moving, and a false one would stop a converging fit short.
+ */
+export const CYCLE_PIXELS = SETTLED_PIXELS / 2;
 
 /**
  * The viewport that renders the candidate where the fit says it belongs.
