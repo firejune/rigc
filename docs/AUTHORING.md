@@ -927,30 +927,27 @@ where one part's **interior detail** — a marking, a highlight, anything not on
 outline — lies inside the other part's area, and see which survives. Then write the
 slots in that order (R4), because there is no other place in the file to say it.
 
-**That reads the reference only, and it settles the edges the reference happens to
-show. There is a second test, and it decides more of them.** Build your candidate
-**both ways**, render each back, and measure the *same* interior feature on both
-sides. A composited part whose unoccluded size you can compute is a ruler: a bead
-that reads 99–109 px in the reference and 108–116 px in your build is being covered
-in one and not in the other, and that is the order. Rung 8's brief settled one edge
-of a four-link chain and said the frames did not show the rest; rendered
-like-for-like, three more came out —
-
-| | link 2 | link 3 | link 4 |
-| --- | ---: | ---: | ---: |
-| reference | 99–106 | 99–107 | 101–109 |
-| candidate, child in front | 108–116 | 109–116 | 109–116 |
-| candidate, **parent in front** | **99–107** | **96–104** | **95–104** |
-
-⇒ each link is drawn in front of the one below it. Worth 1.402 → 1.335 window MAE
-and `slots.order` **6/6** in `bench` — a convention the gate cannot see and the
-measures can.
+**That reads the reference only, so it settles the edges the reference happens to
+show an interior detail on, and no more. There is a second test, and it decides more
+of them: render your own candidate both ways and measure the same feature on both
+sides.** Build the pair, render each back at the frames' own scale, and compare
+like with like. A part whose unoccluded size you can compute is a ruler — composite
+it alone, then read how much of it survives in the reference and how much survives
+in each build. If a part that measures 110 px on its own reads 100 px in the
+reference, the build that also reads 100 px is covering it the way the reference
+does and the build that reads 108 px is not, and that is the order. It costs two
+builds and it reaches edges the frames never show a marking on: rung 8's brief
+settled one edge of a chain from interior detail and said the frames did not show
+the rest, and rendering like-for-like settled three more of them — worth a measurable
+drop in window MAE and a full `slots.order` score in `bench`, a convention the gate
+cannot see and the measures can.
 
 ⚠️ **The same test knows when to stay silent, and you have to let it.** Run on the
-same rung's other shot, the two orders came out **0.8 % apart over the shot and
-pointing opposite ways** — a gap well inside the objective's own scatter, which is
-correctly no answer. A difference that small is not a quiet vote for the winner; it
-means the frames do not decide this edge, and you ship it on reasoning and say so.
+same rung's other shot, the two orders came out **0.8 % apart over the whole shot
+and pointing opposite ways** — a gap well inside the objective's own scatter, which
+is correctly *no answer*. A difference that small is not a quiet vote for the
+winner; it means the frames do not decide this edge, and you ship it on reasoning
+and say in the log that is what you did.
 
 And the general form of all three: **when a reading implies a key, look for a second
 way to get the same number before you author it.** A wrong measurement costs one
@@ -1280,14 +1277,15 @@ a part you have not authored, or one you have put somewhere else entirely.
   the frames cannot separate them. Choose on what the rig has to do next, not on
   what the frames appear to say. ⚠️ **But `bench` does see it**, in
   `attachments.type_counts`, `attachments.mesh_weighted`, `attachments.region_size`
-  and the bone count that comes with the choice — rung 8's ball is a region scaled
-  by its bone where the reference spends a mesh and three more bones, which read
-  `attachments` **0.444** (1/2, 1/2, 0/1) and `bones` **9 against 12**, while
-  `animations.deform` is **1.000** on both sides because neither rig deforms with
-  keys. That is not an argument for guessing: nothing in the frames could have
-  chosen. It is an argument for **writing down which way you went and why at the
-  moment you decide it**, rather than meeting the decision again in the measures
-  after the run is over.
+  and the bone count that comes with the choice — rung 8's ball was posed as a region
+  scaled by its bone, on this bullet's own reasoning, and the reference builds the
+  same silhouette the other way, which cost most of that rig's `attachments` section
+  and left it short of the reference's bone count. `animations.deform` reads
+  **1.000** on both sides, so neither rig deforms with keys; the whole difference is
+  which machinery renders identical pixels. That is not an argument for guessing —
+  nothing in the frames could have chosen. It is an argument for **writing down which
+  way you went and why at the moment you decide it**, rather than meeting the
+  decision again in the measures after the run is over.
 - **Which of two explanations is right.** A slot 3 px low every frame and a slot
   3 px low at one frame have the same drift and opposite causes. The table gives
   you the frame index; §8's rule still applies — look for a second way to get the
@@ -1343,6 +1341,31 @@ an attachment has a Path set, the path is used to find the image file instead of
 attachment name"* — [Images](http://esotericsoftware.com/spine-images). ⇒ in rigc:
 keep the placeholder equal to the PNG's basename and no `path` is written (R5). A
 `path` in the emitted file means the two disagreed.
+
+🧩 **⇒ When the art is named after the parts, the art's names are the rig's names —
+and this is the largest lever §10 has.** *One image → one slot → one attachment,
+named after the image* reads as a structural rule. It is also, and mostly, a
+**naming** rule, and naming is what whole sections of the measures are made of:
+five of `bones`'s eight name-matched measures (`names`, `parent_by_name`, `order`,
+`length_present`, `inherit_present`) and every `slots` measure but the count are
+scored over the names the two sides **share** ([`src/diff.ts`](../src/diff.ts)), so
+a rig whose names miss reads near zero on all of them however well it is built. ⇒
+carry each part's own name straight through — PNG basename → slot → attachment, and
+the bone that moves it — instead of inventing a scheme of your own.
+
+**Both directions are measured.** The one run whose art shipped a separate PNG per
+body part, each named for the part, applied this deliberately and matched the
+reference's slot names **exactly**, with nearly all of its attachment and bone names
+matching too — author and reference converging without either seeing the other.
+Every honest run before it read near zero on the same measures.
+
+⚠️ **And the other half, which matters just as much: when the art is *not* named
+after the parts, no naming strategy beats any other and the measure is noise.** On a
+shot whose two PNGs are called things like `square` and `pendulum`, the names carry
+nothing a rig could inherit, every candidate name is as good as every other, and the
+name measures are reporting the honesty rule's own price rather than a defect in
+your rig. Do not spend a loop hunting for better names there, and do not read the
+low figure as a miss — say in the log that the art did not carry them.
 
 📗 **Housekeeping the format fixes for you.** The default skin *"always has the name
 `default`"* and *"bones are ordered so that the parent always comes before a child
