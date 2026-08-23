@@ -1,0 +1,242 @@
+../../../../../examples/spineboy/images/rear-upper-arm.png
+size: 40, 87
+filter: Linear, Linear
+pma: false
+rear-upper-arm
+bounds: 0, 0, 40, 87
+offsets: 0, 0, 40, 87
+rotate: 0
+
+../../../../../examples/spineboy/images/rear-bracer.png
+size: 56, 72
+filter: Linear, Linear
+pma: false
+rear-bracer
+bounds: 0, 0, 56, 72
+offsets: 0, 0, 56, 72
+rotate: 0
+
+../../../../../examples/spineboy/images/gun.png
+size: 210, 203
+filter: Linear, Linear
+pma: false
+gun
+bounds: 0, 0, 210, 203
+offsets: 0, 0, 210, 203
+rotate: 0
+
+../../../../../examples/spineboy/images/rear-thigh.png
+size: 55, 94
+filter: Linear, Linear
+pma: false
+rear-thigh
+bounds: 0, 0, 55, 94
+offsets: 0, 0, 55, 94
+rotate: 0
+
+../../../../../examples/spineboy/images/rear-shin.png
+size: 75, 178
+filter: Linear, Linear
+pma: false
+rear-shin
+bounds: 0, 0, 75, 178
+offsets: 0, 0, 75, 178
+rotate: 0
+
+../../../../../examples/spineboy/images/rear-foot.png
+size: 113, 60
+filter: Linear, Linear
+pma: false
+rear-foot
+bounds: 0, 0, 113, 60
+offsets: 0, 0, 113, 60
+rotate: 0
+
+../../../../../examples/spineboy/images/torso.png
+size: 98, 180
+filter: Linear, Linear
+pma: false
+torso
+bounds: 0, 0, 98, 180
+offsets: 0, 0, 98, 180
+rotate: 0
+
+../../../../../examples/spineboy/images/neck.png
+size: 36, 41
+filter: Linear, Linear
+pma: false
+neck
+bounds: 0, 0, 36, 41
+offsets: 0, 0, 36, 41
+rotate: 0
+
+../../../../../examples/spineboy/images/head.png
+size: 271, 298
+filter: Linear, Linear
+pma: false
+head
+bounds: 0, 0, 271, 298
+offsets: 0, 0, 271, 298
+rotate: 0
+
+../../../../../examples/spineboy/images/eye-indifferent.png
+size: 93, 89
+filter: Linear, Linear
+pma: false
+eye-indifferent
+bounds: 0, 0, 93, 89
+offsets: 0, 0, 93, 89
+rotate: 0
+
+../../../../../examples/spineboy/images/eye-surprised.png
+size: 93, 89
+filter: Linear, Linear
+pma: false
+eye-surprised
+bounds: 0, 0, 93, 89
+offsets: 0, 0, 93, 89
+rotate: 0
+
+../../../../../examples/spineboy/images/goggles.png
+size: 261, 166
+filter: Linear, Linear
+pma: false
+goggles
+bounds: 0, 0, 261, 166
+offsets: 0, 0, 261, 166
+rotate: 0
+
+../../../../../examples/spineboy/images/mouth-smile.png
+size: 93, 59
+filter: Linear, Linear
+pma: false
+mouth-smile
+bounds: 0, 0, 93, 59
+offsets: 0, 0, 93, 59
+rotate: 0
+
+../../../../../examples/spineboy/images/mouth-grind.png
+size: 93, 59
+filter: Linear, Linear
+pma: false
+mouth-grind
+bounds: 0, 0, 93, 59
+offsets: 0, 0, 93, 59
+rotate: 0
+
+../../../../../examples/spineboy/images/mouth-oooo.png
+size: 93, 59
+filter: Linear, Linear
+pma: false
+mouth-oooo
+bounds: 0, 0, 93, 59
+offsets: 0, 0, 93, 59
+rotate: 0
+
+../../../../../examples/spineboy/images/front-thigh.png
+size: 45, 112
+filter: Linear, Linear
+pma: false
+front-thigh
+bounds: 0, 0, 45, 112
+offsets: 0, 0, 45, 112
+rotate: 0
+
+../../../../../examples/spineboy/images/front-shin.png
+size: 82, 184
+filter: Linear, Linear
+pma: false
+front-shin
+bounds: 0, 0, 82, 184
+offsets: 0, 0, 82, 184
+rotate: 0
+
+../../../../../examples/spineboy/images/front-foot.png
+size: 126, 69
+filter: Linear, Linear
+pma: false
+front-foot
+bounds: 0, 0, 126, 69
+offsets: 0, 0, 126, 69
+rotate: 0
+
+../../../../../examples/spineboy/images/front-upper-arm.png
+size: 46, 97
+filter: Linear, Linear
+pma: false
+front-upper-arm
+bounds: 0, 0, 46, 97
+offsets: 0, 0, 46, 97
+rotate: 0
+
+../../../../../examples/spineboy/images/front-bracer.png
+size: 58, 80
+filter: Linear, Linear
+pma: false
+front-bracer
+bounds: 0, 0, 58, 80
+offsets: 0, 0, 58, 80
+rotate: 0
+
+../../../../../examples/spineboy/images/front-fist-open.png
+size: 86, 87
+filter: Linear, Linear
+pma: false
+front-fist-open
+bounds: 0, 0, 86, 87
+offsets: 0, 0, 86, 87
+rotate: 0
+
+../../../../../examples/spineboy/images/front-fist-closed.png
+size: 75, 82
+filter: Linear, Linear
+pma: false
+front-fist-closed
+bounds: 0, 0, 75, 82
+offsets: 0, 0, 75, 82
+rotate: 0
+
+../../../../../examples/spineboy/images/muzzle01.png
+size: 133, 79
+filter: Linear, Linear
+pma: false
+muzzle01
+bounds: 0, 0, 133, 79
+offsets: 0, 0, 133, 79
+rotate: 0
+
+../../../../../examples/spineboy/images/muzzle02.png
+size: 135, 84
+filter: Linear, Linear
+pma: false
+muzzle02
+bounds: 0, 0, 135, 84
+offsets: 0, 0, 135, 84
+rotate: 0
+
+../../../../../examples/spineboy/images/muzzle03.png
+size: 166, 106
+filter: Linear, Linear
+pma: false
+muzzle03
+bounds: 0, 0, 166, 106
+offsets: 0, 0, 166, 106
+rotate: 0
+
+../../../../../examples/spineboy/images/muzzle04.png
+size: 149, 90
+filter: Linear, Linear
+pma: false
+muzzle04
+bounds: 0, 0, 149, 90
+offsets: 0, 0, 149, 90
+rotate: 0
+
+../../../../../examples/spineboy/images/muzzle05.png
+size: 135, 75
+filter: Linear, Linear
+pma: false
+muzzle05
+bounds: 0, 0, 135, 75
+offsets: 0, 0, 135, 75
+rotate: 0

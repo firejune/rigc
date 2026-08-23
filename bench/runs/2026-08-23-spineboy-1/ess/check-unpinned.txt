@@ -1,0 +1,269 @@
+rigc check
+  candidate  /Users/firejune/Workspace/Firejune/rigc-wt-spineboy/bench/runs/2026-08-23-spineboy-1/ess/spine/skeleton.json
+  atlas      /Users/firejune/Workspace/Firejune/rigc-wt-spineboy/bench/runs/2026-08-23-spineboy-1/ess/spine/skeleton.atlas
+  frames     /Users/firejune/Workspace/Firejune/rigc-wt-spineboy/bench/reference/spineboy/ess
+  framed to  384x367px  0.222531 px/unit  world x[-803.1 .. 922.5] y[-141.1 .. 1508.1]  (fitted to the candidate's own drawn pixels)
+  reference  384x367px  0.222973 px/unit  world x[-795.4 .. 926.7] y[-138.0 .. 1506.7]  (frames.json)
+             ⤷ the two world boxes are different coordinate systems and do not compare; the pixel grid does.
+  content    candidate 323.9x322.0px at (25.5, 19.2)   reference 325.8x320.9px at (23.5, 19.1)   (union over 147 frame(s))
+             ⤷ fit x1.000174  offset -0.06, -0.05 px   rms 6.72 px over 588 edge(s)   union residual -1.79 x +1.21 px   aspect -0.92%  (derived, 3 pass(es), settled)
+             ⚠️ after the fit your shot still covers 1.8 px narrower and 1.2 px taller than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+             ⚠️ the fit leaves 6.72 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+  in units   candidate 1455.7 x 1447.1   reference 1461.1 x 1439.1   x1.0009
+             ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+
+  ── aim — candidate animation "aim", 12 fps ──
+     frames     1 on disk, candidate samples 1, 1 compared
+     MAE        mean 43.59  worst 43.59 at f0000   (0..255 over the union alpha; over the whole frame, mean 1.92)
+     slot drift worst 2.2 px  "front-shin" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    43.59       6198       —      —   front-shin             2.2   tmpl 0.52 7/18
+
+  ── aim@30fps — candidate animation "aim", 30 fps ──
+     frames     1 on disk, candidate samples 1, 1 compared
+     MAE        mean 43.59  worst 43.59 at f0000   (0..255 over the union alpha; over the whole frame, mean 1.92)
+     slot drift worst 2.2 px  "front-shin" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    43.59       6198       —      —   front-shin             2.2   tmpl 0.52 7/18
+
+  ── death — candidate animation "death", 12 fps ──
+     frames     60 on disk, candidate samples 60, 60 compared
+     MAE        mean 44.12  worst 62.57 at f0006   (0..255 over the union alpha; over the whole frame, mean 1.58)
+     slot drift worst 5.0 px  "front-bracer" at f0030
+     per-frame 4 of 59 adjacent pair(s) change by a different amount than the reference does; worst f0016, yours moved 1087 px where the reference moved 211
+
+     the 12 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0002    51.50       6394    7474   7887   front-shin             1.2   tmpl 0.40 5/18
+       f0003    52.91       5825    8357   9082   front-shin             3.3   tmpl 0.58 4/18
+       f0004    54.21       5381    8136   8755   head                   1.3   tmpl 0.40 2/18
+       f0005    53.02       5100    7699   8480   head                   1.6   tmpl 0.36 2/18
+       f0006    62.57       5876    8715   9527   front-bracer           5.0   tmpl 0.37 3/18
+       f0007    56.81       5332    5509   7264   head                   1.6   tmpl 0.35 3/18
+       f0008    54.26       5470    4833   5590   front-foot             3.1   tmpl 0.23 7/18
+       f0010    52.84       5342    4496   4801   front-bracer           4.1   tmpl 0.36 5/18
+       f0016    43.87       4731    1087    211   torso                  3.0   tmpl 0.36 5/18   yours moves 5x the reference
+       f0017    43.85       4721     422     70   torso                  2.7   tmpl 0.33 5/18   yours moves 6x the reference
+       f0018    43.71       4714     637      0   torso                  2.7   tmpl 0.22 5/18   the reference holds still here and yours does not
+       f0023    43.84       4717       0      1   torso                  2.7   tmpl 0.22 5/18   the reference moves here and yours holds still
+
+  ── death@30fps — candidate animation "death", 30 fps ──
+     frames     2 on disk, candidate samples 149, 2 compared
+     MAE        mean 42.23  worst 43.67 at f0148   (0..255 over the union alpha; over the whole frame, mean 1.56)
+     slot drift worst 3.8 px  "rear-shin" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    40.80       5693       —      —   rear-shin              3.8   tmpl 0.35 6/18
+       f0148    43.67       4728       —      —   front-shin             2.9   tmpl 0.28 5/18
+
+  ── hit — candidate animation "hit", 12 fps ──
+     frames     5 on disk, candidate samples 5, 5 compared
+     MAE        mean 60.59  worst 65.55 at f0004   (0..255 over the union alpha; over the whole frame, mean 2.61)
+     slot drift worst 18.3 px  "front-shin" at f0004
+     per-frame all 4 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    54.06       5839       —      —   goggles                1.4   tmpl 0.40 4/18
+       f0001    54.74       5553    7348   7724   front-bracer           2.4   tmpl 0.34 3/18
+       f0002    65.11       6190    6754   7998   rear-shin              1.5   tmpl 0.19 3/18
+       f0003    63.48       6261    6515   8416   front-shin             6.1   tmpl 0.30 4/18
+       f0004    65.55       6424    6110   7571   front-shin            18.3   tmpl 0.55 4/18
+
+  ── hit@30fps — candidate animation "hit", 30 fps ──
+     frames     2 on disk, candidate samples 11, 2 compared
+     MAE        mean 59.81  worst 65.55 at f0010   (0..255 over the union alpha; over the whole frame, mean 2.62)
+     slot drift worst 18.3 px  "front-shin" at f0010
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    54.06       5839       —      —   goggles                1.4   tmpl 0.40 4/18
+       f0010    65.55       6424       —      —   front-shin            18.3   tmpl 0.55 4/18
+
+  ── idle — candidate animation "idle", 12 fps ──
+     frames     21 on disk, candidate samples 21, 21 compared
+     MAE        mean 41.59  worst 45.00 at f0002   (0..255 over the union alpha; over the whole frame, mean 1.95)
+     slot drift worst 2.1 px  "rear-thigh" at f0013
+     per-frame all 20 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    39.99       6583       —      —   mouth                  2.0   tmpl 0.56 13/18
+       f0001    42.86       6645    2918   2516   rear-foot              2.0   tmpl 0.31 13/18
+       f0002    45.00       6679    2763   2888   head                   2.0   tmpl 0.43 10/18
+       f0003    43.76       6657    2771   2929   mouth                  2.1   tmpl 0.67 10/18
+       f0004    43.34       6633    2538   2823   mouth                  1.8   tmpl 0.44 9/18
+       f0005    44.39       6667    2619   2768   front-upper-arm        1.9   tmpl 0.21 9/18
+       f0006    43.46       6621    2340   2632   gun                    1.7   tmpl 0.67 9/18
+       f0007    41.36       6587    2231   2476   torso                  1.9   tmpl 0.53 11/18
+       f0008    41.41       6581    2483   2276   head                   2.1   tmpl 0.43 11/18
+       f0009    40.00       6569    1807   2232   gun                    1.4   tmpl 0.57 10/18
+       f0010    40.03       6563    2189   2348   rear-foot              2.0   tmpl 0.33 10/18
+       f0011    38.90       6538    2501   2319   mouth                  1.5   tmpl 0.49 13/18
+       f0012    40.55       6565    2379   2061   front-fist             2.0   tmpl 0.23 13/18
+       f0013    40.87       6560    2188   2257   rear-thigh             2.1   tmpl 0.37 13/18
+       f0014    41.56       6577    2278   2542   mouth                  1.8   tmpl 0.58 13/18
+       f0015    41.36       6581    2498   2670   rear-thigh             1.9   tmpl 0.42 13/18
+       f0016    41.98       6621    2852   2916   mouth                  2.0   tmpl 0.45 13/18
+       f0017    41.82       6601    2809   2994   torso                  2.0   tmpl 0.60 13/18
+       f0018    40.58       6589    2746   2900   mouth                  2.1   tmpl 0.64 14/18
+       f0019    40.42       6569    2745   2695   mouth                  2.0   tmpl 0.56 11/18
+       f0020    39.73       6581    2513   2474   mouth                  2.0   tmpl 0.56 13/18
+
+  ── idle@30fps — candidate animation "idle", 30 fps ──
+     frames     2 on disk, candidate samples 51, 2 compared
+     MAE        mean 39.86  worst 39.99 at f0000   (0..255 over the union alpha; over the whole frame, mean 1.86)
+     slot drift worst 2.0 px  "mouth" at f0050
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    39.99       6583       —      —   mouth                  2.0   tmpl 0.56 13/18
+       f0050    39.73       6581       —      —   mouth                  2.0   tmpl 0.56 13/18
+
+  ── jump — candidate animation "jump", 12 fps ──
+     frames     17 on disk, candidate samples 17, 17 compared
+     MAE        mean 51.25  worst 65.72 at f0014   (0..255 over the union alpha; over the whole frame, mean 2.30)
+     slot drift worst 5.0 px  "mouth" at f0014
+     per-frame all 16 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    53.68       6421       —      —   mouth                  1.9   tmpl 0.49 4/18
+       f0001    47.54       6427    8978   9827   front-shin             2.5   tmpl 0.57 8/18
+       f0002    48.39       6210    8068   9063   front-shin             1.7   tmpl 0.52 8/18
+       f0003    44.69       5813    7401   8414   front-bracer           2.8   tmpl 0.39 7/18
+       f0004    45.67       5912    6989   7673   front-shin             2.5   tmpl 0.45 7/18
+       f0005    44.35       5964    6754   7370   mouth                  2.3   tmpl 0.48 7/18
+       f0006    45.02       6075    6834   7357   front-bracer           1.8   tmpl 0.26 7/18
+       f0007    50.51       6438    6963   7234   front-bracer           2.2   tmpl 0.25 6/18
+       f0008    51.41       6389    6648   6817   front-shin             1.3   tmpl 0.63 5/18
+       f0009    52.09       6504    5369   5793   front-shin             2.1   tmpl 0.65 5/18
+       f0010    52.58       6539    4727   5057   front-shin             2.1   tmpl 0.60 5/18
+       f0011    51.70       6435    5867   6687   mouth                  1.8   tmpl 0.48 5/18
+       f0012    49.99       6339    7029   7795   head                   1.8   tmpl 0.43 5/18
+       f0013    54.59       6333    8101   8721   front-shin             2.3   tmpl 0.20 5/18
+       f0014    65.72       6695    9783  10666   mouth                  5.0   tmpl 0.50 3/18
+       f0015    57.78       6372    7988   9107   front-shin             1.5   tmpl 0.54 4/18
+       f0016    55.53       6296    4563   6106   front-shin             2.6   tmpl 0.62 4/18
+
+  ── jump@30fps — candidate animation "jump", 30 fps ──
+     frames     2 on disk, candidate samples 41, 2 compared
+     MAE        mean 54.60  worst 55.53 at f0040   (0..255 over the union alpha; over the whole frame, mean 2.46)
+     slot drift worst 2.6 px  "front-shin" at f0040
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    53.68       6421       —      —   mouth                  1.9   tmpl 0.49 4/18
+       f0040    55.53       6296       —      —   front-shin             2.6   tmpl 0.62 4/18
+
+  ── run — candidate animation "run", 12 fps ──
+     frames     9 on disk, candidate samples 9, 9 compared
+     MAE        mean 52.25  worst 62.09 at f0007   (0..255 over the union alpha; over the whole frame, mean 2.29)
+     slot drift worst 4.1 px  "front-fist" at f0001
+     per-frame all 8 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    50.57       6331       —      —   front-bracer           3.2   tmpl 0.58 6/18
+       f0001    47.50       5605    6531   6997   front-fist             4.1   tmpl 0.29 7/18
+       f0002    48.16       5972    5786   6636   front-shin             2.8   tmpl 0.36 5/18
+       f0003    51.66       6396    6405   7305   front-upper-arm        3.0   tmpl 0.35 7/18
+       f0004    47.14       5882    5600   6589   front-shin             1.5   tmpl 0.66 3/18
+       f0005    49.60       5664    5674   6570   front-upper-arm        2.1   tmpl 0.29 5/18
+       f0006    58.97       6569    5219   7237   front-shin             2.3   tmpl 0.40 6/18
+       f0007    62.09       6653    5615   7685   front-shin             2.0   tmpl 0.33 5/18
+       f0008    54.56       6251    5510   7369   front-fist             2.1   tmpl 0.36 5/18
+
+  ── run@30fps — candidate animation "run", 30 fps ──
+     frames     2 on disk, candidate samples 21, 2 compared
+     MAE        mean 52.56  worst 54.56 at f0020   (0..255 over the union alpha; over the whole frame, mean 2.35)
+     slot drift worst 3.2 px  "front-bracer" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    50.57       6331       —      —   front-bracer           3.2   tmpl 0.58 6/18
+       f0020    54.56       6251       —      —   front-fist             2.1   tmpl 0.36 5/18
+
+  ── shoot — candidate animation "shoot", 12 fps ──
+     frames     6 on disk, candidate samples 6, 6 compared
+     MAE        mean 37.63  worst 42.77 at f0005   (0..255 over the union alpha; over the whole frame, mean 2.35)
+     slot drift worst 5.7 px  "rear-shin" at f0002
+     per-frame all 5 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    42.40       6154       —      —   rear-shin              5.4   tmpl 0.33 9/18
+       f0001    42.40       6154       0      0   rear-shin              5.4   tmpl 0.33 9/18
+       f0002    29.26      11717    5751   4974   rear-shin              5.7   tmpl 0.35 11/19
+       f0003    32.29      12136    6530   5878   rear-shin              5.1   tmpl 0.34 10/19
+       f0004    36.68      12546    5980   5436   rear-shin              5.5   tmpl 0.32 9/19
+       f0005    42.77       6175    6856   5560   rear-bracer            3.4   tmpl 0.40 9/18
+
+  ── shoot@30fps — candidate animation "shoot", 30 fps ──
+     frames     2 on disk, candidate samples 13, 2 compared
+     MAE        mean 42.98  worst 43.56 at f0012   (0..255 over the union alpha; over the whole frame, mean 2.18)
+     slot drift worst 5.4 px  "rear-shin" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    42.40       6154       —      —   rear-shin              5.4   tmpl 0.33 9/18
+       f0012    43.56       8114       —      —   rear-bracer            3.4   tmpl 0.40 9/19
+
+  ── walk — candidate animation "walk", 12 fps ──
+     frames     13 on disk, candidate samples 13, 13 compared
+     MAE        mean 45.33  worst 50.99 at f0005   (0..255 over the union alpha; over the whole frame, mean 1.94)
+     slot drift worst 6.5 px  "front-shin" at f0000
+     per-frame all 12 adjacent pair(s) change by as much as the reference's own frames do
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    43.30       6421       —      —   front-shin             6.5   tmpl 0.28 9/18
+       f0001    44.30       6555    6080   6345   front-shin             4.9   tmpl 0.32 9/18
+       f0002    44.43       6530    4885   5304   front-fist             3.9   tmpl 0.30 7/18
+       f0003    43.14       6230    5863   5957   front-bracer           3.7   tmpl 0.30 10/18
+       f0004    44.68       5747    5475   5905   mouth                  2.1   tmpl 0.58 7/18
+       f0005    50.99       5787    4090   4727   front-shin             6.1   tmpl 0.56 6/18
+       f0006    46.72       5636    4674   5468   front-shin             4.2   tmpl 0.45 7/18
+       f0007    48.70       6036    5322   5883   front-shin             2.3   tmpl 0.39 8/18
+       f0008    47.54       5884    4425   4851   front-foot             2.0   tmpl 0.47 9/18
+       f0009    43.61       5504    4788   5396   rear-foot              3.6   tmpl 0.26 11/18
+       f0010    39.45       5292    4693   5131   front-bracer           1.9   tmpl 0.26 7/18
+       f0011    46.91       6118    4475   4552   rear-shin              4.1   tmpl 0.29 8/18
+       f0012    45.56       6439    6036   6333   rear-shin              4.1   tmpl 0.33 9/18
+
+  ── walk@30fps — candidate animation "walk", 30 fps ──
+     frames     2 on disk, candidate samples 31, 2 compared
+     MAE        mean 44.43  worst 45.56 at f0030   (0..255 over the union alpha; over the whole frame, mean 2.03)
+     slot drift worst 6.5 px  "front-shin" at f0000
+     per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    43.30       6421       —      —   front-shin             6.5   tmpl 0.28 9/18
+       f0030    45.56       6439       —      —   rear-shin              4.1   tmpl 0.33 9/18
+
+  MAE is the mean absolute RGB difference over the pixels either side covers, so it is
+  read against 255 and not against a threshold: there is no pass mark here any more than
+  there is one in `diff`. Read the framing line first: it is upstream of every number
+  below, and a residual much wider than a pixel moves all of them at once.
+  The slots column is how many of the drawn slots could be attributed at all. A drift
+  marked `tmpl` was correlated against the slot’s own pixels because the reference
+  merged it into a neighbour; the number beside it is how much better that match was
+  than its best rival, and a slot that matched nothing at all is left out of the count.
+  `Δpx` and `ref Δ` are how many pixels each side moved since ITS OWN previous frame —
+  not against each other. They are the only columns that can see a held pose that is
+  not held, or a one-frame event that never fired: both are small in every frame and
+  wrong only in the relation between two, which is where the MAE cannot look.

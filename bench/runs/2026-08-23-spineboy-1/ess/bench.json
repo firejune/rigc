@@ -1,0 +1,958 @@
+{
+  "rung": "spineboy",
+  "example": "spineboy",
+  "gates": "IK, events, bounding box, clipping, unweighted meshes — and scale: ess 18 bones/20 slots/8 animations, pro 67 bones/52 slots/11 animations",
+  "profile": "spine",
+  "candidate": {
+    "skeleton": "/Users/firejune/Workspace/Firejune/rigc-wt-spineboy/bench/runs/2026-08-23-spineboy-1/ess/spine/skeleton.json",
+    "atlas": "/Users/firejune/Workspace/Firejune/rigc-wt-spineboy/bench/runs/2026-08-23-spineboy-1/ess/spine/skeleton.atlas"
+  },
+  "validate": {
+    "failures": [],
+    "passed": [
+      "A07_ATLAS_TEXT_SHAPE",
+      "A32_EVENT_KEYS_RESOLVE",
+      "A00_ROUNDTRIP_PARSE",
+      "A16_SKELETON_VERSION_4_3",
+      "A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS",
+      "A02_NO_BONE_TRANSFORM_KEY",
+      "A05_CURVE_ARRAY_LENGTH",
+      "A03_REGION_WIDTH_HEIGHT_FINITE",
+      "A04_MESH_TRIANGLES_AND_ENCODING",
+      "A33_VERTEX_ATTACHMENT_GEOMETRY",
+      "A20_MESH_WEIGHTS_COHERENT",
+      "A22_MESH_UVS_IN_UNIT_RANGE",
+      "A23_PHYSICS_CONSTRAINT_EFFECTIVE",
+      "A08_REGION_NAMES_MATCH_ATTACHMENTS",
+      "A10_NO_NAN_AFTER_STEPPING",
+      "A17_ATLAS_PAGE_FILES_EXIST",
+      "A06_ATLAS_PAGE_SIZE_MATCHES_PNG"
+    ],
+    "skipped": [
+      {
+        "assertion": "A31_DRAW_ORDER_OFFSETS_RESOLVE",
+        "reason": "no animation carries a drawOrder timeline"
+      },
+      {
+        "assertion": "A09_ANIMATION_DURATION_MATCHES_SPEC",
+        "reason": "no motion spec supplied, so no declared duration to compare against"
+      },
+      {
+        "assertion": "A18_DETERMINISTIC_EMIT",
+        "reason": "no second compile to compare against (re-gating artifacts on disk)"
+      }
+    ],
+    "profileSkipped": [
+      {
+        "assertion": "A12_NO_DARK_COLOR",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A11_NO_CLIPPING_ATTACHMENTS",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A13_MESH_BUDGET",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A14_NO_FULL_FRAME_MESH",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A15_IDLE_NO_MESH_BONE_KEYS",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A21_MESH_RIM_PINNED",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A19_OVERLAY_PNGS_HAVE_ALPHA",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A24_AXIS_SPACE_STROKE",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A25_DETACHED_BONE_PARENTAGE",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A26_SLOT_DRAW_ORDER",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A27_REGION_NAME_MATCHES_PAGE_FILENAME",
+        "kind": "renderer"
+      },
+      {
+        "assertion": "A28_RIBBON_ROWS_SHARE_WEIGHTS",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A29_STROKE_WITHIN_CONTACT_DEPTH",
+        "kind": "archetype"
+      },
+      {
+        "assertion": "A30_STROKE_WITHIN_CAP_CONTAINMENT",
+        "kind": "archetype"
+      }
+    ],
+    "profile": "spine",
+    "stats": {
+      "pages": 27,
+      "regions": 27,
+      "bones": 18,
+      "slots": 20,
+      "animations": 8,
+      "version": "4.3.13",
+      "regionAttachments": 27,
+      "meshAttachments": 0,
+      "physicsConstraints": 0,
+      "rig": "absent",
+      "profile": "spine"
+    }
+  },
+  "diffs": [
+    {
+      "label": "ess",
+      "role": "rung",
+      "referencePath": "/Users/firejune/Workspace/Firejune/rigc-wt-spineboy/examples/spineboy/export/spineboy-ess.json",
+      "sections": [
+        {
+          "name": "bones",
+          "ratio": 0.8687865497076024,
+          "measures": [
+            {
+              "id": "bones.count",
+              "what": "how many bones",
+              "matched": 18,
+              "total": 18,
+              "ratio": 1
+            },
+            {
+              "id": "bones.names",
+              "what": "the bone names themselves",
+              "matched": 17,
+              "total": 19,
+              "ratio": 0.8947368421052632
+            },
+            {
+              "id": "bones.parent_by_name",
+              "what": "each bone hangs off the same parent",
+              "matched": 17,
+              "total": 18,
+              "ratio": 0.9444444444444444
+            },
+            {
+              "id": "bones.order",
+              "what": "the bones are declared in the same order",
+              "matched": 9,
+              "total": 18,
+              "ratio": 0.5
+            },
+            {
+              "id": "bones.length_present",
+              "what": "a setup `length` is present or absent alike",
+              "matched": 12,
+              "total": 18,
+              "ratio": 0.6666666666666666
+            },
+            {
+              "id": "bones.inherit_present",
+              "what": "a setup `inherit` is present or absent alike",
+              "matched": 17,
+              "total": 18,
+              "ratio": 0.9444444444444444
+            },
+            {
+              "id": "bones.depth_histogram",
+              "what": "NAME-AGNOSTIC: as many bones at each depth",
+              "matched": 18,
+              "total": 18,
+              "ratio": 1
+            },
+            {
+              "id": "bones.degree_sequence",
+              "what": "NAME-AGNOSTIC: as many bones with each child count",
+              "matched": 18,
+              "total": 18,
+              "ratio": 1
+            }
+          ],
+          "nameAgnostic": {
+            "ratio": 0.9222222222222222,
+            "measures": [
+              {
+                "id": "bones.agnostic.count",
+                "what": "how many bones",
+                "matched": 18,
+                "total": 18,
+                "ratio": 1
+              },
+              {
+                "id": "bones.agnostic.depth_histogram",
+                "what": "as many bones at each depth",
+                "matched": 18,
+                "total": 18,
+                "ratio": 1
+              },
+              {
+                "id": "bones.agnostic.degree_sequence",
+                "what": "as many bones with each child count",
+                "matched": 18,
+                "total": 18,
+                "ratio": 1
+              },
+              {
+                "id": "bones.agnostic.shape_histogram",
+                "what": "as many bones of each depth-and-child-count shape (`d1c3` = one hop down, three children)",
+                "matched": 18,
+                "total": 18,
+                "ratio": 1
+              },
+              {
+                "id": "bones.agnostic.order_shape",
+                "what": "the bones are declared in the same order of shapes",
+                "matched": 11,
+                "total": 18,
+                "ratio": 0.6111111111111112
+              }
+            ]
+          }
+        },
+        {
+          "name": "slots",
+          "ratio": 0.9285714285714287,
+          "measures": [
+            {
+              "id": "slots.count",
+              "what": "how many slots",
+              "matched": 20,
+              "total": 20,
+              "ratio": 1
+            },
+            {
+              "id": "slots.names",
+              "what": "the slot names themselves",
+              "matched": 20,
+              "total": 20,
+              "ratio": 1
+            },
+            {
+              "id": "slots.order",
+              "what": "the slots array IS the draw order, so its order is data",
+              "matched": 14,
+              "total": 20,
+              "ratio": 0.7
+            },
+            {
+              "id": "slots.bone",
+              "what": "each slot is bound to the same bone",
+              "matched": 19,
+              "total": 20,
+              "ratio": 0.95
+            },
+            {
+              "id": "slots.attachment",
+              "what": "each slot shows the same setup attachment",
+              "matched": 18,
+              "total": 20,
+              "ratio": 0.9
+            },
+            {
+              "id": "slots.blend",
+              "what": "each slot uses the same blend mode",
+              "matched": 19,
+              "total": 20,
+              "ratio": 0.95
+            },
+            {
+              "id": "slots.color_present",
+              "what": "a tint is present or absent alike",
+              "matched": 20,
+              "total": 20,
+              "ratio": 1
+            }
+          ],
+          "nameAgnostic": {
+            "ratio": 0.8875,
+            "measures": [
+              {
+                "id": "slots.agnostic.count",
+                "what": "how many slots",
+                "matched": 20,
+                "total": 20,
+                "ratio": 1
+              },
+              {
+                "id": "slots.agnostic.attachment_types_by_position",
+                "what": "the same kind of attachment sits at each position in the draw order",
+                "matched": 17,
+                "total": 20,
+                "ratio": 0.85
+              },
+              {
+                "id": "slots.agnostic.bone_binding_shape",
+                "what": "as many slots hang off a bone of each shape (`?` = no such bone is declared)",
+                "matched": 20,
+                "total": 20,
+                "ratio": 1
+              },
+              {
+                "id": "slots.agnostic.order_shape",
+                "what": "the draw order is the same order of `<attachment type>@<bone shape>`",
+                "matched": 14,
+                "total": 20,
+                "ratio": 0.7
+              }
+            ]
+          }
+        },
+        {
+          "name": "attachments",
+          "ratio": 0.9764540128524803,
+          "measures": [
+            {
+              "id": "attachments.skins",
+              "what": "the skin names",
+              "matched": 1,
+              "total": 1,
+              "ratio": 1
+            },
+            {
+              "id": "attachments.count",
+              "what": "how many attachments",
+              "matched": 27,
+              "total": 28,
+              "ratio": 0.9642857142857143
+            },
+            {
+              "id": "attachments.names",
+              "what": "skin/slot/attachment keys",
+              "matched": 26,
+              "total": 29,
+              "ratio": 0.896551724137931
+            },
+            {
+              "id": "attachments.type_counts",
+              "what": "as many of each attachment type",
+              "matched": 27,
+              "total": 28,
+              "ratio": 0.9642857142857143
+            },
+            {
+              "id": "attachments.mesh_vertices",
+              "what": "each mesh has the same vertex count",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "attachments.mesh_triangles",
+              "what": "each mesh has the same triangle count",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "attachments.mesh_weighted",
+              "what": "each mesh is weighted, or is not, alike",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "attachments.mesh_hull",
+              "what": "each mesh declares the same hull length",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "attachments.region_size",
+              "what": "NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)",
+              "matched": 26,
+              "total": 27,
+              "ratio": 0.9629629629629629
+            }
+          ]
+        },
+        {
+          "name": "constraints",
+          "ratio": 1,
+          "measures": [
+            {
+              "id": "constraints.count",
+              "what": "how many constraints",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "constraints.names",
+              "what": "the constraint names",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "constraints.type_counts",
+              "what": "as many of each constraint type",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "constraints.type_by_name",
+              "what": "each constraint is the same type",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            },
+            {
+              "id": "constraints.refs",
+              "what": "each constraint names the same bones and slots",
+              "matched": 0,
+              "total": 0,
+              "ratio": 1,
+              "note": "neither side has any"
+            }
+          ]
+        },
+        {
+          "name": "animations",
+          "ratio": 0.820970320654848,
+          "measures": [
+            {
+              "id": "animations.count",
+              "what": "how many animations",
+              "matched": 8,
+              "total": 8,
+              "ratio": 1
+            },
+            {
+              "id": "animations.names",
+              "what": "the animation names",
+              "matched": 8,
+              "total": 8,
+              "ratio": 1
+            },
+            {
+              "id": "animations.duration",
+              "what": "each animation runs as long (last key time, within one frame)",
+              "matched": 8,
+              "total": 8,
+              "ratio": 1
+            },
+            {
+              "id": "animations.timeline_kinds",
+              "what": "the same timelines exist",
+              "matched": 112,
+              "total": 153,
+              "ratio": 0.7320261437908496
+            },
+            {
+              "id": "animations.key_counts",
+              "what": "those timelines carry as many keys",
+              "matched": 639,
+              "total": 1414,
+              "ratio": 0.4519094766619519
+            },
+            {
+              "id": "animations.curve_kinds",
+              "what": "as many linear / stepped / bezier keys",
+              "matched": 702,
+              "total": 1414,
+              "ratio": 0.49646393210749645
+            },
+            {
+              "id": "animations.event_keys",
+              "what": "as many event firings",
+              "matched": 5,
+              "total": 6,
+              "ratio": 0.8333333333333334
+            },
+            {
+              "id": "animations.draw_order",
+              "what": "a draw-order timeline is present or absent alike",
+              "matched": 7,
+              "total": 8,
+              "ratio": 0.875
+            },
+            {
+              "id": "animations.deform",
+              "what": "a deform timeline is present or absent alike",
+              "matched": 8,
+              "total": 8,
+              "ratio": 1
+            }
+          ]
+        },
+        {
+          "name": "events",
+          "ratio": 0.5,
+          "measures": [
+            {
+              "id": "events.names",
+              "what": "the event names",
+              "matched": 1,
+              "total": 2,
+              "ratio": 0.5
+            },
+            {
+              "id": "events.payloads",
+              "what": "each event carries the same typed payload",
+              "matched": 1,
+              "total": 2,
+              "ratio": 0.5
+            }
+          ]
+        }
+      ],
+      "candidate": {
+        "bones": 18,
+        "slots": 20,
+        "skins": 1,
+        "attachments": 28,
+        "constraints": 0,
+        "animations": 8,
+        "events": 2
+      },
+      "reference": {
+        "bones": 18,
+        "slots": 20,
+        "skins": 1,
+        "attachments": 27,
+        "constraints": 0,
+        "animations": 8,
+        "events": 1
+      }
+    },
+    {
+      "label": "pro",
+      "role": "stretch",
+      "referencePath": "/Users/firejune/Workspace/Firejune/rigc-wt-spineboy/examples/spineboy/export/spineboy-pro.json",
+      "sections": [
+        {
+          "name": "bones",
+          "ratio": 0.23694029850746268,
+          "measures": [
+            {
+              "id": "bones.count",
+              "what": "how many bones",
+              "matched": 18,
+              "total": 67,
+              "ratio": 0.26865671641791045
+            },
+            {
+              "id": "bones.names",
+              "what": "the bone names themselves",
+              "matched": 18,
+              "total": 67,
+              "ratio": 0.26865671641791045
+            },
+            {
+              "id": "bones.parent_by_name",
+              "what": "each bone hangs off the same parent",
+              "matched": 14,
+              "total": 67,
+              "ratio": 0.208955223880597
+            },
+            {
+              "id": "bones.order",
+              "what": "the bones are declared in the same order",
+              "matched": 12,
+              "total": 67,
+              "ratio": 0.1791044776119403
+            },
+            {
+              "id": "bones.length_present",
+              "what": "a setup `length` is present or absent alike",
+              "matched": 13,
+              "total": 67,
+              "ratio": 0.19402985074626866
+            },
+            {
+              "id": "bones.inherit_present",
+              "what": "a setup `inherit` is present or absent alike",
+              "matched": 18,
+              "total": 67,
+              "ratio": 0.26865671641791045
+            },
+            {
+              "id": "bones.depth_histogram",
+              "what": "NAME-AGNOSTIC: as many bones at each depth",
+              "matched": 16,
+              "total": 67,
+              "ratio": 0.23880597014925373
+            },
+            {
+              "id": "bones.degree_sequence",
+              "what": "NAME-AGNOSTIC: as many bones with each child count",
+              "matched": 18,
+              "total": 67,
+              "ratio": 0.26865671641791045
+            }
+          ],
+          "nameAgnostic": {
+            "ratio": 0.2059701492537313,
+            "measures": [
+              {
+                "id": "bones.agnostic.count",
+                "what": "how many bones",
+                "matched": 18,
+                "total": 67,
+                "ratio": 0.26865671641791045
+              },
+              {
+                "id": "bones.agnostic.depth_histogram",
+                "what": "as many bones at each depth",
+                "matched": 16,
+                "total": 67,
+                "ratio": 0.23880597014925373
+              },
+              {
+                "id": "bones.agnostic.degree_sequence",
+                "what": "as many bones with each child count",
+                "matched": 18,
+                "total": 67,
+                "ratio": 0.26865671641791045
+              },
+              {
+                "id": "bones.agnostic.shape_histogram",
+                "what": "as many bones of each depth-and-child-count shape (`d1c3` = one hop down, three children)",
+                "matched": 9,
+                "total": 67,
+                "ratio": 0.13432835820895522
+              },
+              {
+                "id": "bones.agnostic.order_shape",
+                "what": "the bones are declared in the same order of shapes",
+                "matched": 8,
+                "total": 67,
+                "ratio": 0.11940298507462686
+              }
+            ]
+          }
+        },
+        {
+          "name": "slots",
+          "ratio": 0.3626373626373626,
+          "measures": [
+            {
+              "id": "slots.count",
+              "what": "how many slots",
+              "matched": 20,
+              "total": 52,
+              "ratio": 0.38461538461538464
+            },
+            {
+              "id": "slots.names",
+              "what": "the slot names themselves",
+              "matched": 20,
+              "total": 52,
+              "ratio": 0.38461538461538464
+            },
+            {
+              "id": "slots.order",
+              "what": "the slots array IS the draw order, so its order is data",
+              "matched": 14,
+              "total": 52,
+              "ratio": 0.2692307692307692
+            },
+            {
+              "id": "slots.bone",
+              "what": "each slot is bound to the same bone",
+              "matched": 20,
+              "total": 52,
+              "ratio": 0.38461538461538464
+            },
+            {
+              "id": "slots.attachment",
+              "what": "each slot shows the same setup attachment",
+              "matched": 18,
+              "total": 52,
+              "ratio": 0.34615384615384615
+            },
+            {
+              "id": "slots.blend",
+              "what": "each slot uses the same blend mode",
+              "matched": 20,
+              "total": 52,
+              "ratio": 0.38461538461538464
+            },
+            {
+              "id": "slots.color_present",
+              "what": "a tint is present or absent alike",
+              "matched": 20,
+              "total": 52,
+              "ratio": 0.38461538461538464
+            }
+          ],
+          "nameAgnostic": {
+            "ratio": 0.14903846153846154,
+            "measures": [
+              {
+                "id": "slots.agnostic.count",
+                "what": "how many slots",
+                "matched": 20,
+                "total": 52,
+                "ratio": 0.38461538461538464
+              },
+              {
+                "id": "slots.agnostic.attachment_types_by_position",
+                "what": "the same kind of attachment sits at each position in the draw order",
+                "matched": 1,
+                "total": 52,
+                "ratio": 0.019230769230769232
+              },
+              {
+                "id": "slots.agnostic.bone_binding_shape",
+                "what": "as many slots hang off a bone of each shape (`?` = no such bone is declared)",
+                "matched": 7,
+                "total": 52,
+                "ratio": 0.1346153846153846
+              },
+              {
+                "id": "slots.agnostic.order_shape",
+                "what": "the draw order is the same order of `<attachment type>@<bone shape>`",
+                "matched": 3,
+                "total": 52,
+                "ratio": 0.057692307692307696
+              }
+            ]
+          }
+        },
+        {
+          "name": "attachments",
+          "ratio": 0.25286195286195284,
+          "measures": [
+            {
+              "id": "attachments.skins",
+              "what": "the skin names",
+              "matched": 1,
+              "total": 1,
+              "ratio": 1
+            },
+            {
+              "id": "attachments.count",
+              "what": "how many attachments",
+              "matched": 28,
+              "total": 80,
+              "ratio": 0.35
+            },
+            {
+              "id": "attachments.names",
+              "what": "skin/slot/attachment keys",
+              "matched": 27,
+              "total": 81,
+              "ratio": 0.3333333333333333
+            },
+            {
+              "id": "attachments.type_counts",
+              "what": "as many of each attachment type",
+              "matched": 28,
+              "total": 80,
+              "ratio": 0.35
+            },
+            {
+              "id": "attachments.mesh_vertices",
+              "what": "each mesh has the same vertex count",
+              "matched": 0,
+              "total": 12,
+              "ratio": 0
+            },
+            {
+              "id": "attachments.mesh_triangles",
+              "what": "each mesh has the same triangle count",
+              "matched": 0,
+              "total": 12,
+              "ratio": 0
+            },
+            {
+              "id": "attachments.mesh_weighted",
+              "what": "each mesh is weighted, or is not, alike",
+              "matched": 0,
+              "total": 12,
+              "ratio": 0
+            },
+            {
+              "id": "attachments.mesh_hull",
+              "what": "each mesh declares the same hull length",
+              "matched": 0,
+              "total": 12,
+              "ratio": 0
+            },
+            {
+              "id": "attachments.region_size",
+              "what": "NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)",
+              "matched": 16,
+              "total": 66,
+              "ratio": 0.24242424242424243
+            }
+          ]
+        },
+        {
+          "name": "constraints",
+          "ratio": 0,
+          "measures": [
+            {
+              "id": "constraints.count",
+              "what": "how many constraints",
+              "matched": 0,
+              "total": 14,
+              "ratio": 0
+            },
+            {
+              "id": "constraints.names",
+              "what": "the constraint names",
+              "matched": 0,
+              "total": 14,
+              "ratio": 0
+            },
+            {
+              "id": "constraints.type_counts",
+              "what": "as many of each constraint type",
+              "matched": 0,
+              "total": 14,
+              "ratio": 0
+            },
+            {
+              "id": "constraints.type_by_name",
+              "what": "each constraint is the same type",
+              "matched": 0,
+              "total": 14,
+              "ratio": 0
+            },
+            {
+              "id": "constraints.refs",
+              "what": "each constraint names the same bones and slots",
+              "matched": 0,
+              "total": 14,
+              "ratio": 0
+            }
+          ]
+        },
+        {
+          "name": "animations",
+          "ratio": 0.5731165986928172,
+          "measures": [
+            {
+              "id": "animations.count",
+              "what": "how many animations",
+              "matched": 8,
+              "total": 11,
+              "ratio": 0.7272727272727273
+            },
+            {
+              "id": "animations.names",
+              "what": "the animation names",
+              "matched": 7,
+              "total": 12,
+              "ratio": 0.5833333333333334
+            },
+            {
+              "id": "animations.duration",
+              "what": "each animation runs as long (last key time, within one frame)",
+              "matched": 6,
+              "total": 11,
+              "ratio": 0.5454545454545454
+            },
+            {
+              "id": "animations.timeline_kinds",
+              "what": "the same timelines exist",
+              "matched": 98,
+              "total": 421,
+              "ratio": 0.2327790973871734
+            },
+            {
+              "id": "animations.key_counts",
+              "what": "those timelines carry as many keys",
+              "matched": 815,
+              "total": 1791,
+              "ratio": 0.45505304299274146
+            },
+            {
+              "id": "animations.curve_kinds",
+              "what": "as many linear / stepped / bezier keys",
+              "matched": 910,
+              "total": 1791,
+              "ratio": 0.5080960357342267
+            },
+            {
+              "id": "animations.event_keys",
+              "what": "as many event firings",
+              "matched": 5,
+              "total": 6,
+              "ratio": 0.8333333333333334
+            },
+            {
+              "id": "animations.draw_order",
+              "what": "a draw-order timeline is present or absent alike",
+              "matched": 7,
+              "total": 11,
+              "ratio": 0.6363636363636364
+            },
+            {
+              "id": "animations.deform",
+              "what": "a deform timeline is present or absent alike",
+              "matched": 7,
+              "total": 11,
+              "ratio": 0.6363636363636364
+            }
+          ]
+        },
+        {
+          "name": "events",
+          "ratio": 0.5,
+          "measures": [
+            {
+              "id": "events.names",
+              "what": "the event names",
+              "matched": 1,
+              "total": 2,
+              "ratio": 0.5
+            },
+            {
+              "id": "events.payloads",
+              "what": "each event carries the same typed payload",
+              "matched": 1,
+              "total": 2,
+              "ratio": 0.5
+            }
+          ]
+        }
+      ],
+      "candidate": {
+        "bones": 18,
+        "slots": 20,
+        "skins": 1,
+        "attachments": 28,
+        "constraints": 0,
+        "animations": 8,
+        "events": 2
+      },
+      "reference": {
+        "bones": 67,
+        "slots": 52,
+        "skins": 1,
+        "attachments": 80,
+        "constraints": 14,
+        "animations": 11,
+        "events": 1
+      }
+    }
+  ],
+  "check": null
+}

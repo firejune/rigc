@@ -207,7 +207,7 @@ The written form of all this, per rung and per run:
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ⬜ *attempted* |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | 🟨 `pendulum` ✅ · `ball` ⬜ *attempted* |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ⬜ |
-| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | ⬜ |
+| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | ⬜ *attempted* |
 
 ⬜ **but attempted.** Seven runs across rungs 1, 2, 4/5, 6 and 8 were made on
 2026-08-23, and none of them cleared a rung —
@@ -801,6 +801,68 @@ was **cut mid-response by an API connection loss** after §10 and resumed from t
 directory: no input changed, the reference export was still never opened, and `bench`
 had not yet been run at that point. **The run stays clean** — it is recorded because
 a log that omits its own interruptions is not the record this protocol asks for.
+
+### spineboy — attempted, `ess` only (2026-08-23)
+
+Run [`bench/runs/2026-08-23-spineboy-1/`](../bench/runs/2026-08-23-spineboy-1/),
+clean — `bench spineboy` run once at the end, with the brief's own command line, and
+neither spec touched after. `pro` was not attempted: rigc's motion spec has no `ik`,
+`transform` or `deform` timelines yet ([#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)),
+so a `pro` candidate could not be complete, and the rung does not clear on it
+([#16](https://github.com/firejune/rigc/issues/16)). Authored by Claude Opus 5 (1M
+context), Claude Code / Agent SDK, from the brief (revision 2, third-party verified)
+and the rendered reference frames alone, with [AUTHORING.md §10](AUTHORING.md) in
+hand. The gate was green on the first compile of both specs and no compile error was
+hit all run; the loop was `build` + `check` + render-back, plus about 500 fitting
+runs of the candidate against the frames.
+
+The matching line, from a run that also printed a `pro` line — this `ess` candidate
+diffed against the *other* skeleton, which measures nothing and is not quoted:
+
+```
+ess        bones=0.869  slots=0.929  attachments=0.976  constraints=1.000  animations=0.821  events=0.500
+           bones 0.869 (name-matched) · 0.922 (name-agnostic)   slots 0.929 (name-matched) · 0.887 (name-agnostic)
+```
+
+`bench` was run without `--frames`, so it printed no `check` table; the run's
+`check` numbers were taken before it, in the loop. Pinned to `frames.json`'s own box,
+MAE means run **18.77** (`idle`), 24.27 (`shoot`), 26.17 (`aim`), 32.00 (`walk`),
+32.26 (`death`), 38.99 (`jump`), 42.30 (`run`) and **52.09** (`hit`) at 12 fps, with
+worst slot drift 2.8 px on `idle` and **18.2 px** on `hit`.
+
+**What this run establishes, whatever a reader makes of the pass mark.** These are
+the highest structural figures any honest run has recorded: `bones` name-agnostic
+**0.922** with `count`, `depth_histogram`, `degree_sequence` and `shape_histogram`
+all **18/18**, `slots.count` and `slots.names` both **20/20**, `attachments` **0.976**,
+and `animations` `count` / `names` / `duration` all 8/8. The naming figures are the
+surprise — every previous run reads near zero there — and the run attributes them to
+one convention applied deliberately: §10.1's *one image → one slot → one attachment,
+named after the image*, on art that ships as `front-shin.png` and `rear-bracer.png`.
+
+**Three declined guesses came back right.** `constraints` **1.000 at 0/0** and every
+`mesh_*` measure **1.000 at 0/0** — `ess` carries neither, so the IK and unweighted
+meshes in the row above are `pro`'s, and the run's refusal to author either (frames
+cannot show a constraint, and §9.3 says a mesh and a posed region render alike) cost
+nothing and gained the sections outright.
+
+**What is short.** `animations.key_counts` 639/1414 and `curve_kinds` 702/1414 sit
+under `timeline_kinds` 112/153 — the reference carries timelines this rig does not,
+which the run's own reading puts on §10.3's Separate checkbox. `draw_order` 7/8 says
+one animation in the reference reorders its slots and none of this candidate's does;
+the brief's own search for a draw-order *change* came up empty over both skeletons,
+so that one is invisible in the frames by both sides' account. `events` **0.500** is
+the run's most deliberate cost: it declares two events, from the brief's four
+frame-pinned cues, against the reference's one.
+
+⚠️ **Two leaks inside standard inputs, and the run names them rather than using
+them.** [AUTHORING.md](AUTHORING.md) §3.6 states the reference's `events` block
+outright — *"the editor's own spineboy export declares exactly `{"footstep": {}}`"* —
+which is the answer to one of the six sections, in the document the protocol requires
+an authoring agent to read in full, and against §10.6's own rule. §3.4's
+bounding-box example looks like a second. And **this table's own spineboy row
+publishes `ess`'s bone and slot counts, which the brief withholds on purpose**; the
+run used them as a sizing check and says so. All three want fixing before the next
+attempt, and the run's *Notes for the guide* propose the wording.
 
 ---
 
