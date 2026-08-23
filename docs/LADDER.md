@@ -146,7 +146,11 @@ and [`bench/runs/2026-08-23-rung6-1/`](../bench/runs/2026-08-23-rung6-1/). The
 figures and the commander's reading of each are below, under *Rung 1* through
 *Rung 6*.
 
-**What the six runs say so far.** `validate` caught **0 FAILs** across all six —
+**What the seven runs say so far.** Seven, not six: the six above plus rung 3's
+second attempt ([`bench/runs/2026-08-23-rung3-2/`](../bench/runs/2026-08-23-rung3-2/)),
+which did not change a rung's status but is the only run so far authored with
+[AUTHORING.md §10](AUTHORING.md) in hand. (Rung 3's first attempt is read in its own
+section and is not counted here.) `validate` caught **0 FAILs** across all seven —
 roughly 100 builds and `check` cycles combined — and that is the guide designing
 invalid states out before a build is attempted, not a sign the rigs were right;
 validity was never the open question here. `check` is the instrument that carries
@@ -162,7 +166,21 @@ and **static-plateau fidelity** (greedy key reduction sloped a line through a ru
 of frames the reference holds pixel-identical). And the briefs keep turning out to
 be measurement artefacts rather than finished shot descriptions: three of the six
 runs found a brief claim wrong that a client watching the shot could have caught,
-and the fix each time was to re-measure the pixels, not to trust the prose. Two
+and the fix each time was to re-measure the pixels, not to trust the prose.
+
+**Writing the conventions down measurably moves the curve and key measures.** That is
+the seventh run's finding, and it is the first evidence on the ladder that a guide
+changes a figure rather than a habit. Rung 3's second attempt is the same rung, the
+same brief, the same frames and the same model as its first, with §10 added and
+nothing else: `curve_kinds` went 41/69 → 49/69 (bezier everywhere, 15 named easings,
+0 raw `curve` entries) and `key_counts` 42/69 → 49/69, lifting `animations` 0.911 →
+0.936, while every other section figure held exactly. That closes the *curve kind*
+gap rung 6 named. It does **not** close *key density* — §10.6 says outright that no
+public page gives one, and the 20 keys still missing are keys a Bezier span already
+explains, which is the one line of §10 no convention read off a public page can
+write. The measures §10 cannot reach did not move either, and could not have: names
+(granted to the author by the brief) and the two facts a frame does not carry
+(`bones.length_present`, `bones.inherit_present`, 1/3 in both attempts). Two
 runs' authors went further than `check` on their own initiative: rung 2's second
 attempt built a whole-shot contact-sheet comparator because `check` only reads
 `fNNNN.png` files and that rung's committed reference set is contact sheets, and
@@ -225,6 +243,75 @@ the reference export, so no part of the score above): worst-frame 2.42° of
 pendulum rotation, about one frame pixel of block travel, and a re-render mean
 absolute pixel error of 3.4/255. Residual risk carried forward: key density — it
 is not a visible defect at this rung.
+
+#### Attempt 2 — what the conventions guide moved (2026-08-23)
+
+The rung stays **cleared on attempt 1**; this is not a re-judgement of it. Attempt 2
+exists to answer a different question — *does writing the editor's defaults down
+change what an agent authors?* — and it is the first run made with
+[`docs/AUTHORING.md` §10](AUTHORING.md) (*What the editor does by default*) as a
+standard input. Run [`bench/runs/2026-08-23-rung3-2/`](../bench/runs/2026-08-23-rung3-2/),
+authored by Claude Opus 5 (1M context) on Claude Code / Agent SDK from the same brief
+and the same rendered frames, under the same honesty rule — **clean, validator green
+on the first compile**, `bench 3` run once at the end with nothing edited after.
+
+`bench 3`, from [`bench.json`](../bench/runs/2026-08-23-rung3-2/bench.json):
+
+```
+bones=0.567  slots=0.476  attachments=0.870  constraints=1.000  animations=0.936  events=1.000
+```
+
+| | attempt 1 | attempt 2 |
+| --- | ---: | ---: |
+| `animations` | 0.911 | **0.936** |
+| `animations.key_counts` | 42/69 | **49/69** |
+| `animations.curve_kinds` | 41/69 | **49/69** |
+| every other section figure | — | unchanged |
+
+**Reading — the commander's call, 2026-08-23.** §10 lifted what §10 can lift, and
+nothing else moved. The two measures that carry timing quality are the two that
+rose: `curve_kinds` went from 41/69 to 49/69 and is now **bezier everywhere** — 15
+named easings, 0 raw `curve` entries, and the only `linear` keys in the file are the
+eight last keys, one per track, which cannot carry a curve. That is §10.4's rule
+(*"Bezier is the default to adopt; linear is the exception you argue for"*) applied
+literally, and it closes
+the *curve kind* gap rung 6 had named. `key_counts` rose with it, 42/69 → 49/69, from
+§10.3's rule of a key at every change of direction and wherever one Bezier span
+cannot hold the shape. The remaining 20 keys are keys a span already explains — at
+this rung's 0.118 px/unit they move nothing, so `check` cannot ask for them and only
+`bench` can see them. §10.6 is right that no public page gives a density, and this is
+the one line of §10 that no convention read off a public page can close.
+
+**`bones` and `slots` did not move, and could not have.** Every measure under them
+that reads below 1.000 — `names`, `parent_by_name`, `order`, `slots.bone`,
+`attachments.names` — is keyed on names, and the brief grants the author its own
+(*"Names are yours"*). Both name-agnostic bone measures are 3/3 in both attempts. The
+one genuine structural miss is `bones.length_present` and `bones.inherit_present`, 1/3
+each in both runs: the reference declares a setup `length` and an `inherit` where
+neither attempt declared either. §9.3 lists both as invisible in frames and §10 does
+not say what the editor writes — a bone made with Spine's Create tool has a length,
+and that belongs in §10. It would move two measures.
+
+⇒ **The structural shortfall left at this rung is names (unwinnable by design, and
+granted by the brief), plus what neither frames nor §10 can carry (bone `length`,
+setup `inherit`), plus the vacuous 1.000s under `constraints`/`events`.** §10 moved
+everything between those two.
+
+**Fidelity.** Attempt 2 is the first rung-3 run measured by `check` itself: framing
+fit `x0.999458`, `rms 0.25 px`, union residual `+0.50 × +0.01 px`; `heavy` MAE mean
+9.84 / worst slot drift 0.85 px, `light` MAE mean 10.93 / worst slot drift 0.74 px,
+every slot attributed in all 86 frames.
+
+⚠️ **Those numbers are not a trend against attempt 1, and must not be read as one.**
+Attempt 1 never ran `check` — its fidelity figures come from the author's own scripts
+and are different quantities: 2.42° is an *angle*, not a pixel drift, and its 3.4/255
+is a *whole-frame* mean where `check`'s 9.84 is over the *union alpha* (§9.2: the
+whole-frame figure runs ten to twenty-five times smaller on every set measured so
+far). The one pair that does compare term for term is the whole-frame mean, and it is
+attempt 2's `meanMaeFrame` — **3.4/255 → 0.41/255** (`heavy`; 0.46 for `light`). The union-alpha MAE that is left
+is edge coverage rather than motion: attempt 2 draws about 5 % fewer pixels than the
+reference for the same bounding box, and `light`'s held frames f18–f20 sit at 10.04
+with drift 0.0.
 
 ### Rung 1 — attempted, not cleared (2026-08-23)
 
