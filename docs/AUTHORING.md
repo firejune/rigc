@@ -413,7 +413,37 @@ Field lists are in [`src/rig.ts`](../src/rig.ts); three traps worth carrying her
   them parses cleanly and does nothing at all. rigc refuses it up front, and `A23`
   catches it from the other side.
 
-### 3.6 `invariants` — what the artifact cannot say about itself
+### 3.6 `events` — names the animation can fire
+
+**When you need one:** something outside the skeleton has to happen on a
+particular frame — a footstep sound, a spawn, a hit window opening. Spine
+[events](http://esotericsoftware.com/spine-events) carry no rendering effect at
+all; they are a named signal the game listens for, with an optional payload.
+
+The **declaration** lives here, in the rig spec, because the name is structure.
+The **firings** live in the motion spec (§4.8), because when they happen is time.
+
+```json
+"events": {
+  "footstep": {},
+  "voiced": { "audio": "voiced.ogg", "volume": 0.8, "string": "line-01" }
+}
+```
+
+An object keyed by event name — the one top-level collection in the format that
+is not an array. Every field is optional and each is the payload a firing
+**inherits** when it does not override it: `int` (0), `float` (0), `string`
+(`""`), `audio` (none), `volume` and `balance`.
+
+- The editor's own spineboy export declares exactly `{"footstep": {}}` — an empty
+  object is the normal case, not a stub.
+- ⚠️ `volume` and `balance` are read **only when `audio` is set**. Without an
+  audio path the parser drops them without a word, so rigc refuses that pairing
+  rather than emitting two numbers no runtime will read.
+- An event that nothing fires is legitimate: a skeleton may declare the vocabulary
+  its game listens for and key only some of it in any one animation.
+
+### 3.7 `invariants` — what the artifact cannot say about itself
 
 Optional, and only meaningful for rigc's own formations: `meshSlots` and
 `meshTriangles` (the two halves of the mesh budget `A13` measures against),
@@ -456,6 +486,7 @@ time puts it here.
 | `note` | free text |
 | `tracks` | the timelines |
 | `drawOrder` | the draw-order timeline — §4.7. Not a track: it names no target |
+| `events` | the event timeline — §4.8. Not a track, for the same reason |
 
 `groups` (`name → [member, …]`) lets one track target several bones or slots at
 once; `lag` shifts every key of a track, and `stagger` adds a per-member delay in
@@ -578,6 +609,53 @@ the emitted file is the parser's requirement rather than a decision of yours, so
 you state the set of moves and rigc writes them in the order the parser needs.
 `A31_DRAW_ORDER_OFFSETS_RESOLVE` checks all four from the other side.
 
+### 4.8 `events` — firing a declared event
+
+The second timeline that names no target, and it sits on the animation for the
+same reason `drawOrder` does: 4.3 writes it as `animations.<a>.events`, beside
+`bones` and `slots`.
+
+```json
+"animations": {
+  "walk": {
+    "duration": 1.0666666,
+    "loop": true,
+    "events": [
+      { "t": 0, "name": "footstep" },
+      { "t": 0.5333333, "name": "footstep", "int": 2 }
+    ],
+    "tracks": []
+  }
+}
+```
+
+- `name` must be a key of the rig spec's `events` block (§3.6). A miss is a
+  compile error here; in raw JSON the parser **throws** `Event not found` in the
+  consumer's process, which is late.
+- `int`, `float` and `string` override the declaration's payload **for this firing
+  only**. Omit them and the firing inherits the declared defaults, which is what
+  the editor writes.
+- `volume` and `balance` are accepted only on an event that declares `audio`, for
+  the same reason as §3.6.
+- Event keys are **instantaneous** and carry no `ease` or `curve`.
+- Its last key counts towards the declared duration like any other (R7).
+
+rigc refuses three things here, and only the first is loud in the parser:
+
+| You wrote | You get |
+| --- | --- |
+| a name the rig spec does not declare | `event "X" is not declared in the rig spec's "events" block; declared: …` |
+| a key time earlier than the key before it | `key times must not go backwards (at t=0.25, after t=0.5)` |
+| `volume`/`balance` on an event with no `audio` | `volume is set but event "X" declares no "audio"` |
+
+The ordering rule is **non-decreasing**, not strictly increasing: two different
+events on one frame is an ordinary thing to want, and unlike a value track there
+is no contradiction in it. What is refused is going *backwards* —
+`readAnimation` fills frame `i` from key `i` in array order and never sorts, so a
+decreasing time builds an `EventTimeline` whose earlier firing is simply
+unreachable, with a perfectly clean load.
+`A32_EVENT_KEYS_RESOLVE` checks all three from the other side.
+
 ---
 
 ## 5. Reading a failure
@@ -609,6 +687,9 @@ the frequent ones, verbatim:
 | `animation "A" has two tracks on X.property; merge them into one track` | one timeline per target property |
 | `no stage size: give the rig spec a \`skeleton.width\`/\`skeleton.height\`` | §3.1 |
 | `drawOrder at t=…: slot "X" is not one this rig emits` / `is offset twice in one key` / `puts it at N, outside the … emitted slots` | §4.7 |
+| `events at t=…: event "X" is not declared in the rig spec's "events" block` | declare it in the rig spec (§3.6), or fix the name |
+| `events: key times must not go backwards` | put the firings in time order (§4.8) |
+| `events at t=…: volume is set but event "X" declares no "audio"` | drop `volume`/`balance`, or give the event an audio path |
 | `bone "X" takes its position from …, which needs a cut manifest` | R8 — pass `--manifest`, or write literal `x`/`y` |
 
 ### 5.2 Assertions — the gate
@@ -668,6 +749,7 @@ The report prints one line per assertion:
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the animation drives deeper than the manifest's measured contact depth |
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the animation drives past the measured containment ceiling, or scales a bone in the axis subtree |
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | a draw-order key names a slot the skeleton does not have, offsets one slot twice, puts a slot outside the slots array, or lists its offsets out of slot order (§4.7). The only assertion that runs **before** `A00` — the last of those shapes makes the loader spin rather than return, so the round trip is refused instead of attempted |
+| `A32_EVENT_KEYS_RESOLVE` | both | an event key fires a name the skeleton's `events` block does not declare, sits earlier in time than the key before it, or sets `volume`/`balance` on an event with no `audio` (§4.8). **SKIP** when no animation carries an event timeline |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.

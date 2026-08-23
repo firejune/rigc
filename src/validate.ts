@@ -42,8 +42,9 @@ export interface Failure {
  *
  * ⭐ The distinction this draws is the difference between "wrong" and "not how we
  * do it here", and conflating the two is how a validator stops being usable on
- * anybody else's data. Nine of the 31 assertions are policy for one renderer
- * (`spine-html`) or for one project's canvas budget, and every one of them fires
+ * anybody else's data. Fourteen of the 33 assertions are policy — seven for one
+ * renderer (`spine-html`) and one project's canvas budget, seven for rigc's own
+ * formations — and every one of them fires
  * on real, correct, editor-produced Spine data — the official example projects
  * carry clipping attachments, unweighted meshes, 116-triangle meshes and packed
  * atlases, all of which are perfectly valid and none of which spine-html likes.
@@ -113,6 +114,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A29_STROKE_WITHIN_CONTACT_DEPTH: 'archetype',
   A30_STROKE_WITHIN_CAP_CONTAINMENT: 'archetype',
   A31_DRAW_ORDER_OFFSETS_RESOLVE: 'validity',
+  A32_EVENT_KEYS_RESOLVE: 'validity',
 };
 
 export interface ValidateInput {
@@ -368,6 +370,81 @@ export function validate(input: ValidateInput): ValidateReport {
       });
     }
     if (!sawATimeline) return skip('A31_DRAW_ORDER_OFFSETS_RESOLVE', 'no animation carries a drawOrder timeline');
+  });
+
+  // --- A32: every event key fires a declared event, in order ----------------
+  //
+  // The event timeline's three failure modes, and only the first is loud:
+  //
+  //   1. **An undeclared name.** `findEvent` returns null and `readAnimation`
+  //      throws `Event not found` (SkeletonJson.ts:1244). A00 would catch it, but
+  //      as a parser message about a name with no context; this one says which
+  //      animation, which key, and what the skeleton does declare.
+  //   2. **Times out of order.** `readAnimation` writes frame `i` from key `i` in
+  //      ARRAY order and never sorts, so a decreasing time builds an
+  //      `EventTimeline` whose frames run backwards. It loads clean, and the
+  //      firings behind the fold simply never come out. Equal times are fine —
+  //      two events on one frame is ordinary — so this is non-decreasing.
+  //   3. **`volume`/`balance` on a silent event.** `:1254-1257` reads them only
+  //      inside `if (event.data.audioPath)`, so on an event with no `audio` they
+  //      are two numbers in the file that no runtime will ever read.
+  //
+  // It runs on the raw JSON rather than on the loaded data because the loaded
+  // `Event` no longer remembers which fields the file wrote: an override that was
+  // dropped and an override that matched the default are the same object.
+  check('A32_EVENT_KEYS_RESOLVE', () => {
+    if (!raw) return skip('A32_EVENT_KEYS_RESOLVE', 'the skeleton JSON did not parse (A00 owns that failure)');
+    if (!isObj(raw.animations)) return skip('A32_EVENT_KEYS_RESOLVE', 'the skeleton declares no animations');
+    const declared = isObj(raw.events) ? (raw.events as Json) : {};
+    const known = Object.keys(declared);
+    let sawATimeline = false;
+    for (const [animName, anim] of Object.entries(raw.animations as Json)) {
+      if (!isObj(anim) || !Array.isArray(anim.events)) continue;
+      sawATimeline = true;
+      let previous = -Infinity;
+      (anim.events as unknown[]).forEach((key, k) => {
+        const at = `animation "${animName}" event key ${k}`;
+        if (!isObj(key) || typeof key.name !== 'string') {
+          fail('A32_EVENT_KEYS_RESOLVE', `${at}: an event key needs a string "name"`);
+          return;
+        }
+        const definition = declared[key.name];
+        if (definition === undefined) {
+          fail(
+            'A32_EVENT_KEYS_RESOLVE',
+            `${at}: fires "${key.name}", which the skeleton's events block does not declare` +
+              (known.length ? ` (declared: ${known.join(', ')})` : ' (that block is empty or absent)'),
+          );
+          return;
+        }
+        // `time` defaults to 0 when absent (`:1247`), which is what the editor
+        // writes for a firing on frame 0.
+        const time = key.time === undefined ? 0 : key.time;
+        if (typeof time !== 'number' || !Number.isFinite(time)) {
+          fail('A32_EVENT_KEYS_RESOLVE', `${at}: time is ${JSON.stringify(key.time)}, not a finite number`);
+          return;
+        }
+        if (time < previous) {
+          fail(
+            'A32_EVENT_KEYS_RESOLVE',
+            `${at}: "${key.name}" is at t=${time}, after a key at t=${previous} — the parser fills frames in ` +
+              'array order and never sorts them, so the earlier firing is unreachable',
+          );
+        }
+        previous = Math.max(previous, time);
+        const hasAudio = isObj(definition) && typeof definition.audio === 'string';
+        for (const field of ['volume', 'balance'] as const) {
+          if (key[field] !== undefined && !hasAudio) {
+            fail(
+              'A32_EVENT_KEYS_RESOLVE',
+              `${at}: "${key.name}" sets ${field}, but the event declares no audio path — the parser reads ` +
+                `${field} only for an event that has one, so it is dropped in silence`,
+            );
+          }
+        }
+      });
+    }
+    if (!sawATimeline) return skip('A32_EVENT_KEYS_RESOLVE', 'no animation carries an event timeline');
   });
 
   // --- A: the round trip ----------------------------------------------------

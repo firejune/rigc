@@ -303,6 +303,33 @@ export interface MotionDrawOrderKey {
   offsets?: MotionDrawOrderOffset[];
 }
 
+/**
+ * One firing of a declared event, at one time.
+ *
+ * ⚠️ Like `drawOrder` and unlike a `track`, this timeline names **no target**:
+ * 4.3 writes it as `animations.<a>.events` beside `bones` and `slots`
+ * (SPEC_COVERAGE part 1-8), and there is one per animation. The `name` picks
+ * an entry out of the rig spec's `events` table; the optional payload fields
+ * override that entry's defaults for this firing only.
+ *
+ * A key with no `int`/`float`/`string` inherits the event's setup payload
+ * (`:1250-1252`) — which is what the editor writes, and why `{ "t": 0.5,
+ * "name": "footstep" }` is the common shape.
+ */
+export interface MotionEventKey {
+  /** Time in seconds. */
+  t: number;
+  /** An event the rig spec declares. A miss throws in the parser; rigc refuses it. */
+  name: string;
+  /** Payload overrides for this firing. Omit to inherit the event's defaults. */
+  int?: number;
+  float?: number;
+  string?: string;
+  /** Read only when the declared event carries an `audio` path — see `RigEvent`. */
+  volume?: number;
+  balance?: number;
+}
+
 export interface MotionAnimation {
   /** Declared, then verified against the compiled result (rule 4). */
   duration: number;
@@ -320,6 +347,11 @@ export interface MotionAnimation {
    * time. First needed at ladder rung 5.
    */
   drawOrder?: MotionDrawOrderKey[];
+  /**
+   * The event timeline. One per animation, names no target, and for the same
+   * reason `drawOrder` is not a `track`. First needed at the spineboy rung.
+   */
+  events?: MotionEventKey[];
 }
 
 /**
@@ -469,6 +501,11 @@ export interface SpineSkeletonJson {
   slots: SpineSlot[];
   constraints?: SpineConstraint[];
   skins: Array<{ name: string; attachments: Record<string, Record<string, SpineAttachment>> }>;
+  /**
+   * Event definitions, keyed by name (`SkeletonJson.ts:451-464`). An object, not
+   * an array — the one top-level collection in the format that is.
+   */
+  events?: Record<string, SpineEvent>;
   animations: Record<
     string,
     {
@@ -477,8 +514,20 @@ export interface SpineSkeletonJson {
       physics?: Record<string, Record<string, SpineTimelineKey[]>>;
       /** Whole-animation timeline: no target name, one array per animation. */
       drawOrder?: SpineTimelineKey[];
+      /** The other whole-animation timeline; same shape, same reason. */
+      events?: SpineTimelineKey[];
     }
   >;
+}
+
+/** One entry of the emitted `events` map: the payload a firing inherits. */
+export interface SpineEvent {
+  int?: number;
+  float?: number;
+  string?: string;
+  audio?: string;
+  volume?: number;
+  balance?: number;
 }
 
 // ---------------------------------------------------------------------------

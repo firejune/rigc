@@ -95,7 +95,7 @@ expected when re-gating artifacts on disk: `A31` (no draw-order timeline in this
 no motion spec, so there is no declared duration to compare — `build` ran it and it
 passed), `A18` (no second compile). 14 PROF: the renderer policy and the archetype
 assertions are out of profile, which is the right profile for a foreign skeleton with
-no `invariants` block (§3.6, §7 step 3). Nothing was relied on that did not run.
+no `invariants` block (§3.7, §7 step 3). Nothing was relied on that did not run.
 
 ### check — the framing line first
 
