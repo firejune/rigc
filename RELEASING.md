@@ -1,10 +1,10 @@
 # Releasing
 
 The cut is one click: merge the release pull request. Everything either side of
-that click is [`.github/workflows/release.yml`](.github/workflows/release.yml).
-
-**Publishing is not part of it.** rigc is not on npm, so the workflow tags the
-release and stops there — see [Publishing](#publishing).
+that click is [`.github/workflows/release.yml`](.github/workflows/release.yml),
+and no npm credential exists on any machine — the publish authenticates to the
+registry over OIDC (npm trusted publishing), so there is no token to leak and no
+2FA prompt to answer. See [Publishing](#publishing).
 
 ## The loop
 
@@ -22,8 +22,8 @@ Every push to `main` runs `release.yml`, which hands the new commits to
   (`bump-minor-pre-major`) — 1.0.0 is a deliberate act, not the side effect of
   one commit. To force a version, put `Release-As: 1.0.0` in a commit footer.
 - **That pull request is merged** → the merge is a push to `main`, so
-  `release.yml` runs again; this time release-please tags `vX.Y.Z` and creates
-  the GitHub release.
+  `release.yml` runs again; this time release-please tags `vX.Y.Z`, creates the
+  GitHub release, and the same run publishes the package.
 
 Squash-merge the release pull request, so the commit on `main` keeps its
 `release: vX.Y.Z` subject.
@@ -46,57 +46,79 @@ the commit that introduces these files, and is not maintained afterwards.
 
 ## Cutting a release
 
+0. Once, before the first automated cut: the npmjs.com form in
+   [Publishing](#publishing).
 1. Land the work on `main` with conventional-commit subjects. CI runs on every
    push.
 2. Wait for the `release` run to open or update the `release: vX.Y.Z` pull
    request.
 3. Read the diff — the version and the generated changelog are the whole review.
    Optionally run the suite against the release branch: **Actions → ci → Run
-   workflow → `release-please--branches--main`** (see below for why it is not
-   automatic).
+   workflow →** the branch the pull request is on (see below for why it is not
+   automatic, and for why that name is not worth memorising).
 4. **Merge it.** That is the cut.
-5. Watch the second `release` run: it tags `vX.Y.Z` and creates the GitHub
-   release.
-6. Publish by hand — next section.
+5. Watch the second `release` run: it tags `vX.Y.Z`, creates the GitHub release,
+   and publishes.
+6. Confirm: `npm view spine-rigc version`, and the npm page shows the provenance
+   attestation linking the tarball to the workflow run.
 
 ## Publishing
 
-**Manual, every time, until the package exists on npm.** The name has never been
-published, and npm's trusted publishing (OIDC) cannot be configured for a
-package that is not there yet — so an automated publish today could only
-authenticate with a long-lived token, which would be the one persistent secret
-in this repository. Publish from the tag instead. The whole sequence, in order:
+**Automated, on the release push.** The second `release` run — the one that tags
+`vX.Y.Z` — checks out that tag and publishes it. It authenticates over OIDC (npm
+trusted publishing): the runner exchanges a short-lived GitHub token for a
+publish grant, so there is no `NPM_TOKEN` in this repository and no OTP to type.
+That is what `id-token: write` in the job's permissions is for, and it is also
+what lets the publish carry `--provenance`.
 
 **The package name is `spine-rigc`, not `rigc`** — do not retry the short one.
 The first publish of `rigc@0.2.0` was refused by the registry with
 `403 Package name too similar to existing packages rc,rfdc,bigi`, which is a
 registry-side rule no account setting or flag overrides. `bin` still installs
-the command as `rigc`, so only the registry entry changed.
-
-1. `npm login` — once per machine; `npm whoami` says whether it is still done.
-2. Cut the release: merge the `release: vX.Y.Z` pull request and wait for the
-   second `release` run to tag it (steps 1–5 above).
-3. Publish from that tag:
-
-```sh
-git fetch --tags
-git checkout vX.Y.Z              # the tagged tree, never a working main
-bun install --frozen-lockfile
-npm publish                      # runs prepublishOnly, then asks for the OTP
-```
-
-From the tag, never from a working `main`: the tarball has to be the tree the
-GitHub release names. `npm publish` takes no flags here — `publishConfig.access`
-in `package.json` already says `public`, which is what an unscoped first publish
-needs.
+the command as `rigc`, so only the registry entry changed. `spine-rigc@0.2.1`
+went up by hand, before the automation existed; every version after it is the
+workflow's.
 
 `prepublishOnly` runs `bun run typecheck && bun run lint && bun run selftest`
 before npm packs anything, so a tree that fails its own gates cannot be
-published by accident. It is the same three commands CI runs on every push; the
-selftest needs no corpus and no arguments, and reports the example suites as
-HOLEs rather than passes when `examples/` is absent.
+published — by the workflow or by hand. It is the same three commands CI runs on
+every push; the selftest needs no corpus and no arguments, and reports the
+example suites as HOLEs rather than passes when `examples/` is absent, which is
+why the publish job does not fetch the Spine examples the way `ci.yml` does.
+There is no build step to guard: the package ships its TypeScript sources and
+bun runs them.
 
-Confirm afterwards: `npm view spine-rigc version`.
+### One-time setup (owner, npmjs.com)
+
+Do this once, before the first automated cut. It cannot be done from here — it
+needs the account.
+
+1. npmjs.com → **spine-rigc** → **Settings** → **Trusted Publisher** → *GitHub
+   Actions*.
+2. Fill in, exactly (the fields are case-sensitive, and npm does not validate
+   them on save — a typo only surfaces as a failed publish):
+   - Organization or user: `firejune`
+   - Repository: `rigc`
+   - Workflow filename: `release.yml`
+   - Environment name: *leave blank* (the workflow declares no environment; a
+     value here that the workflow does not match rejects the publish)
+   - Allowed actions: `npm publish`
+3. After the first successful automated publish — not before — set **Settings →
+   Publishing access → Require two-factor authentication and disallow tokens**.
+   Trusted publishing keeps working under that setting; it is what closes the
+   door behind the classic tokens. Setting it first would leave no way back if
+   the OIDC path needs a fix.
+
+Two properties of that configuration are load-bearing in the workflow:
+
+- The publish step must live in **`release.yml`**. Renaming the file, or moving
+  the publish into another workflow, breaks the trusted publisher until the form
+  is updated to match.
+- It must run on a **GitHub-hosted runner**. npm does not support trusted
+  publishing from self-hosted runners, so this job never moves to a private
+  machine.
+
+Confirm a cut afterwards: `npm view spine-rigc version`.
 
 ### What the tarball contains
 
@@ -111,25 +133,29 @@ the yardstick, not the tool. Check before a publish with `npm pack --dry-run`,
 which prints the file list and the size.
 
 `publishConfig.provenance` is deliberately **not** set. Provenance can only be
-attested from a CI run with an OIDC token, so it would fail the manual publish
-above; trusted publishing generates the attestation on its own once the
-automation is in place.
+attested from a run holding an OIDC token, so setting it in `package.json` would
+fail the manual fallback below; the workflow passes `--provenance` on the
+command line instead, where it applies to the automated publish only.
 
-Once the package is on npm, the automation is one form and one edit:
+### If the automation is unavailable
 
-1. npmjs.com → **spine-rigc** → **Settings** → **Trusted Publisher** → *GitHub
-   Actions*. Organization or user `firejune`, repository `rigc`, workflow
-   filename `release.yml`, environment name blank, allowed action
-   `npm publish`. The fields are case-sensitive and npm does not validate them
-   on save — a typo only surfaces as a failed publish.
-2. In `release.yml`, give the release-please step an `id`, add `id-token: write`
-   to the job's permissions, and append checkout/setup/publish steps gated on
-   that step's `release_created` output. They must stay in **`release.yml`** —
-   the trusted publisher is pinned to that filename — and on a GitHub-hosted
-   runner, because npm does not support OIDC from self-hosted ones.
+The old path still works and needs nothing from the workflow. Publish from the
+tag, never from a working `main` — the tarball has to be the tree the GitHub
+release names:
 
-After the first successful automated publish, and not before, set **Settings →
-Publishing access → Require two-factor authentication and disallow tokens**.
+```sh
+npm login                        # once per machine; `npm whoami` to check
+git fetch --tags
+git checkout vX.Y.Z              # the tagged tree
+bun install --frozen-lockfile
+npm publish                      # runs prepublishOnly, then asks for the OTP
+```
+
+`npm publish` takes no flags here — `publishConfig.access` in `package.json`
+already says `public`. This is how `spine-rigc@0.2.1` shipped. It authenticates
+with a classic token and a 2FA one-time password, which is why it stops being
+available the moment "require two-factor authentication and disallow tokens" is
+switched on. Fix the workflow instead.
 
 ## Why the release pull request has no CI checks
 
@@ -143,6 +169,24 @@ or a GitHub App, and this repository deliberately does not use one:
 - The pull request adds only generated version and changelog text. There is no
   source change for a test run to have an opinion about.
 - The token would be the only long-lived credential in the repository.
+
+Two things that follow from this, both learned the hard way:
+
+- **A push of your own to the release branch does start a run — and it stops.**
+  Merging `main` into the release branch to resolve a conflict is a push by a
+  user, not by `GITHUB_TOKEN`, so the suppression no longer applies and a
+  `pull_request` run appears. It sits in `action_required` until someone
+  approves it: `gh api -X POST repos/firejune/rigc/actions/runs/<id>/approve`,
+  or **Approve and run** in the Actions tab. Until then the pull request's
+  required `test` check reads as blocked, and a green `workflow_dispatch` run on
+  the same commit does not satisfy it — a required check is matched by the run
+  that reported it, not by the SHA.
+- **The release branch is named after `package-name`, so do not hard-code it.**
+  release-please derives it from `release-please-config.json`; since the package
+  became `spine-rigc` it is
+  `release-please--branches--main--components--spine-rigc`, and it changes again
+  with the next rename. Anything scripted reads it from the pull request:
+  `gh pr view <n> --json headRefName`.
 
 If a rendered check is ever wanted anyway, it takes no edit to `release.yml`:
 create a fine-grained personal access token scoped to `firejune/rigc` with
