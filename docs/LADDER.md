@@ -185,6 +185,39 @@ Practically:
 - A rung attempted with the reference in context is recorded as such, or not
   recorded at all.
 
+**The two lists, and the prompt must quote them.** The enumerated form lives in
+[`bench/runs/README.md`](../bench/runs/README.md), *What a run may read* — one copy,
+because a reading list in two places drifts and then neither is the rule. In one line
+each:
+
+- ✅ **Allowed** — the rung's brief; `bench/reference/<example>/` frames, sheets and
+  `frames.json`; `examples/<example>/images/`; that example's `.atlas`;
+  [AUTHORING.md](AUTHORING.md) in full; Spine's public documentation; this
+  repository's source and README as format documentation; the CLI (`bench` once, at
+  the end); and earlier runs' `README.md`/`LOOP.md` for **process** only.
+- 🚫 **Forbidden** — `examples/*/export/*.json`; `bench/transcriptions/`; **this
+  document's status table and its per-rung sections**; [SPEC_COVERAGE.md](SPEC_COVERAGE.md);
+  [`src/ladder.ts`](../src/ladder.ts)'s `gates:` strings; issue bodies carrying counts
+  or measures; `bench/render_reference.ts`; git history; and any derived form of any
+  of them.
+
+⚠️ **Two of those forbidden entries are this document.** The status table's *New at
+this rung* column publishes bone, slot and animation counts per skeleton — the
+briefs withhold exactly those, on purpose — and the per-rung sections below publish
+every run's measures. **They stay.** They are the ladder's bookkeeping and a reader
+of the ladder needs them; what changes is that an authoring run does not read this
+file except for *How a rung is scored* and *The honesty rule* above.
+[SPEC_COVERAGE.md](SPEC_COVERAGE.md) is on the list for the same reason and more
+directly: its parts 3 and 4 inventory every example skeleton's bones, slots,
+constraints, attachment kinds and timelines, rung by rung.
+
+📌 **The spineboy run of 2026-08-23 read two of these, and said so.** It used this
+table's `ess` row as a **sizing check** (it had been told to read the row) and it
+read an AUTHORING.md §3.6 example that stated the reference's `events` block
+outright. Recorded, not hidden — the run's README and `LOOP.md` §1 name both — and
+**its name-matched figures carry that caveat**. Both leaks are sealed as of
+2026-08-23; the rung is re-attempted before clearing is discussed.
+
 The written form of all this, per rung and per run:
 [`bench/briefs/`](../bench/briefs/) and [`bench/runs/README.md`](../bench/runs/README.md).
 
@@ -855,14 +888,15 @@ the run's most deliberate cost: it declares two events, from the brief's four
 frame-pinned cues, against the reference's one.
 
 ⚠️ **Two leaks inside standard inputs, and the run names them rather than using
-them.** [AUTHORING.md](AUTHORING.md) §3.6 states the reference's `events` block
-outright — *"the editor's own spineboy export declares exactly `{"footstep": {}}`"* —
-which is the answer to one of the six sections, in the document the protocol requires
-an authoring agent to read in full, and against §10.6's own rule. §3.4's
-bounding-box example looks like a second. And **this table's own spineboy row
-publishes `ess`'s bone and slot counts, which the brief withholds on purpose**; the
-run used them as a sizing check and says so. All three want fixing before the next
-attempt, and the run's *Notes for the guide* propose the wording.
+them.** [AUTHORING.md](AUTHORING.md) §3.6 stated the reference's `events` block
+outright — quoting it by name, which is the answer to one of the six sections, in the
+document the protocol requires an authoring agent to read in full, and against
+§10.6's own rule. §3.4's bounding-box example was a second, and an audit found two
+more of the same kind beside it. And **this table's own spineboy row publishes
+`ess`'s bone and slot counts, which the brief withholds on purpose**; the run used
+them as a sizing check and says so. **All of it is sealed as of 2026-08-23** — the
+guide's examples are now synthetic, and the reading list above says out loud that
+this table is not a run's to read.
 
 ---
 
