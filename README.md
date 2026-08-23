@@ -126,6 +126,11 @@ per animation and per frame:
 - **The framing** — where the candidate's drawn pixels sit against the reference's,
   as a scale, an offset and a residual. It is printed first because it is upstream
   of everything else: get it wrong and the error arrives disguised as motion.
+- **Per-frame change** — how many pixels each side moved since **its own** previous
+  frame, compared against each other. It is the only measure here that looks at the
+  relation between two frames rather than at one, and it is what catches a held pose
+  the candidate does not hold, or a one-frame event that never fired: both are cheap
+  in every individual frame and invisible to an aggregate.
 - **Per-slot drift** — where each of the candidate's own slots landed against the
   reference frame, in pixels. MAE says *how wrong*; a slot's drift says *which
   part, which way, how far*. Where the reference merged two parts into one blob —

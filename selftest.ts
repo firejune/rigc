@@ -43,7 +43,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { MeshAttachment, Physics, Skeleton, type SkeletonData } from '@esotericsoftware/spine-core';
-import { assertFrameReadable, checkAgainstFrames, type CheckReport } from './src/check.ts';
+import { assertFrameReadable, checkAgainstFrames, type CheckReport, type FrameChange } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
 import {
@@ -2454,8 +2454,11 @@ const MESH_IMAGES = resolve(import.meta.dir, 'examples/6-arcs/images');
 /** The slots whose attachments are meshes, which is what these two controls are about. */
 const MESH_SLOTS = ['ball', 'tail'];
 
-/** Compile the rung-6 transcription, optionally through a rewritten rig spec. */
-function compileMeshTranscription(rigText: string | null): {
+/** Compile the rung-6 transcription, optionally through a rewritten spec. */
+function compileMeshTranscription(
+  rigText: string | null,
+  motionText?: string,
+): {
   skeletonText: string;
   atlasText: string;
   atlasDir: string;
@@ -2467,13 +2470,110 @@ function compileMeshTranscription(rigText: string | null): {
     rigPath = join(outDir, 'rewritten.rig.json');
     writeFileSync(rigPath, rigText);
   }
-  const result = compile({
-    rigPath,
-    motionPath: join(MESH_TRANSCRIPTION, '6-arcs-pro.motion.json'),
-    outDir,
-    imagesDir: MESH_IMAGES,
-  });
+  let motionPath = join(MESH_TRANSCRIPTION, '6-arcs-pro.motion.json');
+  if (motionText !== undefined) {
+    motionPath = join(outDir, 'rewritten.motion.json');
+    writeFileSync(motionPath, motionText);
+  }
+  const result = compile({ rigPath, motionPath, outDir, imagesDir: MESH_IMAGES });
   return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir, rig: result.rig };
+}
+
+/** The rung-6 motion spec as text, which the two change-fidelity mutants rewrite. */
+function meshMotionText(): string {
+  return readFileSync(join(MESH_TRANSCRIPTION, '6-arcs-pro.motion.json'), 'utf8');
+}
+
+/** How many degrees the plateau mutant tilts a held segment by. */
+const PLATEAU_NUDGE = 6;
+
+/**
+ * The same motion with its busiest rotation carried on past its last key.
+ *
+ * This is rung 6's own defect, reproduced (LOOP.md §10): greedy key reduction is
+ * allowed to slope a line through a plateau while every individual key stays
+ * inside its tolerance, so the held tail keeps drifting across frames the
+ * reference holds pixel-identical. One key appended **at the animation's own
+ * duration** does the same thing — nothing between the old last key and the end
+ * holds still any more — and it keeps `A09` satisfied, which matters because a
+ * control has to be a rig the gate passes.
+ *
+ * Structural, with no measured number in it: the track is chosen as the rotation
+ * with the most keys, and the nudge is a delta in degrees rather than a value read
+ * off this shot.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function slopeThroughAPlateau(motionText: string): string | null {
+  const motion = JSON.parse(motionText);
+  for (const animation of Object.values(motion.animations) as any[]) {
+    const rotations = (animation.tracks as any[])
+      .filter((t: any) => t.property === 'rotate' && Array.isArray(t.keys) && t.keys.length > 0)
+      .sort((a: any, b: any) => b.keys.length - a.keys.length);
+    if (rotations.length === 0) return null;
+    const keys = rotations[0].keys as any[];
+    const last = keys[keys.length - 1];
+    if (!(last.t < animation.duration)) return null;
+    keys.push({ t: animation.duration, v: [last.v[0] + PLATEAU_NUDGE] });
+  }
+  return `${JSON.stringify(motion, null, 2)}\n`;
+}
+
+/**
+ * The same motion with its one-frame attachment reveal never firing.
+ *
+ * The other half of LOOP.md §10: the reveal's key landed a fraction of a
+ * millisecond past the animation's last sample, so the attachment never appeared.
+ * Reproduced here by keying `null` at the same moment instead of moving the time,
+ * because moving it past the duration is a compile error and a control has to be a
+ * rig the gate passes. What lands in the frames is identical: the last frame does
+ * not change, where the reference's does.
+ */
+function dropAOneFrameReveal(motionText: string): string | null {
+  const motion = JSON.parse(motionText);
+  let dropped = 0;
+  for (const animation of Object.values(motion.animations) as any[]) {
+    for (const track of animation.tracks as any[]) {
+      if (track.property !== 'attachment') continue;
+      for (const key of track.keys as any[]) {
+        if (key.v === null) continue;
+        key.v = null;
+        dropped++;
+      }
+    }
+  }
+  return dropped === 0 ? null : `${JSON.stringify(motion, null, 2)}\n`;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/** Every frame whose own change from the frame before it disagrees with the reference's. */
+function changeDisagreements(report: CheckReport): Array<{ dir: string; index: number; change: FrameChange }> {
+  const out: Array<{ dir: string; index: number; change: FrameChange }> = [];
+  for (const anim of report.animations) {
+    for (const frame of anim.frames) {
+      if (frame.change && frame.change.verdict !== 'agrees') {
+        out.push({ dir: anim.dir, index: frame.index, change: frame.change });
+      }
+    }
+  }
+  return out;
+}
+
+/** Adjacent pairs across which the REFERENCE itself holds pixel-identical, or moves. */
+function referenceRhythm(report: CheckReport): { held: number; moved: number; smallest: number } {
+  let held = 0;
+  let moved = 0;
+  let smallest = Infinity;
+  for (const anim of report.animations) {
+    for (const frame of anim.frames) {
+      if (!frame.change) continue;
+      if (frame.change.reference === 0) held++;
+      else {
+        moved++;
+        smallest = Math.min(smallest, frame.change.reference);
+      }
+    }
+  }
+  return { held, moved, smallest: Number.isFinite(smallest) ? smallest : 0 };
 }
 
 /** The median and worst drift of the mesh-bearing slots, over every frame compared. */
@@ -2652,6 +2752,65 @@ function runMeshCheckSuite(): number | null {
       : `${faithfulGate.failures.length} failure(s) on correct foreign geometry: ` +
           `[${[...new Set(faithfulGate.failures.map((x) => x.assertion))].join(', ')}]`,
     'an assertion that calls correct foreign data broken is worse than one that says it has nothing to measure',
+  );
+
+  // --- per-frame change fidelity (issue #53) ------------------------------
+  //
+  // These three live on this fixture because rung 6's frames are the only set in
+  // the corpus that HOLDS STILL: the reference is pixel-identical across f64-f67
+  // and then changes by three pixels at f68, a one-frame reveal. Everything else
+  // in the ladder moves every frame, and a measure about held poses and one-frame
+  // events cannot be controlled on frames that never hold and never blink.
+  //
+  // Both mutants below are the run's own two defects (LOOP.md §10). Both are green
+  // at the gate, both leave `diff`'s structural measures where they were, and both
+  // leave the aggregate union MAE unmoved — which is the whole reason the per-frame
+  // change columns exist. MR09 asserts the fixture actually contains the rhythm the
+  // other two break, so that "no disagreements" is a result rather than a vacuum.
+  const rhythm = referenceRhythm(faithfulReport);
+  const faithfulChanges = changeDisagreements(faithfulReport);
+  bad += say(
+    'MR09_A_FAITHFUL_RIG_MOVES_WHEN_THE_REFERENCE_MOVES',
+    rhythm.held > 0 && rhythm.moved > 0 && faithfulChanges.length === 0,
+    `the reference holds still across ${rhythm.held} adjacent pair(s) and moves across ${rhythm.moved} ` +
+      `(smallest ${rhythm.smallest} px); the transcription disagrees on ${faithfulChanges.length}`,
+    'a measure of held poses proves nothing on frames that never hold — the fixture has to contain the rhythm',
+  );
+
+  const sloped = slopeThroughAPlateau(meshMotionText());
+  const slopedReport =
+    sloped === null ? null : checkAgainstFrames({ ...compileMeshTranscription(null, sloped), framesDir: MESH_FRAMES });
+  const slopedChanges = slopedReport === null ? [] : changeDisagreements(slopedReport);
+  const brokePlateau = slopedChanges.filter((c) => c.change.verdict === 'moves' && c.change.reference === 0);
+  const slopedMae = slopedReport === null ? 0 : checkExtremes(slopedReport).meanMae;
+  bad += say(
+    'MR10_A_HELD_POSE_THAT_IS_NOT_HELD_IS_NAMED',
+    slopedReport !== null && brokePlateau.length > 0 && Math.abs(slopedMae - f.meanMae) < 0.1,
+    slopedReport === null
+      ? 'the fixture has no rotation track to carry past its last key'
+      : `${brokePlateau.length} frame(s) named (${brokePlateau
+          .map((c) => `f${String(c.index).padStart(4, '0')} ${c.change.candidate}px vs 0`)
+          .join(', ')}) while the union MAE stays ${slopedMae.toFixed(2)} against a faithful ${f.meanMae.toFixed(2)}`,
+    'greedy key reduction may slope a line through a plateau inside its own tolerance, and the aggregate cannot see it',
+  );
+
+  const withoutReveal = dropAOneFrameReveal(meshMotionText());
+  const revealReport =
+    withoutReveal === null
+      ? null
+      : checkAgainstFrames({ ...compileMeshTranscription(null, withoutReveal), framesDir: MESH_FRAMES });
+  const revealChanges = revealReport === null ? [] : changeDisagreements(revealReport);
+  const missedReveal = revealChanges.filter((c) => c.change.verdict === 'holds' && c.change.candidate === 0);
+  const revealMae = revealReport === null ? 0 : checkExtremes(revealReport).meanMae;
+  bad += say(
+    'MR11_A_ONE_FRAME_EVENT_THAT_NEVER_FIRED_IS_NAMED',
+    revealReport !== null && missedReveal.length > 0 && Math.abs(revealMae - f.meanMae) < 0.1,
+    revealReport === null
+      ? 'the fixture has no attachment timeline to drop'
+      : `${missedReveal.length} frame(s) named (${missedReveal
+          .map((c) => `f${String(c.index).padStart(4, '0')} 0px vs ${c.change.reference}`)
+          .join(', ')}) while the union MAE stays ${revealMae.toFixed(2)} against a faithful ${f.meanMae.toFixed(2)}`,
+    'a reveal that lands past the last sample never happens, and every structural measure reads it as present',
   );
 
   return bad;
@@ -2931,7 +3090,9 @@ function main(): void {
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
-      : `, + 1 rung-6 mesh render${meshCheckBad === null ? '' : ', + 4 mesh-fidelity controls'}`;
+      : `, + 1 rung-6 mesh render${
+          meshCheckBad === null ? '' : ', + 7 rung-6 fidelity controls (4 mesh, 3 per-frame change)'
+        }`;
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
