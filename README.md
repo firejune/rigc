@@ -1,4 +1,12 @@
-# rigc
+<p align="center">
+  <img src="assets/banner.svg" alt="rigc - Rig compiler for Spine" width="100%" />
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/rigc"><img src="https://img.shields.io/npm/v/rigc.svg?style=flat-square&color=FF6B4A" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/rigc"><img src="https://img.shields.io/npm/dm/rigc.svg?style=flat-square&color=A855F7" alt="npm downloads" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-38BDF8.svg?style=flat-square" alt="license" /></a>
+</p>
 
 **Rig compiler for Spine.** Declarative rig specs in, Spine 4.3 skeleton data out,
 verified by a `spine-core` round-trip. Built so AI agents can author rigs and check
