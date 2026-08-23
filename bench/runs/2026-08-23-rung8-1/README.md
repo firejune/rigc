@@ -277,11 +277,19 @@ and it loses its neck on 8 frames where the reference loses it on 1.
    mostly outline against a light backdrop that is most of the residual MAE, and it
    is the floor rung 3's second attempt describes.
 7. **The key density**, above — measured, and chosen.
-8. **The eyelet's rotation, the four constraints, bone names, parentage, `length`
-   and `inherit` are not in the frames and are not claimed.** The eyelet's is the
-   only one this run can *show* is unknowable rather than merely assert: run free it
-   wandered −25°…+52° frame to frame with no trend, and freezing it cost a measured
-   1.069 → 1.279 window MAE.
+8. **What is not in the frames, and what this run did about each.** *Not claimed:*
+   the eyelet's rotation (the only one this run can **show** is unknowable rather
+   than merely assert — run free it wandered −25°…+52° frame to frame with no trend,
+   and freezing it cost a measured 1.069 → 1.279 window MAE), the `ball`'s four
+   constraints, every bone's `inherit`, and every name. *Claimed anyway, and said
+   so:* every bone carries a setup `length`, because a bone made with Spine's
+   Create tool has one — the chain's four are the link lengths the frames measured,
+   and the discus's 343 and the eyelet's 120 are **not** measurements, they are
+   plausible numbers for a plate that wide and an eyelet that size. `bench` cannot
+   check either way here: `bones.length_present` and `bones.inherit_present` are
+   name-gated, and with `root` the only shared name they read 1/7 and 1/12 no
+   matter what is in the file. Rung 3's second attempt read its own 1/3 on those
+   two as a genuine miss; on this rung they carry no information at all.
 
 ## Notes for the guide
 
