@@ -1,0 +1,78 @@
+{
+  "note": "setup-pose joint positions in world units. Round 1: the centroid of the two parts' overlap in the fitted setup pose, with two placed by hand where the parts never overlap. Round 2 replaces every solvable one with the least-squares fixed point of the two parts across the whole shot (joints.ts).",
+  "round": 2,
+  "joints": {
+    "root": [
+      0,
+      0
+    ],
+    "hip": [
+      -33.85,
+      222.46
+    ],
+    "torso": [
+      -33.85,
+      222.46
+    ],
+    "neck": [
+      -13.02,
+      364.3
+    ],
+    "head": [
+      -10.52,
+      406.3
+    ],
+    "front-upper-arm": [
+      -31.03,
+      324.67
+    ],
+    "front-bracer": [
+      -72.9,
+      300.96
+    ],
+    "front-fist": [
+      -103.87,
+      275.08
+    ],
+    "rear-upper-arm": [
+      -4.07,
+      327.1
+    ],
+    "rear-bracer": [
+      30.56,
+      289.09
+    ],
+    "gun": [
+      69.85,
+      255.58
+    ],
+    "muzzle": [
+      279.4,
+      205
+    ],
+    "front-thigh": [
+      -42.95,
+      225.52
+    ],
+    "front-shin": [
+      -41.77,
+      143.35
+    ],
+    "front-foot": [
+      -98.79,
+      27.03
+    ],
+    "rear-thigh": [
+      -24.75,
+      219.4
+    ],
+    "rear-shin": [
+      60.21,
+      174.63
+    ],
+    "rear-foot": [
+      67.5,
+      40.46
+    ]
+  }
+}

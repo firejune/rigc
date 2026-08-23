@@ -1,0 +1,23 @@
+{
+  "note": "first guess at the idle/f0000 pose: located parts where the template matcher was confident, hand estimates elsewhere. Draw order is back-to-front and is itself a hypothesis.",
+  "placements": [
+    { "part": "rear-upper-arm", "cx": 6, "cy": 300, "rot": -25 },
+    { "part": "rear-bracer", "cx": 57, "cy": 278, "rot": 29 },
+    { "part": "gun", "cx": 155, "cy": 238, "rot": 30 },
+    { "part": "rear-thigh", "cx": 30, "cy": 193, "rot": 30 },
+    { "part": "rear-shin", "cx": 66, "cy": 103, "rot": 7 },
+    { "part": "rear-foot", "cx": 104, "cy": 31, "rot": -1.5 },
+    { "part": "torso", "cx": -20, "cy": 291, "rot": -10 },
+    { "part": "neck", "cx": -15, "cy": 420, "rot": -10 },
+    { "part": "head", "cx": 39, "cy": 507, "rot": 0 },
+    { "part": "eye-indifferent", "cx": 48, "cy": 430, "rot": 0 },
+    { "part": "goggles", "cx": 30, "cy": 471, "rot": 0.5 },
+    { "part": "mouth-grind", "cx": 43, "cy": 390, "rot": 0.5 },
+    { "part": "front-thigh", "cx": -33, "cy": 226, "rot": -1.5 },
+    { "part": "front-shin", "cx": -69, "cy": 103, "rot": -21 },
+    { "part": "front-foot", "cx": -80, "cy": 31, "rot": -1.5 },
+    { "part": "front-upper-arm", "cx": -70, "cy": 305, "rot": -20 },
+    { "part": "front-bracer", "cx": -96, "cy": 296, "rot": -35 },
+    { "part": "front-fist-open", "cx": -105, "cy": 229, "rot": -38 }
+  ]
+}
