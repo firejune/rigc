@@ -45,7 +45,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { MeshAttachment, Physics, Skeleton, type SkeletonData } from '@esotericsoftware/spine-core';
 import { assertFrameReadable, checkAgainstFrames, type CheckReport } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
-import { diffSkeletons, movedMeasures } from './src/diff.ts';
+import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
 import {
   EMPTY_FOOTPRINT,
   frameGeometry,
@@ -917,16 +917,46 @@ const DIFF_FIXTURE = resolve(import.meta.dir, 'examples/3-timing-and-spacing/exp
 interface DiffCase {
   name: string;
   why: string;
-  /** Every measure id this edit must move — exactly, no more and no fewer. */
+  /** Every NAME-MATCHED measure id this edit must move — exactly, no more and no fewer. */
   expect: string[];
+  /**
+   * The same, for the name-agnostic reports under `bones` and `slots`. Pinned
+   * on every case rather than only the ones about naming: those figures are
+   * what a reader is now shown beside the section mean, and a figure nothing
+   * asserts on is a figure that can quietly stop moving.
+   */
+  expectAgnostic: string[];
   mutate: (skeleton: Record<string, unknown>) => void;
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/** Rename every bone and slot, and every reference to one, leaving the shape alone. */
+function renameEverything(j: any): void {
+  const boneName = (n: string): string => `b_${n}`;
+  const slotName = (n: string): string => `s_${n}`;
+  for (const b of j.bones) {
+    if (b.parent !== undefined) b.parent = boneName(b.parent);
+    b.name = boneName(b.name);
+  }
+  for (const s of j.slots) {
+    s.bone = boneName(s.bone);
+    s.name = slotName(s.name);
+  }
+  for (const skin of j.skins) {
+    skin.attachments = Object.fromEntries(
+      Object.entries(skin.attachments).map(([slot, atts]) => [slotName(slot), atts]),
+    );
+  }
+  for (const anim of Object.values(j.animations) as any[]) {
+    if (anim.bones) anim.bones = Object.fromEntries(Object.entries(anim.bones).map(([n, t]) => [boneName(n), t]));
+    if (anim.slots) anim.slots = Object.fromEntries(Object.entries(anim.slots).map(([n, t]) => [slotName(n), t]));
+  }
+}
+
 const DIFF_CASES: DiffCase[] = [
   {
     name: 'D01_drop_a_bone',
-    why: 'the whole bones section moves and nothing else does — a slot still names the bone it named, so the binding figure is untouched and stays diagnostic',
+    why: 'the whole bones section moves and nothing else does — a slot still names the bone it named, so the NAME-MATCHED binding figure is untouched and stays diagnostic. Name-agnostically the binding IS broken, because the bone is gone: the two reports disagree here on purpose, and that is what they are for',
     expect: [
       'bones.count',
       'bones.names',
@@ -937,14 +967,24 @@ const DIFF_CASES: DiffCase[] = [
       'bones.depth_histogram',
       'bones.degree_sequence',
     ],
+    expectAgnostic: [
+      'bones.agnostic.count',
+      'bones.agnostic.depth_histogram',
+      'bones.agnostic.degree_sequence',
+      'bones.agnostic.shape_histogram',
+      'bones.agnostic.order_shape',
+      'slots.agnostic.bone_binding_shape',
+      'slots.agnostic.order_shape',
+    ],
     mutate: (j) => {
       (j as any).bones = (j as any).bones.filter((b: any) => b.name !== 'square');
     },
   },
   {
     name: 'D02_reorder_two_slots',
-    why: 'the slots array IS the draw order, so this is a real defect — and it must move ONLY the order measure, or "wrong z-order" and "wrong rig" would read the same',
+    why: 'the slots array IS the draw order, so this is a real defect — and it must move ONLY the order measure, or "wrong z-order" and "wrong rig" would read the same. Nothing agnostic moves: these two slots draw the same kind of attachment off the same shape of bone, so without their names they are the same slot and a swap is not observable. That is the measure the name-matched half exists to carry',
     expect: ['slots.order'],
+    expectAgnostic: [],
     mutate: (j) => {
       const slots = (j as any).slots;
       (j as any).slots = [slots[1], slots[0], ...slots.slice(2)];
@@ -952,7 +992,7 @@ const DIFF_CASES: DiffCase[] = [
   },
   {
     name: 'D03_remove_an_animation',
-    why: 'every animation measure that can see a missing animation moves; event_keys does not, because neither side has events and a vacuous measure must not manufacture a gap',
+    why: 'every animation measure that can see a missing animation moves; event_keys does not, because neither side has events and a vacuous measure must not manufacture a gap. The skeleton is untouched, so no bone or slot figure moves in either report',
     expect: [
       'animations.count',
       'animations.names',
@@ -963,6 +1003,7 @@ const DIFF_CASES: DiffCase[] = [
       'animations.draw_order',
       'animations.deform',
     ],
+    expectAgnostic: [],
     mutate: (j) => {
       delete (j as any).animations.light;
     },
@@ -971,11 +1012,61 @@ const DIFF_CASES: DiffCase[] = [
     name: 'D04_change_a_curve_kind',
     why: 'one bezier becomes stepped: same timelines, same key count, same duration. Only the curve histogram may notice, and that is the measure that carries timing quality',
     expect: ['animations.curve_kinds'],
+    expectAgnostic: [],
     mutate: (j) => {
       const keys = (j as any).animations.heavy.bones.bone.rotate;
       const at = keys.findIndex((k: any) => Array.isArray(k.curve));
       if (at < 0) throw new Error('fixture has no bezier key on heavy.bones.bone.rotate');
       keys[at].curve = 'stepped';
+    },
+  },
+  {
+    name: 'D05_rename_every_bone_and_slot',
+    why: 'the case issue #21 was filed about: the same rig with its own vocabulary. Every name-keyed measure floors — including `attachments.names`, whose key embeds the slot name — and the name-agnostic reports stay at 1.000 throughout, because not one of their measures consults a name. A reader shown only the section mean would call this rig a total failure; shown the pair, they read "right shape, different words"',
+    expect: [
+      'bones.names',
+      'bones.parent_by_name',
+      'bones.order',
+      'bones.length_present',
+      'bones.inherit_present',
+      'slots.names',
+      'slots.order',
+      'slots.bone',
+      'slots.attachment',
+      'slots.blend',
+      'slots.color_present',
+      'attachments.names',
+    ],
+    expectAgnostic: [],
+    mutate: (j) => renameEverything(j),
+  },
+  {
+    name: 'D06_reparent_a_bone',
+    why: 'the negative control for D05: a real structural defect, made under the SAME names, so the name-agnostic figures have to move on their own. Without this, "agnostic stays 1.000" in D05 would be indistinguishable from an agnostic report that can never move at all. `bones.names`, `bones.order` and `slots.bone` are untouched — the vocabulary is intact and only the tree changed',
+    expect: ['bones.parent_by_name', 'bones.depth_histogram', 'bones.degree_sequence'],
+    expectAgnostic: [
+      'bones.agnostic.depth_histogram',
+      'bones.agnostic.degree_sequence',
+      'bones.agnostic.shape_histogram',
+      'bones.agnostic.order_shape',
+      'slots.agnostic.bone_binding_shape',
+      'slots.agnostic.order_shape',
+    ],
+    mutate: (j) => {
+      const bone = (j as any).bones.find((b: any) => b.name === 'bone');
+      if (!bone || bone.parent !== 'root') throw new Error('fixture bone `bone` is not a child of `root`');
+      bone.parent = 'square';
+    },
+  },
+  {
+    name: 'D07_resize_a_region',
+    why: 'what replaced `region_size_present` (issue #28). The old measure asked whether a size was STATED, was keyed by name, and so reported the naming gap a third time — D05 above would have moved it. This one asks how big the region is, name-agnostically, so D05 leaves it alone and an actual size difference moves it and nothing else',
+    expect: ['attachments.region_size'],
+    expectAgnostic: [],
+    mutate: (j) => {
+      const att = (j as any).skins[0].attachments.square.square;
+      if (typeof att.width !== 'number') throw new Error('fixture region `square` states no width');
+      att.width += 41;
     },
   },
 ];
@@ -1008,20 +1099,52 @@ function runDiffSuite(): number | null {
     console.log(`  FAIL  CONTROL_DIFF_OF_A_FILE_WITH_ITSELF_IS_ONE: [${drift.join(', ')}] are below 1.000`);
   }
 
+  // Second positive control, for the half the one above cannot see: the
+  // name-agnostic reports have to exist and have to be 1.000 on identity too. A
+  // section that quietly stopped emitting one would still pass the control
+  // above, because a report with no measures has nothing below 1.000 in it.
+  const split = identity.sections.filter((s) => s.nameAgnostic !== undefined);
+  const agnosticDrift = movedAgnosticMeasures(identity);
+  const agnosticCount = split.reduce((n, s) => n + (s.nameAgnostic?.measures.length ?? 0), 0);
+  if (split.length === 2 && agnosticCount === 9 && agnosticDrift.length === 0) {
+    console.log(
+      `  PASS  CONTROL_NAME_AGNOSTIC_REPORTS_EXIST_AND_ARE_ONE  (${split.map((s) => s.name).join(', ')}; ${agnosticCount} measures, all 1.000)`,
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  CONTROL_NAME_AGNOSTIC_REPORTS_EXIST_AND_ARE_ONE: sections [${split.map((s) => s.name).join(', ')}] ` +
+        `carrying ${agnosticCount} measure(s); below 1.000: [${agnosticDrift.join(', ')}]  ` +
+        '(want: bones and slots, 9 measures, none below 1.000)',
+    );
+  }
+
   for (const c of DIFF_CASES) {
     const candidate: Record<string, unknown> = JSON.parse(text);
     c.mutate(candidate);
-    const moved = movedMeasures(diffSkeletons(candidate, reference));
+    const report = diffSkeletons(candidate, reference);
+    const moved = movedMeasures(report);
+    const movedAgnostic = movedAgnosticMeasures(report);
     const want = [...c.expect].sort().join(', ');
     const got = [...moved].sort().join(', ');
-    if (want === got) {
-      console.log(`  PASS  ${c.name}  (moved exactly ${moved.length} measure(s))`);
+    const wantAgnostic = [...c.expectAgnostic].sort().join(', ');
+    const gotAgnostic = [...movedAgnostic].sort().join(', ');
+    if (want === got && wantAgnostic === gotAgnostic) {
+      console.log(
+        `  PASS  ${c.name}  (moved exactly ${moved.length} name-matched, ${movedAgnostic.length} name-agnostic measure(s))`,
+      );
       console.log(`          ${c.why}`);
     } else {
       bad++;
       console.log(`  FAIL  ${c.name}`);
-      console.log(`          expected to move: [${want}]`);
-      console.log(`          actually moved:   [${got}]`);
+      if (want !== got) {
+        console.log(`          name-matched expected to move: [${want}]`);
+        console.log(`          name-matched actually moved:   [${got}]`);
+      }
+      if (wantAgnostic !== gotAgnostic) {
+        console.log(`          name-agnostic expected to move: [${wantAgnostic}]`);
+        console.log(`          name-agnostic actually moved:   [${gotAgnostic}]`);
+      }
     }
   }
   return bad;
@@ -2534,7 +2657,8 @@ function main(): void {
       ? '\n  ⚠️ The example corpus is absent, so the ' +
         [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
-      : `, + ${DIFF_CASES.length} diff measure controls, + 5 check controls (frames-only reads, a faithful ` +
+      : `, + 2 diff identity controls (name-matched and name-agnostic), + ${DIFF_CASES.length} diff measure controls, ` +
+        '+ 5 check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         'the framing names)';
   const meshRung =
