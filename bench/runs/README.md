@@ -77,6 +77,13 @@ reference skeleton of the rung, so it prints a line per skeleton whichever candi
 you give it. Build both, run `bench` once per candidate, and read only the matching
 line from each — then say in the log which line came from which run. Quoting the
 other line as though it were a measurement of anything is the failure mode here.
+**Rung 8 is the first two-skeleton rung run since this was written, and it confirms
+the warning is load-bearing**: both of its runs printed a confident, plausible line
+for the skeleton the candidate was not built from
+([`2026-08-23-rung8-1/README.md`](2026-08-23-rung8-1/README.md), *The measures*,
+marks each ⚠️ and quotes only the matching one). This is the rule for the agent
+producing a report; [docs/LADDER.md](../../docs/LADDER.md)'s *Running a rung*
+carries it for whoever reads one.
 
 ⚠️ **spineboy is a two-skeleton rung where only one of them counts.** `ess` is the
 rung; `pro` is a **stretch** skeleton — `bench` labels its line *(stretch — reported,

@@ -1164,5 +1164,22 @@ and does not count towards the rung: it is a harder rig than the graduation exam
 and folding it in would make the exam unpassable for a reason unrelated to
 passing it.
 
+⚠️ **On a two-skeleton rung, half of what `bench` prints is noise, and it does not
+look like noise.** `bench <N> --candidate <dir>` takes one candidate and diffs it
+against *every* reference skeleton of the rung, so it prints a line per skeleton
+whichever candidate it was given. Only the line for the skeleton that candidate was
+built from is a measurement of anything; the other is a confident, plausible figure
+for a rig nobody wrote. Rung 8 is the first two-skeleton rung run since that trap
+was written down, and **both of its runs printed one** — see
+[`2026-08-23-rung8-1/README.md`](../bench/runs/2026-08-23-rung8-1/README.md), which
+marks each ⚠️ and quotes only the matching line. Nothing in `bench`'s own output
+says which line is which, so a report that does not name it has not told you.
+⇒ Build both, run `bench` once per candidate, and read one line from each run; when
+you are reading somebody else's report instead of producing one, check that it says
+which run each quoted line came from before you use a number out of it. The rule for
+the run agent is in the protocol
+([`bench/runs/README.md`](../bench/runs/README.md), *Which rungs can be attempted*);
+this is the same rule for whoever reads the result.
+
 `bench` exits non-zero only when stage 1 fails. The diff has no threshold, so it
 cannot fail — read it.
