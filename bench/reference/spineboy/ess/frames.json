@@ -1,0 +1,167 @@
+{
+  "spec": "rigc-frames/1",
+  "example": "spineboy",
+  "rung": "spineboy",
+  "skeleton": "ess",
+  "background": [
+    232,
+    232,
+    232,
+    255
+  ],
+  "viewport": {
+    "x": -795.445317629071,
+    "y": -138.02508173937127,
+    "width": 1722.1778586894338,
+    "height": 1644.7599339120825,
+    "scale": 0.22297348561444258,
+    "pixelWidth": 384,
+    "pixelHeight": 367
+  },
+  "sets": [
+    {
+      "dir": "aim",
+      "animation": "aim",
+      "fps": 12,
+      "sampled": 1,
+      "written": 1,
+      "stride": 1,
+      "duration": 0
+    },
+    {
+      "dir": "aim@30fps",
+      "animation": "aim",
+      "fps": 30,
+      "sampled": 1,
+      "written": 1,
+      "stride": 999,
+      "duration": 0
+    },
+    {
+      "dir": "death",
+      "animation": "death",
+      "fps": 12,
+      "sampled": 60,
+      "written": 60,
+      "stride": 1,
+      "duration": 4.916666666666666
+    },
+    {
+      "dir": "death@30fps",
+      "animation": "death",
+      "fps": 30,
+      "sampled": 149,
+      "written": 2,
+      "stride": 999,
+      "duration": 4.933333333333334
+    },
+    {
+      "dir": "hit",
+      "animation": "hit",
+      "fps": 12,
+      "sampled": 5,
+      "written": 5,
+      "stride": 1,
+      "duration": 0.3333333333333333
+    },
+    {
+      "dir": "hit@30fps",
+      "animation": "hit",
+      "fps": 30,
+      "sampled": 11,
+      "written": 2,
+      "stride": 999,
+      "duration": 0.3333333333333333
+    },
+    {
+      "dir": "idle",
+      "animation": "idle",
+      "fps": 12,
+      "sampled": 21,
+      "written": 21,
+      "stride": 1,
+      "duration": 1.6666666666666665
+    },
+    {
+      "dir": "idle@30fps",
+      "animation": "idle",
+      "fps": 30,
+      "sampled": 51,
+      "written": 2,
+      "stride": 999,
+      "duration": 1.6666666666666667
+    },
+    {
+      "dir": "jump",
+      "animation": "jump",
+      "fps": 12,
+      "sampled": 17,
+      "written": 17,
+      "stride": 1,
+      "duration": 1.3333333333333333
+    },
+    {
+      "dir": "jump@30fps",
+      "animation": "jump",
+      "fps": 30,
+      "sampled": 41,
+      "written": 2,
+      "stride": 999,
+      "duration": 1.3333333333333333
+    },
+    {
+      "dir": "run",
+      "animation": "run",
+      "fps": 12,
+      "sampled": 9,
+      "written": 9,
+      "stride": 1,
+      "duration": 0.6666666666666666
+    },
+    {
+      "dir": "run@30fps",
+      "animation": "run",
+      "fps": 30,
+      "sampled": 21,
+      "written": 2,
+      "stride": 999,
+      "duration": 0.6666666666666666
+    },
+    {
+      "dir": "shoot",
+      "animation": "shoot",
+      "fps": 12,
+      "sampled": 6,
+      "written": 6,
+      "stride": 1,
+      "duration": 0.41666666666666663
+    },
+    {
+      "dir": "shoot@30fps",
+      "animation": "shoot",
+      "fps": 30,
+      "sampled": 13,
+      "written": 2,
+      "stride": 999,
+      "duration": 0.4
+    },
+    {
+      "dir": "walk",
+      "animation": "walk",
+      "fps": 12,
+      "sampled": 13,
+      "written": 13,
+      "stride": 1,
+      "duration": 1
+    },
+    {
+      "dir": "walk@30fps",
+      "animation": "walk",
+      "fps": 30,
+      "sampled": 31,
+      "written": 2,
+      "stride": 999,
+      "duration": 1
+    }
+  ]
+}
