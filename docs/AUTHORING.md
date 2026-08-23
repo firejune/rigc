@@ -1401,7 +1401,20 @@ all the time"*, and Clean Up *"deletes all unnecessary keys … keying the same 
 multiple times in a row, keying the same values as the setup pose"*, because *"often
 it is convenient to set keys liberally when designing an animation, then use Clean
 Up afterward"* — [Keys](http://esotericsoftware.com/spine-keys). ⇒ a shipped export
-is dense, but it does not repeat a value.
+is dense, and what it does not carry is a key its own neighbours already imply.
+
+🧩 **⇒ A hold still needs a key at both ends, and two equal values are not a
+repeat.** Clean Up's *"keying the same value multiple times in a row"* is about
+**three or more** — a run of keys whose interior ones their neighbours imply. Two
+keys of equal value imply nothing: they are the only way to say *nothing moves here*
+on an interpolated timeline, and deleting either one ramps the value through the
+hold. Stillness is a thing a shot does, sometimes for a twelfth of a second and
+sometimes for nine frames (spineboy's `shoot` opens on the first and its `death`
+lies in the second), and it is authored, not omitted. ⇒ Key the start of a hold and
+key its end, at the same value; drop the ones in between. This is §9.2's *"held pose
+that is not held"* from the other side, and the same place catches it — a sloped
+hold shows up in `check`'s per-frame column and nowhere else, because it is cheap in
+every single frame and wrong only in the relation between two.
 
 📗 **Add a key when a curve cannot carry the shape.** *"If a curve is not smooth
 enough, it is easily remedied by adding another key"*, and the **Bounce** handle
@@ -1417,6 +1430,38 @@ minimal one-key-per-pose spec produces.
 🚫 **No public page gives a keys-per-second figure, and this guide does not invent
 one.** Reaching for a target density is guessing. The frames are the only thing that
 can say where the motion turns; §8 is how to read them.
+
+⚠️ **Two rules for a run that *fits* a pose series rather than reading it off the
+frames.** Neither is Spine's — no public page has an opinion about a fitter — but
+both decide where the keys above actually land, so they sit beside them. Both were
+paid for on the ladder.
+
+**A key tolerance on a rotation is not a number of degrees.** The same angular error
+costs a different number of pixels at every level of a hierarchy, because everything
+below the bone comes with it. Measured on rung 8's four-link chain: **a quarter of a
+degree on the last link moves the chain's end 0.15 px, and the same quarter degree
+on the plate the chain hangs from moves it 0.69 px.** One figure in degrees applied
+per property therefore keys the far end of the chain roughly four times too loosely
+while over-keying the near end — it is not one tolerance at all. ⇒ Declare **one**
+tolerance, **in pixels at the end of what the bone swings**, and convert it per bone
+by that bone's lever arm. With that, the whole trade reads as one curve and you can
+pick a point on it deliberately: that shot measured 0.6 px → 259 keys → 1.619 window
+MAE, 0.3 px → 300 → 1.402, 0.15 px → 377 → 1.305.
+
+**A rig's parameters are not identified by its pixels — remove the gauges before you
+key.** A bone that carries no attachment is an exact gauge: turn it by δ, turn its
+children back by δ, and **not one pixel changes**. Anything optimising against pixels
+is free to wander along that direction, and it does. On the spineboy run the figure's
+topmost body bone carries no art and every moving bone sits under it, and a
+coordinate descent walked it to **+181°** against its child's **−184°** — a pose
+whose picture is right on every frame and whose key series spins the whole figure
+through a full turn between two of them. The rendered result is correct and the
+authored rig is nonsense, and no amount of further fitting finds it, because every
+point on the gauge orbit has identical error. ⇒ Fold each gauge out *before* the
+series becomes keys — for a rotation gauge, take the median of the values along the
+chain and fold it back. It is exact and it is cheap. The same shape exists wherever a
+transform is unobservable: a bone with no art, a slot-less parent chain, a uniform
+scale split across two bones.
 
 ### 10.4 Curves
 
@@ -1450,6 +1495,23 @@ and **Ease in** (*"the value changes more slowly near the next key"*) —
 🧩 **⇒ That is what `easings` is for.** A handful of named shapes, reused by name
 across the file, is how an editor rig reads. Raw `curve` is R6's escape hatch — one
 key needing a shape no other key has — not the normal way to write a curve.
+
+🚨 **The table is a constraint on where the keys go, not a formatting step applied
+afterwards — it has to exist while the keys are chosen.** A run that plans its keys
+by fitting each span's **own** handles, and then writes the nearest entry of a named
+table, has bought a key count at one tolerance and shipped it at another. Nothing in
+the loop can see that: the timeline count, the key count, the curve kinds and the
+duration are all unmoved, so `diff` does not shift and the gate stays green, while
+the rendered result changes by a multiple. Rung 8's first version did exactly this
+and went from **1.07 to 4.65 MAE** — four times its own fit's floor. ⇒ Two passes.
+Pass A fits freely and exists only to *discover* which shapes the shot uses; those
+are clustered into the table; pass B re-plans **every** timeline under the table it
+will actually write. Never fit free handles and substitute the nearest named shape
+after the fact. (The table's size then trades against the key count at a fixed
+tolerance — that shot ran 4 easings/368 keys, 8/314, 12/300, 16/284 — because a
+richer table holds more spans.) This is rung 6's clamp defect in another suit:
+**a constraint that is not enforced where the value is written is not a
+constraint.**
 
 📗 **Handles are normalised, and that is the shape an `easings` entry takes.** For a
 Bezier key, *"the X axis is from 0 to 1 and represents the percent of time between
