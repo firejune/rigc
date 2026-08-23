@@ -474,7 +474,37 @@ export interface SpineMeshAttachment {
   color?: string;
 }
 
-export type SpineAttachment = SpineRegionAttachment | SpineMeshAttachment;
+/**
+ * The two vertex-only attachments: a polygon and nothing else.
+ *
+ * `vertexCount` is not optional the way a mesh's is absent-by-design: the parser
+ * reads `map.vertexCount << 1`, so an omission is `0` and `readVertices` decodes
+ * the coordinate array as a weight run and stores nothing.
+ */
+export interface SpineBoundingBoxAttachment {
+  type: 'boundingbox';
+  vertexCount: number;
+  /** Unweighted x/y pairs, or the weighted run — same encoding as a mesh's. */
+  vertices: number[];
+  color?: string;
+}
+
+export interface SpineClippingAttachment {
+  type: 'clipping';
+  /** The last slot the clip applies to. Absent = to the bottom of the order. */
+  end?: string;
+  convex?: boolean;
+  inverse?: boolean;
+  vertexCount: number;
+  vertices: number[];
+  color?: string;
+}
+
+export type SpineAttachment =
+  | SpineRegionAttachment
+  | SpineMeshAttachment
+  | SpineBoundingBoxAttachment
+  | SpineClippingAttachment;
 
 export type SpineTimelineKey = Record<string, unknown>;
 

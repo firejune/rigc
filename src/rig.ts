@@ -395,18 +395,99 @@ export interface RigMeshAttachment {
 }
 
 /**
- * The four types the format holds and rigc's emitter does not cover yet. They
- * are in the type so a spec can *say* them and get a named
- * `NotImplementedError`; the alternative is the parser's own behaviour, which is
- * to return `null` for an unknown `type` and drop the attachment without a word
+ * The geometry every non-region attachment shares: a polygon, either pinned to
+ * one bone or weighted across several.
+ *
+ * ⭐ `vertexCount` is REQUIRED and cross-checked, and that is the whole design of
+ * these two types. A mesh gets its vertex count from `uvs.length`, so there is
+ * nothing to state; a bounding box and a clipping polygon have no uvs, and the
+ * parser reads `map.vertexCount << 1` — with the field absent that is
+ * `undefined << 1` = **0**, so `readVertices` takes the weighted branch,
+ * decodes coordinates as a weight run, and hands back an attachment with no
+ * vertices at all. Nothing throws. So the count is declared here and checked
+ * against whichever encoding the spec used.
+ *
+ * The two encodings are the mesh's, unchanged, and for the same reason:
+ * `weights` binds by NAME and is the default; `vertices` is either an unweighted
+ * `x, y` run (one pair per vertex) or Spine's index-encoded weighted run, and
+ * the second of those needs `boneIndexing: "raw"` said out loud because a bone
+ * inserted anywhere above shifts every index in silence (issue #45).
+ */
+export interface RigVertexGeometry {
+  /** Required. No parser default: absent reads as 0 and the polygon vanishes. */
+  vertexCount: number;
+  /**
+   * Unweighted `x, y` pairs (`vertices.length === vertexCount * 2`), or Spine's
+   * weighted run behind `boneIndexing: "raw"`. Mutually exclusive with `weights`.
+   */
+  vertices?: number[];
+  /** Weighted geometry bound by name — one entry per vertex. The default form. */
+  weights?: RigMeshBinding[][];
+  /** `"raw"` opts a `vertices` weighted run into the index encoding. */
+  boneIndexing?: 'name' | 'raw';
+  /** `rrggbbaa`. Editor affordance: the colour the box is drawn in. */
+  color?: string;
+}
+
+/**
+ * `type: "boundingbox"` (`SkeletonJson.ts:560-567`).
+ *
+ * **When you need one:** a polygon the game can hit-test against — a hurt box, a
+ * pick region, a trigger volume — that moves with the skeleton and draws
+ * nothing. It is the only attachment type whose entire purpose is outside the
+ * renderer, which is why it has no `path`, no size and no uvs.
+ */
+export interface RigBoundingBoxAttachment extends RigVertexGeometry {
+  type: 'boundingbox';
+}
+
+/**
+ * `type: "clipping"` (`SkeletonJson.ts:635-651`).
+ *
+ * **When you need one:** a mask. The polygon clips every slot drawn from the one
+ * carrying it up to and including `end`, so a window, a portal or a wipe is one
+ * attachment rather than a second set of art.
+ *
+ * ⚠️ `end` is resolved with `skeletonData.findSlot(end)`, which returns **null**
+ * on a miss and assigns that null without complaint (`:626-627`). The clip then
+ * never ends — it runs to the bottom of the draw order and takes every slot
+ * below it with it. rigc refuses a name the rig does not declare.
+ */
+export interface RigClippingAttachment extends RigVertexGeometry {
+  type: 'clipping';
+  /**
+   * The last slot this clip applies to, by name. Absent leaves `endSlot` null,
+   * which is the parser's own encoding for "clip everything after this one".
+   */
+  end?: string;
+  /** 4.3. Default false. */
+  convex?: boolean;
+  /** 4.3. Default false. */
+  inverse?: boolean;
+}
+
+/**
+ * The three types the format holds and rigc's emitter does not cover. They are
+ * in the type so a spec can *say* them and get a named `NotImplementedError`;
+ * the alternative is the parser's own behaviour, which is to return `null` for
+ * an unknown `type` and drop the attachment without a word
  * (`SkeletonJson.ts:653`).
+ *
+ * 🚧 None of the three appears anywhere in the benchmark corpus
+ * (SPEC_COVERAGE parts 3-1 and 4-2), so none is on the ladder's critical path —
+ * which is the reason they are deferred rather than an oversight.
  */
 export interface RigUnimplementedAttachment {
-  type: 'boundingbox' | 'point' | 'clipping' | 'path' | 'linkedmesh';
+  type: 'point' | 'path' | 'linkedmesh';
   [field: string]: unknown;
 }
 
-export type RigAttachment = RigRegionAttachment | RigMeshAttachment | RigUnimplementedAttachment;
+export type RigAttachment =
+  | RigRegionAttachment
+  | RigMeshAttachment
+  | RigBoundingBoxAttachment
+  | RigClippingAttachment
+  | RigUnimplementedAttachment;
 
 /** `slotName -> placeholderName -> attachment` (`SkeletonJson.ts:431-439`). */
 export type RigSkin = Record<string, Record<string, RigAttachment>>;
