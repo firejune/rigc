@@ -421,7 +421,9 @@ Optional, and only meaningful for rigc's own formations: `meshSlots` and
 bone carries a cut's axis or that a parentage is forbidden, so the rig spec says it
 and the validator's archetype assertions read it. **An assertion whose field is
 absent reports SKIP, never a pass.** If you are reproducing a foreign skeleton,
-leave this out entirely and run `--profile spine`.
+leave this out entirely and run `--profile spine` — and expect `PROF` rather than
+that SKIP, because the profile excludes an archetype assertion before its body
+could notice the missing field (§5.2).
 
 ---
 
@@ -623,8 +625,12 @@ The report prints one line per assertion:
 - **PASS** — it ran and held.
 - **SKIP** — it had *nothing to look at*, and the reason says what was missing. A
   skip is never folded into the pass count.
-- **PROF** — the profile you chose does not carry that kind of rule. A
-  `--profile spine` green means *valid Spine*, never *passes the renderer policy*.
+- **PROF** — the profile you chose does not carry that kind of rule. Two kinds sit
+  outside `spine`, not one: the renderer rules **and** the archetype rules. The
+  exclusion is checked before the assertion's body runs, so an archetype rule with
+  no `invariants` field to measure reports `PROF` here, never its own SKIP. A
+  `--profile spine` green means *valid Spine*, never *passes the renderer policy*
+  and never *holds to the archetype rules*.
 - **FAIL** — the detail names the object, the value found and the value required.
   That detail is the instruction; the table below says which file to change.
 
@@ -704,8 +710,10 @@ Two more limits that are not errors but will shape what you can attempt:
    excluded by the profile before the missing `invariants` block could make them
    skip, so they come back `PROF` instead. Do not go looking for a SKIP that the
    profile already accounted for; read step 3 instead.
-3. Read the `PROF` lines. A green under `spine` has not been held to the renderer
-   policy, and a green under `spine-html` has.
+3. Read the `PROF` lines. They are where "was this rig held to that rule at all"
+   gets answered for everything the profile left out — the renderer policy *and*
+   the archetype rules. A green under `spine` has been held to neither; a green
+   under `spine-html` has been held to both.
 4. Run `explain` and read the slots table: every slot you declared should be there
    (§3.3), in the order you meant, showing the setup attachment you meant.
 5. If you were given **frames**, run `check` and read the table (§9). Steps 1–4 are
