@@ -1,0 +1,164 @@
+[
+ {
+  "v": {
+   "hip.x": -32.939415499720596,
+   "hip.y": 16.41017750716938,
+   "hip.rot": 0,
+   "torso": 0,
+   "head": 22,
+   "rear-upper-arm": 31.399999999999988,
+   "rear-bracer": 6.199999999999999,
+   "gun": -9.9,
+   "front-upper-arm": 55.8,
+   "front-bracer": 24.700000000000006,
+   "front-fist": 30.09999999999999,
+   "rear-thigh": -6,
+   "rear-shin": 3.999999999999999,
+   "rear-foot": -10.299999999999999,
+   "front-thigh": 39.4,
+   "front-shin": -14,
+   "front-foot": -6.899999999999999
+  },
+  "fist": "front-fist-closed",
+  "mae": 41.541083154578985
+ },
+ {
+  "v": {
+   "hip.x": -33.12000803851645,
+   "hip.y": 16.908289197682798,
+   "hip.rot": 0,
+   "torso": 0,
+   "head": 22,
+   "rear-upper-arm": 33.4,
+   "rear-bracer": 5.4999999999999964,
+   "gun": -13.000000000000004,
+   "front-upper-arm": 61.39999999999999,
+   "front-bracer": 13,
+   "front-fist": 41.2,
+   "rear-thigh": -6.800000000000001,
+   "rear-shin": 4.8,
+   "rear-foot": -9.7,
+   "front-thigh": 39.4,
+   "front-shin": -14.100000000000001,
+   "front-foot": -3.599999999999998
+  },
+  "fist": "front-fist-closed",
+  "mae": 41.00857313722875
+ },
+ {
+  "v": {
+   "hip.x": 5.139660434062698,
+   "hip.y": 23.753095211737943,
+   "hip.rot": 3.4000000000000004,
+   "torso": 8.6,
+   "head": 10.5,
+   "rear-upper-arm": -8.400000000000002,
+   "rear-bracer": 52.3,
+   "gun": -25.4,
+   "front-upper-arm": 52.599999999999994,
+   "front-bracer": -14.899999999999999,
+   "front-fist": -6.399999999999999,
+   "rear-thigh": -49.400000000000006,
+   "rear-shin": 3.200000000000001,
+   "rear-foot": 31.4,
+   "front-thigh": 51.4,
+   "front-shin": -22.4,
+   "front-foot": -11.700000000000001,
+   "muzzle.rot": 0,
+   "muzzle.sx": 1.8000000000000005,
+   "muzzle.sy": 3.0000000000000004
+  },
+  "fist": "front-fist-closed",
+  "mae": 31.48557656130518,
+  "slots": {
+   "muzzle": "muzzle01",
+   "muzzle-glow": "muzzle-glow",
+   "muzzle-ring": "muzzle-ring"
+  }
+ },
+ {
+  "v": {
+   "hip.x": 16.84663857335547,
+   "hip.y": 27.17486654020378,
+   "hip.rot": 6.800000000000001,
+   "torso": 8.799999999999999,
+   "head": 7.1999999999999975,
+   "rear-upper-arm": -37.199999999999996,
+   "rear-bracer": 90.29999999999997,
+   "gun": -43.59999999999999,
+   "front-upper-arm": 47.19999999999999,
+   "front-bracer": -16.299999999999994,
+   "front-fist": -0.3999999999999975,
+   "rear-thigh": -60.40000000000002,
+   "rear-shin": 4.500000000000002,
+   "rear-foot": 47.50000000000002,
+   "front-thigh": 44.699999999999996,
+   "front-shin": -24.4,
+   "front-foot": -10.1,
+   "muzzle.rot": 31,
+   "muzzle.sx": 0.8999999999999999,
+   "muzzle.sy": 2.4
+  },
+  "fist": "front-fist-closed",
+  "mae": 40.63846064930024,
+  "slots": {
+   "muzzle": "muzzle03",
+   "muzzle-glow": "muzzle-glow",
+   "muzzle-ring": "muzzle-ring"
+  }
+ },
+ {
+  "v": {
+   "hip.x": 29.942898399742774,
+   "hip.y": 32.135627229038796,
+   "hip.rot": 10.2,
+   "torso": 10,
+   "head": 2.399999999999995,
+   "rear-upper-arm": -35.600000000000016,
+   "rear-bracer": 81.79999999999993,
+   "gun": -39.79999999999998,
+   "front-upper-arm": 38.19999999999999,
+   "front-bracer": -11.099999999999994,
+   "front-fist": -1.299999999999996,
+   "rear-thigh": -70.60000000000002,
+   "rear-shin": 11.700000000000001,
+   "rear-foot": 36.900000000000034,
+   "front-thigh": 28.299999999999997,
+   "front-shin": -9.5,
+   "front-foot": -18.799999999999997,
+   "muzzle.rot": -21,
+   "muzzle.sx": 2.9000000000000012,
+   "muzzle.sy": 2.6
+  },
+  "fist": "front-fist-closed",
+  "mae": 39.56438697596372,
+  "slots": {
+   "muzzle": "muzzle04",
+   "muzzle-glow": "muzzle-glow",
+   "muzzle-ring": "muzzle-ring"
+  }
+ },
+ {
+  "v": {
+   "hip.x": 28.543573096464563,
+   "hip.y": 32.78854206265377,
+   "hip.rot": 10.2,
+   "torso": 9.8,
+   "head": 2.399999999999997,
+   "rear-upper-arm": 0.5999999999999877,
+   "rear-bracer": 23.199999999999932,
+   "gun": -16.299999999999986,
+   "front-upper-arm": 46.599999999999994,
+   "front-bracer": -25.3,
+   "front-fist": 5.900000000000005,
+   "rear-thigh": -70.80000000000003,
+   "rear-shin": 14.100000000000001,
+   "rear-foot": 33.50000000000003,
+   "front-thigh": 28.299999999999997,
+   "front-shin": -8.2,
+   "front-foot": -21.4
+  },
+  "fist": "front-fist-closed",
+  "mae": 32.9491878292769
+ }
+]
