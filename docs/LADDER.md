@@ -205,26 +205,31 @@ The written form of all this, per rung and per run:
 | 4 | **4** | `4-wave-principle` | `ess` | nothing structural — a volume test (9 bones, 9 slots, 3 animations, 470 bezier keys) | ⬜ *attempted* |
 | 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ⬜ *attempted* |
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ⬜ *attempted* |
-| 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ⬜ |
+| 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | 🟨 `pendulum` ✅ · `ball` ⬜ *attempted* |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ⬜ |
 | 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (67 bones, 52 slots, 11 animations) | ⬜ |
 
-⬜ **but attempted.** Six runs across rungs 1, 2, 4/5 and 6 were made on 2026-08-23,
-and none cleared — [`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/),
+⬜ **but attempted.** Seven runs across rungs 1, 2, 4/5, 6 and 8 were made on
+2026-08-23, and none of them cleared a rung —
+[`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/),
 [`bench/runs/2026-08-23-rung2-1/`](../bench/runs/2026-08-23-rung2-1/),
 [`bench/runs/2026-08-23-rung4-1/`](../bench/runs/2026-08-23-rung4-1/),
 [`bench/runs/2026-08-23-rung5-1/`](../bench/runs/2026-08-23-rung5-1/), on the
 corrected brief, [`bench/runs/2026-08-23-rung2-2/`](../bench/runs/2026-08-23-rung2-2/),
-and [`bench/runs/2026-08-23-rung6-1/`](../bench/runs/2026-08-23-rung6-1/). The
-figures and the commander's reading of each are below, under *Rung 1* through
-*Rung 6*.
+[`bench/runs/2026-08-23-rung6-1/`](../bench/runs/2026-08-23-rung6-1/), and
+[`bench/runs/2026-08-23-rung8-1/`](../bench/runs/2026-08-23-rung8-1/). Rung 8 is the
+one that came nearest and the reason its row is 🟨 rather than ⬜: **its `pendulum`
+candidate is cleared and its `ball` candidate is not**, and a rung with two
+skeletons clears when both do — rung 1's precedent. The figures and the commander's
+reading of each are below, under *Rung 1* through *Rung 8*.
 
-**What the seven runs say so far.** Seven, not six: the six above plus rung 3's
+**What the eight runs say so far.** Eight, not seven: the seven above plus rung 3's
 second attempt ([`bench/runs/2026-08-23-rung3-2/`](../bench/runs/2026-08-23-rung3-2/)),
-which did not change a rung's status but is the only run so far authored with
+which did not change a rung's status but was the first run authored with
 [AUTHORING.md §10](AUTHORING.md) in hand. (Rung 3's first attempt is read in its own
-section and is not counted here.) `validate` caught **0 FAILs** across all seven —
-roughly 100 builds and `check` cycles combined — and that is the guide designing
+section and is not counted here.) `validate` caught **0 FAILs** across all eight —
+roughly 165 builds and `check` cycles combined; rung 8's single red was a compile
+error before the gate, not an assertion — and that is the guide designing
 invalid states out before a build is attempted, not a sign the rigs were right;
 validity was never the open question here. `check` is the instrument that carries
 the weight `validate` cannot, and every run used it in the loop rather than once at
@@ -232,7 +237,7 @@ the end. What it keeps finding, on a volume test (rung 4), a squash-and-stretch 
 (rung 5) and two independent attempts at a twelve-principles rig (rung 2), is the
 same structural gap in two shapes every time — the author's own **slot strategy**
 (how many slots a shape gets folded into, and by what rule) and **key density**
-(denser than the reference in rung 4, sparser in rung 5 and rung 2) — never a
+(denser than the reference in rungs 4 and 8, sparser in rung 5 and rung 2) — never a
 validity defect. Rung 6 adds two more to the list: **curve kind** (keyed linear
 against a reference a 4.3 editor exports bezier by default, `curve_kinds` 34/539)
 and **static-plateau fidelity** (greedy key reduction sloped a line through a run
@@ -381,7 +386,13 @@ the *curve kind* gap rung 6 had named. `key_counts` rose with it, 42/69 → 49/6
 cannot hold the shape. The remaining 20 keys are keys a span already explains — at
 this rung's 0.118 px/unit they move nothing, so `check` cannot ask for them and only
 `bench` can see them. §10.6 is right that no public page gives a density, and this is
-the one line of §10 that no convention read off a public page can close.
+the one line of §10 that no convention read off a public page can close. **Rung 8 is
+the second run with §10 in hand, and it says both halves again on a shot carrying an
+order of magnitude more keys**: `curve_kinds` 165/302 and 344/501 against rung 6's
+34/539 for the same
+section, and key density still open — 135/302 and 307/501, missed this time from the
+*other* side, roughly twice as dense as the reference rather than half. §10.6's
+silence cuts both ways.
 
 **`bones` and `slots` did not move, and could not have.** Every measure under them
 that reads below 1.000 — `names`, `parent_by_name`, `order`, `slots.bone`,
@@ -634,6 +645,162 @@ that leaves the range," which bounds moves and not starts — every frame whose
 warm-started fit was already outside the range stayed there, a warm start that
 never pulled back, undetected until the emitted keys were read back after
 `bench` had already run.
+
+### Rung 8 — attempted, not cleared: `pendulum` cleared, `ball` not (2026-08-23)
+
+Run [`bench/runs/2026-08-23-rung8-1/`](../bench/runs/2026-08-23-rung8-1/), clean
+(PR [#75](https://github.com/firejune/rigc/pull/75), merged
+[`f4b01c0`](https://github.com/firejune/rigc/commit/f4b01c0); wording follow-up
+[#76](https://github.com/firejune/rigc/pull/76), `aa621db`) — two skeletons, two
+candidates, `bench` run once per candidate at the end with neither spec touched
+after. About 40 builds for the `pendulum` and 25 for the `ball`, nearly all of them
+structure and tolerance sweeps rather than fixes; one red all run, and it was a
+compile error before the gate (an empty `tracks` array against a declared duration),
+not an assertion. Authored by Claude Opus 5 (1M context), Claude Code / Agent SDK,
+from the brief (revision 2, third-party verified) and the rendered reference frames
+alone, with [AUTHORING.md §10](AUTHORING.md) in hand.
+
+Figures. **A two-skeleton rung prints a line per skeleton whichever candidate you
+hand it** ([`bench/runs/README.md`](../bench/runs/README.md)), so each block below is
+the *matching* line of that candidate's own run; the other line in each run is one
+candidate diffed against the other skeleton's reference and measures nothing.
+
+From the `pendulum` candidate's run:
+
+```
+pendulum   bones=0.456  slots=0.857  attachments=1.000  constraints=1.000  animations=0.846  events=1.000
+           bones 0.456 (name-matched) · 1.000 (name-agnostic)   slots 0.857 (name-matched) · 1.000 (name-agnostic)
+```
+
+From the `ball` candidate's run:
+
+```
+ball       bones=0.466  slots=0.929  attachments=0.444  constraints=0.000  animations=0.878  events=1.000
+           bones 0.466 (name-matched) · 0.550 (name-agnostic)   slots 0.929 (name-matched) · 0.625 (name-agnostic)
+```
+
+`check`: both candidates report `frames.json's own box — the candidate measured into
+it`, which is the case [#52](https://github.com/firejune/rigc/issues/52) added, so
+**none of the MAE below is framing**. `pendulum` — fit `x1.000902`, rms 0.34 px, MAE
+mean **12.52** / worst 17.62 over 45 frames at 12 fps and **12.56** / 21.22 over 88
+at 24 fps, worst slot drift **3.3 px**, attributed in every frame of both sets.
+`ball` — fit `x0.999441`, rms 0.90 px, MAE mean **16.17** / worst 56.36 and **16.12**
+/ 56.72, worst slot drift **5.3 px**.
+
+**Reading — the commander's call, 2026-08-23. The rung is attempted, not cleared:
+the `pendulum` skeleton is cleared, the `ball` skeleton is not.** A rung with two
+skeletons clears when both do — rung 1's precedent — and this is the first time the
+two halves of one run have landed on opposite sides of that line.
+
+**`pendulum` — cleared.** The skeleton is the reference's skeleton with the author's
+names on it, and that is measured rather than argued: name-agnostic `bones` and
+`slots` are both **1.000** (`count`, `depth_histogram`, `degree_sequence`,
+`shape_histogram`, `order_shape`, all 7/7), `attachments` is **1.000 across the
+board** including `names` 6/6 and `region_size` 6/6 — §10.1's *the attachment name is
+the image name*, doing what it promises — and every name-matched measure that reads
+short (`bones.names` 1/13, `slots.bone` 0/6) is the one naming fact counted again.
+`slots.order` is **6/6, measured rather than guessed**: the brief settles one edge and
+the run settled three more by rendering its own candidate both ways and reading the
+same interior detail on both sides, worth 1.402 → 1.335 window MAE.
+`animations.draw_order` 1.000 says something weaker — a `drawOrder` timeline is
+present or absent alike, and neither side has one — and `constraints` 1.000 is
+**vacuous** the same way, neither side having any. Fidelity: worst slot drift 3.3 px,
+MAE 12.52 / 12.56 with the framing coincident, and the shot's own subject reproduces
+frame for frame in the author's self-check — the same 8-frame horizontal lag and no
+vertical lag, the same ~1.5× overshoot (1.52 against 1.53), the same last moving
+frame on each part (f79, f84), the same bend peak at f53. The one real gap is key
+density, below, and it is not a visible defect.
+
+**`ball` — not cleared: valid, pixel-faithful, structurally different.** The motion
+is faithful — worst slot drift **5.3 px**, MAE **16.2**, and the residual is three
+poses rather than timing: f24, f60 and f61 of the 24 fps set, where a six-link chain
+folds two ways for nearly the same silhouette and a 24-start rescue moved them by
+less than a point. The structure is not the editor's: `attachments` **0.444**
+(`type_counts` 1/2, `mesh_weighted` 1/2, `region_size` 0/1), name-agnostic `bones`
+**0.550** and `slots` **0.625**, `constraints` **0/4**. The reference's four
+constraints and its attachment scheme leave no trace in the frames — rung 6's finding
+repeated — and the author correctly left constraints unauthored rather than guess.
+The trail as one weighted mesh on a six-bone chain, and the ball as a region scaled
+by its bone, are **the author's structure, not the editor's**: §9.3 says outright
+that a hull moved by a bone chain and the same hull moved by deform keys render to
+the same pixels, and `animations.deform` scores 1.000 on both sides, so neither rig
+deforms it with keys. **Nothing in the pixels could have chosen between them.** That
+is the honest answer for this skeleton, and it is not a defect in the rig.
+
+⇒ **`constraints` splits the two shots from one decision, which is the cleanest
+demonstration the ladder has produced that the honesty rule costs something real and
+is still the right rule.** The same refusal to guess scored 1.000 on the `pendulum`
+(vacuous — the reference has none) and 0.000 on the `ball` (the reference has four).
+One won, one lost, and no reading of the pixels could have told the author which.
+
+**Key density — the run's own-goal, and the direction is the opposite of rung 3's.**
+`animations.key_counts` reads **135/302** (`pendulum`) and **307/501** (`ball`). The
+denominator is the larger of the two key totals, and here it is the candidate's own:
+this run **over-keyed by roughly a factor of two**, where rung 3 under-keyed by a
+third. It is rung 4's finding under a different mechanism. No density was aimed at —
+§10.6 is right that no public page gives one — a **sub-pixel tolerance** was, and a
+sub-pixel tolerance against a *fitted* pose series asks for far more than a
+hand-animated shot contains. The whole tolerance/keys/MAE curve is in the run's log
+and it was measured before the finish line: at 0.6 px the `pendulum` is 238 keys and
+1.597 window MAE against the shipped 302 and 1.335. A cut much closer to the
+reference's density was available at a cost the author could name, and it was
+deliberately **not** re-cut after `bench` had run, because `bench` is the finish
+line. Measured, and chosen.
+
+**`curve_kinds` is where §10.4 paid**: 165/302 and 344/501, bezier everywhere from a
+fitted table of 12 named easings, no raw `curve` in either file — against rung 6's
+34/539 for the same section. The run's own synthetic control says what the curve is
+worth alone: two harmonics over 88 samples reduce to **9 keys at 0.88 units of error**
+with fitted Beziers and **24.3** with linear spans.
+
+**What the rung introduced: nothing.** Transform constraints and weighted meshes both
+arrived at rung 6, and the table says so. So this entry is not about a new feature; it
+is about the ladder's recurring gap, for once visible from both sides inside a single
+run: **unobservable structure — constraints, mesh-versus-bone, key density — is where
+AI output and editor output part ways, and observable motion is where they agree.**
+Two candidates, one agent, one session, one set of rules; the only thing separating
+their measures is how much of each reference's structure the frames could show.
+
+**Tool and guide findings** — six defects in the guide, none of them visible to
+`validate` or `check`, two of which cost the run a loop each. Each is filed:
+
+1. **spine-core 4.3 keeps a bone's local transform on `bone.pose`, not on the bone**
+   ([#77](https://github.com/firejune/rigc/issues/77)). `bone.rotation = …` is
+   neither an error nor a rotation — every frame renders as the setup pose. §9 tells
+   a run to render its candidate back; this is the first thing it hits doing so, and
+   it cost a loop and a plausible MAE (17.3) that did not move for any parameter.
+2. **A tolerance on a rotation is not a number of degrees**
+   ([#78](https://github.com/firejune/rigc/issues/78)). A quarter degree on the last
+   link moves the chain's end 0.15 px; the same quarter degree on the first moves it
+   0.69 px. One tolerance, in pixels at the end of what the bone swings, divided by
+   its lever arm.
+3. **Fitting a curve and then writing a different one is a silent 4× loss**
+   ([#79](https://github.com/firejune/rigc/issues/79)). Fitting each span's own
+   handles and substituting the nearest entry of a named table took the shot from
+   1.07 to 4.65 MAE with a green gate and an unmoved `diff`. §10.4 asks for a small
+   named table and does not say the table has to be **in hand while the keys are
+   chosen**. It does — rung 6's clamp note in another suit.
+4. **§9.3's "a mesh or a bone renders the same" has a measurable cost**
+   ([#80](https://github.com/firejune/rigc/issues/80)). Following it on the `ball`
+   cost `attachments` 0.444 and `bones` 9/12. Not an argument for guessing — an
+   argument for §9.3 saying that this invisible choice is one `bench` *does* see, so
+   a run records it as a decision instead of discovering it in the measures.
+5. **§8's draw-order paragraph is written entirely about reading the reference**
+   ([#81](https://github.com/firejune/rigc/issues/81)). The like-for-like version —
+   render your own candidate both ways and measure the same interior feature on both
+   sides — settled three more edges here, and correctly declined to settle the
+   `ball`'s.
+6. **`bench` prints a confident line for the skeleton you did not build**
+   ([#82](https://github.com/firejune/rigc/issues/82)). The protocol's warning is
+   load-bearing and needs a second home where the output is read.
+
+**Two more things the run recorded about itself, neither of them a defect in the
+rig.** The own-goal is the key density above — logged with its whole cost curve and
+deliberately not re-cut once the finish line was crossed. And the authoring session
+was **cut mid-response by an API connection loss** after §10 and resumed from the run
+directory: no input changed, the reference export was still never opened, and `bench`
+had not yet been run at that point. **The run stays clean** — it is recorded because
+a log that omits its own interruptions is not the record this protocol asks for.
 
 ---
 
