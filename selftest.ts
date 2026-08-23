@@ -2110,6 +2110,31 @@ function gateProbeArtifacts(
   });
 }
 
+/**
+ * Compile the probe and STEP it through spine-core at one rate, as a player does.
+ *
+ * The gate cannot answer "is this key on the sample it was written for": it reads
+ * the emitted numbers, and a key time that is a millionth of a second too large is
+ * a perfectly good number. Only sampling the animation the way a runtime samples it
+ * — `AnimationState.update` at a fixed step, which is exactly `sampleAnimation` —
+ * puts the emitted time and the sample time on the same line.
+ */
+function stepProbe(
+  dirs: ProbeDirs,
+  motion: Record<string, unknown>,
+  animation: string,
+  fps: number,
+): Frame[] {
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+  const opts: Options = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
+  const result = compile(opts);
+  // The atlas names its pages relative to `outDir`, so the loader resolves them
+  // back to the probe's own PNGs without anything having been written.
+  const posable = posableFromText(result.skeletonText, result.atlasText, opts.outDir);
+  return sampleAnimation(posable.data, animation, fps);
+}
+
 /** The message a compile was refused with, or null if it went through. */
 function refusal(dirs: ProbeDirs, motion: Record<string, unknown>): string | null {
   const motionPath = join(dirs.dir, 'probe.motion.json');
@@ -2348,11 +2373,19 @@ function runDrawOrderSuite(): number {
 // only re-rendering the animation and diffing the last two frames showed it
 // (issue #54).
 //
-// The probe declares 68/12 s on purpose. `r6` rounds a key placed exactly there
-// UP, to 5.666667 — past the declared duration by 3.3e-7 s — so the positive
-// control below is also the proof that `KEY_TIME_EPSILON` leaves room for the
-// compiler's own rounding, which is the whole reason it is a step of that grid
-// and not zero.
+// The probe declares 68/12 s on purpose: a duration no number of microseconds
+// lands on. Rounding a key placed exactly there to NEAREST put it 3.3e-7 s past
+// the end — legal only because `KEY_TIME_EPSILON` is a step of the grid and not
+// zero. Since #99 the compiler rounds key times DOWN (`keyTime`), so that case
+// now rides on the grid rather than on the tolerance, and K04 is where the
+// epsilon is still load-bearing: a key read back through a Float32Array can land
+// past its own declared duration by more than a whole step of the 1e-6 grid.
+//
+// K05/K06 are the other half of the same rule, from the player's side rather than
+// the duration's: 2/12 s and 5/30 s are both 0.16666666…, nearest emits 0.166667,
+// and 0.166667 is LARGER than either — so a stepped key written for sample 2 was
+// applied at sample 3, inside the animation, where there is no duration to compare
+// against and nothing errors (issue #99, the spineboy run's muzzle flare).
 
 /** The rung 6 duration: 68 frames at 12 fps, and not representable in decimal. */
 const SIXTY_EIGHT_TWELFTHS = 68 / 12;
@@ -2400,6 +2433,55 @@ function keyTimeMotion(duration: number, anchor: number, lastKey: number): Recor
   };
 }
 
+/** The 12 fps sample the spineboy run's flare was written for: 2/12 s, and 5/30 s too. */
+const TWO_TWELFTHS = 2 / 12;
+
+/**
+ * A stepped attachment reveal at `revealAt`, inside an animation `duration` long.
+ *
+ * The `block` track only pins the declared duration; the reveal is the subject.
+ * An attachment timeline is inherently stepped, which is why it is the one that
+ * shows this: an interpolated track fired a frame late is a frame of slightly
+ * wrong values, and a stepped one is the wrong picture outright.
+ */
+function steppedRevealMotion(revealAt: number, duration: number): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      reveal: {
+        duration,
+        loop: false,
+        tracks: [
+          {
+            slot: 'block',
+            property: 'rgba',
+            keys: [
+              { t: 0, v: [1, 1, 1, 1] },
+              { t: duration, v: [1, 1, 1, 1] },
+            ],
+          },
+          {
+            slot: 'marker',
+            property: 'attachment',
+            keys: [
+              { t: 0, v: null },
+              { t: revealAt, v: 'marker' },
+            ],
+          },
+        ],
+      },
+    },
+  };
+}
+
+/** Is the reveal's attachment drawn in this sampled frame? */
+function markerShows(frames: Frame[], index: number): boolean {
+  return frames[index].pieces.some((piece) => piece.slot === 'marker');
+}
+
 function runKeyTimeSuite(): number {
   const dirs = writeProbeRig();
   let bad = 0;
@@ -2414,9 +2496,9 @@ function runKeyTimeSuite(): number {
     'CONTROL_A_KEY_ON_THE_DECLARED_DURATION_IS_GREEN',
     green.failures.length === 0 && green.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
     green.failures.length === 0
-      ? `both tracks key ${SIXTY_EIGHT_TWELFTHS}s, which r6 emits as 5.666667 — past the declared duration, and legal`
+      ? `both tracks key ${SIXTY_EIGHT_TWELFTHS}s, a duration no microsecond lands on — keyTime emits 5.666666`
       : `[${green.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
-    'an epsilon of zero would refuse every key the author put ON a duration that is not a round number of microseconds',
+    'a key the author put ON a duration that is not a round number of microseconds must compile; before #99 it was the epsilon that allowed it, and now it is the grid',
   );
 
   const rounded = refusal(dirs, keyTimeMotion(SIXTY_EIGHT_TWELFTHS, SIXTY_EIGHT_TWELFTHS, ROUNDED_TO_4DP));
@@ -2457,20 +2539,51 @@ function runKeyTimeSuite(): number {
   );
 
   // The compiler works in doubles on its own 1e-6 grid; the validator reads times
-  // back out of a Float32Array, whose steps grow with the value. 971 frames at 30
-  // fps is 32.366666… s, which `r6` emits as 32.366667 and float32 stores as
-  // 32.366668… — a legal key on the declared duration, arriving 2.0e-6 s late,
-  // twice the compiler's whole epsilon. A flat epsilon here would fail correct
-  // data for being long, which is why A09 adds one float32 step at the duration.
-  const long = 971 / 30;
+  // back out of a Float32Array, whose steps grow with the value. 972 frames at 30
+  // fps is 32.4 s exactly — a time the 1e-6 grid holds exactly, so `keyTime`
+  // changes nothing — and float32 stores it as 32.400001525878906: a legal key on
+  // the declared duration, arriving 1.5e-6 s late, half again the compiler's whole
+  // epsilon. A flat epsilon here would fail correct data for being long, which is
+  // why A09 adds one float32 step at the duration.
+  //
+  // ⚠️ It used to be 971/30, and #99 made that vacuous: 32.366666… now emits as
+  // 32.366666 and lands 1.8e-6 s BEFORE the declared duration, so the case passed
+  // without the float32 slack being needed at all. A control that cannot fail is
+  // not a control — this one is chosen so that dropping `float32Step` still
+  // reddens it.
+  const long = 972 / 30;
   const far = gateProbe(dirs, keyTimeMotion(long, long, long));
   say(
     'K04_a_long_animation_does_not_fail_for_float32_quantisation',
     far.failures.length === 0 && far.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
     far.failures.length === 0
-      ? `${long}s declared and keyed; the emitted 32.366667 loads back as ${Math.fround(32.366667)}`
+      ? `${long}s declared and keyed; the emitted ${long} loads back as ${Math.fround(long)}`
       : `[${far.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'the two layers read different grids: 1e-6 s is fixed, a float32 step at 32 s is 3.8e-6 s and at 5 s is 4.8e-7 s',
+  );
+
+  // K05/K06 are about the DIRECTION the grid rounds, not about the duration, and
+  // they are the pair: K05 asserts the key lands on its own sample and K06 asserts
+  // the probe can still say "not yet". Without K06, an instrument that reported
+  // every frame as showing the marker would pass K05 and measure nothing.
+  const onSample = stepProbe(dirs, steppedRevealMotion(TWO_TWELFTHS, 4 / 12), 'reveal', PROTOCOL_FPS);
+  say(
+    'K05_a_stepped_key_on_the_sample_grid_fires_on_that_sample',
+    markerShows(onSample, 2) && !markerShows(onSample, 1),
+    markerShows(onSample, 2)
+      ? `a reveal keyed at 2/12 s is drawn at sample 2 of ${PROTOCOL_FPS} fps and not before it`
+      : 'the reveal keyed at 2/12 s is NOT drawn at sample 2 — it fires a frame late, silently',
+    'spineboy: 2/12 s is 0.16666666…, r6 to nearest emits 0.166667, and 0.166667 > 2/12 — the muzzle flare fired one 12 fps frame late (issue #99)',
+  );
+
+  const offSample = stepProbe(dirs, steppedRevealMotion(2.5 / 12, 4 / 12), 'reveal', PROTOCOL_FPS);
+  say(
+    'K06_a_key_between_two_samples_still_waits_for_the_later_one',
+    !markerShows(offSample, 2) && markerShows(offSample, 3),
+    !markerShows(offSample, 2) && markerShows(offSample, 3)
+      ? 'a reveal keyed at 2.5/12 s is drawn at sample 3 and not at sample 2 — rounding down is not "always one sample earlier"'
+      : `sample 2 shows ${String(markerShows(offSample, 2))}, sample 3 shows ${String(markerShows(offSample, 3))}`,
+    "K05's negative control: a probe that answered \"drawn\" for every frame would pass K05 while measuring nothing",
   );
   return bad;
 }
@@ -3611,7 +3724,7 @@ function main(): void {
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
       `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 6 draw-order controls, ` +
-      '+ 5 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
+      '+ 7 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       corpus +

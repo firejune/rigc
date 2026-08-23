@@ -86,6 +86,52 @@ function r6(n: number): number {
 }
 
 /**
+ * A **key time** on that same 1e-6 s grid — rounded DOWN rather than to nearest.
+ *
+ * ## Why key times get their own quantiser
+ *
+ * Every other emitted number is a quantity, and for a quantity nearest is the
+ * least wrong answer. A key time is not a quantity: it is a **position against a
+ * sample grid a player will step**, and the two directions of a half-step error
+ * are not equally wrong. Rounded down, a key fires on the sample it was written
+ * for, half a millionth of a second early, and nothing can see it. Rounded up, it
+ * fires on the NEXT sample — a whole frame late — and on a stepped timeline that
+ * is the wrong picture rather than a slightly wrong value.
+ *
+ * The arithmetic is not exotic, it is the common case: `2/12 s` and `5/30 s` are
+ * both 0.16666666…, `r6` emits 0.166667, and 0.166667 is larger than either. The
+ * spineboy run's muzzle flare fired one 12 fps frame late for exactly that, with
+ * no error and no warning, until the run's own frame self-check caught it (issue
+ * #99). ⚠️ An attachment timeline is inherently stepped, so it is where this
+ * surfaces first — but a rotate key rounded up is a frame late too; it just hides
+ * inside the interpolation.
+ *
+ * ## Why this is not `Math.floor(n * 1e6)`
+ *
+ * `n * 1e6` is itself a rounded double: `0.7 * 1e6` is 699999.9999999999, and
+ * flooring it would move a time the grid represents **exactly** a whole step down.
+ * So the value is rounded to nearest first and stepped back only when the result
+ * genuinely overshoots the time it came from. A time already on the grid is
+ * therefore emitted unchanged, which is what keeps `A18_DETERMINISTIC_EMIT` and
+ * every committed artifact where they were.
+ *
+ * ## What it means for `KEY_TIME_EPSILON`
+ *
+ * The tolerance's job narrows rather than moves: an authored key can no longer
+ * land past its own `duration` by the compiler's own rounding, so `checkKeyTime`
+ * only refuses a key the author really did put past the end. The epsilon stays,
+ * because A09 re-checks the same rule on an emitted file read back through a
+ * Float32Array — where the grid is coarser and rounds both ways — and because a
+ * `duration` is not required to be on the grid either.
+ */
+function keyTime(n: number): number {
+  let units = Math.round(n * 1e6);
+  if (units / 1e6 > n) units -= 1;
+  const v = units / 1e6;
+  return v === 0 ? 0 : v;
+}
+
+/**
  * Rule 4, per timeline: no key may land past the animation's declared duration.
  *
  * Rule 4 itself compares one number per animation — the largest key time across
@@ -93,6 +139,12 @@ function r6(n: number): number {
  * all of them, and a key past the end on some *other* track is invisible to it.
  * That is exactly how rung 6 lost a one-frame attachment reveal; the tolerance
  * story is in `KEY_TIME_EPSILON`.
+ *
+ * ⚠️ It compares the **emitted** time, not the authored one, and since `keyTime`
+ * rounds down that can only be more forgiving than comparing the author's number
+ * — by less than one step of the grid. That is the honest side to err on: the
+ * emitted time is the one a player samples, and refusing a key that will in fact
+ * be reached would be refusing a correct animation.
  *
  * This is a refusal rather than an assertion because the key is the thing to
  * change and the motion spec is the file it lives in: the message has to name
@@ -1779,7 +1831,7 @@ function compileValueTrack(
   for (let i = 0; i < track.keys.length; i++) {
     const key = track.keys[i];
     const next = track.keys[i + 1];
-    const time = r6(key.t + shift);
+    const time = keyTime(key.t + shift);
     if (i > 0 && time <= (out[i - 1].time as number)) {
       throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
     }
@@ -1814,7 +1866,7 @@ function compileValueTrack(
         const handles = motion.easings?.[key.ease];
         if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
         if (!Array.isArray(next.v)) throw new CompileError(`${where}: next key value must be an array`);
-        const t2 = r6(next.t + shift);
+        const t2 = keyTime(next.t + shift);
         const curve: number[] = [];
         for (let c = 0; c < shape.fields.length; c++) {
           curve.push(...bezierForChannel(handles, time, t2, (key.v as number[])[c], (next.v as number[])[c]));
@@ -1876,7 +1928,7 @@ function compileDrawOrder(
   const out: SpineTimelineKey[] = [];
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
-    const time = r6(key.t);
+    const time = keyTime(key.t);
     if (i > 0 && time <= (out[i - 1].time as number)) {
       throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
     }
@@ -1966,7 +2018,7 @@ function compileEvents(
       );
     }
     if (!Number.isFinite(key.t)) throw new CompileError(`${where}: key ${i} has a non-finite time ${String(key.t)}`);
-    const time = r6(key.t);
+    const time = keyTime(key.t);
     if (i > 0 && time < (out[i - 1].time as number)) {
       throw new CompileError(
         `${where}: key times must not go backwards (at t=${key.t}, after t=${String(out[i - 1].time)}) — ` +
@@ -2070,7 +2122,7 @@ function compileTrack(
   for (let i = 0; i < track.keys.length; i++) {
     const key = track.keys[i];
     const next = track.keys[i + 1];
-    const time = r6(key.t + shift);
+    const time = keyTime(key.t + shift);
     if (i > 0 && time <= (out[i - 1].time as number)) {
       throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
     }
@@ -2110,7 +2162,7 @@ function compileTrack(
         if (!Array.isArray(next.v)) {
           throw new CompileError(`${where}: rgba key value must be [r,g,b,a]`);
         }
-        const t2 = r6(next.t + shift);
+        const t2 = keyTime(next.t + shift);
         // 4 numbers per channel, r g b a — 16 in total. Short arrays become NaN
         // curves with no error.
         const curve: number[] = [];
