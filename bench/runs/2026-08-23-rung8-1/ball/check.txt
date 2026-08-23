@@ -1,0 +1,60 @@
+rigc check
+  candidate  /Users/firejune/Workspace/Firejune/rigc-wt-rung8/bench/runs/2026-08-23-rung8-1/ball/spine/skeleton.json
+  atlas      /Users/firejune/Workspace/Firejune/rigc-wt-rung8/bench/runs/2026-08-23-rung8-1/ball/spine/skeleton.atlas
+  frames     /Users/firejune/Workspace/Firejune/rigc-wt-rung8/bench/reference/8-follow-through/ball
+  framed to  512x413px  0.142758 px/unit  world x[-1710.9 .. 1875.6] y[-149.5 .. 2741.2]  (frames.json's own box — the candidate measured into it)
+  reference  512x413px  0.142758 px/unit  world x[-1710.9 .. 1875.6] y[-149.5 .. 2741.2]  (frames.json)
+             ⤷ the two world boxes are different coordinate systems and do not compare; the pixel grid does.
+  content    candidate 460.6x369.7px at (29.0, 20.7)   reference 458.7x369.6px at (30.9, 20.9)   (union over 133 frame(s))
+             ⤷ fit x0.999441  offset +0.42, +0.08 px   rms 0.90 px over 532 edge(s)   union residual +1.63 x -0.06 px   aspect +0.37%  (declared, 1 pass(es), coincident)
+             ⚠️ after the fit your shot still covers 1.6 px wider and 0.1 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+  in units   candidate 3226.2 x 2589.7   reference 3213.0 x 2588.7   x1.0023
+             ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+  ⚠️ the candidate's world box was taken from frames.json rather than fitted, because rendering it into that box put its own drawn pixels on the reference's to within 0.90 px rms — so the candidate is authored in the frames' own coordinates, measured rather than assumed, and the box they were rendered at is exact where a fit of it is an estimate. The framing line below is still measured; what it leaves over is the extent fit's own floor, which is why it does not read as the identity. Pass --viewport to override.
+
+  ── follow-through — candidate animation "follow-through", 12 fps ──
+     frames     45 on disk, candidate samples 45, 45 compared
+     MAE        mean 16.17  worst 56.36 at f0012   (0..255 over the union alpha; over the whole frame, mean 0.07)
+     slot drift worst 5.3 px  "ball" at f0020
+     per-frame all 44 adjacent pair(s) change by as much as the reference's own frames do
+
+     the 8 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    23.93       1118       —      —   tail                   0.1   tmpl 0.80 1/2
+       f0002    22.56       1038    1618   1663   ball                   2.3   tmpl 0.23 2/2
+       f0004    23.75       1097    1515   1439   tail                   0.1   tmpl 0.85 1/2
+       f0005    25.11       1035    1701   1673   ball                   3.9   tmpl 0.35 2/2
+       f0012    56.36        935    1725   1738   tail                   1.0   tmpl 0.17 1/2
+       f0013    28.99        907    1529   1510   ball                   2.9   tmpl 0.49 2/2
+       f0020    26.20        925    1655   1756   ball                   5.3   tmpl 0.31 2/2
+       f0030    55.02        952    1749   1788   tail                   0.8   tmpl 0.17 1/2
+
+  ── follow-through@24fps — candidate animation "follow-through", 24 fps ──
+     frames     88 on disk, candidate samples 88, 88 compared
+     MAE        mean 16.12  worst 56.72 at f0061   (0..255 over the union alpha; over the whole frame, mean 0.08)
+     slot drift worst 5.3 px  "ball" at f0040   (2 of 88 frame(s) attributed no slot at all)
+     per-frame all 87 adjacent pair(s) change by as much as the reference's own frames do
+
+     the 8 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0003    26.01       1078     675    581   tail                   0.3   tmpl 0.68 1/2
+       f0009    28.81       1032    1363   1380   ball                   3.3   tmpl 0.23 2/2
+       f0013    56.14        974    1593   1769   —                        —   —         0/2
+       f0024    56.36        935    1609   1652   tail                   1.0   tmpl 0.17 1/2
+       f0026    28.99        907    1323   1295   ball                   2.9   tmpl 0.49 2/2
+       f0040    26.20        925    1373   1422   ball                   5.3   tmpl 0.31 2/2
+       f0060    55.02        952    1618   1683   tail                   0.8   tmpl 0.17 1/2
+       f0061    56.72        956    1620   1669   —                        —   —         0/2
+
+  MAE is the mean absolute RGB difference over the pixels either side covers, so it is
+  read against 255 and not against a threshold: there is no pass mark here any more than
+  there is one in `diff`. Read the framing line first: it is upstream of every number
+  below, and a residual much wider than a pixel moves all of them at once.
+  The slots column is how many of the drawn slots could be attributed at all. A drift
+  marked `tmpl` was correlated against the slot’s own pixels because the reference
+  merged it into a neighbour; the number beside it is how much better that match was
+  than its best rival, and a slot that matched nothing at all is left out of the count.
+  `Δpx` and `ref Δ` are how many pixels each side moved since ITS OWN previous frame —
+  not against each other. They are the only columns that can see a held pose that is
+  not held, or a one-frame event that never fired: both are small in every frame and
+  wrong only in the relation between two, which is where the MAE cannot look.

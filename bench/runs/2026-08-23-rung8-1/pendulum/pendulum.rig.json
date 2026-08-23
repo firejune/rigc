@@ -1,0 +1,148 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "pendulum",
+  "images": "images",
+  "skeleton": {
+    "x": -400,
+    "y": -1100,
+    "width": 800,
+    "height": 1200
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "discus",
+      "parent": "root",
+      "x": 2192.933444777671,
+      "y": 1341.9125606629427,
+      "rotation": 0,
+      "length": 343
+    },
+    {
+      "name": "chain1",
+      "parent": "discus",
+      "x": 0.626953125,
+      "y": 0.201171875,
+      "rotation": -90,
+      "length": 305.322265625
+    },
+    {
+      "name": "chain2",
+      "parent": "chain1",
+      "x": 305.322265625,
+      "y": 0,
+      "rotation": 0,
+      "length": 234.39453125
+    },
+    {
+      "name": "chain3",
+      "parent": "chain2",
+      "x": 234.39453125,
+      "y": 0,
+      "rotation": 0,
+      "length": 204.65625
+    },
+    {
+      "name": "chain4",
+      "parent": "chain3",
+      "x": 204.65625,
+      "y": 0,
+      "rotation": 0,
+      "length": 219.201171875
+    },
+    {
+      "name": "eyelet",
+      "parent": "chain4",
+      "x": 219.201171875,
+      "y": 0,
+      "rotation": 0,
+      "length": 120
+    }
+  ],
+  "slots": [
+    {
+      "name": "chain-end",
+      "bone": "eyelet",
+      "attachment": "chain-end"
+    },
+    {
+      "name": "chain-4",
+      "bone": "chain4",
+      "attachment": "chain-4"
+    },
+    {
+      "name": "chain-3",
+      "bone": "chain3",
+      "attachment": "chain-3"
+    },
+    {
+      "name": "chain-2",
+      "bone": "chain2",
+      "attachment": "chain-2"
+    },
+    {
+      "name": "chain-1",
+      "bone": "chain1",
+      "attachment": "chain-1"
+    },
+    {
+      "name": "platform",
+      "bone": "discus",
+      "attachment": "platform"
+    }
+  ],
+  "skins": {
+    "default": {
+      "chain-1": {
+        "chain-1": {
+          "image": "chain-1.png",
+          "x": 132.5,
+          "y": 0.5,
+          "rotation": 90
+        }
+      },
+      "chain-2": {
+        "chain-2": {
+          "image": "chain-2.png",
+          "x": 89.5,
+          "y": 0.5,
+          "rotation": 90
+        }
+      },
+      "chain-3": {
+        "chain-3": {
+          "image": "chain-3.png",
+          "x": 75,
+          "y": 0.5,
+          "rotation": 90
+        }
+      },
+      "chain-4": {
+        "chain-4": {
+          "image": "chain-4.png",
+          "x": 61.5,
+          "y": 0.5,
+          "rotation": 90
+        }
+      },
+      "chain-end": {
+        "chain-end": {
+          "image": "chain-end.png",
+          "x": -6.5,
+          "y": -0.7999999999999972,
+          "rotation": 90
+        }
+      },
+      "platform": {
+        "platform": {
+          "image": "platform.png",
+          "x": 1,
+          "y": 1.5,
+          "rotation": 0
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+# ball — the same estimator over both sides, 88 frames at 24 fps
+
+  quantity                           candidate              reference
+  subject drawn area (px)            706.00–1064.00 mean 906 787.00–961.00 mean 902
+  ball proportion, readable frames   1.01–3.27 over 80      1.02–2.72 over 87
+  frames under 1.15 (round)          38                     43
+  frames with no neck                f0 f1 f2 f27 f28 f36 f61 f76 f30
+  trail sagitta (px)                 0.51–14.28 mean 4.4    0.52–16.50 mean 5.1
+  trail chord ÷ arc                  0.70–1.00              0.71–1.00
+  f26 ball proportion / axis         2.96 / 1°              2.43 / 2°
+  f27 ball proportion / axis         no neck                2.72 / 2°
+  f28 ball proportion / axis         no neck                2.57 / 1°
+  f40 ball proportion / axis         2.25 / 0°              2.43 / -3°
+  ball centre difference (px)        median 0.95, 59/79 under 2 worst 45.6 at f8 — a split failure

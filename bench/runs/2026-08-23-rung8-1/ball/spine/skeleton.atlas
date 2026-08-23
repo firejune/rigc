@@ -1,0 +1,17 @@
+../../../../../examples/8-follow-through/images/tail.png
+size: 380, 111
+filter: Linear, Linear
+pma: false
+tail
+bounds: 0, 0, 380, 111
+offsets: 0, 0, 380, 111
+rotate: 0
+
+../../../../../examples/8-follow-through/images/ball.png
+size: 156, 156
+filter: Linear, Linear
+pma: false
+ball
+bounds: 0, 0, 156, 156
+offsets: 0, 0, 156, 156
+rotate: 0

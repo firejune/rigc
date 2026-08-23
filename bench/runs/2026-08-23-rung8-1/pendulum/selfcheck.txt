@@ -1,0 +1,16 @@
+# pendulum — the same estimator over both sides, 88 frames at 24 fps
+
+  quantity                           candidate              reference
+  discus rim, tip to tip (px)        109.49–111.52          109.60–111.20
+  discus tilt (deg)                  -16.80–33.26           -16.30–33.11
+  joint 1→2 spacing (px)             40.62 40.42–40.85      40.69 40.35–40.99
+  joint 2→3 spacing (px)             38.78 38.52–38.97      39.18 38.94–39.39
+  joint 3→4 spacing (px)             33.74 33.53–33.99      34.59 34.38–34.85
+  joint 4→5 spacing (px)             35.54 35.32–35.86      34.58 33.38–35.03
+  subject drawn area (px)            2851.00–2886.00        2919.00–2971.00
+  total chain bend (deg)             1.39–103.33, peak f53  0.53–103.41, peak f53
+  eyelet x extremes (px)             31.0 … 478.5           30.6 … 478.6
+  eyelet ÷ discus x travel           1.52                   1.53
+  eyelet lag vs discus, x / y (frames) 8 / 0                  8 / 0
+  last discus step over 1 px         f79                    f79
+  last eyelet step over 1 px         f84                    f84
