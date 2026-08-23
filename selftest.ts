@@ -42,7 +42,15 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { EventTimeline, MeshAttachment, Physics, Skeleton, type SkeletonData } from '@esotericsoftware/spine-core';
+import {
+  BoundingBoxAttachment,
+  ClippingAttachment,
+  EventTimeline,
+  MeshAttachment,
+  Physics,
+  Skeleton,
+  type SkeletonData,
+} from '@esotericsoftware/spine-core';
 import { assertFrameReadable, checkAgainstFrames, type CheckReport, type FrameChange } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
@@ -488,6 +496,72 @@ const MUTANTS: Mutant[] = [
         (j as any).events = { probe_step: {} };
         const anim = Object.values((j as any).animations)[0] as any;
         anim.events = [{ time: 0, name: 'probe_step', volume: 0.5 }];
+      }),
+    }),
+  },
+  {
+    name: 'M46a_a_well_formed_bounding_box_is_accepted',
+    origin: 'the positive control for A33 — spineboy-ess ships exactly this shape, a 6-vertex box on a head slot',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).skins[0].attachments.stage.stage_bb = {
+          type: 'boundingbox',
+          vertexCount: 4,
+          vertices: [0, 0, 64, 0, 64, 64, 0, 64],
+        };
+      }),
+    }),
+  },
+  {
+    name: 'M46b_bounding_box_without_a_vertex_count',
+    origin:
+      'SkeletonJson.ts:552 — `undefined << 1` is 0, so readVertices takes the weighted branch, decodes the ' +
+      'coordinates as a weight run, and hands back a box with nothing in it. A bounding box draws no pixel, ' +
+      'so nothing downstream ever notices',
+    expect: 'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).skins[0].attachments.stage.stage_bb = {
+          type: 'boundingbox',
+          vertices: [0, 0, 64, 0, 64, 64, 0, 64],
+        };
+      }),
+    }),
+  },
+  {
+    name: 'M46c_bounding_box_vertex_count_disagrees_with_its_vertices',
+    origin: 'a count one short reads the coordinate array as a weighted run — the mesh trap of A04 without the uvs',
+    expect: 'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).skins[0].attachments.stage.stage_bb = {
+          type: 'boundingbox',
+          vertexCount: 3,
+          vertices: [0, 0, 64, 0, 64, 64, 0, 64],
+        };
+      }),
+    }),
+  },
+  {
+    name: 'M46d_clipping_ends_at_a_slot_that_is_not_there',
+    origin:
+      'SkeletonJson.ts:626-627 — findSlot returns null on a miss and the null is assigned, so the clip runs ' +
+      'to the bottom of the draw order. Checked on the raw JSON: a null endSlot and an absent `end` load alike',
+    expect: 'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    profile: 'spine',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).skins[0].attachments.stage.stage_clip = {
+          type: 'clipping',
+          end: 'no_such_slot',
+          vertexCount: 4,
+          vertices: [0, 0, 64, 0, 64, 64, 0, 64],
+        };
       }),
     }),
   },
@@ -1777,6 +1851,63 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
+    name: 'R10_bounding_box_without_a_vertex_count',
+    origin:
+      'SkeletonJson.ts:552 — the parser reads `map.vertexCount << 1`, and `undefined << 1` is 0, ' +
+      'so the coordinate array is decoded as a weight run and the box ends up with no vertices at all',
+    expect: 'vertexCount is undefined',
+    mutate: (rig) => {
+      (rig as any).slots.find((sl: any) => sl.name === 'near').attachment = 'probe_bb';
+      (rig as any).skins = {
+        default: { near: { probe_bb: { type: 'boundingbox', vertices: [0, 0, 10, 0, 10, 10, 0, 10] } } },
+      };
+    },
+  },
+  {
+    name: 'R11_bounding_box_vertices_disagree_with_its_vertex_count',
+    origin:
+      'the same length comparison that decides a mesh’s encoding (A04), minus the uvs that would have caught it: ' +
+      'a count that does not match makes readVertices take the weighted branch and read coordinates as weights',
+    expect: 'reads that as a WEIGHTED run',
+    mutate: (rig) => {
+      (rig as any).slots.find((sl: any) => sl.name === 'near').attachment = 'probe_bb';
+      (rig as any).skins = {
+        default: { near: { probe_bb: { type: 'boundingbox', vertexCount: 4, vertices: [0, 0, 10, 0, 10, 10] } } },
+      };
+    },
+  },
+  {
+    name: 'R12_clipping_ends_at_a_slot_the_rig_does_not_have',
+    origin:
+      'SkeletonJson.ts:626-627 — `findSlot` returns null on a miss and the parser assigns it, so the clip ' +
+      'never ends: it runs to the bottom of the draw order and takes every slot below it out of the frame',
+    expect: 'which this rig does not declare',
+    mutate: (rig) => {
+      (rig as any).slots.find((sl: any) => sl.name === 'near').attachment = 'probe_clip';
+      (rig as any).skins = {
+        default: {
+          near: {
+            probe_clip: {
+              type: 'clipping',
+              end: 'collarr',
+              vertexCount: 3,
+              vertices: [0, 0, 10, 0, 0, 10],
+            },
+          },
+        },
+      };
+    },
+  },
+  {
+    name: 'R13_attachment_type_the_emitter_cannot_write',
+    origin: 'SkeletonJson.ts:653 — an unknown attachment `type` returns null and the attachment disappears with no error',
+    expect: 'rigc does not emit it yet',
+    mutate: (rig) => {
+      (rig as any).slots.find((sl: any) => sl.name === 'near').attachment = 'probe_point';
+      (rig as any).skins = { default: { near: { probe_point: { type: 'point', x: 1, y: 2 } } } };
+    },
+  },
+  {
     name: 'R06_wrong_spec_version_field',
     origin: 'the envelope is the only thing standing between a v1 reader and a v2 file',
     expect: 'unknown rig spec version',
@@ -2492,6 +2623,161 @@ function runEventSuite(): number {
     badDeclaration !== null && badDeclaration.includes('declares volume but no "audio"'),
     badDeclaration === null ? 'the compile went through' : `refused with: ${badDeclaration}`,
     'the same silence one level up: SkeletonJson.ts:478-481 reads the setup volume only when an audio path is set',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// bounding boxes and clipping attachments
+// ---------------------------------------------------------------------------
+//
+// ⭐ These two are the only attachment types whose purpose is entirely outside
+// the renderer: a bounding box is a polygon the game hit-tests, a clipping
+// attachment is a mask over the slots behind it. Neither draws a pixel, which is
+// exactly why they need a suite — every downstream check this repository has
+// (the rasteriser, `check`, the diff's region measures) is blind to both, so a
+// bounding box that loaded with zero vertices would sail through all of them.
+//
+// The round-trip cases are the point. `A33` reads the loaded objects, but a
+// validator and a compiler that agree with each other prove nothing; these read
+// the geometry and the end slot back off spine-core and compare them with the
+// numbers the spec wrote.
+
+const POLYGON_RIG = {
+  skins: {
+    default: {
+      block: { block: { image: 'block.png' } },
+      marker: {
+        marker: { image: 'marker.png' },
+        marker_bb: { type: 'boundingbox', vertexCount: 4, vertices: [0, 0, 12, 0, 12, 8, 0, 8], color: 'ce3a3aff' },
+        marker_clip: { type: 'clipping', end: 'marker', vertexCount: 3, vertices: [0, 0, 20, 0, 0, 20] },
+      },
+    },
+  },
+};
+
+const POLYGON_MOTION = {
+  spec: 'rigc-motion/1',
+  archetype: 'static_probe',
+  cut: 'static_probe',
+  easings: {},
+  animations: {},
+};
+
+function runPolygonSuite(): number {
+  const dirs = writeProbeRig(POLYGON_RIG);
+  let bad = 0;
+  console.log('\n── bounding boxes and clipping (self-contained) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(POLYGON_MOTION, null, 2)}\n`);
+  const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+  const gate = validate({
+    skeletonText: built.skeletonText,
+    atlasText: built.atlasText,
+    atlasDir: dirs.outDir,
+    declaredDurations: built.declaredDurations,
+    rig: built.rig,
+    profile: 'spine',
+  });
+  say(
+    'CONTROL_A_RIG_WITH_A_BOX_AND_A_CLIP_IS_GREEN',
+    gate.failures.length === 0 && gate.passed.includes('A33_VERTEX_ATTACHMENT_GEOMETRY'),
+    gate.failures.length === 0
+      ? `${gate.passed.length} assertions ran; A33 ${gate.passed.includes('A33_VERTEX_ATTACHMENT_GEOMETRY') ? 'ran' : 'did NOT run'}`
+      : `[${gate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'neither type draws a pixel, so every other check in this repository is blind to both — this is the only one that is not',
+  );
+
+  const policy = validate({
+    skeletonText: built.skeletonText,
+    atlasText: built.atlasText,
+    atlasDir: dirs.outDir,
+    declaredDurations: built.declaredDurations,
+    rig: built.rig,
+    profile: 'spine-html',
+  });
+  say(
+    'P01_the_same_rig_is_refused_by_the_renderer_profile',
+    policy.failures.some((f) => f.assertion === 'A11_NO_CLIPPING_ATTACHMENTS'),
+    policy.failures.find((f) => f.assertion === 'A11_NO_CLIPPING_ATTACHMENTS')?.detail ??
+      'A11 accepted a clipping attachment under the profile whose renderer skips them',
+    'valid Spine that one renderer will not draw: the emitter must be able to write it and the policy must still say no',
+  );
+
+  const posable = posableFromText(built.skeletonText, built.atlasText, dirs.outDir);
+  const skin = posable.data.findSkin('default');
+  const box = skin?.getAttachment(posable.data.findSlot('marker')!.index, 'marker_bb');
+  say(
+    'P02_the_bounding_box_loads_back_with_its_polygon',
+    box instanceof BoundingBoxAttachment &&
+      box.worldVerticesLength === 8 &&
+      !box.bones &&
+      [...box.vertices].join(',') === '0,0,12,0,12,8,0,8',
+    box instanceof BoundingBoxAttachment
+      ? `worldVerticesLength ${box.worldVerticesLength}, vertices [${[...box.vertices].join(', ')}]`
+      : `the skin returned ${box === null || box === undefined ? 'nothing' : box.constructor.name}`,
+    'a box that loaded with zero vertices is indistinguishable from a correct one everywhere except here',
+  );
+
+  const clip = skin?.getAttachment(posable.data.findSlot('marker')!.index, 'marker_clip');
+  say(
+    'P03_the_clip_loads_back_pointing_at_its_end_slot',
+    clip instanceof ClippingAttachment && clip.endSlot?.name === 'marker' && clip.worldVerticesLength === 6,
+    clip instanceof ClippingAttachment
+      ? `endSlot ${clip.endSlot ? `"${clip.endSlot.name}"` : 'null'}, worldVerticesLength ${clip.worldVerticesLength}`
+      : `the skin returned ${clip === null || clip === undefined ? 'nothing' : clip.constructor.name}`,
+    'findSlot returns null on a miss and the parser assigns it, so "ends nowhere" has to be told apart from "ends here"',
+  );
+
+  // --- the refusals ---------------------------------------------------------
+  const weighted = writeProbeRig({
+    skins: {
+      default: {
+        block: { block: { image: 'block.png' } },
+        marker: {
+          marker: { image: 'marker.png' },
+          marker_bb: {
+            type: 'boundingbox',
+            vertexCount: 3,
+            weights: [
+              [{ bone: 'block', x: 0, y: 0, weight: 1 }],
+              [{ bone: 'block', x: 12, y: 0, weight: 1 }],
+              [{ bone: 'no_such_bone', x: 12, y: 8, weight: 1 }],
+            ],
+          },
+        },
+      },
+    },
+  });
+  const unknownBone = refusal(weighted, POLYGON_MOTION);
+  say(
+    'P04_a_weighted_box_binding_an_unknown_bone_is_refused',
+    unknownBone !== null && unknownBone.includes('which the rig does not declare as a bone'),
+    unknownBone === null ? 'the compile went through' : `refused with: ${unknownBone}`,
+    'the polygon shares the mesh’s by-name encoder, so it inherits the refusal issue #45 was filed for',
+  );
+
+  const deferred = writeProbeRig({
+    skins: {
+      default: {
+        block: { block: { image: 'block.png' } },
+        marker: { marker: { image: 'marker.png' }, marker_pt: { type: 'point', x: 1, y: 2 } },
+      },
+    },
+  });
+  const notImplemented = refusal(deferred, POLYGON_MOTION);
+  say(
+    'P05_a_deferred_attachment_type_says_why_it_is_deferred',
+    notImplemented !== null &&
+      notImplemented.includes('rigc does not emit it yet') &&
+      notImplemented.includes('benchmark corpus'),
+    notImplemented === null ? 'the compile went through' : `refused with: ${notImplemented}`,
+    'a NotImplementedError is a promise about the failure mode, and a deferral without its reason is a wall (issue #5)',
   );
 
   return bad;
@@ -3269,6 +3555,8 @@ function main(): void {
   substantive += 5;
   bad += runEventSuite();
   substantive += 8;
+  bad += runPolygonSuite();
+  substantive += 6;
   bad += runMeshSuite();
   substantive += 4;
   const meshRungBad = runMeshRungSuite();
@@ -3324,6 +3612,7 @@ function main(): void {
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
       `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 6 draw-order controls, ` +
       '+ 5 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
+      '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +

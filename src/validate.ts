@@ -19,6 +19,7 @@ import {
   AnimationState,
   AnimationStateData,
   AtlasAttachmentLoader,
+  BoundingBoxAttachment,
   ClippingAttachment,
   MeshAttachment,
   Physics,
@@ -42,7 +43,7 @@ export interface Failure {
  *
  * ⭐ The distinction this draws is the difference between "wrong" and "not how we
  * do it here", and conflating the two is how a validator stops being usable on
- * anybody else's data. Fourteen of the 33 assertions are policy — seven for one
+ * anybody else's data. Fourteen of the 34 assertions are policy — seven for one
  * renderer (`spine-html`) and one project's canvas budget, seven for rigc's own
  * formations — and every one of them fires
  * on real, correct, editor-produced Spine data — the official example projects
@@ -115,6 +116,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A30_STROKE_WITHIN_CAP_CONTAINMENT: 'archetype',
   A31_DRAW_ORDER_OFFSETS_RESOLVE: 'validity',
   A32_EVENT_KEYS_RESOLVE: 'validity',
+  A33_VERTEX_ATTACHMENT_GEOMETRY: 'validity',
 };
 
 export interface ValidateInput {
@@ -636,6 +638,117 @@ export function validate(input: ValidateInput): ValidateReport {
         }
         if (!weighted && mesh.vertices.length !== mesh.worldVerticesLength) {
           fail('A04_MESH_TRIANGLES_AND_ENCODING', `mesh "${mesh.name}" unweighted vertices disagree with uvs`);
+        }
+      }
+    });
+
+    // --- A33: bounding boxes and clipping polygons hold a real polygon -------
+    //
+    // These two types are the same shape — a polygon and nothing else — and they
+    // fail the same three ways, all three silent:
+    //
+    //   1. **A missing or wrong `vertexCount`.** The parser reads
+    //      `map.vertexCount << 1` and hands it to `readVertices` as the length to
+    //      expect (`:552`, `:632`). `undefined << 1` is 0, so an omission makes
+    //      the coordinate array read as a WEIGHTED run: it decodes numbers as
+    //      bone counts and weights, and the attachment ends up with no vertices
+    //      at all. Nothing throws, and neither type draws a pixel, so nothing
+    //      downstream notices either.
+    //   2. **A weighted run that does not decode to that many vertices.** Same
+    //      trap as a mesh's (A04), minus the uvs that would have caught it.
+    //   3. **A clipping `end` naming a slot that is not there.**
+    //      `skeletonData.findSlot` returns null on a miss and `:626-627` assigns
+    //      the null, so the clip does not end where it was told to — it runs to
+    //      the bottom of the draw order and takes every slot below it with it.
+    //      Checked on the raw JSON, because a null `endSlot` and an `end` that
+    //      was never written are the same loaded object.
+    check('A33_VERTEX_ATTACHMENT_GEOMETRY', () => {
+      const polygons: Array<{ what: string; att: BoundingBoxAttachment | ClippingAttachment }> = [];
+      for (const skin of data.skins) {
+        for (const entry of skin.getAttachments()) {
+          const att = entry.attachment;
+          if (att instanceof BoundingBoxAttachment) polygons.push({ what: `bounding box "${att.name}"`, att });
+          else if (att instanceof ClippingAttachment) polygons.push({ what: `clipping attachment "${att.name}"`, att });
+        }
+      }
+      const slotNames = new Set(data.slots.map((s) => s.name));
+      let endsChecked = 0;
+      if (raw && Array.isArray(raw.skins)) {
+        for (const skin of raw.skins as unknown[]) {
+          if (!isObj(skin) || !isObj(skin.attachments)) continue;
+          for (const [slotName, perSlot] of Object.entries(skin.attachments as Json)) {
+            if (!isObj(perSlot)) continue;
+            for (const [placeholder, att] of Object.entries(perSlot)) {
+              if (!isObj(att) || att.type !== 'clipping' || att.end === undefined) continue;
+              endsChecked++;
+              if (typeof att.end !== 'string' || !slotNames.has(att.end)) {
+                fail(
+                  'A33_VERTEX_ATTACHMENT_GEOMETRY',
+                  `clipping attachment "${placeholder}" on slot "${slotName}" ends at ${JSON.stringify(att.end)}, ` +
+                    'which is not a slot of this skeleton — the clip would run to the bottom of the draw order',
+                );
+              }
+            }
+          }
+        }
+      }
+      if (polygons.length === 0 && endsChecked === 0) {
+        return skip('A33_VERTEX_ATTACHMENT_GEOMETRY', 'the skeleton carries no bounding box and no clipping attachment');
+      }
+      for (const { what, att } of polygons) {
+        const length = att.worldVerticesLength;
+        if (!Number.isInteger(length) || length < 6 || length % 2 !== 0) {
+          fail(
+            'A33_VERTEX_ATTACHMENT_GEOMETRY',
+            `${what} loaded worldVerticesLength ${length}; a polygon is an even count of at least 6 (3 vertices). ` +
+              'A missing "vertexCount" reads as 0 and takes the polygon with it',
+          );
+          continue;
+        }
+        const vertexCount = length / 2;
+        if (!att.bones) {
+          if (att.vertices.length !== length) {
+            fail(
+              'A33_VERTEX_ATTACHMENT_GEOMETRY',
+              `${what} declares ${vertexCount} vertices but holds ${att.vertices.length} unweighted numbers ` +
+                `(expected ${length}); the parser reads that mismatch as a weighted run`,
+            );
+          }
+          continue;
+        }
+        // Weighted: `bones` is boneCount, (index × boneCount), repeated, and
+        // `vertices` holds x, y, weight per binding.
+        let decoded = 0;
+        let bindings = 0;
+        let ok = true;
+        for (let i = 0; i < att.bones.length; decoded++) {
+          const count = att.bones[i++];
+          if (!Number.isInteger(count) || count < 1 || i + count > att.bones.length) {
+            fail('A33_VERTEX_ATTACHMENT_GEOMETRY', `${what} vertex ${decoded} claims ${count} bone(s); the run is malformed`);
+            ok = false;
+            break;
+          }
+          for (let k = 0; k < count; k++, i++) {
+            const index = att.bones[i];
+            if (index < 0 || index >= data.bones.length) {
+              fail('A33_VERTEX_ATTACHMENT_GEOMETRY', `${what} vertex ${decoded} references bone index ${index}`);
+              ok = false;
+            }
+          }
+          bindings += count;
+        }
+        if (!ok) continue;
+        if (decoded !== vertexCount) {
+          fail(
+            'A33_VERTEX_ATTACHMENT_GEOMETRY',
+            `${what} declares ${vertexCount} vertices and its weighted run decodes to ${decoded}`,
+          );
+        }
+        if (att.vertices.length !== bindings * 3) {
+          fail(
+            'A33_VERTEX_ATTACHMENT_GEOMETRY',
+            `${what} has ${bindings} binding(s) and ${att.vertices.length} weight numbers (expected ${bindings * 3})`,
+          );
         }
       }
     });

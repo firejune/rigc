@@ -25,11 +25,14 @@ import {
   parseRigSpec,
   type RigAttachment,
   type RigBone,
-  type RigMeshAttachment,
+  type RigBoundingBoxAttachment,
+  type RigClippingAttachment,
   type RigEvent,
+  type RigMeshAttachment,
   type RigMeshBinding,
   type RigRegionAttachment,
   type RigSpec,
+  type RigVertexGeometry,
 } from './rig.ts';
 import { buildRibbonMesh, buildRingMesh, encodeWeightedVertices, MeshError, type MeshBoneRef } from './mesh.ts';
 import { KEY_TIME_EPSILON } from './timelines.ts';
@@ -55,6 +58,8 @@ import type {
   RigInfo,
   SpineAttachment,
   SpineBone,
+  SpineBoundingBoxAttachment,
+  SpineClippingAttachment,
   SpineConstraint,
   SpineEvent,
   SpineMeshAttachment,
@@ -641,6 +646,7 @@ export function compile(opts: CompileOptions): CompileResult {
           meshes,
           slotName: rigSlot.name,
           anchorBone: rigSlot.bone,
+          slotNames: new Set(rig.slots.map((s) => s.name)),
         });
       }
       tableFor(skinName)[rigSlot.name] = perSlot;
@@ -989,6 +995,8 @@ interface AttachmentContext {
   meshes: CompileResult['meshes'];
   slotName: string;
   anchorBone: string;
+  /** Every slot the rig declares — a clipping attachment's `end` resolves here. */
+  slotNames: Set<string>;
 }
 
 /**
@@ -1009,10 +1017,147 @@ function buildRigAttachment(
   const type = att.type ?? 'region';
   if (type === 'region') return buildRigRegion(att as RigRegionAttachment, placeholder, where, ctx);
   if (type === 'mesh') return buildRigMesh(att as RigMeshAttachment, where, ctx);
+  if (type === 'boundingbox') return buildRigBoundingBox(att as RigBoundingBoxAttachment, where, ctx);
+  if (type === 'clipping') return buildRigClipping(att as RigClippingAttachment, where, ctx);
   throw new NotImplementedError(
     `${where}: attachment type "${String(type)}" is in the Spine 4.3 format and rigc does not emit it yet. ` +
-      'Implemented: region, mesh. docs/SPEC_COVERAGE.md part 1-6 lists what the type would have to carry.',
+      'Implemented: region, mesh, boundingbox, clipping. ' +
+      'point, path and linkedmesh are deliberately deferred: not one of them appears anywhere in the benchmark ' +
+      'corpus (docs/SPEC_COVERAGE.md parts 3-1 and 4-2), so none is on the ladder\'s critical path. ' +
+      'docs/SPEC_COVERAGE.md part 1-6 lists what each type would have to carry.',
   );
+}
+
+/**
+ * Encode the polygon a bounding box or a clipping attachment carries.
+ *
+ * 🚨 `vertexCount` is required, and everything else here is a cross-check of it.
+ * The parser reads `map.vertexCount << 1` and hands that to `readVertices` as the
+ * length to expect (`:552`, `:632`) — so with the field absent it expects 0,
+ * takes the weighted branch, decodes the coordinate list as
+ * `boneCount, (index, x, y, weight) × n`, and returns an attachment holding
+ * whatever that garbage produced. It loads. It draws nothing (a bounding box
+ * never did) and clips nothing, or clips the wrong shape, in complete silence.
+ *
+ * The two encodings are the mesh's — `encodeNamedWeights` is the same function —
+ * because they are the same field with the same trap: `readVertices` decides
+ * weighted vs unweighted by a length comparison alone, and a coincidental match
+ * reads weight data as coordinates.
+ */
+function buildVertexGeometry(att: RigVertexGeometry, where: string, ctx: AttachmentContext): number[] {
+  const count = att.vertexCount;
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 3) {
+    throw new CompileError(
+      `${where}: vertexCount is ${JSON.stringify(count)}; a polygon needs at least 3 vertices, stated outright — ` +
+        'the field has no parser default, and an absent one reads as 0 and takes the polygon with it',
+    );
+  }
+  if (att.vertices && att.weights) {
+    throw new CompileError(
+      `${where}: geometry comes as "vertices" or as "weights", never both — "weights" is the by-name form of the same data`,
+    );
+  }
+  if (att.weights) {
+    if (att.boneIndexing === 'raw') {
+      throw new CompileError(`${where}: "boneIndexing": "raw" describes a "vertices" run; "weights" always binds by name`);
+    }
+    if (att.weights.length !== count) {
+      throw new CompileError(`${where}: weights cover ${att.weights.length} vertices but vertexCount is ${count}`);
+    }
+    return encodeNamedWeights(att.weights, where, ctx);
+  }
+  const raw = att.vertices;
+  if (!raw || raw.length === 0) {
+    throw new CompileError(`${where}: needs geometry — "vertices" (x, y per vertex) or "weights" (bound by name)`);
+  }
+  const unweighted = raw.length === count * 2;
+  if (!unweighted) {
+    if (att.boneIndexing !== 'raw') {
+      throw new CompileError(
+        `${where}: vertexCount ${count} wants ${count * 2} unweighted numbers and "vertices" holds ${raw.length}. ` +
+          'The parser reads that as a WEIGHTED run, whose bone INDEXES point into the emitted bone array — a list ' +
+          'the spec never writes, so inserting a bone rebinds every vertex in silence. ' +
+          'Give the bindings by name as "weights": [[{ "bone": …, "x": …, "y": …, "weight": … }, …], …], ' +
+          'fix vertexCount, or say "boneIndexing": "raw" on this attachment to keep the index form deliberately.',
+      );
+    }
+    // A raw run still has to decode to exactly `vertexCount` vertices, or the
+    // count and the polygon disagree and the parser believes the count.
+    let decoded = 0;
+    for (let i = 0; i < raw.length; decoded++) {
+      const bones = raw[i++];
+      if (!Number.isInteger(bones) || bones < 1) {
+        throw new CompileError(`${where}: the raw weighted run has a bone count of ${String(bones)} at index ${i - 1}`);
+      }
+      i += bones * 4;
+      if (i > raw.length) {
+        throw new CompileError(
+          `${where}: the raw weighted run is truncated — vertex ${decoded} claims ${bones} bone(s) and the array ends first`,
+        );
+      }
+    }
+    if (decoded !== count) {
+      throw new CompileError(`${where}: the raw weighted run decodes to ${decoded} vertices but vertexCount is ${count}`);
+    }
+    // Register the bones it binds so the mesh-bone reports stay complete.
+    for (let i = 0; i < raw.length; ) {
+      const bones = raw[i++];
+      for (let k = 0; k < bones; k++, i += 4) {
+        const bone = ctx.bones[raw[i]];
+        if (bone) ctx.meshBones.add(bone.name);
+      }
+    }
+  }
+  for (const n of raw) {
+    if (!Number.isFinite(n)) throw new CompileError(`${where}: the vertex array holds a non-finite value ${String(n)}`);
+  }
+  return raw.map(r6);
+}
+
+function buildRigBoundingBox(
+  att: RigBoundingBoxAttachment,
+  where: string,
+  ctx: AttachmentContext,
+): SpineBoundingBoxAttachment {
+  const out: SpineBoundingBoxAttachment = {
+    type: 'boundingbox',
+    vertexCount: att.vertexCount,
+    vertices: buildVertexGeometry(att, where, ctx),
+  };
+  if (att.color !== undefined) out.color = att.color;
+  return out;
+}
+
+function buildRigClipping(
+  att: RigClippingAttachment,
+  where: string,
+  ctx: AttachmentContext,
+): SpineClippingAttachment {
+  if (att.end !== undefined) {
+    // `skeletonData.findSlot` returns null on a miss and the parser assigns that
+    // null (`:626-627`), so a typo does not fail — the clip simply never ends and
+    // takes every slot below it out of the frame.
+    if (typeof att.end !== 'string' || !ctx.slotNames.has(att.end)) {
+      throw new CompileError(
+        `${where}: end names slot ${JSON.stringify(att.end)}, which this rig does not declare; ` +
+          'a miss loads as null and the clip then runs to the bottom of the draw order',
+      );
+    }
+  }
+  // Field order is the editor's here — `end`, `convex`, `inverse` before the
+  // geometry — via conditional spreads, because a key assigned after the literal
+  // lands at the end instead. Order carries no meaning in JSON; it is read by
+  // people, and this file's diff against a reference is read a lot.
+  const out: SpineClippingAttachment = {
+    type: 'clipping',
+    ...(att.end !== undefined ? { end: att.end } : {}),
+    ...(att.convex !== undefined ? { convex: att.convex } : {}),
+    ...(att.inverse !== undefined ? { inverse: att.inverse } : {}),
+    vertexCount: att.vertexCount,
+    vertices: buildVertexGeometry(att, where, ctx),
+  };
+  if (att.color !== undefined) out.color = att.color;
+  return out;
 }
 
 function buildRigRegion(

@@ -81,7 +81,7 @@ What the flags mean:
 | `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths are written relative to it |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
-| `--profile` | `spine` = the 18 validity rules · `spine-html` = all 32 (**the default**) |
+| `--profile` | `spine` = the 20 validity rules · `spine-html` = all 34 (**the default**) |
 
 Pick the profile deliberately. `spine-html` adds one renderer's policy and one
 project's canvas budget, and those rules fire on perfectly correct Spine data
@@ -393,6 +393,55 @@ they encode a deformation model rather than a table of numbers, which is why the
 are code invoked by data. A generator is for a skeleton with **no** manifest; a cut
 that has one invokes the same builders through the manifest's `mesh` block.
 
+**Bounding box** ([Spine: bounding boxes](http://esotericsoftware.com/spine-bounding-boxes))
+and **clipping** ([Spine: clipping](http://esotericsoftware.com/spine-clipping))
+attachments — a polygon, and nothing else.
+
+**When you need one:** a *bounding box* is a shape the game hit-tests against — a
+hurt box, a pick region, a trigger volume — that follows the skeleton and draws
+nothing. A *clipping* attachment is a **mask**: everything drawn from the slot
+carrying it up to and including `end` is clipped to the polygon, so a window, a
+portal or a wipe is one attachment rather than a second set of art.
+
+```json
+"head-bb": { "head": { "type": "boundingbox", "vertexCount": 6,
+                       "vertices": [-19.14, -70.3, 40.8, -118.07, 257.77, -115.62,
+                                    285.16, 57.18, 120.77, 164.95, -5.07, 76.95] } },
+"clipping": { "clipping": { "type": "clipping", "end": "head-bb", "vertexCount": 3,
+                            "vertices": [18.89, -228.46, 1471.52, 140.96, 34.01, 930.06],
+                            "color": "ce3a3aff" } }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `vertexCount` | **required.** How many vertices the polygon has, stated outright — see the warning below |
+| `vertices` / `weights` | the same two encodings a mesh's geometry uses, with the same by-name default and the same `"boneIndexing": "raw"` opt-in |
+| `color` | `rrggbbaa`; the colour the editor draws the outline in |
+| `end` | clipping only. The **last** slot the clip applies to, by name |
+| `convex`, `inverse` | clipping only, 4.3, both default false |
+
+🚨 **`vertexCount` has no parser default and rigc will not infer one.** A mesh gets
+its count from `uvs.length`; a polygon has no uvs, and the parser reads
+`map.vertexCount << 1` as the number of coordinates to expect. With the field
+absent that is `undefined << 1` = **0**, so the coordinate array is decoded as a
+*weighted* run — bone counts and weights read out of your x/y pairs — and the
+attachment ends up holding nothing. It loads. Neither type draws a pixel, so
+nothing downstream notices. rigc requires the count and cross-checks it against
+whichever encoding you used; `A33_VERTEX_ATTACHMENT_GEOMETRY` checks it again on
+the artifact.
+
+⚠️ **A clipping `end` that names nothing is not an error to Spine.**
+`skeletonData.findSlot` returns `null` on a miss and the parser assigns that null
+without a word, so the clip never ends — it runs to the bottom of the draw order
+and takes every slot below it out of the frame. rigc refuses a name the rig does
+not declare. Omitting `end` entirely is the format's own way of saying "clip
+everything after this one", and is left alone.
+
+🚫 Under the default `spine-html` profile a clipping attachment is refused by
+`A11_NO_CLIPPING_ATTACHMENTS` — that renderer skips them silently, so a mask that
+was supposed to hide something would not. It is valid Spine and `--profile spine`
+accepts it; the refusal is policy, not validity.
+
 ### 3.5 `constraints` — 4.3's single typed array
 
 Spine 4.3 folds every constraint into one `constraints` array with a `type`
@@ -690,6 +739,9 @@ the frequent ones, verbatim:
 | `events at t=…: event "X" is not declared in the rig spec's "events" block` | declare it in the rig spec (§3.6), or fix the name |
 | `events: key times must not go backwards` | put the firings in time order (§4.8) |
 | `events at t=…: volume is set but event "X" declares no "audio"` | drop `volume`/`balance`, or give the event an audio path |
+| `vertexCount is undefined; a polygon needs at least 3 vertices, stated outright` | give the bounding box or clipping attachment a `vertexCount` (§3.4) |
+| `vertexCount N wants M unweighted numbers and "vertices" holds K` | fix the count or the array; they decide the encoding between them |
+| `end names slot "X", which this rig does not declare` | fix the clipping attachment's `end`, or add the slot |
 | `bone "X" takes its position from …, which needs a cut manifest` | R8 — pass `--manifest`, or write literal `x`/`y` |
 
 ### 5.2 Assertions — the gate
@@ -750,6 +802,7 @@ The report prints one line per assertion:
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the animation drives past the measured containment ceiling, or scales a bone in the axis subtree |
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | a draw-order key names a slot the skeleton does not have, offsets one slot twice, puts a slot outside the slots array, or lists its offsets out of slot order (§4.7). The only assertion that runs **before** `A00` — the last of those shapes makes the loader spin rather than return, so the round trip is refused instead of attempted |
 | `A32_EVENT_KEYS_RESOLVE` | both | an event key fires a name the skeleton's `events` block does not declare, sits earlier in time than the key before it, or sets `volume`/`balance` on an event with no `audio` (§4.8). **SKIP** when no animation carries an event timeline |
+| `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | a bounding box or clipping polygon whose `vertexCount` is missing or disagrees with its vertex array, a weighted run that decodes to the wrong number of vertices or an out-of-range bone index, or a clipping `end` naming a slot the skeleton does not have (§3.4). **SKIP** when the skeleton carries neither type |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
@@ -763,9 +816,14 @@ a **`NotImplementedError` naming the field**, because the parser's own behaviour
 worse: an unknown attachment `type` returns `null` and the attachment disappears,
 and a constraint entry with an unrecognised `type` matches no case and vanishes.
 
+Each is deferred for a stated reason, and the reason is the same one in every row:
+**not one of these types appears anywhere in the benchmark corpus** (SPEC_COVERAGE
+parts 3-1 and 4-2), so none of them is on the ladder's critical path. The message
+says so, because a deferral without its reason is a wall rather than a work item.
+
 | You wrote | You get |
 | --- | --- |
-| attachment `type` of `boundingbox`, `point`, `clipping`, `path`, `linkedmesh` | `attachment type "X" is in the Spine 4.3 format and rigc does not emit it yet. Implemented: region, mesh.` |
+| attachment `type` of `point`, `path`, `linkedmesh` | `attachment type "X" is in the Spine 4.3 format and rigc does not emit it yet. Implemented: region, mesh, boundingbox, clipping. point, path and linkedmesh are deliberately deferred: not one of them appears anywhere in the benchmark corpus …` |
 | constraint `type` of `path` or `slider` | `constraint type "X" … Implemented: ik, transform, physics.` |
 | mesh `generator.kind` of `contour` | `the "contour" generator would triangulate a part's own alpha mask, and src/mesh.ts has no triangulator` |
 
