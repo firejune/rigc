@@ -879,6 +879,7 @@ function buildBone(spec: RigBone, soFar: SpineBone[], ctx: BoneContext): SpineBo
   if (spec.inherit !== undefined) bone.inherit = spec.inherit;
   if (spec.skin !== undefined) bone.skin = spec.skin;
   if (spec.color !== undefined) bone.color = spec.color;
+  if (spec.icon !== undefined) bone.icon = spec.icon;
   return bone;
 }
 

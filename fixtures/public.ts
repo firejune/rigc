@@ -358,7 +358,9 @@ function writeArticulatedRig(dir: string): string {
       { name: 'mass', parent: 'cam', from: { anchor: 'mass' } },
       { name: 'mass_a', parent: 'mass', from: { anchor: 'mass_a', rotation: 'anchor' } },
       { name: 'mass_b', parent: 'mass', from: { anchor: 'mass_b', rotation: 'anchor' } },
-      { name: 'axis', parent: 'cam', from: { anchor: 'axis', rotation: 'axis' } },
+      // `color`/`icon` are editor affordances with no rendering effect; they ride
+      // here so the round trip sees them copied through rather than dropped.
+      { name: 'axis', parent: 'cam', from: { anchor: 'axis', rotation: 'axis' }, color: 'ff3f00ff', icon: 'arrowsB' },
       { name: 'plunger', parent: 'axis', from: { anchor: 'plunger' } },
       { name: 'plunger_tip', parent: 'plunger', from: { anchor: 'plunger_tip' } },
       { name: 'rim', parent: 'axis', from: { anchor: 'rim' } },

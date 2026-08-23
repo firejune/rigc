@@ -185,6 +185,12 @@ export interface RigBone {
   skin?: boolean;
   /** `rrggbbaa`. Editor affordance; no rendering effect. */
   color?: string;
+  /**
+   * The editor's icon for this bone. Editor affordance; no rendering effect,
+   * and no assertion checks the name — the icon vocabulary belongs to the
+   * editor, so an unknown one is not rigc's error to raise.
+   */
+  icon?: string;
   /** rigc extension — see `RigBoneFrom`. */
   from?: RigBoneFrom;
 }
