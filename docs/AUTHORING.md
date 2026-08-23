@@ -1004,11 +1004,13 @@ bun cli.ts check --candidate path/to/spine --frames path/to/reference/frames
 ```
 
 `--frames` takes either a **skeleton root** (the directory holding `frames.json`,
-which checks every animation of that shot) or **one animation directory** inside
-it. Everything else is optional: `--atlas` when the candidate's atlas is not beside
-its skeleton, `--as <name>` when your animation is called something the frame
-directory is not, `--all-frames` to list every frame instead of the worst by MAE,
-`--json <out>` for the whole per-frame, per-slot report.
+which checks every animation of that shot, framed per set — see the scope note
+below) or **one animation directory** inside it. Everything else is optional:
+`--atlas` when the candidate's atlas is not beside its skeleton, `--as <name>` when
+your animation is called something the frame directory is not, `--framing shared`
+to fit one framing across every set instead of one each, `--all-frames` to list
+every frame instead of the worst by MAE, `--json <out>` for the whole per-frame,
+per-slot report.
 
 ⚠️ **A frame set may be contact-sheets-only.** `check` only reads `fNNNN.png`
 files — a committed reference set that ships a contact sheet plus a couple of
@@ -1073,10 +1075,47 @@ pixels rather than quad corners (issue #34, closed by #39; see §9.2). Pin to a 
 you can name a reason for, and read the unpinned framing line first when you are not
 sure whether you have one.
 
-⚠️ **The framing is over the frames you compare.** `--frames <root>` fits one
-framing across every set under it; `--frames <root>/<one-set>` fits one to that set
-alone. Both are right and they are not the same number, so compare like with like
-across builds.
+⚠️ **The framing is over the frames you compare, and `check` decides it PER SET.**
+Point it at a skeleton root and each animation directory under it is asked its own
+question first: *do this set's own drawn pixels land in the box `frames.json`
+records?* The sets that do are measured in that box, which is exact — it is not an
+estimate of where the frames were drawn, it is where they were drawn — and nothing
+another set does can move them. The sets that do not are measured in **one shared
+framing** fitted across every set, printed as the header's `shared box` line. Each
+set says which it got on its own `framed to` line.
+
+Why the split falls there, both halves measured on an 8-shot character (147 frames):
+
+- **Deciding the declared box per set is worth 15–25 MAE.** Over the union, one shot
+  that is not in the frames' coordinates puts the pooled correction over the
+  one-pixel threshold and the *whole root* falls back to a fit. Per set, the shots
+  that qualify read what pinning by hand reads: `idle` **18.77** where a whole-root
+  run read 41.59, with not one key different (issue #100).
+- **Fitting per set is worse, so `check` does not.** `fitFraming` registers extent,
+  and extent is not alignment (see the ⚠️ in §9.2), so on a shot whose silhouette
+  genuinely differs one shot's frames do not constrain the fit enough: `hit` reads
+  **92.36** fitted on its own against 60.59 in the shared fit, and a two-frame stills
+  set reads 101.94 against 42.98. More frames is a better-conditioned fit, so the
+  fallback is deliberately the shared one.
+
+`--framing shared` measures **every** set in the shared framing, which is what a
+whole-root run used to do. It answers one question and it is a good one — *does a
+single box serve every set?* — and it is the wrong number to read as one shot's
+fidelity.
+
+⚠️ The two are different measurements and their absolute numbers are not comparable.
+The `scope` line at the top of the report says which one you got. `--viewport` pins
+one box for the whole run whichever scope you ask for, because a pin is a claim
+about your candidate's own coordinates and those do not change between shots.
+
+⚠️ **`--frames <root>/<one-set>` is a third number for a set that cannot take the
+declared box**, and it is the least constrained of the three: the fit has only that
+set's frames to work from, where a root run's shared fit has every frame in the
+skeleton. Measured on the same character, `hit` reads 60.50 at the root and 92.41
+pointed at its own directory. A set that DOES take the declared box reads the same
+either way — that box is not fitted to anything — so pointing at one directory is
+exact for a shot you authored in the frames' coordinates and a rough estimate for
+one you did not.
 
 ### 9.1 Why this exists
 

@@ -358,8 +358,14 @@ function cmdDiff(flags: Record<string, string>, positional: string[]): void {
  *
  * There is no pass mark, for the same reason `diff` has none.
  */
-function readCheckFlags(flags: Record<string, string>): Pick<CheckOptions, 'fps' | 'viewport' | 'as'> {
-  const out: Pick<CheckOptions, 'fps' | 'viewport' | 'as'> = {};
+function readCheckFlags(flags: Record<string, string>): Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing'> {
+  const out: Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing'> = {};
+  if (flags.framing !== undefined) {
+    if (flags.framing !== 'per-shot' && flags.framing !== 'shared') {
+      throw new UsageError('--framing takes per-shot (the default) or shared');
+    }
+    out.framing = flags.framing;
+  }
   if (flags.fps !== undefined) {
     const fps = Number(flags.fps);
     if (!Number.isFinite(fps) || fps <= 0) throw new UsageError('--fps must be a positive number');
@@ -503,6 +509,13 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
     // summary that reported those numbers without saying how the two shots were
     // put on each other is how issue #34 stayed invisible for two ladder runs.
     const framing = check.framingFit;
+    if (!framing && check.sharedFraming) {
+      const f = check.sharedFraming.fit;
+      console.log(
+        `  framing    one per set (${check.animations.length}); one shared box leaves ` +
+          `x${f.scale.toFixed(6)}, rms ${f.rms.toFixed(2)}px — see the check table above for each set's own`,
+      );
+    }
     if (framing) {
       const signed = (n: number): string => `${n >= 0 ? '+' : ''}${n.toFixed(2)}`;
       const how = !framing.applied
@@ -700,6 +713,10 @@ const USAGE = [
   '  --atlas <path>        the candidate\'s atlas, when it is not beside the skeleton',
   '  --fps <n>             only for a frame set with no frames.json sidecar',
   '  --viewport x,y,w,h    pin the candidate\'s world box, y up, instead of fitting it',
+  '  --framing per-shot|shared   decide the framing per frame set (default), or once',
+  '                        across all of them. Per set, a set whose own pixels land in',
+  '                        frames.json\'s box is measured there; on a multi-shot root that',
+  '                        is worth 15-25 MAE against one shared fit for every set',
   '  --as <name>           the candidate animation to play, when it is named differently',
   '  --all-frames          print every frame, not just the worst by MAE',
   '  --json <out>          the whole per-frame, per-slot report',
