@@ -1,0 +1,56 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "pendulum",
+  "images": "examples/3-timing-and-spacing/images",
+  "skeleton": {
+    "x": -900,
+    "y": -50,
+    "width": 2100,
+    "height": 900
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "block",
+      "parent": "root",
+      "x": 0,
+      "y": 79.5
+    },
+    {
+      "name": "pendulum",
+      "parent": "root",
+      "x": -177.2,
+      "y": 706
+    }
+  ],
+  "slots": [
+    {
+      "name": "block",
+      "bone": "block",
+      "attachment": "square"
+    },
+    {
+      "name": "pendulum",
+      "bone": "pendulum",
+      "attachment": "pendulum"
+    }
+  ],
+  "skins": {
+    "default": {
+      "block": {
+        "square": {
+          "image": "square.png"
+        }
+      },
+      "pendulum": {
+        "pendulum": {
+          "image": "pendulum.png",
+          "x": -316.8,
+          "y": 0
+        }
+      }
+    }
+  }
+}
