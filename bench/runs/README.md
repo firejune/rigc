@@ -30,15 +30,18 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 | 5 | [`5-squash-and-stretch.md`](../briefs/5-squash-and-stretch.md) | rev 2, 2026-08-23 | 3 animations, 12 fps + 24 fps sheets | 1 | subject ~4–16 px; proportions are measured, not seen |
 | 6 | [`6-arcs.md`](../briefs/6-arcs.md) | **yes (third party)**, rev 3, 2026-08-23 | 1 animation, 12 fps + 24 fps sheet | 1 | the subject **deforms**; ball ~14 px; proportions are measured, not seen |
 | 8 | [`8-follow-through.md`](../briefs/8-follow-through.md) | **yes (third party)**, rev 2, 2026-08-23 | 2 skeletons, 1 animation each, 12 **and** 24 fps in full | **2** | two shots that want opposite machinery — `pendulum` deforms nothing, `ball` deforms on most frames; the `ball` shot moves over 130 px between two 12 fps frames, so read it at 24 fps; the chain's lag is **horizontal only** |
-| spineboy | [`spineboy.md`](../briefs/spineboy.md) | **no** | 2 skeletons, 19 animations, 12 fps in full **+ 30 fps sheets** | **1** (`ess`; `pro` is optional) | the rung clears on **`ess` alone**, and `ess` has **8** animations — the ladder row's "11" is `pro`'s count; `pro`'s line is printed *(stretch — does not count)*; the two skeletons are at different scales, so no pixel figure crosses between them; the second rate is **30 fps** and only two frames per animation are on disk at it, so the sheets are for timing and never for a distance |
+| spineboy | [`spineboy.md`](../briefs/spineboy.md) | **yes (third party)**, rev 2, 2026-08-23 | 2 skeletons, 19 animations, 12 fps in full **+ 30 fps sheets** | **1** (`ess`; `pro` is optional) | the rung clears on **`ess` alone**, and `ess` has **8** animations — the ladder row's "11" is `pro`'s count; `pro`'s line is printed *(stretch — does not count)*; the two skeletons are at different scales, so no pixel figure crosses between them; the second rate is **30 fps** and only two frames per animation are on disk at it, so the sheets are for timing and never for a distance |
 | 7 | — | — | — | — | not prepared. `7-anticipation` has no upstream `license.txt` at all, so `render_reference.ts` refuses it and it must never be rendered |
 
 **Brief verified** is the header block described in the next section. Rungs 3 and 1
 were attempted before the rule existed; their briefs still need the pass, and until
 they get it a run against either of them carries the risk the section names.
-**spineboy's brief was written on 2026-08-23 and has not had its pass yet** — it is
-prepared, not ready, and the rung should not be attempted until a different agent has
-been over it. Rung 6
+**spineboy is the third brief to carry a third-party pass** (2026-08-23, revision 2):
+of 179 claims, 146 verified — both duration tables entire, and most of `death`,
+`jump`, `shoot` and `hit` to the digit — 31 were corrected and 2 moved into the
+brief's "cannot tell you" section, and one claim went the other way (the figure is
+decidably in front of the vortex, so the frames settle **two** draw-order edges, not
+one). Rung 6
 is the first brief to carry the pass the protocol actually asks for — a **different**
 agent, not the one that wrote it; rungs 2, 4 and 5 were re-measured by their own
 author and their headers say so. **Rung 8 is the second to carry a third-party
@@ -81,6 +84,15 @@ does not count)* — because it is a harder rig than the graduation exam and fol
 in would make the exam unpassable for a reason unrelated to passing it. A run that
 builds only `ess` is a complete attempt at the rung. The `pro` line that `bench`
 prints from an `ess` candidate is still noise, and the same rule applies to it.
+
+⚠️ **A colour predicate can be satisfied by two different parts, and a control the
+whole shot passes will not notice.** spineboy's verification found the brief's "gun"
+estimator counting the figure's teal hair as well as the gun — nearly half the
+reading — and revision 1's control (a stable 5 % band over 21 stance frames) passed
+precisely *because* the hair is stable in those frames. What caught it was
+compositing the two art files at the sidecar's own scale and predicting the
+estimator's output: 321 px of gun and 268 px of hair against a measured 599–631.
+**Predict what a part should read before believing what a frame does read.**
 
 ## Before a rung is attempted — the brief needs a second pair of eyes
 
