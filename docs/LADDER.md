@@ -240,7 +240,7 @@ The written form of all this, per rung and per run:
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ⬜ *attempted* |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | 🟨 `pendulum` ✅ · `ball` ⬜ ×2, remainder unobservable |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ⬜ |
-| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×3 — structure ✅, motion improving (18.8→14.6 px) · `pro` ⬜ |
+| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×3 — structure ✅, motion improving (18.8→14.6 px) · `pro` ⬜ · frozen as gate 2026-08-24 |
 
 ⬜ **but attempted.** Eleven runs across rungs 1, 2, 4/5, 6, 8 and spineboy have been
 made — eight on 2026-08-23 and three finished 2026-08-24 — and none of them cleared a
@@ -329,7 +329,10 @@ are two different kinds of gap and they want two different answers — (a) is a 
 about what the protocol hands a run, and (b) is a question about method. **Attempt 3 is
 the first sign that (b) has answers rather than only a name**: reading `check`'s
 per-frame column before its MAE, and starting a pose fit from more than one pose, moved
-every figure attempt 2's dashboard named. They did not move it far enough.
+every figure attempt 2's dashboard named. They did not move it far enough. **The
+ladder's active phase closes here** — spineboy is frozen as a gate (below), and the
+rungs now stand as regression gates for tool and method changes rather than as
+attempts waiting to be made.
 
 **Writing the conventions down measurably moves the curve and key measures.** That is
 the seventh run's finding, and it is the first evidence on the ladder that a guide
@@ -1422,6 +1425,27 @@ about a pose it already had.
 motion half stays open, and the gap between them is now measured rather than described.
 The lever is the same one attempt 2 named — a better fitter — and attempt 3 says it is a
 lever that moves.
+
+🧊 **Frozen as a gate, 2026-08-24 — the rung stops taking attempts for their own
+sake.** A rigid pre-alignment probe refuted the hypothesis this section left standing,
+that `death`'s lying passage wants a whole-body pre-alignment: the candidate **already
+lies at the right angle**, and **81 % of what any rigid transform could still win there
+is one constant pixel** — `check`'s own framing floor rather than an authoring defect,
+filed as [#146](https://github.com/firejune/rigc/issues/146) with the measurement
+recorded on [#139](https://github.com/firejune/rigc/issues/139). The residual is
+intra-chain, and the move that reaches it — the multi-start refit over `death`'s long
+tail, which attempt 3's *Known wrong* already names — is incremental. Incremental does
+not earn a full run.
+
+**So the rung's figures become the bar. It reopens when a change of approach, spec or
+solution claims an improvement, and that claim is judged against attempt 3's recorded
+figures** — `bones` **0.924** name-matched / **0.967** name-agnostic, `slots` **0.844** /
+**0.810**, `animations` **0.804**; per chain, `front-thigh` **14.6 px** worst and `death`
+**54.31** reference-denominator MAE — **together with the floors the cleared candidates
+post**, `pendulum` and rung 3 at **0.7–3.3 px** of worst slot drift. A claim that does not
+beat them is not an improvement, and a run is not owed to it.
+[#16](https://github.com/firejune/rigc/issues/16) stays open: a gate is not a clearing.
+
 ---
 
 ## B1's proof — rung 3 transcribed, not authored
