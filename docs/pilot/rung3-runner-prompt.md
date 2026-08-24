@@ -265,7 +265,8 @@ mkdir -p bench/runs/<YYYY-MM-DD>-rung3-1
 ```
 
 If a directory with that exact name already exists, use `-2`, then `-3`, and so
-on.
+on. **Every path below that says `<YYYY-MM-DD>-rung3-1` means the directory you
+actually created** — substitute the real name each time.
 
 **Step 24.** Create `bench/runs/<YYYY-MM-DD>-rung3-1/LOOP.md` and write its header
 block **now, before you author anything**. Use exactly this shape, filling in your

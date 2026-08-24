@@ -568,7 +568,6 @@ for a result, and there is no flag that changes that.
   and rendered frames, scored. [docs/PILOT.md](docs/PILOT.md) is how to run an
   agent through it and score what comes back.
 
-
 ## Usage
 
 📘 **Writing a spec? Read [docs/AUTHORING.md](docs/AUTHORING.md) first.** It is the
