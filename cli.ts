@@ -564,10 +564,17 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
   console.log('  a rung is cleared by a person reading the measures, and docs/LADDER.md records it.');
 
   if (flags.json !== undefined) {
+    // No `gates` field, deliberately. The rung's gate string names its features
+    // and its per-skeleton counts, which `bench/runs/README.md` forbids a run
+    // from reading — and this report is one of the six files the run protocol
+    // requires committing, so a copy of it here would sit inside every future
+    // run's directory, which is exactly where the next author looks for process
+    // notes. `rung` identifies the rung and carries nothing (issue #137). The
+    // console block above still prints the gate string: that is for the person
+    // reading the run, not a file the protocol commits.
     writeJson(flags.json, {
       rung: rung.id,
       example: rung.example,
-      gates: rung.gates,
       profile,
       candidate: { skeleton: skeletonPath, atlas: atlasPath },
       validate: report,

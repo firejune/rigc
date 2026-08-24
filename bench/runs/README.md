@@ -286,6 +286,14 @@ bench/runs/<YYYY-MM-DD>-rung<N>-<n>/     e.g. 2026-08-22-rung3-1/
 `<n>` counts attempts at that rung on that date, from 1. A rung with two skeletons
 puts each candidate's specs and `spine/` in a subdirectory named for it.
 
+`bench.json` carries no gate string. It used to copy `src/ladder.ts`'s `gates:`
+verbatim — a forbidden fact (see the table above) written by the finish line into a
+file this protocol requires committing, and so left within reach of every later run
+that opens an earlier run's directory for process notes. The report now identifies
+the rung by `rung` alone; the gate string is printed to the console only, for the
+person reading the run (issue #137). Runs before that fix may still carry it —
+`2026-08-24-spineboy-3` redacted the field by hand.
+
 ### `README.md` and `LOOP.md`
 
 Two files, because they are read by different people at different times.
