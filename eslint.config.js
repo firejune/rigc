@@ -21,7 +21,8 @@ import tseslint from 'typescript-eslint';
 
 export default [
   {
-    ignores: ['node_modules/**', 'examples/**', 'bench/reference/**'],
+    // pilot run dirs are foreign artifacts kept verbatim — see tsconfig.json's exclude
+    ignores: ['node_modules/**', 'examples/**', 'bench/reference/**', 'bench/runs/2026-08-24-rung3-1/**'],
   },
   {
     files: ['**/*.ts'],

@@ -567,6 +567,9 @@ for a result, and there is no flag that changes that.
 - [docs/LADDER.md](docs/LADDER.md) is the benchmark: the same job, from a brief
   and rendered frames, scored. [docs/PILOT.md](docs/PILOT.md) is how to run an
   agent through it and score what comes back.
+- 🤖 **Handing the authoring to an AI agent?**
+  [docs/PROMPTING.md](docs/PROMPTING.md) is the operator's page — the six prompt
+  clauses a measured pilot run paid for, and what you can leave unsaid.
 
 ## Usage
 
