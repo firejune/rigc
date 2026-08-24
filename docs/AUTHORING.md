@@ -20,7 +20,8 @@ that can see that, and a run that skips it has verified nothing about the motion
 - The motion spec and emitted shapes: [`src/types.ts`](../src/types.ts)
 - What the format holds and rigc covers: [SPEC_COVERAGE.md](SPEC_COVERAGE.md)
 - Reproducing a shot you were given as pictures: **§8**, and read it *before* you
-  start measuring rather than after; then **§9** for the loop that closes it
+  start measuring rather than after; **§8.1** if the figure has more joints than you
+  can measure one at a time; then **§9** for the loop that closes it
 - The conventions an editor user follows without being told — one image per
   attachment, keying practice, curve kind, draw order — sourced from Spine's own
   public documentation: **§10**
@@ -997,6 +998,89 @@ shape from §10.4's automatic-handle advice and a small reused `easings` table; 
 leave `check` to catch the one thing no static reading can, an easing applied the
 wrong way round.
 
+### 8.1 Getting a pose for a figure with a dozen joints
+
+Everything above measures a *part*, and §9 checks a pose you already have. Between
+them sits the question neither answers — where do a dozen bones go on this frame —
+and on a character that gap is most of the run. What follows is not Spine's and no
+public page has an opinion about it, but it decides whether the search converges at
+all, so it sits here rather than being rediscovered once per figure.
+
+**Fit the rendered composite, never a part on its own.** The first trap above tells
+you to measure each part on pixels that can only be that part. On a figure with limbs
+there are no such pixels: an arm crosses a torso, one leg crosses the other, a held
+prop is drawn over both, and **every frame is a frame where parts are touching** — the
+trap with no way out of it. So the objective is the whole picture. Render your
+candidate through the same rasteriser that drew the reference, into the frames' own
+viewport, and minimise the difference over the bones' local transforms; that is §8's
+*"look for a second way to get the same number"* applied to a whole pose at once, and
+it is the render loop **§9.1** sends you into. Read §9.1's warning about where a
+bone's local transform lives *before* you write the first sweep — a fitter that is
+posing nothing reports a flat number and looks like a bad objective.
+
+⚠️ **Fitting one part at a time in sequence is the same mistake wearing a
+schedule.** A near arm solved against the composite while the far arm is still
+wrong is being scored on a picture the other arm is spoiling, and the minimum it
+walks to is not its own. The knobs come down together, coarse first — the next two
+rules are how.
+
+**Compare at a reduced resolution first. At full resolution the objective is flat
+over the range a joint has to travel.** Sweep one bone alone across the width of the
+figure against a single frame and watch the number: at full resolution it can wander
+inside a few percent for the whole sweep with no slope anywhere in it, because a
+limb fifty pixels from where it belongs overlaps the reference no better than one a
+hundred pixels away — both are *no overlap*, and the difference between them is
+aliasing. A coordinate search sees noise, reports no improvement, and leaves the frame
+at a pose that shares almost nothing with the picture. ⇒ **Box-average both sides
+before comparing them and run the search coarse to fine.** The coarsest level places
+the body, the next the limbs, the last two the pixels. The same sweep at the coarse
+level has a slope on it, because at that block size the two figures still overlap and
+the number knows which way to go.
+
+⚠️ **The coarsest level is for the body and nothing else.** A block big enough to
+give the whole figure a gradient is a block a shin is one cell of, and one cell
+cannot say which way a shin points. Place the root and the torso there, then decide
+each limb at a level whose cells are smaller than the part that level is moving.
+
+**Scan each knob's whole plausible range. Do not line-search out from where it sits.**
+A search that steps out from the current value cannot bring an arm 60° round, because
+the first step overlaps the reference no better than standing still did — so it
+reports no improvement and stops, correctly, on the objective it was given. A figure
+whose legs have folded under it is that failure with a picture attached: a real local
+minimum, sat in for as long as you care to iterate. ⇒ For each knob, evaluate the
+whole range that bone can plausibly take — a few dozen samples across it, which is
+nothing beside the frames you are fitting — take the best, and refine only after
+that. The cost is linear in the number of knobs, and it is the difference between a
+fit that converges and a fit that reports success on a folded figure.
+
+⚠️ **Some knobs only decide together.** A part hanging three rotations below a
+shoulder is placed by none of them alone: each single-knob scan finds its own best
+while the part is still nowhere near, because every value of that knob is wrong given
+the other two. Where a chain ends in something whose position you can actually see —
+a hand, a foot, a held prop — scan the two links above it as a **pair**, over the
+grid. That is the product of two ranges on a handful of chains, not on every bone.
+
+**Re-fit the setup pose against frames drawn from every shot, not against one.** Every
+animation is measured from the setup pose, so an error in it is an error in all of
+them — and it is exactly the error one frame cannot show you. Fit an attachment's
+offset against a single frame and that frame's own rotations absorb whatever you got
+wrong: the picture comes out right, the offset is wrong, and every other shot pays
+for it. Across a spread it cannot hide, because a wrong offset would have to be
+absorbed by a *different* rotation in each frame and no one value of the offset does
+that. ⇒ Fit the setup pose against one clear frame to get near, then re-fit it
+against a handful of frames drawn from **every** animation at once, and hold it fixed
+while the per-frame poses are fitted. It is the spread that identifies it — a
+sequence of single-frame fits, one per shot, is not the same thing.
+
+**What comes out is a pose per frame, and a pose per frame is not a key.** Two things
+decide what survives the reduction, and **§10.3** states both: declare one tolerance
+in pixels at the end of what each bone swings rather than a figure in degrees, and
+fold out the gauges — the directions the pixels cannot see — *before* the series
+becomes keys, because a fitter will have wandered along every one of them. Then close
+the loop with **§9**: the fit's own number says how near this pose is to this frame,
+and only `check` says whether the shot is the shot. **§9.3** is the list of what even
+that cannot see.
+
 ---
 
 ## 9. Checking against the frames — `rigc check`
@@ -1143,7 +1227,8 @@ and [the ladder's honesty rule](LADDER.md) makes them a finish line you reach on
 `bone.pose`.** A shot whose poses have to be *fitted* rather than read sends you
 past `check` and into your own render loop over
 `@esotericsoftware/spine-core` — that is §8's *"look for a second way to get the
-same number"* applied to a whole pose, and it is a legitimate thing to build. The
+same number"* applied to a whole pose, and it is a legitimate thing to build — §8.1
+is how that search is set up so it converges. The
 first thing it hits is not a subtlety. **spine-core 4.3 keeps a bone's local
 transform on `bone.pose`, not on the bone**, so `bone.rotation = …` — or `.x`,
 `.y`, `.scaleX` — is neither an error nor a rotation: it adds a property nothing
@@ -1513,7 +1598,7 @@ can say where the motion turns; §8 is how to read them.
 ⚠️ **Two rules for a run that *fits* a pose series rather than reading it off the
 frames.** Neither is Spine's — no public page has an opinion about a fitter — but
 both decide where the keys above actually land, so they sit beside them. Both were
-paid for on the ladder.
+paid for on the ladder. (**§8.1** is how the series gets fitted in the first place.)
 
 **A key tolerance on a rotation is not a number of degrees.** The same angular error
 costs a different number of pixels at every level of a hierarchy, because everything
