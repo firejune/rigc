@@ -1,0 +1,41 @@
+export const IMAGES = 'examples/spineboy/images';
+/** proximal / distal hint in fractional art coords — search-box seeds only. */
+export const PARTS: Record<string, { prox: [number, number]; dist: [number, number] }> = {
+  torso:             { prox: [0.5, 0.92], dist: [0.5, 0.08] },
+  neck:              { prox: [0.5, 0.9],  dist: [0.5, 0.1] },
+  head:              { prox: [0.42, 0.82], dist: [0.8, 0.55] },
+  goggles:           { prox: [0.3, 0.5],  dist: [0.9, 0.5] },
+  'front-thigh':     { prox: [0.5, 0.08], dist: [0.5, 0.92] },
+  'front-shin':      { prox: [0.5, 0.12], dist: [0.45, 0.92] },
+  'front-foot':      { prox: [0.22, 0.25], dist: [0.9, 0.6] },
+  'rear-thigh':      { prox: [0.5, 0.12], dist: [0.5, 0.9] },
+  'rear-shin':       { prox: [0.5, 0.12], dist: [0.45, 0.92] },
+  'rear-foot':       { prox: [0.22, 0.3], dist: [0.9, 0.6] },
+  'front-upper-arm': { prox: [0.5, 0.1],  dist: [0.5, 0.9] },
+  'front-bracer':    { prox: [0.5, 0.1],  dist: [0.5, 0.9] },
+  'front-fist-closed': { prox: [0.5, 0.12], dist: [0.5, 0.9] },
+  'front-fist-open': { prox: [0.5, 0.12], dist: [0.5, 0.9] },
+  'rear-upper-arm':  { prox: [0.5, 0.1],  dist: [0.5, 0.9] },
+  'rear-bracer':     { prox: [0.5, 0.1],  dist: [0.5, 0.9] },
+  gun:               { prox: [0.28, 0.16], dist: [0.78, 0.8] },
+};
+/** parent chain, for the joint solve and the rig */
+export const PARENT: Record<string, string> = {
+  torso: 'hip',
+  neck: 'torso',
+  head: 'neck',
+  goggles: 'head',
+  'front-thigh': 'hip',
+  'front-shin': 'front-thigh',
+  'front-foot': 'front-shin',
+  'rear-thigh': 'hip',
+  'rear-shin': 'rear-thigh',
+  'rear-foot': 'rear-shin',
+  'front-upper-arm': 'torso',
+  'front-bracer': 'front-upper-arm',
+  'front-fist-closed': 'front-bracer',
+  'front-fist-open': 'front-bracer',
+  'rear-upper-arm': 'torso',
+  'rear-bracer': 'rear-upper-arm',
+  gun: 'rear-bracer',
+};
