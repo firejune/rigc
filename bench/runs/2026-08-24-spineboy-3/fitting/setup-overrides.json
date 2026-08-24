@@ -1,0 +1,142 @@
+{
+ "bones": {
+  "neck": {
+   "x": 0,
+   "y": 148
+  },
+  "head": {
+   "x": 32.31,
+   "y": 38.47
+  },
+  "front-upper-arm": {
+   "x": 14,
+   "y": 118
+  },
+  "front-bracer": {
+   "x": 0,
+   "y": -74
+  },
+  "front-fist": {
+   "x": 0,
+   "y": -62
+  },
+  "rear-upper-arm": {
+   "x": -8,
+   "y": 116
+  },
+  "rear-bracer": {
+   "x": 0,
+   "y": -70
+  },
+  "gun": {
+   "x": 0,
+   "y": -73.77
+  },
+  "front-thigh": {
+   "x": 0,
+   "y": 0
+  },
+  "front-shin": {
+   "x": 0.75,
+   "y": -59.45
+  },
+  "front-foot": {
+   "x": -23.5,
+   "y": -146.25
+  },
+  "rear-thigh": {
+   "x": 0,
+   "y": 0.5
+  },
+  "rear-shin": {
+   "x": 0,
+   "y": -101
+  },
+  "rear-foot": {
+   "x": -8.25,
+   "y": -144.25
+  }
+ },
+ "attach": {
+  "torso": {
+   "x": 4,
+   "y": 72
+  },
+  "neck": {
+   "x": 15.5,
+   "y": -1
+  },
+  "head": {
+   "x": 24,
+   "y": 98
+  },
+  "goggles": {
+   "x": 7.2,
+   "y": 70.6
+  },
+  "mouth-grind": {
+   "x": 22,
+   "y": -13
+  },
+  "eye-indifferent": {
+   "x": 37,
+   "y": 48
+  },
+  "front-upper-arm": {
+   "x": 9,
+   "y": -55.5
+  },
+  "front-bracer": {
+   "x": -10,
+   "y": -31.5
+  },
+  "front-fist-closed": {
+   "x": 0,
+   "y": -31
+  },
+  "front-fist-open": {
+   "x": 2.5,
+   "y": -33
+  },
+  "rear-upper-arm": {
+   "x": 0,
+   "y": -39
+  },
+  "rear-bracer": {
+   "x": -13.5,
+   "y": -28.5
+  },
+  "gun": {
+   "x": 32,
+   "y": -50
+  },
+  "front-thigh": {
+   "x": 2.5,
+   "y": -48
+  },
+  "front-shin": {
+   "x": -0.75,
+   "y": -72.25
+  },
+  "front-foot": {
+   "x": 52.25,
+   "y": -19.25,
+   "scaleX": 0.8512499999999998,
+   "scaleY": 0.61
+  },
+  "rear-thigh": {
+   "x": 3,
+   "y": -36
+  },
+  "rear-shin": {
+   "x": 0,
+   "y": -75
+  },
+  "rear-foot": {
+   "x": 50.25,
+   "y": -6,
+   "scaleX": 0.67,
+   "scaleY": 0.89875
+  }
+ }
+}
