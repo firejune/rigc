@@ -48,7 +48,6 @@ interface BenchReport {
   rung?: string;
   example?: string;
   profile?: string;
-  gates?: string;
   diffs?: BenchDiff[];
   validate?: { failures?: unknown[]; passed?: unknown[]; skipped?: unknown[] };
 }
