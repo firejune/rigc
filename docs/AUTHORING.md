@@ -1825,6 +1825,18 @@ richer table holds more spans.) This is rung 6's clamp defect in another suit:
 **a constraint that is not enforced where the value is written is not a
 constraint.**
 
+🧩 **⇒ A span with no interior sample takes the automatic handles, not linear.** Two
+keys on adjacent samples leave pass B nothing to fit — the samples cannot constrain
+that span's shape at all — and a planner with nothing to fit leaves `ease` off, which
+is linear (§4.5): the one shape this section says to argue for rather than default to.
+"No information" is not an argument for constant speed. Take instead the tangents the
+keys either side imply — the editor's own **automatic handles**, quoted above — and
+snap *those* to the nearest table entry, exactly as you would a fitted span. Rung 8's
+second version did this for its adjacent pairs and the samples barely moved (**17.34 →
+17.26 MAE**) while `curve_kinds` changed wholesale: nil in the frames, large in the
+structure, which is the signature of a convention rather than a fidelity fix — and
+this section's whole subject.
+
 📗 **Handles are normalised, and that is the shape an `easings` entry takes.** For a
 Bezier key, *"the X axis is from 0 to 1 and represents the percent of time between
 the two keyframes. The Y axis is from 0 to 1 and represents the percent of the
