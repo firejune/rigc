@@ -583,7 +583,7 @@ chain). There is **no triangulator for arbitrary art** and no importer for edito
 
 | Part-1 type | rigc |
 | --- | --- |
-| `physics` | ✅ — full field set: `bone`, the five components `x`/`y`/`rotate`/`scaleX`/`shearX`, `scaleY` (ScaleYMode), `inertia`/`strength`/`damping`/`mass`/`wind`/`gravity`/`mix`/`fps`/`limit`, the seven `*Global` flags and `skin` (`compile.ts:1522-1548`). A field the rig spec does not give is **omitted**, never guessed (`compile.ts:1463-1468`), so the parser's own default stands |
+| `physics` | ✅ — full field set: `bone`, the five components `x`/`y`/`rotate`/`scaleX`/`shearX`, `scaleY` (ScaleYMode), `inertia`/`strength`/`damping`/`mass`/`wind`/`gravity`/`mix`/`fps`/`limit`, the seven `*Global` flags and `skin` (`compile.ts:1522-1548`). A field the rig spec does not give is **omitted**, never guessed (`compile.ts:1463-1468`), so the parser's own default stands. The motion spec's `physics` tuning table is the second path into this same array and is narrower: no `scaleY`, no `*Global`, no `skin`, and it drops a value that equals the parser default even when the table gives it (`compile.ts:758-761`) |
 | `ik` | ✅ — `bones`, `target`, `scaleY`/`mix`/`softness`/`bendPositive`/`compress`/`stretch`/`skin` (`compile.ts:1425-1430`, landed in `c5eda3b`) |
 | `transform` | ✅ — `bones`, `source`, the 4.3 `properties{from→to}` model, and the full field set (`compile.ts:1431-1462`, landed in `c5eda3b`) |
 | `path` | ❌ |
@@ -605,7 +605,7 @@ chain). There is **no triangulator for arbitrary art** and no importer for edito
 | `ik`, `transform`, `path`, `slider` | ❌ |
 | `attachments.<skin>.…deform` | ❌ (validator knows it: 1 channel, `validate.ts:104-107`) |
 | `attachments.…sequence` | ❌ |
-| `drawOrder` | ✅ — the motion spec's per-animation `drawOrder` array of `{ t, offsets: [{ slot, offset }] }` (`compile.ts:823`, `:850`, `compileDrawOrder` `:1918-1975`). A key with no `offsets`, and a key with an empty one, both emit the parser's reset-to-setup encoding, so two spellings cannot make two files. An unknown slot, a slot offset twice in one key, a non-whole offset and a landing outside the emitted slots are each refused by name, and **A31_DRAW_ORDER_OFFSETS_RESOLVE** re-checks the emitted file |
+| `drawOrder` | ✅ — the motion spec's per-animation `drawOrder` array of `{ t, offsets: [{ slot, offset }] }` (`compile.ts:823`, `:850`, `compileDrawOrder` `:1918-1970`). A key with no `offsets`, and a key with an empty one, both emit the parser's reset-to-setup encoding, so two spellings cannot make two files. An unknown slot, a slot offset twice in one key, a non-whole offset and a landing outside the emitted slots are each refused by name, and **A31_DRAW_ORDER_OFFSETS_RESOLVE** re-checks the emitted file |
 | `drawOrderFolder` | ❌ — editor bookkeeping, 4.3-only |
 | `events` (+ the `root.events` block) | ✅ — the rig spec declares the names (`rig.ts` `RigEvent`), the motion spec's per-animation `events` array fires them, and **A32_EVENT_KEYS_RESOLVE** checks the three ways the timeline goes wrong quietly. `int`/`float`/`string` overrides and `audio`/`volume`/`balance` all round-trip |
 | animation `color` | ❌ |
