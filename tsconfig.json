@@ -28,5 +28,9 @@
     "strictNullChecks": true
   },
   "include": ["cli.ts", "selftest.ts", "src/**/*.ts", "bench/**/*.ts", "tools/**/*.ts", "fixtures/**/*.ts", "scripts/**/*.ts"],
-  "exclude": ["node_modules", "examples"]
+  // A pilot run directory is another agent's artifact, committed verbatim —
+  // docs/pilot/verdicts/ records that this one does not typecheck (hallucinated
+  // spine-core methods in an abandoned helper). Excluded rather than repaired,
+  // because a run record is evidence, not code we maintain.
+  "exclude": ["node_modules", "examples", "bench/runs/2026-08-24-rung3-1"]
 }

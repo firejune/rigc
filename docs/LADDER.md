@@ -525,6 +525,16 @@ is edge coverage rather than motion: attempt 2 draws about 5 % fewer pixels than
 reference for the same bounding box, and `light`'s held frames f18–f20 sit at 10.04
 with drift 0.0.
 
+**Pilot run, 2026-08-24 — not a re-judgement of this rung.** A third agent —
+Gemini 3.7 Flash on Antigravity — ran the rung under the pilot protocol
+([`docs/PILOT.md`](PILOT.md)): [`bench/runs/2026-08-24-rung3-1/`](../bench/runs/2026-08-24-rung3-1/),
+clean, honesty unverified (the harness kept no transcript). Verdict, with all
+three runs re-measured on one build:
+[`docs/pilot/verdicts/2026-08-24-rung3-1.md`](pilot/verdicts/2026-08-24-rung3-1.md)
+— name-agnostic structure identical to both attempts above, motion at roughly
+half (2× MAE, `animations` 0.768, per-frame keys instead of sparse keys with
+curves).
+
 ### Rung 1 — attempted, not cleared (2026-08-23)
 
 Run [`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/), clean,
