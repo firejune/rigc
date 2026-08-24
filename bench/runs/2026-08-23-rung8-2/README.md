@@ -135,6 +135,13 @@ taste.** The median frame-to-frame *acceleration* of the ball is 6.4 px, so a li
 span across a single skipped sample already deviates by about 1.6 px — five times the
 tolerance. Any tolerance under about 1.5 px keys nearly every frame.
 
+> ⚠️ **Correction (2026-08-24):** the divide-by-four above is wrong. The chord through
+> f(n−1) and f(n+1) sits at their mean, so the deviation at the skipped sample is the
+> second difference **/2** — an identity, not an approximation. The measured 6.4 px
+> therefore prices a skipped sample at **3.2 px**, ten times the 0.3 px tolerance, not
+> 1.6; a span could not afford to skip anything until the tolerance passed 3.2 px. The
+> conclusion this passage draws is unchanged and understated. See #112 and §10.3.
+
 **Paired `translate`/`scale`, not the separate axes.** §10.3's default is both axes on
 one key and this shot does not overturn it: planning `translatex`/`translatey` and
 `scalex`/`scaley` separately produced **more** keys, not fewer (486 against 439 at
