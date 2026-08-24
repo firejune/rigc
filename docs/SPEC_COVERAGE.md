@@ -566,8 +566,8 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 
 | Part-1 type | rigc | Detail |
 | --- | --- | --- |
-| `region` | 🟡 | emits `width`, `height` (always, from PNG measurement — the fix for case 6c), `x`, `y` (only when non-zero), `rotation` (only when non-zero, cancelling the bone's world rotation). ❌ `path` (region name == attachment name == PNG basename, enforced by **A08** + **A27**), ❌ `scaleX`/`scaleY`, ❌ `color`, ❌ `sequence` |
-| `mesh` | 🟡 | emits `type`, `uvs`, `triangles`, `vertices` (**weighted encoding only**), `hull`, `width`, `height`. ❌ `edges`, ❌ `path`, ❌ `color`, ❌ `sequence`. Unweighted meshes are 🚫 **A20_MESH_WEIGHTS_COHERENT** (`validate.ts:430-433`) |
+| `region` | 🟡 | emits `width`, `height` (always, from PNG measurement — the fix for case 6c), `x`, `y` (only when non-zero), `rotation` (only when non-zero, cancelling the bone's world rotation), `scaleX`/`scaleY` (`compile.ts:1238-1239`), `color`, and `path` — taken from the rig spec, else derived from the image basename and omitted when that basename *is* the attachment name (the region name == attachment name == PNG basename convention **A08** + **A27** enforce). ❌ `sequence` |
+| `mesh` | 🟡 | emits `type`, `uvs`, `triangles`, `vertices` (**weighted encoding only**), `hull`, `width`, `height`, `edges` (`compile.ts:1343`, and part 4's rung-6 entry measures it byte-identical to the reference), `path`, `color`. ❌ `sequence`. Unweighted meshes are 🚫 **A20_MESH_WEIGHTS_COHERENT** (`validate.ts:430-433`) |
 | `linkedmesh` | ❌ | deliberately deferred — never appears in the corpus (part 3-1) |
 | `boundingbox` | ✅ | `vertexCount` (required and cross-checked), `vertices` **or** by-name `weights`, `color`. **A33_VERTEX_ATTACHMENT_GEOMETRY** |
 | `path` | ❌ | deliberately deferred — never appears in the corpus (part 3-1) |
@@ -583,7 +583,7 @@ chain). There is **no triangulator for arbitrary art** and no importer for edito
 
 | Part-1 type | rigc |
 | --- | --- |
-| `physics` | ✅ — full field set: `bone`, the five components `x`/`y`/`rotate`/`scaleX`/`shearX`, and `inertia`/`strength`/`damping`/`mass`/`wind`/`gravity`/`mix`/`fps`/`limit`. Values equal to the parser default are **omitted** (`compile.ts:555-559`). ❌ `scaleY` (ScaleYMode), ❌ the seven `*Global` flags, ❌ `skin` |
+| `physics` | ✅ — full field set: `bone`, the five components `x`/`y`/`rotate`/`scaleX`/`shearX`, `scaleY` (ScaleYMode), `inertia`/`strength`/`damping`/`mass`/`wind`/`gravity`/`mix`/`fps`/`limit`, the seven `*Global` flags and `skin` (`compile.ts:1522-1548`). A field the rig spec does not give is **omitted**, never guessed (`compile.ts:1463-1468`), so the parser's own default stands. The motion spec's `physics` tuning table is the second path into this same array and is narrower: no `scaleY`, no `*Global`, no `skin`, and it drops a value that equals the parser default even when the table gives it (`compile.ts:758-761`) |
 | `ik` | ✅ — `bones`, `target`, `scaleY`/`mix`/`softness`/`bendPositive`/`compress`/`stretch`/`skin` (`compile.ts:1425-1430`, landed in `c5eda3b`) |
 | `transform` | ✅ — `bones`, `source`, the 4.3 `properties{from→to}` model, and the full field set (`compile.ts:1431-1462`, landed in `c5eda3b`) |
 | `path` | ❌ |
@@ -605,7 +605,8 @@ chain). There is **no triangulator for arbitrary art** and no importer for edito
 | `ik`, `transform`, `path`, `slider` | ❌ |
 | `attachments.<skin>.…deform` | ❌ (validator knows it: 1 channel, `validate.ts:104-107`) |
 | `attachments.…sequence` | ❌ |
-| `drawOrder`, `drawOrderFolder` | ❌ |
+| `drawOrder` | ✅ — the motion spec's per-animation `drawOrder` array of `{ t, offsets: [{ slot, offset }] }` (`compile.ts:823`, `:850`, `compileDrawOrder` `:1918-1970`). A key with no `offsets`, and a key with an empty one, both emit the parser's reset-to-setup encoding, so two spellings cannot make two files. An unknown slot, a slot offset twice in one key, a non-whole offset and a landing outside the emitted slots are each refused by name, and **A31_DRAW_ORDER_OFFSETS_RESOLVE** re-checks the emitted file |
+| `drawOrderFolder` | ❌ — editor bookkeeping, 4.3-only |
 | `events` (+ the `root.events` block) | ✅ — the rig spec declares the names (`rig.ts` `RigEvent`), the motion spec's per-animation `events` array fires them, and **A32_EVENT_KEYS_RESOLVE** checks the three ways the timeline goes wrong quietly. `int`/`float`/`string` overrides and `audio`/`volume`/`balance` all round-trip |
 | animation `color` | ❌ |
 
