@@ -261,6 +261,25 @@ export interface FrameCheck {
   /** Mean absolute RGB difference over the union alpha, 0..255. */
   mae: number;
   /**
+   * The same total difference over the REFERENCE's own drawn pixels alone.
+   *
+   * ⭐ The figure to optimise against, and the reason is the denominator. `mae`
+   * divides by the pixels either side drew, and the candidate owns half of that:
+   * drawing something large and mostly transparent adds many cheap pixels to the
+   * union and the *mean falls*, so an optimiser can buy a better score by growing
+   * (issue #119 — a muzzle flare walked its own scale to 13x doing exactly this).
+   * This denominator is the reference's, which nothing the candidate does can
+   * move, so the only way down is to draw the reference's picture.
+   *
+   * ⚠️ Not bounded by 255, and deliberately: a candidate that draws far more than
+   * the reference has more absolute error than the reference has pixels to carry
+   * it, and the figure says so instead of saturating.
+   *
+   * `mae` is still the right figure for comparing two builds of the same rig,
+   * where the union is near enough the same on both sides.
+   */
+  maeReference: number;
+  /**
    * The same difference averaged over the WHOLE frame, background included.
    *
    * Reported beside `mae` and never instead of it. Most of a frame is background
@@ -297,6 +316,18 @@ export interface AnimationCheck {
   candidateFrames: number;
   compared: number;
   meanMae: number;
+  /** Mean of the per-frame reference-denominator MAE — see `FrameCheck.maeReference`. */
+  meanMaeReference: number;
+  /**
+   * How much this set draws, against how much the reference draws: the mean over
+   * its frames of `candidatePixels / referencePixels`.
+   *
+   * 1 means the two shots put ink on the same amount of the frame. Above 1 the
+   * candidate is drawing more than the reference does, which is the move that
+   * makes the union MAE cheaper — see `OVERDRAW_RATIO`, which is where the
+   * threshold and the corpus it came from are written down.
+   */
+  drawnRatio: number;
   /** Mean of the per-frame whole-frame MAE — see `FrameCheck.maeFrame`. */
   meanMaeFrame: number;
   worstMae: number;
@@ -1505,6 +1536,8 @@ function checkOneSet(
     candidateFrames: prepared.candidateFrames,
     compared: 0,
     meanMae: 0,
+    meanMaeReference: 0,
+    drawnRatio: 1,
     meanMaeFrame: 0,
     worstMae: 0,
     worstMaeFrame: -1,
@@ -1525,6 +1558,8 @@ function checkOneSet(
 
   const frames: FrameCheck[] = [];
   let maeSum = 0;
+  let maeReferenceSum = 0;
+  let drawnRatioSum = 0;
   let maeFrameSum = 0;
   let worstMae = 0;
   let worstMaeFrame = -1;
@@ -1549,6 +1584,8 @@ function checkOneSet(
     previous = { index, candidate: rendered, reference };
     frames.push(check);
     maeSum += check.mae;
+    maeReferenceSum += check.maeReference;
+    drawnRatioSum += check.referencePixels === 0 ? 1 : check.candidatePixels / check.referencePixels;
     maeFrameSum += check.maeFrame;
     if (check.attributed === 0) framesWithoutDrift++;
     if (check.change) {
@@ -1577,6 +1614,8 @@ function checkOneSet(
     ...blank,
     compared: frames.length,
     meanMae: maeSum / frames.length,
+    meanMaeReference: maeReferenceSum / frames.length,
+    drawnRatio: drawnRatioSum / frames.length,
     meanMaeFrame: maeFrameSum / frames.length,
     worstMae,
     worstMaeFrame,
@@ -1756,6 +1795,10 @@ function checkOneFrame(
     index,
     file,
     mae: union === 0 ? 0 : sum / union,
+    // The same numerator over a denominator the candidate does not control — see
+    // `FrameCheck.maeReference`. Both figures are already in hand here, which is
+    // why the second one costs nothing to publish.
+    maeReference: referencePixels === 0 ? 0 : sum / referencePixels,
     maeFrame: sumAll / (viewport.width * viewport.height),
     unionPixels: union,
     candidatePixels,
@@ -1776,6 +1819,58 @@ function checkOneFrame(
 // ---------------------------------------------------------------------------
 // the report
 // ---------------------------------------------------------------------------
+
+/**
+ * How much more than the reference a set may draw before `check` calls it
+ * overdraw, as a ratio of drawn pixels.
+ *
+ * ## Why this direction needs its own warning
+ *
+ * `mae` divides by the pixels **either side drew** — the union — and the
+ * candidate owns half of that denominator. A large, mostly transparent sprite
+ * adds many cheap pixels to it and the *mean falls*, so anything optimising
+ * against `mae` can buy a better score by drawing more, which is the opposite of
+ * fidelity. Issue #119: spineboy-2's muzzle flare walked its own scale to 13x
+ * doing exactly this, and cost every set in that run its framing. Reproduced
+ * here, that candidate's `shoot` reads union MAE **39.65 against the honest
+ * build's 47.20** — the metric calls the flare an improvement — while the same
+ * difference over the reference's own pixels reads **73.06 against 52.54**.
+ *
+ * ⭐ Asymmetric on purpose. A candidate that draws LESS than the reference is
+ * being punished by the MAE, not rewarded, and needs no warning to find out.
+ *
+ * ## Where 1.5 comes from
+ *
+ * Measured over the corpus rather than picked. Across the twelve committed
+ * candidates in `bench/runs/` — 64 compared sets, 1 to 121 frames each — the
+ * ratio spans **0.852 … 1.069** on 62 of them, and the two above that are both
+ * the same shot on the same character: spineboy-1's `shoot@30fps` at 1.154 and
+ * spineboy-2's at **1.274**, two-frame stills sets where the muzzle flare lands
+ * a frame off. Rung 8's ball reads 1.041, rung 3's candidate 0.993.
+ *
+ * The 13x flare reads **1.850** on `shoot` and **3.199** on `shoot@30fps`, and
+ * 0.94–1.01 on the fourteen sets that do not draw it — so the warning names the
+ * shot the overdraw is in rather than colouring the whole run.
+ *
+ * 1.5 is the geometric middle of the gap between the widest honest reading and
+ * the weakest defective one (1.274 · 1.850 ≈ 1.535²): half again as much ink as
+ * the reference put down, which no honest candidate in the corpus approaches and
+ * which the case this was built for clears on both its sets.
+ *
+ * ## What was measured and rejected: the content boxes
+ *
+ * Issue #119 suggests the two content boxes, and `check` has both. Measured, that
+ * test is defeated by the framing it is measured through. `fitFraming` absorbs a
+ * uniform scale on purpose, so a candidate that draws everything too big reads a
+ * box growth of **−3.4 %** while its union MAE falls 137.6 → 36.0 — the fit
+ * simply shrinks it back. It also fires where nothing is overdrawn: the
+ * time-reversed fixture, whose ink is right and whose *timing* is wrong, reads
+ * **+14.1 %** because sampling a reversed shot lands on different poses. Counting
+ * ink is blind to both — that same reversed fixture draws **1.30–1.39x**, under
+ * the bar, and a bloated one draws what it drew whatever the framing does with it
+ * afterwards. C08 and C09 hold both ends of that.
+ */
+export const OVERDRAW_RATIO = 1.5;
 
 /** How many worst frames a set prints when the whole set is too long to list. */
 export const WORST_FRAMES = 8;
@@ -1851,6 +1946,21 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
       `     MAE        mean ${f2(anim.meanMae)}  worst ${f2(anim.worstMae)} at f${String(anim.worstMaeFrame).padStart(4, '0')}` +
         `   (0..255 over the union alpha; over the whole frame, mean ${f2(anim.meanMaeFrame)})`,
     );
+    lines.push(
+      `                ⤷ over the REFERENCE's own drawn pixels, mean ${f2(anim.meanMaeReference)} — the union figure ` +
+        'compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.',
+    );
+    if (anim.drawnRatio > OVERDRAW_RATIO) {
+      const mine = Math.round(anim.frames.reduce((sum, f) => sum + f.candidatePixels, 0) / anim.frames.length);
+      const theirs = Math.round(anim.frames.reduce((sum, f) => sum + f.referencePixels, 0) / anim.frames.length);
+      lines.push(
+        `                ⚠️ overdraw: this shot draws ${mine.toLocaleString('en-US')} px a frame where the reference ` +
+          `draws ${theirs.toLocaleString('en-US')} — ${anim.drawnRatio.toFixed(2)}x as much ink, past the ` +
+          `${OVERDRAW_RATIO}x no committed candidate reaches. Most of that excess lands in the MAE's own ` +
+          'denominator and makes the figure above cheaper without moving a pixel closer, so read the one under it. ' +
+          'Something here is drawn that should not be, or is far too big.',
+      );
+    }
     const blind =
       anim.framesWithoutDrift === 0
         ? ''
@@ -1897,7 +2007,9 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
 
   lines.push('  MAE is the mean absolute RGB difference over the pixels either side covers, so it is');
   lines.push('  read against 255 and not against a threshold: there is no pass mark here any more than');
-  lines.push('  there is one in `diff`. Read the framing line first: it is upstream of every number');
+  lines.push('  there is one in `diff`. The figure under it divides the same difference by the pixels the');
+  lines.push('  REFERENCE drew — a denominator you cannot grow, which is what makes it the one to author');
+  lines.push('  against; it is not bounded by 255. Read the framing line first: it is upstream of every number');
   lines.push('  below, and a residual much wider than a pixel moves all of them at once.');
   lines.push('  The slots column is how many of the drawn slots could be attributed at all. A drift');
   lines.push('  marked `tmpl` was correlated against the slot’s own pixels because the reference');

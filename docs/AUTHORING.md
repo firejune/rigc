@@ -1251,6 +1251,7 @@ loop to it at a flat 17.3; driven through `bone.pose`, the same poses measured
   ── heavy — candidate animation "heavy", 12 fps ──
      frames     65 on disk, candidate samples 65, 65 compared
      MAE        mean 23.10  worst 43.36 at f0029   (0..255 over the union alpha; …)
+                ⤷ over the REFERENCE's own drawn pixels, mean 23.90 — the union figure compares two builds …
      slot drift worst 2.1 px  "pendulum" at f0029
      per-frame 1 of 64 adjacent pair(s) change by a different amount than the reference does; worst
                f0018, yours moved 0 px where the reference moved 374
@@ -1340,6 +1341,20 @@ beside it is the same difference averaged over the background as well; it is the
 because an ad-hoc re-render check naturally computes that one, and on every set
 measured so far it comes out ten to twenty-five times smaller and correspondingly
 blunter.
+
+⚠️ **Half of that denominator is yours, so do not optimise against it.** The union
+is the pixels *either* side drew, and a large, mostly transparent sprite adds many
+cheap pixels to it — so the *mean falls* on a candidate that got worse. That is not
+hypothetical: spineboy-2's muzzle flare walked its own scale to 13x under a fitting
+loop doing exactly this, and cost every set in that run its framing (issue #119).
+So the line under the MAE divides the same difference by the pixels the
+**reference** drew, a denominator nothing you do can grow. Read the union figure to
+compare two builds of your own rig, where both sides cover about the same ground,
+and the reference-denominator figure when you are deciding whether a change made
+the shot better; it is not bounded by 255. A set that draws more than half again as
+much ink as the reference does gets `⚠️ overdraw` beside those two numbers, with
+both pixel counts, because at that point the first figure is cheap for a reason
+that has nothing to do with your keys.
 
 **`Δpx` and `ref Δ`** are the two columns that do **not** compare you against the
 reference. They compare each side against **itself one frame earlier**: how many
