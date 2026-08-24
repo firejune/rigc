@@ -54,6 +54,8 @@ import {
 import {
   assertFrameReadable,
   checkAgainstFrames,
+  checkLines,
+  OVERDRAW_RATIO,
   type AnimationCheck,
   type CheckReport,
   type FrameChange,
@@ -1337,6 +1339,12 @@ const SHOT_OFFSET = 300;
 const SCOPE_TOLERANCE = 0.01;
 /** How far C07 needs a SHARED framing to move it, for the per-shot claim to mean anything. */
 const SCOPE_MOVE = 10;
+/** How far past its own art C08 scales the one sprite it bloats. */
+const OVERDRAW_SCALE = 8;
+/** How faint C08 leaves that sprite — the defect's shape is large AND mostly transparent. */
+const OVERDRAW_ALPHA = 0.1;
+/** How far C09 lets a faithful transcription's two MAE figures differ. */
+const DENOMINATOR_TOLERANCE = 0.05;
 
 const CHECK_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/3-timing-and-spacing');
 const CHECK_FRAMES = resolve(import.meta.dir, 'bench/reference/3-timing-and-spacing');
@@ -1428,6 +1436,37 @@ function moveWholeRig(skeletonText: string, dx: number, dy: number, boneName = '
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 /**
+ * The same skeleton with ONE slot's attachment scaled far past its own art, and
+ * that slot left mostly transparent.
+ *
+ * The defect C08 reproduces (issue #119), in the two parts that make it work.
+ * **Large** puts the sprite's pixels where the reference has none, which is what
+ * grows the union `mae` divides by. **Mostly transparent** is what makes those
+ * pixels *cheap*: each one still clears the content threshold, so it counts in
+ * the denominator, while contributing far less than the shot's own error to the
+ * numerator. Do only the first and the mean rises, which is the tool working;
+ * do both and the mean falls on a candidate that got worse, which is the hole.
+ *
+ * It is not a hypothetical shape. spineboy-2's muzzle flare — a faint flash drawn
+ * over the barrel — walked its own scale to 13x under an optimiser doing exactly
+ * this, and took every set in that run's framing with it.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function bloatOneSlot(skeletonText: string, slot: string, factor: number, alpha: number): string {
+  const skeleton = JSON.parse(skeletonText);
+  for (const skin of skeleton.skins as any[]) {
+    for (const attachment of Object.values(skin.attachments?.[slot] ?? {}) as any[]) {
+      attachment.scaleX = (attachment.scaleX ?? 1) * factor;
+      attachment.scaleY = (attachment.scaleY ?? 1) * factor;
+    }
+  }
+  const hex = Math.round(alpha * 255).toString(16).padStart(2, '0');
+  for (const entry of skeleton.slots as any[]) if (entry.name === slot) entry.color = `ffffff${hex}`;
+  return `${JSON.stringify(skeleton, null, 2)}\n`;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
  * The same motion, played backwards: `t -> duration - t`, keys reversed.
  *
  * Every raw `curve` is dropped with them, because those control points are
@@ -1465,17 +1504,33 @@ function sidecarViewport(): { x: number; y: number; width: number; height: numbe
   return { x, y, width, height };
 }
 
-/** The two figures a check control asserts on, across every animation in the set. */
-function checkExtremes(report: CheckReport): { meanMae: number; frameMae: number; drift: number; sets: number } {
+/** The figures a check control asserts on, across every animation in the set. */
+function checkExtremes(report: CheckReport): {
+  meanMae: number;
+  refMae: number;
+  frameMae: number;
+  drift: number;
+  drawn: number;
+  sets: number;
+} {
   let meanMae = 0;
+  let refMae = 0;
   let frameMae = 0;
   let drift = 0;
+  let drawn = 0;
   for (const anim of report.animations) {
     meanMae = Math.max(meanMae, anim.meanMae);
+    refMae = Math.max(refMae, anim.meanMaeReference);
     frameMae = Math.max(frameMae, anim.meanMaeFrame);
     drift = Math.max(drift, anim.worstDrift);
+    drawn = Math.max(drawn, anim.compared === 0 ? 0 : anim.drawnRatio);
   }
-  return { meanMae, frameMae, drift, sets: report.animations.length };
+  return { meanMae, refMae, frameMae, drift, drawn, sets: report.animations.length };
+}
+
+/** How many sets of a report printed the overdraw warning. */
+function overdrawWarnings(report: CheckReport): number {
+  return checkLines(report).filter((line) => line.includes('⚠️ overdraw:')).length;
 }
 
 /** Every set that was actually compared — each carries its own framing since #100. */
@@ -1814,6 +1869,82 @@ function runCheckSuite(): number | null {
         `${perShotHeavy?.toFixed(2) ?? 'n/a'} per shot against an untouched ${baselineHeavy?.toFixed(2) ?? 'n/a'} ` +
         `(tolerance ${SCOPE_TOLERANCE}) and ${sharedHeavy?.toFixed(2) ?? 'n/a'} shared (needs +${SCOPE_MOVE}); ` +
         `scope ${perShot.framingScope}, one box ${JSON.stringify(perShot.viewport)}`,
+    );
+  }
+
+  // --- the union denominator is the candidate's to grow, and it says so --------
+  // Issue #119. `mae` divides by the pixels EITHER side drew, so a candidate can
+  // lower it by drawing more — and the run that found this had an optimiser walk a
+  // muzzle flare's scale to 13x doing precisely that. The control is the same
+  // reversed rig from C02 with one sprite blown up and left mostly transparent,
+  // and it makes both halves of the claim at once: the union figure must FALL on a
+  // build that got worse, and the figure over the reference's own drawn pixels —
+  // a denominator the candidate does not own — must RISE. A control that only
+  // checked the second would pass on a tool that had merely got noisier.
+  const bloatedReport = checkAgainstFrames({
+    ...reversed,
+    skeletonText: bloatOneSlot(reversed.skeletonText, 'square', OVERDRAW_SCALE, OVERDRAW_ALPHA),
+    framesDir: CHECK_FRAMES,
+  });
+  const b = checkExtremes(bloatedReport);
+  const bloatedWarnings = overdrawWarnings(bloatedReport);
+  const overdrawOk =
+    b.sets === r.sets &&
+    b.meanMae < r.meanMae &&
+    b.refMae > r.refMae &&
+    b.drawn > OVERDRAW_RATIO &&
+    bloatedWarnings === comparedSets(bloatedReport).length;
+  if (overdrawOk) {
+    console.log(
+      `  PASS  C08_GROWING_THE_UNION_IS_CHEAP_IN_THE_MEAN_AND_THE_REPORT_SAYS_SO  ` +
+        `(one sprite x${OVERDRAW_SCALE} at ${OVERDRAW_ALPHA} alpha: union MAE ${b.meanMae.toFixed(2)} DOWN from ` +
+        `${r.meanMae.toFixed(2)}, over the reference's pixels ${b.refMae.toFixed(2)} UP from ${r.refMae.toFixed(2)}, ` +
+        `${b.drawn.toFixed(1)}x the reference's ink, warned on ${bloatedWarnings} set(s))`,
+    );
+    console.log(
+      '          origin: a union-mean objective is minimised by making the union bigger — spineboy-2 walked a muzzle ' +
+        'flare to 13x and cost every set in the run its framing (issue #119)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C08_GROWING_THE_UNION_IS_CHEAP_IN_THE_MEAN_AND_THE_REPORT_SAYS_SO: union MAE ${b.meanMae.toFixed(2)} ` +
+        `against a reversed ${r.meanMae.toFixed(2)} (needs to FALL), over the reference's pixels ${b.refMae.toFixed(2)} ` +
+        `against ${r.refMae.toFixed(2)} (needs to RISE), ${b.drawn.toFixed(2)}x the reference's ink ` +
+        `(needs > ${OVERDRAW_RATIO}), warned on ${bloatedWarnings} of ${comparedSets(bloatedReport).length} set(s)`,
+    );
+  }
+
+  // --- and it stays quiet on a candidate that is not overdrawing ---------------
+  // The negative control for C08, and it has two halves because the warning has
+  // two ways to be useless. A faithful transcription draws what the reference
+  // draws, so its two MAE figures are over the same pixels and must agree — that
+  // is the shape of "nothing to report". The reversed rig is the sharper half: its
+  // ink is RIGHT and its timing is wrong, it reads 100+ MAE, and it must still not
+  // be called overdraw. Without it, "the warning fired on the bloated rig" would be
+  // indistinguishable from a warning that fires on anything that scores badly.
+  const faithfulWarnings = overdrawWarnings(faithfulReport);
+  const reversedWarnings = overdrawWarnings(reversedReport);
+  const denominatorGap = Math.abs(f.meanMae - f.refMae);
+  const quietOk =
+    faithfulWarnings === 0 &&
+    reversedWarnings === 0 &&
+    r.drawn < OVERDRAW_RATIO &&
+    denominatorGap <= DENOMINATOR_TOLERANCE;
+  if (quietOk) {
+    console.log(
+      `  PASS  C09_A_FAITHFUL_TRANSCRIPTION_IS_NOT_CALLED_OVERDRAW  ` +
+        `(faithful: union ${f.meanMae.toFixed(2)} and over the reference's pixels ${f.refMae.toFixed(2)}, the same ` +
+        `pixels either way; time-reversed at ${r.meanMae.toFixed(1)} MAE draws ${r.drawn.toFixed(2)}x and is also quiet)`,
+    );
+    console.log('          origin: a guard that fires on every bad score names nothing — the diagnosis has to be overdraw');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C09_A_FAITHFUL_TRANSCRIPTION_IS_NOT_CALLED_OVERDRAW: ${faithfulWarnings} warning(s) on the faithful ` +
+        `build and ${reversedWarnings} on the time-reversed one (both need 0), reversed draws ${r.drawn.toFixed(2)}x ` +
+        `(needs < ${OVERDRAW_RATIO}), faithful union ${f.meanMae.toFixed(2)} against ${f.refMae.toFixed(2)} over the ` +
+        `reference's pixels (gap ${denominatorGap.toFixed(3)}, tolerance ${DENOMINATOR_TOLERANCE})`,
     );
   }
   return bad;
@@ -3814,10 +3945,11 @@ function main(): void {
         [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
       : `, + 2 diff identity controls (name-matched and name-agnostic), + ${DIFF_CASES.length} diff measure controls, ` +
-        '+ 8 check controls (frames-only reads, a faithful ' +
+        '+ 10 check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +
-        "not, and one offset shot that must not move another shot's numbers)";
+        "not, one offset shot that must not move another shot's numbers, and one bloated sprite that must " +
+        'lower the union mean, raise the figure over the reference’s own pixels, and be named as overdraw)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
