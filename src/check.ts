@@ -77,6 +77,7 @@ import {
   PAD,
   FRAMES_SIDECAR,
   FRAMES_SPEC,
+  type Footprint,
   type Frame,
   type FramesSidecar,
   type FrameSet,
@@ -101,10 +102,12 @@ import {
   type ContentBox,
   type FramingFit,
 } from './framing.ts';
-import { componentsOf, isAttributable, matchSlots, type SlotTrack } from './slots.ts';
+import { componentsOf, isAttributable, matchSlots, searchRadius, type SlotTrack } from './slots.ts';
+import { chainsOf, type BoneChain } from './chains.ts';
 import { readPlate, type Plate, type RGBA } from '../tools/plate.ts';
 
 export { componentsOf, matchSlots, searchRadius, type Component, type MatchMethod, type SlotTrack } from './slots.ts';
+export { chainsOf, chainBySlot, type BoneChain } from './chains.ts';
 export type { BoxPair, ContentBox, FramingFit } from './framing.ts';
 
 // ---------------------------------------------------------------------------
@@ -305,6 +308,60 @@ export interface FrameCheck {
   change: FrameChange | null;
 }
 
+/**
+ * One bone chain's slice of a set — the row an author reads before deciding what
+ * to re-key.
+ *
+ * The chains come from the CANDIDATE's bone tree (`src/chains.ts` owns the rule
+ * and the reasoning); the reference stays pixels, so this is a decomposition of
+ * your own figure and never a reading of the answer.
+ */
+export interface ChainCheck {
+  /** The chain, named as `src/chains.ts` names it. */
+  chain: string;
+  /** How many slots it owns. */
+  slots: number;
+  /** How many of those drew anything in at least one compared frame. */
+  drewSlots: number;
+  /** The worst attributable slot drift anywhere in it, in frame pixels. */
+  worstDrift: number;
+  /** Which slot that was, and in which frame — `null`/`-1` when none was attributable. */
+  worstDriftSlot: string | null;
+  worstDriftFrame: number;
+  /** The mean of every attributable slot drift in it, over `driftSamples` of them. */
+  meanDrift: number;
+  driftSamples: number;
+  /** How many frames contributed at least one of those samples. */
+  driftFrames: number;
+  /**
+   * The absolute RGB difference attributed to this chain, summed over the
+   * REFERENCE's own drawn pixels — never over the union.
+   *
+   * ⭐ The denominator lesson from issue #119, applied to a share. A reference
+   * pixel goes to the chain whose ink is nearest to it, so the chains partition
+   * the reference's drawn pixels and the shares add up to the whole. What the
+   * candidate controls is only *which* chain a pixel lands in, and growing a
+   * chain's ink pulls MORE of the reference's pixels — and their error — into it.
+   * There is no move here that makes a chain look better by drawing more, which is
+   * exactly what the union MAE could not say.
+   */
+  error: number;
+  /** How many reference-drawn pixels it took, summed over frames. */
+  referencePixels: number;
+  /**
+   * `error` per pixel it took — the MAE *inside* this chain, 0..255.
+   *
+   * Printed beside the share because the share alone confounds being wrong with
+   * being big: spineboy's head, goggles, eye and mouth are one chain covering a
+   * lot of the figure, so it can carry a third of the error at a per-pixel figure
+   * below the run's own mean. The share says where the error IS; this says whether
+   * the chain is actually worse than the rest of the figure.
+   */
+  mae: number;
+  /** `error` over the set's own total, 0..1 — see `AnimationCheck.chainDenominator`. */
+  maeShare: number;
+}
+
 export interface AnimationCheck {
   dir: string;
   /** The animation the frames show, per the sidecar. */
@@ -343,6 +400,24 @@ export interface AnimationCheck {
   changeDisagreements: number;
   /** The widest of those disagreements, and `-1` when there is none. */
   worstChangeFrame: number;
+  /**
+   * This set, broken down by the candidate's own bone chains — see `ChainCheck`.
+   *
+   * Chains that own no slot at all are left out: they have nothing to attribute.
+   * They are still in `CheckReport.chains`, so the roster stays a complete account
+   * of where every bone went.
+   */
+  chains: ChainCheck[];
+  /**
+   * The set's whole difference over the reference's own drawn pixels — the
+   * denominator every `ChainCheck.maeShare` divides by.
+   *
+   * The same numerator `meanMaeReference` averages, kept as a total because a
+   * share needs the total and a mean has already divided it away.
+   */
+  chainDenominator: number;
+  /** The part of it no chain could take, because the candidate drew nothing at all. */
+  unattributedError: number;
   frames: FrameCheck[];
   /**
    * The box THIS set's candidate frames were rendered into.
@@ -522,6 +597,14 @@ export interface CheckReport {
    */
   referenceViewport: Framing | null;
   background: RGBA;
+  /**
+   * The candidate's bone tree, cut into chains — the roster the report prints.
+   *
+   * Printed rather than assumed, because a decomposition an author has to guess at
+   * is one they will read wrong: the table says `front-thigh` and the roster says
+   * which bones and which slots that name covers. `src/chains.ts` owns the rule.
+   */
+  chains: BoneChain[];
   animations: AnimationCheck[];
   notes: string[];
 }
@@ -840,10 +923,22 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     );
   }
 
+  // The candidate's own decomposition, derived once and used by every set — see
+  // `src/chains.ts`. Reading the CANDIDATE's tree is what keeps this on the right
+  // side of the honesty rule: the reference is still nothing but pixels.
+  const chains = chainsOf(
+    posable.data.bones.map((bone) => ({ name: bone.name, parent: bone.parent === null ? null : bone.parent.name })),
+    posable.data.slots.map((slot) => ({ name: slot.name, bone: slot.boneData.name })),
+  );
+  const chainOfSlot = new Map<string, number>();
+  chains.forEach((chain, index) => {
+    for (const slot of chain.slots) chainOfSlot.set(slot, index);
+  });
+
   const animations: AnimationCheck[] = [];
   for (let i = 0; i < prepared.length; i++) {
     const f = framings[i];
-    animations.push(checkOneSet(located.root, prepared[i], posable, f, background));
+    animations.push(checkOneSet(located.root, prepared[i], posable, f, background, chains, chainOfSlot));
   }
 
   return {
@@ -860,6 +955,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     sharedFraming,
     referenceViewport,
     background,
+    chains,
     animations,
     notes,
   };
@@ -1524,6 +1620,9 @@ function checkOneSet(
   posable: ReturnType<typeof posableFromText>,
   framing: SetFraming,
   background: RGBA,
+  chains: BoneChain[],
+  /** Slot name → its index in `chains`. */
+  chainOfSlot: Map<string, number>,
 ): AnimationCheck {
   const { set } = prepared;
   const viewport = framing.viewport;
@@ -1548,6 +1647,9 @@ function checkOneSet(
     changePairs: 0,
     changeDisagreements: 0,
     worstChangeFrame: -1,
+    chains: [],
+    chainDenominator: 0,
+    unattributedError: 0,
     frames: [],
     viewport: framingOfViewport(viewport),
     framing: framing.how,
@@ -1575,11 +1677,28 @@ function checkOneSet(
   // ITSELF a frame earlier. Both are already rendered or read for this frame, so
   // holding one frame of each costs one extra plate and no extra work.
   let previous: { index: number; candidate: Plate; reference: Plate } | null = null;
+  const tally: ChainTally = {
+    error: new Array<number>(chains.length).fill(0),
+    pixels: new Array<number>(chains.length).fill(0),
+    unattributed: 0,
+    total: 0,
+  };
 
   for (const { index, file, frame } of prepared.pairs) {
     const reference = readPlateFrom(root, file);
     const rendered = renderFrame(frame, posable.pages, viewport, background);
-    const check = checkOneFrame(index, file, frame, posable.pages, viewport, background, reference, rendered);
+    const check = checkOneFrame(
+      index,
+      file,
+      frame,
+      posable.pages,
+      viewport,
+      background,
+      reference,
+      rendered,
+      chainOfSlot,
+      tally,
+    );
     check.change = previous && previous.index === index - 1 ? frameChange(previous, rendered, reference) : null;
     previous = { index, candidate: rendered, reference };
     frames.push(check);
@@ -1613,6 +1732,9 @@ function checkOneSet(
   return {
     ...blank,
     compared: frames.length,
+    chains: chainChecks(chains, frames, tally),
+    chainDenominator: tally.total,
+    unattributedError: tally.unattributed,
     meanMae: maeSum / frames.length,
     meanMaeReference: maeReferenceSum / frames.length,
     drawnRatio: drawnRatioSum / frames.length,
@@ -1734,6 +1856,176 @@ function plateDelta(before: Plate, after: Plate): { pixels: number; mae: number 
   return { pixels, mae: sum / 3 / count };
 }
 
+/**
+ * Roll a set's frames up into one row per chain — the dashboard's rows.
+ *
+ * A chain that owns no slot is left out: it has nothing to attribute, and a row of
+ * dashes in every set is noise in a table read sixteen times. The roster at the
+ * foot of the report still lists it, so the account of where every bone went stays
+ * complete.
+ */
+function chainChecks(chains: BoneChain[], frames: FrameCheck[], tally: ChainTally): ChainCheck[] {
+  const out: ChainCheck[] = [];
+  chains.forEach((chain, index) => {
+    if (chain.slots.length === 0) return;
+    const own = new Set(chain.slots);
+    const drew = new Set<string>();
+    let worstDrift = 0;
+    let worstDriftSlot: string | null = null;
+    let worstDriftFrame = -1;
+    let driftSum = 0;
+    let driftSamples = 0;
+    let driftFrames = 0;
+    for (const frame of frames) {
+      let sampled = false;
+      for (const track of frame.slots) {
+        if (!own.has(track.slot)) continue;
+        if (track.candidate !== null) drew.add(track.slot);
+        if (!isAttributable(track)) continue;
+        const drift = track.drift as number;
+        driftSum += drift;
+        driftSamples++;
+        sampled = true;
+        if (drift > worstDrift) {
+          worstDrift = drift;
+          worstDriftSlot = track.slot;
+          worstDriftFrame = frame.index;
+        }
+      }
+      if (sampled) driftFrames++;
+    }
+    out.push({
+      chain: chain.name,
+      slots: chain.slots.length,
+      drewSlots: drew.size,
+      worstDrift,
+      worstDriftSlot,
+      worstDriftFrame,
+      meanDrift: driftSamples === 0 ? 0 : driftSum / driftSamples,
+      driftSamples,
+      driftFrames,
+      error: tally.error[index],
+      referencePixels: tally.pixels[index],
+      mae: tally.pixels[index] === 0 ? 0 : tally.error[index] / tally.pixels[index],
+      maeShare: tally.total === 0 ? 0 : tally.error[index] / tally.total,
+    });
+  });
+  return out;
+}
+
+/**
+ * A set's error, being split between the candidate's chains as its frames are read.
+ *
+ * Carried across frames rather than parked on each `FrameCheck` because a share is
+ * a fact about the SET — and because a per-frame array of it would land in every
+ * `--json` report and every `bench.json` for a number nobody reads per frame.
+ */
+interface ChainTally {
+  /** Absolute difference over reference-drawn pixels attributed to each chain. */
+  error: number[];
+  /** How many such pixels each chain took. */
+  pixels: number[];
+  /** The same, over reference pixels no chain could take — the candidate drew nothing. */
+  unattributed: number;
+  /** Every reference-drawn pixel's difference, chain or not: the share's denominator. */
+  total: number;
+}
+
+/** How much a diagonal step costs the chamfer pass below. */
+const DIAGONAL_STEP = Math.SQRT2;
+
+/**
+ * Give every pixel of the frame the chain whose ink is nearest to it.
+ *
+ * Two chamfer passes over the owner mask — forward then backward, propagating
+ * (distance, label) together. It is an approximate Euclidean transform and that is
+ * enough: what it decides is which of a handful of well-separated regions a pixel
+ * belongs to, not a distance anybody reads.
+ *
+ * ⚠️ Nearest **ink the candidate drew**, so a chain that draws nothing seeds
+ * nothing and is handed no pixels at all — its share reads 0 % while its slots are
+ * missing entirely. That is why the table prints `drewSlots` beside the share: 0 %
+ * on `0/3 slots` is the loudest row here, not the quietest one.
+ *
+ * The distance comes back with the label because the caller bounds it — see
+ * `chainRadii`.
+ */
+function nearestOwner(owner: Int32Array, width: number, height: number): { label: Int32Array; dist: Float32Array } {
+  const label = Int32Array.from(owner);
+  const dist = new Float32Array(width * height);
+  for (let i = 0; i < label.length; i++) dist[i] = label[i] >= 0 ? 0 : Infinity;
+  const relax = (at: number, from: number, step: number): void => {
+    const reach = dist[from] + step;
+    if (reach >= dist[at]) return;
+    dist[at] = reach;
+    label[at] = label[from];
+  };
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const at = y * width + x;
+      if (x > 0) relax(at, at - 1, 1);
+      if (y > 0) {
+        relax(at, at - width, 1);
+        if (x > 0) relax(at, at - width - 1, DIAGONAL_STEP);
+        if (x + 1 < width) relax(at, at - width + 1, DIAGONAL_STEP);
+      }
+    }
+  }
+  for (let y = height - 1; y >= 0; y--) {
+    for (let x = width - 1; x >= 0; x--) {
+      const at = y * width + x;
+      if (x + 1 < width) relax(at, at + 1, 1);
+      if (y + 1 < height) {
+        relax(at, at + width, 1);
+        if (x + 1 < width) relax(at, at + width + 1, DIAGONAL_STEP);
+        if (x > 0) relax(at, at + width - 1, DIAGONAL_STEP);
+      }
+    }
+  }
+  return { label, dist };
+}
+
+/**
+ * How far each chain's attribution may reach, in frame pixels.
+ *
+ * The same judgement `src/slots.ts` makes about a slot — *past about its own long
+ * side a part no longer overlaps where it was, and something out there is another
+ * object rather than this one moved* — applied to the chain's own drawn box. Past
+ * it, reference ink is left **unattributed** instead of being handed to whichever
+ * chain happens to be nearest.
+ *
+ * ⚠️ This is the bound that keeps the dashboard honest about its own limits, and
+ * it is a bound rather than a fix. Nothing candidate-side can know which part of
+ * the REFERENCE a pixel belonged to; nearest-ink is a good guess while the figure
+ * is roughly in place and a bad one once a part has left. So a part displaced past
+ * its own size stops being blamed on its neighbour and starts showing up in the
+ * `(unattributed)` row, next to the `reference component(s) no slot reaches` count
+ * that says the same thing a different way.
+ */
+function chainRadii(
+  footprints: Map<string, Footprint>,
+  chainOfSlot: Map<string, number>,
+  chains: number,
+): Float64Array {
+  const minX = new Float64Array(chains).fill(Infinity);
+  const minY = new Float64Array(chains).fill(Infinity);
+  const maxX = new Float64Array(chains).fill(-Infinity);
+  const maxY = new Float64Array(chains).fill(-Infinity);
+  for (const [slot, foot] of footprints) {
+    const chain = chainOfSlot.get(slot);
+    if (chain === undefined || foot.pixels === 0) continue;
+    if (foot.minX < minX[chain]) minX[chain] = foot.minX;
+    if (foot.minY < minY[chain]) minY[chain] = foot.minY;
+    if (foot.maxX > maxX[chain]) maxX[chain] = foot.maxX;
+    if (foot.maxY > maxY[chain]) maxY[chain] = foot.maxY;
+  }
+  const out = new Float64Array(chains);
+  for (let i = 0; i < chains; i++) {
+    out[i] = maxX[i] < minX[i] ? -1 : searchRadius(maxX[i] - minX[i], maxY[i] - minY[i]);
+  }
+  return out;
+}
+
 function checkOneFrame(
   index: number,
   file: string,
@@ -1744,8 +2036,16 @@ function checkOneFrame(
   reference: Plate,
   /** The candidate's own frame, rendered by the caller — it needs it too. */
   rendered: Plate,
+  /** Slot name → chain index, for the per-chain split. */
+  chainOfSlot: Map<string, number>,
+  /** Accumulated across the set by the caller — see `ChainTally`. */
+  tally: ChainTally,
 ): FrameCheck {
-  const { coverage, footprints } = frameGeometry(frame, pages, viewport);
+  const { coverage, footprints, owner } = frameGeometry(frame, pages, viewport, chainOfSlot);
+  // Only worth the transform when something was drawn to be nearest TO.
+  const nearest =
+    owner !== null && owner.some((at) => at >= 0) ? nearestOwner(owner, viewport.width, viewport.height) : null;
+  const radii = chainRadii(footprints, chainOfSlot, tally.error.length);
 
   let union = 0;
   let candidatePixels = 0;
@@ -1762,6 +2062,20 @@ function checkOneFrame(
       const b = reference.get(x, y);
       const delta = (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
       sumAll += delta;
+      if (inReference) {
+        // The share's denominator is the reference's own drawn pixels, and the
+        // split is over exactly those — issue #119's lesson, as a partition.
+        tally.total += delta;
+        const at = y * viewport.width + x;
+        const found = nearest === null ? -1 : nearest.label[at];
+        const chain = found >= 0 && nearest !== null && nearest.dist[at] <= radii[found] ? found : -1;
+        if (chain >= 0) {
+          tally.error[chain] += delta;
+          tally.pixels[chain]++;
+        } else {
+          tally.unattributed += delta;
+        }
+      }
       if (!inCandidate && !inReference) continue;
       union++;
       sum += delta;
@@ -1972,6 +2286,7 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
           `f${String(anim.worstDriftFrame).padStart(4, '0')}${blind}`,
     );
     lines.push(changeSummary(anim));
+    for (const line of chainTable(anim)) lines.push(line);
     lines.push('');
 
     const listed = framesToList(anim, opts?.allFrames === true);
@@ -2005,6 +2320,8 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
     lines.push('');
   }
 
+  for (const line of chainFoot(report)) lines.push(line);
+
   lines.push('  MAE is the mean absolute RGB difference over the pixels either side covers, so it is');
   lines.push('  read against 255 and not against a threshold: there is no pass mark here any more than');
   lines.push('  there is one in `diff`. The figure under it divides the same difference by the pixels the');
@@ -2020,6 +2337,164 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   lines.push('  not held, or a one-frame event that never fired: both are small in every frame and');
   lines.push('  wrong only in the relation between two, which is where the MAE cannot look.');
   return lines;
+}
+
+/** One drift, as the table says it: distance, slot, frame. */
+function driftPhrase(drift: number, slot: string | null, frame: number): string {
+  if (slot === null) return 'no slot attributable';
+  return `${drift.toFixed(1)} px ${JSON.stringify(slot)} f${String(frame).padStart(4, '0')}`;
+}
+
+/** One set, broken down by chain — see `ChainCheck`. */
+function chainTable(anim: AnimationCheck): string[] {
+  if (anim.chains.length === 0) return [];
+  const out: string[] = [];
+  out.push(
+    `     chains     ${anim.chains.length} from the candidate's own bone tree — the roster is at the foot of the report`,
+  );
+  out.push(
+    `       ${'chain'.padEnd(20)} ${'slots'.padStart(6)}   ${'worst slot drift'.padEnd(33)} ` +
+      `${'mean'.padStart(8)}   ${'MAE in it'.padStart(9)}   ${'share'.padStart(6)}`,
+  );
+  // Derivation order rather than worst-first, so the same row is in the same place
+  // in every set's table and a run can be read down a column.
+  for (const chain of anim.chains) {
+    const mean = chain.driftSamples === 0 ? '—' : `${chain.meanDrift.toFixed(1)} px`;
+    out.push(
+      `       ${chain.chain.padEnd(20)} ${`${chain.drewSlots}/${chain.slots}`.padStart(6)}   ` +
+        `${driftPhrase(chain.worstDrift, chain.worstDriftSlot, chain.worstDriftFrame).padEnd(33)} ` +
+        `${mean.padStart(8)}   ${f2(chain.mae).padStart(9)}   ${`${(chain.maeShare * 100).toFixed(1)}%`.padStart(6)}`,
+    );
+  }
+  if (anim.unattributedError > 0 && anim.chainDenominator > 0) {
+    const share = (anim.unattributedError / anim.chainDenominator) * 100;
+    out.push(
+      `       ${'(unattributed)'.padEnd(20)} ${'—'.padStart(6)}   ${'—'.padEnd(33)} ${'—'.padStart(8)}   ` +
+        `${'—'.padStart(9)}   ${`${share.toFixed(1)}%`.padStart(6)}`,
+    );
+  }
+  out.push(
+    "                ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; " +
+      '`MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under ' +
+      '"chains" at the foot of the report.',
+  );
+  return out;
+}
+
+/** One line per chain across every set, plus the roster the names refer to. */
+function chainFoot(report: CheckReport): string[] {
+  if (report.chains.length === 0) return [];
+  const out: string[] = [];
+  out.push('  ── chains ──');
+  out.push(
+    "  Cut from the CANDIDATE's own bone tree at every branch point: a chain runs from a root or a fork down to the",
+  );
+  out.push(
+    '  next fork, a single-bone chain that is itself a fork folds into its parent, and each is named after the first',
+  );
+  out.push(
+    '  bone in it that carries a slot. The reference is still nothing but pixels — this is your figure decomposed,',
+  );
+  out.push('  not the reference’s, which is what keeps it inside the ladder’s honesty rule.');
+  out.push('');
+  out.push("  MAE share divides the difference over the REFERENCE's own drawn pixels — the denominator from the MAE");
+  out.push('  line above, which nothing you draw can grow — and splits it by giving each of those pixels to the chain');
+  out.push('  whose ink is NEAREST it. So the shares are a partition and add to the whole, and no chain can look');
+  out.push('  better by drawing more: growing its ink only pulls more of the reference’s pixels, and their error,');
+  out.push('  into it. `MAE in it` is the same error per pixel it took, and it is the column that separates a chain');
+  out.push('  that is WRONG from one that is merely large — a head and its features cover a lot of a figure and can');
+  out.push('  carry a third of the error at a below-average figure per pixel.');
+  out.push('');
+  out.push('  ⚠️ Two things the split cannot do, both of which show rather than hide. Reference ink further from your');
+  out.push('  ink than the part’s own size is left `(unattributed)` instead of blamed on a neighbour, so a part that');
+  out.push('  has left its place stops being charged to whatever is next to it. And a chain that draws NOTHING seeds');
+  out.push('  nothing and reads 0 % — which is why the slots column is beside the share: 0 % on 0 slots drawn is the');
+  out.push('  loudest row here, not the quietest.');
+  out.push(`    ${'chain'.padEnd(20)} ${'bones'.padEnd(57)} slots`);
+  for (const chain of report.chains) {
+    out.push(
+      `    ${chain.name.padEnd(20)} ${chain.bones.join(', ').padEnd(57)} ` +
+        `${chain.slots.length === 0 ? '(draws nothing)' : chain.slots.join(', ')}`,
+    );
+  }
+  const rows = chainRollup(report);
+  if (rows.length === 0) return out;
+  out.push('');
+  out.push(
+    `    ${'chain'.padEnd(20)} ${'worst slot drift across every set'.padEnd(56)} ` +
+      `${'mean'.padStart(8)}   ${'MAE in it'.padStart(9)}   ${'share'.padStart(6)}`,
+  );
+  for (const row of rows) {
+    const where = row.set === null ? '' : ` in ${row.set}/f${String(row.frame).padStart(4, '0')}`;
+    const worst =
+      row.slot === null ? 'no slot attributable in any set' : `${row.drift.toFixed(1)} px ${JSON.stringify(row.slot)}${where}`;
+    const mean = row.samples === 0 ? '—' : `${row.mean.toFixed(1)} px`;
+    out.push(
+      `    ${row.chain.padEnd(20)} ${worst.padEnd(56)} ${mean.padStart(8)}   ` +
+        `${(row.pixels === 0 ? 0 : row.error / row.pixels).toFixed(2).padStart(9)}   ` +
+        `${`${(row.share * 100).toFixed(1)}%`.padStart(6)}`,
+    );
+  }
+  out.push('');
+  return out;
+}
+
+interface ChainRollup {
+  chain: string;
+  drift: number;
+  slot: string | null;
+  set: string | null;
+  frame: number;
+  mean: number;
+  samples: number;
+  error: number;
+  pixels: number;
+  share: number;
+}
+
+/**
+ * Each chain's worst reading anywhere in the run, worst share first.
+ *
+ * Worst-first here and derivation order in the per-set tables, deliberately: this
+ * is the line a run’s README quotes, so it is ranked by what to fix, while a table
+ * printed once per set is ranked so the sets line up.
+ */
+function chainRollup(report: CheckReport): ChainRollup[] {
+  const rows = new Map<string, ChainRollup>();
+  let denominator = 0;
+  for (const anim of report.animations) {
+    if (anim.compared === 0) continue;
+    denominator += anim.chainDenominator;
+    for (const chain of anim.chains) {
+      const row = rows.get(chain.chain) ?? {
+        chain: chain.chain,
+        drift: 0,
+        slot: null,
+        set: null,
+        frame: -1,
+        mean: 0,
+        samples: 0,
+        error: 0,
+        pixels: 0,
+        share: 0,
+      };
+      if (chain.worstDriftSlot !== null && chain.worstDrift > row.drift) {
+        row.drift = chain.worstDrift;
+        row.slot = chain.worstDriftSlot;
+        row.set = anim.dir;
+        row.frame = chain.worstDriftFrame;
+      }
+      row.mean = row.mean * row.samples + chain.meanDrift * chain.driftSamples;
+      row.samples += chain.driftSamples;
+      row.mean = row.samples === 0 ? 0 : row.mean / row.samples;
+      row.error += chain.error;
+      row.pixels += chain.referencePixels;
+      rows.set(chain.chain, row);
+    }
+  }
+  const out = [...rows.values()];
+  for (const row of out) row.share = denominator === 0 ? 0 : row.error / denominator;
+  return out.sort((a, b) => b.share - a.share);
 }
 
 /**

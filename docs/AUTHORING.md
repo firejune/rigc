@@ -1418,6 +1418,37 @@ summary line carries the same denominator. `N reference component(s) no slot
 reaches` means the reference frame contains something none of your slots overlaps:
 a part you have not authored, or one you have put somewhere else entirely.
 
+**The `chains` block is the same two measures on the unit you actually repair.**
+
+```
+     chains     6 from the candidate's own bone tree — the roster is at the foot of the report
+       chain                 slots   worst slot drift                     mean   MAE in it   share
+       neck                    5/5   3.0 px "goggles" f0004              2.3 px       30.37    24.3%
+       rear-upper-arm          6/6   2.2 px "gun" f0000                  1.4 px       46.26    34.6%
+       front-thigh             3/3   16.3 px "front-shin" f0003          7.2 px       48.18     9.0%
+```
+
+`check` cuts **your own** bone tree at every branch point — a chain runs from a
+root or a fork down to the next fork; a single-bone chain that is itself a fork
+folds into its parent, so a `torso` that branches three ways joins the trunk rather
+than becoming a row of its own; and each chain is named after the first bone in it
+that carries a slot. On a biped that lands on the parts you would name (`neck`,
+`front-thigh`, the gun arm); on a serial figure with no fork it is one chain, and
+the slot rows under it still say which link moved. Which bones and slots went where
+is printed as a roster at the foot of the report, so it is never a guess. `MAE
+share` divides the difference over the **reference's** own drawn pixels — the
+denominator from the line above, which nothing you draw can grow — and splits it by
+giving each of those pixels to the chain whose ink is nearest, so the shares
+partition the set and no chain can look better by drawing more: growing its ink
+only pulls more of the reference's pixels, and their error, into it. Read `MAE in
+it` beside the share, because the share alone confounds *wrong* with *big* — a head
+and its features cover a lot of a figure and can carry a third of the error at a
+below-average figure per pixel. Reference ink further from your ink than the part's
+own size is left `(unattributed)` rather than charged to a neighbour, and a chain
+reading 0 % on `0/3` slots drawn is missing, not clean. The rollup at the foot gives
+each chain one line across every set — the sentence a run's README quotes instead of
+a per-shot list.
+
 ### 9.3 What it still cannot see
 
 - **Anything a frame does not contain.** Bone `length`, the setup `inherit` mode,

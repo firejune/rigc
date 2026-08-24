@@ -57,6 +57,7 @@ import {
   checkLines,
   OVERDRAW_RATIO,
   type AnimationCheck,
+  type ChainCheck,
   type CheckReport,
   type FrameChange,
   type FramingHow,
@@ -1345,6 +1346,20 @@ const OVERDRAW_SCALE = 8;
 const OVERDRAW_ALPHA = 0.1;
 /** How far C09 lets a faithful transcription's two MAE figures differ. */
 const DENOMINATOR_TOLERANCE = 0.05;
+/** How far C10 moves ONE of the fixture's two chains, in the rig's own units (~25 px). */
+const CHAIN_OFFSET = 150;
+/** How many times the offset chain's own per-pixel error must beat the untouched one's, in C10. */
+const CHAIN_BLAME_RATIO = 5;
+/** How far apart C10 lets the same two chains sit when NOTHING is offset. */
+const CHAIN_AGREE_RATIO = 1.5;
+/** How far the offset chain's worst drift must travel for C10 to call it named. */
+const CHAIN_OFFSET_DRIFT = 10;
+/** The drift every chain of a faithful transcription must stay under, in frame pixels (C10, C11). */
+const CHAIN_FLOOR_DRIFT = 1;
+/** How far above its set's own reference-denominator MAE C11 lets any one chain sit. */
+const CHAIN_FLOOR_RATIO = 1.25;
+/** The share C11 lets a faithful build leave unattributed to any chain. */
+const CHAIN_UNATTRIBUTED_TOLERANCE = 0.01;
 
 const CHECK_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/3-timing-and-spacing');
 const CHECK_FRAMES = resolve(import.meta.dir, 'bench/reference/3-timing-and-spacing');
@@ -1555,6 +1570,48 @@ function framedBy(report: CheckReport, how: FramingHow, source: FramingSource): 
 function maeOf(report: CheckReport, dir: string): number | null {
   return report.animations.find((a) => a.dir === dir)?.meanMae ?? null;
 }
+
+/** Every compared set's row for one chain, by the name `src/chains.ts` gives it. */
+function chainRows(report: CheckReport, chain: string): ChainCheck[] {
+  return comparedSets(report)
+    .map((anim) => anim.chains.find((row) => row.chain === chain))
+    .filter((row): row is ChainCheck => row !== undefined);
+}
+
+/** The widest reading one chain gives anywhere in a report, on either measure. */
+function chainWorst(report: CheckReport, chain: string): { mae: number; drift: number } {
+  let mae = 0;
+  let drift = 0;
+  for (const row of chainRows(report, chain)) {
+    mae = Math.max(mae, row.mae);
+    drift = Math.max(drift, row.worstDrift);
+  }
+  return { mae, drift };
+}
+
+/**
+ * The same skeleton with ONE chain moved, by moving the bone it hangs from.
+ *
+ * The fixture's two drawn parts sit on two bones under one root, which
+ * `src/chains.ts` cuts into two chains — so moving one bone moves exactly one
+ * chain and leaves the other where it was. That is the shape C10 needs: an error
+ * with a known owner, in a report that has to name the owner and not its
+ * neighbour.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function offsetOneChain(skeletonText: string, boneName: string, dx: number, dy: number): string {
+  const skeleton = JSON.parse(skeletonText);
+  let found = false;
+  for (const bone of skeleton.bones as any[]) {
+    if (bone.name !== boneName) continue;
+    bone.x = (bone.x ?? 0) + dx;
+    bone.y = (bone.y ?? 0) + dy;
+    found = true;
+  }
+  if (!found) throw new Error(`selftest: no bone "${boneName}" to offset`);
+  return `${JSON.stringify(skeleton, null, 2)}\n`;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 /**
  * The same motion spec with ONE animation moved bodily, by a translate track on
@@ -1945,6 +2002,138 @@ function runCheckSuite(): number | null {
         `build and ${reversedWarnings} on the time-reversed one (both need 0), reversed draws ${r.drawn.toFixed(2)}x ` +
         `(needs < ${OVERDRAW_RATIO}), faithful union ${f.meanMae.toFixed(2)} against ${f.refMae.toFixed(2)} over the ` +
         `reference's pixels (gap ${denominatorGap.toFixed(3)}, tolerance ${DENOMINATOR_TOLERANCE})`,
+    );
+  }
+
+  // --- the chain dashboard: the error is charged to the chain it is in ---------
+  // Issue #123. One number per shot hides where a many-joint figure fails, so
+  // `check` splits each set by the CANDIDATE's own bone chains. The claim under
+  // test is the only one that matters for a dashboard — that the split NAMES the
+  // unit at fault — and it needs both halves to mean anything: the two chains
+  // must agree when nothing is wrong, and one of them must carry the error when
+  // one of them is moved. A table that always blamed the same chain would pass the
+  // second half on its own.
+  //
+  // Measured through a PINNED viewport, and that is the point rather than a
+  // convenience: an unpinned framing absorbs part of a one-chain offset by moving
+  // the whole rig, which is `fitFraming` doing its job and would leave this
+  // control measuring the framing instead of the attribution. C05 already
+  // established that pinning this fixture's own box costs nothing.
+  const chainBase = checkAgainstFrames({ ...faithful, framesDir: CHECK_FRAMES, viewport: sidecarViewport() });
+  const chainMoved = checkAgainstFrames({
+    ...faithful,
+    skeletonText: offsetOneChain(faithful.skeletonText, 'square', CHAIN_OFFSET, CHAIN_OFFSET),
+    framesDir: CHECK_FRAMES,
+    viewport: sidecarViewport(),
+  });
+  const quiet = comparedSets(chainBase);
+  const loud = comparedSets(chainMoved);
+  // Per set, because a mean over sets would let one set's blame cover another's.
+  const agreesWhenRight =
+    quiet.length > 0 &&
+    quiet.every((anim) => {
+      const moved = anim.chains.find((row) => row.chain === 'square');
+      const still = anim.chains.find((row) => row.chain === 'bone');
+      if (!moved || !still || still.mae === 0) return false;
+      const ratio = moved.mae / still.mae;
+      return ratio <= CHAIN_AGREE_RATIO && ratio >= 1 / CHAIN_AGREE_RATIO;
+    });
+  const blamesTheOffsetOne =
+    loud.length === quiet.length &&
+    loud.length > 0 &&
+    loud.every((anim) => {
+      const moved = anim.chains.find((row) => row.chain === 'square');
+      const still = anim.chains.find((row) => row.chain === 'bone');
+      return moved !== undefined && still !== undefined && moved.mae >= still.mae * CHAIN_BLAME_RATIO;
+    });
+  const movedChain = chainWorst(chainMoved, 'square');
+  const stillChain = chainWorst(chainMoved, 'bone');
+  const attributionOk =
+    agreesWhenRight &&
+    blamesTheOffsetOne &&
+    movedChain.drift >= CHAIN_OFFSET_DRIFT &&
+    stillChain.drift < CHAIN_FLOOR_DRIFT &&
+    chainWorst(chainBase, 'square').drift < CHAIN_FLOOR_DRIFT;
+  if (attributionOk) {
+    const worstRatio = Math.min(
+      ...loud.map((anim) => {
+        const moved = anim.chains.find((row) => row.chain === 'square') as ChainCheck;
+        const still = anim.chains.find((row) => row.chain === 'bone') as ChainCheck;
+        return moved.mae / still.mae;
+      }),
+    );
+    console.log(
+      `  PASS  C10_AN_OFFSET_CHAIN_IS_BLAMED_AND_ITS_NEIGHBOUR_IS_NOT  ` +
+        `("square" moved +${CHAIN_OFFSET} units: its own error per pixel runs ${worstRatio.toFixed(1)}x the ` +
+        `untouched chain's in every set, drift ${movedChain.drift.toFixed(1)} px against ` +
+        `${stillChain.drift.toFixed(2)} px, and the two agree within ${CHAIN_AGREE_RATIO}x when nothing is moved)`,
+    );
+    console.log(
+      "          origin: spineboy-2's verdict was one number per shot, and \"motion ✗\" over sixteen sets says " +
+        'nothing about which limb to re-key (issue #123)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C10_AN_OFFSET_CHAIN_IS_BLAMED_AND_ITS_NEIGHBOUR_IS_NOT: with "square" moved +${CHAIN_OFFSET} units ` +
+        `it reads ${movedChain.mae.toFixed(2)} per pixel and drift ${movedChain.drift.toFixed(1)} px against the ` +
+        `untouched chain's ${stillChain.mae.toFixed(2)} and ${stillChain.drift.toFixed(2)} px ` +
+        `(needs ${CHAIN_BLAME_RATIO}x per set: ${blamesTheOffsetOne}; needs ${CHAIN_OFFSET_DRIFT} px of drift on ` +
+        `the moved one and under ${CHAIN_FLOOR_DRIFT} px on the other), and untouched they agree within ` +
+        `${CHAIN_AGREE_RATIO}x: ${agreesWhenRight}`,
+    );
+  }
+
+  // --- and a faithful transcription puts every chain on the floor --------------
+  // The negative control for C10, and the one that makes the dashboard readable:
+  // if a chain of a rig that is RIGHT could read high, an author would have no way
+  // to tell a chain worth re-keying from the tool's own noise. Three halves,
+  // because there are three ways for the table to be useless — a chain that drifts
+  // when nothing moved, a chain whose own error per pixel stands out from its
+  // set's, and reference ink the split could not place at all.
+  //
+  // ⚠️ The count is asserted too. "Every chain is at the floor" is vacuously true
+  // of a decomposition that produced one chain, which is exactly what a broken
+  // derivation returns.
+  const chainCounts = comparedSets(faithfulReport).map((anim) => anim.chains.length);
+  const worstChainDrift = Math.max(
+    0,
+    ...comparedSets(faithfulReport).flatMap((anim) => anim.chains.map((row) => row.worstDrift)),
+  );
+  const worstChainRatio = Math.max(
+    0,
+    ...comparedSets(faithfulReport).flatMap((anim) =>
+      anim.chains.map((row) => (anim.meanMaeReference === 0 ? 0 : row.mae / anim.meanMaeReference)),
+    ),
+  );
+  const worstUnattributed = Math.max(
+    0,
+    ...comparedSets(faithfulReport).map((anim) =>
+      anim.chainDenominator === 0 ? 0 : anim.unattributedError / anim.chainDenominator,
+    ),
+  );
+  const floorOk =
+    chainCounts.length > 0 &&
+    chainCounts.every((count) => count >= 2) &&
+    worstChainDrift < CHAIN_FLOOR_DRIFT &&
+    worstChainRatio <= CHAIN_FLOOR_RATIO &&
+    worstUnattributed <= CHAIN_UNATTRIBUTED_TOLERANCE;
+  if (floorOk) {
+    console.log(
+      `  PASS  C11_A_FAITHFUL_TRANSCRIPTION_READS_FLAT_ACROSS_ITS_CHAINS  ` +
+        `(${chainCounts.join('/')} chains a set: worst drift ${worstChainDrift.toFixed(2)} px, no chain above ` +
+        `${worstChainRatio.toFixed(2)}x its set's own reference-denominator MAE, ` +
+        `${(worstUnattributed * 100).toFixed(1)}% unattributed)`,
+    );
+    console.log('          origin: a dashboard whose floor is not flat cannot tell a limb worth re-keying from its own noise');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C11_A_FAITHFUL_TRANSCRIPTION_READS_FLAT_ACROSS_ITS_CHAINS: ${JSON.stringify(chainCounts)} chain(s) a ` +
+        `set (each needs 2+), worst chain drift ${worstChainDrift.toFixed(2)} px (needs < ${CHAIN_FLOOR_DRIFT}), ` +
+        `worst chain ${worstChainRatio.toFixed(2)}x its set's MAE (needs <= ${CHAIN_FLOOR_RATIO}), ` +
+        `${(worstUnattributed * 100).toFixed(1)}% unattributed (needs <= ` +
+        `${(CHAIN_UNATTRIBUTED_TOLERANCE * 100).toFixed(1)}%)`,
     );
   }
   return bad;
@@ -3945,11 +4134,12 @@ function main(): void {
         [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
       : `, + 2 diff identity controls (name-matched and name-agnostic), + ${DIFF_CASES.length} diff measure controls, ` +
-        '+ 10 check controls (frames-only reads, a faithful ' +
+        '+ 12 check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +
-        "not, one offset shot that must not move another shot's numbers, and one bloated sprite that must " +
-        'lower the union mean, raise the figure over the reference’s own pixels, and be named as overdraw)';
+        "not, one offset shot that must not move another shot's numbers, one bloated sprite that must " +
+        'lower the union mean, raise the figure over the reference’s own pixels, and be named as overdraw, and ' +
+        'one offset bone CHAIN that must be blamed while its neighbour and a faithful build stay on the floor)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'

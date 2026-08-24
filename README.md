@@ -150,6 +150,13 @@ per animation and per frame:
   template-matched against its own rendered pixels instead, with a confidence; and
   where nothing inside the distance that slot could plausibly have moved matches
   it, the answer is **no match** rather than a number about some other part.
+- **Per-chain attribution** — the same two, rolled up onto the unit an author
+  repairs. `check` cuts the **candidate's own** bone tree into chains at its branch
+  points and prints, per chain per set, the worst slot drift with its slot and
+  frame, the mean, the error per pixel inside it, and its share of the set's error
+  over the reference's own drawn pixels — plus one rollup line per chain across
+  every set. A figure with a dozen joints otherwise collapses to one number a shot,
+  and *"motion ✗"* over sixteen shots does not say which limb to re-key.
 
 🔒 **It never reads the reference skeleton.** It opens the candidate and PNG
 frames, and nothing else: every reference-side read goes through one guard that
