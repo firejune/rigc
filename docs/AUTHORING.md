@@ -1075,8 +1075,9 @@ sequence of single-frame fits, one per shot, is not the same thing.
 **What comes out is a pose per frame, and a pose per frame is not a key.** Two things
 decide what survives the reduction, and **§10.3** states both: declare one tolerance
 in pixels at the end of what each bone swings rather than a figure in degrees, and
-fold out the gauges — the directions the pixels cannot see — *before* the series
-becomes keys, because a fitter will have wandered along every one of them. Then close
+deal with the gauges — the directions the pixels cannot see — *before* the series
+becomes keys, because a fitter will have wandered along every one of them; fold the
+exact ones out and penalise the rest. Then close
 the loop with **§9**: the fit's own number says how near this pose is to this frame,
 and only `check` says whether the shot is the shot. **§9.3** is the list of what even
 that cannot see.
@@ -1623,9 +1624,23 @@ through a full turn between two of them. The rendered result is correct and the
 authored rig is nonsense, and no amount of further fitting finds it, because every
 point on the gauge orbit has identical error. ⇒ Fold each gauge out *before* the
 series becomes keys — for a rotation gauge, take the median of the values along the
-chain and fold it back. It is exact and it is cheap. The same shape exists wherever a
-transform is unobservable: a bone with no art, a slot-less parent chain, a uniform
-scale split across two bones.
+chain and fold it back. The same shape exists wherever a transform is unobservable: a
+bone with no art, a slot-less parent chain, a uniform scale split across two bones.
+
+⚠️ **That fold is exact only when the gauge bone's children sit at its own origin** —
+and a character's body bone almost never has them there, which is the very shape the
+paragraph above was written from. Turn the parent by δ and a child *at the origin*
+back by δ and the child is where it was; a child sitting 10 units off swings through
+an arc of that radius first, and the counter-turn only spins it on the spot. The fold
+moves art, so it **changes the picture**. Measured on the second spineboy run, whose
+`hip` carries no attachment and has three children 9–13 units off it: the fold cost
+**3 MAE on every `idle` frame** — mean 23.0 with it against 19.9 without, same search
+— and it was removed. ⇒ Read the children's offsets before you fold. At the origin,
+fold: it is exact and it is cheap. Off the origin the degeneracy is still there but
+it is **soft**, not exact, and a soft degeneracy is *regularised, not folded* — leave
+the values alone and add a penalty on the gauge direction to the objective instead.
+That run used **2e-5 per squared degree** of hip rotation: invisible at animator-sized
+angles, and still decisive against the +181° against −184° above.
 
 ### 10.4 Curves
 
