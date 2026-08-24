@@ -296,9 +296,12 @@ be measurement artefacts rather than finished shot descriptions: three of the si
 runs found a brief claim wrong that a client watching the shot could have caught,
 and the fix each time was to re-measure the pixels, not to trust the prose. The
 second attempts add a fourth and a worse kind — spineboy's revision 2, which
-*carries* a third-party pass, contradicts itself on which hand holds the gun
+*carries* a third-party pass, contradicted itself on which hand holds the gun
 ([#111](https://github.com/firejune/rigc/issues/111)) — so a verification pass
-catches wrong claims and does not yet catch inconsistent ones.
+catches wrong claims and does not yet catch inconsistent ones. That one took a
+*second* third-party pass to close: revision 3 (2026-08-24) re-derived the arm from
+the frames rather than choosing a side, and the gun is in the **far** hand, as both
+attempts had found.
 
 **The interim reading, after eleven honest runs on eight rungs.** An agent authoring
 through rigc, from a brief and rendered frames alone, **reliably produces valid
@@ -1254,9 +1257,10 @@ and cannot hide across frames. **The gun hangs off the rear arm, against the bri
 on art evidence** — the brief says *near hand* twice while its own `death` paragraph
 establishes that a fist means the near arm, and the art draws a second fist free of
 the gun in `idle`, `aim` and `death`. The run reported the defect rather than using
-it; it is now [#111](https://github.com/firejune/rigc/issues/111) and the
-attemptability row in [`bench/runs/README.md`](../bench/runs/README.md) carries the
-caveat until a revision 3 settles it. **A ten-entry `easings` table planned in
+it; it became [#111](https://github.com/firejune/rigc/issues/111), and the brief's
+**revision 3** (2026-08-24) settled it by measurement in the run's favour — the gun is
+in the far hand, `idle` and `walk` now say so, and the attemptability row in
+[`bench/runs/README.md`](../bench/runs/README.md) no longer carries a caveat. **A ten-entry `easings` table planned in
 §10.4's two passes**, at one tolerance of 0.8 px per lever arm, with no raw `curve`
 anywhere.
 

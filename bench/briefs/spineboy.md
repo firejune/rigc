@@ -1,6 +1,19 @@
 # spineboy brief — the graduation exam
 
-> **Revision 1 → 2. Brief verified: yes (third party), 2026-08-23.** Every
+> **Revision 2 → 3. Brief verified: yes (third party), twice — 2026-08-23 and
+> 2026-08-24.**
+>
+> **Revision 3 (2026-08-24)** is a second third-party pass, by an agent that wrote
+> neither revision and neither of the two spineboy attempts. It settles one thing:
+> **which hand holds the gun.** Revision 2 said the *near* hand twice while its own
+> `death` paragraph established the opposite rule on evidence
+> ([#111](https://github.com/firejune/rigc/issues/111)); both could not hold, and a
+> contradiction is not a measurement, so the arm was re-derived rather than chosen.
+> The answer is **the far hand**, and `idle` and `walk` now say so. Method, controls
+> and margins are in *Verification notes — revision 2 → 3*. Nothing else in the brief
+> was re-opened.
+>
+> **Revision 1 → 2 (2026-08-23).** Every
 > quantitative and behavioural claim below was re-measured off
 > `bench/reference/spineboy/` and `examples/spineboy/images/` by a **different
 > agent** from the one that wrote revision 1 (Claude Opus 5 (1M context), Claude
@@ -10,7 +23,7 @@
 > and **each was scored against a control with a known answer before any number it
 > produced was believed** — including compositing the art at the sidecar's own
 > scale to predict what an estimator should read on an unoccluded part. See
-> *Verification notes* at the end for claim-by-claim results.
+> *Verification notes — revision 1 → 2* at the end for claim-by-claim results.
 >
 > **What held, much of it to the digit**: both duration tables entire — all 19
 > animations' frame counts at both rates, all 19 windows and all 19 values on a
@@ -333,8 +346,9 @@ figure itself has not moved at all), `pro/portal` f1 → f2 at **18 px**, and th
 
 ## `idle` — a stance that breathes
 
-**1.6667 s, loops.** The figure stands facing right, gun held across him in the near
-hand, and breathes. It is small: over the 21 frames the subject's bounding box is
+**1.6667 s, loops.** The figure stands facing right, gun held across him in the
+**far** hand — measured; see *Verification notes — revision 2 → 3* — and breathes.
+It is small: over the 21 frames the subject's bounding box is
 **100–101 px wide and 143–146 px tall**, its top edge rises and falls through
 **3 px** (row 191 → 194 → 191), and its centroid sways **2.0 px** horizontally
 (183.5 → 185.5 → 183.6) on the same cycle. The feet never move — exactly two
@@ -369,7 +383,7 @@ one measures, so a foot *is* off the ground for part of every step. What never
 happens is the **figure** leaving the floor: the lowest drawn row stays in
 **334–337** on all 13 frames, against a floor of 336.
 
-📐 **A draw order the frames do decide.** The gun rides in the near hand and swings
+📐 **A draw order the frames do decide.** The gun rides in the **far** hand and swings
 with the arm. On the frames where it swings down and back it goes **behind the near
 leg**. Measure the gun's own teal — the lower share of the split described in the
 header, since the hair is the same colour — and it drops from **322–338 px**, the
@@ -377,9 +391,10 @@ unoccluded reading on all 21 frames of `idle` and on every `walk` frame where th
 is clear, to **36 px at f6** and **47 px at f9**: about **one eighth** of it is left.
 Over the same frames the head's share of the teal holds at **277–291 px**, so nothing
 global is happening to the colour — one part is being covered and the other is not.
-What survives at f6 and f9 is a sliver at rows 280–306, below and left of the near
-knee, with the red-booted near leg drawn across it. It is being covered, not
-foreshortened away. The leg is in front of the gun.
+What survives at f6 and f9 is a narrow strip in the gap between the legs — rows
+278–319, columns 177–201 — and on **no** frame of f5–f10 does a single teal pixel fall
+inside the matched footprint of either shin (*Verification notes — revision 2 → 3*).
+It is being covered, not foreshortened away. The leg is in front of the gun.
 
 ## `run` — the same idea with both feet off the ground
 
@@ -486,9 +501,12 @@ shot longer than this one. It is four distinct passages:
    x 23–131, which is the head-and-chest end, while nothing at all changes right of
    x 140 after f27 — the boots at x 145–175 never move again. The arm that lifts off
    the chest and waves is the **near** one, and the frames say so: the raised hand is
-   an open fist, and the art ships a fist only for the near arm. The subject's top edge
-   rises from row 276 to **265** by f48–f51 and back to 273 — and the arm is down
-   again by f57, after which the frames go quiet (620, 667, 859 px).
+   an open fist, and the art ships a fist only for the near arm. Revision 3 reached
+   the same place from the other end — `front-fist-open` is the piece that matches the
+   raised hand, and the gun, which carries its own gripping hand, is on the far arm.
+   The subject's top edge rises from row 276 to **265** by f48–f51 and back to 273 —
+   and the arm is down again by f57, after which the frames go quiet
+   (620, 667, 859 px).
 
 The whole thing is a fall, a stillness long enough to read as death, and then a last
 movement.
@@ -612,10 +630,14 @@ Stated so that its silence is not mistaken for a measurement.
   these frames, because the renderer that made them skips every attachment that is
   not a region or a mesh. If the reference has any, the frames neither show them nor
   rule them out — and the same goes for a candidate's.
-- **Draw order, except two edges.** The frames decide that the near leg is drawn in
-  front of the gun (`walk`, measured above) and that the figure is drawn in front of
-  the vortex on every frame of `pro/portal` where they overlap — at f14 nearly all of
-  his red kit falls inside the vortex's disc and every pixel of it is visible.
+- **Draw order, except three edges.** The frames decide that the near leg is drawn in
+  front of the gun (`walk`, measured above); that the near leg is drawn in front of the
+  **far** leg — on `walk` f3, f4 and f10 the two superimpose and only one shin fits the
+  survivor, `front-shin` at 418 / 470 / 489 against `rear-shin`'s 1,297 / 1,409 / 1,375
+  in the same place (*Verification notes — revision 2 → 3*); and that the figure is
+  drawn in front of the vortex on every frame of `pro/portal` where they overlap — at
+  f14 nearly all of his red kit falls inside the vortex's disc and every pixel of it is
+  visible.
   Nothing else was found: over both skeletons **no pair of parts was caught visibly
   on one side of each other in one frame and the other side in another**, so these
   frames show no draw-order *change*. That is a search that came up empty, not a
@@ -653,6 +675,78 @@ Stated so that its silence is not mistaken for a measurement.
   drawn in any frame of either skeleton. Whether the world is meant to scroll past
   the figure, or the figure to be moved by something outside the animation, is not a
   fact these pixels carry.
+
+## Verification notes — revision 2 → 3
+
+Second third-party pass, **2026-08-24**, by an agent that wrote neither revision and
+neither of the two spineboy attempts, working from `bench/reference/spineboy/` and
+`examples/spineboy/images/` only. `examples/spineboy/export/`, `bench/transcriptions/`
+and both runs' rig and motion specs were **not** opened.
+
+**The one question.** [#111](https://github.com/firejune/rigc/issues/111): revision 2
+said the gun is in the **near** hand in `idle` and in `walk`, while its own `death`
+paragraph established on evidence that a fist means the near arm — and both attempts
+found `gun.png` carrying its own gripping hand with a *second*, separate fist drawn
+free of the gun in `idle`, `aim` and `death`. Both readings cannot hold. A
+contradiction is settled by re-deriving the arm, not by picking the side that reads
+better.
+
+**The estimator.** Composite an art file at the sidecar's own scale (`ess`:
+**0.222973 px/unit**), search **72 rotations × 2 mirrorings**, and score every
+placement by the mean squared RGB error over that piece's solid pixels. Report the
+best pose, its residual, and its *visibility* — the share of those pixels within
+45/255 of the frame. It is revision 2's compositing control widened from a colour
+count to a whole piece, and like revision 2's it was scored against a control with a
+known answer before any number it produced was believed.
+
+| Estimator | Control | Result |
+| --- | --- | --- |
+| pose match, parts whose place is not in doubt | `torso`, `head`, `gun` on `ess/idle/f0000` | found at (173, 271), (188, 224) and (211, 283), residuals 1,538 / 1,450 / **725**; re-compositing `gun`, `front-fist-open` and both shins over the frame at their matched poses leaves the picture unchanged to the eye |
+| **front-vs-rear discrimination** | the shins — the art ships exactly **one of each**, so a working estimator must split them and a broken one will not | on `ess/idle/f0000` `front-shin` takes the screen-left leg (**499** against `rear-shin`'s 1,229 in the same place, **2.5×**) and `rear-shin` the screen-right one (**259** against `front-shin`'s 1,991, **7.7×**). One each, no tie |
+| **which side is nearer** — by occlusion, not by the filename | `walk` f3, f4, f10, where the two legs superimpose | only one shin fits the survivor: `front-shin` **418 / 470 / 489** against `rear-shin` **1,297 / 1,409 / 1,375** in the same place, **2.8–3.1×**. What survives a superposition is what is drawn in front ⇒ **`front-*` is the near side**, measured rather than read off the prefix |
+| the gun's teal | revision 2's own estimator, re-run from scratch | reproduces to the digit — **322–338 px** on all 21 `idle` frames, **36 px** at `walk` f6, **47 px** at f9 |
+| bracer, upper arm, thigh, foot — **rejected** | the same one-of-each test | they fail it. `front-bracer` and `rear-bracer` land on the *same pixel* at both wrists with residuals within **1.04–1.20×** of each other and the winner flips between shots (`ess/aim` rear 1,291 against front 1,547; `ess/idle/f0010` rear 1,285 against front 1,415); the thighs tie at **1.02×** on one pixel; both feet match the *same* foot; `front-upper-arm`'s best fits are on legs. An estimator that cannot reproduce a known split cannot carry a direction, so these are quoted as the pass's error bar and not used — which is why the control runs on the shins |
+
+**The deciding frames are `ess/walk` f6 and f9**, because that is where the two
+hypotheses differ most: the gun swings back into the body while the other hand swings
+forward and clear.
+
+- **`gun.png` carries its own gripping hand.** The matched gun template covers the
+  hand at the grip, at residuals **575–1,395** on every `walk` frame where the gun is
+  clear, **637** on `ess/aim` and **725** on `ess/idle/f0000`. Nothing else is drawn
+  there.
+- **The separate fist is a `front-` one, and it is the only fist the art ships.**
+  `front-fist-open` matches on `ess/idle/f0000` (**1,616** at (154, 284));
+  `front-fist-closed` matches on **all 13** `walk` frames at **359–871**, tracking a
+  pendulum from (165, 289) out to (201, 274) and back. There is no rear fist in the set — revision
+  2's art table says as much.
+- **At f6 and f9 the gun is 89 % and 86 % hidden** — 36 and 47 px of its own teal
+  against the 322–338 it reads unoccluded. On those same two frames the free fist
+  matches **whole**: residuals **670** and **871**, within the cycle's own 359–871
+  spread, with **85 % / 81 %** of its footprint and **90 % / 91 %** of its
+  lavender-cap-and-red-plate marks agreeing with the frame.
+
+On the frames that separate them, then, one hand is nine tenths behind the figure and
+the other is drawn intact. The hand that goes behind is the one baked into `gun.png`;
+`front-*` is the near side; the only fist in the art is a `front-` one. **The gun is
+in the far hand**, and the near hand is the free fist. `death`'s paragraph, which
+reached the same conclusion from the fist, needed no change.
+
+**Tally: 5 claims taken in turn — 3 corrected, 1 verified, 1 added.** Corrected:
+`idle`'s and `walk`'s "near hand" → **far hand**, and `walk`'s description of the
+surviving sliver, which was given as a bearing off the near knee and is now the
+measured extent (rows 278–319, columns 177–201, in the gap between the legs, with no
+teal pixel inside either shin's footprint on f5–f10). Verified: `death`'s near-arm
+identification. Added: a third decided draw-order edge — the near leg in front of the
+far leg — which is the control that carries the answer, now in the silence list beside
+the other two. Nothing else in the brief was re-opened and no other revision-2 figure
+was disturbed. No scripts are committed; the method is described here, as revision 2's
+was.
+
+**Honesty-rule check.** This pass adds no bone name or count, no hierarchy, no key
+time or value, no curve handle, no timeline kind, no slot name, no setup pose and no
+stage size. What it adds is one draw-order edge and one arm assignment, both read off
+the committed frames and the art files an authoring agent is given.
 
 ## Verification notes — revision 1 → 2
 
