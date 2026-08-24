@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>rigc run viewer — a benchmark run, animating, beside its reference</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        margin: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        background: #14161a;
+        color: #d5d9e0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 16px;
+        background: #1c1f26;
+        border-bottom: 1px solid #2a2e37;
+        flex-wrap: wrap;
+      }
+      h1 {
+        font-size: 13px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      h1 span {
+        color: #7a8494;
+        font-weight: 400;
+      }
+      h2 {
+        font-size: 11px;
+        font-weight: 600;
+        color: #9aa3b2;
+        padding: 6px 10px;
+        border-bottom: 1px solid #2a2e37;
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+      }
+      h2 em {
+        font-style: normal;
+        font-weight: 400;
+        color: #6d7686;
+      }
+      label {
+        font-size: 12px;
+        color: #9aa3b2;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      select,
+      button {
+        background: #262a33;
+        color: #d5d9e0;
+        border: 1px solid #333846;
+        border-radius: 4px;
+        padding: 4px 8px;
+        font: inherit;
+        font-size: 12px;
+      }
+      select:disabled,
+      button:disabled {
+        opacity: 0.45;
+      }
+      option:disabled {
+        color: #6d7686;
+      }
+      button {
+        cursor: pointer;
+        min-width: 34px;
+      }
+      #transport {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex: 1 1 320px;
+        min-width: 260px;
+      }
+      #time {
+        flex: 1;
+        accent-color: #8fd3a0;
+      }
+      #clock {
+        font-size: 12px;
+        color: #8fd3a0;
+        white-space: nowrap;
+        min-width: 116px;
+      }
+      #status {
+        flex-basis: 100%;
+        font-size: 12px;
+        color: #7a8494;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #status.warn {
+        color: #ffd166;
+      }
+      #status.error {
+        color: #ff8f8f;
+      }
+      main {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      .pane {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        border-right: 1px solid #2a2e37;
+      }
+      .pane:last-child {
+        border-right: none;
+      }
+      .viewport {
+        flex: 1;
+        overflow: auto;
+        padding: 14px;
+      }
+      #stage,
+      #reference {
+        position: relative;
+        background: #e8e8e8;
+        box-shadow: 0 0 0 1px #333846;
+      }
+      #reference img {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      #reference.empty {
+        background: #1c1f26;
+        color: #6d7686;
+        font-size: 12px;
+        padding: 10px;
+        box-shadow: none;
+      }
+      .skeleton-root {
+        position: absolute;
+        transform-origin: 0 0;
+      }
+      footer {
+        border-top: 1px solid #2a2e37;
+        background: #1a1d23;
+        height: 34%;
+        display: flex;
+        flex-direction: column;
+      }
+      footer .bar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 6px 10px;
+        border-bottom: 1px solid #2a2e37;
+      }
+      #report {
+        flex: 1;
+        overflow: auto;
+        padding: 10px 12px;
+        font-size: 11.5px;
+        line-height: 1.45;
+        color: #b9c0cc;
+        white-space: pre;
+      }
+      a {
+        color: #8fd3a0;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>rigc run viewer <span>— rigc emits it, spine-html plays it</span></h1>
+      <label>run <select id="run"></select></label>
+      <label>candidate <select id="candidate"></select></label>
+      <label>animation <select id="animation"></select></label>
+      <label>frames <select id="set"></select></label>
+      <div id="transport">
+        <button id="play" title="play / pause">▶</button>
+        <input id="time" type="range" min="0" max="1" step="0.001" value="0" />
+        <span id="clock">—</span>
+      </div>
+      <label>speed
+        <select id="speed">
+          <option value="0.25">0.25×</option>
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option>
+          <option value="2">2×</option>
+        </select>
+      </label>
+      <label>zoom
+        <select id="zoom">
+          <option value="1" selected>1×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+          <option value="3">3×</option>
+        </select>
+      </label>
+      <div id="status">loading…</div>
+    </header>
+    <main>
+      <section class="pane">
+        <h2>candidate — spine-html <em id="candidate-note"></em></h2>
+        <div class="viewport"><div id="stage"></div></div>
+      </section>
+      <section class="pane">
+        <h2>reference frames <em id="reference-note"></em></h2>
+        <div class="viewport"><div id="reference"></div></div>
+      </section>
+    </main>
+    <footer>
+      <div class="bar">
+        <label>report <select id="check"></select></label>
+        <span id="links"></span>
+      </div>
+      <pre id="report"></pre>
+    </footer>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

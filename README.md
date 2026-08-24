@@ -199,6 +199,46 @@ closed**; B3's validator half is (the packed-atlas clauses live behind `--profil
 emitter half — no packer, no atlas importer — is not. Ordered gap list in Part 4 of that document;
 live status, and B1's proof, in [docs/LADDER.md](docs/LADDER.md).
 
+## Run viewer — watching a run instead of reading it
+
+`check.txt` says a candidate's worst frame is f0012 at 56 MAE. The viewer shows
+you f0012.
+
+```bash
+bun run viewer      # http://localhost:5173
+```
+
+Pick a run, a candidate and an animation. The left pane plays the candidate's
+emitted `skeleton.json` — rendered by **[spine-html](https://github.com/firejune/spine-html)**,
+plain DOM, one CSS matrix per slot — and the right pane shows the reference
+frames for the same animation from `bench/reference/`, indexed by the scrubber's
+time at the frame set's own fps. Both panes use the world box the run was
+measured in (`bench.json`'s `check.viewport`, per frame set where the run framed
+them separately), so the two pictures are comparable exactly as far as the
+check's numbers say they are — and the pane label names which box that was.
+Under them: `bench.json`'s section means and the framing plus per-animation
+summary from `check.txt`.
+
+It is also the smallest end-to-end proof the two modules have. rigc emits Spine
+data; spine-html consumes Spine data; neither is checking its own work when the
+skeleton one wrote comes up animating in the other.
+
+Every run under `bench/runs/` is listed, including the ones that predate a
+convention — those are greyed out with the reason (a missing atlas page usually
+means `bun run fetch-examples` has not run) rather than dropped, because the
+ladder's history is part of what the viewer is for.
+
+🚫 **There is no build, and that is deliberate.** The viewer reads the working
+tree: the runs, the reference frames, and `examples/` — which is Esoteric
+Software's art, fetched rather than redistributed and non-commercial even then
+(see [NOTICE.md](NOTICE.md)). A bundle would copy those pixels into a
+distributable artifact. So there is one mode, `vite dev` on localhost, the dev
+server serves nothing outside `bench/` and `examples/`, and `vite build` fails
+on purpose. `viewer/` is not in `package.json`'s `files`, so it never ships
+either; it is also outside the root `tsconfig.json` (it needs the DOM lib, which
+the rest of the repository must not have) and is type-checked on its own with
+`bunx tsc -p viewer --noEmit`. `bun run lint` covers it like everything else.
+
 ## What exists today
 
 **Inputs — three files, one domain each.** Only the middle one is required.
@@ -536,6 +576,10 @@ bench/          count_features.ts — what the example corpus actually uses
                 runs/ — one directory per attempt, and the run protocol
                 transcriptions/ — rung specs transcribed from a reference export,
                 which measure expressiveness and NOT authoring (see LADDER.md)
+viewer/         the run viewer — dev server only, no build (see above)
+                  vite.config.ts  /api/inventory and /repo/<path>, and the build refusal
+                  inventory.ts    what is under bench/runs, resolved to URLs
+                  main.ts         the two panes, the transport, the report
 docs/           AUTHORING.md (how to author a rig), LADDER.md (live rung status),
                 SPEC_COVERAGE.md (format survey),
                 feature_matrix.{csv,json}
