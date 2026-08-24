@@ -1234,10 +1234,24 @@ first thing it hits is not a subtlety. **spine-core 4.3 keeps a bone's local
 transform on `bone.pose`, not on the bone**, so `bone.rotation = …` — or `.x`,
 `.y`, `.scaleX` — is neither an error nor a rotation: it adds a property nothing
 reads, and every frame renders as the setup pose. Write `bone.pose.rotation`.
+Rung 8 lost a loop to it at a flat 17.3; driven through `bone.pose`, the same
+poses measured **2.76**.
+
+🚨 **A region attachment's own offsets are cached.** `attachment.x`, `.y`,
+`.rotation`, `.scaleX/.scaleY` are inputs to a quad spine-core computes once and
+stores; what gets drawn is that stored quad — `computeWorldVertices` reads
+`getOffsets(pose)`, never the fields — so writing them is, again, neither an
+error nor a move. **Call `attachment.updateSequence()` after every write**, or
+every frame renders the quad it was loaded with. A setup fit on spineboy ran
+4,500 renders and reported the same number for all of them before this surfaced
+([`bench/runs/2026-08-23-spineboy-2/LOOP.md`](../bench/runs/2026-08-23-spineboy-2/LOOP.md),
+§4.2).
+
 ⇒ **An MAE that is identical across every pose, and that does not move for any
-parameter you sweep, is this mistake and not a wrong animation.** Rung 8 lost a
-loop to it at a flat 17.3; driven through `bone.pose`, the same poses measured
-**2.76**.
+parameter you sweep — a bone's local transform, an attachment's offsets — is one
+of these inert writes and not a wrong animation.** The parameter you swept was
+never read; a wrong rig moves the number, a write to a field nothing reads
+cannot.
 
 ### 9.2 Reading the table
 
