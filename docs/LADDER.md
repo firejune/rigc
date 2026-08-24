@@ -240,10 +240,10 @@ The written form of all this, per rung and per run:
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ⬜ *attempted* |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | 🟨 `pendulum` ✅ · `ball` ⬜ ×2, remainder unobservable |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ⬜ |
-| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×2 — structure ✅, motion ✗ · `pro` ⬜ |
+| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×3 — structure ✅, motion improving (18.8→14.6 px) · `pro` ⬜ |
 
-⬜ **but attempted.** Ten runs across rungs 1, 2, 4/5, 6, 8 and spineboy have been
-made — eight on 2026-08-23 and two finished 2026-08-24 — and none of them cleared a
+⬜ **but attempted.** Eleven runs across rungs 1, 2, 4/5, 6, 8 and spineboy have been
+made — eight on 2026-08-23 and three finished 2026-08-24 — and none of them cleared a
 rung: [`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/),
 [`bench/runs/2026-08-23-rung2-1/`](../bench/runs/2026-08-23-rung2-1/),
 [`bench/runs/2026-08-23-rung4-1/`](../bench/runs/2026-08-23-rung4-1/),
@@ -252,10 +252,11 @@ corrected brief, [`bench/runs/2026-08-23-rung2-2/`](../bench/runs/2026-08-23-run
 [`bench/runs/2026-08-23-rung6-1/`](../bench/runs/2026-08-23-rung6-1/),
 [`bench/runs/2026-08-23-rung8-1/`](../bench/runs/2026-08-23-rung8-1/),
 [`bench/runs/2026-08-23-spineboy-1/`](../bench/runs/2026-08-23-spineboy-1/), and then
-the two second attempts,
-[`bench/runs/2026-08-23-rung8-2/`](../bench/runs/2026-08-23-rung8-2/) and
-[`bench/runs/2026-08-23-spineboy-2/`](../bench/runs/2026-08-23-spineboy-2/). **Two
-rows are 🟨 rather than ⬜, and the second attempts make both of them mean
+the two second attempts and a third,
+[`bench/runs/2026-08-23-rung8-2/`](../bench/runs/2026-08-23-rung8-2/),
+[`bench/runs/2026-08-23-spineboy-2/`](../bench/runs/2026-08-23-spineboy-2/) and
+[`bench/runs/2026-08-24-spineboy-3/`](../bench/runs/2026-08-24-spineboy-3/). **Two
+rows are 🟨 rather than ⬜, and the re-attempts make both of them mean
 something sharper than they did.** Rung 8 came nearest and still does: **its
 `pendulum` candidate is cleared and its `ball` candidate is not**, and a rung with two
 skeletons clears when both do — rung 1's precedent. `ball` has now been authored
@@ -266,18 +267,24 @@ input**. spineboy was 🟨 because two of this repository's own documents were l
 parts of the answer into its first attempt; the seal held for the second, which posted
 the ladder's first character-scale skeleton — the reference's bone count, tree shape
 and naming, arrived at from the art alone — while leaving 11–19 px of slot drift on
-three shots of a 100 × 146 px figure. It stays 🟨 because the graduation question has
-two halves and only one of them is answered. The figures and the commander's reading
-of each are below, under *Rung 1* through *spineboy, attempt 2*.
+three shots of a 100 × 146 px figure. **The third attempt is the first evidence that
+the remaining half is workable at all**: it took the second's own per-chain dashboard
+as a work order and moved every failure that dashboard named — worst slot drift
+18.8 → 14.6 px, and the per-frame disagreements that say a limb teleports from 14 to 3
+— without reaching the 0.7–3.3 px every cleared candidate posts. It stays 🟨 because
+the graduation question has two halves and only one of them is answered. The figures
+and the commander's reading of each are below, under *Rung 1* through
+*spineboy, attempt 3*.
 
-**What the eleven runs say so far.** Eleven, not ten: the ten above plus rung 3's
+**What the twelve runs say so far.** Twelve, not eleven: the eleven above plus rung 3's
 second attempt ([`bench/runs/2026-08-23-rung3-2/`](../bench/runs/2026-08-23-rung3-2/)),
 which did not change a rung's status but was the first run authored with
 [AUTHORING.md §10](AUTHORING.md) in hand. (Rung 3's first attempt is read in its own
-section and is not counted here.) `validate` caught **0 FAILs** across all eleven —
+section and is not counted here.) `validate` caught **0 FAILs** across all twelve —
 roughly 165 builds and `check` cycles combined for the first eight, a ninth whose
-gate was green on the first compile of both specs and never went red, and two second
-attempts that added about 30 builds each with the gate green throughout; rung 8's
+gate was green on the first compile of both specs and never went red, two second
+attempts that added about 30 builds each with the gate green throughout, and a third
+spineboy attempt whose gate was green on every compile and finished 18 PASS, 0 FAIL; rung 8's
 single red, on its first attempt, was a compile error before the gate, not an
 assertion — and that is the guide
 designing invalid states out before a build is attempted, not a sign the rigs were right;
@@ -303,9 +310,9 @@ catches wrong claims and does not yet catch inconsistent ones. That one took a
 the frames rather than choosing a side, and the gun is in the **far** hand, as both
 attempts had found.
 
-**The interim reading, after eleven honest runs on eight rungs.** An agent authoring
+**The interim reading, after twelve honest runs on eight rungs.** An agent authoring
 through rigc, from a brief and rendered frames alone, **reliably produces valid
-Spine** — 0 FAILs in eleven runs, and the reds that did happen were compile errors
+Spine** — 0 FAILs in twelve runs, and the reds that did happen were compile errors
 before the gate — **with pixel-faithful motion on a small rig**: every cleared
 candidate sits at **0.7–3.3 px** of worst slot drift, and the rig reproduces the
 editor's own *structure* wherever the pixels constrain it, which rung 3, rung 8's
@@ -314,11 +321,15 @@ different scales. It parts from editor output in exactly two places. **(a)
 Unobservable structure** — constraints, mesh-versus-bone, key density: facts a frame
 cannot show, that `bench` measures all the same, and that no authoring convention can
 reach, because there is nothing in the input to read them off. **(b) Motion fidelity
-on a many-joint character** — spineboy's `ess` carries 11–19 px of drift on three of
-its eight shots, and its own defect list says why: the bottleneck is **pose fitting**,
+on a many-joint character** — spineboy's `ess` carried 11–19 px of drift on three of
+its eight shots at attempt 2 and 14.6 px at worst on attempt 3, and its own defect list
+says why: the bottleneck is **pose fitting**,
 not the format, not the validator, and after the seal no longer the documents. Those
 are two different kinds of gap and they want two different answers — (a) is a question
-about what the protocol hands a run, and (b) is a question about method.
+about what the protocol hands a run, and (b) is a question about method. **Attempt 3 is
+the first sign that (b) has answers rather than only a name**: reading `check`'s
+per-frame column before its MAE, and starting a pose fit from more than one pose, moved
+every figure attempt 2's dashboard named. They did not move it far enough.
 
 **Writing the conventions down measurably moves the curve and key measures.** That is
 the seventh run's finding, and it is the first evidence on the ladder that a guide
@@ -1285,6 +1296,132 @@ saying so: [#119](https://github.com/firejune/rigc/issues/119).
 ⇒ **spineboy stays 🟨.** The skeleton half of the graduation question is answered and
 answered well; the motion half is not, and no amount of further authoring convention
 closes it. It closes with a better fitter.
+
+### spineboy, attempt 3 — the measure-first loop works: attempted, not cleared (2026-08-24)
+
+Run [`bench/runs/2026-08-24-spineboy-3/`](../bench/runs/2026-08-24-spineboy-3/), clean
+(PR [#136](https://github.com/firejune/rigc/pull/136), merged
+[`53acfe7`](https://github.com/firejune/rigc/commit/53acfe7)) — **`ess` only**, in its
+own worktree, from the brief's **revision 3**, the one the second third-party pass
+settled the gun hand on. About the same shape of loop as attempt 2: the gate was green
+on every compile and finished **18 PASS, 0 FAIL**, 2 SKIP, 14 PROF under
+`--profile spine`, both SKIPs argued in the run's README as decisions rather than gaps.
+Authored by Claude Opus 5 (1M context), Claude Code / Agent SDK, with
+[AUTHORING.md §10](AUTHORING.md) in hand. `pro` was not attempted and does not gate the
+rung ([#16](https://github.com/firejune/rigc/issues/16)); the `pro` line `bench` prints
+from an `ess` candidate is noise and is quoted nowhere.
+
+**One attempt, four sessions, and the chain is recorded because the artifacts survived
+and the reasoning did not.** Sessions 1–3 were each killed mid-run by a **server-side
+529**, and each time the disk state was inherited in place in the same worktree. **The
+inputs never changed, no forbidden file entered any session, and `bench` had not been
+run** — the interruptions are infrastructure, not a reading breach, and the run stays
+clean. What is lost is the *authorship of the reasoning*, which is why every inherited
+artifact was treated as a draft to validate rather than a conclusion:
+[`LOOP.md`](../bench/runs/2026-08-24-spineboy-3/LOOP.md) §1 re-ran `check` on the
+inherited build before touching anything, §2 reproduced it to the digit, and the one
+claim a predecessor left behind — a draw-order edge the "boot evidence points at" —
+was re-derived from the frames rather than trusted, because a claim without working is
+not an inheritance.
+
+The `ess` line, verbatim:
+
+```
+ess        bones=0.924  slots=0.844  attachments=0.955  constraints=1.000  animations=0.804  events=0.500
+           bones 0.924 (name-matched) · 0.967 (name-agnostic)   slots 0.844 (name-matched) · 0.810 (name-agnostic)
+```
+
+**Reading — the commander's call, 2026-08-24. The measure-first loop works; the rung is
+still not cleared.**
+
+**What the per-chain dashboard prescribed after attempt 2, this attempt delivered.**
+Every named failure shrank. Reference-denominator MAE: `death` **63.03 → 54.31**, `hit`
+**53.91 → 43.27**, `run` **52.57 → 45.62**. Worst slot drift **18.8 → 14.6 px**.
+Per-frame adjacency disagreements **14 → 3** — the limbs no longer teleport — and
+**0 of 16 sets** carry an `⚠️ overdraw` warning, so none of it was bought by inking more
+than the reference does. Structure inched up beside it: name-agnostic bones
+**0.956 → 0.967**, slots **0.798 → 0.810**. Pooled over all 132 committed frames the run
+moved **35.485 → 32.067**, −9.6 %. That is the first time on this ladder that one run's
+diagnosis has been read by the next as a work order and moved every figure it named.
+
+**The residual now has a name, and it is one shape twice.** Both are whole-body
+re-orientations the fitter reaches only by multi-start. **The lying passage of `death`**
+— both thighs, 12–14 px: `front-thigh` 14.6 px at f0054 and `rear-thigh` 12.1 px at
+f0007, the long tail the multi-start refit was not spent on. And **the gun's reach in
+`run`** — 21 px short at f0006, where the reference holds the gun out level and every
+pose in the shot has it at the hip, so every start drawn from `run`'s own frames sits on
+the wrong side of the same two-chain minimum; only a cross-shot start, borrowing `aim`'s
+arm chain, moved it at all.
+
+**Against the cleared-rung bar, motion is closer and not there.** Every cleared candidate
+on this ladder posts **0.7–3.3 px** of worst slot drift. 14.6 px on a 100 × 146 px figure
+is still a visible error.
+
+**Three defects decided the run, and the gate, `diff` and an aggregate MAE were blind to
+all three.** A hold that was not held — `death`'s nine still frames and `shoot`'s
+motionless opening pair, the brief's own headline fact, both moving. Loop seams — four
+independently fitted end poses that were not their own first pose, `shoot`'s near forearm
+**105° away** against a reference pair that differs by **0 px**. And an attachment fitted
+and never emitted — six of eight shots fitted against the closed fist and built showing
+the open one, worth **1.9 MAE on `hit`** and **1.4 on `walk`** on its own. All three were
+found by **`check`'s per-frame column and its chain table**, and two of them were sitting
+in a report that had already been read for its chains.
+
+**`animations` did not move with the motion — 0.806 → 0.804 — and that is not a
+contradiction.** That section counts keys and curve kinds against the reference's, and
+nothing about the key-density trade attempt 2 measured changed here. `bench`'s structural
+sections and `check`'s pixels are answering different questions, which is the whole reason
+`diff` refuses to combine them into a score. `events` **0.500** and `attachments` **0.955**
+are unmoved for the reasons attempt 2 gave.
+
+**A third draw-order edge, and it took fixing the test to get it.** Each boot is drawn
+behind its own shin — reached by §8's like-for-like test only after the run replaced the
+whole-shot denominator with the pixels where the two builds actually differ. Run
+whole-shot, a control reversing an edge the brief settles by measurement came out **0.1 %
+the wrong way**, which under §8's rule is *no answer*; scored over the deciding pixels the
+same control reproduces at **47.7 %** and the boot edge reads **12.5 %**, positive in all
+eight shots, with the two feet agreeing independently at 12.1 % and 13.4 %.
+
+**Known wrong, stated rather than tidied.** `jump` went the other way, 41.05 → **44.11**,
+and the run says which change did it and why it stands. Four sets could not take
+`frames.json`'s own box — `death`, `hit`, `run`, `shoot` — which §9.2 puts at 15–25 MAE,
+so part of the gap between the two halves of the table is the measurement rather than the
+keys. The near arm is the worst chain *per pixel* and carries `no slot attributable` rows,
+which §8.1 calls the loudest row in the table rather than the quietest. `run`'s two
+footfall cues sit at the top of their windows; `jump`'s landing cue is this run's
+inference rather than the brief's list, and it says so; the event names are an animator's,
+because the brief declines to spell them.
+
+⚠️ **One honesty incident, and it is the repository's rather than the run's discretion.**
+`bench --json` writes `src/ladder.ts`'s **gate string** into `bench.json` — a fact the
+forbidden table names explicitly — and the run protocol *requires* `bench.json` in the run
+directory. A forbidden reference fact therefore reaches the run directory **through the
+tool itself**, and no obedient run can avoid handing it to the next agent that opens one.
+It was seen only **after `bench` had run**, so it reached no authoring decision: the rig
+was built, frozen and measured before the file existed. The run committed `bench.json`
+**with that one field redacted by hand**, the redaction saying what it replaced and how to
+regenerate the original, every measure untouched. Hand-redaction is a run doing the
+emitter's job; the fix belongs at the emitter and is filed as
+[#137](https://github.com/firejune/rigc/issues/137).
+
+**Five guide defects, and unlike attempt 2's they are no longer all about obtaining a
+pose.** Two are: §8.1's two-chains-share-a-minimum case and multi-start, including
+cross-shot starts, as the cheap fix
+([#139](https://github.com/firejune/rigc/issues/139)), and §10.3's hold rule needing its
+other half — the key reducer has to key the plateau, because a tolerance is not a hold
+([#138](https://github.com/firejune/rigc/issues/138)). **Three are about reading a
+measurement**: §8's like-for-like test must state its denominator
+([#140](https://github.com/firejune/rigc/issues/140)), a control that fails may be a
+wrong control ([#141](https://github.com/firejune/rigc/issues/141)), and §9.2's per-frame
+column deserves naming in §0's loop
+([#142](https://github.com/firejune/rigc/issues/142)). That shift is itself a finding:
+attempt 2's limit was getting a pose at all, and this one's was believing the wrong number
+about a pose it already had.
+
+⇒ **spineboy stays 🟨.** The skeleton half of the graduation question stays answered, the
+motion half stays open, and the gap between them is now measured rather than described.
+The lever is the same one attempt 2 named — a better fitter — and attempt 3 says it is a
+lever that moves.
 ---
 
 ## B1's proof — rung 3 transcribed, not authored
