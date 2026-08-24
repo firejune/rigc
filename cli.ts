@@ -541,13 +541,19 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
         anim.changeDisagreements === 0
           ? ''
           : `, ${anim.changeDisagreements}/${anim.changePairs} pair(s) change unlike the reference`;
+      // Which of the candidate's own bone chains the error is in — one name, so a
+      // loop between builds reads a unit to fix rather than a verdict on the shot.
+      // The full table is in `check`'s own report; this is its headline.
+      const worstChain = [...anim.chains].sort((a, b) => b.maeShare - a.maeShare)[0];
+      const chain =
+        worstChain === undefined ? '' : `, ${worstChain.chain} carries ${(worstChain.maeShare * 100).toFixed(0)}%`;
       // `ref=` is the same difference over the reference's own drawn pixels. It is
       // carried here and not only in `check`'s own table because this is the line a
       // loop reads between builds, and `mean=` has a denominator the candidate can
       // grow — see `FrameCheck.maeReference`.
       console.log(
         `  ${anim.dir.padEnd(10)} MAE mean=${anim.meanMae.toFixed(2)} worst=${anim.worstMae.toFixed(2)} ` +
-          `ref=${anim.meanMaeReference.toFixed(2)}  over ${anim.compared} frame(s)  ${drift}${change}`,
+          `ref=${anim.meanMaeReference.toFixed(2)}  over ${anim.compared} frame(s)  ${drift}${change}${chain}`,
       );
     }
   } else {

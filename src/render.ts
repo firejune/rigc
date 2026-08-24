@@ -909,6 +909,17 @@ export interface FrameGeometry {
   /** 1 where any piece drew, in `viewport.width * viewport.height` row-major order. */
   coverage: Uint8Array;
   footprints: Map<string, Footprint>;
+  /**
+   * Which owner drew each pixel last, or `-1` — `null` unless `owners` was given.
+   *
+   * "Last" is the composite's own rule: pieces arrive in draw order, so the owner
+   * left in a pixel is the one you would see there. That is deliberately the
+   * opposite of `footprints`, which measures each slot on its own pixels
+   * *ignoring* what covers it — a footprint answers "where is this part", and
+   * this mask answers "whose part is this pixel", and only the second one can be
+   * a partition.
+   */
+  owner: Int32Array | null;
 }
 
 /**
@@ -923,11 +934,19 @@ export interface FrameGeometry {
  * an occluded part merges into its occluder's component — and that is what the
  * matcher reports as ambiguity rather than as drift.
  */
-export function frameGeometry(frame: Frame, pages: Map<string, Plate>, viewport: Viewport): FrameGeometry {
+export function frameGeometry(
+  frame: Frame,
+  pages: Map<string, Plate>,
+  viewport: Viewport,
+  /** Slot name → owner id, when the caller also wants the per-pixel owner mask. */
+  owners?: Map<string, number>,
+): FrameGeometry {
   const coverage = new Uint8Array(viewport.width * viewport.height);
+  const owner = owners === undefined ? null : new Int32Array(viewport.width * viewport.height).fill(-1);
   const footprints = new Map<string, Footprint>();
   const project = projector(viewport);
   for (const piece of frame.pieces) {
+    const owned = owners === undefined ? -1 : (owners.get(piece.slot) ?? -1);
     let weight = 0;
     let sx = 0;
     let sy = 0;
@@ -937,6 +956,7 @@ export function frameGeometry(frame: Frame, pages: Map<string, Plate>, viewport:
     let maxY = -Infinity;
     rasterisePiece(pageFor(pages, piece), piece, project, viewport, (px, py, _r, _g, _b, a) => {
       coverage[py * viewport.width + px] = 1;
+      if (owner !== null && owned >= 0) owner[py * viewport.width + px] = owned;
       const w = a / 255;
       weight += w;
       sx += (px + 0.5) * w;
@@ -956,7 +976,7 @@ export function frameGeometry(frame: Frame, pages: Map<string, Plate>, viewport:
     // answer, and it keeps the map keyed by slot the way the report reads it.
     footprints.set(piece.slot, previous && previous.pixels > 0 ? mergeFootprints(previous, here) : here);
   }
-  return { coverage, footprints };
+  return { coverage, footprints, owner };
 }
 
 function mergeFootprints(a: Footprint, b: Footprint): Footprint {
