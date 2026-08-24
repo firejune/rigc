@@ -1,0 +1,129 @@
+rigc check
+  candidate  /Users/firejune/Workspace/Firejune/rigc/bench/runs/2026-08-24-rung3-1/spine/skeleton.json
+  atlas      /Users/firejune/Workspace/Firejune/rigc/bench/runs/2026-08-24-rung3-1/spine/skeleton.atlas
+  frames     /Users/firejune/Workspace/Firejune/rigc/bench/reference/3-timing-and-spacing
+  scope      the framing decided per frame set (--framing shared measures every set in one shared framing)
+  reference  256x116px  0.117628 px/unit  world x[-573.3 .. 1603.0] y[-81.2 .. 908.9]  (frames.json)
+             ⤷ the two world boxes are different coordinate systems and do not compare; the pixel grid does.
+  shared box one box for all 2 set(s) leaves x0.997258  offset +0.30, +0.50 px   rms 0.50 px over 344 edge(s)  (declared; used for every set that could not take the frames' own box)
+             ⤷ how far one shared framing is from serving every set. A set below that took the frames' own box instead is measured with no such correction at all; --framing shared measures every set here.
+  ⚠️ the framing was decided per frame set: 2 of 2 set(s) were measured in frames.json's own box because their own pixels land there, and the rest in the one shared framing on the "shared box" line. A set framed by the frames' own box cannot be moved by any other set. --framing shared measures every set in the shared framing instead, which is a different measurement and not comparable with this one.
+
+  ── heavy — candidate animation "heavy", 12 fps ──
+     frames     65 on disk, candidate samples 65, 65 compared
+     framed to  256x116px  0.117628 px/unit  world x[-573.3 .. 1603.0] y[-81.2 .. 908.9]  (frames.json's own box — the candidate measured into it)
+     content    candidate 234.5x95.2px at (11.4, 11.7)   reference 234.7x95.3px at (11.2, 11.7)   (union over 65 frame(s))
+                ⤷ fit x0.997263  offset +0.39, +0.45 px   rms 0.52 px over 260 edge(s)   union residual -0.81 x -0.34 px   aspect +0.02%  (declared, 1 pass(es), coincident)
+     in units   candidate 1993.9 x 809.1   reference 1995.3 x 809.8   x0.9992
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     ⚠️ the candidate's world box was taken from frames.json rather than fitted, because rendering it into that box put its own drawn pixels on the reference's to within 0.52 px rms — so the candidate is authored in the frames' own coordinates, measured rather than assumed, and the box they were rendered at is exact where a fit of it is an estimate. The framing line below is still measured; what it leaves over is the extent fit's own floor, which is why it does not read as the identity. Pass --viewport to override.
+     MAE        mean 19.88  worst 27.76 at f0011   (0..255 over the union alpha; over the whole frame, mean 0.86)
+                ⤷ over the REFERENCE's own drawn pixels, mean 20.52 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+     slot drift worst 0.9 px  "pendulum" at f0013
+     per-frame 5 of 64 adjacent pair(s) change by a different amount than the reference does; worst f0047, yours moved 296 px where the reference moved 63
+     chains     2 from the candidate's own bone tree — the roster is at the foot of the report
+       chain                 slots   worst slot drift                      mean   MAE in it    share
+       square                  1/1   0.3 px "square" f0029               0.1 px        6.81    11.4%
+       pendulum                1/1   0.9 px "pendulum" f0013             0.4 px       21.38    88.6%
+                ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+
+     the 13 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0001    11.24       1256       0     40   pendulum               0.2   component  2/2   the reference moves here and yours holds still
+       f0009    26.38       1282    1967   1954   pendulum               0.9   tmpl 0.67 2/2
+       f0010    27.55       1280    1953   1964   pendulum               0.8   component  2/2
+       f0011    27.76       1289    1538   1565   pendulum               0.7   component  2/2
+       f0012    25.29       1289    1024    948   pendulum               0.9   component  2/2
+       f0013    24.41       1291    1109   1124   pendulum               0.9   component  2/2
+       f0014    23.79       1278    1385   1388   pendulum               0.8   component  2/2
+       f0016    22.71       1279    1828   1838   pendulum               0.6   component  2/2
+       f0028    22.33       1274    1330   1324   pendulum               0.6   component  2/2
+       f0047    20.14       1284     296     63   pendulum               0.8   component  2/2   yours moves 5x the reference
+       f0056    20.88       1283       0    109   pendulum               0.4   component  2/2   the reference moves here and yours holds still
+       f0060    21.36       1280       0     62   square                 0.1   component  2/2   the reference moves here and yours holds still
+       f0061    21.39       1280       0      1   square                 0.1   component  2/2   the reference moves here and yours holds still
+
+  ── light — candidate animation "light", 12 fps ──
+     frames     21 on disk, candidate samples 21, 21 compared
+     framed to  256x116px  0.117628 px/unit  world x[-573.3 .. 1603.0] y[-81.2 .. 908.9]  (frames.json's own box — the candidate measured into it)
+     content    candidate 123.8x95.3px at (11.4, 11.7)   reference 123.9x95.1px at (11.2, 11.9)   (union over 21 frame(s))
+                ⤷ fit x0.993593  offset +0.40, +0.86 px   rms 0.33 px over 84 edge(s)   union residual -0.91 x -0.47 px   aspect -0.25%  (declared, 1 pass(es), coincident)
+     in units   candidate 1052.5 x 809.9   reference 1053.5 x 808.7   x1.0003
+                ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+     ⚠️ the candidate's world box was taken from frames.json rather than fitted, because rendering it into that box put its own drawn pixels on the reference's to within 0.33 px rms — so the candidate is authored in the frames' own coordinates, measured rather than assumed, and the box they were rendered at is exact where a fit of it is an estimate. The framing line below is still measured; what it leaves over is the extent fit's own floor, which is why it does not read as the identity. Pass --viewport to override.
+     MAE        mean 19.14  worst 22.22 at f0005   (0..255 over the union alpha; over the whole frame, mean 0.83)
+                ⤷ over the REFERENCE's own drawn pixels, mean 19.76 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+     slot drift worst 0.9 px  "pendulum" at f0004
+     per-frame 1 of 20 adjacent pair(s) change by a different amount than the reference does; worst f0011, yours moved 0 px where the reference moved 139
+     chains     2 from the candidate's own bone tree — the roster is at the foot of the report
+       chain                 slots   worst slot drift                      mean   MAE in it    share
+       square                  1/1   0.1 px "square" f0000               0.1 px        5.45     9.6%
+       pendulum                1/1   0.9 px "pendulum" f0004             0.4 px       21.04    90.4%
+                ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+
+     every frame, in index order
+       frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+       f0000    10.89       1256       —      —   pendulum               0.2   component  2/2
+       f0001    11.83       1249     984    988   pendulum               0.2   component  2/2
+       f0002    11.88       1255    1473   1479   square                 0.1   component  2/2
+       f0003    18.04       1271    1509   1509   square                 0.1   component  2/2
+       f0004    21.84       1273    1893   1872   pendulum               0.9   tmpl 0.74 2/2
+       f0005    22.22       1282     985    968   pendulum               0.6   component  2/2
+       f0006    19.39       1299    1382   1349   pendulum               0.5   component  2/2
+       f0007    20.20       1279    1040    934   pendulum               0.3   component  2/2
+       f0008    20.08       1276     333    316   pendulum               0.4   component  2/2
+       f0009    19.99       1288     872    871   pendulum               0.8   component  2/2
+       f0010    20.81       1286     871    913   pendulum               0.6   component  2/2
+       f0011    20.47       1288       0    139   pendulum               0.6   component  2/2   the reference moves here and yours holds still
+       f0012    19.88       1301     792    755   pendulum               0.4   component  2/2
+       f0013    19.39       1284     472    495   pendulum               0.7   component  2/2
+       f0014    20.93       1282     597    594   pendulum               0.1   component  2/2
+       f0015    20.54       1284     470    392   pendulum               0.5   component  2/2
+       f0016    20.61       1311     592    450   pendulum               0.3   component  2/2
+       f0017    20.66       1280     343    133   square                 0.1   component  2/2
+       f0018    20.76       1282     437    374   pendulum               0.5   component  2/2
+       f0019    20.76       1282       0      0   pendulum               0.5   component  2/2
+       f0020    20.76       1282       0      0   pendulum               0.5   component  2/2
+
+  ── chains ──
+  Cut from the CANDIDATE's own bone tree at every branch point: a chain runs from a root or a fork down to the
+  next fork, a single-bone chain that is itself a fork folds into its parent, and each is named after the first
+  bone in it that carries a slot. The reference is still nothing but pixels — this is your figure decomposed,
+  not the reference’s, which is what keeps it inside the ladder’s honesty rule.
+
+  MAE share divides the difference over the REFERENCE's own drawn pixels — the denominator from the MAE
+  line above, which nothing you draw can grow — and splits it by giving each of those pixels to the chain
+  whose ink is NEAREST it. So the shares are a partition and add to the whole, and no chain can look
+  better by drawing more: growing its ink only pulls more of the reference’s pixels, and their error,
+  into it. `MAE in it` is the same error per pixel it took, and it is the column that separates a chain
+  that is WRONG from one that is merely large — a head and its features cover a lot of a figure and can
+  carry a third of the error at a below-average figure per pixel.
+
+  ⚠️ Two things the split cannot do, both of which show rather than hide. Reference ink further from your
+  ink than the part’s own size is left `(unattributed)` instead of blamed on a neighbour, so a part that
+  has left its place stops being charged to whatever is next to it. And a chain that draws NOTHING seeds
+  nothing and reads 0 % — which is why the slots column is beside the share: 0 % on 0 slots drawn is the
+  loudest row here, not the quietest.
+    chain                bones                                                     slots
+    root                 root                                                      (draws nothing)
+    square               square                                                    square
+    pendulum             pendulum                                                  pendulum
+
+    chain                worst slot drift across every set                            mean   MAE in it    share
+    pendulum             0.9 px "pendulum" in heavy/f0013                           0.4 px       21.30    89.0%
+    square               0.3 px "square" in heavy/f0029                             0.1 px        6.48    11.0%
+
+  MAE is the mean absolute RGB difference over the pixels either side covers, so it is
+  read against 255 and not against a threshold: there is no pass mark here any more than
+  there is one in `diff`. The figure under it divides the same difference by the pixels the
+  REFERENCE drew — a denominator you cannot grow, which is what makes it the one to author
+  against; it is not bounded by 255. Read the framing line first: it is upstream of every number
+  below, and a residual much wider than a pixel moves all of them at once.
+  The slots column is how many of the drawn slots could be attributed at all. A drift
+  marked `tmpl` was correlated against the slot’s own pixels because the reference
+  merged it into a neighbour; the number beside it is how much better that match was
+  than its best rival, and a slot that matched nothing at all is left out of the count.
+  `Δpx` and `ref Δ` are how many pixels each side moved since ITS OWN previous frame —
+  not against each other. They are the only columns that can see a held pose that is
+  not held, or a one-frame event that never fired: both are small in every frame and
+  wrong only in the relation between two, which is where the MAE cannot look.

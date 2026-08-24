@@ -213,7 +213,7 @@ is the one that binds you.
 | --- | --- |
 | `bench/runs/2026-08-23-rung3-1/` | a previous attempt at **the rung you are authoring**. Its specs and its measures are the answer one step away. Allowed item (9) explicitly excludes it |
 | `bench/runs/2026-08-23-rung3-2/` | the same, the second attempt |
-| `docs/pilot/rung3-evaluator.md` | the pilot judge's sheet. It quotes `docs/LADDER.md`'s rung-3 sections, which are forbidden above |
+| `docs/pilot/rung3-evaluator.md` **and everything under `docs/pilot/verdicts/`** | the pilot judge's sheet and the filled-in verdicts of previous pilots. Both quote `docs/LADDER.md`'s rung-3 sections and previous runs' measures, which are forbidden above |
 
 If you want to see what a run's log and report look like, read a run for a
 **different** rung — for example `bench/runs/2026-08-23-rung6-1/LOOP.md` — and
