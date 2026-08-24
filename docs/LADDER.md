@@ -1148,8 +1148,9 @@ linear a "no information" default writes, which moved nothing at the samples
 off this attempt. Trail length scale, trail width scale and draw order each produced
 a spread inside the objective's own scatter; reading any of them as a winner would
 have shipped a wrong number with a measurement's authority. Two were re-decided by a
-direct measurement of the art, and the third shipped on stated reasoning. §8 already
-has the sentence that saved it and it is buried in the draw-order paragraph
+direct measurement of the art, and the third shipped on stated reasoning. The
+sentence that saved it was buried in §8's draw-order paragraph; it is now a
+paragraph of its own governing every render-back sweep
 ([#114](https://github.com/firejune/rigc/issues/114)).
 
 **Known-wrong, in the run's own words:** mesh topology is invented and the frames

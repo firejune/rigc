@@ -956,12 +956,24 @@ frames did not show the rest, and rendering like-for-like settled three more of 
 — worth a measurable drop in window MAE, a convention the gate cannot see and the
 measures can.
 
-⚠️ **The same test knows when to stay silent, and you have to let it.** Run on
-another shot, two orders came out **0.8 % apart over the whole shot and pointing
-opposite ways** — a gap well inside the objective's own scatter, which
-is correctly *no answer*. A difference that small is not a quiet vote for the
-winner; it means the frames do not decide this edge, and you ship it on reasoning
-and say in the log that is what you did.
+⚠️ **A render-back sweep whose spread is inside the objective's own scatter is
+*no answer*, not a weak one.** Rendering candidates back and keeping the best
+number is not a draw-order trick — it is how any structural choice the frames
+might decide gets decided, a scale, an offset, an attachment kind, an order — and
+every one of those sweeps can come back null. **Estimate the objective's own
+scatter first, or the sweep is not readable at all** — a spread smaller than that
+is noise wearing a decimal point. Two orders on one ladder shot came out **0.8 %
+apart over the whole shot and pointing opposite ways**, and a later run swept
+**three** structural choices and landed inside that scatter on every one of them.
+A difference that small is not a quiet vote for the winner; it means the frames do
+not decide this, and there are two honest ways on:
+
+- **find a second, independent way to get the number** — often by measuring the
+  *art* instead of the render, which needs no build at all. Two of those three
+  sweeps were settled that way.
+- **or ship it on reasoning, and say in the log that is what you did.** The third
+  one was. What makes that honest is the record — a number that arrived as an
+  argument must not later be read as a measurement.
 
 And the general form of all three: **when a reading implies a key, look for a second
 way to get the same number before you author it.** A wrong measurement costs one
