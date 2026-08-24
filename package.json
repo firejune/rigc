@@ -51,6 +51,7 @@
     "lint": "bunx eslint .",
     "fetch-examples": "bash scripts/fetch-examples.sh",
     "bench:usage": "bun bench/count_features.ts",
+    "viewer": "vite --config viewer/vite.config.ts",
     "prepublishOnly": "bun run typecheck && bun run lint && bun run selftest"
   },
   "dependencies": {
@@ -59,7 +60,9 @@
   "devDependencies": {
     "@types/bun": "^1.4.0",
     "eslint": "^10.9.0",
+    "spine-html": "^0.4.1",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.67.0"
+    "typescript-eslint": "^8.67.0",
+    "vite": "^8.2.2"
   }
 }

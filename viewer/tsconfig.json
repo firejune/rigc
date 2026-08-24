@@ -1,0 +1,26 @@
+{
+  // The viewer is the one part of this repository that runs in a browser, so it
+  // needs the DOM lib — and the root config deliberately does not have it (`lib`
+  // is ESNext, `types` is bun, and adding DOM there would let `src/` type-check
+  // against globals Bun does not have). The root `include` therefore does not
+  // list `viewer/`, and this file is what an editor and a manual
+  // `bunx tsc -p viewer --noEmit` read instead. `bun run lint` still covers
+  // `viewer/**` — the no-any rule needs no type information.
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node", "vite/client"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "strictNullChecks": true
+  },
+  "include": ["*.ts"]
+}
