@@ -1,4 +1,4 @@
-import { readPlate } from '../tools/plate.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { buildTemplate, match } from './match.ts';
 const frame = readPlate('bench/reference/spineboy/ess/idle/f0000.png');
 const box: [number, number, number, number] = [130, 180, 250, 345];

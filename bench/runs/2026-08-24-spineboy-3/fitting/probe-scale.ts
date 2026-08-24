@@ -1,6 +1,6 @@
 /** how big is each part in the reference? template match with a free scale.
  *  Control: run the same estimator on parts whose size is not in doubt. */
-import { readPlate } from '../tools/plate.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { buildTemplate, score, visibility, ESS_SCALE } from './match.ts';
 const frame = readPlate(`bench/reference/spineboy/ess/${process.argv[2] ?? 'idle'}/f${String(Number(process.argv[3] ?? 0)).padStart(4, '0')}.png`);
 const jobs: [string, number, number, number][] = JSON.parse(process.argv[4]);

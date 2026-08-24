@@ -2,7 +2,7 @@
  *  further than a pinned 3.369 allows? Reference reaches column 354. */
 import { Fitter, refFrame, cropPlate } from './fit.ts';
 import { readFileSync } from 'node:fs';
-import { piecesOf, projector } from '../src/render.ts';
+import { piecesOf, projector } from '../../../../src/render.ts';
 import type { Pose } from './fit.ts';
 const pl = JSON.parse(readFileSync('work/placements-shoot.json', 'utf8')).shoot;
 const f = new Fitter();

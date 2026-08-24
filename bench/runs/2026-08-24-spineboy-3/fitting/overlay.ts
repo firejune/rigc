@@ -1,5 +1,5 @@
 // draw matched templates back onto a frame, tinted, to eyeball the fit
-import { readPlate, Plate, encodePng } from '../tools/plate.ts';
+import { readPlate, Plate, encodePng } from '../../../../tools/plate.ts';
 import { buildTemplate, ESS_SCALE } from './match.ts';
 import { IMAGES } from './parts.ts';
 import { readFileSync, writeFileSync } from 'node:fs';

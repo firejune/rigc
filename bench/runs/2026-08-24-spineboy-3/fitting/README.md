@@ -6,10 +6,13 @@ Rungs 6 and 8 did not commit theirs and described the method instead; rung 2's s
 attempt committed `sheetcheck.ts` and AUTHORING.md §9 now cites it, which is the
 precedent followed here.
 
-⚠️ **They were run from the repository root as `work/`**, so their relative imports
-(`../src/render.ts`, `../tools/plate.ts`) are written for that location and do not
-resolve from this directory. Copy the directory back to `work/` at the root to run
-them. Nothing else in the repository imports them.
+⚠️ **They were written and run as `work/` at the repository root**; the imports were
+rewritten on commit so that they resolve from here and the repository's `typecheck`
+covers them. Their *data* paths are still relative to the repository root, so run
+them from there — `bun bench/runs/2026-08-24-spineboy-3/fitting/refmae.ts <dir>` —
+and note that anything which writes (`settle.ts`, `restart.ts`, `edges.ts`,
+`genmotion.ts`) writes back into `work/`, not here. Nothing else in the repository
+imports them.
 
 | file | what it is |
 | --- | --- |

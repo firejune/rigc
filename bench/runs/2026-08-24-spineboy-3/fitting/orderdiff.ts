@@ -10,8 +10,8 @@
  * So: find the pixels where the two builds actually differ, and score both
  * against the reference over exactly those. Nothing else can contribute.
  */
-import { loadPosable, sampleAnimation, renderFrame, type Posable } from '../src/render.ts';
-import { readPlate } from '../tools/plate.ts';
+import { loadPosable, sampleAnimation, renderFrame, type Posable } from '../../../../src/render.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { fullViewport, BG } from './harness.ts';
 import { REF } from './fit.ts';
 import { existsSync } from 'node:fs';

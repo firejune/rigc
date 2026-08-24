@@ -1,4 +1,4 @@
-import { readPlate } from '../tools/plate.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { buildTemplate, match } from './match.ts';
 const names = ['muzzle01','muzzle02','muzzle03','muzzle04','muzzle05','muzzle-glow','muzzle-ring'];
 for (const f of [2,3,4]) {

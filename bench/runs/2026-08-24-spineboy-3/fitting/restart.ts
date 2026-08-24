@@ -21,7 +21,7 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import { Fitter, refFrame, cropPlate, knobsFor, PAIRS, SPAN, type Pose, type Knob } from './fit.ts';
 import { ink, inkCentre } from './harness.ts';
 import { SETS, MUZZLE, FIST } from './fitrun.ts';
-import type { Plate } from '../tools/plate.ts';
+import type { Plate } from '../../../../tools/plate.ts';
 
 const BG = 232;
 function box(p: Plate): [number, number, number, number] {

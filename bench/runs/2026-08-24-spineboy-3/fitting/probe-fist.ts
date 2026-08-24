@@ -1,4 +1,4 @@
-import { readPlate } from '../tools/plate.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { buildTemplate, match, score, visibility, ESS_SCALE } from './match.ts';
 const CASES: [string, number[]][] = [['idle',[0,10]],['walk',[0,4,8]],['run',[0,4]],['jump',[0,8,16]],['shoot',[0,3]],['hit',[0,4]],['death',[0,30,50]],['aim',[0]]];
 const tc = buildTemplate('examples/spineboy/images/front-fist-closed.png','c');

@@ -1,6 +1,6 @@
 /** the boots, matched in a box around where they are — the control the
  *  whole-figure search failed. Then the same measure on MY render. */
-import { readPlate } from '../tools/plate.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { buildTemplate, match } from './match.ts';
 import { Fitter, refFrame } from './fit.ts';
 import { readFileSync } from 'node:fs';

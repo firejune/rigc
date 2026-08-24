@@ -4,8 +4,8 @@
  * assignment pinned for the run.
  */
 import { Rigger, fullViewport, windowViewport, cost, ink, inkCentre, readPlate, cropPlate } from './harness.ts';
-import type { Plate } from '../tools/plate.ts';
-import type { Viewport } from '../src/render.ts';
+import type { Plate } from '../../../../tools/plate.ts';
+import type { Viewport } from '../../../../src/render.ts';
 
 export const REF = 'bench/reference/spineboy/ess';
 export const CAND = 'bench/runs/2026-08-24-spineboy-3/ess/spine';

@@ -9,7 +9,7 @@ import { emitRig, SLOTS } from './emit.ts';
 import { Fitter, refFrame, cropPlate } from './fit.ts';
 import { FIST, MUZZLE } from './fitrun.ts';
 import type { Pose } from './fit.ts';
-import type { Plate } from '../tools/plate.ts';
+import type { Plate } from '../../../../tools/plate.ts';
 
 const SPREAD: [string, number[]][] = [
   ['idle', [0, 6, 12, 18]], ['walk', [0, 3, 6, 9, 12]], ['run', [0, 2, 4, 6, 8]],

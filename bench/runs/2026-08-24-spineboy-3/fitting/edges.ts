@@ -22,7 +22,7 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import { Fitter, refFrame, cropPlate, knobsFor, type Pose } from './fit.ts';
 import { ink } from './harness.ts';
 import { SETS, MUZZLE, FIST } from './fitrun.ts';
-import type { Plate } from '../tools/plate.ts';
+import type { Plate } from '../../../../tools/plate.ts';
 
 const BG = 232;
 function boxOf(p: Plate): [number, number, number, number] | null {

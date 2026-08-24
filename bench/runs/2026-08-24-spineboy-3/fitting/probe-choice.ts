@@ -5,7 +5,7 @@
  */
 import { Fitter, refFrame, cropPlate, knobsFor } from './fit.ts';
 import { readFileSync } from 'node:fs';
-import type { Plate } from '../tools/plate.ts';
+import type { Plate } from '../../../../tools/plate.ts';
 import type { Pose } from './fit.ts';
 
 const slot = process.argv[2];

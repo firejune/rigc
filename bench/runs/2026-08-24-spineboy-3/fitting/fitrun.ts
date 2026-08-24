@@ -2,7 +2,7 @@
 import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { Fitter, refFrame, cropPlate, knobsFor, scanPass, refinePass, ORDER, PAIRS, SPAN, type Pose, type Knob } from './fit.ts';
 import { ink, inkCentre } from './harness.ts';
-import type { Plate } from '../tools/plate.ts';
+import type { Plate } from '../../../../tools/plate.ts';
 
 export const SETS: Record<string, number> = { aim: 1, death: 60, hit: 5, idle: 21, jump: 17, run: 9, shoot: 6, walk: 13 };
 /** which fist the near hand shows, per shot — measured in work/probe-fist.ts */

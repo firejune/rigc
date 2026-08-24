@@ -1,4 +1,4 @@
-import { readPlate } from '../tools/plate.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { buildTemplate, match } from './match.ts';
 import { buildSetup, toWorld, unrotv } from './rigspec.ts';
 import { readFileSync } from 'node:fs';

@@ -1,7 +1,7 @@
-import { loadPosable, sampleAnimation, renderFrame } from '../src/render.ts';
+import { loadPosable, sampleAnimation, renderFrame } from '../../../../src/render.ts';
 import { fullViewport } from './harness.ts';
 import { refFrame } from './fit.ts';
-import { piecesOf, projector } from '../src/render.ts';
+import { piecesOf, projector } from '../../../../src/render.ts';
 import { Rigger } from './harness.ts';
 import { readFileSync } from 'node:fs';
 const dir = 'bench/runs/2026-08-24-spineboy-3/ess/spine';

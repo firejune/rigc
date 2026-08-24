@@ -2,7 +2,7 @@
 import { Fitter, refFrame } from './fit.ts';
 import { readFileSync } from 'node:fs';
 import { FIST } from './fitrun.ts';
-import type { Plate } from '../tools/plate.ts';
+import type { Plate } from '../../../../tools/plate.ts';
 function boxes(p: Plate, y0: number, y1: number): [number, number, number, number, number][] {
   const seen = new Uint8Array(p.width * p.height);
   const hot = (x: number, y: number) => { const i = (y * p.width + x) * 4; return p.data[i] > p.data[i+1] + 25 && p.data[i] > p.data[i+2] + 25; };

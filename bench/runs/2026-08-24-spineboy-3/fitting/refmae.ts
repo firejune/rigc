@@ -4,8 +4,8 @@
  * drew (§9.2) — nothing the candidate does can grow it — so this is the figure
  * two builds of the same rig are compared on, like for like.
  */
-import { loadPosable, sampleAnimation, renderFrame } from '../src/render.ts';
-import { readPlate } from '../tools/plate.ts';
+import { loadPosable, sampleAnimation, renderFrame } from '../../../../src/render.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { fullViewport, BG } from './harness.ts';
 import { existsSync } from 'node:fs';
 import { REF } from './fit.ts';

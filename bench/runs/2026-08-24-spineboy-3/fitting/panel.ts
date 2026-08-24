@@ -1,8 +1,8 @@
 /** Reference | candidate | overlay, zoomed, for a few frames. */
-import { loadPosable, sampleAnimation, renderFrame } from '../src/render.ts';
-import { readPlate, type Plate } from '../tools/plate.ts';
+import { loadPosable, sampleAnimation, renderFrame } from '../../../../src/render.ts';
+import { readPlate, type Plate } from '../../../../tools/plate.ts';
 import { fullViewport, BG, savePlate } from './harness.ts';
-import { Plate as P } from '../tools/plate.ts';
+import { Plate as P } from '../../../../tools/plate.ts';
 import { REF, CAND } from './fit.ts';
 const view = fullViewport(`${REF}/frames.json`);
 const p = loadPosable(`${CAND}/skeleton.json`, `${CAND}/skeleton.atlas`, CAND);

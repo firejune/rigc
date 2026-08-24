@@ -1,5 +1,5 @@
 import { Rigger, fullViewport, cost, savePlate, readPlate, cropPlate } from './harness.ts';
-import { Plate, encodePng } from '../tools/plate.ts';
+import { Plate, encodePng } from '../../../../tools/plate.ts';
 import { writeFileSync } from 'node:fs';
 const dir = 'bench/runs/2026-08-24-spineboy-3/ess/spine';
 const r = new Rigger(dir);

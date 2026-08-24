@@ -4,8 +4,8 @@
  * Calibrated on `idle/f0000` and `walk`, whose answers the brief already gives.
  */
 import { Fitter, refFrame } from './fit.ts';
-import { piecesOf } from '../src/render.ts';
-import { projector } from '../src/render.ts';
+import { piecesOf } from '../../../../src/render.ts';
+import { projector } from '../../../../src/render.ts';
 import { buildTemplate, match } from './match.ts';
 import { readFileSync } from 'node:fs';
 import { FIST } from './fitrun.ts';

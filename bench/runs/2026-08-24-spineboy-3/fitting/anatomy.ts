@@ -1,5 +1,5 @@
 // per-art-piece geometry: solid mask extent, principal axis, endpoints.
-import { readPlate } from '../tools/plate.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { IMAGES, PARTS } from './parts.ts';
 for (const [name, hint] of Object.entries(PARTS)) {
   const p = readPlate(`${IMAGES}/${name}.png`);

@@ -2,7 +2,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { ATTACHMENTS, fistTracks } from './attachments.ts';
 import { Rigger } from './harness.ts';
-import { piecesOf } from '../src/render.ts';
+import { piecesOf } from '../../../../src/render.ts';
 import { planTimeline, planPaired, discoverTable, type Series } from './plan.ts';
 import type { Handles } from './curves.ts';
 

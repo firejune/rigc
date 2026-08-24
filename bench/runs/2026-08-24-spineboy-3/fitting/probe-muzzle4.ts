@@ -5,7 +5,7 @@
  * art's own numbering; f4's own test is 1.2% apart, which is no answer.
  */
 import { Fitter, refFrame, cropPlate } from './fit.ts';
-import { Plate, encodePng } from '../tools/plate.ts';
+import { Plate, encodePng } from '../../../../tools/plate.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 import type { Pose } from './fit.ts';
 const pl = JSON.parse(readFileSync('work/placements-shoot.json', 'utf8')).shoot;

@@ -1,5 +1,5 @@
 import { Fitter, refFrame, cropPlate } from './fit.ts';
-import { Plate, encodePng } from '../tools/plate.ts';
+import { Plate, encodePng } from '../../../../tools/plate.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 import type { Pose } from './fit.ts';
 const pl = JSON.parse(readFileSync('work/placements-shoot.json', 'utf8')).shoot;

@@ -11,8 +11,8 @@
  * answer is already known — the gun unoccluded on `idle`, where the brief and
  * both earlier passes agree it reads 322-338 px on all 21 frames.
  */
-import { loadPosable, sampleAnimation, renderFrame, type Posable } from '../src/render.ts';
-import { readPlate, type Plate } from '../tools/plate.ts';
+import { loadPosable, sampleAnimation, renderFrame, type Posable } from '../../../../src/render.ts';
+import { readPlate, type Plate } from '../../../../tools/plate.ts';
 import { fullViewport, BG } from './harness.ts';
 import { REF } from './fit.ts';
 

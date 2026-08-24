@@ -1,6 +1,6 @@
 /** per set: my content box in frames.json's own box, against the reference's. */
-import { loadPosable, sampleAnimation } from '../src/render.ts';
-import { frameContentBox, contentBoxOfPlate, unionBoxes, type ContentBox } from '../src/framing.ts';
+import { loadPosable, sampleAnimation } from '../../../../src/render.ts';
+import { frameContentBox, contentBoxOfPlate, unionBoxes, type ContentBox } from '../../../../src/framing.ts';
 import { fullViewport } from './harness.ts';
 import { refFrame } from './fit.ts';
 import { SETS } from './fitrun.ts';

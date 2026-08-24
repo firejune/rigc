@@ -11,8 +11,8 @@ import { Fitter, refFrame, cropPlate } from './fit.ts';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { FIST } from './fitrun.ts';
 import type { Pose } from './fit.ts';
-import type { Plate } from '../tools/plate.ts';
-import { contentBoxOfPlate } from '../src/framing.ts';
+import type { Plate } from '../../../../tools/plate.ts';
+import { contentBoxOfPlate } from '../../../../src/framing.ts';
 
 const SPREAD: [string, number[]][] = [
   ['idle', [0, 4, 8, 12, 16, 20]], ['walk', [0, 2, 4, 6, 8, 10, 12]], ['run', [0, 3, 5, 7, 8]],

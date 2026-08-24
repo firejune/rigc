@@ -1,5 +1,5 @@
 // reproduce the brief's own control: the near fist of ess/idle/f0000 at (154,284)
-import { readPlate } from '../tools/plate.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { buildTemplate, match } from './match.ts';
 const fr = readPlate('bench/reference/spineboy/ess/idle/f0000.png');
 for (const n of ['front-fist-open', 'front-fist-closed']) {

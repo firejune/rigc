@@ -8,9 +8,9 @@
  * (165, 289).
  */
 import { Fitter, refFrame } from './fit.ts';
-import { piecesOf, projector } from '../src/render.ts';
+import { piecesOf, projector } from '../../../../src/render.ts';
 import { buildTemplate, match, type Match } from './match.ts';
-import { Plate } from '../tools/plate.ts';
+import { Plate } from '../../../../tools/plate.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { SETS, FIST } from './fitrun.ts';
 

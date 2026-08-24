@@ -5,7 +5,7 @@
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { Fitter, cropPlate, knobsFor } from './fit.ts';
-import { readPlate } from '../tools/plate.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 import { FIST } from './fitrun.ts';
 import { DUR } from './genmotion.ts';
 import type { Pose } from './fit.ts';

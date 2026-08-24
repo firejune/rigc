@@ -1,9 +1,9 @@
 /** my candidate's drawn box per frame, against the reference's, in frame px. */
-import { loadPosable, sampleAnimation, renderFrame } from '../src/render.ts';
+import { loadPosable, sampleAnimation, renderFrame } from '../../../../src/render.ts';
 import { fullViewport } from './harness.ts';
 import { refFrame } from './fit.ts';
 import { SETS } from './fitrun.ts';
-import type { Plate } from '../tools/plate.ts';
+import type { Plate } from '../../../../tools/plate.ts';
 const dir = 'bench/runs/2026-08-24-spineboy-3/ess/spine';
 const p = loadPosable(`${dir}/skeleton.json`, `${dir}/skeleton.atlas`, dir);
 const view = fullViewport('bench/reference/spineboy/ess/frames.json');

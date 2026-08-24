@@ -31,7 +31,7 @@ import { Fitter, refFrame, cropPlate, knobsFor, type Pose } from './fit.ts';
 import { ink } from './harness.ts';
 import { SETS, MUZZLE, FIST } from './fitrun.ts';
 import { LOOPS } from './genmotion.ts';
-import type { Plate } from '../tools/plate.ts';
+import type { Plate } from '../../../../tools/plate.ts';
 
 const BG = 232;
 /** the brief's own frame-to-frame convention: a pixel differing by >2/255. */

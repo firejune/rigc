@@ -1,4 +1,4 @@
-import { readPlate } from '../tools/plate.ts';
+import { readPlate } from '../../../../tools/plate.ts';
 for (const n of ['muzzle01','muzzle02','muzzle03','muzzle04','muzzle05','muzzle-glow','muzzle-ring','goggles','head']) {
   const p = readPlate(`examples/spineboy/images/${n}.png`);
   let solid=0, semi=0, none=0; let maxA=0;

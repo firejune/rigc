@@ -1,5 +1,5 @@
 import { Fitter, refFrame, cropPlate } from './fit.ts';
-import { Plate, encodePng } from '../tools/plate.ts';
+import { Plate, encodePng } from '../../../../tools/plate.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { FIST } from './fitrun.ts';
 const [anim, iS, file] = [process.argv[2], Number(process.argv[3]), process.argv[4] ?? `work/placements-${process.argv[2]}.json`];

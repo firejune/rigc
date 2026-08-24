@@ -1,8 +1,8 @@
 /** render the COMPILED animation (not the fitter's pose) beside the reference */
-import { loadPosable, sampleAnimation, renderFrame } from '../src/render.ts';
+import { loadPosable, sampleAnimation, renderFrame } from '../../../../src/render.ts';
 import { fullViewport, cropPlate } from './harness.ts';
 import { refFrame } from './fit.ts';
-import { Plate, encodePng } from '../tools/plate.ts';
+import { Plate, encodePng } from '../../../../tools/plate.ts';
 import { writeFileSync } from 'node:fs';
 const dir = 'bench/runs/2026-08-24-spineboy-3/ess/spine';
 const p = loadPosable(`${dir}/skeleton.json`, `${dir}/skeleton.atlas`, dir);

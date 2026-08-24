@@ -8,8 +8,8 @@
  * nothing in the frames does — and because the box is shared, that one set is
  * paying for the framing of the other three. This says which set and which frame.
  */
-import { loadPosable, sampleAnimation, renderFrame } from '../src/render.ts';
-import { readPlate, type Plate } from '../tools/plate.ts';
+import { loadPosable, sampleAnimation, renderFrame } from '../../../../src/render.ts';
+import { readPlate, type Plate } from '../../../../tools/plate.ts';
 import { fullViewport, BG } from './harness.ts';
 import { readFileSync, existsSync } from 'node:fs';
 import { REF, CAND } from './fit.ts';

@@ -1,4 +1,4 @@
-import { readPlate, type Plate } from '../tools/plate.ts';
+import { readPlate, type Plate } from '../../../../tools/plate.ts';
 import { buildTemplate, match, ESS_SCALE, type Template, type Match } from './match.ts';
 import { PARTS, IMAGES } from './parts.ts';
 import { writeFileSync, existsSync } from 'node:fs';

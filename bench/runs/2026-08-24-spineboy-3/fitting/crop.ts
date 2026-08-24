@@ -1,5 +1,5 @@
 // scratch viewer: crop + integer-upscale a frame (or several side by side)
-import { readPlate, Plate, encodePng } from '../tools/plate.ts';
+import { readPlate, Plate, encodePng } from '../../../../tools/plate.ts';
 import { writeFileSync } from 'node:fs';
 
 const [outPath, scaleS, ...srcs] = process.argv.slice(2);

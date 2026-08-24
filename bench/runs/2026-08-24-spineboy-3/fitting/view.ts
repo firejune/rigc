@@ -1,5 +1,5 @@
 // view.ts out.png scale [file:x,y,w,h | file] ...
-import { readPlate, Plate, encodePng } from '../tools/plate.ts';
+import { readPlate, Plate, encodePng } from '../../../../tools/plate.ts';
 import { writeFileSync } from 'node:fs';
 const [outPath, scaleS, ...srcs] = process.argv.slice(2);
 const scale = Number(scaleS);

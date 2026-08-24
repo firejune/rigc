@@ -4,8 +4,8 @@
  * frames' own scale, and score against the reference frame there.
  */
 import { Physics, Skeleton, type Bone } from '@esotericsoftware/spine-core';
-import { loadPosable, piecesOf, projector, blitPiece, pageFor, type Posable, type Viewport } from '../src/render.ts';
-import { Plate, readPlate, encodePng, type RGBA } from '../tools/plate.ts';
+import { loadPosable, piecesOf, projector, blitPiece, pageFor, type Posable, type Viewport } from '../../../../src/render.ts';
+import { Plate, readPlate, encodePng, type RGBA } from '../../../../tools/plate.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 
 export const BG: RGBA = [232, 232, 232, 255];

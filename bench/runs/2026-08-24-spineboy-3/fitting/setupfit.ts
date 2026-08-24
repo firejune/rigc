@@ -7,7 +7,7 @@
 import { Fitter, refFrame, cropPlate } from './fit.ts';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import type { Pose } from './fit.ts';
-import type { Plate } from '../tools/plate.ts';
+import type { Plate } from '../../../../tools/plate.ts';
 import { FIST } from './fitrun.ts';
 
 const SPREAD: [string, number[]][] = [

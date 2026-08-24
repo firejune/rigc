@@ -1,6 +1,6 @@
 /** Per-frame drawn-box delta, candidate minus reference, on frames.json's grid. */
-import { loadPosable, sampleAnimation, renderFrame } from '../src/render.ts';
-import { readPlate, type Plate } from '../tools/plate.ts';
+import { loadPosable, sampleAnimation, renderFrame } from '../../../../src/render.ts';
+import { readPlate, type Plate } from '../../../../tools/plate.ts';
 import { fullViewport, BG } from './harness.ts';
 import { REF, CAND } from './fit.ts';
 import { existsSync } from 'node:fs';

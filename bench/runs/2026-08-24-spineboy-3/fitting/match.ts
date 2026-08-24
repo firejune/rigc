@@ -3,7 +3,7 @@
  * rotations x mirrorings x positions, score mean squared RGB error over that
  * piece's solid pixels. Calibrated against the brief's own published controls.
  */
-import { readPlate, type Plate } from '../tools/plate.ts';
+import { readPlate, type Plate } from '../../../../tools/plate.ts';
 
 export const ESS_SCALE = 0.22297348561444258;
 
