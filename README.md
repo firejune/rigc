@@ -400,6 +400,174 @@ frames rendered from them, which are fetched rather than redistributed (see
 [NOTICE.md](NOTICE.md)). They need a clone and `bun run fetch-examples`, and say
 so by name when the corpus is absent.
 
+## First rig in ten minutes
+
+A whole rig, end to end, in a scratch directory: three tiny plates, two JSON
+files, one `build`, one `validate`. No clone, no art pipeline, nothing fetched.
+
+🚫 **Every value below is invented for this section** — a doll that exists
+nowhere else in this repository. That is [AUTHORING.md](docs/AUTHORING.md) §3's
+rule applied here: no example value in these documents is copied out of a
+reference export, so nothing you read in a quickstart is an answer to anything
+[the ladder](docs/LADDER.md) measures.
+
+**1. Install the command.**
+
+```bash
+bun add -g spine-rigc     # installs `rigc`
+```
+
+Or skip the install and prefix every command below with `bunx `, e.g.
+`bunx spine-rigc build …`.
+
+**2. Make a directory and three plates.** rigc measures PNGs rather than trusting
+a number you typed (R5), so the art has to exist. These three are solid colours a
+few dozen pixels across — a hull, a mast and a lamp:
+
+```bash
+mkdir -p buoy/images && cd buoy
+bun -e '
+const parts = {
+  "images/hull.png": "iVBORw0KGgoAAAANSUhEUgAAADgAAAAMCAYAAAA3bX6lAAAAKElEQVR42mOI8bL6P5wxw6gHRz046sFRD456cNSDox4c9eCoBwcrBgDSZ+mdl2OiDgAAAABJRU5ErkJggg==",
+  "images/mast.png": "iVBORw0KGgoAAAANSUhEUgAAAAgAAAA0CAYAAAC3t3ldAAAAH0lEQVR42mO4dunIf3yYYVTBqIJRBaMKRhWMKhgcCgBGJo4s9YnopgAAAABJRU5ErkJggg==",
+  "images/lamp.png": "iVBORw0KGgoAAAANSUhEUgAAABIAAAASCAYAAABWzo5XAAAAHElEQVR42mP4v8HhPzUww6hBowaNGjRq0HAzCADvdrVmFPbc+QAAAABJRU5ErkJggg=="
+};
+for (const [p, b] of Object.entries(parts)) await Bun.write(p, Buffer.from(b, "base64"));
+'
+```
+
+**3. The rig spec — `buoy.rig.json`.** Structure only: bones, the slots array in
+draw order, and one skin mapping each slot to a plate.
+
+```json
+{
+  "spec": "rigc-rig/1",
+  "name": "buoy",
+  "images": "images",
+  "skeleton": { "width": 200, "height": 200 },
+  "bones": [
+    { "name": "root" },
+    { "name": "hull", "parent": "root", "x": 0, "y": 0 },
+    { "name": "mast", "parent": "hull", "x": 0, "y": 4 },
+    { "name": "lamp", "parent": "mast", "x": 0, "y": 52 }
+  ],
+  "slots": [
+    { "name": "mast", "bone": "mast", "attachment": "mast" },
+    { "name": "hull", "bone": "hull", "attachment": "hull" },
+    { "name": "lamp", "bone": "lamp", "attachment": "lamp" }
+  ],
+  "skins": {
+    "default": {
+      "mast": { "mast": { "image": "mast.png", "y": 26 } },
+      "hull": { "hull": { "image": "hull.png" } },
+      "lamp": { "lamp": { "image": "lamp.png" } }
+    }
+  }
+}
+```
+
+Three things in there are worth naming, because each is a rule rather than a
+style: the **slots array is the setup draw order** (R4) — index 0 is furthest
+back, so the mast is behind the hull; the attachment carries an **`image`
+instead of a `width`/`height`** (R5), which is what makes the size in the
+skeleton and the size in the atlas incapable of drifting apart; and the mast's
+`"y": 26` offsets the plate *within* its slot so the bone sits at the mast's foot
+rather than its middle.
+
+**4. The motion spec — `buoy.motion.json`.** Time only, aimed at the rig by name:
+
+```json
+{
+  "spec": "rigc-motion/1",
+  "archetype": "buoy",
+  "cut": "buoy",
+  "easings": { "swing": [0.42, 0, 0.58, 1] },
+  "animations": {
+    "bob": {
+      "duration": 2,
+      "loop": true,
+      "tracks": [
+        {
+          "bone": "hull",
+          "property": "translatey",
+          "keys": [
+            { "t": 0,   "v": [0],  "ease": "swing" },
+            { "t": 0.5, "v": [5],  "ease": "swing" },
+            { "t": 1.5, "v": [-5], "ease": "swing" },
+            { "t": 2,   "v": [0] }
+          ]
+        },
+        {
+          "bone": "mast",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [-6], "ease": "swing" },
+            { "t": 1, "v": [6],  "ease": "swing" },
+            { "t": 2, "v": [-6] }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+`archetype` must equal the rig's `name`. `duration` is declared and then checked
+against what actually compiled (R7). The **last key of each track carries no
+easing** — there is nothing after it to ease towards, and saying otherwise is a
+compile error.
+
+**5. Build, then re-gate what it wrote.**
+
+```bash
+rigc build --rig buoy.rig.json --motion buoy.motion.json --images images --out spine
+rigc validate spine
+```
+
+`build` prints every assertion by name, then the shape of what it emitted, then
+the two files:
+
+```
+  ..    pages=3 regions=3 bones=4 slots=3 animations=1 version=4.3.13 regionAttachments=3 meshAttachments=0 physicsConstraints=0 rig=buoy profile=spine-html
+rigc: wrote …/buoy/spine/skeleton.json
+rigc: wrote …/buoy/spine/skeleton.atlas
+```
+
+and `validate` re-reads those artifacts from disk and ends `rigc: green`. That is
+a rig. `spine/skeleton.json` is Spine 4.3 skeleton data — it loads in a Spine
+runtime and it imports into the Spine editor.
+
+**Try breaking it**, because the validator's messages are the interface here and
+they are worth meeting once on purpose. Rename `images/hull.png` to
+`images/raft.png`, point the spec's `image` at the new name, and build again:
+
+```
+FAIL  A08_REGION_NAMES_MATCH_ATTACHMENTS: attachment "hull" resolves to region "raft"; v0 requires them identical
+rigc: 1 assertion(s) failed — nothing written
+```
+
+Nothing was written. A red run leaves no half-built artifact on disk to mistake
+for a result, and there is no flag that changes that.
+
+**Where to go next.**
+
+- 📘 **[docs/AUTHORING.md](docs/AUTHORING.md)** is the real guide — both files
+  field by field, the emission rules, every named failure mapped to the file that
+  has to change, and §8–§9 for reproducing a shot you were given as pictures. It
+  ships inside the npm package too, at
+  `node_modules/spine-rigc/docs/AUTHORING.md`.
+- `rigc explain --rig buoy.rig.json --motion buoy.motion.json --out spine` prints
+  the compiled rig as a table — every bone with its resolved parent, the slots in
+  draw order, every timeline key by key — and writes nothing. It is what to reach
+  for when a rig compiles and still looks wrong.
+- 🚨 **A green gate does not mean the animation is right**, and no assertion
+  could. If you have reference pictures of the shot,
+  `rigc check --candidate spine --frames <dir>` is the half of the loop that can
+  see a wrong animation — AUTHORING.md §9.
+- [docs/LADDER.md](docs/LADDER.md) is the benchmark: the same job, from a brief
+  and rendered frames, scored. [docs/PILOT.md](docs/PILOT.md) is how to run an
+  agent through it and score what comes back.
+
 ## Usage
 
 📘 **Writing a spec? Read [docs/AUTHORING.md](docs/AUTHORING.md) first.** It is the

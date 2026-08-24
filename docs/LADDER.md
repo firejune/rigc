@@ -1590,6 +1590,12 @@ A rung is *run* rather than benched: a fresh agent, the brief in
 [`bench/briefs/`](../bench/briefs/), the frames in [`bench/reference/`](../bench/reference/),
 and the protocol in [`bench/runs/README.md`](../bench/runs/README.md).
 
+Putting **somebody else's** agent through that — a different model, a different
+harness — is [PILOT.md](PILOT.md): the tier rubric, a runner prompt that quotes the
+reading lists rather than linking them, and an evaluator sheet holding the
+baselines this file records. The baselines stay out of the runner's prompt for the
+reason the honesty rule gives above.
+
 `bench <rung>` takes `1 … 8` or `spineboy`. Rungs 1 and 8 carry two skeletons and
 both are benched and reported. `spineboy-pro` is reported as a **stretch** figure
 and does not count towards the rung: it is a harder rig than the graduation exam,
