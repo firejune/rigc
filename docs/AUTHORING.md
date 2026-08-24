@@ -1748,20 +1748,24 @@ MAE, 0.3 px → 300 → 1.402, 0.15 px → 377 → 1.305.
 
 ⚠️ **Compute what a skipped sample costs before you declare that tolerance — on a
 fast subject the shot's own speed has already pinned it.** Skipping one sample means
-spanning it linearly, and the deviation at the sample skipped is a quarter of the
-series' second difference there: `|f(n−1) − 2·f(n) + f(n+1)| / 4`. So
-second-difference the fitted series, divide by four, and read that number against the
-tolerance you were about to declare. If it is the larger of the two, the fitter keys
-nearly every frame and no tolerance anywhere in that range changes the answer — the
-key density is then a fact about the subject, not a choice you made. Rung 8's second
-attempt is that case: the ball's median frame-to-frame second difference is 6.4 px, so
-one skipped sample already deviates about 1.6 px, five times the 0.3 px the run
-declared, and any tolerance under about 1.5 px keys nearly everything. What the trade
-bought there was accuracy and never sparsity — 0.6 px → 439 keys → 18.22 MAE at
-12 fps, 0.45 px → 482 → 17.54, 0.3 px → 521 → 17.26. ⇒ Do the arithmetic first. It
-tells you which of the two situations you are in: picking a point on the curve above,
-or discovering the point the shot has already put you on — and the second one is not a
-failure to reach the density this section asks for, it is what that density is here.
+spanning it linearly, and the chord through its two neighbours sits at their mean, so
+the deviation at the sample skipped is **half** the series' second difference there:
+`|f(n−1) − 2·f(n) + f(n+1)| / 2`. That is an identity, not an approximation — check
+it on `f(n) = n²`, whose second difference is 2: the chord reads `n² + 1` where the
+curve reads `n²`, and the deviation is 1. So second-difference the fitted series,
+halve it, and read that number against the tolerance you were about to declare. If it
+is the larger of the two, the fitter keys nearly every frame, and no tolerance below
+it changes that — the key density is then a fact about the subject, not a choice you
+made. One ladder run is that case: its subject's median frame-to-frame second
+difference measured 6.4 px, so a span that skips one sample deviates about 3.2 px,
+ten times the 0.3 px tolerance the run declared, and the tolerance would have to be
+loosened past that 3.2 px before a span could afford to skip anything at all. What
+the trade bought there was accuracy and never sparsity — 0.6 px → 439 keys → 18.22
+MAE at 12 fps, 0.45 px → 482 → 17.54, 0.3 px → 521 → 17.26. ⇒ Do the arithmetic
+first. It tells you which of the two situations you are in: picking a point on the
+curve above, or discovering the point the shot has already put you on — and the
+second one is not a failure to reach the density this section asks for, it is what
+that density is here.
 
 **A rig's parameters are not identified by its pixels — remove the gauges before you
 key.** A bone that carries no attachment is an exact gauge: turn it by δ, turn its
