@@ -1072,6 +1072,60 @@ against a handful of frames drawn from **every** animation at once, and hold it 
 while the per-frame poses are fitted. It is the spread that identifies it — a
 sequence of single-frame fits, one per shot, is not the same thing.
 
+**Seed each frame's search from its neighbour's solution — as one start among the
+full-range scans, never instead of them.** Adjacent frames are adjacent poses, so the
+answer next door is a better first guess than the middle of any range, and it costs one
+extra evaluation per knob to try it. What it must not do is *replace* the scans: the
+neighbouring frame's pose is precisely where a line search would have started, and a
+limb 60° out in one frame stays 60° out in the next for the reason the rule above
+gives — stepping away from it overlaps no better, so the whole series inherits one
+frame's local minimum and looks stable while it does. ⇒ Scan the whole range, add the
+neighbour's value to the starts, take the best of them. Fit outward from a frame you
+trust in both directions rather than only forward, so a bad frame seeds its neighbour
+and not every frame behind it.
+
+⚠️ **Then measure the adjacency drift, because a fit that lost a limb teleports.**
+Fitted frame by frame with nothing tying the frames together, a leg has two answers
+wherever the other leg is near it, and no single frame's number prefers the right one:
+some frames land on the wrong leg, every one of them cheap, and the series jumps back
+and forth between the two. That defect is invisible in any per-frame figure and loud in
+the relation between two — the reading §9.2's `Δpx` and `ref Δ` columns already make
+for the whole figure, and the chain table localises: a chain whose worst slot drift on
+one frame runs many times its own mean across the set did not travel that far, it was
+lost and refound somewhere else. **A limb that moves much further between two adjacent
+frames than the reference's own frame-to-frame change is a fit that lost it, not a limb
+that moved.** Read it per chain rather than per figure — one leg swapped for its twin
+is a small share of a whole-frame delta and vanishes into it.
+
+**Two near-identical parts need one calibrated separator, decided once and pinned.** A
+front limb and a rear one are often the same drawing twice, differing by a tint or by
+nothing at all; a search scoring a whole composite cannot tell which of the two it just
+placed, because exchanging them costs almost nothing on the frames where they overlap.
+Left to the per-frame fit, that assignment is re-decided on every frame — the teleport
+above, arriving by a second route. ⇒ Settle it the way §8 settles a draw-order edge:
+build both hypotheses, render each at the frames' own scale, and compare like with like
+— but calibrate on the frames where the two parts are *unambiguous*, the ones where
+they are far apart or only one of them is drawn, and read the separation there, where
+it is a real gap rather than a rounding difference. Then **pin the assignment for the
+run** and let no per-frame search reopen it. ⚠️ The same test knows when to stay silent
+here too: two hypotheses that come out inside the objective's own scatter mean the
+frames do not decide this, and you ship it on reasoning and say in the log that is what
+you did.
+
+**Spend each iteration on the worst chain, and stop re-fitting the ones already at the
+floor.** §9.2's chain table is this loop's work queue: it gives every limb a worst slot
+drift, an error per pixel, and a share of the set's error. ⇒ Take the next iteration to
+the worst **per-pixel** chain rather than the largest share — the share confounds
+*wrong* with *big*, as §9.2 says beside the table, and the chain holding most of a
+run's error is routinely the one that simply covers most of the figure. Then freeze the
+chains that have converged. Re-fitting them spends the budget the broken chain needed,
+and it is not merely wasteful: chains share parents, so a search free to move a
+converged limb's ancestors will walk it back off the floor to buy a fraction of a point
+somewhere else. ⚠️ **A blank where a drift should be is the loudest row in the table,
+not a quiet one.** The matcher refuses to name a distance past the part's own size
+(§9.2), so a limb far enough out reports no match rather than a large number — read
+that beside a high figure per pixel as the strongest signal the table has.
+
 **What comes out is a pose per frame, and a pose per frame is not a key.** Two things
 decide what survives the reduction, and **§10.3** states both: declare one tolerance
 in pixels at the end of what each bone swings rather than a figure in degrees, and
@@ -1478,7 +1532,9 @@ below-average figure per pixel. Reference ink further from your ink than the par
 own size is left `(unattributed)` rather than charged to a neighbour, and a chain
 reading 0 % on `0/3` slots drawn is missing, not clean. The rollup at the foot gives
 each chain one line across every set — the sentence a run's README quotes instead of
-a per-shot list.
+a per-shot list. **§8.1** is how to act on it: the next iteration goes to the worst
+chain by error per pixel, and a chain already at the floor is frozen rather than
+re-fitted.
 
 ### 9.3 What it still cannot see
 
