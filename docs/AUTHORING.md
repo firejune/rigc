@@ -1237,6 +1237,23 @@ reads, and every frame renders as the setup pose. Write `bone.pose.rotation`.
 Rung 8 lost a loop to it at a flat 17.3; driven through `bone.pose`, the same
 poses measured **2.76**.
 
+🚨 **That trap has a twin one level up: the *setup* transform lives on
+`bone.data.setupPose`, not on `bone.data`.** `BoneData` extends `PosedData`,
+which carries the whole setup transform on a `setupPose` object, so
+`bone.data.rotation` — or `.x`, `.y`, `.scaleX` — is `undefined`, and
+`bone.data.rotation + delta` is `NaN`. Read and write it as
+`bone.data.setupPose.rotation`. This one is worse to spot than the `bone.pose`
+trap, because nothing on the path raises: `undefined` propagates to `NaN`, and
+`NaN` serialises to `null`, so a fit writes `"px": null` into its own placements
+file, the next build reads those as zero, `validate` is green and `check` runs.
+⇒ **A `null` in your own placements dump is the signature of having read
+`bone.data` directly** — nothing in this format is ever legitimately null. On
+spineboy it cost the candidate MAE 13.0 → 114.6 with a green gate throughout
+([`bench/runs/2026-08-23-spineboy-2/LOOP.md`](../bench/runs/2026-08-23-spineboy-2/LOOP.md),
+§4.1). Note that the two names are not the same thing: `bone.data.setupPose` is
+the setup transform, while `bone.setupPose()` on a `Bone` is the method that
+resets `bone.pose` back to it.
+
 🚨 **A region attachment's own offsets are cached.** `attachment.x`, `.y`,
 `.rotation`, `.scaleX/.scaleY` are inputs to a quad spine-core computes once and
 stores; what gets drawn is that stored quad — `computeWorldVertices` reads
