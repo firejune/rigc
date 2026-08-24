@@ -30,7 +30,7 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 | 5 | [`5-squash-and-stretch.md`](../briefs/5-squash-and-stretch.md) | rev 2, 2026-08-23 | 3 animations, 12 fps + 24 fps sheets | 1 | subject ~4–16 px; proportions are measured, not seen |
 | 6 | [`6-arcs.md`](../briefs/6-arcs.md) | **yes (third party)**, rev 3, 2026-08-23 | 1 animation, 12 fps + 24 fps sheet | 1 | the subject **deforms**; ball ~14 px; proportions are measured, not seen |
 | 8 | [`8-follow-through.md`](../briefs/8-follow-through.md) | **yes (third party)**, rev 2, 2026-08-23 | 2 skeletons, 1 animation each, 12 **and** 24 fps in full | **2** | two shots that want opposite machinery — `pendulum` deforms nothing, `ball` deforms on most frames; the `ball` shot moves over 130 px between two 12 fps frames, so read it at 24 fps; the chain's lag is **horizontal only** |
-| spineboy | [`spineboy.md`](../briefs/spineboy.md) | **yes (third party)**, rev 2, 2026-08-23 — ⚠️ **rev 2 carries a known contradiction, pending rev 3**: it says the gun is in the **near** hand while its own `death` paragraph establishes that a fist means the near arm, and the fist is free of the gun ([#111](https://github.com/firejune/rigc/issues/111)). Treat the gun's arm as unsettled by the brief and decide it from the art | 2 skeletons, 19 animations, 12 fps in full **+ 30 fps sheets** | **1** (`ess`; `pro` is optional) | the rung clears on **`ess` alone**, and `ess` has **8** animations — the ladder row's "11" is `pro`'s count; `pro`'s line is printed *(stretch — does not count)*; the two skeletons are at different scales, so no pixel figure crosses between them; the second rate is **30 fps** and only two frames per animation are on disk at it, so the sheets are for timing and never for a distance |
+| spineboy | [`spineboy.md`](../briefs/spineboy.md) | **yes (third party) ×2**, rev 3, 2026-08-24 — the revision-2 gun-hand contradiction ([#111](https://github.com/firejune/rigc/issues/111)) is **settled by measurement**: the gun is in the **far** hand, `idle` and `walk` say so, and the working — estimator, controls and margins — is in the brief's *Verification notes — revision 2 → 3*. Nothing about the gun's arm is left for a run to rediscover | 2 skeletons, 19 animations, 12 fps in full **+ 30 fps sheets** | **1** (`ess`; `pro` is optional) | the rung clears on **`ess` alone**, and `ess` has **8** animations — the ladder row's "11" is `pro`'s count; `pro`'s line is printed *(stretch — does not count)*; the two skeletons are at different scales, so no pixel figure crosses between them; the second rate is **30 fps** and only two frames per animation are on disk at it, so the sheets are for timing and never for a distance |
 | 7 | — | — | — | — | not prepared. `7-anticipation` has no upstream `license.txt` at all, so `render_reference.ts` refuses it and it must never be rendered |
 
 **Brief verified** is the header block described in the next section. Rungs 3 and 1
@@ -41,7 +41,11 @@ of 179 claims, 146 verified — both duration tables entire, and most of `death`
 `jump`, `shoot` and `hit` to the digit — 31 were corrected and 2 moved into the
 brief's "cannot tell you" section, and one claim went the other way (the figure is
 decidably in front of the vortex, so the frames settle **two** draw-order edges, not
-one). Rung 6
+one; revision 3 has since made it three). **It is also the first brief to carry a
+second third-party pass** (2026-08-24, revision 3, a different agent again), which
+took a single question — which hand holds the gun — and settled it against the frames
+instead of choosing between the two answers revision 2 gave: the gun is in the **far**
+hand, and the working is in the brief's *Verification notes — revision 2 → 3*. Rung 6
 is the first brief to carry the pass the protocol actually asks for — a **different**
 agent, not the one that wrote it; rungs 2, 4 and 5 were re-measured by their own
 author and their headers say so. **Rung 8 is the second to carry a third-party
