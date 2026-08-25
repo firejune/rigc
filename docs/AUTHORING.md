@@ -60,6 +60,7 @@ bun cli.ts check \
   --frames    path/to/reference/frames
 
 # read the table → fix the spec → build again → check again
+#   ↳ read its per-frame column before its MAE — §9.2
 ```
 
 `build` compiles, round-trips the result through `@esotericsoftware/spine-core`,
@@ -72,6 +73,18 @@ Green from `build` means the file is valid; it says nothing at all about whether
 the animation is the one in the frames, and there is no assertion that could — see
 §9. The two run in that order because `check` needs artifacts on disk and `build`
 only writes them when the gate is green.
+
+🚨 **Read `check`'s per-frame column before its MAE.** The table's headline figures
+are the MAE and the slot drift, and a reader who came for those will skip the
+`per-frame` line printed under them — but that line is the only thing in this
+toolchain that can see a **hold**, a **loop seam** or a **one-frame event**. Those
+defects are cheap in every single frame and wrong only in the relation between two,
+so an aggregate MAE, `diff` and the gate are all silent on them: a candidate can
+slope a line through a frame pair the reference holds perfectly still across, or
+end a cycle on a pose that is not the pose it began on, without moving a decimal
+anywhere else in the loop. **§9.2** documents the column. It is named here because
+§0 is where the loop is learned, and a run that opens a report for its chain table
+can come away with the column unread.
 
 What the flags mean:
 
@@ -956,6 +969,42 @@ frames did not show the rest, and rendering like-for-like settled three more of 
 — worth a measurable drop in window MAE, a convention the gate cannot see and the
 measures can.
 
+**Score that comparison over the pixels where the two builds differ. A whole-shot
+figure is the wrong feature.** Two builds that differ only in slot order are
+**bit-identical everywhere the two slots do not overlap**, so a whole-shot MAE
+divides the evidence by the whole figure and by every frame that carries none of
+it. What survives that division sits inside the objective's own scatter — real
+hypotheses and a deliberately reversed control alike land in there, pointing
+whichever way the noise does, and what has been condemned is the statistic and not
+the edge. ⇒ Take the pixels where the two renders differ **at all** and score both
+builds over exactly that set. Nothing outside it can contribute, so the dilution is
+gone by construction, and the reading needs no knowledge of which parts are involved
+— it is the same mechanical test on any structural pair. Read a frame-by-frame tally
+beside the figure too, because an edge the frames really decide wins shot after shot
+rather than on a couple of them.
+
+**Calibrate the band with a control on an edge the brief has already settled by
+measurement.** Run the same test on that edge, read how far apart the two builds
+come out over the pixels that decide it, and treat that separation as the scale a
+real answer is measured against. On the deciding pixels a settled edge separates by
+a wide margin where the whole-shot figure had it inside its own noise — which is
+what lets an edge the frames show no interior detail on stop being unanswerable and
+start being an edge the null-result rule below has no business firing on.
+
+⚠️ **A control that fails may be a wrong control — read the per-frame rows before
+you condemn the hypothesis.** A control is a **build**, and a build differs from
+base in everything the change implies, not only in the thing you meant to change:
+send one part behind another and it goes behind everything drawn between them too,
+so what you actually ran is one reversed edge plus several asserted ones. The
+aggregate will not say so, and it can favour the variant while the per-frame rows
+give base *every one* of the frames that carry most of the deciding pixels. That
+split — an aggregate one way, a consistent per-frame tally the other — is the
+signature of a control that asserts more than one thing, and reading the aggregate
+alone condemns an edge the brief settles by measurement. The rule
+[`bench/runs/README.md`](../bench/runs/README.md) carries from the other side is the
+same one: a control that returns an impossible number has told you something, so
+read the number rather than the pass or fail.
+
 ⚠️ **A render-back sweep whose spread is inside the objective's own scatter is
 *no answer*, not a weak one.** Rendering candidates back and keeping the best
 number is not a draw-order trick — it is how any structural choice the frames
@@ -1071,6 +1120,38 @@ while the part is still nowhere near, because every value of that knob is wrong 
 the other two. Where a chain ends in something whose position you can actually see —
 a hand, a foot, a held prop — scan the two links above it as a **pair**, over the
 grid. That is the product of two ranges on a handful of chains, not on every bone.
+
+⚠️ **Two whole chains can share a minimum, and no paired scan reaches that one.**
+The case above is two knobs in one chain. The harder one is two *chains* sitting in
+the same pixels: an arm and the prop it holds lying across the part of the frame the
+reference fills with the legs. Every leg knob that would carry a leg there finds the
+pixels already inked and reports no improvement — correctly, on the objective it was
+given — and the frame keeps its limbs in a **different configuration** rather than a
+slightly wrong one. Pairing cannot help here, because the two knobs are in different
+chains and pairing every chain with every other is the whole product.
+
+**What reaches it is cheap: more than one start, screened coarsely.** Assemble a
+handful of candidate poses for the frame — the incumbent, the two neighbouring
+frames' solutions, a few poses spread across the shot, the setup pose — run all of
+them through the **coarse levels only**, and take the best two through the full
+schedule. **Keep the incumbent among the candidates**, so a frame can only improve
+on what it already had. The cost is a multiple of the coarse pass rather than of the
+fit, and the neighbour seed below is one start out of that set rather than a rule of
+its own. ⚠️ It also measures how far from converged a single-start fit can be while
+reporting success: repeat the *identical* search on one frame from different starts
+and the numbers walk down, step after step. That is not a tolerance being tightened,
+it is a different basin each time — so a search that stopped improving is evidence
+about the start it was given and about nothing else.
+
+**Cross-shot starts, for a configuration a shot cannot reach from its own frames.**
+Where every pose in one shot holds the prop low and the reference holds it out
+level, every start drawn from that shot's own frames is on the wrong side of the
+same two-chain minimum, and multi-start inside the shot barely moves the number.
+These shots are states of one character, so a configuration this shot never visits
+may be sitting in another one — take the start from there. ⇒ Borrow **only the bones
+of the chain in question**, never a whole foreign pose: a foreign pose puts the legs
+where this shot never goes, and the rest of the search then spends itself fighting
+what the borrow brought with it.
 
 **Re-fit the setup pose against frames drawn from every shot, not against one.** Every
 animation is measured from the setup pose, so an error in it is an error in all of
@@ -1725,6 +1806,22 @@ key its end, at the same value; drop the ones in between. This is §9.2's *"held
 that is not held"* from the other side, and the same place catches it — a sloped
 hold shows up in `check`'s per-frame column and nowhere else, because it is cheap in
 every single frame and wrong only in the relation between two.
+
+⚠️ **The key reducer has to key the plateau, because a plateau is neither an end nor
+a turn.** A planner that forces the series ends and every change of direction —
+which is exactly what the rule above asks for — will still author a slope straight
+through a run of still frames: not one sample in the middle of a hold is an end or
+a turning point, and a greedy span stays inside its own per-bone tolerance the whole
+way across. **A tolerance is not a hold.** Slow motion inside the tolerance is a
+tolerance question; stillness is a thing the shot *does*, and it survives the
+reduction only if the reduction is told to keep it. ⇒ Force **both ends of every run
+of equal values** as keys in their own right — a third kind of forced index beside
+the series ends and the turning points — and test on **exact** equality, so that a
+merely near-still span is deliberately not swept up with it. This is worth doing
+before you have any evidence you need it: a run whose *poses* are all right can fail
+this and see nothing wrong anywhere else, because `validate` has no opinion on it,
+`diff` never looks at a rendered frame, and an aggregate MAE is cheap in every
+single frame and wrong only in the relation between two.
 
 📗 **Add a key when a curve cannot carry the shape.** *"If a curve is not smooth
 enough, it is easily remedied by adding another key"*, and the **Bounce** handle
