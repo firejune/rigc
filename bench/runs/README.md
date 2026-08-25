@@ -192,7 +192,7 @@ this ladder so far arrived through a document the run was *told* to read.
 | --- | --- |
 | `examples/*/export/*.json` | the reference skeleton. This is the answer |
 | `bench/transcriptions/**` | the same answer rewritten by a script that read it |
-| [docs/LADDER.md](../../docs/LADDER.md)'s **status table** and its **per-rung sections** | the table's *New at this rung* column publishes bone, slot and animation counts per skeleton, which the briefs withhold on purpose; the per-rung sections publish every previous run's measures. Both are the ladder's bookkeeping and stay where they are — a run simply does not read them. The two parts of that document a run *should* read are *How a rung is scored* and *The honesty rule* |
+| [docs/LADDER.md](../../docs/LADDER.md)'s **status table**, its **per-rung sections** and its **Operating rules** | the table's *New at this rung* column publishes bone, slot and animation counts per skeleton, which the briefs withhold on purpose; the per-rung sections publish every previous run's measures; and *Operating rules* — the pass definition and gate v1 — derives its thresholds by quoting those measures back, so it carries them too. All three are the ladder's bookkeeping and stay where they are — a run simply does not read them. The two parts of that document a run *should* read are *How a rung is scored* and *The honesty rule* |
 | [docs/SPEC_COVERAGE.md](../../docs/SPEC_COVERAGE.md) | all of it. Part 3 inventories what the corpus actually uses and part 4 lists, rung by rung, the bones, slots, constraints, attachment kinds and timelines each example skeleton carries. It is a reference export in prose |
 | [`src/ladder.ts`](../../src/ladder.ts)'s **gate strings** | the same counts again, in code — `gates:` on each rung entry names the features and the sizes |
 | **issue bodies carrying counts or measures** | the per-rung issues (#10–#18) and any issue quoting a `bench` line. A number reaches an agent the same way whichever file it is in |
@@ -252,7 +252,7 @@ another route, and the rule against derived forms below covers it.
 
 **The forbidden list is the table in *What a run may read* above** — one copy, and
 that is the copy. It names `examples/*/export/*.json`, `bench/transcriptions/`,
-`docs/LADDER.md`'s status table and per-rung sections, `docs/SPEC_COVERAGE.md`,
+`docs/LADDER.md`'s status table, per-rung sections and *Operating rules*, `docs/SPEC_COVERAGE.md`,
 `src/ladder.ts`'s gate strings, issue bodies carrying counts, `render_reference.ts`,
 git history, and any derived form of any of them.
 
