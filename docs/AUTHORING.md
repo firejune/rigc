@@ -1601,19 +1601,19 @@ a part you have not authored, or one you have put somewhere else entirely.
 ```
      chains     6 from the candidate's own bone tree — the roster is at the foot of the report
        chain                 slots   worst slot drift                     mean   MAE in it   share
-       neck                    5/5   3.0 px "goggles" f0004              2.3 px       30.37    24.3%
-       rear-upper-arm          6/6   2.2 px "gun" f0000                  1.4 px       46.26    34.6%
-       front-thigh             3/3   16.3 px "front-shin" f0003          7.2 px       48.18     9.0%
+       crest                   5/5   3.0 px "lantern" f0006              2.4 px       28.40    31.5%
+       prop-arm                6/6   2.0 px "prop" f0002                 1.5 px       44.90    33.0%
+       near-strut              3/3   15.0 px "strut-tip" f0004           7.0 px       51.30     8.5%
 ```
 
 `check` cuts **your own** bone tree at every branch point — a chain runs from a
 root or a fork down to the next fork; a single-bone chain that is itself a fork
-folds into its parent, so a `torso` that branches three ways joins the trunk rather
+folds into its parent, so a `hub` that branches three ways joins the trunk rather
 than becoming a row of its own; and each chain is named after the first bone in it
-that carries a slot. On a biped that lands on the parts you would name (`neck`,
-`front-thigh`, the gun arm); on a serial figure with no fork it is one chain, and
-the slot rows under it still say which link moved. Which bones and slots went where
-is printed as a roster at the foot of the report, so it is never a guess. `MAE
+that carries a slot. On a biped that lands on the parts you would name (`crest`,
+`near-strut` and `prop-arm` above); on a serial figure with no fork it is one chain,
+and the slot rows under it still say which link moved. Which bones and slots went
+where is printed as a roster at the foot of the report, so it is never a guess. `MAE
 share` divides the difference over the **reference's** own drawn pixels — the
 denominator from the line above, which nothing you draw can grow — and splits it by
 giving each of those pixels to the chain whose ink is nearest, so the shares
