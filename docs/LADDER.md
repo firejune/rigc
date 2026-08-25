@@ -1,7 +1,8 @@
 # The benchmark ladder
 
 **Live status document.** The rung order, what each rung gates on, how a rung is
-scored, and where each one stands today. The survey behind it is
+scored, what a pass is (*Operating rules*, gate v1), and where each one stands
+today. The survey behind it is
 [SPEC_COVERAGE.md](SPEC_COVERAGE.md) — that document is a dated research note and
 does not move; this one does.
 
@@ -61,6 +62,12 @@ single number cannot distinguish a rig with the right skeleton and the wrong
 timing from a rig with the right timing and the wrong skeleton, and those call
 for opposite fixes. **A rung is marked cleared by a person reading the measures,
 and this file is where that judgement is written down.**
+
+What that person reads the measures *against* is **gate v1**, in *Operating rules*
+below: which measures decide a rung, which are reported without deciding anything,
+and the number each of the deciding ones has to clear. 🚫 That section quotes
+previous runs' figures to derive those numbers, so an authoring run does not open it
+— the pointer is here for whoever is judging a candidate rather than building one.
 
 #### `bones` and `slots` carry two figures
 
@@ -135,6 +142,18 @@ and no other section is affected:
 Where the new measure still reads short it is naming a real disagreement about a
 size — four rigs out of nine — which is what the old one never could.
 
+**2026-08-25 — gate v1 introduced** (issue
+[#153](https://github.com/firejune/rigc/issues/153)). **No measure's definition
+changed and no recorded figure moves**: what arrived is a *pass definition* over the
+measures already listed above — which of them decide a rung and which are reported
+without deciding anything — and the version label `gate v1` for that set. It is
+recorded here because the instrument panel is what this subsection tracks, and
+because a change to it is the event that reopens previously passed rungs; its clauses
+and their derivation are in *Operating rules* below, which is not read by an
+authoring run. Every `bench.json` on disk stays exactly as its run wrote it, and a
+run made before #28 is read through the recompute table above rather than through its
+own file.
+
 **Stage 3 — per-frame pose distance. Named, not built.** The structural diff
 compares what the file *says*; it cannot see that two structurally identical rigs
 pose differently. The measure for that is **per-frame bone world-transform
@@ -196,15 +215,16 @@ each:
   repository's source and README as format documentation; the CLI (`bench` once, at
   the end); and earlier runs' `README.md`/`LOOP.md` for **process** only.
 - 🚫 **Forbidden** — `examples/*/export/*.json`; `bench/transcriptions/`; **this
-  document's status table and its per-rung sections**; [SPEC_COVERAGE.md](SPEC_COVERAGE.md);
+  document's status table, its per-rung sections and its *Operating rules***; [SPEC_COVERAGE.md](SPEC_COVERAGE.md);
   [`src/ladder.ts`](../src/ladder.ts)'s `gates:` strings; issue bodies carrying counts
   or measures; `bench/render_reference.ts`; git history; and any derived form of any
   of them.
 
-⚠️ **Two of those forbidden entries are this document.** The status table's *New at
+⚠️ **Three of those forbidden entries are this document.** The status table's *New at
 this rung* column publishes bone, slot and animation counts per skeleton — the
-briefs withhold exactly those, on purpose — and the per-rung sections below publish
-every run's measures. **They stay.** They are the ladder's bookkeeping and a reader
+briefs withhold exactly those, on purpose — the per-rung sections below publish
+every run's measures, and *Operating rules* derives its thresholds by quoting those
+measures back. **They stay.** They are the ladder's bookkeeping and a reader
 of the ladder needs them; what changes is that an authoring run does not read this
 file except for *How a rung is scored* and *The honesty rule* above.
 [SPEC_COVERAGE.md](SPEC_COVERAGE.md) is on the list for the same reason and more
@@ -220,6 +240,213 @@ outright. Recorded, not hidden — the run's README and `LOOP.md` §1 name both 
 
 The written form of all this, per rung and per run:
 [`bench/briefs/`](../bench/briefs/) and [`bench/runs/README.md`](../bench/runs/README.md).
+
+---
+
+## Operating rules
+
+**Decided 2026-08-25**, issue [#153](https://github.com/firejune/rigc/issues/153).
+*How a rung is scored* above says what is measured; this section says what a
+measurement is allowed to decide. Four rules: what a pass is, the numbers it is
+made of, what closes a rung and what reopens one, and the order the rungs are
+climbed in.
+
+🚫 **An authoring run does not read this section**, and it is on the forbidden list
+above for the reason the status table is: the thresholds below are derived by quoting
+previous candidates' measures, and a number reaches an agent the same way whichever
+file it is in. A run does not need it — `bench` is the finish line, and the gate is
+the reader's instrument rather than the author's. Whether a *brief* may carry the
+gate's clauses stripped of their derivation is a protocol question, and it belongs to
+whoever revises the protocol rather than to a run.
+
+### 1. A pass is a quality gate, not a replica test
+
+The product posture is **"AI lays the foundation; finish in the editor."** A rung
+passes when the draft is foundation-quality: the structure and the motion the frames
+can constrain are inside the thresholds in rule 2. Structure that is **unobservable
+by construction** is reported as figures and **never gates** — it is what the editor
+session is for, and the ladder has now demonstrated three times over that no
+authoring convention reaches it, because there is nothing in the input to read it
+off.
+
+⭐ **The test is not "is this measure hard?" but "could any reading of the frames have
+decided it?"** Key density is hard *and* undecidable; a wrong region size is easy
+*and* decidable; and a shot's duration is handed to the author outright. Only the
+middle kind is allowed to fail a rung. This is the honesty rule's own line — *what a
+client watching the finished animation could tell you* — applied to the verdict
+instead of to the inputs, and it resolves the question left open around
+[#20](https://github.com/firejune/rigc/issues/20) and the `ball` residual under
+*Rung 8, attempt 2*.
+
+**What is unobservable by construction — reported, never gating.** Each row is a
+finding this ladder already recorded, not a new claim:
+
+| Measure | Why no reading of the frames decides it |
+| --- | --- |
+| `constraints.*` (all five) | a physics chain and a hand-keyed chain draw identical frames — rung 6's four transform constraints and rung 8 `ball`'s four, both correctly left unauthored |
+| `bones.length_present`, `bones.inherit_present` | AUTHORING §9.3 lists both as invisible in frames, and §10 has no public page to read a default off. 1/3 in both rung 3 attempts |
+| `attachments.mesh_vertices`, `mesh_triangles`, `mesh_hull`, `mesh_weighted`, `attachments.type_counts`, `attachments.region_size` | §9.3: a hull moved by a bone chain and the same hull moved by deform keys render to the same pixels, and it names these four measures **and the bone count** as the ones that move on that invisible decision. A mesh states no region size, so `region_size` moves with it — rung 6 reads 2/3 there for having one mesh where the reference has two. Rung 8 `ball`'s mesh topology is invented and the frames cannot see any of it |
+| `slots.agnostic.attachment_types_by_position` | positional, but the *type* at each position is the region-versus-mesh choice above |
+| `animations.key_counts` | §10.6 says outright that no public page gives a density, and [#112](https://github.com/firejune/rigc/issues/112) shows the shot's own acceleration pins the knob. Missed from **both** sides on this ladder — a third short at rung 3, twice as dense at rung 8 |
+| `animations.curve_kinds` | §10.4 moved it and cannot finish it: a curve split *between* two reference frames leaves no trace at the rate the frames were rendered, so the residual is a split below the sampling rate |
+| `animations.timeline_kinds` | Separate-versus-combined is a checkbox, not a picture: `translate` with a flat y channel and `translatex` alone render identically. The cleared `pendulum` posts **0.625** here |
+| `animations.event_keys`, `events.names`, `events.payloads` | a firing is not a pixel, and the briefs decline to spell the names. spineboy has paid `events` 0.500 for that refusal twice, deliberately |
+| every name-keyed measure — `bones.names`, `parent_by_name`, `order`, `slots.names`, `slots.bone`, `attachments.names` | unwinnable by design: the brief grants the author its own names. This is what the name-agnostic pair exists for, and it is why no *section mean* is gated |
+| any measure reading 1.000 at `0/0` | vacuous, and the document has said so since B1's proof. A gate that counted these would pass a rung for having nothing |
+
+⚠️ **`attachments.region_size_present` must not be cited as the unwinnable measure it
+was once called, and notes drafted before 2026-08-23 that do are wrong twice over.**
+The measure does not exist — it is `attachments.region_size` now — and the
+unwinnability claim it was retired *under* did not hold: Spine's exporter omits
+nothing, and all twelve reference exports state a width and a height on every one of
+their 168 regions. What made the old measure read `0/8` was that it was keyed by
+name. See the 🔴 correction under *Rung 1* and the 2026-08-23 entry under *Measure
+changes*. Its replacement is on the table above for a **different** reason, and only
+the new reason may be quoted: a size disagreement is observable, but the same
+histogram also moves when a part is meshed rather than posed, and no frame decides
+that.
+
+⚠️ **The unobservable set reaches through measures that look observable, and the
+gate has to let it.** Rung 8 `ball` posts `bones.count` **8/12** and name-agnostic
+`bones` **0.517** — figures that name no names and look like a plain structural
+miss. They are the four constraints again: the four bones the reference's constraints
+drive draw nothing of their own, so the frames cannot ask for them, and
+`slots.agnostic.bone_binding_shape` and `order_shape` inherit the same hole at 0.500
+apiece. ⇒ **`bones.*` and the `bones`/`slots` name-agnostic means are reported and do
+not gate.** A bone is reachable only through the motion it produces, and the motion
+is gated directly in G2 and G3: a rig missing a joint that carries observable motion
+fails there, and a rig missing one that carries none has lost nothing a frame could
+show.
+
+### 2. Gate v1 — the thresholds
+
+⭐ **Leniency that is not written down is not a gate.** Every clause below is a
+number, the number has a derivation beside it, and the set is versioned so that
+changing one is an event rule 3 can act on. Calibration is deliberately **lenient**:
+the floors sit above every figure a commander's reading has already called faithful,
+and tightening them later is what rule 3's re-inspection is for.
+
+Gate v1 is judged **per skeleton**, on `validate --profile spine`, on `bench`'s
+measure table, and on `check` over every committed frame set of that candidate.
+
+| # | Clause | Threshold | Where the number comes from |
+| --- | --- | --- | ---: |
+| **G1** | validity | **0 FAIL** under `--profile spine` | stage 1, unchanged. Twelve honest runs have posted 0 FAILs, so this clause has never yet decided anything — it stays because a candidate that is not valid Spine 4.3 has cleared nothing |
+| **G2** | worst attributable slot drift, in **every** measured set | **≤ 6.0 px** | cleared candidates post **0.74–0.85 px** (rung 3 attempt 2, both sets) and **3.3 px** (rung 8 `pendulum`). Above them sit **4.1 px** (rung 6, at the frames' own box) and **4.2 px** (rung 8 `ball` attempt 2, **5.3 px** at attempt 1), the two highest figures any entry here describes as faithful motion. spineboy attempt 3 posts **14.6 px**, which its own entry calls a visible error on a 100 × 146 px figure. 6.0 clears the highest of those by ~1.8 px and refuses the open one by 2.4×. Deliberately **absolute** and not a fraction of the figure: `check`'s drift is in the frames' own pixels, and a relative bar would license a large rig the visible error a small one is refused |
+| **G3** | per-frame motion, in **every** set | `changeDisagreements` = **0**, and **no** set carrying `⚠️ overdraw` | `pendulum` is attributed in every frame of both sets; `ball` attempt 2 posts agreement on all 44 and all 87 adjacent pairs. spineboy posts **14** disagreements at attempt 2 and **3** at attempt 3 — a limb that teleports, a hold that is not held, a one-frame event that never fires. The overdraw half is not leniency but a hole plugged: `mae`'s denominator is the union, so drawing more buys a better mean ([#119](https://github.com/firejune/rigc/issues/119)), and `OVERDRAW_RATIO` is already 1.5 in [`src/check.ts`](../src/check.ts) against a corpus that spans 0.852–1.069 on 62 of 64 sets |
+| **G4** | the shot inventory | `animations.count`, `animations.names`, `animations.duration` all **1.000** | the least deniable facts on the ladder, and all three are effectively granted: the brief describes each shot the author is to build, and the frames are rendered over each animation's own length, so their count states the duration exactly. Every cleared candidate posts 1.000 on all three, and so do both spineboy attempts and both `ball` attempts — no run has ever needed leniency here, and the runs that do read short (rung 1 `balls`, rung 2, both `duration` 0.000) are naming a real, watchable defect |
+| **G5** | the drawn inventory, name-agnostically | `slots.count` ≥ **0.85** and `attachments.count` ≥ **0.85**, each read **after** the itemised deduction below | a part the reference draws and the candidate does not is the one structural fact a client watching the shot reports. These are the only two structural measures in `bench`'s table that a *count* alone decides — every other one is keyed on a name, on an attachment kind, on a key density or on a constraint. Cleared candidates post **1.000** on both (rung 3, `pendulum`), and so does `ball` attempt 2; the floor is set from the largest rig measured, spineboy attempt 3's **0.952 / 0.931**, so that a character-scale rig clears on the structure its own entry calls *the editor's skeleton* and the rung is decided on motion, which is the half that entry says is open |
+| **G6** | the rung | every skeleton of the rung meets G1–G5 | rung 1's precedent, and rung 8 is where it bit: `pendulum` cleared while `ball` did not, and the rung stayed 🟨 |
+
+🧾 **G5's deduction, and why a bare count is not enough.** An element the frames
+cannot show is deducted from the **reference's** side of G5's counts, **item by item
+and each one named in the rung's section**, before the ratio is read. Three kinds qualify, and the ladder has
+already itemised one of each: an attachment kind no pixel carries (spineboy `ess`
+declined a **bounding box**, which its own entry calls its most arguable omission);
+a part the reference draws that nothing in the frames distinguishes (rung 1 `drop`'s
+**`ground-cover`** layer, 4 slots against 5, recorded as *one invisible layer*); and
+a part folded into another slot as an attachment swap where the frames never show
+both at once. ⇒ **A deduction that cannot name its item is not a deduction.** This is
+the clause that keeps G5 a gate rather than a way of failing a rung for the invisible
+after rule 1 said the invisible does not fail rungs; it is also the only clause in
+gate v1 that takes a reader's judgement, which is why it has to be written down
+element by element where the verdict is.
+
+⚖️ **Where the leniency is, and where it is not.** G2, G3's overdraw half and G5 are
+loose on purpose — they sit above the recorded honest range rather than at it,
+because a first calibration that fails a candidate a reader would have passed teaches
+the ladder nothing. G3's disagreement count and G4 are at zero and 1.000 because
+nothing on this ladder has ever argued for slack there: a hold that is not held and a
+shot that is missing are both visible in the frames the author was given.
+
+🚫 **What cannot gate even though it is observable: the MAE.** `check`'s means are
+the instrument the loop is run on and they are **not** comparable across rungs or
+across framings. Rung 5's course plate renders at **4.29** against its own frames
+with nothing else in the skeleton — every shot has its own floor — the same build
+moved **4.34 → 39.00** on a content box 0.93 % narrower, and §9.2 puts a set that
+cannot take `frames.json`'s own box at 15–25 MAE before any key is wrong. A
+cross-rung threshold on a figure like that would fail rungs for the plate they were
+drawn on. ⇒ **MAE is reported, per set, and decides nothing.** Drift is gated instead
+because it is per-slot and framing-independent in a way the means are not.
+
+🕳️ **A set with no attributable drift is a HOLE, not a pass.** `framesWithoutDrift`
+equal to the frame count means G2 has nothing to read, and rung 4 is the case: the
+disc and its five-link chain are one connected component in every frame, so that run
+had an MAE and nothing else. A set in that state does not meet G2 by default — the
+run pins the viewport, splits the chain table, or says outright that this candidate
+cannot be gated and why. This is the repository's own rule about vacuous assertions,
+applied to the gate that judges them.
+
+📌 **Report the whole table anyway.** A gating clause and a reported figure are
+printed side by side and labelled, exactly as `bench` already prints the name-matched
+and name-agnostic pair. The reported half is where the editor-finishing work lands,
+and a verdict that quoted only the six gating clauses would be a rung score by
+another route — which this document has refused since *How a rung is scored*.
+
+⚠️ **And a reported figure with two possible causes is read down to one before it is
+written off.** `attachments.region_size` is the case: short *because* a part was
+meshed rather than posed is the invisible choice rule 1 exempts, and short *because
+two rigs disagree about how big a part is* is a defect a client would report and a
+reason to look at G2's drift on that slot. The measure does not gate either way, and
+a verdict that says only *"unobservable"* about it has not read it. `bones.count` is
+the same shape: rung 8 `ball`'s **8/12** is four constraint-driven bones and says so
+with its own `constraints` 0/4 beside it, and a shortfall on a rung whose reference
+declares no constraints is a different finding that has to be named differently.
+
+### 3. Close on pass; a gate change re-inspects everything
+
+A rung that meets the gate **closes its ladder issue**. The verdict, the figures and
+the clause each one was read against are written into that rung's section here, the
+status cell goes ✅, and the rung stops taking attempts for their own sake — the way
+spineboy already stopped as a frozen gate.
+
+⚠️ **Any instrument-panel change makes every previously passed rung subject to
+re-inspection against the new gate.** The panel is: `check`'s or `bench`'s scoring
+semantics, a measure's definition, a threshold in rule 2, and the pass definition in
+rule 1 itself. Re-inspection is a re-read of stored candidates, not a re-authoring —
+`check` re-scores a stored skeleton and stored frames, and no run is owed to it. Only
+the rungs that **fail** the new gate reopen; a rung that still passes is left closed
+and its section records that it was re-inspected and against which gate version.
+
+⇒ **So the instruments are finished before the adjudicating starts, not after.**
+Fixing a measure after a verdict reopens the verdict, which is why gate v1 is written
+down before the pass over the existing runs rather than during it, and why
+[#146](https://github.com/firejune/rigc/issues/146), [#36](https://github.com/firejune/rigc/issues/36)
+and [#37](https://github.com/firejune/rigc/issues/37) are landed before it. Each gate
+version is recorded under *Measure changes*, and 🚫 **no `bench.json` is ever
+rewritten** — a run's file is that run's own record, and a re-inspection that
+disagrees with it says so in prose beside the recomputation.
+
+### 4. Climb order under this gate
+
+The order in *The order* above is unchanged; what follows is the sequence the
+remaining work is taken in.
+
+1. **Guide debt first** — [#138](https://github.com/firejune/rigc/issues/138)–[#142](https://github.com/firejune/rigc/issues/142),
+   the five defects spineboy attempt 3 filed. They change no stored score, so they can
+   run alongside the instrument fixes: different files, no interaction.
+2. **The cheap rungs, bottom-up, on the matured guide and the finished instruments** —
+   rung 2 (brief revision 3 first), then 1, 4, 5, 6, and rung 7, which has never been
+   attempted and is local-only under *Licence, per rung*. Only the rungs that fail the
+   gate on **observable** measures are re-attempted; a rung whose whole residual is
+   unobservable is adjudicated, not re-run. Rung 8's `ball` is the first candidate for
+   that reading — its recorded block was *"no further attempts without a new
+   observable input"*, and rule 1 is the protocol change that block was waiting on.
+3. **spineboy `ess` is the graduation exam**, taken last, on the matured guide.
+   `pro` stays gated on [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)
+   and is **not** a graduation requirement ([#16](https://github.com/firejune/rigc/issues/16)):
+   it promotes when a user's rig needs those timelines, not to finish a ladder.
+4. **Then the project's question changes.** Once the graduation gate passes, *does it
+   match the editor?* — a reference-bound question, and the only kind this ladder can
+   ask — gives way to *is it usable without a reference?* The usability track
+   ([#151](https://github.com/firejune/rigc/issues/151), [#152](https://github.com/firejune/rigc/issues/152))
+   is that phase's backlog, and the ladder's rungs stay as regression gates for tool
+   and method changes.
+
+⭐ **A user's demand signal jumps this queue at any point.** The order above is what
+the project does in the absence of one; it is not a commitment to spend a session on
+a rung when somebody's actual rig needs something else. The ladder measures the tool
+— it is not the roadmap.
 
 ---
 
@@ -1120,6 +1347,15 @@ every rung on this ladder has been run under, and it belongs to whoever revises 
 protocol rather than to a run. [#20](https://github.com/firejune/rigc/issues/20) is
 the same shape of question for key density.
 
+> ➡️ **That question was decided on 2026-08-25, and the answer was the other one.**
+> The protocol change is not a hint in the brief but a pass definition that stops
+> asking: *Operating rules* rule 1 reports unobservable structure and never gates on
+> it, so neither the four constraints nor the key density above can fail a rung
+> ([#153](https://github.com/firejune/rigc/issues/153)). **Whether this candidate
+> meets gate v1 is the adjudication pass's verdict and not this entry's** — nothing
+> recorded above is withdrawn or restated, and the figures stay as the run measured
+> them.
+
 ⚠️ **One leak, and the run recorded it rather than burying it.** The mesh-versus-region
 choice for the ball came from [AUTHORING.md](AUTHORING.md) §9.3, which stated this
 rung's reference structure outright, in a document the protocol requires an
@@ -1456,6 +1692,13 @@ figures** — `bones` **0.924** name-matched / **0.967** name-agnostic, `slots` 
 post**, `pendulum` and rung 3 at **0.7–3.3 px** of worst slot drift. A claim that does not
 beat them is not an improvement, and a run is not owed to it.
 [#16](https://github.com/firejune/rigc/issues/16) stays open: a gate is not a clearing.
+
+> ➡️ **Those same floors became gate v1's G2 on 2026-08-25** — *Operating rules* rule
+> 2 turns the 0.7–3.3 px band this paragraph names into a written threshold, and rule
+> 4 makes this rung the graduation exam taken last, on the matured guide. The freeze
+> above is unchanged: an attempt is still owed only to a claim that beats these
+> figures. What is new is that a **gate** change now reopens a passed rung on its own
+> (rule 3), which is why the instruments are finished before the adjudicating starts.
 
 ---
 

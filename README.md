@@ -175,14 +175,19 @@ same pixels whatever coordinates they were authored in, an invisible transparent
 margin cannot move the result, and no single quad corner in a single frame can set
 the scale for a run.
 
-There is no pass mark, for the same reason `diff` has none.
+There is no pass mark **in the tool**, for the same reason `diff` has none. The
+ladder's pass definition and its thresholds are a document read by a person over
+the whole table — [docs/LADDER.md](docs/LADDER.md)'s *Operating rules* — and not an
+exit code either command could produce.
 
 ### Benchmark ladder — the rungs, and where they stand
 
 **[docs/LADDER.md](docs/LADDER.md) is the live ledger**: the rung order
 (blockers → rung 3 first → 1 · 2 · 4 · 5 → 6 → 8 → 7 → spineboy), what each
 rung gates on, how a rung is scored, the honesty rule that keeps the reference
-export away from the authoring agent, and a status table. Run one with:
+export away from the authoring agent, the operating rules — what a pass is, and
+the numbered thresholds of **gate v1** that decide one — and a status table. Run
+one with:
 
 ```bash
 bun cli.ts bench 3 --candidate path/to/candidate/spine
