@@ -202,7 +202,7 @@ exit code either command could produce.
 (blockers → rung 3 first → 1 · 2 · 4 · 5 → 6 → 8 → 7 → spineboy), what each
 rung gates on, how a rung is scored, the honesty rule that keeps the reference
 export away from the authoring agent, the operating rules — what a pass is, and
-the numbered thresholds of **gate v1** that decide one — and a status table. Run
+the numbered thresholds of the current gate (**gate v2**) that decide one — and a status table. Run
 one with:
 
 ```bash

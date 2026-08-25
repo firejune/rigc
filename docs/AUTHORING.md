@@ -18,13 +18,32 @@ that can see that, and a run that skips it has verified nothing about the motion
 - Formats and CLI reference: [README.md](../README.md)
 - The rig spec's own source-level documentation: [`src/rig.ts`](../src/rig.ts)
 - The motion spec and emitted shapes: [`src/types.ts`](../src/types.ts)
-- What the format holds and rigc covers: [SPEC_COVERAGE.md](SPEC_COVERAGE.md)
+- What the format holds and rigc covers: `docs/SPEC_COVERAGE.md` — 🚫 **not an
+  authoring input, and deliberately unlinked**: it inventories the benchmark corpus
+  skeleton by skeleton, so it is on the ladder run's forbidden list. Named here for a
+  maintainer, not offered to a run
 - Reproducing a shot you were given as pictures: **§8**, and read it *before* you
   start measuring rather than after; **§8.1** if the figure has more joints than you
   can measure one at a time; then **§9** for the loop that closes it
 - The conventions an editor user follows without being told — one image per
   attachment, keying practice, curve kind, draw order — sourced from Spine's own
   public documentation: **§10**
+
+🔒 **A ladder run reads this guide in full and does not follow its references out of
+it.** The guide is allowed reading; not everything it cites is. Citations here are
+provenance for a reader of record — the loop that hit a trap, the issue that closed it —
+and following one can arrive at a stored candidate's own spec, at the corpus inventory,
+or at the gate a verdict is read against, none of which a run may open. So: read the
+document, take its numbered sections as the input, and leave its footprints to whoever
+is maintaining it. The rule this states is that an **allowed-reading surface has to be
+closed under reading**; the criterion behind it is under *The honesty rule* in
+[LADDER.md](LADDER.md), and the enumerated allowed and forbidden lists are in
+`bench/runs/README.md`, *What a run may read* — the prompt that starts a run quotes them
+outright, which is the copy that binds.
+
+If you were given no brief and no frames — you are rigging somebody's own art rather
+than reproducing a measured shot — none of this applies to you. It is the ladder's
+protocol, not a property of the tool.
 
 ## The vocabulary is Spine's
 
@@ -276,8 +295,8 @@ payloads in this guide are written to illustrate a field, never copied out of a
 reference export — an example lifted from one would be handing an authoring agent an
 answer to the rung it is standing on, which is the rule §10.6 states and the honesty
 rule in [LADDER.md](LADDER.md) turns on. If a snippet here matches a reference file,
-that is a defect in this guide: report it. (It has happened — 2026-08-23, see
-[`bench/runs/README.md`](../bench/runs/README.md), *What a run may read*.)
+that is a defect in this guide: report it. (It has happened — 2026-08-23; the incident
+is recorded in `bench/runs/README.md`, *What a run may read*.)
 
 ### 3.1 `skeleton` — the header
 
@@ -1000,10 +1019,9 @@ aggregate will not say so, and it can favour the variant while the per-frame row
 give base *every one* of the frames that carry most of the deciding pixels. That
 split — an aggregate one way, a consistent per-frame tally the other — is the
 signature of a control that asserts more than one thing, and reading the aggregate
-alone condemns an edge the brief settles by measurement. The rule
-[`bench/runs/README.md`](../bench/runs/README.md) carries from the other side is the
-same one: a control that returns an impossible number has told you something, so
-read the number rather than the pass or fail.
+alone condemns an edge the brief settles by measurement. The rule the run protocol
+carries from the other side is the same one: a control that returns an impossible
+number has told you something, so read the number rather than the pass or fail.
 
 ⚠️ **A render-back sweep whose spread is inside the objective's own scatter is
 *no answer*, not a weak one.** Rendering candidates back and keeping the best
@@ -1253,9 +1271,8 @@ frames, and spineboy's `@30fps` sets do the same. The frame table still says
 `frames 2 on disk, candidate samples 311, 2 compared` — those are the files — and a
 **`sheet` line under it** carries the other 309: your candidate sampled at the set's
 own rate, rendered into the same box the frames above were at the sheet's own scale,
-and compared tile by tile (issue #36, the gap
-[`bench/runs/2026-08-23-rung2-2/sheetcheck.ts`](../bench/runs/2026-08-23-rung2-2/sheetcheck.ts)
-prototyped in-run).
+and compared tile by tile (issue #36 — the gap a rung-2 run had already prototyped a
+comparator for, in its own working directory, because the tool could not see its shot).
 
 ⚠️ **Read it as a series, not as one number** — §9.2. And note what it does not
 carry: MAE only. The `Δpx` / `ref Δ` thresholds are calibrated at frame scale and a
@@ -1376,6 +1393,13 @@ your run ceasing to be an honest authoring run. It is a loop, in the way `build`
 a loop. `bench` and `diff` against a rung's export are not — they read the answer,
 and [the ladder's honesty rule](LADDER.md) makes them a finish line you reach once.
 
+📌 **That is also why the MAE figures quoted through this section stay.** Every one of
+them is a candidate's own reading against rendered frames — the exam question, not the
+answer key — so none of them narrows a reference-side measure, and a guide that censored
+them would be teaching less for no gain in honesty. The criterion is under *The honesty
+rule* in [LADDER.md](LADDER.md) (issue #158); what it *does* seal is a score written
+over a reference's own count, and no such figure appears here.
+
 🚨 **If you drive the runtime yourself, a bone's local transform lives on
 `bone.pose`.** A shot whose poses have to be *fitted* rather than read sends you
 past `check` and into your own render loop over
@@ -1401,8 +1425,8 @@ file, the next build reads those as zero, `validate` is green and `check` runs.
 ⇒ **A `null` in your own placements dump is the signature of having read
 `bone.data` directly** — nothing in this format is ever legitimately null. On
 spineboy it cost the candidate MAE 13.0 → 114.6 with a green gate throughout
-([`bench/runs/2026-08-23-spineboy-2/LOOP.md`](../bench/runs/2026-08-23-spineboy-2/LOOP.md),
-§4.1). Note that the two names are not the same thing: `bone.data.setupPose` is
+(measured in a spineboy attempt's own loop log, §4.1). Note that the two names are not
+the same thing: `bone.data.setupPose` is
 the setup transform, while `bone.setupPose()` on a `Bone` is the method that
 resets `bone.pose` back to it.
 
@@ -1413,8 +1437,7 @@ stores; what gets drawn is that stored quad — `computeWorldVertices` reads
 error nor a move. **Call `attachment.updateSequence()` after every write**, or
 every frame renders the quad it was loaded with. A setup fit on spineboy ran
 4,500 renders and reported the same number for all of them before this surfaced
-([`bench/runs/2026-08-23-spineboy-2/LOOP.md`](../bench/runs/2026-08-23-spineboy-2/LOOP.md),
-§4.2).
+(the same loop log, §4.2).
 
 ⇒ **An MAE that is identical across every pose, and that does not move for any
 parameter you sweep — a bone's local transform, an attachment's offsets — is one

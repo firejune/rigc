@@ -165,6 +165,16 @@ handed to an authoring agent must quote them both.** Not link them — quote the
 agent cannot avoid a document it was never told to avoid, and every leak recorded on
 this ladder so far arrived through a document the run was *told* to read.
 
+⭐ **What decides whether a text belongs on them is the answer-derivability test**, in
+[docs/LADDER.md](../../docs/LADDER.md)'s *The honesty rule*: a text is sealed **iff it
+states or constrains a reference-side value of a scored measure**, and provenance alone
+does not seal. That criterion lives there and only there, because it is a rule for
+whoever maintains these lists rather than something a run reads — the lists are the copy
+that goes into a prompt. Two consequences the test carries for this file: an allowed
+surface must be **closed under reading**, so a citation out of one into a sealed
+document is a leak by another route; and a candidate-side figure measured against the
+frames is not answer-bearing, so it is not swept out.
+
 **✅ Allowed — the complete list.**
 
 1. the rung's brief, `bench/briefs/<rung>.md`;
@@ -192,7 +202,7 @@ this ladder so far arrived through a document the run was *told* to read.
 | --- | --- |
 | `examples/*/export/*.json` | the reference skeleton. This is the answer |
 | `bench/transcriptions/**` | the same answer rewritten by a script that read it |
-| [docs/LADDER.md](../../docs/LADDER.md)'s **status table**, its **per-rung sections** and its **Operating rules** | the table's *New at this rung* column publishes bone, slot and animation counts per skeleton, which the briefs withhold on purpose; the per-rung sections publish every previous run's measures; and *Operating rules* — the pass definition and gate v1 — derives its thresholds by quoting those measures back, so it carries them too. All three are the ladder's bookkeeping and stay where they are — a run simply does not read them. The two parts of that document a run *should* read are *How a rung is scored* and *The honesty rule* |
+| [docs/LADDER.md](../../docs/LADDER.md)'s **status table**, its **per-rung sections** and its **Operating rules** | the table's *New at this rung* column publishes bone, slot and animation counts per skeleton, which the briefs withhold on purpose; the per-rung sections publish every previous run's measures; and *Operating rules* — the pass definition and the current gate — derives its thresholds by quoting those measures back, so it carries them too. All three are the ladder's bookkeeping and stay where they are — a run simply does not read them. The two parts of that document a run *should* read are *How a rung is scored* and *The honesty rule* |
 | [docs/SPEC_COVERAGE.md](../../docs/SPEC_COVERAGE.md) | all of it. Part 3 inventories what the corpus actually uses and part 4 lists, rung by rung, the bones, slots, constraints, attachment kinds and timelines each example skeleton carries. It is a reference export in prose |
 | [`src/ladder.ts`](../../src/ladder.ts)'s **gate strings** | the same counts again, in code — `gates:` on each rung entry names the features and the sizes |
 | **issue bodies carrying counts or measures** | the per-rung issues (#10–#18) and any issue quoting a `bench` line. A number reaches an agent the same way whichever file it is in |
