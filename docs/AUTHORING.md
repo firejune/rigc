@@ -1246,19 +1246,22 @@ to fit one framing across every set instead of one each, `--all-frames` to list
 every frame instead of the worst by MAE, `--json <out>` for the whole per-frame,
 per-slot report.
 
-⚠️ **A frame set may be contact-sheets-only.** `check` only reads `fNNNN.png`
-files — a committed reference set that ships a contact sheet plus a couple of
-stills (rung 2's does: `f0000.png` and `f0310.png` per animation, the rest folded
-into `contact.png` so a 311-frame shot does not commit 311 near-duplicate PNGs)
-reports `frames 2 on disk, candidate samples 311, 2 compared` and means it: `check`
-compared exactly the committed stills, not the shot. That is not a defect to author
-around — the frame count line says so rather than pretending a fuller comparison
-happened — but it does mean a clean `check` table on a contact-sheet-only set says
-nothing about the frames between the stills. Whole-shot fidelity against a contact
-sheet needs a tile-wise comparison against the sheet's own grid, which `check` does
-not do yet (issue #36);
+⭐ **A frame set may ship a contact sheet instead of every frame, and the sheet is
+compared too.** A long shot does not commit 311 near-duplicate PNGs: rung 2's sets
+ship `f0000.png` and `f0310.png` plus a `contact.png` holding all 311 sampled
+frames, and spineboy's `@30fps` sets do the same. The frame table still says
+`frames 2 on disk, candidate samples 311, 2 compared` — those are the files — and a
+**`sheet` line under it** carries the other 309: your candidate sampled at the set's
+own rate, rendered into the same box the frames above were at the sheet's own scale,
+and compared tile by tile (issue #36, the gap
 [`bench/runs/2026-08-23-rung2-2/sheetcheck.ts`](../bench/runs/2026-08-23-rung2-2/sheetcheck.ts)
-is a working prototype, built in-run for exactly this gap.
+prototyped in-run).
+
+⚠️ **Read it as a series, not as one number** — §9.2. And note what it does not
+carry: MAE only. The `Δpx` / `ref Δ` thresholds are calibrated at frame scale and a
+tile has a fraction of a frame's pixels, so the per-frame change measure stays on
+the committed stills, where it reports `no two compared frames are adjacent` and
+means it.
 
 `--fps <n>` exists for frame sets that have no `frames.json` beside them, which are
 sets rendered before the sidecar existed: it gives the rate those frames were
@@ -1315,8 +1318,10 @@ question first: *do this set's own drawn pixels land in the box `frames.json`
 records?* The sets that do are measured in that box, which is exact — it is not an
 estimate of where the frames were drawn, it is where they were drawn — and nothing
 another set does can move them. The sets that do not are measured in **one shared
-framing** fitted across every set, printed as the header's `shared box` line. Each
-set says which it got on its own `framed to` line.
+framing** fitted across every set, printed as the header's `shared box` line, plus
+their own whole-pixel MAE refinement off it (§9.2) — the fit is shared because more
+frames condition it better; the constant offset it still leaves is per set, and
+measured per set. Each set says which it got on its own `framed to` line.
 
 Why the split falls there, both halves measured on an 8-shot character (147 frames):
 
@@ -1424,6 +1429,7 @@ cannot.
   reference  256x116px  0.117628 px/unit  world x[-573.3 .. 1603.0] y[-81.2 .. 908.9]  (frames.json)
   content    candidate 234.6x95.5px at (11.3, 11.5)   reference 234.7x95.3px at (11.2, 11.7)   (union over 86 frame(s))
              ⤷ fit x0.999256  offset +0.05, -0.02 px   rms 0.42 px over 344 edge(s)   union residual -0.27 x +0.17 px   aspect -0.30%  (derived, 4 pass(es), settled)
+             ⭐ MAE-refined by -1, +1 px: 54.31 → 48.47 over the reference's own pixels (10.7% of the figure). …
   in units   candidate 1995.3 x 809.7   reference 1995.3 x 809.9   x0.9999
 
   ── heavy — candidate animation "heavy", 12 fps ──
@@ -1433,6 +1439,8 @@ cannot.
      slot drift worst 2.1 px  "pendulum" at f0029
      per-frame 1 of 64 adjacent pair(s) change by a different amount than the reference does; worst
                f0018, yours moved 0 px where the reference moved 374
+     sheet      311 of 311 tile(s) of contact.png at 64x57px in 8 column(s)   MAE mean 4.30  worst 4.76 at f0047
+                ⤷ worst 8: f0047=4.8  f0048=4.7  f0045=4.7  f0039=4.7  f0149=4.7  f0044=4.6  f0046=4.6  f0043=4.6
 
      the 9 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
        frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
@@ -1494,6 +1502,12 @@ The lines, in order:
   does not, after the fit. This is the number that says *"something reaches
   somewhere nothing in the frames does, or is a different size"*, and a warning
   spells it out past a pixel.
+- the **MAE-refined** line, which is the last thing that happens to the box and the
+  paragraph below is what it is for. On a **fitted** framing it says what constant
+  whole-pixel offset was taken out and what that was worth (`⭐`), or that the
+  search ran and the identity won. On a box that is not an estimate — the frames'
+  own, or one you pinned — it never moves anything, and if it finds a constant there
+  it says so as a **finding about your rig** rather than about the framing.
 - `in units` — the same two boxes in world units. The framing absorbs a pure scale
   on purpose, so this is the only place one shows; it compares only if you measured
   the shot in the frames' own units.
@@ -1504,10 +1518,31 @@ that is a little large — the best fit of the two extents is not quite the best
 alignment of the two pictures, and the fit spends a fraction of a pixel absorbing
 a difference that would have been cheaper to leave alone. Measured floor: about a
 third of a pixel on the ladder's shots. On most that is invisible; on a small
-high-contrast frame it is worth a point or two of MAE — rung 6 measured five. This
-is the floor the frames' own box has no share in, which is why `check` prefers that
-box whenever your pixels are measured to land in it; `--viewport` is how you stop
-it in the cases that box does not cover.
+high-contrast frame it is worth a point or two of MAE — rung 6 measured five, and
+on the spineboy sets a **constant** one or two pixels was worth 10–30 % of the
+figure (issue #146). This is the floor the frames' own box has no share in, which is
+why `check` prefers that box whenever your pixels are measured to land in it;
+`--viewport` is how you stop it in the cases that box does not cover.
+
+⭐ **What a fitted framing now does about it: one final whole-pixel pass.** After
+the fit settles (or cycles), `check` searches every whole-pixel offset within ±2 px
+for the lowest MAE over the reference's own drawn pixels and moves the box to the
+best one, when that is worth at least 1 % of the figure. So a fitted set's numbers
+are what is left **after** the best constant offset has been removed, rather than a
+constant offset read as motion — and the line says which offset and what it bought,
+in both directions, so nothing is quietly absorbed.
+
+Two things to know when you read it:
+
+- ⚠️ **A large refinement on a set whose drift is also large is not necessarily
+  framing.** The pass removes the best *constant*, and when one part carries much of
+  the shot's ink a constant can absorb part of that part's own displacement. Read
+  the offset beside the chain table: a big offset with a flat drift table is the
+  fit's floor; a big offset with one limb far out is that limb.
+- On a box that is not an estimate the pass declines and says why. `frames.json`'s
+  own box is where the frames were drawn, so a constant pixel *there* is your
+  figure sitting a pixel off inside the right box — a thing to fix, and the report
+  refuses to frame it away. A pinned box is your claim, and nothing overrules it.
 
 **MAE** is the mean absolute RGB difference, 0..255, over the pixels either side
 covers — the *union alpha*. It is not scored against a threshold, any more than a
@@ -1564,7 +1599,26 @@ and blinks where the reference does.
 means it: the difference between two frames 310 apart is not a frame-to-frame delta.
 A disagreement needs one side to hold *exactly* still while the other moves, or one
 side to move four times the other and at least two dozen pixels more; below that the
-two rasterisations differ by their own last bit and the column says nothing.
+two rasterisations differ by their own last bit and the column says nothing. Such a
+set gets the `sheet` line instead, which is MAE over every sampled frame and not a
+change measure — the two thresholds above are pixel counts at frame scale, and a
+tile has a fraction of a frame's pixels.
+
+**The `sheet` line is the whole shot**, on the sets that commit a couple of stills
+and fold every sampled frame into one `contact.png`. It says how many tiles were
+compared out of how many the sheet holds, the grid it measured off the sheet itself,
+the mean and worst tile, and the worst eight by MAE. Read the **series** rather than
+the mean, exactly as with the frame table: flat across the shot is framing or art,
+a spike is timing at that moment — rung 2's four shots read 4.30–4.41 flat over
+1,244 tiles, which is what says their trajectories, ring rates and attachment swaps
+land where and when they should. Two things to know:
+
+- it is measured in the **same box** the frame table was, at the sheet's scale. For
+  a stills-plus-sheet set that box was decided on the stills, so a set whose framing
+  is a fit carries that fit into these numbers as well;
+- a sheet whose dimensions are not a grid of this set's frame count at these frames'
+  aspect is **refused by name** rather than read wrong — the note names the file, and
+  the answer is to re-render the set.
 
 **Slot drift** is what you act on. For each of your slots, `check` measures where
 it landed and how far that is from where the reference put it. That names the part,
@@ -1574,8 +1628,15 @@ sentence you can take straight back to a key.
 There are two matchers and the `how` column says which one answered:
 
 - `component` — your slot sits on a connected component of the reference frame that
-  is its own size. The drift is the distance between the two centroids, and it is
-  the strongest answer available.
+  is its own size **and holds nothing else you drew**. The drift is the distance
+  between the two centroids, and it is the strongest answer available. All three
+  conditions are checked: a blob may not be much bigger than the slot, may not be
+  much wider than its box, and may not contain another of your parts' ink. The last
+  is the one a dominant part slips through otherwise — rung 2's course is 81 % of a
+  blob that also holds the water, the panel and both rings, so the blob is only
+  1.24x its ink and no wider than its box, and the reported *"course drift 11.2 px"*
+  was the distance to a five-part centroid (issue #37). It now falls to the matcher
+  below and reads 0.0 px.
 - `tmpl 0.62` — the reference merged your slot into a neighbour (they touch, or one
   is drawn over the other), so the fallback rendered **your slot on its own** and
   correlated it against the reference around where you drew it. The number is the

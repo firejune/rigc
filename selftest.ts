@@ -39,7 +39,7 @@
  * the real geometry the fixtures only stand in for. Without one, that suite says
  * it was skipped and the run still passes on the public suite alone.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import {
@@ -55,6 +55,8 @@ import {
   assertFrameReadable,
   checkAgainstFrames,
   checkLines,
+  componentField,
+  matchSlots,
   OVERDRAW_RATIO,
   type AnimationCheck,
   type ChainCheck,
@@ -65,8 +67,12 @@ import {
 } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
+import { isContent } from './src/framing.ts';
 import {
+  BACKGROUND,
   EMPTY_FOOTPRINT,
+  fill,
+  FRAMES_SIDECAR,
   frameGeometry,
   framingViewport,
   loadPosable,
@@ -76,9 +82,14 @@ import {
   projector,
   PROTOCOL_FPS,
   rasterisePiece,
+  renderFrame,
   sampleAll,
   sampleAnimation,
   sampleSetupPose,
+  SHEET_COLUMNS,
+  SHEET_FILE,
+  SHEET_GAP,
+  viewportOfSize,
   type Footprint,
   type Frame,
   type Mesh,
@@ -1360,6 +1371,36 @@ const CHAIN_FLOOR_DRIFT = 1;
 const CHAIN_FLOOR_RATIO = 1.25;
 /** The share C11 lets a faithful build leave unattributed to any chain. */
 const CHAIN_UNATTRIBUTED_TOLERANCE = 0.01;
+/**
+ * How far C12 displaces ONE part of the fixture, in the rig's own units (~1 px).
+ *
+ * Small on purpose. What C12 needs is a silhouette that DIFFERS — which is what
+ * pulls the best fit of two extents away from the best alignment of two pictures
+ * — and not a candidate that is grossly wrong: a monster fixture would make the
+ * pass fire for reasons that have nothing to do with the floor being measured.
+ */
+const REFINE_PART_OFFSET = 20;
+/** How far C13 pins the box off the frames' own, in frame pixels. */
+const REFINE_PIN_PIXELS = 2;
+/** How exactly re-measuring at the refined box must reproduce the search's figure. */
+const REFINE_REPORT_TOLERANCE = 0.01;
+/** Which rung-3 set C14 and C15 rebuild as a stills-plus-sheet frame set. */
+const SHEET_SET = 'heavy';
+/** The long side of one tile in that fixture's sheet, in pixels. */
+const SHEET_FIXTURE_TILE = 64;
+/** The rule between its tiles, and the colour its frame numbers are burned in. */
+const SHEET_FIXTURE_RULE: RGBA = [176, 176, 176, 255];
+const SHEET_FIXTURE_LABEL: RGBA = [96, 96, 96, 255];
+/** How far C14's mutant pushes the middle of the shot, in the rig's own units. */
+const SHEET_BUMP = 300;
+/** The floor a faithful candidate must read on the sheet it was rendered into. */
+const SHEET_FLOOR_MAE = 1;
+/** How far C14 lets the two committed stills move when only the middle is wrong. */
+const SHEET_STILLS_TOLERANCE = 0.01;
+/** ...and how much worse the sheet has to read for the hole to count as closed. */
+const SHEET_LOUD_MAE = 10;
+/** The width C15 adds to a sheet so its dimensions are not a grid of these tiles. */
+const SHEET_STRAY_COLUMN = 1;
 
 const CHECK_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/3-timing-and-spacing');
 const CHECK_FRAMES = resolve(import.meta.dir, 'bench/reference/3-timing-and-spacing');
@@ -1636,6 +1677,103 @@ function offsetOneAnimation(motionText: string, name: string, dx: number, dy: nu
   });
   /* eslint-enable @typescript-eslint/no-explicit-any */
   return `${JSON.stringify(spec, null, 2)}\n`;
+}
+
+/**
+ * The same motion spec with ONE animation pushed away in the MIDDLE and left where
+ * it was at both ends.
+ *
+ * The defect a stills-plus-sheet frame set hides by construction (C14): the two
+ * committed frames are the two this leaves alone, so every number computed from
+ * files on disk is right and every tile between them is wrong.
+ */
+function bumpMiddleOfAnimation(motionText: string, name: string, dx: number): string {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const spec = JSON.parse(motionText);
+  const anim = spec.animations[name] as any;
+  anim.tracks.push({
+    bone: 'root',
+    property: 'translate',
+    keys: [
+      { t: 0, v: [0, 0] },
+      { t: anim.duration / 2, v: [dx, 0] },
+      { t: anim.duration, v: [0, 0] },
+    ],
+  });
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  return `${JSON.stringify(spec, null, 2)}\n`;
+}
+
+/**
+ * A frame set of the shape issue #36 is about: two stills on disk, and a contact
+ * sheet holding every sampled frame.
+ *
+ * ⚠️ Built here rather than fetched, because no committed set the check suite uses
+ * has that shape — rung 3 ships every frame — and a control for a sheet needs a
+ * sheet whose contents are known. The two stills are the corpus's own PNGs,
+ * unmodified; the sheet is rendered from the faithful candidate at the tile scale,
+ * which is what `bench/render_reference.ts` does with the reference and what makes
+ * the faithful reading a floor rather than a number nobody can predict.
+ *
+ * `padWidth` adds that many pixels of width to the sheet, which is how C15 asks for
+ * a sheet whose dimensions are not a grid of this many tiles.
+ */
+function buildSheetFixture(
+  artifacts: { skeletonText: string; atlasText: string; atlasDir: string },
+  setDir: string,
+  padWidth = 0,
+): string {
+  const sidecar: unknown = JSON.parse(readFileSync(join(CHECK_FRAMES, FRAMES_SIDECAR), 'utf8'));
+  const source = sidecar as {
+    spec: string;
+    background: RGBA;
+    viewport: { x: number; y: number; width: number; height: number; scale: number; pixelWidth: number; pixelHeight: number };
+    sets: Array<{ dir: string; animation: string | null; fps: number; sampled: number; written: number; stride: number; duration: number }>;
+  };
+  const set = source.sets.find((s) => s.dir === setDir);
+  if (!set) throw new Error(`selftest: no set ${JSON.stringify(setDir)} in ${CHECK_FRAMES}/${FRAMES_SIDECAR}`);
+  const root = mkdtempSync(join(tmpdir(), 'rigc-sheet-'));
+  mkdirSync(join(root, setDir), { recursive: true });
+
+  // The first and last frames, from the corpus, untouched.
+  const stills = [0, set.sampled - 1];
+  for (const index of stills) {
+    const name = `f${String(index).padStart(4, '0')}.png`;
+    copyFileSync(join(CHECK_FRAMES, setDir, name), join(root, setDir, name));
+  }
+  writeFileSync(
+    join(root, FRAMES_SIDECAR),
+    `${JSON.stringify(
+      { ...source, sets: [{ ...set, written: stills.length, stride: set.sampled }] },
+      null,
+      2,
+    )}\n`,
+  );
+
+  // ...and the sheet, at the tile scale, laid out the way the frame-set contract says.
+  const v = source.viewport;
+  const posable = posableFromText(artifacts.skeletonText, artifacts.atlasText, artifacts.atlasDir);
+  const frames = sampleAnimation(posable.data, set.animation as string, set.fps).slice(0, set.sampled);
+  const tileScale = SHEET_FIXTURE_TILE / Math.max(v.pixelWidth, v.pixelHeight);
+  const tileW = Math.max(1, Math.round(v.pixelWidth * tileScale));
+  const tileH = Math.max(1, Math.round(v.pixelHeight * tileScale));
+  const columns = Math.min(SHEET_COLUMNS, frames.length);
+  const rows = Math.ceil(frames.length / columns);
+  const sheet = new Plate(
+    columns * (tileW + SHEET_GAP) + SHEET_GAP + padWidth,
+    rows * (tileH + SHEET_GAP) + SHEET_GAP,
+  );
+  fill(sheet, SHEET_FIXTURE_RULE);
+  const tileViewport = viewportOfSize(v.x, v.y, v.width, v.height, v.scale * tileScale, tileW, tileH);
+  frames.forEach((frame, index) => {
+    const tile = renderFrame(frame, posable.pages, tileViewport, source.background);
+    tile.text(String(index), 2, 2, 1, SHEET_FIXTURE_LABEL);
+    const ox = SHEET_GAP + (index % columns) * (tileW + SHEET_GAP);
+    const oy = SHEET_GAP + Math.floor(index / columns) * (tileH + SHEET_GAP);
+    for (let y = 0; y < tileH; y++) for (let x = 0; x < tileW; x++) sheet.set(ox + x, oy + y, tile.get(x, y));
+  });
+  sheet.writePng(join(root, setDir, SHEET_FILE));
+  return root;
 }
 
 /** Returns the number of failures, or `null` when the example corpus is absent. */
@@ -2134,6 +2272,418 @@ function runCheckSuite(): number | null {
         `worst chain ${worstChainRatio.toFixed(2)}x its set's MAE (needs <= ${CHAIN_FLOOR_RATIO}), ` +
         `${(worstUnattributed * 100).toFixed(1)}% unattributed (needs <= ` +
         `${(CHAIN_UNATTRIBUTED_TOLERANCE * 100).toFixed(1)}%)`,
+    );
+  }
+
+  // --- the contact sheet: the frames a set does not commit as files -----------
+  // Issue #36. A long shot commits two stills and folds every sampled frame into
+  // one `contact.png`, and `check` used to compare the two stills and say so — an
+  // honest `2 compared` with nothing measured about the other 309 frames. The
+  // fixture builds exactly that shape: a frame set with the FIRST and LAST frames
+  // on disk and a sheet holding all 65, and a candidate whose defect is entirely
+  // in between.
+  //
+  // The mutant is the one the hole was hiding: a track that leaves both ends where
+  // the reference has them and pushes the middle of the shot away. Its two stills
+  // are right, so the frame table cannot see it; every tile between them is wrong.
+  // Three assertions, and the first is what makes the other two mean anything:
+  //
+  //   * the FAITHFUL candidate reads a floor on the sheet — if the grid were
+  //     misread by a pixel, or the burned-in frame number counted as a difference,
+  //     nothing here would read a floor at all;
+  //   * the mutant's committed stills read the same as the faithful ones;
+  //   * and its sheet reads many times worse, with the worst tile in the middle.
+  const sheetFrames = buildSheetFixture(faithful, SHEET_SET);
+  const sheetFaithful = checkAgainstFrames({ ...faithful, framesDir: sheetFrames });
+  const bumped = compileTranscription(
+    bumpMiddleOfAnimation(
+      readFileSync(join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.motion.json'), 'utf8'),
+      SHEET_SET,
+      SHEET_BUMP,
+    ),
+  );
+  const sheetBumped = checkAgainstFrames({ ...bumped, framesDir: sheetFrames });
+  const goodSheet = comparedSets(sheetFaithful)[0]?.sheet ?? null;
+  const badSheet = comparedSets(sheetBumped)[0]?.sheet ?? null;
+  const goodStills = comparedSets(sheetFaithful)[0]?.meanMae ?? null;
+  const badStills = comparedSets(sheetBumped)[0]?.meanMae ?? null;
+  const middle = badSheet === null ? -1 : badSheet.worstTile / Math.max(1, badSheet.tiles - 1);
+  const sheetOk =
+    goodSheet !== null &&
+    badSheet !== null &&
+    goodStills !== null &&
+    badStills !== null &&
+    // The stills are two of 65, and both of them are frames the mutant leaves alone.
+    comparedSets(sheetFaithful)[0]?.compared === 2 &&
+    goodSheet.compared === goodSheet.tiles &&
+    goodSheet.tiles > 2 &&
+    goodSheet.meanMae < SHEET_FLOOR_MAE &&
+    Math.abs(badStills - goodStills) <= SHEET_STILLS_TOLERANCE &&
+    badSheet.meanMae > goodSheet.meanMae + SHEET_LOUD_MAE &&
+    middle > 0.25 &&
+    middle < 0.75;
+  if (sheetOk) {
+    console.log(
+      `  PASS  C14_A_DEFECT_BETWEEN_THE_STILLS_IS_LOUD_ON_THE_SHEET  ` +
+        `(${goodSheet.tiles} tiles at ${goodSheet.tileWidth}x${goodSheet.tileHeight}px: faithful ` +
+        `${goodSheet.meanMae.toFixed(2)}, a mid-shot push ${badSheet.meanMae.toFixed(2)} worst at ` +
+        `f${String(badSheet.worstTile).padStart(4, '0')} — while the two committed stills read ` +
+        `${(badStills as number).toFixed(2)} against ${(goodStills as number).toFixed(2)})`,
+    );
+    console.log(
+      '          origin: rung 2 ships 2 of 311 frames per shot, so a clean `2 compared` table said nothing about ' +
+        'the shot (issue #36)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C14_A_DEFECT_BETWEEN_THE_STILLS_IS_LOUD_ON_THE_SHEET: faithful sheet ${JSON.stringify(goodSheet)}, ` +
+        `mutant sheet ${JSON.stringify(badSheet)}, stills ${goodStills?.toFixed(2) ?? 'n/a'} against ` +
+        `${badStills?.toFixed(2) ?? 'n/a'}, worst tile at ${(middle * 100).toFixed(0)}% of the shot`,
+    );
+  }
+
+  // --- and a sheet that is not a grid of these frames is refused, by name ------
+  // The negative control, and it guards the failure that would be worst: a grid
+  // read wrong by one pixel puts every tile a little off its own frame and reports
+  // the offset as motion, on every frame of the shot at once. So the geometry is
+  // derived from the sheet's own dimensions and REFUSED when they are not a grid of
+  // this many tiles at these frames' aspect — with the file named, because the
+  // author's next move is to re-render the set.
+  const strayFrames = buildSheetFixture(faithful, SHEET_SET, SHEET_STRAY_COLUMN);
+  const strayReport = checkAgainstFrames({ ...faithful, framesDir: strayFrames });
+  const strayAnim = comparedSets(strayReport)[0] ?? null;
+  const strayOk =
+    strayAnim !== null &&
+    strayAnim.sheet === null &&
+    strayAnim.compared === 2 &&
+    strayAnim.notes.some((note) => note.includes(SHEET_FILE) && note.includes('not a grid'));
+  if (strayOk) {
+    console.log(
+      `  PASS  C15_A_SHEET_THAT_IS_NOT_A_GRID_OF_THESE_FRAMES_IS_REFUSED  ` +
+        `(+${SHEET_STRAY_COLUMN} px of width: no sheet figure, and the note names ${SHEET_FILE})`,
+    );
+    console.log(
+      '          origin: a grid read wrong by a pixel reports a constant offset as motion on every frame of the shot',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C15_A_SHEET_THAT_IS_NOT_A_GRID_OF_THESE_FRAMES_IS_REFUSED: sheet ` +
+        `${JSON.stringify(strayAnim?.sheet ?? null)}, notes ${JSON.stringify(strayAnim?.notes ?? [])}`,
+    );
+  }
+
+  // --- the MAE-refined final pass: a constant pixel is not motion -------------
+  // Issue #146. A settled extent fit can still leave a CONSTANT translation of a
+  // pixel or two, and on a hard shot that constant is a tenth of the headline
+  // figure — spineboy's `death` reads 54.31 at its fitted box and 48.47 one pixel
+  // away, with the per-frame remainder an order of magnitude smaller. So the
+  // framing gets one last pass that searches whole-pixel offsets against the
+  // reported figure itself.
+  //
+  // The fixture is the faithful rig with ONE part displaced, which is the shape
+  // that produces the defect: the fit registers extent, so a silhouette that
+  // differs anywhere pulls the best fit of the extents away from the best
+  // alignment of the pictures. Three numbers make the claim, and the third is why
+  // this is a control rather than "a number went down":
+  //
+  //   * `before` — the figure at the fitted box, i.e. what this tool reported
+  //     before this pass existed;
+  //   * `after`  — the same figure with the best constant taken out;
+  //   * `truth`  — the same candidate PINNED to the box `frames.json` records,
+  //     which is where the frames were actually drawn and is not an estimate.
+  //
+  // A pass that merely lowered a number could move `after` anywhere. This one has
+  // to move it TOWARDS `truth`, and at `truth` itself it has to find nothing —
+  // otherwise what it is removing is the candidate's own displaced part rather
+  // than the fit's floor.
+  const displaced = compileTranscription(null);
+  const displacedText = offsetOneChain(displaced.skeletonText, 'square', REFINE_PART_OFFSET, 0);
+  const refinedReport = checkAgainstFrames({
+    ...displaced,
+    skeletonText: displacedText,
+    framesDir: CHECK_FRAMES,
+  });
+  const truthReport = checkAgainstFrames({
+    ...displaced,
+    skeletonText: displacedText,
+    framesDir: CHECK_FRAMES,
+    viewport: sidecarViewport(),
+  });
+  const refinements = comparedSets(refinedReport).map((a) => a.framingFit?.refinement ?? null);
+  const truthRefinements = comparedSets(truthReport).map((a) => a.framingFit?.refinement ?? null);
+  const closer = comparedSets(refinedReport).map((anim, i) => {
+    const r = refinements[i];
+    const truth = comparedSets(truthReport)[i]?.meanMaeReference ?? null;
+    if (!r || truth === null) return null;
+    return { r, truth, gained: Math.abs(r.before - truth) - Math.abs(r.after - truth) };
+  });
+  const refinedOk =
+    refinements.length > 0 &&
+    framedBy(refinedReport, 'candidate-pixels', 'derived') &&
+    refinements.every((r) => r !== null && r.applied && (r.dx !== 0 || r.dy !== 0) && r.after < r.before) &&
+    closer.every((c) => c !== null && c.gained > 0) &&
+    // ...and re-measuring at the box it chose reproduces what the search promised,
+    // which is the property that lets a 25-offset search cost one render a frame.
+    comparedSets(refinedReport).every(
+      (anim, i) => Math.abs(anim.meanMaeReference - (refinements[i] as { after: number }).after) <= REFINE_REPORT_TOLERANCE,
+    ) &&
+    // At the box the frames were drawn at there is no constant left to take.
+    truthRefinements.every((r) => r !== null && r.dx === 0 && r.dy === 0 && r.declined === 'identity');
+  if (refinedOk) {
+    const first = refinements[0] as { dx: number; dy: number; before: number; after: number };
+    const truth = (closer[0] as { truth: number }).truth;
+    console.log(
+      `  PASS  C12_A_CONSTANT_FRAMING_PIXEL_IS_TAKEN_OUT_OF_THE_FIGURE  ` +
+        `(one part +${REFINE_PART_OFFSET} units: refined by ${first.dx}, ${first.dy} px, ` +
+        `${first.before.toFixed(2)} → ${first.after.toFixed(2)} against ${truth.toFixed(2)} at the frames' own box, ` +
+        'which reports no constant of its own)',
+    );
+    console.log(
+      "          origin: spineboy's `death` read 54.31 at a settled fit and 48.47 one pixel away, and a loop reads " +
+        'that difference as motion (issue #146)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C12_A_CONSTANT_FRAMING_PIXEL_IS_TAKEN_OUT_OF_THE_FIGURE: framing ` +
+        `${JSON.stringify(comparedSets(refinedReport).map((a) => a.framing))}, refinements ` +
+        `${JSON.stringify(refinements)}, closer-to-truth ${JSON.stringify(closer.map((c) => c?.gained ?? null))}, ` +
+        `at the declared box ${JSON.stringify(truthRefinements.map((r) => r?.declined ?? null))}`,
+    );
+  }
+
+  // --- and it invents no offset where there is none ---------------------------
+  // The negative control for C12, in three halves, because there are three ways
+  // for this pass to be worse than not having it. A faithful candidate framed by
+  // the frames' own box must come back the exact identity — that is issue #146's
+  // own `idle`-class control. The same rig moved BODILY must too, and that half is
+  // the sharper one: its box is FITTED, so it proves the pass is not simply firing
+  // wherever a fit was involved — a pure translation is the one thing the extent
+  // fit recovers exactly, and there is nothing left for a constant to buy.
+  //
+  // The third half is the positive control for the search itself, without which
+  // the two above would also pass on a pass that could not find anything at all:
+  // the same faithful rig, PINNED two pixels off the box the frames were drawn at,
+  // has to find those two pixels — and must still not apply them, because a pin is
+  // the author's claim and nothing here overrides it.
+  const declared = sidecarViewport();
+  const declaredScale = comparedSets(faithfulReport)[0]?.viewport.scale ?? 0;
+  const offBy = declaredScale > 0 ? REFINE_PIN_PIXELS / declaredScale : 0;
+  const pinnedOff = checkAgainstFrames({
+    ...faithful,
+    framesDir: CHECK_FRAMES,
+    viewport: { ...declared, x: declared.x - offBy },
+  });
+  const faithfulRefinements = comparedSets(faithfulReport).map((a) => a.framingFit?.refinement ?? null);
+  const movedRefinements = comparedSets(movedReport).map((a) => a.framingFit?.refinement ?? null);
+  const pinnedRefinements = comparedSets(pinnedOff).map((a) => a.framingFit?.refinement ?? null);
+  const identityEverywhere = (
+    rows: Array<{ dx: number; dy: number; declined: string | null } | null>,
+  ): boolean => rows.length > 0 && rows.every((r) => r !== null && r.dx === 0 && r.dy === 0 && r.declined === 'identity');
+  const inventsNothingOk =
+    identityEverywhere(faithfulRefinements) &&
+    identityEverywhere(movedRefinements) &&
+    pinnedRefinements.length > 0 &&
+    pinnedRefinements.every(
+      // −2 and not +2: `projector` is px = (wx − minX)·k, so a box whose origin is
+      // two pixels' worth of world to the LEFT draws its content two pixels to the
+      // right, and the offset that would bring it back is negative. Asserting the
+      // sign rather than the magnitude is what makes this control catch an
+      // inversion in the search or in `shiftViewport`.
+      (r) => r !== null && !r.applied && r.declined === 'pinned' && r.dx === -REFINE_PIN_PIXELS && r.dy === 0,
+    );
+  if (inventsNothingOk) {
+    const found = pinnedRefinements[0] as { dx: number; dy: number; before: number; after: number };
+    console.log(
+      `  PASS  C13_THE_REFINED_PASS_INVENTS_NO_OFFSET  ` +
+        `(faithful and +${FRAMING_MOVE}-units-moved both come back the exact identity; pinned ` +
+        `${REFINE_PIN_PIXELS} px off, it finds ${found.dx}, ${found.dy} px — ${found.before.toFixed(2)} → ` +
+        `${found.after.toFixed(2)} — and does not apply it)`,
+    );
+    console.log(
+      '          origin: a framing pass that moves a right answer is worse than no pass at all, and a pin is a claim ' +
+        'the tool does not overrule',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C13_THE_REFINED_PASS_INVENTS_NO_OFFSET: faithful ${JSON.stringify(faithfulRefinements)}, moved ` +
+        `${JSON.stringify(movedRefinements)}, pinned ${REFINE_PIN_PIXELS} px off ${JSON.stringify(pinnedRefinements)}`,
+    );
+  }
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// slot attribution — a reference blob is not a part
+// ---------------------------------------------------------------------------
+//
+// `check`'s cheap matcher asks which connected component of the REFERENCE frame
+// each of the candidate's slots landed on, and a component that holds two parts
+// has a centroid that belongs to neither. Two tests guard that — the blob may not
+// be much bigger than the slot, and its box may not be much wider — and issue #37
+// filed the case that walks through both: rung 2's reference merges the course,
+// the water, the panel and both rings into one blob in which the **course is 81 %
+// of the ink**, so the blob is 1.24x the course's own and barely wider than its
+// box. The summary line read `course drift 11.2 px` for a part whose own error per
+// pixel was below the set's mean, and the drift was the distance from the course's
+// centroid to a five-part blob's.
+//
+// ⚠️ These two controls draw their own reference frame instead of using the
+// corpus, and that is the point: the defect is a property of the REFERENCE's
+// labelling, so it needs a blob one part dominates, and no committed frame set
+// that the check suite already uses has one. Drawn here, the whole thing is
+// arithmetic — the true drift is zero by construction — and the suite still runs
+// on a fresh clone with no art at all.
+
+/** A part of the synthetic frame: where it is, and nothing about what it means. */
+interface InkRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** How dark a synthetic part is drawn — anything past `BACKGROUND_TOLERANCE` will do. */
+const INK: RGBA = [16, 16, 16, 255];
+/** The synthetic frame's size, in pixels. */
+const SLOT_FRAME = { width: 64, height: 24 };
+/**
+ * The dominant part, and the small one the reference merges into it.
+ *
+ * Chosen so the blob passes **both** existing merge tests, which is what makes it
+ * the case #37 filed rather than one already caught: 224 px against the small
+ * part's 100 px is 1.45x (under `MERGE_RATIO`'s 1.6), and the blob's box is no
+ * wider than the wide part's own, so the bounding-box test sees nothing either.
+ * What it does move is the centroid, by several pixels, because the small part's
+ * mass is all on one side.
+ */
+const SLOT_WIDE: InkRect = { x: 4, y: 4, width: 56, height: 4 };
+const SLOT_SMALL: InkRect = { x: 4, y: 8, width: 20, height: 5 };
+/** ...and where the small one goes when the two are meant to be separate blobs. */
+const SLOT_SMALL_APART: InkRect = { x: 4, y: 14, width: 20, height: 5 };
+/** How far a control lets a faithful component match sit from the truth, in pixels. */
+const SLOT_TRUE_DRIFT = 0.01;
+/** How big the fabricated drift has to be for S01's fixture to be worth asserting on. */
+const SLOT_LIE_PIXELS = 1;
+
+function drawInk(plate: Plate, rect: InkRect): void {
+  for (let y = rect.y; y < rect.y + rect.height; y++) {
+    for (let x = rect.x; x < rect.x + rect.width; x++) plate.set(x, y, INK);
+  }
+}
+
+/** A frame with these parts drawn on the frames' own background. */
+function inkFrame(rects: InkRect[]): Plate {
+  const plate = new Plate(SLOT_FRAME.width, SLOT_FRAME.height);
+  fill(plate, BACKGROUND);
+  for (const rect of rects) drawInk(plate, rect);
+  return plate;
+}
+
+/**
+ * The footprint a candidate drawing exactly this part would have.
+ *
+ * Measured off a plate rather than written down, for the same reason no mutant in
+ * this file hardcodes an offset: a footprint stated by hand is a second definition
+ * of "where the ink is" that can drift from `frameGeometry`'s.
+ */
+function inkFootprint(rect: InkRect): Footprint {
+  const plate = inkFrame([rect]);
+  let pixels = 0;
+  let sx = 0;
+  let sy = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let y = 0; y < plate.height; y++) {
+    for (let x = 0; x < plate.width; x++) {
+      if (!isContent(plate, x, y, BACKGROUND)) continue;
+      pixels++;
+      sx += x + 0.5;
+      sy += y + 0.5;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  if (pixels === 0) return EMPTY_FOOTPRINT;
+  return { pixels, cx: sx / pixels, cy: sy / pixels, minX, minY, maxX: maxX + 1, maxY: maxY + 1 };
+}
+
+function runSlotSuite(): number {
+  console.log('\n── slot attribution (fixture: a two-part frame drawn here) ──');
+  let bad = 0;
+  const wide = inkFootprint(SLOT_WIDE);
+  const small = inkFootprint(SLOT_SMALL);
+  const apart = inkFootprint(SLOT_SMALL_APART);
+
+  // --- the merged blob, with the dominant part in it --------------------------
+  const merged = componentField(inkFrame([SLOT_WIDE, SLOT_SMALL]), BACKGROUND);
+  // No SlotSource: the template fallback is the OTHER matcher and this control is
+  // about what the component pass is willing to call a measurement.
+  const mergedTracks = matchSlots(new Map([['wide', wide], ['small', small]]), merged, null).tracks;
+  const wideTrack = mergedTracks.find((t) => t.slot === 'wide') ?? null;
+  const blob = merged.components[0];
+  // What the component pass WOULD have reported, derived rather than quoted: the
+  // distance from the dominant part's own centroid to the blob's.
+  const lie = blob === undefined ? 0 : Math.hypot(blob.cx - wide.cx, blob.cy - wide.cy);
+  const oneBlob = merged.components.length === 1;
+  const mergedOk =
+    oneBlob &&
+    lie > SLOT_LIE_PIXELS &&
+    wideTrack !== null &&
+    wideTrack.drift === null &&
+    wideTrack.method === 'none' &&
+    wideTrack.ambiguity !== null &&
+    wideTrack.ambiguity.includes('"small"');
+  if (mergedOk) {
+    console.log(
+      `  PASS  T01_A_BLOB_ITS_OWN_SLOT_DOMINATES_IS_STILL_A_BLOB  ` +
+        `(${blob.pixels} px blob against the part's own ${Math.round(wide.pixels)} px — ` +
+        `${(blob.pixels / wide.pixels).toFixed(2)}x, under the size test, and no wider than its box: reported as ` +
+        `ambiguous rather than as the ${lie.toFixed(1)} px the centroids are apart)`,
+    );
+    console.log(
+      '          origin: rung 2 read `course drift 11.2 px` off a blob holding the course, the water, the panel and ' +
+        'both rings (issue #37)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  T01_A_BLOB_ITS_OWN_SLOT_DOMINATES_IS_STILL_A_BLOB: ${merged.components.length} component(s), ` +
+        `centroids ${lie.toFixed(2)} px apart (needs > ${SLOT_LIE_PIXELS}), track ${JSON.stringify(wideTrack)}`,
+    );
+  }
+
+  // --- and two parts that are two blobs still get their drift -----------------
+  // The negative control, and the suite needs it more than usual: "reported as
+  // ambiguous" is also what a matcher that has stopped measuring anything reports.
+  // The same two parts, moved apart by a row of background, must both come back
+  // with a component match and the drift the fixture makes true — zero.
+  const separate = componentField(inkFrame([SLOT_WIDE, SLOT_SMALL_APART]), BACKGROUND);
+  const separateTracks = matchSlots(new Map([['wide', wide], ['small', apart]]), separate, null).tracks;
+  const separateOk =
+    separate.components.length === 2 &&
+    separateTracks.length === 2 &&
+    separateTracks.every(
+      (t) => t.method === 'component' && t.ambiguity === null && t.drift !== null && t.drift <= SLOT_TRUE_DRIFT,
+    );
+  if (separateOk) {
+    console.log(
+      `  PASS  T02_TWO_PARTS_THAT_ARE_TWO_BLOBS_STILL_GET_A_DRIFT  ` +
+        `(both matched by component at ${separateTracks.map((t) => (t.drift ?? 0).toFixed(2)).join(' / ')} px)`,
+    );
+    console.log('          origin: a matcher that answers "ambiguous" to everything is not a matcher');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  T02_TWO_PARTS_THAT_ARE_TWO_BLOBS_STILL_GET_A_DRIFT: ${separate.components.length} component(s), ` +
+        `tracks ${JSON.stringify(separateTracks.map((t) => ({ slot: t.slot, method: t.method, drift: t.drift })))}`,
     );
   }
   return bad;
@@ -4105,6 +4655,8 @@ function main(): void {
     bad += meshCheckBad;
     substantive += 2;
   }
+  bad += runSlotSuite();
+  substantive += 2;
   const diffBad = runDiffSuite();
   if (diffBad !== null) {
     bad += diffBad;
@@ -4134,12 +4686,16 @@ function main(): void {
         [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
       : `, + 2 diff identity controls (name-matched and name-agnostic), + ${DIFF_CASES.length} diff measure controls, ` +
-        '+ 12 check controls (frames-only reads, a faithful ' +
+        '+ 16 check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +
         "not, one offset shot that must not move another shot's numbers, one bloated sprite that must " +
-        'lower the union mean, raise the figure over the reference’s own pixels, and be named as overdraw, and ' +
-        'one offset bone CHAIN that must be blamed while its neighbour and a faithful build stay on the floor)';
+        'lower the union mean, raise the figure over the reference’s own pixels, and be named as overdraw, ' +
+        'one offset bone CHAIN that must be blamed while its neighbour and a faithful build stay on the floor, ' +
+        'a constant framing pixel that must be taken out of the figure on a displaced silhouette and ' +
+        'invented on neither a faithful nor a bodily moved one, and a defect between two committed stills that ' +
+        'must be loud on the contact sheet holding the frames between them while a sheet that is not a grid of ' +
+        'those frames is refused by name)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
@@ -4149,7 +4705,8 @@ function main(): void {
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
-      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 6 draw-order controls, ` +
+      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 2 slot-attribution ` +
+      'controls (a blob one part dominates, and two parts that are two blobs), + 6 draw-order controls, ' +
       '+ 7 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +

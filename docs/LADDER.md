@@ -154,6 +154,46 @@ authoring run. Every `bench.json` on disk stays exactly as its run wrote it, and
 run made before #28 is read through the recompute table above rather than through its
 own file.
 
+**2026-08-25 — `check` gained an MAE-refined final framing pass** (issue
+[#146](https://github.com/firejune/rigc/issues/146)). A **fitted** framing now takes
+one further pass that searches whole-pixel offsets within ±2 px for the lowest MAE
+over the reference's own drawn pixels and moves the box to the best one when the
+gain clears 1 % of the figure; a box that is not an estimate — `frames.json`'s own,
+or a `--viewport` pin — is searched and reported but never moved. The reason is
+measured: the extent fit's documented floor arrives as a **constant** one or two
+pixels, worth 10–30 % of a fitted set's headline figure on the spineboy candidates
+while the per-frame remainder is an order of magnitude smaller.
+
+⚠️ **So a recorded MAE for a set framed `candidate-pixels` re-reads LOWER, and the
+per-slot drift in such a set can move either way** — the box it is measured in has
+moved. Over the 86 compared sets of the runs on this page, 52 refine to the exact
+identity and are unchanged (every set framed by `frames.json`'s own box is one of
+them); 33 move. `bench.json` files are **not** rewritten, and the re-read figures
+belong to the adjudication pass rule 3 requires after an instrument change, not
+here. Nothing about `bench`'s own measures changed.
+
+**2026-08-25 — `check` compares contact sheets, and stopped calling a merged blob a
+part** (issues [#36](https://github.com/firejune/rigc/issues/36) and
+[#37](https://github.com/firejune/rigc/issues/37)). Two additions in the same pass
+as #146 above, and only one of them moves a recorded figure.
+
+- **The sheet.** A set that commits a couple of stills and folds every sampled frame
+  into `contact.png` was compared on the stills alone. It now also gets a **`sheet`
+  line**: the candidate sampled at the set's own rate, rendered in the set's own box
+  at the sheet's scale, compared tile by tile. Nothing already recorded changes —
+  this is a figure that did not exist. It exists on **35** of the sets on this page,
+  rung 2's four and every `@30fps`/`@24fps` stills set among them, and it is the
+  first whole-shot reading any of them has had.
+- **Slot drift.** A reference component holding another slot's ink is no longer
+  called one slot's own, however much of it that slot draws. ⚠️ **Recorded worst
+  drifts re-read lower where that was happening**: rung 2 attempt 2 **11.2 px →
+  0.2 px** on all four sets, rung 1 `balls` **8.9 → 3.5**, rung 6 `arcs` **4.2 →
+  2.5**. No MAE moves, and no set loses its drift table (4 attributed samples out of
+  ~7,000 across the page).
+
+Both are gating-relevant — G2 reads the drift, and the sheet is a new observable —
+which is why they land before the adjudication pass and not during it.
+
 **Stage 3 — per-frame pose distance. Named, not built.** The structural diff
 compares what the file *says*; it cannot see that two structurally identical rigs
 pose differently. The measure for that is **per-frame bone world-transform

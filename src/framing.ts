@@ -32,6 +32,19 @@
  * measurement error in this file cancels. What is left is a procedure whose noise
  * shrinks as the candidate improves, which is the only shape of noise an authoring
  * loop can work against.
+ *
+ * ## And one pass after that, on the MAE itself
+ *
+ * The extent fit has a floor it cannot see past, because the best fit of two
+ * extents is not the best alignment of two pictures. On a hard shot that floor is
+ * a **constant** pixel worth a tenth of the headline figure (issue #146), which a
+ * loop reads as motion. So a fitted box gets one final pass — `OffsetScan` — that
+ * searches whole-pixel translations in a ±`REFINE_RADIUS` window for the lowest
+ * *reference-denominator MAE* and moves the box when the gain clears
+ * `REFINE_MIN_GAIN`. It optimises the reported figure directly rather than a proxy
+ * for it, which is what separates it from the extent refinement measured and
+ * rejected in `frameByDeclaredBox`: that one walked off the answer because the
+ * answer was not what it was minimising.
  */
 import { Plate, type RGBA } from '../tools/plate.ts';
 import {
@@ -514,6 +527,273 @@ function cornerSpread(box: ContentBox, displace: (x: number, y: number) => [numb
  * that is still moving, and a false one would stop a converging fit short.
  */
 export const CYCLE_PIXELS = SETTLED_PIXELS / 2;
+
+// ---------------------------------------------------------------------------
+// the MAE-refined final pass
+// ---------------------------------------------------------------------------
+
+/**
+ * How far the MAE-refined pass may move a fitted box, in frame pixels.
+ *
+ * Two, because what it is there to recover is *one* pixel. The extent fit lands
+ * within a fraction of a pixel of its own optimum and its optimum is the wrong
+ * one by about that much (`fitFraming`, "the floor, stated plainly"), so the
+ * distance between "where the extents agree" and "where the pictures agree" is a
+ * pixel or two and never more — measured across the committed corpus, every
+ * offset the pass applies is `(0, ±1)`, `(±1, 0)`, `(±1, ±1)`, `(−1, 2)` or
+ * `(−2, ≤1)`, and none of the 86 sets wants a corner of the window. A wider
+ * window would start being able to absorb a real displacement, which is the one
+ * thing the framing must not do.
+ */
+export const REFINE_RADIUS = 2;
+
+/**
+ * How much of the figure a shift must buy before it is allowed to move the box,
+ * as a fraction of the set's own reference-denominator MAE...
+ *
+ * ...and `REFINE_MIN_GAIN_MAE` beside it, absolutely, because a ratio alone means
+ * nothing on a shot whose MAE is already 3.
+ *
+ * ## What the corpus says, and what the threshold is therefore for
+ *
+ * Measured over the 86 compared sets of the committed runs: the best offset in
+ * ±2 px is the **exact identity** on 52 of them — every set framed by
+ * `frames.json`'s own box among them, which is the `idle`-class control issue #146
+ * asked for — and on the other 34 the gain runs **0.9 % … 30.9 %** (0.40 … 14.34
+ * MAE), clustering at 3 % and above with two lone readings at 1.0 % and 0.9 %.
+ *
+ * ⚠️ So this is **not** a threshold separating two measured populations, and it
+ * must not be quoted as one: it is a floor under a continuum. What makes a low
+ * floor the right shape here is that the pass minimises the reported figure
+ * *itself*, so the cost of applying a marginal offset is bounded by the threshold
+ * — a hundredth of the figure — while the cost of refusing one is a constant pixel
+ * left inside a number an author reads as motion. Erring towards applying is the
+ * cheap direction, and the report prints what was applied and what it was worth
+ * either way.
+ */
+export const REFINE_MIN_GAIN = 0.01;
+/** ...and how much of the figure that is, in MAE points, whatever the ratio says. */
+export const REFINE_MIN_GAIN_MAE = 0.1;
+
+/** What the best whole-pixel offset in a window is worth, over a set's frames. */
+export interface OffsetGain {
+  dx: number;
+  dy: number;
+  /** Mean reference-denominator MAE at the identity — the figure as it stands. */
+  identity: number;
+  /** ...and at `dx, dy`, which is the same figure with one constant taken out. */
+  best: number;
+  /** How far the search looked, and how many frames it pooled. */
+  radius: number;
+  frames: number;
+}
+
+/**
+ * The set's reference-denominator MAE at every whole-pixel offset in a window,
+ * accumulated one frame at a time.
+ *
+ * ## What this is for: the constant pixel a settled fit still leaves
+ *
+ * `fitFraming` registers two shots by their **extent**, and a shot whose
+ * silhouette genuinely differs has its best extent fit about a third of a pixel
+ * from its best alignment. Measured on the spineboy candidates (issue #146), that
+ * floor is not a rounding detail: a **constant** translation of one or two pixels
+ * is worth 12 % of `death`'s headline MAE and up to 30 % of a fitted set's,
+ * while the genuinely per-frame remainder is a tenth of it. A loop reading those
+ * numbers as motion is reading a framing offset.
+ *
+ * ## Why the objective is the reference denominator
+ *
+ * Because it is the figure the report tells an author to optimise against
+ * (`FrameCheck.maeReference`), and because it is the one the candidate cannot
+ * grow: minimising the union MAE would let a shift that drags more cheap pixels
+ * into the denominator win, which is issue #119 arriving by another door.
+ *
+ * ## Why whole pixels, and why a plate shift rather than a re-render
+ *
+ * The projector is `px = (wx − minX)·k`, so moving the box by exactly `dx/k`
+ * moves every sample point by exactly one pixel and samples the same texels —
+ * the render at the shifted box **is** the render shifted, but for content
+ * outside the old frame. That makes a 25-offset search cost one render per frame
+ * instead of 25, and it is why the window is whole pixels: a sub-pixel offset
+ * changes the resampling, so nothing could be searched without re-rendering it.
+ * The offset that wins is then applied to the viewport and everything the report
+ * prints is measured on a real render at a real box.
+ */
+export class OffsetScan {
+  readonly radius: number;
+  private readonly span: number;
+  /** Σ over frames of the per-frame reference-denominator MAE, per offset. */
+  private readonly sums: Float64Array;
+  private counted = 0;
+
+  constructor(radius: number = REFINE_RADIUS) {
+    this.radius = Math.max(0, Math.round(radius));
+    this.span = this.radius * 2 + 1;
+    this.sums = new Float64Array(this.span * this.span);
+  }
+
+  /**
+   * One frame: the candidate as it was rendered, its own coverage mask, and the
+   * reference as it is on disk.
+   *
+   * ⭐ The figure accumulated here is `FrameCheck.maeReference` **exactly** —
+   * the difference summed over the pixels either side covers, over the count of
+   * the ones the *reference* covers — because the line the report prints and the
+   * line this pass minimises have to be the same line. Taking the numerator over
+   * the reference's pixels alone would be a near neighbour of it and a different
+   * number, and a "54.31 → 48.47" that did not match the MAE line under it would
+   * be two measurements wearing one name.
+   *
+   * A frame the reference drew nothing in counts as zero rather than being
+   * skipped, which is again what `checkOneFrame` does with it: an empty
+   * denominator is not a measurement, and dropping the frame instead would divide
+   * this pass's mean by a different frame count than the report's.
+   */
+  add(candidate: Plate, coverage: Uint8Array, reference: Plate, background: RGBA): void {
+    const { width, height } = reference;
+    this.counted++;
+    // The reference's own drawn pixels, by the predicate `checkOneFrame` uses.
+    const drawn = new Uint8Array(width * height);
+    const drawnAt: number[] = [];
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (!isContent(reference, x, y, background)) continue;
+        const at = y * width + x;
+        drawn[at] = 1;
+        drawnAt.push(at);
+      }
+    }
+    if (drawnAt.length === 0) return;
+    // ...and the candidate's, which move with the offset. Held as a list because
+    // the second sum below walks them in candidate coordinates.
+    const inkAt: number[] = [];
+    for (let at = 0; at < coverage.length; at++) if (coverage[at] === 1) inkAt.push(at);
+
+    const a = candidate.data;
+    const b = reference.data;
+    const bg = background;
+    /** |candidate at `from` − reference at `to`|, mean over RGB, either off-grid. */
+    const delta = (from: number, to: number): number => {
+      const j = to * 4;
+      const i = from * 4;
+      const ar = from < 0 ? bg[0] : a[i];
+      const ag = from < 0 ? bg[1] : a[i + 1];
+      const ab = from < 0 ? bg[2] : a[i + 2];
+      const br = to < 0 ? bg[0] : b[j];
+      const bgc = to < 0 ? bg[1] : b[j + 1];
+      const bb = to < 0 ? bg[2] : b[j + 2];
+      return (Math.abs(ar - br) + Math.abs(ag - bgc) + Math.abs(ab - bb)) / 3;
+    };
+    for (let dy = -this.radius; dy <= this.radius; dy++) {
+      for (let dx = -this.radius; dx <= this.radius; dx++) {
+        let sum = 0;
+        // Every reference-drawn pixel, against whatever the shifted candidate puts
+        // there — background where the shift pulls it off its own grid, which is
+        // what the render at the shifted box would draw.
+        for (let i = 0; i < drawnAt.length; i++) {
+          const at = drawnAt[i];
+          const x = at % width;
+          const y = (at - x) / width;
+          const sx = x - dx;
+          const sy = y - dy;
+          sum += delta(sx < 0 || sy < 0 || sx >= width || sy >= height ? -1 : sy * width + sx, at);
+        }
+        // ...and every pixel the candidate covers that the reference does not,
+        // which is the other half of the union. A pixel the shift carries out of
+        // the frame is clipped there, so it leaves the sum entirely.
+        for (let i = 0; i < inkAt.length; i++) {
+          const at = inkAt[i];
+          const x = at % width;
+          const y = (at - x) / width;
+          const tx = x + dx;
+          const ty = y + dy;
+          if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue;
+          const to = ty * width + tx;
+          if (drawn[to] === 1) continue;
+          sum += delta(at, to);
+        }
+        this.sums[this.index(dx, dy)] += sum / drawnAt.length;
+      }
+    }
+  }
+
+  /**
+   * The offset with the lowest figure, or `null` when no frame carried reference
+   * ink.
+   *
+   * Ties go to the smaller displacement and then to the lower `dy`, `dx`, so the
+   * answer is a function of the pixels and not of the iteration order —
+   * `A18_DETERMINISTIC_EMIT`'s discipline applied to a measurement. The identity
+   * therefore wins any tie it is in, which is what makes "no constant offset
+   * here" a reachable answer rather than an arbitrary one.
+   */
+  best(): OffsetGain | null {
+    if (this.counted === 0) return null;
+    let bestDx = 0;
+    let bestDy = 0;
+    let bestSum = this.sums[this.index(0, 0)];
+    for (let dy = -this.radius; dy <= this.radius; dy++) {
+      for (let dx = -this.radius; dx <= this.radius; dx++) {
+        const sum = this.sums[this.index(dx, dy)];
+        if (sum > bestSum) continue;
+        if (sum === bestSum && !closerToHome(dx, dy, bestDx, bestDy)) continue;
+        bestSum = sum;
+        bestDx = dx;
+        bestDy = dy;
+      }
+    }
+    return {
+      dx: bestDx,
+      dy: bestDy,
+      identity: this.sums[this.index(0, 0)] / this.counted,
+      best: bestSum / this.counted,
+      radius: this.radius,
+      frames: this.counted,
+    };
+  }
+
+  private index(dx: number, dy: number): number {
+    return (dy + this.radius) * this.span + (dx + this.radius);
+  }
+}
+
+/** Is `(dx, dy)` the smaller displacement, ties broken by `dy` then `dx`? */
+function closerToHome(dx: number, dy: number, atX: number, atY: number): boolean {
+  const mine = dx * dx + dy * dy;
+  const theirs = atX * atX + atY * atY;
+  if (mine !== theirs) return mine < theirs;
+  if (dy !== atY) return dy < atY;
+  return dx < atX;
+}
+
+/** Is this offset worth moving a box for? See `REFINE_MIN_GAIN`. */
+export function offsetIsWorthApplying(gain: OffsetGain): boolean {
+  if (gain.dx === 0 && gain.dy === 0) return false;
+  const won = gain.identity - gain.best;
+  return won >= REFINE_MIN_GAIN_MAE && gain.identity > 0 && won / gain.identity >= REFINE_MIN_GAIN;
+}
+
+/**
+ * The same box moved by whole frame pixels, at the same scale.
+ *
+ * `applyFit` with a scale of exactly 1, written out rather than routed through
+ * it, because the refined pass changes no scale at all and a fit-shaped argument
+ * with `scale: 1` in it would invite one.
+ */
+export function shiftViewport(
+  viewport: Viewport,
+  dx: number,
+  dy: number,
+  pixelWidth: number,
+  pixelHeight: number,
+): Viewport {
+  const minX = viewport.minX - dx / viewport.scale;
+  const maxY = viewport.maxY + dy / viewport.scale;
+  const width = pixelWidth / viewport.scale;
+  const height = pixelHeight / viewport.scale;
+  return viewportOfSize(minX, maxY - height, width, height, viewport.scale, pixelWidth, pixelHeight);
+}
 
 /**
  * The viewport that renders the candidate where the fit says it belongs.

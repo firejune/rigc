@@ -77,6 +77,9 @@ import {
   PAD,
   FRAMES_SIDECAR,
   FRAMES_SPEC,
+  SHEET_COLUMNS,
+  SHEET_FILE,
+  SHEET_GAP,
   type Footprint,
   type Frame,
   type FramesSidecar,
@@ -94,21 +97,38 @@ import {
   fitIsSettled,
   fitSeparation,
   frameContentBox,
+  offsetIsWorthApplying,
+  OffsetScan,
+  shiftViewport,
   unionBoxes,
   isContent,
   BACKGROUND_TOLERANCE,
   CYCLE_PIXELS,
+  REFINE_MIN_GAIN,
+  REFINE_MIN_GAIN_MAE,
+  REFINE_RADIUS,
   type BoxPair,
   type ContentBox,
   type FramingFit,
+  type OffsetGain,
 } from './framing.ts';
-import { componentsOf, isAttributable, matchSlots, searchRadius, type SlotTrack } from './slots.ts';
+import { componentField, isAttributable, matchSlots, searchRadius, type SlotTrack } from './slots.ts';
 import { chainsOf, type BoneChain } from './chains.ts';
 import { readPlate, type Plate, type RGBA } from '../tools/plate.ts';
+import { GLYPH_H, textWidth } from '../tools/font5x7.ts';
 
-export { componentsOf, matchSlots, searchRadius, type Component, type MatchMethod, type SlotTrack } from './slots.ts';
+export {
+  componentField,
+  componentsOf,
+  matchSlots,
+  searchRadius,
+  type Component,
+  type ComponentField,
+  type MatchMethod,
+  type SlotTrack,
+} from './slots.ts';
 export { chainsOf, chainBySlot, type BoneChain } from './chains.ts';
-export type { BoxPair, ContentBox, FramingFit } from './framing.ts';
+export type { BoxPair, ContentBox, FramingFit, OffsetGain } from './framing.ts';
 
 // ---------------------------------------------------------------------------
 // the reference side — frames only, and mechanically so
@@ -362,6 +382,57 @@ export interface ChainCheck {
   maeShare: number;
 }
 
+/**
+ * The whole shot against the contact sheet beside it — the frames `check` has no
+ * file for.
+ *
+ * ## Why a sheet is a frame set and not a picture of one
+ *
+ * A long shot does not commit 311 near-duplicate PNGs. It commits a couple of
+ * stills and folds every sampled frame into one `contact.png`, and `check` used to
+ * read the two stills, say `2 compared`, and mean it — an honest number with a hole
+ * behind it: nothing whatever was measured about the other 309 frames, so a clean
+ * table said nothing about the shot (issue #36). A sheet is the same thing a frame
+ * is, at a smaller scale and with a frame number burned into the corner, and
+ * reading it reads no reference skeleton.
+ *
+ * So the candidate is sampled at the set's own rate, rendered into the same world
+ * box the set was framed in at the sheet's own scale, and each frame is compared
+ * against its own tile. The prototype this replaces was written in-run by the
+ * second rung-2 attempt, which found with it what the two-still table could not:
+ * flat MAE 4.85–4.95 over all 1,244 frames of four shots, no spikes — evidence
+ * that trajectories, ring rates and attachment swaps land where and when they
+ * should.
+ *
+ * ## What it deliberately does not measure: the per-frame change
+ *
+ * The tiles are adjacent, so `FrameChange` looks reachable here, and it is not:
+ * `CHANGE_EXCESS` is two dozen pixels at frame scale, and a quarter-scale tile has
+ * a sixteenth of the pixels to move. The thresholds would have to be re-derived
+ * against sheets before that column could mean anything, and a figure printed at
+ * the wrong scale is worse than one not printed. MAE only, and the report says so.
+ */
+export interface SheetCheck {
+  /** The sheet itself, so a worst-tile line is openable. */
+  file: string;
+  /** The grid, measured off the sheet — see `sheetGeometry`. */
+  columns: number;
+  tileWidth: number;
+  tileHeight: number;
+  /** Frame pixels per tile pixel: how much smaller a tile is than a frame. */
+  tileScale: number;
+  /** How many tiles the sheet holds, and how many the candidate could be compared on. */
+  tiles: number;
+  compared: number;
+  /** Mean and worst over the tiles, in the same two denominators the frames use. */
+  meanMae: number;
+  meanMaeReference: number;
+  worstMae: number;
+  worstTile: number;
+  /** The worst tiles by MAE, worst first — at most `WORST_FRAMES` of them. */
+  worst: Array<{ index: number; mae: number }>;
+}
+
 export interface AnimationCheck {
   dir: string;
   /** The animation the frames show, per the sidecar. */
@@ -432,6 +503,12 @@ export interface AnimationCheck {
   framing: FramingHow;
   /** Where this set's drawn pixels ended up against the reference's. */
   framingFit: FramingReport | null;
+  /**
+   * The whole shot against the contact sheet, when the set ships one and does not
+   * ship every frame — see `SheetCheck`. `null` when there is nothing to add: no
+   * sheet, or every sampled frame already on disk as a frame of its own.
+   */
+  sheet: SheetCheck | null;
   notes: string[];
 }
 
@@ -499,7 +576,16 @@ export type FramingScope = 'per-shot' | 'shared';
 
 /** What the framing pass concluded, and how sure it is of it. */
 export interface FramingReport {
-  /** The residual fit measured at the viewport that was used. */
+  /**
+   * The residual fit measured at the box the framing chain chose.
+   *
+   * ⚠️ **Before** the MAE-refined pass below it, when that pass moved the box —
+   * and deliberately, because the two answer different questions and both are
+   * worth printing: this says how far the two *extents* were from registering,
+   * `refinement` says how far the *pictures* were from each other after that. Its
+   * `settled` / `agrees` / `cycled` words describe the chain that reached the box,
+   * which is a fact about the chain and does not change afterwards.
+   */
   fit: FramingFit;
   /** How many render/measure/correct passes ran. */
   passes: number;
@@ -547,6 +633,70 @@ export interface FramingReport {
    * what it does and does not mean attached.
    */
   units: { candidate: Extent; reference: Extent; ratio: number } | null;
+  /**
+   * What the MAE-refined final pass found, and whether it moved the box.
+   *
+   * `null` when nothing could be searched (no frame with reference ink). See
+   * `FramingRefinement`.
+   */
+  refinement: FramingRefinement | null;
+}
+
+/**
+ * The final framing pass, which asks a different question from every pass above
+ * it: not *do the two extents register?* but *is a constant pixel of this set's
+ * MAE a framing offset?*
+ *
+ * ## Why it exists, and why it is the last thing that happens
+ *
+ * Issue #146 measured the answer on the spineboy candidates: a **constant**
+ * translation of one or two pixels is worth 12 % of `death`'s headline
+ * reference-denominator MAE and up to 30 % of a fitted set's, while what is left
+ * after it is taken out is per-frame and small. That is `fitFraming`'s documented
+ * "extent is not alignment" floor arriving as a tenth of the number an author is
+ * reading as motion. `OffsetScan` searches whole-pixel offsets against the MAE
+ * itself, so it cannot walk off the answer the way the extent refinement measured
+ * and rejected in `frameByDeclaredBox` did — the figure it minimises is the figure
+ * the report prints.
+ *
+ * ## ⭐ Where it is allowed to move the box, and where it only reports
+ *
+ * **A fitted box is an estimate and gets corrected. An exact box does not.**
+ *
+ * - `derived` — the box came from a fit of extents, so a constant pixel in it is
+ *   the estimator's own floor. The offset is applied.
+ * - `declared` — `frames.json`'s box is not an estimate of where the frames were
+ *   drawn, it is where they were drawn (`frameByDeclaredBox`). A constant pixel
+ *   *there* is the candidate's own figure sitting a pixel off inside the right
+ *   box, which is a finding an author can act on and the framing must not absorb.
+ *   Searched, reported, never applied — and measured: over the committed corpus
+ *   every declared-box set's best offset is the exact identity, so this branch
+ *   has cost nothing so far and would only ever fire on a real offset.
+ * - `pinned` — `--viewport` is the author's claim about their own coordinates and
+ *   nothing here overrides it, exactly as the fit above is measured and not
+ *   applied.
+ */
+export interface FramingRefinement {
+  /** The best whole-pixel offset found, in frame pixels. `0, 0` means none was. */
+  dx: number;
+  dy: number;
+  /** Was it applied to the box the set was measured in? */
+  applied: boolean;
+  /** The set's mean reference-denominator MAE at the box the framing chose... */
+  before: number;
+  /** ...and at `dx, dy`, which is the same figure with the constant taken out. */
+  after: number;
+  /** How far the search looked, and how many frames it pooled. */
+  radius: number;
+  frames: number;
+  /**
+   * Why the offset was not applied — `null` when it was.
+   *
+   * `identity` is the answer this pass gives on a set whose framing is already
+   * where the picture is, and it is a measurement rather than a default: the
+   * search ran over the whole window and the identity won it.
+   */
+  declined: 'identity' | 'below-threshold' | 'box-is-exact' | 'pinned' | null;
 }
 
 /** A width and a height in world units. */
@@ -798,6 +948,9 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
         'framing line below is still measured, so it says what the pin cost.',
     );
     const pinnedShape = { passes: 1, settled: false, source: 'pinned' as const, cycled: false, applied: false };
+    // A pin is one claim for the whole run, so the refined pass is measured over
+    // the run as a whole — and never applied, for the same reason the fit is not.
+    const refinement = refinementOf(scanOffsets(located.root, prepared, posable.pages, pinned, background), 'pinned');
     const perSet = prepared.map((p, i) =>
       pairUpBoxes([p], posable.pages, pinned, background, level, slices[i]),
     );
@@ -806,7 +959,10 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       framings.push({
         viewport: pinned,
         how: 'viewport-flag',
-        fit: fit === null ? null : reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS }),
+        fit:
+          fit === null
+            ? null
+            : reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS, refinement }),
         notes: [],
       });
     }
@@ -815,7 +971,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     topHow = 'viewport-flag';
     if (all.length > 0) {
       const fit = fitFraming(all);
-      topFit = reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS });
+      topFit = reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS, refinement });
     }
   } else if (referenceBoxes.every((b) => b === null)) {
     throw new CheckError('no reference frame could be compared, so there is nothing to frame against');
@@ -830,10 +986,24 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       pixelHeight,
       referenceViewport,
     );
-    const fit = { ...framed.report, units: extentsOf(framed.report.fit, framed.viewport.scale, referenceViewport) };
+    // One box for the run, so one refined pass over every frame in it: a single
+    // shared framing that each set nudged its own way would not be a shared one.
+    const refinement = refinementOf(
+      scanOffsets(located.root, prepared, posable.pages, framed.viewport, background),
+      framed.report.source,
+    );
+    const viewport =
+      refinement !== null && refinement.applied
+        ? shiftViewport(framed.viewport, refinement.dx, refinement.dy, pixelWidth, pixelHeight)
+        : framed.viewport;
+    const fit = {
+      ...framed.report,
+      units: extentsOf(framed.report.fit, framed.viewport.scale, referenceViewport),
+      refinement,
+    };
     const how = HOW_BY_SOURCE[framed.report.source];
-    for (let i = 0; i < prepared.length; i++) framings.push({ viewport: framed.viewport, how, fit, notes: [] });
-    topViewport = framed.viewport;
+    for (let i = 0; i < prepared.length; i++) framings.push({ viewport, how, fit, notes: [] });
+    topViewport = viewport;
     topHow = how;
     topFit = fit;
     notes.push(...framingNotes(framed.report));
@@ -902,17 +1072,24 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
               pixelHeight,
               referenceViewport,
             );
-      if (!declared) {
-        framings.push({ ...sharedShape, notes: framingNotes(shared.report) });
-        continue;
-      }
-      own++;
-      framings.push({
-        viewport: declared.viewport,
-        how: HOW_BY_SOURCE[declared.report.source],
-        fit: { ...declared.report, units: extentsOf(declared.report.fit, declared.viewport.scale, referenceViewport) },
-        notes: framingNotes(declared.report),
-      });
+      const chosen: SetFraming = declared
+        ? {
+            viewport: declared.viewport,
+            how: HOW_BY_SOURCE[declared.report.source],
+            fit: {
+              ...declared.report,
+              units: extentsOf(declared.report.fit, declared.viewport.scale, referenceViewport),
+            },
+            notes: framingNotes(declared.report),
+          }
+        : { ...sharedShape, notes: framingNotes(shared.report) };
+      if (declared) own++;
+      // Per set, because the constant this pass removes is per set: issue #146
+      // measured spineboy's `death` wanting (−1, +1) and its `jump` (0, −1) in the
+      // same run and the same shared box. That is not the per-set *fitting* this
+      // scope rejects — the offset is measured against the MAE itself, where one
+      // shot's frames constrain the answer completely.
+      framings.push(refined(located.root, [p], posable.pages, chosen, background, pixelWidth, pixelHeight));
     }
     notes.push(
       `the framing was decided per frame set: ${own} of ${prepared.length} set(s) were measured in ` +
@@ -1303,6 +1480,8 @@ function frameCandidate(
       cycled: chain.cycled,
       agrees: chosen.distance <= COINCIDENT_PIXELS,
       applied: true,
+      // Filled in by the refined pass, which runs once the box is decided.
+      refinement: null,
     },
   };
 }
@@ -1481,8 +1660,89 @@ function frameByDeclaredBox(
       cycled: false,
       agrees: true,
       applied: true,
+      refinement: null,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// the MAE-refined final pass — see `FramingRefinement`
+// ---------------------------------------------------------------------------
+
+/**
+ * The reference-denominator MAE of these sets at every whole-pixel offset in a
+ * ±`REFINE_RADIUS` window, in the box they were framed in.
+ *
+ * One render per frame, whatever the window's size: `OffsetScan` owns why that is
+ * exact for whole pixels. The reference plates are read again here and again by
+ * `checkOneSet`; decoding a PNG twice is cheaper than holding a set's frames in
+ * memory, which on the ladder's largest set is a quarter of a gigabyte.
+ */
+function scanOffsets(
+  root: string,
+  prepared: PreparedSet[],
+  pages: Map<string, Plate>,
+  viewport: Viewport,
+  background: RGBA,
+): OffsetGain | null {
+  const scan = new OffsetScan(REFINE_RADIUS);
+  for (const p of prepared) {
+    for (const pair of p.pairs) {
+      scan.add(
+        renderFrame(pair.frame, pages, viewport, background),
+        frameGeometry(pair.frame, pages, viewport).coverage,
+        readPlateFrom(root, pair.file),
+        background,
+      );
+    }
+  }
+  return scan.best();
+}
+
+/**
+ * What to do with the offset a scan found, given how the box was chosen.
+ *
+ * The whole judgement of `FramingRefinement` in one function, so that "a fitted
+ * box is corrected and an exact one is only reported" is a single readable rule
+ * rather than a condition spread over three call sites.
+ */
+function refinementOf(gain: OffsetGain | null, source: FramingSource): FramingRefinement | null {
+  if (gain === null) return null;
+  const shape = {
+    dx: gain.dx,
+    dy: gain.dy,
+    before: gain.identity,
+    after: gain.best,
+    radius: gain.radius,
+    frames: gain.frames,
+  };
+  if (gain.dx === 0 && gain.dy === 0) return { ...shape, applied: false, declined: 'identity' };
+  if (!offsetIsWorthApplying(gain)) return { ...shape, applied: false, declined: 'below-threshold' };
+  if (source === 'pinned') return { ...shape, applied: false, declined: 'pinned' };
+  if (source === 'declared') return { ...shape, applied: false, declined: 'box-is-exact' };
+  return { ...shape, applied: true, declined: null };
+}
+
+/** One set's framing with the refined pass run over it, and applied if it may be. */
+function refined(
+  root: string,
+  prepared: PreparedSet[],
+  pages: Map<string, Plate>,
+  framing: SetFraming,
+  background: RGBA,
+  pixelWidth: number,
+  pixelHeight: number,
+): SetFraming {
+  if (framing.fit === null) return framing;
+  const refinement = refinementOf(
+    scanOffsets(root, prepared, pages, framing.viewport, background),
+    framing.fit.source,
+  );
+  const viewport =
+    refinement !== null && refinement.applied
+      ? shiftViewport(framing.viewport, refinement.dx, refinement.dy, pixelWidth, pixelHeight)
+      : framing.viewport;
+  return { ...framing, viewport, fit: { ...framing.fit, refinement } };
 }
 
 /**
@@ -1539,6 +1799,16 @@ interface PreparedSet {
   candidateFrames: number;
   referenceFrames: number;
   pairs: FramePair[];
+  /**
+   * Every frame the candidate sampled, in index order — not only the ones a file
+   * on disk pairs with.
+   *
+   * The contact sheet holds a tile for every SAMPLED frame, so a set that commits
+   * two stills out of 311 needs all 311 poses to be compared against it
+   * (`SheetCheck`). Kept as poses rather than plates: a `Frame` is geometry, and
+   * holding 311 rendered plates of a busy shot is a quarter of a gigabyte.
+   */
+  frames: Frame[];
   notes: string[];
   /** Set when nothing could be compared at all, saying why. */
   missing: string | null;
@@ -1562,6 +1832,7 @@ function prepareSet(
       candidateFrames: 0,
       referenceFrames: disk.length,
       pairs: [],
+      frames: [],
       notes: [],
       missing:
         `the candidate has no animation called ${JSON.stringify(wanted)} — it has [${have.join(', ') || 'none'}]. ` +
@@ -1609,6 +1880,7 @@ function prepareSet(
     candidateFrames: candidateFrames.length,
     referenceFrames: disk.length,
     pairs,
+    frames: candidateFrames,
     notes,
     missing: null,
   };
@@ -1654,6 +1926,7 @@ function checkOneSet(
     viewport: framingOfViewport(viewport),
     framing: framing.how,
     framingFit: framing.fit,
+    sheet: null,
     notes: prepared.missing ? [prepared.missing] : [...framing.notes, ...prepared.notes],
   };
   if (prepared.missing !== null || prepared.pairs.length === 0) return blank;
@@ -1729,9 +2002,15 @@ function checkOneSet(
     }
   }
 
+  // The frames the set does not commit as files, against the sheet that holds
+  // them — see `SheetCheck`. After the frame loop, because it is measured in the
+  // box that loop was measured in.
+  const sheet = checkAgainstSheet(root, prepared, posable, viewport, background);
+
   return {
     ...blank,
     compared: frames.length,
+    sheet: sheet.sheet,
     chains: chainChecks(chains, frames, tally),
     chainDenominator: tally.total,
     unattributedError: tally.unattributed,
@@ -1749,7 +2028,7 @@ function checkOneSet(
     changeDisagreements,
     worstChangeFrame,
     frames,
-    notes: [...framing.notes, ...prepared.notes],
+    notes: [...framing.notes, ...prepared.notes, ...sheet.notes],
   };
 }
 
@@ -2082,8 +2361,9 @@ function checkOneFrame(
     }
   }
 
-  const components = componentsOf(reference, background);
-  const { tracks, matchedComponents } = matchSlots(footprints, components, {
+  const field = componentField(reference, background);
+  const components = field.components;
+  const { tracks, matchedComponents } = matchSlots(footprints, field, {
     frame,
     pages,
     viewport,
@@ -2128,6 +2408,205 @@ function checkOneFrame(
     // this one — see `frameChange`.
     change: null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// the contact sheet — see `SheetCheck`
+// ---------------------------------------------------------------------------
+
+/** A sheet's grid, in the terms the tiles are cut out with. */
+interface SheetGeometry {
+  columns: number;
+  rows: number;
+  tileWidth: number;
+  tileHeight: number;
+  /** Tile pixels per frame pixel. */
+  tileScale: number;
+}
+
+/**
+ * A sheet's grid, **measured off the sheet** rather than taken on trust.
+ *
+ * `frames.json` records the frame count and the world box; it does not record the
+ * tile size, because `--tile` is a per-run choice and the sheet's own dimensions
+ * state the answer exactly. With `n` tiles in `c` columns the sheet is
+ * `c·(w+1)+1` by `ceil(n/c)·(h+1)+1`, so a column count either divides both
+ * dimensions exactly or is wrong — and the surviving candidate has to agree with
+ * the frames' own aspect ratio as well, since both tile sides came from one scale.
+ *
+ * `SHEET_COLUMNS` is tried first because it is the contract
+ * `bench/render_reference.ts` writes; the search behind it is what keeps a sheet
+ * rendered by something else readable, and what makes a mismatch a **named
+ * refusal** rather than a silent misread of somebody's grid.
+ */
+export function sheetGeometry(
+  sheet: Plate,
+  tiles: number,
+  pixelWidth: number,
+  pixelHeight: number,
+): SheetGeometry | null {
+  if (tiles <= 0 || pixelWidth <= 0 || pixelHeight <= 0) return null;
+  const candidates = [SHEET_COLUMNS, ...Array.from({ length: Math.min(tiles, 64) }, (_, i) => i + 1)];
+  const slack = 1 / Math.max(pixelWidth, pixelHeight);
+  let best: { geometry: SheetGeometry; error: number } | null = null;
+  for (const columns of candidates) {
+    if (columns > tiles) continue;
+    const across = sheet.width - SHEET_GAP;
+    const rows = Math.ceil(tiles / columns);
+    const down = sheet.height - SHEET_GAP;
+    if (across % columns !== 0 || down % rows !== 0) continue;
+    const tileWidth = across / columns - SHEET_GAP;
+    const tileHeight = down / rows - SHEET_GAP;
+    if (tileWidth < 1 || tileHeight < 1) continue;
+    // Both tile sides are one scale, rounded — so the two ratios agree to within
+    // the rounding, and a grid that does not is a different grid.
+    const error = Math.abs(tileWidth / pixelWidth - tileHeight / pixelHeight);
+    if (error > slack) continue;
+    const geometry = { columns, rows, tileWidth, tileHeight, tileScale: tileWidth / pixelWidth };
+    if (best === null || error < best.error) best = { geometry, error };
+    if (columns === SHEET_COLUMNS) break;
+  }
+  return best === null ? null : best.geometry;
+}
+
+/**
+ * The label burned into a tile's corner, as a box to leave out of the comparison.
+ *
+ * `bench/render_reference.ts` paints the frame's index at `(2, 2)` in the tile at
+ * scale 1, and the candidate does not draw it. Left in, it would add the same
+ * constant to every tile and a bigger one to four-digit frames than to one-digit
+ * ones — a difference that is a fact about the labeller. The box is derived from
+ * the font's own metrics, with a pixel of margin, rather than measured once and
+ * written down.
+ */
+function labelBox(index: number): { width: number; height: number } {
+  return { width: 2 + textWidth(String(index), 1) + 1, height: 2 + GLYPH_H + 1 };
+}
+
+/**
+ * One frame set against its contact sheet, tile by tile.
+ *
+ * The candidate is rendered into the SAME world box the set was framed in, at the
+ * sheet's own scale — so a set framed by `frames.json`'s own box is compared here
+ * with no correction at all, and a set framed by a fit carries that fit (which,
+ * for a stills-plus-sheet set, was measured on the stills). The report says which.
+ */
+function checkAgainstSheet(
+  root: string,
+  prepared: PreparedSet,
+  posable: ReturnType<typeof posableFromText>,
+  viewport: Viewport,
+  background: RGBA,
+): { sheet: SheetCheck | null; notes: string[] } {
+  const { set } = prepared;
+  const file = join(root, set.dir, SHEET_FILE);
+  if (!existsSync(file)) return { sheet: null, notes: [] };
+  const onDisk = framesOnDisk(root, set.dir).length;
+  // Every sampled frame already has a file of its own: the sheet is the same
+  // pictures again, smaller, and measuring them twice would just report the
+  // resampling.
+  if (onDisk >= set.sampled) return { sheet: null, notes: [] };
+  if (prepared.frames.length === 0) return { sheet: null, notes: [] };
+
+  const plate = readPlateFrom(root, file);
+  const geometry = sheetGeometry(plate, set.sampled, viewport.width, viewport.height);
+  if (geometry === null) {
+    return {
+      sheet: null,
+      notes: [
+        `${file} is ${plate.width}x${plate.height} px, which is not a grid of ${set.sampled} tile(s) at the ` +
+          `${viewport.width}x${viewport.height} aspect of these frames — so the whole shot was NOT compared, only ` +
+          `the ${onDisk} still(s) on disk. Re-render the set with bench/render_reference.ts if the sheet is stale.`,
+      ],
+    };
+  }
+
+  const { columns, tileWidth, tileHeight, tileScale } = geometry;
+  const tileViewport = viewportOfSize(
+    viewport.minX,
+    viewport.minY,
+    viewport.maxX - viewport.minX,
+    viewport.maxY - viewport.minY,
+    viewport.scale * tileScale,
+    tileWidth,
+    tileHeight,
+  );
+  const compared = Math.min(set.sampled, prepared.frames.length);
+  let maeSum = 0;
+  let maeReferenceSum = 0;
+  let worstMae = 0;
+  let worstTile = -1;
+  const per: Array<{ index: number; mae: number }> = [];
+  for (let index = 0; index < compared; index++) {
+    const frame = prepared.frames[index];
+    const rendered = renderFrame(frame, posable.pages, tileViewport, background);
+    const ox = SHEET_GAP + (index % columns) * (tileWidth + SHEET_GAP);
+    const oy = SHEET_GAP + Math.floor(index / columns) * (tileHeight + SHEET_GAP);
+    const label = labelBox(index);
+    let union = 0;
+    let referencePixels = 0;
+    let sum = 0;
+    for (let y = 0; y < tileHeight; y++) {
+      for (let x = 0; x < tileWidth; x++) {
+        if (y < label.height && x < label.width) continue;
+        const sx = ox + x;
+        const sy = oy + y;
+        if (sx >= plate.width || sy >= plate.height) continue;
+        const inReference = isContent(plate, sx, sy, background);
+        const inCandidate = isContent(rendered, x, y, background);
+        if (inReference) referencePixels++;
+        if (!inReference && !inCandidate) continue;
+        const a = rendered.get(x, y);
+        const b = plate.get(sx, sy);
+        union++;
+        sum += (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
+      }
+    }
+    const mae = union === 0 ? 0 : sum / union;
+    maeSum += mae;
+    maeReferenceSum += referencePixels === 0 ? 0 : sum / referencePixels;
+    per.push({ index, mae });
+    if (mae > worstMae) {
+      worstMae = mae;
+      worstTile = index;
+    }
+  }
+  per.sort((a, b) => b.mae - a.mae);
+  return {
+    sheet: {
+      file,
+      columns,
+      tileWidth,
+      tileHeight,
+      tileScale,
+      tiles: set.sampled,
+      compared,
+      meanMae: compared === 0 ? 0 : maeSum / compared,
+      meanMaeReference: compared === 0 ? 0 : maeReferenceSum / compared,
+      worstMae,
+      worstTile,
+      worst: per.slice(0, WORST_FRAMES),
+    },
+    notes: [],
+  };
+}
+
+/** The sheet block, as the lines an author reads after the frame table. */
+function sheetLines(sheet: SheetCheck | null): string[] {
+  if (sheet === null) return [];
+  const worst = sheet.worst
+    .map((tile) => `f${String(tile.index).padStart(4, '0')}=${tile.mae.toFixed(1)}`)
+    .join('  ');
+  return [
+    `     sheet      ${sheet.compared} of ${sheet.tiles} tile(s) of ${basename(sheet.file)} at ` +
+      `${sheet.tileWidth}x${sheet.tileHeight}px in ${sheet.columns} column(s)   MAE mean ${f2(sheet.meanMae)}  ` +
+      `worst ${f2(sheet.worstMae)} at f${String(sheet.worstTile).padStart(4, '0')}   ` +
+      `(over the reference's own pixels, mean ${f2(sheet.meanMaeReference)})`,
+    '                ⤷ the frames this set does not commit as files. The candidate is sampled at the set\'s own ' +
+      "rate and rendered into the same box the frames above were, at the sheet's scale. Read the " +
+      'series, not the mean: flat is framing or art, a spike is timing at that moment.',
+    `                ⤷ worst ${sheet.worst.length}: ${worst}`,
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -2286,6 +2765,7 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
           `f${String(anim.worstDriftFrame).padStart(4, '0')}${blind}`,
     );
     lines.push(changeSummary(anim));
+    for (const line of sheetLines(anim.sheet)) lines.push(line);
     for (const line of chainTable(anim)) lines.push(line);
     lines.push('');
 
@@ -2332,6 +2812,10 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   lines.push('  marked `tmpl` was correlated against the slot’s own pixels because the reference');
   lines.push('  merged it into a neighbour; the number beside it is how much better that match was');
   lines.push('  than its best rival, and a slot that matched nothing at all is left out of the count.');
+  lines.push('  A `sheet` line is the frames a set does not commit as files: the candidate sampled at the');
+  lines.push("  set's own rate against the tiles of its contact.png, in the same box the frame table used.");
+  lines.push('  Read it as a series — flat is framing or art, a spike is timing at that moment — and note');
+  lines.push('  that it is MAE only: the change columns below are pixel counts at frame scale.');
   lines.push('  `Δpx` and `ref Δ` are how many pixels each side moved since ITS OWN previous frame —');
   lines.push('  not against each other. They are the only columns that can see a held pose that is');
   lines.push('  not held, or a one-frame event that never fired: both are small in every frame and');
@@ -2581,6 +3065,57 @@ function framedToLines(v: Framing, how: FramingHow | null, indent = ''): string[
   ];
 }
 
+/**
+ * What the MAE-refined pass found, in the words that separate its four answers.
+ *
+ * All four are printed, the identity included, because "the framing is already
+ * where the picture is" is a measurement this pass makes and not a default it
+ * falls back to — the same reason an assertion with nothing to measure reports
+ * SKIP here rather than a pass. The two that decline a real offset are the loud
+ * ones: they say the constant pixel is in the candidate rather than in the box.
+ */
+function refinementLines(refinement: FramingRefinement | null, indent = ''): string[] {
+  if (refinement === null) return [];
+  const { dx, dy, before, after, radius, frames } = refinement;
+  const at = `${dx >= 0 ? '+' : ''}${dx}, ${dy >= 0 ? '+' : ''}${dy} px`;
+  const worth =
+    `${f2(before)} → ${f2(after)} over the reference's own pixels` +
+    (before > 0 ? ` (${(((before - after) / before) * 100).toFixed(1)}% of the figure)` : '');
+  const searched = `±${radius} px over ${frames} frame(s)`;
+  if (refinement.declined === 'identity') {
+    return [
+      `${indent}             ⤷ MAE-refined pass: searched ${searched} and the identity won, so no part of this set's ` +
+        'figure is a constant offset.',
+    ];
+  }
+  if (refinement.declined === 'below-threshold') {
+    return [
+      `${indent}             ⤷ MAE-refined pass: the best offset in ${searched} was ${at}, worth ${worth} — under the ` +
+        `${(REFINE_MIN_GAIN * 100).toFixed(0)}% / ${REFINE_MIN_GAIN_MAE.toFixed(2)} MAE this pass moves a box for, so ` +
+        'the box was left alone.',
+    ];
+  }
+  if (refinement.declined === 'box-is-exact') {
+    return [
+      `${indent}             ⚠️ a constant ${at} would take this set ${worth} — and it was NOT applied, because this ` +
+        `box is ${FRAMES_SIDECAR}'s own and is not an estimate of anything. A constant pixel inside the box the ` +
+        'frames were drawn at is your own figure sitting a pixel off, which is a thing to fix rather than to frame ' +
+        'away. Read it beside the drift below.',
+    ];
+  }
+  if (refinement.declined === 'pinned') {
+    return [
+      `${indent}             ⤷ a constant ${at} would take this set ${worth} — measured, NOT applied, because ` +
+        '--viewport pinned the box.',
+    ];
+  }
+  return [
+    `${indent}             ⭐ MAE-refined by ${at}: ${worth}. The fit above registers the two extents, and the best ` +
+      'fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the ' +
+      'figures below are what is left after it rather than a constant offset read as motion.',
+  ];
+}
+
 function framingLines(framing: FramingReport | null, indent = ''): string[] {
   if (!framing) return [];
   const { fit } = framing;
@@ -2600,6 +3135,7 @@ function framingLines(framing: FramingReport | null, indent = ''): string[] {
         ? `  (${framing.source}, ${framing.passes} pass(es), ${convergence(framing)})`
         : '  (measured, NOT applied — --viewport pinned)'),
   ];
+  out.push(...refinementLines(framing.refinement, indent));
   const spread = Math.max(Math.abs(fit.residualWidth), Math.abs(fit.residualHeight));
   if (spread > 1) {
     const axis = fit.residualWidth > 0 ? 'wider' : 'narrower';

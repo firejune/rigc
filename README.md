@@ -138,6 +138,21 @@ per animation and per frame:
   land in the box `frames.json` records is measured there, exactly, and the rest
   share one fitted framing. `--framing shared` measures every set in the shared one
   — the whole-root behaviour before issue #100, and worth 15–25 MAE on a character.
+  A **fitted** framing then gets one last pass that searches whole-pixel offsets
+  (±2 px) for the lowest MAE and takes the best one, because a fit registers extent
+  and the best fit of two extents is not the best alignment of two pictures — a
+  constant pixel is worth up to 30 % of a set's figure (issue #146). The line says
+  what it moved and what that was worth, and it says so when the identity won as
+  well. A box that is **not** an estimate — `frames.json`'s own, or one you pinned —
+  is never moved: there the same search is reported as a finding, because a constant
+  pixel inside the right box is the candidate's own figure sitting off, not framing.
+- **The whole shot, against the contact sheet** — a set that ships a couple of
+  stills and folds every sampled frame into one `contact.png` (rung 2's do,
+  spineboy's `@30fps` sets do) used to be compared on the stills alone, honestly
+  reported and empty behind: nothing at all was measured about the frames in
+  between. `check` now samples the candidate at the set's own rate and compares it
+  against the sheet's own tiles, whose grid it measures off the sheet (issue #36).
+  MAE only, and a sheet that is not a grid of those frames is refused by name.
 - **Per-frame change** — how many pixels each side moved since **its own** previous
   frame, compared against each other. It is the only measure here that looks at the
   relation between two frames rather than at one, and it is what catches a held pose
@@ -146,7 +161,8 @@ per animation and per frame:
 - **Per-slot drift** — where each of the candidate's own slots landed against the
   reference frame, in pixels. MAE says *how wrong*; a slot's drift says *which
   part, which way, how far*. Where the reference merged two parts into one blob —
-  the trap [AUTHORING §8](docs/AUTHORING.md) opens with — the slot is
+  the trap [AUTHORING §8](docs/AUTHORING.md) opens with, and it counts as merged
+  even when one part is most of the blob (issue #37) — the slot is
   template-matched against its own rendered pixels instead, with a confidence; and
   where nothing inside the distance that slot could plausibly have moved matches
   it, the answer is **no match** rather than a number about some other part.
