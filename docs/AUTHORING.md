@@ -1246,19 +1246,22 @@ to fit one framing across every set instead of one each, `--all-frames` to list
 every frame instead of the worst by MAE, `--json <out>` for the whole per-frame,
 per-slot report.
 
-⚠️ **A frame set may be contact-sheets-only.** `check` only reads `fNNNN.png`
-files — a committed reference set that ships a contact sheet plus a couple of
-stills (rung 2's does: `f0000.png` and `f0310.png` per animation, the rest folded
-into `contact.png` so a 311-frame shot does not commit 311 near-duplicate PNGs)
-reports `frames 2 on disk, candidate samples 311, 2 compared` and means it: `check`
-compared exactly the committed stills, not the shot. That is not a defect to author
-around — the frame count line says so rather than pretending a fuller comparison
-happened — but it does mean a clean `check` table on a contact-sheet-only set says
-nothing about the frames between the stills. Whole-shot fidelity against a contact
-sheet needs a tile-wise comparison against the sheet's own grid, which `check` does
-not do yet (issue #36);
+⭐ **A frame set may ship a contact sheet instead of every frame, and the sheet is
+compared too.** A long shot does not commit 311 near-duplicate PNGs: rung 2's sets
+ship `f0000.png` and `f0310.png` plus a `contact.png` holding all 311 sampled
+frames, and spineboy's `@30fps` sets do the same. The frame table still says
+`frames 2 on disk, candidate samples 311, 2 compared` — those are the files — and a
+**`sheet` line under it** carries the other 309: your candidate sampled at the set's
+own rate, rendered into the same box the frames above were at the sheet's own scale,
+and compared tile by tile (issue #36, the gap
 [`bench/runs/2026-08-23-rung2-2/sheetcheck.ts`](../bench/runs/2026-08-23-rung2-2/sheetcheck.ts)
-is a working prototype, built in-run for exactly this gap.
+prototyped in-run).
+
+⚠️ **Read it as a series, not as one number** — §9.2. And note what it does not
+carry: MAE only. The `Δpx` / `ref Δ` thresholds are calibrated at frame scale and a
+tile has a fraction of a frame's pixels, so the per-frame change measure stays on
+the committed stills, where it reports `no two compared frames are adjacent` and
+means it.
 
 `--fps <n>` exists for frame sets that have no `frames.json` beside them, which are
 sets rendered before the sidecar existed: it gives the rate those frames were
@@ -1436,6 +1439,8 @@ cannot.
      slot drift worst 2.1 px  "pendulum" at f0029
      per-frame 1 of 64 adjacent pair(s) change by a different amount than the reference does; worst
                f0018, yours moved 0 px where the reference moved 374
+     sheet      311 of 311 tile(s) of contact.png at 64x57px in 8 column(s)   MAE mean 4.30  worst 4.76 at f0047
+                ⤷ worst 8: f0047=4.8  f0048=4.7  f0045=4.7  f0039=4.7  f0149=4.7  f0044=4.6  f0046=4.6  f0043=4.6
 
      the 9 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
        frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
@@ -1594,7 +1599,26 @@ and blinks where the reference does.
 means it: the difference between two frames 310 apart is not a frame-to-frame delta.
 A disagreement needs one side to hold *exactly* still while the other moves, or one
 side to move four times the other and at least two dozen pixels more; below that the
-two rasterisations differ by their own last bit and the column says nothing.
+two rasterisations differ by their own last bit and the column says nothing. Such a
+set gets the `sheet` line instead, which is MAE over every sampled frame and not a
+change measure — the two thresholds above are pixel counts at frame scale, and a
+tile has a fraction of a frame's pixels.
+
+**The `sheet` line is the whole shot**, on the sets that commit a couple of stills
+and fold every sampled frame into one `contact.png`. It says how many tiles were
+compared out of how many the sheet holds, the grid it measured off the sheet itself,
+the mean and worst tile, and the worst eight by MAE. Read the **series** rather than
+the mean, exactly as with the frame table: flat across the shot is framing or art,
+a spike is timing at that moment — rung 2's four shots read 4.30–4.41 flat over
+1,244 tiles, which is what says their trajectories, ring rates and attachment swaps
+land where and when they should. Two things to know:
+
+- it is measured in the **same box** the frame table was, at the sheet's scale. For
+  a stills-plus-sheet set that box was decided on the stills, so a set whose framing
+  is a fit carries that fit into these numbers as well;
+- a sheet whose dimensions are not a grid of this set's frame count at these frames'
+  aspect is **refused by name** rather than read wrong — the note names the file, and
+  the answer is to re-render the set.
 
 **Slot drift** is what you act on. For each of your slots, `check` measures where
 it landed and how far that is from where the reference put it. That names the part,

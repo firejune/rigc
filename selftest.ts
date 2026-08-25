@@ -39,7 +39,7 @@
  * the real geometry the fixtures only stand in for. Without one, that suite says
  * it was skipped and the run still passes on the public suite alone.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import {
@@ -72,6 +72,7 @@ import {
   BACKGROUND,
   EMPTY_FOOTPRINT,
   fill,
+  FRAMES_SIDECAR,
   frameGeometry,
   framingViewport,
   loadPosable,
@@ -81,9 +82,14 @@ import {
   projector,
   PROTOCOL_FPS,
   rasterisePiece,
+  renderFrame,
   sampleAll,
   sampleAnimation,
   sampleSetupPose,
+  SHEET_COLUMNS,
+  SHEET_FILE,
+  SHEET_GAP,
+  viewportOfSize,
   type Footprint,
   type Frame,
   type Mesh,
@@ -1378,6 +1384,23 @@ const REFINE_PART_OFFSET = 20;
 const REFINE_PIN_PIXELS = 2;
 /** How exactly re-measuring at the refined box must reproduce the search's figure. */
 const REFINE_REPORT_TOLERANCE = 0.01;
+/** Which rung-3 set C14 and C15 rebuild as a stills-plus-sheet frame set. */
+const SHEET_SET = 'heavy';
+/** The long side of one tile in that fixture's sheet, in pixels. */
+const SHEET_FIXTURE_TILE = 64;
+/** The rule between its tiles, and the colour its frame numbers are burned in. */
+const SHEET_FIXTURE_RULE: RGBA = [176, 176, 176, 255];
+const SHEET_FIXTURE_LABEL: RGBA = [96, 96, 96, 255];
+/** How far C14's mutant pushes the middle of the shot, in the rig's own units. */
+const SHEET_BUMP = 300;
+/** The floor a faithful candidate must read on the sheet it was rendered into. */
+const SHEET_FLOOR_MAE = 1;
+/** How far C14 lets the two committed stills move when only the middle is wrong. */
+const SHEET_STILLS_TOLERANCE = 0.01;
+/** ...and how much worse the sheet has to read for the hole to count as closed. */
+const SHEET_LOUD_MAE = 10;
+/** The width C15 adds to a sheet so its dimensions are not a grid of these tiles. */
+const SHEET_STRAY_COLUMN = 1;
 
 const CHECK_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/3-timing-and-spacing');
 const CHECK_FRAMES = resolve(import.meta.dir, 'bench/reference/3-timing-and-spacing');
@@ -1654,6 +1677,103 @@ function offsetOneAnimation(motionText: string, name: string, dx: number, dy: nu
   });
   /* eslint-enable @typescript-eslint/no-explicit-any */
   return `${JSON.stringify(spec, null, 2)}\n`;
+}
+
+/**
+ * The same motion spec with ONE animation pushed away in the MIDDLE and left where
+ * it was at both ends.
+ *
+ * The defect a stills-plus-sheet frame set hides by construction (C14): the two
+ * committed frames are the two this leaves alone, so every number computed from
+ * files on disk is right and every tile between them is wrong.
+ */
+function bumpMiddleOfAnimation(motionText: string, name: string, dx: number): string {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const spec = JSON.parse(motionText);
+  const anim = spec.animations[name] as any;
+  anim.tracks.push({
+    bone: 'root',
+    property: 'translate',
+    keys: [
+      { t: 0, v: [0, 0] },
+      { t: anim.duration / 2, v: [dx, 0] },
+      { t: anim.duration, v: [0, 0] },
+    ],
+  });
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  return `${JSON.stringify(spec, null, 2)}\n`;
+}
+
+/**
+ * A frame set of the shape issue #36 is about: two stills on disk, and a contact
+ * sheet holding every sampled frame.
+ *
+ * ⚠️ Built here rather than fetched, because no committed set the check suite uses
+ * has that shape — rung 3 ships every frame — and a control for a sheet needs a
+ * sheet whose contents are known. The two stills are the corpus's own PNGs,
+ * unmodified; the sheet is rendered from the faithful candidate at the tile scale,
+ * which is what `bench/render_reference.ts` does with the reference and what makes
+ * the faithful reading a floor rather than a number nobody can predict.
+ *
+ * `padWidth` adds that many pixels of width to the sheet, which is how C15 asks for
+ * a sheet whose dimensions are not a grid of this many tiles.
+ */
+function buildSheetFixture(
+  artifacts: { skeletonText: string; atlasText: string; atlasDir: string },
+  setDir: string,
+  padWidth = 0,
+): string {
+  const sidecar: unknown = JSON.parse(readFileSync(join(CHECK_FRAMES, FRAMES_SIDECAR), 'utf8'));
+  const source = sidecar as {
+    spec: string;
+    background: RGBA;
+    viewport: { x: number; y: number; width: number; height: number; scale: number; pixelWidth: number; pixelHeight: number };
+    sets: Array<{ dir: string; animation: string | null; fps: number; sampled: number; written: number; stride: number; duration: number }>;
+  };
+  const set = source.sets.find((s) => s.dir === setDir);
+  if (!set) throw new Error(`selftest: no set ${JSON.stringify(setDir)} in ${CHECK_FRAMES}/${FRAMES_SIDECAR}`);
+  const root = mkdtempSync(join(tmpdir(), 'rigc-sheet-'));
+  mkdirSync(join(root, setDir), { recursive: true });
+
+  // The first and last frames, from the corpus, untouched.
+  const stills = [0, set.sampled - 1];
+  for (const index of stills) {
+    const name = `f${String(index).padStart(4, '0')}.png`;
+    copyFileSync(join(CHECK_FRAMES, setDir, name), join(root, setDir, name));
+  }
+  writeFileSync(
+    join(root, FRAMES_SIDECAR),
+    `${JSON.stringify(
+      { ...source, sets: [{ ...set, written: stills.length, stride: set.sampled }] },
+      null,
+      2,
+    )}\n`,
+  );
+
+  // ...and the sheet, at the tile scale, laid out the way the frame-set contract says.
+  const v = source.viewport;
+  const posable = posableFromText(artifacts.skeletonText, artifacts.atlasText, artifacts.atlasDir);
+  const frames = sampleAnimation(posable.data, set.animation as string, set.fps).slice(0, set.sampled);
+  const tileScale = SHEET_FIXTURE_TILE / Math.max(v.pixelWidth, v.pixelHeight);
+  const tileW = Math.max(1, Math.round(v.pixelWidth * tileScale));
+  const tileH = Math.max(1, Math.round(v.pixelHeight * tileScale));
+  const columns = Math.min(SHEET_COLUMNS, frames.length);
+  const rows = Math.ceil(frames.length / columns);
+  const sheet = new Plate(
+    columns * (tileW + SHEET_GAP) + SHEET_GAP + padWidth,
+    rows * (tileH + SHEET_GAP) + SHEET_GAP,
+  );
+  fill(sheet, SHEET_FIXTURE_RULE);
+  const tileViewport = viewportOfSize(v.x, v.y, v.width, v.height, v.scale * tileScale, tileW, tileH);
+  frames.forEach((frame, index) => {
+    const tile = renderFrame(frame, posable.pages, tileViewport, source.background);
+    tile.text(String(index), 2, 2, 1, SHEET_FIXTURE_LABEL);
+    const ox = SHEET_GAP + (index % columns) * (tileW + SHEET_GAP);
+    const oy = SHEET_GAP + Math.floor(index / columns) * (tileH + SHEET_GAP);
+    for (let y = 0; y < tileH; y++) for (let x = 0; x < tileW; x++) sheet.set(ox + x, oy + y, tile.get(x, y));
+  });
+  sheet.writePng(join(root, setDir, SHEET_FILE));
+  return root;
 }
 
 /** Returns the number of failures, or `null` when the example corpus is absent. */
@@ -2152,6 +2272,105 @@ function runCheckSuite(): number | null {
         `worst chain ${worstChainRatio.toFixed(2)}x its set's MAE (needs <= ${CHAIN_FLOOR_RATIO}), ` +
         `${(worstUnattributed * 100).toFixed(1)}% unattributed (needs <= ` +
         `${(CHAIN_UNATTRIBUTED_TOLERANCE * 100).toFixed(1)}%)`,
+    );
+  }
+
+  // --- the contact sheet: the frames a set does not commit as files -----------
+  // Issue #36. A long shot commits two stills and folds every sampled frame into
+  // one `contact.png`, and `check` used to compare the two stills and say so — an
+  // honest `2 compared` with nothing measured about the other 309 frames. The
+  // fixture builds exactly that shape: a frame set with the FIRST and LAST frames
+  // on disk and a sheet holding all 65, and a candidate whose defect is entirely
+  // in between.
+  //
+  // The mutant is the one the hole was hiding: a track that leaves both ends where
+  // the reference has them and pushes the middle of the shot away. Its two stills
+  // are right, so the frame table cannot see it; every tile between them is wrong.
+  // Three assertions, and the first is what makes the other two mean anything:
+  //
+  //   * the FAITHFUL candidate reads a floor on the sheet — if the grid were
+  //     misread by a pixel, or the burned-in frame number counted as a difference,
+  //     nothing here would read a floor at all;
+  //   * the mutant's committed stills read the same as the faithful ones;
+  //   * and its sheet reads many times worse, with the worst tile in the middle.
+  const sheetFrames = buildSheetFixture(faithful, SHEET_SET);
+  const sheetFaithful = checkAgainstFrames({ ...faithful, framesDir: sheetFrames });
+  const bumped = compileTranscription(
+    bumpMiddleOfAnimation(
+      readFileSync(join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.motion.json'), 'utf8'),
+      SHEET_SET,
+      SHEET_BUMP,
+    ),
+  );
+  const sheetBumped = checkAgainstFrames({ ...bumped, framesDir: sheetFrames });
+  const goodSheet = comparedSets(sheetFaithful)[0]?.sheet ?? null;
+  const badSheet = comparedSets(sheetBumped)[0]?.sheet ?? null;
+  const goodStills = comparedSets(sheetFaithful)[0]?.meanMae ?? null;
+  const badStills = comparedSets(sheetBumped)[0]?.meanMae ?? null;
+  const middle = badSheet === null ? -1 : badSheet.worstTile / Math.max(1, badSheet.tiles - 1);
+  const sheetOk =
+    goodSheet !== null &&
+    badSheet !== null &&
+    goodStills !== null &&
+    badStills !== null &&
+    // The stills are two of 65, and both of them are frames the mutant leaves alone.
+    comparedSets(sheetFaithful)[0]?.compared === 2 &&
+    goodSheet.compared === goodSheet.tiles &&
+    goodSheet.tiles > 2 &&
+    goodSheet.meanMae < SHEET_FLOOR_MAE &&
+    Math.abs(badStills - goodStills) <= SHEET_STILLS_TOLERANCE &&
+    badSheet.meanMae > goodSheet.meanMae + SHEET_LOUD_MAE &&
+    middle > 0.25 &&
+    middle < 0.75;
+  if (sheetOk) {
+    console.log(
+      `  PASS  C14_A_DEFECT_BETWEEN_THE_STILLS_IS_LOUD_ON_THE_SHEET  ` +
+        `(${goodSheet.tiles} tiles at ${goodSheet.tileWidth}x${goodSheet.tileHeight}px: faithful ` +
+        `${goodSheet.meanMae.toFixed(2)}, a mid-shot push ${badSheet.meanMae.toFixed(2)} worst at ` +
+        `f${String(badSheet.worstTile).padStart(4, '0')} — while the two committed stills read ` +
+        `${(badStills as number).toFixed(2)} against ${(goodStills as number).toFixed(2)})`,
+    );
+    console.log(
+      '          origin: rung 2 ships 2 of 311 frames per shot, so a clean `2 compared` table said nothing about ' +
+        'the shot (issue #36)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C14_A_DEFECT_BETWEEN_THE_STILLS_IS_LOUD_ON_THE_SHEET: faithful sheet ${JSON.stringify(goodSheet)}, ` +
+        `mutant sheet ${JSON.stringify(badSheet)}, stills ${goodStills?.toFixed(2) ?? 'n/a'} against ` +
+        `${badStills?.toFixed(2) ?? 'n/a'}, worst tile at ${(middle * 100).toFixed(0)}% of the shot`,
+    );
+  }
+
+  // --- and a sheet that is not a grid of these frames is refused, by name ------
+  // The negative control, and it guards the failure that would be worst: a grid
+  // read wrong by one pixel puts every tile a little off its own frame and reports
+  // the offset as motion, on every frame of the shot at once. So the geometry is
+  // derived from the sheet's own dimensions and REFUSED when they are not a grid of
+  // this many tiles at these frames' aspect — with the file named, because the
+  // author's next move is to re-render the set.
+  const strayFrames = buildSheetFixture(faithful, SHEET_SET, SHEET_STRAY_COLUMN);
+  const strayReport = checkAgainstFrames({ ...faithful, framesDir: strayFrames });
+  const strayAnim = comparedSets(strayReport)[0] ?? null;
+  const strayOk =
+    strayAnim !== null &&
+    strayAnim.sheet === null &&
+    strayAnim.compared === 2 &&
+    strayAnim.notes.some((note) => note.includes(SHEET_FILE) && note.includes('not a grid'));
+  if (strayOk) {
+    console.log(
+      `  PASS  C15_A_SHEET_THAT_IS_NOT_A_GRID_OF_THESE_FRAMES_IS_REFUSED  ` +
+        `(+${SHEET_STRAY_COLUMN} px of width: no sheet figure, and the note names ${SHEET_FILE})`,
+    );
+    console.log(
+      '          origin: a grid read wrong by a pixel reports a constant offset as motion on every frame of the shot',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C15_A_SHEET_THAT_IS_NOT_A_GRID_OF_THESE_FRAMES_IS_REFUSED: sheet ` +
+        `${JSON.stringify(strayAnim?.sheet ?? null)}, notes ${JSON.stringify(strayAnim?.notes ?? [])}`,
     );
   }
 
@@ -4467,14 +4686,16 @@ function main(): void {
         [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
       : `, + 2 diff identity controls (name-matched and name-agnostic), + ${DIFF_CASES.length} diff measure controls, ` +
-        '+ 14 check controls (frames-only reads, a faithful ' +
+        '+ 16 check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +
         "not, one offset shot that must not move another shot's numbers, one bloated sprite that must " +
         'lower the union mean, raise the figure over the reference’s own pixels, and be named as overdraw, ' +
         'one offset bone CHAIN that must be blamed while its neighbour and a faithful build stay on the floor, ' +
-        'and a constant framing pixel that must be taken out of the figure on a displaced silhouette and ' +
-        'invented on neither a faithful nor a bodily moved one)';
+        'a constant framing pixel that must be taken out of the figure on a displaced silhouette and ' +
+        'invented on neither a faithful nor a bodily moved one, and a defect between two committed stills that ' +
+        'must be loud on the contact sheet holding the frames between them while a sheet that is not a grid of ' +
+        'those frames is refused by name)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'

@@ -146,6 +146,13 @@ per animation and per frame:
   well. A box that is **not** an estimate — `frames.json`'s own, or one you pinned —
   is never moved: there the same search is reported as a finding, because a constant
   pixel inside the right box is the candidate's own figure sitting off, not framing.
+- **The whole shot, against the contact sheet** — a set that ships a couple of
+  stills and folds every sampled frame into one `contact.png` (rung 2's do,
+  spineboy's `@30fps` sets do) used to be compared on the stills alone, honestly
+  reported and empty behind: nothing at all was measured about the frames in
+  between. `check` now samples the candidate at the set's own rate and compares it
+  against the sheet's own tiles, whose grid it measures off the sheet (issue #36).
+  MAE only, and a sheet that is not a grid of those frames is refused by name.
 - **Per-frame change** — how many pixels each side moved since **its own** previous
   frame, compared against each other. It is the only measure here that looks at the
   relation between two frames rather than at one, and it is what catches a held pose

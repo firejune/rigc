@@ -124,6 +124,27 @@ export const FRAMING_FPS = 60;
 export const FRAMES_SIDECAR = 'frames.json';
 export const FRAMES_SPEC = 'rigc-frames/1';
 
+/**
+ * The contact sheet beside a frame set, and the one number its layout needs.
+ *
+ * ⭐ A sheet is **part of the frame set**, not an illustration of it: a long shot
+ * commits a couple of stills and folds every sampled frame into one PNG, so for
+ * such a set the sheet is the only picture of the 309 frames in between, and
+ * `check` compares against its tiles (issue #36). That makes the layout a
+ * contract between two programs — `bench/render_reference.ts` writes the grid and
+ * `src/check.ts` reads it — so the column count lives here rather than in either.
+ *
+ * The tile SIZE is deliberately not here. It is a `--tile` choice per run, and a
+ * reader can measure it exactly off the sheet's own dimensions given the frame
+ * count and the column count (`check`'s `sheetGeometry` does), so recording it
+ * would be a second definition of something already written down in pixels.
+ */
+export const SHEET_COLUMNS = 8;
+/** The sheet's file name inside a frame directory. */
+export const SHEET_FILE = 'contact.png';
+/** One pixel of rule between tiles, and one around the outside. */
+export const SHEET_GAP = 1;
+
 /** One rendered frame directory: which animation, at what rate, and what is on disk. */
 export interface FrameSet {
   /** Directory name under the skeleton root — `heavy`, or `heavy@24fps`. */

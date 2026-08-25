@@ -96,6 +96,9 @@ import {
   renderFrame,
   sampleAll,
   SETUP_POSE_DIR,
+  SHEET_COLUMNS,
+  SHEET_FILE,
+  SHEET_GAP,
   type Frame,
   type FramesSidecar,
   type FrameSet,
@@ -103,8 +106,11 @@ import {
 } from '../src/render.ts';
 import { Plate, type RGBA } from '../tools/plate.ts';
 
-/** Contact sheet: tiles per row, default tile long side, and the separator colour. */
-const SHEET_COLUMNS = 8;
+/** Contact sheet: default tile long side, and the two colours the grid is drawn in.
+ *
+ * The column count and the one-pixel rule are `src/render.ts`'s — they are the
+ * layout `rigc check` reads a sheet's tiles back out of (issue #36), so they are
+ * part of the frame-set contract rather than of this script. */
 const SHEET_TILE = 128;
 const SHEET_RULE: RGBA = [176, 176, 176, 255];
 const SHEET_LABEL: RGBA = [96, 96, 96, 255];
@@ -160,14 +166,14 @@ function contactSheet(
   const tileH = Math.max(1, Math.round(viewport.height * tileScale));
   const columns = Math.min(SHEET_COLUMNS, frames.length);
   const rows = Math.ceil(frames.length / columns);
-  const sheet = new Plate(columns * (tileW + 1) + 1, rows * (tileH + 1) + 1);
+  const sheet = new Plate(columns * (tileW + SHEET_GAP) + SHEET_GAP, rows * (tileH + SHEET_GAP) + SHEET_GAP);
   fill(sheet, SHEET_RULE);
   const base = projector(viewport);
   frames.forEach((frame, i) => {
     const col = i % columns;
     const row = Math.floor(i / columns);
-    const ox = col * (tileW + 1) + 1;
-    const oy = row * (tileH + 1) + 1;
+    const ox = col * (tileW + SHEET_GAP) + SHEET_GAP;
+    const oy = row * (tileH + SHEET_GAP) + SHEET_GAP;
     const plate = new Plate(tileW, tileH);
     fill(plate, BACKGROUND);
     const project = (wx: number, wy: number): [number, number] => {
@@ -308,7 +314,7 @@ for (const skeletonEntry of rung.skeletons) {
     // A single frame has nothing to compare itself against, so it gets no sheet:
     // the sheet would be that same frame with a border and a "0" on it, and the
     // reader would have opened a second file to learn nothing.
-    if (frames.length > 1) contactSheet(frames, pages, viewport, tile).writePng(join(dir, 'contact.png'));
+    if (frames.length > 1) contactSheet(frames, pages, viewport, tile).writePng(join(dir, SHEET_FILE));
     const last = frames[frames.length - 1].time;
     sets.push({
       dir: dirName,

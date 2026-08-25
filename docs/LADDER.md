@@ -172,6 +172,28 @@ them); 33 move. `bench.json` files are **not** rewritten, and the re-read figure
 belong to the adjudication pass rule 3 requires after an instrument change, not
 here. Nothing about `bench`'s own measures changed.
 
+**2026-08-25 — `check` compares contact sheets, and stopped calling a merged blob a
+part** (issues [#36](https://github.com/firejune/rigc/issues/36) and
+[#37](https://github.com/firejune/rigc/issues/37)). Two additions in the same pass
+as #146 above, and only one of them moves a recorded figure.
+
+- **The sheet.** A set that commits a couple of stills and folds every sampled frame
+  into `contact.png` was compared on the stills alone. It now also gets a **`sheet`
+  line**: the candidate sampled at the set's own rate, rendered in the set's own box
+  at the sheet's scale, compared tile by tile. Nothing already recorded changes —
+  this is a figure that did not exist. It exists on **35** of the sets on this page,
+  rung 2's four and every `@30fps`/`@24fps` stills set among them, and it is the
+  first whole-shot reading any of them has had.
+- **Slot drift.** A reference component holding another slot's ink is no longer
+  called one slot's own, however much of it that slot draws. ⚠️ **Recorded worst
+  drifts re-read lower where that was happening**: rung 2 attempt 2 **11.2 px →
+  0.2 px** on all four sets, rung 1 `balls` **8.9 → 3.5**, rung 6 `arcs` **4.2 →
+  2.5**. No MAE moves, and no set loses its drift table (4 attributed samples out of
+  ~7,000 across the page).
+
+Both are gating-relevant — G2 reads the drift, and the sheet is a new observable —
+which is why they land before the adjudication pass and not during it.
+
 **Stage 3 — per-frame pose distance. Named, not built.** The structural diff
 compares what the file *says*; it cannot see that two structurally identical rigs
 pose differently. The measure for that is **per-frame bone world-transform

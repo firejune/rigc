@@ -523,9 +523,18 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
         : framing.source === 'declared'
           ? `frames.json's own box, the candidate measured into it`
           : `fitted to the candidate's pixels, ${framing.passes} pass(es)${framing.settled ? '' : framing.cycled ? ', cycling' : ', unsettled'}`;
+      // The MAE-refined offset belongs on this line rather than only in `check`'s
+      // own table: it moved the box every figure below was measured in, so a row
+      // that quoted the figures without it would not say what they were measured
+      // against — issue #146's own version of the #34 lesson above.
+      const r = framing.refinement;
+      const refined =
+        r === null || !r.applied
+          ? ''
+          : `  MAE-refined ${signed(r.dx)}, ${signed(r.dy)}px (${r.before.toFixed(2)} → ${r.after.toFixed(2)} ref)`;
       console.log(
         `  framing    fit x${framing.fit.scale.toFixed(6)}  rms ${framing.fit.rms.toFixed(2)}px  union residual ` +
-          `${signed(framing.fit.residualWidth)} x ${signed(framing.fit.residualHeight)}px  (${how})`,
+          `${signed(framing.fit.residualWidth)} x ${signed(framing.fit.residualHeight)}px  (${how})${refined}`,
       );
     }
     for (const anim of check.animations) {
@@ -551,9 +560,17 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
       // carried here and not only in `check`'s own table because this is the line a
       // loop reads between builds, and `mean=` has a denominator the candidate can
       // grow — see `FrameCheck.maeReference`.
+      // ...and the contact sheet, when the set ships one: a row reading "over 2
+      // frame(s)" for a 311-frame shot is the hole issue #36 closed, and the whole
+      // -shot figure is the one that says the frames between the stills were seen.
+      const sheet =
+        anim.sheet === null
+          ? ''
+          : `, sheet ${anim.sheet.compared} tile(s) mean=${anim.sheet.meanMae.toFixed(2)} ` +
+            `worst=${anim.sheet.worstMae.toFixed(2)}`;
       console.log(
         `  ${anim.dir.padEnd(10)} MAE mean=${anim.meanMae.toFixed(2)} worst=${anim.worstMae.toFixed(2)} ` +
-          `ref=${anim.meanMaeReference.toFixed(2)}  over ${anim.compared} frame(s)  ${drift}${change}${chain}`,
+          `ref=${anim.meanMaeReference.toFixed(2)}  over ${anim.compared} frame(s)  ${drift}${change}${chain}${sheet}`,
       );
     }
   } else {
