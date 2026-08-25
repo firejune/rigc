@@ -165,6 +165,16 @@ handed to an authoring agent must quote them both.** Not link them — quote the
 agent cannot avoid a document it was never told to avoid, and every leak recorded on
 this ladder so far arrived through a document the run was *told* to read.
 
+⭐ **What decides whether a text belongs on them is the answer-derivability test**, in
+[docs/LADDER.md](../../docs/LADDER.md)'s *The honesty rule*: a text is sealed **iff it
+states or constrains a reference-side value of a scored measure**, and provenance alone
+does not seal. That criterion lives there and only there, because it is a rule for
+whoever maintains these lists rather than something a run reads — the lists are the copy
+that goes into a prompt. Two consequences the test carries for this file: an allowed
+surface must be **closed under reading**, so a citation out of one into a sealed
+document is a leak by another route; and a candidate-side figure measured against the
+frames is not answer-bearing, so it is not swept out.
+
 **✅ Allowed — the complete list.**
 
 1. the rung's brief, `bench/briefs/<rung>.md`;

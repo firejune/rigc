@@ -268,6 +268,38 @@ Practically:
 - A rung attempted with the reference in context is recorded as such, or not
   recorded at all.
 
+⭐ **What seals a text: answer-derivability, not provenance.** Decided 2026-08-25, issue
+[#158](https://github.com/firejune/rigc/issues/158). The question a sweep of an
+allowed-reading surface asks is not *where did this fact come from?* but **can the
+answer be produced from this text?** Provenance alone does not seal — a figure an author
+could have measured off an allowed input is not an answer however it was arrived at, and
+sealing on provenance chases citation chains while censoring material that teaches.
+
+**The test.** Text is forbidden in an allowed-reading surface **iff it states or
+constrains a reference-side value of a scored measure.** `bench`'s measure table and
+`check`'s gated figures are the answer sheet; anything that reveals or narrows one of
+its rows is answer-bearing, and nothing else is. Four readings follow it, and they are
+the ones the sweep of [AUTHORING.md](AUTHORING.md) turned on:
+
+- **A candidate-side `check` figure stays.** `check` measures against the rendered
+  frames, which are the exam question rather than the answer key, so a figure derived
+  from an allowed input cannot be the answer to it.
+- **A score written over a reference denominator is sealed.** A ratio whose denominator
+  is *the reference's* own count states that count, and that is a measure value.
+- **A skeleton or animation name is not sealed.** A name derives no answer, and the
+  brief names the shot being rigged anyway.
+- **An allowed surface has to be closed under reading.** A citation leading out of an
+  allowed document into a sealed one hands over exactly what the document withheld. So
+  the guide says outright that an authoring run does not follow its references out of
+  it, and a citation into a stored run's directory — where a spec that scores well *is*
+  the answer key — is written as a name rather than as a path.
+
+⇒ It is rule 1's principle applied to the other side of the exam: **the exam must be
+answerable from the allowed inputs, and the allowed inputs must not contain the
+answers.** And unlike provenance it is mechanically checkable — an allowed surface can
+be scanned for reference-side measure values, where *"who wrote this number down
+first"* cannot be.
+
 **The two lists, and the prompt must quote them.** The enumerated form lives in
 [`bench/runs/README.md`](../bench/runs/README.md), *What a run may read* — one copy,
 because a reading list in two places drifts and then neither is the rule. In one line
