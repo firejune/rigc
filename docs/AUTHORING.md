@@ -1604,8 +1604,15 @@ sentence you can take straight back to a key.
 There are two matchers and the `how` column says which one answered:
 
 - `component` — your slot sits on a connected component of the reference frame that
-  is its own size. The drift is the distance between the two centroids, and it is
-  the strongest answer available.
+  is its own size **and holds nothing else you drew**. The drift is the distance
+  between the two centroids, and it is the strongest answer available. All three
+  conditions are checked: a blob may not be much bigger than the slot, may not be
+  much wider than its box, and may not contain another of your parts' ink. The last
+  is the one a dominant part slips through otherwise — rung 2's course is 81 % of a
+  blob that also holds the water, the panel and both rings, so the blob is only
+  1.24x its ink and no wider than its box, and the reported *"course drift 11.2 px"*
+  was the distance to a five-part centroid (issue #37). It now falls to the matcher
+  below and reads 0.0 px.
 - `tmpl 0.62` — the reference merged your slot into a neighbour (they touch, or one
   is drawn over the other), so the fallback rendered **your slot on its own** and
   correlated it against the reference around where you drew it. The number is the

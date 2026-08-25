@@ -154,7 +154,8 @@ per animation and per frame:
 - **Per-slot drift** — where each of the candidate's own slots landed against the
   reference frame, in pixels. MAE says *how wrong*; a slot's drift says *which
   part, which way, how far*. Where the reference merged two parts into one blob —
-  the trap [AUTHORING §8](docs/AUTHORING.md) opens with — the slot is
+  the trap [AUTHORING §8](docs/AUTHORING.md) opens with, and it counts as merged
+  even when one part is most of the blob (issue #37) — the slot is
   template-matched against its own rendered pixels instead, with a confidence; and
   where nothing inside the distance that slot could plausibly have moved matches
   it, the answer is **no match** rather than a number about some other part.

@@ -55,6 +55,8 @@ import {
   assertFrameReadable,
   checkAgainstFrames,
   checkLines,
+  componentField,
+  matchSlots,
   OVERDRAW_RATIO,
   type AnimationCheck,
   type ChainCheck,
@@ -65,8 +67,11 @@ import {
 } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
+import { isContent } from './src/framing.ts';
 import {
+  BACKGROUND,
   EMPTY_FOOTPRINT,
+  fill,
   frameGeometry,
   framingViewport,
   loadPosable,
@@ -2293,6 +2298,179 @@ function runCheckSuite(): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// slot attribution — a reference blob is not a part
+// ---------------------------------------------------------------------------
+//
+// `check`'s cheap matcher asks which connected component of the REFERENCE frame
+// each of the candidate's slots landed on, and a component that holds two parts
+// has a centroid that belongs to neither. Two tests guard that — the blob may not
+// be much bigger than the slot, and its box may not be much wider — and issue #37
+// filed the case that walks through both: rung 2's reference merges the course,
+// the water, the panel and both rings into one blob in which the **course is 81 %
+// of the ink**, so the blob is 1.24x the course's own and barely wider than its
+// box. The summary line read `course drift 11.2 px` for a part whose own error per
+// pixel was below the set's mean, and the drift was the distance from the course's
+// centroid to a five-part blob's.
+//
+// ⚠️ These two controls draw their own reference frame instead of using the
+// corpus, and that is the point: the defect is a property of the REFERENCE's
+// labelling, so it needs a blob one part dominates, and no committed frame set
+// that the check suite already uses has one. Drawn here, the whole thing is
+// arithmetic — the true drift is zero by construction — and the suite still runs
+// on a fresh clone with no art at all.
+
+/** A part of the synthetic frame: where it is, and nothing about what it means. */
+interface InkRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** How dark a synthetic part is drawn — anything past `BACKGROUND_TOLERANCE` will do. */
+const INK: RGBA = [16, 16, 16, 255];
+/** The synthetic frame's size, in pixels. */
+const SLOT_FRAME = { width: 64, height: 24 };
+/**
+ * The dominant part, and the small one the reference merges into it.
+ *
+ * Chosen so the blob passes **both** existing merge tests, which is what makes it
+ * the case #37 filed rather than one already caught: 224 px against the small
+ * part's 100 px is 1.45x (under `MERGE_RATIO`'s 1.6), and the blob's box is no
+ * wider than the wide part's own, so the bounding-box test sees nothing either.
+ * What it does move is the centroid, by several pixels, because the small part's
+ * mass is all on one side.
+ */
+const SLOT_WIDE: InkRect = { x: 4, y: 4, width: 56, height: 4 };
+const SLOT_SMALL: InkRect = { x: 4, y: 8, width: 20, height: 5 };
+/** ...and where the small one goes when the two are meant to be separate blobs. */
+const SLOT_SMALL_APART: InkRect = { x: 4, y: 14, width: 20, height: 5 };
+/** How far a control lets a faithful component match sit from the truth, in pixels. */
+const SLOT_TRUE_DRIFT = 0.01;
+/** How big the fabricated drift has to be for S01's fixture to be worth asserting on. */
+const SLOT_LIE_PIXELS = 1;
+
+function drawInk(plate: Plate, rect: InkRect): void {
+  for (let y = rect.y; y < rect.y + rect.height; y++) {
+    for (let x = rect.x; x < rect.x + rect.width; x++) plate.set(x, y, INK);
+  }
+}
+
+/** A frame with these parts drawn on the frames' own background. */
+function inkFrame(rects: InkRect[]): Plate {
+  const plate = new Plate(SLOT_FRAME.width, SLOT_FRAME.height);
+  fill(plate, BACKGROUND);
+  for (const rect of rects) drawInk(plate, rect);
+  return plate;
+}
+
+/**
+ * The footprint a candidate drawing exactly this part would have.
+ *
+ * Measured off a plate rather than written down, for the same reason no mutant in
+ * this file hardcodes an offset: a footprint stated by hand is a second definition
+ * of "where the ink is" that can drift from `frameGeometry`'s.
+ */
+function inkFootprint(rect: InkRect): Footprint {
+  const plate = inkFrame([rect]);
+  let pixels = 0;
+  let sx = 0;
+  let sy = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let y = 0; y < plate.height; y++) {
+    for (let x = 0; x < plate.width; x++) {
+      if (!isContent(plate, x, y, BACKGROUND)) continue;
+      pixels++;
+      sx += x + 0.5;
+      sy += y + 0.5;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  if (pixels === 0) return EMPTY_FOOTPRINT;
+  return { pixels, cx: sx / pixels, cy: sy / pixels, minX, minY, maxX: maxX + 1, maxY: maxY + 1 };
+}
+
+function runSlotSuite(): number {
+  console.log('\n── slot attribution (fixture: a two-part frame drawn here) ──');
+  let bad = 0;
+  const wide = inkFootprint(SLOT_WIDE);
+  const small = inkFootprint(SLOT_SMALL);
+  const apart = inkFootprint(SLOT_SMALL_APART);
+
+  // --- the merged blob, with the dominant part in it --------------------------
+  const merged = componentField(inkFrame([SLOT_WIDE, SLOT_SMALL]), BACKGROUND);
+  // No SlotSource: the template fallback is the OTHER matcher and this control is
+  // about what the component pass is willing to call a measurement.
+  const mergedTracks = matchSlots(new Map([['wide', wide], ['small', small]]), merged, null).tracks;
+  const wideTrack = mergedTracks.find((t) => t.slot === 'wide') ?? null;
+  const blob = merged.components[0];
+  // What the component pass WOULD have reported, derived rather than quoted: the
+  // distance from the dominant part's own centroid to the blob's.
+  const lie = blob === undefined ? 0 : Math.hypot(blob.cx - wide.cx, blob.cy - wide.cy);
+  const oneBlob = merged.components.length === 1;
+  const mergedOk =
+    oneBlob &&
+    lie > SLOT_LIE_PIXELS &&
+    wideTrack !== null &&
+    wideTrack.drift === null &&
+    wideTrack.method === 'none' &&
+    wideTrack.ambiguity !== null &&
+    wideTrack.ambiguity.includes('"small"');
+  if (mergedOk) {
+    console.log(
+      `  PASS  T01_A_BLOB_ITS_OWN_SLOT_DOMINATES_IS_STILL_A_BLOB  ` +
+        `(${blob.pixels} px blob against the part's own ${Math.round(wide.pixels)} px — ` +
+        `${(blob.pixels / wide.pixels).toFixed(2)}x, under the size test, and no wider than its box: reported as ` +
+        `ambiguous rather than as the ${lie.toFixed(1)} px the centroids are apart)`,
+    );
+    console.log(
+      '          origin: rung 2 read `course drift 11.2 px` off a blob holding the course, the water, the panel and ' +
+        'both rings (issue #37)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  T01_A_BLOB_ITS_OWN_SLOT_DOMINATES_IS_STILL_A_BLOB: ${merged.components.length} component(s), ` +
+        `centroids ${lie.toFixed(2)} px apart (needs > ${SLOT_LIE_PIXELS}), track ${JSON.stringify(wideTrack)}`,
+    );
+  }
+
+  // --- and two parts that are two blobs still get their drift -----------------
+  // The negative control, and the suite needs it more than usual: "reported as
+  // ambiguous" is also what a matcher that has stopped measuring anything reports.
+  // The same two parts, moved apart by a row of background, must both come back
+  // with a component match and the drift the fixture makes true — zero.
+  const separate = componentField(inkFrame([SLOT_WIDE, SLOT_SMALL_APART]), BACKGROUND);
+  const separateTracks = matchSlots(new Map([['wide', wide], ['small', apart]]), separate, null).tracks;
+  const separateOk =
+    separate.components.length === 2 &&
+    separateTracks.length === 2 &&
+    separateTracks.every(
+      (t) => t.method === 'component' && t.ambiguity === null && t.drift !== null && t.drift <= SLOT_TRUE_DRIFT,
+    );
+  if (separateOk) {
+    console.log(
+      `  PASS  T02_TWO_PARTS_THAT_ARE_TWO_BLOBS_STILL_GET_A_DRIFT  ` +
+        `(both matched by component at ${separateTracks.map((t) => (t.drift ?? 0).toFixed(2)).join(' / ')} px)`,
+    );
+    console.log('          origin: a matcher that answers "ambiguous" to everything is not a matcher');
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  T02_TWO_PARTS_THAT_ARE_TWO_BLOBS_STILL_GET_A_DRIFT: ${separate.components.length} component(s), ` +
+        `tracks ${JSON.stringify(separateTracks.map((t) => ({ slot: t.slot, method: t.method, drift: t.drift })))}`,
+    );
+  }
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // the rig spec — negative controls for the COMPILER, not for the validator
 // ---------------------------------------------------------------------------
 //
@@ -4258,6 +4436,8 @@ function main(): void {
     bad += meshCheckBad;
     substantive += 2;
   }
+  bad += runSlotSuite();
+  substantive += 2;
   const diffBad = runDiffSuite();
   if (diffBad !== null) {
     bad += diffBad;
@@ -4304,7 +4484,8 @@ function main(): void {
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
-      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 6 draw-order controls, ` +
+      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 2 slot-attribution ` +
+      'controls (a blob one part dominates, and two parts that are two blobs), + 6 draw-order controls, ' +
       '+ 7 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +

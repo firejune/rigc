@@ -5,8 +5,9 @@
  *
  * The cheap matcher labels the reference frame's connected components and asks
  * which one each of the candidate's slots landed on. It is right whenever the
- * parts of a shot are separate blobs, and it has two failure modes that two
- * honest ladder runs hit head-on (issue #34):
+ * parts of a shot are separate blobs, and it has three failure modes that honest
+ * ladder runs hit head-on (issues #34 and #37) — all three the same mistake, which
+ * is treating a blob as a part:
  *
  * - **Parts that touch label as one component.** Rung 4 is a disc with five chain
  *   links hanging off it; they touch in every frame of every animation, so every
@@ -15,6 +16,13 @@
  *   4 px ball, on the frames where it rests against the course and has no component
  *   of its own, matched the floating girder 47 px away — and the summary line
  *   reported **48.3 px of drift for a 4 px ball**, unflagged.
+ * - **A blob one part dominates passes for that part.** Rung 2's reference merges
+ *   the course, the water, the panel and both rings into one component in which the
+ *   course is 81 % of the ink, so it is 1.24x the course's own and no wider than its
+ *   box — both merge tests see nothing, and the run reported *"course drift
+ *   11.2 px"*, the distance to a five-part centroid (issue #37). `occupantsOf`
+ *   answers that one with the label map: anything else the candidate drew inside the
+ *   blob makes the blob's centroid nobody's position.
  *
  * So: components first, and when a component cannot be attributed to one slot, the
  * slot's own rendered quad is **template-matched** against the reference in a
@@ -94,6 +102,21 @@ export interface Component {
 }
 
 /**
+ * The reference frame's components, and which one each pixel belongs to.
+ *
+ * The label map is what makes "is anything ELSE inside this blob?" a measurement
+ * rather than a guess from bounding boxes — see `occupantsOf`. It is indexed
+ * row-major on the frame's own grid, and `-1` is background or a component too
+ * small to be a part.
+ */
+export interface ComponentField {
+  components: Component[];
+  labels: Int32Array;
+  width: number;
+  height: number;
+}
+
+/**
  * Connected components of "not the background colour", 8-connected.
  *
  * 8-connected rather than 4: a thin diagonal — a bar, a stick, a shadow's edge —
@@ -101,6 +124,11 @@ export interface Component {
  * twenty and every match is ambiguous for a reason that is about the labeller.
  */
 export function componentsOf(plate: Plate, background: RGBA): Component[] {
+  return componentField(plate, background).components;
+}
+
+/** The same labelling, with the map kept — see `ComponentField`. */
+export function componentField(plate: Plate, background: RGBA): ComponentField {
   const { width, height } = plate;
   const label = new Int32Array(width * height).fill(-1);
   const out: Component[] = [];
@@ -145,7 +173,54 @@ export function componentsOf(plate: Plate, background: RGBA): Component[] {
       out.push({ pixels, cx: sx / pixels, cy: sy / pixels, minX, minY, maxX: maxX + 1, maxY: maxY + 1 });
     }
   }
-  return out.filter((c) => c.pixels >= MIN_COMPONENT_PIXELS).sort((a, b) => b.pixels - a.pixels);
+  // Crumbs out, biggest first — and the label map carried through the reorder, so
+  // a label is always an index into the array the caller is handed. Renumbering
+  // rather than sorting the map is what keeps the two from drifting apart.
+  const keep = out.map((c, id) => ({ c, id })).filter(({ c }) => c.pixels >= MIN_COMPONENT_PIXELS);
+  keep.sort((a, b) => b.c.pixels - a.c.pixels);
+  const renumbered = new Int32Array(out.length).fill(-1);
+  keep.forEach(({ id }, index) => {
+    renumbered[id] = index;
+  });
+  for (let at = 0; at < label.length; at++) label[at] = label[at] < 0 ? -1 : renumbered[label[at]];
+  return { components: keep.map(({ c }) => c), labels: label, width, height };
+}
+
+/**
+ * Which drawn slots' ink sits inside each component, by centroid.
+ *
+ * ## Why this exists: a blob one part dominates is still a blob
+ *
+ * The size and bounding-box tests below catch a merge when the merged neighbour is
+ * a material fraction of the blob. They cannot catch the case issue #37 filed:
+ * rung 2's reference merges the course, the water, the panel and both rings into
+ * one component, and the **course is 81 % of it**, so the blob is only 1.24x the
+ * course's own ink and barely wider than the course's own box. It passed every
+ * test, and the summary line reported *"course drift 11.2 px"* — the distance from
+ * the course's centroid to the centroid of a blob holding four other parts, which
+ * is not a measurement of the course at all.
+ *
+ * One label lookup per drawn slot answers it exactly: if anything else the
+ * candidate drew lands on this component's own pixels, the component is more than
+ * one part and its centroid is nobody's position. That is the same judgement the
+ * two-claimants rule below already makes; what was missing is that a slot which
+ * never got as far as *claiming* the blob — because it was refused for being 13x
+ * too small, or diverted to the template matcher — still proves the blob is shared.
+ */
+function occupantsOf(field: ComponentField, footprints: Map<string, Footprint>): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  for (const [slot, foot] of footprints) {
+    if (foot.pixels === 0) continue;
+    const x = Math.floor(foot.cx);
+    const y = Math.floor(foot.cy);
+    if (x < 0 || y < 0 || x >= field.width || y >= field.height) continue;
+    const label = field.labels[y * field.width + x];
+    if (label < 0) continue;
+    const seen = out.get(label) ?? [];
+    seen.push(slot);
+    out.set(label, seen);
+  }
+  return out;
 }
 
 /** How the drift beside a slot was arrived at. `none` means it could not be. */
@@ -213,11 +288,16 @@ interface Pending {
  */
 export function matchSlots(
   footprints: Map<string, Footprint>,
-  components: Component[],
+  field: ComponentField,
   source: SlotSource | null,
 ): { tracks: SlotTrack[]; matchedComponents: number } {
+  const components = field.components;
   const pending: Pending[] = [];
   const takenBy = new Map<Component, string[]>();
+  const occupants = occupantsOf(field, footprints);
+  /** Which component each one is, so an occupancy list can be looked up by it. */
+  const idOf = new Map<Component, number>();
+  components.forEach((component, id) => idOf.set(component, id));
 
   for (const [slot, foot] of [...footprints].sort((a, b) => a[0].localeCompare(b[0]))) {
     const track = blankTrack(slot);
@@ -318,6 +398,24 @@ export function matchSlots(
       entry.claimed = component;
       clearMatch(entry.track);
     }
+  }
+
+  // ...and a component ONE slot claimed while other ink of the candidate's sits
+  // inside it is the same blob by the other route — the one that reported a
+  // dominant part's distance to a five-part blob as that part's drift (#37). The
+  // claim goes to the template matcher for the same reason: a centroid shared by
+  // several parts is not this part's position.
+  for (const entry of pending) {
+    if (entry.claimed === null || entry.track.ambiguity !== null) continue;
+    const id = idOf.get(entry.claimed);
+    if (id === undefined) continue;
+    const others = (occupants.get(id) ?? []).filter((slot) => slot !== entry.track.slot);
+    if (others.length === 0) continue;
+    entry.track.ambiguity =
+      `this slot's reference component also holds ${others.map((s) => JSON.stringify(s)).join(', ')} — ` +
+      `${entry.claimed.pixels} px of blob against this slot's own ${Math.round(entry.foot.pixels)} px, so its ` +
+      "centroid is the merged shape's and not this part's";
+    clearMatch(entry.track);
   }
 
   // The fallback: anything the components could not attribute, correlated against

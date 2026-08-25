@@ -109,11 +109,20 @@ import {
   type FramingFit,
   type OffsetGain,
 } from './framing.ts';
-import { componentsOf, isAttributable, matchSlots, searchRadius, type SlotTrack } from './slots.ts';
+import { componentField, isAttributable, matchSlots, searchRadius, type SlotTrack } from './slots.ts';
 import { chainsOf, type BoneChain } from './chains.ts';
 import { readPlate, type Plate, type RGBA } from '../tools/plate.ts';
 
-export { componentsOf, matchSlots, searchRadius, type Component, type MatchMethod, type SlotTrack } from './slots.ts';
+export {
+  componentField,
+  componentsOf,
+  matchSlots,
+  searchRadius,
+  type Component,
+  type ComponentField,
+  type MatchMethod,
+  type SlotTrack,
+} from './slots.ts';
 export { chainsOf, chainBySlot, type BoneChain } from './chains.ts';
 export type { BoxPair, ContentBox, FramingFit, OffsetGain } from './framing.ts';
 
@@ -2272,8 +2281,9 @@ function checkOneFrame(
     }
   }
 
-  const components = componentsOf(reference, background);
-  const { tracks, matchedComponents } = matchSlots(footprints, components, {
+  const field = componentField(reference, background);
+  const components = field.components;
+  const { tracks, matchedComponents } = matchSlots(footprints, field, {
     frame,
     pages,
     viewport,
