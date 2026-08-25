@@ -1360,6 +1360,19 @@ const CHAIN_FLOOR_DRIFT = 1;
 const CHAIN_FLOOR_RATIO = 1.25;
 /** The share C11 lets a faithful build leave unattributed to any chain. */
 const CHAIN_UNATTRIBUTED_TOLERANCE = 0.01;
+/**
+ * How far C12 displaces ONE part of the fixture, in the rig's own units (~1 px).
+ *
+ * Small on purpose. What C12 needs is a silhouette that DIFFERS — which is what
+ * pulls the best fit of two extents away from the best alignment of two pictures
+ * — and not a candidate that is grossly wrong: a monster fixture would make the
+ * pass fire for reasons that have nothing to do with the floor being measured.
+ */
+const REFINE_PART_OFFSET = 20;
+/** How far C13 pins the box off the frames' own, in frame pixels. */
+const REFINE_PIN_PIXELS = 2;
+/** How exactly re-measuring at the refined box must reproduce the search's figure. */
+const REFINE_REPORT_TOLERANCE = 0.01;
 
 const CHECK_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/3-timing-and-spacing');
 const CHECK_FRAMES = resolve(import.meta.dir, 'bench/reference/3-timing-and-spacing');
@@ -2134,6 +2147,146 @@ function runCheckSuite(): number | null {
         `worst chain ${worstChainRatio.toFixed(2)}x its set's MAE (needs <= ${CHAIN_FLOOR_RATIO}), ` +
         `${(worstUnattributed * 100).toFixed(1)}% unattributed (needs <= ` +
         `${(CHAIN_UNATTRIBUTED_TOLERANCE * 100).toFixed(1)}%)`,
+    );
+  }
+
+  // --- the MAE-refined final pass: a constant pixel is not motion -------------
+  // Issue #146. A settled extent fit can still leave a CONSTANT translation of a
+  // pixel or two, and on a hard shot that constant is a tenth of the headline
+  // figure — spineboy's `death` reads 54.31 at its fitted box and 48.47 one pixel
+  // away, with the per-frame remainder an order of magnitude smaller. So the
+  // framing gets one last pass that searches whole-pixel offsets against the
+  // reported figure itself.
+  //
+  // The fixture is the faithful rig with ONE part displaced, which is the shape
+  // that produces the defect: the fit registers extent, so a silhouette that
+  // differs anywhere pulls the best fit of the extents away from the best
+  // alignment of the pictures. Three numbers make the claim, and the third is why
+  // this is a control rather than "a number went down":
+  //
+  //   * `before` — the figure at the fitted box, i.e. what this tool reported
+  //     before this pass existed;
+  //   * `after`  — the same figure with the best constant taken out;
+  //   * `truth`  — the same candidate PINNED to the box `frames.json` records,
+  //     which is where the frames were actually drawn and is not an estimate.
+  //
+  // A pass that merely lowered a number could move `after` anywhere. This one has
+  // to move it TOWARDS `truth`, and at `truth` itself it has to find nothing —
+  // otherwise what it is removing is the candidate's own displaced part rather
+  // than the fit's floor.
+  const displaced = compileTranscription(null);
+  const displacedText = offsetOneChain(displaced.skeletonText, 'square', REFINE_PART_OFFSET, 0);
+  const refinedReport = checkAgainstFrames({
+    ...displaced,
+    skeletonText: displacedText,
+    framesDir: CHECK_FRAMES,
+  });
+  const truthReport = checkAgainstFrames({
+    ...displaced,
+    skeletonText: displacedText,
+    framesDir: CHECK_FRAMES,
+    viewport: sidecarViewport(),
+  });
+  const refinements = comparedSets(refinedReport).map((a) => a.framingFit?.refinement ?? null);
+  const truthRefinements = comparedSets(truthReport).map((a) => a.framingFit?.refinement ?? null);
+  const closer = comparedSets(refinedReport).map((anim, i) => {
+    const r = refinements[i];
+    const truth = comparedSets(truthReport)[i]?.meanMaeReference ?? null;
+    if (!r || truth === null) return null;
+    return { r, truth, gained: Math.abs(r.before - truth) - Math.abs(r.after - truth) };
+  });
+  const refinedOk =
+    refinements.length > 0 &&
+    framedBy(refinedReport, 'candidate-pixels', 'derived') &&
+    refinements.every((r) => r !== null && r.applied && (r.dx !== 0 || r.dy !== 0) && r.after < r.before) &&
+    closer.every((c) => c !== null && c.gained > 0) &&
+    // ...and re-measuring at the box it chose reproduces what the search promised,
+    // which is the property that lets a 25-offset search cost one render a frame.
+    comparedSets(refinedReport).every(
+      (anim, i) => Math.abs(anim.meanMaeReference - (refinements[i] as { after: number }).after) <= REFINE_REPORT_TOLERANCE,
+    ) &&
+    // At the box the frames were drawn at there is no constant left to take.
+    truthRefinements.every((r) => r !== null && r.dx === 0 && r.dy === 0 && r.declined === 'identity');
+  if (refinedOk) {
+    const first = refinements[0] as { dx: number; dy: number; before: number; after: number };
+    const truth = (closer[0] as { truth: number }).truth;
+    console.log(
+      `  PASS  C12_A_CONSTANT_FRAMING_PIXEL_IS_TAKEN_OUT_OF_THE_FIGURE  ` +
+        `(one part +${REFINE_PART_OFFSET} units: refined by ${first.dx}, ${first.dy} px, ` +
+        `${first.before.toFixed(2)} → ${first.after.toFixed(2)} against ${truth.toFixed(2)} at the frames' own box, ` +
+        'which reports no constant of its own)',
+    );
+    console.log(
+      "          origin: spineboy's `death` read 54.31 at a settled fit and 48.47 one pixel away, and a loop reads " +
+        'that difference as motion (issue #146)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C12_A_CONSTANT_FRAMING_PIXEL_IS_TAKEN_OUT_OF_THE_FIGURE: framing ` +
+        `${JSON.stringify(comparedSets(refinedReport).map((a) => a.framing))}, refinements ` +
+        `${JSON.stringify(refinements)}, closer-to-truth ${JSON.stringify(closer.map((c) => c?.gained ?? null))}, ` +
+        `at the declared box ${JSON.stringify(truthRefinements.map((r) => r?.declined ?? null))}`,
+    );
+  }
+
+  // --- and it invents no offset where there is none ---------------------------
+  // The negative control for C12, in three halves, because there are three ways
+  // for this pass to be worse than not having it. A faithful candidate framed by
+  // the frames' own box must come back the exact identity — that is issue #146's
+  // own `idle`-class control. The same rig moved BODILY must too, and that half is
+  // the sharper one: its box is FITTED, so it proves the pass is not simply firing
+  // wherever a fit was involved — a pure translation is the one thing the extent
+  // fit recovers exactly, and there is nothing left for a constant to buy.
+  //
+  // The third half is the positive control for the search itself, without which
+  // the two above would also pass on a pass that could not find anything at all:
+  // the same faithful rig, PINNED two pixels off the box the frames were drawn at,
+  // has to find those two pixels — and must still not apply them, because a pin is
+  // the author's claim and nothing here overrides it.
+  const declared = sidecarViewport();
+  const declaredScale = comparedSets(faithfulReport)[0]?.viewport.scale ?? 0;
+  const offBy = declaredScale > 0 ? REFINE_PIN_PIXELS / declaredScale : 0;
+  const pinnedOff = checkAgainstFrames({
+    ...faithful,
+    framesDir: CHECK_FRAMES,
+    viewport: { ...declared, x: declared.x - offBy },
+  });
+  const faithfulRefinements = comparedSets(faithfulReport).map((a) => a.framingFit?.refinement ?? null);
+  const movedRefinements = comparedSets(movedReport).map((a) => a.framingFit?.refinement ?? null);
+  const pinnedRefinements = comparedSets(pinnedOff).map((a) => a.framingFit?.refinement ?? null);
+  const identityEverywhere = (
+    rows: Array<{ dx: number; dy: number; declined: string | null } | null>,
+  ): boolean => rows.length > 0 && rows.every((r) => r !== null && r.dx === 0 && r.dy === 0 && r.declined === 'identity');
+  const inventsNothingOk =
+    identityEverywhere(faithfulRefinements) &&
+    identityEverywhere(movedRefinements) &&
+    pinnedRefinements.length > 0 &&
+    pinnedRefinements.every(
+      // −2 and not +2: `projector` is px = (wx − minX)·k, so a box whose origin is
+      // two pixels' worth of world to the LEFT draws its content two pixels to the
+      // right, and the offset that would bring it back is negative. Asserting the
+      // sign rather than the magnitude is what makes this control catch an
+      // inversion in the search or in `shiftViewport`.
+      (r) => r !== null && !r.applied && r.declined === 'pinned' && r.dx === -REFINE_PIN_PIXELS && r.dy === 0,
+    );
+  if (inventsNothingOk) {
+    const found = pinnedRefinements[0] as { dx: number; dy: number; before: number; after: number };
+    console.log(
+      `  PASS  C13_THE_REFINED_PASS_INVENTS_NO_OFFSET  ` +
+        `(faithful and +${FRAMING_MOVE}-units-moved both come back the exact identity; pinned ` +
+        `${REFINE_PIN_PIXELS} px off, it finds ${found.dx}, ${found.dy} px — ${found.before.toFixed(2)} → ` +
+        `${found.after.toFixed(2)} — and does not apply it)`,
+    );
+    console.log(
+      '          origin: a framing pass that moves a right answer is worse than no pass at all, and a pin is a claim ' +
+        'the tool does not overrule',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C13_THE_REFINED_PASS_INVENTS_NO_OFFSET: faithful ${JSON.stringify(faithfulRefinements)}, moved ` +
+        `${JSON.stringify(movedRefinements)}, pinned ${REFINE_PIN_PIXELS} px off ${JSON.stringify(pinnedRefinements)}`,
     );
   }
   return bad;
@@ -4134,12 +4287,14 @@ function main(): void {
         [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
       : `, + 2 diff identity controls (name-matched and name-agnostic), + ${DIFF_CASES.length} diff measure controls, ` +
-        '+ 12 check controls (frames-only reads, a faithful ' +
+        '+ 14 check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +
         "not, one offset shot that must not move another shot's numbers, one bloated sprite that must " +
-        'lower the union mean, raise the figure over the reference’s own pixels, and be named as overdraw, and ' +
-        'one offset bone CHAIN that must be blamed while its neighbour and a faithful build stay on the floor)';
+        'lower the union mean, raise the figure over the reference’s own pixels, and be named as overdraw, ' +
+        'one offset bone CHAIN that must be blamed while its neighbour and a faithful build stay on the floor, ' +
+        'and a constant framing pixel that must be taken out of the figure on a displaced silhouette and ' +
+        'invented on neither a faithful nor a bodily moved one)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'

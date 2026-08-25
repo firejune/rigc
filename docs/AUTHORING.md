@@ -1315,8 +1315,10 @@ question first: *do this set's own drawn pixels land in the box `frames.json`
 records?* The sets that do are measured in that box, which is exact — it is not an
 estimate of where the frames were drawn, it is where they were drawn — and nothing
 another set does can move them. The sets that do not are measured in **one shared
-framing** fitted across every set, printed as the header's `shared box` line. Each
-set says which it got on its own `framed to` line.
+framing** fitted across every set, printed as the header's `shared box` line, plus
+their own whole-pixel MAE refinement off it (§9.2) — the fit is shared because more
+frames condition it better; the constant offset it still leaves is per set, and
+measured per set. Each set says which it got on its own `framed to` line.
 
 Why the split falls there, both halves measured on an 8-shot character (147 frames):
 
@@ -1424,6 +1426,7 @@ cannot.
   reference  256x116px  0.117628 px/unit  world x[-573.3 .. 1603.0] y[-81.2 .. 908.9]  (frames.json)
   content    candidate 234.6x95.5px at (11.3, 11.5)   reference 234.7x95.3px at (11.2, 11.7)   (union over 86 frame(s))
              ⤷ fit x0.999256  offset +0.05, -0.02 px   rms 0.42 px over 344 edge(s)   union residual -0.27 x +0.17 px   aspect -0.30%  (derived, 4 pass(es), settled)
+             ⭐ MAE-refined by -1, +1 px: 54.31 → 48.47 over the reference's own pixels (10.7% of the figure). …
   in units   candidate 1995.3 x 809.7   reference 1995.3 x 809.9   x0.9999
 
   ── heavy — candidate animation "heavy", 12 fps ──
@@ -1494,6 +1497,12 @@ The lines, in order:
   does not, after the fit. This is the number that says *"something reaches
   somewhere nothing in the frames does, or is a different size"*, and a warning
   spells it out past a pixel.
+- the **MAE-refined** line, which is the last thing that happens to the box and the
+  paragraph below is what it is for. On a **fitted** framing it says what constant
+  whole-pixel offset was taken out and what that was worth (`⭐`), or that the
+  search ran and the identity won. On a box that is not an estimate — the frames'
+  own, or one you pinned — it never moves anything, and if it finds a constant there
+  it says so as a **finding about your rig** rather than about the framing.
 - `in units` — the same two boxes in world units. The framing absorbs a pure scale
   on purpose, so this is the only place one shows; it compares only if you measured
   the shot in the frames' own units.
@@ -1504,10 +1513,31 @@ that is a little large — the best fit of the two extents is not quite the best
 alignment of the two pictures, and the fit spends a fraction of a pixel absorbing
 a difference that would have been cheaper to leave alone. Measured floor: about a
 third of a pixel on the ladder's shots. On most that is invisible; on a small
-high-contrast frame it is worth a point or two of MAE — rung 6 measured five. This
-is the floor the frames' own box has no share in, which is why `check` prefers that
-box whenever your pixels are measured to land in it; `--viewport` is how you stop
-it in the cases that box does not cover.
+high-contrast frame it is worth a point or two of MAE — rung 6 measured five, and
+on the spineboy sets a **constant** one or two pixels was worth 10–30 % of the
+figure (issue #146). This is the floor the frames' own box has no share in, which is
+why `check` prefers that box whenever your pixels are measured to land in it;
+`--viewport` is how you stop it in the cases that box does not cover.
+
+⭐ **What a fitted framing now does about it: one final whole-pixel pass.** After
+the fit settles (or cycles), `check` searches every whole-pixel offset within ±2 px
+for the lowest MAE over the reference's own drawn pixels and moves the box to the
+best one, when that is worth at least 1 % of the figure. So a fitted set's numbers
+are what is left **after** the best constant offset has been removed, rather than a
+constant offset read as motion — and the line says which offset and what it bought,
+in both directions, so nothing is quietly absorbed.
+
+Two things to know when you read it:
+
+- ⚠️ **A large refinement on a set whose drift is also large is not necessarily
+  framing.** The pass removes the best *constant*, and when one part carries much of
+  the shot's ink a constant can absorb part of that part's own displacement. Read
+  the offset beside the chain table: a big offset with a flat drift table is the
+  fit's floor; a big offset with one limb far out is that limb.
+- On a box that is not an estimate the pass declines and says why. `frames.json`'s
+  own box is where the frames were drawn, so a constant pixel *there* is your
+  figure sitting a pixel off inside the right box — a thing to fix, and the report
+  refuses to frame it away. A pinned box is your claim, and nothing overrules it.
 
 **MAE** is the mean absolute RGB difference, 0..255, over the pixels either side
 covers — the *union alpha*. It is not scored against a threshold, any more than a

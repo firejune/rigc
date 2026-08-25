@@ -94,13 +94,20 @@ import {
   fitIsSettled,
   fitSeparation,
   frameContentBox,
+  offsetIsWorthApplying,
+  OffsetScan,
+  shiftViewport,
   unionBoxes,
   isContent,
   BACKGROUND_TOLERANCE,
   CYCLE_PIXELS,
+  REFINE_MIN_GAIN,
+  REFINE_MIN_GAIN_MAE,
+  REFINE_RADIUS,
   type BoxPair,
   type ContentBox,
   type FramingFit,
+  type OffsetGain,
 } from './framing.ts';
 import { componentsOf, isAttributable, matchSlots, searchRadius, type SlotTrack } from './slots.ts';
 import { chainsOf, type BoneChain } from './chains.ts';
@@ -108,7 +115,7 @@ import { readPlate, type Plate, type RGBA } from '../tools/plate.ts';
 
 export { componentsOf, matchSlots, searchRadius, type Component, type MatchMethod, type SlotTrack } from './slots.ts';
 export { chainsOf, chainBySlot, type BoneChain } from './chains.ts';
-export type { BoxPair, ContentBox, FramingFit } from './framing.ts';
+export type { BoxPair, ContentBox, FramingFit, OffsetGain } from './framing.ts';
 
 // ---------------------------------------------------------------------------
 // the reference side — frames only, and mechanically so
@@ -499,7 +506,16 @@ export type FramingScope = 'per-shot' | 'shared';
 
 /** What the framing pass concluded, and how sure it is of it. */
 export interface FramingReport {
-  /** The residual fit measured at the viewport that was used. */
+  /**
+   * The residual fit measured at the box the framing chain chose.
+   *
+   * ⚠️ **Before** the MAE-refined pass below it, when that pass moved the box —
+   * and deliberately, because the two answer different questions and both are
+   * worth printing: this says how far the two *extents* were from registering,
+   * `refinement` says how far the *pictures* were from each other after that. Its
+   * `settled` / `agrees` / `cycled` words describe the chain that reached the box,
+   * which is a fact about the chain and does not change afterwards.
+   */
   fit: FramingFit;
   /** How many render/measure/correct passes ran. */
   passes: number;
@@ -547,6 +563,70 @@ export interface FramingReport {
    * what it does and does not mean attached.
    */
   units: { candidate: Extent; reference: Extent; ratio: number } | null;
+  /**
+   * What the MAE-refined final pass found, and whether it moved the box.
+   *
+   * `null` when nothing could be searched (no frame with reference ink). See
+   * `FramingRefinement`.
+   */
+  refinement: FramingRefinement | null;
+}
+
+/**
+ * The final framing pass, which asks a different question from every pass above
+ * it: not *do the two extents register?* but *is a constant pixel of this set's
+ * MAE a framing offset?*
+ *
+ * ## Why it exists, and why it is the last thing that happens
+ *
+ * Issue #146 measured the answer on the spineboy candidates: a **constant**
+ * translation of one or two pixels is worth 12 % of `death`'s headline
+ * reference-denominator MAE and up to 30 % of a fitted set's, while what is left
+ * after it is taken out is per-frame and small. That is `fitFraming`'s documented
+ * "extent is not alignment" floor arriving as a tenth of the number an author is
+ * reading as motion. `OffsetScan` searches whole-pixel offsets against the MAE
+ * itself, so it cannot walk off the answer the way the extent refinement measured
+ * and rejected in `frameByDeclaredBox` did — the figure it minimises is the figure
+ * the report prints.
+ *
+ * ## ⭐ Where it is allowed to move the box, and where it only reports
+ *
+ * **A fitted box is an estimate and gets corrected. An exact box does not.**
+ *
+ * - `derived` — the box came from a fit of extents, so a constant pixel in it is
+ *   the estimator's own floor. The offset is applied.
+ * - `declared` — `frames.json`'s box is not an estimate of where the frames were
+ *   drawn, it is where they were drawn (`frameByDeclaredBox`). A constant pixel
+ *   *there* is the candidate's own figure sitting a pixel off inside the right
+ *   box, which is a finding an author can act on and the framing must not absorb.
+ *   Searched, reported, never applied — and measured: over the committed corpus
+ *   every declared-box set's best offset is the exact identity, so this branch
+ *   has cost nothing so far and would only ever fire on a real offset.
+ * - `pinned` — `--viewport` is the author's claim about their own coordinates and
+ *   nothing here overrides it, exactly as the fit above is measured and not
+ *   applied.
+ */
+export interface FramingRefinement {
+  /** The best whole-pixel offset found, in frame pixels. `0, 0` means none was. */
+  dx: number;
+  dy: number;
+  /** Was it applied to the box the set was measured in? */
+  applied: boolean;
+  /** The set's mean reference-denominator MAE at the box the framing chose... */
+  before: number;
+  /** ...and at `dx, dy`, which is the same figure with the constant taken out. */
+  after: number;
+  /** How far the search looked, and how many frames it pooled. */
+  radius: number;
+  frames: number;
+  /**
+   * Why the offset was not applied — `null` when it was.
+   *
+   * `identity` is the answer this pass gives on a set whose framing is already
+   * where the picture is, and it is a measurement rather than a default: the
+   * search ran over the whole window and the identity won it.
+   */
+  declined: 'identity' | 'below-threshold' | 'box-is-exact' | 'pinned' | null;
 }
 
 /** A width and a height in world units. */
@@ -798,6 +878,9 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
         'framing line below is still measured, so it says what the pin cost.',
     );
     const pinnedShape = { passes: 1, settled: false, source: 'pinned' as const, cycled: false, applied: false };
+    // A pin is one claim for the whole run, so the refined pass is measured over
+    // the run as a whole — and never applied, for the same reason the fit is not.
+    const refinement = refinementOf(scanOffsets(located.root, prepared, posable.pages, pinned, background), 'pinned');
     const perSet = prepared.map((p, i) =>
       pairUpBoxes([p], posable.pages, pinned, background, level, slices[i]),
     );
@@ -806,7 +889,10 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       framings.push({
         viewport: pinned,
         how: 'viewport-flag',
-        fit: fit === null ? null : reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS }),
+        fit:
+          fit === null
+            ? null
+            : reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS, refinement }),
         notes: [],
       });
     }
@@ -815,7 +901,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     topHow = 'viewport-flag';
     if (all.length > 0) {
       const fit = fitFraming(all);
-      topFit = reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS });
+      topFit = reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS, refinement });
     }
   } else if (referenceBoxes.every((b) => b === null)) {
     throw new CheckError('no reference frame could be compared, so there is nothing to frame against');
@@ -830,10 +916,24 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       pixelHeight,
       referenceViewport,
     );
-    const fit = { ...framed.report, units: extentsOf(framed.report.fit, framed.viewport.scale, referenceViewport) };
+    // One box for the run, so one refined pass over every frame in it: a single
+    // shared framing that each set nudged its own way would not be a shared one.
+    const refinement = refinementOf(
+      scanOffsets(located.root, prepared, posable.pages, framed.viewport, background),
+      framed.report.source,
+    );
+    const viewport =
+      refinement !== null && refinement.applied
+        ? shiftViewport(framed.viewport, refinement.dx, refinement.dy, pixelWidth, pixelHeight)
+        : framed.viewport;
+    const fit = {
+      ...framed.report,
+      units: extentsOf(framed.report.fit, framed.viewport.scale, referenceViewport),
+      refinement,
+    };
     const how = HOW_BY_SOURCE[framed.report.source];
-    for (let i = 0; i < prepared.length; i++) framings.push({ viewport: framed.viewport, how, fit, notes: [] });
-    topViewport = framed.viewport;
+    for (let i = 0; i < prepared.length; i++) framings.push({ viewport, how, fit, notes: [] });
+    topViewport = viewport;
     topHow = how;
     topFit = fit;
     notes.push(...framingNotes(framed.report));
@@ -902,17 +1002,24 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
               pixelHeight,
               referenceViewport,
             );
-      if (!declared) {
-        framings.push({ ...sharedShape, notes: framingNotes(shared.report) });
-        continue;
-      }
-      own++;
-      framings.push({
-        viewport: declared.viewport,
-        how: HOW_BY_SOURCE[declared.report.source],
-        fit: { ...declared.report, units: extentsOf(declared.report.fit, declared.viewport.scale, referenceViewport) },
-        notes: framingNotes(declared.report),
-      });
+      const chosen: SetFraming = declared
+        ? {
+            viewport: declared.viewport,
+            how: HOW_BY_SOURCE[declared.report.source],
+            fit: {
+              ...declared.report,
+              units: extentsOf(declared.report.fit, declared.viewport.scale, referenceViewport),
+            },
+            notes: framingNotes(declared.report),
+          }
+        : { ...sharedShape, notes: framingNotes(shared.report) };
+      if (declared) own++;
+      // Per set, because the constant this pass removes is per set: issue #146
+      // measured spineboy's `death` wanting (−1, +1) and its `jump` (0, −1) in the
+      // same run and the same shared box. That is not the per-set *fitting* this
+      // scope rejects — the offset is measured against the MAE itself, where one
+      // shot's frames constrain the answer completely.
+      framings.push(refined(located.root, [p], posable.pages, chosen, background, pixelWidth, pixelHeight));
     }
     notes.push(
       `the framing was decided per frame set: ${own} of ${prepared.length} set(s) were measured in ` +
@@ -1303,6 +1410,8 @@ function frameCandidate(
       cycled: chain.cycled,
       agrees: chosen.distance <= COINCIDENT_PIXELS,
       applied: true,
+      // Filled in by the refined pass, which runs once the box is decided.
+      refinement: null,
     },
   };
 }
@@ -1481,8 +1590,89 @@ function frameByDeclaredBox(
       cycled: false,
       agrees: true,
       applied: true,
+      refinement: null,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// the MAE-refined final pass — see `FramingRefinement`
+// ---------------------------------------------------------------------------
+
+/**
+ * The reference-denominator MAE of these sets at every whole-pixel offset in a
+ * ±`REFINE_RADIUS` window, in the box they were framed in.
+ *
+ * One render per frame, whatever the window's size: `OffsetScan` owns why that is
+ * exact for whole pixels. The reference plates are read again here and again by
+ * `checkOneSet`; decoding a PNG twice is cheaper than holding a set's frames in
+ * memory, which on the ladder's largest set is a quarter of a gigabyte.
+ */
+function scanOffsets(
+  root: string,
+  prepared: PreparedSet[],
+  pages: Map<string, Plate>,
+  viewport: Viewport,
+  background: RGBA,
+): OffsetGain | null {
+  const scan = new OffsetScan(REFINE_RADIUS);
+  for (const p of prepared) {
+    for (const pair of p.pairs) {
+      scan.add(
+        renderFrame(pair.frame, pages, viewport, background),
+        frameGeometry(pair.frame, pages, viewport).coverage,
+        readPlateFrom(root, pair.file),
+        background,
+      );
+    }
+  }
+  return scan.best();
+}
+
+/**
+ * What to do with the offset a scan found, given how the box was chosen.
+ *
+ * The whole judgement of `FramingRefinement` in one function, so that "a fitted
+ * box is corrected and an exact one is only reported" is a single readable rule
+ * rather than a condition spread over three call sites.
+ */
+function refinementOf(gain: OffsetGain | null, source: FramingSource): FramingRefinement | null {
+  if (gain === null) return null;
+  const shape = {
+    dx: gain.dx,
+    dy: gain.dy,
+    before: gain.identity,
+    after: gain.best,
+    radius: gain.radius,
+    frames: gain.frames,
+  };
+  if (gain.dx === 0 && gain.dy === 0) return { ...shape, applied: false, declined: 'identity' };
+  if (!offsetIsWorthApplying(gain)) return { ...shape, applied: false, declined: 'below-threshold' };
+  if (source === 'pinned') return { ...shape, applied: false, declined: 'pinned' };
+  if (source === 'declared') return { ...shape, applied: false, declined: 'box-is-exact' };
+  return { ...shape, applied: true, declined: null };
+}
+
+/** One set's framing with the refined pass run over it, and applied if it may be. */
+function refined(
+  root: string,
+  prepared: PreparedSet[],
+  pages: Map<string, Plate>,
+  framing: SetFraming,
+  background: RGBA,
+  pixelWidth: number,
+  pixelHeight: number,
+): SetFraming {
+  if (framing.fit === null) return framing;
+  const refinement = refinementOf(
+    scanOffsets(root, prepared, pages, framing.viewport, background),
+    framing.fit.source,
+  );
+  const viewport =
+    refinement !== null && refinement.applied
+      ? shiftViewport(framing.viewport, refinement.dx, refinement.dy, pixelWidth, pixelHeight)
+      : framing.viewport;
+  return { ...framing, viewport, fit: { ...framing.fit, refinement } };
 }
 
 /**
@@ -2581,6 +2771,57 @@ function framedToLines(v: Framing, how: FramingHow | null, indent = ''): string[
   ];
 }
 
+/**
+ * What the MAE-refined pass found, in the words that separate its four answers.
+ *
+ * All four are printed, the identity included, because "the framing is already
+ * where the picture is" is a measurement this pass makes and not a default it
+ * falls back to — the same reason an assertion with nothing to measure reports
+ * SKIP here rather than a pass. The two that decline a real offset are the loud
+ * ones: they say the constant pixel is in the candidate rather than in the box.
+ */
+function refinementLines(refinement: FramingRefinement | null, indent = ''): string[] {
+  if (refinement === null) return [];
+  const { dx, dy, before, after, radius, frames } = refinement;
+  const at = `${dx >= 0 ? '+' : ''}${dx}, ${dy >= 0 ? '+' : ''}${dy} px`;
+  const worth =
+    `${f2(before)} → ${f2(after)} over the reference's own pixels` +
+    (before > 0 ? ` (${(((before - after) / before) * 100).toFixed(1)}% of the figure)` : '');
+  const searched = `±${radius} px over ${frames} frame(s)`;
+  if (refinement.declined === 'identity') {
+    return [
+      `${indent}             ⤷ MAE-refined pass: searched ${searched} and the identity won, so no part of this set's ` +
+        'figure is a constant offset.',
+    ];
+  }
+  if (refinement.declined === 'below-threshold') {
+    return [
+      `${indent}             ⤷ MAE-refined pass: the best offset in ${searched} was ${at}, worth ${worth} — under the ` +
+        `${(REFINE_MIN_GAIN * 100).toFixed(0)}% / ${REFINE_MIN_GAIN_MAE.toFixed(2)} MAE this pass moves a box for, so ` +
+        'the box was left alone.',
+    ];
+  }
+  if (refinement.declined === 'box-is-exact') {
+    return [
+      `${indent}             ⚠️ a constant ${at} would take this set ${worth} — and it was NOT applied, because this ` +
+        `box is ${FRAMES_SIDECAR}'s own and is not an estimate of anything. A constant pixel inside the box the ` +
+        'frames were drawn at is your own figure sitting a pixel off, which is a thing to fix rather than to frame ' +
+        'away. Read it beside the drift below.',
+    ];
+  }
+  if (refinement.declined === 'pinned') {
+    return [
+      `${indent}             ⤷ a constant ${at} would take this set ${worth} — measured, NOT applied, because ` +
+        '--viewport pinned the box.',
+    ];
+  }
+  return [
+    `${indent}             ⭐ MAE-refined by ${at}: ${worth}. The fit above registers the two extents, and the best ` +
+      'fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the ' +
+      'figures below are what is left after it rather than a constant offset read as motion.',
+  ];
+}
+
 function framingLines(framing: FramingReport | null, indent = ''): string[] {
   if (!framing) return [];
   const { fit } = framing;
@@ -2600,6 +2841,7 @@ function framingLines(framing: FramingReport | null, indent = ''): string[] {
         ? `  (${framing.source}, ${framing.passes} pass(es), ${convergence(framing)})`
         : '  (measured, NOT applied — --viewport pinned)'),
   ];
+  out.push(...refinementLines(framing.refinement, indent));
   const spread = Math.max(Math.abs(fit.residualWidth), Math.abs(fit.residualHeight));
   if (spread > 1) {
     const axis = fit.residualWidth > 0 ? 'wider' : 'narrower';

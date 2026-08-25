@@ -138,6 +138,14 @@ per animation and per frame:
   land in the box `frames.json` records is measured there, exactly, and the rest
   share one fitted framing. `--framing shared` measures every set in the shared one
   — the whole-root behaviour before issue #100, and worth 15–25 MAE on a character.
+  A **fitted** framing then gets one last pass that searches whole-pixel offsets
+  (±2 px) for the lowest MAE and takes the best one, because a fit registers extent
+  and the best fit of two extents is not the best alignment of two pictures — a
+  constant pixel is worth up to 30 % of a set's figure (issue #146). The line says
+  what it moved and what that was worth, and it says so when the identity won as
+  well. A box that is **not** an estimate — `frames.json`'s own, or one you pinned —
+  is never moved: there the same search is reported as a finding, because a constant
+  pixel inside the right box is the candidate's own figure sitting off, not framing.
 - **Per-frame change** — how many pixels each side moved since **its own** previous
   frame, compared against each other. It is the only measure here that looks at the
   relation between two frames rather than at one, and it is what catches a held pose

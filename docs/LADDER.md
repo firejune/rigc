@@ -154,6 +154,24 @@ authoring run. Every `bench.json` on disk stays exactly as its run wrote it, and
 run made before #28 is read through the recompute table above rather than through its
 own file.
 
+**2026-08-25 — `check` gained an MAE-refined final framing pass** (issue
+[#146](https://github.com/firejune/rigc/issues/146)). A **fitted** framing now takes
+one further pass that searches whole-pixel offsets within ±2 px for the lowest MAE
+over the reference's own drawn pixels and moves the box to the best one when the
+gain clears 1 % of the figure; a box that is not an estimate — `frames.json`'s own,
+or a `--viewport` pin — is searched and reported but never moved. The reason is
+measured: the extent fit's documented floor arrives as a **constant** one or two
+pixels, worth 10–30 % of a fitted set's headline figure on the spineboy candidates
+while the per-frame remainder is an order of magnitude smaller.
+
+⚠️ **So a recorded MAE for a set framed `candidate-pixels` re-reads LOWER, and the
+per-slot drift in such a set can move either way** — the box it is measured in has
+moved. Over the 86 compared sets of the runs on this page, 52 refine to the exact
+identity and are unchanged (every set framed by `frames.json`'s own box is one of
+them); 33 move. `bench.json` files are **not** rewritten, and the re-read figures
+belong to the adjudication pass rule 3 requires after an instrument change, not
+here. Nothing about `bench`'s own measures changed.
+
 **Stage 3 — per-frame pose distance. Named, not built.** The structural diff
 compares what the file *says*; it cannot see that two structurally identical rigs
 pose differently. The measure for that is **per-frame bone world-transform
