@@ -240,6 +240,21 @@ one bump takes one re-inspection. The sheet clause can flip a **standing pass**,
 the case rule 5 calls integrity rather than opportunity, so v2's re-inspection is taken in
 the same pass rather than deferred to the next bump — it is the entry below.
 
+**2026-08-25 — the gate-v2 re-inspection** (issue
+[#160](https://github.com/firejune/rigc/issues/160)). The bump's own re-inspection, taken
+immediately for the reason rule 5 gives. **No measure's definition changed here either**:
+this entry records that the pass rule 3 requires has been *taken* against gate v2, over
+every stored candidate, and that it reused the sweep the first adjudication ran — the same
+sixteen candidates over the same 86 compared sets, at
+[`1c6740d`](https://github.com/firejune/rigc/commit/1c6740d), reproducing that pass's
+figures to the digit. 🚫 **No `bench.json` and no run directory was rewritten.** Two
+verdicts moved and both moved on a clause rather than a number: **rung 2 passes** (G4's
+reformulation, plus four flat sheets discharging G3's hole) and **rung 4 fails G7** on an
+observable that did not exist when it was cleared. Rungs 6 and 8 were re-inspected and
+hold; rungs 1, 3, 5 and spineboy fail where they failed before. The figures, the clause
+each verdict was read against and five recorded ambiguities are in *The gate-v2
+re-inspection* under **Status** below.
+
 **Stage 3 — per-frame pose distance. Named, not built.** The structural diff
 compares what the file *says*; it cannot see that two structurally identical rigs
 pose differently. The measure for that is **per-frame bone world-transform
@@ -458,7 +473,11 @@ v1's, unchanged and unrenumbered:
   derivation is under the table.
 - **G7 is new** — the whole-shot contact sheet (#36), the observable v1 was written
   before. It joins as a **spike** clause rather than a level one, because *the MAE
-  decides nothing* still holds.
+  decides nothing* still holds. ⚠️ **Its threshold is the one place the ⭐ above does not
+  apply as written**: the candidates holding a pass mark were cleared *without* this
+  observable ever being read, so *"above every figure a reading has already called
+  faithful"* would license every sheet figure on the page, the outlier included. What it
+  is derived from instead is in the 🧾 under the table.
 
 v1's own wording for both is quoted where the change is, because the verdicts under
 *Status* dated 2026-08-25 were read against it and stay true of it. **A pass is
@@ -690,10 +709,17 @@ remaining work is taken in.
    > ➡️ **The adjudication happened on 2026-08-25 and it moves this queue.** Rungs 4, 6
    > and 8 cleared off their stored candidates — rung 8's `ball` on exactly the reading
    > this item predicted — so they leave the list; rung 3 joins it, its pass mark
-   > withdrawn on an observable clause. What is left to re-climb is **rung 2, rung 1,
-   > rung 5, rung 3 and the untried rung 7**, and the verdicts, the failing clauses and
-   > the two clause readings left open are under *Status*, in *The first gate-v1
-   > adjudication*.
+   > withdrawn on an observable clause. What was left to re-climb after that pass was
+   > **rung 2, rung 1, rung 5, rung 3 and the untried rung 7**, and its verdicts, failing
+   > clauses and the two clause readings it left open are under *Status*, in *The first
+   > gate-v1 adjudication*.
+   > ➡️ **Gate v2's re-inspection, the same day, moves it again.** **Rung 2 clears** on
+   > stored candidates — the first rung cleared on shots with no per-frame reading at all —
+   > so it leaves the list, and **rung 4 joins it** on G7, the sheet clause: that rung's
+   > residual is observable and its own author never had the observable, which makes it a
+   > re-climb rather than an adjudication. The queue is now **rung 4, rung 1, rung 5,
+   > rung 3 and the untried rung 7**, and the current verdicts are in *The gate-v2
+   > re-inspection*.
 3. **spineboy `ess` is the graduation exam**, taken last, on the matured guide.
    `pro` stays gated on [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)
    and is **not** a graduation requirement ([#16](https://github.com/firejune/rigc/issues/16)):
@@ -734,9 +760,9 @@ moves again next week.
    the gate is frozen on purpose, so a candidate and a verdict are read against the same
    numbers.
 
-⇒ **v2 is itself a case of rule 2's first half**: the sheet clause could flip rungs that
-hold a pass mark, so its re-inspection is taken in the same pass that introduces it
-rather than deferred. The G4 fix alone would have waited — it can only *pass* open rungs.
+⇒ **v2 is itself a case of point 2's first half**: the sheet clause could flip rungs that
+hold a pass mark, so its re-inspection is taken in the same pass that introduces it rather
+than deferred. The G4 fix alone would have waited — it can only *pass* open rungs.
 
 ---
 
@@ -749,15 +775,109 @@ rather than deferred. The G4 fix alone would have waited — it can only *pass* 
 | — | **B1** | — | — | skeleton-as-data input model | ✅ |
 | — | **B2** | — | — | A16 accepts pre-release labels | ✅ |
 | — | **B3** | — | — | packed-atlas handling (validator half done) | 🟨 |
-| 1 | **3** | `3-timing-and-spacing` | `ess` | nothing — smallest skeleton in the corpus | 🟨 *re-opened by gate v1 — G3* |
-| 2 | **1** | `1-weight-and-mass` | `balls`, `drop` | `translatex`/`translatey`/`shear`; bone setup `length`; a skeleton with **zero** animations (`drop`) | 🟨 gate v1: `balls` G3 · G4 |
-| 3 | **2** | `2-the-12-principles` | `ess` | slot `blend` (4 additive + 4 multiply); bone `inherit` ≠ Normal | 🟨 gate v1: G4 (G3 unreadable) |
-| 4 | **4** | `4-wave-principle` | `ess` | nothing structural — a volume test (9 bones, 9 slots, 3 animations, 470 bezier keys) | ✅ *gate v1, 2026-08-25* |
-| 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | 🟨 gate v1: G3 |
-| 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ✅ *gate v1, 2026-08-25* |
-| 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ✅ *gate v1, 2026-08-25* — both skeletons |
+| 1 | **3** | `3-timing-and-spacing` | `ess` | nothing — smallest skeleton in the corpus | 🟨 gate v2: G3 *(re-opened by gate v1, 2026-08-25)* |
+| 2 | **1** | `1-weight-and-mass` | `balls`, `drop` | `translatex`/`translatey`/`shear`; bone setup `length`; a skeleton with **zero** animations (`drop`) | 🟨 gate v2: `balls` G3 *(G4 met under v2)* |
+| 3 | **2** | `2-the-12-principles` | `ess` | slot `blend` (4 additive + 4 multiply); bone `inherit` ≠ Normal | ✅ *gate v2, 2026-08-25* — G4's fix and the sheet |
+| 4 | **4** | `4-wave-principle` | `ess` | nothing structural — a volume test (9 bones, 9 slots, 3 animations, 470 bezier keys) | 🟨 gate v2: G7 *(✅ under gate v1, 2026-08-25)* |
+| 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | 🟨 gate v2: G3 |
+| 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ✅ *gate v2, 2026-08-25* — re-inspected, holds |
+| 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ✅ *gate v2, 2026-08-25* — both skeletons, re-inspected |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ⬜ |
-| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×3 — structure ✅, motion improving (18.8→14.6 px) · gate v1: G2 · G3 · `pro` ⬜ · frozen as gate 2026-08-24 |
+| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×3 — structure ✅, motion improving (18.8→14.6 px) · gate v2: G2 · G3 · `pro` ⬜ · frozen as gate 2026-08-24 |
+
+### The gate-v2 re-inspection — 2026-08-25
+
+**Every rung re-judged against gate v2, on the same sweep the first adjudication read.**
+This is the immediate re-inspection rule 5 requires of a change that can flip a standing
+pass. Zero builds and zero authoring; 🚫 **no `bench.json` and no run directory was
+touched.** `check` re-read the sixteen committed candidates over all 86 compared sets and
+`bench` re-ran `validate --profile spine` and the measure table on each. **The sweep
+reproduces the first pass's figures to the digit** — every drift, every disagreement
+count and every sheet mean below is the same number that pass recorded — which is the
+control on this one: what moves a verdict here is the clause, not the reading.
+
+Only the two clauses v2 changed can move anything, so both have their own column. G4's
+column is the **length** limb (`count` and `names` are 1.000 on every candidate that has
+ever been adjudicated); G7's is the worst tile over that sheet's own mean, per sheet.
+
+| Rung | Skeleton | Candidate | G1 | G2 ≤ 6.0 px | G3 = 0 | G4 length | G5 ≥ 0.85 | G7 ≤ 3.5× | v2 | was v1 |
+| --- | --- | --- | :---: | --- | --- | --- | --- | --- | :---: | :---: |
+| **1** | `balls` | rung1-1 | 0 FAIL | **3.49** px `beach` ✅ | ❌ **1** of 39 · **3** of 78 | ✅ 3.250 s v 3.233333 s — **0.2** of a frame | 1.000 · 1.000 ✅ | SKIP — both sets commit every frame | **FAIL** | FAIL |
+| **1** | `drop` | rung1-1 | 0 FAIL | 0.81 px `stick` ✅ | ⚠️ no reading — 1 frame per set, and no sheet to discharge it | ✅ 0 s both | 1.000 · 1.000 *after `ground-cover`* ✅ | SKIP — a single pose | not adjudicable | not adjudicable |
+| **2** | `ess` | rung2-2 | 0 FAIL | 0.33 px `bowling` ✅ | ⚠️ 0 pairs in all four sets — **hole discharged by G7** | ✅ 25.833333 s v 25.866667 s — **0.4** of a frame | 0.882 · 0.882 ✅ | ✅ **1.09–1.11**, four sheets, 311 tiles each | **PASS** | FAIL |
+| **3** | `ess` | rung3-2 | 0 FAIL | 0.84 px `pendulum` ✅ | ❌ **7** of 64 on `heavy` | ✅ exact ×2 | 1.000 · 1.000 ✅ | SKIP — both sets commit every frame | **FAIL** | FAIL |
+| **4** | `ess` | rung4-1 | 0 FAIL | **3.08** px `platform` ✅ | ✅ 0 over 120 + 16 + 16 | ✅ exact ×3 | 0.889 · 0.889 ✅ | ❌ `ball-catch@24fps` **4.00** (121.98 over 30.46, 241 tiles); `wave-by-hand@24fps` 2.07 · `wave-offset@24fps` 2.03 | **FAIL** | PASS |
+| **5** | `ess` | rung5-1 | 0 FAIL | **5.91** px `hood-end2` ✅ | ❌ **6** of 78 on `ball` | ✅ exact ×3 | 0.923 · 1.000 ✅ | ✅ 1.05 · 1.17 | **FAIL** | FAIL |
+| **6** | `pro` | rung6-1 | 0 FAIL | **2.48** px `ball` ✅ | ✅ 0 over 68 | ✅ exact | 1.000 · 1.000 ✅ | ✅ `arcs@24fps` **2.89** (13.99 over 4.84, 137 tiles) — the highest the clause admits | **PASS** | PASS |
+| **7** | — | — | — | — | — | — | — | — | not attempted | not attempted |
+| **8** | `pendulum` | rung8-1 | 0 FAIL | **3.34** px `chain-4` ✅ | ✅ 0 over 44 + 87 | ✅ 3.633333 s, exact | 1.000 · 1.000 ✅ | SKIP — every frame committed at both rates | **PASS** | PASS |
+| **8** | `ball` | rung8-2 | 0 FAIL | **4.19** px `ball` ✅ | ✅ 0 over 44 + 87 | ✅ 3.625 s v 3.633333 s — **0.2** of a 24 fps frame | 1.000 · 1.000 ✅ | SKIP — every frame committed at both rates | **PASS** | PASS |
+| **spineboy** | `ess` | spineboy-3 | 0 FAIL | ❌ **19.57** px `death` · 7.07 `walk` · 6.75 `run` | ❌ **3** of 59 on `death` | ✅ ×8, all inside 1/60 s | 0.952 · 0.931 ✅ | ✅ 1.14–**2.03** (`jump@30fps`), seven sheets | **FAIL** | FAIL |
+
+**Two verdicts move, and one clause stops deciding.**
+
+- ✅ **Rung 2 passes, and it is the first rung this ladder clears on shots no frame table
+  could read frame by frame.** Its four sets are two stills 310 frames apart, so it has never had a
+  per-frame reading; what it has is four sheets that are **flat over all 1,244 tiles**
+  (worst tile 1.09–1.11× the sheet's own mean), and G7's discharge of G3's hole is what
+  lets that count. The clause that failed it under v1 was `animations.duration`: it wrote
+  **25.833333 s**, exactly what its sidecar states, against a reference length of
+  25.866667 s — four tenths of a 12 fps frame, and inside v2's tolerance by 2.5×. Nothing
+  else in the rung moved: 0.33 px of worst drift, `slots.count` and `attachments.count`
+  both 0.882, `validate` green. One skeleton, so G6 follows. **Issue #11 closes.**
+- ❌ **Rung 4 fails G7 alone, and its gate-v1 pass stands as a gate-v1 pass.** Every other
+  clause is met on the same numbers that cleared it: 3.08 px, 0 disagreements over all 152
+  adjacent pairs, exact lengths, 0.889 / 0.889. What it does not meet is the observable
+  that did not exist when it was cleared — `ball-catch@24fps` puts a **121.98** tile over a
+  **30.46** mean, 4.00×, where the sheet corpus's next figure is 2.89 and 33 of 35 sheets
+  sit at or below 2.17. Its own committed stills read 15.33, so the whole shot is twice the
+  figure its frame table shows and one tile of it is eight times. **Issue #17 reopens,
+  citing gate v2**; the v1 close comment is not withdrawn, because a pass is versioned and
+  that one was true of v1.
+- **G4's length limb now decides nothing on the stored corpus.** Rung 1 `balls` clears it
+  at 0.2 of a frame and rung 2 at 0.4; every other candidate is exact or inside 1/60 s.
+  That is the fix working: the clause it replaced was failing two rungs on a residual
+  finer than the grid their frames were drawn on.
+
+**And three verdicts are re-inspected and hold.** Rung 6 clears G7 at 2.89 — the highest
+figure the clause admits, deliberately (rule 2's 🧾 says a tightening finds this rung
+first). Rung 8 clears on both skeletons with G7 **SKIP** on all four sets, because they
+commit every sampled frame at both rates: the whole shot is read frame by frame already,
+and a candidate is not failed for having better coverage than a sheet. Rungs 3, 5 and
+spineboy fail exactly where they failed under v1 — G3, G3, and G2 with G3 — and neither
+changed clause reaches any of them. Rung 7 has still never been attempted.
+
+🧾 **What this pass records for the owner rather than resolving.** The first adjudication
+left two clause readings open; v2 answers one and a half, and adds two of its own.
+
+1. ✅ **Resolved — `animations.duration` was failing rungs on an unanswerable residual.**
+   That is G4's reformulation, derivation in rule 2. The ambiguity is closed, not
+   adjudicated around.
+2. 🟨 **Half resolved — G3 on a set of non-adjacent stills.** Where the shot has a sheet
+   and the sheet meets G7, the hole is **discharged**: every sampled frame has been read,
+   which is what the missing pairs left unknown. Where there is neither an adjacent pair
+   nor a sheet it is still a hole, and rung 1 `drop` is still the case. ⚠️ **Rung 2's pass
+   depends on the discharge**, which is new machinery in v2 rather than a reading of v1 —
+   if the owner declines it, rung 2 returns to unmet on G3 and nothing else about the rung
+   changes, because G4 and G7 are met either way.
+3. ⚠️ **G7's margins are thin, and the corpus does not separate its top two.** 3.5 admits
+   2.89 and refuses 4.00. Rule 2 carries the alternative readings (3.13 against 3.49 on
+   worst tile over the shot's own worst frame; 1.38 against 1.42 on sheet mean over the
+   shot's fullest set) and the conclusion that this ratio is the widest of them. A third
+   sheet landing between them is the argument for moving the number.
+4. ⚠️ **The spikes are on the odd tiles, and that is the same defect at two magnitudes.**
+   In both `ball-catch@24fps` and `arcs@24fps` **every one** of the eight worst tiles is an
+   **odd** index — a frame halfway between two 12 fps samples, which is exactly the
+   residual §10.4 calls a curve split below the sampling rate. The sheet is an allowed
+   input, so the defect is observable and gating it is legitimate; what the gate currently
+   separates rung 4 from rung 6 by is magnitude alone. Adjudicated conservatively — the
+   4.00 fails, the 2.89 passes — and recorded here rather than settled.
+5. 📌 **"Read the sibling set in full" is not a substitute for the sheet, and rung 4 is the
+   proof.** Its three `@24fps` sets have no adjacent pair; v1's pass discharged their G3
+   holes by reading the same shots at 12 fps, where they post 0 disagreements. The sheets
+   of two of those same shots then read 4.00 and 2.03. Both readings are honest and they
+   are of different frames: agreement at every frame the author was given says nothing
+   about the frames between them.
 
 ### The first gate-v1 adjudication — 2026-08-25
 
@@ -925,8 +1045,9 @@ and the commander's reading of each are below, under *Rung 1* through
 > ➡️ **Read the paragraph above as the state on 2026-08-24.** *None of them cleared a
 > rung* was true of the commanders' readings; the gate-v1 adjudication of 2026-08-25
 > then cleared **rungs 4, 6 and 8** off these same stored candidates and withdrew rung
-> 3's pass mark. Nothing above is withdrawn — the runs' figures and readings stand as
-> recorded — and the status cells and per-rung sections carry the verdicts.
+> 3's pass mark, and **gate v2's re-inspection the same day cleared rung 2 and reopened
+> rung 4**. Nothing above is withdrawn — the runs' figures and readings stand as
+> recorded — and the status cells and per-rung sections carry the current verdicts.
 
 **What the twelve runs say so far.** Twelve, not eleven: the eleven above plus rung 3's
 second attempt ([`bench/runs/2026-08-23-rung3-2/`](../bench/runs/2026-08-23-rung3-2/)),
@@ -1225,6 +1346,14 @@ reading, attempt 2's §10 findings and the pilot verdict all stand as recorded. 
 withdrawn thing is the pass mark, by rule 3, which is the rule that says a gate change
 re-inspects everything and only the failures reopen.
 
+#### Gate v2 re-inspection, 2026-08-25 — **FAIL on G3**, unchanged
+
+Neither clause v2 moved reaches this rung. **G4**: both lengths are exact against the
+reference, so the limb is met under either version. **G7**: both sets commit every one of
+their sampled frames, so there is no sheet and the clause reads **SKIP** — the whole shot
+is already read frame by frame, which is where the seven disagreements come from. The
+verdict, the failing clause and the frames are the table above.
+
 ### Rung 1 — attempted, not cleared (2026-08-23)
 
 Run [`bench/runs/2026-08-23-rung1-1/`](../bench/runs/2026-08-23-rung1-1/), clean,
@@ -1291,6 +1420,25 @@ six-decimal rounding. `frames.json` states this set's duration as **3.25**, so t
 candidate wrote the number the protocol handed it. The verdict does not turn on the
 clause (G3 fails independently), and the clause reading is on the list of two the
 adjudication left for the owner under **Status**.
+
+#### Gate v2 re-inspection, 2026-08-25 — **FAIL**: `balls` on G3 alone; `drop` still not adjudicable
+
+The rung's verdict does not move and one of its two failing clauses does.
+
+- ✅ **`balls`'s G4 is met under v2.** 3.250 s against 3.233333 s is **0.2 of a 12 fps
+  frame** and 0.4 of a 24 fps one, inside a tolerance of one whole interval either way.
+  The ⚠️ above is the case v2's G4 was reformulated on: the candidate wrote the number the
+  protocol handed it and the old clause failed it by a third of a microsecond. **G3 still
+  fails** — 1 of 39 and 3 of 78, the tail of the shot, watchable at the rate it was
+  rendered — so the skeleton fails and G6 with it.
+- **G7 reads SKIP on all four sets.** `balls` commits every sampled frame at both rates,
+  so its whole shot is read frame by frame already; `drop`'s two sets are a single pose
+  each. Neither has a sheet, and neither is a hole for want of one.
+- ⚠️ **`drop` stays not adjudicable, and v2 is why that is now a narrower statement.**
+  Elsewhere on this ladder a shot with no adjacent pair can have its G3 hole discharged by
+  a sheet; `drop` has one frame per set and no sheet, so there is nothing to discharge it
+  with. It is inside every clause that *can* be read on it, and G6 does not care which of
+  the rung's two skeletons fails.
 
 ### Rung 2 — attempted, not cleared (2026-08-23)
 
@@ -1398,6 +1546,29 @@ where its two committed stills read 15.33; `wave-by-hand@24fps` 17.79 / 36.90 an
 does not gate it, so this pass does not either — it is listed under **Status** as input
 to a gate v2 decision, together with the 🚫 that says an MAE decides nothing.
 
+#### Gate v2 re-inspection, 2026-08-25 — **FAIL on G7**, and the rung re-opens
+
+The decision the paragraph above handed to gate v2 came back as a clause, and this is the
+rung it fails. G1–G5 are met on the same numbers as above, unchanged and re-read on the
+same sweep; G7 is the one that is new.
+
+| Clause | Reading | |
+| --- | --- | :---: |
+| **G7** the whole shot | `ball-catch@24fps` **121.98** worst tile over a **30.46** mean = **4.00×**, 241 tiles — the corpus's highest, where the next figure is 2.89 and 33 of 35 sheets sit at or below 2.17. `wave-by-hand@24fps` 2.07 and `wave-offset@24fps` 2.03 clear | ❌ |
+| **G4** length limb | `count` 3/3, `names` 3/3, all three lengths exact against the reference | ✅ |
+| **G1 · G2 · G3 · G5** | as the table above: 0 FAIL, 3.08 px, 0 over 152 adjacent pairs, 0.889 / 0.889 | ✅ |
+| **G6** the rung | the one skeleton fails G7 | ❌ |
+
+⚠️ **The finding is not the mean, it is the spike, and it is on the half-frames.** All
+eight of `ball-catch@24fps`'s worst tiles are **odd** indices — frames between two 12 fps
+samples — so what the sheet reads is the shape of this candidate's curves between the
+frames its author was given. The 12 fps reading of the same shot is clean, and both
+readings are honest: *agreement at every frame you were shown says nothing about the
+frames between them.* ⇒ **The residual is observable and this run never had the
+observable**, which makes rung 4 a re-climb rather than an adjudication — it rejoins the
+queue in rule 4. **Nothing recorded above is withdrawn, and the gate-v1 pass is not
+withdrawn either**: a pass is versioned, and that one was true of gate v1.
+
 ### Rung 5 — attempted, not cleared (2026-08-23)
 
 Run [`bench/runs/2026-08-23-rung5-1/`](../bench/runs/2026-08-23-rung5-1/), clean
@@ -1456,6 +1627,15 @@ own reading calls its main one — `constraints` 1.000 **at 0/0**, vacuous. MAE:
 plate alone), `speedy` 6.35 / 6.39. Sheet, report-only: `ball@24fps` **5.78** mean /
 6.08 worst over 157 tiles, `speedy@24fps` **7.60** / 8.87 — flat, and no whole-shot
 surprise behind either stills set.
+
+#### Gate v2 re-inspection, 2026-08-25 — **FAIL on G3**, unchanged
+
+**G4**: all three lengths exact, met under either version. **G7**: the two sheets the
+paragraph above reports are now read as clauses and both clear comfortably — `ball@24fps`
+**1.05×** its own mean and `speedy@24fps` **1.17×**, against a bar of 3.5, which says in
+the gate's own terms what that paragraph said in prose. The rung still fails on `ball`'s
+six disagreements, and 5.91 px still clears G2 by 0.09 px, so a tightening of G2 would
+find this rung first.
 
 ### Rung 2, attempt 2 — attempted, not cleared (2026-08-23)
 
@@ -1525,6 +1705,30 @@ gates nothing.
 15 slots against 12 / 17), `attachments` 0.853, `animations` 0.623 (`key_counts` sparse
 against the reference, this rung's recorded residual), `constraints` 1.000 **at 0/0**,
 vacuous. MAE 4.19–4.26 union on the stills.
+
+#### Gate v2 re-inspection, 2026-08-25 — **PASS**, and the rung closes
+
+Both of the things this rung's v1 verdict was waiting on were clause questions, and gate
+v2 answers both. No figure moved: the readings below are the ones in the table above,
+re-read on the same sweep.
+
+| Clause | Reading under v2 | |
+| --- | --- | :---: |
+| **G4** length limb | `count` 4/4, `names` 4/4; each shot declares **25.833333 s** against a reference length of **25.866667 s** — a gap of 0.033334 s, **four tenths of a 12 fps frame**, where the tolerance is one whole one (0.083333 s). Inside by 2.5× | ✅ |
+| **G7** the whole shot | four sheets, **311 of 311 tiles** compared each: worst tile **1.11 · 1.09 · 1.09 · 1.10 ×** the sheet's own mean (4.76 / 4.69 / 4.80 / 4.77 over 4.30 / 4.32 / 4.41 / 4.34). The flattest sheets in the corpus, against a bar of 3.5 | ✅ |
+| **G3** per-frame motion | still **0 pairs in all four sets** — and the hole is now **discharged**: G7 is a reading of every one of the 311 sampled frames of every shot, which is what the missing pairs left unknown. No `⚠️ overdraw` (0.98) | ✅ *discharged* |
+| **G1 · G2 · G5** | 0 FAIL; **0.33 px** worst drift of four sets; `slots.count` and `attachments.count` **0.882** | ✅ |
+| **G6** the rung | one skeleton, and it meets G1–G5 and G7 | ✅ |
+
+⭐ **This is the first rung the ladder clears on shots no frame table could read frame by
+frame.** Four
+sets of two stills 310 frames apart gave it no per-frame reading at all, and the whole of
+what says its trajectories, its ring rates and its attachment swaps land where and when
+they should is the sheet — flat across 1,244 tiles. The prose above stands as written:
+the motion was faithful and the clause that failed the rung was a duration the protocol
+had handed the author. ⚠️ **The pass depends on G7's discharge of G3's hole**, which is
+new machinery in v2 rather than a re-reading of v1; that dependency is recorded as item 2
+of the ambiguities under *The gate-v2 re-inspection*.
 
 ### Rung 6 — attempted, not cleared (2026-08-23)
 
@@ -1615,10 +1819,37 @@ rung named and rung 3's second attempt closed with §10.4. MAE 3.50 union / 3.53
 reference's own pixels on `arcs`, 3.09 / 3.11 on `arcs@24fps`.
 
 📊 **The sheet, reported.** `arcs@24fps` **4.84** mean over 137 tiles with a worst tile
-of **13.99** — the mean sits inside the corpus's honest band and the worst is 4.5× it.
+of **13.99** — the mean sits inside the corpus's honest band and the worst is 4.5× the
+figure this set's own two committed stills read (3.09).
 A *worst-tile* sheet clause would change this verdict and a *mean* one would not, which
 is why the rung is on the gate v2 list under **Status** with its numbers rather than
 adjudicated on a clause that does not exist.
+
+#### Gate v2 re-inspection, 2026-08-25 — **PASS**, and the rung stays closed
+
+The clause the paragraph above expected to change this verdict does not, because of which
+denominator it is written on.
+
+| Clause | Reading under v2 | |
+| --- | --- | :---: |
+| **G7** the whole shot | `arcs@24fps` worst tile **13.99** over the **sheet's own mean of 4.84** = **2.89×**, 137 tiles, against a bar of 3.5. **The highest figure the clause admits in the whole corpus** | ✅ |
+| **G4** length limb | `count` 1/1, `names` 1/1, length exact | ✅ |
+| **G1 · G2 · G3 · G5** | as the table above: 0 FAIL, 2.48 px, 0 over 68 pairs, 1.000 / 1.000 | ✅ |
+| **G6** the rung | the one skeleton meets G1–G5 and G7 | ✅ |
+
+📎 **Two ratios, and the clause is written on the second.** The *"4.5×"* above divides the
+worst tile by this set's **committed stills'** MAE (3.09); G7 divides it by the **sheet's
+own** mean (4.84), which is 2.89. Both are honest and they are not the same question —
+*"is this tile worse than the frames I was shown?"* against *"is this sheet flat?"* — and
+rule 2 says why the gate asks the second: a sheet's own mean is the only denominator that
+carries the same plate, the same box and the same scale as the tile it is compared with.
+Two committed stills are a sample of two.
+
+⚠️ **This rung is the one a tightening of G7 finds first, and rule 2 names it there.** Its
+worst tiles are all **odd** indices — the half-frames between two 12 fps samples — so what
+the 2.89 measures is this candidate's curve shape between the frames its author had, at a
+magnitude the first calibration deliberately admits. The pass is a pass; it is also the
+narrowest one on the page.
 
 ### Rung 8 — attempted, not cleared: `pendulum` cleared, `ball` not (2026-08-23)
 
@@ -1805,6 +2036,15 @@ separate-versus-combined checkbox rule 1 exempts by name, and `constraints` 1.00
 0/0**, vacuous on both sides. MAE 12.52 / 12.56 union, 12.72 / 12.77 over the
 reference's own pixels. Neither set ships a contact sheet — every frame is on disk — so
 there is no sheet figure to report and none to withhold.
+
+#### Gate v2 re-inspection, 2026-08-25 — `pendulum` **PASSES**, unchanged
+
+**G4**: the candidate's length is **3.633333 s** against the reference's 3.633333 s —
+exact, and the only candidate on the ladder that wrote a length neither of its two
+sidecars states (they say 3.666667 at 12 fps and 3.625 at 24). **G7** reads **SKIP** on
+both sets: every sampled frame is committed at both rates, so the whole shot is read frame
+by frame under G2 and G3 and a sheet would add nothing to it. A SKIP is not a pass and it
+is not a hole either — the coverage a sheet stands in for is already here.
 
 ### spineboy — attempted, not cleared: `ess` authored under a leak caveat, `pro` not built (2026-08-23)
 
@@ -2095,6 +2335,16 @@ new observable input"* — is answered by a pass rather than by a run.
 (`curve_kinds` 0.691), `events` 1.000 at 0/0 — vacuous. MAE 17.26 / 18.00 union and
 18.64 / 19.46 over the reference's own pixels, which is this rig's structural floor by
 the run's own account and decides nothing either way. No contact sheet on either set.
+
+#### Gate v2 re-inspection, 2026-08-25 — `ball` **PASSES**, and so does the rung
+
+**G4**: the candidate declares **3.625 s** against a reference length of 3.633333 s — the
+24 fps sidecar's own value, off by a fifth of a 24 fps frame. It cleared v1's 1/60 s
+tolerance too, by half of it; under v2 it clears by 5× and for a stated reason rather than
+by luck of which side of the grid it fell on. **G7** reads **SKIP** on both sets: every
+sampled frame is committed at both rates, so neither set has a sheet and the shot is read
+frame by frame instead. **G6** unchanged — `pendulum` and `ball` both pass, so the rung
+does.
 
 ### spineboy, attempt 2 — the first after the seal: attempted, not cleared (2026-08-24)
 
@@ -2419,6 +2669,22 @@ candidates post.
 yet* is what attempt 3's own reading says, and G5 passing at 0.952 / 0.931 while G2
 fails on three shots is that sentence in clause form. The gate adds one thing: the
 motion half now has a **written** bar to clear rather than a band to be compared with.
+
+#### Gate v2 re-inspection, 2026-08-25 — **FAIL on G2 and G3**, and the freeze stands
+
+Neither changed clause reaches this rung, and the freeze's bar is unmoved.
+
+- **G4**: all eight lengths are inside 1/60 s of the reference's, so the limb is met under
+  either version — this candidate never needed the leniency the reformulation adds.
+- **G7**: seven of the eight `@30fps` sets carry a sheet — `aim@30fps` is a single pose —
+  and **all seven clear**, at 1.14× to **2.03×** their own means, the highest being
+  `jump@30fps` (92.23 over 45.47). So the whole-shot observable finds nothing here the
+  frame table had not: the *levels* are high because this is a hard plate at a small
+  scale, and the levels are exactly what G7 declines to read. The eight 12 fps sets commit
+  every frame and read SKIP.
+- ⇒ **The graduation bar now reads: 19.57 px worst drift, 3 per-frame disagreements, and
+  every sheet inside 3.5×.** A claim that beats attempt 3 beats it on those, on this
+  instrument panel.
 
 ---
 
