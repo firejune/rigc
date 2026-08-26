@@ -146,6 +146,14 @@ What the verifying agent does:
   plausible on a glance and all false under a pixel test. The same traps §8 of
   [docs/AUTHORING.md](../../docs/AUTHORING.md) names for the authoring agent apply
   here.
+- ⭐ **State the tolerance a claim was measured at, whenever a later reader might
+  re-measure it differently.** Stillness is the case that bites: `check` calls a pixel
+  changed only when a channel moves by more than `CHANGE_TOLERANCE`
+  ([`src/check.ts`](../../src/check.ts), 8 levels), so pairs that read *still* to the
+  measure are routinely **not** identical to the bit — and a later verifier measuring
+  exact equality "corrects" the hold to start a frame later, or away entirely, which is
+  a regression no frame shows. Rungs 5 and 3 both shipped that defect and both now
+  carry the tolerance in the claim.
 - Correct what is wrong *in the brief*, in the terms a client watching the shot
   could give — never by opening the reference export. The verifier is under the same
   honesty rule as the run agent, and a brief repaired from the answer is worse than

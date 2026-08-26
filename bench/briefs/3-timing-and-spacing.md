@@ -1,5 +1,19 @@
 # Rung 3 brief — `3-timing-and-spacing`
 
+> **Revision 3 — 2026-08-26.** Amendment, same verifying agent as revision 2.
+> **Scope of re-verification: one clause — `heavy`'s still tail, re-measured at exact
+> pixel equality as well as at the per-frame comparison's own tolerance.** Nothing
+> else was re-measured and no claim is withdrawn.
+>
+> Revision 2's "the last three or four frames are completely still" is **correct at
+> the tolerance the measure reads**, and it is exactly four: frames 61 to 64. But
+> **none of those three pairs is identical to the bit** — they differ in 240, 212 and
+> 124 pixels, by up to 5, 4 and 2 levels — so a verifier measuring exact equality
+> would find no hold at all and "correct" the claim away, which is a regression no
+> frame would show. Revision 3 pins the claim to the tolerance and names the figures,
+> the way rung 5's revision 4 does for the same defect. The frame numbers are
+> unchanged.
+
 > **Revision 2 — 2026-08-26.** First verification pass, by a different agent than
 > the one that wrote it (Claude Opus 5 (1M context), Claude Code / Agent SDK),
 > under the protocol in [`bench/runs/README.md`](../runs/README.md). Measured off
@@ -132,8 +146,21 @@ contracts as the arcs shrink, from about nine frames for the first two to about 
 by the end — so the shot gets *quicker* as it dies down, not slower.
 
 The motion creeps to nothing near the end, but not as early as it looks: the bar is
-still visibly moving at frames **59 and 60**, and only the last three or four frames
-are completely still.
+still visibly moving at frames **59 and 60**, and the shot goes still only for its
+**last four frames, 61 to 64**.
+
+🚫 **Read "still" at the tolerance the per-frame comparison uses, and do not tighten
+it.** A pixel counts as having changed when a channel moves by **more than 8** levels
+— `CHANGE_TOLERANCE` in [`src/check.ts`](../../src/check.ts), which is the same
+threshold that decides whether there is any ink in a pixel at all, because below it
+the difference is the rasteriser's own last bit. **None of those three pairs is
+identical to the bit**: 61 → 62, 62 → 63 and 63 → 64 differ in 240, 212 and 124
+pixels, by up to 5, 4 and 2 levels — every one of them invisible and under the
+threshold. The boundary is thin at the other end too: the pair before them, 60 → 61,
+clears the threshold by a **single pixel at one level over it**. ⇒ Measuring this tail
+at exact equality reports the hold as never arriving at all, and "correcting" the
+brief to match would hand an author a shot that keeps moving where the reference is
+held.
 
 **Ends hanging straight down.** The last frame is not the first frame: played on a
 loop it would snap back to the raised pose.
