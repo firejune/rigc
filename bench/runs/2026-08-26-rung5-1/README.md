@@ -25,6 +25,37 @@ decide geometry this run had to place, so its figures are not comparable with th
 attempt's and no comparison with it is drawn here — its README and its spec were not
 opened, per *What a run may read*.
 
+## Amendment — 2026-08-26, `spine/skeleton.atlas` page paths
+
+🩹 **What changed.** The 29 page paths in `spine/skeleton.atlas` read
+`../../../rigc-r5/examples/5-squash-and-stretch/images/<part>.png` and now read
+`../../../../examples/5-squash-and-stretch/images/<part>.png`. **Only the paths** —
+every `size:`, `filter:`, `pma:`, `bounds:`, `offsets:` and `rotate:` line is
+untouched, and no other file in this directory was opened.
+
+**Why.** A page path is resolved from the atlas's own directory, and the old one pointed
+at `bench/rigc-r5/examples/…` — the git worktree this run was authored in, which no
+clone has. So `check` threw `ENOENT` on the first page from a clean checkout, and the
+2026-08-26 adjudication had to measure this candidate through an `--atlas` override onto
+a repaired copy. Rule 3's re-inspection is *"a re-read of stored candidates"*, so a
+candidate only its author's directory layout can load is one no later re-inspection can
+read. The corrected path is what the other three 2026-08-26 candidates already emit at
+this depth (`bench/runs/2026-08-26-rung3-1/spine/` and `-rung4-1/spine/` both write
+`../../../../examples/…`). Issue [#181](https://github.com/firejune/rigc/issues/181),
+applied under the owner's ruling of 2026-08-26 and the protocol exception it added to
+[`bench/runs/README.md`](../README.md).
+
+⭐ **No measured figure changed.** `check` over all six committed sets from a clean clone,
+with no `--atlas` override, reproduces every figure recorded below and in the
+adjudication **to the digit**: worst attributable slot drift **5.12 px** `hood-end1`
+(`speedy` f0023), **2.16 px** `head` on `speedy@24fps` and **1.30 px** `course` on the
+four `ball`-family sets, `framesWithoutDrift` **0** on all six; `changeDisagreements`
+**0 of 78** on `ball` and **0 of 78** on `speedy`; `drawnRatio` **0.9881–0.9907**; the
+sheets **6.27 over 5.80** on `ball@24fps` and **8.71 over 7.38** on `speedy@24fps`, 157
+of 157 tiles each. `validate --profile spine` is still **0 FAIL** (15 PASS, 5 SKIP).
+`bench.json` was **not** rewritten, and nothing in the measures, the reading or the
+loop log below was edited.
+
 ## Honesty-rule record
 
 The prompt that started this run named **`docs/LADDER.md`'s *Operating rules*** and
