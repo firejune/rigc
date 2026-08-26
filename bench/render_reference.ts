@@ -15,6 +15,23 @@
  * transcription or from a candidate — that is the whole point of a reference —
  * so this reads `examples/<rung>/export/` and nothing else.
  *
+ * ## One example renders local-only, and the rest keep the refusal
+ *
+ * A rendered frame carries the example's own pixels, so writing one redistributes
+ * the images — which every example's `license.txt` grants only while that file
+ * travels alongside. `7-anticipation` has no `license.txt` upstream at all, and
+ * this script used to refuse it outright and for every output path. That refusal
+ * left rung 7 with no obtainable frames, and so — under the honesty rule, where a
+ * brief is written by somebody *watching the frames* — with no writable brief
+ * either. The owner ruled on 2026-08-26 (issue #3, raised by the
+ * brief-verification pass on issue #14) that #3's rule, *"never vendor, commit,
+ * publish or ship"*, does not forbid a render that never leaves the local disk.
+ *
+ * So that one example may be rendered, **only** to a path this repository ignores
+ * or does not contain, and every other case keeps the unconditional refusal
+ * exactly as it was. See `LOCAL_ONLY_EXAMPLES` below for what holds the exception
+ * narrow.
+ *
  * ## Why not spine-html, and why no browser at all
  *
  * The obvious route is the sibling `spine-html` renderer under Playwright. It
@@ -79,8 +96,9 @@
  * from the one on disk replaces the file outright and says which sets it dropped,
  * because those sets are at a scale this file can no longer describe.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { findRung, RUNG_IDS } from '../src/ladder.ts';
 import {
   BACKGROUND,
@@ -115,6 +133,65 @@ const SHEET_TILE = 128;
 const SHEET_RULE: RGBA = [176, 176, 176, 255];
 const SHEET_LABEL: RGBA = [96, 96, 96, 255];
 
+/**
+ * 🔓 The examples that may be rendered **local-only** — one name, and it is a set
+ * rather than a flag on purpose.
+ *
+ * ⚖️ Ruled by the owner on **2026-08-26**, on
+ * [issue #3](https://github.com/firejune/rigc/issues/3) (*"Rung 7
+ * (`7-anticipation`) has no upstream license.txt — local-only, never
+ * redistribute"*), after the brief-verification pass on
+ * [issue #14](https://github.com/firejune/rigc/issues/14) found that this
+ * script's refusal, not the licence, was what made rung 7 unattemptable: with no
+ * frames obtainable there is no honest input for either the writing pass or the
+ * verifying pass, and a brief written from `sack-pro.json` would be a
+ * transcription of the answer. The ruling: #3's rule — *"never vendor, commit,
+ * publish or ship"* — does not forbid a render that stays on this disk, so the
+ * refusal takes a deliberate, narrow exception for this one example.
+ *
+ * Three things keep it narrow, and each is **checked** rather than documented:
+ *
+ * 1. the exception is this set — one example, edited on a ruling — and not a
+ *    `--force`, `--yes-i-know` or `--local-only` flag somebody can pass by
+ *    accident or in a copied command line;
+ * 2. the output path must be one `git check-ignore` accepts, or lie outside the
+ *    repository altogether. So the default lands in `bench/reference-local/`
+ *    (which `.gitignore` covers) and `--out bench/reference/7-anticipation`
+ *    **refuses** — a frame of this example cannot reach a commit by mistake,
+ *    which is the part of #3's rule that has teeth;
+ * 3. the guard **fails closed**. No `git`, a broken `git`, or a checkout that is
+ *    not a repository refuses too, because *"I could not check"* is not *"it is
+ *    ignored"*.
+ *
+ * 🚫 What the ruling does **not** grant: committing, publishing or shipping these
+ * frames, in any artefact, ever. The notice written beside them says so, in the
+ * place the missing `license.txt` would have occupied.
+ */
+const LOCAL_ONLY_EXAMPLES = new Set(['7-anticipation']);
+
+/** Where a local-only render lands by default. `.gitignore` covers it, and the
+ *  guard below is what makes that coverage load-bearing rather than a habit. */
+const LOCAL_ONLY_DIR = join('bench', 'reference-local');
+
+/** Written beside a local-only render, in place of the `license.txt` that does not
+ *  exist upstream — so the constraint is a property of the output rather than of
+ *  somebody remembering it, which is what the licence copy does for every other
+ *  rung. */
+const LOCAL_ONLY_NOTICE = 'LOCAL-ONLY.txt';
+const LOCAL_ONLY_TEXT = `LOCAL ONLY — DO NOT COMMIT, PUBLISH, SHIP OR REDISTRIBUTE
+
+These frames are rendered from a Spine example that ships NO license.txt upstream,
+so its images carry no redistribution grant of any kind. They were written here
+under the owner's ruling of 2026-08-26 on https://github.com/firejune/rigc/issues/3,
+which allows a LOCAL render — reading and drawing on this disk — and nothing more.
+
+  - never commit them, and never include them in a released artefact;
+  - never copy them to a path this repository does not ignore;
+  - re-render them instead of moving them.
+
+See docs/LADDER.md, "Licence, per rung".
+`;
+
 function usage(message: string): never {
   console.error(`rigc render_reference: ${message}
 
@@ -126,7 +203,8 @@ usage:
   --max     longest side of a frame in pixels (default 256)
   --tile    longest side of one contact-sheet tile (default ${SHEET_TILE})
   --stride  write every Nth frame; the contact sheet still shows every one (default 1)
-  --out     output root; defaults to bench/reference/<example>/`);
+  --out     output root; defaults to bench/reference/<example>/ — or, for a local-only
+            example, to ${LOCAL_ONLY_DIR}/<example>/, and then only a path git ignores`);
   process.exit(2);
 }
 
@@ -222,6 +300,57 @@ function writeSidecar(root: string, next: FramesSidecar): void {
   writeFileSync(path, `${JSON.stringify({ ...next, sets }, null, 2)}\n`);
 }
 
+/**
+ * `resolve`, but with symlinks followed through the part of the path that exists.
+ *
+ * The guard below asks *"could a file written here be committed?"*, and a symlink
+ * makes a path that is lexically outside the repository name a place that is
+ * inside it. Only the existing prefix can be resolved — the frames' own directory
+ * is usually not there yet — and that is enough, because the segments this script
+ * creates are created by this script.
+ */
+function realResolve(path: string): string {
+  let head = resolve(path);
+  const tail: string[] = [];
+  while (!existsSync(head)) {
+    const parent = dirname(head);
+    if (parent === head) return resolve(path);
+    tail.unshift(basename(head));
+    head = parent;
+  }
+  return join(realpathSync(head), ...tail);
+}
+
+/** Does `git` ignore a file written at `path`? Exit 0 means "ignored"; a 1, a
+ *  fatal 128 or no `git` at all all mean "no", so the caller refuses. */
+function gitIgnores(root: string, path: string): boolean {
+  const probe = spawnSync('git', ['-C', root, 'check-ignore', '-q', '--', path], { stdio: 'ignore' });
+  return probe.error === undefined && probe.status === 0;
+}
+
+/**
+ * 🔒 The local-only guard: refuse any output path a frame of this example could be
+ * committed from. See `LOCAL_ONLY_EXAMPLES` for the ruling this implements.
+ *
+ * Outside the repository is fine — nothing there is committable *by this
+ * repository*, and what somebody does with their own disk is beyond a script.
+ * Inside it, `git` decides, and it decides against a path it does not ignore.
+ */
+function refuseCommittableOut(root: string, example: string, out: string): void {
+  const realRoot = realResolve(root);
+  const realOut = realResolve(out);
+  const rel = relative(realRoot, realOut);
+  const inside = rel === '' || (!rel.startsWith('..') && !rel.startsWith('/'));
+  if (!inside) return;
+  if (gitIgnores(realRoot, realOut)) return;
+  usage(
+    `${example} ships no license.txt, so its frames are local-only (docs/LADDER.md, Licence per rung; issue #3) — ` +
+      `and --out ${out} is inside this repository at a path git does not ignore, so a frame written there could be ` +
+      `committed. Point --out at ${LOCAL_ONLY_DIR}/ (which .gitignore covers), at another ignored path, or at a ` +
+      'path outside the repository. If git could not answer at all, that is this refusal too: the guard fails closed.',
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 const flags = parseArgs(process.argv.slice(2));
@@ -243,26 +372,43 @@ const exportDir = join(repoRoot, 'examples', rung.example, 'export');
 if (!existsSync(exportDir)) {
   usage(`no example corpus at ${exportDir} — run \`bun run fetch-examples\` first (examples/ is gitignored)`);
 }
-const outRoot = flags.out ? resolve(flags.out) : join(repoRoot, 'bench', 'reference', rung.example);
-
 // 🔒 A rendered frame carries the example's own pixels, so writing one is
 // redistribution of the images. Every example's `license.txt` grants that only
 // "as long as they are accompanied by this license file" — and `7-anticipation`
 // has no `license.txt` upstream at all, so for that one the grant does not
 // exist. Refusing here, and copying the file next to the frames, makes the
 // licence a property of the output rather than of somebody remembering.
+//
+// 🔓 The one exception, ruled by the owner on 2026-08-26 on issue #3: an example
+// on `LOCAL_ONLY_EXAMPLES` renders to a path this repository cannot commit from,
+// and to nothing else. The reasoning, and the three checks that keep it narrow,
+// are on that constant. Every other missing licence keeps the refusal below
+// exactly as it stood.
 const licencePath = join(repoRoot, 'examples', rung.example, 'license.txt');
-if (!existsSync(licencePath)) {
+const licensed = existsSync(licencePath);
+const localOnly = !licensed && LOCAL_ONLY_EXAMPLES.has(rung.example);
+if (!licensed && !localOnly) {
   usage(
     `${rung.example} ships no license.txt, so its images carry no redistribution grant — ` +
       'rendered frames of it must not be written anywhere, let alone committed (see docs/LADDER.md, Licence per rung)',
   );
 }
 
+const outRoot = flags.out
+  ? resolve(flags.out)
+  : join(repoRoot, ...(localOnly ? [LOCAL_ONLY_DIR] : ['bench', 'reference']), rung.example);
+if (localOnly) refuseCommittableOut(repoRoot, rung.example, outRoot);
+
 console.log(`rigc render_reference rung ${rung.id} — ${rung.example}`);
 console.log(`  source     ${exportDir}`);
 console.log(`  out        ${outRoot}`);
 console.log(`  sampling   ${fps} fps, longest side ${maxSide}px, sheet tile ${tile}px`);
+if (localOnly) {
+  console.log(`  🔒 LOCAL ONLY — ${rung.example} ships no upstream license.txt, so these frames carry no`);
+  console.log('     redistribution grant. Owner ruling 2026-08-26 (issue #3) allows the render and nothing');
+  console.log(`     more: never commit, publish or ship them. git ignores the path above, and ${LOCAL_ONLY_NOTICE}`);
+  console.log('     lands beside the frames saying the same.');
+}
 if (stride > 1) {
   console.log(`  ⚠️ stride  every ${stride}th frame is written; the contact sheet still shows all of them`);
 }
@@ -286,7 +432,12 @@ for (const skeletonEntry of rung.skeletons) {
   const what = data.animations.length === 0 ? 'no animation — setup pose only' : `${sampled.size} animation(s)`;
   console.log(`  ${skeletonEntry.label}: ${viewport.width}x${viewport.height}px, ${what}`);
   mkdirSync(outRoot, { recursive: true });
-  copyFileSync(licencePath, join(outRoot, 'license.txt'));
+  // The licence travels with the frames — or, for the one local-only example that
+  // has no licence to travel, the notice that says why it does not and what that
+  // forbids. Either way the constraint is a file in the output directory rather
+  // than something the next reader has to already know.
+  if (licensed) copyFileSync(licencePath, join(outRoot, 'license.txt'));
+  else writeFileSync(join(outRoot, LOCAL_ONLY_NOTICE), LOCAL_ONLY_TEXT);
   // Two skeletons of one rung are two shots that share an atlas and nothing else
   // — they were framed to their own viewports a few lines up — so they do not
   // pool their frames in one directory. A rung with one skeleton keeps the short

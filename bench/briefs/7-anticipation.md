@@ -1,0 +1,456 @@
+# Rung 7 brief — `7-anticipation`
+
+> ## 🚫 Revision 1 — 2026-08-26. **NOT VERIFIED. Do not run this rung yet.**
+>
+> Written by the agent that rendered the frames (Claude Opus 5 (1M context), Claude
+> Code / Agent SDK). The protocol in [`bench/runs/README.md`](../runs/README.md)
+> requires a **second agent** to measure every claim below against the frames before
+> any attempt at this rung, and that pass has not happened. Until it does, this file
+> is a viewer's report and nothing has checked it — see
+> [#14](https://github.com/firejune/rigc/issues/14).
+>
+> **This is the first brief on the ladder written from frames that are not in this
+> repository and never will be.** `7-anticipation` ships no upstream `license.txt`,
+> so its images carry no redistribution grant and a rendered frame of them cannot be
+> committed ([#3](https://github.com/firejune/rigc/issues/3), and *Licence, per rung*
+> in [docs/LADDER.md](../../docs/LADDER.md)). The owner's ruling of **2026-08-26**
+> opened the one path that leaves the rung attemptable: the frames may be rendered
+> **locally, to a path git ignores**, by whoever needs them. So *The reference frames*
+> below is a command rather than a directory listing, and the verifying agent runs
+> that command first. Byte-for-byte reproducibility is what makes the figures here
+> checkable at all, so **do not change the command's flags**.
+>
+> **How every number below was obtained**, so that the verifying pass can attack the
+> method and not only the digits:
+>
+> - **Subject mask** — a pixel counts as drawn when it differs from the backdrop
+>   (232, 232, 232) by more than **8/255 on some channel**. Every area, box,
+>   centroid and connectivity figure below uses that threshold. Frame-to-frame
+>   *silhouette* figures compare drawn-or-not and nothing else, so they are immune
+>   to shading; where a plain pixel-difference count is quoted it is labelled as one.
+> - **Sack vs cape** is split on **`g − b`**: cape ⇔ `g − b ≤ 8`. Controlled against
+>   the art: **40 of 250,792** opaque pixels of `sack.png` read as cape (0.02 %), and
+>   **100.0 %** of both cape images do. ⚠️ **The obvious split fails this control and
+>   fails it invisibly.** An `r − g > 40` test — crimson is redder than beige — files
+>   the cape's own anti-aliased edge as sack, because a cape pixel blended halfway
+>   into the backdrop reads (212, 209, 209) and its `r − g` is 3. That fringe is a
+>   pixel or two per column; it moves no area figure by 1 %, and it moved the sack's
+>   measured **width at rest from 87 px to 99 px** and its measured diameter by up to
+>   40 px, because both are maxima. Every part-split figure below was recomputed after
+>   the fix. The cape art is crimson with `g == b` on every pixel, so `g − b` survives
+>   blending and `r − g` does not.
+> - **Part masks are denoised** before any diameter or caliper figure: a pixel with
+>   fewer than four same-class neighbours in its 3 × 3 is dropped. This *shrinks*
+>   thin features, so it makes the rigid-pose test below **conservative** — it can
+>   lose a positive, not invent one.
+> - **Durations** are pinned by frame counts at three rates, not by the 12 fps set's
+>   last sample time. `sampleAnimation` takes `round(duration × fps) + 1` frames, so
+>   `n` frames put the duration in `[(n − 1.5)/fps, (n − 0.5)/fps)`; three rates
+>   intersect to a window of about 0.02–0.03 s. The commands are below.
+> - ⚠️ **One estimator was written, failed its control, and its numbers are not in
+>   this brief.** To ask whether the sack merely rotates and scales, silhouettes were
+>   whitened — centred, rotated onto their principal axes, scaled to unit variance —
+>   and compared by IoU. On the control the rest silhouette *rotated by 90°* and the
+>   same silhouette *scaled 1.6 × 1* both scored **0.707**, because whitening swaps
+>   which axis is which when the aspect ratio crosses 1. Every "shape change" that
+>   estimator reported was therefore indistinguishable from a rotation. It is replaced
+>   below by a bound that needs no alignment at all.
+
+> ## The leakage rule this brief was written under
+>
+> ⭐ **Everything below is something a client watching the finished animation could
+> tell you.** Nothing below was copied out of the reference `skeleton.json`, and this
+> author did not open it.
+>
+> This brief names the image files, names the four animations, states each one's
+> length, describes in plain words what a viewer sees, and points at frames. It
+> states **what is drawn** — the cast of the shot — under the fifth reading of the
+> answer-derivability test, ruled 2026-08-26: *an observable-by-construction
+> structural fact is the exam question, not a leak.* What a viewer counts on screen is
+> in the frames whether this file says it or not.
+>
+> It deliberately does **not** carry bone names, bone counts, the hierarchy, key
+> times, key values, curve handles, timeline kinds, slot names, constraint counts, the
+> setup pose, or any other fact that only reading the reference JSON could supply.
+> How many bones, slots or attachments it takes to build this is yours to decide, and
+> it is one of the things being measured.
+>
+> ⚠️ **One disclosure.** While implementing the licence exception that made this
+> render possible, this author necessarily read parts of `docs/LADDER.md` that a run
+> may not — its status table among them. Nothing from those parts is asserted below:
+> every claim here was derived from the frames and the art, and where the frames
+> could not decide something it is in *What the frames cannot tell you* rather than
+> filled in from elsewhere. **An authoring run must not read those sections**, and a
+> run authored by this session would not be recordable.
+>
+> **If you have the reference export in context, stop — this run cannot be recorded.**
+
+## The job
+
+Author a rig spec and a motion spec that reproduce this shot — one skeleton, **four
+animations** — compile them with rigc, and get a green gate.
+
+```bash
+bun cli.ts build \
+  --rig    <your>.rig.json \
+  --motion <your>.motion.json \
+  --images examples/7-anticipation/images \
+  --out    <your-out-dir> \
+  --profile spine
+
+# in the loop, as often as you like — it never opens the reference skeleton
+bun cli.ts check --candidate <your-out-dir> --frames bench/reference-local/7-anticipation
+
+# once, at the end
+bun cli.ts bench 7 --candidate <your-out-dir> --frames bench/reference-local/7-anticipation --json report.json
+```
+
+Notes on the shape of the deliverable:
+
+- **You do not need an atlas.** The art is loose PNGs and rigc emits its own
+  one-part-per-page atlas from them. Point `--images` at the images directory.
+- rigc requires a `skeleton.width`/`skeleton.height` when there is no cut manifest.
+  Nothing in the scoring reads the skeleton header — pick something that comfortably
+  contains the shot and move on.
+- Names are yours. `diff` reports name-matched and name-agnostic figures side by
+  side, precisely so that a rig built correctly under its own names is not called a
+  total failure.
+- ⭐ **Declare the durations from the table below, not from the frame counts.** Three
+  of the four agree with `(frames − 1) / 12`; `hello` does not, and `build`'s
+  `A09_ANIMATION_DURATION_MATCHES_SPEC` will hold you to whatever you declare.
+
+## The reference frames — you render them, they are never committed
+
+🚫 **This example ships no `license.txt` upstream**, so its images carry no
+redistribution grant and rendered frames of them must never be committed, published
+or shipped. Under the owner's ruling of 2026-08-26
+([#3](https://github.com/firejune/rigc/issues/3)) they may be rendered **locally, to
+a path this repository ignores**, and `bench/render_reference.ts` refuses any other
+destination:
+
+```bash
+bun run fetch-examples                                   # once; examples/ is gitignored
+
+# the 12 fps set every figure in this brief was measured on
+bun bench/render_reference.ts --rung 7 --max 1024 --tile 256
+
+# the sheets that pin the durations (first and last still of each, plus a sheet)
+bun bench/render_reference.ts --rung 7 --max 1024 --tile 256 --fps 24 --stride 999
+bun bench/render_reference.ts --rung 7 --max 1024 --tile 256 --fps 30 --stride 999
+```
+
+They land in `bench/reference-local/7-anticipation/`, which `.gitignore` covers, with
+a `LOCAL-ONLY.txt` beside them saying what may not be done with them. The render is
+deterministic — it reposes from the setup pose every time — so the three commands
+reproduce byte for byte, which is what makes every figure below checkable.
+
+**One skeleton, four animations, 102 frames at 12 fps, frame size 1024 × 798 px, one
+shared viewport at 0.189871 px per unit.** `frames.json` beside them carries that box
+and that scale, so a distance measured here converts into the units a rig is authored
+in.
+
+| Animation | 12 fps | 24 fps | 30 fps | duration is inside | **declare** |
+| --- | --- | --- | --- | --- | --- |
+| `fall-in` | 21 frames | 41 | 51 | [1.6500, 1.6833) | **1.6667** s = 50/30 |
+| `hello` | 35 frames | 70 | 87 | [2.8542, 2.8750) | **2.8667** s = 86/30 |
+| `walk` | 9 frames | 17 | 21 | [0.6500, 0.6833) | **0.6667** s = 20/30 |
+| `cape-follow-example` | 37 frames | 73 | 91 | [2.9833, 3.0167) | **3.0000** s = 90/30 |
+
+Every one of those windows contains exactly one multiple of **1/30 s** and the
+right-hand column is it, so the shot is authored on a 30 fps grid — the Spine
+editor's default project rate. `hello`'s window contains no multiple of 1/24 at all,
+which is the same conclusion from the other side.
+
+⚠️ **The viewport is the union of all four shots and the subject is small in it.**
+Standing, the whole thing is **99 × 154 px** in a 1024 × 798 frame — under 2 % of its
+area — because one shot drops in from the top of the box and another crosses almost
+its whole width. 1024 px is what makes a 154 px subject measurable; at the 256 px
+default it is 15 px tall and nothing below can be checked on it. **Do not render at
+another `--max`**: every pixel figure in this brief is at this one, and `frames.json`
+would be rewritten at a scale that describes none of them.
+
+⚠️ **The fall in `fall-in` is four frames long at 12 fps.** The subject's centroid
+drops about **140 px per frame** there — most of a body length — so that shot's first
+third is sampled, not resolved. Nothing below quotes a shape figure inside it that
+needs a fifth frame; if you want one, render a higher rate yourself with the same
+`--max 1024` and say which rate you measured on.
+
+## The art
+
+`examples/7-anticipation/images/` — fetched by `bun run fetch-examples`, and **not**
+redistributed in this repository under any circumstances. Three files.
+
+| File | Size | Opaque box | What it is |
+| --- | --- | --- | --- |
+| `sack.png` | 465 × 813 | 460 × 809 | a plump burlap sack, drawn in pale beige with woven shading, two knotted corners standing up like ears at the top and two small stubby feet at the bottom |
+| `cape-back.png` | 519 × 519 | 514 × 515 | a broad dark-crimson cloth panel with satin highlights, roughly square |
+| `cape-front.png` | 400 × 207 | 395 × 203 | a crimson band with a tied bow and two short loose ends — a collar seen from the front |
+
+At the frames' 0.189871 px per unit those opaque boxes come out **87.3 × 153.6**,
+**97.6 × 97.8** and **75.0 × 38.5** px, and the sack's opaque area is **9,041 px**.
+Those three numbers do most of the work below: standing, the sack measures **87 × 154
+px** on screen, so at rest it is drawn at its own art size to within a pixel.
+
+## What the shot is
+
+The principle is **anticipation**: before a body moves, it moves the other way
+first — and the cloth on it never arrives on time, at either end.
+
+### The cast, and the empty stage
+
+- **Nothing is drawn but the character.** There is no set, no ground, no shadow: of
+  the 1024 × 798 pixels, **0** are drawn on 90 % or more of the 102 frames, and
+  181,132 are drawn on at least one. Every non-background pixel in every frame
+  belongs to the subject.
+- **The subject is one connected shape on every one of the 102 frames** — a single
+  component under 8-connectivity, with no second blob anywhere at any time.
+- **A crimson band runs across the sack, in front of it.** Splitting each frame by
+  colour, the beige part alone is **two separate pieces on 75 of the 102 frames**
+  (head above the band, body below it), three to five on 24 more, and a single piece
+  on only **3** — the frames where the crimson has swung entirely clear. A part that
+  cuts another part's silhouette in two is drawn in front of it, so **at least one
+  crimson piece is in front of the sack**, and it is the collar and bow.
+- **The rest of the crimson never crosses the beige outline** — it hangs past the
+  sack's edge and stops where the sack begins. That is what a panel *behind* the sack
+  looks like, and it is the weaker of the two readings: a panel in front that happens
+  never to overlap would look the same. Build it behind; the frames do not force it.
+- Standing, the whole subject is **99 × 154 px** and **10,244–10,249 px** are drawn,
+  of which **1,843–1,846** are crimson.
+
+### The rest pose is shared, and three of the four shots use it
+
+`fall-in`'s last frame, `hello`'s first and `cape-follow-example`'s first are the same
+standing pose to within a rounding error: their **silhouettes differ by 9, 22 and 31
+pixels** out of ~10,245 drawn. They are not bit-identical — about 1,200 pixels differ
+in colour, all of them interior shading — so read it as *"the same pose, arrived at
+from different directions"* rather than as one frame copied about.
+
+⚠️ **`walk` does not start there.** Its first frame differs from that pose by **2,396
+silhouette pixels**: it opens mid-stride, leaning, with the sack 104 px wide instead
+of 87.
+
+### `fall-in` — 21 frames at 12 fps, duration **1.667 s** (50/30)
+
+The sack drops in from above, lands, squashes, and rebounds into the standing pose.
+
+- **The fall is four frames and it is not accelerating.** The body's centroid drops
+  **139.5, 139.9, 139.9 and 157.9 px** across f0 → f4 — three steps inside half a
+  pixel of each other, then a longer one. The sack's own base row goes 191, 333, 477,
+  620, 737. Read it as constant speed over what the 12 fps set can see, and see the
+  warning above before building a curve into it.
+- **It stretches on the way down and squashes on the hit.** The sack's silhouette
+  measures **87 × 154** at f0, then 82 × 161, 79 × 172 and **79 × 181** at f3 — 27 px
+  taller and 8 px narrower than at rest. At f4 it is **161 × 125**: the widest the
+  sack ever is anywhere in the corpus. (It gets shorter than 125 px elsewhere —
+  106 px at `hello/f0029` — but never wider.)
+- **The cape flies wider than the body.** At f0 the crimson spans the full width of
+  the frame's subject box — x = 56 to x = 238, **183 px** — while the sack inside it
+  is 87 px wide, and 2,907 crimson pixels are visible against 1,843 at rest. It
+  streams out on both sides and *above*: its centroid sits **30 to 36 px above** the body's
+  through the fall, which is the cape lagging on the axis the body is moving on
+  (correlation between the cape's vertical offset and the body's vertical velocity is
+  **−0.66**; on the 7 frames moving faster than 3 px/frame the cape is on the trailing
+  side on 5).
+- **The rebound is f5 → f8.** The sack goes 98 × 122, 90 × 131, 88 × 151 and back to
+  87 × 146, and its base row settles onto **749** at f8 and never leaves it.
+- **The body stops long before the shot does.** From **f9 to f20** — 12 frames,
+  0.917 s — the body's centroid walks **1.2 px in total** while the cape's centroid
+  walks **16.0 px** (net 15.1). Nothing else on screen moves. The last two frames have
+  **identical silhouettes** and are still not the same frame: 1,083 pixels differ in
+  colour, all of them interior shading.
+- It does not return: first frame to last, 16,807 pixels of the sack's silhouette
+  differ, which is most of it — the sack starts 500 px higher up.
+
+### `hello` — 35 frames at 12 fps, duration **2.867 s** (86/30)
+
+⚠️ **The duration is 2.867 s and the 12 fps frame count says 2.833.** 35 frames at
+12 fps only bound it to `[2.7917, 2.8750)`; the 24 and 30 fps counts (70 and 87) cut
+that to **`[2.8542, 2.8750)`**, and the one thirtieth of a second inside that window
+is **86/30 = 2.8667**. No multiple of 1/24 fits at all — this shot is on a 30 fps
+grid and not a 24 fps one. If you declare 2.833 you will be a frame short and every
+timing measure will carry it.
+
+The sack settles, draws itself up to full height, **leans away from where it is about
+to go**, and then leaves across the shot to the right.
+
+- **f0 → f3 — it dips.** The centroid drops 11 px (677.2 → 688.3) and the sack goes
+  from 87 × 154 to **95 × 144** — a small squash, in place.
+- **f4 → f13 — it rises and holds.** The sack's height climbs 149 → **161** and sits at
+  160–161 for seven frames, f7 → f13 — the tallest standing pose in the corpus. The body's centroid
+  moves **0.6 px** over those ten frames — and in the same ten frames the cape's
+  centroid crosses **from 14.2 px left of the body to 8.7 px right of it**, one
+  direction, no reversal. The body has stopped and the cloth has not.
+- ⭐ **f14 → f17 — the anticipation.** The body's centroid moves **23.3 px to the
+  left** (148.5 → 125.2) over four frames, 0.333 s. It crouches as it goes: the sack
+  shortens 161 → **135** and widens 90 → **98**. The cape swings the *other* way, to
+  +31.9 px right of the body at f15 — the extreme of its whole travel in this shot.
+- ⭐ **f17 → f34 — and then it goes right, 803.7 px.** The centroid runs 125.2 →
+  **928.9**, over 17 frames (1.417 s), which is **34 times the wind-up that preceded
+  it**. Its longest single step is **128.7 px**, f30 → f31.
+- **It travels in three arcs.** The sack's base row over f19 → f34 reads 736, 702,
+  693, 721, 737, 722, 662, 675, 714, 740, 740, 737, 622, 565, 578, 670: down onto
+  ~740 twice, and three climbs, the last of them the highest (565 — 184 px above the
+  standing base line).
+- **The cape trails it the whole way.** Its horizontal offset flips negative at f20
+  and stays between **−33 and −48 px** for every remaining frame. Correlation between
+  the cape's horizontal offset and the body's horizontal velocity is **−0.81** at lag
+  0 and **−0.86** at one frame of lag; on the 20 frames moving faster than 3 px/frame
+  it is on the trailing side on **17**.
+- ⚠️ **The drag is horizontal. It is not a 2-D lag.** On the vertical axis the same
+  correlation is **−0.03**, and the cape is on the trailing side on 11 of 20 — a coin
+  toss. A lag fitted to the speed instead of to each axis returns a third number that
+  is true of neither. (This is rung 8's finding, and this shot reproduces it.)
+- **It ends off to the right and in the air**: base row 670 against the 749 it started
+  from, 783 px right of where it began.
+
+### `walk` — 9 frames at 12 fps, duration **0.667 s** (20/30)
+
+A cycle **on the spot**. The body's centroid stays inside **6.4 px** of x = 145 for
+the whole shot (145.2 … 151.5 … 145.2) and its base row inside 737–741. Nothing
+travels.
+
+- **It rocks rather than steps.** The sack's silhouette width runs 104, 130, 114, 83,
+  **73, 72, 73**, 85, 104 while its height stays 137–149: it leans hard one way,
+  comes through narrow and upright in the middle, and leans back.
+- ⭐ **The body loops and the cape does not.** First frame against last: the sack's
+  silhouette differs by **198 px** of ~7,940 — **2.5 %**, a cycle that closes — while
+  the cape's differs by **496 px** against its own 806 and 1,106 visible pixels, and
+  it ends **37 % larger** than it started. Whatever drives the cloth is still
+  unwinding when the body is back where it began. **This is the cleanest single
+  statement of the rung in the corpus**, and it is the one shot where you can read it
+  off two frames.
+- ⚠️ **No drag figure for this shot.** Only one frame moves faster than 3 px/frame
+  horizontally and two vertically, so a correlation over nine frames here is noise.
+  The numbers a lag estimator returns on `walk` are not evidence of anything; do not
+  quote them, and do not read their disagreement with `hello` as a difference between
+  the shots.
+
+### `cape-follow-example` — 37 frames at 12 fps, duration **3.000 s** (90/30)
+
+The same anticipation, larger, and then a full second of nothing moving but cloth.
+
+- **f0 → f3 — the body is still and the cape is not.** The centroid moves 2.2 px; the
+  cape's offset slides −1.6 → −9.1 px. The shot opens on a cape that has not finished
+  from somewhere else.
+- ⭐ **f4 → f11 — the wind-up, 35.8 px to the left** (148.2 → 112.4) over eight
+  frames, 0.667 s. It sinks 9 px and spreads as it goes: the sack runs 90 × 152 →
+  113 × 127 → **150 × 143**, so it is crouching and leaning, not stepping.
+- ⭐ **f12 → f21 — the leap, 238.0 px to the right** and 170 px up. The centroid runs
+  112.4 → **350.4**; the apex is **f17**, where the sack's base row is **579** against
+  the 749 it left. Its longest step is 97.7 px, f19 → f20.
+- **It stretches into the leap and flattens out of it.** The sack measures **84 × 208**
+  at f14 — the tallest it is anywhere in the corpus — and **112 × 204** at f20, and
+  then **152 × 108** at f21, the landing frame. It is a plain teardrop in the air and a pancake on the ground.
+- **The cape opens out above it.** At f20 the crimson covers 3,022 px, the most in this
+  shot, and reaches **above** the sack's own top (its box starts at y = 527, the
+  sack's at y = 535).
+- ⭐ **f27 → f36 — the body has stopped and the cape has 0.75 s left to run.** The
+  centroid is pinned at **345.3 ± 0.1** from f25 to the end. Over f27 → f36 the body's
+  centroid walks **0.4 px in total** while the cape's walks **33.0 px** (net 31.6),
+  and the cape's visible area falls **monotonically**: 2,003, 1,794, 1,643, 1,533,
+  1,443, 1,365, 1,264, 1,186, 1,110, **1,055 px**. Ten frames, one direction, no
+  overshoot — it furls and settles.
+- **The cape trails on every moving frame.** On all **15** frames moving faster than
+  3 px/frame horizontally, the cape sits on the far side of the body from its
+  direction of travel — 15 of 15. The correlation is **−0.76**. Vertically, again,
+  −0.32 and 7 of 16: **horizontal only**.
+- It does not return: 199 px right of where it started, and 17,229 pixels of the
+  sack's silhouette differ between the first frame and the last.
+
+### The sack changes shape, and not by rotating
+
+⭐ **This is the other half of the rung**, and it is provable off the frames without
+any alignment or fitting.
+
+A rigid drawing that is rotated and uniformly scaled by `s` obeys two things at once:
+its silhouette's **diameter** — the farthest apart two of its pixels — is exactly `s`
+times the art's, and its **area** is exactly `s²` times the art's. `sack.png` at the
+frames' scale has a diameter of **164.7 px** and an area of **9,041 px**. And the only
+thing that can hide part of the sack is the cape, because nothing else is drawn — so
+the sack's *visible* area can fall below `9,041 s²` by at most the number of crimson
+pixels on that frame, and no further.
+
+**Seven frames break that budget**, by margins far past the few hundred pixels of
+slack an edge threshold buys:
+
+| Frame | sack diameter | ⇒ `s` | a rigid pose covers | crimson could hide | so ≥ this is visible | actually visible |
+| --- | --- | --- | --- | --- | --- | --- |
+| `cape-follow-example/f0014` | 208.0 px | 1.263 | 14,424 px | 1,750 px | **12,674 px** | **9,040 px** |
+| `cape-follow-example/f0020` | 210.1 | 1.276 | 14,716 | 2,937 | 11,779 | 10,702 |
+| `hello/f0027` | 189.4 | 1.151 | 11,968 | 2,039 | 9,929 | 8,113 |
+| `hello/f0020` | 183.4 | 1.114 | 11,219 | 2,246 | 8,973 | 7,583 |
+| `hello/f0021` | 183.1 | 1.112 | 11,175 | 2,385 | 8,790 | 7,478 |
+| `fall-in/f0003` | 180.1 | 1.094 | 10,814 | 1,923 | 8,891 | 7,311 |
+| `hello/f0019` | 167.4 | 1.017 | 9,344 | 866 | 8,478 | 7,937 |
+
+The largest gap is 3,634 px — 40 % of what is on screen. ⇒ **the sack is not a rigid
+image being posed.** At minimum it is stretched along one axis, and the frames the
+table names are the ones to check a build against.
+
+⚠️ **What this does not settle is whether it needs a mesh.** The test rules out
+rotation with uniform scale; it does not distinguish a non-uniform scale from a
+genuine deformation, and both would produce a tall teardrop at
+`cape-follow-example/f0014`. A similarity invariant says the same thing and no more:
+min-caliper-width ÷ diameter is **0.514** for the art and runs **0.370–0.784** across
+the frames, so the shape is not a similarity copy of its art — and a stretch is not a
+similarity either. Decide it on the pictures, and say in the log which you built.
+
+### The comparison, in one line
+
+A caped sack that drops in, waddles, and twice winds up in the wrong direction before
+throwing itself across the shot — with a cloth that is always a beat behind it and
+still moving after it has stopped.
+
+## What the frames cannot tell you
+
+Stated so that the verifying pass does not have to rediscover it, and so that a run
+does not spend a turn on it.
+
+- **Whether the cloth is simulated, driven, or keyed by hand.** All the frames show is
+  that it lags on entry, trails horizontally while the body travels, overshoots
+  nothing on the way out, and settles monotonically over up to 0.75 s after the body
+  has stopped. Every one of those is a behaviour, not a mechanism.
+- **Whether the cape's panel is one piece or several.** Its visible crimson breaks
+  into dozens of fragments under a colour split, and every one of those breaks is at
+  a boundary where crimson blends into beige — an artefact of the split, not a seam.
+  Nothing here supports a count.
+- **Draw order beyond the one edge the band settles** (crimson collar in front of the
+  sack). The panel's side is argued above and not proven.
+- **The sack's own internal structure.** Its knots and feet move relative to its body,
+  which is visible; how many joints that takes is not.
+- **Anything inside the first 0.25 s of `fall-in`.** Four samples over 560 px.
+- **Where the ground is.** Nothing is drawn there. The base row the sack rests on is
+  **749** in three shots and 737–741 in `walk`, which is the only evidence a ground
+  plane exists at all.
+
+## How the result is read
+
+`bench 7` does two things and does not merge them:
+
+1. **Validity** — `validate --profile spine` on your candidate. This is the only
+   pass/fail. A candidate that is not valid Spine 4.3 has not cleared anything.
+2. **Structural diff** — a ratio per measure against the reference export, in six
+   sections. **There is no rung score**, on purpose: a rig with the right skeleton and
+   the wrong timing and a rig with the right timing and the wrong skeleton call for
+   opposite fixes. A person reads the measures and records the judgement in
+   [docs/LADDER.md](../../docs/LADDER.md).
+
+So do not tune toward a number. Author the shot, get the gate green, and let the
+measures say where it landed.
+
+`check` **does** work on this rung — the rasteriser draws parts that change shape —
+but you must hand it the frames explicitly, `--frames bench/reference-local/7-anticipation`,
+because they are not where every other rung's are. It never opens the reference
+skeleton, so run it in the loop as often as you like.
+
+## Deliverables
+
+See [`bench/runs/README.md`](../runs/README.md) for the run protocol — where the
+output goes, what has to be recorded, and what you must not read. Read
+[docs/AUTHORING.md](../../docs/AUTHORING.md) first, **including §8**, which is about
+measuring reference frames and was written from the mistakes the first ladder run made
+doing exactly that. Two of this brief's own estimators are fresh instances of §8's
+rule — one shipped only after its control caught a 12 px error in the sack's width,
+and one was thrown away because its control could not tell a rotation from a squash.
+**Score your estimator against a shape you built out of the art itself, and against a
+transform whose answer you already know, before you believe a number it gives you.**

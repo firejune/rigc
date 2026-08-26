@@ -171,8 +171,21 @@ example's own `license.txt`, and why `render_reference.ts` copies it rather than
 leaving it to somebody's memory.
 
 🚫 **`7-anticipation` ships no `license.txt` upstream at all**, so the grant its
-siblings carry does not exist for it. Its frames must never be rendered here,
-committed, published or shipped. `render_reference.ts` refuses that rung by name.
+siblings carry does not exist for it. Its frames must never be committed, published
+or shipped, and they are not in this directory or anywhere else in this repository.
+
+They may be **rendered locally**, and only there. The owner ruled on **2026-08-26**
+([#3](https://github.com/firejune/rigc/issues/3)) that #3's rule — *"never vendor,
+commit, publish or ship"* — does not forbid a render that stays on one disk, which is
+what left rung 7 attemptable: with no frames obtainable there was no honest input for
+either writing or verifying its brief ([#14](https://github.com/firejune/rigc/issues/14)).
+So `render_reference.ts` takes one deliberate, narrow exception for that example: it
+writes to `bench/reference-local/7-anticipation/` by default, it **refuses any `--out`
+inside this repository that `git check-ignore` does not accept**, it fails closed if
+git cannot answer, and it drops a `LOCAL-ONLY.txt` beside the frames in place of the
+`license.txt` that does not exist. Every other missing licence keeps the unconditional
+refusal. The commands, and the frame figures measured from them, are in
+[`bench/briefs/7-anticipation.md`](../briefs/7-anticipation.md).
 
 See [NOTICE.md](../../NOTICE.md) for the per-example table and
 [docs/LADDER.md](../../docs/LADDER.md) §*Licence, per rung*.

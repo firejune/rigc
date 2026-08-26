@@ -953,6 +953,13 @@ reference frames, and `render_reference.ts` refuses to render it because
 `7-anticipation` ships no upstream `license.txt` (*Licence, per rung*). There is no
 stored candidate to re-score, and an unattempted rung is not a failing one.
 
+> ➡️ **The last of those three reasons was lifted on 2026-08-26** by the local-render
+> exception in *Licence, per rung*, and the rung now has a brief — revision 1,
+> **unverified**, so still no run and still ⬜. What this pass recorded stays true of
+> the day it was taken: on 2026-08-25 the rung was **unattemptable**, and that is the
+> state the exception was ruled against ([#3](https://github.com/firejune/rigc/issues/3),
+> [#14](https://github.com/firejune/rigc/issues/14)).
+
 ⚠️ **Rung 3's ✅ does not survive gate v1, and that is the pass's largest finding.**
 The rung was cleared on 2026-08-23 by a commander's reading, two days before a pass
 definition existed; G3 asks for **0** per-frame disagreements in every set and
@@ -2871,6 +2878,30 @@ are covered by no explicit grant, so:
 `examples/` is gitignored for the whole corpus, which keeps the general case
 right by construction; rung 7 is the case where a one-off "just this once" copy
 would be a licence problem rather than a tidiness problem.
+
+🔓 **The local-render exception, ruled 2026-08-26** — issue
+[#3](https://github.com/firejune/rigc/issues/3), raised by the brief-verification pass
+on [#14](https://github.com/firejune/rigc/issues/14). The rule above does not forbid a
+render that never leaves the local disk, and reading it as though it did was what made
+this rung **unattemptable rather than unattempted**: the honesty rule says a brief is
+written by somebody *watching the frames*, so with no frames obtainable neither the
+writing pass nor the verifying pass had a legitimate input, and a brief written from
+the export would have been a transcription of the answer. So:
+
+- ✅ **Rendering its frames to a path this repository ignores is allowed**, for as long
+  as somebody needs them. [`bench/render_reference.ts`](../bench/render_reference.ts)
+  implements exactly that and nothing wider: a one-name set, an `--out` that must pass
+  `git check-ignore` or lie outside the repository, a guard that fails closed when git
+  cannot answer, and a `LOCAL-ONLY.txt` written beside the frames in place of the
+  licence that does not exist. Every other missing licence keeps the unconditional
+  refusal.
+- 🚫 **Everything the rule already forbade, it still forbids** — committing, publishing
+  or shipping a frame, in any artefact, ever. The exception is about where a render may
+  land, not about what may be distributed.
+- 📌 Consequences elsewhere: the rung's frames are **not** under `bench/reference/`, so
+  its brief carries the render commands and
+  [`bench/runs/README.md`](../bench/runs/README.md)'s allowed-reading list names
+  `bench/reference-local/7-anticipation/` for this rung alone.
 
 ---
 
