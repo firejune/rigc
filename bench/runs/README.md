@@ -34,8 +34,9 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 | 7 | — | — | — | — | not prepared. `7-anticipation` has no upstream `license.txt` at all, so `render_reference.ts` refuses it and it must never be rendered |
 
 **Brief verified** is the header block described in the next section. Rungs 3 and 1
-were attempted before the rule existed; their briefs still need the pass, and until
-they get it a run against either of them carries the risk the section names.
+were attempted before the rule existed, and their recorded runs are labelled against
+the unverified revision they were authored from; both briefs took the pass on
+**2026-08-26** (revision 2 each), so no rung with a brief is now waiting on one.
 **spineboy is the third brief to carry a third-party pass** (2026-08-23, revision 2):
 of 179 claims, 146 verified — both duration tables entire, and most of `death`,
 `jump`, `shoot` and `hit` to the digit — 31 were corrected and 2 moved into the
@@ -47,15 +48,17 @@ took a single question — which hand holds the gun — and settled it against t
 instead of choosing between the two answers revision 2 gave: the gun is in the **far**
 hand, and the working is in the brief's *Verification notes — revision 2 → 3*. Rung 6
 is the first brief to carry the pass the protocol actually asks for — a **different**
-agent, not the one that wrote it; rungs 2, 4 and 5 were re-measured by their own
-author and their headers say so. **Rung 8 is the second to carry a third-party
-pass** (2026-08-23): its revision 1 stated its estimators and their controls in its
-own header, which is what let the verifying pass attack the method rather than only
-the digits — and that is where most of what it found came from. Of 79 claims, 61
-verified (many to the digit), 13 were corrected and 5 moved into the brief's
-"cannot tell you" section. Two claims went the other way: draw order in `pendulum`
-and area conservation in `ball` were listed as things the frames could not decide,
-and the frames decide them.
+agent, not the one that wrote it. Rungs 2, 4 and 5 were re-measured by their own
+author, and their revision-2 headers say so; **rungs 4 and 5 then took the
+third-party pass on 2026-08-26** (revision 3 each), which leaves **rung 2 as the one
+brief whose latest pass is still its own author's**. **Rung 8 is the second to carry
+a third-party pass** (2026-08-23): its revision 1 stated its estimators and their
+controls in its own header, which is what let the verifying pass attack the method
+rather than only the digits — and that is where most of what it found came from. Of
+79 claims, 61 verified (many to the digit), 13 were corrected and 5 moved into the
+brief's "cannot tell you" section. Two claims went the other way: draw order in
+`pendulum` and area conservation in `ball` were listed as things the frames could not
+decide, and the frames decide them.
 
 ⚠️ **Two of those findings are worth carrying forward as patterns, because neither
 was a wrong digit.** The first: a lag fitted to a 2-D velocity is meaningless when
