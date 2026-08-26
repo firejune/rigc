@@ -1,5 +1,29 @@
 # Rung 1 brief — `1-weight-and-mass`
 
+> **Revision 2 — 2026-08-26.** First verification pass, by a different agent than
+> the one that wrote it (Claude Opus 5 (1M context), Claude Code / Agent SDK), under
+> the protocol in [`bench/runs/README.md`](../runs/README.md). Every quantitative
+> claim was measured off the committed frames. What was wrong:
+>
+> - the four balls were said to start at **staggered heights** — their bottom edges
+>   are level and all four fall the same distance;
+> - all three deforming balls were said to rebound "a little over half" — the
+>   **red** one rebounds two thirds; and the steel ball's own hop is a fifth of its
+>   fall rather than a sixth, with two smaller hops after it that went unmentioned;
+> - "the two rubber balls are still moving in the final frames" — only the **red**
+>   one is; the blue one stops before the beach ball does;
+> - "the 12 fps set does not contain a single one of them" (the flattenings) — it
+>   contains two;
+> - the beach ball was said to be "round as it arrives" at `animation@24fps/f0012`
+>   — it is drawn out and narrow there;
+> - its narrowest silhouette is **55 px**, not 57, so the shape change is not
+>   symmetric.
+>
+> Missing: each shadow's **opacity** tracks its ball's height, which is the largest
+> single thing the shadows do and the brief described only their width. `drop` held
+> entire. So did the durations, the four contact frames, the columns, the steel
+> ball's rigidity, the arc counts and the beach ball's 61 px rest silhouette.
+
 > ## The leakage rule this brief was written under
 >
 > ⭐ **Everything below is something a client watching the finished animation
@@ -94,9 +118,12 @@ different heft, so that what separates them is how much each one seems to weigh.
 
 Four balls hang in the air in a row, each with its own soft shadow on the ground
 below it: the big striped beach ball at the far left, then the red rubber ball,
-then the smaller blue one, and the small dark steel ball at the right. They start
-at staggered heights, the row sloping down to the right, the beach ball highest and
-the steel ball lowest.
+then the smaller blue one, and the small dark steel ball at the right.
+
+⚠️ **They are all at the same height, and it does not look like it.** Their **bottom
+edges are level** — all four sit about 150 px above the ground and fall the same
+distance — so the row looks like it slopes down to the right only because the balls
+are four different sizes. Measure the bottoms, not the tops.
 
 **Nothing travels sideways at any point.** Every ball goes straight up and down in
 its own column for the whole shot.
@@ -104,39 +131,57 @@ its own column for the whole shot.
 They are released together and reach the ground within a frame of each other
 (around **f5–f6**). From there they part completely:
 
-- the **steel ball** barely rebounds. Its one hop comes back about a sixth of the
-  way to where it was dropped from, and it is at rest by **f12** — a third of the
-  way into the shot — and never moves again;
-- the **beach ball** and the two rubber balls all rebound to a little over **half**
-  the height they fell from, and then again, and again: you can pick out three or
+- the **steel ball** barely rebounds. Its first hop comes back about a fifth of the
+  way to where it was dropped from — 31 px of a 151 px fall — and there are two more
+  after it, about 10 px and about 3 px, easiest to see in the 24 fps set. It is at
+  rest by **f12** — a
+  third of the way into the shot — and never moves again;
+- the **beach ball** and the **blue** rubber ball rebound to a little over **half**
+  the height they fell from; the **red** one is the bounciest of the four and comes
+  back **two thirds** of the way. Then again, and again: you can pick out three or
   four arcs each, every one lower than the last;
-- they do not settle together either. The beach ball's silhouette stops changing
-  around **f33**; the two rubber balls are still moving a pixel at a time in the
-  final frames.
+- they do not settle together either, and not in the order you would guess. The
+  **blue** ball is the first to stop — its silhouette stops changing at **f28** —
+  then the beach ball around **f33**, and the **red** one is still moving a pixel at
+  a time in the last frame of both sets.
 
 Three of the four **change shape as they go.** The beach ball and both rubber balls
 draw out taller and narrower while they are falling fast, and flatten wider than
 they are tall on the frame they hit. The **steel ball never does**: it stays the
 same circle throughout. That contrast is the shot.
 
-⭐ **Each flattening lasts one frame, and it falls between two 12 fps frames** — the
-12 fps set does not contain a single one of them. That is what the 24 fps set is
-for. The red rubber ball is the clearest of the three:
+⭐ **Each flattening lasts about one frame, and every ball's *first* impact falls
+between two 12 fps frames** — which is what the 24 fps set is for. ⚠️ **Later
+impacts are not all so obliging**: two of them land square on a 12 fps frame, and
+you can measure the flattening there — `balls/animation/f0022.png` has the red ball
+**31 px wide against its 29 px rest silhouette**, and `f0026.png` has the blue ball
+at 23 against 22. So "no flattening at 12 fps" is not a rule you can lean on.
+
+The red rubber ball is the clearest of the three:
 
 - `balls/animation@24fps/f0010.png` — drawn out, taller than wide, on the way down
 - `balls/animation@24fps/f0011.png` — flat and wide, on the ground
 - `balls/animation@24fps/f0012.png` — tall again, on the way back up
 
-The beach ball does the same one frame later (`f0012.png` round as it arrives,
-`f0013.png` flattened). Its silhouette measures 61 px across at rest, 57 px at its
-narrowest and 65 px at its widest, so the shape change is a little over ±6 % — small
-enough that it is worth measuring rather than judging by eye.
+The beach ball does the same one frame later, and it is worth opening both:
+`f0012.png` catches it **drawn out and narrow** — 55 px across, not round — and
+`f0013.png` is the flattened one, 65 px across. Its rest silhouette is 61 px, so the
+change is **not symmetric**: about +6 % wide on the landing frame and about −10 %
+narrow on the frame before it. Small enough that it is worth measuring rather than
+judging by eye.
 
 The **steel ball** is round in every frame of its own impact — open the same four
 frames on its column and there is nothing to see. That is the point of it being
 there.
 
-Each shadow **widens as its ball comes down and narrows as it goes up**.
+Each shadow does two things at once, and the second is the bigger one:
+
+- it **widens as its ball comes down and narrows as it goes up**;
+- and it **darkens and fades with it**, from barely there when its ball is at the top
+  of an arc to full strength on the frame the ball lands, over and over for as long
+  as that ball keeps bouncing. Measured on the darkest pixel of each shadow, the
+  swing runs from about 170 down to about 20 on a 0–232 scale — far more visible than
+  the width change, and it is the one thing in this shot you are most likely to miss.
 
 **Ends nowhere near where it began.** The last frame is four balls on the ground;
 the first is four balls in the air.

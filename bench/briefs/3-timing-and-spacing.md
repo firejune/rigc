@@ -1,5 +1,19 @@
 # Rung 3 brief — `3-timing-and-spacing`
 
+> **Revision 2 — 2026-08-26.** First verification pass, by a different agent than
+> the one that wrote it (Claude Opus 5 (1M context), Claude Code / Agent SDK),
+> under the protocol in [`bench/runs/README.md`](../runs/README.md). Measured off
+> the committed frames, not eyeballed. Corrected: `heavy`'s settling swings were
+> described as getting *slower* (the gap between successive extremes **contracts**,
+> from about nine frames to about four); `light`'s settle was "one small overshoot"
+> (the return swing is the same size as the overshoot, and two smaller reversals
+> follow); `light`'s block was said to shift "about one block's width" (it shifts
+> about two thirds of its own width); and `light`'s "final two frames are still" is
+> the final **three**. `heavy`'s tail gained the frame at which the bar actually
+> stops, and the block's tilt gained a figure. Everything else held, including both
+> durations, the identical opening pose, both block-contact frames, `heavy`'s
+> half-frame travel, the tumble, and both rest frames.
+
 > ## The leakage rule this brief was written under
 >
 > ⭐ **Everything below is something a client watching the finished animation
@@ -110,10 +124,16 @@ crossing about half the width of the frame, **tumbling as it goes**, then comes 
 lands square again and slides to a stop. It is at rest by frame **30**, a little
 under halfway into the shot, and never moves again — while the bar is still going.
 
-The bar overshoots past hanging and then rocks back and forth about the vertical in
-visibly shrinking arcs — about four swings you can pick out, each shorter and slower
-than the last. The motion creeps to nothing near the end, and the last three or four
-frames are completely still.
+The bar overshoots well past hanging — roughly 40° beyond the vertical on the first
+swing — and then rocks back and forth about the vertical in visibly shrinking arcs:
+about four swings you can pick out, each shorter than the last **and arriving sooner
+than the one before it.** The gap from one extreme to the next
+contracts as the arcs shrink, from about nine frames for the first two to about four
+by the end — so the shot gets *quicker* as it dies down, not slower.
+
+The motion creeps to nothing near the end, but not as early as it looks: the bar is
+still visibly moving at frames **59 and 60**, and only the last three or four frames
+are completely still.
 
 **Ends hanging straight down.** The last frame is not the first frame: played on a
 loop it would snap back to the raised pose.
@@ -123,20 +143,25 @@ loop it would snap back to the raised pose.
 The light read of the same event, and the contrast is the whole point.
 
 It starts immediately: frame 0 → 1 already shows a large move, where `heavy` had
-almost none. The fall is over in three or four frames, there is one small overshoot
-past hanging, and it is essentially there.
+almost none. The fall is over in three or four frames — and then it rocks, rather
+than arriving: it overshoots a little past hanging (frames 4–5), swings back **about
+as far again the other way** (frame 8), and settles through two much smaller
+reversals after that. Small next to `heavy`'s swings, but there is more than one of
+them.
 
 The block is barely disturbed. It first moves at frame **4** — much earlier than in
 `heavy`, because the bar got down there much sooner — and it is at rest again by
-frame **6**, having shifted about **one block's width** to the right instead of half
-the frame. It stays beside the ball rather than across the picture. It does turn as
-it is knocked — clearly tilted while it moves, square again by the time it settles —
-but it is a nudge, not a tumble: the same event, a tenth of the travel.
+frame **6**, having shifted about **two thirds of its own width** to the right
+instead of half the frame — 12 px, against a block that measures 19 px across.
+It stays beside the ball rather than across the picture. It does turn as
+it is knocked — tilted about 12° while it moves, which widens its silhouette from
+19 px to 23 px, and square again by the time it settles — but it is a nudge, not a
+tumble: the same event, a tenth of the travel.
 
-After that first half-second the shot is nearly a held pose: the bar only creeps
-through a last small settle for the rest of its length, and the final two frames are
-still. **Ends hanging straight down**, in the same rest pose `heavy` ends in, and
-again not where it began.
+After that first half-second there is no more event, but the bar is not parked
+either: the settle above runs on through the rest of the shot's length, and the
+final **three** frames are still. **Ends hanging straight down**, in the same rest
+pose `heavy` ends in, and again not where it began.
 
 ### The comparison, in one line
 
