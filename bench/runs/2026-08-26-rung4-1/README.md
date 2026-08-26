@@ -14,7 +14,10 @@
              read for exactly one line; see *A note on the supplied atlas*
 - guide:     AUTHORING.md §10 in hand (a post-2026-08-23 run)
 - profile:   `spine`
-- builds:    **10**
+- builds:    **11** — one structure-only, four that baked a geometry sweep into the
+             rig spec, and six that carried a motion spec. (`build` was invoked 14
+             times: three of those re-ran identical inputs to read the report
+             again, and are not counted as builds.)
 - loop log:  [`LOOP.md`](LOOP.md) — every turn, every dead end, and the
              honesty-rule note in its §1
 
