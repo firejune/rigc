@@ -1,5 +1,23 @@
 # Rung 4 brief — `4-wave-principle`
 
+> **Revision 3 — 2026-08-26.** Second verification pass, and the first by a
+> **different** agent than the one that wrote revision 2 (Claude Opus 5 (1M
+> context), Claude Code / Agent SDK), under the protocol in
+> [`bench/runs/README.md`](../runs/README.md). Revision 2's two short shots came out
+> of this pass almost untouched — the 87 px slide, the frame-8 far point, the
+> frame 9–10 tip lag, the 108 px tip travel, the exact loop, and the 7½ px / 6 px /
+> 1½ px differences between the two whips all reproduce to the digit. Corrected:
+> the `@24fps` sets are described as sheets only (each also commits its first and
+> last frame); frame 8 is not the *least* different frame of the two whips (frames
+> 1, 14 and 15 are closer); and three `ball-catch` figures were a few frames or a few
+> pixels out — the far point is x 383 at frame 16, the disc is at x 584 at frame 30
+> and reaches 600 around frame 33, and the mid-shot rocking spans x 590–621. Added
+> two things the frames carry and the brief did not: the disc **turns right over**,
+> twice, in the throw at the end of the shot — revision 2 had that passage as "the
+> disc drops away", and it is the fastest and most complicated motion in the shot —
+> and the way out is not an even sweep but a fast run, a near-stop across frames 6–8,
+> and a second fast run.
+
 > **Revision 2 — 2026-08-23.** Verified against the frames and contact sheets by
 > Claude Opus 5 (1M context), Claude Code / Agent SDK, under the protocol in
 > [`bench/runs/README.md`](../runs/README.md). This rung has not been attempted;
@@ -81,10 +99,13 @@ directly comparable.
 - `wave-offset/f0000.png` … `f0016.png` — 17 frames at 12 fps
 - `contact.png` in each — every frame of that animation as one labelled grid, row
   major. **Look at the contact sheets first.**
-- `<animation>@24fps/contact.png` — the same three animations sampled at **24 fps**,
-  as contact sheets only. They are here because the fast part of `ball-catch`
-  happens between two 12 fps frames; the individual 24 fps frames were not worth
-  their weight, so the sheet is the whole of that set.
+- `<animation>@24fps/` — the same three animations sampled at **24 fps**. Each of
+  those three sets commits its `contact.png` plus its **first and last frame** and
+  nothing in between: the sheet is where the set's whole shot lives, and the two
+  stills are there to be measured against. They exist because the fast parts of
+  `ball-catch` happen between two 12 fps frames, so the 12 fps set — which you can
+  read frame by frame — cannot show you what your curves do in the gaps, and the
+  sheet can.
 
 ⚠️ **The subject sits in the bottom-right eighth of the frame and the rest is
 empty** — in the two short shots. That is not a rendering fault: all three
@@ -127,8 +148,9 @@ these two run continuously with no snap.
 identical at frames 0 and 16 and differ at every frame in between: the largest
 difference is about **7½ px**, in the bottom links, at frames 4–5 on the way out and
 about 6 px at frame 12 on the way back. At the widest part of the swing (frame 8)
-they differ by about 1½ px — the *least* of any intermediate frame. So the offset
-between them shows up in the accelerating and decelerating quarters, not at the
+they differ by about 1½ px — and only the frames next to the loop point (1, 14, 15)
+are closer, at about a pixel. So the offset between them shows up in the
+accelerating and decelerating quarters, not at the
 extremes. You are not expected to reproduce that difference from the frames, and you
 are not being scored on it: reproduce the whip, give it to both, and let the diff say
 what the difference between them was worth.
@@ -140,26 +162,41 @@ The same disc and chain, plus a ball.
 ⚠️ **It is the disc that does the travelling, not just the ball** — the shot is
 named for it. A ball drops in from the upper left; the disc rushes up and to the left
 to meet it, and from then on the two move together while the disc keeps the ball up.
-The disc's own centre runs from about x 628 at the start out to about x 386 by frame
-17 and back to about x 600 by frame 30 — a third of the width of a 768 px frame —
-and it tilts hard while it goes, which is what sets the chain going. ✅ The chain
-starts a beat later and is still settling from one throw when the next arrives, so
-the wave never fully dies.
+The disc's own centre runs from about x 629 at the start out to about **x 383 at
+frame 16** and back to about x 584 by frame 30 (it passes 600 around frame 33) — a
+third of the width of a 768 px frame — and it tilts hard while it goes, which is what
+sets the chain going. ⚠️ **The way out is not one even sweep.** It covers about 29 px
+a frame over frames 3–6, then almost stops — about 3 px a frame across frames 6, 7
+and 8 — and then runs out to its far point at about 25 px a frame again. On a rung
+about timing, that hold in the middle of a fast move is worth reading off the contact
+sheet before you key anything. ✅ The chain starts a beat later and is still settling
+from one throw when the next arrives, so the wave never fully dies.
 
 Through the middle of the shot — roughly frames 31 to 70 — the ball rides on the
-disc and the pair only rocks gently around x 600–625. Then the disc drops away and
-flicks the ball up: **that flick, around frame 79, is the ball's highest point in
-the whole shot after it enters**, higher than any earlier arc. The bounces do not
-simply decay.
+disc and the pair only rocks gently, over a range of about x 590 to x 621. Then the
+disc drops away and flicks the ball up: **that flick, around frame 79, is the ball's
+highest point in the whole shot after it enters**, higher than any earlier arc. The
+bounces do not simply decay.
+
+⚠️ **And in that same throw the disc turns right over — twice.** Open
+`ball-catch/f0077.png` through `f0085.png` one after another. The saucer is flat and
+about 59 × 10 px through frame 78; by **frame 80** it is standing **upright and
+edge-on**, about 16 px wide and 58 px tall; it comes part-way back at frame 81, stands
+right up **again** at frame 82 (about 25 × 57), and is flat again by frame 84. The
+chain whips over the top of it rather than hanging under it for the whole of that
+half second. It is the fastest and most violently rotating passage in the shot, and
+what your curves do *between* those frames is exactly what the 24 fps sheet is there
+to show you: read the 12 fps frames alone and you can author a modest tilt here and
+never know.
 
 After the last contact, around frame 84, the ball is thrown left across the empty
-part of the frame, comes to rest in the bottom-left corner by about frame 100, and
+part of the frame, comes to rest in the bottom-left corner by about frame 98, and
 does not move again. That empty part is what the shared viewport is sized to, and
 the ball crosses it **twice** — once coming in, once going out.
 
 ✅ **By the last two or three frames very little is moving.** The ball has been
-parked for twenty frames; only the chain is still settling, and it is still settling
-at the final frame.
+parked for the last twenty-odd frames; only the disc and the chain are still
+settling, and they are still settling at the final frame.
 
 ✅ **Ends nowhere near where it began.** The last frame is not the first.
 

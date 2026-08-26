@@ -1,5 +1,32 @@
 # Rung 5 brief — `5-squash-and-stretch`
 
+> **Revision 3 — 2026-08-26.** Second verification pass, and the first by a
+> **different** agent than the one that wrote revision 2 (Claude Opus 5 (1M
+> context), Claude Code / Agent SDK), under the protocol in
+> [`bench/runs/README.md`](../runs/README.md). Revision 2's ball measurements all
+> reproduce to the digit — the 4 × 4 / 2 × 5 / 5 × 3 silhouettes, the three named
+> frames, the 30 px spike clearance — and so do the girder findings: the character
+> is one pixel column clear of the lattice at `speedy/f0058` and covers exactly two
+> of its pixels at `speedy/f0062`, which is the only frame in either shot where any
+> girder pixel changes. What was wrong:
+>
+> - **the girder is not above the right-hand block.** It hangs above the right-hand
+>   spike bed, columns 125–129 of 192, immediately left of the right-hand ledge; the
+>   block is columns 154–184. Said twice in revision 2, corrected in both places;
+> - **`ball-ready-to-animate` is not "nothing keyed".** What the frame shows is the
+>   set with the ball at its corner *and no character on screen*, and revision 2's
+>   instruction to emit the animation "with no tracks" will not produce that from a
+>   skeleton that has to carry the character for `speedy`;
+> - **the route is missing its last leg.** After the right-hand ledge the ball goes
+>   up, across to the girder and down its side before it arcs onto the block;
+> - the set is **5,556** px, not 5,116 (the *at most 6* overwritten is exact);
+> - "the last three frames are pixel-identical" — the last **four** are, and nothing
+>   moves after frame 75;
+> - the character reaches **26** px stretched, not 24;
+> - the hair should not have been counted among the swap sets — see `speedy` below.
+>
+> Added: `ball` holds **three** times, not once, and revision 2 named only the last.
+
 > **Revision 2 — 2026-08-23.** Verified against the frames and contact sheets by
 > Claude Opus 5 (1M context), Claude Code / Agent SDK, under the protocol in
 > [`bench/runs/README.md`](../runs/README.md). This rung has not been attempted; the
@@ -67,7 +94,7 @@ redistributed in this repository.
 | `course.png` | the whole set in one piece — see below |
 | `ball.png` | a small orange ball |
 | `head.png`, `torso.png` | a character's head (with a big eye and an orange visor) and body |
-| `hair-1.png`, `hair-2.png` | two drawings of a tuft of hair |
+| `hair-1.png`, `hair-2.png` | two hair tufts of much the same shape in two colours — one bright orange, one darker brown. Two files in two colours is a different pattern from the many-drawings-of-one-shape sets below; see `speedy` |
 | `belt-ends.png` | two loose belt ends |
 | `hood-end1a.png` … `hood-end1f.png`, `hood-end2a.png` … `hood-end2f.png` | six drawings each of two trailing hood tips |
 | `left-hand.png`, `right-hand.png` | one hand each |
@@ -91,7 +118,7 @@ comparable.
 
 ⚠️ **The subject is small in these frames** — the set is wide and everything shares
 one viewport, so the ball is about **4 px** across and the character about **16 px**
-tall standing — up to 24 px when he is stretched out. That is enough to *measure* a
+tall standing — up to 26 px when he is stretched out. That is enough to *measure* a
 silhouette's proportions and not enough to eyeball them. Read the numbers below as
 what you should be able to reproduce from measurement, not as something the pictures
 will show you at a glance.
@@ -105,14 +132,21 @@ The set, left to right: a tall block on the left with a blue lamp set into it an
 striped barrier on top; a low ledge stepping down from it; a bed of spikes along the
 floor; two thin lattice pillars standing in the spikes, each with a flat cap;
 another bed of spikes; a low ledge on the right stepping up to a second tall block;
-and, hanging in the air above the right-hand block, a single orange lattice girder.
+and, hanging in the air **above that second bed of spikes**, immediately to the left
+of the right-hand ledge, a single orange lattice girder. ⚠️ It is *not* over the
+right-hand block: the girder occupies pixel columns 125–129 of 192, the ledge starts
+at 133 and the block itself at 154.
 
 ### `ball` — 79 frames, 6½ seconds (78/12 s)
 
 A small orange ball crosses the whole set, left to right. It starts high at the left
 edge, drops, and bounces its way across — first off the top of the tall left block
-itself, then off the low left ledge, off the flat caps of the two pillars, off the
-right-hand ledge — and finishes on top of the right-hand block. ✅ It stays above the
+itself (frame 3), then off the low left ledge (frames 10–19), off the flat caps of
+the two pillars (frames 26 and 31), off the right-hand ledge (frames 39–49) — and
+then a last leg that is easy to miss: **it goes up the left face of the right-hand
+block, crosses to the girder, runs down the girder's right side over frames 58–62,
+and only then arcs up and over onto the top of the block** (landing frame 69, at rest
+from frame 75). The girder is a stop on the route, not scenery. ✅ It stays above the
 spike beds the whole way, and by a wide margin: over open spikes it never comes
 within about 30 px of the tips.
 
@@ -126,9 +160,17 @@ swings by roughly a factor of two either side of round.
 - a flattened one: `ball/f0026.png`
 - round, at rest: `ball/f0078.png`
 
+⚠️ **It stops dead three separate times, and two of them are mid-shot.** The whole
+picture is bit-identical from one frame to the next at **frames 16 → 17 → 18**
+(resting on the low left ledge), again at **frames 46 → 47** (resting on the
+right-hand ledge), and then for the rest of the shot from **frame 75** on. A hold in
+this shot is a *hold*, not a slow passage: if your ball moves by a pixel across any
+of those pairs, the shot is wrong there in a way the contact sheet will not show you
+and a frame-by-frame comparison will.
+
 **Ends nowhere near where it began** — it starts at the top left and finishes at the
-top right — and the **last three frames are pixel-identical**: nothing at all moves
-after frame 76.
+top right — and the **last four frames are pixel-identical**: nothing at all moves
+after frame 75.
 
 ### `speedy` — 79 frames, 6½ seconds (78/12 s)
 
@@ -137,14 +179,17 @@ route, same landmarks. He runs, jumps the two spike beds, uses the pillar caps, 
 climbs the right-hand block.
 
 Note what the art list is telling you about him: six drawings of each hood tip, four
-of each foot, two of the hair. A part that ships with six drawings of itself is a
+of each foot. A part that ships with six drawings of itself is a
 part that gets **swapped**, not one that gets posed — that is a decision to make in
-the rig before you start keying angles.
+the rig before you start keying angles. 🚫 **The two hair files are not on that
+list.** Two drawings of something is not the evidence six is, and at this scale the
+frames cannot settle whether they are alternates of one tuft or two tufts drawn
+together — so do not read a swap into them, and do not read the absence of one either.
 
 ⚠️ **He never gets in front of the set, anywhere in this shot.** Across all 79
-frames his silhouette overwrites at most **6** of the set's 5,116 pixels, and those
+frames his silhouette overwrites at most **6** of the set's 5,556 pixels, and those
 are antialiased edges. He runs along the tops of things, so there is almost nothing
-for him to cross: at the orange girder above the right-hand block he comes closest,
+for him to cross: at the orange girder he comes closest,
 standing one pixel column clear of it at `speedy/f0058.png` (the lattice is
 untouched) and covering **two** of its pixels at `speedy/f0062.png`. Nothing in these
 frames tells you anything about draw order beyond "the set is in front", and two
@@ -156,9 +201,16 @@ frame.
 
 ### `ball-ready-to-animate` — 0 seconds, a single pose
 
-The set with the ball back at its starting corner, held. Nothing moves and nothing
-is keyed; the animation is zero seconds long and exists to name the pose. Give it an
-animation of that name with no tracks and `duration: 0`.
+The set with the ball back at its starting corner, held, and **no character on
+screen** — `ball-ready-to-animate/f0000.png` is pixel-identical to `ball/f0000.png`,
+and both differ from `speedy/f0000.png` by exactly the character. The animation is
+zero seconds long and exists to name that pose.
+
+⚠️ **It is one skeleton for all three shots, so "no character on screen" is
+something the rig has to arrange.** Whatever your setup pose draws, this shot's one
+frame — and every frame of `ball` — has to come out with the course and the ball and
+nothing else, and `speedy` has to come out with the character. Do not assume an
+empty animation gets you there; render it and look.
 
 ### The comparison, in one line
 
