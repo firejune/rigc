@@ -39,10 +39,11 @@ jobs:
         id: release
         with:
           # GITHUB_TOKEN is the intended default here. Its one limitation is
-          # that a PR it opens does not start other workflows, so the release
-          # PR carries no CI checks of its own — see RELEASING.md for why that
-          # is acceptable and how to opt into RELEASE_PLEASE_TOKEN if it ever
-          # is not. The fallback below needs no edit to this file.
+          # that the `pull_request` run its PR starts has no permission to run
+          # until somebody approves it, so the release PR's required check is
+          # blocked rather than absent — see RELEASING.md for that approve step
+          # and how to opt into RELEASE_PLEASE_TOKEN if it ever stops being
+          # enough. The fallback below needs no edit to this file.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
