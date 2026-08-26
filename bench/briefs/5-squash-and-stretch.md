@@ -23,7 +23,9 @@
 > - "the last three frames are pixel-identical" — the last **four** are, and nothing
 >   moves after frame 75;
 > - the character reaches **26** px stretched, not 24;
-> - the hair should not have been counted among the swap sets — see `speedy` below.
+> - the hair should not have been counted among the swap sets — see `speedy` below;
+> - the `@24fps` sets are described as sheets only — each also commits its first and
+>   last frame.
 >
 > Added: `ball` holds **three** times, not once, and revision 2 named only the last.
 
@@ -112,9 +114,13 @@ comparable.
 - `ball-ready-to-animate/f0000.png` — one frame; that shot holds a single pose
 - `contact.png` beside the frames — every frame of that animation as one labelled
   grid, row major. **Look at the contact sheets first.**
-- `<animation>@24fps/contact.png` — `ball` and `speedy` sampled at **24 fps**, as
-  contact sheets only. The squash is a one-frame event and at 12 fps you land on it
-  by luck; the 24 fps sheet is where you can see which side of a landing it is on.
+- `ball@24fps/` and `speedy@24fps/` — the same two shots sampled at **24 fps**. Each
+  commits its `contact.png` plus its **first and last frame** (`f0000.png` and
+  `f0156.png`) and nothing in between, so the sheet is where that set's whole shot
+  lives and the two stills are there to be measured against. The squash is a one-frame
+  event and at 12 fps you land on it by luck; the 24 fps sheet is where you can see
+  which side of a landing it is on. (`ball-ready-to-animate@24fps/` is the single pose
+  again and has no sheet — there is no shot to read.)
 
 ⚠️ **The subject is small in these frames** — the set is wide and everything shares
 one viewport, so the ball is about **4 px** across and the character about **16 px**
