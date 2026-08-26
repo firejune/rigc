@@ -31,12 +31,15 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 | 6 | [`6-arcs.md`](../briefs/6-arcs.md) | **yes (third party)**, rev 3, 2026-08-23 | 1 animation, 12 fps + 24 fps sheet | 1 | the subject **deforms**; ball ~14 px; proportions are measured, not seen |
 | 8 | [`8-follow-through.md`](../briefs/8-follow-through.md) | **yes (third party)**, rev 2, 2026-08-23 | 2 skeletons, 1 animation each, 12 **and** 24 fps in full | **2** | two shots that want opposite machinery — `pendulum` deforms nothing, `ball` deforms on most frames; the `ball` shot moves over 130 px between two 12 fps frames, so read it at 24 fps; the chain's lag is **horizontal only** |
 | spineboy | [`spineboy.md`](../briefs/spineboy.md) | **yes (third party) ×2**, rev 3, 2026-08-24 — the revision-2 gun-hand contradiction ([#111](https://github.com/firejune/rigc/issues/111)) is **settled by measurement**: the gun is in the **far** hand, `idle` and `walk` say so, and the working — estimator, controls and margins — is in the brief's *Verification notes — revision 2 → 3*. Nothing about the gun's arm is left for a run to rediscover | 2 skeletons, 19 animations, 12 fps in full **+ 30 fps sheets** | **1** (`ess`; `pro` is optional) | the rung clears on **`ess` alone**, and `ess` has **8** animations — the ladder row's "11" is `pro`'s count; `pro`'s line is printed *(stretch — does not count)*; the two skeletons are at different scales, so no pixel figure crosses between them; the second rate is **30 fps** and only two frames per animation are on disk at it, so the sheets are for timing and never for a distance |
-| 7 | — | — | — | — | not prepared. `7-anticipation` has no upstream `license.txt` at all, so `render_reference.ts` refuses it and it must never be rendered |
+| 7 | [`7-anticipation.md`](../briefs/7-anticipation.md) | **no — rev 1, 2026-08-26, UNVERIFIED** | **local-only, never committed**: 4 animations, 102 frames at 12 fps, plus 24 and 30 fps sheets | — | 🚫 **not runnable yet** — the brief has had no second pass. And the frames are not in this repository: render them yourself with the exact commands in the brief, into the gitignored `bench/reference-local/`, and pass `--frames` to `check` and `bench` |
 
 **Brief verified** is the header block described in the next section. Rungs 3 and 1
 were attempted before the rule existed, and their recorded runs are labelled against
 the unverified revision they were authored from; both briefs took the pass on
-**2026-08-26** (revision 2 each), so no rung with a brief is now waiting on one.
+**2026-08-26** (revision 2 each). ⚠️ **Rung 7 is now the one brief waiting on a first
+pass** — written the same day, revision 1, and its row says **UNVERIFIED** because
+nothing has checked it; the sentence that stood here before it existed said no brief
+was waiting, and that was true for a few hours.
 **spineboy is the third brief to carry a third-party pass** (2026-08-23, revision 2):
 of 179 claims, 146 verified — both duration tables entire, and most of `death`,
 `jump`, `shoot` and `hit` to the digit — 31 were corrected and 2 moved into the
@@ -155,6 +158,26 @@ A brief that is corrected after a rung has been attempted invalidates nothing th
 was already recorded — the run's measures stand, labelled against the revision they
 were authored from — but the rung is worth re-attempting from the corrected text.
 
+⚠️ **Rung 7 is the one rung whose frames the verifying agent has to render first, and
+the render is part of the pass.** `7-anticipation` ships no upstream `license.txt`, so
+its frames may exist **locally only** — the owner's ruling of 2026-08-26 on
+[#3](https://github.com/firejune/rigc/issues/3), which is what made the rung
+attemptable at all ([#14](https://github.com/firejune/rigc/issues/14) has the
+reasoning: with no frames obtainable there was no honest input for either the writing
+pass or the verifying pass). Three consequences for a verification pass over that
+brief:
+
+- **Render the frames with the commands the brief states, flag for flag.** They land
+  in `bench/reference-local/7-anticipation/`, which `.gitignore` covers and
+  `render_reference.ts` refuses to write outside of. The render is deterministic, so
+  those commands are what makes the brief's figures checkable at all — a pass at
+  another `--max` is measuring a different picture and its disagreements mean nothing.
+- 🚫 **Never commit a frame of it**, or include one in any artefact. `git status`
+  before every commit of a rung-7 pass.
+- The brief's revision-1 header names its estimators, its controls, and **two
+  estimators that failed their controls**. Attack those first: one of them had already
+  put a wrong figure into a draft of the brief, and the control is what caught it.
+
 ## The run agent
 
 **Fresh context, and no history of this repository.** A session that has already
@@ -182,7 +205,10 @@ frames is not answer-bearing, so it is not swept out.
 
 1. the rung's brief, `bench/briefs/<rung>.md`;
 2. the rendered reference frames and contact sheets under
-   `bench/reference/<example>/`, and their `frames.json` sidecars;
+   `bench/reference/<example>/`, and their `frames.json` sidecars — **and, for rung 7
+   alone, `bench/reference-local/7-anticipation/`**, where that rung's frames have to
+   be rendered because they may not be committed (the brief carries the commands; the
+   path is gitignored and `render_reference.ts` will not write outside it);
 3. the art, `examples/<example>/images/`;
 4. that example's **`.atlas`** — the atlas is a supplied input rather than something
    the agent authors (rigc has no packer, B3), and it is packed *from* the loose PNGs

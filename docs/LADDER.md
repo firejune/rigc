@@ -953,6 +953,13 @@ reference frames, and `render_reference.ts` refuses to render it because
 `7-anticipation` ships no upstream `license.txt` (*Licence, per rung*). There is no
 stored candidate to re-score, and an unattempted rung is not a failing one.
 
+> ➡️ **The last of those three reasons was lifted on 2026-08-26** by the local-render
+> exception in *Licence, per rung*, and the rung now has a brief — revision 1,
+> **unverified**, so still no run and still ⬜. What this pass recorded stays true of
+> the day it was taken: on 2026-08-25 the rung was **unattemptable**, and that is the
+> state the exception was ruled against ([#3](https://github.com/firejune/rigc/issues/3),
+> [#14](https://github.com/firejune/rigc/issues/14)).
+
 ⚠️ **Rung 3's ✅ does not survive gate v1, and that is the pass's largest finding.**
 The rung was cleared on 2026-08-23 by a commander's reading, two days before a pass
 definition existed; G3 asks for **0** per-frame disagreements in every set and
