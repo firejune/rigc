@@ -635,6 +635,26 @@ stepped.
   written for. ⚠️ What this does **not** protect you from is rounding your own
   times before you write them — write `2/12`, not `0.1667`, and let the compiler
   do the quantising.
+- 🚨 **Nor does it protect a stepped key whose time is ALREADY on the 1e-6 grid.**
+  Rounding down leaves such a time exactly where you wrote it, and the sampler does
+  not arrive there: a player — and `sampleAnimation`, and therefore `check` — reaches
+  sample *i* by accumulating `1/fps` *i* times, which for many *i* lands a few ULPs
+  **below** `i/fps`. `2/12` is saved by the rule above precisely because it is *not*
+  on the grid; `0.25`, `0.5`, `0.75`, `1` and every other multiple of `0.25 s` is, and
+  a stepped key there sits above the sample that was meant to see it. On an
+  interpolated timeline that costs a few ULPs of value and nothing else. On a
+  **stepped** one it is the whole frame — and on the last sample it is the whole
+  event, because there is no later sample to catch it. Measured on rung 5's 6.5 s
+  shot at 12 fps: **13 of its 78 sample times are affected** (f6, f15, f18, f21, f24,
+  f27, f60, f63, f66, f69, f72, f75, f78), and an attachment key written at the
+  declared duration `6.5` never fired at all against an accumulated
+  `6.499999999999994` — which read as a frame-change disagreement the pose series had
+  already fixed, and cost that run three builds
+  ([`2026-08-26-rung5-1`](../bench/runs/2026-08-26-rung5-1/LOOP.md), §8). ⇒ **For a
+  stepped timeline, write `T − 1e-6` rather than `T`.** One grid step early cannot
+  reach the previous sample — 83,333 µs away at 12 fps — and is always seen by the
+  sample it was written for; one ULP late loses the frame. This is the same asymmetry
+  the rule above turns on, one grid step further in.
 - **No key may land past the animation's `duration`.** Nothing that plays the
   animation for the duration it declares ever reaches such a key, so it is a
   compile error — checked on **every timeline**, not just on the latest key in the
