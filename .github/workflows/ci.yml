@@ -10,9 +10,14 @@ on:
   push:
     branches: [main]
   pull_request:
-  # A pull request opened by GITHUB_TOKEN — release-please's — starts no
-  # workflow, so the release branch can be tested on demand from the Actions
-  # tab instead. See RELEASING.md.
+  # The release pull request gets a `pull_request` run like any other. What
+  # GITHUB_TOKEN costs is not the run but its permission to start: the run lands
+  # in `action_required`, so that pull request's required check reads as blocked
+  # rather than absent, and approving it is a standing step of every cut — see
+  # RELEASING.md. A run started from the Actions tab cannot stand in for that
+  # approval; a required check is matched by the run that reported it, not by the
+  # SHA. So the trigger below is a manual lever for running the suite on an
+  # arbitrary ref, and nothing more.
   workflow_dispatch:
 
 permissions:
