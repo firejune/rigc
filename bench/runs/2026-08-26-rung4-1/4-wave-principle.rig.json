@@ -1,0 +1,184 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "4-wave-principle",
+  "images": "images",
+  "skeleton": {
+    "x": -7239,
+    "y": -373,
+    "width": 8838,
+    "height": 7301
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "platform",
+      "parent": "root",
+      "x": -14.55,
+      "y": 1046.93,
+      "rotation": 0,
+      "length": 343
+    },
+    {
+      "name": "chain-1",
+      "parent": "platform",
+      "x": 0,
+      "y": -63.67,
+      "rotation": -90,
+      "length": 246.67
+    },
+    {
+      "name": "chain-2",
+      "parent": "chain-1",
+      "x": 246.67,
+      "y": 0,
+      "rotation": 0,
+      "length": 237
+    },
+    {
+      "name": "chain-3",
+      "parent": "chain-2",
+      "x": 237,
+      "y": 0,
+      "rotation": 0,
+      "length": 208.73
+    },
+    {
+      "name": "chain-4",
+      "parent": "chain-3",
+      "x": 208.73,
+      "y": 0,
+      "rotation": 0,
+      "length": 207.13
+    },
+    {
+      "name": "chain-end",
+      "parent": "chain-4",
+      "x": 207.13,
+      "y": 0,
+      "rotation": 0,
+      "length": 63
+    },
+    {
+      "name": "basket-lambertian",
+      "parent": "root",
+      "x": -14.55,
+      "y": 1202.93,
+      "rotation": 0,
+      "length": 103
+    },
+    {
+      "name": "basket-ball",
+      "parent": "basket-lambertian",
+      "x": 0,
+      "y": 0,
+      "rotation": 0,
+      "length": 103
+    }
+  ],
+  "slots": [
+    {
+      "name": "chain-1",
+      "bone": "chain-1",
+      "attachment": "chain-1"
+    },
+    {
+      "name": "chain-2",
+      "bone": "chain-2",
+      "attachment": "chain-2"
+    },
+    {
+      "name": "chain-3",
+      "bone": "chain-3",
+      "attachment": "chain-3"
+    },
+    {
+      "name": "chain-4",
+      "bone": "chain-4",
+      "attachment": "chain-4"
+    },
+    {
+      "name": "chain-end",
+      "bone": "chain-end",
+      "attachment": "chain-end"
+    },
+    {
+      "name": "platform",
+      "bone": "platform",
+      "attachment": "platform"
+    },
+    {
+      "name": "basket-ball",
+      "bone": "basket-ball",
+      "attachment": "basket-ball"
+    },
+    {
+      "name": "basket-lambertian",
+      "bone": "basket-lambertian",
+      "attachment": "basket-lambertian",
+      "color": "ffffffba"
+    }
+  ],
+  "skins": {
+    "default": {
+      "chain-1": {
+        "chain-1": {
+          "image": "chain-1.png",
+          "x": 72.58,
+          "y": 0,
+          "rotation": 90
+        }
+      },
+      "chain-2": {
+        "chain-2": {
+          "image": "chain-2.png",
+          "x": 87.58,
+          "y": 0,
+          "rotation": 90
+        }
+      },
+      "chain-3": {
+        "chain-3": {
+          "image": "chain-3.png",
+          "x": 74.79,
+          "y": 0,
+          "rotation": 90
+        }
+      },
+      "chain-4": {
+        "chain-4": {
+          "image": "chain-4.png",
+          "x": 64.7,
+          "y": 0,
+          "rotation": 90
+        }
+      },
+      "chain-end": {
+        "chain-end": {
+          "image": "chain-end.png",
+          "x": -0.43,
+          "y": 0,
+          "rotation": 90
+        }
+      },
+      "platform": {
+        "platform": {
+          "image": "platform.png",
+          "x": 0.85,
+          "y": 0
+        }
+      },
+      "basket-ball": {
+        "basket-ball": {
+          "image": "basket-ball.png"
+        }
+      },
+      "basket-lambertian": {
+        "basket-lambertian": {
+          "image": "basket-lambertian.png"
+        }
+      }
+    }
+  }
+}

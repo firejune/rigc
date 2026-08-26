@@ -1826,10 +1826,22 @@ re-fitted.
   3 px low at one frame have the same drift and opposite causes. The table gives
   you the frame index; §8's rule still applies — look for a second way to get the
   number before you author the key.
-- **What happens between two committed frames.** `Δpx` compares adjacent frames and
-  a set that ships stills has none, so a shot that is right at every committed frame
-  and wrong between them reads clean. That is the same gap `--frames` on a
-  contact-sheet set already has, and it is why the frame-count line is printed.
+- **What happens between two committed frames** — *unless the set ships a sheet.*
+  `Δpx` compares adjacent frames and a set that ships stills has none, so a shot
+  that is right at every committed frame and wrong between them reads clean in that
+  column. That is the same gap `--frames` on a contact-sheet set already has, and it
+  is why the frame-count line is printed. ⭐ What closes it is the **`sheet` line**:
+  on a set rendered at a higher rate than the frames on disk, every sampled frame is
+  compared, so the samples between two committed ones are measured there and
+  nowhere else.
+  🚨 **And when you go looking for one of them, do not assume it lies between its
+  neighbours.** A half-frame is not an interpolation — it is where the shot actually
+  was, and the interesting ones are interesting because it left the interval. Rung
+  4's ball makes contact entirely inside one twelfth of a second: the sheet puts it
+  **40 px below both 12 fps frames that bracket it**, while its x sits within their
+  own range. A search whose reach was scaled from those two frames' own step
+  therefore looked ±9 px for something 40 px away and reported the interpolation
+  back, twice, before the tile was read rather than inferred.
 
 ---
 
@@ -2022,6 +2034,18 @@ whole difficulty is the pairs where the reference barely moves — including, on
 rung, one pair it moves a single pixel across, which no MAE and no drift figure in this
 toolchain can see.
 
+🚨 **But check that the shot holds at all first, because applying this to one that
+never does manufactures the defect it prevents.** The rule is about a *shot*, and a
+snap-to-still step in a planner does not cost nothing when there is nothing to snap:
+it will find some run of samples inside the fitter's own resolution and flatten it.
+Rung 4's shot has **no** still span — not one adjacent pair of its 155 reference
+frames is pixel-identical, and even its last two differ, because the chain is still
+settling at the final frame — and the snap duly flattened the tail and put a
+*"yours moved 0 px where the reference moved 28"* into the per-frame column: §9.2's
+held-pose defect arriving from the opposite direction. ⇒ Difference every adjacent
+pair of frames once, before the planner runs. It is one pass over the set, and it
+tells you whether this paragraph applies to you at all.
+
 📗 **Add a key when a curve cannot carry the shape.** *"If a curve is not smooth
 enough, it is easily remedied by adding another key"*, and the **Bounce** handle
 preset exists for *"changing directions abruptly, such as when a ball bounces"* —
@@ -2074,6 +2098,22 @@ first. It tells you which of the two situations you are in: picking a point on t
 curve above, or discovering the point the shot has already put you on — and the
 second one is not a failure to reach the density this section asks for, it is what
 that density is here.
+
+🚨 **There is a third situation, and it is the one where nothing in the loop can
+help you: a tolerance under the accuracy of whatever produced the series.** The
+arithmetic above is about the *subject*; this is about the *estimator*. A fitted
+series is only as good as its objective's basin, and a tolerance below that width
+buys keys that encode the fitter's wander — and **`check` cannot see that it
+happened**, because two candidates that are both inside tolerance render the same
+pixels. `diff`'s `key_counts` sees it and `diff` is the finish line, so a run gets
+one shot at the number. Rung 4's is the recorded case: it declared 0.28 px, and its
+own objective's basin on the shortest lever in the chain measured **±1.5°**, which
+is ±0.5 px there — so the declared figure was under the noise, and it shipped about
+three times the reference's key count (`key_counts` 421/1339) with every other
+animation measure at or near 1.000. ⇒ **Measure the basin before you declare the
+tolerance**, which costs nothing and needs no reference: scan each knob around its
+converged value and read how far it moves before the objective does. Then declare a
+tolerance at or above the widest of them, and record both numbers.
 
 **A rig's parameters are not identified by its pixels — remove the gauges before you
 key.** A bone that carries no attachment is an exact gauge: turn it by δ, turn its
