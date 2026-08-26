@@ -316,7 +316,8 @@ sealing on provenance chases citation chains while censoring material that teach
 constrains a reference-side value of a scored measure.** `bench`'s measure table and
 `check`'s gated figures are the answer sheet; anything that reveals or narrows one of
 its rows is answer-bearing, and nothing else is. Four readings follow it, and they are
-the ones the sweep of [AUTHORING.md](AUTHORING.md) turned on:
+the ones the sweep of [AUTHORING.md](AUTHORING.md) turned on; a fifth, dated and
+raised by a later pass, follows them:
 
 - **A candidate-side `check` figure stays.** `check` measures against the rendered
   frames, which are the exam question rather than the answer key, so a figure derived
@@ -330,6 +331,38 @@ the ones the sweep of [AUTHORING.md](AUTHORING.md) turned on:
   the guide says outright that an authoring run does not follow its references out of
   it, and a citation into a stored run's directory — where a spec that scores well *is*
   the answer key — is written as a name rather than as a path.
+
+🆕 **A fifth reading, ruled 2026-08-26** — raised by the brief-verification pass over
+rungs 1, 3, 4 and 5 ([#10](https://github.com/firejune/rigc/issues/10),
+[#12](https://github.com/firejune/rigc/issues/12),
+[#17](https://github.com/firejune/rigc/issues/17),
+[#18](https://github.com/firejune/rigc/issues/18)) and settled against the criterion
+[#158](https://github.com/firejune/rigc/issues/158) fixed above:
+
+- **An observable-by-construction structural fact is the exam question, not a leak.**
+  What a client watching the shot would report — how many things are drawn, and what
+  they are — may be stated in a brief, and stating it does not breach
+  answer-derivability. ⚠️ **Read literally, the test says otherwise**, and that is the
+  ambiguity this reading closes: a brief's cast list — *"four balls hang in the air in
+  a row, each with its own soft shadow on the ground below it"* — fixes
+  `slots.count` and `attachments.count`, which are exactly the two measures **G5**
+  gates on. But G5 was *chosen* because it is the client-observable structural
+  measure: its derivation in *Operating rules* rule 2 says outright that **"a part the
+  reference draws and the candidate does not is the one structural fact a client
+  watching the shot reports"**, and rule 1's own test is *could any reading of the
+  frames have decided it?* So the fact is in the frames the author is handed whether
+  the brief says it or not; sealing it would withhold the shot rather than the answer,
+  and **no brief on this ladder could be written** — every one of the eight names its
+  cast.
+  - 🚫 **The reading is narrow and it does not travel.** It licenses only what a viewer
+    of the committed frames could count for themselves. A reference-side value of a
+    scored measure that the frames do **not** carry stays sealed exactly as before —
+    key counts, curve data, timeline kinds, constraint counts, the setup pose, and any
+    count of parts the frames never distinguish. The other four readings are unchanged.
+  - 📌 **It is a clarification, not a gate change.** No measure's definition moves, no
+    threshold in *Operating rules* rule 2 moves, and no recorded figure moves — so this
+    is not a gate release, and rule 5's re-inspection is not owed. It flips no standing
+    pass; what it settles is which sentences a brief may carry.
 
 ⇒ It is rule 1's principle applied to the other side of the exam: **the exam must be
 answerable from the allowed inputs, and the allowed inputs must not contain the
