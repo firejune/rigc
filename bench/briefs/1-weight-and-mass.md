@@ -1,5 +1,19 @@
 # Rung 1 brief — `1-weight-and-mass`
 
+> **Revision 3 — 2026-08-26.** Amendment, same verifying agent as revision 2.
+> **Scope of re-verification: two claims about the committed frame sets — which
+> directories hold a `contact.png`, and which set the red ball is still moving in at
+> the end.** Nothing else was re-measured and nothing else changes.
+>
+> - `contact.png` was said to be "in each" of the reference directories. It is in
+>   `balls/animation/` and `balls/animation@24fps/` only; **`drop`'s two sets ship
+>   none**, correctly — a single frame has no sheet to make. `drop` also has a second
+>   single-pose directory the list did not mention.
+> - "the **red** one is still moving a pixel at a time in the last frame of **both
+>   sets**" is true of the 24 fps set and **false of the 12 fps one**, where the last
+>   pair reads still. That is the pair a per-frame comparison reads as a hold, so the
+>   claim was pointing at the one place the shot is finished rather than moving.
+
 > **Revision 2 — 2026-08-26.** First verification pass, by a different agent than
 > the one that wrote it (Claude Opus 5 (1M context), Claude Code / Agent SDK), under
 > the protocol in [`bench/runs/README.md`](../runs/README.md). Every quantitative
@@ -100,9 +114,12 @@ different shots that happen to share an atlas and they are framed independently:
 
 - `balls/animation/f0000.png` … `f0039.png` — 40 frames at **12 fps**
 - `balls/animation@24fps/f0000.png` … `f0078.png` — the same shot at **24 fps**
-- `drop/ready-to-animate/f0000.png` — one frame; that shot holds a single pose
-- `contact.png` in each — every frame of that animation as one labelled grid, row
-  major. **Look at the contact sheets first.**
+- `drop/ready-to-animate/f0000.png` and `drop/ready-to-animate@24fps/f0000.png` — one
+  frame each; that shot holds a single pose, so both rates render the same picture
+- `contact.png` in **`balls`' two sets only** — every frame of that animation as one
+  labelled grid, row major. **Look at the contact sheets first.** `drop` ships no
+  sheet and is not missing one: there is no shot to lay out, and one frame is the
+  whole of it.
 
 The 24 fps set is there because the fastest part of this shot happens between two
 12 fps frames. Read the two sets as two sets: they share a viewport and a scale, so
@@ -142,8 +159,10 @@ They are released together and reach the ground within a frame of each other
   four arcs each, every one lower than the last;
 - they do not settle together either, and not in the order you would guess. The
   **blue** ball is the first to stop — its silhouette stops changing at **f28** —
-  then the beach ball around **f33**, and the **red** one is still moving a pixel at
-  a time in the last frame of both sets.
+  then the beach ball around **f33**, and the **red** one is still creeping a pixel at
+  a time through the final frames of the **24 fps** set. ⚠️ The 12 fps set finishes
+  one frame sooner than that: **its last pair, f38 → f39, reads still**, so the shot
+  ends held at 12 fps and still settling at 24.
 
 Three of the four **change shape as they go.** The beach ball and both rubber balls
 draw out taller and narrower while they are falling fast, and flatten wider than

@@ -1,5 +1,19 @@
 # Rung 5 brief — `5-squash-and-stretch`
 
+> **Revision 4 — 2026-08-26.** Amendment, same verifying agent as revision 3.
+> **Scope of re-verification: the three hold claims in `ball`, re-measured at exact
+> pixel equality as well as at the per-frame comparison's own tolerance.** Nothing
+> else was re-measured and no claim is withdrawn.
+>
+> All three holds are **correct as revision 3 states them** — the six still pairs are
+> the six a per-frame reading takes — but revision 3 called them *bit-identical*, and
+> two of the six are not: frames 16 → 17 and 75 → 76 each differ in 12 pixels, by up
+> to 6 and up to 8 levels, both under the threshold that decides a pixel has changed.
+> A verifier measuring exact equality would therefore "correct" two of the three holds
+> to start a frame later than they do, which is a regression no frame would show.
+> Revision 4 adds the qualifier that pins the claims to the tolerance they are read
+> at, so they cannot be mis-corrected; the frame numbers are unchanged.
+
 > **Revision 3 — 2026-08-26.** Second verification pass, and the first by a
 > **different** agent than the one that wrote revision 2 (Claude Opus 5 (1M
 > context), Claude Code / Agent SDK), under the protocol in
@@ -166,17 +180,33 @@ swings by roughly a factor of two either side of round.
 - a flattened one: `ball/f0026.png`
 - round, at rest: `ball/f0078.png`
 
-⚠️ **It stops dead three separate times, and two of them are mid-shot.** The whole
-picture is bit-identical from one frame to the next at **frames 16 → 17 → 18**
-(resting on the low left ledge), again at **frames 46 → 47** (resting on the
-right-hand ledge), and then for the rest of the shot from **frame 75** on. A hold in
-this shot is a *hold*, not a slow passage: if your ball moves by a pixel across any
-of those pairs, the shot is wrong there in a way the contact sheet will not show you
-and a frame-by-frame comparison will.
+⚠️ **It stops dead three separate times, and two of them are mid-shot.** Nothing in
+the picture moves from one frame to the next at **frames 16 → 17 → 18** (resting on
+the low left ledge), again at **frames 46 → 47** (resting on the right-hand ledge),
+and then for the rest of the shot from **frame 75** on. A hold in this shot is a
+*hold*, not a slow passage: if your ball moves by a pixel across any of those pairs,
+the shot is wrong there in a way the contact sheet will not show you and a
+frame-by-frame comparison will.
+
+🚫 **Read "nothing moves" at the tolerance the per-frame comparison uses, and do not
+tighten it.** A pixel counts as having changed when a channel moves by **more than
+8** levels — `CHANGE_TOLERANCE` in [`src/check.ts`](../../src/check.ts), which is the
+same threshold that decides whether there is any ink in a pixel at all, because below
+it the difference is the rasteriser's own last bit. **Four** of the six pairs above
+are identical to the bit. **Two are not, and they are still holds**: frames
+16 → 17 differ in 12 pixels by up to 6 levels, and frames 75 → 76 in 12 pixels by up
+to 8 — exactly on the boundary, since the test is *more than* 8, not *at least*.
+Neither is visible at any magnification.
+
+⇒ **So measuring these pairs at exact equality reports each of those two holds
+starting a frame later than it does**, and shortening the list to match would hand an
+author a shot that moves where the reference is held — a regression no frame would
+show. The three holds are stated above at the tolerance they are read at; leave them
+there.
 
 **Ends nowhere near where it began** — it starts at the top left and finishes at the
-top right — and the **last four frames are pixel-identical**: nothing at all moves
-after frame 75.
+top right — and the shot is **still for its last four frames**: nothing at all moves
+after frame 75, at the tolerance above.
 
 ### `speedy` — 79 frames, 6½ seconds (78/12 s)
 
