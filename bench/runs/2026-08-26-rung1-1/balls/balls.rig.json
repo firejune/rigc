@@ -1,0 +1,154 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "balls",
+  "images": "images",
+  "skeleton": {
+    "x": -750,
+    "y": -152,
+    "width": 2380,
+    "height": 2220
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "cast-shadow-beach",
+      "parent": "root",
+      "x": -354.7,
+      "y": -14
+    },
+    {
+      "name": "cast-shadow-red",
+      "parent": "root",
+      "x": 367.4,
+      "y": -16.3
+    },
+    {
+      "name": "cast-shadow-blue",
+      "parent": "root",
+      "x": 895.2,
+      "y": -16
+    },
+    {
+      "name": "cast-shadow-iron",
+      "parent": "root",
+      "x": 1429.3,
+      "y": -13.1
+    },
+    {
+      "name": "beach-ball",
+      "parent": "root",
+      "x": -354.7,
+      "y": 285.1
+    },
+    {
+      "name": "red-rubber-ball",
+      "parent": "root",
+      "x": 367.4,
+      "y": 136.08
+    },
+    {
+      "name": "blue-rubber-ball",
+      "parent": "root",
+      "x": 895.2,
+      "y": 98.41
+    },
+    {
+      "name": "steel-ball",
+      "parent": "root",
+      "x": 1427.6,
+      "y": 103
+    }
+  ],
+  "slots": [
+    {
+      "name": "cast-shadow-beach",
+      "bone": "cast-shadow-beach",
+      "attachment": "cast-shadow-beach"
+    },
+    {
+      "name": "cast-shadow-red",
+      "bone": "cast-shadow-red",
+      "attachment": "cast-shadow-red"
+    },
+    {
+      "name": "cast-shadow-blue",
+      "bone": "cast-shadow-blue",
+      "attachment": "cast-shadow-blue"
+    },
+    {
+      "name": "cast-shadow-iron",
+      "bone": "cast-shadow-iron",
+      "attachment": "cast-shadow-iron"
+    },
+    {
+      "name": "beach-ball",
+      "bone": "beach-ball",
+      "attachment": "beach-ball"
+    },
+    {
+      "name": "red-rubber-ball",
+      "bone": "red-rubber-ball",
+      "attachment": "red-rubber-ball"
+    },
+    {
+      "name": "blue-rubber-ball",
+      "bone": "blue-rubber-ball",
+      "attachment": "blue-rubber-ball"
+    },
+    {
+      "name": "steel-ball",
+      "bone": "steel-ball",
+      "attachment": "steel-ball"
+    }
+  ],
+  "skins": {
+    "default": {
+      "cast-shadow-beach": {
+        "cast-shadow-beach": {
+          "image": "cast-shadow-beach.png",
+          "y": 24
+        }
+      },
+      "cast-shadow-red": {
+        "cast-shadow-red": {
+          "image": "cast-shadow-red.png",
+          "y": 16
+        }
+      },
+      "cast-shadow-blue": {
+        "cast-shadow-blue": {
+          "image": "cast-shadow-blue.png",
+          "y": 17
+        }
+      },
+      "cast-shadow-iron": {
+        "cast-shadow-iron": {
+          "image": "cast-shadow-iron.png",
+          "y": 14
+        }
+      },
+      "beach-ball": {
+        "beach-ball": {
+          "image": "beach-ball.png"
+        }
+      },
+      "red-rubber-ball": {
+        "red-rubber-ball": {
+          "image": "red-rubber-ball.png"
+        }
+      },
+      "blue-rubber-ball": {
+        "blue-rubber-ball": {
+          "image": "blue-rubber-ball.png"
+        }
+      },
+      "steel-ball": {
+        "steel-ball": {
+          "image": "steel-ball.png"
+        }
+      }
+    }
+  }
+}

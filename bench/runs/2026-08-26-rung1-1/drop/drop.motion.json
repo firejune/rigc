@@ -1,0 +1,14 @@
+{
+  "spec": "rigc-motion/1",
+  "archetype": "drop",
+  "cut": "drop",
+  "easings": {},
+  "animations": {
+    "ready-to-animate": {
+      "duration": 0,
+      "loop": false,
+      "note": "a held pose: the shot names the pose and keys nothing",
+      "tracks": []
+    }
+  }
+}
