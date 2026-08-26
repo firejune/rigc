@@ -1,0 +1,260 @@
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end2a.png
+size: 30, 76
+filter: Linear, Linear
+pma: false
+hood-end2a
+bounds: 0, 0, 30, 76
+offsets: 0, 0, 30, 76
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end2b.png
+size: 38, 71
+filter: Linear, Linear
+pma: false
+hood-end2b
+bounds: 0, 0, 38, 71
+offsets: 0, 0, 38, 71
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end2c.png
+size: 42, 64
+filter: Linear, Linear
+pma: false
+hood-end2c
+bounds: 0, 0, 42, 64
+offsets: 0, 0, 42, 64
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end2d.png
+size: 23, 76
+filter: Linear, Linear
+pma: false
+hood-end2d
+bounds: 0, 0, 23, 76
+offsets: 0, 0, 23, 76
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end2e.png
+size: 28, 74
+filter: Linear, Linear
+pma: false
+hood-end2e
+bounds: 0, 0, 28, 74
+offsets: 0, 0, 28, 74
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end2f.png
+size: 31, 70
+filter: Linear, Linear
+pma: false
+hood-end2f
+bounds: 0, 0, 31, 70
+offsets: 0, 0, 31, 70
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end1a.png
+size: 23, 84
+filter: Linear, Linear
+pma: false
+hood-end1a
+bounds: 0, 0, 23, 84
+offsets: 0, 0, 23, 84
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end1b.png
+size: 28, 79
+filter: Linear, Linear
+pma: false
+hood-end1b
+bounds: 0, 0, 28, 79
+offsets: 0, 0, 28, 79
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end1c.png
+size: 31, 70
+filter: Linear, Linear
+pma: false
+hood-end1c
+bounds: 0, 0, 31, 70
+offsets: 0, 0, 31, 70
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end1d.png
+size: 29, 82
+filter: Linear, Linear
+pma: false
+hood-end1d
+bounds: 0, 0, 29, 82
+offsets: 0, 0, 29, 82
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end1e.png
+size: 35, 78
+filter: Linear, Linear
+pma: false
+hood-end1e
+bounds: 0, 0, 35, 78
+offsets: 0, 0, 35, 78
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hood-end1f.png
+size: 39, 71
+filter: Linear, Linear
+pma: false
+hood-end1f
+bounds: 0, 0, 39, 71
+offsets: 0, 0, 39, 71
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hair-2.png
+size: 74, 43
+filter: Linear, Linear
+pma: false
+hair-2
+bounds: 0, 0, 74, 43
+offsets: 0, 0, 74, 43
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/left-foot.png
+size: 80, 47
+filter: Linear, Linear
+pma: false
+left-foot
+bounds: 0, 0, 80, 47
+offsets: 0, 0, 80, 47
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/left-foot-side.png
+size: 90, 42
+filter: Linear, Linear
+pma: false
+left-foot-side
+bounds: 0, 0, 90, 42
+offsets: 0, 0, 90, 42
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/left-foot-bent01.png
+size: 87, 43
+filter: Linear, Linear
+pma: false
+left-foot-bent01
+bounds: 0, 0, 87, 43
+offsets: 0, 0, 87, 43
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/left-foot-bent02.png
+size: 82, 43
+filter: Linear, Linear
+pma: false
+left-foot-bent02
+bounds: 0, 0, 82, 43
+offsets: 0, 0, 82, 43
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/left-hand.png
+size: 52, 53
+filter: Linear, Linear
+pma: false
+left-hand
+bounds: 0, 0, 52, 53
+offsets: 0, 0, 52, 53
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/belt-ends.png
+size: 45, 56
+filter: Linear, Linear
+pma: false
+belt-ends
+bounds: 0, 0, 45, 56
+offsets: 0, 0, 45, 56
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/torso.png
+size: 77, 85
+filter: Linear, Linear
+pma: false
+torso
+bounds: 0, 0, 77, 85
+offsets: 0, 0, 77, 85
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/head.png
+size: 116, 124
+filter: Linear, Linear
+pma: false
+head
+bounds: 0, 0, 116, 124
+offsets: 0, 0, 116, 124
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/hair-1.png
+size: 82, 39
+filter: Linear, Linear
+pma: false
+hair-1
+bounds: 0, 0, 82, 39
+offsets: 0, 0, 82, 39
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/right-foot.png
+size: 66, 56
+filter: Linear, Linear
+pma: false
+right-foot
+bounds: 0, 0, 66, 56
+offsets: 0, 0, 66, 56
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/right-foot-side.png
+size: 90, 42
+filter: Linear, Linear
+pma: false
+right-foot-side
+bounds: 0, 0, 90, 42
+offsets: 0, 0, 90, 42
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/right-foot-bent01.png
+size: 85, 43
+filter: Linear, Linear
+pma: false
+right-foot-bent01
+bounds: 0, 0, 85, 43
+offsets: 0, 0, 85, 43
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/right-foot-bent02.png
+size: 79, 43
+filter: Linear, Linear
+pma: false
+right-foot-bent02
+bounds: 0, 0, 79, 43
+offsets: 0, 0, 79, 43
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/right-hand.png
+size: 56, 58
+filter: Linear, Linear
+pma: false
+right-hand
+bounds: 0, 0, 56, 58
+offsets: 0, 0, 56, 58
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/ball.png
+size: 76, 76
+filter: Linear, Linear
+pma: false
+ball
+bounds: 0, 0, 76, 76
+offsets: 0, 0, 76, 76
+rotate: 0
+
+../../../rigc-r5/examples/5-squash-and-stretch/images/course.png
+size: 1538, 822
+filter: Linear, Linear
+pma: false
+course
+bounds: 0, 0, 1538, 822
+offsets: 0, 0, 1538, 822
+rotate: 0
