@@ -285,7 +285,7 @@ above: the chain was being scanned at a level where it is invisible, and two
 bit-identical frames were coming back with poses 4 px apart. Fixed → mean 0.156.
 
 ### 3 — the geometry sweep (`globals.ts`), alternated with the pose fit
-0.156 → 0.097 → 0.089 → 0.086 over three alternations, then builds **2, 3** baked
+0.156 → 0.097 → 0.089 → 0.086 over three alternations, then builds **2, 3, 4, 5** baked
 the winners into the rig spec. §2.3 has the figures and the two controls that said
 the residual was not a resolution floor.
 
@@ -301,23 +301,23 @@ the residual was not a resolution floor.
 `half.ts` on all three sets. 58 of 120 of `ball-catch`'s half-frames moved off the
 smooth prior; the biggest gains (75–87 % of a tile's ink) are in the throw.
 
-### 6 — builds **4, 5**: the first finished candidate, and the first `check`
+### 6 — builds **5, 6**: the first finished candidate, and the first `check`
 `check` reported all six sets measured in `frames.json`'s own box, `ball-catch` MAE
 mean 18.25 — and **one** frame-change disagreement, which the loop had authored
-(§2.5). Fixed; `per-frame` clean on all three shots from build 5 onward.
+(§2.5). Fixed; `per-frame` clean on all three shots from build 6 onward.
 
-### 7 — build **6**: the half-frame reach
+### 7 — build **7**: the half-frame reach
 `check`'s worst tile was f0169 at 3.55× the sheet mean. The probe in §3.5 found the
 ball's contact 40 px below both bracketing frames and the search reaching ±9 px.
 Reach made generous → tile 169's ball landed within 5 px of the sheet's reading.
 
-### 8 — build **7**: one value, two owners
+### 8 — build **8**: one value, two owners
 `basket-lambertian`'s slot alpha was being fitted per frame and shipped as a single
 setup number, so the fit and the emitted animation disagreed about the ball's own
 colour on every frame of `ball-catch`. Pinned to the swept value (0.73) in both.
 Worst sheet tile 3.55× → **3.08×**.
 
-### 9 — builds **8, 9, 10**: four rescue passes
+### 9 — builds **9, 10, 11**: four rescue passes
 `rescue.ts` (12 fps frames) and `rescue-half.ts` (sheet tiles) walk the product of
 the saucer's rotation and the chain's first joint from every start and keep only
 what beats the incumbent. §8.1's rule, and the largest single lever in this run:
