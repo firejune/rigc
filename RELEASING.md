@@ -58,13 +58,15 @@ the commit that introduces these files, and is not maintained afterwards.
 2. Wait for the `release` run to open or update the `release: vX.Y.Z` pull
    request.
 3. Read the diff — the version and the generated changelog are the whole review.
-   Optionally run the suite against the release branch: **Actions → ci → Run
-   workflow →** the branch the pull request is on (see below for why it is not
-   automatic, and for why that name is not worth memorising).
-4. **Merge it.** That is the cut.
-5. Watch the second `release` run: it tags `vX.Y.Z`, creates the GitHub release,
+4. **Approve the `ci` run.** It is already there and sitting in
+   `action_required`, so the required `test` check is blocked until you do:
+   `gh api -X POST repos/firejune/rigc/actions/runs/<id>/approve`, or **Approve
+   and run** in the Actions tab. Every cut needs this — see below for why, and
+   for why the branch name is not worth memorising.
+5. **Merge it.** That is the cut.
+6. Watch the second `release` run: it tags `vX.Y.Z`, creates the GitHub release,
    and publishes.
-6. Confirm: `npm view spine-rigc version`, and the npm page shows the provenance
+7. Confirm: `npm view spine-rigc version`, and the npm page shows the provenance
    attestation linking the tarball to the workflow run.
 
 ## Publishing
@@ -178,12 +180,24 @@ authentication and disallow tokens" permits; what that setting rules out is
 doing this from a script, unattended. Reach for it when the automation is broken
 and a release cannot wait — then fix the workflow.
 
-## Why the release pull request has no CI checks
+## Why the release pull request's check has to be approved by hand
 
-A pull request opened with the default `GITHUB_TOKEN` starts no other workflow
-runs — GitHub suppresses that to prevent recursive runs — so `ci.yml` does not
-fire on release-please's pull request. The usual fix is a personal access token
-or a GitHub App, and this repository deliberately does not use one:
+⚠️ **The `ci` run does fire, and it waits for you.** A `pull_request` run is
+created on release-please's pull request like any other; what GitHub withholds
+to prevent recursive runs is not the run but its *permission to start*, so the
+run lands in **`action_required`** and the pull request's required `test` check
+reads as **blocked rather than absent**. ⇒ **Approving it is a standing step of
+every cut**, not a special case.
+
+Observed on every `pull_request` run `ci.yml` has ever had on a release branch:
+each one was started by `github-actions[bot]`, every first attempt concluded
+`action_required`, and the only ones that went green are second attempts, after
+a human approved them. The v0.4.0 cut is the worked example — pull request #169,
+one bot-authored commit and no push of anyone's own, run `32943138182` sitting
+in `action_required`, approved, green, merged a minute later.
+
+The usual way to make the run start on its own is a personal access token or a
+GitHub App, and this repository deliberately does not use one:
 
 - The base of the release pull request is a commit on `main` that `ci.yml`
   already tested on push.
@@ -193,15 +207,14 @@ or a GitHub App, and this repository deliberately does not use one:
 
 Two things that follow from this, both learned the hard way:
 
-- **A push of your own to the release branch does start a run — and it stops.**
-  Merging `main` into the release branch to resolve a conflict is a push by a
-  user, not by `GITHUB_TOKEN`, so the suppression no longer applies and a
-  `pull_request` run appears. It sits in `action_required` until someone
-  approves it: `gh api -X POST repos/firejune/rigc/actions/runs/<id>/approve`,
-  or **Approve and run** in the Actions tab. Until then the pull request's
-  required `test` check reads as blocked, and a green `workflow_dispatch` run on
-  the same commit does not satisfy it — a required check is matched by the run
-  that reported it, not by the SHA.
+- **How to approve, and why nothing else clears the check.** Every cut:
+  `gh api -X POST repos/firejune/rigc/actions/runs/<id>/approve`, or **Approve
+  and run** in the Actions tab. A push of your own to the release branch —
+  merging `main` in to resolve a conflict — changes nothing about this; it
+  produces another run needing the same approval. Until one is approved and
+  green the required `test` check reads as blocked, and a green
+  `workflow_dispatch` run on the same commit does **not** satisfy it: a required
+  check is matched by the run that reported it, not by the SHA.
 - **The release branch is named after `package-name`, so do not hard-code it.**
   release-please derives it from `release-please-config.json`; since the package
   became `spine-rigc` it is
