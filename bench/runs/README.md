@@ -400,3 +400,15 @@ costs the ladder every figure it ever printed.
    [docs/AUTHORING.md](../../docs/AUTHORING.md).
 3. A run attempted with the reference in context is recorded **as such**, or not
    recorded at all.
+
+🩹 **The one exception to a run's record being final** (owner's ruling, 2026-08-26,
+[#181](https://github.com/firejune/rigc/issues/181)): a **mechanical portability repair
+that changes no measured figure** — an `.atlas` page path that resolves only inside the
+worktree the run was built in is the case — may be applied to a stored run as a
+**labelled amendment commit**, recorded as an *Amendment* note in that run's
+`README.md`. ⚠️ The test is reproducibility, not tidiness: rule 3's re-inspection is *"a
+re-read of stored candidates"*, so a candidate only its author's directory layout can
+load is one no re-inspection can read. Everything else about a run stays final —
+`bench.json` is never rewritten and no measure or reading is ever edited — and the
+repair is **verified before it is committed**, by `check` from the repository root with
+no `--atlas` override, reproducing the run's own figures to the digit.
