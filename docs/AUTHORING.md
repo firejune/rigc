@@ -1592,6 +1592,35 @@ much ink as the reference does gets `⚠️ overdraw` beside those two numbers, 
 both pixel counts, because at that point the first figure is cheap for a reason
 that has nothing to do with your keys.
 
+🚨 **Part of your MAE is the texture, not the animation, and nothing in the report
+says so.** The reference frames are rendered through the example's **own packed
+atlas**, and a packed atlas may carry a `scale:` line — the ladder has one at
+`scale: 0.5`, whose 745x212 part is packed at 373x106. rigc has no packer (**§6**), so
+a candidate built from the loose PNGs samples a texture at twice that resolution and
+resamples every edge differently. The pixels are the same shape in the same place; they
+are filtered from a different source, and the difference lands on the outline of every
+part in every frame. It is a constant, it is invisible to `content`, `rms` and the
+`±2 px` refinement — a resampling difference is not an offset — and **no key you write
+can move it**.
+
+⇒ **When the MAE is flat across the whole set and the drift is already at the floor,
+check the atlas before you look for keys.** The example's `.atlas` is an allowed input
+in its own right (`bench/runs/README.md`, *What a run may read*, item 4), and one line
+of it answers the question. To size the floor, re-run `check` once with
+`--atlas <the example's own .atlas>`: same skeleton, same keys, the reference's own
+texture. Measured on rung 3, MAE **6.13 / 6.01** with the candidate's own
+full-resolution atlas against **2.25 / 2.30** with the supplied one — **two thirds of
+the figure was the texture**, and the run that did not know it would have spent its
+whole budget hunting a rig that was already right.
+
+⚠️ Two things about that diagnostic. It is a **diagnostic and not a better number**:
+the artifact `bench` validates ships its own atlas, so the first figure is the one
+that belongs in a run's record and the second is the explanation of where it went.
+And the coarser texture **loses** resolution the finer one has — on the same rung a
+pair the reference moves *one pixel* across stopped being visible at half scale, so
+the diagnostic run reported a frame-change disagreement the graded run does not have.
+Read it for the floor, never as the verdict.
+
 **`Δpx` and `ref Δ`** are the two columns that do **not** compare you against the
 reference. They compare each side against **itself one frame earlier**: how many
 pixels of your own frame moved since your own previous frame, and the same for the
@@ -1906,6 +1935,38 @@ before you have any evidence you need it: a run whose *poses* are all right can 
 this and see nothing wrong anywhere else, because `validate` has no opinion on it,
 `diff` never looks at a rendered frame, and an aggregate MAE is cheap in every
 single frame and wrong only in the relation between two.
+
+⚠️ **And a tolerance is not a *slow span* either — a key tolerance needs a relative
+floor beside its absolute one.** The rule above rescues exact stillness by forcing it,
+and deliberately leaves near-stillness to the tolerance. But **§9.2's per-frame column
+compares *changes*, not positions**, so on a span the shot barely moves across, an
+error well inside an absolute tolerance is most of the motion. Measured, on rung 3: the
+reference moves **0.109 px** between two frames; a greedy span deviated **0.098 px**
+there, legal under a 0.30 px tolerance and legal again under 0.15 px — and the column
+read **259 px against the reference's 40**, a six-fold disagreement authored by a span
+that was, at every keyframe, exactly right. The same tolerance that is generous on the
+fast part of the shot is a 90 % error on the slow part, because one figure in pixels
+cannot be both.
+
+⇒ Cap each span's deviation at **the smaller of the absolute tolerance and the
+smallest single-frame move inside that span**. It is one line in the planner, it costs
+a handful of keys, and it is the difference between a reduction that is accurate and
+one that is accurate *in proportion to what is happening*.
+
+⭐ **Then stop trusting the floor and close the loop on the frames, because a floor is
+a heuristic and the column is a measurement.** The floor above cut rung 3's
+disagreements from three to one and could not reach the last: **sample your own planned
+curves at the frames' own rate, render them, compare every adjacent pair against the
+reference's own change, force the offending frames as keys, and re-plan** — repeating
+until no pair is out of band. It terminates quickly (that shot needed one extra round
+on one animation and none on the other), it needs no build, and it is the only part of
+key planning that is verified rather than argued. ⚠️ The band is worth reading before
+you aim at it: `check` calls a pair a disagreement when one side is **exactly** still
+and the other is not, or when one side moves **four times** the other **and** at least
+**24 px** more (`src/check.ts`). So the wide middle of a shot is nearly free and the
+whole difficulty is the pairs where the reference barely moves — including, on that
+rung, one pair it moves a single pixel across, which no MAE and no drift figure in this
+toolchain can see.
 
 📗 **Add a key when a curve cannot carry the shape.** *"If a curve is not smooth
 enough, it is easily remedied by adding another key"*, and the **Bounce** handle
