@@ -1,7 +1,7 @@
 # The benchmark ladder
 
 **Live status document.** The rung order, what each rung gates on, how a rung is
-scored, what a pass is (*Operating rules*, gate v2), and where each one stands
+scored, what a pass is (*Operating rules*, gate **v2.1**), and where each one stands
 today. The survey behind it is
 [SPEC_COVERAGE.md](SPEC_COVERAGE.md) — that document is a dated research note and
 does not move; this one does.
@@ -254,6 +254,39 @@ observable that did not exist when it was cleared. Rungs 6 and 8 were re-inspect
 hold; rungs 1, 3, 5 and spineboy fail where they failed before. The figures, the clause
 each verdict was read against and five recorded ambiguities are in *The gate-v2
 re-inspection* under **Status** below.
+
+**2026-08-26 — gate v2.1 introduced** (the owner's ruling on the clause gap
+[#10](https://github.com/firejune/rigc/issues/10) and the 2026-08-26 batch adjudication
+both recorded). **No measure's definition changed, no threshold moved and no recorded
+figure moves** — this is a *reading* of one existing clause, and every `bench.json` on disk
+stays as its run wrote it. One change from v2, and the rest of the clause set is v2's:
+
+- **G3's scope excludes a single-pose set**, and where that exclusion leaves a skeleton with
+  no G3-readable set at all the clause reads **SKIP** rather than a pass or a fail — G7's
+  own precedent, *no observable ⇒ SKIP*. 🚫 It is **not** a general *no adjacent pair ⇒
+  SKIP* rule: a set of non-adjacent stills is a shot sampled twice and its hole is still
+  G7's to discharge. The statement, its three precedents and what it costs are in
+  *Operating rules* rule 2, under *Gate v2.1*.
+
+By rule 5's asymmetry this could only ever *pass* an open rung, so it was not owed
+immediately; what released it is rule 5 point 3's milestone. Its re-inspection is the entry
+below.
+
+**2026-08-26 — the gate-v2.1 re-inspection.** The bump's own re-inspection, taken in the
+same pass. **No measure's definition changed here either**: this entry records that the pass
+rule 3 requires has been *taken* against gate v2.1, over every candidate that holds a
+verdict — the **ten standing candidates over 44 committed sets**, 963 adjacent pairs and 17
+compared sheets, re-read by `check` and `validate --profile spine` **from the repository
+root with no `--atlas` override**, reproducing the recorded figures to the digit. `bench`
+was not re-run, because nothing v2.1 changes can reach G4's lengths or G5's counts; those
+are quoted from the verdicts that measured them. 🚫 **No `bench.json` and no run directory
+was rewritten.** **One verdict moves**: rung 1 `drop`'s G3 goes from *not adjudicable —
+clause gap* to **SKIP**, so **rung 1 meets G6 and #10 closes**. Rungs 2, 3, 4, 5, 6 and 8
+are re-inspected and hold; spineboy fails where it failed under v2. ⚠️ The superseded
+attempts are **not** re-adjudicated — they keep their own entries, which is why this sweep's
+44 sets are fewer than the 86 the 2026-08-25 passes read and not a coverage loss. Figures
+and the clause each verdict was read against are in *The gate-v2.1 re-inspection* under
+**Status** below.
 
 **Stage 3 — per-frame pose distance. Named, not built.** The structural diff
 compares what the file *says*; it cannot see that two structurally identical rigs
@@ -517,6 +550,14 @@ v1's own wording for both is quoted where the change is, because the verdicts un
 versioned**: a rung that met gate v1 met gate v1, and the v2 re-inspection says
 separately whether it also meets this.
 
+🆕 **v2.1 supersedes v2 as of 2026-08-26** (owner's ruling; the gap
+[#10](https://github.com/firejune/rigc/issues/10) and the 2026-08-26 batch adjudication
+both recorded). **No threshold moves and no clause is renumbered** — every row of the
+table below is v2's, unchanged. What v2.1 settles is one *reading*: what G3 does with a
+set that is a **single pose**. The clause statement and its precedents are the dated
+block at the end of this rule, and the re-inspection it owes is under *Status*, in *The
+gate-v2.1 re-inspection*.
+
 | # | Clause | Threshold | Where the number comes from |
 | --- | --- | --- | ---: |
 | **G1** | validity | **0 FAIL** under `--profile spine` | stage 1, unchanged. Twelve honest runs have posted 0 FAILs, so this clause has never yet decided anything — it stays because a candidate that is not valid Spine 4.3 has cleared nothing |
@@ -697,6 +738,65 @@ the same shape: rung 8 `ball`'s **8/12** is four constraint-driven bones and say
 with its own `constraints` 0/4 beside it, and a shortfall on a rung whose reference
 declares no constraints is a different finding that has to be named differently.
 
+#### Gate v2.1 — G3's scope on a single-pose set (2026-08-26)
+
+🆕 **The owner's ruling of 2026-08-26**, on the one clause decision the 2026-08-26 batch
+adjudication left outstanding. It closes a **gap in the text**, not a threshold: three
+passes in a row reached *"not adjudicable — clause gap"* on the same set, and the gate is
+the thing that has to answer. Two clauses, and the second follows from the first:
+
+**(a) A single-pose set is excluded from G3's scope.** A set of one frame is not a shot
+sampled too coarsely; there is no shot in it. G3 reads adjacent pairs and such a set has
+none to read, so it is out of scope rather than an unmet clause.
+
+🧾 **Three precedents, and the ruling records rather than invents them.** This is what the
+gate was already doing everywhere the question came up:
+
+1. **G7's 🕳️ excludes it by name** — *"the set is a single pose (`ready-to-animate`,
+   `aim`): there is no shot to read"* — so the same state is already out of scope for the
+   other clause that reads a whole shot.
+2. **Both 2026-08-25 readings of spineboy treated `aim` that way.** Its G3 was recorded as
+   *"3 of 59 on `death`"* with `aim` — a single pose — never counted as a hole, and the
+   graduation bar that pass published (*"19.57 px worst drift, 3 per-frame disagreements,
+   and every sheet inside 3.5×"*) could not be beaten at all if that set left an
+   undischargeable one.
+3. **The 2026-08-26 rung-5 adjudication made the reading explicit** rather than relying on
+   it: `ball-ready-to-animate`'s two sets are single poses, the exclusion leaves `ball` and
+   `speedy` behind, and G3 was read on those at 78 adjacent pairs each. That verdict is a
+   standing PASS resting on this reading.
+
+⇒ So the alternative to writing (a) down is not a stricter gate; it is **three recorded
+verdicts resting on an unwritten rule**, which is the ⭐ at the head of this rule
+(*leniency that is not written down is not a gate*) with the sign flipped.
+
+**(b) Where (a) leaves a skeleton with no G3-readable set at all, G3 reads SKIP.** Not a
+pass and not a fail — the clause has no object, and the precedent for what to do then is
+G7's own: **no observable ⇒ SKIP**, and the rung is decided on the clauses that *can* be
+read. G6 is met by a skeleton whose G3 reads SKIP for the same reason it is met by one
+whose G7 does.
+
+🚫 **What (b) is not: a general "no adjacent pair ⇒ SKIP" rule.** A set of **non-adjacent
+stills** is a shot sampled twice, not a single pose — it has frames between its samples
+that nothing has looked at, which is a real hole and exactly the one **G7's discharge**
+answers. Two standing verdicts turn on that distinction and neither is touched here: rung
+2's four sets (two stills 310 frames apart, G3's hole discharged by four flat sheets) and
+rung 4's three `@24fps` sets. ⇒ **(b) fires only where every shot the skeleton has is a
+single pose.** Rung 1 `drop` — *"a skeleton with zero animations"* — is the only case on
+this ladder, and the only verdict v2.1 moves.
+
+⚖️ **What this costs, stated rather than smoothed over.** A skeleton whose only shot is a
+single pose is now gated on G1, G2, G4 and G5 alone, with two clauses skipping. That is a
+thinner reading than any other rung gets, and it is the honest one: the frames contain one
+pose, every pose the shot has is committed, and no candidate can produce evidence the
+reference does not carry. Rule 1's test — *could any reading of the frames have decided
+it?* — answers no, and rule 1 says only the decidable kind may fail a rung.
+
+📌 **Cadence.** By rule 5's asymmetry this change is **opportunity, not integrity** — it
+can only let an open rung pass, never flip a standing one — so it was not owed
+immediately. It is released here because rule 5 point 3 anchors bumps to milestones and
+this is one: the phase-3 worklist closing, and the run-up to a version cut. Its
+re-inspection is taken in the same pass, under *Status*.
+
 ### 3. Close on pass; a gate change re-inspects everything
 
 A rung that meets the gate **closes its ladder issue**. The verdict, the figures and
@@ -760,6 +860,13 @@ remaining work is taken in.
    > The queue is now **rung 1 (on a clause decision, not a re-climb) and the untried rung
    > 7**, and the verdicts are under *Status*, in *The gate-v2 batch adjudication of the
    > four re-climbs*.
+   > ➡️ **Gate v2.1 takes the clause decision, and rung 1 leaves the queue the same day.**
+   > `drop`'s G3 reads **SKIP** under (b) above, so the rung meets G6 and **#10 closes**.
+   > ⇒ **The queue is now the untried rung 7 alone** — and it is not a re-climb either:
+   > rung 7 has never been attempted, its brief is revision 1 **UNVERIFIED**, and
+   > `bench/runs/README.md` marks it 🚫 not runnable until a second pass over that brief.
+   > **Nothing on this ladder is now open on a gate question.** Verdicts in *The gate-v2.1
+   > re-inspection*.
 3. **spineboy `ess` is the graduation exam**, taken last, on the matured guide.
    `pro` stays gated on [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)
    and is **not** a graduation requirement ([#16](https://github.com/firejune/rigc/issues/16)):
@@ -804,6 +911,16 @@ moves again next week.
 hold a pass mark, so its re-inspection is taken in the same pass that introduces it rather
 than deferred. The G4 fix alone would have waited — it can only *pass* open rungs.
 
+⇒ **And v2.1 is a case of point 2's second half released under point 3.** Its single
+clause can only let an open rung pass, so integrity did not demand it and it waited — from
+the batch adjudication that recorded the gap to this bump. What released it is the
+milestone: the phase-3 worklist closing and a version cut behind it. ⚠️ **The wait is not
+free and the ledger says so**: while it lasted, three standing verdicts rested on a reading
+the gate did not state (rung 5's PASS and spineboy's published bar, both of which exclude a
+single pose from G3), and one rung sat 🟨 on a gap no candidate could close. Point 2's
+asymmetry ranks those correctly — a rung staying 🟨 misleads nobody — but *"opportunity"*
+is the cost of the wait, not the absence of one.
+
 ---
 
 ## Status
@@ -816,7 +933,7 @@ than deferred. The G4 fix alone would have waited — it can only *pass* open ru
 | — | **B2** | — | — | A16 accepts pre-release labels | ✅ |
 | — | **B3** | — | — | packed-atlas handling (validator half done) | 🟨 |
 | 1 | **3** | `3-timing-and-spacing` | `ess` | nothing — smallest skeleton in the corpus | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung3-1` |
-| 2 | **1** | `1-weight-and-mass` | `balls`, `drop` | `translatex`/`translatey`/`shear`; bone setup `length`; a skeleton with **zero** animations (`drop`) | 🟨 gate v2: `drop` **G3 not adjudicable — clause gap** *(`balls` clears every clause, 2026-08-26)* |
+| 2 | **1** | `1-weight-and-mass` | `balls`, `drop` | `translatex`/`translatey`/`shear`; bone setup `length`; a skeleton with **zero** animations (`drop`) | ✅ *gate v2.1, 2026-08-26* — on `2026-08-26-rung1-1`; the clause gap closed, `drop`'s G3 **SKIP** |
 | 3 | **2** | `2-the-12-principles` | `ess` | slot `blend` (4 additive + 4 multiply); bone `inherit` ≠ Normal | ✅ *gate v2, 2026-08-25* — G4's fix and the sheet |
 | 4 | **4** | `4-wave-principle` | `ess` | nothing structural — a volume test (9 bones, 9 slots, 3 animations, 470 bezier keys) | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung4-1`; G7 now 1.43–1.91× |
 | 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung5-1` |
@@ -824,6 +941,98 @@ than deferred. The G4 fix alone would have waited — it can only *pass* open ru
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ✅ *gate v2, 2026-08-25* — both skeletons, re-inspected |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ⬜ |
 | 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×3 — structure ✅, motion improving (18.8→14.6 px) · gate v2: G2 · G3 · `pro` ⬜ · frozen as gate 2026-08-24 |
+
+### The gate-v2.1 re-inspection — 2026-08-26
+
+**Every standing candidate re-read against gate v2.1.** The re-inspection rule 3 requires
+of a gate version, taken in the same pass that releases it — rule 5 point 3, the milestone
+bump. 🚫 **Zero builds and zero authoring, and no run directory and no `bench.json` was
+touched.** `check` and `validate --profile spine` re-read the **ten standing candidates**
+over all **44 committed sets** — 963 adjacent pairs and 17 compared sheets — **from the
+repository root, with no `--atlas` override on any of them**, and reproduce every gated
+figure to the digit. That is this pass's control: what moves a verdict here is the clause,
+not the reading.
+
+📌 **Two scope notes, so no figure is read as more or less than it is.** ① The sweep covers
+the ten candidates that *hold* a verdict, not the sixteen the 2026-08-25 passes read — the
+superseded attempts keep their own entries below and are not re-adjudicated, so 44 sets
+against that pass's 86 is a narrower subject and **not** a coverage loss. ② `bench` was not
+re-run: G4's lengths and G5's counts below are the figures already recorded in each rung's
+own verdict, quoted rather than re-measured, because nothing v2.1 changes can reach them.
+What this pass re-measured itself is G1, G2, G3 and G7.
+
+Only G3 can move anything, so its column carries the reading each skeleton gets under
+v2.1's (a) and (b).
+
+| Rung | Skeleton | Candidate | G1 | G2 ≤ 6.0 px | G3 = 0 | G4 length | G5 ≥ 0.85 | G7 ≤ 3.5× | v2.1 | was v2 |
+| --- | --- | --- | :---: | --- | --- | --- | --- | --- | :---: | :---: |
+| **1** | `balls` | rung1-1 | 0 FAIL | **1.51** px `cast-shadow-red` ✅ | ✅ **0** of 39 · **0** of 78; drawn 1.1005 / 1.1010 | ✅ 3.250000 s v 3.233333 s — **0.20** of a frame | 1.000 · 1.000 ✅ | SKIP — both sets commit every frame | **PASS** | PASS |
+| **1** | `drop` | rung1-1 | 0 FAIL | 1.06 px `sword` ✅ | 🆕 **SKIP** — one frame per set, so **(a)** excludes both and **(b)** leaves the clause no object | ✅ 0.000000 s v 0.000000 s | 0.800 → **1.000** after `ground-cover` ✅ | SKIP — a single pose | **PASS** | not adjudicable |
+| **2** | `ess` | rung2-2 | 0 FAIL | 0.33 px `bowling` ✅ | ⚠️ 0 pairs in all four sets — **hole discharged by G7**, unchanged: two stills 310 frames apart is not a single pose, so **(b) does not apply** | ✅ 25.833333 s v 25.866667 s — **0.4** of a frame | 0.882 · 0.882 ✅ | ✅ **1.088–1.107**, four sheets, 311 tiles each | **PASS** | PASS |
+| **3** | `ess` | rung3-1 | 0 FAIL | 0.65 px `pendulum` ✅ | ✅ **0** of 64 · **0** of 20; drawn 0.9913 / 0.9922 | ✅ exact ×2 | 1.000 · 1.000 ✅ | SKIP — both sets commit every frame | **PASS** | PASS |
+| **4** | `ess` | rung4-1 | 0 FAIL | **3.63** px `chain-1` ✅ | ✅ **0** of 120 + 16 + 16; the three `@24fps` sets are stills — **(b) does not apply**, G7 reads them | ✅ exact ×3 | 0.889 · 0.889 ✅ | ✅ **1.911** · 1.428 · 1.776, 241/33/33 tiles | **PASS** | PASS |
+| **5** | `ess` | rung5-1 | 0 FAIL | **5.12** px `hood-end1` ✅ | ✅ **0** of 78 · **0** of 78, with `ball-ready-to-animate`'s two sets excluded under **(a)** — the reading v2.1 writes down, and this verdict already rested on it | ✅ exact ×3 | 1.000 · 1.000 ✅ | ✅ 1.081 · 1.181, 157 tiles each | **PASS** | PASS |
+| **6** | `pro` | rung6-1 | 0 FAIL | **2.48** px `ball` ✅ | ✅ **0** over 68 | ✅ exact | 1.000 · 1.000 ✅ | ✅ `arcs@24fps` **2.892** (13.99 over 4.84, 137 tiles) | **PASS** | PASS |
+| **7** | — | — | — | — | — | — | — | — | not attempted | not attempted |
+| **8** | `pendulum` | rung8-1 | 0 FAIL | **3.34** px `chain-4` ✅ | ✅ **0** over 44 + 87 | ✅ 3.633333 s, exact | 1.000 · 1.000 ✅ | SKIP — every frame committed at both rates | **PASS** | PASS |
+| **8** | `ball` | rung8-2 | 0 FAIL | **4.19** px `ball` ✅ | ✅ **0** over 44 + 87 | ✅ 3.625 s v 3.633333 s — **0.2** of a 24 fps frame | 1.000 · 1.000 ✅ | SKIP — every frame committed at both rates | **PASS** | PASS |
+| **spineboy** | `ess` | spineboy-3 | 0 FAIL | ❌ **19.57** px `death` · 7.07 `walk` · 6.75 `run` | ❌ **3** of 59 on `death`; `aim`'s two sets excluded under **(a)**, which is what both 2026-08-25 passes already did | ✅ ×8, all inside 1/60 s | 0.952 · 0.931 ✅ | ✅ 1.136–**2.028** (`jump@30fps`), seven sheets | **FAIL** | FAIL |
+
+**One verdict moves, and it is the one the gap named.**
+
+- ✅ **Rung 1 `drop`'s G3: *not adjudicable — clause gap* → SKIP, and the rung closes.**
+  Nothing about the skeleton changed and nothing could have: `ready-to-animate` is
+  0.000000 s, both its sets are one frame, `changePairs` is **0**, and three passes in a row
+  said so. What changed is that the gate now states what it does with that — (a) excludes
+  the set, (b) leaves G3 with no object and reads SKIP on G7's precedent. `drop` is
+  **PASS · PASS · SKIP · PASS · PASS · SKIP** across G1–G5 and G7, `balls` clears every
+  clause outright, so **G6 is met on both skeletons and issue
+  [#10](https://github.com/firejune/rigc/issues/10) closes.** ⚠️ **A pass is versioned**:
+  this is a **gate-v2.1** pass, and the 2026-08-26 verdict that read *not adjudicable*
+  stays true of gate v2 — it is not withdrawn and its section is not rewritten.
+- **Nothing else moves.** Rungs 2, 3, 4, 5, 6 and 8 are re-inspected and hold; spineboy
+  fails where it failed under v2, on G2 and G3, and neither limb is one v2.1 touches.
+
+⭐ **Where the clause did *not* fire, and why that is the point.** Six of the 44 sets are
+single poses — `drop`'s two, rung 5's two `ball-ready-to-animate` sets and spineboy's two
+`aim` sets — and (a) excludes all six. Only on `drop` does that leave the skeleton with
+nothing, because there the single pose is the whole skeleton. On rung 5 it leaves `ball` and
+`speedy` at 78 pairs each and on spineboy it leaves seven shots; both verdicts read G3
+directly and are unchanged. ⇒ **The ruling did not loosen G3 anywhere it was deciding
+something.** It stated a scope three verdicts already assumed, and applied it once more
+where the scope turns out to be empty.
+
+🚫 **And where (b) deliberately does not reach.** Rung 2's four sets and rung 4's three
+`@24fps` sets have **0 adjacent pairs** and are **not** single poses — they are shots
+sampled twice, with frames between the samples that a pair reading never sees. That hole is
+real and **G7's discharge** is what answers it; reading those sets as SKIP instead would
+retire load-bearing v2 machinery and hand rung 2 its pass on nothing. Rung 2's verdict is
+therefore unchanged **and unchanged by the same route** — the four sheets flat over all
+1,244 tiles.
+
+📌 **A reproducibility fact this pass is the first able to state.** All ten standing
+candidates were re-read **from the repository root with no `--atlas` override** and all ten
+load. The 2026-08-26 batch could not say that: the rung-5 candidate's atlas named its pages
+relative to its author's worktree and had to be measured through an override
+([#181](https://github.com/firejune/rigc/issues/181), repaired as a labelled amendment the
+same day). ⇒ Rule 3's *"a re-read of stored candidates"* is now literally executable on
+every candidate that holds a verdict.
+
+🧾 **What this pass records for the owner rather than resolving.**
+
+1. ✅ **Resolved — the single-pose question, both faces.** It was the one clause decision the
+   2026-08-26 batch left outstanding, and the only thing holding a rung open. Closed by the
+   ruling, not adjudicated around.
+2. ⚠️ **Two clause-gap findings from earlier passes are still open, and neither is a
+   number.** G7's margins do not separate the sheet corpus's top two (3.5 admits 2.892 and
+   refuses 4.00; rule 2's 🧾 carries the alternative readings), and the odd-tile spikes that
+   distinguish rung 4 from rung 6 are the same defect at two magnitudes. Both are recorded
+   under *The gate-v2 re-inspection* and neither is touched here.
+3. 📌 **The ladder is now open on no gate question at all.** Every rung but 7 is ✅; rung 7
+   has never been attempted and is blocked on a brief that has had no second pass, not on a
+   clause. What remains before the graduation exam is protocol work, and spineboy's freeze
+   is unaffected: its G2 and G3 are observable residuals, so rule 4 item 2 makes it a
+   re-climb rather than an adjudication.
 
 ### The gate-v2 batch adjudication of the four re-climbs — 2026-08-26
 
@@ -975,6 +1184,11 @@ did carry a reference-side `events` block and does caveat that run's name-matche
    thing rung 5's and spineboy's passes rest on. It is a clause change, so rule 5 says it
    batches into the next gate version; and by rule 5's own asymmetry it is **not** urgent in
    the direction that would open rung 5, only in the direction that would close rung 1.
+   > ➡️ **Answered the same day, by the owner's ruling that became gate v2.1.** Both faces:
+   > a single-pose set is out of G3's scope, and a skeleton left with no readable set reads
+   > SKIP. The clause is in *Operating rules* rule 2 under *Gate v2.1* and the verdicts it
+   > moves are in *The gate-v2.1 re-inspection* above — **rung 1 closes**; rung 5's and
+   > spineboy's readings are unchanged and now stated rather than assumed.
 2. 📌 **Rung 4 is the first rung to fail a clause and then clear it by re-authoring rather
    than by a gate change**, which is the sequence rule 4 item 2 predicted for an observable
    residual. Rung 3 is the mirror: cleared by a commander, withdrawn by gate v1, and now
@@ -987,6 +1201,13 @@ did carry a reference-side `events` block and does caveat that run's name-matche
    directory**, per rule 3's 🚫. Every figure quoted for rung 5 is from that read and matches
    the run's own record to the digit. A run's artifact that only its author's directory
    layout can load is a reproducibility defect in the record rather than in the candidate.
+   > ➡️ **Repaired the same day**, as [#181](https://github.com/firejune/rigc/issues/181)
+   > and a labelled amendment commit under the owner's ruling of 2026-08-26 — the page paths
+   > only, verified from the repository root against every figure above, and recorded as an
+   > *Amendment* in that run's README. The protocol rule that licenses this narrow class of
+   > repair is at the end of [`bench/runs/README.md`](../bench/runs/README.md)'s *After a
+   > run*. The v2.1 re-inspection then re-read **all ten** standing candidates with no
+   > override and all ten load, so the class is closed and not only this instance.
 4. 📌 **Four of the five candidates returned no clause verdict at all, by design, and the
    protocol is what made that right.** Three declined *Operating rules* outright and one
    read it and reported itself. Both outcomes are the reading list working; what neither is
@@ -1967,6 +2188,17 @@ had handed the author. ⚠️ **The pass depends on G7's discharge of G3's hole*
 new machinery in v2 rather than a re-reading of v1; that dependency is recorded as item 2
 of the ambiguities under *The gate-v2 re-inspection*.
 
+#### Gate v2.1 re-inspection, 2026-08-26 — **PASS**, and the pass keeps its own route
+
+Re-read on the stored candidate: 0.33 px `bowling`, 0 adjacent pairs in all four sets, the
+four sheets at **1.088–1.107** over 311 tiles each, 15 PASS / 0 FAIL / 5 SKIP — every
+figure above to the digit. 🚫 **v2.1 (b) does not reach this rung, deliberately.** Its four
+sets are two stills 310 frames apart: a shot **sampled twice**, not a single pose, so the
+frames between the samples are a real hole and **G7's discharge is still what answers it**.
+Reading them as SKIP instead would retire that machinery and hand this rung its pass on
+nothing. ⇒ Verdict unchanged, and unchanged *by the same route*.
+
+
 ### Rung 6 — attempted, not cleared (2026-08-23)
 
 Run [`bench/runs/2026-08-23-rung6-1/`](../bench/runs/2026-08-23-rung6-1/), clean
@@ -2087,6 +2319,14 @@ worst tiles are all **odd** indices — the half-frames between two 12 fps sampl
 the 2.89 measures is this candidate's curve shape between the frames its author had, at a
 magnitude the first calibration deliberately admits. The pass is a pass; it is also the
 narrowest one on the page.
+
+#### Gate v2.1 re-inspection, 2026-08-26 — **PASS**, unchanged
+
+Re-read on the stored candidate: **2.48 px** `ball` at f0010, **0** disagreements over 68
+adjacent pairs, `arcs@24fps` at **2.892×** (13.99 over 4.84, 137 tiles), 15 PASS / 0 FAIL /
+5 SKIP. v2.1 changes one reading of G3 and this rung has no single-pose set, so nothing here
+is in its scope. The narrowest G7 margin on the page is still this one.
+
 
 ### Rung 8 — attempted, not cleared: `pendulum` cleared, `ball` not (2026-08-23)
 
@@ -2282,6 +2522,13 @@ sidecars states (they say 3.666667 at 12 fps and 3.625 at 24). **G7** reads **SK
 both sets: every sampled frame is committed at both rates, so the whole shot is read frame
 by frame under G2 and G3 and a sheet would add nothing to it. A SKIP is not a pass and it
 is not a hole either — the coverage a sheet stands in for is already here.
+
+#### Gate v2.1 re-inspection, 2026-08-26 — `pendulum` **PASSES**, unchanged
+
+Re-read on the stored candidate: **3.34 px** `chain-4`, **0** disagreements over 44 + 87
+adjacent pairs, G7 **SKIP** on both sets, 15 PASS / 0 FAIL / 5 SKIP. No single-pose set, so
+v2.1's clause has nothing to reach here.
+
 
 ### spineboy — attempted, not cleared: `ess` authored under a leak caveat, `pro` not built (2026-08-23)
 
@@ -2582,6 +2829,14 @@ by luck of which side of the grid it fell on. **G7** reads **SKIP** on both sets
 sampled frame is committed at both rates, so neither set has a sheet and the shot is read
 frame by frame instead. **G6** unchanged — `pendulum` and `ball` both pass, so the rung
 does.
+
+#### Gate v2.1 re-inspection, 2026-08-26 — `ball` **PASSES**, and so does the rung
+
+Re-read on the stored candidate: **4.19 px** `ball` at `follow-through@24fps` f0077, **0**
+disagreements over 44 + 87 adjacent pairs, G7 **SKIP** on both sets, 15 PASS / 0 FAIL /
+5 SKIP. No single-pose set on either skeleton of this rung, so v2.1 leaves both verdicts
+where they were.
+
 
 ### spineboy, attempt 2 — the first after the seal: attempted, not cleared (2026-08-24)
 
@@ -2923,6 +3178,18 @@ Neither changed clause reaches this rung, and the freeze's bar is unmoved.
   every sheet inside 3.5×.** A claim that beats attempt 3 beats it on those, on this
   instrument panel.
 
+#### Gate v2.1 re-inspection, 2026-08-26 — **FAIL on G2 and G3**, and the freeze stands
+
+Re-read on the stored candidate over all sixteen sets: **19.57 px** `rear-shin` on `death`
+f0006, 7.07 `walk`, 6.75 `run`; **3** disagreements of 59 on `death`; seven sheets at
+**1.136–2.028**, `jump@30fps` the highest; 16 PASS / 0 FAIL / 4 SKIP. ⭐ **v2.1 makes this
+run's own treatment of `aim` the gate's.** Both `aim` sets are single poses and were never
+counted as G3 holes here — the reading is now clause (a) rather than a convention, which is
+part of why it was written down. It changes no figure and no verdict: G2 and G3 fail on
+`death`, both observables, so rule 4 item 2 keeps this a re-climb rather than an
+adjudication and **the graduation bar above is unchanged**.
+
+
 ### Rung 1, attempt 2 — both skeletons re-authored: `balls` clears, `drop` unchanged (2026-08-26)
 
 Run [`bench/runs/2026-08-26-rung1-1/`](../bench/runs/2026-08-26-rung1-1/), clean —
@@ -3001,6 +3268,38 @@ none. The full reading, and the reason the same state does **not** block rung 5,
 *The gate-v2 batch adjudication of the four re-climbs*. ⇒ It wants a clause-level decision
 at the next gate release, not another attempt: **no candidate can move it.**
 
+#### Gate v2.1 re-inspection, 2026-08-26 — `drop`'s G3 reads **SKIP**, and the rung closes
+
+The clause release the verdict above asked for, on the same stored candidate. Re-read by
+`check` and `validate --profile spine` from the repository root; **every figure in the table
+above reproduces to the digit** — 1.51 px and 1.06 px of worst drift, 0 of 39 and 0 of 78,
+`drawnRatio` 1.1005 / 1.1010, `framesWithoutDrift` 0 on all four sets, 15 PASS / 0 FAIL /
+5 SKIP on both skeletons. Nothing was built and nothing in the run directory was touched.
+
+| Clause | `balls` | `drop` |
+| --- | --- | --- |
+| **G1** validity | **PASS** — 0 FAIL | **PASS** — 0 FAIL |
+| **G2** worst attributable slot drift ≤ 6.0 px | **PASS** — 1.51 px | **PASS** — 1.06 px |
+| **G3** per-frame motion | **PASS** — 0 of 39 · 0 of 78 | 🆕 **SKIP** — v2.1 (a) excludes both single-pose sets, (b) leaves the clause no object |
+| **G4** shot inventory and length | **PASS** — 0.20 of a frame | **PASS** — 0.000000 s v 0.000000 s |
+| **G5** drawn inventory | **PASS** — 1.000 · 1.000 | **PASS** — 1.000 · 1.000 after `ground-cover` |
+| **G7** the sheet | **SKIP** — every frame committed | **SKIP** — a single pose |
+| **G6** the rung | ✅ **both skeletons meet G1–G5 with G3 and G7 skipping where they have no object** | |
+
+⭐ **What decided it was the gate, not the candidate — as three passes in a row said it
+would have to be.** `ready-to-animate` is 0.000000 s long, so `changePairs` is 0 and no
+authoring could produce a pair to read; the verdict above is right that *no candidate can
+move it*. v2.1 states the scope instead: a single-pose set is out of G3's reach (the reading
+rung 5's and spineboy's verdicts already rested on), and a skeleton left with no readable
+set reads SKIP on G7's own *no observable ⇒ SKIP*. ⇒ **Issue
+[#10](https://github.com/firejune/rigc/issues/10) closes**, and rule 4's queue is down to
+the untried rung 7.
+
+⚠️ **A pass is versioned, and this history is not rewritten.** This is a **gate-v2.1**
+pass. The verdict above met gate v2 as far as gate v2 could read it and its *not
+adjudicable* stands as a true statement about that gate; the two gate-v1 and gate-v2
+sections under *Rung 1 — attempted, not cleared* are likewise untouched.
+
 ### Rung 3, attempt 4 — the frame-change clause clears, and the rung is re-earned (2026-08-26)
 
 Run [`bench/runs/2026-08-26-rung3-1/`](../bench/runs/2026-08-26-rung3-1/), clean —
@@ -3071,6 +3370,14 @@ recorded under the earlier attempts is withdrawn by this; what is restored is th
 a candidate that clears every clause. **Issue [#12](https://github.com/firejune/rigc/issues/12)
 closes.**
 
+#### Gate v2.1 re-inspection, 2026-08-26 — **PASS**, unchanged
+
+Re-read on the stored candidate: **0.65 px** `pendulum` at `heavy` f0017, **0** of 64 and
+**0** of 20 adjacent pairs, `drawnRatio` 0.9913 / 0.9922, G7 **SKIP** on both sets (each
+commits every sampled frame), 15 PASS / 0 FAIL / 5 SKIP. No single-pose set, so v2.1's
+clause is not in play. #12 stays closed.
+
+
 ### Rung 4, attempt 2 — re-authored from a verified brief; the sheet clause clears (2026-08-26)
 
 Run [`bench/runs/2026-08-26-rung4-1/`](../bench/runs/2026-08-26-rung4-1/), clean —
@@ -3137,6 +3444,15 @@ re-authoring** rather than by a gate change, which is the sequence rule 4 item 2
 for a residual that is observable. Its gate-v1 pass stands as a gate-v1 pass, and every
 clause that cleared then clears now. **Issue [#17](https://github.com/firejune/rigc/issues/17)
 closes.**
+
+#### Gate v2.1 re-inspection, 2026-08-26 — **PASS**, unchanged
+
+Re-read on the stored candidate: **3.63 px** `chain-1` at `ball-catch` f0103, **0**
+disagreements over 120 + 16 + 16 adjacent pairs, the three sheets at **1.911 · 1.428 ·
+1.776**, 15 PASS / 0 FAIL / 5 SKIP. 🚫 **v2.1 (b) does not reach the three `@24fps` sets**:
+two stills apiece is a shot sampled twice, not a single pose, so they stay G7's to read —
+which is the whole reason this rung's G7 verdict means something. #17 stays closed.
+
 
 ### Rung 5, attempt 2 — re-authored from a verified brief; G3 clears on both shots (2026-08-26)
 
@@ -3221,6 +3537,21 @@ already on the 1e-6 grid can be missed entirely** — 13 of this shot's 78 sampl
 affected, `sampleAnimation` accumulating `1/12` can land a few ULPs below a time like
 `6.5`, and for a stepped timeline that is a whole frame late or never (fix: write
 `T − 1e-6`) — and the packed-atlas MAE floor, which two rungs now measure independently.
+
+#### Gate v2.1 re-inspection, 2026-08-26 — **PASS**, and the reading it rested on is now the gate's
+
+Re-read on the stored candidate **from the repository root with no `--atlas` override**,
+which the 2026-08-26 verdict could not do — see the *Amendment* in that run's README and
+[#181](https://github.com/firejune/rigc/issues/181). Every figure above to the digit:
+**5.12 px** `hood-end1` at `speedy` f0023, 2.16 px `head` on `speedy@24fps`, 1.30 px
+`course` on the four `ball`-family sets, `framesWithoutDrift` 0 on all six; **0 of 78** on
+`ball` and **0 of 78** on `speedy`; `drawnRatio` 0.9881–0.9907; the sheets at **1.081×** and
+**1.181×** over 157 tiles each; 15 PASS / 0 FAIL / 5 SKIP.
+
+⭐ **The verdict is unchanged and its footing is not.** This rung passed on an explicit
+reading — that `ball-ready-to-animate`'s two single-pose sets are outside G3's scope — which
+the gate did not state at the time. v2.1 clause (a) states it. ⇒ The PASS no longer rests on
+an unwritten rule, which is what the 2026-08-26 comment asked the next gate version for.
 
 ---
 
