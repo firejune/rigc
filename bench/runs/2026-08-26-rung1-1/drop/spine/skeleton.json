@@ -1,0 +1,94 @@
+{
+  "skeleton": {
+    "spine": "4.3.13",
+    "x": -626,
+    "y": -1172,
+    "width": 1252,
+    "height": 910
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "ground-bg",
+      "parent": "root",
+      "x": 0,
+      "y": -974.1
+    },
+    {
+      "name": "rock",
+      "parent": "root",
+      "x": -136.9,
+      "y": -404.7
+    },
+    {
+      "name": "stick",
+      "parent": "root",
+      "x": -0.2,
+      "y": -404.5
+    },
+    {
+      "name": "sword",
+      "parent": "root",
+      "x": 124.2,
+      "y": -399.3
+    }
+  ],
+  "slots": [
+    {
+      "name": "ground-bg",
+      "bone": "ground-bg",
+      "attachment": "ground-bg"
+    },
+    {
+      "name": "rock",
+      "bone": "rock",
+      "attachment": "rock"
+    },
+    {
+      "name": "stick",
+      "bone": "stick",
+      "attachment": "stick"
+    },
+    {
+      "name": "sword",
+      "bone": "sword",
+      "attachment": "sword"
+    }
+  ],
+  "skins": [
+    {
+      "name": "default",
+      "attachments": {
+        "ground-bg": {
+          "ground-bg": {
+            "width": 1251,
+            "height": 394
+          }
+        },
+        "rock": {
+          "rock": {
+            "width": 88,
+            "height": 75
+          }
+        },
+        "stick": {
+          "stick": {
+            "width": 44,
+            "height": 267
+          }
+        },
+        "sword": {
+          "sword": {
+            "width": 44,
+            "height": 275
+          }
+        }
+      }
+    }
+  ],
+  "animations": {
+    "ready-to-animate": {}
+  }
+}

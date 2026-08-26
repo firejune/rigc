@@ -1,0 +1,35 @@
+../../../../../examples/1-weight-and-mass/images/ground-bg.png
+size: 1251, 394
+filter: Linear, Linear
+pma: false
+ground-bg
+bounds: 0, 0, 1251, 394
+offsets: 0, 0, 1251, 394
+rotate: 0
+
+../../../../../examples/1-weight-and-mass/images/rock.png
+size: 88, 75
+filter: Linear, Linear
+pma: false
+rock
+bounds: 0, 0, 88, 75
+offsets: 0, 0, 88, 75
+rotate: 0
+
+../../../../../examples/1-weight-and-mass/images/stick.png
+size: 44, 267
+filter: Linear, Linear
+pma: false
+stick
+bounds: 0, 0, 44, 267
+offsets: 0, 0, 44, 267
+rotate: 0
+
+../../../../../examples/1-weight-and-mass/images/sword.png
+size: 44, 275
+filter: Linear, Linear
+pma: false
+sword
+bounds: 0, 0, 44, 275
+offsets: 0, 0, 44, 275
+rotate: 0

@@ -1046,6 +1046,25 @@ And the general form of all three: **when a reading implies a key, look for a se
 way to get the same number before you author it.** A wrong measurement costs one
 spurious key; a wrong measurement you believed costs the shape of the whole shot.
 
+⚠️ **A part that grows about a pivot that is not its own centre reads as a part
+that moves.** Fit a scale about the region centre when the reference scales it about
+somewhere else, and the residual stays *plausible* while the fitted centre walks
+along with the fitted scale — so the series looks like a translate you measured
+rather than a pivot you did not model. The tell is that shape and nothing else: **a
+per-frame centre that moves monotonically with the fitted scale is an unmodelled
+pivot.** Read it as motion and you author a translate timeline the reference does
+not have; read it as a pivot and it is an attachment offset (§3.4's `x`/`y`) with
+the bone's own scale carrying both the size and the centre drift — *one* keyed
+property, which is also what an editor rig has. Recover the offset by sweeping it
+against the frames where the part is unoccluded and taking the minimum; the minimum
+is sharp, and it is a structural constant rather than a per-frame value, so a
+handful of frames settle it. Measured on a shot with four such parts: MAE **3.13 →
+1.95** with not one key value re-measured, and those parts' chains from 10–13
+`MAE in it` down to 1.3–8.8. What made it believable rather than a lucky fit is the
+second trap's own cross-check — the four offsets came out the same **fraction of each
+part's own height**, from four independent fits, which is the quantity that had to
+agree between them and did.
+
 **A value is easier to get right than a curve.** The three traps above are all
 about measuring a *value*, and both ladder runs so far found that the values came
 out right early: rung 1's key values were exact at every keyframe on the second
@@ -1645,6 +1664,21 @@ Both of those were found by that run writing its own render-diff by hand. Read t
 line whenever the MAE is flat and something still looks wrong: a flat MAE says the
 framing and the art agree, and it says nothing at all about whether your shot holds
 and blinks where the reference does.
+
+⚠️ **Each set is compared against ITSELF, so on a shot committed at two rates a hold
+can exist in one set and not the other.** The coarse set samples every other frame of
+the fine one, so a pair the coarse set holds across is a constraint between samples
+**2k and 2k+2** of the fine series — and 2k+1 between them is free to move, and does.
+One ladder shot has a pair whose whole-frame change at the coarse rate is **exactly
+0** while both fine-rate pairs inside that same span change by 48 px: the subject
+shifts under three world units and comes back, so the two coarse samples land on the
+same pose either side of it. So §10.3's *key both ends of the hold* has to be applied
+**at each committed rate separately**, and equal values are not enough — the two
+samples have to be **keys**, or a planner reduces through one of them and an
+interpolant inside its own tolerance is not equality. That cost two builds on that
+run, the second of them for exactly that reason. ⇒ Measure the frames' own
+frame-to-frame change **once per committed rate**, and where a rate holds, pin both
+ends as keys whenever a finer rate moves between them.
 
 ⚠️ Only between **adjacent** frames. A set that ships stills rather than every frame
 — rung 2's contact-sheet sets — reports `no two compared frames are adjacent`, and
