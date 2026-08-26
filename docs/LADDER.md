@@ -2872,6 +2872,30 @@ are covered by no explicit grant, so:
 right by construction; rung 7 is the case where a one-off "just this once" copy
 would be a licence problem rather than a tidiness problem.
 
+🔓 **The local-render exception, ruled 2026-08-26** — issue
+[#3](https://github.com/firejune/rigc/issues/3), raised by the brief-verification pass
+on [#14](https://github.com/firejune/rigc/issues/14). The rule above does not forbid a
+render that never leaves the local disk, and reading it as though it did was what made
+this rung **unattemptable rather than unattempted**: the honesty rule says a brief is
+written by somebody *watching the frames*, so with no frames obtainable neither the
+writing pass nor the verifying pass had a legitimate input, and a brief written from
+the export would have been a transcription of the answer. So:
+
+- ✅ **Rendering its frames to a path this repository ignores is allowed**, for as long
+  as somebody needs them. [`bench/render_reference.ts`](../bench/render_reference.ts)
+  implements exactly that and nothing wider: a one-name set, an `--out` that must pass
+  `git check-ignore` or lie outside the repository, a guard that fails closed when git
+  cannot answer, and a `LOCAL-ONLY.txt` written beside the frames in place of the
+  licence that does not exist. Every other missing licence keeps the unconditional
+  refusal.
+- 🚫 **Everything the rule already forbade, it still forbids** — committing, publishing
+  or shipping a frame, in any artefact, ever. The exception is about where a render may
+  land, not about what may be distributed.
+- 📌 Consequences elsewhere: the rung's frames are **not** under `bench/reference/`, so
+  its brief carries the render commands and
+  [`bench/runs/README.md`](../bench/runs/README.md)'s allowed-reading list names
+  `bench/reference-local/7-anticipation/` for this rung alone.
+
 ---
 
 ## Running a rung
