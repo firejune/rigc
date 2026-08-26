@@ -14,10 +14,17 @@ Every push to `main` runs `release.yml`, which hands the new commits to
 - **Nothing releasable since the last tag** → the run does nothing. Commit types
   release-please hides from the changelog (`docs`, `test`, `ci`, `build`,
   `chore`, `refactor`, `style`) do not open a release pull request on their own.
+  **Visibility is what makes a type releasable**, which is why
+  `release-please-config.json` carries a `changelog-sections` array: it is the
+  default node list plus `check` → *Instrument*, so instrument work on shipped
+  sources counts and gets its own changelog line instead of riding along
+  silently ([#163](https://github.com/firejune/rigc/issues/163)). Overriding the
+  array replaces the default rather than extending it, so the whole list is
+  written out — dropping a row from it hides that type.
 - **Something releasable** → it opens, or updates, a pull request titled
   `release: vX.Y.Z` containing exactly three generated changes: the
   `package.json` version, `CHANGELOG.md`, and `.release-please-manifest.json`.
-  `feat` bumps the minor, `fix` and `perf` bump the patch. A `!` or a
+  `feat` bumps the minor, `fix`, `perf` and `check` bump the patch. A `!` or a
   `BREAKING CHANGE:` footer bumps the **minor** while the package is pre-1.0
   (`bump-minor-pre-major`) — 1.0.0 is a deliberate act, not the side effect of
   one commit. To force a version, put `Release-As: 1.0.0` in a commit footer.
