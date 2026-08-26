@@ -23,7 +23,7 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 
 | Rung | Brief | Brief verified | Reference frames | Candidates | Watch out for |
 | --- | --- | --- | --- | --- | --- |
-| 3 | [`3-timing-and-spacing.md`](../briefs/3-timing-and-spacing.md) | **yes (third party)**, rev 2, 2026-08-26 | 2 animations, 12 fps | 1 | — |
+| 3 | [`3-timing-and-spacing.md`](../briefs/3-timing-and-spacing.md) | **yes (third party)**, rev 2, 2026-08-26 | 2 animations, 12 fps | **2** | the two parts never overlap on any frame, so the frames decide **no** draw-order edge here — the deciding-pixel set is empty rather than narrow; and this example's supplied atlas is packed at `scale: 0.5`, which puts a floor under the MAE that no key can move (§9.2 of [AUTHORING.md](../../docs/AUTHORING.md), measured in [`2026-08-26-rung3-1`](2026-08-26-rung3-1/README.md)) |
 | 1 | [`1-weight-and-mass.md`](../briefs/1-weight-and-mass.md) | **yes (third party)**, rev 2, 2026-08-26 | 2 skeletons, 12 + 24 fps | **2** | two shots; see the note below |
 | 2 | [`2-the-12-principles.md`](../briefs/2-the-12-principles.md) | rev 2, 2026-08-23 | 4 animations, 12 fps, **contact sheets + 2 stills each** | 1 | 4 × 25.8 s; the sheets *are* the frame set |
 | 4 | [`4-wave-principle.md`](../briefs/4-wave-principle.md) | **yes (third party)**, rev 3, 2026-08-26 | 3 animations, 12 fps + 24 fps sheets | 1 | one shared viewport; in `ball-catch` the whole rig travels, not just the ball |
