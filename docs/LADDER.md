@@ -863,10 +863,15 @@ remaining work is taken in.
    > ➡️ **Gate v2.1 takes the clause decision, and rung 1 leaves the queue the same day.**
    > `drop`'s G3 reads **SKIP** under (b) above, so the rung meets G6 and **#10 closes**.
    > ⇒ **The queue is now the untried rung 7 alone** — and it is not a re-climb either:
-   > rung 7 has never been attempted, its brief is revision 1 **UNVERIFIED**, and
-   > `bench/runs/README.md` marks it 🚫 not runnable until a second pass over that brief.
+   > rung 7 has never been attempted, and on 2026-08-26 its brief was revision 1
+   > **UNVERIFIED**, which `bench/runs/README.md` marked 🚫 not runnable until a second
+   > pass over that brief.
    > **Nothing on this ladder is now open on a gate question.** Verdicts in *The gate-v2.1
    > re-inspection*.
+   > ➡️ **That second pass landed on 2026-08-27** ([#14](https://github.com/firejune/rigc/issues/14)):
+   > the brief is **revision 2, verified by a third party**, and rung 7 is **runnable** —
+   > the queue is one unattempted rung with nothing procedural left in front of it. Its
+   > status stays ⬜ because no candidate exists, not because anything is blocked.
 3. **spineboy `ess` is the graduation exam**, taken last, on the matured guide.
    `pro` stays gated on [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)
    and is **not** a graduation requirement ([#16](https://github.com/firejune/rigc/issues/16)):

@@ -31,15 +31,24 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 | 6 | [`6-arcs.md`](../briefs/6-arcs.md) | **yes (third party)**, rev 3, 2026-08-23 | 1 animation, 12 fps + 24 fps sheet | 1 | the subject **deforms**; ball ~14 px; proportions are measured, not seen |
 | 8 | [`8-follow-through.md`](../briefs/8-follow-through.md) | **yes (third party)**, rev 2, 2026-08-23 | 2 skeletons, 1 animation each, 12 **and** 24 fps in full | **2** | two shots that want opposite machinery — `pendulum` deforms nothing, `ball` deforms on most frames; the `ball` shot moves over 130 px between two 12 fps frames, so read it at 24 fps; the chain's lag is **horizontal only** |
 | spineboy | [`spineboy.md`](../briefs/spineboy.md) | **yes (third party) ×2**, rev 3, 2026-08-24 — the revision-2 gun-hand contradiction ([#111](https://github.com/firejune/rigc/issues/111)) is **settled by measurement**: the gun is in the **far** hand, `idle` and `walk` say so, and the working — estimator, controls and margins — is in the brief's *Verification notes — revision 2 → 3*. Nothing about the gun's arm is left for a run to rediscover | 2 skeletons, 19 animations, 12 fps in full **+ 30 fps sheets** | **1** (`ess`; `pro` is optional) | the rung clears on **`ess` alone**, and `ess` has **8** animations — the ladder row's "11" is `pro`'s count; `pro`'s line is printed *(stretch — does not count)*; the two skeletons are at different scales, so no pixel figure crosses between them; the second rate is **30 fps** and only two frames per animation are on disk at it, so the sheets are for timing and never for a distance |
-| 7 | [`7-anticipation.md`](../briefs/7-anticipation.md) | **no — rev 1, 2026-08-26, UNVERIFIED** | **local-only, never committed**: 4 animations, 102 frames at 12 fps, plus 24 and 30 fps sheets | — | 🚫 **not runnable yet** — the brief has had no second pass. And the frames are not in this repository: render them yourself with the exact commands in the brief, into the gitignored `bench/reference-local/`, and pass `--frames` to `check` and `bench` |
+| 7 | [`7-anticipation.md`](../briefs/7-anticipation.md) | **yes (third party)**, rev 2, 2026-08-27 | **local-only, never committed**: 4 animations, 102 frames at 12 fps, plus 24 and 30 fps sheets | — | the frames are not in this repository: render them yourself with the exact commands in the brief, into the gitignored `bench/reference-local/`, and pass `--frames` to `check` and `bench`. The brief's figures depend on three conventions it now states and none of which is the obvious choice — opaque means **alpha ≥ 128** on the art, velocity is a **central difference**, and "differ in colour" counts are at **exact equality** while silhouettes are at 8/255 |
 
 **Brief verified** is the header block described in the next section. Rungs 3 and 1
 were attempted before the rule existed, and their recorded runs are labelled against
 the unverified revision they were authored from; both briefs took the pass on
-**2026-08-26** (revision 2 each). ⚠️ **Rung 7 is now the one brief waiting on a first
-pass** — written the same day, revision 1, and its row says **UNVERIFIED** because
-nothing has checked it; the sentence that stood here before it existed said no brief
-was waiting, and that was true for a few hours.
+**2026-08-26** (revision 2 each). **Rung 7 took its first pass on 2026-08-27**
+(revision 2), which was also **the first verification pass that had to render its own
+frames** — the rung-7 paragraph below is what that costs. **14 items were corrected**
+and nothing else moved: nothing went into the brief's "cannot tell you" section and
+nothing came out of it, and both of its draw-order readings survived as written.
+⚠️ **The pattern worth carrying forward from it is not a wrong digit
+either: three of the fourteen were unstated *conventions*, not values** — what "opaque"
+means on the art, whether velocity is a forward or a central difference, and whether a
+"differ in colour" count is at exact equality or at the mask threshold. Each one was
+reproducible only by guessing the author's choice, and the obvious guess was wrong in
+all three cases; a forward difference flips one correlation's **sign** (−0.03 to +0.24).
+**A method disclosure that names its estimators still hides the answer if it leaves out
+the arithmetic underneath them.**
 **spineboy is the third brief to carry a third-party pass** (2026-08-23, revision 2):
 of 179 claims, 146 verified — both duration tables entire, and most of `death`,
 `jump`, `shoot` and `hit` to the digit — 31 were corrected and 2 moved into the
@@ -177,14 +186,19 @@ brief:
 
 - **Render the frames with the commands the brief states, flag for flag.** They land
   in `bench/reference-local/7-anticipation/`, which `.gitignore` covers and
-  `render_reference.ts` refuses to write outside of. The render is deterministic, so
-  those commands are what makes the brief's figures checkable at all — a pass at
+  `render_reference.ts` refuses to write outside of. The render **is** deterministic —
+  two independent renders of the 12 fps set produced identical digests on 2026-08-27 —
+  so those commands are what makes the brief's figures checkable at all: a pass at
   another `--max` is measuring a different picture and its disagreements mean nothing.
 - 🚫 **Never commit a frame of it**, or include one in any artefact. `git status`
-  before every commit of a rung-7 pass.
-- The brief's revision-1 header names its estimators, its controls, and **two
-  estimators that failed their controls**. Attack those first: one of them had already
-  put a wrong figure into a draft of the brief, and the control is what caught it.
+  before every commit of a rung-7 pass, and `git ls-files bench/reference-local`
+  should report 0.
+- The brief's header names its estimators, its controls, **two estimators that failed
+  their controls**, and — since revision 2 — the arithmetic conventions underneath them.
+  Attack those first: one failed estimator had already put a wrong figure into a draft
+  of the brief and its control is what caught it, and the 2026-08-27 pass found that
+  three of its own disagreements with the brief were unstated conventions rather than
+  wrong measurements.
 
 ## The run agent
 
