@@ -1,7 +1,50 @@
 # spineboy brief — the graduation exam
 
-> **Revision 2 → 3. Brief verified: yes (third party), twice — 2026-08-23 and
-> 2026-08-24.**
+> **Revision 3 → 4. Brief verified: yes (third party), three times — 2026-08-23,
+> 2026-08-24 and 2026-08-27.**
+>
+> **Revision 4 (2026-08-27)** is a third third-party pass, by an agent that wrote no
+> previous revision and none of the three spineboy attempts, and the first pass held
+> to two conventions that postdate every earlier one: **a stillness or boundary claim
+> states the tolerance it was measured at** (the verifier's rule in
+> [`bench/runs/README.md`](../runs/README.md)) and **an observable-by-construction
+> structural fact is the exam question rather than a leak** (the fifth reading of the
+> honesty rule). Every quantitative claim below was re-measured; the durations, the
+> art table, both floor rows, the whole of `idle`, `walk`, `jump`, `shoot`, `hit`,
+> `aim`, the connectivity census, the flare census, every sheet-tile figure and every
+> `pro` figure reproduce — most of them to the digit.
+>
+> **What revision 4 changes.** Most of it comes back to one thing: this brief counts a
+> frame-to-frame difference at **2/255**, which is *finer* than the tolerance the
+> per-frame comparison uses, so a passage this brief describes as quietly moving can be
+> a **dead hold** to the measure. It happens once, and it happens in the longest shot.
+>
+> - **`ess/death`'s nine-frame stillness now carries its tolerance**, and the figures
+>   at the measure's own threshold: **eight of the nine pairs are exactly 0** there and
+>   the ninth moves by **one pixel**. "Nothing is ever completely still except one
+>   frame pair in the whole reference" was true only at 2/255 and is now stated that
+>   way.
+> - **`ess/death` gains its missing passage.** Revision 3's four passages ran
+>   f0–f7, f8–f12, f18–f26 and f27–f56, and named nothing between f12 and f18 — so the
+>   brief read as though the shot dropped from 3,220 px to 45 px in one frame. It does
+>   not: it decays 1,496 → 797 → 332 → 297 → 140, and by the end of them the only
+>   thing still moving is **the boots**.
+> - **`ess/run` gains the blaster.** The shot's paragraph described the feet and said
+>   nothing about the gun, which sweeps **121 px of screen** across the stride.
+> - **The teal predicate is satisfied by three art files, not two** — `goggles.png`
+>   is the third, at 5,272 px — so the composited control quoted in revision 2 was
+>   missing a term. And **the 45 % split now states where it works**: it separates the
+>   gun in `idle` and `walk` and nowhere else.
+> - Smaller: the header's `pro/shoot` floor control counted **six** frames where its
+>   own body says seven; "four shots return exactly" is a 2/255 statement and only
+>   three of the four are identical to the bit; `idle`'s "the feet never move" is true
+>   to within one column, not exactly; `death`'s "x ≈ 83" is reached at f13, not f12;
+>   revision 2's note that none of the seventeen first-to-last differences reproduces
+>   at 8/255 was wrong — five do; and the pointer at the ladder's own status table is
+>   gone, because that table is a document an authoring run does not open.
+>
+> Method, controls and the claim-by-claim tally are in *Verification notes —
+> revision 3 → 4*.
 >
 > **Revision 3 (2026-08-24)** is a second third-party pass, by an agent that wrote
 > neither revision and neither of the two spineboy attempts. It settles one thing:
@@ -28,7 +71,8 @@
 > **What held, much of it to the digit**: both duration tables entire — all 19
 > animations' frame counts at both rates, all 19 windows and all 19 values on a
 > 30 fps grid; every one of the 17 first-to-last differences at 2/255; the whole
-> `idle`, `hit`, `shoot` and `aim` routes; `death`'s four passages, including the
+> `idle`, `hit`, `shoot` and `aim` routes; `death`'s four passages **as revision 2
+> numbered them** — revision 4 splits a fifth out of them — including the
 > 9,658 px throw, the 24–45 px stillness over nine frames and the f26 → f27 restart
 > at 1,590 px; `jump`'s rise series 335 → 169 and its 167 px apex over tiles 20–25;
 > `walk`'s footfall counting frame by frame; all 40 image dimensions and every margin
@@ -56,11 +100,28 @@
 >   extent and connectivity figure uses that threshold.
 > - **Frame-to-frame difference counts** use a different threshold, **2/255**, which
 >   is rung 8's convention and is said here rather than assumed.
+> - 🚫 ⭐ **2/255 is finer than the per-frame comparison's own tolerance, so read every
+>   "still" in this brief at 8 and not at 2.** A pixel counts as having changed when a
+>   channel moves by **more than 8** levels — `CHANGE_TOLERANCE` in
+>   [`src/check.ts`](../../src/check.ts), the same threshold that decides whether there
+>   is any ink in a pixel at all, because below it the difference is the rasteriser's
+>   own last bit. Every difference count below is at 2, which means **a pair this brief
+>   reports as moving by a few dozen pixels may be a dead hold to the measure.** It
+>   happens once and it happens in the longest shot: `ess/death`'s nine quiet pairs read
+>   24–45 px here and **0, 0, 0, 0, 0, 1, 0, 0, 0** at the measure's tolerance (see
+>   *`death`*). **No other pair in either skeleton crosses to zero.** The nearest miss
+>   is `pro/death`'s own settle, f17 → f23, which reads 162–207 px here and **5–23 px**
+>   at 8/255 without ever reaching a hold; every other adjacent pair in the reference
+>   reads the same order of magnitude at both thresholds — the counts fall by up to
+>   about a third, never to nothing. ⇒ **Do not build motion into a passage
+>   this brief calls still**, and do not tighten the reading to exact equality either:
+>   none of those nine `ess/death` pairs is identical to the bit (719–852 pixels move,
+>   by 1–6 levels, every one of them invisible).
 > - **The floor.** `frames.json` puts world y = 0 at image row **335.96** in `ess`
 >   and **280.90** in `pro` — recomputed from the sidecar's own viewport, not taken
 >   on trust. Control: the lowest drawn row is **336** on all 21 frames of
 >   `ess/idle` and on `ess/aim`, and **281** on all 21 frames of `pro/idle`, all 4
->   of `pro/idle-turn` and on **six of the nine** frames of `pro/shoot` (f1 and f2
+>   of `pro/idle-turn` and on **seven of the nine** frames of `pro/shoot` (f1 and f2
 >   read 296 and 305, because the flare hangs below the feet — see *`pro/shoot`*).
 >   The standing feet sit on world y = 0 to within a pixel, so "off the ground"
 >   below means "the lowest drawn row is above that number".
@@ -78,17 +139,28 @@
 >   Two orders of magnitude under a flash, but not zero — read the detector as
 >   "a flash is hundreds to thousands of pixels", not as a yes/no.
 > - **The gun** — drawn pixels with g > 100, g > r + 30, b > r + 15 and b < g + 40.
->   ⚠️ **This predicate is not gun-only.** The figure's hair is the same teal:
->   `head.png` satisfies it on **5,388** of its opaque pixels against `gun.png`'s
->   **6,459**, so a whole-frame reading is gun *plus* head. Control by compositing
->   the art at the sidecar's scale: 6,459 × 0.222973² ≈ **321 px** of gun and
->   5,388 × 0.222973² ≈ **268 px** of head, **589 px** together — and `ess/idle`
->   reads 599–631 across all 21 frames and `ess/aim` reads 608, so in both the gun
->   is **unoccluded** and the estimator is calibrated to within 5 %. To measure the
->   gun alone, split the teal at 45 % of the subject's box height: in `ess/idle` the
->   lower (gun) share is **322–338 px** on all 21 frames and the upper (head) share
->   is **272–293 px**, each stable to a few per cent. That split is what makes the
->   occlusion figures below mean something.
+>   ⚠️ **This predicate is not gun-only, and it is not two-part either — it is three.**
+>   Scanned over all 40 art files at the opaque pixels, it fires on `gun.png`
+>   (**6,488**), `head.png`'s teal hair (**5,399**) and **`goggles.png` (5,272)**, plus
+>   seven files at 3–17 px each, which is under one pixel at frame scale and can be
+>   ignored. Composited at the sidecar's scale those three predict
+>   6,488 × 0.222973² ≈ **323 px**, 5,399 × 0.222973² ≈ **268 px** and
+>   5,272 × 0.222973² ≈ **262 px**. ⇒ **The two-part sum revision 2 quoted (321 + 268 =
+>   589 px against `ess/idle`'s measured 599–631) matches only because the goggles are
+>   drawn over the hair and cover most of it**, so the frame shows about one head's
+>   worth of teal above the neck rather than two. The gun's own term is the sound half
+>   of that control and it is the one the figures below use.
+>   - **To measure the gun alone, split the teal at 45 % of the subject's box height —
+>     and only while the arm hangs.** ⚠️ **The split is valid in `idle` and `walk` and
+>     nowhere else in `ess`.** In `ess/idle` the lower (gun) share is **322–338 px** on
+>     all 21 frames and the upper (head-and-goggles) share is **272–293 px**, each
+>     stable to a few per cent; in `walk` the lower share stays the gun's on all 13.
+>     But the cut is a fraction of the *box*, so a raised arm puts the gun above it:
+>     in **`aim` and on every frame of `shoot`** the gun's teal is entirely above the
+>     cut (the "gun share" reads 80–200 px of nothing in particular and the upper share
+>     414–528), and it straddles the cut on **`run` f7**, **`jump` f9–f15** and
+>     **`hit` f0, f3 and f4**. Read a gun figure from this split only where this brief
+>     quotes one.
 > - **The vortex** in `pro/portal` — drawn pixels with b > r + 25 and b > g + 25.
 >   Control: `portal/f0000`, before anything opens, reads **202 px**, which is the
 >   figure's own dark blue hair. That is the estimator's floor; everything quoted
@@ -142,8 +214,11 @@ do with passing it.
   `portal` and `run-to-idle` are **`pro`-only**. The two `shoot`s are different
   lengths.
 
-⚠️ [docs/LADDER.md](../../docs/LADDER.md)'s spineboy row says "11 animations". That
-is `pro`'s count. **Do not size the exam from it.**
+⚠️ **You may see "11 animations" attached to this rung elsewhere in the repository.
+That is `pro`'s count** — the two lines above are the whole inventory, and `ess` has
+**8**. Do not size the exam from the larger number, and do not go looking for where it
+is written: the ladder's status table is a document an authoring run does not open, and
+the 2026-08-23 attempt at this rung paid for reading it.
 
 ```bash
 bun cli.ts build \
@@ -333,12 +408,22 @@ one of their `pro` counterparts does — `pro/idle` at 0 px; `pro/walk` is 77 px
 is small but not exact either. All four are still cycles; do not read the difference
 as a structural fact.
 
-📌 **Nothing is ever completely still except one frame pair in the whole reference.**
-The quietest consecutive pair anywhere is `ess/shoot` f0 → f1, which is **identical**
-— the shot holds for its first twelfth of a second. Everything else moves: the next
-quietest are `pro/portal` f0 → f1 at **4 px** (the vortex's first speck, while the
-figure itself has not moved at all), `pro/portal` f1 → f2 at **18 px**, and then
-`ess/death` f25 → f26 at **24 px**.
+📌 **At 2/255, one consecutive pair in the whole reference is completely still — and
+at the tolerance the measure uses there are nine.** The distinction matters more than
+the count does, so both readings are given.
+
+- **At 2/255**, the quietest consecutive pair anywhere is `ess/shoot` f0 → f1, which
+  is **identical** — the shot holds for its first twelfth of a second, and that pair
+  is identical to the bit as well. Everything else moves: the next quietest are
+  `pro/portal` f0 → f1 at **4 px** (the vortex's first speck, while the figure itself
+  has not moved at all), `pro/portal` f1 → f2 at **18 px**, and then `ess/death`
+  f25 → f26 at **24 px**.
+- ⭐ **At 8/255** — `CHANGE_TOLERANCE`, the threshold the per-frame comparison reads
+  at — `ess/shoot` f0 → f1 is joined by **eight of `ess/death`'s nine quiet pairs,
+  which read exactly 0**, and the ninth reads 1 px. Nothing else in either skeleton
+  crosses over: the next quietest after those reads 4 px at both thresholds. ⇒ **Build
+  `death`'s middle as a hold, not as a crawl** (see *`death`*), and read every other
+  "moves" in this brief as safe at either threshold.
 
 ---
 
@@ -351,9 +436,12 @@ figure itself has not moved at all), `pro/portal` f1 → f2 at **18 px**, and th
 It is small: over the 21 frames the subject's bounding box is
 **100–101 px wide and 143–146 px tall**, its top edge rises and falls through
 **3 px** (row 191 → 194 → 191), and its centroid sways **2.0 px** horizontally
-(183.5 → 185.5 → 183.6) on the same cycle. The feet never move — exactly two
-ground-contact groups on all 21 frames, and the lowest drawn row is **336** on every
-one of them.
+(183.5 → 185.5 → 183.6) on the same cycle. The feet are planted — exactly two
+ground-contact groups on all 21 frames, the lowest drawn row is **336** on every one
+of them, and the two contact spans hold to **within one column** across the cycle
+(24 and 27 columns on f0–f2 and f17–f20, 23 and 27 on f3–f16). It is a plant, not a
+mathematical hold; the one-column wobble is the near foot's edge crossing the 8/255
+mask as the body sways.
 
 No consecutive pair differs by less than 3,157 px. The breathing is continuous, not
 a hold with a bob in it.
@@ -399,9 +487,12 @@ It is being covered, not foreshortened away. The leg is in front of the gun.
 ## `run` — the same idea with both feet off the ground
 
 **0.6667 s, loops — and it returns to its first frame within 1 pixel.** Four shots
-return exactly (`ess/shoot`, `pro/idle`, `pro/run`, `pro/shoot`), so this is the
-fifth-tightest loop and the tightest in `ess` after `shoot`. Two strides, again
-**on the spot** (centroid x 183.8–193.6, first and last frame both 191.1, no drift).
+return at 0 px (`ess/shoot`, `pro/idle`, `pro/run`, `pro/shoot`), so this is the
+fifth-tightest loop and the tightest in `ess` after `shoot`. ⚠️ Three of those four are
+identical to the bit; **`pro/run` is not** — 5 pixels move there, by one level each, so
+"returns exactly" is a statement at 2/255 and not a claim of byte equality. Two
+strides, again **on the spot** (centroid x 183.8–193.6, first and last frame both
+191.1, no drift).
 
 **There is a flight phase, twice.** The lowest drawn row is **323 on f2 and f6** and
 **334–336 on every other frame** — the whole figure is **13 px ≈ 58 units** clear of
@@ -417,6 +508,32 @@ flat contact each time, **21 columns at f3 and 14 at f7**, so the two landings a
 not the same width — which the 30 fps sheet corroborates: contact returns at tiles
 **6** and **17**, and the wide flat contact runs tiles 7–9 and 18–20. Four twelfths
 of a second apart, one landing per stride.
+
+🔫 **The arms swing too, and the blaster's reach is the widest in `ess`.** The gun
+rides the far arm (*`idle`*), and over nine frames its teal sweeps **121 px of screen**
+— from column 128 at f3 to column 249 at f6. Frame by frame, the leftmost and
+rightmost column its teal reaches, and its own area from the split (valid here on every
+frame but f7, against the 322–338 px it reads unoccluded):
+
+| frame | f0 | f1 | f2 | f3 | f4 | f5 | f6 | f7 | f8 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| leftmost column | 195 | 186 | 152 | **128** | 131 | 189 | 204 | 197 | 195 |
+| rightmost column | 242 | 204 | 170 | 169 | 167 | 201 | **249** | 240 | 242 |
+| own teal, px | 326 | 198 | 102 | 265 | 297 | 281 | 333 | 165 | 326 |
+
+- **f3 and f4 are the extreme forward reach** — the gun sits at columns 128–169
+  (rows 273–287) and 131–167 (rows 284–303), out past the leading knee and clear of
+  the body, and **column 128 is the furthest left the blaster gets in any `ess` shot**.
+  The figure's own box only starts at column 120 on that frame, so the gun is within
+  8 px of being the leading edge of the whole silhouette: an arm that comes up short
+  here comes up short visibly.
+- **f6 is the extreme back reach**, columns 204–249, rows 259–280 — the gun is high
+  and behind, and at 333 px it is unoccluded.
+- **f7 is where the arm comes up**: the gun's teal lifts to rows 243–268, crossing the
+  45 % cut, which is why the split's figure drops to 165 px there without the gun being
+  covered. Read f7's *position* from the columns above and not from that number.
+- The dips at f1 (198 px), f2 (102 px) and f7 are occlusion by the near leg and the
+  torso as the arm passes the body — the same mechanism `walk` f6 and f9 measure.
 
 ## `jump` — no wind-up, a long hang
 
@@ -444,11 +561,13 @@ the last frame's box is (146, 200)–(249, 335) against the first's (146, 201)�
 
 ## `shoot` — a hold, a flash, and back exactly
 
-**0.4000 s, and the last frame is bit-identical to the first** — 0 px differ, the
-only exact return in `ess`.
+**0.4000 s, and the last frame is bit-identical to the first** — not one pixel differs
+at any threshold, the only exact return in `ess`.
 
-- **f0 → f1 is identical.** The shot holds for its first twelfth of a second before
-  anything happens. This is the only motionless frame pair in the entire reference.
+- **f0 → f1 is identical, and bit-identical.** The shot holds for its first twelfth of
+  a second before anything happens. **At 2/255 it is the only motionless consecutive
+  pair in the reference; at the measure's own 8/255 it is one of nine**, the other
+  eight being `ess/death`'s hold — see the note under the duration tables.
 - **The flash.** Pink flare pixels are absent on f0, f1 and f5, and present on
   **f2 (166 px), f3 (1,659 px) and f4 (717 px)** — it blooms and disperses rather
   than popping for one frame. On the 30 fps sheet it is on tiles **5 through 11**,
@@ -476,40 +595,90 @@ length recovering. Over five frames the box goes 148 × 80 → 149 × 104 → 13
 ⚠️ He passes **below** the standing floor: the lowest drawn row is **338, 340, 339,
 336, 336** — up to 4 px under world y = 0 on the middle frames.
 
+**He rolls up; he is never lifted, and he never holds.** Two measurements say so and
+both matter to a fit, because this is the densest five frames on the ladder:
+
+- **Ground contact never breaks** — exactly **one** group on all five frames, and its
+  width collapses **48 → 28 → 27 → 27 → 29 columns**. At f0 the contact band holds
+  48 columns because the body is lying along it; from f2 onward it is an ordinary
+  stance width. On the 30 fps sheet the same thing reads as one group on ten of the
+  eleven tiles (tile 2 briefly splits) with the tile box height climbing **27 → 50**
+  without a step.
+- **Every consecutive pair moves by about eight thousand pixels** — 7,979 / 8,275 /
+  8,651 / 7,919 at 2/255, and 7,724 / 7,998 / 8,416 / 7,571 at 8/255. There is no
+  quiet pair anywhere in the shot and no frame to reuse.
+- **The blaster travels with him.** The teal that is not the hair sits at
+  **x 148–164, rows 304–322** on f0 — down at the far end of the lying body, close to
+  the floor — and finishes at **x 171–204, rows 235–266** on f4, up and out to the
+  right. It is not yet where `aim` holds it (x 190–237, rows 244–258), so the shot ends
+  on its own pose rather than on the stance.
+
 `pro` has no `hit`.
 
 ## `death` — fall, land, lie still, then a hand comes up
 
 **4.9333 s, does not return** (9,761 px). The longest shot in this rung — though not
 on the ladder: rung 2's `tennis-ball` runs 25.8 s and rungs 3, 4, 5 and 6 all carry a
-shot longer than this one. It is four distinct passages:
+shot longer than this one. It is **five** distinct passages, and the two in the middle
+are the ones a fitter gets wrong:
 
 1. **f0 → f7, the fall.** Standing at (177.8, 256.1), the figure is thrown up and to
    the left, tumbling: the box turns from 61 × 153 upright to **151 × 65** flat, the
    lowest row goes 336 → 259 (he leaves the ground) → 338, and the largest change in
    the shot is **f5 → f6 at 9,658 px**. He ends on his back, head to the left.
-2. **f8 → f12, the settle.** He slides and stops. The centroid travels from x 177.8
-   at f0 to **x ≈ 83**, about **95 px ≈ 426 units to the left**. Consecutive
-   differences fall away — 5,942, 5,120, 5,337, 4,567, 3,220.
-3. **f18 → f26, dead still.** Consecutive differences drop under 50 px at f17 → f18
-   and stay there — **24 to 45 px**, a two-hundredth of what a moving pair costs in
-   this shot — for **nine frames, 0.75 s**. The bounding box is (24–25, 275–276)–(175,
-   338) and moves by at most one pixel in that whole passage.
-4. **f27 → f56, a hand comes up.** Motion restarts at f27 — the f26 → f27 pair
-   differs by **1,590 px**, sixty times the pair before it — and it is confined to the
-   left-hand end of the body: every difference box in this passage lies inside
+   ⚠️ **This is a whole-body re-orientation over seven frames and every limb turns
+   with it** — the difference box is the whole figure on every pair (x 135–215 at
+   f0 → f1, x 36–155 at f5 → f6, x 23–173 at f6 → f7), so there is no part of him a
+   fit can leave where it started.
+2. **f8 → f12, the slide.** He slides and stops. The centroid travels from x 177.8
+   at f0 to **x 84.2 by f12** and settles at **x 82.8** one frame later — about
+   **95 px ≈ 426 units to the left** all told. Consecutive differences fall away —
+   5,942, 5,120, 5,337, 4,567, 3,220.
+3. ⭐ **f13 → f17, the feet come to rest** — a five-frame tail that is easy to miss
+   because the body is already in place. The box has reached its resting extent by
+   f13–f15 and the difference counts decay **1,496 → 797 → 332 → 297 → 140** (at 2/255)
+   or **1,387 → 676 → 245 → 211 → 70** at the measure's own 8/255. Where the motion is
+   matters more than how much: at 8/255 the difference box walks *right* and shrinks
+   onto the boots — **x 60–169** at f12 → f13 (rows 277–337), then **x 111–173**
+   (rows 303–338), then **x 151–176** twice (rows 310–337), and finally **x 164–175**
+   at f16 → f17 (rows 311–333). By f14 nothing outside the boots is moving at all.
+   ⇒ **The body lands before the feet do**, and these five frames are the only place in
+   the shot where one end of him is settled and the other is not. A build that treats
+   the shot as "moving until f12, then held from f18" is wrong twice — it slides a
+   settled body, and it holds feet that are still arriving.
+4. **f18 → f26, a dead hold.** 🚫 **Read this at the per-frame comparison's own
+   tolerance and build it as a hold.** At 2/255 the consecutive differences drop under
+   50 px at f17 → f18 and stay there — 24 to 45 px, a two-hundredth of what a moving
+   pair costs in this shot — for **nine frames, 0.75 s**. At **8/255**
+   (`CHANGE_TOLERANCE`) the same nine pairs read **0, 0, 0, 0, 0, 1, 0, 0, 0**: eight
+   of them are held outright and the ninth, **f22 → f23, is a single pixel** (at
+   column 88, row 317, moving 43 levels). The bounding box is
+   (24–25, 275–276)–(175, 338) and moves by at most one pixel in the whole passage.
+   ⚠️ **Neither reading is exact equality** — 719 to 852 pixels move on every one of
+   those pairs, by 1 to 6 levels, invisible at any magnification — so do not tighten
+   the hold to byte equality either. What the passage asks for is a rig that does not
+   move at all for nine frames, and one pixel's worth of the head-and-chest end that
+   does, once.
+5. **f27 → f56, a hand comes up.** Motion restarts at f27 — the f26 → f27 pair
+   differs by **1,590 px**, **sixty-six times** the pair before it — and it is confined
+   to the left-hand end of the body: every difference box in this passage lies inside
    x 23–131, which is the head-and-chest end, while nothing at all changes right of
-   x 140 after f27 — the boots at x 145–175 never move again. The arm that lifts off
+   x 140 after f27 — the boots at x 145–175 never move again. ⚠️ **The confinement is
+   the strongest constraint in the shot and it tightens**: from f31 the difference box's
+   right edge draws in from 131 to **111** and its left edge from 23 to **33**, so by
+   the middle of the passage everything that moves is inside **x 30–113**. A fit that
+   reaches this passage by turning the whole body will be wrong on the two thirds of
+   him that are held. The arm that lifts off
    the chest and waves is the **near** one, and the frames say so: the raised hand is
    an open fist, and the art ships a fist only for the near arm. Revision 3 reached
    the same place from the other end — `front-fist-open` is the piece that matches the
    raised hand, and the gun, which carries its own gripping hand, is on the far arm.
    The subject's top edge rises from row 276 to **265** by f48–f51 and back to 273 —
-   and the arm is down again by f57, after which the frames go quiet
-   (620, 667, 859 px).
+   the largest pair in the passage is **f54 → f55 at 3,590 px** — and the arm is down
+   again by f57, after which the frames go quiet (620, 667, 859 px).
 
-The whole thing is a fall, a stillness long enough to read as death, and then a last
-movement.
+The whole thing is a fall, a slide, the feet coming to rest, a hold long enough to read
+as death, and then a last movement.
 
 ## `aim` — one frame
 
@@ -676,6 +845,117 @@ Stated so that its silence is not mistaken for a measurement.
   the figure, or the figure to be moved by something outside the animation, is not a
   fact these pixels carry.
 
+## Verification notes — revision 3 → 4
+
+Third third-party pass, **2026-08-27**, by an agent that wrote no previous revision and
+none of the three spineboy attempts, working from `bench/reference/spineboy/` and
+`examples/spineboy/images/` only. `examples/spineboy/export/`, `bench/transcriptions/`
+and all three runs' rig and motion specs were **not** opened. The repository's own
+source was read for two thresholds and one layout — `src/check.ts` for
+`CHANGE_TOLERANCE`, `src/framing.ts` for `BACKGROUND_TOLERANCE`, `src/render.ts` for
+the sampling rule and its rasteriser comment, and `bench/render_reference.ts` for the
+sheet's tile geometry — and none of it carries a rung's answer.
+
+**Why this pass exists.** Two conventions postdate every earlier spineboy pass:
+a stillness or boundary claim must state the tolerance it was measured at, and an
+observable-by-construction structural fact is the exam question rather than a leak.
+The first turned out to reach three claims and one whole passage of `death`; the
+second changed nothing that had to be removed and licensed two paragraphs that were
+missing.
+
+**Method and controls.** Every estimator was rebuilt from scratch against the plate
+reader the tooling itself uses, and each was scored on a control with a known answer
+before its output was believed:
+
+| Estimator | Control | Result |
+| --- | --- | --- |
+| changed-pixel count | written to `check`'s own definition — strictly *more than* the threshold, on any of the three colour channels, over the whole frame rather than a mask — and first run at **2/255** against every difference figure this brief already publishes: 17 first-to-last counts, `death`'s 9,658 px throw and 5,942/5,120/5,337/4,567/3,220 settle, `jump`'s 10,811 px drop, `idle`'s 3,157 px quietest pair, `pro/portal`'s 4 px and 3,236 px | all of them to the digit, so the same code run at **8/255** is the instrument the per-frame comparison uses and its readings can be quoted beside the 2/255 ones |
+| floor row | recomputed from each sidecar's viewport | **335.96** and **280.90** to the digit, and the lowest drawn row is 336 / 281 on every standing frame |
+| subject mask, boxes, centroids, lowest rows | revision 2's published figures for `idle`, `walk`, `run`, `jump`, `shoot`, `hit`, `death` and all eleven `pro` shots | every box, every centroid to 0.1 px, every lowest row |
+| **teal predicate over the art** | all 40 files rather than the two revision 2 named — a predicate that fires on two files can fire on three | ⚠️ **it fires on three**: `gun` 6,488, `head` 5,399, **`goggles` 5,272**, plus seven files at 3–17 px. Revision 2's 5,388 and 6,459 reproduce to 0.4 %; its missing term does not |
+| the 45 % teal split | applied to **every** `ess` frame, not only the ones it is quoted on | valid on all 21 `idle` and all 13 `walk` frames; **invalid on `aim`, all of `shoot`, `run` f7, `jump` f9–f15 and `hit` f0/f3/f4**, where the gun sits above or across the cut |
+| contact-sheet tiles | cut with `render_reference.ts`'s own geometry (128 px long side, 1 px rules, 8 columns, row major) and checked against the 12 fps frames whose answer is already in hand | every tile figure in the brief reproduces — `walk`'s 2/1/2/1/2 census, `run`'s zero-contact tiles 5/15/16 and its toes on 4/6/14/17, `jump`'s apex on tiles 20–25 and its 45-against-49, `shoot`'s tiles 5–11 brightest at 9, `pro/shoot`'s tiles 1–5, `pro/portal`'s 1 px on tiles 36–37 |
+| duration bracketing | recomputed from each sidecar's `sampled` at both rates | all 19 frame counts, all 19 windows and all 19 values on a 30 fps grid, and the 24 fps counterfactual (**two** candidates each for `ess/death` and `ess/shoot`) |
+| art margins | every file, both as fully transparent rows/columns and as an alpha-255 border test | 25 flush, 7 with a true 1 px border, 8 lopsided, every margin figure including `muzzle03`'s 4/3/2/5, no file with an alpha-255 border pixel, `portal-bg` 264 × 264 in 266 × 266 |
+| connectivity census | all 322 committed frames under both 4- and 8-connectivity | **28**, and the same 28 both ways: 26 `pro/portal`, `ess/shoot/f0004`, `pro/aim` |
+
+**Tally: 6 claims corrected, 3 stillness clauses pinned to the tolerance they are read
+at, 4 passages added or extended, 1 pointer removed.** Nothing was moved into the
+silence list and nothing came out of it, and no figure of revisions 2 or 3 was
+disturbed except the six named below.
+
+Corrected (old → new):
+
+1. **The teal predicate fires on three art files, not two**, and the 589 px two-part
+   prediction matches the frames only because the goggles are drawn over the hair.
+   The gun's own term is unchanged and so is every gun figure in the brief.
+2. **The 45 % split now states its domain.** It was written as a general method and it
+   is not one.
+3. **The header's `pro/shoot` floor control**: "six of the nine" → **seven of the
+   nine**, which is what the body's own revision-2 correction already said. Third
+   revision of one sentence; the values were right and the count was not.
+4. **"Four shots return exactly"** → four return at 0 px, and **three of the four are
+   identical to the bit**; `pro/run` moves 5 pixels by one level.
+5. **`idle`'s "the feet never move"** → planted, with both contact spans holding to
+   within one column and the wobble attributed to the mask edge.
+6. **`death`'s slide** reaches x 84.2 at f12 and settles at **x 82.8 at f13**; the
+   "x ≈ 83" quoted for the passage ending at f12 is the resting value, one frame late.
+   Also **"sixty times the pair before it"** → sixty-six, and revision 2's own note
+   that none of the 17 first-to-last differences reproduces at 8/255 → **five do**.
+
+Given their tolerance:
+
+- **`ess/death` f18 → f26.** 24–45 px at 2/255; **0, 0, 0, 0, 0, 1, 0, 0, 0** at 8/255,
+  the one pixel being f22 → f23 at column 88, row 317, 43 levels. None of the nine is
+  identical to the bit (719–852 pixels at 1–6 levels). ⇒ the passage is a hold to the
+  measure, and the brief said it was a crawl.
+- **"Nothing is ever completely still except one frame pair in the whole reference."**
+  True at 2/255, false at 8/255, where there are nine. Both readings are now given, and
+  the second one names the shot.
+- **`ess/shoot` f0 → f1 and f0 → f5.** Bit-identical, checked at exact equality rather
+  than asserted.
+
+Added:
+
+- **`ess/death` gains a fifth passage, f13 → f17** — the feet coming to rest after the
+  body has stopped, with the difference box walking right onto the boots
+  (x 60–169, then x 111–173, then x 151–176 twice, then x 164–175, all in rows
+  277–338). It was described by neither of the two passages it sat between.
+- **`ess/run` gains the blaster** — leading and trailing column and visible teal on all
+  nine frames, a 121 px sweep, with f3 the furthest forward the gun reaches anywhere in
+  `ess` and f7 the frame where it crosses the split's cut.
+- **`ess/hit` gains three facts** — contact never breaks and its width collapses
+  48 → 29 columns; every pair moves by about 8,000 px, so there is no quiet frame in
+  the shot; and the blaster travels from the floor at x 148–164 to x 171–204 held out.
+  All three are things a viewer of the frames counts for themselves, which is what the
+  fifth reading licenses — and five frames of continuous whole-body rotation is the
+  densest thing this rung asks for, so it was the thinnest paragraph in the brief with
+  the most to place.
+- **`death`'s passage 5 gains the tightening** — the moving box draws in to x 30–113
+  from f31, and the largest pair in the passage is f54 → f55 at 3,590 px.
+
+Removed:
+
+- 🚫 **The pointer at the ladder's status table.** Revision 3 said "`docs/LADDER.md`'s
+  spineboy row says '11 animations'" with a live path, which is a citation out of an
+  allowed surface into a forbidden one — the closure clause of the honesty rule, and
+  the leak the 2026-08-23 attempt at this rung recorded and paid for. The correction it
+  was making stays; the path and the invitation are gone. (The one remaining mention of
+  that document, in *How the result is read*, is about what a person does with the
+  measures after the run and is the same sentence every brief on the ladder carries.)
+
+**Honesty-rule check, under the fifth reading.** This pass adds no bone name or count,
+no hierarchy, no key time or value, no curve handle, no timeline kind, no slot name, no
+setup pose and no stage size. What it adds is measured off the committed frames and the
+art files an authoring agent is handed: per-pair changed-pixel counts at two stated
+thresholds, difference-box extents, contact widths, and the position of one drawn part
+across nine frames. Every one of those is a reading of the exam question — the frames —
+rather than of the answer key, which is the first of the honesty rule's readings;
+and the cast facts added to `hit` are what a client watching the shot would report,
+which is the fifth. Nothing here states or narrows a reference-side value of a scored
+measure that the frames do not carry. No scripts are committed; the method is described
+here, as revisions 2's and 3's were.
+
 ## Verification notes — revision 2 → 3
 
 Second third-party pass, **2026-08-24**, by an agent that wrote neither revision and
@@ -789,7 +1069,10 @@ error, revision 1's number was kept.
 tables entire (all 19 frame counts at 12 fps, all 19 at 30 fps, all 19 windows, all
 19 values on a 30 fps grid, and the two corrections 30 fps was chosen for,
 `pro/idle-turn` 0.2667 and `pro/shoot` 0.6333); all 17 first-to-last differences at
-2/255, none of which reproduce at 8/255; `ess/idle`'s 100–101 × 143–146 box, its
+2/255 (⚠️ **revision 4 corrects this pass's own gloss**: "none of which reproduce at
+8/255" is wrong — **five of the seventeen do**, namely the four that read 0 and
+`ess/run`'s single pixel; the other twelve move, 302 → 142 and 104 → 21 among them);
+`ess/idle`'s 100–101 × 143–146 box, its
 191 → 194 → 191 top edge, its 183.5 → 185.5 → 183.6 sway, its immobile feet (both
 contact spans identical to within one column on all 21 frames) and its 3,157 px
 quietest pair; `ess/walk`'s footfall counting frame by frame (2,2,1,1,1,2,2,2,2,1,1,2,2)
@@ -887,7 +1170,8 @@ pair.
     or less" → **0.22 %** (302 / 140,928 = 0.214 %); "their `pro` counterparts do
     (0 and 77)" → only `pro/idle` returns bit-exactly, `pro/walk`'s 77 px does not;
     the third-quietest consecutive pair is **`pro/portal` f1 → f2 at 18 px**, ahead
-    of `ess/death` f25 → f26 at 24; `ess/death`'s passage-4 difference boxes run
+    of `ess/death` f25 → f26 at 24; `ess/death`'s passage-4 difference boxes
+    (**passage 5** in revision 4's numbering) run
     **x 23–131**, not 24–131 (and nothing at all changes right of x 140 after f27);
     `ess/run`'s "tightest loop in either skeleton after `shoot`" → four shots return
     at 0 px, so it is the **fifth** tightest; `pro/run`'s clearance "≈ 60–64 units" →

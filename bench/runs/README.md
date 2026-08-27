@@ -30,7 +30,7 @@ status and gating features live in [docs/LADDER.md](../../docs/LADDER.md).
 | 5 | [`5-squash-and-stretch.md`](../briefs/5-squash-and-stretch.md) | **yes (third party)**, rev 3, 2026-08-26 | 3 animations, 12 fps + 24 fps sheets | **2** | subject ~4–16 px; proportions are measured, not seen; the second candidate is the first authored from rev 3, so its figures do not compare with the first's |
 | 6 | [`6-arcs.md`](../briefs/6-arcs.md) | **yes (third party)**, rev 3, 2026-08-23 | 1 animation, 12 fps + 24 fps sheet | 1 | the subject **deforms**; ball ~14 px; proportions are measured, not seen |
 | 8 | [`8-follow-through.md`](../briefs/8-follow-through.md) | **yes (third party)**, rev 2, 2026-08-23 | 2 skeletons, 1 animation each, 12 **and** 24 fps in full | **2** | two shots that want opposite machinery — `pendulum` deforms nothing, `ball` deforms on most frames; the `ball` shot moves over 130 px between two 12 fps frames, so read it at 24 fps; the chain's lag is **horizontal only** |
-| spineboy | [`spineboy.md`](../briefs/spineboy.md) | **yes (third party) ×2**, rev 3, 2026-08-24 — the revision-2 gun-hand contradiction ([#111](https://github.com/firejune/rigc/issues/111)) is **settled by measurement**: the gun is in the **far** hand, `idle` and `walk` say so, and the working — estimator, controls and margins — is in the brief's *Verification notes — revision 2 → 3*. Nothing about the gun's arm is left for a run to rediscover | 2 skeletons, 19 animations, 12 fps in full **+ 30 fps sheets** | **1** (`ess`; `pro` is optional) | the rung clears on **`ess` alone**, and `ess` has **8** animations — the ladder row's "11" is `pro`'s count; `pro`'s line is printed *(stretch — does not count)*; the two skeletons are at different scales, so no pixel figure crosses between them; the second rate is **30 fps** and only two frames per animation are on disk at it, so the sheets are for timing and never for a distance |
+| spineboy | [`spineboy.md`](../briefs/spineboy.md) | **yes (third party) ×3**, rev 4, 2026-08-27 — the revision-2 gun-hand contradiction ([#111](https://github.com/firejune/rigc/issues/111)) is **settled by measurement** (rev 3): the gun is in the **far** hand, `idle` and `walk` say so, and nothing about the gun's arm is left for a run to rediscover. Rev 4 is the first pass under the tolerance-in-claim rule and the fifth reading, and it found the brief counting differences at **2/255**, finer than the measure — so `ess/death`'s nine-frame hold read "24–45 px" where the per-frame comparison reads **eight exact holds and one 1 px pair**, and the shot's f13–f17 tail (the feet coming to rest after the body has) was described by no passage at all. Both are fixed, `run` gained the blaster's 121 px sweep, and the pointer at this repository's ladder row is gone | 2 skeletons, 19 animations, 12 fps in full **+ 30 fps sheets** | **1** (`ess`; `pro` is optional) | the rung clears on **`ess` alone**, and `ess` has **8** animations — the ladder row's "11" is `pro`'s count; `pro`'s line is printed *(stretch — does not count)*; the two skeletons are at different scales, so no pixel figure crosses between them; the second rate is **30 fps** and only two frames per animation are on disk at it, so the sheets are for timing and never for a distance. ⚠️ **This brief's difference counts are at 2/255 throughout** — read every "still" at `check`'s 8, which the brief now does for you |
 | 7 | [`7-anticipation.md`](../briefs/7-anticipation.md) | **yes (third party)**, rev 2, 2026-08-27 | **local-only, never committed**: 4 animations, 102 frames at 12 fps, plus 24 and 30 fps sheets | — | the frames are not in this repository: render them yourself with the exact commands in the brief, into the gitignored `bench/reference-local/`, and pass `--frames` to `check` and `bench`. The brief's figures depend on three conventions it now states and none of which is the obvious choice — opaque means **alpha ≥ 128** on the art, velocity is a **central difference**, and "differ in colour" counts are at **exact equality** while silhouettes are at 8/255 |
 
 **Brief verified** is the header block described in the next section. Rungs 3 and 1
@@ -58,7 +58,21 @@ one; revision 3 has since made it three). **It is also the first brief to carry 
 second third-party pass** (2026-08-24, revision 3, a different agent again), which
 took a single question — which hand holds the gun — and settled it against the frames
 instead of choosing between the two answers revision 2 gave: the gun is in the **far**
-hand, and the working is in the brief's *Verification notes — revision 2 → 3*. Rung 6
+hand, and the working is in the brief's *Verification notes — revision 2 → 3* — **and
+the first to carry a third** (2026-08-27, revision 4, a third agent), which is the
+first spineboy pass held to the tolerance rule in *What the verifying agent does*
+below and to the honesty rule's fifth reading. It corrected six claims, put three
+stillness clauses on the tolerance they are read at, added the two passages the brief
+had left out — `ess/death`'s f13–f17 and `ess/run`'s blaster — and dropped a live path
+into `docs/LADDER.md`'s status table.
+⚠️ **Its finding generalises and is worth carrying to any brief written at a
+self-chosen threshold**: spineboy counts frame-to-frame differences at **2/255**, which
+is *finer* than `CHANGE_TOLERANCE`, and the failure mode is the mirror image of rungs 3
+and 5's. Theirs said "still" and a later reader tightened it to exact equality; this one
+said "24 to 45 pixels" for a passage the measure reads as **eight exact holds and one
+one-pixel pair**, so an author who believed the brief would build a crawl into a hold.
+**A tolerance finer than the measure's is as misleading as one coarser, and neither
+shows up unless the claim carries its threshold.** Rung 6
 is the first brief to carry the pass the protocol actually asks for — a **different**
 agent, not the one that wrote it. Rungs 2, 4 and 5 were re-measured by their own
 author, and their revision-2 headers say so; **rungs 4 and 5 then took the
@@ -163,6 +177,16 @@ What the verifying agent does:
   exact equality "corrects" the hold to start a frame later, or away entirely, which is
   a regression no frame shows. Rungs 5 and 3 both shipped that defect and both now
   carry the tolerance in the claim.
+  - ⚠️ **It bites in both directions, and the other one is worse** (spineboy, revision
+    4, 2026-08-27). A brief that measures at a threshold *finer* than
+    `CHANGE_TOLERANCE` reports motion where the measure reads a dead hold: spineboy
+    counts at 2/255 and so described `ess/death`'s nine-frame stillness as "24 to
+    45 px", where at 8/255 eight of those nine pairs are **exactly 0** and the ninth is
+    **one pixel**. An author who believed the brief would build a crawl into a hold —
+    and stillness is the one thing the per-frame comparison treats categorically, so
+    moving at all against a still reference is a disagreement however small it is. ⇒
+    **State the threshold, and if it is not the measure's, quote the measure's reading
+    too.**
 - Correct what is wrong *in the brief*, in the terms a client watching the shot
   could give — never by opening the reference export. The verifier is under the same
   honesty rule as the run agent, and a brief repaired from the answer is worse than
