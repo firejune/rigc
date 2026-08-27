@@ -1,0 +1,580 @@
+rigc bench rung 7 — 7-anticipation
+  gates      physics timelines; a KEYED transform timeline; deform (first appearance); 20 physics constraints
+  candidate  /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/rigc/bench/runs/2026-08-28-rung7-1/spine/skeleton.json
+  atlas      /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/rigc/bench/runs/2026-08-28-rung7-1/spine/skeleton.atlas
+
+  ── validate (profile spine) ──
+    ..    profile spine — 7 renderer-policy and 7 archetype assertion(s) do not apply
+    PASS  A07_ATLAS_TEXT_SHAPE
+    PASS  A00_ROUNDTRIP_PARSE
+    PASS  A16_SKELETON_VERSION_4_3
+    PASS  A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS
+    PASS  A02_NO_BONE_TRANSFORM_KEY
+    PASS  A05_CURVE_ARRAY_LENGTH
+    PASS  A03_REGION_WIDTH_HEIGHT_FINITE
+    PASS  A04_MESH_TRIANGLES_AND_ENCODING
+    PASS  A20_MESH_WEIGHTS_COHERENT
+    PASS  A22_MESH_UVS_IN_UNIT_RANGE
+    PASS  A23_PHYSICS_CONSTRAINT_EFFECTIVE
+    PASS  A08_REGION_NAMES_MATCH_ATTACHMENTS
+    PASS  A10_NO_NAN_AFTER_STEPPING
+    PASS  A17_ATLAS_PAGE_FILES_EXIST
+    PASS  A06_ATLAS_PAGE_SIZE_MATCHES_PNG
+    SKIP  A31_DRAW_ORDER_OFFSETS_RESOLVE: no animation carries a drawOrder timeline
+    SKIP  A32_EVENT_KEYS_RESOLVE: no animation carries an event timeline
+    SKIP  A33_VERTEX_ATTACHMENT_GEOMETRY: the skeleton carries no bounding box and no clipping attachment
+    SKIP  A09_ANIMATION_DURATION_MATCHES_SPEC: no motion spec supplied, so no declared duration to compare against
+    SKIP  A18_DETERMINISTIC_EMIT: no second compile to compare against (re-gating artifacts on disk)
+    PROF  A12_NO_DARK_COLOR: renderer rule, not in profile "spine"
+    PROF  A11_NO_CLIPPING_ATTACHMENTS: renderer rule, not in profile "spine"
+    PROF  A13_MESH_BUDGET: renderer rule, not in profile "spine"
+    PROF  A14_NO_FULL_FRAME_MESH: renderer rule, not in profile "spine"
+    PROF  A15_IDLE_NO_MESH_BONE_KEYS: renderer rule, not in profile "spine"
+    PROF  A21_MESH_RIM_PINNED: archetype rule, not in profile "spine"
+    PROF  A19_OVERLAY_PNGS_HAVE_ALPHA: renderer rule, not in profile "spine"
+    PROF  A24_AXIS_SPACE_STROKE: archetype rule, not in profile "spine"
+    PROF  A25_DETACHED_BONE_PARENTAGE: archetype rule, not in profile "spine"
+    PROF  A26_SLOT_DRAW_ORDER: archetype rule, not in profile "spine"
+    PROF  A27_REGION_NAME_MATCHES_PAGE_FILENAME: renderer rule, not in profile "spine"
+    PROF  A28_RIBBON_ROWS_SHARE_WEIGHTS: archetype rule, not in profile "spine"
+    PROF  A29_STROKE_WITHIN_CONTACT_DEPTH: archetype rule, not in profile "spine"
+    PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
+
+  ── diff vs 7-anticipation/sack-pro ──
+    candidate  /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/rigc/bench/runs/2026-08-28-rung7-1/spine/skeleton.json
+    reference  /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/rigc/examples/7-anticipation/export/sack-pro.json
+    ..         bones=7/31  slots=3/3  skins=1/1  attachments=3/3  constraints=0/24  animations=4/4  events=0/0   (candidate/reference)
+  
+    bones                 mean 0.136  over 8 measures
+        0.226  count                        7/31        how many bones
+        0.086  names                        3/35        the bone names themselves
+        0.065  parent_by_name               2/31        each bone hangs off the same parent
+        0.097  order                        3/31        the bones are declared in the same order
+        0.065  length_present               2/31        a setup `length` is present or absent alike
+        0.097  inherit_present              3/31        a setup `inherit` is present or absent alike
+        0.226  depth_histogram              7/31        NAME-AGNOSTIC: as many bones at each depth
+        0.226  degree_sequence              7/31        NAME-AGNOSTIC: as many bones with each child count
+  
+    bones (name-agnostic) mean 0.187  over 5 measures  — the same two skeletons compared with names thrown away
+        0.226  count                        7/31        how many bones
+        0.226  depth_histogram              7/31        as many bones at each depth
+        0.226  degree_sequence              7/31        as many bones with each child count
+        0.129  shape_histogram              4/31        as many bones of each depth-and-child-count shape (`d1c3` = one hop down, three children)
+        0.129  order_shape                  4/31        the bones are declared in the same order of shapes
+  
+    slots                 mean 0.952  over 7 measures
+        1.000  count                        3/3         how many slots
+        1.000  names                        3/3         the slot names themselves
+        1.000  order                        3/3         the slots array IS the draw order, so its order is data
+        0.667  bone                         2/3         each slot is bound to the same bone
+        1.000  attachment                   3/3         each slot shows the same setup attachment
+        1.000  blend                        3/3         each slot uses the same blend mode
+        1.000  color_present                3/3         a tint is present or absent alike
+  
+    slots (name-agnostic) mean 0.333  over 4 measures  — the same two skeletons compared with names thrown away
+        1.000  count                        3/3         how many slots
+        0.333  attachment_types_by_position 1/3         the same kind of attachment sits at each position in the draw order
+        0.000  bone_binding_shape           0/3         as many slots hang off a bone of each shape (`?` = no such bone is declared)
+        0.000  order_shape                  0/3         the draw order is the same order of `<attachment type>@<bone shape>`
+  
+    attachments           mean 0.407  over 9 measures
+        1.000  skins                        1/1         the skin names
+        1.000  count                        3/3         how many attachments
+        1.000  names                        3/3         skin/slot/attachment keys
+        0.333  type_counts                  1/3         as many of each attachment type
+        0.000  mesh_vertices                0/3         each mesh has the same vertex count
+        0.000  mesh_triangles               0/3         each mesh has the same triangle count
+        0.333  mesh_weighted                1/3         each mesh is weighted, or is not, alike
+        0.000  mesh_hull                    0/3         each mesh declares the same hull length
+        0.000  region_size                  0/2         NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)
+  
+    constraints           mean 0.000  over 5 measures
+        0.000  count                        0/24        how many constraints
+        0.000  names                        0/24        the constraint names
+        0.000  type_counts                  0/24        as many of each constraint type
+        0.000  type_by_name                 0/24        each constraint is the same type
+        0.000  refs                         0/24        each constraint names the same bones and slots
+  
+    animations            mean 0.791  over 9 measures
+        1.000  count                        4/4         how many animations
+        1.000  names                        4/4         the animation names
+        1.000  duration                     4/4         each animation runs as long (last key time, within one frame)
+        0.243  timeline_kinds               44/181      the same timelines exist
+        0.486  key_counts                   645/1326    those timelines carry as many keys
+        0.643  curve_kinds                  852/1326    as many linear / stepped / bezier keys
+        1.000  event_keys                   0/0         as many event firings  — neither side has any
+        1.000  draw_order                   4/4         a draw-order timeline is present or absent alike
+        0.750  deform                       3/4         a deform timeline is present or absent alike
+  
+    events                mean 1.000  over 2 measures
+        1.000  names                        0/0         the event names  — neither side has any
+        1.000  payloads                     0/0         each event carries the same typed payload  — neither side has any
+  
+    There is no overall score, on purpose: a section mean is an average of the
+    measures printed under it, and averaging those together would hide which
+    half of a rig is wrong. Read the measures.
+  
+    `bones` and `slots` carry two figures because most of their measures are
+    keyed on names, and a candidate is entitled to its own. They are two
+    comparisons, not two halves of one: name-agnostic 1.000 beside a low
+    name-matched figure means the shape is right and the vocabulary differs.
+
+  ── check vs frames /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/rigc/bench/reference-local/7-anticipation ──
+    candidate  /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/rigc/bench/runs/2026-08-28-rung7-1/spine/skeleton.json
+    atlas      /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/rigc/bench/runs/2026-08-28-rung7-1/spine/skeleton.atlas
+    frames     /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/rigc/bench/reference-local/7-anticipation
+    scope      the framing decided per frame set (--framing shared measures every set in one shared framing)
+    reference  1024x798px  0.189871 px/unit  world x[-782.8 .. 4610.3] y[-317.3 .. 3886.1]  (frames.json)
+               ⤷ the two world boxes are different coordinate systems and do not compare; the pixel grid does.
+    shared box one box for all 12 set(s) leaves x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)  (derived; used for every set that could not take the frames' own box)
+               ⤷ how far one shared framing is from serving every set. A set below that took the frames' own box instead is measured with no such correction at all; --framing shared measures every set here.
+    ⚠️ the framing was decided per frame set: 0 of 12 set(s) were measured in frames.json's own box because their own pixels land there, and the rest in the one shared framing on the "shared box" line. A set framed by the frames' own box cannot be moved by any other set. --framing shared measures every set in the shared framing instead, which is a different measurement and not comparable with this one.
+  
+    ── cape-follow-example — candidate animation "cape-follow-example", 12 fps ──
+       frames     37 on disk, candidate samples 37, 37 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-795.2 .. 4651.6] y[-327.6 .. 3917.1]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +2, +0 px: 27.63 → 25.07 over the reference's own pixels (9.3% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 23.91  worst 39.96 at f0020   (0..255 over the union alpha; over the whole frame, mean 0.32)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 25.07 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 7.3 px  "cape-front" at f0012   (2 of 37 frame(s) attributed no slot at all)
+       per-frame all 36 adjacent pair(s) change by as much as the reference's own frames do
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   2.6 px "sack" f0012                 1.7 px       17.75    71.2%
+         cape-back               1/1   1.0 px "cape-back" f0021            1.0 px       46.66    14.8%
+         cape-front              1/1   7.3 px "cape-front" f0012           1.5 px       35.41    12.6%
+         (unattributed)            —   —                                        —           —     1.3%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       the 8 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0012    30.74      10077    5006   3683   cape-front             7.3   tmpl 0.40 2/3
+         f0014    33.15      11300   16173  18055   cape-front             0.8   tmpl 0.25 1/3
+         f0016    28.91       9717   10683  11814   cape-front             0.9   tmpl 0.42 1/3
+         f0019    35.54      11381    8670  10477   cape-front             1.3   tmpl 0.42 1/3
+         f0020    39.96      14448   17179  20061   —                        —   —         0/3
+         f0021    29.65      11352   18928  20408   cape-back              1.0   tmpl 0.22 1/3
+         f0022    32.34      10901    8163   9567   —                        —   —         0/3
+         f0030    29.61      10766    3745   1274   cape-front             2.0   tmpl 0.54 1/3
+  
+    ── cape-follow-example@24fps — candidate animation "cape-follow-example", 24 fps ──
+       frames     2 on disk, candidate samples 73, 2 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-789.9 .. 4656.9] y[-327.6 .. 3917.1]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +1, +0 px: 21.02 → 16.45 over the reference's own pixels (21.7% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 15.71  worst 22.93 at f0072   (0..255 over the union alpha; over the whole frame, mean 0.20)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 16.45 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 3.0 px  "sack" at f0072
+       per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+       sheet      73 of 73 tile(s) of contact.png at 256x200px in 8 column(s)   MAE mean 27.38  worst 69.28 at f0041   (over the reference's own pixels, mean 29.53)
+                  ⤷ the frames this set does not commit as files. The candidate is sampled at the set's own rate and rendered into the same box the frames above were, at the sheet's scale. Read the series, not the mean: flat is framing or art, a spike is timing at that moment.
+                  ⤷ worst 8: f0041=69.3  f0039=61.0  f0043=51.2  f0040=48.7  f0042=46.2  f0038=44.9  f0044=42.5  f0027=40.3
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   3.0 px "sack" f0072                 3.0 px       12.15    77.6%
+         cape-back               1/1   no slot attributable                     —       15.98     6.7%
+         cape-front              1/1   2.7 px "cape-front" f0072           1.9 px       26.72    15.6%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       every frame, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0000     8.49      10285       —      —   cape-front             1.2   tmpl 0.61 1/3
+         f0072    22.93      10483       —      —   sack                   3.0   tmpl 0.22 2/3
+  
+    ── cape-follow-example@30fps — candidate animation "cape-follow-example", 30 fps ──
+       frames     2 on disk, candidate samples 91, 2 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-789.9 .. 4656.9] y[-327.6 .. 3917.1]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +1, +0 px: 20.98 → 16.42 over the reference's own pixels (21.8% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 15.68  worst 22.86 at f0090   (0..255 over the union alpha; over the whole frame, mean 0.20)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 16.42 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 3.0 px  "sack" at f0090
+       per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+       sheet      91 of 91 tile(s) of contact.png at 256x200px in 8 column(s)   MAE mean 28.06  worst 71.95 at f0051   (over the reference's own pixels, mean 30.40)
+                  ⤷ the frames this set does not commit as files. The candidate is sampled at the set's own rate and rendered into the same box the frames above were, at the sheet's scale. Read the series, not the mean: flat is framing or art, a spike is timing at that moment.
+                  ⤷ worst 8: f0051=72.0  f0049=61.7  f0052=56.5  f0048=53.2  f0050=50.0  f0054=49.2  f0053=48.0  f0047=46.0
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   3.0 px "sack" f0090                 3.0 px       12.10    77.6%
+         cape-back               1/1   no slot attributable                     —       15.99     6.8%
+         cape-front              1/1   2.7 px "cape-front" f0090           1.9 px       26.73    15.7%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       every frame, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0000     8.49      10285       —      —   cape-front             1.2   tmpl 0.61 1/3
+         f0090    22.86      10479       —      —   sack                   3.0   tmpl 0.23 2/3
+  
+    ── fall-in — candidate animation "fall-in", 12 fps ──
+       frames     21 on disk, candidate samples 21, 21 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-789.9 .. 4656.9] y[-327.6 .. 3917.1]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +1, +0 px: 22.92 → 19.07 over the reference's own pixels (16.8% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 18.41  worst 42.91 at f0000   (0..255 over the union alpha; over the whole frame, mean 0.24)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 19.07 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 5.0 px  "cape-front" at f0000   (1 of 21 frame(s) attributed no slot at all)
+       per-frame all 20 adjacent pair(s) change by as much as the reference's own frames do
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   4.4 px "sack" f0000                 1.6 px       12.35    58.5%
+         cape-back               1/1   no slot attributable                     —       29.70    18.9%
+         cape-front              1/1   5.0 px "cape-front" f0000           1.6 px       38.08    17.6%
+         (unattributed)            —   —                                        —           —     5.0%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       every frame, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0000    42.91      11888       —      —   cape-front             5.0   tmpl 0.50 2/3
+         f0001    37.00      11416   19479  22135   cape-front             4.0   tmpl 0.22 1/3
+         f0002    34.80      10515   18810  20803   —                        —   —         0/3
+         f0003    35.58       9867   17455  19199   cape-front             1.2   tmpl 0.26 1/3
+         f0004    24.51      11792   19204  20597   cape-front             1.5   tmpl 0.17 1/3
+         f0005    27.17       9654    7740   9071   cape-front             2.8   tmpl 0.24 1/3
+         f0006    24.44       9411    6814   5971   sack                   2.6   tmpl 0.22 2/3
+         f0007    20.26      10011    5843   4830   cape-front             0.3   tmpl 0.24 1/3
+         f0008    17.74      10329    3885   3773   cape-front             2.7   tmpl 0.20 1/3
+         f0009    16.48      10338    2551   2709   sack                   2.0   tmpl 0.20 2/3
+         f0010    13.70      10284    4493   2951   sack                   1.9   tmpl 0.28 2/3
+         f0011    11.68      10333    2499   2550   sack                   0.8   tmpl 0.28 2/3
+         f0012    10.56      10341    2123   1686   sack                   1.9   tmpl 0.29 2/3
+         f0013     9.40      10332    1032   1448   cape-front             1.2   tmpl 0.54 2/3
+         f0014     9.28      10291    1002    968   cape-front             1.1   tmpl 0.54 1/3
+         f0015     9.04      10294     533    584   sack                   1.6   tmpl 0.39 2/3
+         f0016     8.65      10284     980    506   cape-front             1.1   tmpl 0.63 2/3
+         f0017     8.42      10293     172    194   sack                   1.5   tmpl 0.33 2/3
+         f0018     8.36      10299     110    105   sack                   1.7   tmpl 0.41 2/3
+         f0019     8.36      10303      99     75   cape-front             1.2   tmpl 0.57 2/3
+         f0020     8.36      10306      85     39   sack                   0.8   tmpl 0.24 2/3
+  
+    ── fall-in@24fps — candidate animation "fall-in", 24 fps ──
+       frames     2 on disk, candidate samples 41, 2 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-789.9 .. 4656.9] y[-327.6 .. 3917.1]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +1, +0 px: 30.72 → 26.74 over the reference's own pixels (13.0% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 25.62  worst 42.91 at f0000   (0..255 over the union alpha; over the whole frame, mean 0.36)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 26.74 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 5.0 px  "cape-front" at f0000
+       per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+       sheet      41 of 41 tile(s) of contact.png at 256x200px in 8 column(s)   MAE mean 20.72  worst 63.02 at f0007   (over the reference's own pixels, mean 22.13)
+                  ⤷ the frames this set does not commit as files. The candidate is sampled at the set's own rate and rendered into the same box the frames above were, at the sheet's scale. Read the series, not the mean: flat is framing or art, a spike is timing at that moment.
+                  ⤷ worst 8: f0007=63.0  f0001=58.2  f0003=56.1  f0005=55.3  f0000=42.4  f0011=36.0  f0002=34.3  f0006=33.9
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   4.4 px "sack" f0000                 2.6 px       14.35    45.9%
+         cape-back               1/1   no slot attributable                     —       48.06    18.1%
+         cape-front              1/1   5.0 px "cape-front" f0000           2.7 px       58.37    20.1%
+         (unattributed)            —   —                                        —           —    16.0%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       every frame, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0000    42.91      11888       —      —   cape-front             5.0   tmpl 0.50 2/3
+         f0040     8.34      10306       —      —   sack                   0.8   tmpl 0.24 2/3
+  
+    ── fall-in@30fps — candidate animation "fall-in", 30 fps ──
+       frames     2 on disk, candidate samples 51, 2 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-789.9 .. 4656.9] y[-327.6 .. 3917.1]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +1, +0 px: 30.73 → 26.74 over the reference's own pixels (13.0% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 25.63  worst 42.91 at f0000   (0..255 over the union alpha; over the whole frame, mean 0.36)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 26.74 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 5.0 px  "cape-front" at f0000
+       per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+       sheet      51 of 51 tile(s) of contact.png at 256x200px in 8 column(s)   MAE mean 21.16  worst 64.29 at f0009   (over the reference's own pixels, mean 22.77)
+                  ⤷ the frames this set does not commit as files. The candidate is sampled at the set's own rate and rendered into the same box the frames above were, at the sheet's scale. Read the series, not the mean: flat is framing or art, a spike is timing at that moment.
+                  ⤷ worst 8: f0009=64.3  f0001=58.4  f0004=54.8  f0003=54.7  f0006=53.7  f0002=53.7  f0008=50.4  f0007=42.5
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   4.4 px "sack" f0000                 2.6 px       14.35    45.9%
+         cape-back               1/1   no slot attributable                     —       48.06    18.1%
+         cape-front              1/1   5.0 px "cape-front" f0000           2.7 px       58.38    20.1%
+         (unattributed)            —   —                                        —           —    16.0%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       every frame, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0000    42.91      11888       —      —   cape-front             5.0   tmpl 0.50 2/3
+         f0050     8.35      10306       —      —   sack                   0.8   tmpl 0.24 2/3
+  
+    ── hello — candidate animation "hello", 12 fps ──
+       frames     35 on disk, candidate samples 35, 35 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-795.2 .. 4651.6] y[-327.6 .. 3917.1]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +2, +0 px: 31.57 → 29.23 over the reference's own pixels (7.4% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 27.46  worst 48.31 at f0034   (0..255 over the union alpha; over the whole frame, mean 0.36)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 29.23 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 3.3 px  "cape-front" at f0014   (18 of 35 frame(s) attributed no slot at all)
+       per-frame all 34 adjacent pair(s) change by as much as the reference's own frames do
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   2.7 px "sack" f0004                 1.8 px       20.10    69.0%
+         cape-back               1/1   no slot attributable                     —       40.62    18.4%
+         cape-front              1/1   3.3 px "cape-front" f0014           1.4 px       41.43    10.3%
+         (unattributed)            —   —                                        —           —     2.2%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       the 8 frames worth reading — worst by MAE, plus every frame whose own change disagrees, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0022    37.08      10188   15839  15535   —                        —   —         0/3
+         f0023    37.34       9103   11841  13029   —                        —   —         0/3
+         f0027    39.91      11071   17244  17869   —                        —   —         0/3
+         f0028    38.25      13143   18642  20738   —                        —   —         0/3
+         f0029    39.29      10144   11422  11905   —                        —   —         0/3
+         f0031    38.38      11629   20848  22683   —                        —   —         0/3
+         f0033    46.31      11301   18882  19074   —                        —   —         0/3
+         f0034    48.31      12088   15070  17090   —                        —   —         0/3
+  
+    ── hello@24fps — candidate animation "hello", 24 fps ──
+       frames     2 on disk, candidate samples 70, 2 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-789.9 .. 4656.9] y[-327.6 .. 3917.1]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +1, +0 px: 37.71 → 32.52 over the reference's own pixels (13.8% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 29.11  worst 49.69 at f0069   (0..255 over the union alpha; over the whole frame, mean 0.44)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 32.52 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 1.0 px  "cape-front" at f0000   (1 of 2 frame(s) attributed no slot at all)
+       per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+       sheet      70 of 70 tile(s) of contact.png at 256x200px in 8 column(s)   MAE mean 34.41  worst 65.03 at f0067   (over the reference's own pixels, mean 37.91)
+                  ⤷ the frames this set does not commit as files. The candidate is sampled at the set's own rate and rendered into the same box the frames above were, at the sheet's scale. Read the series, not the mean: flat is framing or art, a spike is timing at that moment.
+                  ⤷ worst 8: f0067=65.0  f0057=63.6  f0043=59.8  f0059=59.6  f0068=55.7  f0045=54.9  f0055=53.5  f0065=52.4
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   no slot attributable                     —       19.36    60.3%
+         cape-back               1/1   no slot attributable                     —       47.31    28.3%
+         cape-front              1/1   1.0 px "cape-front" f0000           1.0 px       38.83    11.4%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       every frame, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0000     8.54      10304       —      —   cape-front             1.0   tmpl 0.50 1/3
+         f0069    49.69      12661       —      —   —                        —   —         0/3
+  
+    ── hello@30fps — candidate animation "hello", 30 fps ──
+       frames     2 on disk, candidate samples 87, 2 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-789.9 .. 4656.9] y[-327.6 .. 3917.1]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +1, +0 px: 36.89 → 31.73 over the reference's own pixels (14.0% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 28.47  worst 48.41 at f0086   (0..255 over the union alpha; over the whole frame, mean 0.43)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 31.73 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 1.0 px  "cape-front" at f0000   (1 of 2 frame(s) attributed no slot at all)
+       per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+       sheet      87 of 87 tile(s) of contact.png at 256x200px in 8 column(s)   MAE mean 34.78  worst 66.26 at f0084   (over the reference's own pixels, mean 38.51)
+                  ⤷ the frames this set does not commit as files. The candidate is sampled at the set's own rate and rendered into the same box the frames above were, at the sheet's scale. Read the series, not the mean: flat is framing or art, a spike is timing at that moment.
+                  ⤷ worst 8: f0084=66.3  f0071=65.6  f0083=61.8  f0053=61.5  f0072=61.1  f0074=60.5  f0085=59.7  f0054=58.4
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   no slot attributable                     —       19.16    61.2%
+         cape-back               1/1   no slot attributable                     —       44.35    27.2%
+         cape-front              1/1   1.0 px "cape-front" f0000           1.0 px       38.85    11.7%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       every frame, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0000     8.54      10304       —      —   cape-front             1.0   tmpl 0.50 1/3
+         f0086    48.41      12583       —      —   —                        —   —         0/3
+  
+    ── walk — candidate animation "walk", 12 fps ──
+       frames     9 on disk, candidate samples 9, 9 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-789.9 .. 4656.9] y[-327.6 .. 3917.1]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +1, +0 px: 23.06 → 20.80 over the reference's own pixels (9.8% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 19.77  worst 25.60 at f0002   (0..255 over the union alpha; over the whole frame, mean 0.22)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 20.80 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 2.2 px  "cape-front" at f0002
+       per-frame all 8 adjacent pair(s) change by as much as the reference's own frames do
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   2.2 px "sack" f0006                 1.6 px       14.84    76.3%
+         cape-back               1/1   no slot attributable                     —       31.59    10.0%
+         cape-front              1/1   2.2 px "cape-front" f0002           1.1 px       30.38    13.7%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       every frame, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0000    16.02       8999       —      —   sack                   1.1   tmpl 0.23 2/3
+         f0001    22.14       9364    6566   6882   cape-front             1.7   tmpl 0.22 1/3
+         f0002    25.60       9981    5148   5349   cape-front             2.2   tmpl 0.27 1/3
+         f0003    23.09       9221    7270   6212   cape-front             1.4   tmpl 0.46 1/3
+         f0004    19.95       8981    6193   5587   cape-front             0.3   tmpl 0.29 1/3
+         f0005    21.02       8658    4139   4356   cape-front             0.7   tmpl 0.38 1/3
+         f0006    16.55       8911    4287   5299   sack                   2.2   tmpl 0.28 2/3
+         f0007    17.31       9037    5193   4997   cape-front             1.1   tmpl 0.44 1/3
+         f0008    16.21       9388    4731   5033   cape-front             1.0   tmpl 0.46 1/3
+  
+    ── walk@24fps — candidate animation "walk", 24 fps ──
+       frames     2 on disk, candidate samples 17, 2 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-789.9 .. 4656.9] y[-322.3 .. 3922.4]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +1, +1 px: 19.15 → 17.46 over the reference's own pixels (8.8% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 16.88  worst 18.08 at f0016   (0..255 over the union alpha; over the whole frame, mean 0.19)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 17.46 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 2.6 px  "sack" at f0016
+       per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+       sheet      17 of 17 tile(s) of contact.png at 256x200px in 8 column(s)   MAE mean 23.79  worst 29.49 at f0005   (over the reference's own pixels, mean 24.97)
+                  ⤷ the frames this set does not commit as files. The candidate is sampled at the set's own rate and rendered into the same box the frames above were, at the sheet's scale. Read the series, not the mean: flat is framing or art, a spike is timing at that moment.
+                  ⤷ worst 8: f0005=29.5  f0007=28.5  f0010=28.4  f0008=27.8  f0011=26.9  f0009=26.3  f0004=25.8  f0006=25.8
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   2.6 px "sack" f0016                 1.3 px       12.62    74.2%
+         cape-back               1/1   no slot attributable                     —       59.91    15.7%
+         cape-front              1/1   0.4 px "cape-front" f0016           0.4 px       22.64    10.1%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       every frame, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0000    15.67       9006       —      —   cape-front             0.4   tmpl 0.61 2/3
+         f0016    18.08       9527       —      —   sack                   2.6   tmpl 0.19 2/3
+  
+    ── walk@30fps — candidate animation "walk", 30 fps ──
+       frames     2 on disk, candidate samples 21, 2 compared
+       framed to  1024x798px  0.187998 px/unit  world x[-789.9 .. 4656.9] y[-322.3 .. 3922.4]  (fitted to the candidate's own drawn pixels)
+       content    candidate 946.7x725.5px at (30.7, 43.5)   reference 943.8x729.9px at (40.8, 38.8)   (union over 118 frame(s))
+                  ⤷ fit x0.999917  offset +0.03, +0.04 px   rms 10.67 px over 472 edge(s)   union residual +2.81 x -4.46 px   aspect +0.91%  (derived, 2 pass(es), settled)
+                  ⭐ MAE-refined by +1, +1 px: 18.97 → 16.97 over the reference's own pixels (10.6% of the figure). The fit above registers the two extents, and the best fit of two extents is not the best alignment of two pictures — this pass takes that difference out, so the figures below are what is left after it rather than a constant offset read as motion.
+                  ⚠️ after the fit your shot still covers 2.8 px wider and 4.5 px shorter than the reference's. One uniform scale cannot absorb that: something reaches somewhere nothing in the frames does, or is a different size. Read it before reading a drift.
+                  ⚠️ the fit leaves 10.67 px rms across the frames' edges, so no single scale and offset puts the two shots on each other — they are different shapes, not the same shape misframed.
+       in units   candidate 5035.4 x 3859.1   reference 4970.6 x 3844.2   x1.0085
+                  ⤷ the same two boxes in world units. The framing absorbs a difference of pure scale on purpose — a rig is authored in its own coordinates — so this is the only place one shows. It compares only if you measured the shot in the frames’ own units.
+       MAE        mean 16.41  worst 17.15 at f0020   (0..255 over the union alpha; over the whole frame, mean 0.19)
+                  ⤷ over the REFERENCE's own drawn pixels, mean 16.97 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+       slot drift worst 3.5 px  "sack" at f0020
+       per-frame no two compared frames are adjacent, so nothing was measured about how much this shot changes from frame to frame
+       sheet      21 of 21 tile(s) of contact.png at 256x200px in 8 column(s)   MAE mean 23.65  worst 29.53 at f0006   (over the reference's own pixels, mean 24.87)
+                  ⤷ the frames this set does not commit as files. The candidate is sampled at the set's own rate and rendered into the same box the frames above were, at the sheet's scale. Read the series, not the mean: flat is framing or art, a spike is timing at that moment.
+                  ⤷ worst 8: f0006=29.5  f0009=28.3  f0012=27.9  f0013=27.6  f0010=26.3  f0008=26.3  f0014=26.1  f0007=26.0
+       chains     3 from the candidate's own bone tree — the roster is at the foot of the report
+         chain                 slots   worst slot drift                      mean   MAE in it    share
+         sack                    1/1   3.5 px "sack" f0020                 1.8 px       12.53    75.9%
+         cape-back               1/1   no slot attributable                     —       52.84    13.7%
+         cape-front              1/1   0.4 px "cape-front" f0020           0.4 px       22.64    10.4%
+                  ⤷ share is of this set's own difference over the REFERENCE's drawn pixels, split by nearest ink; `MAE in it` is that same error per pixel. The rule, the denominator and what a 0 % row means are under "chains" at the foot of the report.
+  
+       every frame, in index order
+         frame      MAE   union px     Δpx  ref Δ   worst slot            drift   how       slots   note
+         f0000    15.67       9006       —      —   cape-front             0.4   tmpl 0.61 2/3
+         f0020    17.15       9481       —      —   sack                   3.5   tmpl 0.21 2/3
+  
+    ── chains ──
+    Cut from the CANDIDATE's own bone tree at every branch point: a chain runs from a root or a fork down to the
+    next fork, a single-bone chain that is itself a fork folds into its parent, and each is named after the first
+    bone in it that carries a slot. The reference is still nothing but pixels — this is your figure decomposed,
+    not the reference’s, which is what keeps it inside the ladder’s honesty rule.
+  
+    MAE share divides the difference over the REFERENCE's own drawn pixels — the denominator from the MAE
+    line above, which nothing you draw can grow — and splits it by giving each of those pixels to the chain
+    whose ink is NEAREST it. So the shares are a partition and add to the whole, and no chain can look
+    better by drawing more: growing its ink only pulls more of the reference’s pixels, and their error,
+    into it. `MAE in it` is the same error per pixel it took, and it is the column that separates a chain
+    that is WRONG from one that is merely large — a head and its features cover a lot of a figure and can
+    carry a third of the error at a below-average figure per pixel.
+  
+    ⚠️ Two things the split cannot do, both of which show rather than hide. Reference ink further from your
+    ink than the part’s own size is left `(unattributed)` instead of blamed on a neighbour, so a part that
+    has left its place stops being charged to whatever is next to it. And a chain that draws NOTHING seeds
+    nothing and reads 0 % — which is why the slots column is beside the share: 0 % on 0 slots drawn is the
+    loudest row here, not the quietest.
+      chain                bones                                                     slots
+      sack                 root, sack                                                sack
+      sack-b               sack-b, sack-c, sack-d                                    (draws nothing)
+      cape-back            cape-back                                                 cape-back
+      cape-front           cape-front                                                cape-front
+  
+      chain                worst slot drift across every set                            mean   MAE in it    share
+      sack                 4.4 px "sack" in fall-in/f0000                             1.8 px       16.85    67.5%
+      cape-back            1.0 px "cape-back" in cape-follow-example/f0021            1.0 px       39.61    16.9%
+      cape-front           7.3 px "cape-front" in cape-follow-example/f0012           1.5 px       37.47    12.9%
+  
+    MAE is the mean absolute RGB difference over the pixels either side covers, so it is
+    read against 255 and not against a threshold: there is no pass mark here any more than
+    there is one in `diff`. The figure under it divides the same difference by the pixels the
+    REFERENCE drew — a denominator you cannot grow, which is what makes it the one to author
+    against; it is not bounded by 255. Read the framing line first: it is upstream of every number
+    below, and a residual much wider than a pixel moves all of them at once.
+    The slots column is how many of the drawn slots could be attributed at all. A drift
+    marked `tmpl` was correlated against the slot’s own pixels because the reference
+    merged it into a neighbour; the number beside it is how much better that match was
+    than its best rival, and a slot that matched nothing at all is left out of the count.
+    A `sheet` line is the frames a set does not commit as files: the candidate sampled at the
+    set's own rate against the tiles of its contact.png, in the same box the frame table used.
+    Read it as a series — flat is framing or art, a spike is timing at that moment — and note
+    that it is MAE only: the change columns below are pixel counts at frame scale.
+    `Δpx` and `ref Δ` are how many pixels each side moved since ITS OWN previous frame —
+    not against each other. They are the only columns that can see a held pose that is
+    not held, or a one-frame event that never fired: both are small in every frame and
+    wrong only in the relation between two, which is where the MAE cannot look.
+
+  ── summary ──
+  validate   green  (profile spine)
+  sack-pro   bones=0.136  slots=0.952  attachments=0.407  constraints=0.000  animations=0.791  events=1.000
+             bones 0.136 (name-matched) · 0.187 (name-agnostic)   slots 0.952 (name-matched) · 0.333 (name-agnostic)
+  framing    one per set (12); one shared box leaves x0.999917, rms 10.67px — see the check table above for each set's own
+  cape-follow-example MAE mean=23.91 worst=39.96 ref=25.07  over 37 frame(s)  worst slot drift 7.3px, attributed in 35, sack carries 71%
+  cape-follow-example@24fps MAE mean=15.71 worst=22.93 ref=16.45  over 2 frame(s)  worst slot drift 3.0px, attributed in 2, sack carries 78%, sheet 73 tile(s) mean=27.38 worst=69.28
+  cape-follow-example@30fps MAE mean=15.68 worst=22.86 ref=16.42  over 2 frame(s)  worst slot drift 3.0px, attributed in 2, sack carries 78%, sheet 91 tile(s) mean=28.06 worst=71.95
+  fall-in    MAE mean=18.41 worst=42.91 ref=19.07  over 21 frame(s)  worst slot drift 5.0px, attributed in 20, sack carries 59%
+  fall-in@24fps MAE mean=25.62 worst=42.91 ref=26.74  over 2 frame(s)  worst slot drift 5.0px, attributed in 2, sack carries 46%, sheet 41 tile(s) mean=20.72 worst=63.02
+  fall-in@30fps MAE mean=25.63 worst=42.91 ref=26.74  over 2 frame(s)  worst slot drift 5.0px, attributed in 2, sack carries 46%, sheet 51 tile(s) mean=21.16 worst=64.29
+  hello      MAE mean=27.46 worst=48.31 ref=29.23  over 35 frame(s)  worst slot drift 3.3px, attributed in 17, sack carries 69%
+  hello@24fps MAE mean=29.11 worst=49.69 ref=32.52  over 2 frame(s)  worst slot drift 1.0px, attributed in 1, sack carries 60%, sheet 70 tile(s) mean=34.41 worst=65.03
+  hello@30fps MAE mean=28.47 worst=48.41 ref=31.73  over 2 frame(s)  worst slot drift 1.0px, attributed in 1, sack carries 61%, sheet 87 tile(s) mean=34.78 worst=66.26
+  walk       MAE mean=19.77 worst=25.60 ref=20.80  over 9 frame(s)  worst slot drift 2.2px, attributed in 9, sack carries 76%
+  walk@24fps MAE mean=16.88 worst=18.08 ref=17.46  over 2 frame(s)  worst slot drift 2.6px, attributed in 2, sack carries 74%, sheet 17 tile(s) mean=23.79 worst=29.49
+  walk@30fps MAE mean=16.41 worst=17.15 ref=16.97  over 2 frame(s)  worst slot drift 3.5px, attributed in 2, sack carries 76%, sheet 21 tile(s) mean=23.65 worst=29.53
+  Section figures are means of their own measures. There is no rung score:
+  a rung is cleared by a person reading the measures, and docs/LADDER.md records it.
+rigc: wrote /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/rigc/bench/runs/2026-08-28-rung7-1/bench.json

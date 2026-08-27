@@ -1,0 +1,26 @@
+../../../../examples/7-anticipation/images/cape-back.png
+size: 519, 519
+filter: Linear, Linear
+pma: false
+cape-back
+bounds: 0, 0, 519, 519
+offsets: 0, 0, 519, 519
+rotate: 0
+
+../../../../examples/7-anticipation/images/sack.png
+size: 465, 813
+filter: Linear, Linear
+pma: false
+sack
+bounds: 0, 0, 465, 813
+offsets: 0, 0, 465, 813
+rotate: 0
+
+../../../../examples/7-anticipation/images/cape-front.png
+size: 400, 207
+filter: Linear, Linear
+pma: false
+cape-front
+bounds: 0, 0, 400, 207
+offsets: 0, 0, 400, 207
+rotate: 0
