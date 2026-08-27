@@ -1,5 +1,61 @@
 # Rung 7 brief — `7-anticipation`
 
+> ## ✅ Revision 3 — 2026-08-28. **Two claims promoted out of the hedges. Attempt 2 may fire.**
+>
+> Same third-party verifier as revision 2, after the rung's first authored run and its
+> adjudication. **Nothing here comes from the run's record or from the adjudication** —
+> both findings below were re-derived from frames rendered locally at this brief's own
+> flags, and the reference export was not opened. The run's own figures, the
+> adjudication's, and anything reference-side stay where they belong, on
+> [#14](https://github.com/firejune/rigc/issues/14).
+>
+> **1. The panel's draw-order edge is now measured, not hedged.** Revision 2 called it
+> *"the weaker of the two readings"* on the grounds that *"a panel in front that happens
+> never to overlap would look the same"*. **The overlap is on every frame in the
+> corpus.** Scanning rows for *crimson, beige, crimson* inside one unbroken drawn span
+> finds it on **all 102 frames** — 5,696 rows, 287,244 flanked beige pixels — and
+> restricted to flanked runs **60 px or wider**, still **149,583 px on 1,945 rows and
+> still all 102 frames** — and on **71** of those the flanked rows span more vertically
+> than the collar art's entire 38.5 px height, so the collar cannot be what flanks them.
+> Put beside revision 2's verified converse (crimson crosses the beige outline by **84
+> px** in the whole corpus), the panel lies across the sack constantly and the beige wins
+> everywhere they meet. ⇒ **build it behind**, stated as a measurement under the fifth
+> reading of the answer-derivability test: what a viewer of the committed frames could
+> count for themselves. The one alternative the pixels do not formally exclude is written
+> down beside the claim, together with the build-side test that does exclude it and uses
+> the already-settled collar edge as its control.
+>
+> **2. The sack needs a deforming attachment, and that is also frames-forced.** A Spine
+> bone's local transform is a general affine, so *"is each frame's sack silhouette an
+> affine image of the art's?"* is exactly *"could one bone placing one region draw
+> this?"* — and **not one of the 102 frames reads below a deliberate-20 %-bend control**,
+> against a pure-affine floor four to six times lower. Revision 2 listed this under
+> *What this does not settle*; it was too conservative rather than wrong, and the reason
+> is that revision 1's estimator had been discarded over a control failure that turns out
+> to be one line deep. Full estimator, both controls, the grid sweep and a **second**
+> control failure found while repairing it are stated in place.
+>
+> **What did NOT move, deliberately.** The cape's mechanism stays in *What the frames
+> cannot tell you*, and that entry is now sharper rather than weaker: the affine test
+> needs a silhouette belonging to one part, and the two cape images are both crimson with
+> `g == b` on every pixel, so nothing separates the collar from the panel. **The sack's
+> verdict does not read across to the cape in either direction**, and the brief now says
+> so, because that is the inference most available to a run that has just read finding 2.
+>
+> **Added for attempt 2, from the frames only.** `cape-follow-example` f7 → f13 is where
+> the cloth is hardest to place: the visible crimson falls monotonically to the **least
+> crimson anywhere in the corpus**, filling only **4.7–5.0 %** of its own bounding box
+> against 12.1 % at rest — nearly edge-on, so the silhouette is dominated by angle rather
+> than extent. Then f13 → f14 throws it open **+132 % in one frame**.
+>
+> **Seal check: clean.** Both promotions are observable-by-construction facts measured off
+> the frames and the art, and both are stated as what the pictures force rather than as
+> what the reference contains. No count of bones, slots, attachments, constraints,
+> vertices or timelines appears; no key time, curve or setup-pose value appears; and no
+> figure from the run or the adjudication appears. Finding 2 says a region cannot draw the
+> sack — it does not say what the reference built instead, and *"how much deformation, and
+> how"* is left open in place.
+
 > ## ✅ Revision 2 — 2026-08-27. **Verified. The rung is runnable.**
 >
 > Third-party verification pass, by a **different** agent than the one that wrote
@@ -90,8 +146,9 @@
 >
 > **Nothing was moved into *What the frames cannot tell you*, and nothing went the
 > other way.** Both draw-order readings survive as the brief stated them — the collar
-> in front is proven by the beige-piece census, and the panel behind is still the
-> weaker reading the frames do not force.
+> in front is proven by the beige-piece census, and the panel behind was, **as of this
+> pass**, still the weaker reading the frames were thought not to force. (Revision 3
+> overturned that half: the overlap is on every frame, and the edge is measured.)
 >
 > **Seal check: clean.** No reference-side value of a scored measure appears below.
 > The cast, the four animation names, the four durations and the one skeleton are the
@@ -176,6 +233,13 @@
 >   which axis is which when the aspect ratio crosses 1. Every "shape change" that
 >   estimator reported was therefore indistinguishable from a rotation. It is replaced
 >   below by a bound that needs no alignment at all.
+>   - ✅ **Revision 3 recovered it, and the fix is one line of method**: search the
+>     rotation and both reflections exhaustively instead of trusting whitening's axis
+>     order. The same 90° control that scored 0.707 then reads **0.023–0.032** — correctly
+>     "this is affine" — and the repaired estimator is what settles the sack's deformation
+>     in *The sack changes shape*. ⚠️ It came with a **second** control failure of its own,
+>     recorded there: a control at the art's own resolution measures point density rather
+>     than shape when the subject is 30× sparser.
 
 > ## The leakage rule this brief was written under
 >
@@ -332,14 +396,48 @@ first — and the cloth on it never arrives on time, at either end.
   on only **3** — the frames where the crimson has swung entirely clear. A part that
   cuts another part's silhouette in two is drawn in front of it, so **at least one
   crimson piece is in front of the sack**, and it is the collar and bow.
-- **The rest of the crimson essentially never crosses the beige outline** — it hangs
-  past the sack's edge and stops where the sack begins. The budget on "never": of the
-  ~190,000 crimson pixels across the 102 frames, **84** are strictly enclosed by
-  beige, on **19** frames, worst **51** at `hello/f18` — a twelve-row cluster beside
-  the band, two-thirds of it touching beige, which is the blend boundary the colour
-  split cannot help producing. That is what a panel *behind* the sack
-  looks like, and it is the weaker of the two readings: a panel in front that happens
-  never to overlap would look the same. Build it behind; the frames do not force it.
+- ⭐ **The panel is behind the sack, and the frames force it.** Two measurements, and
+  the second is the one that closes it:
+  - **The crimson essentially never crosses the beige outline.** Of the ~190,000
+    crimson pixels across the 102 frames, **84** are strictly enclosed by beige, on
+    **19** frames, worst **51** at `hello/f18` — a twelve-row cluster beside the band,
+    two-thirds of it touching beige, which is the blend boundary the colour split
+    cannot help producing. So wherever the two meet, the beige wins.
+  - **And they do meet, on every frame.** Scanning each row for the sequence *crimson,
+    beige, crimson* inside one **unbroken drawn span** — no backdrop pixel anywhere
+    between the two crimson runs, so the drawn material is continuous across the
+    sack — finds it on **all 102 frames**: **5,696 rows** and **287,244** flanked beige
+    pixels. Restricted to flanked beige runs **60 px or wider** it is still **149,583**
+    pixels on **1,945** rows and still **all 102 frames**, reaching **82 px** wide on the
+    standing frames — about the full width of an 87 px sack.
+  - **The collar cannot be what is doing the flanking**, on most of the corpus. On **71
+    of the 102** frames those wide flanked rows span more than **38.5 px** vertically,
+    which is the collar art's *entire* height at this scale (75.0 × 38.5 px), so a collar
+    drawn at its own size cannot reach them at all — the widest spans run to 101–123 px
+    in `cape-follow-example`.
+  - ⇒ crimson shows on both sides of the sack at the same height, with the drawn material
+    unbroken between, on every frame in the corpus, and the beige is frontmost wherever
+    they meet. **Build the panel behind.**
+  - 🔍 **What the pixels leave open, stated exactly**, because it is what revision 2 was
+    right to worry about and wrong about the size of: continuity of *drawn* material does
+    not by itself prove one cloth spans the gap. The surviving alternative is two crimson
+    regions that terminate **exactly** on the sack's outline, on 1,945 rows, across all
+    102 frames, while the panel — 97.6 × 97.8 px of art, demonstrably on screen — never
+    once produces the pattern itself. That is not a reading the frames support; it is one
+    they do not formally exclude, and the build-side test below excludes it. Revision 2's
+    *"a panel in front that happens never to overlap would look the same"* failed on the
+    premise rather than the logic: **the overlap is constant, not absent.**
+  - 🔍 **Convention**: classes are this brief's own — drawn at 8/255, cape ⇔
+    `g − b ≤ 8` — on **raw** masks with no denoise, and a beige run counts as flanked
+    only when its immediate neighbours inside the span are both crimson. Denoising
+    shrinks thin features and would only remove flanked rows, never add them.
+  - 🧪 **Once you have a build you can confirm it a second way, and the collar gives you
+    the control for free**: render your candidate twice, swapping one adjacent pair of
+    slots each time, and score both renders against the frames **over the pixels where
+    the two renders differ at all** — a whole-frame figure divides the evidence by the
+    whole frame. The panel edge separates several times harder than the collar edge,
+    which is an edge you already know the answer to. The size of the separation depends
+    on your rig, so read the collar's number as your own scale rather than chasing one.
 - Standing, the whole subject is **99 × 153–154 px** and **10,244–10,249 px** are
   drawn, of which **1,843–1,846** are crimson.
 
@@ -475,10 +573,25 @@ The same anticipation, larger, and then a full second of nothing moving but clot
   sampling intervals, 0.667 s. It sinks 9 px and spreads as it goes: the sack runs
   90 × 152 (f3) → 113 × 127 (f5) → **150 × 143** (f11), so it is crouching and leaning,
   not stepping.
+- ⭐ **f7 → f13 — the cloth furls, and this is the hardest placement in the corpus.**
+  The visible crimson falls monotonically over seven frames — **1,551, 1,414, 1,183,
+  1,007, 920, 876, 782 px** — reaching at f13 the **least crimson anywhere in the 102
+  frames** (against 1,846 at rest and 3,193 at `hello/f0034`). It is not shrinking so
+  much as turning edge-on: across **f10 → f13** the crimson fills only **4.7–5.0 % of
+  its own bounding box**, the thinnest in the corpus, against **12.1 %** at rest — at
+  f12 that is **876 px spread through a 138 × 133 box**. A cloth this close to edge-on
+  is a narrow band strung across a wide box, so its silhouette is dominated by the
+  *angle* rather than the extent, and a couple of degrees moves it several pixels. Its
+  centroid meanwhile crosses from **+2.5 px right of the body at f9 to −15.9 at f12**
+  while sitting **26–28 px above** it. ⇒ **f11–f13 is where a cape placement drifts, and
+  where to look first if yours does.**
 - ⭐ **f11 → f21 — the leap, 238.0 px to the right** and 170 px up. The centroid runs
   112.4 → **350.4**; the apex is **f17**, where the sack's base row is **579** against
   the 749 it left. Its longest step is 97.7 px of centroid travel, f19 → f20; the
   longest purely **horizontal** step is 43.0 px, f13 → f14.
+- **f13 → f14 throws the cloth open again**, 782 → **1,816 px**, +132 % in one frame —
+  the sharpest opening in this shot, and the frame after the furl. (The corpus's largest
+  single-frame crimson change is `hello` f19 → f20, 951 → 2,306, +1,355 px.)
 - **It stretches into the leap and flattens out of it.** The sack measures **84 × 208**
   at f14 — the tallest it is anywhere in the corpus — and **112 × 204** at f20, and
   then **152 × 108** at f21, the landing frame. It is a plain teardrop in the air and a pancake on the ground.
@@ -529,13 +642,41 @@ The largest gap is 3,634 px — 40 % of what is on screen. ⇒ **the sack is not
 image being posed.** At minimum it is stretched along one axis, and the frames the
 table names are the ones to check a build against.
 
-⚠️ **What this does not settle is whether it needs a mesh.** The test rules out
-rotation with uniform scale; it does not distinguish a non-uniform scale from a
-genuine deformation, and both would produce a tall teardrop at
-`cape-follow-example/f0014`. A similarity invariant says the same thing and no more:
-min-caliper-width ÷ diameter is **0.514** for the art and runs **0.370–0.784** across
-the frames, so the shape is not a similarity copy of its art — and a stretch is not a
-similarity either. Decide it on the pictures, and say in the log which you built.
+The test above rules out rotation with uniform scale, and a similarity invariant says
+the same thing and no more: min-caliper-width ÷ diameter is **0.514** for the art and
+runs **0.370–0.784** across the frames, so the shape is not a similarity copy of its
+art — and a stretch is not a similarity either.
+
+⭐ **And no affine placement reproduces it either, on any frame — so the sack needs a
+deforming attachment.** This is worth stating exactly, because a Spine bone's local
+transform *is* a general affine: translate, rotate, scale each axis, shear. So "is each
+frame's sack silhouette an affine image of `sack.png`'s own?" is the same question as
+"could one bone placing one region draw this?", and the answer the frames give is no.
+
+- **Estimator.** Whiten both silhouettes — centre them, then normalise the
+  second-moment matrix to identity — which quotients out every affine *except* rotation
+  and reflection, then search those exhaustively (2° steps, both reflections) and keep
+  the best IoU. Residual = 1 − that IoU.
+- **Controls, through the identical code.** A pure affine must read as the floor and
+  does: the art at a non-uniform scale 1.6 × 1 reads **0.017–0.020**, and the art
+  rotated 90° reads **0.023–0.032**. A *real* deformation must read clearly above it and
+  does: the art with its top third slid 20 % of its width reads **0.078–0.080**.
+- **The frames.** Best **0.095–0.122**, mean **0.17–0.19**, worst **0.29–0.31**
+  (`fall-in/f0004`). **Not one of the 102 frames reads below the bend control** — the
+  most affine-like frame in the corpus is still further from affine than a deliberate
+  20 % bend, and four to six times the pure-affine floor.
+- 🔍 **Convention, and why the ranges are ranges.** The figures are quoted across grid
+  resolutions **48, 64 and 96**, and the spread above is that sweep rather than
+  measurement noise; the verdict is identical at all three. ⚠️ **The control has to match
+  the subject's point density or it measures point count instead of shape** — warping the
+  art at *art* resolution (~250,000 pixels) and comparing it against frame masks of
+  ~8,400 left the controls flat while the frames' residuals more than doubled from grid
+  96 to 192. The art is resampled to the frames' own scale first, so every mask compared
+  here carries ~8,400–9,000 points.
+
+⚠️ **What this still does not settle is how much deformation, or how.** Ruling out one
+affine does not tell you how many bones, how many vertices, or where the weights go, and
+those are yours. Say in the log which you built.
 
 ### The comparison, in one line
 
@@ -552,12 +693,22 @@ does not spend a turn on it.
   that it lags on entry, trails horizontally while the body travels, overshoots
   nothing on the way out, and settles monotonically over up to 0.75 s after the body
   has stopped. Every one of those is a behaviour, not a mechanism.
+- ⚠️ **Whether either cape part deforms at all** — and unlike the sack, this one the
+  frames genuinely cannot reach. The affine test that settles the sack needs a
+  silhouette belonging to **one** part, and the two cape images are both crimson with
+  `g == b` on every pixel, so no colour split separates the collar from the panel and
+  the crimson silhouette is a union of two things. A region that translates, turns and
+  scales and a mesh that deforms can also draw the same pixels. **Do not read the sack's
+  verdict across to the cape**, in either direction: it is not evidence that the cape
+  deforms, and it is not evidence that it does not.
 - **Whether the cape's panel is one piece or several.** Its visible crimson breaks
   into dozens of fragments under a colour split, and every one of those breaks is at
   a boundary where crimson blends into beige — an artefact of the split, not a seam.
   Nothing here supports a count.
-- **Draw order beyond the one edge the band settles** (crimson collar in front of the
-  sack). The panel's side is argued above and not proven.
+- **Draw order beyond the two edges above.** Both are now settled by measurement — the
+  collar in front of the sack, the panel behind it — and neither is a guess. What the
+  frames say nothing about is any *further* ordering: if you build the panel as more
+  than one piece, how those pieces sit relative to each other is yours.
 - **The sack's own internal structure.** Its knots and feet move relative to its body,
   which is visible; how many joints that takes is not.
 - **Anything inside the first 0.25 s of `fall-in`.** Four samples over 560 px.
