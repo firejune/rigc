@@ -1,13 +1,111 @@
 # Rung 7 brief — `7-anticipation`
 
-> ## 🚫 Revision 1 — 2026-08-26. **NOT VERIFIED. Do not run this rung yet.**
+> ## ✅ Revision 2 — 2026-08-27. **Verified. The rung is runnable.**
+>
+> Third-party verification pass, by a **different** agent than the one that wrote
+> revision 1 (Claude Opus 5 (1M context), Claude Code / Agent SDK), under
+> [`bench/runs/README.md`](../runs/README.md)'s *Before a rung is attempted*. The
+> frames were fetched and rendered from scratch at the exact flags in *The reference
+> frames* below, every claim re-measured against them, and no frame was committed —
+> `git ls-files bench/reference-local` reports 0. The verdict is on
+> [#14](https://github.com/firejune/rigc/issues/14).
+>
+> **The method held up, which is why so much of this reproduced.** The `g − b` split,
+> the 8/255 subject mask and the three-rate duration argument were reproduced
+> independently and every art-side control came back to the digit: `sack.png`'s opaque
+> box **460 × 809**, its **250,792** opaque pixels of which **40** read as cape, its
+> area **9,041 px** and diameter **164.7 px** at the frames' scale, and **100.0 %** of
+> both cape images on the cape side — with *opaque* meaning **alpha ≥ 128**, which the
+> brief did not say and which every one of those five figures depends on. The render
+> is byte-for-byte deterministic: two independent renders of the 12 fps set have
+> identical digests.
+>
+> **Every quantitative and behavioural claim below was re-measured, and the fourteen
+> items in the next list are all that moved.** These reproduced *to the digit*: all
+> four frame counts at all three rates and all four duration windows; the empty-stage
+> figures (**181,132** pixels drawn on at least one frame, **0** on 90 % or more of
+> them); one connected component on every one of the 102 frames; the beige-piece census
+> **75 / 24 / 3**; the three rest-pose silhouette distances **9, 22, 31**; `walk`'s
+> nine widths, both loop figures (**198** px of ~7,940; cape **496** against 806 and
+> 1,106) and its two fast-frame counts; `fall-in`'s four centroid drops, its five base
+> rows and its four rebound boxes; `hello`'s sixteen base rows f19 → f34 in order and
+> its 803.7 px / 34× travel; `cape-follow-example`'s ten monotone cape areas f27 → f36
+> in order and its two cape-vs-body walks; every diameter in the rigid-pose table and
+> every one of its crimson and visible-area figures; the caliper ratio range
+> **0.370 – 0.784** and the art's **0.514**; the three corpus extremes; and five of the
+> six drag correlations (the sixth is out by 0.01, item 12).
+>
+> **Corrected.** Fourteen items, in the order they appear below.
+>
+> 1. **Three spans started a frame late.** `hello`'s anticipation is **f13 → f17**
+>    (148.5 is f13's centroid, f14's is 143.2), `cape-follow-example`'s wind-up is
+>    **f3 → f11** (148.2 is f3, f4 is 144.5) and its leap is **f11 → f21** (112.4 is
+>    f11, f12 is 116.0). Every figure attached to those spans — 23.3 px, 35.8 px,
+>    238.0 px, the durations, and the shape boxes — is right for the corrected range,
+>    which is what identified it.
+> 2. **`hello` f4 → f13: the body's centroid walks 4.0 px, not 0.6 px** (net 3.8).
+>    0.6 px is the **f7 → f13** hold. The sentence's point stands either way — 4 px of
+>    body against 22.9 px of cape crossing — and both figures are now in it.
+> 3. **The velocity convention was missing, and every drag figure needs it.** All the
+>    "faster than 3 px/frame" counts and all six correlations reproduce only under a
+>    **central difference**. Under forward differences `hello`'s vertical correlation
+>    reads **+0.24** instead of −0.03 and `walk`'s counts read 2 and 5 instead of 1
+>    and 2 — so re-measuring the obvious way would have "corrected" the brief wrongly.
+> 4. **At the 256 px default the subject is 38 px tall, not 15.** Rendered at the
+>    default it is 24 × 38 px in a 256 × 200 frame. The case for `--max 1024` is
+>    unaffected.
+> 5. **The discarded `r − g` split moves the crimson areas by 2.2 – 7.1 %**, not
+>    "no area figure by 1 %" — `walk/f0`'s 806 becomes 749. The sack areas move up to
+>    1.05 % on the quoted frames and 1.48 % at `fall-in/f2`.
+> 6. **Its 40 px diameter shift needs the undenoised mask.** It reproduces there
+>    (**41.7 px** worst, `hello/f29`, 151.6 → 193.3) and collapses to **1.5 px** with
+>    the denoise step the bullet above it mandates.
+> 7. **A half-blended cape pixel cannot read `r − g` = 3.** `cape-back.png`'s minimum
+>    source `r − g` is **17**, so half blend floors it near 8. The triple
+>    (212, 209, 209) does occur — 4 pixels in the 102 frames — at about **18 %**
+>    coverage. The mechanism and the conclusion are right; the illustration was not.
+> 8. **The rigid-pose table's area columns are denoised too**, which the method
+>    bullets did not say. The conclusion survives on raw areas: `f0014` would then
+>    need 12,599 px and show 9,058.
+> 9. **`fall-in` starts 558 px higher up, not 500** — the warning above it already
+>    said 560.
+> 10. **The cape's +31.9 px at `hello/f15` is the extreme on that side**, not of its
+>     whole travel; the largest excursion in the shot is −48.3 px at f21.
+> 11. **Two "longest step" figures are 2-D**, in paragraphs about horizontal travel.
+>     The longest *horizontal* steps are 85.2 px (`hello` f27 → f28) and 43.0 px
+>     (`cape-follow-example` f13 → f14).
+> 12. **`cape-follow-example`'s vertical correlation is −0.31** (−0.3147), not −0.32.
+> 13. **Digits and bands.** `hello` f3's centroid is 688.2 (688.3 is f2's); `walk`'s
+>     centroid **spans** 6.3 px, 145.1 … 151.5, rather than staying inside 6.4 px of
+>     x = 145 (max |x − 145| is 6.45); `cape-follow-example`'s x is ±0.1 of 345.3 from
+>     **f27**, and ±0.15 of 345.2 from f25; the rest pose is 99 × **153–154** because
+>     `cape-follow-example/f0` is a pixel shorter.
+> 14. **Four stillness and "never" claims had no tolerance**, which is the failure
+>     rungs 5 and 3 both shipped. `fall-in` f19/f20's silhouettes are identical **at
+>     the 8/255 mask threshold** and differ by 3 pixels at exact equality; the
+>     "differ in colour" counts are **exact-equality** counts (39 and 75 at 8/255);
+>     the crimson that "never crosses the beige outline" crosses it by **84 pixels
+>     over the 102 frames**, worst 51 at `hello/f18`; and "all of them interior
+>     shading" is 1,076 of 1,083 inside the drawn region, 135 of those on its edge.
+>
+> **Nothing was moved into *What the frames cannot tell you*, and nothing went the
+> other way.** Both draw-order readings survive as the brief stated them — the collar
+> in front is proven by the beige-piece census, and the panel behind is still the
+> weaker reading the frames do not force.
+>
+> **Seal check: clean.** No reference-side value of a scored measure appears below.
+> The cast, the four animation names, the four durations and the one skeleton are the
+> granted or licensed cases — the fifth reading of the answer-derivability test for
+> the cast, *The honesty rule* outright for names and durations, `frames.json` for
+> the skeleton and the viewport. Everything else is measured off the frames, the art
+> or `frames.json`. Every sealed item is refused by name where it would otherwise be
+> tempting: the panel's piece count, the cloth's mechanism, the sack's joint count,
+> and whether the shape change needs a mesh.
+
+> ## Revision 1 — 2026-08-26. Written from the frames, before any verification.
 >
 > Written by the agent that rendered the frames (Claude Opus 5 (1M context), Claude
-> Code / Agent SDK). The protocol in [`bench/runs/README.md`](../runs/README.md)
-> requires a **second agent** to measure every claim below against the frames before
-> any attempt at this rung, and that pass has not happened. Until it does, this file
-> is a viewer's report and nothing has checked it — see
-> [#14](https://github.com/firejune/rigc/issues/14).
+> Code / Agent SDK), and unchecked until revision 2 above.
 >
 > **This is the first brief on the ladder written from frames that are not in this
 > repository and never will be.** `7-anticipation` ships no upstream `license.txt`,
@@ -27,22 +125,45 @@
 >   (232, 232, 232) by more than **8/255 on some channel**. Every area, box,
 >   centroid and connectivity figure below uses that threshold. Frame-to-frame
 >   *silhouette* figures compare drawn-or-not and nothing else, so they are immune
->   to shading; where a plain pixel-difference count is quoted it is labelled as one.
+>   to shading; where a plain pixel-difference count is quoted it is labelled as one,
+>   and **every "differ in colour" count below is at exact equality** rather than at
+>   the 8/255 threshold. The two answers are far apart — `fall-in`'s last pair differs
+>   by 1,083 pixels exactly and 39 at 8/255 — so a stillness figure here always names
+>   which one it is.
+> - **Opaque, on the art side, means `alpha ≥ 128`.** Every figure taken off the three
+>   PNGs uses that: the opaque boxes, the areas, the diameter and the colour controls
+>   all move if you use `alpha > 0` instead (`sack.png` reads 253,628 pixels and a
+>   463 × 811 box that way).
 > - **Sack vs cape** is split on **`g − b`**: cape ⇔ `g − b ≤ 8`. Controlled against
 >   the art: **40 of 250,792** opaque pixels of `sack.png` read as cape (0.02 %), and
 >   **100.0 %** of both cape images do. ⚠️ **The obvious split fails this control and
 >   fails it invisibly.** An `r − g > 40` test — crimson is redder than beige — files
->   the cape's own anti-aliased edge as sack, because a cape pixel blended halfway
->   into the backdrop reads (212, 209, 209) and its `r − g` is 3. That fringe is a
->   pixel or two per column; it moves no area figure by 1 %, and it moved the sack's
->   measured **width at rest from 87 px to 99 px** and its measured diameter by up to
->   40 px, because both are maxima. Every part-split figure below was recomputed after
->   the fix. The cape art is crimson with `g == b` on every pixel, so `g − b` survives
->   blending and `r − g` does not.
-> - **Part masks are denoised** before any diameter or caliper figure: a pixel with
->   fewer than four same-class neighbours in its 3 × 3 is dropped. This *shrinks*
+>   the cape's thinly-covered anti-aliased edge as sack: at the rest pose **159**
+>   crimson pixels flip class that way, **146** of them touching the backdrop and 94 of
+>   them within 40/255 of it, with a median `r − g` of 7. A crimson pixel drawn at about
+>   **18 %** coverage over the backdrop reads (212, 209, 209), whose `r − g` is 3, and
+>   4 pixels in the 102 frames read exactly that. (Half coverage is not enough to do
+>   it — `cape-back.png`'s lowest source `r − g` is 17, so half blend floors the
+>   composite near 8.) The damage is concentrated in the maxima and in the crimson
+>   totals: it moved the sack's measured **width at rest from 87 px to 99 px** and its
+>   measured **diameter by up to 41.7 px** (`hello/f29`, 151.6 → 193.3, on the
+>   undenoised mask — with the denoise step below the worst diameter shift is 1.5 px),
+>   while moving the **crimson** areas quoted below by **2.2 – 7.1 %** (`walk/f0`'s 806
+>   becomes 749) and the sack areas by up to 1.05 % on those frames and 1.48 % at
+>   `fall-in/f2`. Every part-split figure below was recomputed after the fix. The cape
+>   art is crimson with `g == b` on every pixel, so `g − b` survives blending and
+>   `r − g` does not.
+> - **Part masks are denoised** before any diameter or caliper figure, **and before
+>   the two area columns of the rigid-pose table**: a pixel with fewer than four
+>   same-class neighbours in its 3 × 3 is dropped. This *shrinks*
 >   thin features, so it makes the rigid-pose test below **conservative** — it can
->   lose a positive, not invent one.
+>   lose a positive, not invent one. (Raw areas would not change its verdict:
+>   `cape-follow-example/f0014` would need 12,599 px and show 9,058.)
+> - **Velocity is a central difference** — `v` at frame `i` is
+>   `(p[i + 1] − p[i − 1]) / 2`, so the first and last frame of a shot carry none.
+>   ⚠️ **Every drag figure below depends on that choice.** With forward differences
+>   `hello`'s vertical correlation reads **+0.24** instead of −0.03, and `walk`'s
+>   "faster than 3 px/frame" counts read 2 and 5 instead of 1 and 2.
 > - **Durations** are pinned by frame counts at three rates, not by the 12 fps set's
 >   last sample time. `sampleAnimation` takes `round(duration × fps) + 1` frames, so
 >   `n` frames put the duration in `[(n − 1.5)/fps, (n − 0.5)/fps)`; three rates
@@ -165,7 +286,8 @@ which is the same conclusion from the other side.
 Standing, the whole thing is **99 × 154 px** in a 1024 × 798 frame — under 2 % of its
 area — because one shot drops in from the top of the box and another crosses almost
 its whole width. 1024 px is what makes a 154 px subject measurable; at the 256 px
-default it is 15 px tall and nothing below can be checked on it. **Do not render at
+default the frame is 256 × 200 and the whole subject is **24 × 38 px**, on which
+nothing below can be checked. **Do not render at
 another `--max`**: every pixel figure in this brief is at this one, and `frames.json`
 would be rewritten at a scale that describes none of them.
 
@@ -188,8 +310,8 @@ redistributed in this repository under any circumstances. Three files.
 
 At the frames' 0.189871 px per unit those opaque boxes come out **87.3 × 153.6**,
 **97.6 × 97.8** and **75.0 × 38.5** px, and the sack's opaque area is **9,041 px**.
-Those three numbers do most of the work below: standing, the sack measures **87 × 154
-px** on screen, so at rest it is drawn at its own art size to within a pixel.
+Those three numbers do most of the work below: standing, the sack measures **87–88 ×
+153–154 px** on screen, so at rest it is drawn at its own art size to within a pixel.
 
 ## What the shot is
 
@@ -210,20 +332,28 @@ first — and the cloth on it never arrives on time, at either end.
   on only **3** — the frames where the crimson has swung entirely clear. A part that
   cuts another part's silhouette in two is drawn in front of it, so **at least one
   crimson piece is in front of the sack**, and it is the collar and bow.
-- **The rest of the crimson never crosses the beige outline** — it hangs past the
-  sack's edge and stops where the sack begins. That is what a panel *behind* the sack
+- **The rest of the crimson essentially never crosses the beige outline** — it hangs
+  past the sack's edge and stops where the sack begins. The budget on "never": of the
+  ~190,000 crimson pixels across the 102 frames, **84** are strictly enclosed by
+  beige, on **19** frames, worst **51** at `hello/f18` — a twelve-row cluster beside
+  the band, two-thirds of it touching beige, which is the blend boundary the colour
+  split cannot help producing. That is what a panel *behind* the sack
   looks like, and it is the weaker of the two readings: a panel in front that happens
   never to overlap would look the same. Build it behind; the frames do not force it.
-- Standing, the whole subject is **99 × 154 px** and **10,244–10,249 px** are drawn,
-  of which **1,843–1,846** are crimson.
+- Standing, the whole subject is **99 × 153–154 px** and **10,244–10,249 px** are
+  drawn, of which **1,843–1,846** are crimson.
 
 ### The rest pose is shared, and three of the four shots use it
 
 `fall-in`'s last frame, `hello`'s first and `cape-follow-example`'s first are the same
 standing pose to within a rounding error: their **silhouettes differ by 9, 22 and 31
-pixels** out of ~10,245 drawn. They are not bit-identical — about 1,200 pixels differ
-in colour, all of them interior shading — so read it as *"the same pose, arrived at
-from different directions"* rather than as one frame copied about.
+pixels** out of ~10,245 drawn, at the 8/255 mask threshold (in that order:
+`fall-in/f0020` against `hello/f0000`, `hello/f0000` against
+`cape-follow-example/f0000`, and `fall-in/f0020` against
+`cape-follow-example/f0000`). They are not bit-identical — **993 to 1,745 pixels
+differ in colour at exact equality**, 70 to 145 of them at the 8/255 threshold, and
+only 15 to 41 of them fall outside the drawn region — so read it as *"the same pose,
+arrived at from different directions"* rather than as one frame copied about.
 
 ⚠️ **`walk` does not start there.** Its first frame differs from that pose by **2,396
 silhouette pixels**: it opens mid-stride, leaning, with the sack 104 px wide instead
@@ -253,13 +383,16 @@ The sack drops in from above, lands, squashes, and rebounds into the standing po
   side on 5).
 - **The rebound is f5 → f8.** The sack goes 98 × 122, 90 × 131, 88 × 151 and back to
   87 × 146, and its base row settles onto **749** at f8 and never leaves it.
-- **The body stops long before the shot does.** From **f9 to f20** — 12 frames,
-  0.917 s — the body's centroid walks **1.2 px in total** while the cape's centroid
-  walks **16.0 px** (net 15.1). Nothing else on screen moves. The last two frames have
-  **identical silhouettes** and are still not the same frame: 1,083 pixels differ in
-  colour, all of them interior shading.
+- **The body stops long before the shot does.** From **f9 to f20** — twelve frames,
+  eleven sampling intervals, 0.917 s — the body's centroid walks **1.2 px in total**
+  while the cape's centroid walks **16.0 px** (net 15.1). Nothing else on screen moves.
+  The last two frames have **silhouettes identical at the 8/255 mask threshold** — they
+  differ by 3 pixels at exact equality, so a verifier testing bit equality will not
+  reproduce the word "identical" — and they are still not the same frame: **1,083
+  pixels differ in colour at exact equality** (39 at 8/255), 1,076 of them inside the
+  drawn region and 135 of those on its edge.
 - It does not return: first frame to last, 16,807 pixels of the sack's silhouette
-  differ, which is most of it — the sack starts 500 px higher up.
+  differ, which is most of it — the sack starts **558 px** higher up.
 
 ### `hello` — 35 frames at 12 fps, duration **2.867 s** (86/30)
 
@@ -273,20 +406,25 @@ timing measure will carry it.
 The sack settles, draws itself up to full height, **leans away from where it is about
 to go**, and then leaves across the shot to the right.
 
-- **f0 → f3 — it dips.** The centroid drops 11 px (677.2 → 688.3) and the sack goes
-  from 87 × 154 to **95 × 144** — a small squash, in place.
+- **f0 → f3 — it dips.** The centroid drops 11 px (677.2 → 688.2, with the low point
+  688.3 at f2) and the sack goes from 87 × 154 to **95 × 144** — a small squash, in
+  place.
 - **f4 → f13 — it rises and holds.** The sack's height climbs 149 → **161** and sits at
-  160–161 for seven frames, f7 → f13 — the tallest standing pose in the corpus. The body's centroid
-  moves **0.6 px** over those ten frames — and in the same ten frames the cape's
+  160–161 for seven frames, f7 → f13 — the tallest settled pose in the corpus (the only
+  taller sack with its feet near the ground is `cape-follow-example/f0020`, stretched
+  mid-landing). The body's centroid walks **4.0 px** over those ten frames and only
+  **0.6 px** over the f7 → f13 hold — and in the same ten frames the cape's
   centroid crosses **from 14.2 px left of the body to 8.7 px right of it**, one
-  direction, no reversal. The body has stopped and the cloth has not.
-- ⭐ **f14 → f17 — the anticipation.** The body's centroid moves **23.3 px to the
-  left** (148.5 → 125.2) over four frames, 0.333 s. It crouches as it goes: the sack
-  shortens 161 → **135** and widens 90 → **98**. The cape swings the *other* way, to
-  +31.9 px right of the body at f15 — the extreme of its whole travel in this shot.
+  direction, no reversal. The body has all but stopped and the cloth has not.
+- ⭐ **f13 → f17 — the anticipation.** The body's centroid moves **23.3 px to the
+  left** (148.5 → 125.2) over four sampling intervals, 0.333 s. It crouches as it goes:
+  the sack shortens 161 → **135** and widens 90 → **98**. The cape swings the *other*
+  way, to +31.9 px right of the body at f15 — the extreme of its travel to that side in
+  this shot (the largest excursion either way is −48.3 px at f21).
 - ⭐ **f17 → f34 — and then it goes right, 803.7 px.** The centroid runs 125.2 →
-  **928.9**, over 17 frames (1.417 s), which is **34 times the wind-up that preceded
-  it**. Its longest single step is **128.7 px**, f30 → f31.
+  **928.9**, over 17 sampling intervals (1.417 s), which is **34 times the wind-up that
+  preceded it**. Its longest single step is **128.7 px** of centroid travel, f30 → f31;
+  the longest purely **horizontal** step is 85.2 px, f27 → f28.
 - **It travels in three arcs.** The sack's base row over f19 → f34 reads 736, 702,
   693, 721, 737, 722, 662, 675, 714, 740, 740, 737, 622, 565, 578, 670: down onto
   ~740 twice, and three climbs, the last of them the highest (565 — 184 px above the
@@ -305,9 +443,9 @@ to go**, and then leaves across the shot to the right.
 
 ### `walk` — 9 frames at 12 fps, duration **0.667 s** (20/30)
 
-A cycle **on the spot**. The body's centroid stays inside **6.4 px** of x = 145 for
-the whole shot (145.2 … 151.5 … 145.2) and its base row inside 737–741. Nothing
-travels.
+A cycle **on the spot**. The body's centroid spans **6.3 px** over the whole shot —
+145.1 … 151.5, starting and ending at 145.2 — and its base row stays inside 737–741.
+Nothing travels.
 
 - **It rocks rather than steps.** The sack's silhouette width runs 104, 130, 114, 83,
   **73, 72, 73**, 85, 104 while its height stays 137–149: it leans hard one way,
@@ -320,7 +458,8 @@ travels.
   statement of the rung in the corpus**, and it is the one shot where you can read it
   off two frames.
 - ⚠️ **No drag figure for this shot.** Only one frame moves faster than 3 px/frame
-  horizontally and two vertically, so a correlation over nine frames here is noise.
+  horizontally and two vertically (central differences, as everywhere below), so a
+  correlation over nine frames here is noise.
   The numbers a lag estimator returns on `walk` are not evidence of anything; do not
   quote them, and do not read their disagreement with `hello` as a difference between
   the shots.
@@ -332,12 +471,14 @@ The same anticipation, larger, and then a full second of nothing moving but clot
 - **f0 → f3 — the body is still and the cape is not.** The centroid moves 2.2 px; the
   cape's offset slides −1.6 → −9.1 px. The shot opens on a cape that has not finished
   from somewhere else.
-- ⭐ **f4 → f11 — the wind-up, 35.8 px to the left** (148.2 → 112.4) over eight
-  frames, 0.667 s. It sinks 9 px and spreads as it goes: the sack runs 90 × 152 →
-  113 × 127 → **150 × 143**, so it is crouching and leaning, not stepping.
-- ⭐ **f12 → f21 — the leap, 238.0 px to the right** and 170 px up. The centroid runs
+- ⭐ **f3 → f11 — the wind-up, 35.8 px to the left** (148.2 → 112.4) over eight
+  sampling intervals, 0.667 s. It sinks 9 px and spreads as it goes: the sack runs
+  90 × 152 (f3) → 113 × 127 (f5) → **150 × 143** (f11), so it is crouching and leaning,
+  not stepping.
+- ⭐ **f11 → f21 — the leap, 238.0 px to the right** and 170 px up. The centroid runs
   112.4 → **350.4**; the apex is **f17**, where the sack's base row is **579** against
-  the 749 it left. Its longest step is 97.7 px, f19 → f20.
+  the 749 it left. Its longest step is 97.7 px of centroid travel, f19 → f20; the
+  longest purely **horizontal** step is 43.0 px, f13 → f14.
 - **It stretches into the leap and flattens out of it.** The sack measures **84 × 208**
   at f14 — the tallest it is anywhere in the corpus — and **112 × 204** at f20, and
   then **152 × 108** at f21, the landing frame. It is a plain teardrop in the air and a pancake on the ground.
@@ -345,7 +486,8 @@ The same anticipation, larger, and then a full second of nothing moving but clot
   shot, and reaches **above** the sack's own top (its box starts at y = 527, the
   sack's at y = 535).
 - ⭐ **f27 → f36 — the body has stopped and the cape has 0.75 s left to run.** The
-  centroid is pinned at **345.3 ± 0.1** from f25 to the end. Over f27 → f36 the body's
+  centroid is pinned at **345.3 ± 0.1** from f27 to the end, and at 345.2 ± 0.15 if you
+  start at f25 (f25 itself reads 345.06). Over f27 → f36 the body's
   centroid walks **0.4 px in total** while the cape's walks **33.0 px** (net 31.6),
   and the cape's visible area falls **monotonically**: 2,003, 1,794, 1,643, 1,533,
   1,443, 1,365, 1,264, 1,186, 1,110, **1,055 px**. Ten frames, one direction, no
@@ -353,7 +495,7 @@ The same anticipation, larger, and then a full second of nothing moving but clot
 - **The cape trails on every moving frame.** On all **15** frames moving faster than
   3 px/frame horizontally, the cape sits on the far side of the body from its
   direction of travel — 15 of 15. The correlation is **−0.76**. Vertically, again,
-  −0.32 and 7 of 16: **horizontal only**.
+  −0.31 and 7 of 16: **horizontal only**.
 - It does not return: 199 px right of where it started, and 17,229 pixels of the
   sack's silhouette differ between the first frame and the last.
 
