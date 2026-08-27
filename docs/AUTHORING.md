@@ -1550,15 +1550,43 @@ construction**: absence pays the reference's ink exactly once, so on any objecti
 normalised by that ink, *"draw nothing"* sits at 1.0 by arithmetic — which is why it is
 worth evaluating deliberately rather than discovering.
 
-⇒ **Three defences, and the first is the cheap one.**
+⇒ **Four defences, and the first is the cheap one.**
 
 - **Bound the search to the frame.** A part cannot legitimately leave the picture on a
   shot whose frames all draw it, so a translation range wide enough to exit the
   viewport is a range that contains a false optimum. Bound each parameter by what the
   frames can *show*, not by what the format permits.
+  - ⚠️ **And its converse, which is the easier half to get wrong: a bound has to
+    *reach* what the frames show, not merely stop where they stop.** The two failures
+    look nothing alike — a bound that is too wide loses a fit to the cliff, a bound
+    that is too narrow loses one to a wall it never reports hitting. Bounding a
+    vertical channel to the range the *rest* pose occupies is the classic case: a shot
+    that drops its subject in from hundreds of pixels above the standing pose puts its
+    own entry outside the search entirely, and the fitter returns the best pose *it was
+    allowed*, which is the top of the box, silently. ⇒ **Take each channel's range from
+    the brief and the frames — the extremes the shot actually visits — and then check
+    afterwards how many converged values are sitting on a bound.** A knob resting
+    exactly on its limit is the signature, and it costs one line to print.
 - **Assert the part is drawn, every iteration.** Count your own ink for that part and
   reject any candidate whose count is zero or a small fraction of the reference's. This
   is one comparison and it makes the cliff unreachable rather than merely unattractive.
+  - ⚠️ **Write it at the resolution the level is actually being evaluated at.** On a
+    coarse-to-fine pyramid, a threshold expressed in full-resolution pixel counts
+    refuses **every** coarse pose — and a rejection that fires on everything is
+    indistinguishable from an objective with no gradient. You get `Infinity`, or a
+    figure far worse than the same search reaches with the assert switched off, and
+    nothing in either says *"your guard is the problem"*. ⇒ Express the count as a
+    **fraction of the reference's ink at that same level**, so the test means the same
+    thing at every rung of the pyramid.
+- **Charge ink that leaves the window, because the cliff has a second entrance.** If
+  your objective is computed inside a window around the reference's own drawn box —
+  and it usually is, since that is what makes it cheap — then ink outside the window
+  costs **nothing**, and the three defences above do not reach that: the part is still
+  drawn, its count is still healthy, and the score still falls. The fitter hangs a part
+  a few hundred pixels below the frame and reports progress every step. ⇒ **Count your
+  own ink further than a small margin outside the reference's drawn box and charge it.**
+  One line, in the same place as the ink count, and it closes the entrance the bound
+  closes only when the bound happens to be tight enough.
 - **Read the objective's floor before you trust its direction.** Evaluate *"draw
   nothing"* once, deliberately, and keep the figure. Any score at or below it is the
   cliff, whatever the search says — and if your best honest pose is *above* that floor,
@@ -1570,6 +1598,31 @@ divide over the **reference's** own drawn pixels and a chain that draws nothing 
 0 % on 0 slots, which §9.2 says is the loudest row in the table and not the quietest.
 The trap lives in the objectives **you** write inside a fit, where the denominator is
 yours to choose.
+
+🚨 **One more inert-write trap, and it is on the way *out* of the fit rather than
+inside it: your compiled animation is not your pose series.** Everything above is about
+a search that reads the wrong thing; this is about a search that was right and an
+emission that was not. The formats differ in a way that is easy to miss — **a translate
+key is an offset from the setup pose, while a fitter almost always drives the absolute
+local position** — so writing the fitted numbers straight into keys applies the setup
+offset a second time and displaces the whole figure by it.
+
+⚠️ **What makes it expensive is how it presents.** `build` is green: the numbers are
+finite, the durations agree, nothing is degenerate. And `check` does not say *"your keys
+are offset"* — it says the union box is a fifth larger than the reference's, the MAE is
+several times anything a wrong pose produces, and no slot is attributable anywhere.
+That reads like a **wrong rig**, so the hours go into the rig.
+
+⇒ **Before reading a single measure, sample your own compiled animation and diff it
+against the pose series the fitter produced.** `sampleAnimation` in
+[`src/render.ts`](../src/render.ts) is the same stepper the frames were made with, so
+this is a handful of lines and it is exact: for every frame, for every bone, the local
+transform the file plays back against the local transform you fitted. A constant offset
+per channel is this bug; a constant *factor* is a unit or lever mistake; zeros
+everywhere are §9.1's `bone.pose` trap one level earlier. ⭐ **The general rule: a
+pipeline with a fit at one end and a file at the other needs one check that the file
+plays what the fit found**, and it belongs before the measures rather than after a day
+of them.
 
 ### 9.2 Reading the table
 
@@ -1746,6 +1799,27 @@ And the coarser texture **loses** resolution the finer one has — on the same r
 pair the reference moves *one pixel* across stopped being visible at half scale, so
 the diagnostic run reported a frame-change disagreement the graded run does not have.
 Read it for the floor, never as the verdict.
+
+🚨 **And a third, which decides whether the recipe measures anything at all: `--atlas`
+substitutes region *geometry* as well as texture.** The diagnostic's logic is *"same
+skeleton, same keys, the reference's own texture"* — but an atlas entry is not only a
+page and a rectangle. It also carries how the region was packed: **`rotate`**, and the
+trim offsets that say where the opaque part sits inside the original image. Swap the
+atlas and your attachments are re-seated on those, so the quads change too.
+
+⇒ **The recipe measures a floor only when the substitution is *"same quads, coarser
+texture"*.** Where the supplied atlas packs its regions **rotated or trimmed** and your
+attachments were measured off the loose PNGs, it is not — and the tell is unmistakable:
+**the number goes the wrong way.** A texture floor can only *explain* error, so a
+diagnostic that sends the MAE **up** on every set has substituted geometry, not just
+pixels, and the run's own atlas was the more faithful of the two.
+
+⚠️ **Then the honest verdict is *inconclusive*, not *no floor*.** Both readings stay
+open — there may be a texture floor this diagnostic cannot isolate — so record the
+figures, say the substitution changed the quads, and do **not** convert a failed
+diagnostic into a claim about the shot. ⇒ Check the atlas's own entries for `rotate` and
+for trim before you run it; that is one look at a text file, and it tells you in advance
+whether the number you are about to take will mean anything.
 
 🚨 **The precondition the advice above does not state: a floor measured with another
 part misplaced is not a floor.** Measuring at the rest pose is right — it is the one
@@ -2205,6 +2279,27 @@ it. A contraction reported as a fit is the same dishonesty as a hold reported as
 measurement, and the cost is real — the frames you contracted are slightly less faithful
 than they were.
 
+🚨 **Contract the *planned curves*, not the pose series — the report never sees the pose
+series.** This is one sentence and it is worth two builds: the change column measures
+your **compiled animation sampled at the frames' own rate**, and between your poses and
+that lie the key reduction and the curves. Contract before the reduction and you have
+adjusted a series nothing downstream reads — the planner then re-fits its spans through
+the adjusted poses, the interpolants land where the tolerance allows, and the pair you
+were aiming at comes back out of band having *moved*. ⇒ **Apply the contraction where
+the measurement is taken**: plan the keys, sample the planned curves, find the offending
+pairs, and contract *those samples* by forcing or moving the keys that produce them —
+then re-plan and re-sample. That is the closing loop below, and its subject is the curve
+series throughout.
+
+⚠️ **And aim *inside* the band, not at it.** `check`'s thresholds are exact and stated in
+[`src/check.ts`](../src/check.ts), so it is tempting to converge until every pair is
+just inside. But a run measuring its own change renders in **its own framing**, and the
+report renders in the one `check` chose — and a fraction of a percent of scale is worth
+a few percent of a pixel count. A pair you cleared by a hair in your loop can sit the
+wrong side of the same threshold in the report, on a difference that is entirely
+framing. ⇒ Converge to a **margin** — clear the band by enough that a percent of scale
+cannot cross it — and re-read the real report before believing the column.
+
 ⭐ **Then stop trusting the floor and close the loop on the frames, because a floor is
 a heuristic and the column is a measurement.** The floor above cut rung 3's
 disagreements from three to one and could not reach the last: **sample your own planned
@@ -2300,6 +2395,50 @@ animation measure at or near 1.000. ⇒ **Measure the basin before you declare t
 tolerance**, which costs nothing and needs no reference: scan each knob around its
 converged value and read how far it moves before the objective does. Then declare a
 tolerance at or above the widest of them, and record both numbers.
+
+⚖️ **Read that last sentence with the rule two paragraphs up, because taken literally
+the two pull apart — and the resolution is that the basin is a *per-channel floor*,
+not a second global declaration.** The tension is real: *declare one tolerance* asks
+for a single figure in one unit so the density trade reads as one curve, while
+*declare at or above the widest basin* points at the worst-identified knob in the rig.
+Those can differ by **an order of magnitude** — a well-levered channel the objective
+pins to a fraction of a pixel sitting in the same rig as a part the objective barely
+sees at all, whose basin is several pixels wide. Take the widest and every good channel
+is keyed to the worst one's ignorance; take the declared figure alone and the bad
+channel ships the fitter's wander as data.
+
+⭐ **What decides it: a basin belongs to the estimator that wrote the channel, and a
+run that fits poses has more than one.** The two rules are answering different
+questions. *One tolerance* is about the **unit and comparability** of the figure you
+declare — that survives untouched. *The basin* is about the **noise under a particular
+series**, and noise is a property of the estimator on that channel, not of the rig. So:
+
+> **Declare one tolerance, in pixels at the end of what each bone swings. Then floor it
+> per channel at that channel's own basin, capped.** Effective tolerance for a channel
+> = `max(declared, min(that channel's basin, cap))`.
+
+- **Why per channel** — the thing the floor protects against is encoding wander, and
+  wander is per channel. A global maximum spends keys nowhere they were needed and
+  removes them nowhere they were wrong.
+- **Why a cap, and this is the part worth understanding.** The basin bounds **what you
+  know**; the tolerance also bounds **what you render**, and the rendered series is read
+  by `check`'s change column at *zero* slack (§9.2). So an uncapped floor lets a
+  badly-identified channel buy a reduction error large enough to show up as motion the
+  reference does not have — trading a measure nothing reads for one read at zero
+  tolerance, which is the wrong direction. A cap of a pixel or two, declared and
+  recorded, bounds the reduction error whatever the identifiability.
+- ⇒ **And a channel whose basin exceeds the cap is telling you it is not identified,
+  which is a different problem with a different fix.** The answer there is a **prior** —
+  regularise the channel toward a smooth trend and say in the log that you did — not a
+  tolerance wide enough to key it three times and call the result a measurement. ⚠️ Such
+  a channel is *partly a prior rather than a measurement*, and a run that does this
+  records which channels and over which passages, exactly as it records a contraction
+  trade below.
+
+📌 **Record all three numbers**: the declared tolerance, each floored channel's basin,
+and the cap. `diff`'s `key_counts` is the finish line and a run gets one shot at it, so
+the arithmetic that produced the density is the only thing that makes the figure
+readable afterwards.
 
 **A rig's parameters are not identified by its pixels — remove the gauges before you
 key.** A bone that carries no attachment is an exact gauge: turn it by δ, turn its
