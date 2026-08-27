@@ -880,6 +880,13 @@ remaining work is taken in.
    > step and the run's README says where to check it. ⇒ **The queue is rung 7 alone, now on
    > a number rather than on procedure**, and no rung is open on a gate question. Verdict
    > under *Status*, in *Rung 7 — attempted, not cleared*.
+   > ➡️ **The re-climb landed the same day and clears — 🏁 this item's list is now empty.**
+   > `2026-08-28-rung7-2`, authored from brief revision 3, takes G2 from 7.33 px to **2.76
+   > px** and meets every clause: **PASS**, #14 closes, and **rungs 1 through 8 are all ✅**.
+   > ⚠️ Note what the fix was **not**: attempt 1's named next step — a mesh for the cape —
+   > was built, fitted like-for-like against the region, and **lost on all four shots**, so
+   > the failing drift was placement rather than mechanism. ⇒ **What remains of this rule is
+   > item 3, the graduation exam.** Verdicts in *Rung 7, attempt 2*.
 3. **spineboy `ess` is the graduation exam**, taken last, on the matured guide.
    `pro` stays gated on [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)
    and is **not** a graduation requirement ([#16](https://github.com/firejune/rigc/issues/16)):
@@ -952,7 +959,7 @@ is the cost of the wait, not the absence of one.
 | 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung5-1` |
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ✅ *gate v2, 2026-08-25* — re-inspected, holds |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ✅ *gate v2, 2026-08-25* — both skeletons, re-inspected |
-| 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | 🟨 `2026-08-28-rung7-1` — gate v2.1: **G2 alone** (7.33 px), every other clause ✅; frames **local-only** |
+| 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ✅ *gate v2.1, 2026-08-28* — re-climbed on `2026-08-28-rung7-2`; G2 7.33 → **2.76 px**; frames **local-only** |
 | 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×3 — structure ✅, motion improving (18.8→14.6 px) · gate v2: G2 · G3 · `pro` ⬜ · frozen as gate 2026-08-24 |
 
 ### The gate-v2.1 re-inspection — 2026-08-26
@@ -3617,6 +3624,14 @@ part, one texture generation apart, and no key can move it (§9.2). ⇒ Every MA
 on 4.42, and the rung's own row in [`bench/runs/README.md`](../bench/runs/README.md) now
 carries the same `scale: 0.5` warning rungs 3 and 1 carry.
 
+> 🔴 **Correction, 2026-08-28 — do not re-quote 4.42 as this example's texture floor.**
+> Attempt 2 ran the same diagnostic and it sent the MAE *up* on every set, because
+> `--atlas` substitutes region **geometry** as well as texture and this example's regions
+> are packed rotated and trimmed. The recipe does not isolate a texture floor here, so the
+> figure above is **inconclusive rather than a floor**, and the ledger row and
+> [AUTHORING.md](AUTHORING.md) §9.2 now say why. The paragraph is left as written because it
+> is what this pass measured and reported; what is corrected is the reading, not the number.
+
 #### Gate v2.1 verdict, 2026-08-28 — **FAIL on G2 alone**, and the rung stays 🟨
 
 🚫 **Zero builds and zero authoring, and nothing in the run directory was touched.** The
@@ -3775,6 +3790,219 @@ clears, G2 clears on eleven of twelve sets, and the run names its own next step:
 the cape on a short chain, checked against the frame where the crimson spans twice the
 sack's width and a region at scale 1.87 cannot reach. **Issue [#14](https://github.com/firejune/rigc/issues/14)
 stays open on G2**, and the rung's status goes **⬜ → 🟨**.
+
+> 🔴 **Correction, 2026-08-28 — the named next step was the wrong hypothesis.** Attempt 2
+> built the cape mesh, fitted it like-for-like against a region under one fitter, budget and
+> objective, and the **region won on all four shots**. The 7.33 px was **placement, not
+> deformation**, and G2 cleared at 2.76 px with the cape still a posed region. The reading
+> above is the *"reported figure with two possible causes"* ⚠️ landing on the wrong one; what
+> settled it was a controlled fit rather than an argument. See *Rung 7, attempt 2*.
+
+### Rung 7, attempt 2 — the cape's drift clears, and the last numbered rung closes (2026-08-28)
+
+Run [`bench/runs/2026-08-28-rung7-2/`](../bench/runs/2026-08-28-rung7-2/) — `--profile spine`
+green. Authored by Claude Opus 5 (1M context) on Claude Code / Agent SDK from **brief
+revision 3** (third-party verified 2026-08-28, the revision that promoted the panel's draw
+order and the sack's deformation out of their hedges on attempt 1's evidence), the frames the
+run rendered itself, and this repository's source read as format documentation. The reference
+export was never opened; the supplied `.atlas` was opened once, after the candidate was
+final, for §9.2's texture-floor diagnostic. `bench` run once, at the end — **not
+bench-assisted**. **No honesty-rule incident.**
+
+One skeleton, `sack`: **8 bones · 3 slots · 3 attachments · 0 constraints · 4 animations ·
+1,273 keys over 64 timelines**, against a reference of **31 bones · 3 slots · 3 attachments ·
+24 constraints**. Bone tree `root → body → { sack1 → sack2 → sack3 → sack4, collar, panel }`,
+with `body` carrying **translation only** because it holds no attachment and keying its
+rotation would be a gauge (§10.3).
+
+🚫 **No frame committed.** `git ls-files bench/reference-local` → **0**, checked before every
+commit; the candidate's atlas names the example's own PNGs by relative path rather than
+carrying copies. Re-inspection needs `bun run fetch-examples` and a local render first, as on
+attempt 1.
+
+```
+sack   bones=8/31  slots=3/3  skins=1/1  attachments=3/3  constraints=0/24  animations=4/4  events=0/0
+
+bones      0.128 (name-agnostic 0.213)   attachments 0.407   animations 0.798
+slots      0.857 (name-agnostic 0.333)   constraints 0.000   events      1.000
+```
+
+| exact (1.000) | partial |
+| --- | --- |
+| `slots.count` 3/3 · `names` 3/3 · **`order` 3/3** · `attachment` 3/3 · `blend` 3/3 · `color_present` 3/3 · `attachments.skins` 1/1 · `count` 3/3 · `names` 3/3 · `animations.count` 4/4 · `names` 4/4 · **`duration` 4/4** · **`draw_order` 4/4** · `event_keys` 0/0 · `events` both at 0/0 | `bones.count` 8/31 · `names` 2/37 · `parent_by_name` 1/31 · **`slots.bone` 0/3** · `attachments.type_counts` 1/3 · `mesh_weighted` 1/3 · `mesh_vertices`, `mesh_triangles`, `mesh_hull` 0/3 · `region_size` 0/2 · all five `constraints.*` **0/24** · `animations.curve_kinds` 0.645 (821/1273) · `key_counts` **0.528** (672/1273) · `timeline_kinds` 0.260 (47/181) · `deform` 0.75 |
+
+**Both mechanism questions the brief leaves open were decided by building both hypotheses and
+fitting them with the identical fitter, budget and objective** — §9.3's rule, and a stronger
+form of it than attempt 1 managed. The sack **deforms**: a weighted 5 × 9 grid mesh, 45
+vertices / 64 triangles / hull 24, on a four-link chain up its own height. The cape panel
+**does not**: one bone placing one region, chosen from a baseline where both rigs score
+**11.14** on `hello/f0000` unfitted, after which the region variant wins on all four shots
+(**19.55 / 27.10 / 24.21 / 25.39** against **23.13 / 32.45 / 27.30 / 27.15**). ⚠️ The run
+states its own caveat: the mesh variant carries 30 knobs against the region's 24 at the same
+budget, so part of that gap is search rather than mechanism. ⭐ **And the frames corroborate
+it from a second direction** — the passage that looks least affine, `fall-in` f0's two crimson
+wings with a gap between them, is explained by the *collar*, whose art is a wide chevron whose
+arms reach exactly those corners.
+
+📌 **`hello`'s terminal pose was fitted, not held.** It exists in exactly one file — the 30 fps
+last still at 86/30 s, which the 12 fps set ending 2.8333 s does not carry — and the run
+fitted it like any other frame and keyed it at the declared duration. That is
+[AUTHORING.md](AUTHORING.md) §9's ⇒ ①, which attempt 1's own log asked for and which this run
+is the first to be able to follow.
+
+#### Gate v2.1 verdict, 2026-08-28 — **PASS**, and the rung closes
+
+🚫 **Zero builds and zero authoring, and nothing in the run directory was touched.** The
+candidate was re-read with `check` and `validate --profile spine` **from the repository root
+over all 12 sets, with no `--atlas` and no `--viewport` override**, against frames rendered at
+the brief's exact flags, and **every figure the run recorded reproduces to the digit** — all
+twelve MAE means and worst frames, all twelve worst drifts and their slots and frames, the
+attribution counts, 98 adjacent pairs, 0 disagreements, all eight sheet means and worst tiles,
+the three-chain rollup including `panel`'s *"no slot attributable in any set"*, 0 unreached
+reference components, and 15 PASS / 0 FAIL / 5 SKIP / 14 PROF.
+
+| Clause | Reading over all 12 sets | |
+| --- | --- | :---: |
+| **G1** validity | 0 FAIL under `--profile spine` — 15 PASS, 5 SKIP, 14 PROF | ✅ |
+| **G2** worst attributable slot drift ≤ 6.0 px | **2.76 px** `cape-front` at `cape-follow-example` f0019; next worst **2.74 px** `sack` at `hello` f0004, then 2.05, 2.01, 1.76, 1.76, 0.83, 0.83, 0.50, 0.50, 0.41, 0.32. **Clears by 2.2×.** No set is the 🕳️ HOLE case — every set attributes some frame (16/21, 19/35, 7/9, 29/37 on the 12 fps sets; 1–2 of 2 on the stills) — and **0 reference components go unreached in any set** | ✅ |
+| **G3** per-frame motion = 0 | **0 of 98** adjacent pairs — 36 + 20 + 34 + 8, every pair of every shot at the rate each was committed in full. The eight stills sets carry no pair; **v2.1 (b) does not reach them** (a shot sampled twice is not a single pose) and each carries a sheet meeting G7, the discharge rung 2's and rung 4's sets use. No `⚠️ overdraw`: `drawnRatio` **0.951–0.989** against `OVERDRAW_RATIO` 1.5 | ✅ |
+| **G4** shot inventory | `count` 4/4 · `names` 4/4; lengths against the reference's own — `cape-follow-example` **3.000000** v 3.000000 · `fall-in` **1.666666** v 1.666667 · `hello` **2.866666** v 2.866667 · `walk` **0.666666** v 0.666667. Worst gap **0.000001 s**, inside 1/12 s by five orders. `hello` declared at 86/30 from the brief's table rather than the 12 fps set's 2.8333 | ✅ |
+| **G5** drawn inventory ≥ 0.85 | name-agnostic `slots.count` **3/3 = 1.000** · `attachments.count` **3/3 = 1.000**. **No deduction taken and none needed** | ✅ |
+| **G7** every sheet ≤ 3.5× own mean | **eight sheets, all eight compared, all eight inside** — `fall-in@30fps` **2.923** (66.48 over a 22.74 mean, 51/51 tiles) · `fall-in@24fps` **2.816** (62.44 over 22.17, 41/41) · `cape-follow-example@24fps` 2.537 (71.81 over 28.30, 73/73) · `cape-follow-example@30fps` 2.488 (72.77 over 29.25, 91/91) · `hello@24fps` 1.773 (58.64 over 33.09, 70/70) · `hello@30fps` 1.705 (58.47 over 34.30, 87/87) · `walk@24fps` 1.545 (41.14 over 26.63, 17/17) · `walk@30fps` 1.477 (39.74 over 26.90, 21/21). The four 12 fps sets commit every sampled frame and read **SKIP**. **No set is a HOLE** | ✅ |
+| **G6** the rung | one skeleton, and it meets G1–G5 and G7 | ✅ |
+
+⇒ **Every clause reads PASS or SKIP. Rule 3's *close on pass* applies, issue
+[#14](https://github.com/firejune/rigc/issues/14) closes, and rung 7's status goes 🟨 → ✅.**
+🏁 **That is the last numbered rung**: rungs 1 through 8 are now all ✅, and what remains before
+the graduation exam is spineboy alone.
+
+⚖️ **The framing ruling of attempt 1 is reused unchanged, and this time it is not even
+contested.** The gate's figures are `check`'s own unaided reading; `frames.json`'s box is
+refused on all twelve sets, on extent, exactly as revision 3 predicts. The run kept
+`check-declared-box.txt` as a **named diagnostic** and says so — the framing is worth
+**0.7–1.3 MAE** here against attempt 1's 1–11, and 🚫 the pinned run is not the record. ⭐ Note
+what shrank: the framing gap fell by roughly an order of magnitude while the drift fell by
+2.7×, which is what a candidate closer to the reference's own extents looks like from both
+sides.
+
+⚖️ **The deliberate fidelity trade, ruled: no gating clause reads it, and it is legal.** Three
+`cape-follow-example` pairs were contracted toward each other at a cost of **+6.89, +7.06 and
++7.08 composite units**, and ten further pairs at +0.13 to +2.66, to bring the candidate's own
+frame-to-frame change inside `check`'s band. The run asked whether any clause reads that cost.
+**None does, and the gate says so in its own words**: rule 2's 🚫 — *"MAE is reported, per set,
+and decides nothing"* — covers exactly this quantity, a per-frame residual in the run's own
+composite units. ⇒ **The trade converts a figure no clause reads into G3, which is read at
+zero tolerance**, and that is the direction the gate's ⚖️ prefers by construction (*"a hold
+that is not held … [is] visible in the frames the author was given"*). Verified rather than
+assumed: on the traded frames the gated columns read **MAE(ref) 25.09–25.59** against that
+set's own mean of **24.93**, and **drift 0.6–1.3 px** against a 6.0 px bar — the cost is
+invisible in every column that gates. ⭐ **And it is recorded the way the guide now requires**:
+frames named, cost per frame quantified, declared as a trade rather than presented as a fit.
+Nothing else on the run's list is a clause matter — the union-box residual and the panel's
+regularised passages are both reported figures, and the atlas diagnostic is an instrument
+question, ruled on below.
+
+⚠️ **`panel` is never attributable a drift in any set, and that is read down rather than
+waved through.** The `cape-back` slot **draws on all 118 compared frames** and the chain
+carries **15.7 %** of the difference at **44.04** per pixel — so it is drawn and it is scored
+— but [`src/slots.ts`](../src/slots.ts)'s matcher returns no match for it anywhere, because
+the panel sits *behind* the sack over a beige backdrop and the best residual exceeds its
+confidence bar. A blank drift is normally the **loudest** row in the table (§9.2), so the two
+causes have to be separated, per rule 2's ⚠️:
+
+- **`(unattributed)` is 1.7 %** and **0 reference components go unreached in any set** — a
+  part that had left its place would dump the reference's ink into both.
+- **The quantitative bound comes from attempt 1 on the same frames.** That candidate's
+  `cape-back` was a region on its own bone too, *was* attributed, and read **1.0 px worst /
+  1.0 px mean** with `MAE in it` **39.61**. This one reads **44.04** — **11 % worse per
+  pixel** than a part measured at one pixel out. A part tens of pixels out of place does not
+  land 11 % away from one that is not.
+- **It was predicted before any build**, out of `src/slots.ts`, and recorded in that run's
+  `LOOP.md` §7 rather than explained afterwards.
+
+⇒ **G2 reads and passes.** The clause is *"worst attributable slot drift, in every measured
+set"*, and its 🕳️ fires on a **set** with no attributable drift, not on a slot; every set here
+has attributed frames. 📌 But the coverage is honestly **2 of 3 slots**, and that is owner
+item 2 below rather than something this pass invents a condition for.
+
+📌 **Reported and not gating.** `bones` **0.128** and `constraints` **0.000** are exempt by
+name in rule 1, on attempt 1's reading and for the same reason — the cloth's mechanism is on
+the brief's *cannot tell you* list. ⚠️ **`slots.bone` fell to 0/3 from attempt 1's 2/3**,
+which is `bones.names` 2/37 reaching through a name-keyed measure: this rig's bones are named
+after nothing public, and rule 1 lists every name-keyed measure as unwinnable by design.
+`key_counts` **0.528** is the density measure §10.6 says no public page gives, and it improved
+from attempt 1's 0.486 without being aimed at. `attachments.type_counts` 1/3 and the four
+`mesh_*` measures are the region-versus-mesh choice §9.3 names as invisible — and this
+candidate reaches them from the *other* side than attempt 1 did, having meshed the sack and
+posed the cape.
+
+🎯 **What moved between the two attempts, against the clause that decided them.**
+
+| | attempt 1 | attempt 2 |
+| --- | --- | --- |
+| **G2** worst drift | **7.33 px** ❌ | **2.76 px** ✅ |
+| G3 disagreements | 0 of 98 | 0 of 98 |
+| G7 worst sheet | 3.041× | 2.923× |
+| framing cost | 1–11 MAE | 0.7–1.3 MAE |
+| MAE(ref), 12 fps sets | 19.07 / 20.80 / 25.07 / 29.23 | **19.17 / 22.56 / 24.93 / 26.20** |
+| `key_counts` | 0.486 | **0.528** |
+| bones / slots | 7 / 0.952 | 8 / 0.857 |
+
+⭐ **The rung was decided by the cape, both times, and the fix was not the one attempt 1
+predicted.** That run's named next step was *"a mesh for `cape-back` on a short chain"*, on the
+reasoning that its residual was the panel's own deformation. Attempt 2 **built that mesh, fitted
+it against the region under identical conditions, and the region won on all four shots** — so
+the 7.33 px was **placement, not mechanism**, and the mesh would have spent the rung's budget on
+the wrong hypothesis. 📌 That is the ladder's own ⚠️ about a reported figure with two causes,
+playing out across two attempts: attempt 1 read its cape residual down to *deformation* and was
+wrong, and what settled it was a like-for-like fit rather than an argument.
+
+🧾 **What this pass records for the owner rather than resolving.**
+
+1. ⚠️ **G7's thin margin is now an integrity matter rather than an opportunity, and rule 5
+   says so.** The corpus's top three are rung 4's withdrawn 4.00, **this candidate's 2.923**
+   and rung 6's 2.892 — and 2.923 sits above 2.892, so *"a tightening of G7 finds rung 6
+   first"* is **still not true; it finds rung 7 first.** What changed with this verdict is the
+   direction: rung 7 now **holds a PASS** resting on a 1.20× margin, beside rung 6's 1.21×, so
+   by rule 5 point 2 a tightening of G7 could flip **two standing passes** and would
+   re-inspect immediately rather than waiting for a bump. Rule 2's ⚠️ (*"both margins are
+   thin, and that is recorded rather than smoothed over"*) now has two candidates inside it.
+   🚫 **No threshold is touched here** — this is the argument arriving where rule 2 says it
+   starts, with the ranking it changes stated.
+2. ⚖️ **G2's 🕳️ is written per set, and this candidate is the first to show the per-*slot*
+   gap.** One of three slots contributes no drift sample anywhere in the corpus, so G2's
+   reading covers two thirds of the drawn parts. It does not hold this rung — the blank is
+   read down above on three independent grounds — but the shape generalises badly: a part
+   drawn *behind* another over a flat backdrop can be misplaced and never appear in the one
+   clause that measures placement. The gate has no word for it, and `check`'s own text calls
+   a blank the loudest row, which is the opposite reading. ⇒ **A clause decision for the next
+   gate version**, in the same family as the single-pose gap v2.1 closed: either a slot never
+   attributable in any set is a HOLE on that slot, or the clause states that per-set
+   attribution is what it means and the unattributable case is covered by the unreached-component
+   count instead.
+3. 📌 **The texture-floor diagnostic is not sound as §9.2 wrote the recipe, and the guide now
+   says so.** `check --atlas <the example's own>` sent MAE(ref) **up** — 24.93 → 28.84 and
+   19.17 → 27.75 — because `--atlas` substitutes region **geometry** as well as texture, and
+   this example's regions are packed rotated and trimmed while the candidate's attachments are
+   measured off the loose PNGs. The run read it as **inconclusive rather than as a floor**,
+   which is the honest verdict, and this pass agrees. ⚠️ **So attempt 1's recorded 4.42 floor
+   should not be re-quoted as this example's texture floor**: it rests on the same substitution.
+   Whether `check` should offer a texture-only substitution is an **instrument** question, and
+   rule 3 keeps instruments out of a gate version.
+4. 📌 **Guide debt: eight items, and all eight are folded** into [AUTHORING.md](AUTHORING.md)
+   (*After a run* step 2) — including the two the run flagged. §10.3's one-tolerance rule and
+   its basin rule are reconciled the way the run resolved them, and the reading is codified as
+   the guide's: **declare one tolerance, then floor it per channel at that channel's own basin,
+   capped** — because a basin bounds what you *know* while a tolerance also bounds what you
+   *render*, and the rendered series is read by G3 at zero slack. A channel whose basin exceeds
+   the cap is unidentified and wants a **prior**, recorded as such, not a loose tolerance.
+   §9.2's atlas recipe gains item 3's caveat. None of the eight changes a stored figure.
+
+⇒ **What the ladder learns from this rung.** It is the first to be climbed with **no
+committed reference frames at all**, and the protocol held on both attempts — rendered locally,
+never committed, reproduced digit for digit by an adjudicator who rendered them again. It is
+also the first rung where an attempt's own *stated* next step was the wrong hypothesis and a
+like-for-like fit said so. **Issue [#14](https://github.com/firejune/rigc/issues/14) closes.**
 
 ---
 
