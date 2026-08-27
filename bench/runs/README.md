@@ -169,8 +169,9 @@ What the verifying agent does:
   plausible on a glance and all false under a pixel test. The same traps §8 of
   [docs/AUTHORING.md](../../docs/AUTHORING.md) names for the authoring agent apply
   here.
-- ⭐ **State the tolerance a claim was measured at, whenever a later reader might
-  re-measure it differently.** Stillness is the case that bites: `check` calls a pixel
+- ⭐ **State the tolerance — and the measurement convention — a claim was measured at,
+  whenever a later reader might re-measure it differently.** Stillness is the case that
+  bites: `check` calls a pixel
   changed only when a channel moves by more than `CHANGE_TOLERANCE`
   ([`src/check.ts`](../../src/check.ts), 8 levels), so pairs that read *still* to the
   measure are routinely **not** identical to the bit — and a later verifier measuring
@@ -187,6 +188,17 @@ What the verifying agent does:
     moving at all against a still reference is a disagreement however small it is. ⇒
     **State the threshold, and if it is not the measure's, quote the measure's reading
     too.**
+  - ⚠️ **A convention fails the same way and can fail worse than either direction of a
+    threshold** (rung 7, revision 2, 2026-08-27,
+    [#14](https://github.com/firejune/rigc/issues/14)). Three of that pass's fourteen
+    findings were arithmetic choices the brief never named — what *opaque* means on the
+    art, whether a velocity is a forward or a central difference, and whether a "differ
+    in colour" count is at exact equality or at the mask threshold — and the obvious
+    guess was wrong in all three, so each made a **correct** figure unreproducible. A
+    threshold read the wrong way moves a boundary a frame; the velocity convention
+    **flips a correlation's sign** (−0.03 becomes +0.24), which turns a true per-axis
+    finding into its opposite. ⇒ **If a figure would change under a defensible
+    alternative reading of *how* it was computed, the reading is part of the claim.**
 - Correct what is wrong *in the brief*, in the terms a client watching the shot
   could give — never by opening the reference export. The verifier is under the same
   honesty rule as the run agent, and a brief repaired from the answer is worse than
