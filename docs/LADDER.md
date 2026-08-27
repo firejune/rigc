@@ -3615,7 +3615,7 @@ rest pose — where the pose is provably the art at scale 1 — this candidate r
 per reference pixel** with sack IoU 0.986 and cape IoU 0.920. That is the outline of every
 part, one texture generation apart, and no key can move it (§9.2). ⇒ Every MAE below sits
 on 4.42, and the rung's own row in [`bench/runs/README.md`](../bench/runs/README.md) now
-names three examples with the same floor.
+carries the same `scale: 0.5` warning rungs 3 and 1 carry.
 
 #### Gate v2.1 verdict, 2026-08-28 — **FAIL on G2 alone**, and the rung stays 🟨
 
