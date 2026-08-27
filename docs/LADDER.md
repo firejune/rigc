@@ -3747,6 +3747,16 @@ own instruction to close it that way.
    frames do not force it."* ⇒ Suggested for **revision 3**: move it into a measured claim
    with the deciding-pixel figure beside it. 🚫 **Not a blocker and not adjudicated** — a
    brief is the verifying pass's surface, not the gate's, and this pass edited no brief.
+   - ➡️ **Done, 2026-08-28 — and the brief carries a frames-only proof instead.** The
+     verifying pass re-derived the render-back result independently (driving the compiled
+     candidate's own timelines rather than the run's fitted knob store: **+974 %** over
+     372,159 deciding pixels, 101 of 102 frames, against **+241 %** over 65,481 on the
+     collar control) and then found the edge is forced **without any build at all** —
+     *crimson, beige, crimson* inside one unbroken drawn span occurs on **all 102 frames**,
+     and on flanked runs ≥ 60 px, which no gap inside a 75 × 38.5 px collar can produce,
+     still all 102. Revision 3 states the frames-only measurement, so an author no longer
+     needs a candidate to know which way the edge goes. The same pass promoted the sack's
+     deformation on the same basis.
 4. 📌 **Guide debt: seven items, and all seven are folded.** The run's `LOOP.md` *Notes* left
    them unapplied by design, as *After a run* step 2 expects; they are in
    [AUTHORING.md](AUTHORING.md) as of this pass — §9.1's mirrored trap, §9.2's floor
