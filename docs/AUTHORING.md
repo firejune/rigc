@@ -1276,6 +1276,23 @@ not a quiet one.** The matcher refuses to name a distance past the part's own si
 (§9.2), so a limb far enough out reports no match rather than a large number — read
 that beside a high figure per pixel as the strongest signal the table has.
 
+⚠️ **Excess adjacency change has a second diagnosis, and the rule above assumes the
+first.** *A limb has left its place* is one cause — a fit that teleported, which is what
+a blank drift and a high figure per pixel together point at. The other is **two
+independent per-frame residuals adding**: every pose inside its own accuracy, nothing
+lost, and the *difference* between two neighbours nonetheless several times the
+reference's. The fixes are opposite — the first wants the search bounded or restarted,
+the second wants the neighbouring poses drawn toward each other (§10.3's own note on
+this) — so guessing costs a round either way.
+
+⇒ **Separate them by asking how much freedom the neighbour-mean step actually had.**
+Measure, over every neighbouring pair in the shot, how many of those steps your own
+constraints left **free** to move: if the answer is a percent or two of them, then the
+search was not free to teleport anything, and the excess is residuals adding rather than
+a lost limb. It is one count over data the
+fit already produced, and it is worth more than an afternoon of restarts aimed at the
+wrong cause.
+
 **What comes out is a pose per frame, and a pose per frame is not a key.** Two things
 decide what survives the reduction, and **§10.3** states both: declare one tolerance
 in pixels at the end of what each bone swings rather than a figure in degrees, and
@@ -1318,6 +1335,27 @@ carry: MAE only. The `Δpx` / `ref Δ` thresholds are calibrated at frame scale 
 tile has a fraction of a frame's pixels, so the per-frame change measure stays on
 the committed stills, where it reports `no two compared frames are adjacent` and
 means it.
+
+⭐ **Do not treat such a set's two stills as bookends. They are full-resolution frames
+at their own rate, and one of them is routinely a pose no other set on disk carries.**
+The temptation is to read a strided set as *a sheet, plus two files that fix the
+framing* — the sheet is where the shot is, so the stills look like plumbing. But the
+last still is the animation's **own last sample at that rate**, and a finer rate lands
+on a different instant: a shot whose length is not a multiple of the coarse interval
+ends *between* two coarse samples, so the coarse set's last frame is not the end of the
+shot and the finer set's is. If the shot is still moving there — and an end pose usually
+is the part that moves most — that pose exists in exactly one file, at full resolution,
+and it is worth fitting like any other frame.
+
+⇒ **Two consequences for a run.** ① **Fit every committed still**, at every rate, and
+do not let a "sheets are for timing" habit skip them; a pose you never fitted is a pose
+you guessed, and a hold written across the gap because nothing on disk contradicted it
+is a **fabrication** rather than a simplification. ② This is the same fact a brief
+states from the timing side when it warns you against declaring the coarse set's
+rounded length: the rounding and the missing pose are one arithmetic, seen twice. If
+your shot's length is not a whole number of coarse intervals, expect **both** — a
+duration the coarse sidecar understates, and a terminal pose only the finer set shows
+you.
 
 `--fps <n>` exists for frame sets that have no `frames.json` beside them, which are
 sets rendered before the sidecar existed: it gives the rate those frames were
@@ -1483,6 +1521,55 @@ parameter you sweep — a bone's local transform, an attachment's offsets — is
 of these inert writes and not a wrong animation.** The parameter you swept was
 never read; a wrong rig moves the number, a write to a field nothing reads
 cannot.
+
+🚨 **And the mirror image of all three: an objective that *improves by removing the
+subject*.** The traps above are each *"the number will not move"*, and they train you
+to distrust a still figure. The twin is a figure that moves, in the right direction,
+for the wrong reason — and it is the more dangerous one, because progress is what it
+looks like.
+
+The shape is arithmetic, not a bug. **Any symmetric error over two silhouettes charges
+a mismatch in both directions**, so it charges your ink that the reference has none
+under *and* the reference's ink you leave bare. Give it a candidate that draws
+**nothing** and only the second term survives: the score is the reference's own ink,
+once, and it is a *finite, respectable-looking number*. A part that is present but
+badly posed pays both terms and can score **worse than absence**. ⇒ A search with a
+free enough range finds the cliff and walks off it, and every step of the walk reports
+as an improvement. Synthetic illustration of the whole failure in three rows — one
+part, one objective, nothing else changed:
+
+| what the candidate does | part error |
+| --- | --- |
+| posed roughly right | 2.15 |
+| posed badly — overlapping the wrong reference ink | 2.48 |
+| **translated clean off the frame** | **1.00** |
+
+The search reports **1.00 against 2.15** and calls it a 53 % gain. What it found was
+the absence of a subject. ⚠️ **1.00 is not a coincidence in that table, it is the
+construction**: absence pays the reference's ink exactly once, so on any objective
+normalised by that ink, *"draw nothing"* sits at 1.0 by arithmetic — which is why it is
+worth evaluating deliberately rather than discovering.
+
+⇒ **Three defences, and the first is the cheap one.**
+
+- **Bound the search to the frame.** A part cannot legitimately leave the picture on a
+  shot whose frames all draw it, so a translation range wide enough to exit the
+  viewport is a range that contains a false optimum. Bound each parameter by what the
+  frames can *show*, not by what the format permits.
+- **Assert the part is drawn, every iteration.** Count your own ink for that part and
+  reject any candidate whose count is zero or a small fraction of the reference's. This
+  is one comparison and it makes the cliff unreachable rather than merely unattractive.
+- **Read the objective's floor before you trust its direction.** Evaluate *"draw
+  nothing"* once, deliberately, and keep the figure. Any score at or below it is the
+  cliff, whatever the search says — and if your best honest pose is *above* that floor,
+  the objective is ranking absence over effort and needs an asymmetry (charge bare
+  reference ink more than stray candidate ink) before it is safe to optimise against.
+
+📌 **`check` itself is not exposed to this** — its `MAE in it` and `share` columns
+divide over the **reference's** own drawn pixels and a chain that draws nothing reads
+0 % on 0 slots, which §9.2 says is the loudest row in the table and not the quietest.
+The trap lives in the objectives **you** write inside a fit, where the denominator is
+yours to choose.
 
 ### 9.2 Reading the table
 
@@ -1660,6 +1747,60 @@ pair the reference moves *one pixel* across stopped being visible at half scale,
 the diagnostic run reported a frame-change disagreement the graded run does not have.
 Read it for the floor, never as the verdict.
 
+🚨 **The precondition the advice above does not state: a floor measured with another
+part misplaced is not a floor.** Measuring at the rest pose is right — it is the one
+pose you can often *prove*, because the setup pose is the art at its own scale and the
+frames state the standing dimensions — but "the pose is provably right" is a claim
+about **one part**, and the floor you read is a whole-figure number. Any other part
+that can occlude the one you are measuring is inside that number too, and a part
+sitting tens of units off its place occludes the **wrong** pixels: the ones it hides
+count as yours-and-not-theirs, the ones it should have hidden count as
+theirs-and-not-yours, and both land on the part you thought you were isolating.
+
+The damage is that you then hold a *plausible* floor and calibrate against it. A
+synthetic case with the same shape — one part measured three ways, nothing about that
+part changed between the rows:
+
+| what else is placed | silhouette IoU read for the measured part |
+| --- | --- |
+| a neighbour still tens of units out of place | 0.74 |
+| that neighbour placed | **0.95** |
+| (the difference) | 0.21, all of it the neighbour |
+
+A fifth of an IoU is larger than most of what a fit is trying to buy, so two or three
+experiments get read against the wrong baseline before anything exposes it — and what
+usually exposes it is the setup fit finishing, which is *after* you needed the number.
+
+⇒ **Before believing a floor, check that every part which can occlude the one you are
+measuring is already placed** — and prefer a frame where the parts are **far apart or
+only one is drawn** to one where they overlap, which is §8.1's rule for calibrating a
+two-part assignment applied to a floor. If no such frame exists, say in the log that
+the floor is an upper bound on the error rather than a floor under it. ⚠️ This is the
+same failure as capturing a guard's expected value from a screen that is already
+broken: the baseline records the defect, and then the *repair* is what looks wrong.
+
+⚖️ **`frames.json`'s own box can be refused for a reason that is not a coordinate
+error, and there is an honest answer.** The test is on **extent**: a candidate authored
+in the frames' own world units — one whose setup box lands on the reference's to the
+pixel — still fails it if its union content box differs by a few pixels at the
+extremes, because one part reaching somewhere nothing in the frames reaches is enough.
+`check` then fits its own box, and on a multi-shot root the fitted framing costs every
+set some MAE against the declared one — the same order as the shared-versus-per-set gap
+the `--framing` flag's own help quotes, and easily more than a round of fitting buys.
+That cost is real and it is **not** a sign you got the coordinates wrong.
+
+⇒ **Report both, label which is which, and say what separates them.** Run `check`
+unaided — that is the figure the artifact produces on its own and the one that belongs
+in a run's record — then run it once more with `--viewport` on the declared box and keep
+that output as a **named diagnostic file** beside the first. The gap between them is the
+framing; what is left is the keys, which is the only reason to want the second number.
+🚫 **The pinned run is never the record.** `--viewport` is a claim about your own
+coordinates and `check` says so above every figure it prints under one: *nothing checks
+it*. And do not chase the refusal by shrinking a part to fit the box — that trades a
+framing cost for a wrong silhouette, which is worse in every column that matters.
+Instead read the `content` line's own advice: it names how much wider and shorter you
+cover, and **which part reaches too far is a drift question**, not a framing one.
+
 **`Δpx` and `ref Δ`** are the two columns that do **not** compare you against the
 reference. They compare each side against **itself one frame earlier**: how many
 pixels of your own frame moved since your own previous frame, and the same for the
@@ -1795,6 +1936,19 @@ each chain one line across every set — the sentence a run's README quotes inst
 a per-shot list. **§8.1** is how to act on it: the next iteration goes to the worst
 chain by error per pixel, and a chain already at the floor is frozen rather than
 re-fitted.
+
+⚠️ **One exception to "0 % is the loudest row", and on a mesh rig it is the common
+case: a chain whose roster reads `(draws nothing)` rather than `0/n`.** Those are two
+different states and the table prints them differently. `0 %` on `0/3` **slots drawn**
+means three slots exist on that chain and none of them put ink on the frame — that is
+the loud row, and it is a missing part. `(draws nothing)` in the **bones** roster means
+the chain carries **no slot at all**, and a mesh's control bones are exactly that: the
+mesh attachment lives on the slot of the bone the mesh hangs from, so the bones that
+*deform* it own nothing to draw. ⇒ **On a mesh rig that row is normal and quiet.** Read
+the roster at the foot of the report before reacting to a chain's share: if the chain's
+slots column is a parenthesis rather than a fraction, the deformation it carries is
+already being scored inside the chain that owns the slot, and the row is telling you
+about your bone tree rather than about a hole in your figure.
 
 ### 9.3 What it still cannot see
 
@@ -2018,6 +2172,38 @@ cannot be both.
 smallest single-frame move inside that span**. It is one line in the planner, it costs
 a handful of keys, and it is the difference between a reduction that is accurate and
 one that is accurate *in proportion to what is happening*.
+
+⚠️ **The opposite defect exists and forcing keys makes it worse.** Everything above is
+one direction — *my curve slopes through a plateau the reference holds* — and its fix is
+to force both ends as keys. The other direction is *my candidate moves several times
+what the reference does on a pair the reference barely moves across*, and if you reach
+for the same fix you will pin the excess in place instead of removing it. **The cause is
+different**: there the key plan was smoothing away motion the shot has; here the key
+plan is faithful and what disagrees is the **per-frame residual** — two neighbouring
+poses each a little off, in opposite directions, so the *difference* between them is
+several times either error. Forcing both as keys asks the planner to reproduce exactly
+the two poses whose disagreement is the problem.
+
+⭐ **Diagnose it before you fix it, with one comparison.** Take the two frames the column
+flags and ask whether your **poses** at those two frames are each inside your own fitting
+accuracy. If they are — and the pair still disagrees — the defect is the residual and not
+the plan. Synthetic case, one pair:
+
+| | reference moves | candidate moves | each pose's own error |
+| --- | --- | --- | --- |
+| a quiet pair | 0.8 px | 4.1 px | 1.6 px and 1.7 px, opposite signs |
+
+Both poses are ordinary; the pair is a five-fold disagreement built out of them.
+
+⇒ **The fix has the same shape as the relative floor above: make the smoothing slack
+relative to the reference's own local change.** Where the reference barely moves,
+contract your neighbouring poses toward each other until your own frame-to-frame change
+is inside the band — accepting a small, *bounded* loss of fidelity on those frames in
+exchange for the one measure that can see a hold. ⚠️ **That is a trade and it is recorded
+as a trade**: name the frames, name the cost per frame, and say in the log that you took
+it. A contraction reported as a fit is the same dishonesty as a hold reported as a
+measurement, and the cost is real — the frames you contracted are slightly less faithful
+than they were.
 
 ⭐ **Then stop trusting the floor and close the loop on the frames, because a floor is
 a heuristic and the column is a measurement.** The floor above cut rung 3's
