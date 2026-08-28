@@ -1270,6 +1270,47 @@ against a handful of frames drawn from **every** animation at once, and hold it 
 while the per-frame poses are fitted. It is the spread that identifies it — a
 sequence of single-frame fits, one per shot, is not the same thing.
 
+🚨 **That rule is not sufficient for a *joint*, and the difference is not a matter of
+degree.** An attachment offset is identified by a spread of *rotations*; a **pivot** — the
+point one bone turns about relative to its parent — is identified only by frames whose
+**relative rotation across that joint actually differs**. So a spread can draw frames from
+every single shot, satisfy the paragraph above to the letter, and still be
+**ill-conditioned**: if every shot holds that joint at much the same relative angle, the
+pivot is barely constrained, and a wrong one re-solves far away *at equal residuals*. Equal
+residuals is the trap — nothing in the fit reports a problem, because there genuinely is no
+better answer within the data you gave it.
+
+🚫 **And a structural descent that holds the fitted poses fixed cannot recover a
+mis-triangulated pivot at all.** This is the part worth internalising, because it looks
+like the obvious repair and it is inert: the per-frame poses were *fitted against the wrong
+pivot*, so they have already absorbed its error. Move the pivot with those poses held and
+every frame gets worse; hold the pivot and refit the poses and they re-absorb it. **The
+gradient at fixed poses points nowhere**, so the descent reports convergence on the wrong
+geometry — and multi-start does not help either, because the defect is not a basin you
+failed to reach, it is a parameter the objective is no longer a function of.
+
+⇒ **Triangulate a joint from part template matches across *configurations*, not from the
+whole-figure objective.** Match the two parts the joint connects — each is its own art file
+and its own reading — on frames that put the joint in **genuinely different relative
+angles**, and solve for the one point that is fixed in both parts' own coordinates. Then
+refit the poses against the corrected pivot. Two practical notes:
+
+- ⭐ **"Different configurations" means what the shot list looks like, not how many frames
+  you took.** A figure standing, walking and running may hold one joint at nearly the same
+  angle throughout; a figure **lying down**, or inverted, or reaching across itself, is what
+  makes that joint observable. Pick frames for *angular diversity across the joint*, and if
+  the shot list has only one configuration, say in the log that the pivot is a prior.
+- 📌 **Check the conditioning rather than trusting the fit**: re-solve the joint from a
+  subset that excludes the diverse configurations and see how far the answer moves. If it
+  moves a long way at comparable residuals, the diverse frames were carrying the whole
+  identification — which is exactly the state in which an earlier triangulation goes wrong
+  silently.
+- ⚠️ **Sequence matters, because the surgery invalidates work.** Correcting a pivot
+  invalidates every pose fitted under the old one, so do it **before** the per-frame fitting
+  budget is spent, not after. When it has to be done late, expect to re-settle every channel
+  hung off that joint — and freeze the ones that are not, so the two effects stay separable
+  in the record.
+
 **Seed each frame's search from its neighbour's solution — as one start among the
 full-range scans, never instead of them.** Adjacent frames are adjacent poses, so the
 answer next door is a better first guess than the middle of any range, and it costs one
@@ -1646,6 +1687,43 @@ divide over the **reference's** own drawn pixels and a chain that draws nothing 
 0 % on 0 slots, which §9.2 says is the loudest row in the table and not the quietest.
 The trap lives in the objectives **you** write inside a fit, where the denominator is
 yours to choose.
+
+🚨 **The cliff's nearest cousin, and the one that survives all four defences:
+*sacrificial cover*.** Every defence above protects a part from being **removed**. None
+protects a part from being **moved somewhere wrong on purpose**. A whole-figure objective
+scores one number over every pixel, so when part A is mis-placed and leaves reference ink
+bare, the cheapest available improvement is frequently to drag **part B off its own correct
+place to cover that ink**. Both parts are drawn, both counts are healthy, nothing leaves
+the window — and the score genuinely falls, because covering bare ink is worth more to a
+blunt objective than B's own displacement costs it.
+
+⚠️ **What makes it expensive is that the objective is not lying.** The pose it prefers
+really is better *by that measure*. So the loop offers no signal at all: the fit converges,
+the number improves, and what you have is one part visibly out of place standing in for
+another. It surfaces later as a **drift** on the sacrificed part — a slot several pixels
+from where the frames put it inside a pose whose overall figure looks fine — which is the
+one measure that reads parts individually.
+
+⇒ **Two ways to catch it, and the first is nearly free.**
+
+- **Read a per-part residual beside the composite, never only the composite.** Score each
+  part against its own template match as well, and flag any frame where the composite
+  improves while a part's own residual worsens. That divergence *is* the signature; the
+  composite alone cannot express it.
+- **Seed the parts analytically from their own measured features, then refine jointly with
+  the sacrificed part pinned.** If a part's place is independently measurable — a colour
+  feature, a template peak, a contact row the brief gives you — put it there first rather
+  than letting the composite negotiate it, and hold the part that was being abused fixed
+  while the rest re-settles.
+
+⚖️ **Expect the corrected pose to score *worse* on the composite, and record that as a
+trade.** A few percent worse on your own objective while decisively better on every
+frame-derived placement instrument is the **expected** shape of this repair, not a
+regression — the composite's preference was the defect. Declare an accept threshold before
+you need it, say how often you used it, and name the frames. ⭐ **And prefer the
+frame-derived instruments when they disagree with the composite about a single part's
+place**: the composite is one number over everything, while a template match on that part's
+own art is a measurement of the thing in question.
 
 🚨 **One more inert-write trap, and it is on the way *out* of the fit rather than
 inside it: your compiled animation is not your pose series.** Everything above is about
