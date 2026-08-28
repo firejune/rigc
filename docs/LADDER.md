@@ -362,8 +362,20 @@ raised by a later pass, follows them:
 - **An allowed surface has to be closed under reading.** A citation leading out of an
   allowed document into a sealed one hands over exactly what the document withheld. So
   the guide says outright that an authoring run does not follow its references out of
-  it, and a citation into a stored run's directory — where a spec that scores well *is*
-  the answer key — is written as a name rather than as a path.
+  it, and a citation into a stored run's directory — which holds that attempt's measures
+  — is written as a name rather than as a path.
+  - ➡️ **Amended 2026-08-28 by owner ruling**, on the spineboy attempt-4 verdict
+    ([#16](https://github.com/firejune/rigc/issues/16)). This reading used to give its
+    reason as *"a spec that scores well **is** the answer key"*, and that half is
+    withdrawn: **a successor attempt at the same rung may inherit the prior attempt's rig
+    spec, motion specs and fitting harness**, because a spec authored under honest
+    conditions carries no reference-side value its author did not legitimately derive.
+    The reading's *conclusion* is unchanged and now rests on the other half — the
+    directory still holds `bench.json`, `README.md` and `LOOP.md`, so a citation into it
+    is still written as a name. Procedure, the exact file split and the scope limit:
+    [`bench/runs/README.md`](../bench/runs/README.md), *Inheriting the prior attempt's
+    candidate*. ⚖️ **No measure, threshold or recorded figure moves** — this is a rule
+    about what an attempt may start from, not about how one is scored.
 
 🆕 **A fifth reading, ruled 2026-08-26** — raised by the brief-verification pass over
 rungs 1, 3, 4 and 5 ([#10](https://github.com/firejune/rigc/issues/10),
