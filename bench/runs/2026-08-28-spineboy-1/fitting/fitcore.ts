@@ -65,9 +65,13 @@ export interface EvalCtx {
   skeleton: Skeleton;
   win: Window;
   crops: Map<number, RefCrop>; // by level
+  /** optional per-pixel weights aligned with crops (by level); default 1 */
+  weights?: Map<number, Float32Array>;
   attachments?: Record<string, string | null>;
   /** extra penalty terms, e.g. gauge priors: (pose) => number */
   prior?: (pose: PoseVec) => number;
+  /** out-of-window world-extent charge weight (default 1e-5) */
+  outPenalty?: number;
 }
 
 /** world box of the window, for out-of-window ink charge */
@@ -96,11 +100,12 @@ export function evalPose(ctx: EvalCtx, pose: PoseVec, k: number): number {
   pen += Math.max(0, b.maxX - wb.x1 - margin) ** 2;
   pen += Math.max(0, wb.y0 - b.minY - margin) ** 2;
   pen += Math.max(0, b.maxY - wb.y1 - margin) ** 2;
-  pen *= 1e-5;
+  pen *= ctx.outPenalty ?? 1e-5;
 
   const ref = ctx.crops.get(k)!;
   const cand = renderFrame({ index: 0, time: 0, pieces }, posable.pages, cropViewport(ctx.win, k), [BG[0], BG[1], BG[2], 255]);
   let sum = 0, candInk = 0;
+  const wts = ctx.weights?.get(k);
   const n = Math.min(ref.w * ref.h, cand.width * cand.height);
   for (let o = 0; o < n; o++) {
     const ci = o * 4;
@@ -109,7 +114,7 @@ export function evalPose(ctx: EvalCtx, pose: PoseVec, k: number): number {
     if (cInk) candInk++;
     if (cInk || ref.ink[o]) {
       const dr = cand.data[ci] - ref.rgb[o * 3], dg = cand.data[ci + 1] - ref.rgb[o * 3 + 1], db = cand.data[ci + 2] - ref.rgb[o * 3 + 2];
-      sum += dr * dr + dg * dg + db * db;
+      sum += (wts ? wts[o] : 1) * (dr * dr + dg * dg + db * db);
     }
   }
   let err = sum / (255 * 255) / Math.max(ref.inkCount, 1);

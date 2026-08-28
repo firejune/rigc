@@ -80,7 +80,7 @@ function tolFor(ch: string): number {
 // ---------- per-channel key plan ----------
 interface PlannedKey { i: number; v: number; ease?: EaseName }
 
-function planChannel(s: number[], tol: number): PlannedKey[] {
+function planChannel(s: number[], tol: number, tv?: number[]): PlannedKey[] {
   const N = s.length;
   if (N === 1) return [{ i: 0, v: s[0] }];
   const forced = new Set<number>([0, N - 1]);
@@ -104,7 +104,7 @@ function planChannel(s: number[], tol: number): PlannedKey[] {
     const nextForced = idx.find((j) => j > cursor)!;
     // try to span from cursor directly to nextForced; if invalid, bisect
     let end = nextForced;
-    while (end > cursor + 1 && !spanOk(s, cursor, end, tol)) end--;
+    while (end > cursor + 1 && !spanOk(s, cursor, end, tol, tv)) end--;
     chosen.push(end);
     cursor = end;
   }
@@ -113,7 +113,7 @@ function planChannel(s: number[], tol: number): PlannedKey[] {
 }
 
 /** span cursor..end valid iff some table entry keeps all interior samples inside cap */
-function spanOk(s: number[], a: number, b: number, tol: number): boolean {
+function spanOk(s: number[], a: number, b: number, tol: number, tv?: number[]): boolean {
   if (b - a <= 1) return true;
   // relative floor: smallest nonzero single-frame move inside the span
   let minMove = Infinity;
@@ -122,16 +122,16 @@ function spanOk(s: number[], a: number, b: number, tol: number): boolean {
     if (m > 1e-9) minMove = Math.min(minMove, m);
   }
   const cap = Math.min(tol, minMove === Infinity ? tol : Math.max(minMove, tol * 0.25));
-  return bestEase(s, a, b, cap).ok;
+  return bestEase(s, a, b, cap, tv).ok;
 }
 
-function bestEase(s: number[], a: number, b: number, cap: number): { ok: boolean; ease: EaseName; err: number } {
+function bestEase(s: number[], a: number, b: number, cap: number, tv?: number[]): { ok: boolean; ease: EaseName; err: number } {
   const names: EaseName[] = ['linear', 'smooth', 'gentle', 'sine', 'accel', 'decel'];
   let best: { ok: boolean; ease: EaseName; err: number } = { ok: false, ease: 'linear', err: Infinity };
   for (const name of names) {
     let worst = 0;
     for (let i = a + 1; i < b; i++) {
-      const x = (i - a) / (b - a);
+      const x = tv ? (tv[i] - tv[a]) / (tv[b] - tv[a]) : (i - a) / (b - a);
       const v = s[a] + (s[b] - s[a]) * easeValue(name, x);
       worst = Math.max(worst, Math.abs(v - s[i]));
     }
@@ -142,7 +142,9 @@ function bestEase(s: number[], a: number, b: number, cap: number): { ok: boolean
 }
 
 /** assign eases to planned keys (per span; last key carries none) */
-function assignEases(s: number[], keys: PlannedKey[]): void {
+let easeTimes: number[] | undefined;
+function assignEases(s: number[], keys: PlannedKey[], tv?: number[]): void {
+  easeTimes = tv;
   for (let k = 0; k < keys.length - 1; k++) {
     const a = keys[k].i, b = keys[k + 1].i;
     if (s[a] === s[b] && spanIsFlat(s, a, b)) { keys[k].ease = undefined; continue; } // hold: linear between equal keys
@@ -151,7 +153,7 @@ function assignEases(s: number[], keys: PlannedKey[]): void {
       keys[k].ease = autoEase(s, keys, k);
       continue;
     }
-    const { ease } = bestEase(s, a, b, Infinity);
+    const { ease } = bestEase(s, a, b, Infinity, easeTimes);
     keys[k].ease = ease === 'linear' ? undefined : ease;
   }
 }
@@ -198,7 +200,6 @@ for (const anim of ANIMS) {
   const N = store.frames.length;
   const duration = DUR[anim];
   // no key may land past the declared duration (shoot: f5's sample sits past 0.4)
-  const times = store.frames.map((_, i) => Math.min(i / FPS, duration || i / FPS));
   // shoot: f0->f1 is bit-identical in the reference and f5 returns exactly to f0 —
   // share one pose for all three (the best-fitting of f0/f1)
   if (anim === 'shoot') {
@@ -207,10 +208,22 @@ for (const anim of ANIMS) {
     store.frames[1] = { pose: { ...bestPose }, err: 0 };
     store.frames[5] = { pose: { ...bestPose }, err: 0 };
   }
+  const entries: { t: number; pose: PoseVec }[] = store.frames.map((f: { pose: PoseVec }, i: number) => ({
+    t: Math.min(i / FPS, duration || i / FPS), pose: f.pose,
+  }));
+  // death: the feet are still arriving at f16->f17 (the measure reads 70 px there);
+  // the fitter's basin cannot resolve the residual boot motion, so author the last
+  // step of the settle: f16 sits 0.8 deg off the resting foot pose it decays into
+  if (anim === 'death') {
+    for (const ch of ['front-foot.rot', 'rear-foot.rot']) {
+      const p16 = store.frames[16].pose, p17 = store.frames[17].pose;
+      if ((p16[ch] ?? 0) === (p17[ch] ?? 0)) p16[ch] = (p17[ch] ?? 0) + 0.8;
+    }
+  }
   // death: author the f22->f23 one-pixel blip (the hold's ninth pair) — a small
   // front-fist turn between samples 22 and 23, held to f26; calibrated by runcheck
   if (anim === 'death') {
-    const BLIP_DEG = 2.0;
+    const BLIP_DEG = 0.1;
     for (let i = 23; i <= 26; i++) {
       const p = store.frames[i].pose;
       p['front-fist.rot'] = (p['front-fist.rot'] ?? 0) + BLIP_DEG;
@@ -221,15 +234,21 @@ for (const anim of ANIMS) {
   let extra: { pose: PoseVec } | null = null;
   if (anim === 'death' && existsSync(extraFile)) {
     extra = JSON.parse(readFileSync(extraFile, 'utf8'));
-    times.push(148 / 30);
   }
 
+  // sheet-fitted in-between poses (30fps instants), if any
+  const extraFile2 = join(RUN, `fitting/poses/${anim}-extra.json`);
+  if (existsSync(extraFile2)) {
+    for (const ex of JSON.parse(readFileSync(extraFile2, 'utf8')) as { t: number; pose: PoseVec }[]) {
+      if (!entries.some((e) => Math.abs(e.t - ex.t) < 1e-9) && ex.t < (duration || Infinity)) entries.push({ t: ex.t, pose: ex.pose });
+    }
+  }
+  if (extra) entries.push({ t: 148 / 30, pose: extra.pose });
+  entries.sort((a, b) => a.t - b.t);
+  const times = entries.map((e) => e.t);
+
   const tracks: Track[] = [];
-  const series = (ch: string): number[] => {
-    const s = store.frames.map((f) => f.pose[ch] ?? 0);
-    if (extra) s.push(extra.pose[ch] ?? 0);
-    return s;
-  };
+  const series = (ch: string): number[] => entries.map((e) => e.pose[ch] ?? 0);
 
   // unwrap rotations for continuity
   const unwrap = (s: number[]): number[] => {
@@ -249,13 +268,13 @@ for (const anim of ANIMS) {
     const active = sx.some((v) => v !== 0) || sy.some((v) => v !== 0);
     if (!active) continue;
     const tol = tolFor(`${bone}.x`);
-    const kx = planChannel(sx, tol), ky = planChannel(sy, tol);
+    const kx = planChannel(sx, tol, times), ky = planChannel(sy, tol, times);
     const merged = [...new Set([...kx.map((k) => k.i), ...ky.map((k) => k.i)])].sort((a, b) => a - b);
     const keys = merged.map((i) => ({ i, v: [sx[i], sy[i]] as number[], ease: undefined as EaseName | undefined }));
     // eases from the dominant axis
     const dom = Math.max(...sx.map(Math.abs)) >= Math.max(...sy.map(Math.abs)) ? sx : sy;
     const pk: PlannedKey[] = merged.map((i) => ({ i, v: dom[i] }));
-    assignEases(dom, pk);
+    assignEases(dom, pk, times);
     for (let k = 0; k < keys.length; k++) keys[k].ease = pk[k].ease;
     tracks.push({
       bone, property: 'translate',
@@ -270,8 +289,8 @@ for (const anim of ANIMS) {
     const s0 = series(ch);
     if (!s0.some((v) => v !== 0)) continue;
     const s = unwrap(s0);
-    const keys = planChannel(s, tolFor(ch));
-    assignEases(s, keys);
+    const keys = planChannel(s, tolFor(ch), times);
+    assignEases(s, keys, times);
     const bone = ch.slice(0, ch.lastIndexOf('.'));
     tracks.push({
       bone, property: 'rotate',

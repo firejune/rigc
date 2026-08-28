@@ -166,8 +166,8 @@
   },
   "muzzle-ring": {
    "muzzle-ring": {
-    "x": -0.74,
-    "y": -1.43,
+    "x": 0,
+    "y": 0,
     "rotation": 0,
     "scaleX": 1,
     "scaleY": 1
@@ -175,8 +175,8 @@
   },
   "muzzle-glow": {
    "muzzle-glow": {
-    "x": -0.74,
-    "y": -1.43,
+    "x": 0,
+    "y": 0,
     "rotation": 0,
     "scaleX": 1,
     "scaleY": 1
@@ -184,36 +184,36 @@
   },
   "muzzle": {
    "muzzle01": {
-    "x": 66.53,
-    "y": -1.43,
+    "x": 0,
+    "y": 0,
     "rotation": 0,
     "scaleX": 1,
     "scaleY": 1
    },
    "muzzle02": {
-    "x": 66.53,
-    "y": -1.43,
+    "x": 0,
+    "y": 0,
     "rotation": 0,
     "scaleX": 1,
     "scaleY": 1
    },
    "muzzle03": {
-    "x": 66.53,
-    "y": -1.43,
+    "x": 0,
+    "y": 0,
     "rotation": 0,
     "scaleX": 1,
     "scaleY": 1
    },
    "muzzle04": {
-    "x": 66.53,
-    "y": -1.43,
+    "x": 0,
+    "y": 0,
     "rotation": 0,
     "scaleX": 1,
     "scaleY": 1
    },
    "muzzle05": {
-    "x": 66.53,
-    "y": -1.43,
+    "x": 0,
+    "y": 0,
     "rotation": 0,
     "scaleX": 1,
     "scaleY": 1
