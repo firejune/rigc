@@ -1022,6 +1022,34 @@ gone by construction, and the reading needs no knowledge of which parts are invo
 beside the figure too, because an edge the frames really decide wins shot after shot
 rather than on a couple of them.
 
+⭐ **That dilution has a *temporal* cousin, and it bites inside a single shot's own
+per-frame fit.** The paragraph above is about two builds and a whole-shot figure; this is
+about one build and a whole-*figure* objective. Where a passage's motion is **a small
+part moving against a large, nearly still body** — a hand, a head, a prop, while
+everything else holds — the moving part is a tiny share of the ink, so a whole-figure
+score is dominated by the still majority. Every frame then reports a good number
+*individually*, the fit converges, and the passage comes out **static**: the mover was
+never worth enough of the objective to pull the search toward it.
+
+⚠️ **Nothing else in the loop catches this.** The MAE is fine, the drift is fine on every
+part that is not moving, and `validate` and `diff` never look at a rendered frame. What
+does see it is §10.3's change column, in its **under-change** direction — and by the time
+it tells you, the poses are already wrong, because a key plan cannot add motion the poses
+do not have.
+
+⇒ **Weight the objective by the reference's own frame-to-frame change.** Build a mask
+from where the reference *changes* between the two frames bracketing the one you are
+fitting, and weight the score by it — so the pixels that carry the passage's motion carry
+the passage's objective. It costs one extra difference per frame, needs nothing but the
+frames, and it turns an untrackable passage into an ordinary one.
+
+📌 **Read the mask itself before you trust the fit, because it also tells you what is
+actually moving** — which is frequently not what the shot looks like it is about. A
+passage that reads as one limb waving can turn out to carry most of its change somewhere
+else entirely (a body-wide micro-rocking, a shadow, a trailing part), and a fitter aimed
+at the limb would have been chasing the minority of the evidence. The mask is the cheap
+way to find that out first.
+
 **Calibrate the band with a control on an edge the brief has already settled by
 measurement.** Run the same test on that edge, read how far apart the two builds
 come out over the pixels that decide it, and treat that separation as the scale a
@@ -1209,6 +1237,26 @@ may be sitting in another one — take the start from there. ⇒ Borrow **only t
 of the chain in question**, never a whole foreign pose: a foreign pose puts the legs
 where this shot never goes, and the rest of the search then spends itself fighting
 what the borrow brought with it.
+
+🚨 **Before you fit a chain at all, check that it can *reach* the extremes the shot
+visits — a reach deficit is invisible to every per-frame fit.** This is the precondition
+the borrow rule assumes and the loop does not check. If a chain's segment lengths are
+short — read off a pose where the chain is **folded**, which is the easiest reading to
+take and the one most likely to be wrong — then every frame where the chain is folded
+fits beautifully, and the fitter *silently absorbs* the deficit on every other frame by
+rotating the parts it does have. Nothing reports a failure. The number is merely a little
+worse everywhere, which reads like an ordinary residual, until a passage needs the full
+extension and then no start converges anywhere near it — and multi-start does not help,
+because the pose being searched for is **outside the chain's reachable set**.
+
+⇒ **The check is arithmetic and needs no fit.** Take the chain's total reach from your own
+rig; take the longest excursion the shot's own frames show that chain's end travelling —
+a pendulum's full swing, a limb's extreme, a prop's sweep — and compare. If the shot asks
+for markedly more than the chain has, the rig is wrong and no amount of searching will say
+so. ⭐ **A frames-side reading beats a rig-side one here**: the shot's own extremes are a
+measurement, while segment lengths taken off a folded pose are an estimate — so when they
+disagree, suspect the estimate. And do this **per chain, before its first fit**, because
+the surgery to fix it invalidates every pose already fitted with the short chain.
 
 **Re-fit the setup pose against frames drawn from every shot, not against one.** Every
 animation is measured from the setup pose, so an error in it is an error in all of
@@ -2299,6 +2347,33 @@ a few percent of a pixel count. A pair you cleared by a hair in your loop can si
 wrong side of the same threshold in the report, on a difference that is entirely
 framing. ⇒ Converge to a **margin** — clear the band by enough that a percent of scale
 cannot cross it — and re-read the real report before believing the column.
+
+🚨 **There is a third direction, and on a busy shot it is the binding one: your candidate
+moving too *little*.** The two cases above are both *you moved when you should not have*
+— a hold that is not held, and excess change on a quiet pair. But `check`'s rule is
+**two-sided**: it faults a pair when **either** side moves several times the other by
+more than its pixel floor. So the mirror case is a reference that is genuinely busy and
+a candidate that reproduces a fraction of it, and nothing in the two paragraphs above
+names it.
+
+⭐ **The practical form is a floor rather than a ceiling: on every pair the reference
+moves, yours has to move at least about a quarter as much.** Read the exact multiple and
+the pixel floor out of [`src/check.ts`](../src/check.ts) rather than trusting the
+approximation — but plan against the floor, because it behaves quite differently from
+the ceiling:
+
+- **It is not fixed by keys.** Over-change is a planning artefact you can force or
+  contract away. Under-change means the *poses themselves* barely differ, so no key plan
+  recovers it — the fit has to find more motion before the planner sees any.
+- **It is where a whole-figure objective fails hardest**, which is why the item below
+  belongs beside it: a passage whose motion is a small part against a large still body
+  contributes almost nothing to a whole-shot score, so a fitter converges happily on a
+  near-static series and every pose looks fine on its own.
+- ⚠️ **And the band will accept a shot that is visibly underplayed.** Clearing the floor
+  at a quarter is not reproducing the motion; it is not *failing* it. A run whose busy
+  passage sits near the floor should say so in the log as a known-weak passage rather than
+  quote the column as if it were a fidelity result — the column is a **band**, and a band
+  is the widest thing that passes, not the thing you were aiming at.
 
 ⭐ **Then stop trusting the floor and close the loop on the frames, because a floor is
 a heuristic and the column is a measurement.** The floor above cut rung 3's
