@@ -227,3 +227,44 @@ Cross-set chain rollup: torso worst 4.8 px (death/f0035), mean 1.8 px (was 7.9 /
 2.8→3.5) are traceable: the first is the per-set fitted framing shifting with the
 chest's ink (the foot channels themselves are frozen), the second is run f8's
 chest refit (composite improved 0.1823→0.1607). Both far under every margin.
+
+## Result
+Final artifacts: build 4 (of 4 builds total this attempt). `check` stored in
+`check-final.txt`/`check-final.json`; `bench spineboy --candidate ess/spine
+--json bench.json` run **once, at the end** — after it, nothing was edited.
+
+```
+validate   green  (profile spine)
+ess        bones=0.924  slots=0.838  attachments=0.955  constraints=1.000  animations=0.777  events=0.500
+           bones 0.924 (name-matched) · 0.967 (name-agnostic)   slots 0.838 (name-matched) · 0.798 (name-agnostic)
+pro        bones=0.243  slots=0.360  attachments=0.262  constraints=0.000  animations=0.545  events=0.500   [stretch]
+           bones 0.243 (name-matched) · 0.206 (name-agnostic)   slots 0.360 (name-matched) · 0.178 (name-agnostic)
+```
+⚠️ The `pro` line is `bench` diffing this ess candidate against the stretch
+skeleton it was never built for — noise, per the two-skeleton warning; quoted
+only to say it was not read as a measurement.
+
+## Notes
+- **Builds: 4.** (1) stage-0 recompile, (2) post-surgery, (3) post-refit,
+  (4) death settle retune. Probes/triangulation/refits needed no build.
+- **The whole repair is one geometric edit** — six numbers in three objects —
+  plus pose-store refits of chest-hung channels traceable to it. hip and leg
+  channels were frozen in every refit; the death boot-settle degrees (authored
+  values in genmotion.ts) were retuned because the hold unify changed what they
+  sit on.
+- **What the guide should say** (for the fold): §8.1's *re-fit the setup pose
+  against frames drawn from every shot* is not sufficient for a JOINT — a pivot
+  is identified only by frames whose relative rotations across that joint
+  differ, and a spread can cover every shot and still be ill-conditioned
+  (upright-only triangulation here re-solves 21 art units away at equal
+  residuals). And a setupfit-style structural descent that holds the fitted
+  poses fixed cannot recover a mis-triangulated pivot at all, because the poses
+  were fitted to compensate it — the gradient at fixed poses points nowhere.
+  Triangulate the joint from part template matches across configurations
+  (lying + upright), then refit the poses.
+- **Open disagreement, recorded not smoothed**: in death's lying stretch and in
+  shoot f2–f4, the torso template match wants the torso art rotated ~12–16° from
+  where the composite refit puts it (match residuals 2869–4109 there, against
+  1570–2604 where the two instruments agree). Pinning the torso at the match
+  costs +30% composite on death's hold, so the composite stood. Both readings
+  are under the bar; the final check reads death torso worst 4.8 px.
