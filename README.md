@@ -198,11 +198,25 @@ exit code either command could produce.
 
 ### Benchmark ladder — the rungs, and where they stand
 
+🎓 **The ladder is complete, 2026-08-28.** All eight numbered rungs and the
+spineboy graduation exam are cleared under gate v2.1, every clause PASS or SKIP:
+worst attributable slot drift **5.55 px** against a 6.0 px bar, and **0 of 124**
+frame-change disagreements. Recompiling the same spec in a different session
+reproduced every field of the measurement record **to the digit**. The rungs stay
+in place as regression gates.
+
+⚠️ **What that certifies, stated exactly.** That **the tool, the guide and the
+protocol reach the bar across a bounded series of honest attempts, each residual
+diagnosed and fixed** — spineboy took five, and the last inherited its
+predecessor's specs under the run protocol's inheritance clause. It is **not**
+that an agent authors a spineboy-scale rig from the brief alone in one run: the
+ladder has not demonstrated that, and each row records which of the two it is.
+
 **[docs/LADDER.md](docs/LADDER.md) is the live ledger**: the rung order
 (blockers → rung 3 first → 1 · 2 · 4 · 5 → 6 → 8 → 7 → spineboy), what each
 rung gates on, how a rung is scored, the honesty rule that keeps the reference
 export away from the authoring agent, the operating rules — what a pass is, and
-the numbered thresholds of the current gate (**gate v2**) that decide one — and a status table. Run
+the numbered thresholds of the current gate (**gate v2.1**) that decide one — and a status table. Run
 one with:
 
 ```bash
