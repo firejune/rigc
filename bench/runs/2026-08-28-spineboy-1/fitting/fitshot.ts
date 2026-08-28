@@ -250,7 +250,7 @@ function fitFrame(i: number, jitter = false): void {
       const { applyPose } = require('./pose.ts') as typeof import('./pose.ts');
       applyPose(skeleton, pose);
       const slot = skeleton.findSlot('head')!;
-      const att = slot.appliedPose.attachment as {
+      const att = slot.appliedPose.attachment as unknown as {
         computeWorldVertices: (s: unknown, o: unknown, w: number[], off: number, stride: number) => void;
         getOffsets: (p: unknown) => unknown;
       };
