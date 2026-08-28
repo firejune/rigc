@@ -293,7 +293,13 @@ frames is not answer-bearing, so it is not swept out.
    `bench` **once, at the end**;
 9. earlier runs' `README.md` and `LOOP.md` **for process only** — how a loop is run
    and what a log looks like — and **not** another attempt at the rung being
-   authored, whose measures and whose spec are the answer one step away.
+   authored, whose **measures** are the answer one step away;
+10. ⭐ **and, for a successor attempt at the same rung only, the prior attempt's own rig
+    spec, motion spec(s) and fitting harness** — its author-authored inputs and tools,
+    and none of the files beside them that record a measurement. Owner ruling,
+    2026-08-28. The exact file split and the reasoning are in *Inheriting the prior
+    attempt's candidate* below, and a run that inherits **must** read that section
+    before it opens the directory.
 
 **🚫 Forbidden — and each of these has a reason beside it.**
 
@@ -317,6 +323,62 @@ row for `ess` as a **sizing check** — it had been told to read the row — and
 Both are recorded rather than hidden, in that run's README and `LOOP.md` §1, and both
 are sealed as of this revision. **Its name-matched figures carry that caveat**, and
 the rung is not discussed as cleared until an attempt after the seal.
+
+### Inheriting the prior attempt's candidate
+
+⭐ **Owner ruling, 2026-08-28, decided on the spineboy attempt-4 verdict
+([#16](https://github.com/firejune/rigc/issues/16)): a successor attempt may inherit the
+prior attempt's candidate — the author's own work-product — instead of rebuilding it
+from zero.**
+
+**✅ What may be inherited — the author-authored inputs and tools:**
+
+- the **rig spec**, `<name>.rig.json`;
+- the **motion spec(s)**, `<name>.motion.json`;
+- the author's own **fitting and tooling harness** — that run's `tools/`, and the
+  intermediate stores it wrote for itself (placement fits, key plans, pose caches,
+  setup dumps).
+
+**🚫 What stays sealed, exactly as before — everything beside them that records a
+measurement:**
+
+- `README.md` and `LOOP.md`, which a successor still reads **for process only**, as
+  item 9 has always said;
+- `bench.json`, and any stored `bench` output;
+- stored `check` output, and any other file in that directory that records what the
+  prior attempt **scored**.
+
+⚠️ **So "inherit the candidate" is not "read the run directory."** The two halves sit
+side by side on one disk and only one of them crosses. A successor that opens
+`bench.json` for a starting point has read the answer key, and the fact that the spec
+next to it was fair game does not launder that.
+
+**Why the spec crosses and the measures do not.** A candidate spec authored under honest
+conditions **contains no reference-side value its author did not legitimately derive** —
+that is precisely what the honesty rule bought when the spec was written, and it does not
+expire because a second attempt begins. The measures are the other thing entirely: they
+are scored *against* the reference, they carry its denominators, and reading them is
+reading the answer however they are phrased. ⇒ **Inheriting a spec changes the attempt's
+economics, not its honesty.**
+
+📌 **The sealed line is drawn at the file, deliberately more conservatively than the
+answer-derivability test alone would require.** A candidate-side `check` figure is not
+answer-bearing — [docs/LADDER.md](../../docs/LADDER.md)'s *The honesty rule*, first
+reading — and a successor runs `check` itself as often as it likes, exactly as item 8
+allows. What it does not get is the prior attempt's **record**: `README.md` and
+`bench.json` quote reference-side denominators, `LOOP.md` narrates them, and picking the
+answer-bearing lines out of a stored log is not a judgement worth asking a run to make
+mid-flight.
+
+🎯 **Scope: successor attempts at the same rung, and the same skeleton.** A candidate
+built for one skeleton is not an input to another skeleton's attempt, and a spec from a
+different rung was fitted to a different reference. Nothing here widens item 9 for any
+other run, and nothing here changes the gate, the clauses or the bar.
+
+🧾 **Say so in the log.** A run that inherits records **what** it inherited and **from
+which attempt**, in `LOOP.md` §1 beside the reference-not-read line. An inherited attempt
+and a from-zero attempt are not measuring the same thing about the model, and a reader
+comparing them needs to know which one they have.
 
 ### Three of those entries carry a reason
 

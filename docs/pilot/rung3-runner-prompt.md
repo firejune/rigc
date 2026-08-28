@@ -191,7 +191,7 @@ is the one that binds you.
 >    `bench` **once, at the end**;
 > 9. earlier runs' `README.md` and `LOOP.md` **for process only** — how a loop is
 >    run and what a log looks like — and **not** another attempt at the rung being
->    authored, whose measures and whose spec are the answer one step away.
+>    authored, whose **measures** are the answer one step away.
 >
 > **🚫 Forbidden — and each of these has a reason beside it.**
 >
@@ -211,7 +211,7 @@ is the one that binds you.
 
 | Not this | Why |
 | --- | --- |
-| `bench/runs/2026-08-23-rung3-1/` | a previous attempt at **the rung you are authoring**. Its specs and its measures are the answer one step away. Allowed item (9) explicitly excludes it |
+| `bench/runs/2026-08-23-rung3-1/` | a previous attempt at **the rung you are authoring** — its measures, and for this exercise its specs too. ⚠️ The ladder's own protocol lets a *successor attempt* inherit a prior attempt's rig and motion specs (owner ruling 2026-08-28, `bench/runs/README.md`, *Inheriting the prior attempt's candidate*). **A pilot run is not a successor attempt**: the whole point here is to measure an agent authoring from zero, so the specs are excluded on top of item 9 rather than by it |
 | `bench/runs/2026-08-23-rung3-2/` | the same, the second attempt |
 | `docs/pilot/rung3-evaluator.md` **and everything under `docs/pilot/verdicts/`** | the pilot judge's sheet and the filled-in verdicts of previous pilots. Both quote `docs/LADDER.md`'s rung-3 sections and previous runs' measures, which are forbidden above |
 

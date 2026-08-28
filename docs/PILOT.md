@@ -202,8 +202,11 @@ that section says why in its own first line: *an agent cannot avoid a document i
 was never told to avoid, and every leak recorded on this ladder so far arrived
 through a document the run was told to read.* The one copy of those lists lives in
 that file; [`pilot/rung3-runner-prompt.md`](pilot/rung3-runner-prompt.md) quotes
-them in full, with both existing rung-3 run directories named as forbidden — an
-earlier attempt at the same rung is the answer one step away.
+them in full, with both existing rung-3 run directories named as forbidden. ⚠️ **Their
+specs are excluded *on top of* item 9, not by it** — the ladder lets a successor attempt
+inherit a prior attempt's specs (owner ruling 2026-08-28), and a pilot run is not a
+successor attempt: it measures an agent authoring from zero, so the whole directory
+stays out. The prior attempt's measures are forbidden either way.
 
 **2. Baseline scores never appear in the runner's prompt.** LADDER.md's status
 table and its per-rung sections are on the forbidden list for exactly this reason:
