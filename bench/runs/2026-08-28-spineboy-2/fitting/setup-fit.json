@@ -1,0 +1,108 @@
+{
+  "torso": {
+    "torso": {
+      "x": 89.25,
+      "y": 45.12,
+      "rotation": -87.97
+    }
+  },
+  "head": {
+    "head": {
+      "x": 96.68,
+      "y": 5.13,
+      "rotation": -82
+    }
+  },
+  "goggles": {
+    "goggles": {
+      "x": 67.31,
+      "y": 17.66,
+      "rotation": -82
+    }
+  },
+  "mouth": {
+    "mouth-smile": {
+      "x": -15.06,
+      "y": -9.98,
+      "rotation": -81,
+      "scaleX": 0.4
+    }
+  },
+  "gun": {
+    "gun": {
+      "x": 66,
+      "y": -41.5,
+      "rotation": -0.5
+    }
+  },
+  "front-shin": {
+    "front-shin": {
+      "x": 60.76,
+      "y": 15.85,
+      "rotation": 58.2
+    }
+  },
+  "rear-shin": {
+    "rear-shin": {
+      "x": 50.51,
+      "y": -22.33,
+      "rotation": 92.31
+    }
+  },
+  "front-foot": {
+    "front-foot": {
+      "x": 19.05,
+      "y": -25.03,
+      "rotation": 21.57
+    }
+  },
+  "rear-foot": {
+    "rear-foot": {
+      "x": 18.6,
+      "y": -20.44,
+      "rotation": 16.93
+    }
+  },
+  "front-thigh": {
+    "front-thigh": {
+      "x": 17.97,
+      "y": 10.61,
+      "rotation": 146.99
+    }
+  },
+  "rear-thigh": {
+    "rear-thigh": {
+      "x": -35.22,
+      "y": -1,
+      "rotation": 21.43
+    }
+  },
+  "front-upper-arm": {
+    "front-upper-arm": {
+      "x": 33.16,
+      "y": 10.52,
+      "rotation": 103.51
+    }
+  },
+  "front-bracer": {
+    "front-bracer": {
+      "x": 22.37,
+      "y": 6.49,
+      "rotation": 85.34
+    }
+  },
+  "front-fist": {
+    "front-fist-open": {
+      "x": 17.94,
+      "y": 8.97,
+      "rotation": 52.5
+    }
+  },
+  "neck": {
+    "neck": {
+      "x": -29.47,
+      "y": 34.64,
+      "rotation": -81.54
+    }
+  }
+}
