@@ -912,6 +912,14 @@ remaining work is taken in.
    > saturated and the shoulder/chest geometry named as the suspect), so item 2's test keeps
    > this a **re-climb**. #16 stays open; the freeze stands. Verdict in *spineboy, attempt
    > 4*.
+   > ➡️ 🎓 **The re-climb landed the same day and PASSES — the graduation exam is met and
+   > this rule's work is done.** `2026-08-28-spineboy-2` is the **first run under the
+   > inheritance clause** (protocol item 10): it inherited attempt 4's specs and harness,
+   > performed the one named geometric edit — six numbers in three objects — and the refits
+   > it invalidates. Every clause reads PASS or SKIP; worst drift **7.86 → 5.55 px**; **#16
+   > closes**. ⚠️ Two things the row and the verdict record rather than bury: the margin is
+   > **1.08×**, the ladder's thinnest, and the attempt is **inherited**, so the from-zero
+   > trajectory is attempts 1–4. ⇒ **Item 4 now fires.** Verdict in *spineboy, attempt 5*.
 4. **Then the project's question changes.** Once the graduation gate passes, *does it
    match the editor?* — a reference-bound question, and the only kind this ladder can
    ask — gives way to *is it usable without a reference?* The usability track
@@ -981,7 +989,7 @@ is the cost of the wait, not the absence of one.
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ✅ *gate v2, 2026-08-25* — re-inspected, holds |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ✅ *gate v2, 2026-08-25* — both skeletons, re-inspected |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ✅ *gate v2.1, 2026-08-28* — re-climbed on `2026-08-28-rung7-2`; G2 7.33 → **2.76 px**; frames **local-only** |
-| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×4 — gate v2.1, 2026-08-28 on `2026-08-28-spineboy-1`: **G2 alone** (7.86 px `torso`, `hit` f0), G1 · G3 · G4 · G5 · G7 all ✅; **G3 clears for the first time** (3 of 59 → **0 of 124**) and worst drift 19.57 → **7.86 px** · `pro` ⬜ · frozen as gate 2026-08-24 |
+| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🎓 ✅ *gate v2.1, 2026-08-28* — `ess` cleared on `2026-08-28-spineboy-2`, every clause PASS/SKIP; worst drift **5.55 px** (⚠️ 1.08×, the ladder's thinnest margin). ⚠️ **Inherited attempt** under protocol item 10 — its figures measure the lever; the **from-zero trajectory is attempts 1–4** (18.8 → 14.6 → 7.86 px; 14 → 3 → 0 disagreements) · `pro` ⬜, not a graduation requirement |
 
 ### The gate-v2.1 re-inspection — 2026-08-26
 
@@ -4198,6 +4206,228 @@ shoulder/chest geometry through the *lying* poses as well as the upright ones, w
 G2 clears on fifteen of sixteen sets and on seven of eight shots, and the run names both the
 suspect and the method. **The graduation exam is not passed, and it is closer than the
 ladder's own bar for "closer" has ever been asked to measure.**
+
+### spineboy, attempt 5 — 🎓 the graduation exam **PASSES**, on an inherited candidate and one geometric edit (2026-08-28)
+
+Run [`bench/runs/2026-08-28-spineboy-2/`](../bench/runs/2026-08-28-spineboy-2/) — **4
+builds**, `--profile spine` green. Authored by Claude Fable 5 on Claude Code / Agent SDK, a
+**fresh session**, from brief **revision 4**. `ess` alone. The reference export, the
+transcriptions, this document's status table and per-rung sections and *Operating rules*,
+`SPEC_COVERAGE.md`, `src/ladder.ts`'s gate strings and `render_reference.ts` were **not
+opened**.
+
+🆕 **The first run under the inheritance clause** (protocol item 10, owner's ruling
+2026-08-28, in [`bench/runs/README.md`](../bench/runs/README.md)). It inherited attempt 4's
+**rig spec, motion spec and `fitting/` harness** with the intermediate stores that harness
+wrote for itself, and left sealed everything beside them that records a measurement — that
+run's `bench.json`, its `check-final.*`, its compiled `spine/`, and its README and LOOP
+beyond process. ⚠️ **So this attempt's figures measure a lever, not from-zero authoring.**
+The from-zero trajectory on this rung is **attempts 1–4**; this one is the surgical
+re-attempt those four earned, and the distinction is recorded here and in the status row
+because the two things answer different questions.
+
+**What it changed: six numbers in three objects.** Attempt 4 failed on one clause — 7.86 px
+of `torso` drift at `hit` f0000 — which this document adjudicated as a **geometry** defect
+with a named fix: *re-triangulate the shoulder/chest joint through the lying poses*. This
+attempt performed exactly that and the refits it invalidates, and nothing else. Verified
+against the two compiled skeletons, the whole rig-spec diff is:
+
+| object | field | before | after |
+| --- | --- | --- | --- |
+| bone `neck` | x, y | 179.10, 21.98 | 176.04, 35.94 |
+| bone `head` (compensation) | x, y | 21.60, −19.96 | 24.89, −33.86 |
+| attachment `neck` (compensation) | x, y | −23.15, 13.48 | −19.86, −0.42 |
+
+⭐ **And the compensation is arithmetically consistent with a setup-render-invariant pivot
+move**, which this pass checked rather than took on trust: the pivot moves by
+**Δ = (−3.06, +13.96)**, |Δ| = 14.291, and the two compensations are **identical to each
+other** at (+3.29, −13.90), |·| = 14.284 — the same magnitude to 0.007, which is what −Δ
+expressed in the child's own rotated frame looks like.
+
+#### Gate v2.1 verdict, 2026-08-28 — **PASS on every clause. The rung closes and the ladder is complete**
+
+🚫 **Zero builds and zero authoring, and nothing in the run directory was touched.** The
+candidate was re-read with `check` and `validate --profile spine` **from the repository root
+over all 16 committed sets, with no `--atlas` and no `--viewport` override**, and every
+figure the run recorded reproduces to the digit.
+
+| Clause | Reading over all 16 sets | |
+| --- | --- | :---: |
+| **G1** validity | 0 FAIL under `--profile spine` — 16 PASS, 4 SKIP, 14 PROF | ✅ |
+| **G2** worst attributable slot drift ≤ 6.0 px | ✅ **5.55 px** `rear-shin` at `run` f0006 — **no set exceeds the bar.** Then `death` 4.77 `torso` f35 · `hit` 4.57 `rear-shin` f2 · `walk` 4.70 · `shoot` 4.37 · `shoot@30fps` 4.20 · `aim` 3.52 (both sets) · `walk@30fps` 3.52 · `jump` 3.58 · `run@30fps` 3.46 · `hit@30fps` **3.36** `torso` f0 · `death@30fps` 2.93 · `idle` 2.12 · `idle@30fps` 1.76 · `jump@30fps` 1.61. No 🕳️ HOLE; **0 reference components unreached** | ✅ |
+| **G3** per-frame motion = 0 | ✅ **0 of 124** adjacent pairs — 59 `death` + 20 `idle` + 16 `jump` + 12 `walk` + 8 `run` + 5 `shoot` + 4 `hit`. `aim` and `aim@30fps` are single poses, **excluded under v2.1 (a)**; (b) does not fire. The seven `@30fps` stills sets carry no pair and each carries a sheet meeting G7. No `⚠️ overdraw`: `drawnRatio` **0.945–1.078** against 1.5 | ✅ |
+| **G4** shot inventory | ✅ `count` 8/8 · `names` 8/8; all eight lengths against the reference's own — `aim` 0.000000 · `death` 4.933333 · `hit` 0.333333 · `idle` 1.666666 · `jump` 1.333333 · `run` 0.666666 · `shoot` 0.400000 · `walk` 1.000000, each against the same figure. Worst gap **0.000001 s** | ✅ |
+| **G5** drawn inventory ≥ 0.85 | ✅ name-agnostic `slots.count` **20/21 = 0.952** · `attachments.count` **27/29 = 0.931**. **No deduction taken or needed**; the shortfall is in the candidate's favour on both — it draws *more* than the reference | ✅ |
+| **G7** every sheet ≤ 3.5× own mean | ✅ **seven sheets, all seven compared, all seven well inside** — `death@30fps` **1.516** (71.45 over a 47.11 mean, 149/149 tiles) · `walk@30fps` 1.439 (55.99 over 38.91, 31/31) · `jump@30fps` 1.321 (56.01 over 42.39, 41/41) · `hit@30fps` 1.320 (60.07 over 45.49, 11/11) · `run@30fps` 1.225 (57.53 over 46.96, 21/21) · `idle@30fps` 1.210 (38.99 over 32.24, 51/51) · `shoot@30fps` 1.100 (42.42 over 38.57, 13/13). `aim@30fps` is a single pose → **SKIP**; the nine 12 fps shots commit every sampled frame → SKIP. **No HOLE** | ✅ |
+| **G6** the rung | ✅ the graduating skeleton meets G1–G5 and G7 | ✅ |
+
+⇒ 🎓 **Every clause reads PASS or SKIP. Rule 3's *close on pass* applies, issue
+[#16](https://github.com/firejune/rigc/issues/16) closes, spineboy goes 🟨 → ✅, and every
+rung on this ladder is now cleared.** The 2026-08-24 freeze is lifted by being met.
+
+⚠️ **The margin, stated rather than smoothed over: 0.45 px, and it is the ladder's
+thinnest.** 5.55 px against a 6.0 px bar is **1.08×**, where rung 5's 5.12 px was 1.17× and
+every other standing pass sits at 1.4× or better. ⇒ Rule 2's *"a tightening of G2 finds rung
+5 first"* is **no longer true — it finds spineboy first**, and owner item 1 below records
+what that changes.
+
+📌 **And the figure G2 turns on was already there.** `run`'s 5.5491 px `rear-shin` at f0006
+is **bit-identical** to the inherited candidate's — this pass verified it to four decimal
+places and verified that `run`'s leg channels are byte-identical between the two compiled
+skeletons. ⇒ **Graduation was reached by removing the other failure, not by improving the
+binding one.** The clause now rests on a figure attempt 4 had also posted, which is worth
+knowing before anyone reads 5.55 px as headroom.
+
+### 🔬 The determinism comparison — the reproducibility headline
+
+The owner asked for this explicitly, and it is the strongest result in this entry. Attempt 5
+stored an **unchanged-recompile snapshot** of the inherited specs — build 1, before any edit
+— in [`check-baseline-inherited/`](../bench/runs/2026-08-28-spineboy-2/check-baseline-inherited/),
+and deliberately made **no comparison against attempt 4's stored record**, which was sealed
+to it. Both records are the adjudicator's to read, so this pass made that comparison.
+
+🎯 **Recompiling the inherited spec through the author path, in a different session, reproduces
+attempt 4's stored `check` record EXACTLY. Not approximately — identically.**
+
+- **All 16 sets**, on every gated and every reported field: `meanMae`, `meanMaeReference`,
+  `worstMae` and its frame, `worstDrift` and its frame **and its slot**, `changePairs`,
+  `changeDisagreements`, `drawnRatio`, `framesWithoutDrift`, `compared`, `referenceFrames`,
+  and the **framing source each set resolved to**. **Zero differences.**
+- **All 147 compared frames**, on `mae`, `maeReference`, `unionPixels`, `candidatePixels`,
+  `referencePixels`, `worstDrift`, `worstSlot`, `attributed`, `drawn`, `components` and
+  `unmatchedComponents`. **Zero differences.**
+- **Every chain row of every set**, on `worstDrift`, `meanDrift`, `error`,
+  `referencePixels`, `mae`, `maeShare`, `driftSamples` and `drewSlots`. **Zero differences.**
+- **Every sheet**, on `meanMae`, `meanMaeReference`, `worstMae`, `worstTile`, `tiles` and
+  `compared`. **Zero differences.**
+
+⇒ **What that establishes.** `spec → build → check` is **deterministic across sessions and
+across agents**, so rule 3's *"a re-inspection is a re-read of stored candidates"* is not
+merely executable but **exact**: a stored spec is a stored figure. It also means three
+independent readings of attempt 4 now agree to the digit — that run's own record, this
+adjudicator's re-read of 2026-08-28, and a different session's blind recompile. 📌 The
+inheritance clause is what made this measurable at all: it created a run that had to
+recompile a spec it could not compare against, which is a determinism control nobody
+designed and nobody could have run before.
+
+**The stage-0 → final delta table also reproduces, in full.** All 16 rows, both drift
+figures and both MAE means each — the run's own table is accurate to the digit on every
+cell this pass checked.
+
+✅ **Traceability, verified against the compiled skeletons rather than the prose.** The
+surgery is skeleton-wide by design, so every shot's chest-hung channels moved: `torso`,
+`neck`, `head`, `gun`, both `upper-arm`s, both `bracer`s and both `fist`s changed in **all
+8** animations, and nothing else in the rig or the skin changed but the six numbers above.
+
+🔴 **One record-accuracy defect, and it is a claim stronger than its measurement.** The run
+states *"**hip and both legs were frozen in every refit**, so every leg figure is untouched
+by construction"*, and its table header repeats *"no set's leg or hip keys moved"*. **That is
+false as written for two of the eight shots.** Measured on the timelines:
+
+| shot | leg/hip channels that moved | worst single-key change |
+| --- | --- | --- |
+| `hit` | `hip` (rotate + translate), `front-thigh`, `rear-thigh`, `rear-shin`, `front-foot`, `rear-foot` | **`rear-thigh` rotate 38.2°**; `hip` translate y **12.94 units**; two channels also gained keys |
+| `death` | `front-foot`, `front-shin`, `rear-foot` | `front-foot` rotate **7.6°**; key counts 67→64 and 68→67 |
+| the other six | **none — byte-identical** | — |
+
+⚖️ **What survives and what does not.** The **per-set marks are true**: `run`, `walk` and
+`walk@30fps` are marked *"leg figure identical"* and they are — byte-identical leg channels
+and bit-identical drift figures — which is the load-bearing case, because the corpus-worst
+figure G2 turns on is `run`'s. The **blanket sentences are not true**, and a reader relying on
+them would wrongly believe `hit`'s new worst row (4.57 px `rear-shin`) was inherited when it
+was **refitted**. 📌 The run's own narrative does disclose the work — it names `hit0full.ts`
+(*"full multi-start on hit f0"*), `unifydeath.ts`, and the boot-settle retune from
+2.4/1.6/0.8° to 4.2/2.2/1.0° — so this is a **summary overstating a body that was honest**,
+not concealment. ⚠️ **It moves no figure and does not touch the verdict**: every number above
+is this pass's own measurement, and G2 passes on all sixteen sets whatever the provenance of
+each figure. It is recorded because *"legs frozen by construction"* was offered as the reason
+to trust the binding figure, and the general form of that reason does not hold.
+
+🔧 **The instrument disagreement the run flagged, adjudicated as an observation.** In
+`death`'s lying stretch and `shoot` f2–f4 the run's **torso template match** wants the torso
+art rotated ~12–16° from where its **composite fitter** puts it (match residuals 2869–4109
+there against 1570–2604 where the two agree). The run let the composite stand, said so, and
+asked the adjudicator's instruments to be the tiebreaker. **They side with the run's
+decision:**
+
+- across `death` f13–f26 — the flagged lying passage — the **worst slot drift of any frame is
+  1.18 px**, and no frame in it exceeds 4.0 px;
+- `shoot` f2–f4 read **4.37 / 4.14 / 4.19 px**, with `front-foot` as the worst slot on all
+  three — the torso is not the worst part on any of them;
+- `death`'s worst is 4.77 px at f0035, outside the flagged passage.
+
+⇒ **`check`'s drift correlator — the only one of the three instruments the gate reads — sees
+nothing near the bar in either region.** Recorded as an **instrument observation, not a
+verdict matter and not an issue against `check`**: the disagreement is between two
+*candidate-side* tools, and the gated third reads both regions comfortably clear. 📌 It would
+become issue-worthy the day a composite and a template match disagree in a region that
+*straddles* the bar, because then the choice between them would decide a rung. §9.1's new
+*sacrificial cover* passage is where the general lesson landed.
+
+⚖️ **The honesty touch in `LOOP.md` §1, ruled: recorded, and it moves no figure — the same
+ruling rung 1 attempt 1 and rung 7 attempt 1 got.** `git log` ran as part of landing
+mechanics and those commands display HEAD-adjacent commit subjects; the subjects seen were
+adjudication and protocol titles. **Git history is on the forbidden list, so it is a touch
+whatever it contained, and it stays on the record.** Under the answer-derivability test in
+*The honesty rule* it narrows **no** reference-side measure: commit subjects are
+verdict-level facts, no diff, blame or tag was opened, and no measure-bearing text was read.
+⭐ **And the specific facts visible were ones this attempt's own mandate already carried** —
+its task was defined by #16's public verdict. ⇒ **No figure in this entry carries a caveat.**
+
+⚠️ **One structural note beside it, and it is not the run's fault.** This attempt's mandate
+handed it **the 6.0 px bar** — a figure that lives in *Operating rules*, which the reading
+list seals. The run did not open that file and its header says so; the bar arrived in the
+prompt. That is the fourth instance of the shape [#174](https://github.com/firejune/rigc/issues/174)
+exists to fix — *split the clause statements from the derivations that quote measured
+figures* — and the same shape *The gate-v2 batch adjudication of the four re-climbs* above
+recorded on rung 1. 📌 It narrows nothing on the reference side: a drift threshold is derived
+from *previous candidates'* figures, not from the reference skeleton. But #174 is still open,
+and a graduation run receiving a sealed threshold in its dispatch is the strongest argument
+yet for closing it.
+
+🧾 **What this pass records for the owner rather than resolving.**
+
+1. ⚠️ **G2's thin margin is now an integrity matter, and spineboy is first in line.** 5.55 px
+   against 6.0 is **1.08×** — thinner than rung 5's 1.17×, which rule 2's ⚠️ currently names
+   as the clause's first casualty. ⇒ *"A tightening of G2 finds rung 5 first"* is **false as
+   of this verdict; it finds spineboy first**, and by rule 5 point 2 a tightening could now
+   flip **the graduation pass itself**, which re-inspects immediately rather than waiting for
+   a bump. 🚫 **No threshold is touched here.** This is the same shape as the G7 finding from
+   rung 7 attempt 2 ([#193](https://github.com/firejune/rigc/issues/193)) — the corpus has
+   moved under a clause's derivation and the derivation's stated ordering is now stale — and
+   the two together suggest rule 2's *"a tightening finds X first"* lines want a rule for
+   staying current rather than individual repairs.
+2. ⚖️ **What the graduation certifies is a framing call, and this pass will not make it.**
+   The pass is real and every clause is met on a stored candidate anyone can re-read. But the
+   candidate is **inherited**, and the final lever was one geometric edit plus its refits —
+   so *"an agent can author a spineboy-scale rig to foundation quality from the brief alone"*
+   is a claim the ladder has **not** demonstrated in a single run, while *"the
+   tool + guide + protocol reach the bar across a bounded series of honest attempts, with
+   each attempt's residual diagnosed and fixed"* is exactly what it has. Attempts 1–4 are the
+   from-zero trajectory (18.8 → 14.6 → 7.86 px of worst drift, 14 → 3 → 0 disagreements) and
+   attempt 5 is the lever. ⇒ **Anything said outside this repository should say which of the
+   two it means**, and rule 5 point 3 makes that a milestone question.
+3. 📌 **The inheritance clause worked, and it bought something nobody designed.** Its first
+   use produced the determinism control above — a blind recompile that reproduced a sealed
+   record to the digit — because the clause splits the spec from the measures at the file. ⇒
+   Worth keeping the stage-0 snapshot as a **standing requirement** for inherited attempts:
+   it costs one `check` run and it is the only way that comparison ever gets made.
+4. 📌 **The record-accuracy defect above is a candidate for the verifier bullet.**
+   *"Legs frozen in every refit"* is a **claim without its tolerance or its scope** — the
+   same family as the stillness and convention defects the rung-3, rung-5 and spineboy brief
+   passes found, but in a *run's* record rather than a brief's. The protocol asks briefs to
+   carry the threshold a claim was measured at; nothing asks a run's summary to carry the
+   scope a freeze actually had. One sentence in *After a run* would.
+
+⇒ 🎓 **The ladder is complete.** Rungs 1–8 cleared, and spineboy `ess` cleared as the
+graduation exam under gate v2.1. `pro` remains unattempted and is not a graduation
+requirement ([#16](https://github.com/firejune/rigc/issues/16),
+[#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)).
+By rule 4 item 4 the project's question now changes: *does it match the editor?* — the only
+question a reference-bound ladder can ask — gives way to *is it usable without a reference?*,
+whose backlog is [#151](https://github.com/firejune/rigc/issues/151) and
+[#152](https://github.com/firejune/rigc/issues/152). The rungs stay as regression gates for
+tool and method changes.
 
 ---
 
