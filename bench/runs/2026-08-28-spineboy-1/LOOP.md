@@ -125,3 +125,69 @@ f2 = muzzle01 @3.9, f3 = muzzle02 @4.0, f4 = muzzle04 @4.0 (residuals .051/.035/
 — the reference flash is soft exactly like 4× upscaled art). Keys on the 30fps grid
 (sheet tiles 5–11): ON 5/30−1e-6, swaps 7/30−1e-6 and 10/30−1e-6, OFF 12/30−1e-6 —
 each stepped and one grid step early per §4.5's stepped-timeline rule.
+⚠️ First landing had the flare's quad out at column 407: the muzzle placeholders
+carried their genrig offsets, and **an attachment offset scales with its bone** — at
+4× the 67-unit offset became 268. Zeroed the five flare placeholders onto the muzzle
+bone and re-fitted; one line the guide could carry (§3.4): an attachment on a bone
+you scale-key must sit at that bone's origin, or the offset rides the scale.
+
+### 9 — emission (fitting/genmotion.ts) and the closing loop
+Durations on the 30fps grid the brief's windows single out. Times as exact JS
+fractions (k/12, 148/30), stepped keys 1e-6 early. Forced keys: series ends, turning
+points, both ends of exact-equal runs. Declared tolerance 0.5 px at each lever's
+end; per-channel basin floor 0.25° (the fitter's final step); cap 2 px; the relative
+floor (span deviation ≤ smallest single-frame move inside the span). shoot's f0/f1/f5
+share one pose object (the reference is bit-identical there); death f18–f26 hold
+f17's pose verbatim; the f22→f23 blip is an authored 0.1° fist turn (renders as
+10 changed px against the reference's 1 — inside the [1, 25] band).
+
+First compiled candidate: **7 of 8 shots at zero change disagreements** on the first
+try; death carried 19, all three families diagnosable: (a) the boot settle
+had been flattened by the fitter's basin — authored a decaying 2.4/1.6/0.8° foot
+settle at f14–f16 on top of the fitted values (recorded as a trade); (b) the blip at
+2° read 162 px — calibrated down to 0.1°; (c) **the wave parked** — the fit found one
+pose for whole stretches. Splitting the reference's wave changes by region showed
+70–85 % of every pair's change lives in the head end (x<95), not the hand: the lying
+body's static ink had diluted the objective. Weighting the objective by the
+reference's own change mask (dilated, ×20) plus finer refine steps (to 0.06°) made
+the arm and head track; a floor charge (outPenalty 3e-4 with the window walls at the
+body's own box) stopped the waving fist sinking below the ground line.
+
+### 10 — sheet-fitted in-betweens (fitting/sheetfit.ts)
+The sheet series' spikes were all half-frames on fast passages (§9.3's "do not assume
+it lies between its neighbours"): death's tumble tiles 4–22, jump's launch 1–8 and
+drop 32–37, hit 3–9, run 4/19, walk 9/21, at 1/3 scale against the sheet's own tiles
+(label corner masked). Each fitted from the interpolant and keyed at its own 30fps
+instant: death tile 16 err 0.58→0.36, jump tile 36 0.60→0.28, hit tile 6 0.52→0.29.
+Worst sheet tiles fell: death 85.6→69.0, jump 97.7→56.0, hit 93.2→55.0.
+
+### 11 — §10.3's "aim inside the band" bit once, measurably
+My own loop (runcheck, declared viewport) read death f13→f14 at 169+ px changed; the
+report's framing (fitted, x1.000208, −0.06 px) read the same pair at **158** against
+a needed 169 — a framing-sized difference crossing the threshold exactly as §10.3
+warns. The settle amplitude was raised (margin, not a hair) and the pair reads
+comfortably in band in the report's own framing since.
+
+### 12 — targeted drift work off the chain table (§8.1's work queue)
+death f5's rear-foot 10.1→(restarts)→8.1→(more restarts + leg pairs)→gone (5.0 set
+worst); run f6 11.1→5.5; hit f0's torso 7.9 px survived three restart batteries
+(errs saturate at 0.207) and ships as the run's worst attributable figure.
+
+## Result
+
+23 builds; `check` (in-loop, candidate-side) ×6 full passes + runcheck throughout;
+`bench spineboy` run once, after the last edit — summary in README.md, raw in
+`bench.json`. Final `check`: **0 frame-change disagreements over all 124 adjacent
+pairs; worst attributable drift 7.9 px (hit f0 torso); all sets' inventory complete;
+durations exact at both rates.**
+
+## Notes
+
+- What was guessable from the frames: everything the brief promised — the stance,
+  the footfalls, the flight, the tumble geometry, the hold (to the measure's own
+  tolerance), the gun's sweep, the flash's timing to the 30fps tile.
+- What was not: the reference's sub-pixel micro-motion (the hold's 719–852 invisible
+  moving pixels; the wave's head-end micro-rocking amplitude; the 1-px blip's true
+  source), the eye/mouth choices under the goggles, and whether glow/ring compose
+  under the flare. Each shipped on reasoning and is named in README known-wrong.
+- Guide feedback is in README §What the guide should have said.

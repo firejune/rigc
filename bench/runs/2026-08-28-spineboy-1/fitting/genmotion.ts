@@ -215,9 +215,14 @@ for (const anim of ANIMS) {
   // the fitter's basin cannot resolve the residual boot motion, so author the last
   // step of the settle: f16 sits 0.8 deg off the resting foot pose it decays into
   if (anim === 'death') {
-    for (const ch of ['front-foot.rot', 'rear-foot.rot']) {
-      const p16 = store.frames[16].pose, p17 = store.frames[17].pose;
-      if ((p16[ch] ?? 0) === (p17[ch] ?? 0)) p16[ch] = (p17[ch] ?? 0) + 0.8;
+    // decaying authored settle on the boots: keeps f13->f14 change above a quarter
+    // of the reference's 676 in ANY framing (the band is read at zero slack)
+    const extraDeg: Record<number, number> = { 14: 2.4, 15: 1.6, 16: 0.8 };
+    for (const [fi, deg] of Object.entries(extraDeg)) {
+      for (const ch of ['front-foot.rot', 'rear-foot.rot']) {
+        const p = store.frames[Number(fi)].pose;
+        p[ch] = (p[ch] ?? store.frames[17].pose[ch] ?? 0) + deg;
+      }
     }
   }
   // death: author the f22->f23 one-pixel blip (the hold's ninth pair) — a small
