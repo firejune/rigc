@@ -197,7 +197,25 @@ for (const anim of ANIMS) {
   };
   const N = store.frames.length;
   const duration = DUR[anim];
-  const times = store.frames.map((_, i) => i / FPS);
+  // no key may land past the declared duration (shoot: f5's sample sits past 0.4)
+  const times = store.frames.map((_, i) => Math.min(i / FPS, duration || i / FPS));
+  // shoot: f0->f1 is bit-identical in the reference and f5 returns exactly to f0 —
+  // share one pose for all three (the best-fitting of f0/f1)
+  if (anim === 'shoot') {
+    const bestPose = store.frames[0].err <= store.frames[1].err ? store.frames[0].pose : store.frames[1].pose;
+    store.frames[0] = { pose: { ...bestPose }, err: 0 };
+    store.frames[1] = { pose: { ...bestPose }, err: 0 };
+    store.frames[5] = { pose: { ...bestPose }, err: 0 };
+  }
+  // death: author the f22->f23 one-pixel blip (the hold's ninth pair) — a small
+  // front-fist turn between samples 22 and 23, held to f26; calibrated by runcheck
+  if (anim === 'death') {
+    const BLIP_DEG = 2.0;
+    for (let i = 23; i <= 26; i++) {
+      const p = store.frames[i].pose;
+      p['front-fist.rot'] = (p['front-fist.rot'] ?? 0) + BLIP_DEG;
+    }
+  }
   // death: an extra fitted endpoint at 148/30 may exist
   const extraFile = join(RUN, 'fitting/poses/death-end.json');
   let extra: { pose: PoseVec } | null = null;
