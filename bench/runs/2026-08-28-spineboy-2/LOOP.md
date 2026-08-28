@@ -19,6 +19,14 @@
              run's `README.md` and `LOOP.md` beyond process (item 9), its
              `bench.json`, `check-final.json`, `check-final.txt`, and its compiled
              `ess/spine/` artifacts (recompiled here instead).
+- honesty:   one named surface contact, recorded rather than buried — `git log`
+             ran as part of landing mechanics (clone/pull/push/commit
+             verification), and those commands display HEAD-adjacent commit
+             subjects; the subjects seen are adjudication/protocol titles
+             (verdict-level facts this attempt's own mandate already carried).
+             No diff, no transcription commit, no blame, no tag, and no
+             measure-bearing text was opened; nothing read there states or
+             narrows a reference-side value of a scored measure.
 - guide:     AUTHORING.md §10 in hand
 - profile:   spine
 - task:      surgical re-attempt after attempt 4's adjudicated single-clause FAIL
