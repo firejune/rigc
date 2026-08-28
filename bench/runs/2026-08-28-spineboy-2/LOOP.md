@@ -70,3 +70,120 @@ much as the reference's own frames do" (death 59/59, hit 4/4, idle 20/20, jump
 attempt-4 public record. hit's chain table: torso chain mean 3.6 px (the
 corpus-highest named in the diagnosis), worst 7.9 px at f0000. Cross-set rollup:
 torso chain worst 7.9 px (hit/f0000), mean 2.1 px; every other chain worst ≤ 5.5 px.
+
+### 3 — reading the inherited harness before the surgery (no build)
+Read `fitting/` in full (the inherited tools and stores; the prior run's
+README/LOOP stay sealed). Two findings that locate the geometry defect the
+adjudication named:
+
+- **The stored `hit` poses saturate the fitter's own bounds.** fitshot.ts bounds
+  `torso.x`/`torso.y` at ±35; the stored hit poses read torso.x = −35.0 / −34.8 /
+  −32.6 / −31.8 / −35.0 and torso.y = +31.8..+33.6 — pinned at or against the box
+  on the lying frames, and only there (idle |torso.xy| ≤ 6, walk ≤ 19, run ≤ 33,
+  death's lying stretch −21.8/−21.4). §9.1's own rule: a knob resting exactly on
+  its limit is the signature. Restarts could never fix this — the optimum is
+  outside the box, which is why attempt 4's restarts saturated.
+- **The saturation is orientation-correlated.** hit is the only shot whose torso
+  runs to +130° of local rotation from setup (death lies via hip.rot=120 with
+  torso near setup-relative −10). A torso-content-vs-pivot position error e maps
+  to a needed hip-space compensation −R(θ)·e that grows with the local angle θ —
+  invisible upright (absorbed into the fitted setup), saturating in the lying
+  poses. That is the shape of a mis-triangulated joint, not of a search failure.
+
+Plan: probe first (no spec edit) — refit the lying + a spread of upright frames
+with torso.x/y bounds widened to ±110 and only the chest-coupled channels free
+(torso.x/y/rot, neck.rot, head.rot, arm rotations; hip and legs frozen so the
+passing sets cannot be disturbed), read the per-frame needed compensation δ_f,
+then solve the pivot correction e from δ_f = k − R(81.47°+rot_f)·e by least
+squares. Apply as a movePivot('torso') (setup-render-invariant, the inherited
+harness's own compensation pattern), re-probe, and only then refit + rebuild.
+
+### 4 — probe (no build): widened torso.x/y bounds do NOT move the optimum
+`bun fitting/waistprobe.ts` (new tool, this attempt) — refit of 26 frames across
+all 8 shots with torso.x/y bounds ±110 (was ±35), chest-coupled channels free,
+hip+legs frozen. Result: hit's fitted torso.xy stays at (−35.3..−29.8, +23..+36)
+— the ±35 box was *barely* active; the composite objective's optimum is genuinely
+there, and errs move ≤ ±0.02. ⇒ H1 (waist pivot error compensated by a clipped
+translate) is dead: no wider search and no restart reaches a better torso — the
+adjudicated "restarts saturated" reproduced from the inside. The defect is the
+RELATIVE geometry between the torso image and the chest joint cluster (neck +
+shoulders): the whole-composite compromise anchors the head/arms and leaves the
+torso image 7.9 px off, which only the per-slot matcher sees. Next: triangulate
+the neck/chest joint directly — template-match torso.png and head.png per frame
+(the brief's own verification method) across lying + upright frames, and solve
+the joint that is fixed in both parts' art frames by least squares.
+
+### 5 — triangulation (no build): the chest joint, re-derived through the lying poses
+`bun fitting/chestlock.ts` (new tool) — template-matched `torso.png` and `head.png`
+(the brief's own 72-rotation matcher convention, ±30° at 2.5° around the fit's
+seed) on 18 frames across all 8 shots, lying frames included, then solved for the
+one point fixed in BOTH art frames, least squares over the 17 rows that pass the
+residual filter (torso res 1570–3634, head res 1449–1888):
+
+- measured joint p = (5.0, 89.9) in torso-art coords; q = (−45.0, −121.6) in
+  head-art coords; per-frame residuals 0.5–4.5 px.
+- the CURRENT rig's joint sits at p = (18.8, 93.7) / q = (−34.2, −121.1)
+  ⇒ **δp = (−13.8, −3.8) torso-art units ≈ 3.2 px, toward the figure's back.**
+- ⭐ upright-only rows re-solve to p = (−0.4, 68.7) with residuals 0.9–3.0 — a
+  21-unit-different answer that fits the upright frames just as well. The joint
+  is ill-conditioned without the lying poses, which is how the inherited
+  triangulation (idle zoom-read) went wrong without any frame saying so.
+- consistency: a movePivot of δp alone moves q to (−48.5, −121.3) vs measured
+  (−45.0, −121.6) — within 0.8 px, so ONE edit repairs both views of the joint.
+
+`bun fitting/placedelta.ts` (new tool) — candidate-vs-match placement per frame:
+head within 1.4 px everywhere; torso off 8.1 px at hit f0 (check reads 7.9),
+5.0–5.8 px through death's lying stretch (check 5.0), 4.0 px + 14° at shoot f3
+(check 5.2), 0–1.4 px upright. Torso angle error ±12–16° correlates with the
+position error — a rotation about a mis-placed pivot, the head anchored. The
+solve's post-repair residuals (≤3.7 px lying, ≤2.5 hit f0, split between parts
+instead of landing on the torso) predict the drift comes under the bar.
+
+Decision: the surgery = **movePivot('neck', Δ) with Δ = R(torso-att rot)·δp**
+(≈ (−3.0, +14.0) in torso-bone space) — the inherited harness's own
+setup-render-invariant pivot move: rig diff = neck bone x/y + neck attachment
+x/y + head bone x/y, nothing else. Shoulders are NOT edited: the arm chains
+have enough DOF to follow any chest, the placedelta table shows the head-torso
+pair is the binding constraint, and the solve says one edit closes it.
+
+### 6 — the surgery + build 2
+`bun fitting/surgery5.ts` — one movePivot('neck', Δ) with Δ = (−3.06, +13.96) in
+torso-bone space, from the chestlock solve. Rig-spec diff = exactly 6 numbers in
+3 objects: neck bone (179.1, 21.98) → (176.04, 35.94); head bone (compensation)
+(21.6, −19.96) → (24.89, −33.86); neck attachment (compensation) (−23.15, 13.48)
+→ (−19.86, −0.42). Setup render invariant by construction; verified the joint
+now reads p = (5.00, 89.90) in torso-art coords. `genrig` regenerated the rig
+spec; build 2 green (same PASS/SKIP/PROF census as build 1).
+
+### 7 — refit hit (12 fps store + tile extras), chest-coupled channels only
+`bun fitting/refit5.ts hit` (new tool) — free: torso.x/y/rot, neck.rot,
+head.rot, both arm chains. Frozen: hip.*, both legs (so run/walk/idle leg
+figures cannot move by construction). hit errs under the NEW geometry beat the
+OLD geometry's own optima: f1 0.2238→0.1598 (old best 0.1798), f3 0.2280→0.1847
+(old 0.1919), f4 0.2317→0.1966 (old 0.1977). Tile extras refit in place against
+their own tiles (t=0.100 0.2193→0.1615 etc.).
+
+### 8 — torso-seeded polish for the frames stuck in the old basin
+`bun fitting/torsopolish.ts hit:0 hit:3 hit:4` (new tool) — multi-start per
+§8.1: the incumbent stays a candidate; the added start places the torso
+analytically ON its own template match. f3 ACCEPT (err 0.1847→0.1765, torso now
+1.7 px from match), f4 ACCEPT (0.1966→0.1748, 2.4 px). f0 rejected the seed
+(0.2393 vs 0.2014): the composite genuinely prefers the torso 8.6 px off there.
+
+### 9 — hit f0: the composite was using the torso as sacrificial cover
+Diagnosis by rendering both sides (fitting/render crops): at f0 the candidate's
+gun sat ~18 px above the brief's measured teal (x 148–164, rows 304–322 — at the
+floor), and the rear leg was mis-derived (baseline check: "rear-thigh — no slot
+attributable"). The whole-figure SSD then pulls the torso down-left to cover the
+bare ink — §9.1's absence-cliff cousin: a blunt objective covering one part's
+error with another part.
+`bun fitting/hit0full.ts 0` (new tool) — seed = torso ON its match + gun chain
+IK'd onto its measured teal (landed at (156.0, 311.6), the brief's own figures)
++ legs re-derived from red components (both assignments), then a joint local
+refine with the torso pinned (±2). Result: composite 0.2091 vs the compromise's
+0.2014 (+3.8%), torso 3.3 px + 4.0° from its match instead of 8.6 px.
+⚖️ **Recorded trade**: the pose accepted at f0 is 3.8% worse on my own composite
+objective and decisively better on both frame-derived placement instruments
+(template match; check's own slot correlator reads the same picture). The
+composite's preference is the documented sacrificial-cover failure, not a
+fidelity signal. Accept threshold 10% used once, here, and logged.
