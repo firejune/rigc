@@ -187,3 +187,43 @@ objective and decisively better on both frame-derived placement instruments
 (template match; check's own slot correlator reads the same picture). The
 composite's preference is the documented sacrificial-cover failure, not a
 fidelity signal. Accept threshold 10% used once, here, and logged.
+
+### 10 — refit death; re-impose the dead hold; polish rejected on evidence
+`bun fitting/refit5.ts death` — wave passage errs fall hard (f54 0.3130→0.2295,
+f55 0.3408→0.2400). ⚠️ The per-frame refit broke the f13..f26 pose-identity the
+dead hold requires, so `bun fitting/unifydeath.ts` (new tool) re-unified f13..f26
+on the pose with the lowest mean hold error (f19's, mean 0.2402 — better than any
+single old figure there). `bun fitting/deathpolish.ts` then tried the same
+torso-on-match seed that fixed hit: **rejected** — pinning the torso at its match
+costs +30% composite on the hold frames (0.2402→0.3133), against a mediocre match
+residual (3043). Two instruments disagree ≥8% ⇒ the composite stands and check
+arbitrates. Same verdict for shoot f2/f3/f4 (torsopolish rejected at +3–5%,
+res 3243). Only hit f0 carries an override, and it is logged in §9.
+
+### 11 — refit the remaining six shots + extras + death endpoint
+`bun fitting/refit5.ts jump shoot aim idle walk run` — errs improve throughout
+(walk f0 0.1637→0.1263, run f0 0.2002→0.1600, idle f20 0.1897→0.1394).
+`bun fitting/deathend.ts` refit the 148/30 endpoint (err 0.2390).
+
+### 12 — genmotion + build 3 + runcheck; one under-change pair; retune; build 4
+`genmotion` (2630 keys, 8 animations) → build 3 green → `runcheck`: 1 of 124
+pairs flagged — death f13→f14, mine 156 px where the reference moves 676 (the
+unify flattened f13..f16's own poses, so the authored boot-settle now carries
+the whole change; the inherited 2.4/1.6/0.8° were calibrated for the old
+skeleton). Retuned to 4.2/2.2/1.0° aiming inside the band (§10.3), documented in
+genmotion.ts. Build 4 green; runcheck: **0 disagreements of 124.**
+
+### 13 — check (in-loop), the whole root
+Worst attributable slot drift per set, stage 0 → now:
+aim 3.6→3.5 · aim@30 3.6→3.5 · death 5.0→4.8 (torso f35) · death@30 4.6→**2.9**
+· **hit 7.9→4.6 (rear-shin f2; torso is no longer the worst row)** ·
+**hit@30 7.9→3.4 (torso f0)** · idle 2.1→2.1 · idle@30 1.5→1.8 · jump 3.6→3.6 ·
+jump@30 2.1→1.6 · **run 5.5→5.5 (rear-shin f6 — bit-identical, legs frozen)** ·
+run@30 2.8→3.5 · shoot 5.2→4.4 (front-foot; torso off the top row) ·
+shoot@30 4.4→4.2 · walk 4.7→4.7 · walk@30 3.5→3.5.
+per-frame: every set with adjacent pairs reads all-pairs-agree (124/124).
+Cross-set chain rollup: torso worst 4.8 px (death/f0035), mean 1.8 px (was 7.9 /
+2.1). The two small @30fps upticks (idle@30 front-foot 1.5→1.8, run@30 torso
+2.8→3.5) are traceable: the first is the per-set fitted framing shifting with the
+chest's ink (the foot channels themselves are frozen), the second is run f8's
+chest refit (composite improved 0.1823→0.1607). Both far under every margin.

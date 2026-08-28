@@ -10,20 +10,20 @@
     "front-shin.rot": -0.5,
     "rear-thigh.rot": -32,
     "rear-shin.rot": -28.25,
-    "front-upper-arm.rot": -2.25,
-    "front-bracer.rot": 115.75,
-    "rear-upper-arm.rot": -4.520802023925671,
+    "front-upper-arm.rot": 0.25,
+    "front-bracer.rot": 123.15,
+    "rear-upper-arm.rot": -3.020802023925671,
     "rear-bracer.rot": 7.991379129914328,
     "gun.rot": 31.620591037589364,
-    "front-fist.rot": -71.35,
-    "neck.rot": 17.298937589628828,
+    "front-fist.rot": -81.35,
+    "neck.rot": 16.798937589628828,
     "head.rot": -3.673153643430595,
     "front-foot.rot": -4.25,
     "rear-foot.rot": -15.75,
-    "torso.y": -2.9006050438315683,
-    "torso.x": 12.353201331731626
+    "torso.y": -6.900605043831568,
+    "torso.x": 13.353201331731626
    },
-   "err": 0.17606079021211282
+   "err": 0.16
   },
   {
    "pose": {
@@ -36,19 +36,19 @@
     "rear-thigh.rot": -0.25,
     "rear-shin.rot": -70.5,
     "front-upper-arm.rot": 80,
-    "front-bracer.rot": -19.05,
+    "front-bracer.rot": -20.95,
     "rear-upper-arm.rot": -52,
     "rear-bracer.rot": -15,
     "gun.rot": 32.620591037589364,
-    "front-fist.rot": -27.799999999999997,
-    "neck.rot": 5.3989375896288285,
-    "head.rot": 2.276846356569405,
+    "front-fist.rot": -24.799999999999997,
+    "neck.rot": -0.6010624103711706,
+    "head.rot": 8.276846356569404,
     "front-foot.rot": 4.95,
     "rear-foot.rot": -31.75,
-    "torso.y": -2.9006050438315683,
-    "torso.x": 17.903201331731626
+    "torso.y": -1.4006050438315683,
+    "torso.x": 16.403201331731626
    },
-   "err": 0.236937298800474
+   "err": 0.234
   },
   {
    "pose": {
@@ -61,19 +61,19 @@
     "rear-thigh.rot": 22.865787836874002,
     "rear-shin.rot": 5.018668686891538,
     "front-upper-arm.rot": 106,
-    "front-bracer.rot": 4.25,
+    "front-bracer.rot": 7.25,
     "rear-upper-arm.rot": -49.3,
-    "rear-bracer.rot": -88.2,
-    "gun.rot": 50.75,
-    "front-fist.rot": 26.2,
+    "rear-bracer.rot": -88.60000000000001,
+    "gun.rot": 51.15,
+    "front-fist.rot": 25.2,
     "neck.rot": 5.113844401873983,
     "head.rot": 12.865436949966558,
     "front-foot.rot": -31.05,
     "rear-foot.rot": 32.5,
-    "torso.y": -13.28140358420752,
+    "torso.y": -14.28140358420752,
     "torso.x": 18.02387584397524
    },
-   "err": 0.15062269467866862
+   "err": 0.1491
   },
   {
    "pose": {
@@ -85,20 +85,20 @@
     "front-shin.rot": -32.781826638747575,
     "rear-thigh.rot": -32.75,
     "rear-shin.rot": 44,
-    "front-upper-arm.rot": 119.3,
-    "front-bracer.rot": 26.7,
-    "rear-upper-arm.rot": -68.79246738302828,
-    "rear-bracer.rot": -115.5264361746577,
-    "gun.rot": 39.94596126866071,
-    "front-fist.rot": -37.05,
-    "neck.rot": -18.063777879343718,
-    "head.rot": 24,
+    "front-upper-arm.rot": 123.3,
+    "front-bracer.rot": 12.2,
+    "rear-upper-arm.rot": -67.29246738302828,
+    "rear-bracer.rot": -116.5264361746577,
+    "gun.rot": 38.94596126866071,
+    "front-fist.rot": -31.549999999999997,
+    "neck.rot": -12.063777879343718,
+    "head.rot": 18,
     "front-foot.rot": -63.0397460822511,
     "rear-foot.rot": 24.7,
-    "torso.y": -18.90066496206258,
+    "torso.y": -17.90066496206258,
     "torso.x": 18.66339152485162
    },
-   "err": 0.18797908700995083
+   "err": 0.1916
   },
   {
    "pose": {
@@ -110,12 +110,12 @@
     "front-shin.rot": -1.45,
     "rear-thigh.rot": -15.5,
     "rear-shin.rot": 6.5,
-    "front-upper-arm.rot": 51.2,
-    "front-bracer.rot": 17.250000000000004,
+    "front-upper-arm.rot": 53.7,
+    "front-bracer.rot": -1.7499999999999964,
     "rear-upper-arm.rot": -52.94999999999999,
     "rear-bracer.rot": -107.10000000000001,
     "gun.rot": 29.399999999999995,
-    "front-fist.rot": 15.450000000000003,
+    "front-fist.rot": 17.950000000000003,
     "neck.rot": 0.4362221206562822,
     "head.rot": 8.3,
     "front-foot.rot": -70,
@@ -123,7 +123,7 @@
     "torso.y": -25.35066496206258,
     "torso.x": 14.113391524851622
    },
-   "err": 0.13439180064988338
+   "err": 0.134
   },
   {
    "pose": {
@@ -140,15 +140,15 @@
     "rear-upper-arm.rot": -6.467797931238465,
     "rear-bracer.rot": -75.23336969608422,
     "gun.rot": 21.99168159388448,
-    "front-fist.rot": 84,
+    "front-fist.rot": 83.9,
     "neck.rot": -1.969215758105807,
     "head.rot": 6,
     "front-foot.rot": -8.25,
     "rear-foot.rot": 42,
-    "torso.y": -31.28734813163948,
+    "torso.y": -31.187348131639478,
     "torso.x": 24.63115710097321
    },
-   "err": 0.19769416527641567
+   "err": 0.1968
   },
   {
    "pose": {
@@ -160,12 +160,12 @@
     "front-shin.rot": -48,
     "rear-thigh.rot": 13,
     "rear-shin.rot": 14,
-    "front-upper-arm.rot": -5.8,
-    "front-bracer.rot": 100.14999999999999,
-    "rear-upper-arm.rot": 14.60012121157854,
-    "rear-bracer.rot": -15.129904390983555,
-    "gun.rot": 21.05,
-    "front-fist.rot": -89.15,
+    "front-upper-arm.rot": -10.8,
+    "front-bracer.rot": 108.14999999999999,
+    "rear-upper-arm.rot": 11.60012121157854,
+    "rear-bracer.rot": -9.129904390983555,
+    "gun.rot": 18.05,
+    "front-fist.rot": -98.65,
     "neck.rot": -1.5116294679357447,
     "head.rot": 13.2,
     "front-foot.rot": -32.305044729846614,
@@ -173,7 +173,7 @@
     "torso.y": -14.770225676901159,
     "torso.x": 31.710971250485002
    },
-   "err": 0.17688127705962123
+   "err": 0.1732
   },
   {
    "pose": {
@@ -186,19 +186,19 @@
     "rear-thigh.rot": -27.75,
     "rear-shin.rot": 83.3,
     "front-upper-arm.rot": -30.924468846319208,
-    "front-bracer.rot": 45.965059233631926,
-    "rear-upper-arm.rot": 22.25322103633719,
-    "rear-bracer.rot": -6.690571674603653,
-    "gun.rot": 43.5,
-    "front-fist.rot": 88.45,
-    "neck.rot": -5.9170572036767455,
-    "head.rot": 20.79430310519585,
+    "front-bracer.rot": 40.865059233631925,
+    "rear-upper-arm.rot": 25.65322103633719,
+    "rear-bracer.rot": -13.090571674603654,
+    "gun.rot": 46.5,
+    "front-fist.rot": 90.35000000000001,
+    "neck.rot": -0.4170572036767446,
+    "head.rot": 14.794303105195851,
     "front-foot.rot": -37.82953957980008,
     "rear-foot.rot": 23.089593612741307,
-    "torso.y": -33.25,
-    "torso.x": 19.55084095128777
+    "torso.y": -34.15,
+    "torso.x": 19.150840951287773
    },
-   "err": 0.2016986877071037
+   "err": 0.199
   },
   {
    "pose": {
@@ -210,20 +210,20 @@
     "front-shin.rot": -25.25,
     "rear-thigh.rot": -45.2,
     "rear-shin.rot": 2.3999999999999995,
-    "front-upper-arm.rot": -8.25,
-    "front-bracer.rot": 108.5,
-    "rear-upper-arm.rot": -3.75821009155743,
-    "rear-bracer.rot": -0.746232300725751,
-    "gun.rot": 38.5,
-    "front-fist.rot": 88.45,
-    "neck.rot": 14.030784241894192,
-    "head.rot": -3.6504883825825907,
+    "front-upper-arm.rot": -8.85,
+    "front-bracer.rot": 109,
+    "rear-upper-arm.rot": -6.25821009155743,
+    "rear-bracer.rot": 5.253767699274249,
+    "gun.rot": 35.5,
+    "front-fist.rot": 92.05,
+    "neck.rot": 13.630784241894192,
+    "head.rot": -2.850488382582591,
     "front-foot.rot": -3.5,
     "rear-foot.rot": -47.8,
-    "torso.y": -32.58734813163948,
-    "torso.x": 27.93115710097321
+    "torso.y": -34.58734813163948,
+    "torso.x": 29.43115710097321
    },
-   "err": 0.16035697981387598
+   "err": 0.1607
   }
  ],
  "attachments": {

@@ -217,7 +217,7 @@ for (const anim of ANIMS) {
   if (anim === 'death') {
     // decaying authored settle on the boots: keeps f13->f14 change above a quarter
     // of the reference's 676 in ANY framing (the band is read at zero slack)
-    const extraDeg: Record<number, number> = { 14: 2.4, 15: 1.6, 16: 0.8 };
+    const extraDeg: Record<number, number> = { 14: 4.2, 15: 2.2, 16: 1.0 }; // attempt 5: f13..f16 share the hold pose after the unify, so the authored settle carries the whole f13->f14 change; retuned to clear the band with margin (ref 676/245/211/70 px at 8/255)
     for (const [fi, deg] of Object.entries(extraDeg)) {
       for (const ch of ['front-foot.rot', 'rear-foot.rot']) {
         const p = store.frames[Number(fi)].pose;
