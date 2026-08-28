@@ -131,16 +131,19 @@ Two properties of that configuration are load-bearing in the workflow:
 
 Confirm a cut afterwards: `npm view spine-rigc version`.
 
-**The next release is the first automated publish, and only that run can prove
-the exchange** — everything up to the registry is testable here, the token swap
-itself is not. Watch it: **Actions → release →** the run for the release commit,
+**The exchange is proven.** **v0.4.0** and **v0.5.0** both published automatically
+over OIDC, with provenance attestations, from release runs `32944316689` and
+`33155874461` — everything up to the registry was always testable here, the
+token swap itself was not, and those two cuts are what settled it. Still watch a
+cut: **Actions → release →** the run for the release commit,
 step *Publish to npm*. A rejection there names its own cause; a mismatch against
 the trusted publisher above is the first thing to re-read, since npm matches the
 `workflow_ref` claim — repository and workflow filename — and accepts no
-approximation of it. If it fails on authentication rather than on a mismatch,
+approximation of it. If it ever fails on authentication rather than on a mismatch,
 try dropping `registry-url` from the `setup-node` step: it exists only to write
 an `.npmrc`, and the `.npmrc` it writes carries a `NODE_AUTH_TOKEN` placeholder
-that nothing sets. The fallback below covers the release in the meantime.
+that nothing sets. The fallback below is a contingency for that case, not a
+parallel path.
 
 ### What the tarball contains
 
