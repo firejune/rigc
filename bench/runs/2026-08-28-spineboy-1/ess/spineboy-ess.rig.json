@@ -25,7 +25,7 @@
     {
       "name": "torso",
       "parent": "hip",
-      "x": 0,
+      "x": 2,
       "y": 0,
       "rotation": 81.47,
       "length": 181.4
@@ -33,31 +33,31 @@
     {
       "name": "neck",
       "parent": "torso",
-      "x": 181.4,
-      "y": 0,
+      "x": 179.1,
+      "y": 21.98,
       "rotation": -0.93,
       "length": 27.28
     },
     {
       "name": "head",
       "parent": "neck",
-      "x": 27.28,
-      "y": 0,
+      "x": 21.6,
+      "y": -19.96,
       "rotation": 4.46,
       "length": 180
     },
     {
       "name": "front-upper-arm",
       "parent": "torso",
-      "x": 109.55,
-      "y": 116.2,
+      "x": 109.25,
+      "y": 118.18,
       "rotation": -203.47,
       "length": 42.31
     },
     {
       "name": "front-bracer",
       "parent": "front-upper-arm",
-      "x": 42.31,
+      "x": 75,
       "y": 0,
       "rotation": 25.67,
       "length": 40.61
@@ -65,16 +65,16 @@
     {
       "name": "front-fist",
       "parent": "front-bracer",
-      "x": 40.61,
-      "y": 0,
+      "x": 15.92,
+      "y": 20.22,
       "rotation": 6.34,
       "length": 30
     },
     {
       "name": "rear-upper-arm",
       "parent": "torso",
-      "x": 129.73,
-      "y": 42.13,
+      "x": 129.43,
+      "y": 44.11,
       "rotation": -139.86,
       "length": 68.46
     },
@@ -89,16 +89,16 @@
     {
       "name": "gun",
       "parent": "rear-bracer",
-      "x": 58.77,
-      "y": -19.38,
+      "x": 56.77,
+      "y": -27.38,
       "rotation": 45.95,
       "length": 150
     },
     {
       "name": "muzzle",
       "parent": "gun",
-      "x": 155,
-      "y": -115,
+      "x": 162.14,
+      "y": -110.88,
       "rotation": -30
     },
     {
@@ -129,15 +129,15 @@
       "name": "rear-thigh",
       "parent": "hip",
       "x": 26.91,
-      "y": 13.45,
+      "y": 15.45,
       "rotation": -52.43,
       "length": 73.56
     },
     {
       "name": "rear-shin",
       "parent": "rear-thigh",
-      "x": 73.56,
-      "y": 0,
+      "x": 75.15,
+      "y": -1.22,
       "rotation": -32.37,
       "length": 99.07
     },
@@ -263,8 +263,8 @@
         "rear-upper-arm": {
           "image": "rear-upper-arm.png",
           "x": 36.14,
-          "y": -1.18,
-          "rotation": 0.39
+          "y": -10.78,
+          "rotation": -2.41
         }
       },
       "rear-bracer": {
@@ -272,15 +272,15 @@
           "image": "rear-bracer.png",
           "x": 16.33,
           "y": 0,
-          "rotation": -44.05
+          "rotation": -70.05
         }
       },
       "rear-thigh": {
         "rear-thigh": {
           "image": "rear-thigh.png",
-          "x": -35.22,
-          "y": -1,
-          "rotation": 21.43
+          "x": -32.43,
+          "y": -3.42,
+          "rotation": 35.83
         }
       },
       "rear-shin": {
@@ -302,24 +302,24 @@
       "neck": {
         "neck": {
           "image": "neck.png",
-          "x": -29.47,
-          "y": 34.64,
-          "rotation": -81.54
+          "x": -24.35,
+          "y": 14.68,
+          "rotation": -85.54
         }
       },
       "torso": {
         "torso": {
           "image": "torso.png",
-          "x": 89.25,
-          "y": 45.12,
+          "x": 88.95,
+          "y": 45.9,
           "rotation": -87.97
         }
       },
       "gun": {
         "gun": {
           "image": "gun.png",
-          "x": 66,
-          "y": -41.5,
+          "x": 73.14,
+          "y": -37.38,
           "rotation": -0.5
         }
       },
@@ -374,24 +374,24 @@
       "head": {
         "head": {
           "image": "head.png",
-          "x": 96.68,
-          "y": 5.13,
+          "x": 104.66,
+          "y": 4.51,
           "rotation": -82
         }
       },
       "eye": {
         "eye-indifferent": {
           "image": "eye-indifferent.png",
-          "x": 71.71,
-          "y": -47.75,
+          "x": 79.69,
+          "y": -48.37,
           "rotation": -82.5,
           "scaleX": 0.6,
           "scaleY": 0.6
         },
         "eye-surprised": {
           "image": "eye-surprised.png",
-          "x": 71.71,
-          "y": -47.75,
+          "x": 79.69,
+          "y": -48.37,
           "rotation": -82.5,
           "scaleX": 0.6,
           "scaleY": 0.6
@@ -400,32 +400,32 @@
       "goggles": {
         "goggles": {
           "image": "goggles.png",
-          "x": 67.31,
-          "y": 17.66,
+          "x": 75.29,
+          "y": 17.04,
           "rotation": -82
         }
       },
       "mouth": {
         "mouth-smile": {
           "image": "mouth-smile.png",
-          "x": -15.06,
-          "y": -9.98,
-          "rotation": -81,
+          "x": -7.08,
+          "y": -18.6,
+          "rotation": -79.8,
           "scaleX": 0.4,
           "scaleY": 0.4
         },
         "mouth-grind": {
           "image": "mouth-grind.png",
-          "x": -15.06,
-          "y": -9.98,
+          "x": -7.08,
+          "y": -10.6,
           "rotation": -81,
           "scaleX": 0.4,
           "scaleY": 0.4
         },
         "mouth-oooo": {
           "image": "mouth-oooo.png",
-          "x": -15.06,
-          "y": -9.98,
+          "x": -7.08,
+          "y": -10.6,
           "rotation": -81,
           "scaleX": 0.4,
           "scaleY": 0.4
@@ -434,8 +434,8 @@
       "front-thigh": {
         "front-thigh": {
           "image": "front-thigh.png",
-          "x": 17.97,
-          "y": 10.61,
+          "x": 15.17,
+          "y": 16.21,
           "rotation": 146.99
         }
       },
@@ -458,30 +458,30 @@
       "front-upper-arm": {
         "front-upper-arm": {
           "image": "front-upper-arm.png",
-          "x": 33.16,
-          "y": 10.52,
-          "rotation": 103.51
+          "x": 37.16,
+          "y": 13.32,
+          "rotation": 102.31
         }
       },
       "front-bracer": {
         "front-bracer": {
           "image": "front-bracer.png",
-          "x": 22.37,
-          "y": 6.49,
+          "x": -7.09,
+          "y": 20.65,
           "rotation": 85.34
         }
       },
       "front-fist": {
         "front-fist-open": {
           "image": "front-fist-open.png",
-          "x": 17.94,
-          "y": 8.97,
+          "x": 11.33,
+          "y": 3.47,
           "rotation": 52.5
         },
         "front-fist-closed": {
           "image": "front-fist-closed.png",
-          "x": 17.94,
-          "y": 8.97,
+          "x": 12.53,
+          "y": 3.47,
           "rotation": 52.5
         }
       }

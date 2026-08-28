@@ -226,6 +226,28 @@ for (const p of parts) {
   }
 }
 
+// overlay a whole-skeleton fit (stage C) verbatim, when present
+const skelFitPath = join(RUN, 'fitting/skeleton-fit.json');
+if (existsSync(skelFitPath)) {
+  const sf = JSON.parse(readFileSync(skelFitPath, 'utf8')) as {
+    bones: Record<string, { x: number; y: number; rotation: number }>;
+    attachments: Record<string, Record<string, { x: number; y: number; rotation: number; scaleX: number; scaleY: number }>>;
+  };
+  for (const b of rigBones) {
+    const f = sf.bones[b.name as string];
+    if (f && b.name !== 'root') { b.x = f.x; b.y = f.y; b.rotation = f.rotation; }
+  }
+  for (const [slotName, atts] of Object.entries(sf.attachments)) {
+    for (const [attName, f] of Object.entries(atts)) {
+      const att = skin[slotName]?.[attName];
+      if (!att) continue;
+      att.x = f.x; att.y = f.y; att.rotation = f.rotation;
+      if (Math.abs(f.scaleX - 1) > 1e-6) { att.scaleX = f.scaleX; att.scaleY = f.scaleY; }
+      else { delete att.scaleX; delete att.scaleY; }
+    }
+  }
+}
+
 const rig = {
   spec: 'rigc-rig/1',
   name: 'spineboy-ess',

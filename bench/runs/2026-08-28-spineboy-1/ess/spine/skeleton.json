@@ -24,7 +24,7 @@
       "name": "torso",
       "parent": "hip",
       "length": 181.4,
-      "x": 0,
+      "x": 2,
       "y": 0,
       "rotation": 81.47
     },
@@ -32,31 +32,31 @@
       "name": "neck",
       "parent": "torso",
       "length": 27.28,
-      "x": 181.4,
-      "y": 0,
+      "x": 179.1,
+      "y": 21.98,
       "rotation": -0.93
     },
     {
       "name": "head",
       "parent": "neck",
       "length": 180,
-      "x": 27.28,
-      "y": 0,
+      "x": 21.6,
+      "y": -19.96,
       "rotation": 4.46
     },
     {
       "name": "front-upper-arm",
       "parent": "torso",
       "length": 42.31,
-      "x": 109.55,
-      "y": 116.2,
+      "x": 109.25,
+      "y": 118.18,
       "rotation": -203.47
     },
     {
       "name": "front-bracer",
       "parent": "front-upper-arm",
       "length": 40.61,
-      "x": 42.31,
+      "x": 75,
       "y": 0,
       "rotation": 25.67
     },
@@ -64,16 +64,16 @@
       "name": "front-fist",
       "parent": "front-bracer",
       "length": 30,
-      "x": 40.61,
-      "y": 0,
+      "x": 15.92,
+      "y": 20.22,
       "rotation": 6.34
     },
     {
       "name": "rear-upper-arm",
       "parent": "torso",
       "length": 68.46,
-      "x": 129.73,
-      "y": 42.13,
+      "x": 129.43,
+      "y": 44.11,
       "rotation": -139.86
     },
     {
@@ -88,15 +88,15 @@
       "name": "gun",
       "parent": "rear-bracer",
       "length": 150,
-      "x": 58.77,
-      "y": -19.38,
+      "x": 56.77,
+      "y": -27.38,
       "rotation": 45.95
     },
     {
       "name": "muzzle",
       "parent": "gun",
-      "x": 155,
-      "y": -115,
+      "x": 162.14,
+      "y": -110.88,
       "rotation": -30
     },
     {
@@ -128,15 +128,15 @@
       "parent": "hip",
       "length": 73.56,
       "x": 26.91,
-      "y": 13.45,
+      "y": 15.45,
       "rotation": -52.43
     },
     {
       "name": "rear-shin",
       "parent": "rear-thigh",
       "length": 99.07,
-      "x": 73.56,
-      "y": 0,
+      "x": 75.15,
+      "y": -1.22,
       "rotation": -32.37
     },
     {
@@ -261,8 +261,8 @@
             "width": 40,
             "height": 87,
             "x": 36.14,
-            "y": -1.18,
-            "rotation": 0.39
+            "y": -10.78,
+            "rotation": -2.41
           }
         },
         "rear-bracer": {
@@ -271,16 +271,16 @@
             "height": 72,
             "x": 16.33,
             "y": 0,
-            "rotation": -44.05
+            "rotation": -70.05
           }
         },
         "rear-thigh": {
           "rear-thigh": {
             "width": 55,
             "height": 94,
-            "x": -35.22,
-            "y": -1,
-            "rotation": 21.43
+            "x": -32.43,
+            "y": -3.42,
+            "rotation": 35.83
           }
         },
         "rear-shin": {
@@ -305,17 +305,17 @@
           "neck": {
             "width": 36,
             "height": 41,
-            "x": -29.47,
-            "y": 34.64,
-            "rotation": -81.54
+            "x": -24.35,
+            "y": 14.68,
+            "rotation": -85.54
           }
         },
         "torso": {
           "torso": {
             "width": 98,
             "height": 180,
-            "x": 89.25,
-            "y": 45.12,
+            "x": 88.95,
+            "y": 45.9,
             "rotation": -87.97
           }
         },
@@ -323,8 +323,8 @@
           "gun": {
             "width": 210,
             "height": 203,
-            "x": 66,
-            "y": -41.5,
+            "x": 73.14,
+            "y": -37.38,
             "rotation": -0.5
           }
         },
@@ -387,8 +387,8 @@
           "head": {
             "width": 271,
             "height": 298,
-            "x": 96.68,
-            "y": 5.13,
+            "x": 104.66,
+            "y": 4.51,
             "rotation": -82
           }
         },
@@ -396,8 +396,8 @@
           "eye-indifferent": {
             "width": 93,
             "height": 89,
-            "x": 71.71,
-            "y": -47.75,
+            "x": 79.69,
+            "y": -48.37,
             "rotation": -82.5,
             "scaleX": 0.6,
             "scaleY": 0.6
@@ -405,8 +405,8 @@
           "eye-surprised": {
             "width": 93,
             "height": 89,
-            "x": 71.71,
-            "y": -47.75,
+            "x": 79.69,
+            "y": -48.37,
             "rotation": -82.5,
             "scaleX": 0.6,
             "scaleY": 0.6
@@ -416,8 +416,8 @@
           "goggles": {
             "width": 261,
             "height": 166,
-            "x": 67.31,
-            "y": 17.66,
+            "x": 75.29,
+            "y": 17.04,
             "rotation": -82
           }
         },
@@ -425,17 +425,17 @@
           "mouth-smile": {
             "width": 93,
             "height": 59,
-            "x": -15.06,
-            "y": -9.98,
-            "rotation": -81,
+            "x": -7.08,
+            "y": -18.6,
+            "rotation": -79.8,
             "scaleX": 0.4,
             "scaleY": 0.4
           },
           "mouth-grind": {
             "width": 93,
             "height": 59,
-            "x": -15.06,
-            "y": -9.98,
+            "x": -7.08,
+            "y": -10.6,
             "rotation": -81,
             "scaleX": 0.4,
             "scaleY": 0.4
@@ -443,8 +443,8 @@
           "mouth-oooo": {
             "width": 93,
             "height": 59,
-            "x": -15.06,
-            "y": -9.98,
+            "x": -7.08,
+            "y": -10.6,
             "rotation": -81,
             "scaleX": 0.4,
             "scaleY": 0.4
@@ -454,8 +454,8 @@
           "front-thigh": {
             "width": 45,
             "height": 112,
-            "x": 17.97,
-            "y": 10.61,
+            "x": 15.17,
+            "y": 16.21,
             "rotation": 146.99
           }
         },
@@ -481,17 +481,17 @@
           "front-upper-arm": {
             "width": 46,
             "height": 97,
-            "x": 33.16,
-            "y": 10.52,
-            "rotation": 103.51
+            "x": 37.16,
+            "y": 13.32,
+            "rotation": 102.31
           }
         },
         "front-bracer": {
           "front-bracer": {
             "width": 58,
             "height": 80,
-            "x": 22.37,
-            "y": 6.49,
+            "x": -7.09,
+            "y": 20.65,
             "rotation": 85.34
           }
         },
@@ -499,15 +499,15 @@
           "front-fist-open": {
             "width": 86,
             "height": 87,
-            "x": 17.94,
-            "y": 8.97,
+            "x": 11.33,
+            "y": 3.47,
             "rotation": 52.5
           },
           "front-fist-closed": {
             "width": 75,
             "height": 82,
-            "x": 17.94,
-            "y": 8.97,
+            "x": 12.53,
+            "y": 3.47,
             "rotation": 52.5
           }
         }

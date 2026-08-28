@@ -1,0 +1,31 @@
+{
+ "frames": [
+  {
+   "pose": {
+    "hip.x": -12,
+    "hip.y": 30,
+    "hip.rot": 10,
+    "torso.rot": -2,
+    "front-thigh.rot": 60.3,
+    "front-shin.rot": -49,
+    "rear-thigh.rot": -66,
+    "rear-shin.rot": 42,
+    "front-upper-arm.rot": 98,
+    "front-bracer.rot": -43.5,
+    "rear-upper-arm.rot": 23.25,
+    "rear-bracer.rot": -3.5,
+    "gun.rot": 0.25,
+    "front-foot.rot": -13,
+    "rear-foot.rot": 17.75,
+    "front-fist.rot": -0.75,
+    "head.rot": 10,
+    "neck.rot": 6,
+    "torso.x": 5.75
+   },
+   "err": 0.2122924621821821
+  }
+ ],
+ "attachments": {
+  "front-fist": "front-fist-closed"
+ }
+}
