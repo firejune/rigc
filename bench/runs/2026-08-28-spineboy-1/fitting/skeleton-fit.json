@@ -26,18 +26,18 @@
    "rotation": 4.46
   },
   "front-upper-arm": {
-   "x": 109.25,
-   "y": 118.18,
+   "x": 105.4,
+   "y": 82,
    "rotation": -203.47
   },
   "front-bracer": {
-   "x": 75,
-   "y": 0,
+   "x": 107.88,
+   "y": -20.72,
    "rotation": 25.67
   },
   "front-fist": {
-   "x": 15.92,
-   "y": 20.22,
+   "x": 44.11,
+   "y": 4.91,
    "rotation": 6.34
   },
   "rear-upper-arm": {
@@ -87,34 +87,34 @@
   },
   "rear-foot": {
    "x": 99.07,
-   "y": 0,
+   "y": -2,
    "rotation": 66.37
   }
  },
  "attachments": {
   "rear-upper-arm": {
    "rear-upper-arm": {
-    "x": 36.14,
-    "y": -10.78,
-    "rotation": -2.41,
+    "x": 31.2,
+    "y": 5.2,
+    "rotation": 82,
     "scaleX": 1,
     "scaleY": 1
    }
   },
   "rear-bracer": {
    "rear-bracer": {
-    "x": 16.33,
+    "x": 23.6,
     "y": 0,
-    "rotation": -70.05,
+    "rotation": 90,
     "scaleX": 1,
     "scaleY": 1
    }
   },
   "rear-thigh": {
    "rear-thigh": {
-    "x": -32.43,
-    "y": -3.42,
-    "rotation": 35.83,
+    "x": -41.63,
+    "y": -10.22,
+    "rotation": 37.03,
     "scaleX": 1,
     "scaleY": 1
    }
@@ -130,8 +130,8 @@
   },
   "rear-foot": {
    "rear-foot": {
-    "x": 18.6,
-    "y": -20.44,
+    "x": 20.43,
+    "y": -19.64,
     "rotation": 16.93,
     "scaleX": 1,
     "scaleY": 1
@@ -139,18 +139,18 @@
   },
   "neck": {
    "neck": {
-    "x": -24.35,
-    "y": 14.68,
-    "rotation": -85.54,
+    "x": -23.15,
+    "y": 13.48,
+    "rotation": -74.74,
     "scaleX": 1,
     "scaleY": 1
    }
   },
   "torso": {
    "torso": {
-    "x": 88.95,
+    "x": 86.55,
     "y": 45.9,
-    "rotation": -87.97,
+    "rotation": -93.17,
     "scaleX": 1,
     "scaleY": 1
    }
@@ -256,8 +256,8 @@
   "mouth": {
    "mouth-smile": {
     "x": -7.08,
-    "y": -18.6,
-    "rotation": -79.8,
+    "y": -14.6,
+    "rotation": -78.6,
     "scaleX": 0.4,
     "scaleY": 0.4
    },
@@ -278,9 +278,9 @@
   },
   "front-thigh": {
    "front-thigh": {
-    "x": 15.17,
-    "y": 16.21,
-    "rotation": 146.99,
+    "x": 21.57,
+    "y": 18.61,
+    "rotation": 141.79,
     "scaleX": 1,
     "scaleY": 1
    }
@@ -305,34 +305,34 @@
   },
   "front-upper-arm": {
    "front-upper-arm": {
-    "x": 37.16,
-    "y": 13.32,
-    "rotation": 102.31,
+    "x": 49.58,
+    "y": -32.32,
+    "rotation": 98,
     "scaleX": 1,
     "scaleY": 1
    }
   },
   "front-bracer": {
    "front-bracer": {
-    "x": -7.09,
-    "y": 20.65,
-    "rotation": 85.34,
+    "x": 13.91,
+    "y": 8.91,
+    "rotation": 88.8,
     "scaleX": 1,
     "scaleY": 1
    }
   },
   "front-fist": {
    "front-fist-open": {
-    "x": 11.33,
-    "y": 3.47,
-    "rotation": 52.5,
+    "x": 18.39,
+    "y": -5.43,
+    "rotation": 96.4,
     "scaleX": 1,
     "scaleY": 1
    },
    "front-fist-closed": {
-    "x": 12.53,
-    "y": 3.47,
-    "rotation": 52.5,
+    "x": -5.61,
+    "y": -9.43,
+    "rotation": 90,
     "scaleX": 1,
     "scaleY": 1
    }

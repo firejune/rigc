@@ -75,6 +75,7 @@ const store: Store = existsSync(poseFile)
   ? JSON.parse(readFileSync(poseFile, 'utf8'))
   : { frames: frames.map(() => ({ pose: {}, err: Infinity })), attachments: cfg[anim].attachments };
 for (const f of store.frames) if (f.err === null || f.err === undefined) f.err = Infinity; // JSON drops Infinity
+if (args.includes('--fresh')) for (const f of store.frames) f.err = Infinity; // skeleton changed: stored errs are stale
 
 // which frames to fit
 let indices = frames.map((_, i) => i);
@@ -127,6 +128,67 @@ function bestFistMatch(ref: ReturnType<typeof refFrames>[number], fistName: stri
   return best;
 }
 let fistWindow = { x0: 0, y0: 0, x1: 0, y1: 0 };
+
+const gogglesTemplates = new Map<number, Template>();
+function headSeed(ctx2: EvalCtx, pose: PoseVec, ref2: ReturnType<typeof refFrames>[number], box2: { minX: number; minY: number; maxX: number; maxY: number }, K2: Record<string, KnobDef>): void {
+  // match goggles around the current head position, then set head.rot so the
+  // goggles' world angle equals the match; neck/head pair-refined after.
+  const { applyPose } = require('./pose.ts') as typeof import('./pose.ts');
+  applyPose(skeleton, pose);
+  const slot = skeleton.findSlot('goggles')!;
+  const att = slot.appliedPose.attachment as {
+    computeWorldVertices: (s: unknown, o: unknown, w: number[], off: number, stride: number) => void;
+    getOffsets: (p: unknown) => unknown;
+  } | null;
+  if (!att) return;
+  const wv = new Array<number>(8).fill(0);
+  att.computeWorldVertices(slot, att.getOffsets(slot.appliedPose), wv, 0, 2);
+  const sc = (require('./lib.ts') as typeof import('./lib.ts')).sidecar().viewport;
+  const cgx = ((wv[0] + wv[2] + wv[4] + wv[6]) / 4 - sc.x) * sc.scale;
+  const cgy = sc.pixelHeight - ((wv[1] + wv[3] + wv[5] + wv[7]) / 4 - sc.y) * sc.scale;
+  const curAngle = Math.atan2(wv[3] - wv[1], wv[2] - wv[0]) * 180 / Math.PI; // br->bl edge angle
+  const a = art('goggles');
+  let best: { x: number; y: number; phi: number; score: number } | null = null;
+  for (let phi = -180; phi < 180; phi += 10) {
+    let t = gogglesTemplates.get(phi);
+    if (!t) { t = makeTemplate(a, phi); gogglesTemplates.set(phi, t); }
+    for (let cy = Math.max(box2.minY, cgy - 30); cy <= Math.min(box2.maxY, cgy + 30); cy += 3) {
+      for (let cx = Math.max(box2.minX, cgx - 30); cx <= Math.min(box2.maxX, cgx + 30); cx += 3) {
+        let sum = 0, n = 0;
+        for (let py = 0; py < t.h; py += 2) {
+          const fy = Math.round(cy - t.cy) + py;
+          if (fy < 0 || fy >= ref2.height) continue;
+          for (let px = 0; px < t.w; px += 2) {
+            const o = py * t.w + px;
+            if (!t.solid[o]) continue;
+            const fx = Math.round(cx - t.cx) + px;
+            if (fx < 0 || fx >= ref2.width) continue;
+            const fi = (fy * ref2.width + fx) * 4;
+            const dr = t.rgb[o * 3] - ref2.data[fi], dg = t.rgb[o * 3 + 1] - ref2.data[fi + 1], db = t.rgb[o * 3 + 2] - ref2.data[fi + 2];
+            sum += dr * dr + dg * dg + db * db; n++;
+          }
+        }
+        if (n < 30) continue;
+        const s = sum / n / 3;
+        if (!best || s < best.score) best = { x: cx, y: cy, phi, score: s };
+      }
+    }
+  }
+  if (!best || best.score > 6500) return;
+  // goggles template phi is the ART's world rotation; current art world rotation:
+  // approximate delta from the quad edge angle difference
+  const target = { ...pose, 'head.rot': (pose['head.rot'] ?? 0) + norm2(best.phi - artPhiOf(curAngle)) };
+  const e0 = evalPose(ctx2, pose, 3);
+  const e1 = evalPose(ctx2, target, 3);
+  if (e1 < e0) Object.assign(pose, target);
+  localPair(ctx2, pose, K2['neck.rot'], K2['head.rot'], 3, 15, 5);
+  function artPhiOf(edgeAngle: number): number {
+    // the goggles quad br->bl edge at art rotation phi runs at (phi + 180) in world;
+    // so art phi = edgeAngle - 180
+    return edgeAngle - 180;
+  }
+  function norm2(x: number): number { while (x > 180) x -= 360; while (x <= -180) x += 360; return x; }
+}
 
 const gauge = (pose: PoseVec) => 2e-6 * (pose['hip.rot'] ?? 0) ** 2 + 1e-5 * (pose['neck.rot'] ?? 0) ** 2;
 
@@ -225,6 +287,7 @@ function fitFrame(i: number, jitter = false): void {
         scan(ctx, pose, K['front-fist.rot'], 3, 6);
       }
     }
+    headSeed(ctx, pose, ref, box, K);
     // leg seeds off red boot components: try both assignments
     {
       const rowCut = box.minY + 0.55 * (box.maxY - box.minY);

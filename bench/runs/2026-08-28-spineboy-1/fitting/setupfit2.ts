@@ -24,7 +24,7 @@ const SPREAD: [string, number[]][] = [
 ];
 // death/hit appended by --all once those shots are fitted
 if (process.argv.includes('--all')) {
-  SPREAD.push(['death', [0, 3, 5, 8, 13, 30, 50]], ['hit', [0, 2, 4]], ['jump', [0, 4, 9, 14, 16]]);
+  SPREAD.push(['death', [0, 3, 5, 8, 11, 14, 17]], ['hit', [0, 2, 4]], ['jump', [0, 4, 9, 14, 16]]);
 }
 
 const spread: SpreadEntry[] = [];

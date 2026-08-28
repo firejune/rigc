@@ -48,24 +48,24 @@
       "name": "front-upper-arm",
       "parent": "torso",
       "length": 42.31,
-      "x": 109.25,
-      "y": 118.18,
+      "x": 105.4,
+      "y": 82,
       "rotation": -203.47
     },
     {
       "name": "front-bracer",
       "parent": "front-upper-arm",
       "length": 40.61,
-      "x": 75,
-      "y": 0,
+      "x": 107.88,
+      "y": -20.72,
       "rotation": 25.67
     },
     {
       "name": "front-fist",
       "parent": "front-bracer",
       "length": 30,
-      "x": 15.92,
-      "y": 20.22,
+      "x": 44.11,
+      "y": 4.91,
       "rotation": 6.34
     },
     {
@@ -144,7 +144,7 @@
       "parent": "rear-shin",
       "length": 85.09,
       "x": 99.07,
-      "y": 0,
+      "y": -2,
       "rotation": 66.37
     }
   ],
@@ -260,27 +260,27 @@
           "rear-upper-arm": {
             "width": 40,
             "height": 87,
-            "x": 36.14,
-            "y": -10.78,
-            "rotation": -2.41
+            "x": 31.2,
+            "y": 5.2,
+            "rotation": 82
           }
         },
         "rear-bracer": {
           "rear-bracer": {
             "width": 56,
             "height": 72,
-            "x": 16.33,
+            "x": 23.6,
             "y": 0,
-            "rotation": -70.05
+            "rotation": 90
           }
         },
         "rear-thigh": {
           "rear-thigh": {
             "width": 55,
             "height": 94,
-            "x": -32.43,
-            "y": -3.42,
-            "rotation": 35.83
+            "x": -41.63,
+            "y": -10.22,
+            "rotation": 37.03
           }
         },
         "rear-shin": {
@@ -296,8 +296,8 @@
           "rear-foot": {
             "width": 113,
             "height": 60,
-            "x": 18.6,
-            "y": -20.44,
+            "x": 20.43,
+            "y": -19.64,
             "rotation": 16.93
           }
         },
@@ -305,18 +305,18 @@
           "neck": {
             "width": 36,
             "height": 41,
-            "x": -24.35,
-            "y": 14.68,
-            "rotation": -85.54
+            "x": -23.15,
+            "y": 13.48,
+            "rotation": -74.74
           }
         },
         "torso": {
           "torso": {
             "width": 98,
             "height": 180,
-            "x": 88.95,
+            "x": 86.55,
             "y": 45.9,
-            "rotation": -87.97
+            "rotation": -93.17
           }
         },
         "gun": {
@@ -426,8 +426,8 @@
             "width": 93,
             "height": 59,
             "x": -7.08,
-            "y": -18.6,
-            "rotation": -79.8,
+            "y": -14.6,
+            "rotation": -78.6,
             "scaleX": 0.4,
             "scaleY": 0.4
           },
@@ -454,9 +454,9 @@
           "front-thigh": {
             "width": 45,
             "height": 112,
-            "x": 15.17,
-            "y": 16.21,
-            "rotation": 146.99
+            "x": 21.57,
+            "y": 18.61,
+            "rotation": 141.79
           }
         },
         "front-shin": {
@@ -481,34 +481,34 @@
           "front-upper-arm": {
             "width": 46,
             "height": 97,
-            "x": 37.16,
-            "y": 13.32,
-            "rotation": 102.31
+            "x": 49.58,
+            "y": -32.32,
+            "rotation": 98
           }
         },
         "front-bracer": {
           "front-bracer": {
             "width": 58,
             "height": 80,
-            "x": -7.09,
-            "y": 20.65,
-            "rotation": 85.34
+            "x": 13.91,
+            "y": 8.91,
+            "rotation": 88.8
           }
         },
         "front-fist": {
           "front-fist-open": {
             "width": 86,
             "height": 87,
-            "x": 11.33,
-            "y": 3.47,
-            "rotation": 52.5
+            "x": 18.39,
+            "y": -5.43,
+            "rotation": 96.4
           },
           "front-fist-closed": {
             "width": 75,
             "height": 82,
-            "x": 12.53,
-            "y": 3.47,
-            "rotation": 52.5
+            "x": -5.61,
+            "y": -9.43,
+            "rotation": 90
           }
         }
       }
