@@ -891,6 +891,15 @@ remaining work is taken in.
    `pro` stays gated on [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)
    and is **not** a graduation requirement ([#16](https://github.com/firejune/rigc/issues/16)):
    it promotes when a user's rig needs those timelines, not to finish a ladder.
+   > ➡️ **Taken on 2026-08-28, on the matured guide and brief revision 4, and not passed.**
+   > `2026-08-28-spineboy-1` meets **G1, G3, G4, G5 and G7** and fails **G2 alone**, at 7.86
+   > px against 6.0 on one pose of one shot. ⭐ **G3 clears for the first time on this rung**
+   > — 3 of 59 → **0 of 124** — and the worst drift falls 19.57 → 7.86 px, so two of the
+   > three dimensions the 2026-08-24 freeze named are now clear. The residual is
+   > **observable** (a `torso` visibly out of place on a lying pose, with restart batteries
+   > saturated and the shoulder/chest geometry named as the suspect), so item 2's test keeps
+   > this a **re-climb**. #16 stays open; the freeze stands. Verdict in *spineboy, attempt
+   > 4*.
 4. **Then the project's question changes.** Once the graduation gate passes, *does it
    match the editor?* — a reference-bound question, and the only kind this ladder can
    ask — gives way to *is it usable without a reference?* The usability track
@@ -960,7 +969,7 @@ is the cost of the wait, not the absence of one.
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ✅ *gate v2, 2026-08-25* — re-inspected, holds |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ✅ *gate v2, 2026-08-25* — both skeletons, re-inspected |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ✅ *gate v2.1, 2026-08-28* — re-climbed on `2026-08-28-rung7-2`; G2 7.33 → **2.76 px**; frames **local-only** |
-| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×3 — structure ✅, motion improving (18.8→14.6 px) · gate v2: G2 · G3 · `pro` ⬜ · frozen as gate 2026-08-24 |
+| 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🟨 `ess` ⬜ ×4 — gate v2.1, 2026-08-28 on `2026-08-28-spineboy-1`: **G2 alone** (7.86 px `torso`, `hit` f0), G1 · G3 · G4 · G5 · G7 all ✅; **G3 clears for the first time** (3 of 59 → **0 of 124**) and worst drift 19.57 → **7.86 px** · `pro` ⬜ · frozen as gate 2026-08-24 |
 
 ### The gate-v2.1 re-inspection — 2026-08-26
 
@@ -4003,6 +4012,180 @@ committed reference frames at all**, and the protocol held on both attempts — 
 never committed, reproduced digit for digit by an adjudicator who rendered them again. It is
 also the first rung where an attempt's own *stated* next step was the wrong hypothesis and a
 like-for-like fit said so. **Issue [#14](https://github.com/firejune/rigc/issues/14) closes.**
+
+### spineboy, attempt 4 — the graduation exam: two of the three failing dimensions clear, G2 does not (2026-08-28)
+
+Run [`bench/runs/2026-08-28-spineboy-1/`](../bench/runs/2026-08-28-spineboy-1/) — **23
+builds**, `--profile spine` green. Authored by Claude Fable 5 on Claude Code / Agent SDK
+from the brief's **revision 4** (third-party verified ×3, 2026-08-27 — the pass that found
+the D1–D3 brief defects which had been telling authors to put motion into `death`'s middle
+that is not there). **`ess` alone**; `pro` was not attempted and does not gate the rung
+([#16](https://github.com/firejune/rigc/issues/16)). The reference export was never opened,
+and **the three earlier spineboy attempts were sealed and unread** as attempts at the rung
+being authored. `bench` run once, at the end — the loop ran on `check` and on a
+candidate-side change-column instrument.
+
+**18 bones · 21 slots · 29 attachments · 0 constraints · 8 animations · 2 events · 2,581
+keys**, against a reference of **18 bones · 20 slots · 27 attachments · 8 animations · 1
+event**. Authored in the frames' own world coordinates (1 art px = 1 world unit, confirmed
+by template matches at scale 1 landing on the brief's own verification figures). One static
+draw order — the frames show no draw-order change, and both decided `ess` edges hold in one
+ordering. Durations declared on the 30 fps grid inside the brief's windows; `footstep` fired
+at both footfalls of `walk` and both landings of `run`, `shoot` at the flash instant.
+
+```
+ess    bones=0.924  slots=0.838  attachments=0.955  constraints=1.000  animations=0.778  events=0.500
+       bones 0.924 (name-matched) · 0.967 (name-agnostic)   slots 0.838 (name-matched) · 0.798 (name-agnostic)
+```
+
+⚠️ **The `pro` line `bench` also prints is stretch noise for an `ess` candidate** and is
+quoted nowhere, per the two-skeleton rule in [`bench/runs/README.md`](../bench/runs/README.md).
+
+#### Gate v2.1 verdict, 2026-08-28 — **FAIL on G2 alone**, and the freeze stands
+
+🚫 **Zero builds and zero authoring, and nothing in the run directory was touched.** The
+candidate was re-read with `check` and `validate --profile spine` **from the repository
+root over all 16 committed sets, with no `--atlas` and no `--viewport` override**, and
+**every figure the run recorded reproduces to the digit** — all nine shot MAE means and
+worst frames, every worst slot drift with its slot and frame, the six-chain rollup, 124
+adjacent pairs, 0 disagreements, all seven sheet means and worst tiles, 0 unreached
+reference components, and 16 PASS / 0 FAIL / 4 SKIP / 14 PROF.
+
+| Clause | Reading over all 16 sets | |
+| --- | --- | :---: |
+| **G1** validity | 0 FAIL under `--profile spine` — 16 PASS, 4 SKIP, 14 PROF | ✅ |
+| **G2** worst attributable slot drift ≤ 6.0 px | ❌ **7.86 px** `torso` at `hit` **f0000**, and the same pose again in `hit@30fps` — over the bar by 1.86 px, **1.31×**. **Two sets of sixteen, one pose.** Every other set is inside: `run` 5.55 `rear-shin` f0006 · `shoot` 5.17 · `death` 5.03 `torso` f0036 · `walk` 4.70 · `death@30fps` 4.64 · `shoot@30fps` 4.44 · `jump` 3.63 · `aim` 3.55 (both sets) · `walk@30fps` 3.52 · `run@30fps` 2.76 · `jump@30fps` 2.14 · `idle` 2.12 · `idle@30fps` 1.50. Chain means **0.5–2.1 px**. No set is the 🕳️ HOLE case, and **0 reference components go unreached in any set** | ❌ |
+| **G3** per-frame motion = 0 | ✅ **0 of 124** adjacent pairs — 59 `death` + 20 `idle` + 16 `jump` + 12 `walk` + 8 `run` + 5 `shoot` + 4 `hit`, every pair of every shot at the rate each was committed in full. **`aim` and `aim@30fps` are single poses and are excluded under v2.1 (a)**, which is what both 2026-08-25 passes already did; (b) does not fire, because seven shots remain readable. The seven `@30fps` stills sets carry no pair and each carries a sheet meeting G7. No `⚠️ overdraw`: `drawnRatio` **0.948–1.080** against 1.5 | ✅ |
+| **G4** shot inventory | ✅ `count` 8/8 · `names` 8/8; all eight lengths against the reference's own, in seconds — `aim` **0.000000** v 0.000000 · `death` **4.933333** v 4.933333 · `hit` **0.333333** v 0.333333 · `idle` **1.666666** v 1.666667 · `jump` **1.333333** v 1.333333 · `run` **0.666666** v 0.666667 · `shoot` **0.400000** v 0.400000 · `walk` **1.000000** v 1.000000. Worst gap **0.000001 s** | ✅ |
+| **G5** drawn inventory ≥ 0.85 | ✅ name-agnostic `slots.count` **20/21 = 0.952** · `attachments.count` **27/29 = 0.931**. **No deduction taken and none needed** — and note the shortfall is in the *candidate's* favour on both: it draws **more** than the reference (21 v 20 slots, 29 v 27 attachments), which is the editor-convention alternatives sharing slots | ✅ |
+| **G7** every sheet ≤ 3.5× own mean | ✅ **seven sheets, all seven compared, all seven well inside** — `death@30fps` **1.502** (69.03 over a 45.96 mean, 149/149 tiles) · `walk@30fps` 1.475 (56.72 over 38.44, 31/31) · `run@30fps` 1.311 (60.97 over 46.50, 21/21) · `jump@30fps` 1.310 (56.03 over 42.76, 41/41) · `idle@30fps` 1.255 (40.05 over 31.91, 51/51) · `hit@30fps` 1.207 (55.04 over 45.61, 11/11) · `shoot@30fps` 1.093 (41.70 over 38.17, 13/13). `aim@30fps` is a single pose and reads **SKIP**; the nine 12 fps shots commit every sampled frame and read SKIP. **No set is a HOLE** | ✅ |
+| **G6** the rung | ❌ the graduating skeleton does not meet G2 | ❌ |
+
+⇒ **Five clauses clear, G2 does not, and G6 follows it.** The freeze of 2026-08-24 stands,
+**issue [#16](https://github.com/firejune/rigc/issues/16) stays open on G2 alone**, and
+spineboy's status stays 🟨.
+
+🎯 **Against the frozen bar — which dimensions moved, and by how much.** The bar this
+attempt was measured against is the one the 2026-08-25 pass published and the v2.1 sweep
+re-read on `2026-08-24-spineboy-3`: *"19.57 px worst drift, 3 per-frame disagreements, and
+every sheet inside 3.5×"*.
+
+| dimension | attempt 3 (frozen bar) | attempt 4 | move |
+| --- | --- | --- | :---: |
+| **G3** per-frame disagreements | ❌ **3** of 59 on `death` | ✅ **0** of **124** | **cleared** |
+| **G2** worst drift | ❌ **19.57 px** `death` | ❌ **7.86 px** `torso` `hit` f0 | **2.5× better**, still over |
+| **G2** `death` | 19.57 px | **5.03 px** | **3.9× better**, now inside |
+| **G2** `walk` | 7.07 px | **4.70 px** | 1.5× better, now inside |
+| **G2** `run` | 6.75 px | **5.55 px** | 1.2× better, now inside |
+| **G2** sets over 6.0 px | ≥ 3 shots | **1 shot** (2 sets, 1 pose) | 3 → 1 |
+| **G7** worst sheet | ✅ 2.028 `jump@30fps` | ✅ **1.502** `death@30fps` | 1.35× better |
+| **G4** durations | ✅ ×8 inside 1/60 s | ✅ ×8 **exact to 1e-6 s** | held |
+| **G5** counts | ✅ 0.952 · 0.931 | ✅ 0.952 · 0.931 | unchanged |
+| **G1** validity | 0 FAIL | 0 FAIL | held |
+| MAE(ref) `death` | 54.31 | **49.04** | −9.7 % |
+| MAE(ref) `run` | 45.62 | **39.29** | −13.9 % |
+| MAE(ref) `hit` | 43.27 | 44.56 | **+3.0 %** ⚠️ |
+| `slots` name-agnostic | 0.810 | 0.798 | −0.012 ⚠️ |
+| `animations` | 0.804 | 0.778 | −0.026 ⚠️ |
+
+⭐ **Two of the three dimensions the freeze named are now clear, and the third is one
+pose.** The 2026-08-24 freeze recorded three failing dimensions — the change column, the
+worst drift, and the drawn inventory. **The change column is clean everywhere**, which is
+the harder of the two gated ones and the one three attempts had never managed: 0 of 124
+pairs, including `death`'s nine-pair hold rendered pose-identical and the five-pair boot
+settle that brief defect D2 had described to nobody. **The inventory is complete** — no set
+reports a reference component no slot reaches. And the drift is no longer a *shape* of
+failure but a single frame: every shot except `hit` is inside the bar, and every chain mean
+is at or under 2.1 px.
+
+⚠️ **What did not move is the absolute MAE, and the run says so itself.** Union means run
+**31–45** across the shots, against 4–20 on the cleared rungs. 🚫 **That is not a clause and
+does not enter this verdict** — rule 2's 🚫 is explicit that *"MAE is reported, per set, and
+decides nothing"*, and spineboy's plate is not comparable with any other rung's. It is
+recorded because the run recorded it: the per-pixel fidelity of the poses is honest but
+short of a transcription, the arm chains carry the largest error per pixel, and the lying
+passages of `death` and `hit` fit to ~0.20–0.33 of the windowed objective where the standing
+shots reach ~0.08.
+
+📌 **Three figures went the wrong way and are named rather than buried.** `hit`'s MAE(ref)
+rose 3 %, `slots` name-agnostic fell 0.012 and `animations` fell 0.026. The last two are
+**structural consequences of choices this attempt made deliberately**: it authored a 21st
+slot and five muzzle-flare alternatives sharing slots (editor convention), which moves
+`slots.order` and `attachment_types_by_position`; and it authored 2,581 keys where attempt 3
+authored fewer, which moves `key_counts` (**0.264**) and `curve_kinds` (**0.285**). None of
+the three is a gated measure, and `key_counts` is on rule 1's unobservable list by name.
+
+⚖️ **The framing ruling of the rung-7 adjudications is reused unchanged, and again it is not
+decisive.** Three of sixteen sets — `run`, `walk`, `walk@30fps` — took **`frames.json`'s own
+box** because their own pixels land there, which is `check`'s `declared` source and the very
+case G2's *"4.1 px (rung 6, at the frames' own box)"* names; the other thirteen sit in one
+shared fit at `x1.000072`, offset −0.02/−0.03 px, **3.72 px rms over 588 edges**. This pass
+also read the candidate **pinned** to `frames.json`'s box as a diagnostic, and the pinned
+reading is **worse, not better**:
+
+| reading | worst drift | where | sets over 6.0 px |
+| --- | --- | --- | --- |
+| `check` as-is — **the record** | **7.86 px** | `torso`, `hit` f0000 | 2 (`hit`, `hit@30fps`) |
+| `--viewport` on the declared box — diagnostic | **14.45 px** | `front-fist`, `death` f0058 | 3 (+ `death`) |
+
+⇒ **G2 fails under both framings**, so nothing in this verdict turns on the framing
+question — the third rung-7-era adjudication in a row where that is true. 📌 Worth noting
+which way the shared fit cuts: it *helps* `death` substantially (14.45 → 5.03 px) and barely
+touches `hit` (7.96 → 7.86 px), so `hit` f0's residual is a pose error and not a framing
+artefact. The run's own ⚠️ explains the shared fit's cost — the flare's widest instant
+reaches ~8 px short of the reference's rightmost column and one `death` in-between dips ~7
+px below its lowest row, giving a union residual of −8.7 × +7.4 px that no single scale
+absorbs.
+
+🔬 **The residual, named precisely.** `hit` f0000 is the shot's opening lying extreme. The
+whole-body horizontal pose *is* fitted — the run reports err 0.207 there and the frame's
+MAE, 41.31, is that shot's second best — but the `torso` slot sits 7.9 px off inside an
+otherwise-solved pose, and **restart batteries saturated**: the run's own diagnosis is that
+the shoulder/chest geometry, fitted against upright shots, is the suspect. ⭐ **That reads as
+a geometry defect rather than a search defect**, and it is corroborated from two directions:
+`hit`'s `torso` chain mean is **3.6 px** — the highest chain mean in any set — while the same
+chain reads 2.1 px pooled across all sets, and `hit` is the only shot whose body is
+horizontal. ⇒ **This is the observable, decidable kind of residual** — a part visibly out of
+place — so rule 1 does not exempt it, and rule 4 item 2 makes it a **re-climb** rather than
+an adjudication. The lever the run did not pull is the one it names: re-triangulate the
+shoulder/chest geometry through the *lying* poses as well as the upright ones, which is
+§8.1's multi-shot setup re-fit applied to a joint rather than to a pose.
+
+🧾 **What this pass records for the owner rather than resolving.**
+
+1. ⚖️ **G2 is now the whole exam, and the margin is 1.86 px on one frame of one shot.** No
+   clause decision is needed and none is asked for — the clause is unambiguous and the
+   figure is over it. What the owner may want to weigh is **cadence**: this is the closest
+   spineboy has been, the failure is a single named geometry defect with a named fix, and
+   rule 4 item 3 makes this rung the last thing before the project's question changes. 🚫
+   **This pass proposes no threshold change**, and notes for the record that G2's derivation
+   explicitly refuses the argument a large rig might invite — *"a relative bar would license
+   a large rig the visible error a small one is refused"* — so *"7.9 px on a 384 × 367 px
+   plate is proportionally small"* is an argument the gate has already heard and rejected.
+2. 📌 **Two of the three frozen dimensions clearing is the PoC's headline whatever the
+   verdict**, and it is the first time the change column has been clean on this rung. It is
+   also the first spineboy attempt to run on a brief whose D1–D3 defects were fixed, so part
+   of the move is the brief and not only the fitter — the rev-4 verification pass predicted
+   exactly that (*"an author working from rev 3 was told to put motion into f13–f26 that is
+   not there"*).
+3. 🧹 **A process cost worth an owner call, filed as [#201](https://github.com/firejune/rigc/issues/201).**
+   `tsconfig.json` includes `bench/**/*.ts`, so a run directory's throwaway fitting harness
+   lands inside the repository's CI typecheck surface — **227 committed `.ts` files across 12
+   run directories today**, 22 of them (3,014 lines) from this run. One run directory is
+   already excluded ad hoc. Whether run-dir tooling should be excluded by rule is the
+   owner's; the trade-offs and the evidence are on the issue and this pass takes no side.
+4. 📌 **The *Candidates* column in [`bench/runs/README.md`](../bench/runs/README.md) is not
+   maintained to a single rule**, which this pass found while updating it. Rungs 4, 5, 6, 7
+   and 8 match the count of stored candidate runs; rungs 1, 2, 3 and spineboy do not (2 runs
+   reading 3, 2 reading 1, 3 non-pilot reading 2, and spineboy at **1** across every revision
+   through three attempts). This pass sets spineboy's cell to the run count and **does not
+   touch the other four**, because their cells may encode something it cannot verify. A
+   one-line statement of what the column counts would settle it.
+
+⇒ **What a fifth attempt has to move is one slot on one frame.** Every clause but G2 clears,
+G2 clears on fifteen of sixteen sets and on seven of eight shots, and the run names both the
+suspect and the method. **The graduation exam is not passed, and it is closer than the
+ladder's own bar for "closer" has ever been asked to measure.**
 
 ---
 
