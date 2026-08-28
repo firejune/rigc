@@ -1,6 +1,6 @@
 {
   "name": "spine-rigc",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Rig compiler for Spine — declarative rig specs in, Spine 4.3 skeleton data out, verified by a spine-core round-trip. Built so AI agents can author rigs and check their own work; the output imports into the Spine editor.",
   "type": "module",
   "bin": {
