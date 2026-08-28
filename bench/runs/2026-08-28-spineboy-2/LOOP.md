@@ -19,6 +19,14 @@
              run's `README.md` and `LOOP.md` beyond process (item 9), its
              `bench.json`, `check-final.json`, `check-final.txt`, and its compiled
              `ess/spine/` artifacts (recompiled here instead).
+- honesty:   one named surface contact, recorded rather than buried — `git log`
+             ran as part of landing mechanics (clone/pull/push/commit
+             verification), and those commands display HEAD-adjacent commit
+             subjects; the subjects seen are adjudication/protocol titles
+             (verdict-level facts this attempt's own mandate already carried).
+             No diff, no transcription commit, no blame, no tag, and no
+             measure-bearing text was opened; nothing read there states or
+             narrows a reference-side value of a scored measure.
 - guide:     AUTHORING.md §10 in hand
 - profile:   spine
 - task:      surgical re-attempt after attempt 4's adjudicated single-clause FAIL
@@ -187,6 +195,16 @@ objective and decisively better on both frame-derived placement instruments
 (template match; check's own slot correlator reads the same picture). The
 composite's preference is the documented sacrificial-cover failure, not a
 fidelity signal. Accept threshold 10% used once, here, and logged.
+
+### 9b — full multi-start on hit f0 before the joint re-derivation
+Before §9's combined seed, the inherited fitter itself was given the frame:
+`fitting/fitshot.ts`'s torso.x/y bounds were widened ±35 → ±60 in THIS run's
+copy of the harness (the probe had shown ±35 barely binding, but the widening
+removes the wall for the full pipeline), then `bun fitshot.ts hit --frames 0
+--restarts 3` — four fits, all kept the incumbent at 0.2014. That is the
+adjudicated "restarts saturated" reproduced once more, now with the corrected
+joint and wider bounds: the residual defect at f0 was never searchable, which is
+what motivated §9's analytic seeds.
 
 ### 10 — refit death; re-impose the dead hold; polish rejected on evidence
 `bun fitting/refit5.ts death` — wave passage errs fall hard (f54 0.3130→0.2295,
