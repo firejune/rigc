@@ -299,7 +299,8 @@ frames is not answer-bearing, so it is not swept out.
     and none of the files beside them that record a measurement. Owner ruling,
     2026-08-28. The exact file split and the reasoning are in *Inheriting the prior
     attempt's candidate* below, and a run that inherits **must** read that section
-    before it opens the directory.
+    before it opens the directory — it also carries **one obligation**, a mandatory
+    stage-0 snapshot taken before any edit.
 
 **🚫 Forbidden — and each of these has a reason beside it.**
 
@@ -379,6 +380,33 @@ other run, and nothing here changes the gate, the clauses or the bar.
 which attempt**, in `LOOP.md` §1 beside the reference-not-read line. An inherited attempt
 and a from-zero attempt are not measuring the same thing about the model, and a reader
 comparing them needs to know which one they have.
+
+🔒 **Stage 0 is mandatory: recompile the inherited spec unchanged and store the `check`
+output before editing anything.** Owner ruling, 2026-08-28. Build the inherited rig and
+motion specs exactly as received, run `check` against the frames, and commit the **full**
+output in the run directory as the inherited baseline —
+`check-baseline-inherited/` is the name the first inherited attempt used and the one to
+keep. Only then start editing.
+
+**Why it is an obligation and not just good practice.** It costs one `check` run, and it
+is **the only way the determinism comparison ever gets made.** The successor cannot make
+that comparison itself: the prior attempt's record is sealed to it, so the snapshot is
+written blind. Whoever adjudicates holds both records and can compare them — and the
+first inherited attempt's snapshot reproduced the prior attempt's stored record
+**exactly**, zero differences on every gated and reported field, across every set, every
+compared frame, every chain row and every sheet. ⇒ `spec → build → check` is deterministic
+across sessions and across agents, which is what makes *Operating rules* rule 3's
+*"a re-inspection is a re-read of stored candidates"* **exact** rather than merely
+executable: a stored spec is a stored figure. ⚠️ **That evidence class arrived by
+accident** — the snapshot was one run's own idea, and nobody had designed the control.
+Requiring it means every inherited attempt renews it instead of the ladder hoping for
+another lucky run.
+
+📌 **The snapshot is the successor's own record, not a reading of the prior one.** Writing
+it breaches nothing: the run compiles a spec it is entitled to have and measures it
+against the frames, which are the exam question. And once written it joins **that** run's
+sealed remainder — the next attempt to inherit may take the specs and the harness, and
+not this baseline.
 
 ### Three of those entries carry a reason
 
@@ -477,6 +505,17 @@ measurement this whole exercise exists for — reads the second.
 
 Every run from rung 3's second attempt onwards ships both. The single `log.md` this
 template used to show was the shape of the first two runs only.
+
+⭐ **A summary claim carries its scope — which sets, which channels, which frames — the
+way a brief's claim carries its tolerance and its convention.** *"Frozen in every refit"*
+is a claim about a set of shots and a set of channels, and if it held for most of them it
+is not true of all of them. Case, 2026-08-28: the graduation run's summary said the hip
+and both legs were frozen in every refit, and two shots moved them
+([#16](https://github.com/firejune/rigc/issues/16)). Nothing was scored wrong — the
+per-set marks the gate turned on were true, and the narrative underneath had disclosed the
+work — so what failed was the **summary**, which is the file a reader stops at. This is
+the same failure the brief-verification passes keep finding, a claim without its scope,
+arriving in a run's own account of itself instead of in a brief.
 
 Open `LOOP.md` with a header block, then one entry per turn:
 
