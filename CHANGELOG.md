@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0](https://github.com/firejune/rigc/compare/v0.6.0...v0.7.0) (2026-08-29)
+
+
+### Features
+
+* **cli:** rigc vote — the A/B ballot and its append-only vote ledger ([#232](https://github.com/firejune/rigc/issues/232)) ([126fe8f](https://github.com/firejune/rigc/commit/126fe8ff4fb73c4cd89635693cb0a8889c7417e3))
+* **emitter:** key IK, transform and deform timelines from the motion spec ([#233](https://github.com/firejune/rigc/issues/233)) ([da7366e](https://github.com/firejune/rigc/commit/da7366e8f9632e6d4c80ca11b76b23f16e024336)), closes [#87](https://github.com/firejune/rigc/issues/87) [#88](https://github.com/firejune/rigc/issues/88) [#89](https://github.com/firejune/rigc/issues/89)
+
+
+### Bug Fixes
+
+* **deps:** refresh bun.lock to match package.json typescript range ([#237](https://github.com/firejune/rigc/issues/237)) ([565666c](https://github.com/firejune/rigc/commit/565666cddae00dc5cb25a60e639463bfb7bccf46))
+
 ## [0.6.0](https://github.com/firejune/rigc/compare/v0.5.0...v0.6.0) (2026-08-29)
 
 
