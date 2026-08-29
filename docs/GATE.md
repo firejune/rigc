@@ -4,7 +4,7 @@
 clause: the measure it reads, the comparator, the number, and what it does when there is
 nothing to read.
 
-Current version: **gate v2.1**, released 2026-08-26.
+Current version: **gate v2.2**, released 2026-08-29.
 
 ✅ **A run may read this file.** It is on the allowed list in
 [`bench/runs/README.md`](../bench/runs/README.md), *What a run may read*, and the prompt
@@ -63,6 +63,19 @@ figure — a relative bar would license a large rig the visible error a small on
 `framesWithoutDrift` equals that set's frame count the clause has nothing to read, and the
 set does **not** meet it by default: pin the viewport, split the chain table, or say
 outright that the candidate cannot be gated on that set and why.
+
+🆕 **Per slot — gate v2.2.** A slot that **draws** in a measured set and is attributable in
+**no frame** of that set is **read down explicitly in the verdict**: name the slot, and name
+the evidence that its placement is benign. **A blank that cannot be read down fails the
+clause for that set.** The 🕳️ above fires on a *set*; this fires on a *slot*, and it exists
+because a part drawn behind another over a flat backdrop can be misplaced and never appear
+in the one clause that measures placement — while a blank drift row is the loudest signal
+`check` prints. ⇒ **A read-down that cannot name its evidence is not a read-down.**
+
+📌 **This is a disclosure requirement, not a fail-by-default.** `check` declines to attribute
+a part the reference has merged into a larger connected component, which on a dense figure
+is routine and benign; the limb says that such a part is named and accounted for rather than
+passing unread. Nothing about it changes the 6.0 px bar.
 
 ## G3: per-frame motion
 
@@ -180,4 +193,5 @@ ladder's *Operating rules* and *Status*.
 | --- | --- | --- |
 | v1 | 2026-08-25 | the first written pass definition over the existing measures |
 | v2 | 2026-08-25 | G4's length limb reformulated as a tolerance; **G7** added on the contact-sheet observable |
-| **v2.1** | **2026-08-26** | G3's scope on a single-pose set, and the SKIP that follows from it |
+| v2.1 | 2026-08-26 | G3's scope on a single-pose set, and the SKIP that follows from it |
+| **v2.2** | **2026-08-29** | **G2's per-slot limb** — a slot that draws but is attributable in no frame of a set is read down explicitly, or the clause fails for that set |

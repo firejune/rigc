@@ -1,7 +1,7 @@
 # The benchmark ladder
 
 **Live status document.** The rung order, what each rung gates on, how a rung is
-scored, what a pass is (*Operating rules*, gate **v2.1** — the clauses themselves are
+scored, what a pass is (*Operating rules*, gate **v2.2** — the clauses themselves are
 stated in [GATE.md](GATE.md), which this section derives), and where each one stands
 today. The survey behind it is
 [SPEC_COVERAGE.md](SPEC_COVERAGE.md) — that document is a dated research note and
@@ -64,8 +64,8 @@ timing from a rig with the right timing and the wrong skeleton, and those call
 for opposite fixes. **A rung is marked cleared by a person reading the measures,
 and this file is where that judgement is written down.**
 
-What that person reads the measures *against* is the current gate — **gate v2.1** since
-2026-08-26 — whose clauses are stated in **[GATE.md](GATE.md)**: which measures decide a
+What that person reads the measures *against* is the current gate — **gate v2.2** since
+2026-08-29 — whose clauses are stated in **[GATE.md](GATE.md)**: which measures decide a
 rung, which are reported without deciding anything, and the number each of the deciding
 ones has to clear. ✅ **That card is allowed reading for an authoring run**, and it is the
 canonical statement of every clause. 🚫 What is not is *Operating rules* below, which
@@ -289,6 +289,46 @@ are re-inspected and hold; spineboy fails where it failed under v2. ⚠️ The s
 attempts are **not** re-adjudicated — they keep their own entries, which is why this sweep's
 44 sets are fewer than the 86 the 2026-08-25 passes read and not a coverage loss. Figures
 and the clause each verdict was read against are in *The gate-v2.1 re-inspection* under
+**Status** below.
+
+**2026-08-29 — gate v2.2 introduced** (the owner's rulings on
+[#198](https://github.com/firejune/rigc/issues/198),
+[#193](https://github.com/firejune/rigc/issues/193) and
+[#207](https://github.com/firejune/rigc/issues/207)). **No measure's definition changed, no
+threshold moved and no recorded figure moves** — every `bench.json` on disk stays as its run
+wrote it. One clause gains a limb and the rest of the clause set is v2's:
+
+- **G2 is read per slot as well as per set.** A slot that draws in a measured set and is
+  attributable in **no frame** of that set is **read down explicitly in the verdict** — the
+  slot named, the evidence named — or the clause fails for that set. It closes the gap rung 7
+  attempt 2 recorded: G2's 🕳️ fires on a *set*, so a part drawn behind another over a flat
+  backdrop can be misplaced and never appear in the clause that measures placement. The
+  statement, the four kinds of evidence that qualify and what the limb costs are in *Operating
+  rules* rule 2, under *Gate v2.2*.
+
+Released beside it and changing no clause: **G7's 3.5× stands** — its own revisit trigger
+fired on rung 7 attempt 2's 2.923 and the deliberation held the number — and the *"a
+tightening of X finds Y first"* lines are **deleted** in favour of *The clause margins* under
+**Status**, which every adjudication updates.
+
+By rule 5's asymmetry the limb can only make a **standing pass fail**, which is point 2's
+integrity half, so its re-inspection is taken in the same pass rather than deferred. It is the
+entry below.
+
+**2026-08-29 — the gate-v2.2 re-inspection.** The bump's own re-inspection, taken
+immediately for the reason rule 5 gives. **No measure's definition changed here either**: this
+entry records that the pass rule 3 requires has been *taken* against gate v2.2, over the
+**eleven standing candidates** — every rung and the graduation skeleton — across **56
+committed sets**, 1,142 compared frames, 1,061 adjacent pairs and 25 compared sheets, re-read
+by `check` and `validate --profile spine` **from the repository root with no `--atlas` and no
+`--viewport` override**, reproducing every gated figure to the digit. Rung 7's frames were
+rendered locally at its brief's exact flags first, and **no frame of it was committed**.
+`bench` was not re-run, because nothing v2.2 changes can reach G4's lengths or G5's counts;
+those are quoted from the verdicts that measured them. 🚫 **No `bench.json` and no run
+directory was rewritten.** **No verdict moves**: the new limb fires on **194** blank
+(set, slot) pairs across four candidates, and every one reads down — the twelve slots
+attributable in no set at all are itemised individually. Figures, the read-downs and the
+margins they feed are in *The gate-v2.2 re-inspection* and *The clause margins* under
 **Status** below.
 
 **Stage 3 — per-frame pose distance. Named, not built.** The structural diff
@@ -605,6 +645,18 @@ set that is a **single pose**. The clause statement and its precedents are the d
 block at the end of this rule, and the re-inspection it owes is under *Status*, in *The
 gate-v2.1 re-inspection*.
 
+🆕 **v2.2 supersedes v2.1 as of 2026-08-29** (owner's rulings on
+[#198](https://github.com/firejune/rigc/issues/198),
+[#193](https://github.com/firejune/rigc/issues/193) and
+[#207](https://github.com/firejune/rigc/issues/207)). **No threshold moves and no clause is
+renumbered** — every row of the table below is still v2's. One clause gains a limb: **G2 is
+read per slot as well as per set**, and a slot that draws in a set while attributing in no
+frame of it is read down explicitly or the clause fails for that set. Released with it and
+changing no clause: **G7's 3.5× stands** (its own revisit trigger fired and was heard), and
+**the *finds-X-first* lines are replaced by a margins table** that each adjudication updates.
+The dated block is at the end of this rule; the re-inspection it owes is under *Status*, in
+*The gate-v2.2 re-inspection*.
+
 📌 **The clause column is a link, not a copy.** Each row names the measure so that its
 derivation reads, and the comparator, the number and the SKIP semantics live once — on the
 card. A derivation necessarily narrates the figure it produced, which is why each is dated:
@@ -708,9 +760,16 @@ the worst frame that shot posts at any rate it was read in full.
 does not separate its top two by much on *any* reading: worst-tile-over-own-mean puts
 them at 2.89 and 4.00, worst tile over the same shot's worst frame at 3.13 and 3.49, and
 sheet mean over the shot's fullest committed set at 1.38 and 1.42. The clause is written
-on the widest of those three separations, and ⇒ **a tightening of G7 finds rung 6 first**,
-the way a tightening of G2 finds rung 5 first. A second candidate landing between them is
-the argument for revisiting the number, and the number is where that argument starts.
+on the widest of those three separations, and **a second candidate landing between them is
+the argument for revisiting the number.**
+
+➡️ **That trigger fired, and the ruling of 2026-08-29 is that the number stands** —
+[#193](https://github.com/firejune/rigc/issues/193), under *Gate v2.2* below. 📌 **Which
+candidate a tightening would find first is a fact about the corpus and not about this
+clause, so it is no longer asserted here**: the ranking is in *The clause margins* under
+**Status**, which every adjudication updates. Two sentences of that kind used to close this
+paragraph and both went false within three days of being written; (c) of the v2.2 block is
+why they are gone.
 
 🚫 **What G7 is not: a tile-level change measure.** The sheet line carries MAE only, on
 purpose — the `Δpx` / `ref Δ` thresholds are pixel counts calibrated at frame scale and a
@@ -848,6 +907,134 @@ can only let an open rung pass, never flip a standing one — so it was not owed
 immediately. It is released here because rule 5 point 3 anchors bumps to milestones and
 this is one: the phase-3 worklist closing, and the run-up to a version cut. Its
 re-inspection is taken in the same pass, under *Status*.
+
+#### Gate v2.2 — G2's per-slot limb, and two rulings released beside it (2026-08-29)
+
+🆕 **The owner's rulings of 2026-08-29**, on the three items the graduation milestone left in
+the decision queue: [#198](https://github.com/firejune/rigc/issues/198), the per-slot gap
+rung 7 attempt 2 recorded as its owner item 2;
+[#193](https://github.com/firejune/rigc/issues/193), G7's own revisit trigger, fired; and
+[#207](https://github.com/firejune/rigc/issues/207), the *finds-X-first* lines.
+**Exactly one of the three is a clause change** — (a). The other two are a threshold **held**
+and a bookkeeping rule, recorded here because all three were decided in one deliberation and
+released together. **No threshold moves, no clause is renumbered, and no measure's definition
+or recorded figure changes.**
+
+**(a) G2 gains a per-slot limb.** ⭐ **A slot that draws in a measured set and is attributable
+in NO frame of that set is read down explicitly in the verdict — name the slot, and name the
+evidence that its placement is benign. A blank that cannot be read down fails the clause for
+that set.** The statement is on the card, [GATE.md](GATE.md#g2-worst-attributable-slot-drift);
+what follows is its derivation.
+
+🧾 **Why per slot when G2's 🕳️ is per set.** The 🕳️ fires when `framesWithoutDrift` equals a
+set's frame count — when a *set* attributes nothing at all — and on this corpus it has never
+fired. But attribution is decided per slot: [`src/slots.ts`](../src/slots.ts)'s matcher
+returns no match when the reference has merged a part into a larger connected component and
+correlating the part's own pixels finds nothing above its confidence bar, and that is exactly
+what happens to a part drawn **behind** another over a flat backdrop. So a set can attribute
+most of its parts and never read one of them, and the clause that measures placement never
+measures that one. ⚠️ **`check`'s own text says a blank drift row is the loudest signal in
+the table** (AUTHORING §9.2); the clause as written could not hear it, which is the opposite
+reading. Rung 7 attempt 2 is where the shape appeared: `cape-back` draws on all 118 compared
+frames of twelve sets and is attributable in none of them, and what held the rung was
+**adjudicator diligence rather than a clause**. ⇒ Same family as the single-pose G3 gap v2.1
+closed — an observable the gate's text reaches at the wrong unit.
+
+🧾 **What counts as evidence, and it is G5's pattern again.** G5's deduction is the precedent:
+the clause names the kinds that qualify, each one drawn from a case the ladder has already
+recorded, and the verdict names the item. Four kinds qualify, and the v2.2 sweep below
+itemises every one of them at least once:
+
+1. **The slot is attributed in another set of the same skeleton.** Its placement *is* read by
+   the clause, in a set that reads it, so the blank is a fact about that set's occlusion or
+   sampling rather than about the part. Name the set and its figure. **The strongest of the
+   four**, and it discharges most of what the limb catches.
+2. **A sibling slot on the same bone chain is attributed.** The bone chain that places the
+   slot is measured, and a rigid part hung off a measured chain cannot travel independently
+   of it. Name the sibling, its figure and its sample count. ⚠️ **Weaker than 1, and a
+   verdict says so**: it bounds the chain and not the part on it, so it wants a third or
+   fourth ground beside it wherever the part is large.
+3. **The chain the slot alone owns carries near-zero error per reference pixel.** `MAE in it`
+   is the difference that chain took over the reference pixels nearest its ink; a part tens of
+   pixels out of place cannot land there. Quote the figure **with the set's other chains
+   beside it**, because the figure alone carries a plate.
+4. **A quantitative per-pixel control against an attributed instance of the same part.**
+   Rung 7's `cape-back` is the worked case and the limb's origin: the same slot on the same
+   frames of attempt 1 *was* attributed, at 1.0 px worst and 1.0 px mean, and read
+   **39.61** per pixel where this candidate reads **44.04** — **11 % worse per pixel than a
+   part measured one pixel out of place.** A part tens of pixels out does not land 11 % away
+   from one that is not.
+
+**And two columns are quoted in every read-down, whichever kind it uses**: the set's
+`(unattributed)` share and its count of **unreached reference components**. A part that had
+left its place would dump the reference's ink into both, so a read-down that does not quote
+them has not excluded the case the limb exists for. ⇒ **A read-down that cannot name its
+evidence is not a read-down**, and the clause fails for that set — G5's own 🧾 with the sign
+kept.
+
+⚖️ **What the limb costs, measured rather than estimated.** The re-inspection below swept all
+eleven standing candidates for it, and it fires far more widely than the case that motivated
+it: **194** blank (set, slot) pairs over 56 sets, on **four** of the eleven candidates, and
+**12** slots attributable in no set at all. Every one reads down. But the volume is itself the
+finding — `check` declines a part the reference has merged into a larger component, and on a
+dense figure that is most of the small parts on most frames. ⇒ **The limb is a disclosure
+requirement and not a fail-by-default**, and a verdict discharges the bulk of it in a table
+rather than a paragraph each; only the slots that reach kinds 3 and 4 are written out in
+full. 📌 **What it does not do is change what passes.** No standing verdict moves, and the
+6.0 px bar is untouched.
+
+📌 **Cadence: integrity, so the re-inspection is taken in the same pass.** By rule 5 point 2
+this limb can only make a standing pass **fail** — a blank that cannot be read down fails the
+clause — so it is the first half of the asymmetry and re-inspects immediately rather than
+waiting for a bump. The milestone is the same one rule 5 point 3 names for a release: the
+ladder closing.
+
+**(b) G7's 3.5× stands — [#193](https://github.com/firejune/rigc/issues/193) closes.** The
+trigger G7's 🧾 wrote for itself — *a second candidate landing between them* — has fired
+twice: rung 7 attempt 1's `fall-in@24fps` at **3.041**, on a candidate that then failed G2,
+and attempt 2's `fall-in@30fps` at **2.923**, on a candidate that holds a **PASS**. The
+deliberation the trigger asks for has been held, and the number does not move. Three grounds:
+
+- ⭐ **The quality-gate posture holds, and it is rule 1's.** Calibration is deliberately
+  lenient — the floors sit above every figure a reading has already called faithful — and
+  tightening later is what rule 3's re-inspection is for. **But no evidence has arrived that
+  demands it.** Nothing on this corpus has been read as unfaithful at a sheet ratio the clause
+  admits; what arrived is a *ranking* changing, which is a fact about the corpus rather than
+  an argument about the bar.
+- ⚠️ **A tightening below 2.923 flips two standing passes**, rung 7's and rung 6's, which sit
+  **0.031 apart** — so whatever the number moved to it would almost certainly move both or
+  neither. By rule 5 point 2 that is an integrity event taken immediately. Spending it on a
+  clause nothing has argued against, days after the ladder closed, is the posture inverted.
+- 📌 **The caveat that would have argued for it is recorded and does not reach the number.**
+  Rung 7's sheets are **not** corroborated the way rung 6's 2.892 is — rung 6's shot is also
+  committed in full at 12 fps, where it reads 0 disagreements over 68 pairs, while rung 7's
+  12 fps sets are *different shots*. `fall-in` is itself committed in full at 12 fps at 0 of
+  20 pairs, so there is an independent reading of that shot; what it does not cover is the
+  sheet's extra samples. That is weaker corroboration than rung 6's and stronger than the
+  withdrawn rung 4's, and it is a reason to keep reading, not a measurement of unfaithfulness.
+
+🚫 **What the ruling does not claim.** Not that the margin is comfortable: G7 guards two
+standing passes at **1.20×** and **1.21×**, and the corpus separates its top two thinly on
+every reading available. What would move the number is a candidate a reading calls unfaithful
+*inside* the bar, or a **sheet-scale change measure** — and the second is an instrument
+question, which rule 3 keeps out of a gate version.
+
+**(c) A margin is a table, not a sentence — [#207](https://github.com/firejune/rigc/issues/207)
+closes.** Rule 2 used to close G7's derivation with *"a tightening of G7 finds rung 6 first,
+the way a tightening of G2 finds rung 5 first."* **Both halves went false within three days,**
+and neither failure was a mistake in the sentence: G7's when rung 7 attempt 2 landed at 2.923
+above rung 6's 2.892, and G2's when spineboy's 5.55 px displaced rung 5's 5.12. A margin is a
+fact about the **corpus**, the corpus moves every time a candidate lands, and a sentence
+inside a rule does not. ⇒ **The lines are deleted from the gate text and *The clause margins*
+under *Status* carries the ranking instead** — per clause: the bar, the closest standing pass,
+its figure and the ratio. **Every adjudication updates it**, which is now a named part of
+*After a run* step 1 in [`bench/runs/README.md`](../bench/runs/README.md), so the table is
+current by construction rather than by anybody remembering.
+
+📌 **What a derivation may still say.** It may narrate the corpus it was calibrated against —
+that is a dated historical argument and stays true of its date. What it may not do is assert a
+**present** ranking. The line between the two is the same one the honesty rule's sixth reading
+draws between a clause statement and its derivation: one is live, one is dated.
 
 ### 3. Close on pass; a gate change re-inspects everything
 
@@ -1010,6 +1197,16 @@ single pose from G3), and one rung sat 🟨 on a gap no candidate could close. P
 asymmetry ranks those correctly — a rung staying 🟨 misleads nobody — but *"opportunity"*
 is the cost of the wait, not the absence of one.
 
+⇒ **v2.2 is point 2's first half again, and point 1 doing its job.** Its limb can only make
+a standing pass **fail**, so it re-inspects immediately; and three decisions that arrived
+separately over four days — a clause gap, a fired threshold trigger and a stale commentary
+line — **batched into one version and cost one re-inspection**, which is what point 1 is for.
+⚠️ **Point 3's milestone is doing double duty here and the ledger should say so**: the
+graduation close is both the anchor that released v2.1 and the anchor releasing v2.2, three
+days apart. That is the correct reading of *"anything about to be said outside this
+repository"* — the ladder's completion is exactly that — but a milestone that fires twice is
+worth noticing before it becomes a habit of bumping whenever a decision queue looks full.
+
 ---
 
 ## Status
@@ -1030,6 +1227,239 @@ is the cost of the wait, not the absence of one.
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ✅ *gate v2, 2026-08-25* — both skeletons, re-inspected |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ✅ *gate v2.1, 2026-08-28* — re-climbed on `2026-08-28-rung7-2`; G2 7.33 → **2.76 px**; frames **local-only** |
 | 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🎓 ✅ *gate v2.1, 2026-08-28* — `ess` cleared on `2026-08-28-spineboy-2`, every clause PASS/SKIP; worst drift **5.55 px** (⚠️ 1.08×, the ladder's thinnest margin). ⚠️ **Inherited attempt** under protocol item 10 — its figures measure the lever; the **from-zero trajectory is attempts 1–4** (18.8 → 14.6 → 7.86 px; 14 → 3 → 0 disagreements) · `pro` ⬜, not a graduation requirement |
+
+### The gate-v2.2 re-inspection — 2026-08-29
+
+**Every standing candidate re-read against gate v2.2, and swept for its new limb.** The
+re-inspection rule 3 requires of a gate version, taken in the same pass that releases it —
+rule 5 point 2's integrity half, because the limb can only make a standing pass *fail*.
+🚫 **Zero builds and zero authoring, and no run directory and no `bench.json` was touched.**
+`check` and `validate --profile spine` re-read the **eleven standing candidates** over all
+**56 committed sets** — 1,142 compared frames, 1,061 adjacent pairs and 25 compared sheets —
+**from the repository root with no `--atlas` and no `--viewport` override on any of them**,
+and reproduce **every gated figure to the digit**. That reproduction is this pass's control:
+what moves a verdict here is the clause, not the reading.
+
+📌 **Three scope notes, so no figure is read as more or less than it is.** ① The sweep covers
+the eleven candidates that *hold* a verdict; the superseded attempts keep their own entries
+below and are not re-adjudicated. ② `bench` was not re-run, because nothing v2.2 changes can
+reach G4's lengths or G5's counts — those columns are quoted from the verdicts that measured
+them. What this pass re-measured itself is G1, G2, G3 and G7, and the per-slot attribution the
+new limb reads. ③ **Rung 7's frames are local-only**, so this pass rendered them itself at the
+brief's exact flags before reading that candidate; `git ls-files bench/reference-local` reports
+**0** and no frame of it is committed here either.
+
+Only G2 can move anything, so it carries a second column: the limb's reading per candidate.
+
+| Rung | Skeleton | Candidate | G1 | G2 ≤ 6.0 px | 🆕 G2 per slot | G3 = 0 | G4 length | G5 ≥ 0.85 | G7 ≤ 3.5× | v2.2 | was v2.1 |
+| --- | --- | --- | :---: | --- | --- | --- | --- | --- | --- | :---: | :---: |
+| **1** | `balls` | rung1-1 | 0 FAIL | **1.51** px `cast-shadow-red` ✅ | ✅ **no blank** — all 8 slots attributed in both sets | ✅ **0** of 39 · **0** of 78; drawn 1.1005 / 1.1010 | ✅ 3.250000 s v 3.233333 s | 1.000 · 1.000 ✅ | SKIP — both sets commit every frame | **PASS** | PASS |
+| **1** | `drop` | rung1-1 | 0 FAIL | 1.06 px `sword` ✅ | ✅ **no blank** — all 4 slots attributed | SKIP — v2.1 (a) and (b) | ✅ 0.000000 s v 0.000000 s | 0.800 → **1.000** after `ground-cover` ✅ | SKIP — a single pose | **PASS** | PASS |
+| **2** | `ess` | rung2-2 | 0 FAIL | 0.33 px `bowling` ✅ | ⚠️ **7 blanks, 4 slots** — read down below, kinds 2 and 3 | ⚠️ 0 pairs in all four sets — hole discharged by G7 | ✅ 25.833333 s v 25.866667 s | 0.882 · 0.882 ✅ | ✅ **1.088–1.107**, four sheets, 311 tiles each | **PASS** | PASS |
+| **3** | `ess` | rung3-1 | 0 FAIL | 0.65 px `pendulum` ✅ | ✅ **no blank** — both slots attributed in both sets | ✅ **0** of 64 · **0** of 20; drawn 0.9913 / 0.9922 | ✅ exact ×2 | 1.000 · 1.000 ✅ | SKIP — both sets commit every frame | **PASS** | PASS |
+| **4** | `ess` | rung4-1 | 0 FAIL | **3.63** px `chain-1` ✅ | ✅ **no blank** — all 8 slots attributed in all six sets | ✅ **0** of 120 + 16 + 16 | ✅ exact ×3 | 0.889 · 0.889 ✅ | ✅ **1.911** · 1.428 · 1.776 | **PASS** | PASS |
+| **5** | `ess` | rung5-1 | 0 FAIL | **5.12** px `hood-end1` ✅ | ⚠️ **7 blanks, 7 slots, one set** — read down below, kind 1 | ✅ **0** of 78 · **0** of 78 | ✅ exact ×3 | 1.000 · 1.000 ✅ | ✅ 1.081 · 1.181 | **PASS** | PASS |
+| **6** | `pro` | rung6-1 | 0 FAIL | **2.48** px `ball` ✅ | ✅ **no blank** — all 4 slots attributed in both sets | ✅ **0** over 68 | ✅ exact | 1.000 · 1.000 ✅ | ✅ `arcs@24fps` **2.892** | **PASS** | PASS |
+| **7** | `sack` | rung7-2 | 0 FAIL | **2.76** px `cape-front` ✅ | ⚠️ **16 blanks, 3 slots** — `cape-back` in all twelve sets, the limb's worked case; read down below, kinds 4 and 1 | ✅ **0** of 98 | ✅ worst gap **0.000001 s** | 1.000 · 1.000 ✅ | ✅ **1.477–2.923**, eight sheets | **PASS** | PASS |
+| **8** | `pendulum` | rung8-1 | 0 FAIL | **3.34** px `chain-4` ✅ | ✅ **no blank** — all 6 slots attributed in both sets | ✅ **0** over 44 + 87 | ✅ 3.633333 s, exact | 1.000 · 1.000 ✅ | SKIP — every frame committed at both rates | **PASS** | PASS |
+| **8** | `ball` | rung8-2 | 0 FAIL | **4.19** px `ball` ✅ | ✅ **no blank** — both slots attributed in both sets | ✅ **0** over 44 + 87 | ✅ 3.625 s v 3.633333 s | 1.000 · 1.000 ✅ | SKIP — every frame committed at both rates | **PASS** | PASS |
+| **spineboy** | `ess` | spineboy-2 | 0 FAIL | **5.55** px `rear-shin` ✅ | ⚠️ **164 blanks, 15 slots** — read down below, kinds 1 and 2 | ✅ **0** of 124 | ✅ worst gap **0.000001 s** | 0.952 · 0.931 ✅ | ✅ 1.100–**1.516**, seven sheets | **PASS** | PASS |
+
+**No verdict moves, and the limb is why the pass was taken rather than why anything changed.**
+All eleven standing candidates hold, every rung stays ✅, and no status cell moves. A pass is
+versioned, so each row's own gate label below is unchanged: what this pass adds to each rung's
+section is the record rule 3 asks for — *that it was re-inspected, and against which version*.
+
+⚠️ **What the sweep actually found, and it is wider than the case that motivated the limb.**
+**194** blank (set, slot) pairs over the 56 sets, on **four** of the eleven candidates, and
+**12** slots attributable in **no** set at all. Seven of the eleven candidates have no blank
+anywhere. The pattern is not a rig defect: `check` declines to attribute a part the reference
+has merged into a larger connected component, so the blanks concentrate on **small parts of
+dense figures** (spineboy's 15 slots, 164 pairs) and on **parts drawn over or behind a static
+backdrop** (rung 2's basin, rung 7's cape panel). ⇒ **The limb's value is the disclosure, not
+the refusals**: it fires on nothing that should fail and it makes the coverage of G2 visible,
+which is what rung 7 attempt 2 asked for.
+
+#### The read-down, itemised
+
+**Every blank reads down.** Two classes, and the split is whether the clause reads that slot's
+placement *somewhere*.
+
+⭐ **Class A — the slot is attributed in another set of the same skeleton** (kind 1, the
+strongest ground). 182 of the 194 pairs, on 17 (candidate, slot) pairs. The clause reads the
+part's placement; the blank is a fact about that set's sampling or occlusion.
+
+| Candidate | Slot | Blank in | Attributed in | Its worst reading there |
+| --- | --- | --- | --- | ---: |
+| **rung 5** `ess` | `hood-end1` | `speedy@24fps` | `speedy` | **5.12 px** — the rung's own G2 figure |
+| | `right-foot` | `speedy@24fps` | `speedy` | 4.07 px |
+| | `belt-ends` | `speedy@24fps` | `speedy` | 3.91 px |
+| | `hair-2` | `speedy@24fps` | `speedy` | 3.18 px |
+| | `hair-1` | `speedy@24fps` | `speedy` | 3.13 px |
+| | `torso` | `speedy@24fps` | `speedy` | 2.24 px |
+| | `left-hand` | `speedy@24fps` | `speedy` | 1.32 px |
+| **rung 7** `sack` | `cape-front` | `hello@24fps`, `hello@30fps` | 10 sets | **2.76 px** — the rung's own G2 figure |
+| | `sack` | `walk@24fps`, `walk@30fps` | 10 sets | 2.74 px |
+| **spineboy** `ess` | `rear-shin` | 3 of 16 sets | 13 sets | **5.55 px** — the rung's own G2 figure |
+| | `torso` | 1 of 16 | 15 sets | 4.77 px |
+| | `rear-foot` | 7 of 16 | 9 sets | 3.20 px |
+| | `rear-bracer` | 15 of 16 | `run` | 2.64 px |
+| | `gun` | 1 of 16 | 15 sets | 2.48 px |
+| | `front-fist` | 10 of 16 | 6 sets | 2.29 px |
+| | `front-thigh` | 15 of 16 | `walk` | 2.14 px |
+| | `neck` | 15 of 16 | `idle` | 2.12 px |
+
+⭐ **Rung 5's seven are one set and one cause, and it is the cleanest form the limb takes.**
+`speedy@24fps` is **two stills** of a shot that is *also* committed **in full at 12 fps**, where
+all seven read as above over 78 pairs. A blank on the sampled set of a shot read frame by frame
+at another rate carries no information at all.
+
+⭐ **Class B — the slot is attributable in no set** (12 slots, 12 of the pairs' distinct
+subjects). These are the case [#198](https://github.com/firejune/rigc/issues/198) named, and
+each is written out.
+
+**Rung 7 `sack` — `cape-back`, and it is the limb's worked example.** The read-down is
+[PR #197](https://github.com/firejune/rigc/pull/197)'s, reproduced here to the digit by this
+pass and now standing as the pattern rather than as one adjudicator's diligence:
+
+- **It is drawn and it is scored.** `cape-back` draws on **all 118** compared frames of all
+  twelve sets, and the `panel` chain carries **15.7 %** of the candidate's difference over the
+  reference's own drawn pixels, at **44.04** per pixel. This is not a part nobody looked at.
+- **Why the matcher declines it.** [`src/slots.ts`](../src/slots.ts) returns no match anywhere:
+  the panel sits **behind** the sack over a beige backdrop, the reference component containing
+  it is **1.4×** its size, and the best residual never clears the confidence bar. Predicted out
+  of the source *before any build* and recorded in that run's `LOOP.md` §7, not explained
+  afterwards.
+- **The standing columns.** `(unattributed)` is **1.7 %** across the twelve sets and **0**
+  reference components go unreached in any of them — a part that had left its place would dump
+  the reference's ink into both.
+- **The quantitative control — kind 4.** Attempt 1's `cape-back` on the *same frames* was also
+  a region on its own bone, *was* attributed, and read **1.0 px worst / 1.0 px mean** with
+  **39.61** per pixel. This candidate reads **44.04**: **11 % worse per pixel than a part
+  measured one pixel out of place.** A part tens of pixels out does not land 11 % away from one
+  that is not.
+
+⇒ **G2 reads and passes on rung 7.** 📌 And the coverage is honestly **2 of 3 slots**, which is
+now a stated reading rather than an unstated one — which is the whole of what the limb buys.
+
+**Rung 2 `ess` — four slots, and every one is either the static basin or a highlight of a few
+pixels.**
+
+- **`water` — kind 3.** 74 × 39 px, 1,562 px of ink, drawn in all eight frames of all four
+  sets, and the only slot on its chain, so kind 2 is unavailable. Its chain reads **`MAE in it`
+  0.27–0.29** — **the lowest of the nine drawn chains in every set**, against `panel` 3.63,
+  `course` 4.54, `ring-upper` 5.52–5.99, `ring-lower` 7.15 and the ball chains 20.78–32.56 — at
+  a **0.5–0.6 %** share. The reference pixels nearest its ink differ from it by a quarter of a
+  level out of 255; a 74 × 39 part out of place cannot land there. `check`'s reason for
+  declining it is merging, not distance: the reference component containing it is **13.4–13.7×**
+  its size. Standing columns: **0** unreached components on all eight frames, `(unattributed)`
+  **0.000 %**, and the four sheets flat over **1,244** tiles at 1.088–1.107.
+- **`billiard` (4–5 px of ink, a 3 × 2 box) and `billiard-gloss` (1 px) — kind 2.** Both hang
+  off bone `billiard`, whose `billiard-shade` **is** attributed, at **0.11 px**. The reference
+  component that swallows them is **4,409×** and **20,985×** their size respectively. A
+  one-pixel gloss has nothing to correlate and never will.
+- **`bowling-gloss` (3 px) — kind 2.** Same shape: `bowling` at **0.33 px** — the rung's own G2
+  figure — and `bowling-shade` at **0.29 px** are attributed on the same bone.
+
+**spineboy `ess` — seven slots, all kind 2, and every one of them hangs off a chain the clause
+reads.**
+
+| Slot | Its chain | Attributed siblings on that chain | Merged into a reference component |
+| --- | --- | --- | ---: |
+| `eye` | `neck` | `head` **2.92 px** (147 samples) · `goggles` **2.84 px** (147) | 44.9–60.7× its size |
+| `mouth` | `neck` | the same two | 162–212× |
+| `front-upper-arm` | `front-upper-arm` | `front-fist` **2.29 px** (14) | 31.6–41.8× |
+| `front-bracer` | `front-upper-arm` | `front-fist` **2.29 px** (14) | 28.4–36.9× |
+| `rear-thigh` | `rear-thigh` | `rear-shin` **5.55 px** (69) · `rear-foot` **3.20 px** (46) | 32.5–41.7× |
+| `rear-upper-arm` | `rear-upper-arm` | `rear-bracer` **2.64 px** · `gun` **2.48 px** (82) | 39.1–50.7× |
+| `muzzle` | `rear-upper-arm` | the same two | 3.8–4.0× |
+
+Standing columns for all seven: **0** unreached reference components on any of the 147 frames
+of any of the 16 sets, and `(unattributed)` **0.004 %** over the whole candidate.
+
+⚠️ **`muzzle` is the one that needs more than kind 2, and it gets it.** It is much the largest
+of the twelve — 1,753–2,662 px, a 113 × 83 box — so *"the chain is measured"* is a weaker
+statement about it than about a 23-pixel mouth. Three further grounds, all on the three frames
+of `shoot` where it draws at all: the whole figure **is one connected component** on two of the
+three (`components` 1, 1, 2), so there is no separate reference component for the matcher to
+try; `(unattributed)` on that set is **0.000 %** with **0** unreached components on all three
+frames; and `shoot@30fps`'s sheet is **the flattest of the seven** at **1.100×**, over a shot
+whose candidate draws 7.8 % more ink than the reference — the flash is where the reference puts
+it and lasts as long. 📌 It is also the only one of the twelve that is not chronic: three frames
+of one shot, against 118–147 for every other.
+
+⚖️ **What the two weakest read-downs are honestly worth, stated rather than smoothed over.**
+Kind 2 bounds the **chain**, not the part hung on it — a rigid part on a chain whose distal end
+lands correctly cannot travel far, but *cannot travel far* is not *is measured*. On this corpus
+that is comfortable, because the parts it covers are small (23–159 px, `muzzle` excepted) and
+their siblings read 2.29–5.55 px. It would stop being comfortable on a large part whose chain is
+long and whose siblings are attributed only near the root. ⇒ **A future verdict reaching kind 2
+for a large part owes a third ground**, the way `muzzle` does here.
+
+🧾 **What this pass records for the owner rather than resolving.**
+
+1. 📌 **The limb's cost is disclosure volume, and a future adjudication should expect a table
+   rather than a paragraph.** 194 pairs is not a workload a verdict can carry prose-by-prose,
+   and the two-class split above is the shape that made it tractable — Class A collapses to one
+   row per (candidate, slot) because the evidence is uniform, and only Class B is written out.
+   Worth keeping as the form.
+2. ⚠️ **G5's 1.04× is now the ladder's thinnest margin and nothing has been written about it.**
+   *The clause margins* computes it for the first time: rung 2's `ess` clears the 0.85 floor at
+   **0.882** on both counts, thinner than G2's 1.08× and G7's 1.20×, both of which have owner
+   items. No action is proposed — the figure has not moved and no reading calls that candidate
+   structurally wrong — but a ranking that is computed rather than remembered has surfaced a
+   clause nobody was watching.
+3. 📌 **One reproducibility note, and it decides nothing.** Rung 5's `speedy` reports **3**
+   unreached reference components over its 79 frames (2 on f0067, 1 on f0064) — the only
+   non-zero count anywhere in the sweep, and 3 of 317 components on that set. Every rung-5 blank
+   is Class A on a *different* set, so no read-down rests on it, and G2 there reads 5.12 px as
+   recorded. Named because the limb's standing columns quote that count, and a column quoted as
+   evidence should be quoted when it is not zero.
+
+### The clause margins — the corpus against the bar
+
+⭐ **This table is the live ranking, and it replaces the *"a tightening of X finds Y first"*
+sentences that used to sit in rule 2.** Those were snapshots written into a rule and **two of
+them went false within three days**: G7's when rung 7 attempt 2 landed at 2.923 above rung 6's
+2.892, and G2's when spineboy's 5.55 px displaced rung 5's 5.12. A margin is a fact about the
+**corpus**, which moves whenever a candidate lands; a sentence inside a rule does not.
+Owner ruling 2026-08-29, [#207](https://github.com/firejune/rigc/issues/207); the reasoning is
+in *Operating rules* rule 2, under *Gate v2.2* (c).
+
+📌 **Every adjudication updates this table.** It is a named part of *After a run* step 1 in
+[`bench/runs/README.md`](../bench/runs/README.md), so it is current by construction rather than
+by anybody remembering to repair a sentence.
+
+**Read 2026-08-29**, over the **eleven standing candidates** — rungs 1 through 8 and spineboy
+`ess` — as re-measured for *The gate-v2.2 re-inspection* below.
+
+| Clause | The bar | Closest standing pass | Its figure | Margin |
+| --- | --- | --- | ---: | ---: |
+| **G1** validity | 0 FAIL | every standing candidate | **0 FAIL** | *no ratio — a bar at zero* |
+| **G2** worst attributable slot drift | ≤ 6.0 px | **spineboy** `ess` — `rear-shin` at `run` f0006 | **5.55 px** | **1.08×** |
+| **G3** per-frame disagreements | = 0 | every standing candidate | **0** of 1,061 pairs | *no ratio — a bar at zero* |
+| **G3** overdraw | no `⚠️ overdraw` | **rung 1** `balls` — `animation@24fps` | `drawnRatio` **1.101** | **1.36×** |
+| **G4** shot length | ≤ one interval of the coarsest committed rate | **rung 2** `ess` — 25.833333 s against 25.866667 s | gap **0.033334 s** against 1/12 s | **2.50×** |
+| **G5** drawn inventory | ≥ 0.85, after the itemised deduction | **rung 2** `ess` — `slots.count` and `attachments.count` alike | **0.882** | **1.04×** |
+| **G7** sheet flatness | ≤ 3.5 × that sheet's own mean | **rung 7** `sack` — `fall-in@30fps` | **2.923×** (66.48 over 22.74) | **1.20×** |
+
+⚠️ **Three clauses now guard a standing pass at 1.21× or thinner**, and that is the fact the
+deleted sentences existed to carry: **G5 at 1.04×**, **G2 at 1.08×** and **G7 at 1.20×**, with
+rung 6's `arcs@24fps` at **1.21×** immediately behind rung 7's on G7 — 0.031 apart, so a
+tightening would almost certainly take both or neither. By rule 5 point 2 a tightening of any
+of the three is an **integrity** change: it flips a published pass and re-inspects immediately
+rather than waiting for a bump.
+
+📌 **G5's 1.04× is the thinnest margin on the ladder and it is the least discussed**, which is
+worth saying out loud now that the ranking is computed rather than remembered. Rung 2's `ess`
+draws 15 of the reference's 17 slots and attachments and takes no deduction, so the clause
+clears by two parts. G2's 1.08× has had two owner items written about it and G5's 1.04× none.
+
+🚫 **What this table is not.** It names the **closest** pass per clause, not a ranking of
+candidates, and a margin is a ratio against a bar rather than a quality score — rung 2's 1.04×
+is a candidate that draws two parts fewer than the reference, not one that is nearly wrong.
+G6 has no row: it is the conjunction of the others, so its margin is whichever of them is
+thinnest on the rung in question.
 
 ### The gate-v2.1 re-inspection — 2026-08-26
 
@@ -1117,6 +1547,13 @@ every candidate that holds a verdict.
    refuses 4.00; rule 2's 🧾 carries the alternative readings), and the odd-tile spikes that
    distinguish rung 4 from rung 6 are the same defect at two magnitudes. Both are recorded
    under *The gate-v2 re-inspection* and neither is touched here.
+   > ➡️ **The first of the two is ruled, 2026-08-29: the 3.5× stands**
+   > ([#193](https://github.com/firejune/rigc/issues/193), closed) — the trigger fired on rung 7
+   > attempt 2's 2.923× and the deliberation held the number, because a tightening would flip
+   > two standing passes 0.031 apart and nothing on the corpus has been read as unfaithful
+   > inside the bar. The **second** — a tile-level change measure that would separate the
+   > spikes — is untouched and stays an **instrument** question, which rule 3 keeps out of a
+   > gate version. *Operating rules* rule 2, under *Gate v2.2* (b).
 3. 📌 **The ladder is now open on no gate question at all.** Every rung but 7 is ✅; rung 7
    has never been attempted and is blocked on a brief that has had no second pass, not on a
    clause. What remains before the graduation exam is protocol work, and spineboy's freeze
@@ -2287,6 +2724,18 @@ frames between the samples are a real hole and **G7's discharge is still what an
 Reading them as SKIP instead would retire that machinery and hand this rung its pass on
 nothing. ⇒ Verdict unchanged, and unchanged *by the same route*.
 
+#### Gate v2.2 re-inspection, 2026-08-29 — **PASS**, and the new limb fires four times
+
+Re-read on the stored candidate: every figure above to the digit. ⚠️ **v2.2's per-slot limb
+finds four blanks here** — `water` in all four sets, `billiard` and `billiard-gloss` in
+`billiard-ball`, `bowling-gloss` in `bowling-ball` — and all four **read down**, three of them
+because the bone that places them *is* measured (`billiard-shade` at 0.11 px, `bowling` at
+0.33 px, `bowling-shade` at 0.29 px on the same bones) and `water` because the chain it alone
+owns carries **0.27–0.29** of error per reference pixel, the lowest of the nine drawn chains in
+every set. The itemised read-down is in *The gate-v2.2 re-inspection* above. ⇒ **Verdict
+unchanged.** 📌 This rung also holds the ladder's **thinnest margin on any clause**: G5 at
+**0.882** against 0.85, **1.04×** — see *The clause margins*.
+
 
 ### Rung 6 — attempted, not cleared (2026-08-23)
 
@@ -2415,6 +2864,20 @@ Re-read on the stored candidate: **2.48 px** `ball` at f0010, **0** disagreement
 adjacent pairs, `arcs@24fps` at **2.892×** (13.99 over 4.84, 137 tiles), 15 PASS / 0 FAIL /
 5 SKIP. v2.1 changes one reading of G3 and this rung has no single-pose set, so nothing here
 is in its scope. The narrowest G7 margin on the page is still this one.
+
+➡️ **That last sentence was true on 2026-08-26 and is not true now**: rung 7 attempt 2's
+`fall-in@30fps` reads **2.923×** against this sheet's 2.892×, so the narrowest G7 margin on the
+page is **rung 7's**, by 0.031. The live ranking is *The clause margins* under **Status**, and
+it is the surface that stays current; this paragraph keeps its date.
+
+#### Gate v2.2 re-inspection, 2026-08-29 — **PASS**, unchanged
+
+Re-read on the stored candidate: every figure above to the digit. ✅ **v2.2's per-slot limb
+finds no blank here** — all four slots are attributed in both sets. This rung's `arcs@24fps` is
+the **second**-closest standing pass to G7's bar at **1.21×**, 0.031 behind rung 7's, and
+[#193](https://github.com/firejune/rigc/issues/193)'s ruling of 2026-08-29 holds the 3.5×
+where it is; a tightening would take this rung and rung 7 together or neither. ⇒ **Verdict
+unchanged.**
 
 
 ### Rung 8 — attempted, not cleared: `pendulum` cleared, `ball` not (2026-08-23)
@@ -2617,6 +3080,11 @@ is not a hole either — the coverage a sheet stands in for is already here.
 Re-read on the stored candidate: **3.34 px** `chain-4`, **0** disagreements over 44 + 87
 adjacent pairs, G7 **SKIP** on both sets, 15 PASS / 0 FAIL / 5 SKIP. No single-pose set, so
 v2.1's clause has nothing to reach here.
+
+#### Gate v2.2 re-inspection, 2026-08-29 — `pendulum` **PASSES**, unchanged
+
+Re-read on the stored candidate: every figure above to the digit. ✅ **v2.2's per-slot limb
+finds no blank here** — all six slots are attributed in both sets. ⇒ **Verdict unchanged.**
 
 
 ### spineboy — attempted, not cleared: `ess` authored under a leak caveat, `pro` not built (2026-08-23)
@@ -2925,6 +3393,12 @@ Re-read on the stored candidate: **4.19 px** `ball` at `follow-through@24fps` f0
 disagreements over 44 + 87 adjacent pairs, G7 **SKIP** on both sets, 15 PASS / 0 FAIL /
 5 SKIP. No single-pose set on either skeleton of this rung, so v2.1 leaves both verdicts
 where they were.
+
+#### Gate v2.2 re-inspection, 2026-08-29 — `ball` **PASSES**, and so does the rung
+
+Re-read on the stored candidate: every figure above to the digit. ✅ **v2.2's per-slot limb
+finds no blank on either skeleton of this rung** — both of `ball`'s slots and all six of
+`pendulum`'s are attributed in every set. ⇒ **Both verdicts unchanged, and G6 holds.**
 
 
 ### spineboy, attempt 2 — the first after the seal: attempted, not cleared (2026-08-24)
@@ -3389,6 +3863,16 @@ pass. The verdict above met gate v2 as far as gate v2 could read it and its *not
 adjudicable* stands as a true statement about that gate; the two gate-v1 and gate-v2
 sections under *Rung 1 — attempted, not cleared* are likewise untouched.
 
+#### Gate v2.2 re-inspection, 2026-08-29 — **PASS** on both skeletons, unchanged
+
+Re-read on the stored candidate: every figure above to the digit. ✅ **v2.2's per-slot limb
+finds no blank on either skeleton** — all eight of `balls`'s slots are attributed in both its
+sets and all four of `drop`'s in its single pose, so the limb has nothing to read down here.
+📌 `balls` is the closest standing pass to G3's **overdraw** limb, at `drawnRatio` **1.101**
+against `OVERDRAW_RATIO` 1.5 — **1.36×**, and the thinnest margin on that limb anywhere on the
+ladder (see *The clause margins*). It is inside, it has not moved, and it is named because the
+ranking is now computed rather than remembered. ⇒ **Both verdicts unchanged, and G6 holds.**
+
 ### Rung 3, attempt 4 — the frame-change clause clears, and the rung is re-earned (2026-08-26)
 
 Run [`bench/runs/2026-08-26-rung3-1/`](../bench/runs/2026-08-26-rung3-1/), clean —
@@ -3466,6 +3950,12 @@ Re-read on the stored candidate: **0.65 px** `pendulum` at `heavy` f0017, **0** 
 commits every sampled frame), 15 PASS / 0 FAIL / 5 SKIP. No single-pose set, so v2.1's
 clause is not in play. #12 stays closed.
 
+#### Gate v2.2 re-inspection, 2026-08-29 — **PASS**, unchanged
+
+Re-read on the stored candidate: every figure above to the digit. ✅ **v2.2's per-slot limb
+finds no blank here** — both slots are attributed in both sets, which is what a two-part rig
+read frame by frame at two rates should look like. ⇒ **Verdict unchanged.** #12 stays closed.
+
 
 ### Rung 4, attempt 2 — re-authored from a verified brief; the sheet clause clears (2026-08-26)
 
@@ -3541,6 +4031,13 @@ disagreements over 120 + 16 + 16 adjacent pairs, the three sheets at **1.911 · 
 1.776**, 15 PASS / 0 FAIL / 5 SKIP. 🚫 **v2.1 (b) does not reach the three `@24fps` sets**:
 two stills apiece is a shot sampled twice, not a single pose, so they stay G7's to read —
 which is the whole reason this rung's G7 verdict means something. #17 stays closed.
+
+#### Gate v2.2 re-inspection, 2026-08-29 — **PASS**, unchanged
+
+Re-read on the stored candidate: every figure above to the digit. ✅ **v2.2's per-slot limb
+finds no blank here** — all eight slots are attributed in all six sets, including the three
+two-still `@24fps` sets, which is the strongest per-slot coverage any multi-set candidate on
+this ladder posts. ⇒ **Verdict unchanged.** #17 stays closed.
 
 
 ### Rung 5, attempt 2 — re-authored from a verified brief; G3 clears on both shots (2026-08-26)
@@ -3641,6 +4138,29 @@ which the 2026-08-26 verdict could not do — see the *Amendment* in that run's 
 reading — that `ball-ready-to-animate`'s two single-pose sets are outside G3's scope — which
 the gate did not state at the time. v2.1 clause (a) states it. ⇒ The PASS no longer rests on
 an unwritten rule, which is what the 2026-08-26 comment asked the next gate version for.
+
+📌 **One live claim in this section has since gone stale.** The 2026-08-26 verdict above
+records that *"a tightening of G2 finds rung 5 first"* was unchanged, and it was — on that
+date. spineboy's graduation pass at **5.55 px** displaced it on 2026-08-28, and this rung is
+now second on that clause at **1.17×**. The paragraph keeps its date; the live ranking is *The
+clause margins* under **Status**, and gate v2.2 (c) is why there is one.
+
+#### Gate v2.2 re-inspection, 2026-08-29 — **PASS**, and the new limb fires on one set
+
+Re-read on the stored candidate: every figure above to the digit. ⚠️ **v2.2's per-slot limb
+finds seven blanks, all in `speedy@24fps`** — `belt-ends`, `hair-1`, `hair-2`, `hood-end1`,
+`left-hand`, `right-foot` and `torso` — and **all seven read down on the strongest ground there
+is**: that set is **two stills of a shot committed in full at 12 fps**, where every one of them
+is attributed over 78 pairs, at 5.12 · 4.07 · 3.91 · 3.18 · 3.13 · 2.24 · 1.32 px. A blank on
+the sampled set of a shot read frame by frame at another rate carries no information. The
+itemised read-down is in *The gate-v2.2 re-inspection* above. ⇒ **Verdict unchanged.**
+
+📌 **One reproducibility note this pass adds, and it decides nothing.** `speedy` reports **3**
+unreached reference components over its 79 frames — 3 of 317, on f0064 and f0067 — the only
+non-zero count anywhere in the v2.2 sweep. No read-down on this rung rests on it (all seven
+blanks are discharged by the 12 fps set), and G2 reads 5.12 px as recorded. It is named because
+the limb quotes that column as evidence, and a column quoted as evidence is worth quoting when
+it is not zero.
 
 ### Rung 7 — attempted, not cleared: the cape fails G2 and nothing else fails (2026-08-28)
 
@@ -4038,6 +4558,14 @@ wrong, and what settled it was a like-for-like fit rather than an argument.
    thin, and that is recorded rather than smoothed over"*) now has two candidates inside it.
    🚫 **No threshold is touched here** — this is the argument arriving where rule 2 says it
    starts, with the ranking it changes stated.
+   > ➡️ **Ruled 2026-08-29: the 3.5× stands** ([#193](https://github.com/firejune/rigc/issues/193),
+   > closed). The trigger fired and the deliberation was held; what refused the tightening is
+   > the quality-gate posture — nothing on this corpus has been read as unfaithful at a ratio
+   > the clause admits, and a tightening below 2.923 would flip **two** standing passes 0.031
+   > apart. The stale *ranking* is fixed a different way: rule 2's *finds-X-first* lines are
+   > **deleted** and *The clause margins* under **Status** carries the ranking, updated by every
+   > adjudication ([#207](https://github.com/firejune/rigc/issues/207), closed). Both in
+   > *Operating rules* rule 2, under *Gate v2.2*.
 2. ⚖️ **G2's 🕳️ is written per set, and this candidate is the first to show the per-*slot*
    gap.** One of three slots contributes no drift sample anywhere in the corpus, so G2's
    reading covers two thirds of the drawn parts. It does not hold this rung — the blank is
@@ -4049,6 +4577,15 @@ wrong, and what settled it was a like-for-like fit rather than an argument.
    attributable in any set is a HOLE on that slot, or the clause states that per-set
    attribution is what it means and the unattributable case is covered by the unreached-component
    count instead.
+   > ➡️ **Closed 2026-08-29 as gate v2.2's one content change**
+   > ([#198](https://github.com/firejune/rigc/issues/198)), and by neither of the two options
+   > this item offered. The limb is a **disclosure** requirement rather than a HOLE or a
+   > silence: *a slot that draws in a set and is attributable in no frame of it is read down
+   > explicitly in the verdict, or the clause fails for that set.* ⭐ **The read-down above is
+   > what the limb now requires of everyone** — it is written into rule 2 as kind 4, the
+   > quantitative per-pixel control, with the three other qualifying kinds beside it. Clause in
+   > *Operating rules* rule 2 under *Gate v2.2*; the sweep it owed is *The gate-v2.2
+   > re-inspection*.
 3. 📌 **The texture-floor diagnostic is not sound as §9.2 wrote the recipe, and the guide now
    says so.** `check --atlas <the example's own>` sent MAE(ref) **up** — 24.93 → 28.84 and
    19.17 → 27.75 — because `--atlas` substitutes region **geometry** as well as texture, and
@@ -4072,6 +4609,29 @@ committed reference frames at all**, and the protocol held on both attempts — 
 never committed, reproduced digit for digit by an adjudicator who rendered them again. It is
 also the first rung where an attempt's own *stated* next step was the wrong hypothesis and a
 like-for-like fit said so. **Issue [#14](https://github.com/firejune/rigc/issues/14) closes.**
+
+#### Gate v2.2 re-inspection, 2026-08-29 — **PASS**, and this rung is the limb's worked case
+
+Re-read on the stored candidate, with the frames rendered again for this pass at the brief's
+exact flags and **no frame committed** (`git ls-files bench/reference-local` → 0). Every figure
+above reproduces to the digit, including the chain rollup and `panel`'s *"no slot attributable
+in any set"* at **44.04** per pixel.
+
+⚠️ **v2.2's per-slot limb finds 16 blanks across three slots, and the one it was written for is
+`cape-back`.** Its read-down is the ⚠️ above, unchanged and now **required rather than
+diligent**: the slot is named, the matcher's reason is named, `(unattributed)` **1.7 %** and
+**0** unreached components are quoted, and the quantitative control is attempt 1's attributed
+`cape-back` on the same frames at **39.61** per pixel against this one's 44.04 — **11 % worse
+per pixel than a part measured one pixel out**. That is the limb's **kind 4**, and rule 2 now
+carries it as the pattern. The other two blanks are `cape-front` in the two `hello` stills sets
+and `sack` in the two `walk` stills sets, both attributed in **ten** other sets at 2.76 px and
+2.74 px — the limb's kind 1.
+
+⇒ **Verdict unchanged.** 📌 And the coverage statement the attempt-2 verdict made informally —
+*"honestly 2 of 3 slots"* — is now what the clause obliges every verdict to say. This rung's
+`fall-in@30fps` is also the **closest standing pass to G7's bar**, at **2.923×**, **1.20×**
+inside; [#193](https://github.com/firejune/rigc/issues/193)'s ruling of 2026-08-29 holds the
+3.5× where it is.
 
 ### spineboy, attempt 4 — the graduation exam: two of the three failing dimensions clear, G2 does not (2026-08-28)
 
@@ -4318,6 +4878,40 @@ skeletons. ⇒ **Graduation was reached by removing the other failure, not by im
 binding one.** The clause now rests on a figure attempt 4 had also posted, which is worth
 knowing before anyone reads 5.55 px as headroom.
 
+#### Gate v2.2 re-inspection, 2026-08-29 — **PASS**, unchanged, and the graduation pass holds
+
+Re-read on the stored candidate from the repository root with no `--atlas` and no `--viewport`
+override, over all 16 sets: every figure above to the digit, including **5.5491 px**
+`rear-shin` at `run` f0006.
+
+⚠️ **v2.2's per-slot limb finds 164 blanks across 15 slots here — much the largest count on the
+ladder, and none of it is a defect.** `ess` is the densest figure in the corpus, and `check`
+declines to attribute a part the reference has merged into a larger connected component, so
+most small parts go unmatched on most frames. **Every one reads down**, in two groups:
+
+- **8 slots by kind 1** — attributed in another set of the same skeleton: `torso` 4.77 px,
+  `gun` 2.48, `rear-shin` **5.55** (the rung's own G2 figure), `rear-foot` 3.20,
+  `front-fist` 2.29, `rear-bracer` 2.64, `front-thigh` 2.14, `neck` 2.12;
+- **7 slots by kind 2** — attributable in no set, but each hanging off a chain the clause reads
+  through an attributed sibling: `eye` and `mouth` under `head` 2.92 px / `goggles` 2.84 px,
+  `front-upper-arm` and `front-bracer` under `front-fist` 2.29 px, `rear-thigh` under
+  `rear-shin` 5.55 px / `rear-foot` 3.20 px, and `rear-upper-arm` and `muzzle` under
+  `rear-bracer` 2.64 px / `gun` 2.48 px. `(unattributed)` is **0.004 %** over the whole
+  candidate and **0** reference components go unreached in any of the 147 frames.
+
+⚠️ **`muzzle` is the only one that needed a third ground and it has three**, because it is much
+the largest of the twelve never-attributed slots on the ladder (1,753–2,662 px). It draws on
+**three frames of `shoot` alone**; on two of them the whole figure is a **single** connected
+component, so there is no separate reference component for the matcher to try at all;
+`(unattributed)` on that set is **0.000 %** with 0 unreached components on all three; and
+`shoot@30fps`'s sheet is the **flattest of the seven** at **1.100×** on a shot whose candidate
+draws 7.8 % more ink than the reference. The itemised read-down is in *The gate-v2.2
+re-inspection* above.
+
+⇒ **Verdict unchanged. The graduation pass holds under gate v2.2, and its 1.08× is still the
+ladder's thinnest drift margin** — though not, as *The clause margins* now computes, the
+thinnest margin on the ladder: G5's 1.04× on rung 2 is.
+
 ### 🔬 The determinism comparison — the reproducibility headline
 
 The owner asked for this explicitly, and it is the strongest result in this entry. Attempt 5
@@ -4425,6 +5019,12 @@ from *previous candidates'* figures, not from the reference skeleton. But #174 i
 and a graduation run receiving a sealed threshold in its dispatch is the strongest argument
 yet for closing it.
 
+➡️ **Closed 2026-08-29.** The clause statements are split out to [GATE.md](GATE.md), which the
+run protocol's allowed list now names, and a launch prompt **names no surface the two reading
+lists do not name and pastes no threshold**. This instance is one of the four tabulated in
+[`bench/runs/README.md`](../bench/runs/README.md), *What a run may read*; the criterion is the
+honesty rule's sixth reading above.
+
 🧾 **What this pass records for the owner rather than resolving.**
 
 1. ⚠️ **G2's thin margin is now an integrity matter, and spineboy is first in line.** 5.55 px
@@ -4437,6 +5037,13 @@ yet for closing it.
    moved under a clause's derivation and the derivation's stated ordering is now stale — and
    the two together suggest rule 2's *"a tightening finds X first"* lines want a rule for
    staying current rather than individual repairs.
+   > ➡️ **Ruled 2026-08-29, and the suggestion in the last sentence is what was adopted**
+   > ([#207](https://github.com/firejune/rigc/issues/207), closed). The lines are **deleted from
+   > the gate text**, and *The clause margins* under **Status** carries the ranking per clause —
+   > bar, closest standing pass, figure, ratio — updated by **every** adjudication as a named
+   > part of *After a run* step 1. G2's bar is **not** touched: this candidate's 1.08× stands as
+   > the ladder's thinnest drift margin, and the table records that G5's **1.04×** is thinner
+   > still. Reasoning in *Operating rules* rule 2, under *Gate v2.2* (c).
 2. ⚖️ **What the graduation certifies is a framing call, and this pass will not make it.**
    The pass is real and every clause is met on a stored candidate anyone can re-read. But the
    candidate is **inherited**, and the final lever was one geometric edit plus its refits —
@@ -4460,7 +5067,7 @@ yet for closing it.
    scope a freeze actually had. One sentence in *After a run* would.
 
 ⇒ 🎓 **The ladder is complete.** Rungs 1–8 cleared, and spineboy `ess` cleared as the
-graduation exam under gate v2.1. `pro` remains unattempted and is not a graduation
+graduation exam under gate v2.1 and re-inspected under **v2.2**. `pro` remains unattempted and is not a graduation
 requirement ([#16](https://github.com/firejune/rigc/issues/16),
 [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)).
 By rule 4 item 4 the project's question now changes: *does it match the editor?* — the only
