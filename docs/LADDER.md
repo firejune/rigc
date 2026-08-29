@@ -1,7 +1,8 @@
 # The benchmark ladder
 
 **Live status document.** The rung order, what each rung gates on, how a rung is
-scored, what a pass is (*Operating rules*, gate **v2.1**), and where each one stands
+scored, what a pass is (*Operating rules*, gate **v2.1** — the clauses themselves are
+stated in [GATE.md](GATE.md), which this section derives), and where each one stands
 today. The survey behind it is
 [SPEC_COVERAGE.md](SPEC_COVERAGE.md) — that document is a dated research note and
 does not move; this one does.
@@ -63,12 +64,14 @@ timing from a rig with the right timing and the wrong skeleton, and those call
 for opposite fixes. **A rung is marked cleared by a person reading the measures,
 and this file is where that judgement is written down.**
 
-What that person reads the measures *against* is the current gate — **gate v2** since
-2026-08-25 — in *Operating rules*
-below: which measures decide a rung, which are reported without deciding anything,
-and the number each of the deciding ones has to clear. 🚫 That section quotes
-previous runs' figures to derive those numbers, so an authoring run does not open it
-— the pointer is here for whoever is judging a candidate rather than building one.
+What that person reads the measures *against* is the current gate — **gate v2.1** since
+2026-08-26 — whose clauses are stated in **[GATE.md](GATE.md)**: which measures decide a
+rung, which are reported without deciding anything, and the number each of the deciding
+ones has to clear. ✅ **That card is allowed reading for an authoring run**, and it is the
+canonical statement of every clause. 🚫 What is not is *Operating rules* below, which
+carries the **derivations** — they quote previous runs' figures to arrive at those numbers,
+so an authoring run does not open that section. The pointer to it is here for whoever is
+judging a candidate rather than building one.
 
 #### `bones` and `slots` carry two figures
 
@@ -422,7 +425,8 @@ each:
 
 - ✅ **Allowed** — the rung's brief; `bench/reference/<example>/` frames, sheets and
   `frames.json`; `examples/<example>/images/`; that example's `.atlas`;
-  [AUTHORING.md](AUTHORING.md) in full; Spine's public documentation; this
+  [AUTHORING.md](AUTHORING.md) in full; **[GATE.md](GATE.md), the clause statements**;
+  Spine's public documentation; this
   repository's source and README as format documentation; the CLI (`bench` once, at
   the end); and earlier runs' `README.md`/`LOOP.md` for **process** only.
 - 🚫 **Forbidden** — `examples/*/export/*.json`; `bench/transcriptions/`; **this
@@ -438,6 +442,30 @@ every run's measures, and *Operating rules* derives its thresholds by quoting th
 measures back. **They stay.** They are the ladder's bookkeeping and a reader
 of the ladder needs them; what changes is that an authoring run does not read this
 file except for *How a rung is scored* and *The honesty rule* above.
+
+🆕 **A sixth reading, ruled 2026-08-29** — the surface split
+[#174](https://github.com/firejune/rigc/issues/174) asked for, and the one the four
+recorded collisions were waiting on:
+
+- **A clause statement is not answer-bearing; its derivation is.** Apply the test to the
+  two halves of *Operating rules* rule 2 and they come apart. A **threshold** — *worst
+  attributable slot drift ≤ 6.0 px* — states no reference-side value of any measure: it is
+  the exam's grading policy, and it was derived from previous **candidates'** figures, which
+  are candidate-side by the first reading above. A **derivation** — *"cleared candidates post
+  0.74–0.85 px … spineboy attempt 3 posts 14.6 px"* — quotes those candidates' scores over
+  the reference's own denominators, and the third reading seals exactly that. ⇒ **The
+  statements move to an allowed surface, [GATE.md](GATE.md), and the derivations stay
+  here.**
+  - ⚖️ **What sealing the bar actually cost, which is the argument for the split.** It
+    protected nothing — no rung's reference-side measure is narrowed by knowing the bar — and
+    it produced **four** run launches that reached around it: two re-climbs that resolved the
+    same collision in opposite directions, one that could not perform *After a run* step 1 at
+    all, and a graduation mandate that pasted the drift bar into the prompt. A rule that
+    cannot be obeyed is not a seal; it is a generator of recorded breaches.
+  - 🚫 **The split is narrow and it moves nothing else.** No measure, no threshold and no
+    recorded figure changes, this is not a gate release, and rule 5's re-inspection is not
+    owed. The status table, the per-rung sections and rule 2's derivations are as sealed as
+    they were.
 [SPEC_COVERAGE.md](SPEC_COVERAGE.md) is on the list for the same reason and more
 directly: its parts 3 and 4 inventory every example skeleton's bones, slots,
 constraints, attachment kinds and timelines, rung by rung.
@@ -464,12 +492,19 @@ made of, what closes a rung and what reopens one, the order the rungs are
 climbed in, and the cadence a gate changes at.
 
 🚫 **An authoring run does not read this section**, and it is on the forbidden list
-above for the reason the status table is: the thresholds below are derived by quoting
-previous candidates' measures, and a number reaches an agent the same way whichever
-file it is in. A run does not need it — `bench` is the finish line, and the gate is
-the reader's instrument rather than the author's. Whether a *brief* may carry the
-gate's clauses stripped of their derivation is a protocol question, and it belongs to
-whoever revises the protocol rather than to a run.
+above for the reason the status table is: the **derivations** below quote previous
+candidates' measures, and a number reaches an agent the same way whichever file it is in.
+
+✅ **What a run may read is the bar itself — [GATE.md](GATE.md), the clause statements.**
+Owner ruling 2026-08-29 ([#174](https://github.com/firejune/rigc/issues/174)), and the
+sixth reading of *The honesty rule* above is the criterion it rests on: a threshold is the
+exam's grading policy and states no reference-side value, while a derivation quotes the
+scores it was calibrated against. ⇒ **That card is the canonical statement of every clause,
+and this section is its derivation.** The table below therefore names each clause and links
+it rather than restating it — one claim, one home — and each derivation is dated by the gate
+version that produced it. If a threshold ever moves, a new dated block below supersedes the
+old derivation and the card is what changes; nothing here is edited in place, because a pass
+is versioned.
 
 ### 1. A pass is a quality gate, not a replica test
 
@@ -570,15 +605,20 @@ set that is a **single pose**. The clause statement and its precedents are the d
 block at the end of this rule, and the re-inspection it owes is under *Status*, in *The
 gate-v2.1 re-inspection*.
 
-| # | Clause | Threshold | Where the number comes from |
-| --- | --- | --- | ---: |
-| **G1** | validity | **0 FAIL** under `--profile spine` | stage 1, unchanged. Twelve honest runs have posted 0 FAILs, so this clause has never yet decided anything — it stays because a candidate that is not valid Spine 4.3 has cleared nothing |
-| **G2** | worst attributable slot drift, in **every** measured set | **≤ 6.0 px** | cleared candidates post **0.74–0.85 px** (rung 3 attempt 2, both sets) and **3.3 px** (rung 8 `pendulum`). Above them sit **4.1 px** (rung 6, at the frames' own box) and **4.2 px** (rung 8 `ball` attempt 2, **5.3 px** at attempt 1), the two highest figures any entry here describes as faithful motion. spineboy attempt 3 posts **14.6 px**, which its own entry calls a visible error on a 100 × 146 px figure. 6.0 clears the highest of those by ~1.8 px and refuses the open one by 2.4×. Deliberately **absolute** and not a fraction of the figure: `check`'s drift is in the frames' own pixels, and a relative bar would license a large rig the visible error a small one is refused |
-| **G3** | per-frame motion, in **every** set | `changeDisagreements` = **0**, and **no** set carrying `⚠️ overdraw` | `pendulum` is attributed in every frame of both sets; `ball` attempt 2 posts agreement on all 44 and all 87 adjacent pairs. spineboy posts **14** disagreements at attempt 2 and **3** at attempt 3 — a limb that teleports, a hold that is not held, a one-frame event that never fires. The overdraw half is not leniency but a hole plugged: `mae`'s denominator is the union, so drawing more buys a better mean ([#119](https://github.com/firejune/rigc/issues/119)), and `OVERDRAW_RATIO` is already 1.5 in [`src/check.ts`](../src/check.ts) against a corpus that spans 0.852–1.069 on 62 of 64 sets |
-| **G4** | the shot inventory | `animations.count` and `animations.names` **1.000**; and every animation's **length** within **one sampling interval of the coarsest rate that shot's frames were committed at** — 1/12 s everywhere on this ladder | count and names are the least deniable facts here and both are granted outright: the brief describes each shot the author is to build. The length is granted too, but only *to the grid it was rendered on*, which is why the limb is a tolerance and not a ratio — the 🧾 derivation below. v1 read `animations.duration` **1.000** instead, and that number is `bench`'s own 1/60 s agreement: finer than the frames can resolve at every rate the ladder commits, so it failed two rungs on a residual no reading of the frames could have decided |
-| **G5** | the drawn inventory, name-agnostically | `slots.count` ≥ **0.85** and `attachments.count` ≥ **0.85**, each read **after** the itemised deduction below | a part the reference draws and the candidate does not is the one structural fact a client watching the shot reports. These are the only two structural measures in `bench`'s table that a *count* alone decides — every other one is keyed on a name, on an attachment kind, on a key density or on a constraint. Cleared candidates post **1.000** on both (rung 3, `pendulum`), and so does `ball` attempt 2; the floor is set from the largest rig measured, spineboy attempt 3's **0.952 / 0.931**, so that a character-scale rig clears on the structure its own entry calls *the editor's skeleton* and the rung is decided on motion, which is the half that entry says is open |
-| **G7** | the whole shot, on a set whose frames are a contact sheet | every sheet's **worst tile ≤ 3.5 × that sheet's own mean**. A set with **no** sheet reads **SKIP**, never a pass — see the 🧾 below for what a SKIP means | new in v2, from the observable #36 added. A **ratio inside one sheet** rather than a level, because a sheet MAE is an MAE and *the MAE decides nothing across rungs or framings* — numerator and denominator here are the same measurement in the same box on the same plate, so the clause asks the only question that survives the doctrine: **is the sheet flat?** §9.2 already reads it that way — *"flat is framing or art, a spike is timing at that moment"*. The 🧾 derivation below carries the corpus |
-| **G6** | the rung | every skeleton of the rung meets G1–G5 and G7 | rung 1's precedent, and rung 8 is where it bit: `pendulum` cleared while `ball` did not, and the rung stayed 🟨 |
+📌 **The clause column is a link, not a copy.** Each row names the measure so that its
+derivation reads, and the comparator, the number and the SKIP semantics live once — on the
+card. A derivation necessarily narrates the figure it produced, which is why each is dated:
+read it as *how this version's number was arrived at*, never as *what the clause says today*.
+
+| # | The clause | Where the number comes from |
+| --- | --- | ---: |
+| **G1** | [validity](GATE.md#g1-validity) | stage 1, unchanged. Twelve honest runs have posted 0 FAILs, so this clause has never yet decided anything — it stays because a candidate that is not valid Spine 4.3 has cleared nothing |
+| **G2** | [worst attributable slot drift](GATE.md#g2-worst-attributable-slot-drift), in **every** measured set | cleared candidates post **0.74–0.85 px** (rung 3 attempt 2, both sets) and **3.3 px** (rung 8 `pendulum`). Above them sit **4.1 px** (rung 6, at the frames' own box) and **4.2 px** (rung 8 `ball` attempt 2, **5.3 px** at attempt 1), the two highest figures any entry here describes as faithful motion. spineboy attempt 3 posts **14.6 px**, which its own entry calls a visible error on a 100 × 146 px figure. 6.0 clears the highest of those by ~1.8 px and refuses the open one by 2.4×. Deliberately **absolute** and not a fraction of the figure: `check`'s drift is in the frames' own pixels, and a relative bar would license a large rig the visible error a small one is refused |
+| **G3** | [per-frame motion](GATE.md#g3-per-frame-motion), in **every** set | `pendulum` is attributed in every frame of both sets; `ball` attempt 2 posts agreement on all 44 and all 87 adjacent pairs. spineboy posts **14** disagreements at attempt 2 and **3** at attempt 3 — a limb that teleports, a hold that is not held, a one-frame event that never fires. The overdraw half is not leniency but a hole plugged: `mae`'s denominator is the union, so drawing more buys a better mean ([#119](https://github.com/firejune/rigc/issues/119)), and `OVERDRAW_RATIO` is already 1.5 in [`src/check.ts`](../src/check.ts) against a corpus that spans 0.852–1.069 on 62 of 64 sets |
+| **G4** | [the shot inventory](GATE.md#g4-the-shot-inventory) | count and names are the least deniable facts here and both are granted outright: the brief describes each shot the author is to build. The length is granted too, but only *to the grid it was rendered on*, which is why the limb is a tolerance and not a ratio — the 🧾 derivation below, and 1/12 s is the figure in practice everywhere on this ladder. v1 read `animations.duration` **1.000** instead, and that number is `bench`'s own 1/60 s agreement: finer than the frames can resolve at every rate the ladder commits, so it failed two rungs on a residual no reading of the frames could have decided |
+| **G5** | [the drawn inventory, name-agnostically](GATE.md#g5-the-drawn-inventory-name-agnostically) | a part the reference draws and the candidate does not is the one structural fact a client watching the shot reports. These are the only two structural measures in `bench`'s table that a *count* alone decides — every other one is keyed on a name, on an attachment kind, on a key density or on a constraint. Cleared candidates post **1.000** on both (rung 3, `pendulum`), and so does `ball` attempt 2; the floor is set from the largest rig measured, spineboy attempt 3's **0.952 / 0.931**, so that a character-scale rig clears on the structure its own entry calls *the editor's skeleton* and the rung is decided on motion, which is the half that entry says is open |
+| **G7** | [the whole shot, on a set whose frames are a contact sheet](GATE.md#g7-the-whole-shot-on-a-set-whose-frames-are-a-contact-sheet) | new in v2, from the observable #36 added. A **ratio inside one sheet** rather than a level, because a sheet MAE is an MAE and *the MAE decides nothing across rungs or framings* — numerator and denominator here are the same measurement in the same box on the same plate, so the clause asks the only question that survives the doctrine: **is the sheet flat?** §9.2 already reads it that way — *"flat is framing or art, a spike is timing at that moment"*. The 🧾 derivation below carries the corpus |
+| **G6** | [the rung](GATE.md#g6-the-rung) | rung 1's precedent, and rung 8 is where it bit: `pendulum` cleared while `ball` did not, and the rung stayed 🟨 |
 
 🧾 **G4's duration limb, derived from the answerability principle.** Rule 1's test is
 *could any reading of the frames have decided it?* — so the arithmetic of how the frames

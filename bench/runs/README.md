@@ -261,6 +261,34 @@ handed to an authoring agent must quote them both.** Not link them — quote the
 agent cannot avoid a document it was never told to avoid, and every leak recorded on
 this ladder so far arrived through a document the run was *told* to read.
 
+🆕 **And it quotes them *instead of* naming surfaces — owner ruling 2026-08-29,
+[#174](https://github.com/firejune/rigc/issues/174).** Four recorded collisions have the
+same shape, and none of them is a run disobeying: a launch prompt **named a surface** where
+it should have quoted these lists, and three of the four named a **forbidden** one as the
+pass bar.
+
+| The launch | What the prompt did | What the run did |
+| --- | --- | --- |
+| rung 3's re-climb, 2026-08-26 | named *Operating rules* as the pass bar, in the same breath as the forbidden list sealing it | refused to open the file, and returned figures with the clause mapping blank |
+| rung 1's re-climb, 2026-08-26 | the same | read the clause table and **recorded the breach** in its `LOOP.md` §1 |
+| rung 5's re-climb, 2026-08-26 | asked for *After a run* step 1, which writes into a sealed file | could not perform the step, and raised it as an owner item |
+| the graduation attempt, 2026-08-28 | **pasted the drift bar into the mandate** | did not open the sealed file, and its header says so |
+
+⇒ **Two requirements on any prompt that launches a run**, a pilot runner prompt included:
+
+1. **Quote both lists verbatim, in the prompt body.** A link is not a quote and a summary
+   is not a quote — a prompt that says *"follow the run protocol"* has told the agent
+   nothing it can obey.
+2. **Name no surface these lists do not name, and paste no threshold.** The clause
+   statements are allowed reading now, item 11 above, so a prompt that wants the run to
+   know the bar **points at [docs/GATE.md](../../docs/GATE.md)** instead of quoting a
+   number out of a sealed section. Neither is a leak, and only one of them is legible to
+   the run as an instruction it can keep.
+
+📌 **The first three of those collisions are the reason item 11 exists**; the fourth is why
+this paragraph does. Splitting the surface removed the *need* to name a sealed section, and
+this rule removes the *habit*.
+
 ⭐ **What decides whether a text belongs on them is the answer-derivability test**, in
 [docs/LADDER.md](../../docs/LADDER.md)'s *The honesty rule*: a text is sealed **iff it
 states or constrains a reference-side value of a scored measure**, and provenance alone
@@ -300,7 +328,20 @@ frames is not answer-bearing, so it is not swept out.
     2026-08-28. The exact file split and the reasoning are in *Inheriting the prior
     attempt's candidate* below, and a run that inherits **must** read that section
     before it opens the directory — it also carries **one obligation**, a mandatory
-    stage-0 snapshot taken before any edit.
+    stage-0 snapshot taken before any edit;
+11. 🆕 **the gate's clause statements, [docs/GATE.md](../../docs/GATE.md)** — the bar the
+    candidate will be graded against, stated and nothing else: the measure each clause
+    reads, its comparator, its number, and what it does when there is nothing to read.
+    Owner ruling, 2026-08-29 ([#174](https://github.com/firejune/rigc/issues/174)). It
+    carries **no recorded figure, no per-rung anything and no derivation** — the
+    derivations quote previous candidates' measures and stay sealed in
+    [docs/LADDER.md](../../docs/LADDER.md)'s *Operating rules*, which the table below
+    still forbids. ⚠️ **A threshold is answer-free and this is why**: the
+    answer-derivability test seals a text that states or constrains a *reference-side*
+    value of a scored measure, and a bar is the exam's grading policy — derived from
+    previous **candidates'** figures, not from the reference skeleton. Sealing it did not
+    protect the answer; it produced four run launches that reached for the sealed section
+    or pasted a number out of it.
 
 **🚫 Forbidden — and each of these has a reason beside it.**
 
@@ -308,7 +349,7 @@ frames is not answer-bearing, so it is not swept out.
 | --- | --- |
 | `examples/*/export/*.json` | the reference skeleton. This is the answer |
 | `bench/transcriptions/**` | the same answer rewritten by a script that read it |
-| [docs/LADDER.md](../../docs/LADDER.md)'s **status table**, its **per-rung sections** and its **Operating rules** | the table's *New at this rung* column publishes bone, slot and animation counts per skeleton, which the briefs withhold on purpose; the per-rung sections publish every previous run's measures; and *Operating rules* — the pass definition and the current gate — derives its thresholds by quoting those measures back, so it carries them too. All three are the ladder's bookkeeping and stay where they are — a run simply does not read them. The two parts of that document a run *should* read are *How a rung is scored* and *The honesty rule* |
+| [docs/LADDER.md](../../docs/LADDER.md)'s **status table**, its **per-rung sections** and its **Operating rules** | the table's *New at this rung* column publishes bone, slot and animation counts per skeleton, which the briefs withhold on purpose; the per-rung sections publish every previous run's measures; and *Operating rules* — the pass definition and the current gate — **derives** its thresholds by quoting those measures back, so it carries them too. All three are the ladder's bookkeeping and stay where they are — a run simply does not read them. The two parts of that document a run *should* read are *How a rung is scored* and *The honesty rule*. 🆕 **What a run needs out of *Operating rules* — the clause statements themselves — is item 11 of the allowed list above**, in [docs/GATE.md](../../docs/GATE.md). What stays sealed here is the **derivation**, not the bar |
 | [docs/SPEC_COVERAGE.md](../../docs/SPEC_COVERAGE.md) | all of it. Part 3 inventories what the corpus actually uses and part 4 lists, rung by rung, the bones, slots, constraints, attachment kinds and timelines each example skeleton carries. It is a reference export in prose |
 | [`src/ladder.ts`](../../src/ladder.ts)'s **gate strings** | the same counts again, in code — `gates:` on each rung entry names the features and the sizes |
 | **issue bodies carrying counts or measures** | the per-rung issues (#10–#18) and any issue quoting a `bench` line. A number reaches an agent the same way whichever file it is in |
@@ -557,12 +598,21 @@ costs the ladder every figure it ever printed.
 
 ## After a run
 
-1. Paste the `bench` summary into [docs/LADDER.md](../../docs/LADDER.md) and move
-   that rung's status if a person judges it cleared.
-2. Fold anything the log says about the guide back into
-   [docs/AUTHORING.md](../../docs/AUTHORING.md).
-3. A run attempted with the reference in context is recorded **as such**, or not
-   recorded at all.
+🆕 **Steps 1 and 3 are the ADJUDICATOR's, never the author's — owner ruling 2026-08-29,
+[#174](https://github.com/firejune/rigc/issues/174).** Both write into
+[docs/LADDER.md](../../docs/LADDER.md)'s status table and per-rung sections, which the
+forbidden table above seals to an authoring run, so a run performing them would be
+breaching the protocol in order to follow it. That contradiction is not hypothetical: of
+the four candidates the 2026-08-26 batch adjudicated, three declined the file outright and
+one read it and reported itself — **and both outcomes were the reading list working.**
+⇒ **An author's landing ends at the run directory and the issue comment.** A run never
+adjudicates itself, and a verdict is written by whoever holds the records.
+
+| # | The step | Whose |
+| :---: | --- | --- |
+| **1** | Paste the `bench` summary into [docs/LADDER.md](../../docs/LADDER.md), write the verdict and the clause each figure was read against into that rung's section, and move the status cell if a person judges it cleared | **adjudicator** |
+| **2** | Fold anything the log says about the guide back into [docs/AUTHORING.md](../../docs/AUTHORING.md) | either — the guide is allowed reading in both directions |
+| **3** | A run attempted with the reference in context is recorded **as such**, or not recorded at all | **both halves, and they are different files**: the author writes the honesty line in `LOOP.md` §1, and the adjudicator carries whatever it says into the verdict as a caveat |
 
 🩹 **The one exception to a run's record being final** (owner's ruling, 2026-08-26,
 [#181](https://github.com/firejune/rigc/issues/181)): a **mechanical portability repair

@@ -191,7 +191,12 @@ is the one that binds you.
 >    `bench` **once, at the end**;
 > 9. earlier runs' `README.md` and `LOOP.md` **for process only** — how a loop is
 >    run and what a log looks like — and **not** another attempt at the rung being
->    authored, whose **measures** are the answer one step away.
+>    authored, whose **measures** are the answer one step away;
+> 10. **the gate's clause statements, `docs/GATE.md`** — the bar this candidate will be
+>     graded against, stated and nothing else: the measure each clause reads, its
+>     comparator, its number, and what it does when there is nothing to read. It carries
+>     no recorded figure, no per-rung anything and no derivation; the derivations quote
+>     previous candidates' measures and stay forbidden below.
 >
 > **🚫 Forbidden — and each of these has a reason beside it.**
 >
@@ -199,7 +204,7 @@ is the one that binds you.
 > | --- | --- |
 > | `examples/*/export/*.json` | the reference skeleton. This is the answer |
 > | `bench/transcriptions/**` | the same answer rewritten by a script that read it |
-> | `docs/LADDER.md`'s **status table** and its **per-rung sections** | the table's *New at this rung* column publishes bone, slot and animation counts per skeleton, which the briefs withhold on purpose; the per-rung sections publish every previous run's measures. Both are the ladder's bookkeeping and stay where they are — a run simply does not read them. The two parts of that document a run *should* read are *How a rung is scored* and *The honesty rule* |
+> | `docs/LADDER.md`'s **status table**, its **per-rung sections** and its **Operating rules** | the table's *New at this rung* column publishes bone, slot and animation counts per skeleton, which the briefs withhold on purpose; the per-rung sections publish every previous run's measures; and *Operating rules* **derives** the gate's thresholds by quoting those measures back. All three are the ladder's bookkeeping and stay where they are — a run simply does not read them. The two parts of that document a run *should* read are *How a rung is scored* and *The honesty rule*, and the bar itself is item 10 above, `docs/GATE.md` |
 > | `docs/SPEC_COVERAGE.md` | all of it. Part 3 inventories what the corpus actually uses and part 4 lists, rung by rung, the bones, slots, constraints, attachment kinds and timelines each example skeleton carries. It is a reference export in prose |
 > | `src/ladder.ts`'s **gate strings** | the same counts again, in code — `gates:` on each rung entry names the features and the sizes |
 > | **issue bodies carrying counts or measures** | the per-rung issues (#10–#18) and any issue quoting a `bench` line. A number reaches an agent the same way whichever file it is in |

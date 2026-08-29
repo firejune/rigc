@@ -33,7 +33,11 @@ that can see that, and a run that skips it has verified nothing about the motion
 it.** The guide is allowed reading; not everything it cites is. Citations here are
 provenance for a reader of record — the loop that hit a trap, the issue that closed it —
 and following one can arrive at a stored candidate's own spec, at the corpus inventory,
-or at the gate a verdict is read against, none of which a run may open. So: read the
+or at the **derivation** of the gate a verdict is read against, none of which a run may
+open. ⭐ The gate's **clause statements** are a different matter and a run may read them:
+they are in `docs/GATE.md`, item 11 of the allowed list (owner ruling 2026-08-29) — the
+measure, the comparator, the number and the SKIP semantics, with no recorded figure in it.
+So: read the
 document, take its numbered sections as the input, and leave its footprints to whoever
 is maintaining it. The rule this states is that an **allowed-reading surface has to be
 closed under reading**; the criterion behind it is under *The honesty rule* in

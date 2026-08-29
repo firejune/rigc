@@ -196,7 +196,8 @@ bench-assisted.
 
 Three, and none of them is optional.
 
-**1. The allowed and forbidden lists are quoted verbatim, not linked.** The rule
+**1. The allowed and forbidden lists are quoted verbatim, not linked — and no surface
+is named in their place.** The rule
 is [`bench/runs/README.md`](../bench/runs/README.md)'s *What a run may read*, and
 that section says why in its own first line: *an agent cannot avoid a document it
 was never told to avoid, and every leak recorded on this ladder so far arrived
@@ -207,14 +208,27 @@ specs are excluded *on top of* item 9, not by it** — the ladder lets a success
 inherit a prior attempt's specs (owner ruling 2026-08-28), and a pilot run is not a
 successor attempt: it measures an agent authoring from zero, so the whole directory
 stays out. The prior attempt's measures are forbidden either way.
+🆕 **The second half of that rule is dated 2026-08-29** ([#174](https://github.com/firejune/rigc/issues/174)):
+a launch prompt **names no surface the lists do not name and pastes no threshold**. Four
+recorded collisions all had that shape, and the protocol's *What a run may read* carries
+them in a table. A prompt that wants the run to know the bar points at the clause card.
 
-**2. Baseline scores never appear in the runner's prompt.** LADDER.md's status
-table and its per-rung sections are on the forbidden list for exactly this reason:
-the table publishes per-skeleton bone, slot and animation counts that the briefs
-withhold on purpose, and the per-rung sections publish every previous run's
-measures. An agent that knows the target `key_counts` is being scored on aiming at
-a number. The two parts of LADDER.md a runner *may* read are *How a rung is
-scored* and *The honesty rule*.
+**2. The bar is quoted; the baselines never are.** Those are two different things and the
+ruling of 2026-08-29 separates them.
+
+- ✅ **[GATE.md](GATE.md) — the clause statements — is allowed reading**, and it is item 10
+  of the runner prompt's quoted list. It carries the measure, the comparator, the number and
+  the SKIP semantics, and no recorded figure at all.
+- 🚫 **Baseline scores never appear in the runner's prompt.** LADDER.md's status
+  table, its per-rung sections and its *Operating rules* are on the forbidden list for
+  exactly this reason: the table publishes per-skeleton bone, slot and animation counts that
+  the briefs withhold on purpose, the per-rung sections publish every previous run's
+  measures, and *Operating rules* derives the gate's thresholds by quoting those measures
+  back. An agent that knows the target `key_counts` is being scored on aiming at
+  a number. The two parts of LADDER.md a runner *may* read are *How a rung is
+  scored* and *The honesty rule*.
+- ⚠️ **And [`pilot/rung3-evaluator.md`](pilot/rung3-evaluator.md) is still yours alone.**
+  Knowing the bar is not knowing what two previous candidates scored against it.
 
 **3. The judge trusts tool output, never the runner's self-report.** A run's
 prose is the agent's account of itself and it may be sincerely wrong — that is the
@@ -224,9 +238,12 @@ green build; the `rigc: green` line is.
 
 ## Cross-links
 
+- [GATE.md](GATE.md) — the clause statements the run is graded against. Allowed
+  reading for the runner, and the only surface that states the bar.
 - [LADDER.md](LADDER.md) — *How a rung is scored* (stages, section means, why
   there is no rung score) and *The honesty rule*. Everything else in that file is
-  forbidden to the runner.
+  forbidden to the runner, *Operating rules* included: it is the derivation of the
+  card above, and it quotes previous candidates' measures to get there.
 - [`bench/runs/README.md`](../bench/runs/README.md) — the run protocol, *What a
   run may read*, and the `README.md`/`LOOP.md` layout.
 - [AUTHORING.md](AUTHORING.md) — the guide the agent authors from; §8 reading

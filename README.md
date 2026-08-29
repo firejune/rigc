@@ -193,7 +193,8 @@ the scale for a run.
 
 There is no pass mark **in the tool**, for the same reason `diff` has none. The
 ladder's pass definition and its thresholds are a document read by a person over
-the whole table — [docs/LADDER.md](docs/LADDER.md)'s *Operating rules* — and not an
+the whole table — [docs/GATE.md](docs/GATE.md) states the clauses and
+[docs/LADDER.md](docs/LADDER.md)'s *Operating rules* derives them — and not an
 exit code either command could produce.
 
 ### Benchmark ladder — the rungs, and where they stand
@@ -793,7 +794,8 @@ viewer/         the run viewer — dev server only, no build (see above)
                   vite.config.ts  /api/inventory and /repo/<path>, and the build refusal
                   inventory.ts    what is under bench/runs, resolved to URLs
                   main.ts         the two panes, the transport, the report
-docs/           AUTHORING.md (how to author a rig), LADDER.md (live rung status),
+docs/           AUTHORING.md (how to author a rig), GATE.md (the clause statements
+                a candidate is graded against), LADDER.md (live rung status),
                 SPEC_COVERAGE.md (format survey),
                 feature_matrix.{csv,json}
 .github/        workflows/ — ci.yml (the gates) and release.yml (release-please)
