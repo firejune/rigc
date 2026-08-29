@@ -39,6 +39,7 @@
  * the real geometry the fixtures only stand in for. Without one, that suite says
  * it was skipped and the run still passes on the public suite alone.
  */
+import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -4557,6 +4558,160 @@ function runSuite(suite: Suite): number {
 // entry in it is compiled and gated, so a project that adds a cut gets it covered
 // without editing this file.
 
+// ---------------------------------------------------------------------------
+// error attribution — issue #219: which file, and where in it
+// ---------------------------------------------------------------------------
+//
+// Two gaps, closed together because they share one shape: an error that names
+// a file is more useful than one that does not, and with two input files (a
+// rig spec and a motion spec) or one malformed one, "which" and "where" are
+// exactly the information a reader is missing.
+
+function runErrorAttributionSuite(): number {
+  console.log('\n── error attribution (issue #219) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const dirs = writeProbeRig();
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+
+  // E01: a fault in the motion spec's own content (an animation targeting a
+  // bone the RIG does not declare) used to be reported with no path at all,
+  // and the header above it named only the rig — the one file that is NOT at
+  // fault here.
+  {
+    const message = refusal(dirs, {
+      spec: 'rigc-motion/1',
+      archetype: 'static_probe',
+      cut: 'static_probe',
+      easings: {},
+      animations: {
+        probe: {
+          duration: 1,
+          loop: false,
+          tracks: [
+            {
+              bone: 'nonexistent_bone',
+              property: 'translatey',
+              keys: [
+                { t: 0, v: 0 },
+                { t: 1, v: 1 },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    say(
+      'E01_A_MOTION_SPEC_FAULT_NAMES_THE_MOTION_FILE',
+      message !== null && message.startsWith(motionPath) && message.includes('unknown bone "nonexistent_bone"'),
+      message === null ? 'the compile went through — the broken track was accepted' : `refused with: ${message}`,
+      'every "animation … bone … property" refusal named no file at all, and the one path the surrounding ' +
+        'output DID print was the rig\'s — the wrong file whenever the fault is here',
+    );
+  }
+
+  // E02: a motion file that fails to parse as JSON at all names the file (it
+  // always did) but not where inside it the syntax broke.
+  {
+    const brokenPath = join(dirs.dir, 'probe.motion.broken.json');
+    writeFileSync(brokenPath, '{\n  "spec": "rigc-motion/1",\n  archetype: "static_probe"\n}\n');
+    let message: string | null = null;
+    try {
+      compile({ rigPath: dirs.rigPath, motionPath: brokenPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    } catch (err) {
+      message = err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+    say(
+      'E02_A_JSON_PARSE_FAILURE_REPORTS_A_LINE_NUMBER',
+      message !== null && message.includes(brokenPath) && /line 3, column \d+/.test(message),
+      message === null ? 'the malformed JSON was somehow accepted' : `refused with: ${message}`,
+      "the runtime's own JSON.parse names the fault (\"Property name must be a string literal\") and never a " +
+        'position, so a reader knows which file broke and not where',
+    );
+  }
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// cli ergonomics — issue #218, exercised as the installed command sees it:
+// a real `bun cli.ts …` subprocess, not the functions cli.ts happens to export
+// ---------------------------------------------------------------------------
+
+/** Run `bun cli.ts <args>` as a real subprocess, from the repository root. */
+function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, ['cli.ts', ...args], {
+    cwd: import.meta.dir,
+    encoding: 'utf8',
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function runCliSuite(): number {
+  console.log('\n── cli ergonomics (subprocess: bun cli.ts …) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  {
+    const { status, stderr } = runCli(['init']);
+    say(
+      'CLI01_UNKNOWN_SUBCOMMAND_IS_NAMED_AND_NONZERO',
+      status !== 0 && status !== null && stderr.includes('unknown command: init'),
+      `exit=${String(status)} stderr=${JSON.stringify(stderr.split('\n')[0])}`,
+      '`rigc init` used to fall through to the plain usage text, silently indistinguishable from any other typo',
+    );
+  }
+
+  {
+    const { status: bareStatus, stderr: bareStderr } = runCli([]);
+    say(
+      'CLI02_NO_ARGS_IS_USAGE_NOT_AN_UNKNOWN_COMMAND',
+      bareStatus !== 0 && bareStatus !== null && bareStderr.includes('usage:') && !bareStderr.includes('unknown command'),
+      `exit=${String(bareStatus)} stderr=${JSON.stringify(bareStderr.split('\n')[0])}`,
+      'a bare invocation is a caller asking for the shape of the tool, not a typo\'d command name',
+    );
+  }
+
+  {
+    const { status, stdout, stderr } = runCli(['build', '--help']);
+    say(
+      'CLI03_BUILD_HELP_NO_LONGER_ERRORS',
+      status === 0 && stderr === '' && stdout.includes('--rig') && stdout.includes('flags:'),
+      `exit=${String(status)} stderr=${JSON.stringify(stderr)} stdout starts ${JSON.stringify(stdout.slice(0, 60))}`,
+      '`rigc build --help` used to fail argument parsing itself: "rigc: --help needs a value"',
+    );
+  }
+
+  {
+    const pkgVersion = (JSON.parse(readFileSync(join(import.meta.dir, 'package.json'), 'utf8')) as { version: string })
+      .version;
+    const { status, stdout } = runCli(['--version']);
+    say(
+      'CLI04_VERSION_PRINTS_THE_PACKAGE_VERSION',
+      status === 0 && stdout.trim() === pkgVersion,
+      `expected ${pkgVersion}, got ${JSON.stringify(stdout.trim())} (exit=${String(status)})`,
+      '`rigc --version` used to fall through to the plain usage text instead of naming a version at all',
+    );
+  }
+
+  {
+    const { status, stdout } = runCli(['-v']);
+    say(
+      'CLI05_SHORT_VERSION_FLAG_WORKS_TOO',
+      status === 0 && /^\d+\.\d+\.\d+/.test(stdout.trim()),
+      `got ${JSON.stringify(stdout.trim())} (exit=${String(status)})`,
+      'cheap to add alongside --version, and every other CLI\'s users reach for it out of habit',
+    );
+  }
+
+  return bad;
+}
+
 function runCutsSuite(): { failures: number; cuts: number } {
   console.log('\n── extra suite: registered cuts ──');
   if (CUTS === null) {
@@ -4657,6 +4812,10 @@ function main(): void {
   }
   bad += runSlotSuite();
   substantive += 2;
+  bad += runErrorAttributionSuite();
+  substantive += 2;
+  bad += runCliSuite();
+  substantive += 5;
   const diffBad = runDiffSuite();
   if (diffBad !== null) {
     bad += diffBad;
@@ -4710,6 +4869,9 @@ function main(): void {
       '+ 7 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
+      ', + 2 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
+      'reports a line number), + 5 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
+      '`--version`, `-v`)' +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : ''),
