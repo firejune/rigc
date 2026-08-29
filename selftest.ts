@@ -106,6 +106,16 @@ import {
   type Posable,
   type Viewport,
 } from './src/render.ts';
+import {
+  BALLOT_SPEC,
+  ballotId,
+  MANIFEST_ELEMENT_ID,
+  resultFilename,
+  TIE,
+  VOTE_SPEC,
+  type BallotManifest,
+  type LedgerLine,
+} from './src/ballot.ts';
 import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
 import { readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult } from './src/types.ts';
@@ -6026,6 +6036,362 @@ function runSeeItSuite(): number {
   return bad;
 }
 
+/**
+ * The A/B ballot and its ledger (issue #151).
+ *
+ * ⚠️ What this suite can and cannot see, stated up front. It reads the
+ * generated page as **text** and the ledger as **JSON**, so it covers the
+ * artifact's shape, its hashes and every refusal `--record` can make. It does
+ * not open a browser, so "the two panes actually play" is not in here — that
+ * needs a runtime with WebGL and this file has to run on a fresh clone with no
+ * network. The check that closes that gap is in the pull request's notes, not
+ * in the suite, and this comment exists so nobody reads a green here as one.
+ *
+ * The mutants are the tampered results: a forged digest, a choice that is not
+ * on the ballot, a reason code that contradicts the choice and a second vote on
+ * a ballot the ledger already has. Each has to be refused **by its own rule
+ * name**, because the caller is an agent and "invalid vote" is not actionable.
+ */
+function runBallotSuite(): number {
+  console.log('\n── the A/B ballot and its ledger (issue #151) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  // --- two candidates that differ, built through the CLI ----------------------
+  //
+  // They must differ in BOTH halves of a digest — the skeleton and the page
+  // bytes — or a mutant that forges one of them would still hash to the other's
+  // value and the refusal would pass for the wrong reason.
+  const built: { dir: string; outDir: string }[] = [];
+  for (const [length, colour] of [
+    [12, [40, 60, 200, 255]],
+    [22, [200, 60, 40, 255]],
+  ] as [number, RGBA][]) {
+    const dirs = writeProbeRig({
+      bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length }],
+    });
+    writeProbePng(join(dirs.dir, 'block.png'), 12, 8, colour);
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+    const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir]);
+    if (build.status !== 0) {
+      say('B00_THE_TWO_CANDIDATES_BUILD', false, `build exit=${String(build.status)}: ${build.stderr.split('\n')[0]}`, '');
+      return bad;
+    }
+    built.push({ dir: dirs.dir, outDir: dirs.outDir });
+  }
+  const work = mkdtempSync(join(tmpdir(), 'rigc-ballot-'));
+  const ballotPath = join(work, 'ballot.html');
+  const ledgerPath = join(work, 'votes.jsonl');
+  const vote = runCli([
+    'vote',
+    '--candidate', built[0].outDir,
+    '--candidate', built[1].outDir,
+    '--out', ballotPath,
+  ]);
+  const page = vote.status === 0 && existsSync(ballotPath) ? readFileSync(ballotPath, 'utf8') : '';
+
+  const readIfThere = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '');
+  const skeletons = built.map((b) => readIfThere(join(b.outDir, 'skeleton.json')));
+  const atlases = built.map((b) => readIfThere(join(b.outDir, 'skeleton.atlas')));
+  const pageNames = atlases.map((text) => (text === '' ? [] : atlasPageNames(text)));
+  const carries = (mime: string, body: string): boolean =>
+    body !== '' && page.includes(`data:${mime};base64,${Buffer.from(body, 'utf8').toString('base64')}`);
+  const imageUris = page.split('data:image/png;base64,').length - 1;
+  say(
+    'B01_THE_BALLOT_EMBEDS_EVERY_CANDIDATE',
+    vote.status === 0 &&
+      skeletons.every((text) => carries('application/json', text)) &&
+      atlases.every((text) => carries('text/plain', text)) &&
+      skeletons[0] !== skeletons[1] &&
+      imageUris === pageNames[0].length + pageNames[1].length,
+    vote.status === 0
+      ? `${skeletons.length} skeletons and atlases embedded byte for byte, ${imageUris} image data URI(s) for ` +
+        `${pageNames[0].length}+${pageNames[1].length} atlas page(s)`
+      : `vote exit=${String(vote.status)}: ${vote.stderr.split('\n')[0]}`,
+    'a ballot missing one candidate\'s pages is a comparison against a blank pane, which reads as a defect in that candidate',
+  );
+
+  // The manifest is the machine-readable half of the file, and everything below
+  // reads the ballot through it rather than through the prose.
+  let manifest: BallotManifest | null = null;
+  const manifestText = new RegExp(
+    `<script type="application/json" id="${MANIFEST_ELEMENT_ID}">([\\s\\S]*?)</script>`,
+  ).exec(page);
+  if (manifestText) manifest = JSON.parse(manifestText[1]) as BallotManifest;
+
+  // ⚖️ The one thing the page must NOT say. A voter who can see that B came out
+  // of `experiments/` is not comparing pictures any more, so the paths live in
+  // the manifest and the manifest only — checked by looking for them in the page
+  // with that element cut out of it.
+  const withoutManifest = manifestText ? page.replace(manifestText[0], '') : page;
+  const sources = manifest?.candidates.map((c) => c.source) ?? [];
+  say(
+    'B02_THE_PAGE_SHOWS_NO_CANDIDATE_PATH',
+    manifest !== null &&
+      sources.length === 2 &&
+      sources.every((source) => source !== '' && page.includes(source) && !withoutManifest.includes(source)) &&
+      /<h2>A<\/h2>/.test(page) &&
+      /<h2>B<\/h2>/.test(page),
+    manifest === null
+      ? `no <script id="${MANIFEST_ELEMENT_ID}"> in the page`
+      : `panes labelled A and B; both source paths present in the manifest and absent from the rest of the file`,
+    'labels are neutral so the vote is about pixels; the mapping still has to be auditable, so it is in the file but never on the screen',
+  );
+
+  // The id is a hash of the candidates, which is what makes a result checkable
+  // against a ballot at all — and swapping the panes has to make a NEW ballot,
+  // because "which side was it on" is exactly the bias a re-vote controls for.
+  const digests = manifest?.candidates.map((c) => c.digest) ?? [];
+  const derived = manifest === null ? '' : ballotId(manifest.animation, digests);
+  const swapped = manifest === null ? '' : ballotId(manifest.animation, [...digests].reverse());
+  say(
+    'B03_THE_BALLOT_ID_DERIVES_FROM_ITS_CANDIDATE_DIGESTS',
+    manifest !== null &&
+      manifest.spec === BALLOT_SPEC &&
+      derived === manifest.ballot &&
+      swapped !== manifest.ballot &&
+      digests[0] !== digests[1] &&
+      new Set(digests).size === 2,
+    manifest === null ? 'no manifest to read' : `${manifest.ballot} = hash(${digests.length} digests), and reversed = ${swapped}`,
+    'a label means nothing outside one ballot and a path means nothing once the directory is rebuilt; the digest is the only stable name',
+  );
+
+  // --- a vote comes back ------------------------------------------------------
+  //
+  // Synthesised exactly as the page writes it. Building it from the manifest
+  // rather than from a literal is what makes the round trip a round trip: a
+  // change to either shape breaks this without anybody editing the expectation.
+  const resultFor = (against: BallotManifest | null, choice: string, reasonCode: string, reason: string): string =>
+    `${JSON.stringify(
+      {
+        spec: VOTE_SPEC,
+        ballot: against?.ballot,
+        animation: against?.animation ?? null,
+        candidates: (against?.candidates ?? []).map((c) => ({ label: c.label, digest: c.digest })),
+        choice,
+        reasonCode,
+        reason,
+        at: '2026-08-25T09:00:00.000Z',
+        player: '4.3.*',
+      },
+      null,
+      2,
+    )}\n`;
+  const writeResult = (name: string, text: string): string => {
+    const path = join(work, name);
+    writeFileSync(path, text);
+    return path;
+  };
+  const record = (path: string, extra: string[] = [], against = ballotPath): ReturnType<typeof runCli> =>
+    runCli(['vote', '--record', path, '--ballot', against, '--ledger', ledgerPath, ...extra]);
+  const ledger = (): LedgerLine[] =>
+    existsSync(ledgerPath)
+      ? readFileSync(ledgerPath, 'utf8')
+          .split('\n')
+          .filter((line) => line.trim() !== '')
+          .map((line) => JSON.parse(line) as LedgerLine)
+      : [];
+
+  const winnerPath = writeResult(
+    resultFilename(manifest?.ballot ?? 'x'),
+    resultFor(manifest, 'B', 'defect-in-others', "A's marker drifts"),
+  );
+  const first = record(winnerPath);
+  const afterFirst = ledger();
+  say(
+    'B04_A_VOTE_ROUND_TRIPS_INTO_THE_LEDGER',
+    first.status === 0 &&
+      afterFirst.length === 1 &&
+      afterFirst[0].spec === VOTE_SPEC &&
+      afterFirst[0].seq === 1 &&
+      afterFirst[0].attempt === 1 &&
+      afterFirst[0].ballot === manifest?.ballot &&
+      afterFirst[0].choice === 'B' &&
+      afterFirst[0].winner === digests[1] &&
+      afterFirst[0].coverage.length === 2 &&
+      afterFirst[0].coverage.map((c) => c.digest).join() === digests.join(),
+    first.status === 0
+      ? `line 1: choice=${afterFirst[0]?.choice} winner=${String(afterFirst[0]?.winner).slice(0, 20)}… coverage=${afterFirst[0]?.coverage.length}`
+      : `record exit=${String(first.status)}: ${first.stderr.split('\n').find((l) => l.includes('FAIL')) ?? first.stderr.split('\n')[0]}`,
+    'the ledger carries the WINNER as a digest, not as "B": the next ballot\'s B is a different rig',
+  );
+
+  // ⭐ The distinction the whole record exists for. A tie the human declared is
+  // an ANSWER and lands as a line; only an unopened ballot is missing from the
+  // ledger. `both-unacceptable` is the tie that means "propose again", and it is
+  // unreachable if a tie is not recordable.
+  //
+  // Recorded against a SECOND ballot — the same two builds with the panes
+  // swapped — because one ballot is one question and B09 below is the control
+  // that says so. The swap is also how a run controls for a voter's bias toward
+  // the left pane, so this doubles as the end-to-end version of B03's `swapped`.
+  const swappedPath = join(work, 'swapped.html');
+  const swapVote = runCli([
+    'vote',
+    '--candidate', built[1].outDir,
+    '--candidate', built[0].outDir,
+    '--out', swappedPath,
+  ]);
+  let swappedManifest: BallotManifest | null = null;
+  if (swapVote.status === 0 && existsSync(swappedPath)) {
+    const found = new RegExp(
+      `<script type="application/json" id="${MANIFEST_ELEMENT_ID}">([\\s\\S]*?)</script>`,
+    ).exec(readFileSync(swappedPath, 'utf8'));
+    if (found) swappedManifest = JSON.parse(found[1]) as BallotManifest;
+  }
+  const tiePath = writeResult('tie.json', resultFor(swappedManifest, TIE, 'both-unacceptable', 'neither holds the pose'));
+  const tie = record(tiePath, [], swappedPath);
+  const afterTie = ledger();
+  say(
+    'B05_A_TIE_IS_A_RECORDED_OUTCOME_NOT_A_MISSING_ONE',
+    tie.status === 0 &&
+      swappedManifest !== null &&
+      swappedManifest.ballot !== manifest?.ballot &&
+      afterTie.length === 2 &&
+      afterTie[1].seq === 2 &&
+      afterTie[1].ballot === swappedManifest.ballot &&
+      afterTie[1].choice === TIE &&
+      afterTie[1].winner === null &&
+      afterTie[1].reasonCode === 'both-unacceptable' &&
+      afterTie[1].coverage.length === 2,
+    tie.status === 0
+      ? `line 2 on the pane-swapped ballot ${String(swappedManifest?.ballot)}: choice=${afterTie[1]?.choice} ` +
+        `winner=${String(afterTie[1]?.winner)} reasonCode=${afterTie[1]?.reasonCode}`
+      : `record exit=${String(tie.status)}: ${tie.stderr.split('\n').find((l) => l.includes('FAIL')) ?? ''}`,
+    'an interface that only offers "pick one" turns "these are indistinguishable" into an unanswered question',
+  );
+
+  // --- the mutants: four tampered results, four named refusals ----------------
+  const refusals: { name: string; rule: string; path: string; extra?: string[]; why: string }[] = [
+    {
+      name: 'B06_A_FORGED_DIGEST_IS_REFUSED_BY_NAME',
+      rule: 'V02_CANDIDATE_DIGESTS_ARE_THE_BALLOTS',
+      path: writeResult(
+        'forged.json',
+        resultFor(manifest, 'A', 'preferred', '').replace(digests[1] ?? '', `sha256:${'0'.repeat(64)}`),
+      ),
+      why: 'a vote is about the pixels whose hashes it carries; a result naming other pixels is a vote on something else',
+    },
+    {
+      name: 'B07_A_CHOICE_THAT_IS_NOT_ON_THE_BALLOT_IS_REFUSED',
+      rule: 'V04_CHOICE_IS_ON_THE_BALLOT',
+      path: writeResult('unknown-choice.json', resultFor(manifest, 'Z', 'preferred', '')),
+      why: 'a winner nobody can resolve to a digest is a ledger line that means nothing to the agent that reads it',
+    },
+    {
+      name: 'B08_A_REASON_CODE_THAT_CONTRADICTS_THE_CHOICE_IS_REFUSED',
+      rule: 'V05_REASON_CODE_FITS_THE_CHOICE',
+      path: writeResult('mismatched-code.json', resultFor(manifest, TIE, 'preferred', '')),
+      why: '"tie, because this one is better" is not a state; the enumeration is only worth having if it is enforced',
+    },
+    {
+      name: 'B09_A_SECOND_VOTE_ON_ONE_BALLOT_NEEDS_AGAIN',
+      rule: 'V06_NOT_ALREADY_RECORDED',
+      path: winnerPath,
+      why: 'a result file recorded twice by a retrying agent would double one human\'s answer and skew every count over the ledger',
+    },
+  ];
+  for (const mutant of refusals) {
+    const before = ledger().length;
+    const run = record(mutant.path, mutant.extra);
+    const after = ledger();
+    const named = run.stderr.includes(`FAIL  ${mutant.rule}`);
+    say(
+      mutant.name,
+      run.status === 1 && named && after.length === before,
+      run.status === 1
+        ? `exit=1, ${named ? `refused by ${mutant.rule}` : `WRONG RULE: ${JSON.stringify(run.stderr.split('\n')[4] ?? '')}`}, ` +
+          `ledger still ${after.length} line(s)`
+        : `exit=${String(run.status)} — the ledger took it`,
+      mutant.why,
+    );
+  }
+
+  // …and `--again` is the door, so the refusal above is a gate rather than a wall.
+  const again = record(winnerPath, ['--again']);
+  const afterAgain = ledger();
+  say(
+    'B10_AGAIN_RECORDS_A_DELIBERATE_RE_VOTE_AS_A_SECOND_ATTEMPT',
+    again.status === 0 &&
+      afterAgain.length === 3 &&
+      afterAgain[2].seq === 3 &&
+      afterAgain[2].attempt === 2 &&
+      afterAgain[2].ballot === manifest?.ballot &&
+      // `attempt` counts this ballot's votes and `seq` counts the ledger's: the
+      // tie on the swapped ballot sits between them, so a line whose attempt is
+      // 2 at seq 3 is the proof the two counters are not the same number.
+      afterAgain[1].ballot !== manifest?.ballot,
+    again.status === 0
+      ? `line 3: seq=${afterAgain[2]?.seq} attempt=${afterAgain[2]?.attempt}`
+      : `record --again exit=${String(again.status)}`,
+    'a re-vote after a change of mind is a real event; refusing it outright would push it into hand-editing the ledger',
+  );
+
+  // --- the arguments ----------------------------------------------------------
+  const alone = runCli(['vote', '--candidate', built[0].outDir, '--out', join(work, 'alone.html')]);
+  const tooMany = runCli([
+    'vote',
+    ...built.flatMap((b) => ['--candidate', b.outDir]),
+    ...built.flatMap((b) => ['--candidate', b.outDir]),
+    '--candidate', built[0].outDir,
+    '--out', join(work, 'crowd.html'),
+  ]);
+  const repeatedElsewhere = runCli(['check', '--candidate', built[0].outDir, '--candidate', built[1].outDir, '--frames', work]);
+  say(
+    'B11_THE_CANDIDATE_COUNT_IS_BOUNDED_AND_A_REPEAT_ELSEWHERE_IS_A_TYPO',
+    alone.status === 2 &&
+      /one candidate on its own is `rigc preview`/.test(alone.stderr) &&
+      tooMany.status === 2 &&
+      /at most 4/.test(tooMany.stderr) &&
+      repeatedElsewhere.status === 2 &&
+      /--candidate was given more than once/.test(repeatedElsewhere.stderr),
+    `one candidate exit=${String(alone.status)}, five exit=${String(tooMany.status)}, ` +
+      `\`check --candidate a --candidate b\` exit=${String(repeatedElsewhere.status)}`,
+    'a repeated --candidate used to be silently last-wins everywhere, which is a report about a rig nobody asked about',
+  );
+
+  // Two panes playing two different animations look like a comparison and are
+  // not one — and the labels are A and B, so nothing on the screen would say so.
+  const mismatched = runCli([
+    'vote',
+    '--candidate', built[0].outDir,
+    '--candidate', built[1].outDir,
+    '--animation', 'nope',
+    '--out', join(work, 'mismatched.html'),
+  ]);
+  const help = runCli(['vote', '--help']);
+  const topLevel = runCli([]);
+  say(
+    'B12_AN_ANIMATION_NO_CANDIDATE_HAS_IS_REFUSED_AND_VOTE_IS_DISCOVERABLE',
+    mismatched.status === 2 &&
+      /no animation "nope" in candidate 1/.test(mismatched.stderr) &&
+      /slide/.test(mismatched.stderr) &&
+      help.status === 0 &&
+      help.stdout.includes('--record') &&
+      help.stdout.includes('--ledger') &&
+      topLevel.stderr.includes('rigc vote'),
+    `mismatched animation exit=${String(mismatched.status)}, \`vote --help\` ${help.status === 0 ? 'ok' : 'FAILED'}, ` +
+      'named in the bare-invocation usage',
+    'a ballot whose panes play different animations is unfalsifiable from the outside — the voter cannot see which is which',
+  );
+
+  // ⚖️ The licence line for the new surface, as a machine check: same posture as
+  // the preview, so NOTICE.md needs no new sentence and this is what keeps that true.
+  say(
+    'B13_THE_PLAYER_IS_REFERENCED_AND_NEVER_VENDORED',
+    /<script src="https:\/\/unpkg\.com\/@esotericsoftware\/spine-player@[^"]+"><\/script>/.test(page) &&
+      !page.includes('SpinePlayer = class') &&
+      page.includes('spine-runtimes-license'),
+    `player loaded by <script src>, page is ${(page.length / 1024).toFixed(1)} KiB, and it names the Spine Runtimes licence`,
+    'NOTICE.md: the Spine Runtimes are Esoteric Software\'s and rigc redistributes none of them — a second surface must not be the exception',
+  );
+
+  return bad;
+}
+
 function runCutsSuite(): { failures: number; cuts: number } {
   console.log('\n── extra suite: registered cuts ──');
   if (CUTS === null) {
@@ -6146,6 +6512,8 @@ function main(): void {
   }
   bad += runSeeItSuite();
   substantive += 11;
+  bad += runBallotSuite();
+  substantive += 13;
   bad += runCopyImagesSuite();
   substantive += 3;
   const diffBad = runDiffSuite();
@@ -6223,6 +6591,14 @@ function main(): void {
       'to RGBA while still refusing a colour type that is not one, a preview embedding the skeleton, the atlas and ' +
       'one data URI per page under the names the player asks for, the player referenced rather than vendored, both ' +
       'commands in the help, and a misspelled --animation refused by name)' +
+      ', + 13 ballot controls (two candidates embedded whole in one page, neutral A/B panes with both source paths ' +
+      'in the manifest and nowhere else, a ballot id that derives from the candidate digests and changes when the ' +
+      'panes swap, a winner and a tie each landing as a ledger line carrying the winning DIGEST and its coverage, ' +
+      'four tampered results — a forged digest, a choice that is not on the ballot, a reason code contradicting the ' +
+      'choice, and a duplicate — each refused by its own rule name with nothing appended, --again recording a ' +
+      'deliberate re-vote as attempt 2, the candidate count bounded at both ends with a repeated --candidate ' +
+      'elsewhere refused as the typo it is, an animation no candidate has refused by name, `vote` in the help, and ' +
+      'the player referenced rather than vendored)' +
       ', + 3 copy-images controls (self-contained out dir, unchanged default, deterministic basename collision)' +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
