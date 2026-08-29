@@ -102,36 +102,20 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { findRung, RUNG_IDS } from '../src/ladder.ts';
 import {
   BACKGROUND,
-  blitPiece,
-  fill,
+  contactSheet,
   FRAMES_SIDECAR,
   FRAMES_SPEC,
   framingViewport,
   loadPosable,
-  pageFor,
   PROTOCOL_FPS,
-  projector,
   renderFrame,
   sampleAll,
   SETUP_POSE_DIR,
-  SHEET_COLUMNS,
   SHEET_FILE,
-  SHEET_GAP,
-  type Frame,
+  SHEET_TILE,
   type FramesSidecar,
   type FrameSet,
-  type Viewport,
 } from '../src/render.ts';
-import { Plate, type RGBA } from '../tools/plate.ts';
-
-/** Contact sheet: default tile long side, and the two colours the grid is drawn in.
- *
- * The column count and the one-pixel rule are `src/render.ts`'s — they are the
- * layout `rigc check` reads a sheet's tiles back out of (issue #36), so they are
- * part of the frame-set contract rather than of this script. */
-const SHEET_TILE = 128;
-const SHEET_RULE: RGBA = [176, 176, 176, 255];
-const SHEET_LABEL: RGBA = [96, 96, 96, 255];
 
 /**
  * 🔓 The examples that may be rendered **local-only** — one name, and it is a set
@@ -224,45 +208,6 @@ function parseArgs(argv: string[]): Record<string, string> {
     i++;
   }
   return flags;
-}
-
-/**
- * Every frame of one animation as one labelled grid, row major.
- *
- * Not decoration: rung 3's subject is *spacing* — how far a thing travels
- * between two consecutive frames — and that is a comparison across frames. A
- * reader flipping through 65 separate files is comparing against memory.
- */
-function contactSheet(
-  frames: Frame[],
-  pages: Map<string, Plate>,
-  viewport: Viewport,
-  tile: number,
-): Plate {
-  const tileScale = tile / Math.max(viewport.width, viewport.height);
-  const tileW = Math.max(1, Math.round(viewport.width * tileScale));
-  const tileH = Math.max(1, Math.round(viewport.height * tileScale));
-  const columns = Math.min(SHEET_COLUMNS, frames.length);
-  const rows = Math.ceil(frames.length / columns);
-  const sheet = new Plate(columns * (tileW + SHEET_GAP) + SHEET_GAP, rows * (tileH + SHEET_GAP) + SHEET_GAP);
-  fill(sheet, SHEET_RULE);
-  const base = projector(viewport);
-  frames.forEach((frame, i) => {
-    const col = i % columns;
-    const row = Math.floor(i / columns);
-    const ox = col * (tileW + SHEET_GAP) + SHEET_GAP;
-    const oy = row * (tileH + SHEET_GAP) + SHEET_GAP;
-    const plate = new Plate(tileW, tileH);
-    fill(plate, BACKGROUND);
-    const project = (wx: number, wy: number): [number, number] => {
-      const [px, py] = base(wx, wy);
-      return [px * tileScale, py * tileScale];
-    };
-    for (const piece of frame.pieces) blitPiece(plate, pageFor(pages, piece), piece, project);
-    plate.text(String(i), 2, 2, 1, SHEET_LABEL);
-    for (let y = 0; y < tileH; y++) for (let x = 0; x < tileW; x++) sheet.set(ox + x, oy + y, plate.get(x, y));
-  });
-  return sheet;
 }
 
 /**
