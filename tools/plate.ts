@@ -169,7 +169,19 @@ function crc32(buf: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-function chunk(type: string, body: Uint8Array): Uint8Array {
+/** The eight bytes every PNG opens with. */
+export const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/**
+ * One PNG chunk: length, type, body, CRC.
+ *
+ * Exported because this writer only ever emits colour type 6, and the selftest
+ * has to produce the colour types it does NOT — indexed and greyscale, with and
+ * without a `tRNS` chunk — to have anything for `A19` to judge. Building those by
+ * hand needs the CRC table, and a second copy of it in the test would be a second
+ * thing that can be wrong.
+ */
+export function pngChunk(type: string, body: Uint8Array): Uint8Array {
   const out = new Uint8Array(body.length + 12);
   const view = new DataView(out.buffer);
   view.setUint32(0, body.length);
@@ -197,10 +209,10 @@ export function encodePng(width: number, height: number, rgba: Uint8Array): Uint
   ihdr[11] = 0;
   ihdr[12] = 0;
   const parts = [
-    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', new Uint8Array(deflateSync(raw, { level: 9 }))),
-    chunk('IEND', new Uint8Array(0)),
+    PNG_SIGNATURE,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', new Uint8Array(deflateSync(raw, { level: 9 }))),
+    pngChunk('IEND', new Uint8Array(0)),
   ];
   const total = parts.reduce((n, p) => n + p.length, 0);
   const out = new Uint8Array(total);

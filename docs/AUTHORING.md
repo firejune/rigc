@@ -116,6 +116,7 @@ What the flags mean:
 | `--rig` | the rig spec — skeleton structure |
 | `--motion` | the motion spec — time |
 | `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths are written relative to it |
+| `--copy-images` | `build` only: also copies every referenced page PNG into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own. Default is unchanged — page paths still point at the source art (issue #217) |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--profile` | `spine` = the 20 validity rules · `spine-html` = all 34 (**the default**) |
@@ -871,7 +872,7 @@ The report prints one line per assertion:
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` label is not on the 4.3 line (`4.3`, `4.3.N`, `4.3.N-suffix`) |
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | a page the atlas declares is not a file. Check `--images` and `--out` |
 | `A18_DETERMINISTIC_EMIT` | both | a second compile of the same inputs differed. That is a compiler bug, not a spec bug — report it |
-| `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | an overlay page has a colour type with no alpha channel. Only the full-stage base plate may be opaque |
+| `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | an overlay part image can never be transparent: no alpha channel (colour type 4 or 6) and no `tRNS` chunk either, so it would paint a solid rectangle over what is behind it. Re-export it as RGBA, or as an indexed / greyscale PNG that keeps its `tRNS`. Only the full-stage base plate may be opaque. Indexed-with-`tRNS` — the usual output of ImageMagick, "Export as PNG-8", GIMP's indexed mode, aseprite and pngquant — **passes**: it is transparent art |
 | `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, or a binding at weight 0 |
 | `A21_MESH_RIM_PINNED` | archetype | a generated ring's rim, or a ribbon's entry row, is not pinned to its anchor bone at weight 1 |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | a mesh UV outside its region, or a UV array that disagrees with the vertex count |

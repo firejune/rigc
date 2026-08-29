@@ -29,7 +29,7 @@ import {
   SkeletonJson,
   TextureAtlas,
 } from '@esotericsoftware/spine-core';
-import { readPngInfo } from './png.ts';
+import { colourTypeName, readPngInfo } from './png.ts';
 import { CHANNELS_BY_KIND, KEY_TIME_EPSILON, walkTimelines } from './timelines.ts';
 import type { RigInfo } from './types.ts';
 
@@ -1297,11 +1297,21 @@ export function validate(input: ValidateInput): ValidateReport {
       }
     }
   });
-  // An overlay part must carry an alpha channel or it cannot be an overlay: it
-  // would paint an opaque rectangle over the untouched base, and an overlay
-  // formation's whole claim is that the still frame has no seam. The base
+  // An overlay part must be able to draw a transparent pixel or it cannot be an
+  // overlay: it would paint a solid rectangle over the untouched base, and an
+  // overlay formation's whole claim is that the still frame has no seam. The base
   // plate itself is the one page allowed to be opaque, and it identifies
   // itself structurally — it is the region that covers the whole stage.
+  //
+  // ⭐ Transparency is not the same thing as an alpha CHANNEL, and this assertion
+  // used to conflate them (#215). Colour types 4 and 6 store alpha per pixel;
+  // types 0, 2 and 3 store it in a `tRNS` chunk instead, and indexed+tRNS is the
+  // ordinary output of ImageMagick, Photoshop's PNG-8 export, GIMP's indexed
+  // mode, aseprite and pngquant. Judging on the colour type alone refused art
+  // that was never broken — seven of one author's nine hand-drawn parts, on their
+  // first build — and told them, untruthfully, that the file held no transparency
+  // at all. It is the likeliest first error a stranger meets, so the refusal
+  // below has to be both TRUE and actionable when it does fire.
   check('A19_OVERLAY_PNGS_HAVE_ALPHA', () => {
     if (!atlas) return;
     const stageW = skeletonData?.width ?? 0;
@@ -1313,15 +1323,27 @@ export function validate(input: ValidateInput): ValidateReport {
         if (region) basePages.add(region.page.name);
       }
     }
+    // The escape hatch is only worth naming when it is reachable: with no stage
+    // size to measure against, `basePages` is empty and no image can qualify, so
+    // pointing at it would send the reader after a door that is not there.
+    const exemption =
+      stageW && stageH
+        ? `Only the one image big enough to cover the whole stage (${stageW}x${stageH}) may be opaque.`
+        : 'The one image that covers the whole stage may be opaque, but this skeleton declares no stage size, so ' +
+          'nothing here qualifies.';
     for (const page of atlas.pages) {
       const abs = resolve(input.atlasDir, page.name);
       if (!existsSync(abs)) continue;
       const info = readPngInfo(abs);
-      if (info.hasAlpha) continue;
+      if (info.hasTransparency) continue;
       if (basePages.has(page.name)) continue; // full-stage base plate: opaque is correct
       fail(
         'A19_OVERLAY_PNGS_HAVE_ALPHA',
-        `overlay page "${page.name}" has colour type ${info.colourType}, which carries no alpha channel`,
+        `part image "${page.name}" cannot be transparent anywhere: it is colour type ${info.colourType} ` +
+          `(${colourTypeName(info.colourType)}) with no tRNS chunk, so it would paint a solid rectangle over ` +
+          'whatever is drawn behind it. Re-export it with transparency — as RGBA, or as an indexed or greyscale ' +
+          `PNG that keeps its tRNS chunk. ${exemption} This is renderer policy: --profile spine does not run ` +
+          'this check.',
       );
     }
   });
