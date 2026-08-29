@@ -43,7 +43,7 @@ export interface Failure {
  *
  * ⭐ The distinction this draws is the difference between "wrong" and "not how we
  * do it here", and conflating the two is how a validator stops being usable on
- * anybody else's data. Fourteen of the 34 assertions are policy — seven for one
+ * anybody else's data. Fourteen of the 36 assertions are policy — seven for one
  * renderer (`spine-html`) and one project's canvas budget, seven for rigc's own
  * formations — and every one of them fires
  * on real, correct, editor-produced Spine data — the official example projects
@@ -133,6 +133,8 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A31_DRAW_ORDER_OFFSETS_RESOLVE: 'validity',
   A32_EVENT_KEYS_RESOLVE: 'validity',
   A33_VERTEX_ATTACHMENT_GEOMETRY: 'validity',
+  A34_CONSTRAINT_TIMELINE_TARGETS: 'validity',
+  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: 'validity',
 };
 
 export interface ValidateInput {
@@ -226,6 +228,38 @@ type Json = Record<string, unknown>;
 
 function isObj(v: unknown): v is Json {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * How long the array a deform key edits is, read off one raw attachment — or
+ * `null` when the file does not say.
+ *
+ * The rule is `readVertices`' own: the attachment's `vertices` is coordinates
+ * when its length equals `worldVerticesLength`, and a weight run otherwise. A
+ * deform array is therefore one `x, y` pair per **vertex** in the first case and
+ * one per **bone influence** (`vertices.length / 3`) in the second — the same
+ * count with two different meanings, which is exactly why this measures rather
+ * than assumes.
+ *
+ * `null` for the two shapes that cannot be measured from this object alone: a
+ * type with no vertices at all (nothing to deform, and the parser throws on it),
+ * and a `linkedmesh`, whose geometry belongs to another attachment.
+ */
+function deformArrayLength(att: Json): number | null {
+  const type = typeof att.type === 'string' ? att.type : 'region';
+  let worldVerticesLength: number;
+  if (type === 'mesh') {
+    if (!Array.isArray(att.uvs)) return null;
+    worldVerticesLength = att.uvs.length;
+  } else if (type === 'boundingbox' || type === 'clipping' || type === 'path') {
+    if (typeof att.vertexCount !== 'number') return null;
+    worldVerticesLength = att.vertexCount * 2;
+  } else {
+    return null;
+  }
+  if (!Array.isArray(att.vertices)) return null;
+  const vertices = att.vertices as unknown[];
+  return vertices.length === worldVerticesLength ? worldVerticesLength : (vertices.length / 3) * 2;
 }
 
 export function validate(input: ValidateInput): ValidateReport {
@@ -466,6 +500,200 @@ export function validate(input: ValidateInput): ValidateReport {
       });
     }
     if (!sawATimeline) return skip('A32_EVENT_KEYS_RESOLVE', 'no animation carries an event timeline');
+  });
+
+  // --- A34: ik / transform timelines aim at a constraint of that type -------
+  //
+  // These two groups are one unnamed timeline per constraint
+  // (`animations.<a>.ik.<name>`), and the parser resolves the name AND the type:
+  // `findConstraint(name, IkConstraintData)` returns null for a transform
+  // constraint that happens to share the name, and `readAnimation` then throws
+  // `IK Constraint not found`. That one is loud — A00 reports it, as a parser
+  // message about a name with no context — so this assertion exists for the
+  // second failure, which is silent:
+  //
+  //   **An empty key array.** `let keyMap = constraintMap[0]; if (!keyMap)
+  //   continue;` — the group is read, the timeline is skipped, and nothing is
+  //   said. `"ik": { "leg-ik": [] }` is a timeline that does not exist, written
+  //   by a generator that thought it wrote one.
+  //
+  // Reporting both from here also means a candidate with a misspelled constraint
+  // gets told which constraints it does have, rather than being handed the
+  // loader's own sentence.
+  check('A34_CONSTRAINT_TIMELINE_TARGETS', () => {
+    if (!raw) return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'the skeleton JSON did not parse (A00 owns that failure)');
+    if (!isObj(raw.animations)) return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'the skeleton declares no animations');
+    const typeOf = new Map<string, string>();
+    for (const entry of Array.isArray(raw.constraints) ? (raw.constraints as unknown[]) : []) {
+      if (isObj(entry) && typeof entry.name === 'string') typeOf.set(entry.name, String(entry.type));
+    }
+    let sawATimeline = false;
+    for (const [animName, anim] of Object.entries(raw.animations as Json)) {
+      if (!isObj(anim)) continue;
+      for (const group of ['ik', 'transform'] as const) {
+        if (!isObj(anim[group])) continue;
+        for (const [name, keys] of Object.entries(anim[group] as Json)) {
+          sawATimeline = true;
+          const at = `animation "${animName}" ${group} timeline "${name}"`;
+          const declared = typeOf.get(name);
+          if (declared === undefined) {
+            const known = [...typeOf.entries()].filter(([, t]) => t === group).map(([n]) => n);
+            fail(
+              'A34_CONSTRAINT_TIMELINE_TARGETS',
+              `${at}: the skeleton's constraints array has no "${name}"` +
+                (known.length ? ` (${group} constraints: ${known.join(', ')})` : `, and no ${group} constraint at all`),
+            );
+            continue;
+          }
+          if (declared !== group) {
+            fail(
+              'A34_CONSTRAINT_TIMELINE_TARGETS',
+              `${at}: "${name}" is declared as a "${declared}" constraint, so the ${group} lookup misses it and the loader throws`,
+            );
+            continue;
+          }
+          if (!Array.isArray(keys) || keys.length === 0) {
+            fail(
+              'A34_CONSTRAINT_TIMELINE_TARGETS',
+              `${at}: the key array is ${Array.isArray(keys) ? 'empty' : JSON.stringify(keys)}; the parser reads ` +
+                'key 0, finds nothing and skips the whole timeline without a word',
+            );
+          }
+        }
+      }
+    }
+    if (!sawATimeline) {
+      return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'no animation carries an ik or transform constraint timeline');
+    }
+  });
+
+  // --- A35: a deform key's run lands inside the attachment it edits ---------
+  //
+  // 🚨 The nastiest silent failure in the animation half of this format. A deform
+  // key is a sparse edit of a vertex array whose length comes from the attachment,
+  // and the parser applies it with
+  //
+  //   Utils.arrayCopy(verticesValue, 0, deform, start, verticesValue.length)
+  //
+  // into a `Float32Array`. Writing past the end of a typed array in JavaScript is
+  // a **no-op** — no throw, no warning, no NaN — so a run one pair too long, or a
+  // run aimed at an attachment with fewer vertices than the author thought, loses
+  // its tail and deforms the rest correctly. The result looks nearly right, which
+  // is worse than looking wrong.
+  //
+  // Two more shapes, both of them equally quiet:
+  //
+  //   * an **odd `offset`** puts every x of the run on a y and every y on the
+  //     next x — the array is pairs, and nothing in the format says so;
+  //   * a **non-finite value** in `vertices` reaches `computeWorldVertices` and
+  //     turns the vertex into NaN, which A10 would only catch if the deformed
+  //     slot's BONE went non-finite, and it does not.
+  //
+  // The length depends on the encoding and the two are the same split
+  // `readVertices` makes: unweighted is one pair per vertex, weighted is one pair
+  // per bone influence (`vertices.length / 3 * 2`). Deriving it here rather than
+  // assuming either is the whole point — assuming would produce a confident,
+  // wrong bound on half the meshes in the world.
+  check('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', () => {
+    if (!raw) return skip('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', 'the skeleton JSON did not parse (A00 owns that failure)');
+    if (!isObj(raw.animations)) return skip('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', 'the skeleton declares no animations');
+    /** skin name -> slot -> attachment, straight off the raw JSON. */
+    const skins = new Map<string, Json>();
+    for (const skin of Array.isArray(raw.skins) ? (raw.skins as unknown[]) : []) {
+      if (isObj(skin) && typeof skin.name === 'string' && isObj(skin.attachments)) {
+        skins.set(skin.name, skin.attachments as Json);
+      }
+    }
+    let sawATimeline = false;
+    let measured = 0;
+    for (const [animName, anim] of Object.entries(raw.animations as Json)) {
+      if (!isObj(anim) || !isObj(anim.attachments)) continue;
+      for (const [skinName, slotMap] of Object.entries(anim.attachments as Json)) {
+        if (!isObj(slotMap)) continue;
+        for (const [slotName, attMap] of Object.entries(slotMap)) {
+          if (!isObj(attMap)) continue;
+          for (const [attName, timelines] of Object.entries(attMap)) {
+            if (!isObj(timelines) || !Array.isArray(timelines.deform)) continue;
+            sawATimeline = true;
+            const at = `animation "${animName}" deform ${skinName}/${slotName}/${attName}`;
+            const attachment = isObj(skins.get(skinName)?.[slotName])
+              ? ((skins.get(skinName)![slotName] as Json)[attName] as unknown)
+              : undefined;
+            if (!isObj(attachment)) {
+              fail(
+                'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT',
+                `${at}: skin "${skinName}" has no attachment "${attName}" on slot "${slotName}"; the parser throws ` +
+                  '`Timeline attachment not found`',
+              );
+              continue;
+            }
+            const length = deformArrayLength(attachment);
+            if (length === null) {
+              // A linked mesh takes its geometry from another attachment, so the
+              // raw file cannot state this one's length. Saying nothing beats
+              // inventing a bound: an assertion with a default is how "nothing to
+              // measure" becomes a measurement of the wrong thing.
+              continue;
+            }
+            measured++;
+            const keys = timelines.deform as unknown[];
+            if (keys.length === 0) {
+              fail('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', `${at}: the key array is empty; the parser skips the timeline in silence`);
+              continue;
+            }
+            keys.forEach((key, k) => {
+              if (!isObj(key)) {
+                fail('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', `${at} key ${k}: not an object`);
+                return;
+              }
+              const vertices = key.vertices;
+              if (vertices === undefined || vertices === null) return; // "back to setup" — nothing to fit
+              if (!Array.isArray(vertices)) {
+                fail('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', `${at} key ${k}: vertices is ${JSON.stringify(vertices)}, not an array`);
+                return;
+              }
+              const offset = key.offset === undefined ? 0 : key.offset;
+              if (typeof offset !== 'number' || !Number.isInteger(offset) || offset < 0) {
+                fail('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', `${at} key ${k}: offset is ${JSON.stringify(key.offset)}`);
+                return;
+              }
+              if (offset % 2 !== 0) {
+                fail(
+                  'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT',
+                  `${at} key ${k}: offset ${offset} is odd, so the run's x values land on y slots and back again`,
+                );
+              }
+              if (vertices.length % 2 !== 0) {
+                fail(
+                  'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT',
+                  `${at} key ${k}: the run holds ${vertices.length} numbers and the deform array is x, y pairs`,
+                );
+              }
+              if (offset + vertices.length > length) {
+                fail(
+                  'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT',
+                  `${at} key ${k}: the run covers ${offset}..${offset + vertices.length} of a ${length}-long deform ` +
+                    'array; everything past the end is copied into a Float32Array and dropped without a word',
+                );
+              }
+              for (const n of vertices as unknown[]) {
+                if (typeof n !== 'number' || !Number.isFinite(n)) {
+                  fail('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', `${at} key ${k}: the run holds a non-finite value ${JSON.stringify(n)}`);
+                  break;
+                }
+              }
+            });
+          }
+        }
+      }
+    }
+    if (!sawATimeline) return skip('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', 'no animation carries a deform timeline');
+    if (measured === 0) {
+      return skip(
+        'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT',
+        'every deform timeline here keys an attachment whose vertex count the raw file does not state (a linked mesh)',
+      );
+    }
   });
 
   // --- A: the round trip ----------------------------------------------------

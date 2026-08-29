@@ -45,12 +45,16 @@ import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import {
+  AnimationState,
+  AnimationStateData,
   BoundingBoxAttachment,
   ClippingAttachment,
   EventTimeline,
+  IkConstraint,
   MeshAttachment,
   Physics,
   Skeleton,
+  TransformConstraint,
   type SkeletonData,
 } from '@esotericsoftware/spine-core';
 import {
@@ -3979,6 +3983,527 @@ function runEventSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// constraint timelines (ik, transform) and deform timelines
+// ---------------------------------------------------------------------------
+//
+// ⭐ The three timeline families a first-time author reaches for the moment an
+// idle works: a walk needs IK, an aim rig needs a transform constraint mixed in
+// by the animation that wants it, and squash-and-stretch needs a deform. rigc
+// could emit all three CONSTRAINTS since rung 6 and could not key any of them
+// (issues #87, #88, #89).
+//
+// 🚨 Every case below that matters loads the emitted skeleton through spine-core
+// and reads a NUMBER back off the posed skeleton, because the failure mode this
+// suite is designed against is the one a parse-only test cannot see: a timeline
+// written under a field name the parser does not read loads perfectly and does
+// nothing. `mixRotation` instead of `mixRotate`, `bendDirection` instead of
+// `bendPositive`, `vertices` at an offset one pair past the end of a
+// `Float32Array` — all three produce a green parse and a dead animation. So the
+// controls assert the mix the runtime applied, the rotation the constrained bone
+// actually took, and the world position the deformed vertex actually moved to.
+
+/**
+ * A rig with the three things the families need: an IK chain with a target, a
+ * transform constraint whose mixes are all off at setup, an UNWEIGHTED mesh and
+ * a WEIGHTED one whose third vertex deliberately carries two bones.
+ *
+ * The two meshes are the point of the deform half. A deform array is one `x, y`
+ * pair per vertex on the first and one pair per bone INFLUENCE on the second, so
+ * a suite with only one of them would prove the emitter right about half the
+ * meshes in the world and say nothing about the other half.
+ */
+const TIMELINE_RIG = {
+  bones: [
+    { name: 'root' },
+    { name: 'thigh', parent: 'root', x: 0, y: 0, length: 20 },
+    { name: 'shin', parent: 'thigh', x: 20, y: 0, length: 20 },
+    { name: 'foot-target', parent: 'root', x: 30, y: -10 },
+    { name: 'aim', parent: 'root', x: 0, y: 30, rotation: 40 },
+  ],
+  slots: [
+    // `flat` hangs off the ROOT on purpose: T04 measures a world vertex, and a
+    // slot on a constrained bone would move for two reasons at once — the IK
+    // swinging the chain and the deform — which is a measurement of neither.
+    { name: 'flat', bone: 'root', attachment: 'flat' },
+    { name: 'bound', bone: 'thigh', attachment: 'bound' },
+  ],
+  skins: {
+    default: {
+      flat: {
+        flat: {
+          type: 'mesh',
+          image: 'block.png',
+          path: 'block',
+          uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+          triangles: [0, 1, 2, 0, 2, 3],
+          // Unweighted: one x, y per uv pair, so `vertices.length === uvs.length`
+          // and the deform array is 8 long — one pair per vertex.
+          vertices: [0, 0, 12, 0, 12, 8, 0, 8],
+          hull: 4,
+          width: 12,
+          height: 8,
+        },
+      },
+      bound: {
+        bound: {
+          type: 'mesh',
+          image: 'marker.png',
+          path: 'marker',
+          uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+          triangles: [0, 1, 2, 0, 2, 3],
+          // Weighted, bound by name. Vertex 2 carries two bones on purpose: it is
+          // the vertex `fromVertex` must refuse, and the reason the deform array
+          // is 10 long (5 influences) rather than 8.
+          weights: [
+            [{ bone: 'thigh', x: 0, y: 0, weight: 1 }],
+            [{ bone: 'thigh', x: 6, y: 0, weight: 1 }],
+            [
+              { bone: 'thigh', x: 6, y: 6, weight: 0.5 },
+              { bone: 'shin', x: -14, y: 6, weight: 0.5 },
+            ],
+            [{ bone: 'thigh', x: 0, y: 6, weight: 1 }],
+          ],
+          hull: 4,
+          width: 6,
+          height: 6,
+        },
+      },
+    },
+  },
+  constraints: [
+    // Both start muted, so "the animation turned it on" is a measurable event
+    // rather than a value that was already there — which is exactly the idiom
+    // issue #88 found in spineboy's aim rig.
+    { name: 'leg-ik', type: 'ik', bones: ['thigh', 'shin'], target: 'foot-target', mix: 0 },
+    {
+      name: 'aim-shin',
+      type: 'transform',
+      bones: ['shin'],
+      source: 'aim',
+      properties: { rotate: { to: { rotate: {} } } },
+      mixRotate: 0,
+    },
+  ],
+};
+
+/** A motion spec for the timeline rig, with whatever animation body is handed in. */
+function timelineMotion(animation: Record<string, unknown>): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    // Deliberately asymmetric: a symmetric ease is 0.5 at the midpoint whether the
+    // bezier was written or not, so it cannot tell a curve from a straight line.
+    easings: { lateBloom: [0.9, 0, 1, 0.35] },
+    animations: { move: animation },
+  };
+}
+
+/** Compile the timeline probe and load the result through spine-core. */
+function timelinePosable(dirs: ProbeDirs, motion: Record<string, unknown>): Posable {
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+  const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+  return posableFromText(built.skeletonText, built.atlasText, dirs.outDir);
+}
+
+/**
+ * Pose the skeleton at one time the way `sampleAnimation` does — by accumulating
+ * `1/fps`, not by seeking.
+ *
+ * ⚠️ Seeking (`state.update(t)` once) and accumulating do not land on the same
+ * number, and the difference is the whole subject of AUTHORING §10.3: a player
+ * reaches sample *i* by adding `1/fps` *i* times, which for many *i* lands a few
+ * ULPs BELOW `i/fps`. A stepped key written at exactly that time is then never
+ * seen. So the sampler here has to accumulate or it would test a thing no runtime
+ * does.
+ */
+function poseAtSample(data: SkeletonData, animation: string, fps: number, sample: number): Skeleton {
+  const skeleton = new Skeleton(data);
+  const state = new AnimationState(new AnimationStateData(data));
+  state.setAnimation(0, animation, false);
+  skeleton.setupPose();
+  state.apply(skeleton);
+  skeleton.update(0);
+  skeleton.updateWorldTransform(Physics.reset);
+  const step = 1 / fps;
+  for (let i = 0; i < sample; i++) {
+    state.update(step);
+    state.apply(skeleton);
+    skeleton.update(step);
+    skeleton.updateWorldTransform(Physics.update);
+  }
+  return skeleton;
+}
+
+/** The world x, y of one vertex of a slot's mesh, with the deform applied. */
+function worldVertex(skeleton: Skeleton, slotName: string, vertex: number): [number, number] {
+  const slot = skeleton.slots.find((s) => s.data.name === slotName)!;
+  const attachment = slot.appliedPose.attachment;
+  if (!(attachment instanceof MeshAttachment)) throw new Error(`slot "${slotName}" shows no mesh`);
+  const world = new Array<number>(attachment.worldVerticesLength).fill(0);
+  attachment.computeWorldVertices(skeleton, slot, 0, attachment.worldVerticesLength, world, 0, 2);
+  return [world[vertex * 2], world[vertex * 2 + 1]];
+}
+
+function runConstraintAndDeformSuite(): number {
+  const dirs = writeProbeRig(TIMELINE_RIG);
+  let bad = 0;
+  console.log('\n── constraint and deform timelines (self-contained: an IK chain, an aim rig and two meshes) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const near = (a: number, b: number, tol = 1e-4): boolean => Math.abs(a - b) <= tol;
+
+  // --- the control ----------------------------------------------------------
+  const everything = timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    ik: [
+      {
+        constraint: 'leg-ik',
+        keys: [
+          { t: 0, mix: 0, softness: 0, bendPositive: true, stretch: false },
+          { t: 1, mix: 1, softness: 8, bendPositive: false, stretch: true },
+        ],
+      },
+    ],
+    transform: [
+      {
+        constraint: 'aim-shin',
+        keys: [
+          { t: 0, mixRotate: 0 },
+          { t: 1, mixRotate: 1 },
+        ],
+      },
+    ],
+    deform: [
+      { slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 0.5, fromVertex: 1, vertices: [0, 6] }, { t: 1 }] },
+      { slot: 'bound', attachment: 'bound', keys: [{ t: 0 }, { t: 1, fromVertex: 1, vertices: [3, -3] }] },
+    ],
+  });
+  const gate = gateProbe(dirs, everything);
+  say(
+    'CONTROL_ALL_THREE_TIMELINE_FAMILIES_ARE_GREEN',
+    gate.failures.length === 0 &&
+      gate.passed.includes('A34_CONSTRAINT_TIMELINE_TARGETS') &&
+      gate.passed.includes('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT'),
+    gate.failures.length === 0
+      ? `${gate.passed.length} assertions ran; A34 and A35 both ${
+          gate.passed.includes('A34_CONSTRAINT_TIMELINE_TARGETS') && gate.passed.includes('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT')
+            ? 'ran'
+            : 'did NOT run'
+        }`
+      : `[${gate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'a suite of refusals cannot tell a compiler that emits nothing from one that emits the right thing',
+  );
+
+  const data = timelinePosable(dirs, everything).data;
+
+  // --- the round trip: IK ---------------------------------------------------
+  const ikAt = (t: number): { mix: number; softness: number; bend: number; stretch: boolean } => {
+    const constraint = poseAtSample(data, 'move', 4, t * 4).findConstraint('leg-ik', IkConstraint)!;
+    return {
+      mix: constraint.pose.mix,
+      softness: constraint.pose.softness,
+      bend: constraint.pose.bendDirection,
+      stretch: constraint.pose.stretch,
+    };
+  };
+  const ik0 = ikAt(0);
+  const ikHalf = ikAt(0.5);
+  const ik1 = ikAt(1);
+  say(
+    'T01_an_ik_timeline_mixes_the_constraint_in_at_the_runtime',
+    near(ik0.mix, 0) && near(ikHalf.mix, 0.5) && near(ik1.mix, 1) &&
+      near(ik0.softness, 0) && near(ikHalf.softness, 4) && near(ik1.softness, 8),
+    `mix 0 -> ${ikHalf.mix.toFixed(4)} -> ${ik1.mix.toFixed(4)}, softness 0 -> ${ikHalf.softness.toFixed(4)} -> ${ik1.softness.toFixed(4)}`,
+    'the setup constraint is mix 0, so every number here came from the timeline — a wrong field name would leave it at 0',
+  );
+  say(
+    'T02_the_ik_booleans_arrive_as_bend_direction_and_stretch',
+    ik0.bend === 1 && !ik0.stretch && ik1.bend === -1 && ik1.stretch,
+    `bendDirection ${ik0.bend} -> ${ik1.bend}, stretch ${String(ik0.stretch)} -> ${String(ik1.stretch)}`,
+    '`bendPositive` in the file becomes `bendDirection` ±1 in the pose, and the three booleans are stepped by nature',
+  );
+
+  // --- the round trip: transform constraint ---------------------------------
+  //
+  // The mix alone is not the claim: a mix the runtime holds and never applies
+  // would pass that. So this also reads the constrained bone's world rotation,
+  // which is what a transform constraint exists to change.
+  const tcAt = (t: number): { mix: number; rotation: number } => {
+    const skeleton = poseAtSample(data, 'move', 4, t * 4);
+    const constraint = skeleton.findConstraint('aim-shin', TransformConstraint)!;
+    const shin = skeleton.bones.find((b) => b.data.name === 'shin')!;
+    return { mix: constraint.pose.mixRotate, rotation: shin.appliedPose.getWorldRotationX() };
+  };
+  const tc0 = tcAt(0);
+  const tc1 = tcAt(1);
+  say(
+    'T03_a_transform_timeline_turns_a_muted_constraint_on_and_the_bone_moves',
+    near(tc0.mix, 0) && near(tc1.mix, 1) && Math.abs(tc1.rotation - tc0.rotation) > 1,
+    `mixRotate ${tc0.mix.toFixed(4)} -> ${tc1.mix.toFixed(4)}, shin world rotation ${tc0.rotation.toFixed(2)}° -> ${tc1.rotation.toFixed(2)}°`,
+    'issue #88: the whole idiom is a constraint muted at setup that the animation mixes in — so the bone has to actually move',
+  );
+
+  // --- the round trip: deform, both encodings -------------------------------
+  const flatSetup = worldVertex(poseAtSample(data, 'move', 4, 0), 'flat', 1);
+  const flatDeformed = worldVertex(poseAtSample(data, 'move', 4, 2), 'flat', 1);
+  say(
+    'T04_an_unweighted_deform_key_moves_the_vertex_it_names',
+    near(flatDeformed[0] - flatSetup[0], 0, 1e-3) && near(flatDeformed[1] - flatSetup[1], 6, 1e-3),
+    `vertex 1 world (${flatSetup[0].toFixed(3)}, ${flatSetup[1].toFixed(3)}) -> (${flatDeformed[0].toFixed(3)}, ${flatDeformed[1].toFixed(3)})`,
+    'on an unweighted mesh the parser ADDS the setup position back, so the file holds offsets and the world must move by exactly the offset',
+  );
+  const boundDeform = poseAtSample(data, 'move', 4, 4).slots.find((s) => s.data.name === 'bound')!.pose.deform;
+  say(
+    'T05_a_weighted_deform_array_is_one_pair_per_influence_and_the_run_lands_on_the_named_vertex',
+    boundDeform.length === 10 && near(boundDeform[2], 3) && near(boundDeform[3], -3) && near(boundDeform[0], 0) && near(boundDeform[4], 0),
+    `deform[${boundDeform.length}] = [${Array.from(boundDeform).map((n) => n.toFixed(1)).join(', ')}]`,
+    'vertex 2 carries two bones, so the array is 5 influences x 2 = 10 — a per-vertex assumption would size it 8 and land the run one pair early',
+  );
+
+  // --- the round trip: the deform curve is the BLEND, not a coordinate ------
+  const eased = timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [
+      { slot: 'flat', attachment: 'flat', keys: [{ t: 0, fromVertex: 1, vertices: [0, 0], ease: 'lateBloom' }, { t: 1, fromVertex: 1, vertices: [0, 10] }] },
+    ],
+  });
+  const easedData = timelinePosable(dirs, eased).data;
+  const easedMid = poseAtSample(easedData, 'move', 4, 2).slots.find((s) => s.data.name === 'flat')!.pose.deform[3];
+  say(
+    'T06_a_named_easing_on_a_deform_key_curves_the_blend',
+    easedMid < 4,
+    `the y offset is ${easedMid.toFixed(4)} at the midpoint of a 0 -> 10 ease, where linear would be 5`,
+    "readCurve builds a deform's one channel between 0 and 1 — the fraction — so the easing has to be written against 0..1, not against the vertex numbers",
+  );
+
+  // --- the curve arrays A05 counts ------------------------------------------
+  //
+  // Each family has its own channel count — 2 for an IK constraint, 6 for a
+  // transform constraint, 1 for a deform — and a curve array is four numbers per
+  // channel. A short one multiplies `undefined` into the cubic and yields a NaN
+  // curve with no error at all (the reason A05 exists), so the lengths the
+  // emitter writes have to be checked by the gate and not merely by this file.
+  const curved = timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    ik: [{ constraint: 'leg-ik', keys: [{ t: 0, mix: 0, softness: 0, ease: 'lateBloom' }, { t: 1, mix: 1, softness: 4 }] }],
+    transform: [{ constraint: 'aim-shin', keys: [{ t: 0, mixRotate: 0, ease: 'lateBloom' }, { t: 1, mixRotate: 1 }] }],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0, fromVertex: 0, vertices: [0, 0], ease: 'lateBloom' }, { t: 1, fromVertex: 0, vertices: [0, 3] }] }],
+  });
+  const curvedGate = gateProbe(dirs, curved);
+  const curvedJson = JSON.parse(
+    compile({
+      rigPath: dirs.rigPath,
+      motionPath: join(dirs.dir, 'probe.motion.json'),
+      outDir: dirs.outDir,
+      imagesDir: dirs.dir,
+    }).skeletonText,
+  ) as { animations: Record<string, Record<string, unknown>> };
+  const lengthsOf = (): number[] => {
+    const move = curvedJson.animations.move;
+    const ik = (move.ik as Record<string, Array<Record<string, unknown>>>)['leg-ik'][0].curve as number[];
+    const tc = (move.transform as Record<string, Array<Record<string, unknown>>>)['aim-shin'][0].curve as number[];
+    return [ik.length, tc.length, (deformKeysOf(move, 'flat')[0].curve as number[]).length];
+  };
+  const lengths = lengthsOf();
+  say(
+    'T06B_each_family_writes_four_curve_numbers_per_channel',
+    curvedGate.failures.length === 0 &&
+      curvedGate.passed.includes('A05_CURVE_ARRAY_LENGTH') &&
+      lengths[0] === 8 && lengths[1] === 24 && lengths[2] === 4,
+    `ik ${lengths[0]}, transform ${lengths[1]}, deform ${lengths[2]} numbers; A05 ${
+      curvedGate.passed.includes('A05_CURVE_ARRAY_LENGTH') ? 'ran and held' : 'did NOT run'
+    }${curvedGate.failures.length ? ` — ${curvedGate.failures.map((f) => f.assertion).join(', ')}` : ''}`,
+    'a short curve array multiplies undefined into the cubic and yields NaN with no error — 2, 6 and 1 channels, so 8, 24 and 4',
+  );
+
+  // --- the ULP trap, AUTHORING §10.3 ---------------------------------------
+  //
+  // A player reaches sample i by adding 1/fps i times. At 12 fps over 0.5 s that
+  // accumulates to 0.49999999999999994 — below the 0.5 a stepped key would be
+  // written at — so the last sample never sees such a key, and on a stepped
+  // timeline that is the whole event rather than a few ULPs of value.
+  const steppedAt = (keyTime: number): number => {
+    const motion = timelineMotion({
+      duration: 0.5,
+      loop: false,
+      tracks: [],
+      ik: [
+        {
+          constraint: 'leg-ik',
+          keys: [
+            { t: 0, mix: 0, ease: 'stepped' },
+            { t: keyTime, mix: 1 },
+          ],
+        },
+      ],
+    });
+    return poseAtSample(timelinePosable(dirs, motion).data, 'move', 12, 6).findConstraint('leg-ik', IkConstraint)!.pose.mix;
+  };
+  const onTheGrid = steppedAt(0.5);
+  const oneStepEarly = steppedAt(0.5 - 1e-6);
+  say(
+    'T07_a_stepped_key_on_the_last_sample_needs_the_grid_step_AUTHORING_10_3',
+    near(onTheGrid, 0) && near(oneStepEarly, 1),
+    `a stepped key at 0.5 reads mix=${onTheGrid.toFixed(4)} on the last sample; the same key at 0.5-1e-6 reads mix=${oneStepEarly.toFixed(4)}`,
+    'accumulating 1/12 six times lands at 0.49999999999999994, so a key written exactly on the declared duration is one ULP out of reach',
+  );
+
+  // --- the refusals ---------------------------------------------------------
+  const unknownIk = refusal(dirs, timelineMotion({
+    duration: 1, loop: false, tracks: [],
+    ik: [{ constraint: 'leg-ikk', keys: [{ t: 0, mix: 0 }, { t: 1, mix: 1 }] }],
+  }));
+  say(
+    'T08_an_unknown_ik_constraint_is_refused_and_names_the_motion_file',
+    unknownIk !== null && unknownIk.includes('keys unknown ik constraint "leg-ikk"') && unknownIk.includes('probe.motion.json'),
+    unknownIk === null ? 'the compile went through' : `refused with: ${unknownIk}`,
+    'the parser throws `IK Constraint not found` in the consumer’s process, and a reader with two input files needs to be told which one is at fault (#227)',
+  );
+
+  const wrongType = refusal(dirs, timelineMotion({
+    duration: 1, loop: false, tracks: [],
+    ik: [{ constraint: 'aim-shin', keys: [{ t: 0, mix: 0 }, { t: 1, mix: 1 }] }],
+  }));
+  say(
+    'T09_keying_a_transform_constraint_as_ik_is_refused_by_type',
+    wrongType !== null && wrongType.includes('"transform" constraint'),
+    wrongType === null ? 'the compile went through' : `refused with: ${wrongType}`,
+    'findConstraint(name, IkConstraintData) resolves by name AND type, so a right name of the wrong type is a miss, not a match',
+  );
+
+  const uneven = refusal(dirs, timelineMotion({
+    duration: 1, loop: false, tracks: [],
+    ik: [{ constraint: 'leg-ik', keys: [{ t: 0, mix: 1, softness: 20 }, { t: 1, mix: 0 }] }],
+  }));
+  say(
+    'T10_a_field_on_one_key_and_not_the_next_is_refused',
+    uneven !== null && uneven.includes('softness') && uneven.includes('snap'),
+    uneven === null ? 'the compile went through' : `refused with: ${uneven}`,
+    'every key is read with its own default, so an omitted softness is 0 rather than "unchanged" — it loads, it plays, and it is not what was written',
+  );
+
+  const overMix = refusal(dirs, timelineMotion({
+    duration: 1, loop: false, tracks: [],
+    ik: [{ constraint: 'leg-ik', keys: [{ t: 0, mix: 0 }, { t: 1, mix: 1.5 }] }],
+  }));
+  say(
+    'T11_an_ik_mix_outside_0_to_1_is_refused',
+    overMix !== null && overMix.includes('outside 0..1'),
+    overMix === null ? 'the compile went through' : `refused with: ${overMix}`,
+    'IkConstraintPose.mix is documented as a percentage 0-1; a transform mix is documented UNBOUNDED, so only this one carries a range',
+  );
+
+  const overrun = refusal(dirs, timelineMotion({
+    duration: 1, loop: false, tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, offset: 4, vertices: [1, 1, 1, 1, 1, 1] }] }],
+  }));
+  say(
+    'T12_a_deform_run_past_the_end_of_the_attachment_is_refused',
+    overrun !== null && overrun.includes('deform array is 8 long'),
+    overrun === null ? 'the compile went through' : `refused with: ${overrun}`,
+    'the parser copies into a Float32Array, and writing past the end of a typed array is a no-op — the tail is dropped without a word',
+  );
+
+  const multiBone = refusal(dirs, timelineMotion({
+    duration: 1, loop: false, tracks: [],
+    deform: [{ slot: 'bound', attachment: 'bound', keys: [{ t: 0 }, { t: 1, fromVertex: 2, vertices: [1, 1] }] }],
+  }));
+  say(
+    'T13_fromVertex_on_a_multi_bone_vertex_is_refused_by_name',
+    multiBone !== null && multiBone.includes('vertex 2 has 2 of them') && multiBone.includes('deform index 4'),
+    multiBone === null ? 'the compile went through' : `refused with: ${multiBone}`,
+    "a weighted vertex's world offset is a weighted sum of per-bone offsets in each bone's bind space, so one x, y for the vertex is not a thing the array can hold",
+  );
+
+  const unknownAttachment = refusal(dirs, timelineMotion({
+    duration: 1, loop: false, tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flatt', keys: [{ t: 0 }, { t: 1, fromVertex: 0, vertices: [1, 1] }] }],
+  }));
+  say(
+    'T14_an_unknown_attachment_is_refused_and_lists_the_ones_there_are',
+    unknownAttachment !== null && unknownAttachment.includes('no attachment "flatt"') && unknownAttachment.includes('it has: flat'),
+    unknownAttachment === null ? 'the compile went through' : `refused with: ${unknownAttachment}`,
+    'the parser throws `Timeline attachment not found`, which names the attachment and not the ones that were there instead',
+  );
+
+  const oddOffset = refusal(dirs, timelineMotion({
+    duration: 1, loop: false, tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, offset: 3, vertices: [1, 1] }] }],
+  }));
+  say(
+    'T15_an_odd_deform_offset_is_refused',
+    oddOffset !== null && oddOffset.includes('is odd'),
+    oddOffset === null ? 'the compile went through' : `refused with: ${oddOffset}`,
+    'the deform array is x, y pairs and nothing in the format says so, so an odd start silently puts every x of the run on a y',
+  );
+
+  // --- the gate's own mutants: A34 and A35 have to be reachable -------------
+  const emptied = gateProbeArtifacts(dirs, everything, (skeleton) => {
+    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+    (animations.move.ik as Record<string, unknown[]>)['leg-ik'] = [];
+  });
+  say(
+    'T16_A34_fires_on_an_ik_timeline_with_no_keys',
+    emptied.failures.some((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS'),
+    emptied.failures.find((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS')?.detail ?? 'A34 accepted an empty key array',
+    '`let keyMap = constraintMap[0]; if (!keyMap) continue;` — the timeline is skipped and nothing is said',
+  );
+
+  const renamed = gateProbeArtifacts(dirs, everything, (skeleton) => {
+    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+    const ik = animations.move.ik as Record<string, unknown>;
+    ik['aim-shin'] = ik['leg-ik'];
+    delete ik['leg-ik'];
+  });
+  say(
+    'T17_A34_fires_when_a_timeline_names_a_constraint_of_the_wrong_type',
+    renamed.failures.some((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS'),
+    renamed.failures.find((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS')?.detail ?? 'A34 accepted an ik timeline aimed at a transform constraint',
+    'the name resolves and the type does not, so the loader throws — A00 would say so, without saying which constraints there were',
+  );
+
+  const overflowed = gateProbeArtifacts(dirs, everything, (skeleton) => {
+    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+    const keys = deformKeysOf(animations.move, 'flat');
+    keys[1].vertices = [1, 2, 3, 4, 5, 6, 7, 8];
+  });
+  say(
+    'T18_A35_fires_on_a_run_that_overflows_the_deform_array',
+    overflowed.failures.some((f) => f.assertion === 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT'),
+    overflowed.failures.find((f) => f.assertion === 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT')?.detail ?? 'A35 accepted a run past the end',
+    'Utils.arrayCopy into a Float32Array drops everything past the end, so the deform is applied to part of the mesh and looks nearly right',
+  );
+
+  const misaligned = gateProbeArtifacts(dirs, everything, (skeleton) => {
+    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+    deformKeysOf(animations.move, 'flat')[1].offset = 3;
+  });
+  say(
+    'T19_A35_fires_on_an_odd_offset',
+    misaligned.failures.some((f) => f.assertion === 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT'),
+    misaligned.failures.find((f) => f.assertion === 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT')?.detail ?? 'A35 accepted an odd offset',
+    'the array is pairs; an odd start reads every x as a y, which loads and tears the mesh',
+  );
+
+  return bad;
+}
+
+/** The `deform` key array of one slot in an emitted animation, for a mutant to edit. */
+function deformKeysOf(animation: Record<string, unknown>, slot: string): Array<Record<string, unknown>> {
+  const attachments = animation.attachments as Record<string, Record<string, Record<string, Record<string, unknown>>>>;
+  return attachments.default[slot][slot].deform as Array<Record<string, unknown>>;
+}
+
+// ---------------------------------------------------------------------------
 // bounding boxes and clipping attachments
 // ---------------------------------------------------------------------------
 //
@@ -4734,7 +5259,7 @@ interface Suite {
 /**
  * The rulebook the mutation suite runs under, pinned.
  *
- * Every mutant in this file was written against the full 34, and 14 of those
+ * Every mutant in this file was written against the full 36, and 14 of those
  * rules exist only under `spine-html`. Under `spine` those 14 do not pass and do
  * not skip — they are `profileSkipped`, a third channel — so a mutant aimed at
  * one of them would come back with nothing fired and no complaint. This suite is
@@ -5130,16 +5655,16 @@ function runCliSuite(): number {
     const optedAll = assertions(opted.stdout);
     const optedProf = [...opted.stdout.matchAll(/^ {2}PROF {2}A\d\d_/gm)].length;
     say(
-      'CLI07_PROFILE_SPINE_HTML_STILL_RUNS_ALL_34',
+      'CLI07_PROFILE_SPINE_HTML_STILL_RUNS_ALL_36',
       opted.status !== 0 &&
         opted.status !== null &&
-        optedAll.size === 34 &&
+        optedAll.size === 36 &&
         optedProf === 0 &&
         new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout),
-      `exit=${String(opted.status)}, ${optedAll.size}/34 assertions reported, ${optedProf} PROF, ` +
+      `exit=${String(opted.status)}, ${optedAll.size}/36 assertions reported, ${optedProf} PROF, ` +
         `A19 ${new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout) ? 'FAILED as it must' : 'did not fire'}`,
       'flipping a default is only safe if the old one is still reachable and still complete — the opt-in has to be ' +
-        'the same 34 rules it always was, not a weakened copy',
+        'the same 36 rules it always was, not a weakened copy',
     );
   }
 
@@ -5592,6 +6117,8 @@ function main(): void {
   substantive += 5;
   bad += runEventSuite();
   substantive += 8;
+  bad += runConstraintAndDeformSuite();
+  substantive += 21;
   bad += runPolygonSuite();
   substantive += 6;
   bad += runMeshSuite();
@@ -5681,12 +6208,15 @@ function main(): void {
       'refusal), + 2 slot-attribution ' +
       'controls (a blob one part dominates, and two parts that are two blobs), + 6 draw-order controls, ' +
       '+ 7 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
+      '+ 21 constraint- and deform-timeline controls (8 of them a spine-core round trip that reads the ik and ' +
+      'transform mixes off the posed constraints, the world position of a deformed vertex, and a weighted ' +
+      "attachment's per-influence deform array), " +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       ', + 2 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number), + 7 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
-      'builds green with no flag and is refused by all 34 rules under `--profile spine-html`)' +
+      'builds green with no flag and is refused by all 36 rules under `--profile spine-html`)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
       ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +

@@ -52,10 +52,13 @@ import type {
   EasingHandles,
   FaceManifest,
   FaceManifestPart,
+  MotionDeformTrack,
   MotionDrawOrderKey,
   MotionEventKey,
+  MotionIkTrack,
   MotionSpec,
   MotionTrack,
+  MotionTransformTrack,
   RigInfo,
   SpineAttachment,
   SpineBone,
@@ -204,6 +207,78 @@ const BONE_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
 const PHYSICS_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
   mix: { fields: ['value'], identity: [1] },
   reset: { fields: [], identity: [] },
+};
+
+/**
+ * One numeric channel of a constraint timeline: the JSON field, the value the
+ * parser uses when a key omits it, and — for `mixY` alone — the field it takes
+ * that default FROM.
+ *
+ * Channel order is load-bearing twice over. `readCurve` indexes a curve array by
+ * channel (`curve[value << 2]`), so the order here is the order four-number
+ * groups concatenate in; and the parser reads the fields in this order, so
+ * emitting them in it keeps the file readable against an editor export.
+ */
+interface ConstraintChannel {
+  field: string;
+  dflt: number;
+  /** `mixY` defaults to the SAME key's `mixX`, not to 1 (`:988`). */
+  inheritsFrom?: string;
+}
+
+/** A stepped-by-nature boolean on a constraint key. Never a curve channel. */
+interface ConstraintFlag {
+  field: string;
+  dflt: boolean;
+}
+
+interface ConstraintTimelineShape {
+  channels: ConstraintChannel[];
+  flags: ConstraintFlag[];
+  /** Per-field bounds, where the runtime documents one. */
+  range: Record<string, [number, number]>;
+}
+
+/**
+ * The two constraint groups that are ONE unnamed timeline per constraint
+ * (`animations.<a>.ik.<name>`, `animations.<a>.transform.<name>`).
+ *
+ * ⚠️ Every field is optional in the file and every one has a per-key default, so
+ * omitting a field on one key of a track does not carry the previous key's value
+ * forward — it snaps to the default. `compileConstraintTrack` refuses a track
+ * whose keys disagree about which fields they name, because that is the shape
+ * that loads clean and plays something nobody wrote.
+ *
+ * The bounds: `IkConstraintPose.mix` is documented as a percentage 0-1 and
+ * `softness` as a distance, while every transform mix is documented **unbounded**
+ * — so only the IK pair carries a range, and refusing a transform mix above 1
+ * would refuse correct data (an over-mix is a real editor idiom).
+ */
+const CONSTRAINT_TIMELINES: Record<'ik' | 'transform', ConstraintTimelineShape> = {
+  ik: {
+    channels: [
+      { field: 'mix', dflt: 1 },
+      { field: 'softness', dflt: 0 },
+    ],
+    flags: [
+      { field: 'bendPositive', dflt: true },
+      { field: 'compress', dflt: false },
+      { field: 'stretch', dflt: false },
+    ],
+    range: { mix: [0, 1], softness: [0, Infinity] },
+  },
+  transform: {
+    channels: [
+      { field: 'mixRotate', dflt: 1 },
+      { field: 'mixX', dflt: 1 },
+      { field: 'mixY', dflt: 1, inheritsFrom: 'mixX' },
+      { field: 'mixScaleX', dflt: 1 },
+      { field: 'mixScaleY', dflt: 1 },
+      { field: 'mixShearY', dflt: 1 },
+    ],
+    flags: [],
+    range: {},
+  },
 };
 
 /** Physics constraint fields and their parser defaults (SkeletonJson.js:295-319). */
@@ -767,9 +842,15 @@ export function compile(opts: CompileOptions): CompileResult {
   const constraints: SpineConstraint[] = [];
   const physicsReport: CompileResult['physics'] = [];
   const constraintNames = new Set<string>();
+  // `ik` and `transform` timelines resolve their target by name AND by type —
+  // `findConstraint(name, IkConstraintData)` returns null for a transform
+  // constraint of the same name and the parser then throws. Keeping the type
+  // beside the name is what lets the refusal say which of the two it is.
+  const constraintTypes = new Map<string, string>();
   for (const spec of rig.constraints ?? []) {
     constraints.push(buildRigConstraint(spec as RigConstraintInput, boneNames));
     constraintNames.add(spec.name);
+    constraintTypes.set(spec.name, spec.type);
   }
   withMotionSource(() => {
     for (const [name, spec] of Object.entries(motion.physics ?? {})) {
@@ -777,6 +858,7 @@ export function compile(opts: CompileOptions): CompileResult {
         throw new CompileError(`constraint "${name}" is declared in both the rig spec and the motion spec's physics table`);
       }
       constraintNames.add(name);
+      constraintTypes.set(name, 'physics');
       if (!boneNames.has(spec.bone)) {
         throw new CompileError(`physics constraint "${name}" targets unknown bone "${spec.bone}"`);
       }
@@ -866,6 +948,103 @@ export function compile(opts: CompileOptions): CompileResult {
         });
       }
 
+      // -- constraint timelines: one unnamed timeline per constraint ---------
+      //
+      // `ik` and `transform` sit beside `tracks` rather than in it because their
+      // keys carry named fields instead of one `v` — see `MotionAnimation.ik`.
+      // The target is resolved by name AND by type: `findConstraint(name,
+      // IkConstraintData)` misses a transform constraint of the same name and the
+      // parser throws in the consumer's process, so the mismatch is named here.
+      const constraintTimelines: Record<'ik' | 'transform', Record<string, SpineTimelineKey[]>> = {
+        ik: {},
+        transform: {},
+      };
+      for (const group of ['ik', 'transform'] as const) {
+        const tracks: Array<MotionIkTrack | MotionTransformTrack> = anim[group] ?? [];
+        if (!Array.isArray(tracks)) {
+          throw new CompileError(`animation "${animName}": "${group}" must be an array of { constraint, keys } entries`);
+        }
+        for (const track of tracks) {
+          const name = track.constraint;
+          if (typeof name !== 'string' || name.length === 0) {
+            throw new CompileError(`animation "${animName}": a ${group} timeline needs a "constraint" name`);
+          }
+          const type = constraintTypes.get(name);
+          if (type === undefined) {
+            const known = [...constraintTypes.entries()].filter(([, t]) => t === group).map(([n]) => n);
+            throw new CompileError(
+              `animation "${animName}" keys unknown ${group} constraint "${name}"; ` +
+                (known.length
+                  ? `the rig declares ${group} constraint(s): ${known.join(', ')}`
+                  : `the rig declares no ${group} constraint at all`),
+            );
+          }
+          if (type !== group) {
+            throw new CompileError(
+              `animation "${animName}" keys "${name}" as ${group === 'ik' ? 'an' : 'a'} ${group} constraint, but the rig declares it as a ` +
+                `"${type}" constraint — the parser looks a timeline's target up by name AND type, misses, and throws`,
+            );
+          }
+          if (constraintTimelines[group][name]) {
+            throw new CompileError(
+              `animation "${animName}" has two ${group} timelines on constraint "${name}"; ` +
+                'the group holds one timeline per constraint, so merge them into one',
+            );
+          }
+          const keys = compileConstraintTrack(group, track, motion, animName, anim.duration);
+          for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
+          constraintTimelines[group][name] = keys;
+        }
+      }
+
+      // -- deform timelines: keyed on a skin/slot/attachment triple ----------
+      // Four deep, because the format is: skin -> slot -> attachment -> timeline
+      // name -> keys. `deform` is one of two timeline names an attachment can
+      // carry (the other is `sequence`), which is why the level exists at all.
+      const deformTimelines: Record<string, Record<string, Record<string, Record<string, SpineTimelineKey[]>>>> = {};
+      const deformTracks: MotionDeformTrack[] = anim.deform ?? [];
+      if (!Array.isArray(deformTracks)) {
+        throw new CompileError(
+          `animation "${animName}": "deform" must be an array of { slot, attachment, keys } entries`,
+        );
+      }
+      for (const track of deformTracks) {
+        const skinName = track.skin ?? 'default';
+        const at = `animation "${animName}" deform ${skinName}/${String(track.slot)}/${String(track.attachment)}`;
+        const table = skinTables.get(skinName);
+        if (!table) {
+          throw new CompileError(
+            `${at}: this rig emits no skin called "${skinName}" (it emits: ${[...skinTables.keys()].join(', ')})`,
+          );
+        }
+        const perSlot = table[track.slot];
+        if (!perSlot) {
+          throw new CompileError(
+            `${at}: skin "${skinName}" gives slot "${String(track.slot)}" no attachments` +
+              (slotNames.has(track.slot) ? '' : ', and this rig does not declare that slot at all'),
+          );
+        }
+        const attachment = perSlot[track.attachment];
+        if (!attachment) {
+          throw new CompileError(
+            `${at}: slot "${track.slot}" in skin "${skinName}" has no attachment "${String(track.attachment)}" ` +
+              `(it has: ${Object.keys(perSlot).join(', ')})`,
+          );
+        }
+        if (deformTimelines[skinName]?.[track.slot]?.[track.attachment]) {
+          throw new CompileError(`${at}: two deform timelines on one attachment; merge them into one`);
+        }
+        const keys = compileDeformTrack(
+          track,
+          motion,
+          animName,
+          anim.duration,
+          deformGeometryOf(attachment, at),
+        );
+        for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
+        ((deformTimelines[skinName] ??= {})[track.slot] ??= {})[track.attachment] = { deform: keys };
+      }
+
       const drawOrder = anim.drawOrder ? compileDrawOrder(anim.drawOrder, animName, anim.duration, slots) : null;
       if (drawOrder) for (const key of drawOrder) compiledDuration = Math.max(compiledDuration, key.time as number);
 
@@ -889,10 +1068,18 @@ export function compile(opts: CompileOptions): CompileResult {
           `animation "${animName}" declares duration ${anim.duration}s but its last key is at ${compiledDuration}s`,
         );
       }
+      // Group order is `readAnimation`'s own reading order, so an emitted file
+      // diffs cleanly against an editor export. Each line is conditional, which
+      // is what keeps a spec that uses none of the new groups byte-identical.
       animations[animName] = {};
       if (Object.keys(slotTimelines).length) animations[animName].slots = slotTimelines;
       if (Object.keys(boneTimelines).length) animations[animName].bones = boneTimelines;
+      if (Object.keys(constraintTimelines.ik).length) animations[animName].ik = constraintTimelines.ik;
+      if (Object.keys(constraintTimelines.transform).length) {
+        animations[animName].transform = constraintTimelines.transform;
+      }
       if (Object.keys(physicsTimelines).length) animations[animName].physics = physicsTimelines;
+      if (Object.keys(deformTimelines).length) animations[animName].attachments = deformTimelines;
       if (drawOrder) animations[animName].drawOrder = drawOrder;
       if (eventKeys) animations[animName].events = eventKeys;
     }
@@ -2108,6 +2295,431 @@ function compileEvents(
     out.push(entry);
   }
   return out;
+}
+
+/**
+ * An IK or transform constraint keyed over time — `animations.<a>.<group>.<name>`.
+ *
+ * One function for both because the two differ only in their field table: the
+ * group is one unnamed timeline per constraint, every field is optional with a
+ * per-key default, and the curve concatenates four numbers per channel in field
+ * order. `CONSTRAINT_TIMELINES` holds what differs.
+ *
+ * 🚨 The refusal that is not obvious is the **uniform field set**. In this format
+ * a key does not inherit anything from the key before it: `getValue(keyMap,
+ * "softness", 0)` is read fresh per key, so a track written as
+ *
+ * ```
+ * { "t": 0, "mix": 1, "softness": 20 },  { "t": 1, "mix": 0 }
+ * ```
+ *
+ * does not hold softness at 20 and fade the mix out — it snaps softness to 0 at
+ * t=1 and interpolates from 20 down to 0 on the way, which is a thing the author
+ * did not write and cannot see. It loads, it plays, and it is wrong. So every key
+ * of a track has to name the same fields; stating the default explicitly is the
+ * way to opt in.
+ *
+ * ⚠️ The values a curve is built between are the **effective** ones — the
+ * author's number where there is one, the parser's default where there is not.
+ * That is reading the format, not inventing a value: it is exactly what the
+ * runtime will interpolate, and a bezier built against anything else would
+ * describe a curve the player does not play.
+ */
+function compileConstraintTrack(
+  group: 'ik' | 'transform',
+  track: MotionIkTrack | MotionTransformTrack,
+  motion: MotionSpec,
+  animName: string,
+  duration: number,
+): SpineTimelineKey[] {
+  const shape = CONSTRAINT_TIMELINES[group];
+  const article = group === 'ik' ? 'an' : 'a';
+  const where = `animation "${animName}" ${group} constraint "${track.constraint}"`;
+  const keys = track.keys;
+  if (!Array.isArray(keys) || keys.length === 0) throw new CompileError(`${where}: no keys`);
+
+  const read = (key: MotionIkTrack['keys'][number] | MotionTransformTrack['keys'][number], field: string): unknown =>
+    (key as unknown as Record<string, unknown>)[field];
+  const named = (key: MotionIkTrack['keys'][number] | MotionTransformTrack['keys'][number]): string[] =>
+    [...shape.channels, ...shape.flags].map((c) => c.field).filter((field) => read(key, field) !== undefined);
+
+  // The uniform-field-set rule, checked against key 0 so the message can name the
+  // key that differs rather than "some key".
+  const first = named(keys[0]);
+  const firstSet = new Set(first);
+  keys.forEach((key, i) => {
+    if (i === 0) return;
+    const here = named(key);
+    for (const field of here) {
+      if (firstSet.has(field)) continue;
+      throw new CompileError(
+        `${where}: key ${i} (t=${key.t}) names "${field}" and key 0 does not. Every key of ${article} ${group} timeline ` +
+          'is read with its own default, so a field stated on some keys and not others snaps to the default on ' +
+          'the rest — state it on every key or on none.',
+      );
+    }
+    for (const field of first) {
+      if (here.includes(field)) continue;
+      throw new CompileError(
+        `${where}: key 0 names "${field}" and key ${i} (t=${key.t}) does not. Every key of ${article} ${group} timeline ` +
+          `is read with its own default, so "${field}" would snap to ` +
+          `${JSON.stringify(defaultOf(shape, field))} at t=${key.t} — state it on every key or on none.`,
+      );
+    }
+  });
+
+  /** The value the runtime will see for `field` on this key: authored, or default. */
+  const effective = (key: MotionIkTrack['keys'][number] | MotionTransformTrack['keys'][number], channel: ConstraintChannel): number => {
+    const v = read(key, channel.field);
+    if (v !== undefined) return v as number;
+    if (channel.inheritsFrom === undefined) return channel.dflt;
+    const inherited = read(key, channel.inheritsFrom);
+    return inherited === undefined ? channel.dflt : (inherited as number);
+  };
+
+  const out: SpineTimelineKey[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const next = keys[i + 1];
+    if (!Number.isFinite(key.t)) throw new CompileError(`${where}: key ${i} has a non-finite time ${String(key.t)}`);
+    const time = keyTime(key.t);
+    if (i > 0 && time <= (out[i - 1].time as number)) {
+      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
+    }
+    checkKeyTime(where, time, key.t, duration);
+
+    const entry: SpineTimelineKey = { time };
+    for (const channel of shape.channels) {
+      const v = read(key, channel.field);
+      if (v === undefined) continue;
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        throw new CompileError(`${where} (t=${key.t}): ${channel.field} is ${JSON.stringify(v)}, not a finite number`);
+      }
+      const bounds = shape.range[channel.field];
+      if (bounds && (v < bounds[0] || v > bounds[1])) {
+        throw new CompileError(
+          `${where} (t=${key.t}): ${channel.field} is ${v}, outside ${bounds[0]}..${
+            bounds[1] === Infinity ? '∞' : bounds[1]
+          } — the runtime documents it as ${channel.field === 'mix' ? 'a percentage 0-1' : 'a distance'}`,
+        );
+      }
+      entry[channel.field] = r6(v);
+    }
+    for (const flag of shape.flags) {
+      const v = read(key, flag.field);
+      if (v === undefined) continue;
+      if (typeof v !== 'boolean') {
+        throw new CompileError(`${where} (t=${key.t}): ${flag.field} is ${JSON.stringify(v)}, not true or false`);
+      }
+      entry[flag.field] = v;
+    }
+
+    if (key.ease !== undefined && key.curve !== undefined) {
+      throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
+    }
+    if (key.curve !== undefined) {
+      if (!next) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
+      entry.curve = rawCurve(key.curve, shape.channels.length, where, String(key.t));
+    } else if (key.ease !== undefined && next) {
+      if (key.ease === 'stepped') {
+        entry.curve = 'stepped';
+      } else {
+        const handles = motion.easings?.[key.ease];
+        if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
+        const t2 = keyTime(next.t);
+        const curve: number[] = [];
+        for (const channel of shape.channels) {
+          curve.push(...bezierForChannel(handles, time, t2, effective(key, channel), effective(next, channel)));
+        }
+        entry.curve = curve;
+      }
+    } else if (key.ease !== undefined && !next) {
+      throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
+/** The parser default for one field of a constraint timeline, for a message. */
+function defaultOf(shape: ConstraintTimelineShape, field: string): number | boolean {
+  const channel = shape.channels.find((c) => c.field === field);
+  if (channel) return channel.dflt;
+  return shape.flags.find((f) => f.field === field)?.dflt ?? 0;
+}
+
+/**
+ * What a deform key is editing: the array the parser builds for one attachment.
+ *
+ * The two encodings are the reason this is derived rather than assumed, and they
+ * are the same split `readVertices` makes when it decides whether a `vertices`
+ * array is coordinates or a weight run:
+ *
+ *   unweighted — `deformLength = vertices.length`, one `x, y` pair per vertex;
+ *   weighted   — `deformLength = vertices.length / 3 * 2`, one pair per bone
+ *                INFLUENCE, because the loaded `vertices` is `x, y, weight` per
+ *                influence.
+ *
+ * Same shape, two meanings, and picking the wrong one writes a run that silently
+ * lands on the wrong vertices.
+ */
+interface DeformGeometry {
+  weighted: boolean;
+  /** How long the array the key edits is. */
+  deformLength: number;
+  vertexCount: number;
+  /** Bone influences per vertex, in vertex order. Null on an unweighted attachment. */
+  boneCounts: number[] | null;
+}
+
+/**
+ * Measure one emitted attachment's deform array.
+ *
+ * A region attachment is refused rather than measured: it has no `vertices` at
+ * all, so `attachment.vertices.length` throws inside the parser — one of the very
+ * few places this format fails loudly, and it fails in the consumer's process.
+ */
+function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
+  const type = (att as { type?: string }).type ?? 'region';
+  let worldVerticesLength: number;
+  if (type === 'mesh') {
+    worldVerticesLength = (att as SpineMeshAttachment).uvs.length;
+  } else if (type === 'boundingbox' || type === 'clipping') {
+    worldVerticesLength = (att as SpineBoundingBoxAttachment).vertexCount * 2;
+  } else {
+    throw new CompileError(
+      `${where}: a deform timeline keys the vertices of an attachment, and this one is a "${type}" — ` +
+        'it has no vertex array to deform. Deformable types: mesh, boundingbox, clipping.',
+    );
+  }
+  const vertices = (att as SpineMeshAttachment).vertices ?? [];
+  const weighted = vertices.length !== worldVerticesLength;
+  if (!weighted) {
+    return { weighted, deformLength: worldVerticesLength, vertexCount: worldVerticesLength / 2, boneCounts: null };
+  }
+  // Walk the weight run for the per-vertex influence counts. The run's own shape
+  // is already assured by the attachment builders and by A33/A04; this only
+  // counts, and a malformed run stops rather than producing a plausible number.
+  const boneCounts: number[] = [];
+  for (let i = 0; i < vertices.length; ) {
+    const n = vertices[i++];
+    if (!Number.isInteger(n) || n < 1) {
+      throw new CompileError(`${where}: the attachment's weighted vertex run has a bone count of ${String(n)} at index ${i - 1}`);
+    }
+    i += n * 4;
+    if (i > vertices.length) {
+      throw new CompileError(`${where}: the attachment's weighted vertex run is truncated at vertex ${boneCounts.length}`);
+    }
+    boneCounts.push(n);
+  }
+  const influences = vertices.length / 3;
+  return { weighted, deformLength: influences * 2, vertexCount: boneCounts.length, boneCounts };
+}
+
+/**
+ * One attachment's geometry keyed over time —
+ * `animations.<a>.attachments.<skin>.<slot>.<attachment>.deform`.
+ *
+ * ⭐ Every refusal below is a silent failure of the parser's own deform branch,
+ * and the first is the one that matters most:
+ *
+ *   1. **A run that does not fit.** The parser copies with
+ *      `Utils.arrayCopy(vertices, 0, deform, start, vertices.length)` into a
+ *      `Float32Array` sized from the attachment. Writing past the end of a typed
+ *      array is a **no-op in JavaScript** — no throw, no warning — so a run one
+ *      pair too long, or aimed at the wrong attachment, loses its tail and
+ *      deforms part of the mesh correctly. That is the worst possible failure
+ *      shape: it looks almost right.
+ *   2. **An odd `offset`, or an odd run length.** The array is `x, y` pairs; an
+ *      odd index puts every x of the run on a y and vice versa. It loads.
+ *   3. **`fromVertex` where a vertex is not one pair.** See below.
+ *   4. **A key that carries both a run and no room for one**, or a non-finite
+ *      offset — a NaN in the deform array propagates into world vertices.
+ *
+ * `fromVertex` is rigc's own field and the reason it exists is issue #89's
+ * observation: a deform key is the only key in the format whose meaning depends
+ * on the attachment it is attached to, and an author reasons in vertices while
+ * the array is indexed in influences. On an **unweighted** attachment the two
+ * coincide, so the translation is exact. On a **weighted** one it is exact only
+ * where each vertex the run covers has exactly ONE bone on it; with two bones a
+ * vertex occupies two pairs and "move vertex 3 by (dx, dy)" is not a statement
+ * the array can hold — the world offset would be
+ * `Σ weightᵦ · Mᵦ · (dx, dy)`, which equals `(dx, dy)` only if every influencing
+ * bone happens to share one world matrix. So that case is refused by name and
+ * `offset` stays available for an author who really is writing bind-space
+ * offsets per influence.
+ */
+function compileDeformTrack(
+  track: MotionDeformTrack,
+  motion: MotionSpec,
+  animName: string,
+  duration: number,
+  geometry: DeformGeometry,
+): SpineTimelineKey[] {
+  const skin = track.skin ?? 'default';
+  const where = `animation "${animName}" deform ${skin}/${track.slot}/${track.attachment}`;
+  const keys = track.keys;
+  if (!Array.isArray(keys) || keys.length === 0) throw new CompileError(`${where}: no keys`);
+
+  const out: SpineTimelineKey[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (!Number.isFinite(key.t)) throw new CompileError(`${where}: key ${i} has a non-finite time ${String(key.t)}`);
+    const time = keyTime(key.t);
+    if (i > 0 && time <= (out[i - 1].time as number)) {
+      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
+    }
+    checkKeyTime(where, time, key.t, duration);
+    if (key.offset !== undefined && key.fromVertex !== undefined) {
+      throw new CompileError(
+        `${where} (t=${key.t}): a key gives its start as "offset" (an index into the deform array) or as ` +
+          '"fromVertex" (a vertex index rigc translates), never both',
+      );
+    }
+    const run = key.vertices ?? null;
+    if (run === null) {
+      // The parser's own encoding for "no edit": with no `vertices` the deform is
+      // the setup pose. `offset`/`fromVertex` would be pointing into nothing, and
+      // two spellings of one key must not emit two different files.
+      if (key.offset !== undefined || key.fromVertex !== undefined) {
+        throw new CompileError(
+          `${where} (t=${key.t}): the key has no "vertices", which is the format's way of saying "back to the ` +
+            'setup pose" — so there is nothing for a start index to point at. Drop the offset, or give it a run.',
+        );
+      }
+      out.push(deformKeyCurve({ time }, key, keys, i, motion, where));
+      continue;
+    }
+    if (!Array.isArray(run) || run.length === 0) {
+      throw new CompileError(
+        `${where} (t=${key.t}): "vertices" is ${JSON.stringify(key.vertices)}; give an array of x, y offsets, ` +
+          'or omit it entirely for "back to the setup pose"',
+      );
+    }
+    if (run.length % 2 !== 0) {
+      throw new CompileError(
+        `${where} (t=${key.t}): "vertices" holds ${run.length} numbers; the deform array is x, y PAIRS, so a run has an even length`,
+      );
+    }
+    for (const n of run) {
+      if (typeof n !== 'number' || !Number.isFinite(n)) {
+        throw new CompileError(`${where} (t=${key.t}): "vertices" holds a non-finite value ${JSON.stringify(n)}`);
+      }
+    }
+    const start = deformStart(key, run.length, geometry, where);
+    if (start + run.length > geometry.deformLength) {
+      throw new CompileError(
+        `${where} (t=${key.t}): the run starts at deform index ${start} and is ${run.length} long, which ends at ` +
+          `${start + run.length}; this attachment's deform array is ${geometry.deformLength} long ` +
+          `(${geometry.weighted ? `${geometry.deformLength / 2} bone influences` : `${geometry.vertexCount} vertices`}). ` +
+          'The parser copies into a Float32Array, so everything past the end is dropped without a word.',
+      );
+    }
+    const entry: SpineTimelineKey = { time };
+    // `offset` defaults to 0 in the parser and the editor omits it there, so an
+    // authored 0, an authored `fromVertex: 0` and an absent start all emit the
+    // same bytes — one meaning, one file.
+    if (start !== 0) entry.offset = start;
+    entry.vertices = run.map(r6);
+    out.push(deformKeyCurve(entry, key, keys, i, motion, where));
+  }
+  return out;
+}
+
+/**
+ * Where in the deform array this key's run begins.
+ *
+ * `offset` is that index outright. `fromVertex` is a vertex index, and turning
+ * one into the other is exact only where a vertex occupies exactly one pair —
+ * which is every vertex of an unweighted attachment and only the single-bone
+ * vertices of a weighted one.
+ */
+function deformStart(
+  key: MotionDeformTrack['keys'][number],
+  runLength: number,
+  geometry: DeformGeometry,
+  where: string,
+): number {
+  if (key.offset !== undefined) {
+    if (!Number.isInteger(key.offset) || key.offset < 0) {
+      throw new CompileError(
+        `${where} (t=${key.t}): offset is ${JSON.stringify(key.offset)}; it is an index into the deform array, so a whole number ≥ 0`,
+      );
+    }
+    if (key.offset % 2 !== 0) {
+      throw new CompileError(
+        `${where} (t=${key.t}): offset ${key.offset} is odd. The deform array is x, y pairs, so an odd start puts ` +
+          "every x of this run on a y — it loads, and the mesh tears. Use an even index, or say which vertex you meant with \"fromVertex\".",
+      );
+    }
+    return key.offset;
+  }
+  if (key.fromVertex === undefined) return 0;
+  const from = key.fromVertex;
+  if (!Number.isInteger(from) || from < 0) {
+    throw new CompileError(`${where} (t=${key.t}): fromVertex is ${JSON.stringify(from)}; it is a vertex index, so a whole number ≥ 0`);
+  }
+  const covered = runLength / 2;
+  if (from + covered > geometry.vertexCount) {
+    throw new CompileError(
+      `${where} (t=${key.t}): fromVertex ${from} plus ${covered} vertex offset(s) runs to vertex ${from + covered}, ` +
+        `and the attachment has ${geometry.vertexCount}`,
+    );
+  }
+  if (!geometry.weighted) return from * 2;
+  const counts = geometry.boneCounts!;
+  for (let v = from; v < from + covered; v++) {
+    if (counts[v] === 1) continue;
+    throw new CompileError(
+      `${where} (t=${key.t}): "fromVertex" counts VERTICES, and this attachment is weighted — its deform array ` +
+        `holds one x, y pair per bone INFLUENCE, and vertex ${v} has ${counts[v]} of them. One offset per vertex ` +
+        'is not a thing that array can hold: the world offset of a multi-bone vertex is the weighted sum of a ' +
+        'per-bone offset in each bone\'s own bind space, so rigc will not guess one for you. Either key the ' +
+        'control bone instead, or write the bind-space pairs yourself and start the run with "offset" ' +
+        `(vertex ${from} starts at deform index ${2 * counts.slice(0, from).reduce((a, b) => a + b, 0)}).`,
+    );
+  }
+  let start = 0;
+  for (let v = 0; v < from; v++) start += counts[v];
+  return start * 2;
+}
+
+/**
+ * A deform key's curve.
+ *
+ * One channel, and it is not any value in `vertices`: `readCurve(curve, timeline,
+ * bezier, frame, 0, time, time2, 0, 1, 1)` builds the cubic between **0 and 1**,
+ * the fraction of the way from this key's geometry to the next one's. So a named
+ * easing here is the same shape it would be anywhere, applied to the blend rather
+ * than to a coordinate, and a raw curve is four numbers whose value axis is 0..1.
+ */
+function deformKeyCurve(
+  entry: SpineTimelineKey,
+  key: MotionDeformTrack['keys'][number],
+  keys: MotionDeformTrack['keys'],
+  index: number,
+  motion: MotionSpec,
+  where: string,
+): SpineTimelineKey {
+  const hasNext = index + 1 < keys.length;
+  if (key.ease !== undefined && key.curve !== undefined) {
+    throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
+  }
+  if (key.curve !== undefined) {
+    if (!hasNext) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
+    entry.curve = rawCurve(key.curve, 1, where, String(key.t));
+    return entry;
+  }
+  if (key.ease === undefined) return entry;
+  if (!hasNext) throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
+  if (key.ease === 'stepped') {
+    entry.curve = 'stepped';
+    return entry;
+  }
+  const handles = motion.easings?.[key.ease];
+  if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
+  entry.curve = bezierForChannel(handles, entry.time as number, keyTime(keys[index + 1].t), 0, 1);
+  return entry;
 }
 
 function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string): string[] {

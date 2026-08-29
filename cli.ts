@@ -1012,6 +1012,46 @@ function cmdExplain(flags: Record<string, string>): void {
         }
       }
     }
+    // The two constraint groups: one unnamed timeline per constraint, so the
+    // name printed is the constraint's and there is no timeline name to print
+    // beside it. Every field a key carries is shown, because each one is
+    // optional in the file and the ABSENT ones are what a reader has to see —
+    // an omitted `softness` is 0, not "unchanged".
+    for (const group of ['ik', 'transform'] as const) {
+      for (const [name, keys] of Object.entries(anim[group] ?? {})) {
+        console.log(`    ${group}.${name}  ${keys.length} key(s)  <- one timeline per constraint`);
+        for (const key of keys) {
+          const fields = Object.entries(key)
+            .filter(([k]) => k !== 'time' && k !== 'curve')
+            .map(([k, v]) => `${k}=${String(v)}`)
+            .join(' ');
+          const curve = Array.isArray(key.curve) ? `bezier[${key.curve.length}]` : key.curve === 'stepped' ? 'stepped' : 'linear';
+          console.log(`      t=${String(key.time).padEnd(7)} ${(fields || '(all defaults)').padEnd(46)} ${curve}`);
+        }
+      }
+    }
+    // Deform timelines are keyed on a skin/slot/attachment triple, and the run
+    // is printed as its span rather than its numbers: `offset` plus a length is
+    // what tells a reader whether the key lands where they meant, and a hundred
+    // vertex offsets on one line tells them nothing.
+    for (const [skinName, slotMap] of Object.entries(anim.attachments ?? {})) {
+      for (const [slotName, attMap] of Object.entries(slotMap)) {
+        for (const [attName, timelines] of Object.entries(attMap)) {
+          for (const [timelineName, keys] of Object.entries(timelines)) {
+            console.log(`    ${skinName}/${slotName}/${attName}.${timelineName}  ${keys.length} key(s)`);
+            for (const key of keys) {
+              const run = Array.isArray(key.vertices) ? (key.vertices as number[]) : null;
+              const offset = typeof key.offset === 'number' ? key.offset : 0;
+              const span = run
+                ? `deform[${offset}..${offset + run.length}]  ${run.length / 2} pair(s)`
+                : 'back to the setup pose';
+              const curve = Array.isArray(key.curve) ? `bezier[${key.curve.length}]` : key.curve === 'stepped' ? 'stepped' : 'linear';
+              console.log(`      t=${String(key.time).padEnd(7)} ${span.padEnd(46)} ${curve}`);
+            }
+          }
+        }
+      }
+    }
     // The draw-order timeline names no target, so it hangs off the animation
     // rather than off a slot — and a timeline `explain` did not print would be a
     // timeline nobody could check without reading the emitted JSON.
@@ -1226,7 +1266,7 @@ const USAGE = [
   '              THE DEFAULT — 20 rules, and the question the output answers when',
   '              you import it into the Spine editor.',
   '  spine-html  the above, plus this project\'s renderer and archetype policy:',
-  '              all 34 rules, opt-in. Those extra 14 fire on real, correct,',
+  '              all 36 rules, opt-in. Those extra 14 fire on real, correct,',
   '              editor-produced Spine data, so they are somebody\'s policy rather',
   '              than anybody\'s validity.',
   '',

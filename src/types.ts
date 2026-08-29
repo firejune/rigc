@@ -330,6 +330,144 @@ export interface MotionEventKey {
   balance?: number;
 }
 
+/**
+ * One key of an IK constraint's timeline (`animations.<a>.ik.<constraint>`).
+ *
+ * ⚠️ Every field is **optional and absolute**, and that pairing is the trap. The
+ * parser reads each one with its own default per key
+ * (`SkeletonJson.ts`: `mix` 1, `softness` 0, `bendPositive` true, `compress`
+ * false, `stretch` false) — so a key that omits `softness` does not hold the
+ * previous key's softness, it snaps to 0. rigc therefore refuses a track whose
+ * keys do not all name the SAME set of fields: state the value on every key, or
+ * on none of them.
+ *
+ * `mix` and `softness` are the timeline's two curve channels, in that order.
+ * The three booleans are stepped by nature — nothing interpolates them.
+ */
+export interface MotionIkKey {
+  /** Time in seconds. */
+  t: number;
+  /** 0..1: how much of the constrained rotation is applied. Parser default 1. */
+  mix?: number;
+  /** Distance from full reach at which the bones stop straightening. Default 0. */
+  softness?: number;
+  /** Two-bone IK bend direction. Default true. */
+  bendPositive?: boolean;
+  /** One-bone IK: scale the bone down to reach a close target. Default false. */
+  compress?: boolean;
+  /** Scale the bone up to reach a far target. Default false. */
+  stretch?: boolean;
+  /** Named easing from `easings`, or "stepped". Absent = linear. */
+  ease?: string;
+  /** The raw form: 4 absolute (time, value) numbers per channel — 8 here. */
+  curve?: number[] | 'stepped';
+}
+
+/**
+ * One IK constraint keyed over time.
+ *
+ * 4.3 writes this as `animations.<a>.ik.<constraint>` — **one unnamed timeline
+ * per constraint**, so the constraint name is the only target there is and the
+ * group carries no timeline name at all.
+ */
+export interface MotionIkTrack {
+  /** An `ik` constraint the rig spec declares. */
+  constraint: string;
+  keys: MotionIkKey[];
+}
+
+/**
+ * One key of a transform constraint's timeline
+ * (`animations.<a>.transform.<constraint>`).
+ *
+ * Six mixes, six curve channels, in the order written here — which is the order
+ * the parser reads them and therefore the order a curve array concatenates.
+ * The same absent-means-default rule as `MotionIkKey` applies, with one extra
+ * quirk: `mixY` defaults to **this key's own `mixX`**, not to 1.
+ */
+export interface MotionTransformKey {
+  /** Time in seconds. */
+  t: number;
+  /** Parser default 1. */
+  mixRotate?: number;
+  /** Parser default 1. */
+  mixX?: number;
+  /** Parser default: the same key's `mixX`. */
+  mixY?: number;
+  /** Parser default 1. */
+  mixScaleX?: number;
+  /** Parser default 1. */
+  mixScaleY?: number;
+  /** Parser default 1. */
+  mixShearY?: number;
+  ease?: string;
+  /** 4 absolute (time, value) numbers per channel — 24 here. */
+  curve?: number[] | 'stepped';
+}
+
+/** One transform constraint keyed over time. Same shape rule as `MotionIkTrack`. */
+export interface MotionTransformTrack {
+  /** A `transform` constraint the rig spec declares. */
+  constraint: string;
+  keys: MotionTransformKey[];
+}
+
+/**
+ * One key of a deform timeline
+ * (`animations.<a>.attachments.<skin>.<slot>.<attachment>.deform`).
+ *
+ * 🚨 This is the only key in the format whose meaning depends on the object it
+ * is attached to. The parser builds a zero-filled array as long as the
+ * attachment's own deform array, copies this key's `vertices` into it starting at
+ * `offset`, and leaves the rest alone — so a key is a **sparse edit of the setup
+ * geometry**, and both the length of that array and the meaning of an index into
+ * it come from the attachment (`SkeletonJson.ts`, the `deform` branch):
+ *
+ *   - **unweighted** attachment — the array is one `x, y` pair per VERTEX, and
+ *     the parser adds the setup position back on load. The numbers here are
+ *     therefore offsets from setup, in the slot bone's space.
+ *   - **weighted** attachment — the array is one `x, y` pair per BONE INFLUENCE
+ *     (`vertices.length / 3 * 2`), each in the bind space of that influence's
+ *     bone. A vertex with three bones on it occupies three pairs.
+ *
+ * `offset` is an index into that array and works for both. `fromVertex` is
+ * rigc's ergonomic form — a VERTEX index, which rigc translates — and it is
+ * accepted only where the translation is honest: always on an unweighted
+ * attachment, and on a weighted one only when every vertex the run covers has
+ * exactly one bone influence. Anything else is refused by name rather than
+ * emitted as a plausible-looking lie.
+ */
+export interface MotionDeformKey {
+  /** Time in seconds. */
+  t: number;
+  /** Where the run starts in the attachment's own deform array. Default 0. */
+  offset?: number;
+  /** The same start, given as a vertex index. Never together with `offset`. */
+  fromVertex?: number;
+  /**
+   * The run: `x, y` offsets, two numbers per array slot. Absent or `null` is the
+   * parser's own encoding for "back to the setup pose" — the key with no edit.
+   */
+  vertices?: number[] | null;
+  ease?: string;
+  /**
+   * One channel, and it interpolates the deform FRACTION from 0 to 1 rather than
+   * any value in `vertices` (`readCurve(..., 0, 1, 1)`). So a raw curve is 4
+   * numbers whose value axis runs 0..1.
+   */
+  curve?: number[] | 'stepped';
+}
+
+/** One attachment's geometry keyed over time. */
+export interface MotionDeformTrack {
+  /** The skin the attachment lives in. Absent = `"default"`. */
+  skin?: string;
+  slot: string;
+  /** The attachment's placeholder name inside that skin and slot. */
+  attachment: string;
+  keys: MotionDeformKey[];
+}
+
 export interface MotionAnimation {
   /** Declared, then verified against the compiled result (rule 4). */
   duration: number;
@@ -337,6 +475,23 @@ export interface MotionAnimation {
   loop: boolean;
   note?: string;
   tracks: MotionTrack[];
+  /**
+   * IK constraint timelines, one entry per constraint.
+   *
+   * ⭐ Not a `track`, and the reason is the key rather than the target. A track's
+   * key is one `v` — an array, a name, or nothing — and these three families each
+   * carry a shape of their own: five named fields for IK, six for a transform
+   * constraint, and for a deform a sparse run whose meaning depends on the
+   * attachment. Folding them into `MotionKey` would make `v` mean four different
+   * things depending on `property`, and the type would stop documenting any of
+   * them. So they sit beside `tracks`, where 4.3 also writes them
+   * (`animations.<a>.ik`, `.transform`, `.attachments`).
+   */
+  ik?: MotionIkTrack[];
+  /** Transform constraint timelines, one entry per constraint. */
+  transform?: MotionTransformTrack[];
+  /** Deform timelines, one entry per skin/slot/attachment triple. */
+  deform?: MotionDeformTrack[];
   /**
    * The draw-order timeline. **One per animation, and it names no target** —
    * which is why it is not a `track`: 4.3 writes it as `animations.<a>.drawOrder`
@@ -541,7 +696,15 @@ export interface SpineSkeletonJson {
     {
       slots?: Record<string, Record<string, SpineTimelineKey[]>>;
       bones?: Record<string, Record<string, SpineTimelineKey[]>>;
+      /**
+       * `ik.<constraint> = keys[]` — the constraint IS the timeline, so there is
+       * no timeline name between the two. Same for `transform`.
+       */
+      ik?: Record<string, SpineTimelineKey[]>;
+      transform?: Record<string, SpineTimelineKey[]>;
       physics?: Record<string, Record<string, SpineTimelineKey[]>>;
+      /** `attachments.<skin>.<slot>.<attachment>.<timeline> = keys[]` — four deep. */
+      attachments?: Record<string, Record<string, Record<string, Record<string, SpineTimelineKey[]>>>>;
       /** Whole-animation timeline: no target name, one array per animation. */
       drawOrder?: SpineTimelineKey[];
       /** The other whole-animation timeline; same shape, same reason. */

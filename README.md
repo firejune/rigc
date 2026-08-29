@@ -586,8 +586,11 @@ the rest of the repository must not have) and is type-checked on its own with
 - A **motion spec** (`MotionSpec`, `spec: "rigc-motion/1"`) owns **time**: the rig
   it was authored against, named easing handles, setup overrides, a physics tuning
   table, and the animations — each with a declared duration, a loop flag, its
-  tracks, and optionally a `drawOrder` timeline (the one timeline that names no
-  target, so it sits on the animation rather than in `tracks`).
+  tracks, and five timeline families that sit on the animation rather than in `tracks`:
+  `drawOrder` and `events`, which name no target at all, and `ik`, `transform`
+  and `deform`, whose keys carry named fields instead of one value (an IK mix and
+  softness, six transform mixes, a sparse run of vertex offsets) — which is also
+  where 4.3 writes each of them.
 
 **Outputs — two files per cut**, written to the cut's `out` directory:
 
@@ -613,7 +616,7 @@ model (what is pinned, what may move, how authority falls off), and the
 ### The validator
 
 [`src/validate.ts`](src/validate.ts) parses the emitted artifacts with `spine-core`
-and then runs 34 named assertions over the loaded skeleton. Each one exists because
+and then runs 36 named assertions over the loaded skeleton. Each one exists because
 the failure it catches is **silent**: the file loads, animates, and lies.
 
 Assertions whose data is absent are reported as **SKIP**, never folded into the pass
@@ -621,7 +624,7 @@ count — an assertion with nothing to check has not checked anything.
 
 #### Profiles — "wrong" versus "not how we do it here"
 
-Not all 34 rules are about Spine. Some are about **spine-html**, the renderer this
+Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this
 compiler was built to feed, and about one project's frame budget; they fire on real,
 correct, editor-produced Spine data, because the official example projects carry
 clipping attachments, unweighted meshes, 116-triangle meshes and packed atlases —
@@ -634,12 +637,12 @@ So `validate` and `build` take a `--profile`:
 
 | Profile | Runs | For |
 | --- | --- | --- |
-| `spine` | the 20 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
-| `spine-html` | all 34 | Opt-in. Is this a rig *this* project can ship? |
+| `spine` | the 22 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
+| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |
 
 `spine` is the default because it is the question this package's output answers:
 the artifact imports into the Spine editor and plays in any 4.3 runtime, and
-that is what the 20 validity rules are about. The other 14 are somebody's policy
+that is what the 22 validity rules are about. The other 14 are somebody's policy
 — one renderer's, one canvas budget's, one compiler's own formations' — and a
 rig arriving from anywhere else has no stake in them. Ask for them with
 `--profile spine-html` when you want them.
@@ -688,6 +691,8 @@ the renderer policy*.
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | every draw-order key resolves to a real permutation: known slots, one entry per slot, each landing inside the slots array, offsets in ascending slot order. The **only assertion that runs before `A00`** — descending offsets make `readDrawOrder`'s forward-only cursor spin rather than return, so the round trip is refused by name instead of attempted |
 | `A32_EVENT_KEYS_RESOLVE` | both | every event key fires an event the skeleton declares, no key sits earlier in time than the one before it, and `volume`/`balance` appear only on an event with an `audio` path. Only the first of those is loud in the parser; the other two load clean and drop the firing or the value in silence. SKIPs when no animation carries an event timeline |
 | `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | every bounding box and clipping polygon states a `vertexCount` that agrees with its vertex array, its weighted run decodes to that many vertices with bone indices in range, and a clipping `end` names a slot that exists. All three load clean: a missing count reads as zero and empties the polygon, and a missing end slot makes the clip run to the bottom of the draw order. SKIPs when the skeleton carries neither type |
+| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | every `ik` / `transform` timeline names a constraint of that type and carries at least one key. The name-and-type miss is loud in the parser (`IK Constraint not found`) and this one says which constraints the skeleton *does* have; the empty key array is silent — `readAnimation` reads key 0, finds nothing and skips the timeline without a word. SKIPs when no animation carries one |
+| `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | both | every deform key's run lands inside the attachment's own deform array, starts on an even index, holds an even count of finite numbers, and names a skin/slot/attachment triple that resolves. The array is one `x, y` pair per **vertex** on an unweighted attachment and one per **bone influence** on a weighted one, so its length is measured from the attachment rather than assumed. An overlong run is the format's quietest defect: `Utils.arrayCopy` into a `Float32Array` drops everything past the end, so part of the mesh deforms and it looks nearly right. SKIPs when no animation carries a deform timeline |
 
 ## Usage
 
@@ -754,7 +759,7 @@ bun cli.ts preview --candidate path/to/spine                # one .html that pla
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
 it re-derive the declared durations and the structural expectations too, and the
 report says which it had. `build` and `validate` both default to `--profile spine`,
-the 20 validity rules; `--profile spine-html` adds this project's renderer and
+the 22 validity rules; `--profile spine-html` adds this project's renderer and
 archetype policy on top.
 
 `render` and `preview` are the two that need no reference at all — see
@@ -862,7 +867,7 @@ fixtures/       public.ts — the three synthetic cuts the selftest breaks
 src/
   compile.ts    rig + motion spec (+ manifest) -> skeleton JSON + atlas text (pure data assembly)
   rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
-  validate.ts   spine-core round trip + the 34 assertions
+  validate.ts   spine-core round trip + the 36 assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure
   render.ts     the rasteriser (regions + meshes), shared by the reference renderer,
                 `rigc render` and check
