@@ -2865,10 +2865,15 @@ adjacent pairs, `arcs@24fps` at **2.892×** (13.99 over 4.84, 137 tiles), 15 PAS
 5 SKIP. v2.1 changes one reading of G3 and this rung has no single-pose set, so nothing here
 is in its scope. The narrowest G7 margin on the page is still this one.
 
-➡️ **That last sentence was true on 2026-08-26 and is not true now**: rung 7 attempt 2's
-`fall-in@30fps` reads **2.923×** against this sheet's 2.892×, so the narrowest G7 margin on the
-page is **rung 7's**, by 0.031. The live ranking is *The clause margins* under **Status**, and
-it is the surface that stays current; this paragraph keeps its date.
+➡️ **Two sentences in this section were true when written and are not true now**, and both
+keep their dates. ① *"The narrowest G7 margin on the page is still this one"* — rung 7 attempt
+2's `fall-in@30fps` reads **2.923×** against this sheet's 2.892×, so the narrowest is **rung
+7's**, by 0.031. ② *"a tightening of G7 finds rung 6 first, and rule 2 names it there"* — **rule
+2 no longer names it, or any other ranking**: those lines were deleted on 2026-08-29 under gate
+v2.2 (c), because a margin is a fact about the corpus and a sentence inside a rule cannot stay
+current with it ([#207](https://github.com/firejune/rigc/issues/207)). ⇒ **The live ranking is
+*The clause margins* under *Status***, updated by every adjudication — and it is where a reader
+sent here by either sentence should go.
 
 #### Gate v2.2 re-inspection, 2026-08-29 — **PASS**, unchanged
 
