@@ -573,6 +573,14 @@ export interface CompiledImage {
   absPath: string;
   width: number;
   height: number;
+  /**
+   * A per-pixel alpha channel, and only that — colour types 4 and 6.
+   *
+   * ⚠️ Not "this part can be transparent": indexed and greyscale art keeps its
+   * transparency in a `tRNS` chunk and reads `false` here. Anything asking
+   * whether the art can draw a transparent pixel wants `PngInfo.hasTransparency`
+   * ([`src/png.ts`](png.ts)), which is the distinction A19 got wrong (#215).
+   */
   hasAlpha: boolean;
   isBase: boolean;
 }

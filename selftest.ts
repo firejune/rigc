@@ -42,6 +42,7 @@
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import {
   BoundingBoxAttachment,
   ClippingAttachment,
@@ -97,10 +98,11 @@ import {
   type Posable,
   type Viewport,
 } from './src/render.ts';
+import { readPngInfo } from './src/png.ts';
 import type { CompileResult } from './src/types.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
-import { Plate, readPlate, type RGBA } from './tools/plate.ts';
+import { Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
 interface CutEntry {
@@ -3198,6 +3200,254 @@ function runStaticRigSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// PNG transparency — the colour types rigc's own writer never produces
+// ---------------------------------------------------------------------------
+//
+// ⭐ Every PNG in every other suite is written by `tools/plate.ts`, which emits
+// colour type 6 and nothing else. So for as long as A19 judged a part by its
+// colour type alone, the suite could not have caught the error it made: no
+// fixture here was ever an indexed or greyscale file.
+//
+// A stranger's files are. Indexed-with-`tRNS` is the default or ordinary output
+// of ImageMagick, Photoshop's "Export as PNG-8", GIMP's indexed mode, aseprite,
+// pngquant and optipng, and #215 is what that cost — seven of nine hand-drawn
+// parts refused on a first build, told they carried "no alpha channel" when the
+// art was genuinely transparent and rendered correctly.
+//
+// The cases below are the two sides of the corrected rule (transparency present
+// versus genuinely absent) across the three colour types that can carry a `tRNS`
+// chunk, plus the greyscale+alpha file that always passed — that one is here
+// because it is the OTHER half of the audit: two of those nine parts came out
+// type 4 from the same tool in the same command and sailed through, which is why
+// the author could not see any property of their own that explained the split.
+
+/** Palette and pixel plan for one synthetic part, in a colour type `Plate` cannot write. */
+interface TypedPng {
+  /** 0 greyscale, 2 truecolour, 3 indexed. Types 4 and 6 come from `Plate` instead. */
+  colourType: 0 | 2 | 3;
+  /** Emit a `tRNS` chunk: a palette alpha table for type 3, one invisible colour for 0 and 2. */
+  trns: boolean;
+}
+
+/**
+ * Write an 8-bit PNG in a colour type `tools/plate.ts` does not produce.
+ *
+ * The pixels are a checkerboard for the same reason every other fixture's are —
+ * a flat fill hides a wrong mapping — but nothing here is measured. The only
+ * load-bearing property is the chunk list: which colour type the IHDR declares,
+ * and whether a `tRNS` chunk sits between `PLTE` and `IDAT` where the spec puts
+ * it. That is exactly the surface `readPngInfo` reads and A19 judges.
+ */
+function writeTypedPng(path: string, width: number, height: number, spec: TypedPng): void {
+  const samples = spec.colourType === 2 ? 3 : 1;
+  const stride = width * samples + 1;
+  const raw = new Uint8Array(height * stride);
+  for (let y = 0; y < height; y++) {
+    raw[y * stride] = 0; // filter: none, as `encodePng` does
+    for (let x = 0; x < width; x++) {
+      const on = (Math.floor(x / 4) + Math.floor(y / 4)) % 2 === 0;
+      const at = y * stride + 1 + x * samples;
+      if (spec.colourType === 3) {
+        // Palette index 0 is the entry `tRNS` makes invisible, so the "off"
+        // squares are the transparent ones when a tRNS chunk is present.
+        raw[at] = on ? 1 : 0;
+      } else if (spec.colourType === 0) {
+        raw[at] = on ? 220 : 30;
+      } else {
+        raw[at] = on ? 220 : 30;
+        raw[at + 1] = on ? 210 : 40;
+        raw[at + 2] = on ? 200 : 50;
+      }
+    }
+  }
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = spec.colourType;
+  const parts: Uint8Array[] = [PNG_SIGNATURE, pngChunk('IHDR', ihdr)];
+  if (spec.colourType === 3) {
+    parts.push(pngChunk('PLTE', new Uint8Array([30, 40, 50, 220, 210, 200])));
+    // One alpha byte per palette entry, shortest-first: entry 0 invisible.
+    if (spec.trns) parts.push(pngChunk('tRNS', new Uint8Array([0])));
+  } else if (spec.trns) {
+    // One colour declared invisible: a 16-bit sample per channel, big-endian.
+    parts.push(
+      pngChunk('tRNS', spec.colourType === 0 ? new Uint8Array([0, 30]) : new Uint8Array([0, 30, 0, 40, 0, 50])),
+    );
+  }
+  parts.push(pngChunk('IDAT', new Uint8Array(deflateSync(raw, { level: 9 }))));
+  parts.push(pngChunk('IEND', new Uint8Array(0)));
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  writeFileSync(path, out);
+}
+
+/**
+ * Write a greyscale+alpha (colour type 4) PNG — the file that always passed.
+ *
+ * `Plate` cannot write this one either, and it is not a `TypedPng`: it carries a
+ * real per-pixel alpha channel rather than a `tRNS` chunk, which is the whole
+ * point of having it here.
+ */
+function writeGreyAlphaPng(path: string, width: number, height: number): void {
+  const stride = width * 2 + 1;
+  const raw = new Uint8Array(height * stride);
+  for (let y = 0; y < height; y++) {
+    raw[y * stride] = 0;
+    for (let x = 0; x < width; x++) {
+      const at = y * stride + 1 + x * 2;
+      raw[at] = (Math.floor(x / 4) + Math.floor(y / 4)) % 2 === 0 ? 220 : 30;
+      raw[at + 1] = x < 2 || y < 2 || x >= width - 2 || y >= height - 2 ? 0 : 255;
+    }
+  }
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  ihdr[8] = 8;
+  ihdr[9] = 4;
+  const parts = [
+    PNG_SIGNATURE,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', new Uint8Array(deflateSync(raw, { level: 9 }))),
+    pngChunk('IEND', new Uint8Array(0)),
+  ];
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  writeFileSync(path, out);
+}
+
+const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
+
+/**
+ * Replace the probe rig's `block.png` with one of these files and gate the rig.
+ *
+ * ⚠️ The profile is `spine-html` and it has to be: A19 is renderer policy, so
+ * under `spine` it is not a pass and not a skip but a third thing —
+ * `profileSkipped` — and a case that read `passed` under the wrong profile would
+ * report a confident green for an assertion that never ran.
+ *
+ * `block.png` is 12x8 against a 64x64 stage, so it is nowhere near covering the
+ * stage: it is judged as an overlay, which is the branch under test. The rig is
+ * rebuilt per case so no case can inherit another's art.
+ */
+function gatePartImage(write: (path: string) => void): ReturnType<typeof validate> {
+  const dirs = writeProbeRig();
+  write(join(dirs.dir, 'block.png'));
+  return gateProbe(dirs, STATIC_MOTION, 'spine-html');
+}
+
+function runPngTransparencySuite(): number {
+  let bad = 0;
+  console.log('\n── PNG transparency (self-contained: this suite writes its own art) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const verdict = (report: ReturnType<typeof validate>): string => {
+    const failure = report.failures.find((f) => f.assertion === A19);
+    if (failure) return `A19 failed: ${failure.detail}`;
+    if (report.passed.includes(A19)) return 'A19 passed';
+    const skipped = report.skipped.find((s) => s.assertion === A19);
+    if (skipped) return `A19 skipped: ${skipped.reason}`;
+    return 'A19 did not run at all';
+  };
+
+  const indexedTrns = gatePartImage((p) => writeTypedPng(p, 12, 8, { colourType: 3, trns: true }));
+  say(
+    'T01_INDEXED_WITH_TRNS_IS_TRANSPARENT_ART',
+    indexedTrns.passed.includes(A19),
+    verdict(indexedTrns),
+    'colour type 3 + tRNS is what ImageMagick, PNG-8 export, GIMP indexed and pngquant produce; the art is transparent (#215)',
+  );
+
+  const greyTrns = gatePartImage((p) => writeTypedPng(p, 12, 8, { colourType: 0, trns: true }));
+  say(
+    'T02_GREYSCALE_WITH_TRNS_IS_TRANSPARENT_ART',
+    greyTrns.passed.includes(A19),
+    verdict(greyTrns),
+    'tRNS on a greyscale file names one invisible shade; the rule is transparency, not the channel it is stored in',
+  );
+
+  const rgbTrns = gatePartImage((p) => writeTypedPng(p, 12, 8, { colourType: 2, trns: true }));
+  say(
+    'T03_TRUECOLOUR_WITH_TRNS_IS_TRANSPARENT_ART',
+    rgbTrns.passed.includes(A19),
+    verdict(rgbTrns),
+    'same chunk, third colour type — a rule keyed on tRNS must not be keyed on "indexed" by accident',
+  );
+
+  const greyAlpha = gatePartImage((p) => writeGreyAlphaPng(p, 12, 8));
+  say(
+    'T04_GREYSCALE_ALPHA_STILL_PASSES',
+    greyAlpha.passed.includes(A19),
+    verdict(greyAlpha),
+    'the other half of the #215 audit: two of nine parts came out type 4 from the same command and passed',
+  );
+
+  // The break. Nothing about the fix may make A19 unable to go RED — an opaque
+  // part with no alpha channel and no tRNS still paints over what is behind it.
+  const opaque = gatePartImage((p) => writeTypedPng(p, 12, 8, { colourType: 3, trns: false }));
+  const refusal = opaque.failures.find((f) => f.assertion === A19);
+  say(
+    'T05_INDEXED_WITHOUT_TRNS_IS_STILL_REFUSED',
+    refusal !== undefined,
+    verdict(opaque),
+    'the assertion still has to fire, or the fix has replaced a false alarm with a blind spot',
+  );
+
+  // ⭐ The message is the deliverable here, not just the verdict. #215 was ranked
+  // above every other wall in the audit because the explanation was WRONG, and a
+  // true verdict with an unhelpful message would leave most of that unfixed: the
+  // reader has to be told what to do and that a profile exists which does not ask.
+  const detail = refusal?.detail ?? '';
+  const missing = [
+    /re-export/i.test(detail) ? null : 'a remedy ("re-export")',
+    /rgba/i.test(detail) ? null : 'the target format (RGBA)',
+    /tRNS/.test(detail) ? null : 'the chunk that would make it transparent (tRNS)',
+    /--profile spine\b/.test(detail) ? null : 'the profile that does not enforce it (--profile spine)',
+    /no alpha channel/i.test(detail) ? 'DROP the old untrue "no alpha channel" phrasing' : null,
+  ].filter((m): m is string => m !== null);
+  say(
+    'T06_THE_REFUSAL_NAMES_A_REMEDY_AND_A_PROFILE',
+    refusal !== undefined && missing.length === 0,
+    missing.length === 0 ? detail : `message is missing: ${missing.join(', ')} — got: ${detail}`,
+    'every other error in the audit named a fix; the one a stranger meets first did not',
+  );
+
+  // Where the defect actually lived: the reader stopped at the IHDR, so a chunk
+  // sitting after it could not be seen no matter what the rule above it said.
+  const probe = mkdtempSync(join(tmpdir(), 'rigc-trns-'));
+  writeTypedPng(join(probe, 'with.png'), 12, 8, { colourType: 3, trns: true });
+  writeTypedPng(join(probe, 'without.png'), 12, 8, { colourType: 3, trns: false });
+  const withTrns = readPngInfo(join(probe, 'with.png'));
+  const withoutTrns = readPngInfo(join(probe, 'without.png'));
+  say(
+    'T07_READ_PNG_INFO_WALKS_PAST_THE_HEADER',
+    withTrns.colourType === 3 &&
+      withTrns.hasTrns &&
+      withTrns.hasTransparency &&
+      !withTrns.hasAlpha &&
+      !withoutTrns.hasTrns &&
+      !withoutTrns.hasTransparency &&
+      withTrns.width === 12 &&
+      withTrns.height === 8,
+    `with tRNS: ${JSON.stringify(withTrns)}; without: ${JSON.stringify(withoutTrns)}`,
+    'hasAlpha stays "a per-pixel alpha channel"; the tRNS chunk is a separate fact and the size must survive the walk',
+  );
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // draw-order timelines
 // ---------------------------------------------------------------------------
 //
@@ -4635,6 +4885,8 @@ function main(): void {
   substantive += 1 + RIG_MUTANTS.length;
   bad += runStaticRigSuite();
   substantive += 4;
+  bad += runPngTransparencySuite();
+  substantive += 7;
   bad += runDrawOrderSuite();
   substantive += 6;
   bad += runKeyTimeSuite();
@@ -4705,7 +4957,10 @@ function main(): void {
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
-      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, + 2 slot-attribution ` +
+      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, ` +
+      '+ 7 PNG transparency controls (indexed, greyscale and truecolour art whose transparency lives in a tRNS ' +
+      'chunk, a greyscale+alpha file, a genuinely opaque part the gate still refuses, and the wording of that ' +
+      'refusal), + 2 slot-attribution ' +
       'controls (a blob one part dominates, and two parts that are two blobs), + 6 draw-order controls, ' +
       '+ 7 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +

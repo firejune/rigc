@@ -659,7 +659,7 @@ This is the split Part 4(c) needs. **Spine-validity** = the file is wrong for an
 | `A12_NO_DARK_COLOR` | **renderer-profile** | slot `dark`, `rgba2`/`rgb2` timelines — "parsed, then ignored" |
 | `A13_MESH_BUDGET` | **renderer-profile** | >4 mesh slots, >80 triangles per mesh |
 | `A14_NO_FULL_FRAME_MESH` | **renderer-profile** | a mesh spanning the whole stage |
-| `A19_OVERLAY_PNGS_HAVE_ALPHA` | **renderer-profile** | an overlay page with no alpha channel |
+| `A19_OVERLAY_PNGS_HAVE_ALPHA` | **renderer-profile** | an overlay page that can never be transparent — no alpha channel and no `tRNS` chunk |
 | `A20_MESH_WEIGHTS_COHERENT` | **renderer-profile / archetype** | **unweighted meshes**, weights not summing to 1, out-of-range bone indices |
 | `A21_MESH_RIM_PINNED` | archetype | ring/ribbon rim not pinned |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | validity-ish | UVs outside 0..1 |

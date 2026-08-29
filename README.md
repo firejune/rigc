@@ -389,7 +389,7 @@ the renderer policy*.
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` version label is on the 4.3 line (the parser never checks it) |
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | every page the atlas declares is a file on disk |
 | `A18_DETERMINISTIC_EMIT` | both | a second, independent compile of the same inputs is byte-identical. SKIPs when re-gating artifacts already on disk |
-| `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | every overlay page carries an alpha channel; only the base plate — identified structurally as the region covering the stage — may be opaque |
+| `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | every overlay part image can be transparent somewhere — an alpha channel (colour type 4 or 6) **or** a `tRNS` chunk, which is where indexed and greyscale PNGs keep theirs. Only the base plate — identified structurally as the region covering the stage — may be opaque |
 | `A20_MESH_WEIGHTS_COHERENT` | both ◑ | every weighted vertex has at least one bone, no negative weight, bone indices in range, and each vertex's weights sum to 1. `spine-html` also requires that a mesh be weighted at all and that no binding sit at weight 0 |
 | `A21_MESH_RIM_PINNED` | archetype | a ring mesh's rim vertices are pinned to the anchor bone and its hull is a real ring; a ribbon's entry row stays put. **SKIPs on authored geometry** — rigc did not place its rim |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | every UV lies inside its region |
@@ -777,7 +777,7 @@ src/
   timelines.ts  the 4.3 timeline catalogue and its walker (shared, pure JSON)
   mesh.ts       ring and ribbon mesh builders, weighted-vertex encoding
   transform.ts  crop pixels (y down) <-> Spine world (y up), world transforms
-  png.ts        PNG header reader (size and colour type, no decode)
+  png.ts        PNG header reader (size, colour type, tRNS; no pixel decode)
   errors.ts     CompileError, and NotImplementedError for what the format holds
                 and the emitter does not write
   types.ts      manifest, motion spec, and emitted-JSON shapes
