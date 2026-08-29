@@ -124,7 +124,7 @@ What the flags mean:
 | `--copy-images` | `build` only: also copies every referenced page PNG into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own. Default is unchanged — page paths still point at the source art (issue #217) |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
-| `--profile` | `spine` = the 20 validity rules · `spine-html` = all 34 (**the default**) |
+| `--profile` | `spine` = the 20 validity rules (**the default**) · `spine-html` = all 34, opt-in |
 | `--candidate` | `check`, `bench`, `render` and `preview` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton |
 | `--animation` | `render` and `preview` only: which animation to show. The default is **every** one for `render` and the **first** for `preview`. A name the skeleton does not have is refused, with the ones it does have listed |
 
@@ -133,12 +133,14 @@ protocol rate the reference frames use) and `--max <px>` (the long side of a
 frame, default 256). Both commands take `--out`: a directory for `render`
 (default `render/`), the `.html` file for `preview` (default `preview.html`).
 
-Pick the profile deliberately. `spine-html` adds one renderer's policy and one
-project's canvas budget, and those rules fire on perfectly correct Spine data
-(clipping attachments, unweighted meshes, packed atlases). If what you are
-authoring is "valid Spine 4.3 that any runtime plays correctly", use
-`--profile spine`. A report always prints which profile ran and lists what that
-profile left out, on `PROF` lines.
+Pick the profile deliberately, and know which one you got by saying nothing. The
+default is `spine`: "is this valid Spine 4.3 that any runtime plays correctly",
+which is the question a rig authored anywhere is asking. `--profile spine-html`
+adds one renderer's policy and one project's canvas budget on top, and those
+extra rules fire on perfectly correct Spine data (clipping attachments,
+unweighted meshes, packed atlases) — reach for it when you are shipping into
+*that* project, not to be thorough. A report always prints which profile ran and
+lists what that profile left out, on `PROF` lines.
 
 The other commands:
 
@@ -515,10 +517,10 @@ and takes every slot below it out of the frame. rigc refuses a name the rig does
 not declare. Omitting `end` entirely is the format's own way of saying "clip
 everything after this one", and is left alone.
 
-🚫 Under the default `spine-html` profile a clipping attachment is refused by
+🚫 Under `--profile spine-html` a clipping attachment is refused by
 `A11_NO_CLIPPING_ATTACHMENTS` — that renderer skips them silently, so a mask that
-was supposed to hide something would not. It is valid Spine and `--profile spine`
-accepts it; the refusal is policy, not validity.
+was supposed to hide something would not. It is valid Spine and the default
+`--profile spine` accepts it; the refusal is policy, not validity.
 
 ### 3.5 `constraints` — 4.3's single typed array
 
@@ -955,6 +957,8 @@ Two more limits that are not errors but will shape what you can attempt:
 ## 7. Before you call it done
 
 1. `build --profile <the one you meant>` exits 0 and the report has **no FAIL**.
+   Saying nothing means `spine`, so "the one you meant" is a decision either way —
+   the report's first line names the profile that judged it.
 2. Read the `SKIP` lines. Each one is a check that did *not* run — make sure none of
    them is a check you were relying on.
    ⚠️ Under `--profile spine` a foreign skeleton usually produces **no SKIP lines

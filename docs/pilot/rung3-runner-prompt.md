@@ -318,7 +318,7 @@ bun cli.ts build \
   --profile spine
 ```
 
-Use `--profile spine`. You are reproducing an editor export, and the default
+Use `--profile spine`. You are reproducing an editor export, and the
 `spine-html` profile would fail you for renderer policy this rung is not about.
 
 **Step 28.** Append one entry to `LOOP.md` for the build you just ran, in this

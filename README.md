@@ -217,26 +217,30 @@ rigc validate spine
 the two files:
 
 ```
-  ..    pages=3 regions=3 bones=4 slots=3 animations=1 version=4.3.13 regionAttachments=3 meshAttachments=0 physicsConstraints=0 rig=buoy profile=spine-html
+  ..    pages=3 regions=3 bones=4 slots=3 animations=1 version=4.3.13 regionAttachments=3 meshAttachments=0 physicsConstraints=0 rig=buoy profile=spine
 rigc: wrote …/buoy/spine/skeleton.json
 rigc: wrote …/buoy/spine/skeleton.atlas
 ```
 
-and `validate` re-reads those artifacts from disk and ends `rigc: green`. That is
-a rig. `spine/skeleton.json` is Spine 4.3 skeleton data — it loads in a Spine
-runtime and it imports into the Spine editor.
+`profile=spine` is the rulebook that judged it: *is this valid Spine 4.3 that any
+runtime plays correctly?* That is the default, and the [Profiles](#profiles--wrong-versus-not-how-we-do-it-here)
+section below is where the other one lives. `validate` then re-reads those
+artifacts from disk and ends `rigc: green`. That is a rig. `spine/skeleton.json`
+is Spine 4.3 skeleton data — it loads in a Spine runtime and it imports into the
+Spine editor.
 
 **Try breaking it**, because the validator's messages are the interface here and
-they are worth meeting once on purpose. Rename `images/hull.png` to
-`images/raft.png`, point the spec's `image` at the new name, and build again:
+they are worth meeting once on purpose. With `spine/` built, rename
+`images/hull.png` to `images/raft.png` and re-run `rigc validate spine`:
 
 ```
-FAIL  A08_REGION_NAMES_MATCH_ATTACHMENTS: attachment "hull" resolves to region "raft"; v0 requires them identical
-rigc: 1 assertion(s) failed — nothing written
+FAIL  A17_ATLAS_PAGE_FILES_EXIST: page "../images/hull.png" is not on disk at …/images/hull.png
+rigc: 1 assertion(s) failed
 ```
 
-Nothing was written. A red run leaves no half-built artifact on disk to mistake
-for a result, and there is no flag that changes that.
+Put the name back and it is green again. The same gate runs inside `build`, and
+a FAIL there stops it **before it writes** — a red build leaves no half-built
+artifact on disk to mistake for a result, and there is no flag that changes that.
 
 **6. See what you built.**
 
@@ -630,8 +634,15 @@ So `validate` and `build` take a `--profile`:
 
 | Profile | Runs | For |
 | --- | --- | --- |
-| `spine-html` | all 34 | **the default.** Is this a rig this project can ship? |
-| `spine` | the 20 validity rules | Is this valid Spine 4.3 that any runtime plays correctly? |
+| `spine` | the 20 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
+| `spine-html` | all 34 | Opt-in. Is this a rig *this* project can ship? |
+
+`spine` is the default because it is the question this package's output answers:
+the artifact imports into the Spine editor and plays in any 4.3 runtime, and
+that is what the 20 validity rules are about. The other 14 are somebody's policy
+— one renderer's, one canvas budget's, one compiler's own formations' — and a
+rig arriving from anywhere else has no stake in them. Ask for them with
+`--profile spine-html` when you want them.
 
 The **Profile** column below says which is which — `both` = validity, `renderer` and
 `archetype` = `spine-html` only, and **`both ◑`** = a mixed assertion whose validity
@@ -731,7 +742,7 @@ commands:
 ```bash
 bun cli.ts explain  --cut my_cut --cuts path/to/cuts.json   # the compiled rig as a table
 bun cli.ts validate path/to/spine                           # re-gate artifacts already on disk
-bun cli.ts validate --profile spine path/to/any/skeleton    # spec rules only (see Profiles)
+bun cli.ts validate --profile spine-html path/to/spine      # …and this project's policy too (see Profiles)
 bun cli.ts diff candidate.json reference.json               # structural comparison
 bun cli.ts check --candidate path/to/spine \
                  --frames bench/reference/3-timing-and-spacing   # against pictures
@@ -742,8 +753,9 @@ bun cli.ts preview --candidate path/to/spine                # one .html that pla
 
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
 it re-derive the declared durations and the structural expectations too, and the
-report says which it had. `build` and `validate` both take `--profile spine` to drop
-the renderer and archetype policy; the default stays `spine-html`.
+report says which it had. `build` and `validate` both default to `--profile spine`,
+the 20 validity rules; `--profile spine-html` adds this project's renderer and
+archetype policy on top.
 
 `render` and `preview` are the two that need no reference at all — see
 [Looking at a rig](#looking-at-a-rig--rigc-render-and-rigc-preview). Run either

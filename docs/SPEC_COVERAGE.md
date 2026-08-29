@@ -14,9 +14,11 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 >
 > - **B2 is fixed** — A16 accepts `4.3`, `4.3.N` and `4.3.N-<suffix>`, so all twelve example
 >   exports pass it.
-> - **The profile split exists** — `--profile spine | spine-html`, default `spine-html`, so the
->   nine renderer-policy assertions of §2.2 no longer apply to foreign data. That closes the
->   validator half of B3; the emitter half (no packer, no atlas importer) is untouched.
+> - **The profile split exists** — `--profile spine | spine-html`, **default `spine` since
+>   2026-08-29** (issue #221; it was `spine-html` when this survey was written), so the nine
+>   renderer-policy assertions of §2.2 no longer apply to foreign data, and no longer apply
+>   unasked. That closes the validator half of B3; the emitter half (no packer, no atlas
+>   importer) is untouched.
 > - **`walkTimelines` reaches all eleven groups** — §2.3 item 1 and §4.3 item 4 are done, so
 >   A05 is no longer blind to `ik` / `transform` / `path` / `slider` / `drawOrder` /
 >   `drawOrderFolder` / `events`.
