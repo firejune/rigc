@@ -37,6 +37,7 @@ import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type Che
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
 import { diffLines, diffSkeletons, sectionFigures, type DiffReport } from './src/diff.ts';
 import { copyAtlasImages } from './src/emit.ts';
+import { parseJsonWithPosition } from './src/json-position.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
 import { DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import type { CompileResult, MotionSpec } from './src/types.ts';
@@ -63,6 +64,40 @@ export type CutTable = Record<string, CutEntry>;
 class UsageError extends Error {}
 
 // ---------------------------------------------------------------------------
+// package metadata — the installed version and repository, for `--version`
+// and for naming a remedy `bench` can only give from a repo checkout.
+// ---------------------------------------------------------------------------
+
+interface PackageMeta {
+  version?: string;
+  repository?: string | { url?: string };
+}
+
+let packageMeta: PackageMeta | null | undefined;
+
+/** `package.json` sits next to this file both in the repo and once installed. */
+function readPackageMeta(): PackageMeta | null {
+  if (packageMeta === undefined) {
+    try {
+      packageMeta = JSON.parse(readFileSync(join(import.meta.dir, 'package.json'), 'utf8')) as PackageMeta;
+    } catch {
+      packageMeta = null;
+    }
+  }
+  return packageMeta;
+}
+
+function readVersion(): string {
+  return readPackageMeta()?.version ?? 'unknown';
+}
+
+function repositoryUrl(): string {
+  const repo = readPackageMeta()?.repository;
+  const url = typeof repo === 'string' ? repo : repo?.url;
+  return (url ?? 'https://github.com/firejune/rigc').replace(/^git\+/, '').replace(/\.git$/, '');
+}
+
+// ---------------------------------------------------------------------------
 // argument parsing
 // ---------------------------------------------------------------------------
 
@@ -73,7 +108,7 @@ class UsageError extends Error {}
  * flag": inferring it would turn `--out --json report.json` — a real typo, a
  * missing value — into a silently accepted switch plus a stray positional.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'copy-images']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'help', 'copy-images']);
 
 /** `--flag value` pairs plus the leftover positionals, in order. */
 function parseArgs(argv: string[]): { flags: Record<string, string>; positional: string[] } {
@@ -101,6 +136,21 @@ function parseArgs(argv: string[]): { flags: Record<string, string>; positional:
 }
 
 /**
+ * Read and parse a JSON file the caller named on the command line — a cuts
+ * table, a candidate or reference skeleton to `diff`. A parse failure names the
+ * file and, best-effort, where inside it the syntax broke (see
+ * `parseJsonWithPosition`); left as a raw `JSON.parse`, it would surface as an
+ * unhandled `SyntaxError` with a stack trace instead of a usage error.
+ */
+function readJsonFile(path: string): unknown {
+  try {
+    return parseJsonWithPosition(readFileSync(path, 'utf8'));
+  } catch (err) {
+    throw new UsageError(`cannot read ${path}: ${(err as Error).message}`);
+  }
+}
+
+/**
  * Read a cuts.json and resolve its three paths against the file's own
  * directory. Anchoring on the table rather than on the process cwd is what lets
  * the same command work from anywhere in the owning project.
@@ -108,7 +158,7 @@ function parseArgs(argv: string[]): { flags: Record<string, string>; positional:
 function readCutTable(cutsPath: string): { dir: string; table: CutTable } {
   const abs = resolve(cutsPath);
   if (!existsSync(abs)) throw new UsageError(`no cuts file at ${abs}`);
-  const parsed: unknown = JSON.parse(readFileSync(abs, 'utf8'));
+  const parsed = readJsonFile(abs);
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new UsageError(`${abs}: expected an object of cut name -> { manifest, motion, out }`);
   }
@@ -207,6 +257,12 @@ function cmdBuild(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
   const profile = readProfile(flags);
   console.log(`rigc build ${label}`);
+  // Named explicitly and on their own lines rather than folded into the header
+  // above: with two input files, a header that names only one of them (the rig,
+  // historically) reads as though it were the one at fault whenever the error
+  // that follows actually comes from the other.
+  console.log(`  ..    rig    ${opts.rigPath}`);
+  console.log(`  ..    motion ${opts.motionPath}`);
   const result = compile(opts);
 
   console.log(`  ..    ${result.images.length} part page(s):`);
@@ -343,10 +399,7 @@ function cmdDiff(flags: Record<string, string>, positional: string[]): void {
   for (const path of [candidatePath, referencePath]) {
     if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
   }
-  const report = diffSkeletons(
-    JSON.parse(readFileSync(candidatePath, 'utf8')),
-    JSON.parse(readFileSync(referencePath, 'utf8')),
-  );
+  const report = diffSkeletons(readJsonFile(candidatePath), readJsonFile(referencePath));
   console.log('rigc diff');
   for (const line of diffLines(report, { candidate: candidatePath, reference: referencePath })) console.log(line);
   if (flags.json !== undefined) {
@@ -460,9 +513,14 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
   const profile = flags.profile === undefined ? 'spine' : readProfile(flags);
   const exportDir = resolve(import.meta.dir, 'examples', rung.example, 'export');
   if (!existsSync(exportDir)) {
-    throw new UsageError(
-      `no example corpus at ${exportDir} — run \`bun run fetch-examples\` first (examples/ is gitignored, not shipped)`,
-    );
+    // `bun run fetch-examples` runs `scripts/fetch-examples.sh`, and `scripts/`
+    // is not in package.json's `files` — an npm install has no such script to
+    // run. Its presence is what tells the two contexts apart, so the remedy
+    // named here is one that actually exists in whichever context this is.
+    const remedy = existsSync(resolve(import.meta.dir, 'scripts', 'fetch-examples.sh'))
+      ? 'run `bun run fetch-examples` first'
+      : `bench needs a checkout of ${repositoryUrl()} — its \`fetch-examples\` script is not part of the installed package`;
+    throw new UsageError(`no example corpus at ${exportDir} — ${remedy} (examples/ is gitignored, not shipped)`);
   }
 
   const { skeletonPath, atlasPath } = resolveArtifacts(flags.candidate, flags.atlas);
@@ -633,10 +691,14 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
 
 function cmdExplain(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
-  const result = compile(opts);
-  const motion = JSON.parse(readFileSync(opts.motionPath, 'utf8')) as MotionSpec;
-
   console.log(`rigc explain ${label}`);
+  // See the identical pair of lines in `cmdBuild` for why both paths are named
+  // here rather than only the one the header's `label` happens to carry.
+  console.log(`  ..    rig    ${opts.rigPath}`);
+  console.log(`  ..    motion ${opts.motionPath}`);
+  const result = compile(opts);
+  const motion = readJsonFile(opts.motionPath) as MotionSpec;
+
   console.log(`\nstage  ${result.skeleton.skeleton.width} x ${result.skeleton.skeleton.height}  (spine ${result.skeleton.skeleton.spine})`);
 
   // The crop note describes where the numbers CAME from, and without a manifest
@@ -743,35 +805,142 @@ function cmdExplain(flags: Record<string, string>): void {
   console.log(`  default=${motion.mix?.default ?? 0} pairs=${JSON.stringify(motion.mix?.pairs ?? [])}`);
 }
 
+// ---------------------------------------------------------------------------
+// usage / per-command help
+// ---------------------------------------------------------------------------
+
+/**
+ * One meaning per flag name, shared by every command that takes it — the
+ * single place this project states what a flag means. AUTHORING.md §0 quotes
+ * this table for `build`'s `--rig`/`--motion`/`--out`/`--images`/`--manifest`/
+ * `--profile`; if the two ever disagree, this is the one the code runs.
+ */
+const FLAG_MEANINGS: Record<string, string> = {
+  rig: 'the rig spec — skeleton structure',
+  motion: 'the motion spec — time',
+  out: 'directory for skeleton.json + skeleton.atlas; atlas page paths are written relative to it',
+  images: "override the rig spec's own images directory (relative to your working directory)",
+  manifest: 'a cut manifest, for a rig with measured art behind it; a foreign skeleton has none',
+  'copy-images':
+    'also copy every referenced page PNG into --out and rewrite the atlas to the copies, so the directory is ' +
+    'self-contained enough to zip or commit on its own (default: page paths still point at the source art)',
+  cut: 'look up a named cut in --cuts <cuts.json>, instead of --rig/--motion/--out',
+  cuts: 'the cuts.json --cut names',
+  profile: "which rulebook to check against — spine = valid Spine 4.3; spine-html = also this project's renderer/archetype policy",
+  atlas: "the candidate's atlas, when it is not beside the skeleton",
+  candidate: 'a compiled skeleton: a directory holding skeleton.json + skeleton.atlas, or a skeleton.json path',
+  frames: 'a rendered reference frame set (a skeleton root, or one animation directory)',
+  fps: 'frame rate, only for a frame set with no frames.json sidecar',
+  viewport: "pin the candidate's world box, y up, instead of fitting it",
+  framing: 'fit each frame set on its own (default) or once across all of them',
+  as: 'the candidate animation to play, when it is named differently from the frame set',
+  'all-frames': 'print every frame, not just the worst by MAE',
+  json: 'also write the whole report to this path',
+  help: "show this command's flags and exit",
+};
+
+/** The `<value>` a flag takes, for its column in a command's flag table. Absent for a boolean switch. */
+const FLAG_VALUES: Record<string, string> = {
+  rig: '<path>',
+  motion: '<path>',
+  out: '<dir>',
+  images: '<dir>',
+  manifest: '<path>',
+  cut: '<name>',
+  cuts: '<path>',
+  profile: 'spine|spine-html',
+  atlas: '<path>',
+  candidate: '<dir|skeleton.json>',
+  frames: '<dir>',
+  fps: '<n>',
+  viewport: '<x,y,w,h>',
+  framing: 'per-shot|shared',
+  as: '<name>',
+  json: '<out>',
+};
+
+interface CommandDoc {
+  name: string;
+  /** One or more invocation forms, each already spelling the command name. */
+  usage: string[];
+  /** Flag names (into FLAG_MEANINGS/FLAG_VALUES), in display order. `--help` is appended automatically. */
+  flags: string[];
+}
+
+const COMMANDS: CommandDoc[] = [
+  {
+    name: 'build',
+    usage: [
+      'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images]',
+      'rigc build --cut <name> --cuts <cuts.json>',
+    ],
+    flags: ['rig', 'motion', 'out', 'manifest', 'images', 'copy-images', 'cut', 'cuts', 'profile'],
+  },
+  {
+    name: 'explain',
+    usage: ['rigc explain  (same arguments as build, minus --profile — it never gates)'],
+    flags: ['rig', 'motion', 'out', 'manifest', 'images', 'cut', 'cuts'],
+  },
+  {
+    name: 'validate',
+    usage: [
+      'rigc validate <dir | skeleton.json> [--atlas <path>] [--profile spine|spine-html]',
+      'rigc validate --cut <name> --cuts <cuts.json>   (also re-derives declared durations)',
+    ],
+    flags: ['atlas', 'profile', 'cut', 'cuts', 'rig', 'motion', 'out', 'manifest', 'images'],
+  },
+  {
+    name: 'diff',
+    usage: ['rigc diff <candidate.json> <reference.json> [--json <out>]'],
+    flags: ['json'],
+  },
+  {
+    name: 'check',
+    usage: ['rigc check --candidate <dir | skeleton.json> --frames <dir> [flags]'],
+    flags: ['candidate', 'frames', 'atlas', 'fps', 'viewport', 'framing', 'as', 'all-frames', 'json'],
+  },
+  {
+    name: 'bench',
+    usage: [`rigc bench <${RUNG_IDS.join(' | ')}> --candidate <dir | skeleton.json> [--frames <dir>] [flags]`],
+    flags: ['candidate', 'atlas', 'frames', 'profile', 'all-frames', 'json'],
+  },
+];
+
+const KNOWN_COMMANDS = COMMANDS.map((c) => c.name);
+
+/** `rigc <command> --help`: that command's own usage line(s) and flag table. */
+function commandHelp(name: string): string {
+  const doc = COMMANDS.find((c) => c.name === name);
+  if (!doc) throw new Error(`internal: no help text for command "${name}"`);
+  const keys = [...doc.flags, 'help'];
+  const labels = keys.map((key) => `--${key}${FLAG_VALUES[key] ? ` ${FLAG_VALUES[key]}` : ''}`);
+  const width = Math.max(...labels.map((l) => l.length)) + 2;
+  return ['usage:', ...doc.usage.map((u) => `  ${u}`), '', 'flags:', ...keys.map((key, i) => `  ${labels[i].padEnd(width)}${FLAG_MEANINGS[key]}`)].join(
+    '\n',
+  );
+}
+
 const USAGE = [
-  'usage:',
-  '  bun cli.ts build    --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>]',
-  '  bun cli.ts build    --cut <name> --cuts <cuts.json>',
-  '  bun cli.ts explain  (same arguments as build)',
-  '  bun cli.ts validate <dir | skeleton.json> [--atlas <path>]',
-  '  bun cli.ts diff     <candidate.json> <reference.json> [--json <out>]',
-  '  bun cli.ts check    --candidate <dir | skeleton.json> --frames <dir>',
-  `  bun cli.ts bench    <${RUNG_IDS.join(' | ')}> --candidate <dir | skeleton.json> [--frames <dir>]`,
+  'rigc — the rig compiler',
   '',
-  'build and validate take --profile spine|spine-html (default spine-html):',
+  '(from a source checkout: `bun cli.ts <command>` is the same as `rigc <command>`)',
+  '',
+  'usage:',
+  ...COMMANDS.flatMap((c) => c.usage.map((u) => `  ${u}`)),
+  '',
+  '  rigc <command> --help    that command\'s own flag table',
+  '  rigc --version           print the installed version (-v works too)',
+  '',
+  'build, validate and bench take --profile spine|spine-html:',
   '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
-  '  spine-html  the above, plus this project\'s renderer and archetype policy.',
+  '  spine-html  the above, plus this project\'s renderer and archetype policy',
+  '              (the default everywhere except bench, which judges a reproduction',
+  '              of editor output and so defaults to spine).',
   '',
   'check renders the candidate onto the reference frames\' own pixel grid, fitting it',
   'there by its own drawn pixels, and compares. It reads the frames and never the',
   'reference skeleton, so it belongs INSIDE an authoring loop — the validator cannot',
-  'see a wrong animation and this can:',
-  '  --frames <dir>        a rendered frame set (a skeleton root, or one animation dir)',
-  '  --atlas <path>        the candidate\'s atlas, when it is not beside the skeleton',
-  '  --fps <n>             only for a frame set with no frames.json sidecar',
-  '  --viewport x,y,w,h    pin the candidate\'s world box, y up, instead of fitting it',
-  '  --framing per-shot|shared   decide the framing per frame set (default), or once',
-  '                        across all of them. Per set, a set whose own pixels land in',
-  '                        frames.json\'s box is measured there; on a multi-shot root that',
-  '                        is worth 15-25 MAE against one shared fit for every set',
-  '  --as <name>           the candidate animation to play, when it is named differently',
-  '  --all-frames          print every frame, not just the worst by MAE',
-  '  --json <out>          the whole per-frame, per-slot report',
+  'see a wrong animation and this can. See `rigc check --help` for its flags.',
   '',
   'a cuts.json is { "<name>": { "rig": "...", "motion": "...", "out": "...",',
   '                             "manifest": "..." (optional) } }, with every path',
@@ -780,17 +949,33 @@ const USAGE = [
 
 const [command, ...rest] = process.argv.slice(2);
 try {
+  if (command === undefined) {
+    console.error(USAGE);
+    process.exit(2);
+  }
+  if (command === '--version' || command === '-v') {
+    console.log(readVersion());
+    process.exit(0);
+  }
+  if (command === '--help' || command === '-h') {
+    console.log(USAGE);
+    process.exit(0);
+  }
+  if (!KNOWN_COMMANDS.includes(command)) {
+    throw new UsageError(`unknown command: ${command}`);
+  }
+
   const { flags, positional } = parseArgs(rest);
+  if (flags.help !== undefined) {
+    console.log(commandHelp(command));
+    process.exit(0);
+  }
   if (command === 'build') cmdBuild(flags);
   else if (command === 'validate') cmdValidate(flags, positional);
   else if (command === 'explain') cmdExplain(flags);
   else if (command === 'diff') cmdDiff(flags, positional);
   else if (command === 'check') cmdCheck(flags);
   else if (command === 'bench') cmdBench(flags, positional);
-  else {
-    console.error(USAGE);
-    process.exit(2);
-  }
 } catch (err) {
   if (err instanceof UsageError) {
     console.error(`rigc: ${err.message}\n\n${USAGE}`);

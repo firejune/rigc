@@ -21,6 +21,7 @@ import { basename, dirname, relative, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { readPngInfo } from './png.ts';
 import { CompileError, NotImplementedError } from './errors.ts';
+import { parseJsonWithPosition } from './json-position.ts';
 import {
   parseRigSpec,
   type RigAttachment,
@@ -255,8 +256,17 @@ export function bezierForChannel(
 // ---------------------------------------------------------------------------
 
 function readJson<T>(path: string): T {
+  let text: string;
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as T;
+    text = readFileSync(path, 'utf8');
+  } catch (err) {
+    throw new CompileError(`cannot read ${path}: ${(err as Error).message}`);
+  }
+  try {
+    // A parse failure gets a line/column appended to the runtime's own
+    // message — see `parseJsonWithPosition` for why `JSON.parse` alone
+    // cannot say where.
+    return parseJsonWithPosition(text) as T;
   } catch (err) {
     throw new CompileError(`cannot read ${path}: ${(err as Error).message}`);
   }
@@ -360,17 +370,38 @@ export function compile(opts: CompileOptions): CompileResult {
   const motion = readJson<MotionSpec>(motionPath);
   const manifest = manifestPath === null ? null : readJson<FaceManifest>(manifestPath);
 
-  if (motion.spec !== 'rigc-motion/1') {
-    throw new CompileError(`unknown motion spec version: ${String(motion.spec)}`);
-  }
-  // The motion spec was authored against one formation. Pairing it with another
-  // rig would aim its keys at bones whose names happen to match and whose meaning
-  // does not — the class of wrongness that loads, plays and lies.
-  if (motion.archetype !== rig.name) {
-    throw new CompileError(
-      `motion spec names archetype "${motion.archetype}" but the rig spec at ${rigPath} is called "${rig.name}"`,
-    );
-  }
+  // The rig spec names its own path in every message `parseRigSpec` throws (its
+  // `where` argument, above). The motion spec gets no such treatment below —
+  // every "animation … bone … property" refusal is built from data alone — so a
+  // reader with two input files and one error has no way to tell which one is at
+  // fault. This wraps the motion-only regions (the version/archetype check right
+  // below, the physics table and the animation loop further down) and prefixes
+  // the motion path onto any `CompileError` that escapes them, unless the
+  // message already names it.
+  const withMotionSource = <T>(fn: () => T): T => {
+    try {
+      return fn();
+    } catch (err) {
+      if (err instanceof CompileError && !err.message.includes(motionPath)) {
+        throw new CompileError(`${motionPath}: ${err.message}`);
+      }
+      throw err;
+    }
+  };
+
+  withMotionSource(() => {
+    if (motion.spec !== 'rigc-motion/1') {
+      throw new CompileError(`unknown motion spec version: ${String(motion.spec)}`);
+    }
+    // The motion spec was authored against one formation. Pairing it with another
+    // rig would aim its keys at bones whose names happen to match and whose meaning
+    // does not — the class of wrongness that loads, plays and lies.
+    if (motion.archetype !== rig.name) {
+      throw new CompileError(
+        `motion spec names archetype "${motion.archetype}" but the rig spec at ${rigPath} is called "${rig.name}"`,
+      );
+    }
+  });
 
   // The stage. The rig may state it outright (a foreign skeleton has no crop);
   // otherwise the manifest's crop is it. With neither there is nothing to
@@ -740,128 +771,132 @@ export function compile(opts: CompileOptions): CompileResult {
     constraints.push(buildRigConstraint(spec as RigConstraintInput, boneNames));
     constraintNames.add(spec.name);
   }
-  for (const [name, spec] of Object.entries(motion.physics ?? {})) {
-    if (constraintNames.has(name)) {
-      throw new CompileError(`constraint "${name}" is declared in both the rig spec and the motion spec's physics table`);
+  withMotionSource(() => {
+    for (const [name, spec] of Object.entries(motion.physics ?? {})) {
+      if (constraintNames.has(name)) {
+        throw new CompileError(`constraint "${name}" is declared in both the rig spec and the motion spec's physics table`);
+      }
+      constraintNames.add(name);
+      if (!boneNames.has(spec.bone)) {
+        throw new CompileError(`physics constraint "${name}" targets unknown bone "${spec.bone}"`);
+      }
+      const entry: SpineConstraint = {
+        name,
+        type: 'physics',
+        bone: spec.bone,
+      };
+      const components: string[] = [];
+      for (const comp of PHYSICS_COMPONENTS) {
+        const v = spec[comp];
+        if (v === undefined || v === 0) continue;
+        entry[comp] = r6(v);
+        components.push(comp);
+      }
+      if (!components.length) {
+        // The parser is happy with this and the constraint does nothing at all.
+        // A23 catches it too; refusing here means it never reaches the gate.
+        throw new CompileError(
+          `physics constraint "${name}" drives no component — set at least one of ${PHYSICS_COMPONENTS.join('/')}`,
+        );
+      }
+      for (const [param, dflt] of PHYSICS_PARAMS) {
+        const v = spec[param as keyof typeof spec] as number | undefined;
+        if (v === undefined || v === dflt) continue;
+        entry[param] = r6(v);
+      }
+      constraints.push(entry);
+      physicsReport.push({
+        name,
+        bone: spec.bone,
+        components,
+        mix: spec.mix ?? 1,
+        drivesMesh: meshBones.has(spec.bone),
+      });
     }
-    constraintNames.add(name);
-    if (!boneNames.has(spec.bone)) {
-      throw new CompileError(`physics constraint "${name}" targets unknown bone "${spec.bone}"`);
-    }
-    const entry: SpineConstraint = {
-      name,
-      type: 'physics',
-      bone: spec.bone,
-    };
-    const components: string[] = [];
-    for (const comp of PHYSICS_COMPONENTS) {
-      const v = spec[comp];
-      if (v === undefined || v === 0) continue;
-      entry[comp] = r6(v);
-      components.push(comp);
-    }
-    if (!components.length) {
-      // The parser is happy with this and the constraint does nothing at all.
-      // A23 catches it too; refusing here means it never reaches the gate.
-      throw new CompileError(
-        `physics constraint "${name}" drives no component — set at least one of ${PHYSICS_COMPONENTS.join('/')}`,
-      );
-    }
-    for (const [param, dflt] of PHYSICS_PARAMS) {
-      const v = spec[param as keyof typeof spec] as number | undefined;
-      if (v === undefined || v === dflt) continue;
-      entry[param] = r6(v);
-    }
-    constraints.push(entry);
-    physicsReport.push({
-      name,
-      bone: spec.bone,
-      components,
-      mix: spec.mix ?? 1,
-      drivesMesh: meshBones.has(spec.bone),
-    });
-  }
+  });
 
   // -- 5. animations ---------------------------------------------------------
   const animations: SpineSkeletonJson['animations'] = {};
   const declaredDurations: Record<string, number> = {};
   const slotNames = new Set(slots.map((s) => s.name));
 
-  for (const [animName, anim] of Object.entries(motion.animations)) {
-    declaredDurations[animName] = anim.duration;
-    const slotTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
-    const boneTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
-    const physicsTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
-    const claimed = new Set<string>();
-    let compiledDuration = 0;
+  withMotionSource(() => {
+    for (const [animName, anim] of Object.entries(motion.animations)) {
+      declaredDurations[animName] = anim.duration;
+      const slotTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
+      const boneTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
+      const physicsTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
+      const claimed = new Set<string>();
+      let compiledDuration = 0;
 
-    for (const track of anim.tracks) {
-      const isPhysicsTrack = track.property in PHYSICS_TRACKS;
-      const isBoneTrack = !isPhysicsTrack && track.property in BONE_TRACKS;
-      const targets = resolveTargets(track, motion, animName);
-      targets.forEach((target, index) => {
-        if (isPhysicsTrack) {
-          if (!constraintNames.has(target)) {
-            throw new CompileError(`animation "${animName}" keys unknown physics constraint "${target}"`);
+      for (const track of anim.tracks) {
+        const isPhysicsTrack = track.property in PHYSICS_TRACKS;
+        const isBoneTrack = !isPhysicsTrack && track.property in BONE_TRACKS;
+        const targets = resolveTargets(track, motion, animName);
+        targets.forEach((target, index) => {
+          if (isPhysicsTrack) {
+            if (!constraintNames.has(target)) {
+              throw new CompileError(`animation "${animName}" keys unknown physics constraint "${target}"`);
+            }
+          } else if (isBoneTrack) {
+            if (!boneNames.has(target)) {
+              throw new CompileError(`animation "${animName}" keys unknown bone "${target}"`);
+            }
+          } else if (!slotNames.has(target)) {
+            throw new CompileError(`animation "${animName}" targets unknown slot "${target}"`);
           }
-        } else if (isBoneTrack) {
-          if (!boneNames.has(target)) {
-            throw new CompileError(`animation "${animName}" keys unknown bone "${target}"`);
+          const claim = `${target}.${track.property}`;
+          if (claimed.has(claim)) {
+            throw new CompileError(
+              `animation "${animName}" has two tracks on ${claim}; merge them into one track`,
+            );
           }
-        } else if (!slotNames.has(target)) {
-          throw new CompileError(`animation "${animName}" targets unknown slot "${target}"`);
-        }
-        const claim = `${target}.${track.property}`;
-        if (claimed.has(claim)) {
-          throw new CompileError(
-            `animation "${animName}" has two tracks on ${claim}; merge them into one track`,
-          );
-        }
-        claimed.add(claim);
+          claimed.add(claim);
 
-        const shift = (track.lag ?? 0) + (track.stagger ?? 0) * index;
-        const keys = isPhysicsTrack
-          ? compileValueTrack(track, motion, animName, anim.duration, target, shift, PHYSICS_TRACKS, 'physics constraint')
-          : isBoneTrack
-            ? compileValueTrack(track, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
-            : compileTrack(track, motion, animName, anim.duration, target, shift, tableFor('default'));
-        for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
-        if (isPhysicsTrack) (physicsTimelines[target] ??= {})[track.property] = keys;
-        else if (isBoneTrack) (boneTimelines[target] ??= {})[track.property] = keys;
-        else (slotTimelines[target] ??= {})[track.property] = keys;
-      });
+          const shift = (track.lag ?? 0) + (track.stagger ?? 0) * index;
+          const keys = isPhysicsTrack
+            ? compileValueTrack(track, motion, animName, anim.duration, target, shift, PHYSICS_TRACKS, 'physics constraint')
+            : isBoneTrack
+              ? compileValueTrack(track, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
+              : compileTrack(track, motion, animName, anim.duration, target, shift, tableFor('default'));
+          for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
+          if (isPhysicsTrack) (physicsTimelines[target] ??= {})[track.property] = keys;
+          else if (isBoneTrack) (boneTimelines[target] ??= {})[track.property] = keys;
+          else (slotTimelines[target] ??= {})[track.property] = keys;
+        });
+      }
+
+      const drawOrder = anim.drawOrder ? compileDrawOrder(anim.drawOrder, animName, anim.duration, slots) : null;
+      if (drawOrder) for (const key of drawOrder) compiledDuration = Math.max(compiledDuration, key.time as number);
+
+      const eventKeys = anim.events ? compileEvents(anim.events, animName, anim.duration, rig.events ?? {}) : null;
+      // An event timeline counts towards the animation's length the same as any
+      // other: `readAnimation` takes the duration from the longest timeline it
+      // built, and `EventTimeline.getDuration()` is its last frame like the rest.
+      if (eventKeys) for (const key of eventKeys) compiledDuration = Math.max(compiledDuration, key.time as number);
+
+      // Rule 4: the declared duration is verified, because skeleton JSON does not
+      // carry one — the loader takes the max key time.
+      //
+      // This arm is about the DECLARED DURATION being wrong, so it compares one
+      // number per animation and tolerates a frame of it. The other arm —
+      // `checkKeyTime`, above, per key — is about a key landing past the end, and
+      // a frame is 16,667 times too coarse to see one. Both are needed: this one
+      // catches an animation that stops a second early, and only that one catches
+      // a key on a track whose neighbour already sits on the declared duration.
+      if (Math.abs(compiledDuration - anim.duration) > FRAME) {
+        throw new CompileError(
+          `animation "${animName}" declares duration ${anim.duration}s but its last key is at ${compiledDuration}s`,
+        );
+      }
+      animations[animName] = {};
+      if (Object.keys(slotTimelines).length) animations[animName].slots = slotTimelines;
+      if (Object.keys(boneTimelines).length) animations[animName].bones = boneTimelines;
+      if (Object.keys(physicsTimelines).length) animations[animName].physics = physicsTimelines;
+      if (drawOrder) animations[animName].drawOrder = drawOrder;
+      if (eventKeys) animations[animName].events = eventKeys;
     }
-
-    const drawOrder = anim.drawOrder ? compileDrawOrder(anim.drawOrder, animName, anim.duration, slots) : null;
-    if (drawOrder) for (const key of drawOrder) compiledDuration = Math.max(compiledDuration, key.time as number);
-
-    const eventKeys = anim.events ? compileEvents(anim.events, animName, anim.duration, rig.events ?? {}) : null;
-    // An event timeline counts towards the animation's length the same as any
-    // other: `readAnimation` takes the duration from the longest timeline it
-    // built, and `EventTimeline.getDuration()` is its last frame like the rest.
-    if (eventKeys) for (const key of eventKeys) compiledDuration = Math.max(compiledDuration, key.time as number);
-
-    // Rule 4: the declared duration is verified, because skeleton JSON does not
-    // carry one — the loader takes the max key time.
-    //
-    // This arm is about the DECLARED DURATION being wrong, so it compares one
-    // number per animation and tolerates a frame of it. The other arm —
-    // `checkKeyTime`, above, per key — is about a key landing past the end, and
-    // a frame is 16,667 times too coarse to see one. Both are needed: this one
-    // catches an animation that stops a second early, and only that one catches
-    // a key on a track whose neighbour already sits on the declared duration.
-    if (Math.abs(compiledDuration - anim.duration) > FRAME) {
-      throw new CompileError(
-        `animation "${animName}" declares duration ${anim.duration}s but its last key is at ${compiledDuration}s`,
-      );
-    }
-    animations[animName] = {};
-    if (Object.keys(slotTimelines).length) animations[animName].slots = slotTimelines;
-    if (Object.keys(boneTimelines).length) animations[animName].bones = boneTimelines;
-    if (Object.keys(physicsTimelines).length) animations[animName].physics = physicsTimelines;
-    if (drawOrder) animations[animName].drawOrder = drawOrder;
-    if (eventKeys) animations[animName].events = eventKeys;
-  }
+  });
 
   // -- 6. assemble -----------------------------------------------------------
   const header: SpineSkeletonJson['skeleton'] = {
