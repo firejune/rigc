@@ -263,10 +263,12 @@ interface Mutant {
    */
   expect: string | null;
   /**
-   * Which rulebook to run the break against. Defaults to `spine-html`, the
-   * profile every other mutant in this file was written for. A mutant that names
-   * a profile is asserting something about the SPLIT rather than about one
-   * assertion — see M36a/M36b, which are the same edit under both profiles.
+   * Which rulebook to run the break against. Absent means `MUTANT_PROFILE`
+   * (`spine-html`), the profile every other mutant in this file was written for
+   * — the suite pins it rather than inheriting a default, so that flipping the
+   * CLI's default (#221) cannot quietly stop a mutant's assertion from running
+   * at all. A mutant that names a profile is asserting something about the SPLIT
+   * rather than about one assertion — see M36a/M36b, the same edit under both.
    */
   profile?: ValidateProfile;
   mutate: (a: Artifacts) => Artifacts;
@@ -3419,11 +3421,18 @@ function runPngTransparencySuite(): number {
     /re-export/i.test(detail) ? null : 'a remedy ("re-export")',
     /rgba/i.test(detail) ? null : 'the target format (RGBA)',
     /tRNS/.test(detail) ? null : 'the chunk that would make it transparent (tRNS)',
-    /--profile spine\b/.test(detail) ? null : 'the profile that does not enforce it (--profile spine)',
+    // Both halves of the profile split, and `spine` is matched with `-` excluded
+    // so that the words "--profile spine-html" cannot satisfy both requirements
+    // at once. Since #221 the reader arrives here only by opting in, so the
+    // message has to say which rulebook they opted into as well as which one
+    // would not have asked — naming only the escape hatch now reads as though
+    // the tool had chosen this rule for them.
+    /--profile spine-html/.test(detail) ? null : 'the profile this rule belongs to (--profile spine-html)',
+    /--profile spine\b(?!-)/.test(detail) ? null : 'the default profile that does not enforce it (--profile spine)',
     /no alpha channel/i.test(detail) ? 'DROP the old untrue "no alpha channel" phrasing' : null,
   ].filter((m): m is string => m !== null);
   say(
-    'T06_THE_REFUSAL_NAMES_A_REMEDY_AND_A_PROFILE',
+    'T06_THE_REFUSAL_NAMES_A_REMEDY_AND_BOTH_PROFILES',
     refusal !== undefined && missing.length === 0,
     missing.length === 0 ? detail : `message is missing: ${missing.join(', ')} — got: ${detail}`,
     'every other error in the audit named a fix; the one a stranger meets first did not',
@@ -4722,6 +4731,18 @@ interface Suite {
   mutants: Mutant[];
 }
 
+/**
+ * The rulebook the mutation suite runs under, pinned.
+ *
+ * Every mutant in this file was written against the full 34, and 14 of those
+ * rules exist only under `spine-html`. Under `spine` those 14 do not pass and do
+ * not skip — they are `profileSkipped`, a third channel — so a mutant aimed at
+ * one of them would come back with nothing fired and no complaint. This suite is
+ * the reason the assertions are known to be reachable at all, so it names its
+ * profile out loud instead of inheriting whatever the CLI happens to default to.
+ */
+const MUTANT_PROFILE: ValidateProfile = 'spine-html';
+
 const SUITES: Suite[] = [
   { name: OVERLAY.rig, opts: optsForFixture(OVERLAY), mutants: MUTANTS },
   { name: ARTICULATED.rig, opts: optsForFixture(ARTICULATED), mutants: ARTICULATED_MUTANTS },
@@ -4741,6 +4762,7 @@ function runSuite(suite: Suite): number {
     declaredDurations: pristine.declaredDurations,
     rig: pristine.rig,
     reEmit: { skeletonText: compile(suite.opts).skeletonText, atlasText: compile(suite.opts).atlasText },
+    profile: MUTANT_PROFILE,
   });
   if (control.failures.length === 0) {
     // Skips are reported separately from passes: an assertion with no data to
@@ -4762,7 +4784,7 @@ function runSuite(suite: Suite): number {
       atlasDir: suite.opts.outDir,
       declaredDurations: pristine.declaredDurations,
       rig: pristine.rig,
-      profile: mutant.profile,
+      profile: mutant.profile ?? MUTANT_PROFILE,
     });
     const where = mutant.profile ? `  [profile ${mutant.profile}]` : '';
     if (mutant.expect === null) {
@@ -4980,8 +5002,10 @@ function runErrorAttributionSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
-// cli ergonomics — issue #218, exercised as the installed command sees it:
-// a real `bun cli.ts …` subprocess, not the functions cli.ts happens to export
+// cli ergonomics — issues #218 and #221, exercised as the installed command sees
+// it: a real `bun cli.ts …` subprocess, not the functions cli.ts happens to
+// export. A default is a claim about what happens when the caller says nothing,
+// so the only honest way to test one is to say nothing.
 // ---------------------------------------------------------------------------
 
 /** Run `bun cli.ts <args>` as a real subprocess, from the repository root. */
@@ -5049,6 +5073,73 @@ function runCliSuite(): number {
       status === 0 && /^\d+\.\d+\.\d+/.test(stdout.trim()),
       `got ${JSON.stringify(stdout.trim())} (exit=${String(status)})`,
       'cheap to add alongside --version, and every other CLI\'s users reach for it out of habit',
+    );
+  }
+
+  // --- the default profile, exercised as a stranger meets it (issue #221) ----
+  //
+  // ⭐ The art is chosen so that ONE rule separates the two profiles: `block.png`
+  // is an opaque indexed PNG with no tRNS, which A19 — renderer policy — refuses
+  // and no validity rule has an opinion about. So the same two files must build
+  // green with no flag and RED under `--profile spine-html`, and the pair states
+  // the default in the only place a default can be stated honestly: what happens
+  // when nobody says anything.
+  //
+  // It runs the real subprocess rather than reading `CLI_DEFAULT_PROFILE`,
+  // because the constant is not the thing users meet — the flag plumbing between
+  // it and the gate is, and a test that imported the constant would go on passing
+  // if `readProfile` stopped consulting it.
+  {
+    const dirs = writeProbeRig();
+    writeTypedPng(join(dirs.dir, 'block.png'), 12, 8, { colourType: 3, trns: false });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const args = (extra: string[]): string[] => [
+      'build',
+      '--rig',
+      dirs.rigPath,
+      '--motion',
+      motionPath,
+      '--images',
+      dirs.dir,
+      '--out',
+      dirs.outDir,
+      ...extra,
+    ];
+    const assertions = (out: string): Set<string> =>
+      new Set([...out.matchAll(/^ {2}(?:PASS|FAIL|SKIP|PROF) {2}(A\d\d_[A-Z0-9_]+)/gm)].map((m) => m[1]));
+
+    const bare = runCli(args([]));
+    const bareProf = [...bare.stdout.matchAll(/^ {2}PROF {2}(A\d\d_[A-Z0-9_]+)/gm)].map((m) => m[1]);
+    say(
+      'CLI06_NO_PROFILE_FLAG_MEANS_SPINE',
+      bare.status === 0 &&
+        /profile spine\b/.test(bare.stdout) &&
+        !/profile spine-html/.test(bare.stdout) &&
+        bareProf.includes(A19) &&
+        bareProf.length === 14,
+      bare.status === 0
+        ? `green, profile=${/rig=\S+ profile=(\S+)/.exec(bare.stdout)?.[1] ?? '?'}, ${bareProf.length} PROF including ` +
+            `${bareProf.includes(A19) ? A19 : `NOT ${A19}`}`
+        : `exit=${String(bare.status)} — the default refused art only renderer policy objects to: ${bare.stderr.trim()}`,
+      "the npm pitch is that the output imports into the Spine editor, and a stranger's first build was being " +
+        "judged against a third-party renderer's policy instead (#221)",
+    );
+
+    const opted = runCli(args(['--profile', 'spine-html']));
+    const optedAll = assertions(opted.stdout);
+    const optedProf = [...opted.stdout.matchAll(/^ {2}PROF {2}A\d\d_/gm)].length;
+    say(
+      'CLI07_PROFILE_SPINE_HTML_STILL_RUNS_ALL_34',
+      opted.status !== 0 &&
+        opted.status !== null &&
+        optedAll.size === 34 &&
+        optedProf === 0 &&
+        new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout),
+      `exit=${String(opted.status)}, ${optedAll.size}/34 assertions reported, ${optedProf} PROF, ` +
+        `A19 ${new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout) ? 'FAILED as it must' : 'did not fire'}`,
+      'flipping a default is only safe if the old one is still reachable and still complete — the opt-in has to be ' +
+        'the same 34 rules it always was, not a weakened copy',
     );
   }
 
@@ -5446,6 +5537,11 @@ function runCutsSuite(): { failures: number; cuts: number } {
         // determinism claim is worth more than on a fixture, because the manifest
         // carries floats nobody chose.
         reEmit: { skeletonText: compile(opts).skeletonText, atlasText: compile(opts).atlasText },
+        // `spine-html`, pinned: a registered cut is a rig this project ships, and
+        // "can this project ship it" is the whole question the extra suite asks.
+        // It is the reading this suite has always had, and it is now stated
+        // rather than inherited (#221).
+        profile: 'spine-html',
       });
       if (report.failures.length === 0) {
         const skips = report.skipped.length ? `, ${report.skipped.length} skipped` : '';
@@ -5588,8 +5684,9 @@ function main(): void {
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       ', + 2 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
-      'reports a line number), + 5 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
-      '`--version`, `-v`)' +
+      'reports a line number), + 7 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
+      '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
+      'builds green with no flag and is refused by all 34 rules under `--profile spine-html`)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
       ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +

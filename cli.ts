@@ -59,7 +59,7 @@ import {
   type FramesSidecar,
   type FrameSet,
 } from './src/render.ts';
-import { DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
+import { CLI_DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import type { CompileResult, MotionSpec } from './src/types.ts';
 
 /**
@@ -239,14 +239,17 @@ function resolveCut(flags: Record<string, string>): { label: string; opts: Compi
 // ---------------------------------------------------------------------------
 
 /**
- * Read `--profile`, defaulting to the profile every caller had before the flag
- * existed. An unknown name is a usage error rather than a silent fallback: the
- * fallback would be `spine-html`, so a typo would quietly re-apply the strictest
- * rulebook to data the caller was trying to exempt.
+ * Read `--profile`, defaulting to `spine` — see `CLI_DEFAULT_PROFILE`.
+ *
+ * An unknown name is a usage error rather than a silent fallback, and that
+ * matters in both directions: a typo used to re-apply the strictest rulebook to
+ * data the caller was trying to exempt, and it would now drop the policy layer
+ * from a caller who typed `--profile spine-htlm` and believes they asked for it.
+ * Neither is something to discover from a green.
  */
 function readProfile(flags: Record<string, string>): ValidateProfile {
   const raw = flags.profile;
-  if (raw === undefined) return DEFAULT_PROFILE;
+  if (raw === undefined) return CLI_DEFAULT_PROFILE;
   const found = VALIDATE_PROFILES.find((p) => p === raw);
   if (!found) throw new UsageError(`--profile ${JSON.stringify(raw)}; known profiles: ${VALIDATE_PROFILES.join(', ')}`);
   return found;
@@ -729,8 +732,8 @@ function cmdPreview(flags: Record<string, string>): void {
  * Two questions, asked in this order and never merged:
  *
  *   1. Is the candidate valid Spine at all? That is `validate --profile spine`,
- *      and it is the only part with a pass/fail. `spine-html` is not the default
- *      here (it is everywhere else): the thing being reproduced is an editor
+ *      and it is the only part with a pass/fail. The profile is pinned here, not
+ *      inherited from the CLI default: the thing being reproduced is an editor
  *      export, and holding it to this project's renderer policy would fail rungs
  *      for reasons the rung is not about.
  *   2. How close is it, structurally, to the reference? That is `diff`, and it
@@ -750,8 +753,12 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
   if (!rung) throw new UsageError(`unknown rung ${JSON.stringify(rungId)}; known: ${RUNG_IDS.join(', ')}`);
   if (flags.candidate === undefined) throw new UsageError('bench needs --candidate <dir | skeleton.json>');
 
-  // bench judges a reproduction of editor output, so `spine` is the default.
-  const profile = flags.profile === undefined ? 'spine' : readProfile(flags);
+  // bench judges a reproduction of editor output, so `spine` is PINNED here
+  // rather than inherited. It reads the same as the CLI default today (#221) and
+  // is kept as its own statement anyway: the ladder's stage-1 gate is defined by
+  // `docs/GATE.md` as `validate --profile spine`, and a bench run must go on
+  // meaning that whatever a later release decides the default should be.
+  const profile: ValidateProfile = flags.profile === undefined ? 'spine' : readProfile(flags);
   const exportDir = resolve(import.meta.dir, 'examples', rung.example, 'export');
   if (!existsSync(exportDir)) {
     // `bun run fetch-examples` runs `scripts/fetch-examples.sh`, and `scripts/`
@@ -1067,7 +1074,9 @@ const FLAG_MEANINGS: Record<string, string> = {
     'self-contained enough to zip or commit on its own (default: page paths still point at the source art)',
   cut: 'look up a named cut in --cuts <cuts.json>, instead of --rig/--motion/--out',
   cuts: 'the cuts.json --cut names',
-  profile: "which rulebook to check against — spine = valid Spine 4.3; spine-html = also this project's renderer/archetype policy",
+  profile:
+    'which rulebook to check against (default: spine) — spine = valid Spine 4.3 that any runtime plays ' +
+    "correctly; spine-html = also this project's renderer/archetype policy",
   atlas: "the candidate's atlas, when it is not beside the skeleton",
   candidate: 'a compiled skeleton: a directory holding skeleton.json + skeleton.atlas, or a skeleton.json path',
   frames: 'a rendered reference frame set (a skeleton root, or one animation directory)',
@@ -1214,9 +1223,15 @@ const USAGE = [
   '',
   'build, validate and bench take --profile spine|spine-html:',
   '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
-  '  spine-html  the above, plus this project\'s renderer and archetype policy',
-  '              (the default everywhere except bench, which judges a reproduction',
-  '              of editor output and so defaults to spine).',
+  '              THE DEFAULT — 20 rules, and the question the output answers when',
+  '              you import it into the Spine editor.',
+  '  spine-html  the above, plus this project\'s renderer and archetype policy:',
+  '              all 34 rules, opt-in. Those extra 14 fire on real, correct,',
+  '              editor-produced Spine data, so they are somebody\'s policy rather',
+  '              than anybody\'s validity.',
+  '',
+  'Every report names the profile that judged it and lists, on PROF lines, the',
+  'rules that profile left out.',
   '',
   'check renders the candidate onto the reference frames\' own pixel grid, fitting it',
   'there by its own drawn pixels, and compares. It reads the frames and never the',

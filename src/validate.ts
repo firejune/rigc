@@ -53,15 +53,31 @@ export interface Failure {
  * - `spine`      — is this valid Spine 4.3 that any runtime will play correctly?
  * - `spine-html` — the above, plus this project's renderer and archetype policy.
  *
- * ⚠️ `spine-html` is the DEFAULT and must stay the default: it is the behaviour
- * every existing caller already has, and a switch that silently loosens a gate
- * for callers who did not ask is worse than no switch at all.
+ * ⚠️ `validate()` has NO default profile — `ValidateInput.profile` is required,
+ * and that is deliberate. A silent default here can only be wrong in one of two
+ * directions: loosen it and a caller who did not ask gets a weaker gate than the
+ * one they think they ran; tighten it and foreign data is refused by a policy the
+ * caller has no stake in. Issue #221 flipped the CLI to `spine` while several
+ * internal callers still wanted `spine-html`, at which point one constant could
+ * no longer honestly serve both — so the choice is made at every call site now,
+ * by the caller who knows which question they are asking.
  */
 export type ValidateProfile = 'spine' | 'spine-html';
 
 export const VALIDATE_PROFILES: readonly ValidateProfile[] = ['spine', 'spine-html'];
 
-export const DEFAULT_PROFILE: ValidateProfile = 'spine-html';
+/**
+ * What the CLI uses when `--profile` is absent — and ONLY the CLI. This is not
+ * `validate()`'s default; that function has none (above).
+ *
+ * `spine` since issue #221. The published package's pitch is "the output imports
+ * into the Spine editor", which is exactly the question `spine` asks, and a
+ * stranger's first build was being judged instead against one renderer's policy
+ * and one project's canvas budget — 14 rules they have no stake in, with the
+ * escape hatch documented only in prose. Defaults beat prose. `spine-html` is
+ * still one flag away, and every report names the profile that judged it.
+ */
+export const CLI_DEFAULT_PROFILE: ValidateProfile = 'spine';
 
 /**
  * What kind of rule each assertion is. Every assertion has an entry, and
@@ -136,8 +152,11 @@ export interface ValidateInput {
    * stats line says `rig=absent` so a green run cannot be mistaken for a full one.
    */
   rig?: RigInfo;
-  /** Which body of rules to apply. Defaults to `spine-html`; see ValidateProfile. */
-  profile?: ValidateProfile;
+  /**
+   * Which body of rules to apply. Required, and deliberately so — there is no
+   * default to fall into. See ValidateProfile.
+   */
+  profile: ValidateProfile;
 }
 
 export interface ValidateReport {
@@ -215,7 +234,7 @@ export function validate(input: ValidateInput): ValidateReport {
   const skipped: ValidateReport['skipped'] = [];
   const profileSkipped: ValidateReport['profileSkipped'] = [];
   const stats: Record<string, number | string> = {};
-  const profile = input.profile ?? DEFAULT_PROFILE;
+  const profile = input.profile;
   /** True when this profile's rulebook includes the policy layer. */
   const policy = profile === 'spine-html';
 
@@ -1310,8 +1329,12 @@ export function validate(input: ValidateInput): ValidateReport {
   // mode, aseprite and pngquant. Judging on the colour type alone refused art
   // that was never broken — seven of one author's nine hand-drawn parts, on their
   // first build — and told them, untruthfully, that the file held no transparency
-  // at all. It is the likeliest first error a stranger meets, so the refusal
-  // below has to be both TRUE and actionable when it does fire.
+  // at all. That audit is also why the CLI's default is now `spine`, which does
+  // not run this rule at all (#221): a stranger reaches this refusal only by
+  // asking for `spine-html`. It still has to be both TRUE and actionable when it
+  // fires, and it now has to name the profile it belongs to as well as the one
+  // that does not ask — the reader opted in, and the message is where they find
+  // out what they opted into.
   check('A19_OVERLAY_PNGS_HAVE_ALPHA', () => {
     if (!atlas) return;
     const stageW = skeletonData?.width ?? 0;
@@ -1342,8 +1365,8 @@ export function validate(input: ValidateInput): ValidateReport {
         `part image "${page.name}" cannot be transparent anywhere: it is colour type ${info.colourType} ` +
           `(${colourTypeName(info.colourType)}) with no tRNS chunk, so it would paint a solid rectangle over ` +
           'whatever is drawn behind it. Re-export it with transparency — as RGBA, or as an indexed or greyscale ' +
-          `PNG that keeps its tRNS chunk. ${exemption} This is renderer policy: --profile spine does not run ` +
-          'this check.',
+          `PNG that keeps its tRNS chunk. ${exemption} This is renderer policy, and it belongs to --profile ` +
+          'spine-html: the default --profile spine does not run this check.',
       );
     }
   });
