@@ -42,7 +42,7 @@
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import {
   BoundingBoxAttachment,
@@ -5052,6 +5052,96 @@ function runCliSuite(): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// bin launcher — issue #220: npm's `bin` field is bin/rigc.cjs, a plain Node
+// script, not cli.ts. It has to be invisible when Bun is on PATH (same argv,
+// same stdout/stderr, same exit code as `bun cli.ts …`) and it has to explain
+// itself — once, to stderr, non-zero — when Bun is not, instead of the bare
+// `env: bun: No such file or directory` a Bun-less machine used to get.
+// ---------------------------------------------------------------------------
+
+const LAUNCHER = join(import.meta.dir, 'bin', 'rigc.cjs');
+
+/** The first directory on PATH holding an executable literally named `name`, or null. */
+function firstOnPath(name: string): string | null {
+  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+    if (dir !== '' && existsSync(join(dir, name))) return dir;
+  }
+  return null;
+}
+
+/** The current PATH with every directory that has a `bun` executable removed. */
+function pathWithoutBun(): string {
+  return (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter((dir) => dir !== '' && !existsSync(join(dir, 'bun')))
+    .join(delimiter);
+}
+
+/** Run the packaged launcher (bin/rigc.cjs) under a real `node`, as npm's own shim would. */
+function runLauncher(args: string[], pathOverride?: string): { status: number | null; stdout: string; stderr: string } {
+  const nodeDir = firstOnPath('node');
+  if (nodeDir === null) throw new Error('runLauncher needs a `node` binary on PATH — call sites must check firstOnPath first');
+  const result = spawnSync(join(nodeDir, 'node'), [LAUNCHER, ...args], {
+    cwd: import.meta.dir,
+    encoding: 'utf8',
+    env: pathOverride === undefined ? process.env : { ...process.env, PATH: pathOverride },
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/** Returns null (and prints why) when there is no `node` on PATH to run the launcher under. */
+function runLauncherSuite(): number | null {
+  console.log('\n── bin launcher (subprocess: node bin/rigc.cjs …) ──');
+  if (firstOnPath('node') === null) {
+    console.log('  INFO  no `node` binary found on PATH, so the launcher suite was skipped.');
+    console.log('        bin/rigc.cjs is the thing npm installs and Node is the thing it is meant to run');
+    console.log('        under — this run cannot exercise it without one.');
+    return null;
+  }
+
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  {
+    const launcher = runLauncher(['--version']);
+    const direct = runCli(['--version']);
+    say(
+      'BIN01_LAUNCHER_MATCHES_DIRECT_INVOCATION_FOR_VERSION',
+      launcher.status === direct.status && launcher.stdout === direct.stdout,
+      `launcher exit=${String(launcher.status)} stdout=${JSON.stringify(launcher.stdout.trim())}; ` +
+        `direct exit=${String(direct.status)} stdout=${JSON.stringify(direct.stdout.trim())}`,
+      'npm installs bin/rigc.cjs, never cli.ts directly — a caller asking for the version must not be able to tell',
+    );
+  }
+
+  {
+    const launcher = runLauncher(['init']);
+    const direct = runCli(['init']);
+    say(
+      'BIN02_LAUNCHER_MATCHES_DIRECT_INVOCATION_FOR_UNKNOWN_COMMAND',
+      launcher.status === direct.status && launcher.stdout === direct.stdout && launcher.stderr === direct.stderr,
+      `launcher exit=${String(launcher.status)}; direct exit=${String(direct.status)}`,
+      'the hand-off has to carry argv, stdout, stderr AND the exit code through unchanged — not just the happy path',
+    );
+  }
+
+  {
+    const { status, stdout, stderr } = runLauncher(['--version'], pathWithoutBun());
+    say(
+      'BIN03_MISSING_BUN_EXPLAINS_ITSELF_AT_THE_FAILURE_POINT',
+      status !== 0 && status !== null && stdout === '' && stderr.includes('https://bun.sh'),
+      `exit=${String(status)} stderr=${JSON.stringify(stderr.trim())}`,
+      'installing on a Bun-less machine used to fail as a bare `env: bun: No such file or directory` with no ' +
+        'hint why — issue #220',
+    );
+  }
+
+  return bad;
+}
+
 function runCutsSuite(): { failures: number; cuts: number } {
   console.log('\n── extra suite: registered cuts ──');
   if (CUTS === null) {
@@ -5158,6 +5248,11 @@ function main(): void {
   substantive += 2;
   bad += runCliSuite();
   substantive += 5;
+  const launcherBad = runLauncherSuite();
+  if (launcherBad !== null) {
+    bad += launcherBad;
+    substantive += 3;
+  }
   bad += runCopyImagesSuite();
   substantive += 3;
   const diffBad = runDiffSuite();
@@ -5205,6 +5300,12 @@ function main(): void {
       : `, + 1 rung-6 mesh render${
           meshCheckBad === null ? '' : ', + 7 rung-6 fidelity controls (4 mesh, 3 per-frame change)'
         }`;
+  const launcher =
+    launcherBad === null
+      ? '\n  ⚠️ No `node` binary was found on PATH, so the packaged bin/rigc.cjs launcher (issue #220) was not ' +
+        'exercised in this run.'
+      : ', + 3 bin-launcher controls (`--version` and an unknown command match direct invocation, and the exact ' +
+        'message printed when Bun is missing from PATH)';
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
@@ -5219,9 +5320,11 @@ function main(): void {
       ', + 2 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number), + 5 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`)' +
+      `${launcher.startsWith(',') ? launcher : ''}` +
       ', + 3 copy-images controls (self-contained out dir, unchanged default, deterministic basename collision)' +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
+      (launcher.startsWith(',') ? '' : launcher) +
       (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : ''),
   );
 }
