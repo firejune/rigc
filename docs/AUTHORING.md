@@ -129,7 +129,7 @@ What the flags mean:
 | `--copy-images` | `build` only: also copies every referenced page PNG into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own. Default is unchanged — page paths still point at the source art (issue #217) |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
-| `--profile` | `spine` = the 20 validity rules (**the default**) · `spine-html` = all 34, opt-in |
+| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |
 | `--candidate` | `check`, `bench`, `render`, `preview` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview`, and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote`, so is a name that only *some* candidates have |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
@@ -649,6 +649,9 @@ time puts it here.
 | `tracks` | the timelines |
 | `drawOrder` | the draw-order timeline — §4.7. Not a track: it names no target |
 | `events` | the event timeline — §4.8. Not a track, for the same reason |
+| `ik` | IK constraint timelines — §4.9. Not a track: its keys carry named fields, not one `v` |
+| `transform` | transform constraint timelines — §4.10. Same reason |
+| `deform` | deform timelines — §4.11. Same reason |
 
 `groups` (`name → [member, …]`) lets one track target several bones or slots at
 once; `lag` shifts every key of a track, and `stagger` adds a per-member delay in
@@ -658,6 +661,13 @@ member order.
 
 A track names **exactly one** of `bone`, `slot`, `group`, `physics`. Two tracks on
 the same `target.property` is a compile error: merge them.
+
+Three families are **not** tracks and sit beside `tracks` instead — `ik` (§4.9),
+`transform` (§4.10) and `deform` (§4.11). The reason is the key rather than the
+target: a track's key carries one `v`, and those three carry named fields each
+(two for an IK constraint, six for a transform constraint, a sparse vertex run for
+a deform). Folding them in would make `v` mean four different things depending on
+`property`. 4.3 also writes them as their own groups beside `bones` and `slots`.
 
 | Target | `property` | Key `v` |
 | --- | --- | --- |
@@ -851,6 +861,232 @@ decreasing time builds an `EventTimeline` whose earlier firing is simply
 unreachable, with a perfectly clean load.
 `A32_EVENT_KEYS_RESOLVE` checks all three from the other side.
 
+### 4.9 `ik` — mixing an IK constraint in over time
+
+The rig spec declares the constraint (§3.5); this keys it. 4.3 writes the group as
+`animations.<a>.ik.<constraint>` — **one unnamed timeline per constraint**, so the
+constraint name is the only target there is, and there is no timeline name between
+the two the way a bone has `rotate` and `translate`.
+
+```json
+"animations": {
+  "walk": {
+    "duration": 0.8666666,
+    "loop": true,
+    "tracks": [],
+    "ik": [
+      {
+        "constraint": "rear-leg-ik",
+        "keys": [
+          { "t": 0,         "mix": 1, "softness": 0 },
+          { "t": 0.2666666, "mix": 1, "softness": 14, "ease": "settle" },
+          { "t": 0.5333333, "mix": 0, "softness": 0 },
+          { "t": 0.8666666, "mix": 1, "softness": 0 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+⚠️ **Every number above is invented.** They are shaped like a walk cycle — the leg
+under load is solved to the ground and the leg in flight is let go — and nothing
+here was measured off a real rig. Copy the shape, not the values.
+
+| Field | Meaning | Absent means |
+| --- | --- | --- |
+| `mix` | 0..1, how much of the solved rotation is applied | `1` |
+| `softness` | distance from full reach at which the bones stop straightening | `0` |
+| `bendPositive` | two-bone bend direction | `true` |
+| `compress` | one-bone IK scales the bone down to reach a close target | `false` |
+| `stretch` | scales the bone up to reach a far target | `false` |
+
+- **`mix` and `softness` are the two curve channels, in that order.** A raw
+  `curve` is therefore 8 numbers, and the three booleans are stepped by nature —
+  nothing interpolates a bend direction.
+- `mix` outside `0..1` is a compile error: `IkConstraintPose.mix` is documented as
+  a percentage. A **transform** mix is documented *unbounded*, which is why §4.10
+  has no such rule — the asymmetry is the runtime's, not ours.
+- 🚨 **A field stated on one key and not the next is a compile error.** This is the
+  refusal worth reading twice, because the format's shape invites the mistake: the
+  parser reads every field **fresh per key** with its own default, so a key that
+  omits `softness` does not hold the previous key's 14 — it snaps to 0, and
+  interpolates down to it on the way. It loads. It plays. It is not what you
+  wrote. So state a field on every key of a track or on none of them; writing the
+  default out loud is how you opt in.
+- Its last key counts towards the declared duration like any other (R7).
+
+rigc refuses four things here:
+
+| You wrote | You get |
+| --- | --- |
+| a constraint the rig does not declare | `keys unknown ik constraint "X"; the rig declares ik constraint(s): …` |
+| a `transform` constraint's name | `keys "X" as an ik constraint, but the rig declares it as a "transform" constraint` |
+| `softness` on the first key only | `key 0 names "softness" and key 1 (t=…) does not … it would snap to 0` |
+| `mix: 1.5` | `mix is 1.5, outside 0..1 — the runtime documents it as a percentage 0-1` |
+
+The type check matters because the parser resolves a timeline's target by name
+**and** type: `findConstraint(name, IkConstraintData)` misses a transform
+constraint of the same name, returns null, and `readAnimation` throws — in the
+consumer's process, which is late. `A34_CONSTRAINT_TIMELINE_TARGETS` checks the
+same two from the other side, plus one thing the compiler cannot produce and a
+hand-edited file can: an **empty key array**, which the parser skips in silence.
+
+### 4.10 `transform` — turning a muted transform constraint on
+
+Same shape as §4.9 and the same absent-means-default rule; six mixes instead of
+two. The idiom this exists for is an aim rig: the constraints are declared with
+`mixRotate: 0` in the rig spec — muted at setup, so the figure is posed by its own
+bones — and the animation that needs them mixes them in.
+
+```json
+"animations": {
+  "aim": {
+    "duration": 0.3333333,
+    "loop": false,
+    "tracks": [],
+    "transform": [
+      { "constraint": "aim-head-transform",      "keys": [{ "t": 0, "mixRotate": 1 }] },
+      { "constraint": "aim-torso-transform",     "keys": [{ "t": 0, "mixRotate": 0.6 }] },
+      { "constraint": "aim-front-arm-transform", "keys": [{ "t": 0, "mixRotate": 1 }] }
+    ]
+  }
+}
+```
+
+⚠️ **Every number above is invented**, including the 0.6 — a torso that follows the
+aim less than the head is a plausible rig and not a measured one.
+
+A single key at `t: 0` is the whole timeline here, and that is not a degenerate
+case: it says "while this animation is playing, this constraint is on", which is
+exactly what a mix that was 0 at setup needs said.
+
+| Field | Absent means |
+| --- | --- |
+| `mixRotate` | `1` |
+| `mixX` | `1` |
+| `mixY` | **this key's own `mixX`** — not `1` |
+| `mixScaleX` | `1` |
+| `mixScaleY` | `1` |
+| `mixShearY` | `1` |
+
+- **Six curve channels, in the order above.** A raw `curve` is 24 numbers.
+- No range check: every one of these is documented **unbounded**, and an over-mix
+  above 1 is a real editor idiom rather than a mistake.
+- ⚠️ A mix is only read by the runtime if the constraint declares the matching
+  `properties` mapping (§3.5). Keying `mixScaleY` on a constraint that maps
+  rotation only is dead data — legal, loaded, and it moves nothing.
+- The refusals are §4.9's, with `transform` in place of `ik`.
+
+### 4.11 `deform` — moving an attachment's vertices
+
+The one timeline whose keys mean something different depending on what they are
+attached to, and the only one keyed on a **skin / slot / attachment** triple:
+`animations.<a>.attachments.<skin>.<slot>.<attachment>.deform`.
+
+```json
+"animations": {
+  "hoverboard": {
+    "duration": 1.6666666,
+    "loop": true,
+    "tracks": [],
+    "deform": [
+      {
+        "slot": "board",
+        "attachment": "board",
+        "keys": [
+          { "t": 0 },
+          { "t": 0.5,       "fromVertex": 4, "vertices": [0, -7, 0, -7], "ease": "settle" },
+          { "t": 1.1666666, "fromVertex": 4, "vertices": [0, 4, 0, 4],  "ease": "settle" },
+          { "t": 1.6666666 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+⚠️ **Every number above is invented** — the vertex indices, the offsets and the
+times alike. A real deform's numbers come from the geometry it is bending, and
+there is no way to guess which vertices of somebody's board are its middle.
+
+| Field | Meaning |
+| --- | --- |
+| `skin` | which skin the attachment lives in. Absent = `"default"` |
+| `slot` | the slot |
+| `attachment` | the attachment's **placeholder** name inside that skin and slot |
+
+Per key:
+
+| Field | Meaning |
+| --- | --- |
+| `vertices` | the run: `x, y` offset pairs. **Absent** = back to the setup pose |
+| `fromVertex` | which VERTEX the run starts at — rigc translates it |
+| `offset` | the same start as a raw index into the deform array. Never with `fromVertex` |
+| `ease` / `curve` | one channel, and it eases the **blend**, not a coordinate |
+
+Four things are worth having straight before you write one.
+
+**A key is a sparse edit, and a key with no `vertices` is the setup pose.** The
+parser builds an array as long as the attachment's own, copies your run into it at
+`offset`, and leaves the rest at zero. So a run only has to cover the vertices that
+move, and the `{ "t": 0 }` and `{ "t": 1.6666666 }` keys above are how a looping
+deform starts and ends undeformed. That is the format's own encoding for it, not a
+convention — which is why rigc refuses a start index on such a key: there would be
+nothing for it to point at.
+
+**Offsets, not positions.** The numbers are relative to the setup geometry in both
+encodings. On an unweighted attachment the parser literally adds the setup vertex
+back on load; on a weighted one zero *is* "unmoved".
+
+**The array is indexed by vertex on an unweighted attachment and by bone influence
+on a weighted one.** Its length is `vertices.length` in the first case and
+`vertices.length / 3 * 2` in the second, because a weighted attachment stores
+`x, y, weight` per influence. A vertex with three bones on it therefore occupies
+**three** pairs, each in that bone's own bind space. This is the whole reason
+`fromVertex` exists and the whole reason it is sometimes refused:
+
+- on an **unweighted** attachment `fromVertex` always works — vertex *v* is array
+  index `2v`, exactly;
+- on a **weighted** one it works while every vertex the run covers has exactly one
+  bone on it, and rigc computes the true start index for you (which is *not*
+  `2v` — earlier multi-bone vertices push it along);
+- on a **multi-bone** vertex it is a compile error, and deliberately so. One
+  `x, y` for such a vertex is not a thing the array can hold: its world offset is
+  `Σ weightᵦ · Mᵦ · offsetᵦ` over its bones, so a single pair only means what you
+  meant if every influencing bone happens to share one world matrix. rigc will not
+  guess. Either key the control bone instead — which is what a rigc-generated ring
+  or ribbon mesh is *for* — or write the bind-space pairs yourself and start the
+  run with `offset`. The refusal tells you the index that vertex starts at.
+
+**The curve eases the blend.** A deform timeline has exactly one channel and
+`readCurve` builds it between **0 and 1** — the fraction of the way from this key's
+geometry to the next one's. So a named `ease` behaves as it does anywhere, and a
+raw `curve` is 4 numbers whose value axis runs 0..1, not the range of your vertex
+offsets.
+
+rigc refuses six things here, and the first is the quietest defect in the whole
+animation half of the format:
+
+| You wrote | You get |
+| --- | --- |
+| a run that ends past the array | `the run starts at deform index 4 and is 6 long, which ends at 10; this attachment's deform array is 8 long (4 vertices)` |
+| an odd `offset` | `offset 3 is odd. The deform array is x, y pairs, so an odd start puts every x of this run on a y` |
+| an odd number of `vertices` | `"vertices" holds 3 numbers; the deform array is x, y PAIRS` |
+| `fromVertex` on a multi-bone vertex | `"fromVertex" counts VERTICES, and this attachment is weighted … vertex 2 has 2 of them` |
+| an attachment that is not there | `slot "flat" in skin "default" has no attachment "flatt" (it has: flat)` |
+| a deform on a region attachment | `a deform timeline keys the vertices of an attachment, and this one is a "region"` |
+
+The overrun is the one to fear. `readAnimation` copies with
+`Utils.arrayCopy(vertices, 0, deform, offset, vertices.length)` into a
+`Float32Array`, and writing past the end of a typed array is a **no-op in
+JavaScript** — no throw, no warning, no `NaN`. A run one pair too long loses its
+tail and deforms the rest of the mesh correctly, which looks nearly right, and
+"nearly right" is the hardest kind of wrong to find.
+`A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` checks all of it from the other side, on the
+emitted file, measuring the array's length from the attachment rather than assuming
+an encoding.
+
 ---
 
 ## 5. Reading a failure
@@ -889,6 +1125,14 @@ the frequent ones, verbatim:
 | `vertexCount N wants M unweighted numbers and "vertices" holds K` | fix the count or the array; they decide the encoding between them |
 | `end names slot "X", which this rig does not declare` | fix the clipping attachment's `end`, or add the slot |
 | `bone "X" takes its position from …, which needs a cut manifest` | R8 — pass `--manifest`, or write literal `x`/`y` |
+| `animation "A" keys unknown ik constraint "X"; the rig declares ik constraint(s): …` | §4.9 — fix the name, or declare the constraint in the rig spec |
+| `animation "A" keys "X" as an ik constraint, but the rig declares it as a "transform" constraint` | §4.9 — a timeline's target resolves by name AND type; put the entry under the right group |
+| `ik constraint "X": key 0 names "softness" and key 1 (t=…) does not` | §4.9 — every key is read with its own default, so state the field on every key or on none |
+| `ik constraint "X" (t=…): mix is 1.5, outside 0..1` | §4.9 — an IK mix is a percentage; a transform mix is unbounded |
+| `deform …: the run starts at deform index 4 and is 6 long, which ends at 10; this attachment's deform array is 8 long` | §4.11 — shorten the run or move its start; the parser would drop the tail in silence |
+| `deform … (t=…): offset 3 is odd` | §4.11 — the deform array is `x, y` pairs, so a run starts on an even index |
+| `deform …: "fromVertex" counts VERTICES, and this attachment is weighted … vertex 2 has 2 of them` | §4.11 — key the control bone, or write bind-space pairs and start with `offset` |
+| `deform …: slot "X" in skin "default" has no attachment "Y" (it has: …)` | §4.11 — fix the placeholder name |
 
 ### 5.2 Assertions — the gate
 
@@ -949,6 +1193,8 @@ The report prints one line per assertion:
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | a draw-order key names a slot the skeleton does not have, offsets one slot twice, puts a slot outside the slots array, or lists its offsets out of slot order (§4.7). The only assertion that runs **before** `A00` — the last of those shapes makes the loader spin rather than return, so the round trip is refused instead of attempted |
 | `A32_EVENT_KEYS_RESOLVE` | both | an event key fires a name the skeleton's `events` block does not declare, sits earlier in time than the key before it, or sets `volume`/`balance` on an event with no `audio` (§4.8). **SKIP** when no animation carries an event timeline |
 | `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | a bounding box or clipping polygon whose `vertexCount` is missing or disagrees with its vertex array, a weighted run that decodes to the wrong number of vertices or an out-of-range bone index, or a clipping `end` naming a slot the skeleton does not have (§3.4). **SKIP** when the skeleton carries neither type |
+| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | an `ik` or `transform` timeline names a constraint the skeleton does not declare, names one of the other type, or carries no keys at all (§4.9, §4.10). The last is silent: the parser reads key 0, finds nothing, and skips the timeline. **SKIP** when no animation carries one |
+| `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | both | a deform key's run runs past the end of the attachment's deform array, starts on an odd index, holds an odd count of numbers or a non-finite one, or names a skin/slot/attachment triple that does not resolve (§4.11). The overrun is the quiet one — the parser copies into a `Float32Array` and drops the tail. **SKIP** when no animation carries a deform timeline |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
@@ -979,10 +1225,13 @@ Two more limits that are not errors but will shape what you can attempt:
   region covers its whole page, `pma: false`. To reproduce a skeleton whose art
   ships as a packed atlas you either supply loose PNGs and let rigc build its own
   atlas, or hand the packed atlas to `validate`/`bench` alongside the candidate.
-- **Sequences, `drawOrderFolder`, event timelines and deform timelines** are walked
-  by the validator but are not motion-spec properties: the track table in §4.4 is
-  the complete list of what a *track* can key, and §4.7's `drawOrder` is the only
-  timeline outside it.
+- **`sequence` timelines, `drawOrderFolder` and `slider` / `path` constraint
+  timelines** are walked by the validator (so `A05` checks their curves and `diff`
+  counts their keys) and cannot be *written*: there is no motion-spec property for
+  any of them. The two constraint groups are blocked one level down — rigc emits no
+  `path` or `slider` constraint to key. Everything a motion spec **can** key is
+  §4.4's track table plus the five families that sit beside `tracks`: `drawOrder`
+  (§4.7), `events` (§4.8), `ik` (§4.9), `transform` (§4.10) and `deform` (§4.11).
 
 ---
 
