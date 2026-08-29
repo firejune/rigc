@@ -277,6 +277,22 @@ there has been played by Esoteric Software's own runtime rather than by ours.
 > Esoteric Software owns (see [NOTICE.md](NOTICE.md)). Everything the player
 > draws is inside your file.
 
+**7. Let someone choose.** Sooner or later you will have two builds that both pass
+the gate and no instrument that can separate them. `vote` puts them in one page
+side by side, labelled `A` and `B` with no paths on screen, and takes an answer
+back:
+
+```bash
+rigc vote --candidate spine-a --candidate spine-b   # -> ballot.html, open it and pick one
+rigc vote --record vote-<id>.json                   # -> checks the answer into votes.jsonl
+```
+
+The voter picks a winner or says "tie / no preference"; the page hands them a
+small JSON file to save; `--record` checks that file against the ballot's own
+hashes and appends one line to an append-only ledger, refusing by name anything
+that does not belong to it. See
+[Letting someone choose](#letting-someone-choose--rigc-vote).
+
 **Where to go next.**
 
 - 📘 **[docs/AUTHORING.md](docs/AUTHORING.md)** is the real guide — both files
@@ -515,6 +531,59 @@ They complement each other rather than overlap. `render` is offline, determinist
 and measurable — its pixels are the ones `check` reports on. `preview` is the
 interop proof: what plays there was played by Esoteric's own runtime, not by ours.
 
+### Letting someone choose — `rigc vote`
+
+Sometimes looking is not enough on its own, because there is more than one
+candidate and no instrument that can separate them: a pose fit with two local
+optima that measure the same, a key density that is a matter of taste, a first
+draft with no reference to compare against. `vote` is the deliberate human gate
+for exactly that residue, and only for that residue.
+
+```bash
+rigc vote --candidate spine-a --candidate spine-b [--animation <name>] [--out ballot.html]
+rigc vote --record vote-<id>.json [--ballot ballot.html] [--ledger votes.jsonl] [--again]
+```
+
+The first form writes one self-contained `ballot.html`: two to four compiled
+candidates side by side, each in its own official player, looping, with one
+button that restarts them together. The panes are labelled `A`, `B`, `C`, `D` and
+show **no paths** — a voter who can see that `B` came out of `experiments/` is not
+comparing pictures any more — so the path→label mapping lives in a manifest
+embedded in the same file and is never rendered. A voter picks a winner or says
+"tie / no preference", optionally writes a sentence, and copies or downloads a
+small JSON result the page prints the filename for.
+
+The second form checks that result against the ballot's own manifest and appends
+it to an append-only JSONL ledger. Nothing is trusted: the result carries a
+content **digest** per candidate, and a result whose digests are not this
+ballot's, whose choice is not on it, or whose reason code contradicts its choice
+is refused by a named rule (`V02_CANDIDATE_DIGESTS_ARE_THE_BALLOTS` and friends)
+with nothing appended. A second vote on one ballot needs `--again`.
+
+The loop it is built for, in one line: **the agent compiles N candidates that all
+pass the gate → `rigc vote` writes the ballot → a human opens it, watches, and
+votes → `rigc vote --record` checks the answer into `votes.jsonl` → the agent
+reads the ledger and proceeds.** Compile first, vote last: a candidate reaches a
+ballot only because it already validated green, so the human is never asked to
+read JSON, a diff or a spec.
+
+Three properties are worth stating because they are what make the ledger usable
+by the next agent rather than by a reader:
+
+- **A tie is a recorded outcome, not a missing one.** The ledger distinguishes a
+  ballot with a winner, a ballot the human called a tie, and a ballot nobody
+  opened. `both-unacceptable` is the tie that means *propose again*, and it is
+  unreachable if ties are not recordable.
+- **The winner is a digest, not a label.** `B` means nothing outside one ballot;
+  the digest identifies the same pixels anywhere. Every line also carries its
+  `coverage` — which candidates the vote compared — so completeness is
+  computable rather than assumed.
+- **Every line carries a reason code** from a closed enumeration, and the
+  enumeration is enforced: "tie, because this one is better" is refused.
+
+Same player, same posture as `preview`: referenced from a CDN, never vendored,
+and the file contains only your own art ([NOTICE.md](NOTICE.md)).
+
 ## Run viewer — watching a *run* instead of reading it
 
 🔎 **This is the ladder's instrument, not the way to look at your own rig** — that
@@ -749,6 +818,8 @@ bun cli.ts check --candidate path/to/spine \
 bun cli.ts bench 3 --candidate path/to/spine                # one rung of the ladder
 bun cli.ts render  --candidate path/to/spine                # PNG frames + a contact sheet
 bun cli.ts preview --candidate path/to/spine                # one .html that plays it
+bun cli.ts vote    --candidate path/to/a --candidate path/to/b   # one .html that asks which
+bun cli.ts vote    --record vote-<id>.json                  # check the answer into votes.jsonl
 ```
 
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
@@ -759,7 +830,9 @@ archetype policy on top.
 
 `render` and `preview` are the two that need no reference at all — see
 [Looking at a rig](#looking-at-a-rig--rigc-render-and-rigc-preview). Run either
-straight after a green `build`, on the same directory `--out` wrote.
+straight after a green `build`, on the same directory `--out` wrote. `vote` is the
+same idea with more than one candidate in the page and an answer coming back —
+see [Letting someone choose](#letting-someone-choose--rigc-vote).
 
 ## Checks
 
@@ -856,7 +929,7 @@ nothing substantive executed exits 2 rather than printing green.
 
 ```
 tsconfig.json   type-check config (noEmit); eslint.config.js — the no-any gate
-cli.ts          build / validate / explain / diff / check / bench / render / preview
+cli.ts          build / validate / explain / diff / check / bench / render / preview / vote
 selftest.ts     the validator's own negative controls, and diff's and check's
 fixtures/       public.ts — the three synthetic cuts the selftest breaks
 src/
@@ -868,6 +941,9 @@ src/
                 `rigc render` and check
   preview.ts    the single-file HTML player page — the artifact embedded as data
                 URIs, played by the official Spine Web Player (referenced, not vendored)
+  ballot.ts     the same page with 2–4 candidates in it and a vote coming back —
+                candidate digests, the ballot manifest, and the refusals that
+                stand between a saved vote and the ledger
   check.ts      a candidate against rendered frames — pixels and per-slot drift,
                 and it never opens the reference skeleton
   ladder.ts     which example is which rung, and which file in it is the reference
