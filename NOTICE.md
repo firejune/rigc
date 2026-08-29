@@ -30,6 +30,27 @@ Software's terms, not a licence term of this project:
 > creates one where none existed nor removes one that did. It is not a route around
 > the editor licence.
 
+### The Spine Web Player, and what `rigc preview` does with it
+
+`rigc preview` writes an HTML file that plays a compiled rig in the **Spine Web
+Player** (`@esotericsoftware/spine-player`), also part of the Spine Runtimes and
+under the same licence as above.
+
+⚖️ **It is referenced, never redistributed.** The generated page loads the player
+from a CDN with a `<script src>` and a `<link rel="stylesheet">`; no byte of it is
+committed to this repository, bundled into the published npm package, or copied
+into the generated file. What the generated file *does* contain is the user's own
+skeleton, atlas and page images, embedded as data URIs so the page opens without a
+server — those are the user's, not Esoteric Software's.
+
+Two consequences worth stating plainly:
+
+- a generated preview needs a network connection the first time it is opened, and
+  says so in the page when the player does not arrive;
+- the obligation above is unchanged by it. Playing Spine skeleton data in the
+  Spine Web Player is a Spine Runtimes integration like any other, so **each user
+  of a product built this way needs their own Spine Editor license.**
+
 ## Example assets
 
 The official Spine example projects are the yardstick this compiler is measured
