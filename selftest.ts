@@ -39,7 +39,7 @@
  * the real geometry the fixtures only stand in for. Without one, that suite says
  * it was skipped and the run still passes on the public suite alone.
  */
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -68,6 +68,7 @@ import {
 } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
 import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
+import { copyAtlasImages } from './src/emit.ts';
 import { isContent } from './src/framing.ts';
 import {
   BACKGROUND,
@@ -99,7 +100,7 @@ import {
   type Viewport,
 } from './src/render.ts';
 import { readPngInfo } from './src/png.ts';
-import type { CompileResult } from './src/types.ts';
+import type { CompiledImage, CompileResult } from './src/types.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
@@ -4790,6 +4791,95 @@ function runSuite(suite: Suite): number {
 }
 
 // ---------------------------------------------------------------------------
+// --copy-images — issue #217: `--out` was not self-contained
+// ---------------------------------------------------------------------------
+//
+// `compile()` never writes a page's bytes anywhere, and a page's NAME is
+// relative to the atlas file — by default that name is wherever the source art
+// already sits, which is very often outside `--out` (`../parts/torso.png`).
+// `copyAtlasImages` (`src/emit.ts`) is the opt-in that copies every page into
+// the output directory and rewrites the atlas to match. Three things have to
+// hold:
+//
+//   * left alone, nothing changed — a page still points outside `outDir`;
+//   * asked for, every page lands inside `outDir` and the REWRITTEN atlas
+//     resolves there — read back and stat-ed, not merely asserted from memory;
+//   * two different source files that happen to share a basename are
+//     disambiguated the same way on every run, not silently overwritten.
+
+function runCopyImagesSuite(): number {
+  console.log('\n── --copy-images: out becomes self-contained (issue #217) ──');
+  let bad = 0;
+
+  const opts = optsForFixture(OVERLAY);
+  const result = compile(opts);
+
+  // --- left alone, the default is exactly what it was ------------------------
+  const stillEscapes = result.images.length > 0 && result.images.every((img) => img.page.startsWith('..'));
+  bad += reportCase(
+    'CPI01_DEFAULT_BUILD_STILL_POINTS_OUTSIDE_OUT',
+    stillEscapes,
+    `${result.images.length} page(s), e.g. "${result.images[0]?.page}" — --copy-images is opt-in, so a build ` +
+      'with no flag emits the same paths it always did',
+    'issue #217 IS this path; a fix that flipped it by default would silently change every existing build with ' +
+      'no flag to say so',
+  );
+
+  // --- asked for, the directory is genuinely self-contained -------------------
+  const selfContainedDir = join(OVERLAY.dir, 'spine_self_contained');
+  const copied = copyAtlasImages(result.images, selfContainedDir);
+  const pageLines = copied.atlasText.split('\n').filter((l) => l.endsWith('.png'));
+  const flat = pageLines.every((l) => !l.includes('/') && !l.includes('\\'));
+  const landed = copied.pages.every((p) => {
+    const abs = join(selfContainedDir, p.to);
+    return existsSync(abs) && statSync(abs).size > 0;
+  });
+  const countMatches = pageLines.length === result.images.length && copied.pages.length === result.images.length;
+  bad += reportCase(
+    'CPI02_COPY_IMAGES_MAKES_OUT_SELF_CONTAINED',
+    flat && landed && countMatches,
+    `${copied.pages.length} page(s) copied into ${selfContainedDir}; atlas re-read (${pageLines.join(', ')}) and ` +
+      'every page stat-ed there',
+    'zipping or committing --out alone loses every texture, because the emitted paths pointed at the source art ' +
+      'rather than at the directory being handed off',
+  );
+
+  // --- a basename collision is disambiguated, deterministically ---------------
+  const collideRoot = mkdtempSync(join(tmpdir(), 'rigc-collide-'));
+  const dirA = join(collideRoot, 'a');
+  const dirB = join(collideRoot, 'b');
+  mkdirSync(dirA, { recursive: true });
+  mkdirSync(dirB, { recursive: true });
+  writeProbePng(join(dirA, 'torso.png'), 4, 4, [220, 30, 30, 255]);
+  writeProbePng(join(dirB, 'torso.png'), 4, 4, [30, 220, 30, 255]);
+  const synthetic: CompiledImage[] = [
+    { region: 'torso', page: 'a/torso.png', absPath: join(dirA, 'torso.png'), width: 4, height: 4, hasAlpha: false, isBase: false },
+    { region: 'torso_alt', page: 'b/torso.png', absPath: join(dirB, 'torso.png'), width: 4, height: 4, hasAlpha: false, isBase: false },
+  ];
+  const firstRun = copyAtlasImages(synthetic, join(collideRoot, 'out1'));
+  // Same inputs, a different outDir: the mapping must not depend on what else
+  // happened to be on disk already.
+  const secondRun = copyAtlasImages(synthetic, join(collideRoot, 'out2'));
+  const names = firstRun.pages.map((p) => p.to);
+  const disambiguated = names[0] === 'torso.png' && names[1] === 'torso-2.png';
+  const deterministic = names.join(',') === secondRun.pages.map((p) => p.to).join(',');
+  const notMixedUp =
+    disambiguated &&
+    readPlate(join(collideRoot, 'out1', 'torso.png')).get(0, 0)[0] === 220 &&
+    readPlate(join(collideRoot, 'out1', 'torso-2.png')).get(0, 0)[1] === 220;
+  bad += reportCase(
+    'CPI03_BASENAME_COLLISION_IS_DISAMBIGUATED_DETERMINISTICALLY',
+    disambiguated && deterministic && notMixedUp,
+    `${JSON.stringify(names)}, identical on a second run over the same inputs, neither file's pixels landed under ` +
+      "the other's name",
+    "compile() already refuses two images sharing a region (== basename); this is the defence for the day that " +
+      'invariant changes, plus a case-insensitive filesystem colliding two basenames the region check saw as distinct',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // the extra suite — a project's own cuts, when it points the run at them
 // ---------------------------------------------------------------------------
 //
@@ -4909,6 +4999,8 @@ function main(): void {
   }
   bad += runSlotSuite();
   substantive += 2;
+  bad += runCopyImagesSuite();
+  substantive += 3;
   const diffBad = runDiffSuite();
   if (diffBad !== null) {
     bad += diffBad;
@@ -4965,6 +5057,7 @@ function main(): void {
       '+ 7 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
+      ', + 3 copy-images controls (self-contained out dir, unchanged default, deterministic basename collision)' +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : ''),
