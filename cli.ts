@@ -31,7 +31,7 @@
  * Its paths resolve against the cuts.json file itself, so the table travels
  * with the project that owns the art rather than with this repository.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type CheckReport } from './src/check.ts';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
@@ -39,6 +39,26 @@ import { diffLines, diffSkeletons, sectionFigures, type DiffReport } from './src
 import { copyAtlasImages } from './src/emit.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
+import { buildPreview, PLAYER_LINE, type PreviewPage } from './src/preview.ts';
+import {
+  atlasPageNames,
+  BACKGROUND,
+  contactSheet,
+  FRAMES_SIDECAR,
+  FRAMES_SPEC,
+  framingViewport,
+  loadPosable,
+  PROTOCOL_FPS,
+  renderFrame,
+  sampleAll,
+  sampleAnimation,
+  SETUP_POSE_DIR,
+  SHEET_FILE,
+  SHEET_TILE,
+  type Frame,
+  type FramesSidecar,
+  type FrameSet,
+} from './src/render.ts';
 import { DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import type { CompileResult, MotionSpec } from './src/types.ts';
 
@@ -482,6 +502,227 @@ function writeJson(target: string, body: unknown): void {
   console.log(`rigc: wrote ${out}`);
 }
 
+// ---------------------------------------------------------------------------
+// seeing the result — render and preview
+// ---------------------------------------------------------------------------
+//
+// ⭐ Why two commands exist for one question. `validate` says the artifact is
+// valid, `check` says how close it is to reference frames — and a first user has
+// neither a reference nor any way to look at what they built. A rig whose head
+// sits visibly off its torso passes the gate, loads in `spine-core` and steps
+// cleanly, because the offsets are the ones the spec asked for. The only remedy
+// is looking (issue #216).
+//
+// `render` looks with OUR rasteriser: PNGs on disk, no browser, no network, and
+// the same frame geometry `check` compares against — so its output is a frame set
+// like any other, sidecar included. `preview` looks with ESOTERIC'S, in one HTML
+// file, which is the stronger statement of the two: a rig that plays there has
+// been played by the reference implementation rather than by ours (issue #151).
+//
+// Both take a COMPILED artifact rather than a rig and motion spec. That is what
+// `check`, `bench` and `validate` all take, it is what `build --out` leaves
+// behind, and it keeps `--out` meaning one thing per command instead of naming
+// the build directory on the way in and the pictures on the way out.
+
+/** Both commands' shared front door: which artifact, and what is in it. */
+function resolveViewable(flags: Record<string, string>): {
+  skeletonPath: string;
+  atlasPath: string;
+  atlasDir: string;
+} {
+  if (flags.candidate === undefined) {
+    throw new UsageError('needs --candidate <dir | skeleton.json> — the directory `build --out` wrote');
+  }
+  const { skeletonPath, atlasPath } = resolveArtifacts(flags.candidate, flags.atlas);
+  for (const path of [skeletonPath, atlasPath]) {
+    if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
+  }
+  return { skeletonPath, atlasPath, atlasDir: dirname(atlasPath) };
+}
+
+/** `--animation`, checked against what the skeleton actually carries. */
+function readAnimationFlag(flags: Record<string, string>, available: string[]): string | undefined {
+  const name = flags.animation;
+  if (name === undefined) return undefined;
+  if (!available.includes(name)) {
+    throw new UsageError(
+      `no animation ${JSON.stringify(name)} in this skeleton; it has [${available.join(', ') || 'none'}]`,
+    );
+  }
+  return name;
+}
+
+function readPositiveNumber(flags: Record<string, string>, key: string, fallback: number, least: number): number {
+  const raw = flags[key];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < least) throw new UsageError(`--${key} must be a number of at least ${least}`);
+  return value;
+}
+
+/**
+ * render — the frame series, drawn by the same rasteriser `check` measures with.
+ *
+ * The framing is measured across EVERY animation at `FRAMING_FPS` and not across
+ * the one being written, which is `src/render.ts`'s own invariant: the viewport is
+ * a property of the shot, so two animations of one rig — and the same animation at
+ * two rates — land on one pixel grid and stay comparable.
+ */
+function cmdRender(flags: Record<string, string>): void {
+  const { skeletonPath, atlasPath, atlasDir } = resolveViewable(flags);
+  const fps = readPositiveNumber(flags, 'fps', PROTOCOL_FPS, 1);
+  const maxSide = readPositiveNumber(flags, 'max', 256, 16);
+  const outRoot = resolve(flags.out ?? 'render');
+
+  console.log('rigc render');
+  console.log(`  ..    skeleton ${skeletonPath}`);
+  console.log(`  ..    atlas    ${atlasPath}`);
+  const { data, pages } = loadPosable(skeletonPath, atlasPath, atlasDir);
+  const only = readAnimationFlag(flags, data.animations.map((a) => a.name));
+
+  const viewport = framingViewport(data, maxSide);
+  if (!viewport) {
+    throw new UsageError(
+      `${skeletonPath} posed no drawable attachment in any animation or in its setup pose — there is nothing to draw`,
+    );
+  }
+
+  // `sampleAll` covers the skeleton with no animation at all, which files its one
+  // setup-pose frame under the reserved name. Narrowing to one animation reuses
+  // the same sampler rather than a second path through it.
+  const sampled: Map<string, Frame[]> =
+    only === undefined ? sampleAll(data, fps) : new Map([[only, sampleAnimation(data, only, fps)]]);
+  console.log(`  ..    ${viewport.width}x${viewport.height}px at ${fps} fps, ${sampled.size} set(s) -> ${outRoot}`);
+
+  mkdirSync(outRoot, { recursive: true });
+  const sets: FrameSet[] = [];
+  for (const [name, frames] of sampled) {
+    // Same naming as a reference render: the protocol rate says nothing, any
+    // other rate says itself, so two rates of one animation sit side by side.
+    const dirName = fps === PROTOCOL_FPS ? name : `${name}@${fps}fps`;
+    const dir = join(outRoot, dirName);
+    // Cleared rather than written over: a shorter animation would otherwise leave
+    // the tail of a longer previous run on disk, and stale frames in a frame set
+    // are indistinguishable from real ones.
+    if (existsSync(dir)) rmSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < frames.length; i++) {
+      renderFrame(frames[i], pages, viewport, BACKGROUND).writePng(join(dir, `f${String(i).padStart(4, '0')}.png`));
+    }
+    // One frame has nothing to compare itself against, so it gets no sheet — it
+    // would be the same picture with a border and a "0" on it.
+    const sheet = frames.length > 1;
+    if (sheet) contactSheet(frames, pages, viewport, SHEET_TILE).writePng(join(dir, SHEET_FILE));
+    const duration = frames[frames.length - 1].time;
+    sets.push({
+      dir: dirName,
+      animation: name === SETUP_POSE_DIR && data.animations.length === 0 ? null : name,
+      fps,
+      sampled: frames.length,
+      written: frames.length,
+      stride: 1,
+      duration,
+    });
+    const how = frames.length === 1 ? 'a single pose' : `${duration.toFixed(3)}s`;
+    console.log(`  ..    ${name.padEnd(16)} ${frames.length} frame(s), ${how}${sheet ? ` + ${SHEET_FILE}` : ''} -> ${dir}`);
+  }
+
+  // The sidecar is what makes this a frame SET rather than a pile of pictures:
+  // the world box every frame is a picture of, so a distance measured in pixels
+  // converts back to the units the rig is authored in — and so `rigc check` can
+  // render something else into the same grid later.
+  const sidecar: FramesSidecar = {
+    spec: FRAMES_SPEC,
+    background: BACKGROUND,
+    viewport: {
+      x: viewport.minX,
+      y: viewport.minY,
+      width: viewport.maxX - viewport.minX,
+      height: viewport.maxY - viewport.minY,
+      scale: viewport.scale,
+      pixelWidth: viewport.width,
+      pixelHeight: viewport.height,
+    },
+    sets: [...sets].sort((a, b) => a.dir.localeCompare(b.dir)),
+  };
+  writeFileSync(join(outRoot, FRAMES_SIDECAR), `${JSON.stringify(sidecar, null, 2)}\n`);
+  console.log(`rigc: wrote ${join(outRoot, FRAMES_SIDECAR)}`);
+}
+
+/** The animation names an emitted skeleton carries, in the order it lists them. */
+function skeletonAnimationNames(skeletonText: string, path: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = parseJsonWithPosition(skeletonText);
+  } catch (err) {
+    throw new UsageError(`cannot read ${path}: ${(err as Error).message}`);
+  }
+  if (typeof parsed !== 'object' || parsed === null) throw new UsageError(`${path} is not a skeleton object`);
+  const animations = (parsed as { animations?: unknown }).animations;
+  if (animations === undefined) return [];
+  if (typeof animations !== 'object' || animations === null || Array.isArray(animations)) {
+    throw new UsageError(`${path} has an "animations" field that is not an object`);
+  }
+  return Object.keys(animations);
+}
+
+/**
+ * preview — the artifact playing in Esoteric's own web player, as one file.
+ *
+ * ⚠️ Nothing is rasterised here and nothing is decoded. The pages go into the
+ * page as the bytes they are on disk, so a preview works for any PNG a BROWSER
+ * can draw rather than for the ones our own decoder reads — which is the right
+ * direction for the command whose whole job is "just show me".
+ */
+function cmdPreview(flags: Record<string, string>): void {
+  const { skeletonPath, atlasPath, atlasDir } = resolveViewable(flags);
+  const skeletonText = readFileSync(skeletonPath, 'utf8');
+  const atlasText = readFileSync(atlasPath, 'utf8');
+  const animations = skeletonAnimationNames(skeletonText, skeletonPath);
+  const chosen = readAnimationFlag(flags, animations);
+
+  // A directory for --out is taken as "put the default name in here", because
+  // `--out render/` is what the sibling command means by the same flag and a
+  // preview written OVER a directory is not a recoverable mistake.
+  const target = resolve(flags.out ?? 'preview.html');
+  const out = existsSync(target) && statSync(target).isDirectory() ? join(target, 'preview.html') : target;
+
+  console.log('rigc preview');
+  console.log(`  ..    skeleton ${skeletonPath}`);
+  console.log(`  ..    atlas    ${atlasPath}`);
+
+  const pages: PreviewPage[] = atlasPageNames(atlasText).map((name) => {
+    const path = join(atlasDir, name);
+    if (!existsSync(path)) {
+      throw new UsageError(
+        `the atlas declares page "${name}", which resolves to ${path} and is not there — ` +
+          'a page a preview cannot embed is a page the player could not have loaded either',
+      );
+    }
+    return { name, bytes: readFileSync(path) };
+  });
+  for (const page of pages) {
+    console.log(`  ..    page     ${page.name.padEnd(28)} ${(page.bytes.length / 1024).toFixed(1)} KiB`);
+  }
+
+  const html = buildPreview({
+    skeletonText,
+    atlasText,
+    pages,
+    animation: chosen ?? animations[0] ?? null,
+    animations,
+    label: skeletonPath,
+    version: readVersion(),
+  });
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, html);
+  console.log(
+    `  ..    embedded ${pages.length} page(s) + the skeleton and atlas as data URIs; ` +
+      `the player itself loads from unpkg (@${PLAYER_LINE}), so the first open needs a network`,
+  );
+  console.log(`rigc: wrote ${out}  (${(html.length / 1024).toFixed(1)} KiB — open it in a browser)`);
+}
+
 /**
  * bench — run one rung of the benchmark ladder against a candidate rig.
  *
@@ -836,6 +1077,8 @@ const FLAG_MEANINGS: Record<string, string> = {
   as: 'the candidate animation to play, when it is named differently from the frame set',
   'all-frames': 'print every frame, not just the worst by MAE',
   json: 'also write the whole report to this path',
+  animation: 'which animation to show; the default is every one for `render` and the first for `preview`',
+  max: 'longest side of a rendered frame, in pixels (default 256)',
   help: "show this command's flags and exit",
 };
 
@@ -857,6 +1100,8 @@ const FLAG_VALUES: Record<string, string> = {
   framing: 'per-shot|shared',
   as: '<name>',
   json: '<out>',
+  animation: '<name>',
+  max: '<px>',
 };
 
 interface CommandDoc {
@@ -865,6 +1110,18 @@ interface CommandDoc {
   usage: string[];
   /** Flag names (into FLAG_MEANINGS/FLAG_VALUES), in display order. `--help` is appended automatically. */
   flags: string[];
+  /**
+   * Per-command wording for a flag whose value or meaning genuinely differs here.
+   *
+   * ⚠️ The default above it — one meaning per flag name, everywhere — is the rule
+   * and this is the named exception to it, not a second table. Two flags earn it:
+   * `--out` is a directory of artifacts to `build`, a directory of pictures to
+   * `render` and one file to `preview`; `--fps` is the rate a frame set was
+   * RECORDED at to `check`, which reads it off a sidecar, and the rate to SAMPLE
+   * at to `render`, which is choosing it. Writing either as one sentence covering
+   * every command would leave every command's own help less true than it is now.
+   */
+  overrides?: Record<string, { value?: string; meaning?: string }>;
 }
 
 const COMMANDS: CommandDoc[] = [
@@ -904,6 +1161,28 @@ const COMMANDS: CommandDoc[] = [
     usage: [`rigc bench <${RUNG_IDS.join(' | ')}> --candidate <dir | skeleton.json> [--frames <dir>] [flags]`],
     flags: ['candidate', 'atlas', 'frames', 'profile', 'all-frames', 'json'],
   },
+  {
+    name: 'render',
+    usage: [
+      'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--fps 12] [--max 256] [--out render/]',
+    ],
+    flags: ['candidate', 'atlas', 'animation', 'fps', 'max', 'out'],
+    overrides: {
+      out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
+      fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },
+    },
+  },
+  {
+    name: 'preview',
+    usage: ['rigc preview --candidate <dir | skeleton.json> [--animation <name>] [--out preview.html]'],
+    flags: ['candidate', 'atlas', 'animation', 'out'],
+    overrides: {
+      out: {
+        value: '<file>',
+        meaning: 'the .html file to write (default `preview.html`); a directory means "the default name in here"',
+      },
+    },
+  },
 ];
 
 const KNOWN_COMMANDS = COMMANDS.map((c) => c.name);
@@ -913,9 +1192,11 @@ function commandHelp(name: string): string {
   const doc = COMMANDS.find((c) => c.name === name);
   if (!doc) throw new Error(`internal: no help text for command "${name}"`);
   const keys = [...doc.flags, 'help'];
-  const labels = keys.map((key) => `--${key}${FLAG_VALUES[key] ? ` ${FLAG_VALUES[key]}` : ''}`);
+  const value = (key: string): string | undefined => doc.overrides?.[key]?.value ?? FLAG_VALUES[key];
+  const meaning = (key: string): string => doc.overrides?.[key]?.meaning ?? FLAG_MEANINGS[key];
+  const labels = keys.map((key) => `--${key}${value(key) ? ` ${value(key)}` : ''}`);
   const width = Math.max(...labels.map((l) => l.length)) + 2;
-  return ['usage:', ...doc.usage.map((u) => `  ${u}`), '', 'flags:', ...keys.map((key, i) => `  ${labels[i].padEnd(width)}${FLAG_MEANINGS[key]}`)].join(
+  return ['usage:', ...doc.usage.map((u) => `  ${u}`), '', 'flags:', ...keys.map((key, i) => `  ${labels[i].padEnd(width)}${meaning(key)}`)].join(
     '\n',
   );
 }
@@ -941,6 +1222,14 @@ const USAGE = [
   'there by its own drawn pixels, and compares. It reads the frames and never the',
   'reference skeleton, so it belongs INSIDE an authoring loop — the validator cannot',
   'see a wrong animation and this can. See `rigc check --help` for its flags.',
+  '',
+  'render and preview are how you LOOK at a build, and they need no reference at all:',
+  '  rigc render  --candidate <the dir build --out wrote>    PNG frames + a contact sheet',
+  '  rigc preview --candidate <the same dir>                 one .html file that plays it',
+  'A rig with its head off its torso passes the gate and steps cleanly — the offsets',
+  'are the ones you asked for — so looking is the only thing that catches it. render',
+  'draws with rigc\'s own rasteriser; preview embeds the artifact in a page that plays',
+  'it in the official Spine Web Player, which is also the interop proof.',
   '',
   'a cuts.json is { "<name>": { "rig": "...", "motion": "...", "out": "...",',
   '                             "manifest": "..." (optional) } }, with every path',
@@ -976,6 +1265,8 @@ try {
   else if (command === 'diff') cmdDiff(flags, positional);
   else if (command === 'check') cmdCheck(flags);
   else if (command === 'bench') cmdBench(flags, positional);
+  else if (command === 'render') cmdRender(flags);
+  else if (command === 'preview') cmdPreview(flags);
 } catch (err) {
   if (err instanceof UsageError) {
     console.error(`rigc: ${err.message}\n\n${USAGE}`);

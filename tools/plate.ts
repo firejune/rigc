@@ -228,48 +228,127 @@ export function encodePng(width: number, height: number, rgba: Uint8Array): Uint
 // PNG decoding
 // ---------------------------------------------------------------------------
 
+/** Samples per pixel for each PNG colour type. Anything else is not a colour type. */
+const CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+
+/** The bit depths the PNG spec allows for each colour type. */
+const BIT_DEPTHS: Record<number, number[]> = {
+  0: [1, 2, 4, 8, 16],
+  2: [8, 16],
+  3: [1, 2, 4, 8],
+  4: [8, 16],
+  6: [8, 16],
+};
+
 /**
- * Read an 8-bit RGB/RGBA PNG back into a `Plate`.
+ * Read one sample out of an unfiltered scanline, at the file's own bit depth.
+ *
+ * Returns the RAW value — 0..1 for a 1-bit file, 0..65535 for a 16-bit one — not
+ * a scaled byte. Two callers need it that way: a palette index IS the raw value,
+ * and a `tRNS` colour is declared at the file's depth and has to be compared
+ * against samples at that depth, not against something already rounded to 8 bits.
+ */
+function sampleAt(line: Uint8Array, index: number, bitDepth: number): number {
+  if (bitDepth === 8) return line[index];
+  if (bitDepth === 16) return (line[index * 2] << 8) | line[index * 2 + 1];
+  const perByte = 8 / bitDepth;
+  const byte = line[Math.floor(index / perByte)];
+  // Sub-byte samples are packed most-significant first.
+  const shift = 8 - bitDepth * ((index % perByte) + 1);
+  return (byte >> shift) & ((1 << bitDepth) - 1);
+}
+
+/** A raw sample scaled to 0..255, the range a `Plate` stores. */
+function toByte(sample: number, bitDepth: number): number {
+  if (bitDepth === 8) return sample;
+  if (bitDepth === 16) return sample >> 8;
+  return Math.round((sample * 255) / ((1 << bitDepth) - 1));
+}
+
+/**
+ * Read a PNG back into a `Plate`, expanding whatever it is to straight RGBA.
  *
  * `src/png.ts` parses 26 bytes because that is all the COMPILER needs, and it
  * stays that way: the compiler never re-measures art. This
  * decoder is for the measuring tools, which is where art measurement belongs -
  * the same division that puts `mesh.center` in the manifest as a measured number
  * rather than as something the compiler derives at build time.
+ *
+ * ⭐ **Every colour type the gate accepts is decodable here** (issue #226). It
+ * used to read colour types 2 and 6 only, which was the compiler's own old blind
+ * spot rebuilt one step later: `A19` learned in #215 that indexed and greyscale
+ * art carrying a `tRNS` chunk is ordinary transparent art — ImageMagick, PNG-8
+ * export, GIMP indexed, aseprite and pngquant all write it — so such a part
+ * builds and validates green, and would then have been refused by the one command
+ * whose whole job is to show the author what they built. A wall removed at the
+ * gate and rebuilt at the picture is not a wall removed.
+ *
+ * So the expansion happens here, at decode: a palette index becomes its `PLTE`
+ * entry with its `tRNS` alpha, a greyscale sample becomes three equal channels,
+ * and a `tRNS` colour on a type 0 or 2 file becomes alpha 0 on the pixels that
+ * match it. Every caller above this line keeps seeing exactly one thing, RGBA.
+ *
+ * Interlaced files are still refused: Adam7 is a second sample layout rather than
+ * a second sample format, and no tool in the corpus writes one.
  */
 export function decodePng(buf: Uint8Array): Plate {
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   let at = 8;
   let width = 0;
   let height = 0;
+  let bitDepth = 8;
   let colourType = 6;
+  let palette: Uint8Array | null = null;
+  let trns: Uint8Array | null = null;
   const idat: Uint8Array[] = [];
-  while (at < buf.length) {
+  while (at + 8 <= buf.length) {
     const len = view.getUint32(at);
     const type = String.fromCharCode(buf[at + 4], buf[at + 5], buf[at + 6], buf[at + 7]);
     const body = buf.subarray(at + 8, at + 8 + len);
     if (type === 'IHDR') {
       width = view.getUint32(at + 8);
       height = view.getUint32(at + 12);
-      if (body[8] !== 8) throw new Error(`unsupported bit depth ${body[8]}`);
+      bitDepth = body[8];
       colourType = body[9];
       if (body[12] !== 0) throw new Error('interlaced PNG');
-    } else if (type === 'IDAT') idat.push(body);
+    } else if (type === 'PLTE') palette = body.slice();
+    else if (type === 'tRNS') trns = body.slice();
+    else if (type === 'IDAT') idat.push(body);
     at += 12 + len;
   }
-  const bpp = colourType === 6 ? 4 : colourType === 2 ? 3 : 0;
-  if (!bpp) throw new Error(`unsupported colour type ${colourType}`);
+  const channels = CHANNELS[colourType];
+  if (channels === undefined) throw new Error(`unsupported colour type ${colourType}`);
+  if (!BIT_DEPTHS[colourType].includes(bitDepth)) {
+    throw new Error(`bit depth ${bitDepth} is not one PNG allows for colour type ${colourType}`);
+  }
+  if (colourType === 3 && palette === null) throw new Error('indexed PNG with no PLTE chunk');
+  // Const copies so the null checks above narrow inside the per-pixel loop below,
+  // where `palette` and `trns` are still the chunk loop's mutable bindings.
+  const pal = palette ?? new Uint8Array(0);
+  const alphaTable = trns;
+
   const raw = new Uint8Array(inflateSync(Buffer.concat(idat.map((c) => Buffer.from(c)))));
-  const stride = width * bpp + 1;
+  // The filter operates on BYTES, and its "left neighbour" is one whole pixel
+  // back — rounded up to a byte, so sub-byte depths compare against the byte
+  // immediately to the left.
+  const filterUnit = Math.max(1, Math.ceil((channels * bitDepth) / 8));
+  const rowBytes = Math.ceil((width * channels * bitDepth) / 8);
+  const stride = rowBytes + 1;
   const plate = new Plate(width, height);
-  let prev = new Uint8Array(width * bpp);
+  let prev = new Uint8Array(rowBytes);
+  // On a type 0 or 2 file a `tRNS` chunk names ONE invisible colour, one
+  // big-endian 16-bit sample per channel whatever the file's own depth. (For an
+  // indexed file the same chunk is something else entirely: one alpha byte per
+  // palette entry, read directly below.)
+  const trnsSample = (i: number): number =>
+    alphaTable === null ? -1 : (alphaTable[i * 2] << 8) | alphaTable[i * 2 + 1];
   for (let y = 0; y < height; y++) {
     const filter = raw[y * stride];
     const line = raw.slice(y * stride + 1, (y + 1) * stride);
-    for (let x = 0; x < width * bpp; x++) {
-      const a = x >= bpp ? line[x - bpp] : 0;
+    for (let x = 0; x < rowBytes; x++) {
+      const a = x >= filterUnit ? line[x - filterUnit] : 0;
       const b = prev[x];
-      const c = x >= bpp ? prev[x - bpp] : 0;
+      const c = x >= filterUnit ? prev[x - filterUnit] : 0;
       if (filter === 1) line[x] = (line[x] + a) & 255;
       else if (filter === 2) line[x] = (line[x] + b) & 255;
       else if (filter === 3) line[x] = (line[x] + ((a + b) >> 1)) & 255;
@@ -283,16 +362,68 @@ export function decodePng(buf: Uint8Array): Plate {
     }
     for (let x = 0; x < width; x++) {
       const o = (y * width + x) * 4;
-      plate.data[o] = line[x * bpp];
-      plate.data[o + 1] = line[x * bpp + 1];
-      plate.data[o + 2] = line[x * bpp + 2];
-      plate.data[o + 3] = bpp === 4 ? line[x * bpp + 3] : 255;
+      const first = x * channels;
+      if (colourType === 3) {
+        const index = sampleAt(line, first, bitDepth);
+        plate.data[o] = pal[index * 3];
+        plate.data[o + 1] = pal[index * 3 + 1];
+        plate.data[o + 2] = pal[index * 3 + 2];
+        // A tRNS shorter than the palette leaves the entries past its end opaque,
+        // which is what the spec says and what pngquant relies on.
+        plate.data[o + 3] = alphaTable !== null && index < alphaTable.length ? alphaTable[index] : 255;
+        continue;
+      }
+      if (colourType === 0 || colourType === 4) {
+        const grey = sampleAt(line, first, bitDepth);
+        const g = toByte(grey, bitDepth);
+        plate.data[o] = g;
+        plate.data[o + 1] = g;
+        plate.data[o + 2] = g;
+        plate.data[o + 3] =
+          colourType === 4
+            ? toByte(sampleAt(line, first + 1, bitDepth), bitDepth)
+            : alphaTable !== null && alphaTable.length >= 2 && trnsSample(0) === grey
+              ? 0
+              : 255;
+        continue;
+      }
+      const r = sampleAt(line, first, bitDepth);
+      const g = sampleAt(line, first + 1, bitDepth);
+      const b = sampleAt(line, first + 2, bitDepth);
+      plate.data[o] = toByte(r, bitDepth);
+      plate.data[o + 1] = toByte(g, bitDepth);
+      plate.data[o + 2] = toByte(b, bitDepth);
+      plate.data[o + 3] =
+        colourType === 6
+          ? toByte(sampleAt(line, first + 3, bitDepth), bitDepth)
+          : alphaTable !== null &&
+              alphaTable.length >= 6 &&
+              trnsSample(0) === r &&
+              trnsSample(1) === g &&
+              trnsSample(2) === b
+            ? 0
+            : 255;
     }
     prev = line;
   }
   return plate;
 }
 
+/**
+ * Decode the PNG at `path`, naming the file if it cannot be decoded.
+ *
+ * The bare message says what is wrong with the bytes and nothing about which
+ * bytes; a rig has as many pages as it has parts, and "unsupported colour type 5"
+ * with no path is a search rather than a fix.
+ */
 export function readPlate(path: string): Plate {
-  return decodePng(readFileSync(path));
+  // Only the DECODE is wrapped. A missing file already says which one, and
+  // rewording an ENOENT as a decoding problem would mislabel the commonest
+  // failure of all.
+  const buf = readFileSync(path);
+  try {
+    return decodePng(buf);
+  } catch (err) {
+    throw new Error(`cannot decode PNG ${path}: ${(err as Error).message}`);
+  }
 }

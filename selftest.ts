@@ -72,6 +72,7 @@ import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.
 import { copyAtlasImages } from './src/emit.ts';
 import { isContent } from './src/framing.ts';
 import {
+  atlasPageNames,
   BACKGROUND,
   EMPTY_FOOTPRINT,
   fill,
@@ -95,16 +96,18 @@ import {
   viewportOfSize,
   type Footprint,
   type Frame,
+  type FramesSidecar,
   type Mesh,
   type Piece,
   type Posable,
   type Viewport,
 } from './src/render.ts';
+import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
 import { readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult } from './src/types.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
-import { Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
+import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
 interface CutEntry {
@@ -5142,6 +5145,271 @@ function runLauncherSuite(): number | null {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// seeing the result — `rigc render` and `rigc preview` (issues #216, #226)
+// ---------------------------------------------------------------------------
+//
+// ⭐ Why this suite exists and what it is aimed at. Every other control in this
+// file asks whether the artifact is RIGHT; these ask whether anybody can LOOK at
+// it. A rig whose head sits visibly off its torso passes the whole gate, loads in
+// `spine-core` and steps numerically clean — the offsets are the ones the spec
+// asked for — so looking is the only remedy there is, and until #216 the package
+// had no command that looked.
+//
+// 🚨 The load-bearing case is R04, and it is a REGRESSION control rather than a
+// feature one. `A19` learned in #215 that indexed and greyscale art carrying a
+// `tRNS` chunk is ordinary transparent art (T01–T07 above), so such a part builds
+// and validates green — while `decodePng` still refused colour types 0 and 3, and
+// `src/render.ts` reads its pages through exactly that decoder. Shipping a "see
+// what you built" command on top of it would have rebuilt #215's wall one step
+// further along: green from `build`, refused by the picture. R04 walks the whole
+// path a stranger walks, on the art the tools they own actually write.
+//
+// The rig deliberately mixes colour types — an indexed+tRNS `block.png` beside a
+// truecolour+alpha `marker.png` — because one page of each is what proves the
+// expansion happens per page rather than per file format.
+
+/** The probe rig's art, translated 40 units across one second: 13 frames at 12 fps. */
+const SLIDE_MOTION = {
+  spec: 'rigc-motion/1',
+  archetype: 'static_probe',
+  cut: 'static_probe',
+  easings: {},
+  animations: {
+    slide: {
+      duration: 1,
+      loop: false,
+      tracks: [
+        {
+          bone: 'block',
+          property: 'translatex',
+          keys: [
+            { t: 0, v: [0] },
+            { t: 1, v: [40] },
+          ],
+        },
+      ],
+    },
+  },
+};
+
+/** Every `f####.png` in a frame directory, in index order. */
+function frameFiles(dir: string): string[] {
+  return readdirSync(dir)
+    .filter((f) => /^f\d{4}\.png$/.test(f))
+    .sort();
+}
+
+function runSeeItSuite(): number {
+  console.log('\n── seeing the result: render + preview (issues #216, #226) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  // --- the artifact, built through the CLI on deliberately mixed colour types ---
+  const dirs = writeProbeRig();
+  writeTypedPng(join(dirs.dir, 'block.png'), 12, 8, { colourType: 3, trns: true });
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+  const build = runCli([
+    'build',
+    '--rig', dirs.rigPath,
+    '--motion', motionPath,
+    '--images', dirs.dir,
+    '--out', dirs.outDir,
+  ]);
+  say(
+    'R04_INDEXED_ART_BUILDS_AND_THEN_RENDERS',
+    build.status === 0,
+    `build exit=${String(build.status)} on a rig whose block.png is colour type 3 + tRNS`,
+    'issue #226: the gate accepts this art since #215, and the renderer read it through a decoder that did not',
+  );
+
+  const framesDir = join(dirs.dir, 'frames');
+  const render = runCli(['render', '--candidate', dirs.outDir, '--animation', 'slide', '--out', framesDir]);
+  const set = join(framesDir, 'slide');
+  const files = render.status === 0 && existsSync(set) ? frameFiles(set) : [];
+  say(
+    'R01_RENDER_WRITES_THE_SAMPLED_FRAME_SERIES',
+    render.status === 0 && files.length === 13,
+    render.status === 0
+      ? `${files.length} frame(s) in ${set} (1.000s at ${PROTOCOL_FPS} fps samples to 13)`
+      : `render exit=${String(render.status)}: ${render.stderr.split('\n')[0]}`,
+    'the frame series is the cheapest possible answer to "did I get what I authored", and #226 sat on its path',
+  );
+
+  // The sidecar is what makes the directory a frame SET, so the pictures are
+  // measured against IT rather than against a number this file repeats.
+  let sidecar: FramesSidecar | null = null;
+  if (existsSync(join(framesDir, FRAMES_SIDECAR))) {
+    sidecar = JSON.parse(readFileSync(join(framesDir, FRAMES_SIDECAR), 'utf8')) as FramesSidecar;
+  }
+  const plates = files.map((f) => readPlate(join(set, f)));
+  const expected = sidecar ? [sidecar.viewport.pixelWidth, sidecar.viewport.pixelHeight] : [0, 0];
+  const sized = plates.length > 0 && plates.every((p) => p.width === expected[0] && p.height === expected[1]);
+  say(
+    'R02_EVERY_FRAME_IS_THE_SIZE_THE_SIDECAR_DECLARES',
+    sidecar !== null && sized && sidecar.sets.length === 1 && sidecar.sets[0].sampled === files.length,
+    sidecar === null
+      ? `no ${FRAMES_SIDECAR} beside the frames`
+      : `${files.length} frame(s) at ${expected[0]}x${expected[1]}, sidecar declares ${sidecar.sets[0].sampled} sampled`,
+    'a frame set whose pictures are not the size its own box says is unreadable by `check` and by a human with a ruler',
+  );
+
+  // Motion, not merely files: 13 identical pictures is what a renderer that never
+  // advanced the pose would also write, and it would pass every count above.
+  let moved = 0;
+  if (plates.length > 1) {
+    for (let i = 0; i < plates[0].data.length; i++) moved += Math.abs(plates[0].data[i] - plates[plates.length - 1].data[i]);
+  }
+  say(
+    'R03_THE_FRAMES_ACTUALLY_MOVE',
+    moved > 0 && existsSync(join(set, SHEET_FILE)),
+    `|f0000 − f${String(files.length - 1).padStart(4, '0')}| = ${moved} across the plate, and ${SHEET_FILE} is beside them`,
+    'a series of identical stills passes every count a frame set has; only comparing two of them can tell',
+  );
+
+  // The decoder itself, at the level the fix lives: one control per colour type
+  // `tools/plate.ts` could not write and therefore never met until #226.
+  const probe = mkdtempSync(join(tmpdir(), 'rigc-decode-'));
+  writeTypedPng(join(probe, 'indexed.png'), 8, 4, { colourType: 3, trns: true });
+  writeTypedPng(join(probe, 'grey.png'), 8, 4, { colourType: 0, trns: true });
+  // 8x8 rather than 8x4: `writeGreyAlphaPng` makes a two-pixel transparent border,
+  // and at height 4 there is no interior left for the opaque half of the control.
+  writeGreyAlphaPng(join(probe, 'greyalpha.png'), 8, 8);
+  const indexed = readPlate(join(probe, 'indexed.png'));
+  const grey = readPlate(join(probe, 'grey.png'));
+  const greyAlpha = readPlate(join(probe, 'greyalpha.png'));
+  // The fixtures put palette entry 0 (and greyscale 30) on the "off" squares and
+  // declare exactly those invisible, so the checkerboard's two halves are the two
+  // alpha answers — a decoder that ignored tRNS would return 255 everywhere.
+  const expansions =
+    indexed.get(0, 0)[3] === 255 &&
+    indexed.get(4, 0)[3] === 0 &&
+    indexed.get(0, 0).slice(0, 3).join() === '220,210,200' &&
+    grey.get(0, 0)[3] === 255 &&
+    grey.get(4, 0)[3] === 0 &&
+    grey.get(0, 0).slice(0, 3).join() === '220,220,220' &&
+    greyAlpha.get(0, 0)[3] === 0 &&
+    greyAlpha.get(4, 4)[3] === 255;
+  say(
+    'R05_DECODE_EXPANDS_PALETTES_AND_GREYSCALE_TO_RGBA',
+    expansions,
+    `indexed ${JSON.stringify(indexed.get(0, 0))}/${JSON.stringify(indexed.get(4, 0))}, ` +
+      `greyscale ${JSON.stringify(grey.get(0, 0))}/${JSON.stringify(grey.get(4, 0))}, ` +
+      `greyscale+alpha ${JSON.stringify(greyAlpha.get(0, 0))}/${JSON.stringify(greyAlpha.get(4, 4))}`,
+    'every one of these threw `unsupported colour type` before #226, and the gate had been accepting them since #215',
+  );
+
+  // A colour type that is not one still has to be refused: the fix must not have
+  // replaced a false refusal with a decoder that reads anything it is handed.
+  let refused = '';
+  try {
+    const ihdr = new Uint8Array(13);
+    new DataView(ihdr.buffer).setUint32(0, 1);
+    new DataView(ihdr.buffer).setUint32(4, 1);
+    ihdr[8] = 8;
+    ihdr[9] = 5; // not a PNG colour type at all
+    const bytes = [PNG_SIGNATURE, pngChunk('IHDR', ihdr), pngChunk('IEND', new Uint8Array(0))];
+    const flat = new Uint8Array(bytes.reduce((n, b) => n + b.length, 0));
+    let at = 0;
+    for (const b of bytes) {
+      flat.set(b, at);
+      at += b.length;
+    }
+    decodePng(flat);
+  } catch (err) {
+    refused = (err as Error).message;
+  }
+  say(
+    'R06_A_COLOUR_TYPE_THAT_IS_NOT_ONE_IS_STILL_REFUSED',
+    /unsupported colour type 5/.test(refused),
+    refused || 'colour type 5 decoded without complaint',
+    'widening a decoder is only a fix while the things it must not read still fail loudly',
+  );
+
+  // --- preview: one file, everything in it, and the player referenced not copied
+  const html = join(dirs.dir, 'preview.html');
+  const preview = runCli(['preview', '--candidate', dirs.outDir, '--out', html]);
+  const page = preview.status === 0 && existsSync(html) ? readFileSync(html, 'utf8') : '';
+  // Read through `existsSync` rather than straight: a build that failed above must
+  // leave this suite reporting FAIL lines, not dying on an ENOENT — a crash here
+  // would take every case after it with it and print no verdict at all.
+  const readIfThere = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '');
+  const atlasText = readIfThere(join(dirs.outDir, 'skeleton.atlas'));
+  const skeletonText = readIfThere(join(dirs.outDir, 'skeleton.json'));
+  const pageNames = atlasText === '' ? [] : atlasPageNames(atlasText);
+  const pageCount = pageNames.length;
+  const imageUris = page.split('data:image/png;base64,').length - 1;
+  const carries = (mime: string, body: string): boolean =>
+    page.includes(`data:${mime};base64,${Buffer.from(body, 'utf8').toString('base64')}`);
+  say(
+    'P01_PREVIEW_EMBEDS_THE_WHOLE_ARTIFACT',
+    preview.status === 0 &&
+      skeletonText !== '' &&
+      carries('application/json', skeletonText) &&
+      carries('text/plain', atlasText) &&
+      imageUris === pageCount &&
+      pageCount === 2,
+    preview.status === 0
+      ? `skeleton and atlas embedded byte for byte, ${imageUris} image data URI(s) for ${pageCount} atlas page(s)`
+      : `preview exit=${String(preview.status)}: ${preview.stderr.split('\n')[0]}`,
+    'a preview missing one page is a file that opens and draws the wrong picture — the failure this command exists to catch',
+  );
+
+  // The keys are what the player asks for, so they are as load-bearing as the
+  // bytes: a page embedded under a name nothing requests is not embedded.
+  const keyed = pageCount > 0 && pageNames.every((name) => page.includes(JSON.stringify(name).slice(1, -1)));
+  say(
+    'P02_THE_EMBEDDED_KEYS_ARE_THE_NAMES_THE_PLAYER_ASKS_FOR',
+    keyed && page.includes(SKELETON_KEY) && page.includes(ATLAS_KEY),
+    `rawDataURIs keyed by ${JSON.stringify([SKELETON_KEY, ATLAS_KEY, ...pageNames])}`,
+    "`config.atlas` has no directory part, so the player asks for each page under the name the ATLAS spells — not its basename",
+  );
+
+  // ⚖️ The licence line, as a machine check rather than as a note somebody has to
+  // remember: the player is referenced by URL and nothing Esoteric owns is copied
+  // into the page. A vendored player would be hundreds of kilobytes of it.
+  const referenced = /<script src="https:\/\/unpkg\.com\/@esotericsoftware\/spine-player@[^"]+"><\/script>/.test(page);
+  say(
+    'P03_THE_PLAYER_IS_REFERENCED_AND_NEVER_VENDORED',
+    referenced && !page.includes('SpinePlayer = class') && page.includes('spine-runtimes-license'),
+    `player loaded by <script src>, page is ${(page.length / 1024).toFixed(1)} KiB, and it names the Spine Runtimes licence`,
+    'NOTICE.md: the Spine Runtimes are Esoteric Software\'s and rigc redistributes none of them',
+  );
+
+  // --- both commands are discoverable, which is half of shipping them ----------
+  const renderHelp = runCli(['render', '--help']);
+  const previewHelp = runCli(['preview', '--help']);
+  const topLevel = runCli([]);
+  say(
+    'P04_BOTH_COMMANDS_ARE_IN_THE_HELP',
+    renderHelp.status === 0 &&
+      renderHelp.stdout.includes('--animation') &&
+      renderHelp.stdout.includes('frame series') &&
+      previewHelp.status === 0 &&
+      previewHelp.stdout.includes('.html') &&
+      topLevel.stderr.includes('rigc render') &&
+      topLevel.stderr.includes('rigc preview'),
+    `render --help ${renderHelp.status === 0 ? 'ok' : 'FAILED'}, preview --help ${previewHelp.status === 0 ? 'ok' : 'FAILED'}, ` +
+      'both named in the bare-invocation usage',
+    'issue #216 is a discoverability failure as much as a capability one — the renderer already existed and no command exposed it',
+  );
+
+  // An animation this skeleton does not have must be refused BY NAME, with the
+  // ones it does have listed: the flag is the one place a typo is silent.
+  const wrong = runCli(['render', '--candidate', dirs.outDir, '--animation', 'nope', '--out', framesDir]);
+  say(
+    'P05_AN_UNKNOWN_ANIMATION_IS_REFUSED_AND_THE_REAL_ONES_LISTED',
+    wrong.status === 2 && /no animation "nope"/.test(wrong.stderr) && /slide/.test(wrong.stderr),
+    `exit=${String(wrong.status)} stderr=${JSON.stringify(wrong.stderr.split('\n')[0])}`,
+    'silently rendering every animation because one name was misspelled is a report about the wrong shot',
+  );
+
+  return bad;
+}
+
 function runCutsSuite(): { failures: number; cuts: number } {
   console.log('\n── extra suite: registered cuts ──');
   if (CUTS === null) {
@@ -5253,6 +5521,8 @@ function main(): void {
     bad += launcherBad;
     substantive += 3;
   }
+  bad += runSeeItSuite();
+  substantive += 11;
   bad += runCopyImagesSuite();
   substantive += 3;
   const diffBad = runDiffSuite();
@@ -5321,6 +5591,11 @@ function main(): void {
       'reports a line number), + 5 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
+      ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
+      'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +
+      'to RGBA while still refusing a colour type that is not one, a preview embedding the skeleton, the atlas and ' +
+      'one data URI per page under the names the player asks for, the player referenced rather than vendored, both ' +
+      'commands in the help, and a misspelled --animation refused by name)' +
       ', + 3 copy-images controls (self-contained out dir, unchanged default, deterministic basename collision)' +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +

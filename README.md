@@ -238,6 +238,41 @@ rigc: 1 assertion(s) failed — nothing written
 Nothing was written. A red run leaves no half-built artifact on disk to mistake
 for a result, and there is no flag that changes that.
 
+**6. See what you built.**
+
+🚨 **Green is a claim about validity and about nothing else.** A rig whose head
+sits visibly off its torso passes every assertion, loads in `spine-core` and steps
+numerically clean — the offsets are the ones your spec asked for, and no
+assertion can know you did not mean them. The only remedy is looking, and both
+commands below need nothing you do not already have: no reference frames, no
+second package, no server.
+
+```bash
+rigc render  --candidate spine          # PNG frames + a contact sheet, in render/
+rigc preview --candidate spine          # one .html file that plays it: preview.html
+```
+
+**`render`** samples every animation at 12 fps and writes `render/<animation>/f0000.png…`
+with a `contact.png` beside them — every frame of the shot as one labelled grid,
+which is the picture to open first, because spacing is a comparison *across*
+frames. It draws with rigc's own rasteriser (the one `check` measures with), so
+it needs no browser and no network, and the `frames.json` it leaves beside the
+directories makes the result a frame set like any other — the world box every
+frame is a picture of. `--animation <name>` narrows it to one, `--fps` and
+`--max` change the rate and the frame size.
+
+**`preview`** writes a single self-contained `.html`: your skeleton, your atlas
+and every page's PNG bytes are embedded in it as data URIs, and it plays them in
+the **official [Spine Web Player](https://esotericsoftware.com/spine-player)**.
+Double-click it, or attach it to a message — the file carries the whole artifact.
+It is also the strongest interop statement in this repository: a rig that plays
+there has been played by Esoteric Software's own runtime rather than by ours.
+
+> ⚖️ The player itself is **referenced, not embedded** — the page loads it from
+> unpkg, so the first open needs a network, and rigc redistributes nothing
+> Esoteric Software owns (see [NOTICE.md](NOTICE.md)). Everything the player
+> draws is inside your file.
+
 **Where to go next.**
 
 - 📘 **[docs/AUTHORING.md](docs/AUTHORING.md)** is the real guide — both files
@@ -449,7 +484,38 @@ closed**; B3's validator half is (the packed-atlas clauses live behind `--profil
 emitter half — no packer, no atlas importer — is not. Ordered gap list in Part 4 of that document;
 live status, and B1's proof, in [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).
 
-## Run viewer — watching a run instead of reading it
+## Looking at a rig — `rigc render` and `rigc preview`
+
+The validator cannot see a wrong pose and says so honestly; `check` can, and needs
+reference frames a first user does not have. That left looking as the one thing
+the package could not do, and these two commands are it. Both take a compiled
+artifact — the directory `build --out` wrote — and neither needs a reference, a
+clone or a server:
+
+```bash
+rigc render  --candidate spine [--animation <name>] [--fps 12] [--max 256] [--out render/]
+rigc preview --candidate spine [--animation <name>] [--out preview.html]
+```
+
+`render` writes `render/<animation>/f0000.png…` plus a `contact.png` grid of every
+frame and a `frames.json` sidecar describing the world box they are pictures of —
+the same frame-set shape `bench/render_reference.ts` writes and `rigc check`
+reads, drawn by the same rasteriser, so the output is a frame set rather than a
+pile of images. `preview` writes one self-contained `.html` that plays the
+artifact in the official Spine Web Player, with the skeleton, the atlas and every
+page embedded as data URIs; the player is loaded from unpkg rather than copied, so
+the first open needs a network and rigc redistributes nothing Esoteric Software
+owns ([NOTICE.md](NOTICE.md)).
+
+They complement each other rather than overlap. `render` is offline, deterministic
+and measurable — its pixels are the ones `check` reports on. `preview` is the
+interop proof: what plays there was played by Esoteric's own runtime, not by ours.
+
+## Run viewer — watching a *run* instead of reading it
+
+🔎 **This is the ladder's instrument, not the way to look at your own rig** — that
+is the section above. The viewer is reference-bound and repository-bound, and it
+deliberately never ships.
 
 `check.txt` says a candidate's worst frame is f0012 at 56 MAE. The viewer shows
 you f0012.
@@ -670,12 +736,18 @@ bun cli.ts diff candidate.json reference.json               # structural compari
 bun cli.ts check --candidate path/to/spine \
                  --frames bench/reference/3-timing-and-spacing   # against pictures
 bun cli.ts bench 3 --candidate path/to/spine                # one rung of the ladder
+bun cli.ts render  --candidate path/to/spine                # PNG frames + a contact sheet
+bun cli.ts preview --candidate path/to/spine                # one .html that plays it
 ```
 
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
 it re-derive the declared durations and the structural expectations too, and the
 report says which it had. `build` and `validate` both take `--profile spine` to drop
 the renderer and archetype policy; the default stays `spine-html`.
+
+`render` and `preview` are the two that need no reference at all — see
+[Looking at a rig](#looking-at-a-rig--rigc-render-and-rigc-preview). Run either
+straight after a green `build`, on the same directory `--out` wrote.
 
 ## Checks
 
@@ -772,7 +844,7 @@ nothing substantive executed exits 2 rather than printing green.
 
 ```
 tsconfig.json   type-check config (noEmit); eslint.config.js — the no-any gate
-cli.ts          build / validate / explain / diff / check / bench
+cli.ts          build / validate / explain / diff / check / bench / render / preview
 selftest.ts     the validator's own negative controls, and diff's and check's
 fixtures/       public.ts — the three synthetic cuts the selftest breaks
 src/
@@ -780,7 +852,10 @@ src/
   rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
   validate.ts   spine-core round trip + the 34 assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure
-  render.ts     the rasteriser (regions + meshes), shared by the reference renderer and check
+  render.ts     the rasteriser (regions + meshes), shared by the reference renderer,
+                `rigc render` and check
+  preview.ts    the single-file HTML player page — the artifact embedded as data
+                URIs, played by the official Spine Web Player (referenced, not vendored)
   check.ts      a candidate against rendered frames — pixels and per-slot drift,
                 and it never opens the reference skeleton
   ladder.ts     which example is which rung, and which file in it is the reference
@@ -818,7 +893,7 @@ CONTRIBUTING.md how to propose a change; RELEASING.md — how a version is cut
 | --- | --- |
 | `measure_contact_depth.ts` | measures a cut's contact depth from its plates, with the two-sided proof it has to satisfy. Both slot names are required: which plate is the mass and which is the occluder is a fact about one cut, and a default would measure the wrong pair and still print a number |
 | `contact.ts` | plate-vs-plate overlap measurement — the largest advance that keeps two footprints disjoint |
-| `plate.ts` / `png_probe.mjs` | minimal PNG read/write and decode |
+| `plate.ts` / `png_probe.mjs` | minimal PNG read/write and decode. The writer emits colour type 6 only; the reader takes every colour type and bit depth PNG allows except interlaced, expanding indexed palettes (`PLTE` + `tRNS`) and greyscale to RGBA — because the gate accepts that art, so the renderer has to as well (issue #226) |
 | `font5x7.ts` | bitmap labels for diagnostic images and generated plates |
 
 ## Contributing

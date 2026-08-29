@@ -15,3 +15,8 @@ examples/
 .DS_Store
 # `npm pack` output, from checking what a publish would ship.
 /spine-rigc-*.tgz
+# Where `rigc render` and `rigc preview` land by default. Running either from a
+# checkout is the normal way to look at something, and neither output belongs to
+# this repository — the reference frames that DO live here are under bench/.
+/render/
+/preview.html

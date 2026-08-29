@@ -144,6 +144,11 @@ export const SHEET_COLUMNS = 8;
 export const SHEET_FILE = 'contact.png';
 /** One pixel of rule between tiles, and one around the outside. */
 export const SHEET_GAP = 1;
+/** Default long side of one contact-sheet tile, in pixels. */
+export const SHEET_TILE = 128;
+/** The rule between tiles, and the frame number drawn in each. */
+export const SHEET_RULE: RGBA = [176, 176, 176, 255];
+export const SHEET_LABEL: RGBA = [96, 96, 96, 255];
 
 /** One rendered frame directory: which animation, at what rate, and what is on disk. */
 export interface FrameSet {
@@ -283,6 +288,19 @@ export interface Posable {
  */
 export function loadPosable(skeletonPath: string, atlasPath: string, atlasDir: string): Posable {
   return posableFromText(readFileSync(skeletonPath, 'utf8'), readFileSync(atlasPath, 'utf8'), atlasDir);
+}
+
+/**
+ * The page names an atlas declares, in the order it declares them.
+ *
+ * Through `TextureAtlas` rather than by reading the lines: a page name and a
+ * region name are both unindented in the atlas format, so anything that told them
+ * apart here would be a second opinion about the file's syntax — and the one
+ * caller that needs this list (`rigc preview`, embedding each page) has to agree
+ * exactly with the player that will ask for them by name.
+ */
+export function atlasPageNames(atlasText: string): string[] {
+  return new TextureAtlas(atlasText).pages.map((page) => page.name);
 }
 
 /** Same, for artifacts held in memory rather than on disk. */
@@ -909,6 +927,46 @@ export function renderFrame(frame: Frame, pages: Map<string, Plate>, viewport: V
   const project = projector(viewport);
   for (const piece of frame.pieces) blitPiece(plate, pageFor(pages, piece), piece, project);
   return plate;
+}
+
+/**
+ * Every frame of one animation as one labelled grid, row major.
+ *
+ * Not decoration: rung 3's subject is *spacing* — how far a thing travels
+ * between two consecutive frames — and that is a comparison across frames. A
+ * reader flipping through 65 separate files is comparing against memory.
+ *
+ * ⭐ It lives here rather than beside either caller because the layout is a
+ * CONTRACT: `bench/render_reference.ts` writes the grid, `rigc render` writes the
+ * same grid for a user's own build, and `src/check.ts` reads a sheet's tiles back
+ * out of it (issue #36). Three programs reading one geometry is one definition or
+ * it is a bug waiting for the day two of them are edited apart.
+ */
+export function contactSheet(frames: Frame[], pages: Map<string, Plate>, viewport: Viewport, tile: number): Plate {
+  const tileScale = tile / Math.max(viewport.width, viewport.height);
+  const tileW = Math.max(1, Math.round(viewport.width * tileScale));
+  const tileH = Math.max(1, Math.round(viewport.height * tileScale));
+  const columns = Math.min(SHEET_COLUMNS, frames.length);
+  const rows = Math.ceil(frames.length / columns);
+  const sheet = new Plate(columns * (tileW + SHEET_GAP) + SHEET_GAP, rows * (tileH + SHEET_GAP) + SHEET_GAP);
+  fill(sheet, SHEET_RULE);
+  const base = projector(viewport);
+  frames.forEach((frame, i) => {
+    const col = i % columns;
+    const row = Math.floor(i / columns);
+    const ox = col * (tileW + SHEET_GAP) + SHEET_GAP;
+    const oy = row * (tileH + SHEET_GAP) + SHEET_GAP;
+    const plate = new Plate(tileW, tileH);
+    fill(plate, BACKGROUND);
+    const project = (wx: number, wy: number): [number, number] => {
+      const [px, py] = base(wx, wy);
+      return [px * tileScale, py * tileScale];
+    };
+    for (const piece of frame.pieces) blitPiece(plate, pageFor(pages, piece), piece, project);
+    plate.text(String(i), 2, 2, 1, SHEET_LABEL);
+    for (let y = 0; y < tileH; y++) for (let x = 0; x < tileW; x++) sheet.set(ox + x, oy + y, plate.get(x, y));
+  });
+  return sheet;
 }
 
 /** Where one thing landed in a frame, in frame pixels. */

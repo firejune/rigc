@@ -85,6 +85,10 @@ bun cli.ts check \
 
 # read the table → fix the spec → build again → check again
 #   ↳ read its per-frame column before its MAE — §9.2
+
+# …and if nobody gave you frames, LOOK at it instead — neither needs a reference:
+bun cli.ts render  --candidate path/to/spine    # PNG frames + a contact sheet grid
+bun cli.ts preview --candidate path/to/spine    # one .html that plays it in Spine's own player
 ```
 
 `build` compiles, round-trips the result through `@esotericsoftware/spine-core`,
@@ -121,6 +125,13 @@ What the flags mean:
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--profile` | `spine` = the 20 validity rules · `spine-html` = all 34 (**the default**) |
+| `--candidate` | `check`, `bench`, `render` and `preview` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton |
+| `--animation` | `render` and `preview` only: which animation to show. The default is **every** one for `render` and the **first** for `preview`. A name the skeleton does not have is refused, with the ones it does have listed |
+
+`render` also takes `--fps <n>` (the rate it samples at, default 12 — the same
+protocol rate the reference frames use) and `--max <px>` (the long side of a
+frame, default 256). Both commands take `--out`: a directory for `render`
+(default `render/`), the `.html` file for `preview` (default `preview.html`).
 
 Pick the profile deliberately. `spine-html` adds one renderer's policy and one
 project's canvas budget, and those rules fire on perfectly correct Spine data
@@ -137,6 +148,8 @@ bun cli.ts validate path/to/spine                # re-gate artifacts already on 
 bun cli.ts diff     candidate.json reference.json
 bun cli.ts check    --candidate path/to/spine --frames path/to/frames
 bun cli.ts bench    3 --candidate path/to/spine [--frames path/to/frames]
+bun cli.ts render   --candidate path/to/spine [--animation …] [--fps 12] [--max 256]
+bun cli.ts preview  --candidate path/to/spine [--animation …] [--out preview.html]
 ```
 
 - **`explain`** is the one to reach for when a rig compiles but looks wrong. It
@@ -156,6 +169,20 @@ bun cli.ts bench    3 --candidate path/to/spine [--frames path/to/frames]
   line, not a loop**: it opens the reference export, so a run that consults it and
   then edits is no longer an authoring run. `check` carries no such restriction —
   see §9.
+- 🚨 **`render` and `preview` are how you LOOK at what you built**, and they are
+  the two that need no reference at all. Reach for them the moment a rig compiles
+  green, because green says nothing about the picture: a head that sits visibly
+  off its torso passes every assertion, loads in `spine-core` and steps
+  numerically clean — the offsets are the ones you asked for, and nothing in the
+  gate can know you did not mean them. `render` writes
+  `render/<animation>/f0000.png…` with a `contact.png` grid of **every** frame
+  beside them (open that one first — spacing is a comparison across frames) and a
+  `frames.json` sidecar naming the world box they are pictures of. `preview`
+  writes one self-contained `.html`: your skeleton, atlas and page PNGs are
+  embedded in it as data URIs and played by the official **Spine Web Player**, so
+  double-clicking it is also the interop proof — what plays there was played by
+  Esoteric Software's runtime, not by rigc's. The player is loaded from a CDN
+  rather than copied into the file, so the first open needs a network.
 
 ---
 
