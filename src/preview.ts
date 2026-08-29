@@ -102,7 +102,7 @@ export function dataUri(mime: string, body: string | Uint8Array): string {
 }
 
 /** `#rrggbb` for the player's background, so a preview and `rigc render` agree. */
-function backgroundHex(): string {
+export function backgroundHex(): string {
   return `#${BACKGROUND.slice(0, 3)
     .map((c) => c.toString(16).padStart(2, '0'))
     .join('')}`;
@@ -126,7 +126,7 @@ export function escapeHtml(text: string): string {
  * string to a JSON reader, so nothing about the value changes. Page names come
  * out of a file somebody else wrote, which is exactly why this is not optional.
  */
-function embeddedJson(value: unknown): string {
+export function embeddedJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 

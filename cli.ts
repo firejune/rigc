@@ -31,8 +31,23 @@
  * Its paths resolve against the cuts.json file itself, so the table travels
  * with the project that owns the art rather than with this repository.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import {
+  BallotError,
+  buildBallot,
+  ledgerLineText,
+  MAX_CANDIDATES,
+  MIN_CANDIDATES,
+  parseLedger,
+  readBallotManifest,
+  resultFilename,
+  TIE,
+  verifyResult,
+  VOTE_RULES,
+  type BallotCandidateInput,
+  type BallotInput,
+} from './src/ballot.ts';
 import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type CheckReport } from './src/check.ts';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
 import { diffLines, diffSkeletons, sectionFigures, type DiffReport } from './src/diff.ts';
@@ -128,31 +143,63 @@ function repositoryUrl(): string {
  * flag": inferring it would turn `--out --json report.json` — a real typo, a
  * missing value — into a silently accepted switch plus a stray positional.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'help', 'copy-images']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'help', 'copy-images', 'again']);
 
-/** `--flag value` pairs plus the leftover positionals, in order. */
-function parseArgs(argv: string[]): { flags: Record<string, string>; positional: string[] } {
+/**
+ * The flags a command is allowed to spell more than once.
+ *
+ * Only `vote --candidate` is, because a ballot is *by definition* several
+ * candidates. Everywhere else a repeat is a mistake and is refused: `check
+ * --candidate a --candidate b` used to take `b` silently, which is a report
+ * about a rig the caller did not think they were asking about.
+ */
+const REPEATABLE_FLAGS: Record<string, ReadonlySet<string>> = {
+  vote: new Set(['candidate']),
+};
+
+/**
+ * `--flag value` pairs plus the leftover positionals, in order.
+ *
+ * `lists` carries every occurrence of every flag and `flags` carries the last
+ * one, so a command that wants a repeated flag reads `lists` and the ones that
+ * do not are untouched by the addition.
+ */
+function parseArgs(
+  argv: string[],
+  repeatable: ReadonlySet<string> = new Set(),
+): { flags: Record<string, string>; lists: Record<string, string[]>; positional: string[] } {
   const flags: Record<string, string> = {};
+  const lists: Record<string, string[]> = {};
   const positional: string[] = [];
+  const take = (name: string, value: string): void => {
+    if (flags[name] !== undefined && !repeatable.has(name)) {
+      throw new UsageError(
+        `--${name} was given more than once (${JSON.stringify(flags[name])} then ${JSON.stringify(value)}); ` +
+          'this command takes it once',
+      );
+    }
+    flags[name] = value;
+    (lists[name] ??= []).push(value);
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg.startsWith('--')) {
       const eq = arg.indexOf('=');
       if (eq !== -1) {
-        flags[arg.slice(2, eq)] = arg.slice(eq + 1);
+        take(arg.slice(2, eq), arg.slice(eq + 1));
       } else if (BOOLEAN_FLAGS.has(arg.slice(2))) {
-        flags[arg.slice(2)] = 'true';
+        take(arg.slice(2), 'true');
       } else {
         const next = argv[i + 1];
         if (next === undefined || next.startsWith('--')) throw new UsageError(`${arg} needs a value`);
-        flags[arg.slice(2)] = next;
+        take(arg.slice(2), next);
         i++;
       }
     } else {
       positional.push(arg);
     }
   }
-  return { flags, positional };
+  return { flags, lists, positional };
 }
 
 /**
@@ -726,6 +773,223 @@ function cmdPreview(flags: Record<string, string>): void {
   console.log(`rigc: wrote ${out}  (${(html.length / 1024).toFixed(1)} KiB — open it in a browser)`);
 }
 
+// ---------------------------------------------------------------------------
+// choosing between results — vote
+// ---------------------------------------------------------------------------
+//
+// ⭐ `preview` shows one candidate; this shows two to four of them side by side
+// and takes an answer back. The rest of this toolchain is instruments, and it
+// should be — the vote opens only where the instruments have already run out.
+// See `src/ballot.ts` for why the ballot is ordered compile-first-vote-last,
+// why the labels are A and B, and why the record is hashes.
+//
+// Two modes on one command, because they share exactly one thing and it is the
+// contract between them: the ballot manifest. Splitting them would document
+// that format twice and let the halves drift.
+//
+//   rigc vote --candidate <a> --candidate <b> [--animation <n>] [--out ballot.html]
+//   rigc vote --record <result.json> [--ballot ballot.html] [--ledger votes.jsonl] [--again]
+
+const DEFAULT_BALLOT = 'ballot.html';
+const DEFAULT_LEDGER = 'votes.jsonl';
+
+/** Load one candidate off disk in the shape a ballot needs. */
+function loadBallotCandidate(target: string): { candidate: BallotCandidateInput; animations: string[] } {
+  const { skeletonPath, atlasPath } = resolveArtifacts(target, undefined);
+  for (const path of [skeletonPath, atlasPath]) {
+    if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
+  }
+  const skeletonText = readFileSync(skeletonPath, 'utf8');
+  const atlasText = readFileSync(atlasPath, 'utf8');
+  const atlasDir = dirname(atlasPath);
+  const pages: PreviewPage[] = atlasPageNames(atlasText).map((name) => {
+    const path = join(atlasDir, name);
+    if (!existsSync(path)) {
+      throw new UsageError(
+        `the atlas declares page "${name}", which resolves to ${path} and is not there — ` +
+          'a page a ballot cannot embed is a page the player could not have loaded either',
+      );
+    }
+    return { name, bytes: readFileSync(path) };
+  });
+  return {
+    candidate: { source: skeletonPath, skeletonText, atlasText, pages },
+    animations: skeletonAnimationNames(skeletonText, skeletonPath),
+  };
+}
+
+/**
+ * The one animation every candidate plays.
+ *
+ * ⚠️ Refused rather than resolved per candidate. Two panes running two
+ * different animations look like a comparison and are not one, and a voter has
+ * no way to see that it happened — the labels are `A` and `B`, which is the
+ * whole point, so nothing on the screen would say so.
+ */
+function commonAnimation(
+  flags: Record<string, string>,
+  loaded: { animations: string[] }[],
+): string | null {
+  const asked = flags.animation;
+  if (asked === undefined) {
+    const first = loaded[0].animations[0];
+    if (first === undefined) {
+      const withAny = loaded.findIndex((l) => l.animations.length > 0);
+      if (withAny !== -1) {
+        throw new UsageError(
+          `candidate ${withAny + 1} has animations [${loaded[withAny].animations.join(', ')}] and candidate 1 has none — ` +
+            'a ballot plays one animation in every pane, so there is nothing to compare here',
+        );
+      }
+      return null;
+    }
+    const missing = loaded.findIndex((l) => !l.animations.includes(first));
+    if (missing !== -1) {
+      throw new UsageError(
+        `the default animation is candidate 1's first, ${JSON.stringify(first)}, and candidate ${missing + 1} does not ` +
+          `have it (it has [${loaded[missing].animations.join(', ') || 'none'}]); name one they share with --animation`,
+      );
+    }
+    return first;
+  }
+  const missing = loaded.findIndex((l) => !l.animations.includes(asked));
+  if (missing !== -1) {
+    throw new UsageError(
+      `no animation ${JSON.stringify(asked)} in candidate ${missing + 1}; it has ` +
+        `[${loaded[missing].animations.join(', ') || 'none'}]`,
+    );
+  }
+  return asked;
+}
+
+/** vote (ballot mode) — write the page a human opens. */
+function cmdVoteBallot(flags: Record<string, string>, candidates: string[]): void {
+  if (candidates.length < MIN_CANDIDATES) {
+    throw new UsageError(
+      `a ballot needs ${MIN_CANDIDATES}–${MAX_CANDIDATES} --candidate <dir | skeleton.json>, and ${candidates.length} ` +
+        'was given — one candidate on its own is `rigc preview`',
+    );
+  }
+  if (candidates.length > MAX_CANDIDATES) {
+    throw new UsageError(
+      `${candidates.length} candidates were given and a ballot holds at most ${MAX_CANDIDATES} — they go side by side ` +
+        'on one screen, and a comparison that needs scrolling is not a comparison',
+    );
+  }
+  // `--atlas` names ONE atlas and there are several skeletons here, so there is
+  // no unambiguous thing it could mean. Each candidate's atlas has to sit beside
+  // its skeleton, which is what `build --out` leaves behind.
+  if (flags.atlas !== undefined) {
+    throw new UsageError(
+      '--atlas names one atlas and a ballot has several candidates; each one\'s atlas has to sit beside its skeleton',
+    );
+  }
+
+  const loaded = candidates.map((target) => loadBallotCandidate(target));
+  const animation = commonAnimation(flags, loaded);
+
+  const target = resolve(flags.out ?? DEFAULT_BALLOT);
+  const out = existsSync(target) && statSync(target).isDirectory() ? join(target, DEFAULT_BALLOT) : target;
+
+  const input: BallotInput = {
+    candidates: loaded.map((l) => l.candidate),
+    animation,
+    version: readVersion(),
+  };
+  const { html, manifest } = buildBallot(input);
+
+  console.log('rigc vote');
+  console.log(`  ..    ballot    ${manifest.ballot}`);
+  console.log(`  ..    animation ${animation === null ? '(none — the setup pose)' : animation}`);
+  for (let i = 0; i < manifest.candidates.length; i++) {
+    const entry = manifest.candidates[i];
+    const bytes = loaded[i].candidate.pages.reduce((n, p) => n + p.bytes.length, 0);
+    console.log(
+      `  ..    ${entry.label}         ${entry.digest.slice(0, 'sha256:'.length + 12)}…  ` +
+        `${entry.pages.length} page(s), ${(bytes / 1024).toFixed(1)} KiB  <- ${entry.source}`,
+    );
+  }
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, html);
+  console.log(
+    `  ..    the page shows ${manifest.candidates.map((c) => c.label).join('/')} and nothing else — the paths above are ` +
+      'in its manifest, never on the screen',
+  );
+  console.log(
+    `  ..    embedded every candidate's skeleton, atlas and page(s) as data URIs; the player itself loads from ` +
+      `unpkg (@${PLAYER_LINE}), so the first open needs a network`,
+  );
+  console.log(`rigc: wrote ${out}  (${(html.length / 1024).toFixed(1)} KiB — open it in a browser)`);
+  console.log(
+    `rigc: then record the saved vote with  rigc vote --record ${resultFilename(manifest.ballot)} --ballot ${out}`,
+  );
+}
+
+/** vote (record mode) — check one saved vote and append it to the ledger. */
+function cmdVoteRecord(flags: Record<string, string>): void {
+  for (const key of ['candidate', 'out'] as const) {
+    if (flags[key] !== undefined) {
+      throw new UsageError(`--record and --${key} are the two halves of this command; run them one at a time`);
+    }
+  }
+  const resultPath = resolve(flags.record);
+  const ballotPath = resolve(flags.ballot ?? DEFAULT_BALLOT);
+  const ledgerPath = resolve(flags.ledger ?? DEFAULT_LEDGER);
+  for (const [what, path] of [
+    ['result', resultPath],
+    ['ballot', ballotPath],
+  ] as const) {
+    if (!existsSync(path)) {
+      throw new UsageError(
+        `no ${what} file at ${path}` + (what === 'ballot' ? ' — name the page this vote came from with --ballot' : ''),
+      );
+    }
+  }
+
+  console.log('rigc vote --record');
+  console.log(`  ..    result ${resultPath}`);
+  console.log(`  ..    ballot ${ballotPath}`);
+  console.log(`  ..    ledger ${ledgerPath}`);
+
+  const manifest = readBallotManifest(readFileSync(ballotPath, 'utf8'), ballotPath);
+  const result = readJsonFile(resultPath);
+  const existing = existsSync(ledgerPath) ? parseLedger(readFileSync(ledgerPath, 'utf8'), ledgerPath) : [];
+  const attempts = existing.filter((l) => l.ballot === manifest.ballot).length;
+  const again = flags.again !== undefined;
+
+  const { refusals, line } = verifyResult(manifest, result, { attempts, again });
+  if (line === null) {
+    for (const refusal of refusals) console.error(`  FAIL  ${refusal.rule}: ${refusal.detail}`);
+    console.error(`rigc: ${refusals.length} refusal(s) — nothing appended to ${ledgerPath}`);
+    process.exit(1);
+  }
+  for (const rule of VOTE_RULES) console.log(`  PASS  ${rule}`);
+
+  line.seq = existing.length + 1;
+  mkdirSync(dirname(ledgerPath), { recursive: true });
+  appendFileSync(ledgerPath, ledgerLineText(line));
+  console.log(
+    `  ..    ${line.choice === TIE ? 'tie' : `winner ${line.choice} = ${line.winner}`}, ` +
+      `reason code ${line.reasonCode}${line.attempt > 1 ? `, attempt ${line.attempt}` : ''}`,
+  );
+  console.log(
+    `  ..    coverage ${line.coverage.length} candidate(s): ` +
+      line.coverage.map((c) => `${c.label}=${c.digest.slice(0, 'sha256:'.length + 12)}…`).join(' '),
+  );
+  console.log(`rigc: appended line ${line.seq} to ${ledgerPath}`);
+}
+
+function cmdVote(flags: Record<string, string>, candidates: string[]): void {
+  if (flags.record !== undefined) cmdVoteRecord(flags);
+  else if (candidates.length > 0) cmdVoteBallot(flags, candidates);
+  else {
+    throw new UsageError(
+      'vote takes either 2–4 --candidate <dir | skeleton.json> to write a ballot, or --record <result.json> to ' +
+        'record one that came back',
+    );
+  }
+}
+
 /**
  * bench — run one rung of the benchmark ladder against a candidate rig.
  *
@@ -1088,6 +1352,10 @@ const FLAG_MEANINGS: Record<string, string> = {
   json: 'also write the whole report to this path',
   animation: 'which animation to show; the default is every one for `render` and the first for `preview`',
   max: 'longest side of a rendered frame, in pixels (default 256)',
+  record: 'a saved vote to check against its ballot and append to the ledger, instead of writing a ballot',
+  ballot: `the ballot the --record'd vote answers (default \`${DEFAULT_BALLOT}\`); its embedded manifest is what the vote is checked against`,
+  ledger: `the append-only JSONL the vote lands in (default \`${DEFAULT_LEDGER}\`)`,
+  again: 'record a second vote on a ballot the ledger already has; without it, a repeat is refused rather than doubled',
   help: "show this command's flags and exit",
 };
 
@@ -1111,6 +1379,9 @@ const FLAG_VALUES: Record<string, string> = {
   json: '<out>',
   animation: '<name>',
   max: '<px>',
+  record: '<result.json>',
+  ballot: '<ballot.html>',
+  ledger: '<votes.jsonl>',
 };
 
 interface CommandDoc {
@@ -1123,12 +1394,14 @@ interface CommandDoc {
    * Per-command wording for a flag whose value or meaning genuinely differs here.
    *
    * ⚠️ The default above it — one meaning per flag name, everywhere — is the rule
-   * and this is the named exception to it, not a second table. Two flags earn it:
+   * and this is the named exception to it, not a second table. Three flags earn it:
    * `--out` is a directory of artifacts to `build`, a directory of pictures to
-   * `render` and one file to `preview`; `--fps` is the rate a frame set was
-   * RECORDED at to `check`, which reads it off a sidecar, and the rate to SAMPLE
-   * at to `render`, which is choosing it. Writing either as one sentence covering
-   * every command would leave every command's own help less true than it is now.
+   * `render` and one file to `preview` and `vote`; `--fps` is the rate a frame set
+   * was RECORDED at to `check`, which reads it off a sidecar, and the rate to
+   * SAMPLE at to `render`, which is choosing it; `--candidate` is one artifact
+   * everywhere except `vote`, which is the one command that takes several and is
+   * the reason there is a ballot at all. Writing any of them as one sentence
+   * covering every command would leave every command's own help less true.
    */
   overrides?: Record<string, { value?: string; meaning?: string }>;
 }
@@ -1192,6 +1465,29 @@ const COMMANDS: CommandDoc[] = [
       },
     },
   },
+  {
+    name: 'vote',
+    usage: [
+      `rigc vote --candidate <dir | skeleton.json> --candidate <…> [--candidate …] [--animation <name>] [--out ${DEFAULT_BALLOT}]`,
+      `rigc vote --record <result.json> [--ballot ${DEFAULT_BALLOT}] [--ledger ${DEFAULT_LEDGER}] [--again]`,
+    ],
+    flags: ['candidate', 'animation', 'out', 'record', 'ballot', 'ledger', 'again'],
+    overrides: {
+      candidate: {
+        value: '<dir|skeleton.json>',
+        meaning: `repeat it ${MIN_CANDIDATES}–${MAX_CANDIDATES} times — one compiled artifact per pane, labelled A, B, C, D in the order given`,
+      },
+      animation: {
+        meaning:
+          'the one animation every pane plays (default: the first of candidate A). A candidate that does not have ' +
+          'it is refused — two panes playing two animations is not a comparison',
+      },
+      out: {
+        value: '<file>',
+        meaning: `the .html ballot to write (default \`${DEFAULT_BALLOT}\`); a directory means "the default name in here"`,
+      },
+    },
+  },
 ];
 
 const KNOWN_COMMANDS = COMMANDS.map((c) => c.name);
@@ -1246,6 +1542,14 @@ const USAGE = [
   'draws with rigc\'s own rasteriser; preview embeds the artifact in a page that plays',
   'it in the official Spine Web Player, which is also the interop proof.',
   '',
+  'vote is the same page with two to four builds in it and an answer coming back:',
+  '  rigc vote --candidate <build A> --candidate <build B>   ballot.html, panes labelled A and B',
+  '  rigc vote --record vote-<id>.json --ballot ballot.html  check it, append it to votes.jsonl',
+  'Reach for it where the instruments have run out — a choice with no reference behind',
+  'it, two fits that measure the same. The panes carry no paths, a tie is a recorded',
+  'answer rather than a missing one, and a result whose hashes are not the ballot\'s is',
+  'refused by name instead of appended.',
+  '',
   'a cuts.json is { "<name>": { "rig": "...", "motion": "...", "out": "...",',
   '                             "manifest": "..." (optional) } }, with every path',
   'resolved relative to the cuts.json file itself.',
@@ -1269,7 +1573,7 @@ try {
     throw new UsageError(`unknown command: ${command}`);
   }
 
-  const { flags, positional } = parseArgs(rest);
+  const { flags, lists, positional } = parseArgs(rest, REPEATABLE_FLAGS[command]);
   if (flags.help !== undefined) {
     console.log(commandHelp(command));
     process.exit(0);
@@ -1282,9 +1586,16 @@ try {
   else if (command === 'bench') cmdBench(flags, positional);
   else if (command === 'render') cmdRender(flags);
   else if (command === 'preview') cmdPreview(flags);
+  else if (command === 'vote') cmdVote(flags, lists.candidate ?? []);
 } catch (err) {
   if (err instanceof UsageError) {
     console.error(`rigc: ${err.message}\n\n${USAGE}`);
+    process.exit(2);
+  }
+  // A ballot refuses on its arguments, like a usage error, but its messages are
+  // long enough that reprinting the whole usage under them buries the reason.
+  if (err instanceof BallotError) {
+    console.error(`rigc vote: ${err.message}`);
     process.exit(2);
   }
   if (err instanceof CompileError) {

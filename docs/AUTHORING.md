@@ -89,6 +89,11 @@ bun cli.ts check \
 # …and if nobody gave you frames, LOOK at it instead — neither needs a reference:
 bun cli.ts render  --candidate path/to/spine    # PNG frames + a contact sheet grid
 bun cli.ts preview --candidate path/to/spine    # one .html that plays it in Spine's own player
+
+# …and where you have several green candidates and no instrument that separates
+# them, ask a human — the one loop step this toolchain cannot run for you:
+bun cli.ts vote --candidate path/to/spine-a --candidate path/to/spine-b   # -> ballot.html
+bun cli.ts vote --record vote-<id>.json                                   # -> votes.jsonl
 ```
 
 `build` compiles, round-trips the result through `@esotericsoftware/spine-core`,
@@ -125,13 +130,18 @@ What the flags mean:
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--profile` | `spine` = the 20 validity rules (**the default**) · `spine-html` = all 34, opt-in |
-| `--candidate` | `check`, `bench`, `render` and `preview` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton |
-| `--animation` | `render` and `preview` only: which animation to show. The default is **every** one for `render` and the **first** for `preview`. A name the skeleton does not have is refused, with the ones it does have listed |
+| `--candidate` | `check`, `bench`, `render`, `preview` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
+| `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview`, and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote`, so is a name that only *some* candidates have |
+| `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
+| `--ballot` | `vote --record` only: the ballot the vote answers (default `ballot.html`). Its embedded manifest is what the vote is checked against, so the ballot file is the record of the question |
+| `--ledger` | `vote --record` only: the append-only JSONL the vote lands in (default `votes.jsonl`), one vote per line |
+| `--again` | `vote --record` only: record a second vote on a ballot the ledger already has. Without it a repeat is refused by name rather than doubled |
 
 `render` also takes `--fps <n>` (the rate it samples at, default 12 — the same
 protocol rate the reference frames use) and `--max <px>` (the long side of a
-frame, default 256). Both commands take `--out`: a directory for `render`
-(default `render/`), the `.html` file for `preview` (default `preview.html`).
+frame, default 256). Three commands take `--out`: a directory for `render`
+(default `render/`), the `.html` file for `preview` (default `preview.html`) and
+for `vote` (default `ballot.html`).
 
 Pick the profile deliberately, and know which one you got by saying nothing. The
 default is `spine`: "is this valid Spine 4.3 that any runtime plays correctly",
@@ -152,6 +162,8 @@ bun cli.ts check    --candidate path/to/spine --frames path/to/frames
 bun cli.ts bench    3 --candidate path/to/spine [--frames path/to/frames]
 bun cli.ts render   --candidate path/to/spine [--animation …] [--fps 12] [--max 256]
 bun cli.ts preview  --candidate path/to/spine [--animation …] [--out preview.html]
+bun cli.ts vote     --candidate path/to/a --candidate path/to/b [--out ballot.html]
+bun cli.ts vote     --record vote-<id>.json [--ballot ballot.html] [--ledger votes.jsonl]
 ```
 
 - **`explain`** is the one to reach for when a rig compiles but looks wrong. It
@@ -185,6 +197,26 @@ bun cli.ts preview  --candidate path/to/spine [--animation …] [--out preview.h
   double-clicking it is also the interop proof — what plays there was played by
   Esoteric Software's runtime, not by rigc's. The player is loaded from a CDN
   rather than copied into the file, so the first open needs a network.
+- 🗳️ **`vote` is `preview` with more than one candidate in it and an answer
+  coming back**, and it is the one step of this loop you cannot run yourself.
+  Reach for it where the instruments have run out: two builds that `check` and
+  `diff` cannot separate, a pose fit with two local optima, a key density that is
+  a matter of taste, a first draft with no reference at all. **The intended loop
+  is: you compile 2–4 candidates that every one of them passes the gate → `rigc
+  vote` writes one `ballot.html` → a human opens it, watches the panes loop, and
+  picks a winner or declares a tie → they save the small JSON result the page
+  hands them → `rigc vote --record <that file>` checks it against the ballot and
+  appends one line to `votes.jsonl` → you read the ledger and proceed.**
+  Compile first, vote last: never put a candidate on a ballot that did not build
+  green, and never ask the human to read JSON, a diff or a spec — the page holds
+  playable pixels and nothing else. The panes are labelled `A`/`B`/`C`/`D` and
+  carry no paths, so do not describe the candidates to the voter either. What
+  comes back is machine-checkable rather than prose: each line names the winner
+  by content **digest** (a label means nothing outside one ballot), carries the
+  `coverage` set so you can compute what is still unreviewed, and carries a
+  reason code from a closed enumeration. A **tie is a recorded answer**, and
+  `both-unacceptable` is the one that means *propose again* rather than *adopt
+  either* — check for it before you treat a ballot as settled.
 
 ---
 
