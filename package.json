@@ -38,6 +38,7 @@
     "tools/font5x7.ts",
     "docs/AUTHORING.md",
     "docs/SPEC_COVERAGE.md",
+    "docs/PROMPTING.md",
     "NOTICE.md"
   ],
   "publishConfig": {
