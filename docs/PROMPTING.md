@@ -7,7 +7,7 @@ This page tells you what to put in the prompt, and it earns its claims from a
 measured case: in August 2026 a deliberately small model — Gemini 3.7 Flash on
 the Antigravity harness — authored a benchmark rung unattended for three hours,
 and every stumble below is one it actually made, priced by the instruments in
-[PILOT.md](PILOT.md)'s protocol. A large model makes fewer of these mistakes
+[PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md)'s protocol. A large model makes fewer of these mistakes
 unprompted; the clauses cost you three lines and make the small model's run
 land and the large model's run land cleaner.
 
@@ -24,7 +24,7 @@ For ordinary use (not a benchmark), the whole prompt is short:
 
 Then add the clauses below. If you are running the **benchmark**, do not
 improvise a prompt at all — hand the agent
-[pilot/rung3-runner-prompt.md](pilot/rung3-runner-prompt.md) verbatim; it
+[pilot/rung3-runner-prompt.md](https://github.com/firejune/rigc/blob/main/docs/pilot/rung3-runner-prompt.md) verbatim; it
 carries the honesty rule, and an improvised summary of that rule is how a run
 stops being scorable.
 
@@ -98,7 +98,7 @@ prompt for the five clauses above and then let the agent work.
 
 ## If you are scoring the run
 
-That is a different document: [PILOT.md](PILOT.md) is the protocol,
+That is a different document: [PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) is the protocol,
 `pilot/rung3-runner-prompt.md` is the exact prompt, and the evaluator sheet it
 names is for the judge only. The one rule that reaches this page: **never put
 baseline figures, reference structure, or previous runs' measures into the

@@ -29,6 +29,11 @@ that can see that, and a run that skips it has verified nothing about the motion
   attachment, keying practice, curve kind, draw order — sourced from Spine's own
   public documentation: **§10**
 
+If you were given no brief and no reference frames, this section does not apply to
+you — skip to **§0**. You are rigging somebody's own art rather than reproducing a
+measured shot, so none of what follows applies: it is the ladder's protocol, not a
+property of the tool.
+
 🔒 **A ladder run reads this guide in full and does not follow its references out of
 it.** The guide is allowed reading; not everything it cites is. Citations here are
 provenance for a reader of record — the loop that hit a trap, the issue that closed it —
@@ -41,13 +46,9 @@ So: read the
 document, take its numbered sections as the input, and leave its footprints to whoever
 is maintaining it. The rule this states is that an **allowed-reading surface has to be
 closed under reading**; the criterion behind it is under *The honesty rule* in
-[LADDER.md](LADDER.md), and the enumerated allowed and forbidden lists are in
+[LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md), and the enumerated allowed and forbidden lists are in
 `bench/runs/README.md`, *What a run may read* — the prompt that starts a run quotes them
 outright, which is the copy that binds.
-
-If you were given no brief and no frames — you are rigging somebody's own art rather
-than reproducing a measured shot — none of this applies to you. It is the ladder's
-protocol, not a property of the tool.
 
 ## The vocabulary is Spine's
 
@@ -162,7 +163,7 @@ bun cli.ts preview  --candidate path/to/spine [--animation …] [--out preview.h
   for opposite fixes. A measure with nothing to compare says `0/0` and says so.
 - **`check`** renders your candidate into the reference frames' own pixel grid and
   compares pixels — the only thing here that can see a wrong animation. **§9.**
-- **`bench <rung>`** runs one rung of [the benchmark ladder](LADDER.md): validate
+- **`bench <rung>`** runs one rung of [the benchmark ladder](https://github.com/firejune/rigc/blob/main/docs/LADDER.md): validate
   under `--profile spine`, then diff against that rung's reference export, and with
   `--frames` the `check` table as well. Unlike the three above it is a **finish
   line, not a loop**: it opens the reference export, so a run that consults it and
@@ -326,7 +327,7 @@ must be non-empty. `slots` must be present (it may be empty).
 payloads in this guide are written to illustrate a field, never copied out of a
 reference export — an example lifted from one would be handing an authoring agent an
 answer to the rung it is standing on, which is the rule §10.6 states and the honesty
-rule in [LADDER.md](LADDER.md) turns on. If a snippet here matches a reference file,
+rule in [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) turns on. If a snippet here matches a reference file,
 that is a defect in this guide: report it. (It has happened — 2026-08-23; the incident
 is recorded in `bench/runs/README.md`, *What a run may read*.)
 
@@ -682,7 +683,7 @@ stepped.
   declared duration `6.5` never fired at all against an accumulated
   `6.499999999999994` — which read as a frame-change disagreement the pose series had
   already fixed, and cost that run three builds
-  ([`2026-08-26-rung5-1`](../bench/runs/2026-08-26-rung5-1/LOOP.md), §8). ⇒ **For a
+  ([`2026-08-26-rung5-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-26-rung5-1/LOOP.md), §8). ⇒ **For a
   stepped timeline, write `T − 1e-6` rather than `T`.** One grid step early cannot
   reach the previous sample — 83,333 µs away at 12 fps — and is always seen by the
   sample it was written for; one ULP late loses the frame. This is the same asymmetry
@@ -1589,13 +1590,13 @@ that drew the reference frames, onto the same pixel grid, and reports what diffe
 you specifically: it means **you may run `check` as often as you like** without
 your run ceasing to be an honest authoring run. It is a loop, in the way `build` is
 a loop. `bench` and `diff` against a rung's export are not — they read the answer,
-and [the ladder's honesty rule](LADDER.md) makes them a finish line you reach once.
+and [the ladder's honesty rule](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) makes them a finish line you reach once.
 
 📌 **That is also why the MAE figures quoted through this section stay.** Every one of
 them is a candidate's own reading against rendered frames — the exam question, not the
 answer key — so none of them narrows a reference-side measure, and a guide that censored
 them would be teaching less for no gain in honesty. The criterion is under *The honesty
-rule* in [LADDER.md](LADDER.md) (issue #158); what it *does* seal is a score written
+rule* in [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) (issue #158); what it *does* seal is a score written
 over a reference's own count, and no such figure appears here.
 
 🚨 **If you drive the runtime yourself, a bone's local transform lives on

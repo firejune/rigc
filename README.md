@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="rigc - Rig compiler for Spine" width="100%" />
+  <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/banner.svg" alt="rigc - Rig compiler for Spine" width="100%" />
 </p>
 
 <p align="center">
@@ -52,6 +52,248 @@ a mesh whose vertex count happens to equal its UV count silently loses its bone
 weights. Every one of those loads clean, plays, and is wrong. rigc's answer is to
 make the failure legible: compile from a spec, round-trip through the real parser,
 run a list of named assertions, and **write nothing unless all of them are green.**
+
+## Install
+
+📦 **rigc measures loose PNGs directly — one atlas page per image.** It is not an
+atlas packer: packing several regions onto one page is tracked as
+[issue #4](https://github.com/firejune/rigc/issues/4), not something the tool does
+today.
+
+rigc runs on [Bun](https://bun.sh). The package ships its TypeScript sources and
+Bun runs them, so there is no build step and no `dist/` that can drift from the
+repository it was cut from.
+
+**The npm package is `spine-rigc`; the command it installs is `rigc`.** npm
+refuses the name `rigc` as too similar to packages that already exist, so the
+project, this repository and the executable keep their name and only the
+registry entry is spelled out.
+
+```bash
+bunx spine-rigc --help    # run it without installing
+bun add -g spine-rigc     # or install the command
+bun add -d spine-rigc     # or pin it in a project
+```
+
+`npx spine-rigc` works too, as long as Bun is on `PATH` — the executable is a
+Bun script, and npm only writes the shim that calls it.
+
+Installed, the command is `rigc`. The examples below spell it `bun cli.ts`
+because they are written from a clone of this repository (`bun install`, then run
+the CLI in place); the two are interchangeable — `rigc build …` is
+`bun cli.ts build …`.
+
+Two commands are repository workflows rather than package ones: `bench` and
+`check` measure against Spine's official example projects and the reference
+frames rendered from them, which are fetched rather than redistributed (see
+[NOTICE.md](NOTICE.md)). They need a clone and `bun run fetch-examples`, and say
+so by name when the corpus is absent.
+
+## First rig in ten minutes
+
+A whole rig, end to end, in a scratch directory: three tiny plates, two JSON
+files, one `build`, one `validate`. No clone, no art pipeline, nothing fetched.
+
+🚫 **Every value below is invented for this section** — a doll that exists
+nowhere else in this repository. That is [AUTHORING.md](docs/AUTHORING.md) §3's
+rule applied here: no example value in these documents is copied out of a
+reference export, so nothing you read in a quickstart is an answer to anything
+[the ladder](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) measures.
+
+**1. Install the command.**
+
+```bash
+bun add -g spine-rigc     # installs `rigc`
+```
+
+Or skip the install and prefix every command below with `bunx `, e.g.
+`bunx spine-rigc build …`.
+
+**2. Make a directory and three plates.** rigc measures PNGs rather than trusting
+a number you typed (R5), so the art has to exist. These three are solid colours a
+few dozen pixels across — a hull, a mast and a lamp:
+
+```bash
+mkdir -p buoy/images && cd buoy
+bun -e '
+const parts = {
+  "images/hull.png": "iVBORw0KGgoAAAANSUhEUgAAADgAAAAMCAYAAAA3bX6lAAAAKElEQVR42mOI8bL6P5wxw6gHRz046sFRD456cNSDox4c9eCoBwcrBgDSZ+mdl2OiDgAAAABJRU5ErkJggg==",
+  "images/mast.png": "iVBORw0KGgoAAAANSUhEUgAAAAgAAAA0CAYAAAC3t3ldAAAAH0lEQVR42mO4dunIf3yYYVTBqIJRBaMKRhWMKhgcCgBGJo4s9YnopgAAAABJRU5ErkJggg==",
+  "images/lamp.png": "iVBORw0KGgoAAAANSUhEUgAAABIAAAASCAYAAABWzo5XAAAAHElEQVR42mP4v8HhPzUww6hBowaNGjRq0HAzCADvdrVmFPbc+QAAAABJRU5ErkJggg=="
+};
+for (const [p, b] of Object.entries(parts)) await Bun.write(p, Buffer.from(b, "base64"));
+'
+```
+
+**3. The rig spec — `buoy.rig.json`.** Structure only: bones, the slots array in
+draw order, and one skin mapping each slot to a plate.
+
+```json
+{
+  "spec": "rigc-rig/1",
+  "name": "buoy",
+  "images": "images",
+  "skeleton": { "width": 200, "height": 200 },
+  "bones": [
+    { "name": "root" },
+    { "name": "hull", "parent": "root", "x": 0, "y": 0 },
+    { "name": "mast", "parent": "hull", "x": 0, "y": 4 },
+    { "name": "lamp", "parent": "mast", "x": 0, "y": 52 }
+  ],
+  "slots": [
+    { "name": "mast", "bone": "mast", "attachment": "mast" },
+    { "name": "hull", "bone": "hull", "attachment": "hull" },
+    { "name": "lamp", "bone": "lamp", "attachment": "lamp" }
+  ],
+  "skins": {
+    "default": {
+      "mast": { "mast": { "image": "mast.png", "y": 26 } },
+      "hull": { "hull": { "image": "hull.png" } },
+      "lamp": { "lamp": { "image": "lamp.png" } }
+    }
+  }
+}
+```
+
+Three things in there are worth naming, because each is a rule rather than a
+style: the **slots array is the setup draw order** (R4) — index 0 is furthest
+back, so the mast is behind the hull; the attachment carries an **`image`
+instead of a `width`/`height`** (R5), which is what makes the size in the
+skeleton and the size in the atlas incapable of drifting apart; and the mast's
+`"y": 26` offsets the plate *within* its slot so the bone sits at the mast's foot
+rather than its middle.
+
+**4. The motion spec — `buoy.motion.json`.** Time only, aimed at the rig by name:
+
+```json
+{
+  "spec": "rigc-motion/1",
+  "archetype": "buoy",
+  "cut": "buoy",
+  "easings": { "swing": [0.42, 0, 0.58, 1] },
+  "animations": {
+    "bob": {
+      "duration": 2,
+      "loop": true,
+      "tracks": [
+        {
+          "bone": "hull",
+          "property": "translatey",
+          "keys": [
+            { "t": 0,   "v": [0],  "ease": "swing" },
+            { "t": 0.5, "v": [5],  "ease": "swing" },
+            { "t": 1.5, "v": [-5], "ease": "swing" },
+            { "t": 2,   "v": [0] }
+          ]
+        },
+        {
+          "bone": "mast",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [-6], "ease": "swing" },
+            { "t": 1, "v": [6],  "ease": "swing" },
+            { "t": 2, "v": [-6] }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+`archetype` must equal the rig's `name`. `duration` is declared and then checked
+against what actually compiled (R7). The **last key of each track carries no
+easing** — there is nothing after it to ease towards, and saying otherwise is a
+compile error.
+
+**5. Build, then re-gate what it wrote.**
+
+```bash
+rigc build --rig buoy.rig.json --motion buoy.motion.json --images images --out spine
+rigc validate spine
+```
+
+`build` prints every assertion by name, then the shape of what it emitted, then
+the two files:
+
+```
+  ..    pages=3 regions=3 bones=4 slots=3 animations=1 version=4.3.13 regionAttachments=3 meshAttachments=0 physicsConstraints=0 rig=buoy profile=spine-html
+rigc: wrote …/buoy/spine/skeleton.json
+rigc: wrote …/buoy/spine/skeleton.atlas
+```
+
+and `validate` re-reads those artifacts from disk and ends `rigc: green`. That is
+a rig. `spine/skeleton.json` is Spine 4.3 skeleton data — it loads in a Spine
+runtime and it imports into the Spine editor.
+
+**Try breaking it**, because the validator's messages are the interface here and
+they are worth meeting once on purpose. Rename `images/hull.png` to
+`images/raft.png`, point the spec's `image` at the new name, and build again:
+
+```
+FAIL  A08_REGION_NAMES_MATCH_ATTACHMENTS: attachment "hull" resolves to region "raft"; v0 requires them identical
+rigc: 1 assertion(s) failed — nothing written
+```
+
+Nothing was written. A red run leaves no half-built artifact on disk to mistake
+for a result, and there is no flag that changes that.
+
+**6. See what you built.**
+
+🚨 **Green is a claim about validity and about nothing else.** A rig whose head
+sits visibly off its torso passes every assertion, loads in `spine-core` and steps
+numerically clean — the offsets are the ones your spec asked for, and no
+assertion can know you did not mean them. The only remedy is looking, and both
+commands below need nothing you do not already have: no reference frames, no
+second package, no server.
+
+```bash
+rigc render  --candidate spine          # PNG frames + a contact sheet, in render/
+rigc preview --candidate spine          # one .html file that plays it: preview.html
+```
+
+**`render`** samples every animation at 12 fps and writes `render/<animation>/f0000.png…`
+with a `contact.png` beside them — every frame of the shot as one labelled grid,
+which is the picture to open first, because spacing is a comparison *across*
+frames. It draws with rigc's own rasteriser (the one `check` measures with), so
+it needs no browser and no network, and the `frames.json` it leaves beside the
+directories makes the result a frame set like any other — the world box every
+frame is a picture of. `--animation <name>` narrows it to one, `--fps` and
+`--max` change the rate and the frame size.
+
+**`preview`** writes a single self-contained `.html`: your skeleton, your atlas
+and every page's PNG bytes are embedded in it as data URIs, and it plays them in
+the **official [Spine Web Player](https://esotericsoftware.com/spine-player)**.
+Double-click it, or attach it to a message — the file carries the whole artifact.
+It is also the strongest interop statement in this repository: a rig that plays
+there has been played by Esoteric Software's own runtime rather than by ours.
+
+> ⚖️ The player itself is **referenced, not embedded** — the page loads it from
+> unpkg, so the first open needs a network, and rigc redistributes nothing
+> Esoteric Software owns (see [NOTICE.md](NOTICE.md)). Everything the player
+> draws is inside your file.
+
+**Where to go next.**
+
+- 📘 **[docs/AUTHORING.md](docs/AUTHORING.md)** is the real guide — both files
+  field by field, the emission rules, every named failure mapped to the file that
+  has to change, and §8–§9 for reproducing a shot you were given as pictures. It
+  ships inside the npm package too, at
+  `node_modules/spine-rigc/docs/AUTHORING.md`.
+- `rigc explain --rig buoy.rig.json --motion buoy.motion.json --out spine` prints
+  the compiled rig as a table — every bone with its resolved parent, the slots in
+  draw order, every timeline key by key — and writes nothing. It is what to reach
+  for when a rig compiles and still looks wrong.
+- 🚨 **A green gate does not mean the animation is right**, and no assertion
+  could. If you have reference pictures of the shot,
+  `rigc check --candidate spine --frames <dir>` is the half of the loop that can
+  see a wrong animation — AUTHORING.md §9.
+- [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) is the benchmark: the same job, from a brief
+  and rendered frames, scored. [docs/PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) is how to run an
+  agent through it and score what comes back.
+- 🤖 **Handing the authoring to an AI agent?**
+  [docs/PROMPTING.md](docs/PROMPTING.md) is the operator's page — the six prompt
+  clauses a measured pilot run paid for, and what you can leave unsaid.
 
 ## The yardstick
 
@@ -193,8 +435,8 @@ the scale for a run.
 
 There is no pass mark **in the tool**, for the same reason `diff` has none. The
 ladder's pass definition and its thresholds are a document read by a person over
-the whole table — [docs/GATE.md](docs/GATE.md) states the clauses and
-[docs/LADDER.md](docs/LADDER.md)'s *Operating rules* derives them — and not an
+the whole table — [docs/GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md) states the clauses and
+[docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md)'s *Operating rules* derives them — and not an
 exit code either command could produce.
 
 ### Benchmark ladder — the rungs, and where they stand
@@ -213,11 +455,11 @@ predecessor's specs under the run protocol's inheritance clause. It is **not**
 that an agent authors a spineboy-scale rig from the brief alone in one run: the
 ladder has not demonstrated that, and each row records which of the two it is.
 
-**[docs/LADDER.md](docs/LADDER.md) is the live ledger**: the rung order
+**[docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) is the live ledger**: the rung order
 (blockers → rung 3 first → 1 · 2 · 4 · 5 → 6 → 8 → 7 → spineboy), what each
 rung gates on, how a rung is scored, the honesty rule that keeps the reference
 export away from the authoring agent, the operating rules — what a pass is, and
-the numbered thresholds of the current gate (**gate v2.2**, stated in [docs/GATE.md](docs/GATE.md)) that decide one — and a status table. Run
+the numbered thresholds of the current gate (**gate v2.2**, stated in [docs/GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md)) that decide one — and a status table. Run
 one with:
 
 ```bash
@@ -240,7 +482,7 @@ that every example declares; and **B3**, every example ships a **packed** atlas 
 page) against rigc's one-part-per-page model, which `A06` enforced unconditionally. **B1 and B2 are
 closed**; B3's validator half is (the packed-atlas clauses live behind `--profile`, above) and its
 emitter half — no packer, no atlas importer — is not. Ordered gap list in Part 4 of that document;
-live status, and B1's proof, in [docs/LADDER.md](docs/LADDER.md).
+live status, and B1's proof, in [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).
 
 ## Looking at a rig — `rigc render` and `rigc preview`
 
@@ -436,243 +678,6 @@ the renderer policy*.
 | `A32_EVENT_KEYS_RESOLVE` | both | every event key fires an event the skeleton declares, no key sits earlier in time than the one before it, and `volume`/`balance` appear only on an event with an `audio` path. Only the first of those is loud in the parser; the other two load clean and drop the firing or the value in silence. SKIPs when no animation carries an event timeline |
 | `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | every bounding box and clipping polygon states a `vertexCount` that agrees with its vertex array, its weighted run decodes to that many vertices with bone indices in range, and a clipping `end` names a slot that exists. All three load clean: a missing count reads as zero and empties the polygon, and a missing end slot makes the clip run to the bottom of the draw order. SKIPs when the skeleton carries neither type |
 
-## Install
-
-rigc runs on [Bun](https://bun.sh). The package ships its TypeScript sources and
-Bun runs them, so there is no build step and no `dist/` that can drift from the
-repository it was cut from.
-
-**The npm package is `spine-rigc`; the command it installs is `rigc`.** npm
-refuses the name `rigc` as too similar to packages that already exist, so the
-project, this repository and the executable keep their name and only the
-registry entry is spelled out.
-
-```bash
-bunx spine-rigc --help    # run it without installing
-bun add -g spine-rigc     # or install the command
-bun add -d spine-rigc     # or pin it in a project
-```
-
-`npx spine-rigc` works too, as long as Bun is on `PATH` — the executable is a
-Bun script, and npm only writes the shim that calls it.
-
-Installed, the command is `rigc`. The examples below spell it `bun cli.ts`
-because they are written from a clone of this repository (`bun install`, then run
-the CLI in place); the two are interchangeable — `rigc build …` is
-`bun cli.ts build …`.
-
-Two commands are repository workflows rather than package ones: `bench` and
-`check` measure against Spine's official example projects and the reference
-frames rendered from them, which are fetched rather than redistributed (see
-[NOTICE.md](NOTICE.md)). They need a clone and `bun run fetch-examples`, and say
-so by name when the corpus is absent.
-
-## First rig in ten minutes
-
-A whole rig, end to end, in a scratch directory: three tiny plates, two JSON
-files, one `build`, one `validate`. No clone, no art pipeline, nothing fetched.
-
-🚫 **Every value below is invented for this section** — a doll that exists
-nowhere else in this repository. That is [AUTHORING.md](docs/AUTHORING.md) §3's
-rule applied here: no example value in these documents is copied out of a
-reference export, so nothing you read in a quickstart is an answer to anything
-[the ladder](docs/LADDER.md) measures.
-
-**1. Install the command.**
-
-```bash
-bun add -g spine-rigc     # installs `rigc`
-```
-
-Or skip the install and prefix every command below with `bunx `, e.g.
-`bunx spine-rigc build …`.
-
-**2. Make a directory and three plates.** rigc measures PNGs rather than trusting
-a number you typed (R5), so the art has to exist. These three are solid colours a
-few dozen pixels across — a hull, a mast and a lamp:
-
-```bash
-mkdir -p buoy/images && cd buoy
-bun -e '
-const parts = {
-  "images/hull.png": "iVBORw0KGgoAAAANSUhEUgAAADgAAAAMCAYAAAA3bX6lAAAAKElEQVR42mOI8bL6P5wxw6gHRz046sFRD456cNSDox4c9eCoBwcrBgDSZ+mdl2OiDgAAAABJRU5ErkJggg==",
-  "images/mast.png": "iVBORw0KGgoAAAANSUhEUgAAAAgAAAA0CAYAAAC3t3ldAAAAH0lEQVR42mO4dunIf3yYYVTBqIJRBaMKRhWMKhgcCgBGJo4s9YnopgAAAABJRU5ErkJggg==",
-  "images/lamp.png": "iVBORw0KGgoAAAANSUhEUgAAABIAAAASCAYAAABWzo5XAAAAHElEQVR42mP4v8HhPzUww6hBowaNGjRq0HAzCADvdrVmFPbc+QAAAABJRU5ErkJggg=="
-};
-for (const [p, b] of Object.entries(parts)) await Bun.write(p, Buffer.from(b, "base64"));
-'
-```
-
-**3. The rig spec — `buoy.rig.json`.** Structure only: bones, the slots array in
-draw order, and one skin mapping each slot to a plate.
-
-```json
-{
-  "spec": "rigc-rig/1",
-  "name": "buoy",
-  "images": "images",
-  "skeleton": { "width": 200, "height": 200 },
-  "bones": [
-    { "name": "root" },
-    { "name": "hull", "parent": "root", "x": 0, "y": 0 },
-    { "name": "mast", "parent": "hull", "x": 0, "y": 4 },
-    { "name": "lamp", "parent": "mast", "x": 0, "y": 52 }
-  ],
-  "slots": [
-    { "name": "mast", "bone": "mast", "attachment": "mast" },
-    { "name": "hull", "bone": "hull", "attachment": "hull" },
-    { "name": "lamp", "bone": "lamp", "attachment": "lamp" }
-  ],
-  "skins": {
-    "default": {
-      "mast": { "mast": { "image": "mast.png", "y": 26 } },
-      "hull": { "hull": { "image": "hull.png" } },
-      "lamp": { "lamp": { "image": "lamp.png" } }
-    }
-  }
-}
-```
-
-Three things in there are worth naming, because each is a rule rather than a
-style: the **slots array is the setup draw order** (R4) — index 0 is furthest
-back, so the mast is behind the hull; the attachment carries an **`image`
-instead of a `width`/`height`** (R5), which is what makes the size in the
-skeleton and the size in the atlas incapable of drifting apart; and the mast's
-`"y": 26` offsets the plate *within* its slot so the bone sits at the mast's foot
-rather than its middle.
-
-**4. The motion spec — `buoy.motion.json`.** Time only, aimed at the rig by name:
-
-```json
-{
-  "spec": "rigc-motion/1",
-  "archetype": "buoy",
-  "cut": "buoy",
-  "easings": { "swing": [0.42, 0, 0.58, 1] },
-  "animations": {
-    "bob": {
-      "duration": 2,
-      "loop": true,
-      "tracks": [
-        {
-          "bone": "hull",
-          "property": "translatey",
-          "keys": [
-            { "t": 0,   "v": [0],  "ease": "swing" },
-            { "t": 0.5, "v": [5],  "ease": "swing" },
-            { "t": 1.5, "v": [-5], "ease": "swing" },
-            { "t": 2,   "v": [0] }
-          ]
-        },
-        {
-          "bone": "mast",
-          "property": "rotate",
-          "keys": [
-            { "t": 0, "v": [-6], "ease": "swing" },
-            { "t": 1, "v": [6],  "ease": "swing" },
-            { "t": 2, "v": [-6] }
-          ]
-        }
-      ]
-    }
-  }
-}
-```
-
-`archetype` must equal the rig's `name`. `duration` is declared and then checked
-against what actually compiled (R7). The **last key of each track carries no
-easing** — there is nothing after it to ease towards, and saying otherwise is a
-compile error.
-
-**5. Build, then re-gate what it wrote.**
-
-```bash
-rigc build --rig buoy.rig.json --motion buoy.motion.json --images images --out spine
-rigc validate spine
-```
-
-`build` prints every assertion by name, then the shape of what it emitted, then
-the two files:
-
-```
-  ..    pages=3 regions=3 bones=4 slots=3 animations=1 version=4.3.13 regionAttachments=3 meshAttachments=0 physicsConstraints=0 rig=buoy profile=spine-html
-rigc: wrote …/buoy/spine/skeleton.json
-rigc: wrote …/buoy/spine/skeleton.atlas
-```
-
-and `validate` re-reads those artifacts from disk and ends `rigc: green`. That is
-a rig. `spine/skeleton.json` is Spine 4.3 skeleton data — it loads in a Spine
-runtime and it imports into the Spine editor.
-
-**Try breaking it**, because the validator's messages are the interface here and
-they are worth meeting once on purpose. Rename `images/hull.png` to
-`images/raft.png`, point the spec's `image` at the new name, and build again:
-
-```
-FAIL  A08_REGION_NAMES_MATCH_ATTACHMENTS: attachment "hull" resolves to region "raft"; v0 requires them identical
-rigc: 1 assertion(s) failed — nothing written
-```
-
-Nothing was written. A red run leaves no half-built artifact on disk to mistake
-for a result, and there is no flag that changes that.
-
-**6. See what you built.**
-
-🚨 **Green is a claim about validity and about nothing else.** A rig whose head
-sits visibly off its torso passes every assertion, loads in `spine-core` and steps
-numerically clean — the offsets are the ones your spec asked for, and no
-assertion can know you did not mean them. The only remedy is looking, and both
-commands below need nothing you do not already have: no reference frames, no
-second package, no server.
-
-```bash
-rigc render  --candidate spine          # PNG frames + a contact sheet, in render/
-rigc preview --candidate spine          # one .html file that plays it: preview.html
-```
-
-**`render`** samples every animation at 12 fps and writes `render/<animation>/f0000.png…`
-with a `contact.png` beside them — every frame of the shot as one labelled grid,
-which is the picture to open first, because spacing is a comparison *across*
-frames. It draws with rigc's own rasteriser (the one `check` measures with), so
-it needs no browser and no network, and the `frames.json` it leaves beside the
-directories makes the result a frame set like any other — the world box every
-frame is a picture of. `--animation <name>` narrows it to one, `--fps`
-and `--max` change the rate and the frame size.
-
-**`preview`** writes a single self-contained `.html`: your skeleton, your atlas
-and every page's PNG bytes are embedded in it as data URIs, and it plays them in
-the **official [Spine Web Player](https://esotericsoftware.com/spine-player)**.
-Double-click it, or attach it to a message — the file carries the whole artifact.
-It is also the strongest interop statement in this repository: a rig that plays
-there has been played by Esoteric Software's own runtime rather than by ours.
-
-> ⚖️ The player itself is **referenced, not embedded** — the page loads it from
-> unpkg, so the first open needs a network, and rigc redistributes nothing
-> Esoteric Software owns (see [NOTICE.md](NOTICE.md)). Everything the player
-> draws is inside your file.
-
-**Where to go next.**
-
-- 📘 **[docs/AUTHORING.md](docs/AUTHORING.md)** is the real guide — both files
-  field by field, the emission rules, every named failure mapped to the file that
-  has to change, and §8–§9 for reproducing a shot you were given as pictures. It
-  ships inside the npm package too, at
-  `node_modules/spine-rigc/docs/AUTHORING.md`.
-- `rigc explain --rig buoy.rig.json --motion buoy.motion.json --out spine` prints
-  the compiled rig as a table — every bone with its resolved parent, the slots in
-  draw order, every timeline key by key — and writes nothing. It is what to reach
-  for when a rig compiles and still looks wrong.
-- 🚨 **A green gate does not mean the animation is right**, and no assertion
-  could. If you have reference pictures of the shot,
-  `rigc check --candidate spine --frames <dir>` is the half of the loop that can
-  see a wrong animation — AUTHORING.md §9.
-- [docs/LADDER.md](docs/LADDER.md) is the benchmark: the same job, from a brief
-  and rendered frames, scored. [docs/PILOT.md](docs/PILOT.md) is how to run an
-  agent through it and score what comes back.
-- 🤖 **Handing the authoring to an AI agent?**
-  [docs/PROMPTING.md](docs/PROMPTING.md) is the operator's page — the six prompt
-  clauses a measured pilot run paid for, and what you can leave unsaid.
-
 ## Usage
 
 📘 **Writing a spec? Read [docs/AUTHORING.md](docs/AUTHORING.md) first.** It is the
@@ -753,7 +758,7 @@ bun run selftest     # the validator's own negative controls (next section)
 ```
 
 All three run on every push and pull request —
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml). Bun runs the sources
+[`.github/workflows/ci.yml`](https://github.com/firejune/rigc/blob/main/.github/workflows/ci.yml). Bun runs the sources
 directly, so the first two are not on the path of anything; they exist because a
 convention nothing checks is a convention. `tsconfig.json` is
 `strict: false` with `strictNullChecks: true` and says in place why the rest is
@@ -773,7 +778,7 @@ for each. Two further edits are *tolerance* controls the gate must let through,
 because a widened assertion can fail by firing too often as easily as by firing too
 rarely.
 
-**The rigs it breaks are generated.** [`fixtures/public.ts`](fixtures/public.ts)
+**The rigs it breaks are generated.** [`fixtures/public.ts`](https://github.com/firejune/rigc/blob/main/fixtures/public.ts)
 writes three synthetic cuts into a temp directory on every run, and between them
 they carry every structure the assertions have an opinion about — region
 attachments, attachment swaps, rgba fades, a ring mesh on a control bone, a ribbon
@@ -893,9 +898,9 @@ CONTRIBUTING.md how to propose a change; RELEASING.md — how a version is cut
 
 ## Contributing
 
-Issues are the ledger; see [CONTRIBUTING.md](CONTRIBUTING.md) for what a change
+Issues are the ledger; see [CONTRIBUTING.md](https://github.com/firejune/rigc/blob/main/CONTRIBUTING.md) for what a change
 has to clear before it lands. Releases are cut by release-please —
-[RELEASING.md](RELEASING.md).
+[RELEASING.md](https://github.com/firejune/rigc/blob/main/RELEASING.md).
 
 ## Licence
 
