@@ -610,7 +610,7 @@ adjudicates itself, and a verdict is written by whoever holds the records.
 
 | # | The step | Whose |
 | :---: | --- | --- |
-| **1** | Paste the `bench` summary into [docs/LADDER.md](../../docs/LADDER.md), write the verdict and the clause each figure was read against into that rung's section, and move the status cell if a person judges it cleared | **adjudicator** |
+| **1** | Paste the `bench` summary into [docs/LADDER.md](../../docs/LADDER.md), write the verdict and the clause each figure was read against into that rung's section, and move the status cell if a person judges it cleared. 🆕 **Then update *The clause margins*** in that file with any figure this candidate now brings closest to a bar — owner ruling 2026-08-29, [#207](https://github.com/firejune/rigc/issues/207), because a margin is a fact about the corpus and the corpus moves every time a candidate lands | **adjudicator** |
 | **2** | Fold anything the log says about the guide back into [docs/AUTHORING.md](../../docs/AUTHORING.md) | either — the guide is allowed reading in both directions |
 | **3** | A run attempted with the reference in context is recorded **as such**, or not recorded at all | **both halves, and they are different files**: the author writes the honesty line in `LOOP.md` §1, and the adjudicator carries whatever it says into the verdict as a caveat |
 
