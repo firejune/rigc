@@ -630,6 +630,11 @@ bun cli.ts build \
   [--manifest path/to/manifest.json] [--images path/to/images]
 ```
 
+By default, atlas page paths point back at the source art wherever it lives —
+often outside `--out` — so add `--copy-images` when `spine/` itself needs to be
+self-contained (zipped, committed, or handed off on its own): it copies every
+referenced page PNG into `--out` and rewrites the atlas to match.
+
 …or register cuts in a `cuts.json` and build them by name. Every path in the table
 resolves **relative to the `cuts.json` file itself**, so the table lives with the
 project that owns the art:

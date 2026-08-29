@@ -32,10 +32,11 @@
  * with the project that owns the art rather than with this repository.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type CheckReport } from './src/check.ts';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
 import { diffLines, diffSkeletons, sectionFigures, type DiffReport } from './src/diff.ts';
+import { copyAtlasImages } from './src/emit.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
 import { DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import type { CompileResult, MotionSpec } from './src/types.ts';
@@ -72,7 +73,7 @@ class UsageError extends Error {}
  * flag": inferring it would turn `--out --json report.json` — a real typo, a
  * missing value — into a silently accepted switch plus a stray positional.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'copy-images']);
 
 /** `--flag value` pairs plus the leftover positionals, in order. */
 function parseArgs(argv: string[]): { flags: Record<string, string>; positional: string[] } {
@@ -241,8 +242,25 @@ function cmdBuild(flags: Record<string, string>): void {
   }
 
   mkdirSync(opts.outDir, { recursive: true });
+
+  // `--copy-images`: `--out` is otherwise NOT self-contained — a page's default
+  // path is relative to the source art (often `../parts/foo.png`), which is
+  // correct for a build sitting beside the project it came from and breaks the
+  // moment the directory is zipped, committed or moved on its own (issue #217).
+  // Opt-in only: the default stays exactly what it has always been.
+  let atlasText = result.atlasText;
+  if (flags['copy-images'] !== undefined) {
+    const copied = copyAtlasImages(result.images, opts.outDir);
+    atlasText = copied.atlasText;
+    console.log(`  ..    copy-images: ${copied.pages.length} page(s) copied into ${opts.outDir}`);
+    for (const p of copied.pages) {
+      const note = p.to === basename(p.from) ? '' : `  (renamed from ${basename(p.from)} — basename collision)`;
+      console.log(`  ..      ${p.region.padEnd(24)} <- ${p.to}${note}`);
+    }
+  }
+
   writeFileSync(join(opts.outDir, 'skeleton.json'), result.skeletonText);
-  writeFileSync(join(opts.outDir, 'skeleton.atlas'), result.atlasText);
+  writeFileSync(join(opts.outDir, 'skeleton.atlas'), atlasText);
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.json')}`);
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.atlas')}`);
 }

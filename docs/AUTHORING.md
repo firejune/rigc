@@ -116,6 +116,7 @@ What the flags mean:
 | `--rig` | the rig spec — skeleton structure |
 | `--motion` | the motion spec — time |
 | `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths are written relative to it |
+| `--copy-images` | `build` only: also copies every referenced page PNG into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own. Default is unchanged — page paths still point at the source art (issue #217) |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--profile` | `spine` = the 20 validity rules · `spine-html` = all 34 (**the default**) |

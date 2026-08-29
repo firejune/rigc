@@ -319,6 +319,36 @@ export interface CompileOptions {
   imagesDir?: string;
 }
 
+/**
+ * One part = one page. No packer, so no PMA trap, no rotation, no strip
+ * offsets. Region covers the page exactly => u2=v2=1.
+ *
+ * Two text-shape traps are load-bearing here:
+ *   * a region name is the RAW line, not a trimmed one -> no indentation;
+ *   * a blank line closes the page block -> none between header and regions.
+ *
+ * Exported (rather than inlined into `compile`) so `--copy-images` can call it a
+ * second time with `page` rewritten to the copies' filenames, after the copy
+ * itself has happened — see [`src/emit.ts`](emit.ts). Everything else about an
+ * image (`region`, `width`, `height`) is unchanged by that rewrite; only where the
+ * bytes live moved.
+ */
+export function buildAtlasText(images: CompiledImage[]): string {
+  const atlasLines: string[] = [];
+  images.forEach((img, i) => {
+    if (i > 0) atlasLines.push(''); // exactly one blank line BETWEEN pages
+    atlasLines.push(img.page);
+    atlasLines.push(`size: ${img.width}, ${img.height}`);
+    atlasLines.push('filter: Linear, Linear');
+    atlasLines.push('pma: false');
+    atlasLines.push(img.region);
+    atlasLines.push(`bounds: 0, 0, ${img.width}, ${img.height}`);
+    atlasLines.push(`offsets: 0, 0, ${img.width}, ${img.height}`);
+    atlasLines.push('rotate: 0');
+  });
+  return `${atlasLines.join('\n')}\n`;
+}
+
 export function compile(opts: CompileOptions): CompileResult {
   const rigPath = resolve(opts.rigPath);
   const motionPath = resolve(opts.motionPath);
@@ -546,25 +576,7 @@ export function compile(opts: CompileOptions): CompileResult {
   }
 
   // -- 2. atlas --------------------------------------------------------------
-  // One part = one page. No packer, so no PMA trap, no rotation, no strip
-  // offsets. Region covers the page exactly => u2=v2=1.
-  //
-  // Two text-shape traps are load-bearing here:
-  //   * a region name is the RAW line, not a trimmed one -> no indentation;
-  //   * a blank line closes the page block -> none between header and regions.
-  const atlasLines: string[] = [];
-  images.forEach((img, i) => {
-    if (i > 0) atlasLines.push(''); // exactly one blank line BETWEEN pages
-    atlasLines.push(img.page);
-    atlasLines.push(`size: ${img.width}, ${img.height}`);
-    atlasLines.push('filter: Linear, Linear');
-    atlasLines.push('pma: false');
-    atlasLines.push(img.region);
-    atlasLines.push(`bounds: 0, 0, ${img.width}, ${img.height}`);
-    atlasLines.push(`offsets: 0, 0, ${img.width}, ${img.height}`);
-    atlasLines.push('rotate: 0');
-  });
-  const atlasText = `${atlasLines.join('\n')}\n`;
+  const atlasText = buildAtlasText(images);
 
   // -- 3. bones --------------------------------------------------------------
   //
