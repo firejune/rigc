@@ -22,6 +22,9 @@ toolchain and this page does not invent one.
 - What the Spine editor does when nobody tells it otherwise: **AUTHORING §10**
 - Reading a pose out of a picture — the instrument this recipe consumes:
   **AUTHORING §11**
+- If what you were handed is a **compiled skeleton** rather than loose parts — reading
+  it, transcribing it into specs, re-pivoting it, extending it with an animation:
+  [INGEST.md](INGEST.md)
 - If you are the *person operating* an agent rather than the agent:
   [PROMPTING.md](PROMPTING.md)
 
@@ -421,6 +424,12 @@ The two end poses need no pivot: they are stated as placements. **The in-between
 one**, because interpolating a `rotate` track means turning about the bone's position,
 so the pivot decides the entire path between the ends. It is an in-betweening input,
 and this is where it is decided.
+
+📏 **That claim is measured on the other side.** [INGEST.md](INGEST.md) §4.1 moves one
+pivot inside an existing rig and reports what `check` sees: the setup pose unchanged to
+2.8e-14 units, and the difference climbing monotonically from the first frame the bone
+rotates. Read it if you want the numbers behind *"a pivot is invisible in either end
+pose."*
 
 **Two placements of the same part fix its rotation's fixed point, when the rotation is
 large.** With the part's centre at `cA`, `cB` and its screen rotation at `θA`, `θB`, the

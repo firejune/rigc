@@ -22,6 +22,12 @@ that can see that, and a run that skips it has verified nothing about the motion
   authoring input, and deliberately unlinked**: it inventories the benchmark corpus
   skeleton by skeleton, so it is on the ladder run's forbidden list. Named here for a
   maintainer, not offered to a run
+- Working with a skeleton **somebody else authored** — what the CLI will and will not
+  do with a foreign `skeleton.json`, transcribing one into specs, re-pivoting and
+  renaming it: `docs/INGEST.md`. 🚫 **Not an authoring input, and deliberately
+  unlinked** for the same reason as the line above: it cites `SPEC_COVERAGE.md` and
+  the stored transcriptions, both of which are on the ladder run's forbidden list. Its
+  reader was handed a compiled skeleton rather than art and a brief
 - Reproducing a shot you were given as pictures: **§8**, and read it *before* you
   start measuring rather than after; **§8.1** if the figure has more joints than you
   can measure one at a time; then **§9** for the loop that closes it
