@@ -1127,8 +1127,10 @@ remaining work is taken in.
    > the failing drift was placement rather than mechanism. ⇒ **What remains of this rule is
    > item 3, the graduation exam.** Verdicts in *Rung 7, attempt 2*.
 3. **spineboy `ess` is the graduation exam**, taken last, on the matured guide.
-   `pro` stays gated on [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)
-   and is **not** a graduation requirement ([#16](https://github.com/firejune/rigc/issues/16)):
+   `pro`'s tool gate is gone — [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)
+   shipped 2026-08-29 (PR #233, in v0.7.0) and the transcription reads 1.000 on every measure
+   (#239) — but authoring `pro` stays **not** a graduation requirement
+   ([#16](https://github.com/firejune/rigc/issues/16)):
    it promotes when a user's rig needs those timelines, not to finish a ladder.
    > ➡️ **Taken on 2026-08-28, on the matured guide and brief revision 4, and not passed.**
    > `2026-08-28-spineboy-1` meets **G1, G3, G4, G5 and G7** and fails **G2 alone**, at 7.86
@@ -5072,14 +5074,16 @@ honesty rule's sixth reading above.
    scope a freeze actually had. One sentence in *After a run* would.
 
 ⇒ 🎓 **The ladder is complete.** Rungs 1–8 cleared, and spineboy `ess` cleared as the
-graduation exam under gate v2.1 and re-inspected under **v2.2**. `pro` remains unattempted and is not a graduation
-requirement ([#16](https://github.com/firejune/rigc/issues/16),
-[#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)).
+graduation exam under gate v2.1 and re-inspected under **v2.2**. `pro` remains unauthored and is not a graduation
+requirement ([#16](https://github.com/firejune/rigc/issues/16)); its former tool gate
+([#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89))
+closed 2026-08-29 with PR #233, and its transcription reads 1.000 on every measure (#239).
 By rule 4 item 4 the project's question now changes: *does it match the editor?* — the only
-question a reference-bound ladder can ask — gives way to *is it usable without a reference?*,
-whose backlog is [#151](https://github.com/firejune/rigc/issues/151) and
-[#152](https://github.com/firejune/rigc/issues/152). The rungs stay as regression gates for
-tool and method changes.
+question a reference-bound ladder can ask — gives way to *is it usable without a reference?*.
+Of that backlog, [#151](https://github.com/firejune/rigc/issues/151) shipped 2026-08-29
+(`rigc vote`, PR #232, in v0.7.0) and
+[#152](https://github.com/firejune/rigc/issues/152) awaits demand. The rungs stay as
+regression gates for tool and method changes.
 
 ---
 
