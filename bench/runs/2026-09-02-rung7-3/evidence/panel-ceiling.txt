@@ -1,0 +1,130 @@
+=== cape-follow-example ===
+  f0000.png  crimson  1846  outer  1846  hidden     0  tightest quad 98x154 at 6deg = 15082 px  ⇒ ceiling 12%
+  f0001.png  crimson  1835  outer  1835  hidden     0  tightest quad 99x149 at 1deg = 14746 px  ⇒ ceiling 12%
+  f0002.png  crimson  1837  outer  1837  hidden     0  tightest quad 97x153 at 5deg = 14865 px  ⇒ ceiling 12%
+  f0003.png  crimson  1835  outer  1835  hidden     0  tightest quad 139x102 at 83deg = 14173 px  ⇒ ceiling 13%
+  f0004.png  crimson  1276  outer  1276  hidden     0  tightest quad 100x143 at 0deg = 14300 px  ⇒ ceiling 9%
+  f0005.png  crimson  1256  outer  1256  hidden     0  tightest quad 113x125 at 78deg = 14076 px  ⇒ ceiling 9%
+  f0006.png  crimson  1431  outer  1430  hidden     1  tightest quad 117x130 at 77deg = 15128 px  ⇒ ceiling 9%
+  f0007.png  crimson  1551  outer  1551  hidden     0  tightest quad 143x120 at 78deg = 17105 px  ⇒ ceiling 9%
+  f0008.png  crimson  1414  outer  1414  hidden     0  tightest quad 136x121 at 78deg = 16465 px  ⇒ ceiling 9%
+  f0009.png  crimson  1183  outer  1183  hidden     0  tightest quad 144x120 at 77deg = 17328 px  ⇒ ceiling 7%
+  f0010.png  crimson  1007  outer  1007  hidden     0  tightest quad 149x118 at 74deg = 17531 px  ⇒ ceiling 6%
+  f0011.png  crimson   920  outer   920  hidden     0  tightest quad 145x118 at 77deg = 17123 px  ⇒ ceiling 5%
+  f0012.png  crimson   876  outer   876  hidden     0  tightest quad 136x118 at 75deg = 15995 px  ⇒ ceiling 5%
+  f0013.png  crimson   782  outer   782  hidden     0  tightest quad 110x139 at 8deg = 15217 px  ⇒ ceiling 5%
+  f0014.png  crimson  1816  outer  1816  hidden     0  tightest quad 91x202 at 10deg = 18316 px  ⇒ ceiling 10%
+  f0015.png  crimson  1691  outer  1690  hidden     1  tightest quad 95x147 at 17deg = 13917 px  ⇒ ceiling 12%
+  f0016.png  crimson  1573  outer  1573  hidden     0  tightest quad 103x137 at 19deg = 14177 px  ⇒ ceiling 11%
+  f0017.png  crimson  1721  outer  1721  hidden     0  tightest quad 124x132 at 89deg = 16415 px  ⇒ ceiling 10%
+  f0018.png  crimson  2410  outer  2410  hidden     0  tightest quad 124x148 at 72deg = 18427 px  ⇒ ceiling 13%
+  f0019.png  crimson  2237  outer  2237  hidden     0  tightest quad 140x152 at 35deg = 21196 px  ⇒ ceiling 11%
+  f0020.png  crimson  3022  outer  3022  hidden     0  tightest quad 206x124 at 55deg = 25573 px  ⇒ ceiling 12%
+  f0021.png  crimson  2772  outer  2772  hidden     0  tightest quad 108x154 at 87deg = 16714 px  ⇒ ceiling 17%
+  f0022.png  crimson  2048  outer  2047  hidden     1  tightest quad 117x142 at 80deg = 16705 px  ⇒ ceiling 12%
+  f0023.png  crimson  1349  outer  1349  hidden     0  tightest quad 90x159 at 13deg = 14286 px  ⇒ ceiling 9%
+  f0024.png  crimson  1787  outer  1787  hidden     0  tightest quad 107x152 at 12deg = 16205 px  ⇒ ceiling 11%
+  f0025.png  crimson  2044  outer  2044  hidden     0  tightest quad 120x145 at 10deg = 17452 px  ⇒ ceiling 12%
+  f0026.png  crimson  1980  outer  1980  hidden     0  tightest quad 134x144 at 6deg = 19224 px  ⇒ ceiling 10%
+  f0027.png  crimson  2003  outer  2002  hidden     1  tightest quad 129x145 at 9deg = 18750 px  ⇒ ceiling 11%
+  f0028.png  crimson  1794  outer  1794  hidden     0  tightest quad 136x140 at 89deg = 18982 px  ⇒ ceiling 9%
+  f0029.png  crimson  1643  outer  1643  hidden     0  tightest quad 138x138 at 0deg = 19044 px  ⇒ ceiling 9%
+  f0030.png  crimson  1533  outer  1533  hidden     0  tightest quad 136x135 at 88deg = 18365 px  ⇒ ceiling 8%
+  f0031.png  crimson  1443  outer  1443  hidden     0  tightest quad 127x136 at 1deg = 17383 px  ⇒ ceiling 8%
+  f0032.png  crimson  1365  outer  1365  hidden     0  tightest quad 120x140 at 2deg = 16869 px  ⇒ ceiling 8%
+  f0033.png  crimson  1264  outer  1264  hidden     0  tightest quad 114x139 at 3deg = 15786 px  ⇒ ceiling 8%
+  f0034.png  crimson  1186  outer  1186  hidden     0  tightest quad 110x138 at 0deg = 15180 px  ⇒ ceiling 8%
+  f0035.png  crimson  1110  outer  1110  hidden     0  tightest quad 106x139 at 1deg = 14711 px  ⇒ ceiling 8%
+  f0036.png  crimson  1055  outer  1055  hidden     0  tightest quad 103x140 at 2deg = 14461 px  ⇒ ceiling 7%
+=== cape-follow-example@24fps ===
+  f0000.png  crimson  1846  outer  1846  hidden     0  tightest quad 98x154 at 6deg = 15082 px  ⇒ ceiling 12%
+  f0072.png  crimson  1027  outer  1027  hidden     0  tightest quad 102x140 at 2deg = 14271 px  ⇒ ceiling 7%
+=== cape-follow-example@30fps ===
+  f0000.png  crimson  1846  outer  1846  hidden     0  tightest quad 98x154 at 6deg = 15082 px  ⇒ ceiling 12%
+  f0090.png  crimson  1024  outer  1024  hidden     0  tightest quad 101x140 at 2deg = 14252 px  ⇒ ceiling 7%
+=== fall-in ===
+  f0000.png  crimson  2907  outer  2907  hidden     0  tightest quad 157x173 at 75deg = 27126 px  ⇒ ceiling 11%
+  f0001.png  crimson  2656  outer  2656  hidden     0  tightest quad 159x162 at 72deg = 25789 px  ⇒ ceiling 10%
+  f0002.png  crimson  2270  outer  2270  hidden     0  tightest quad 165x145 at 72deg = 23943 px  ⇒ ceiling 9%
+  f0003.png  crimson  1983  outer  1983  hidden     0  tightest quad 168x131 at 72deg = 21948 px  ⇒ ceiling 9%
+  f0004.png  crimson  2643  outer  2643  hidden     0  tightest quad 152x137 at 32deg = 20790 px  ⇒ ceiling 13%
+  f0005.png  crimson  2359  outer  2358  hidden     1  tightest quad 106x129 at 6deg = 13698 px  ⇒ ceiling 17%
+  f0006.png  crimson  2139  outer  2138  hidden     1  tightest quad 126x98 at 85deg = 12292 px  ⇒ ceiling 17%
+  f0007.png  crimson  1872  outer  1872  hidden     0  tightest quad 147x99 at 87deg = 14651 px  ⇒ ceiling 13%
+  f0008.png  crimson  1877  outer  1877  hidden     0  tightest quad 138x107 at 84deg = 14668 px  ⇒ ceiling 13%
+  f0009.png  crimson  1819  outer  1819  hidden     0  tightest quad 100x145 at 4deg = 14544 px  ⇒ ceiling 13%
+  f0010.png  crimson  1811  outer  1811  hidden     0  tightest quad 98x150 at 9deg = 14644 px  ⇒ ceiling 12%
+  f0011.png  crimson  1834  outer  1834  hidden     0  tightest quad 96x155 at 11deg = 14831 px  ⇒ ceiling 12%
+  f0012.png  crimson  1842  outer  1842  hidden     0  tightest quad 97x157 at 9deg = 15287 px  ⇒ ceiling 12%
+  f0013.png  crimson  1839  outer  1839  hidden     0  tightest quad 98x156 at 0deg = 15288 px  ⇒ ceiling 12%
+  f0014.png  crimson  1825  outer  1825  hidden     0  tightest quad 97x155 at 6deg = 15021 px  ⇒ ceiling 12%
+  f0015.png  crimson  1843  outer  1843  hidden     0  tightest quad 97x155 at 5deg = 15052 px  ⇒ ceiling 12%
+  f0016.png  crimson  1842  outer  1842  hidden     0  tightest quad 98x155 at 6deg = 15148 px  ⇒ ceiling 12%
+  f0017.png  crimson  1848  outer  1848  hidden     0  tightest quad 98x155 at 5deg = 15196 px  ⇒ ceiling 12%
+  f0018.png  crimson  1845  outer  1845  hidden     0  tightest quad 144x101 at 83deg = 14492 px  ⇒ ceiling 13%
+  f0019.png  crimson  1843  outer  1843  hidden     0  tightest quad 147x100 at 88deg = 14606 px  ⇒ ceiling 13%
+  f0020.png  crimson  1843  outer  1843  hidden     0  tightest quad 147x100 at 88deg = 14606 px  ⇒ ceiling 13%
+=== fall-in@24fps ===
+  f0000.png  crimson  2907  outer  2907  hidden     0  tightest quad 157x173 at 75deg = 27126 px  ⇒ ceiling 11%
+  f0040.png  crimson  1844  outer  1844  hidden     0  tightest quad 98x155 at 5deg = 15179 px  ⇒ ceiling 12%
+=== fall-in@30fps ===
+  f0000.png  crimson  2907  outer  2907  hidden     0  tightest quad 157x173 at 75deg = 27126 px  ⇒ ceiling 11%
+  f0050.png  crimson  1842  outer  1842  hidden     0  tightest quad 98x155 at 5deg = 15179 px  ⇒ ceiling 12%
+=== hello ===
+  f0000.png  crimson  1846  outer  1846  hidden     0  tightest quad 98x155 at 6deg = 15169 px  ⇒ ceiling 12%
+  f0001.png  crimson  1711  outer  1711  hidden     0  tightest quad 138x104 at 81deg = 14431 px  ⇒ ceiling 12%
+  f0002.png  crimson  1788  outer  1788  hidden     0  tightest quad 141x104 at 86deg = 14654 px  ⇒ ceiling 12%
+  f0003.png  crimson  1788  outer  1787  hidden     1  tightest quad 103x146 at 1deg = 15059 px  ⇒ ceiling 12%
+  f0004.png  crimson  1534  outer  1533  hidden     1  tightest quad 144x100 at 85deg = 14489 px  ⇒ ceiling 11%
+  f0005.png  crimson  1490  outer  1490  hidden     0  tightest quad 148x99 at 85deg = 14637 px  ⇒ ceiling 10%
+  f0006.png  crimson  1495  outer  1495  hidden     0  tightest quad 150x98 at 84deg = 14607 px  ⇒ ceiling 10%
+  f0007.png  crimson  1452  outer  1452  hidden     0  tightest quad 155x97 at 85deg = 15015 px  ⇒ ceiling 10%
+  f0008.png  crimson  1419  outer  1419  hidden     0  tightest quad 89x165 at 7deg = 14773 px  ⇒ ceiling 10%
+  f0009.png  crimson  1423  outer  1423  hidden     0  tightest quad 88x168 at 8deg = 14789 px  ⇒ ceiling 10%
+  f0010.png  crimson  1388  outer  1388  hidden     0  tightest quad 87x168 at 8deg = 14611 px  ⇒ ceiling 9%
+  f0011.png  crimson  1354  outer  1354  hidden     0  tightest quad 86x168 at 7deg = 14464 px  ⇒ ceiling 9%
+  f0012.png  crimson  1349  outer  1349  hidden     0  tightest quad 86x168 at 8deg = 14503 px  ⇒ ceiling 9%
+  f0013.png  crimson  1338  outer  1338  hidden     0  tightest quad 87x167 at 8deg = 14582 px  ⇒ ceiling 9%
+  f0014.png  crimson  1649  outer  1648  hidden     1  tightest quad 91x158 at 2deg = 14395 px  ⇒ ceiling 11%
+  f0015.png  crimson  2029  outer  2029  hidden     0  tightest quad 132x112 at 76deg = 14759 px  ⇒ ceiling 14%
+  f0016.png  crimson  2069  outer  2069  hidden     0  tightest quad 131x112 at 79deg = 14715 px  ⇒ ceiling 14%
+  f0017.png  crimson  2053  outer  2052  hidden     1  tightest quad 126x110 at 67deg = 13842 px  ⇒ ceiling 15%
+  f0018.png  crimson  1269  outer  1218  hidden    51  tightest quad 131x109 at 77deg = 14375 px  ⇒ ceiling 8%
+  f0019.png  crimson   951  outer   951  hidden     0  tightest quad 84x157 at 15deg = 13217 px  ⇒ ceiling 7%
+  f0020.png  crimson  2306  outer  2304  hidden     2  tightest quad 111x140 at 8deg = 15552 px  ⇒ ceiling 15%
+  f0021.png  crimson  2452  outer  2451  hidden     1  tightest quad 159x123 at 12deg = 19551 px  ⇒ ceiling 13%
+  f0022.png  crimson  2049  outer  2049  hidden     0  tightest quad 183x126 at 25deg = 23038 px  ⇒ ceiling 9%
+  f0023.png  crimson  2151  outer  2151  hidden     0  tightest quad 134x157 at 71deg = 21051 px  ⇒ ceiling 10%
+  f0024.png  crimson  2425  outer  2425  hidden     0  tightest quad 130x160 at 45deg = 20764 px  ⇒ ceiling 12%
+  f0025.png  crimson  2736  outer  2736  hidden     0  tightest quad 142x144 at 8deg = 20358 px  ⇒ ceiling 13%
+  f0026.png  crimson  2571  outer  2570  hidden     1  tightest quad 147x158 at 44deg = 23144 px  ⇒ ceiling 11%
+  f0027.png  crimson  2128  outer  2128  hidden     0  tightest quad 185x127 at 43deg = 23560 px  ⇒ ceiling 9%
+  f0028.png  crimson  2995  outer  2993  hidden     2  tightest quad 194x129 at 59deg = 24975 px  ⇒ ceiling 12%
+  f0029.png  crimson  2615  outer  2615  hidden     0  tightest quad 107x164 at 88deg = 17573 px  ⇒ ceiling 15%
+  f0030.png  crimson  2444  outer  2433  hidden    11  tightest quad 155x147 at 30deg = 22708 px  ⇒ ceiling 11%
+  f0031.png  crimson  2567  outer  2567  hidden     0  tightest quad 123x139 at 20deg = 17084 px  ⇒ ceiling 15%
+  f0032.png  crimson  2852  outer  2852  hidden     0  tightest quad 127x155 at 42deg = 19696 px  ⇒ ceiling 14%
+  f0033.png  crimson  2419  outer  2419  hidden     0  tightest quad 137x149 at 52deg = 20541 px  ⇒ ceiling 12%
+  f0034.png  crimson  3193  outer  3189  hidden     4  tightest quad 180x108 at 57deg = 19419 px  ⇒ ceiling 16%
+=== hello@24fps ===
+  f0000.png  crimson  1846  outer  1846  hidden     0  tightest quad 98x155 at 6deg = 15169 px  ⇒ ceiling 12%
+  f0069.png  crimson  3531  outer  3521  hidden    10  tightest quad 196x97 at 66deg = 18916 px  ⇒ ceiling 19%
+=== hello@30fps ===
+  f0000.png  crimson  1846  outer  1846  hidden     0  tightest quad 98x155 at 6deg = 15169 px  ⇒ ceiling 12%
+  f0086.png  crimson  3496  outer  3487  hidden     9  tightest quad 195x98 at 65deg = 19074 px  ⇒ ceiling 18%
+=== walk ===
+  f0000.png  crimson   806  outer   805  hidden     1  tightest quad 99x148 at 12deg = 14562 px  ⇒ ceiling 6%
+  f0001.png  crimson   788  outer   788  hidden     0  tightest quad 133x126 at 84deg = 16826 px  ⇒ ceiling 5%
+  f0002.png  crimson   917  outer   917  hidden     0  tightest quad 114x133 at 4deg = 15138 px  ⇒ ceiling 6%
+  f0003.png  crimson  1189  outer  1188  hidden     1  tightest quad 85x145 at 6deg = 12295 px  ⇒ ceiling 10%
+  f0004.png  crimson  1562  outer  1562  hidden     0  tightest quad 82x146 at 3deg = 11913 px  ⇒ ceiling 13%
+  f0005.png  crimson  1781  outer  1781  hidden     0  tightest quad 139x84 at 87deg = 11690 px  ⇒ ceiling 15%
+  f0006.png  crimson  1604  outer  1604  hidden     0  tightest quad 80x150 at 6deg = 12064 px  ⇒ ceiling 13%
+  f0007.png  crimson  1285  outer  1285  hidden     0  tightest quad 83x150 at 8deg = 12481 px  ⇒ ceiling 10%
+  f0008.png  crimson  1106  outer  1106  hidden     0  tightest quad 100x148 at 10deg = 14841 px  ⇒ ceiling 7%
+=== walk@24fps ===
+  f0000.png  crimson   806  outer   805  hidden     1  tightest quad 99x148 at 12deg = 14562 px  ⇒ ceiling 6%
+  f0016.png  crimson  1226  outer  1225  hidden     1  tightest quad 99x150 at 11deg = 14936 px  ⇒ ceiling 8%
+=== walk@30fps ===
+  f0000.png  crimson   806  outer   805  hidden     1  tightest quad 99x148 at 12deg = 14562 px  ⇒ ceiling 6%
+  f0020.png  crimson  1200  outer  1200  hidden     0  tightest quad 100x149 at 10deg = 14893 px  ⇒ ceiling 8%
