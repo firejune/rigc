@@ -83,7 +83,15 @@ import {
   measureContourFit,
   traceAlphaOutline,
 } from './src/mesh.ts';
-import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
+import {
+  boneDistance,
+  BONE_QUANTITIES,
+  BONEDIST_SPEC,
+  IDENTITY_CORRESPONDENCE,
+  type BoneDistReport,
+  type BoneQuantity,
+} from './src/bonedist.ts';
+import { diffSkeletons, movedAgnosticMeasures, movedMeasures, movedReportedMeasures } from './src/diff.ts';
 import { copyAtlasImages } from './src/emit.ts';
 import { isContent } from './src/framing.ts';
 import {
@@ -1118,6 +1126,27 @@ const CONTAINED_MUTANTS: Mutant[] = [
 
 const DIFF_FIXTURE = resolve(import.meta.dir, 'examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json');
 
+/**
+ * The second fixture, and why one was not enough (issue #46).
+ *
+ * `3-timing-and-spacing-ess` has **no mesh attachment at all** — three bones,
+ * two slots, two regions — so every `attachments.mesh_*` measure is vacuous
+ * against it (`0/0`, ratio 1.000) and not one of D01–D07 has ever moved one. A
+ * `mesh_edges` case written against that fixture would mutate nothing, move
+ * nothing, and fail with an empty diff, which reads like a broken measure
+ * rather than a wrong fixture.
+ *
+ * `6-arcs-pro` carries two weighted meshes, both with `edges` (`ball` 8 entries,
+ * `tail` 116), four transform constraints and a deform timeline. So it
+ * un-vacuums `mesh_vertices`, `mesh_triangles`, `mesh_weighted`, `mesh_hull`
+ * and `mesh_edges` at once, and the identity control over it is worth more than
+ * the one measure it was added for.
+ */
+const DIFF_MESH_FIXTURE = resolve(import.meta.dir, 'examples/6-arcs/export/6-arcs-pro.json');
+
+/** Which fixture a case mutates. `mesh` is `DIFF_MESH_FIXTURE`; the default is `DIFF_FIXTURE`. */
+type DiffFixture = 'default' | 'mesh';
+
 interface DiffCase {
   name: string;
   why: string;
@@ -1130,6 +1159,14 @@ interface DiffCase {
    * asserts on is a figure that can quietly stop moving.
    */
   expectAgnostic: string[];
+  /**
+   * The same again, for the `(reported)` measures. Pinned on every case for the
+   * same reason and one more of its own: nothing gates on these, so a reported
+   * figure that stopped moving would break no clause and fail no other control.
+   */
+  expectReported: string[];
+  /** Which skeleton to mutate — `DIFF_FIXTURE` unless a case says otherwise. */
+  fixture?: DiffFixture;
   mutate: (skeleton: Record<string, unknown>) => void;
 }
 
@@ -1180,6 +1217,7 @@ const DIFF_CASES: DiffCase[] = [
       'slots.agnostic.bone_binding_shape',
       'slots.agnostic.order_shape',
     ],
+    expectReported: [],
     mutate: (j) => {
       (j as any).bones = (j as any).bones.filter((b: any) => b.name !== 'square');
     },
@@ -1189,6 +1227,7 @@ const DIFF_CASES: DiffCase[] = [
     why: 'the slots array IS the draw order, so this is a real defect — and it must move ONLY the order measure, or "wrong z-order" and "wrong rig" would read the same. Nothing agnostic moves: these two slots draw the same kind of attachment off the same shape of bone, so without their names they are the same slot and a swap is not observable. That is the measure the name-matched half exists to carry',
     expect: ['slots.order'],
     expectAgnostic: [],
+    expectReported: [],
     mutate: (j) => {
       const slots = (j as any).slots;
       (j as any).slots = [slots[1], slots[0], ...slots.slice(2)];
@@ -1196,7 +1235,13 @@ const DIFF_CASES: DiffCase[] = [
   },
   {
     name: 'D03_remove_an_animation',
-    why: 'every animation measure that can see a missing animation moves; event_keys does not, because neither side has events and a vacuous measure must not manufacture a gap. The skeleton is untouched, so no bone or slot figure moves in either report',
+    why:
+      'every animation measure that can see a missing animation moves; event_keys does not, because neither side has ' +
+      'events and a vacuous measure must not manufacture a gap. The skeleton is untouched, so no bone or slot figure ' +
+      'moves in either report. Both reported RATES move too, and that is correct rather than a smear: `light` is ' +
+      "keyed harder than `heavy` per second, so deleting it changes the whole shot's keys-per-second and its " +
+      'keys-per-timeline. This is the case that keeps the rates honest about being AGGREGATES over the shots that ' +
+      'exist — a per-animation figure would be unmoved here and would say the keying was unchanged',
     expect: [
       'animations.count',
       'animations.names',
@@ -1208,6 +1253,7 @@ const DIFF_CASES: DiffCase[] = [
       'animations.deform',
     ],
     expectAgnostic: [],
+    expectReported: ['animations.key_density', 'animations.keys_per_timeline'],
     mutate: (j) => {
       delete (j as any).animations.light;
     },
@@ -1217,6 +1263,7 @@ const DIFF_CASES: DiffCase[] = [
     why: 'one bezier becomes stepped: same timelines, same key count, same duration. Only the curve histogram may notice, and that is the measure that carries timing quality',
     expect: ['animations.curve_kinds'],
     expectAgnostic: [],
+    expectReported: [],
     mutate: (j) => {
       const keys = (j as any).animations.heavy.bones.bone.rotate;
       const at = keys.findIndex((k: any) => Array.isArray(k.curve));
@@ -1242,6 +1289,7 @@ const DIFF_CASES: DiffCase[] = [
       'attachments.names',
     ],
     expectAgnostic: [],
+    expectReported: [],
     mutate: (j) => renameEverything(j),
   },
   {
@@ -1256,6 +1304,7 @@ const DIFF_CASES: DiffCase[] = [
       'slots.agnostic.bone_binding_shape',
       'slots.agnostic.order_shape',
     ],
+    expectReported: [],
     mutate: (j) => {
       const bone = (j as any).bones.find((b: any) => b.name === 'bone');
       if (!bone || bone.parent !== 'root') throw new Error('fixture bone `bone` is not a child of `root`');
@@ -1267,29 +1316,76 @@ const DIFF_CASES: DiffCase[] = [
     why: 'what replaced `region_size_present` (issue #28). The old measure asked whether a size was STATED, was keyed by name, and so reported the naming gap a third time — D05 above would have moved it. This one asks how big the region is, name-agnostically, so D05 leaves it alone and an actual size difference moves it and nothing else',
     expect: ['attachments.region_size'],
     expectAgnostic: [],
+    expectReported: [],
     mutate: (j) => {
       const att = (j as any).skins[0].attachments.square.square;
       if (typeof att.width !== 'number') throw new Error('fixture region `square` states no width');
       att.width += 41;
     },
   },
+  {
+    name: 'D08_drop_the_edges_key',
+    fixture: 'mesh',
+    why:
+      "issue #46: `docs/LADDER.md` gates rung 6 on three features and `attachments` measured none of the third, so a " +
+      'candidate that dropped its mesh `edges` scored a clean 1.000 for the meshes it kept. This is the case that ' +
+      'makes the new measure fire — and it must move NOTHING else: dropping the edge list changes no vertex, no ' +
+      'triangle and no weight, so "dropped nonessential editor data" and "wrong mesh" have to read differently. ' +
+      'Nothing NAME-MATCHED moves at all, which is what puts the finding entirely in the reported block',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: ['attachments.mesh_edges'],
+    mutate: (j) => {
+      const atts = (j as any).skins[0].attachments;
+      let dropped = 0;
+      for (const slot of Object.values(atts) as any[]) {
+        for (const att of Object.values(slot) as any[]) {
+          if (att.type !== 'mesh' || !('edges' in att)) continue;
+          delete att.edges;
+          dropped++;
+        }
+      }
+      if (dropped === 0) throw new Error('mesh fixture declares no `edges` on any mesh — the case would prove nothing');
+    },
+  },
+  {
+    name: 'D09_over_key_one_timeline',
+    why:
+      'issue #20, and the case is the failure mode rung 4 actually hit: a candidate carrying more keys than the ' +
+      'reference along the same curve. `key_counts` is a histogram intersection over max(candidate, reference), so ' +
+      'it moves — and it cannot say WHICH side is bigger, which is why the reported rates exist. Both of them move ' +
+      'here (more keys over the same seconds, and more keys in the same eight timelines) while `timeline_kinds` and ' +
+      '`duration` do not: the shot is the same length and has the same timelines in it. `curve_kinds` moves because ' +
+      'the inserted keys are linear where the reference holds that span with one bezier, which is a true finding ' +
+      'rather than a smear',
+    expect: ['animations.key_counts', 'animations.curve_kinds'],
+    expectAgnostic: [],
+    expectReported: ['animations.key_density', 'animations.keys_per_timeline'],
+    mutate: (j) => {
+      const keys = (j as any).animations.heavy.bones.bone.rotate;
+      if (!Array.isArray(keys) || keys.length < 3) throw new Error('fixture has no `heavy.bones.bone.rotate` to over-key');
+      // Between the first two keys, so neither the first key's implicit t=0 nor
+      // the last key's time — the shot's declared length — moves.
+      const t0 = keys[0].time ?? 0;
+      const t1 = keys[1].time;
+      const inserted = [1, 2, 3].map((i) => ({ time: t0 + ((t1 - t0) * i) / 4, value: keys[0].value ?? 0 }));
+      (j as any).animations.heavy.bones.bone.rotate = [keys[0], ...inserted, ...keys.slice(1)];
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-/** Returns the number of failures, or `null` when the fixture is not on disk. */
-function runDiffSuite(): number | null {
-  if (!existsSync(DIFF_FIXTURE)) {
-    console.log('\n── rigc diff ──');
-    console.log('  SKIP  the diff self-checks did not run: no example corpus on disk.');
-    console.log(`          expected ${DIFF_FIXTURE}`);
-    console.log('          run `bun run fetch-examples` and re-run this suite.');
-    console.log('          ⚠️ This is a HOLE in this run, not a pass — `rigc diff` was not exercised at all.');
-    return null;
-  }
-  console.log('\n── rigc diff (fixture: 3-timing-and-spacing-ess) ──');
-  const text = readFileSync(DIFF_FIXTURE, 'utf8');
-  const reference: Record<string, unknown> = JSON.parse(text);
+/** Three identity controls, over each of the two fixtures. */
+const DIFF_IDENTITY_CONTROLS = 6;
+/** How many name-agnostic measures the two split sections carry between them. */
+const DIFF_AGNOSTIC_MEASURES = 9;
+/** How many `(reported)` measures the report carries in total. */
+const DIFF_REPORTED_MEASURES = 3;
+
+/** The three identity controls, over one fixture. Returns the failure count. */
+function runDiffIdentityControls(label: string, text: string): number {
   let bad = 0;
+  const reference: Record<string, unknown> = JSON.parse(text);
 
   // Positive control. `diff X X` has to be 1.000 on every measure, or every
   // number below it is being read against a baseline that is not zero.
@@ -1297,10 +1393,10 @@ function runDiffSuite(): number | null {
   const drift = movedMeasures(identity);
   if (drift.length === 0) {
     const measures = identity.sections.reduce((n, sec) => n + sec.measures.length, 0);
-    console.log(`  PASS  CONTROL_DIFF_OF_A_FILE_WITH_ITSELF_IS_ONE  (${measures} measures, all 1.000)`);
+    console.log(`  PASS  CONTROL_DIFF_OF_A_FILE_WITH_ITSELF_IS_ONE [${label}]  (${measures} measures, all 1.000)`);
   } else {
     bad++;
-    console.log(`  FAIL  CONTROL_DIFF_OF_A_FILE_WITH_ITSELF_IS_ONE: [${drift.join(', ')}] are below 1.000`);
+    console.log(`  FAIL  CONTROL_DIFF_OF_A_FILE_WITH_ITSELF_IS_ONE [${label}]: [${drift.join(', ')}] are below 1.000`);
   }
 
   // Second positive control, for the half the one above cannot see: the
@@ -1310,32 +1406,89 @@ function runDiffSuite(): number | null {
   const split = identity.sections.filter((s) => s.nameAgnostic !== undefined);
   const agnosticDrift = movedAgnosticMeasures(identity);
   const agnosticCount = split.reduce((n, s) => n + (s.nameAgnostic?.measures.length ?? 0), 0);
-  if (split.length === 2 && agnosticCount === 9 && agnosticDrift.length === 0) {
+  if (split.length === 2 && agnosticCount === DIFF_AGNOSTIC_MEASURES && agnosticDrift.length === 0) {
     console.log(
-      `  PASS  CONTROL_NAME_AGNOSTIC_REPORTS_EXIST_AND_ARE_ONE  (${split.map((s) => s.name).join(', ')}; ${agnosticCount} measures, all 1.000)`,
+      `  PASS  CONTROL_NAME_AGNOSTIC_REPORTS_EXIST_AND_ARE_ONE [${label}]  (${split.map((s) => s.name).join(', ')}; ${agnosticCount} measures, all 1.000)`,
     );
   } else {
     bad++;
     console.log(
-      `  FAIL  CONTROL_NAME_AGNOSTIC_REPORTS_EXIST_AND_ARE_ONE: sections [${split.map((s) => s.name).join(', ')}] ` +
+      `  FAIL  CONTROL_NAME_AGNOSTIC_REPORTS_EXIST_AND_ARE_ONE [${label}]: sections [${split.map((s) => s.name).join(', ')}] ` +
         `carrying ${agnosticCount} measure(s); below 1.000: [${agnosticDrift.join(', ')}]  ` +
-        '(want: bones and slots, 9 measures, none below 1.000)',
+        `(want: bones and slots, ${DIFF_AGNOSTIC_MEASURES} measures, none below 1.000)`,
     );
   }
 
+  // Third, for the block that gates nothing and would therefore break nothing
+  // else if it vanished. Same argument as the control above it, one layer out:
+  // `movedReportedMeasures` on a report that emits no reported block at all is
+  // the empty list, which is indistinguishable from a block that is all 1.000.
+  // So the COUNT is asserted as well as the drift.
+  const reportedSections = identity.sections.filter((s) => s.reported !== undefined);
+  const reportedDrift = movedReportedMeasures(identity);
+  const reportedCount = reportedSections.reduce((n, s) => n + (s.reported?.measures.length ?? 0), 0);
+  const noMean = reportedSections.every((s) => !('ratio' in (s.reported ?? {})));
+  if (reportedCount === DIFF_REPORTED_MEASURES && reportedDrift.length === 0 && noMean) {
+    console.log(
+      `  PASS  CONTROL_REPORTED_MEASURES_EXIST_ARE_ONE_AND_CARRY_NO_MEAN [${label}]  ` +
+        `(${reportedSections.map((s) => s.name).join(', ')}; ${reportedCount} measures, all 1.000, no mean over them)`,
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  CONTROL_REPORTED_MEASURES_EXIST_ARE_ONE_AND_CARRY_NO_MEAN [${label}]: sections ` +
+        `[${reportedSections.map((s) => s.name).join(', ')}] carrying ${reportedCount} measure(s); below 1.000: ` +
+        `[${reportedDrift.join(', ')}]; a mean over them: ${!noMean}  (want: ${DIFF_REPORTED_MEASURES} measures, ` +
+        'none below 1.000, and no mean anywhere)',
+    );
+  }
+  return bad;
+}
+
+/** Returns the number of failures, or `null` when the fixtures are not on disk. */
+function runDiffSuite(): number | null {
+  const missing = [DIFF_FIXTURE, DIFF_MESH_FIXTURE].filter((f) => !existsSync(f));
+  if (missing.length > 0) {
+    console.log('\n── rigc diff ──');
+    console.log('  SKIP  the diff self-checks did not run: no example corpus on disk.');
+    for (const f of missing) console.log(`          expected ${f}`);
+    console.log('          run `bun run fetch-examples` and re-run this suite.');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — `rigc diff` was not exercised at all.');
+    return null;
+  }
+  console.log('\n── rigc diff (fixtures: 3-timing-and-spacing-ess, 6-arcs-pro) ──');
+  const texts: Record<DiffFixture, string> = {
+    default: readFileSync(DIFF_FIXTURE, 'utf8'),
+    mesh: readFileSync(DIFF_MESH_FIXTURE, 'utf8'),
+  };
+  let bad = 0;
+
+  // Both fixtures, because they exercise different measures: `6-arcs-pro` is
+  // the only one of the two with a mesh, a constraint or a deform timeline in
+  // it, so identity over the rung-3 skeleton alone leaves every mesh and
+  // constraint measure at a vacuous 1.000 it did not earn.
+  bad += runDiffIdentityControls('3-timing-and-spacing-ess', texts.default);
+  bad += runDiffIdentityControls('6-arcs-pro', texts.mesh);
+
   for (const c of DIFF_CASES) {
+    const text = texts[c.fixture ?? 'default'];
+    const reference: Record<string, unknown> = JSON.parse(text);
     const candidate: Record<string, unknown> = JSON.parse(text);
     c.mutate(candidate);
     const report = diffSkeletons(candidate, reference);
     const moved = movedMeasures(report);
     const movedAgnostic = movedAgnosticMeasures(report);
+    const movedReported = movedReportedMeasures(report);
     const want = [...c.expect].sort().join(', ');
     const got = [...moved].sort().join(', ');
     const wantAgnostic = [...c.expectAgnostic].sort().join(', ');
     const gotAgnostic = [...movedAgnostic].sort().join(', ');
-    if (want === got && wantAgnostic === gotAgnostic) {
+    const wantReported = [...c.expectReported].sort().join(', ');
+    const gotReported = [...movedReported].sort().join(', ');
+    if (want === got && wantAgnostic === gotAgnostic && wantReported === gotReported) {
       console.log(
-        `  PASS  ${c.name}  (moved exactly ${moved.length} name-matched, ${movedAgnostic.length} name-agnostic measure(s))`,
+        `  PASS  ${c.name}  (moved exactly ${moved.length} name-matched, ${movedAgnostic.length} name-agnostic, ` +
+          `${movedReported.length} reported measure(s))`,
       );
       console.log(`          ${c.why}`);
     } else {
@@ -1349,10 +1502,243 @@ function runDiffSuite(): number | null {
         console.log(`          name-agnostic expected to move: [${wantAgnostic}]`);
         console.log(`          name-agnostic actually moved:   [${gotAgnostic}]`);
       }
+      if (wantReported !== gotReported) {
+        console.log(`          reported expected to move: [${wantReported}]`);
+        console.log(`          reported actually moved:   [${gotReported}]`);
+      }
     }
   }
   return bad;
 }
+
+// ---------------------------------------------------------------------------
+// `rigc bonedist` — the ladder's stage 3, and the same discipline again
+// ---------------------------------------------------------------------------
+//
+// A per-frame pose distance is the one measure on the ladder that had never
+// existed, and `docs/LADDER.md` said so in as many words: *"None of it exists.
+// Do not report a per-frame figure until it does"* (issue #8). What makes a
+// figure like that trustworthy is not that it is large when a rig is wrong — a
+// broken measure is large too — but that it is **exactly zero** when the two
+// skeletons are the same file, and that a single deliberate edit moves exactly
+// the quantities that edit can reach.
+//
+// So the four controls below are one positive and three negatives, and every
+// negative names the quantities it may move AND the ones it must leave at zero:
+//
+//   B01  the same skeleton on both sides            all four exactly 0
+//   B02  one leaf bone translated in setup          position only
+//   B03  the same bone rotated in setup             rotation and linear only
+//   B04  the same bone renamed                      unmatched under `identity`,
+//                                                   and back to 0 under a map
+//
+// ⭐ B03 is what stops B02 being a measure of one thing wearing four hats: a
+// translation that moved the rotation figure, or a rotation that moved the
+// scale figure, would mean the decomposition is not a decomposition. And B04 is
+// the control for the *input* — a correspondence that is quietly ignored would
+// leave B01–B03 all passing, because they use the identity mapping.
+//
+// The fixture is `6-arcs-pro`: 14 bones, four transform constraints, one deform
+// timeline. The two negatives move two DIFFERENT bones, and each choice is
+// load-bearing rather than arbitrary — writing down why is most of what the
+// suite teaches about the conventions.
+//
+// ⚠️ **B03 needs an identity parent.** Under a parent carrying **non-uniform
+// scale** a local rotation changes the child's world scale and shear as well as
+// its rotation — correctly; that is what a world matrix does — so B03 measured
+// on a bone down the `tail` chain (which an animation scales) reads 30.263° and
+// a scale difference of 0.023, and the control would be asserting the fixture's
+// arithmetic rather than the instrument's. `platform` hangs off `root`, which
+// is unrotated and unscaled, and has no children: the one place a 30° local
+// turn is a 30° world turn and nothing else.
+//
+// ⚠️ **B02 must not move the bone that sets the SIZE.** Positions are divided by
+// each skeleton's own size (greatest root-to-bone distance in the setup pose),
+// and `platform` sits at x≈1068 — it *is* 6-arcs' size. Translating it moves
+// the normaliser, so every bone's normalised position shifts and the worst
+// reading lands on whichever bone is farthest rather than on the one that
+// moved. That is a true property of a scale measured from the rig, which is why
+// the report names the bone that set it; it is not a property a control should
+// be quietly exercising. `arc-tracker` is 445 units out against `platform`'s
+// 1068, so translating it 50 units leaves the size alone. Rotating `platform`
+// is safe for the same test because a rotation about a bone's own origin does
+// not move that origin.
+
+const BONEDIST_FIXTURE = resolve(import.meta.dir, 'examples/6-arcs/export/6-arcs-pro.json');
+const BONEDIST_ATLAS = resolve(import.meta.dir, 'examples/6-arcs/export/6-arcs.atlas');
+/** B02's bone: a leaf off the scaled `tail` chain, and NOT the size-setter. */
+const BONEDIST_MOVED = 'arc-tracker';
+/** B03's and B04's bone: a childless leaf off the identity `root`. */
+const BONEDIST_PROBE = 'platform';
+/** What B04 renames it to. */
+const BONEDIST_RENAMED = 'probe-platform';
+/** How far B02 translates its bone, in the rig's own units. */
+const BONEDIST_NUDGE = 50;
+/** How far B03 rotates its bone, in degrees. */
+const BONEDIST_TURN = 30;
+/**
+ * Floating-point slack for the *"must stay at zero"* halves of the negatives.
+ *
+ * The positive control is asserted at **exactly** zero and does not use this:
+ * the two sides are the same numbers through the same code, so anything but
+ * zero there is a bug and not arithmetic. The negatives do need slack, because
+ * the edited bone's world matrix is recomposed — a 30° turn leaves 1e-8 on the
+ * scale magnitudes, which is `Math.sqrt` and not a scale difference.
+ */
+const BONEDIST_EPSILON = 1e-6;
+
+function runBoneDistSuite(): number | null {
+  if (!existsSync(BONEDIST_FIXTURE) || !existsSync(BONEDIST_ATLAS)) {
+    console.log('\n── rigc bonedist ──');
+    console.log('  SKIP  the stage-3 self-checks did not run: no `examples/6-arcs` on disk.');
+    console.log(`          expected ${BONEDIST_FIXTURE}`);
+    console.log('          run `bun run fetch-examples` and re-run this suite.');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — `rigc bonedist` was not exercised at all.');
+    return null;
+  }
+  console.log('\n── rigc bonedist (fixture: 6-arcs-pro, the ladder\'s stage 3) ──');
+  const exportDir = dirname(BONEDIST_FIXTURE);
+  const text = readFileSync(BONEDIST_FIXTURE, 'utf8');
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-bonedist-'));
+  let bad = 0;
+
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const variant = (name: string, mutate: (j: any) => void): string => {
+    const j = JSON.parse(text);
+    mutate(j);
+    const path = join(dir, `${name}.json`);
+    writeFileSync(path, JSON.stringify(j));
+    return path;
+  };
+  const boneOf = (j: any, name: string): any => {
+    const bone = j.bones.find((b: any) => b.name === name);
+    if (!bone) throw new Error(`bonedist fixture has no bone "${name}"`);
+    return bone;
+  };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  const run = (candidateSkeleton: string, bones: string): BoneDistReport =>
+    boneDistance({
+      candidateSkeleton,
+      candidateAtlas: BONEDIST_ATLAS,
+      candidateAtlasDir: exportDir,
+      referenceSkeleton: BONEDIST_FIXTURE,
+      referenceAtlas: BONEDIST_ATLAS,
+      referenceAtlasDir: exportDir,
+      bones,
+    });
+
+  /** `position=0.000000 rotation=0.0000 …`, for a control's own detail line. */
+  const worstLine = (report: BoneDistReport): string =>
+    BONE_QUANTITIES.map((q) => `${q}=${report.worst[q].value.toExponential(3)}`).join(' ');
+  const zeroExcept = (report: BoneDistReport, moved: BoneQuantity[]): boolean =>
+    BONE_QUANTITIES.every((q) =>
+      moved.includes(q) ? report.worst[q].value > BONEDIST_EPSILON : report.worst[q].value <= BONEDIST_EPSILON,
+    );
+
+  // --- B01, the positive control -------------------------------------------
+  const identity = run(BONEDIST_FIXTURE, IDENTITY_CORRESPONDENCE);
+  const frames = identity.animations.reduce((n, a) => n + a.compared, 0);
+  bad += reportCase(
+    'B01_CONTROL_THE_SAME_SKELETON_IS_EXACTLY_ZERO',
+    BONE_QUANTITIES.every((q) => identity.worst[q].value === 0) && frames > 0 && identity.correspondence.pairs === 14,
+    `${frames} frame(s) × ${identity.correspondence.pairs} bone pair(s): ${worstLine(identity)}`,
+    'a pose distance that is not exactly zero on one file against itself is measuring its own arithmetic, and that ' +
+      'noise looks exactly like a small honest gap',
+  );
+
+  // --- B02, translation ----------------------------------------------------
+  const nudged = run(
+    variant('nudged', (j) => {
+      const bone = boneOf(j, BONEDIST_MOVED);
+      bone.x = (bone.x ?? 0) + BONEDIST_NUDGE;
+    }),
+    IDENTITY_CORRESPONDENCE,
+  );
+  bad += reportCase(
+    'B02_A_TRANSLATED_BONE_MOVES_POSITION_AND_NOTHING_ELSE',
+    zeroExcept(nudged, ['position']) && nudged.worst.position.bone === BONEDIST_MOVED,
+    `\`${BONEDIST_MOVED}\` moved ${BONEDIST_NUDGE} units in setup: ${worstLine(nudged)}; worst position is bone ` +
+      `\`${nudged.worst.position.bone}\``,
+    'a translation cannot rotate, scale or shear anything, so a rotation or scale figure that noticed it would ' +
+      'mean the four quantities are one quantity in four costumes. It also has to land on the bone that MOVED, ' +
+      'which is what makes the per-bone table a diagnosis rather than an alarm',
+  );
+
+  // --- B03, rotation -------------------------------------------------------
+  const turned = run(
+    variant('turned', (j) => {
+      const bone = boneOf(j, BONEDIST_PROBE);
+      bone.rotation = (bone.rotation ?? 0) + BONEDIST_TURN;
+    }),
+    IDENTITY_CORRESPONDENCE,
+  );
+  bad += reportCase(
+    'B03_A_ROTATED_BONE_MOVES_ROTATION_AND_THE_MATRIX',
+    zeroExcept(turned, ['rotation', 'linear']) &&
+      turned.worst.rotation.bone === BONEDIST_PROBE &&
+      Math.abs(turned.worst.rotation.value - BONEDIST_TURN) < BONEDIST_EPSILON,
+    `\`${BONEDIST_PROBE}\` turned ${BONEDIST_TURN}° in setup: ${worstLine(turned)}; the rotation figure reads ` +
+      `${turned.worst.rotation.value.toFixed(6)}° on bone \`${turned.worst.rotation.bone}\``,
+    'the negative control for B02, and the one that pins the UNIT: a leaf bone off an identity root turned 30° must ' +
+      'read 30°, or the figure is an angle in some scale nobody stated. Its world position is unchanged because a ' +
+      'rotation about its own origin moves no origin and it has no children, and its scale is unchanged because a ' +
+      'rotation is not a scale — but `linear` MUST move, since rotation lives in the matrix it reports, and it ' +
+      'reads 0.5 because that is sin(30°)',
+  );
+
+  // --- B04, the correspondence is an input, and it is honoured -------------
+  // A real candidate renaming a bone renames every reference to it too, so the
+  // mutant does the same — otherwise the skeleton does not parse and the case
+  // would be testing the parser.
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const renamedPath = variant('renamed', (j: any) => {
+    boneOf(j, BONEDIST_PROBE).name = BONEDIST_RENAMED;
+    for (const bone of j.bones) if (bone.parent === BONEDIST_PROBE) bone.parent = BONEDIST_RENAMED;
+    for (const slot of j.slots) if (slot.bone === BONEDIST_PROBE) slot.bone = BONEDIST_RENAMED;
+    for (const anim of Object.values(j.animations) as any[]) {
+      if (!anim.bones?.[BONEDIST_PROBE]) continue;
+      anim.bones[BONEDIST_RENAMED] = anim.bones[BONEDIST_PROBE];
+      delete anim.bones[BONEDIST_PROBE];
+    }
+  });
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const unmapped = run(renamedPath, IDENTITY_CORRESPONDENCE);
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const names: string[] = (JSON.parse(text).bones as any[]).map((b: any) => b.name);
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const mapPath = join(dir, 'correspondence.json');
+  writeFileSync(
+    mapPath,
+    JSON.stringify({
+      spec: BONEDIST_SPEC,
+      bones: Object.fromEntries(names.map((n) => [n === BONEDIST_PROBE ? BONEDIST_RENAMED : n, n])),
+    }),
+  );
+  const mapped = run(renamedPath, mapPath);
+  bad += reportCase(
+    'B04_A_SUPPLIED_CORRESPONDENCE_IS_USED_AND_A_MISSING_ONE_IS_NAMED',
+    unmapped.correspondence.pairs === 13 &&
+      unmapped.correspondence.candidateUnmatched.length === 1 &&
+      unmapped.correspondence.candidateUnmatched[0].startsWith(BONEDIST_RENAMED) &&
+      unmapped.correspondence.referenceUnpaired.includes(BONEDIST_PROBE) &&
+      mapped.correspondence.pairs === 14 &&
+      mapped.correspondence.candidateUnmatched.length === 0 &&
+      BONE_QUANTITIES.every((q) => mapped.worst[q].value === 0),
+    `renamed to \`${BONEDIST_RENAMED}\`: under \`${IDENTITY_CORRESPONDENCE}\` ${unmapped.correspondence.pairs} pair(s) ` +
+      `with [${unmapped.correspondence.candidateUnmatched.join(', ')}] unmatched and ` +
+      `[${unmapped.correspondence.referenceUnpaired.join(', ')}] unpaired; under the supplied map ` +
+      `${mapped.correspondence.pairs} pair(s) and ${worstLine(mapped)}`,
+    'the mapping is an INPUT (a candidate is entitled to its own vocabulary), so a correspondence that were quietly ' +
+      'ignored would leave B01–B03 all green — they use the identity mapping — while every real run read a renamed ' +
+      'rig as a rig that poses wrongly',
+  );
+
+  return bad;
+}
+
+/** How many controls `runBoneDistSuite` reports when it runs. */
+const BONEDIST_CONTROLS = 4;
 
 // ---------------------------------------------------------------------------
 // `rigc check` — the instrument for the thing the gate cannot see
@@ -8558,7 +8944,12 @@ function main(): void {
   const diffBad = runDiffSuite();
   if (diffBad !== null) {
     bad += diffBad;
-    substantive += 1 + DIFF_CASES.length;
+    substantive += DIFF_IDENTITY_CONTROLS + DIFF_CASES.length;
+  }
+  const boneDistBad = runBoneDistSuite();
+  if (boneDistBad !== null) {
+    bad += boneDistBad;
+    substantive += BONEDIST_CONTROLS;
   }
   const checkBad = runCheckSuite();
   if (checkBad !== null) {
@@ -8579,11 +8970,14 @@ function main(): void {
     process.exit(1);
   }
   const corpus =
-    diffBad === null || checkBad === null
+    diffBad === null || checkBad === null || boneDistBad === null
       ? '\n  ⚠️ The example corpus is absent, so the ' +
-        [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
+        [diffBad === null ? 'diff' : null, boneDistBad === null ? 'bonedist' : null, checkBad === null ? 'check' : null]
+          .filter(Boolean)
+          .join(', ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
-      : `, + 2 diff identity controls (name-matched and name-agnostic), + ${DIFF_CASES.length} diff measure controls, ` +
+      : `, + ${DIFF_IDENTITY_CONTROLS} diff identity controls (name-matched, name-agnostic and reported, over both a ` +
+        `mesh-free and a mesh-carrying fixture), + ${DIFF_CASES.length} diff measure controls, ` +
         '+ 19 check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +
@@ -8597,7 +8991,13 @@ function main(): void {
         'at other units and a rig somewhere else still do, a rotated and trimmed repack of the same texels that ' +
         'must leave every world vertex where it was and every graded figure to the decimal — where loading it as ' +
         "the candidate's own atlas moves them by 234 MAE — and the texture resampling attributed under a bound the " +
-        "decomposition obeys as arithmetic, with the candidate's own atlas reporting a floor of exactly nothing)";
+        "decomposition obeys as arithmetic, with the candidate's own atlas reporting a floor of exactly nothing)" +
+        (boneDistBad === null
+          ? ''
+          : `, + ${BONEDIST_CONTROLS} stage-3 bonedist controls (one file against itself at exactly zero, a translated ` +
+            'leaf bone that moves position and nothing else, the same bone turned 30° that reads 30° and moves the ' +
+            'matrix but not the scale, and a renamed bone that is named as unmatched under `identity` and returns to ' +
+            'exactly zero under a supplied correspondence)');
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'

@@ -2,8 +2,8 @@
 
 This document is the record of **whether rigc works**, and it holds the text that was
 the bulk of the README until the README became the arriving user's document: the
-yardstick rigc is measured against, the two instruments that do the measuring
-(`rigc diff` and `rigc check`) and what neither of them can see, the eight-rung
+yardstick rigc is measured against, the three instruments that do the measuring
+(`rigc diff`, `rigc bonedist` and `rigc check`) and what none of them can see, the eight-rung
 benchmark ladder and the spineboy graduation exam, the commands that let you look at a
 rig with no reference at all, the run viewer, the input and output surface as it stands
 today, the 39 named assertions and their profiles, the selftest that has watched every
@@ -76,6 +76,258 @@ Three properties the measures are built to have:
 An assertion or measure with nothing to compare reports its `total` as 0 and says
 so, exactly as the validator's SKIP does — a vacuous 1.000 that looks earned is
 the same false green in a different costume.
+
+#### The measure inventory
+
+Six sections. `bones` and `slots` each carry a **second** comparison made without
+consulting a name (`sections[].nameAgnostic`), and `attachments` and `animations`
+each carry a **`(reported)`** block (`sections[].reported`) — measures that report
+and never gate, with no mean over them. The three figures a section can carry are
+three different comparisons and none is a part of another; `sections[].ratio` is
+the mean of the **first** column only, which is what every stored `bench.json`
+quotes.
+
+| Section | Name-matched measures | Name-agnostic | Reported |
+| --- | --- | --- | --- |
+| `bones` | `count` · `names` · `parent_by_name` · `order` · `length_present` · `inherit_present` · `depth_histogram` · `degree_sequence` | `count` · `depth_histogram` · `degree_sequence` · `shape_histogram` · `order_shape` | — |
+| `slots` | `count` · `names` · `order` · `bone` · `attachment` · `blend` · `color_present` | `count` · `attachment_types_by_position` · `bone_binding_shape` · `order_shape` | — |
+| `attachments` | `skins` · `count` · `names` · `type_counts` · `mesh_vertices` · `mesh_triangles` · `mesh_weighted` · `mesh_hull` · `region_size` | — | **`mesh_edges`** |
+| `constraints` | `count` · `names` · `type_counts` · `type_by_name` · `refs` | — | — |
+| `animations` | `count` · `names` · `duration` · `timeline_kinds` · `key_counts` · `curve_kinds` · `event_keys` · `draw_order` · `deform` | — | **`key_density`** · **`keys_per_timeline`** |
+| `events` | `names` · `payloads` | — | — |
+
+##### Why a measure can be reported and not gating
+
+`docs/GATE.md`'s *What never gates* seals off "anything unobservable by
+construction", and its test is not *is this measure hard?* but **could any
+reading of the frames have decided it?** For the three measures in the last
+column the answer is no, whatever the frames are:
+
+- **`attachments.mesh_edges`** — *each mesh declares an edge list, or declares
+  none, alike.* `edges` constrains triangulation in the editor and has **no
+  runtime effect at all**; it draws no pixel.
+- **`animations.key_density`** and **`animations.keys_per_timeline`** — two
+  keyings of one curve render the same pictures at every rate, which is measured
+  under *Key density* below.
+
+They are still findings against the reference export, so they are printed — and
+they are printed in a block of their own, with **no mean**, for two reasons. The
+first is arithmetic: a presence share and a keys-per-second agreement have unlike
+units, so an average over them is a number with no referent. The second is that
+`sections[].ratio` is the one figure a stored ladder row quotes, and keeping a
+non-gating measure out of it is what let all three be added without moving a
+recorded figure — verified over the whole committed transcription corpus, every
+section mean and every existing measure identical to the digit.
+
+##### `attachments.mesh_edges` — the third of rung 6's three features
+
+`docs/LADDER.md` gates rung 6 on transform constraints, weighted meshes from
+authored geometry, and **mesh `edges`**. `bench` could see the first two and not
+the third at all: the section measured nine things and none read `edges`, so a
+candidate that dropped one of the rung's own gating features scored a clean 1.000
+for the meshes it kept ([issue #46](https://github.com/firejune/rigc/issues/46)).
+
+**Present-vs-absent, and not the list**, keyed on the name-matched mesh pairs.
+`edges` has no runtime effect, so two candidates can carry different-but-equivalent
+lists and mean the same rig, and index equality would score a correct rig below
+1.000. `edges.length` has the same defect in weaker form — `6-arcs`' `tail`
+declares 116 entries and a mesh triangulated differently declares a different
+number while being just as right. Present-vs-absent is the only distinction that
+is unambiguous, and it is exactly the one that was invisible. Declaring
+`"edges": []` reads as *declared*: that is a different statement from omitting
+the key, and it is how `bench/count_features.ts`'s `mesh_hasEdges` survey counts
+it too, so the corpus census and the measure agree on what "has edges" means.
+
+On the committed corpus it reads **2/2** on the rung-6 transcription, **12/12**
+on `spineboy-pro`, and vacuous `0/0` where neither side has a mesh.
+
+##### Key density — measured, and why neither of #20's routes was taken
+
+[Issue #20](https://github.com/firejune/rigc/issues/20) reported rung 3's one real
+gap as `key_counts` 42/69 and proposed making key density **observable**: render
+the reference frames at 24 or 30 fps, or state a key-density hint in the brief.
+Both were measured before either was built, on rung 3's own export, with the
+stage-3 instrument below as the measuring device — the maximum bone-world
+position difference over **all** time, converted to reference-frame pixels at
+rung 3's own render scale (0.1176 px per unit; one skeleton size = 86.70 px):
+
+| variant | bone keys (ref: 69) | 12 fps | 24 fps | 30 fps | 240 fps ≈ the true maximum |
+| --- | --- | --- | --- | --- | --- |
+| over-keyed — resampled at 60 Hz, same motion | 1688 (24.5×) | **0.0000 px** | 0.2139 px | **0.0000 px** | 0.2139 px |
+| over-keyed — resampled at 47 Hz, same motion | 1324 (19.2×) | 0.4824 px | 0.4824 px | 0.8229 px | 0.8229 px |
+| under-keyed — every second key dropped | 41 (0.59×) | 6.0195 px | 6.0195 px | 5.9947 px | 6.0539 px |
+
+Three findings, and they close the question in both directions.
+
+1. **Over-keying is sub-pixel at every rate.** A candidate carrying 19 to 24
+   times the reference's keys along the same curve differs from it by **at most
+   0.82 frame pixels, anywhere, ever** — against the 0.67 px of slot drift that
+   `check`'s own *faithful* transcription control already carries from atlas
+   resampling. There is nothing above the instrument's noise floor for any rate
+   to sample. This is the failure mode the ladder actually hit: the rung-4
+   re-climb cleared every pixel-side measure while carrying `key_counts`
+   421/1339, over-keyed roughly 3×.
+2. **Under-keying that matters is already fully visible at 12 fps**, which reads
+   99.4 % of the position maximum and 99.9 % of the rotation maximum (37.90° of
+   37.93°). Going to 30 fps reads 0.4 % *lower* — it misses the peak. And a
+   6 px / 38° error is far above the gate's 6.0 px drift bar, so it was never the
+   invisible case.
+3. **"Higher is more observable" is false as stated.** 12 fps and 30 fps saw
+   *exactly nothing* of the 60 Hz over-keying because both rates divide 60 and
+   every sample lands on a knot where the two curves coincide, while 24 fps saw
+   the whole residual. What a rate reveals depends on whether it is commensurate
+   with the candidate's own keying grid, not on being higher — which is not a
+   property a protocol can choose in advance, because the candidate's grid is
+   the thing being measured.
+
+⇒ **The frame rate is not the ceiling; the pixels are.** So no reference set was
+re-rendered and `bench/render_reference.ts` is unchanged — it already writes any
+`--fps` to a `<animation>@<fps>fps` directory beside the 12 fps set, so a higher
+rate was always available to anyone who wanted one; what the measurements say is
+that it buys ≤ 0.4 % on the observable case and nothing on the unobservable one,
+for two to three times the committed frame bytes.
+
+🚫 **And the brief-side hint is refused, on the honesty rule rather than on
+cost.** `docs/LADDER.md` lists **key counts** among what a brief may *not* carry,
+and [#158](https://github.com/firejune/rigc/issues/158)'s sealing test states the
+general form: text is forbidden in an allowed-reading surface **iff it states or
+constrains a reference-side value of a scored measure**. `animations.key_counts`
+and `animations.curve_kinds` are scored rows, so a key-density hint is exactly
+that text. It would also not make density *observable* — it would make it
+**told**, which converts a measure into an input and then measures whether an
+author can copy a number. Nothing needs it as an input either: gate v2.3
+([#153](https://github.com/firejune/rigc/issues/153)) settled that no clause
+reads a figure the authoring loop cannot see, which is the question #20's own
+follow-up sharpened it into. ⇒ **No brief-format field was added and no brief was
+rewritten.** The convention stands as it was: a brief states each animation's
+duration and whether it loops, and states nothing about how it is keyed.
+
+⭐ **What was actually wrong was the report, and that is what changed.**
+`animations.key_counts` is a histogram intersection over
+`max(candidate, reference)`, so **it cannot say which side is the bigger one**:
+rung 4's 421/1339 is indistinguishable from a candidate carrying a third of the
+reference's keys rather than three times them, and the author read it as a gap
+and left it — correctly, because nothing in the report said *over-keyed*. Two
+reported rates say so, each with its convention printed beside it:
+
+- **`animations.key_density`** — every key of every timeline over the summed
+  last-key time of every animation, in **keys per second**, compared as
+  `min/max` at three decimal places, with the direction in the note.
+- **`animations.keys_per_timeline`** — the same key total over the number of
+  timelines that exist, in **keys per timeline**.
+
+Two and not one, because a key total can differ two ways and the repairs are
+opposite. On the committed corpus every candidate reads **1.000** against its own
+reference; the cross-comparison of the two spineboy skeletons shows the pair
+working — `spineboy-pro` against `ess` reads *1.67× — OVER-keyed* per second and
+*0.87× — UNDER-keyed* per timeline, which says **more timelines, not denser
+ones** (421 against 153). The flat `key_counts` 744/1791 says neither.
+
+### Comparing the poses themselves — `rigc bonedist` (stage 3)
+
+```bash
+bun cli.ts bonedist --candidate path/to/spine \
+                    --reference examples/6-arcs/export/6-arcs-pro.json \
+                    --bones correspondence.json   # or: --bones identity
+bun cli.ts bench 6 --candidate path/to/spine --bones identity   # folded into a rung
+```
+
+⭐ `docs/LADDER.md`'s *How a rung is scored* names three stages, and the third had
+never been built: *"per-frame bone world-transform distance … **None of it
+exists.** Do not report a per-frame figure until it does"*
+([issue #8](https://github.com/firejune/rigc/issues/8)). The structural diff
+compares what the two files *say*, and two structurally identical rigs can pose
+completely differently — a rotation of 30° and a rotation of 300° are one key
+each. `bonedist` steps both skeletons through the paired animation at a fixed
+rate and reports, per frame and per corresponded bone, how far apart they are.
+
+**It is not `check` with bones.** `check` measures a candidate against
+**pictures**, which is what lets it run inside an authoring loop; `bonedist`
+reads the **reference skeleton**, so it is a finish-line instrument subject to
+the honesty rule. Four things follow, and each is a hole `check` has by design:
+its unit is a drawn slot, so a bone that drives nothing visible has no footprint
+at all; it reports a centroid and a bbox, so rotation is only inferred and scale
+and shear are not separated; its matcher *guesses* the pairing and says when it
+is guessing; and everything below the render scale is invisible to it (0.117 px
+per unit on rung 3).
+
+**The correspondence is an input, never a derivation.** A candidate is entitled
+to its own bone names, so a mapping worked out by the tool would be a guess
+reported as a measurement — and a wrong guess reads as a rig that poses wrongly,
+which is the one conclusion this figure is for. Pass a file:
+
+```json
+{ "spec": "rigc-bonedist/1",
+  "bones": { "<candidate bone>": "<reference bone>" },
+  "animations": { "<candidate animation>": "<reference animation>" } }
+```
+
+…or `--bones identity` to state that the two skeletons use the same names, which
+is the transcription case. The report says which it used, so a figure can never
+be read as though a mapping had been supplied when none was, and a name present
+on one side only is **named** rather than dropped.
+
+**Four quantities, no score.** Every figure is printed under the conventions it
+was measured at, and the report carries them verbatim in
+`BoneDistReport.conventions`:
+
+| Quantity | What it is | Unit |
+| --- | --- | --- |
+| `position` | each bone's world origin **relative to its own skeleton's root** and divided by **its own skeleton's size**, then the Euclidean distance between the two | skeleton sizes |
+| `rotation` | `\|Δ getWorldRotationX()\|`, wrapped to ±180 | degrees |
+| `scale` | `max(\|Δ getWorldScaleX()\|, \|Δ getWorldScaleY()\|)` | dimensionless |
+| `linear` | `max(\|Δa\|, \|Δb\|, \|Δc\|, \|Δd\|)` over the world matrix's linear part — **complete**: rotation, scale *and shear* all live in those four numbers | dimensionless |
+
+- **Size** is the greatest root-to-bone distance in that skeleton's **setup
+  pose**, and the report names the bone it came from. Two-sided normalisation on
+  purpose: a candidate is authored in its own coordinate system and under the
+  honesty rule could not be authored in any other, so a different origin or a
+  different unit is absorbed, exactly as `check`'s fitted similarity absorbs
+  them for pixels. ⚠️ A globally **rotated** rig is not absorbed — it arrives as
+  a constant rotation on every bone, which is the diagnosis. ⚠️ And the size is a
+  property of the whole rig, so a candidate that moves the bone setting its size
+  renormalises every position figure; read the two sizes in the header first.
+- **Frames** — both sides sampled from t=0 at one rate over **their own**
+  durations, compared index by index over the shorter of the two. Every animation
+  states both frame counts and both durations, so a candidate that runs long
+  reads as that rather than as a pose error.
+- **Aggregate** — per bone: the mean and the worst over the compared frames. Per
+  animation: the mean of the bone means, and the single worst (bone, frame).
+  Nothing is combined **across** the four quantities and there is no score, for
+  the reason `diff` opens with: a rig with the right positions and the wrong
+  rotations and a rig with the right rotations and the wrong positions call for
+  opposite fixes.
+- 🚫 **It gates nothing.** `docs/GATE.md` reads no figure from this table, and no
+  threshold or recorded figure moved when it was added.
+
+**What the committed transcriptions read**, at 12 fps under `--bones identity`:
+
+| candidate | frames × bone pairs | worst position | worst rotation | worst scale | worst linear |
+| --- | --- | --- | --- | --- | --- |
+| rung 3 `ess` | 86 × 3 | 0.000000 | 0.0002° | 0.000000 | 0.000003 |
+| rung 6 `pro` | 69 × 14 | 0.000003 | 0.0006° | 0.000000 | 0.000010 |
+| `spineboy-ess` | 132 × 18 | 0.000003 | 0.0005° | 0.000001 | 0.000008 |
+| `spineboy-pro` | 190 × 67 | 0.049394 | 13.1730° | 0.184070 | 0.257906 |
+
+The first three are the floor: a few parts per million of a skeleton size, which
+is the rig spec's own rounding of the curve handles and nothing else. That is
+what a real candidate is read against.
+
+🔬 **The fourth is the instrument's first finding, and it is a sampling knife
+edge rather than a pose defect** — worth writing down because it is the shape a
+reader will meet again. It is one animation (`hoverboard`) and two bones
+(`side-glow1`, `side-glow2`) out of 190 frames × 67 pairs; every other reading
+sits on the floor. Both bones are keyed **stepped**, the reference's key times
+are `0.16666667` / `0.2666667` / `0.8666667` and the transcription's are
+`0.166666` / `0.266666` / `0.866666` — and 12 fps samples land exactly on those
+boundaries, so the two sides read opposite sides of one step (13.1730° is
+precisely the 40.95424 → 27.781216 step). Re-run at **11 or 13 fps and it is
+gone**, floor to floor. ⇒ Two lessons the report now carries in its own
+conventions: a spike on one bone at one frame is worth re-running at another rate
+before it is read as motion, and a **stepped** key time cannot be rounded as
+freely as a bezier one. 🚫 Neither the transcription nor any recorded verdict was
+changed for it: `spineboy` is a cleared rung under gate v2.3, this figure gates
+nothing, and the transcriptions measure expressiveness rather than authoring.
 
 ### Checking a rig against the pictures — `rigc check`
 
@@ -653,6 +905,8 @@ bun cli.ts validate --profile spine-html path/to/spine      # …and this projec
 bun cli.ts diff candidate.json reference.json               # structural comparison
 bun cli.ts check --candidate path/to/spine \
                  --frames bench/reference/3-timing-and-spacing   # against pictures
+bun cli.ts bonedist --candidate path/to/spine \
+                 --reference ref.json --bones identity      # per-frame pose distance (stage 3)
 bun cli.ts bench 3 --candidate path/to/spine                # one rung of the ladder
 bun cli.ts render  --candidate path/to/spine                # PNG frames + a contact sheet
 bun cli.ts preview --candidate path/to/spine                # one .html that plays it
@@ -770,8 +1024,8 @@ nothing substantive executed exits 2 rather than printing green.
 
 ```
 tsconfig.json   type-check config (noEmit); eslint.config.js — the no-any gate
-cli.ts          build / validate / explain / diff / check / bench / render / preview / vote / pose
-selftest.ts     the validator's own negative controls, and diff's and check's
+cli.ts          build / validate / explain / diff / check / bonedist / bench / render / preview / vote / pose
+selftest.ts     the validator's own negative controls, and diff's, bonedist's and check's
 fixtures/       public.ts — the three synthetic cuts the selftest breaks
 src/
   compile.ts    rig + motion spec (+ manifest) -> skeleton JSON + atlas text (pure data assembly)
@@ -787,6 +1041,10 @@ src/
                 stand between a saved vote and the ledger
   check.ts      a candidate against rendered frames — pixels and per-slot drift,
                 and it never opens the reference skeleton
+  bonedist.ts   the ladder's stage 3 — per-frame, per-bone world-transform distance
+                between two POSED skeletons, on a supplied bone correspondence. It
+                does read the reference skeleton, so it sits beside bench and not
+                inside an authoring loop
   pose.ts       the other direction: loose part PNGs against ONE pose frame, and
                 where each part sits in it. An entry instrument — it reads a given
                 condition into spec coordinates and grades nothing
