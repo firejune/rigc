@@ -1,0 +1,45 @@
+pinning "panel" — set mean maeReference against a whole-track translation, in frame pixels
+  reach ±8 px on each axis; 1 px = 5.267 world units at this viewport
+  cape-follow-example          at 0 px 23.464   1px +0.108  2px +0.349  3px +0.677  4px +1.059  6px +1.993  8px +3.099   ⇒ +1 % at 2 px
+  cape-follow-example@24fps    at 0 px 14.580   1px +-0.088  2px +0.161  3px +0.297  4px +0.485  6px +1.304  8px +2.262   ⚠️ a shifted placement is BETTER by 0.088   ⇒ +1 % at 2 px
+  cape-follow-example@30fps    at 0 px 14.609   1px +-0.081  2px +0.147  3px +0.278  4px +0.459  6px +1.265  8px +2.212   ⚠️ a shifted placement is BETTER by 0.081   ⇒ +1 % at 2 px
+  fall-in                      at 0 px 17.918   1px +0.154  2px +0.537  3px +1.046  4px +1.701  6px +3.409  8px +5.373   ⇒ +1 % at 2 px
+  fall-in@24fps                at 0 px 20.279   1px +-0.121  2px +0.521  3px +1.011  4px +1.654  6px +3.647  8px +6.018   ⚠️ a shifted placement is BETTER by 0.121   ⇒ +1 % at 2 px
+  fall-in@30fps                at 0 px 20.289   1px +-0.127  2px +0.521  3px +1.011  4px +1.653  6px +3.646  8px +6.016   ⚠️ a shifted placement is BETTER by 0.127   ⇒ +1 % at 2 px
+  hello                        at 0 px 24.396   1px +0.156  2px +0.509  3px +0.987  4px +1.547  6px +2.856  8px +4.355   ⇒ +1 % at 2 px
+  hello@24fps                  at 0 px 20.372   1px +-0.101  2px +0.423  3px +0.905  4px +1.496  6px +3.283  8px +5.748   ⚠️ a shifted placement is BETTER by 0.101   ⇒ +1 % at 2 px
+  hello@30fps                  at 0 px 19.873   1px +-0.028  2px +0.917  3px +1.542  4px +2.275  6px +4.384  8px +6.303   ⚠️ a shifted placement is BETTER by 0.028   ⇒ +1 % at 2 px
+  walk                         at 0 px 20.876   1px +0.135  2px +0.419  3px +0.788  4px +1.210  6px +2.192  8px +3.318   ⇒ +1 % at 2 px
+  walk@24fps                   at 0 px 18.460   1px +-0.209  2px +0.039  3px +0.194  4px +0.415  6px +1.128  8px +2.170   ⚠️ a shifted placement is BETTER by 0.209   ⇒ +1 % at 3 px
+  walk@30fps                   at 0 px 18.057   1px +0.004  2px +0.080  3px +0.263  4px +0.530  6px +1.442  8px +2.682   ⇒ +1 % at 3 px
+
+pinning "collar" — set mean maeReference against a whole-track translation, in frame pixels
+  reach ±8 px on each axis; 1 px = 5.267 world units at this viewport
+  cape-follow-example          at 0 px 23.464   1px +0.424  2px +1.222  3px +2.013  4px +2.797  6px +4.255  8px +5.386   ⇒ +1 % at 1 px
+  cape-follow-example@24fps    at 0 px 14.580   1px +0.691  2px +2.014  3px +3.118  4px +4.069  6px +5.831  8px +7.054   ⇒ +1 % at 1 px
+  cape-follow-example@30fps    at 0 px 14.609   1px +0.690  2px +2.013  3px +3.117  4px +4.068  6px +5.830  8px +7.054   ⇒ +1 % at 1 px
+  fall-in                      at 0 px 17.918   1px +0.437  2px +1.322  3px +2.026  4px +2.648  6px +3.864  8px +4.745   ⇒ +1 % at 1 px
+  fall-in@24fps                at 0 px 20.279   1px +0.501  2px +1.496  3px +2.260  4px +2.878  6px +3.872  8px +4.620   ⇒ +1 % at 1 px
+  fall-in@30fps                at 0 px 20.289   1px +0.498  2px +1.493  3px +2.257  4px +2.877  6px +3.871  8px +4.618   ⇒ +1 % at 1 px
+  hello                        at 0 px 24.396   1px +0.205  2px +0.595  3px +1.028  4px +1.434  6px +2.182  8px +2.921   ⇒ +1 % at 2 px
+  hello@24fps                  at 0 px 20.372   1px +0.583  2px +1.649  3px +2.392  4px +3.084  6px +4.385  8px +5.307   ⇒ +1 % at 1 px
+  hello@30fps                  at 0 px 19.873   1px +0.571  2px +1.659  3px +2.629  4px +3.400  6px +4.664  8px +5.618   ⇒ +1 % at 1 px
+  walk                         at 0 px 20.876   1px +0.280  2px +0.994  3px +1.767  4px +2.570  6px +4.079  8px +5.315   ⇒ +1 % at 1 px
+  walk@24fps                   at 0 px 18.460   1px +0.117  2px +0.603  3px +1.230  4px +1.906  6px +3.440  8px +4.817   ⇒ +1 % at 2 px
+  walk@30fps                   at 0 px 18.057   1px +0.033  2px +0.458  3px +1.021  4px +1.685  6px +3.275  8px +4.696   ⇒ +1 % at 2 px
+
+pinning "sack1" — set mean maeReference against a whole-track translation, in frame pixels
+  reach ±8 px on each axis; 1 px = 5.267 world units at this viewport
+  cape-follow-example          at 0 px 23.464   1px +0.424  2px +1.261  3px +2.321  4px +3.551  6px +6.280  8px +9.091   ⇒ +1 % at 1 px
+  cape-follow-example@24fps    at 0 px 14.580   1px +1.388  2px +2.613  3px +4.216  4px +5.631  6px +8.646  8px +11.521   ⇒ +1 % at 1 px
+  cape-follow-example@30fps    at 0 px 14.609   1px +1.388  2px +2.612  3px +4.216  4px +5.631  6px +8.646  8px +11.522   ⇒ +1 % at 1 px
+  fall-in                      at 0 px 17.918   1px +1.035  2px +2.350  3px +3.932  4px +5.457  6px +8.673  8px +11.812   ⇒ +1 % at 1 px
+  fall-in@24fps                at 0 px 20.279   1px +1.601  2px +3.055  3px +4.791  4px +6.218  6px +9.297  8px +12.259   ⇒ +1 % at 1 px
+  fall-in@30fps                at 0 px 20.289   1px +1.600  2px +3.054  3px +4.786  4px +6.212  6px +9.292  8px +12.258   ⇒ +1 % at 1 px
+  hello                        at 0 px 24.396   1px +0.414  2px +1.298  3px +2.438  4px +3.691  6px +6.334  8px +8.993   ⇒ +1 % at 1 px
+  hello@24fps                  at 0 px 20.372   1px +1.484  2px +2.632  3px +4.195  4px +5.488  6px +8.240  8px +10.907   ⇒ +1 % at 1 px
+  hello@30fps                  at 0 px 19.873   1px +1.474  2px +2.644  3px +4.214  4px +5.505  6px +8.178  8px +10.836   ⇒ +1 % at 1 px
+  walk                         at 0 px 20.876   1px +0.135  2px +0.671  3px +1.495  4px +2.499  6px +4.790  8px +7.400   ⇒ +1 % at 2 px
+  walk@24fps                   at 0 px 18.460   1px +0.441  2px +1.449  3px +2.788  4px +4.252  6px +7.247  8px +10.299   ⇒ +1 % at 1 px
+  walk@30fps                   at 0 px 18.057   1px +0.428  2px +1.444  3px +2.831  4px +4.288  6px +7.305  8px +10.386   ⇒ +1 % at 1 px
+

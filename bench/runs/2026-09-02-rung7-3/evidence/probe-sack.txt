@@ -1,0 +1,248 @@
+=== cape-follow-example ===
+  f0000  88x154 own=9177  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.10 px
+  f0001  87x151 own=9091  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 1.43 px
+  f0002  87x151 own=9137  r=32  ref under it: crimson 8% beige 91% backdrop 1%
+          ATTRIBUTABLE drift 2.18 px
+  f0003  87x149 own=9100  r=32  ref under it: crimson 8% beige 91% backdrop 1%
+          ATTRIBUTABLE drift 1.69 px
+  f0004  99x142 own=9238  r=32  ref under it: crimson 10% beige 88% backdrop 2%
+          ATTRIBUTABLE drift 1.31 px
+  f0005  112x124 own=8288  r=32  ref under it: crimson 8% beige 90% backdrop 2%
+          ATTRIBUTABLE drift 0.75 px
+  f0006  117x125 own=8572  r=32  ref under it: crimson 9% beige 90% backdrop 1%
+          ATTRIBUTABLE drift 1.97 px
+  f0007  105x157 own=9755  r=32  ref under it: crimson 8% beige 90% backdrop 3%
+          this slot is inside a reference component 1.1x its size and 122x151 px against its 105x157 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 15.5 against its own 114.5 of contrast; confidence 0.15 where 0.18 is needed 2.0 px out)
+  f0008  126x154 own=9621  r=32  ref under it: crimson 8% beige 88% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 10725 px of blob against this slot's own 9504 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 18.1 against its own 114.0 of contrast; confidence 0.08 where 0.20 is needed 3.6 px out)
+  f0009  125x154 own=9496  r=32  ref under it: crimson 8% beige 89% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 10502 px of blob against this slot's own 9389 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 15.9 against its own 113.7 of contrast; confidence 0.14 where 0.16 is needed 1.0 px out)
+  f0010  126x151 own=9363  r=32  ref under it: crimson 7% beige 89% backdrop 4%
+          this slot is inside a reference component 1.1x its size and 148x147 px against its 126x151 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 18.9 against its own 113.7 of contrast; confidence 0.07 where 0.18 is needed 2.0 px out)
+  f0011  126x147 own=9396  r=32  ref under it: crimson 7% beige 89% backdrop 3%
+          this slot is inside a reference component 1.1x its size and 150x144 px against its 126x147 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 16.4 against its own 113.5 of contrast; confidence 0.10 where 0.18 is needed 2.0 px out)
+  f0012  127x136 own=9058  r=32  ref under it: crimson 8% beige 89% backdrop 3%
+          this slot is inside a reference component 1.1x its size and 142x134 px against its 127x136 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 15.6 against its own 113.9 of contrast; confidence 0.17 where 0.18 is needed 2.2 px out)
+  f0013  118x135 own=9051  r=32  ref under it: crimson 8% beige 90% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 9374 px of blob against this slot's own 8936 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 17.1 against its own 114.2 of contrast; confidence 0.16 where 0.16 is needed 1.0 px out)
+  f0014  101x148 own=8465  r=32  ref under it: crimson 10% beige 85% backdrop 5%
+          this slot is inside a reference component 1.3x its size and 89x208 px against its 101x148 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 19.2 against its own 114.2 of contrast; confidence 0.12 where 0.19 is needed 3.0 px out)
+  f0015  121x142 own=8613  r=32  ref under it: crimson 12% beige 84% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 9611 px of blob against this slot's own 8511 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 20.1 against its own 114.4 of contrast; confidence 0.09 where 0.18 is needed 2.0 px out)
+  f0016  122x132 own=8402  r=32  ref under it: crimson 13% beige 84% backdrop 3%
+          this slot's reference component also holds "cape-back", "cape-front" — 8919 px of blob against this slot's own 8287 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 19.4 against its own 115.1 of contrast; confidence 0.16 where 0.16 is needed 1.0 px out)
+  f0017  130x128 own=8614  r=32  ref under it: crimson 15% beige 82% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 9401 px of blob against this slot's own 8487 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 21.0 against its own 115.5 of contrast; confidence 0.08 where 0.16 is needed 1.0 px out)
+  f0018  133x123 own=8583  r=32  ref under it: crimson 21% beige 73% backdrop 5%
+          this slot is inside a reference component 1.1x its size and 154x129 px against its 133x123 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 29.1 against its own 115.1 of contrast; confidence 0.03 where 0.21 is needed 4.0 px out)
+  f0019  133x133 own=9261  r=32  ref under it: crimson 18% beige 75% backdrop 7%
+          this slot is inside a reference component 1.2x its size and 162x181 px against its 133x133 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 26.9 against its own 113.9 of contrast; confidence 0.12 where 0.18 is needed 2.2 px out)
+  f0020  118x176 own=11023  r=32  ref under it: crimson 6% beige 83% backdrop 11%
+          this slot is inside a reference component 1.3x its size and 180x212 px against its 118x176 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 22.2 against its own 112.6 of contrast; confidence 0.06 where 0.15 is needed 0.0 px out)
+  f0021  138x97 own=9521  r=32  ref under it: crimson 13% beige 78% backdrop 9%
+          this slot is inside a reference component 1.1x its size and 167x110 px against its 138x97 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 24.3 against its own 113.1 of contrast; confidence 0.12 where 0.16 is needed 1.0 px out)
+  f0022  120x114 own=9020  r=32  ref under it: crimson 10% beige 87% backdrop 3%
+          ATTRIBUTABLE drift 3.94 px
+  f0023  102x168 own=10681  r=32  ref under it: crimson 11% beige 86% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 11221 px of blob against this slot's own 10571 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 20.7 against its own 111.2 of contrast; confidence 0.09 where 0.18 is needed 2.2 px out)
+  f0024  97x152 own=9362  r=32  ref under it: crimson 8% beige 89% backdrop 3%
+          this slot is inside a reference component 1.2x its size and 121x150 px against its 97x152 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 17.1 against its own 111.3 of contrast; confidence 0.14 where 0.18 is needed 2.0 px out)
+  f0025  105x142 own=9666  r=32  ref under it: crimson 11% beige 85% backdrop 4%
+          this slot is inside a reference component 1.1x its size and 130x140 px against its 105x142 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 21.7 against its own 110.7 of contrast; confidence 0.04 where 0.25 is needed 7.2 px out)
+  f0026  97x143 own=9112  r=32  ref under it: crimson 9% beige 89% backdrop 3%
+          ATTRIBUTABLE drift 1.64 px
+  f0027  95x145 own=9100  r=32  ref under it: crimson 9% beige 89% backdrop 3%
+          this slot is inside a reference component 1.2x its size and 137x142 px against its 95x145 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 16.4 against its own 111.6 of contrast; confidence 0.06 where 0.21 is needed 4.1 px out)
+  f0028  94x146 own=9255  r=32  ref under it: crimson 9% beige 88% backdrop 3%
+          this slot is inside a reference component 1.2x its size and 140x139 px against its 94x146 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 19.7 against its own 112.0 of contrast; confidence 0.10 where 0.22 is needed 5.1 px out)
+  f0029  96x145 own=9324  r=32  ref under it: crimson 10% beige 88% backdrop 3%
+          this slot is inside a reference component 1.1x its size and 139x138 px against its 96x145 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 18.8 against its own 111.8 of contrast; confidence 0.04 where 0.22 is needed 5.1 px out)
+  f0030  97x146 own=9521  r=32  ref under it: crimson 10% beige 87% backdrop 3%
+          this slot is inside a reference component 1.1x its size and 135x138 px against its 97x146 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 18.5 against its own 111.6 of contrast; confidence 0.07 where 0.21 is needed 4.0 px out)
+  f0031  96x146 own=9561  r=32  ref under it: crimson 10% beige 86% backdrop 3%
+          this slot is inside a reference component 1.1x its size and 129x139 px against its 96x146 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 21.8 against its own 111.4 of contrast; confidence 0.10 where 0.18 is needed 2.2 px out)
+  f0032  97x146 own=9542  r=32  ref under it: crimson 10% beige 86% backdrop 4%
+          this slot is inside a reference component 1.1x its size and 122x140 px against its 97x146 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 22.2 against its own 111.3 of contrast; confidence 0.03 where 0.21 is needed 4.5 px out)
+  f0033  97x147 own=9504  r=32  ref under it: crimson 10% beige 86% backdrop 4%
+          this slot is inside a reference component 1.1x its size and 116x140 px against its 97x147 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 20.3 against its own 111.4 of contrast; confidence 0.10 where 0.16 is needed 1.0 px out)
+  f0034  96x147 own=9502  r=32  ref under it: crimson 10% beige 86% backdrop 4%
+          this slot is inside a reference component 1.1x its size and 111x140 px against its 96x147 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 22.1 against its own 111.2 of contrast; confidence 0.04 where 0.22 is needed 5.0 px out)
+  f0035  96x147 own=9516  r=32  ref under it: crimson 10% beige 86% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 9933 px of blob against this slot's own 9540 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 21.2 against its own 111.3 of contrast; confidence 0.05 where 0.21 is needed 4.1 px out)
+  f0036  96x147 own=9515  r=32  ref under it: crimson 10% beige 86% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 9881 px of blob against this slot's own 9544 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 20.7 against its own 111.3 of contrast; confidence 0.11 where 0.19 is needed 3.2 px out)
+=== cape-follow-example@24fps ===
+  f0000  88x154 own=9177  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.10 px
+  f0072  96x147 own=9515  r=32  ref under it: crimson 10% beige 86% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 9856 px of blob against this slot's own 9544 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 20.6 against its own 111.3 of contrast; confidence 0.11 where 0.19 is needed 3.2 px out)
+=== cape-follow-example@30fps ===
+  f0000  88x154 own=9177  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.10 px
+  f0090  96x147 own=9515  r=32  ref under it: crimson 10% beige 86% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 9852 px of blob against this slot's own 9544 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 20.6 against its own 111.3 of contrast; confidence 0.11 where 0.19 is needed 3.2 px out)
+=== fall-in ===
+  f0000  87x161 own=9211  r=32  ref under it: crimson 9% beige 88% backdrop 3%
+          ATTRIBUTABLE drift 2.98 px
+  f0001  86x161 own=8729  r=32  ref under it: crimson 8% beige 90% backdrop 2%
+          this slot is inside a reference component 1.3x its size and 175x161 px against its 86x161 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 15.9 against its own 115.6 of contrast; confidence 0.13 where 0.17 is needed 1.4 px out)
+  f0002  83x161 own=8163  r=32  ref under it: crimson 7% beige 91% backdrop 3%
+          this slot is inside a reference component 1.2x its size and 157x173 px against its 83x161 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 15.3 against its own 115.8 of contrast; confidence 0.16 where 0.16 is needed 1.0 px out)
+  f0003  79x167 own=7753  r=32  ref under it: crimson 7% beige 88% backdrop 5%
+          this slot is inside a reference component 1.2x its size and 142x181 px against its 79x167 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 18.9 against its own 116.0 of contrast; confidence 0.07 where 0.23 is needed 6.0 px out)
+  f0004  125x145 own=9497  r=32  ref under it: crimson 16% beige 81% backdrop 3%
+          this slot is inside a reference component 1.2x its size and 161x157 px against its 125x145 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 23.2 against its own 118.1 of contrast; confidence 0.08 where 0.23 is needed 5.4 px out)
+  f0005  100x132 own=7691  r=32  ref under it: crimson 13% beige 83% backdrop 3%
+          this slot's reference component also holds "cape-back", "cape-front" — 9053 px of blob against this slot's own 7579 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 20.1 against its own 117.7 of contrast; confidence 0.12 where 0.16 is needed 1.0 px out)
+  f0006  106x140 own=8968  r=32  ref under it: crimson 19% beige 78% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 9231 px of blob against this slot's own 8834 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 23.9 against its own 116.9 of contrast; confidence 0.07 where 0.26 is needed 8.1 px out)
+  f0007  90x152 own=8875  r=32  ref under it: crimson 10% beige 88% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 9727 px of blob against this slot's own 8737 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 16.4 against its own 115.3 of contrast; confidence 0.16 where 0.17 is needed 1.4 px out)
+  f0008  90x152 own=9160  r=32  ref under it: crimson 10% beige 88% backdrop 2%
+          ATTRIBUTABLE drift 0.63 px
+  f0009  90x150 own=9228  r=32  ref under it: crimson 10% beige 88% backdrop 2%
+          ATTRIBUTABLE drift 0.22 px
+  f0010  92x151 own=9364  r=32  ref under it: crimson 11% beige 87% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 10127 px of blob against this slot's own 9230 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 16.6 against its own 115.8 of contrast; confidence 0.16 where 0.17 is needed 1.4 px out)
+  f0011  86x157 own=9113  r=32  ref under it: crimson 8% beige 90% backdrop 1%
+          ATTRIBUTABLE drift 0.03 px
+  f0012  85x156 own=9044  r=32  ref under it: crimson 9% beige 90% backdrop 1%
+          this slot's reference component also holds "cape-back", "cape-front" — 10232 px of blob against this slot's own 8905 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 17.3 against its own 114.8 of contrast; confidence 0.10 where 0.19 is needed 3.0 px out)
+  f0013  85x155 own=9131  r=32  ref under it: crimson 9% beige 90% backdrop 1%
+          ATTRIBUTABLE drift 0.85 px
+  f0014  86x156 own=9083  r=32  ref under it: crimson 8% beige 91% backdrop 1%
+          this slot's reference component also holds "cape-back", "cape-front" — 10228 px of blob against this slot's own 8936 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 17.2 against its own 115.0 of contrast; confidence 0.05 where 0.21 is needed 4.0 px out)
+  f0015  86x155 own=9121  r=32  ref under it: crimson 8% beige 91% backdrop 1%
+          this slot's reference component also holds "cape-back", "cape-front" — 10236 px of blob against this slot's own 8970 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 18.3 against its own 114.9 of contrast; confidence 0.03 where 0.21 is needed 4.0 px out)
+  f0016  87x154 own=9151  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.19 px
+  f0017  87x154 own=9144  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.29 px
+  f0018  88x154 own=9162  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.30 px
+  f0019  88x154 own=9171  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.07 px
+  f0020  88x154 own=9177  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.09 px
+=== fall-in@24fps ===
+  f0000  87x161 own=9211  r=32  ref under it: crimson 9% beige 88% backdrop 3%
+          ATTRIBUTABLE drift 2.98 px
+  f0040  88x154 own=9177  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.09 px
+=== fall-in@30fps ===
+  f0000  87x161 own=9211  r=32  ref under it: crimson 9% beige 88% backdrop 3%
+          ATTRIBUTABLE drift 2.98 px
+  f0050  88x154 own=9177  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.09 px
+=== hello ===
+  f0000  88x154 own=9177  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.10 px
+  f0001  93x140 own=8318  r=32  ref under it: crimson 10% beige 88% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 9198 px of blob against this slot's own 8202 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 18.4 against its own 115.0 of contrast; confidence 0.02 where 0.23 is needed 5.7 px out)
+  f0002  94x134 own=8089  r=32  ref under it: crimson 12% beige 86% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 8950 px of blob against this slot's own 7983 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 19.7 against its own 114.9 of contrast; confidence 0.15 where 0.19 is needed 2.8 px out)
+  f0003  96x136 own=8070  r=32  ref under it: crimson 12% beige 86% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 8939 px of blob against this slot's own 7951 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 20.0 against its own 115.0 of contrast; confidence 0.11 where 0.16 is needed 1.0 px out)
+  f0004  91x149 own=8761  r=32  ref under it: crimson 10% beige 88% backdrop 2%
+          ATTRIBUTABLE drift 0.07 px
+  f0005  93x150 own=8723  r=32  ref under it: crimson 8% beige 90% backdrop 2%
+          ATTRIBUTABLE drift 1.04 px
+  f0006  90x156 own=8786  r=32  ref under it: crimson 8% beige 89% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 9523 px of blob against this slot's own 8679 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 16.7 against its own 115.7 of contrast; confidence 0.13 where 0.18 is needed 2.0 px out)
+  f0007  89x162 own=8891  r=32  ref under it: crimson 9% beige 90% backdrop 2%
+          ATTRIBUTABLE drift 0.79 px
+  f0008  89x164 own=8966  r=32  ref under it: crimson 9% beige 89% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 9532 px of blob against this slot's own 8831 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 14.5 against its own 115.2 of contrast; confidence 0.13 where 0.15 is needed 0.0 px out)
+  f0009  89x164 own=8868  r=32  ref under it: crimson 8% beige 90% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 9539 px of blob against this slot's own 8744 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 15.8 against its own 115.5 of contrast; confidence 0.03 where 0.21 is needed 4.0 px out)
+  f0010  90x164 own=8815  r=32  ref under it: crimson 7% beige 91% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 9514 px of blob against this slot's own 8694 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 15.0 against its own 115.6 of contrast; confidence 0.13 where 0.17 is needed 1.4 px out)
+  f0011  90x164 own=8832  r=32  ref under it: crimson 8% beige 90% backdrop 2%
+          ATTRIBUTABLE drift 1.20 px
+  f0012  90x163 own=8830  r=32  ref under it: crimson 8% beige 90% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 9482 px of blob against this slot's own 8695 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 15.8 against its own 115.4 of contrast; confidence 0.13 where 0.18 is needed 2.0 px out)
+  f0013  90x163 own=8801  r=32  ref under it: crimson 8% beige 90% backdrop 2%
+          ATTRIBUTABLE drift 0.56 px
+  f0014  88x158 own=8739  r=32  ref under it: crimson 7% beige 90% backdrop 3%
+          this slot's reference component also holds "cape-back", "cape-front" — 9684 px of blob against this slot's own 8621 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 15.7 against its own 115.6 of contrast; confidence 0.14 where 0.15 is needed 0.0 px out)
+  f0015  87x147 own=8311  r=32  ref under it: crimson 8% beige 87% backdrop 5%
+          this slot is inside a reference component 1.2x its size and 106x145 px against its 87x147 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 17.4 against its own 115.8 of contrast; confidence 0.13 where 0.15 is needed 0.0 px out)
+  f0016  85x140 own=7786  r=32  ref under it: crimson 8% beige 86% backdrop 6%
+          this slot is inside a reference component 1.2x its size and 115x138 px against its 85x140 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 19.7 against its own 115.7 of contrast; confidence 0.12 where 0.18 is needed 2.0 px out)
+  f0017  91x137 own=7573  r=32  ref under it: crimson 9% beige 86% backdrop 5%
+          ATTRIBUTABLE drift 0.79 px
+  f0018  86x143 own=8032  r=32  ref under it: crimson 9% beige 87% backdrop 3%
+          this slot is inside a reference component 1.1x its size and 108x144 px against its 86x143 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 19.0 against its own 114.8 of contrast; confidence 0.10 where 0.19 is needed 3.2 px out)
+  f0019  93x141 own=8453  r=32  ref under it: crimson 10% beige 87% backdrop 3%
+          this slot's reference component also holds "cape-back", "cape-front" — 8902 px of blob against this slot's own 8343 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 19.6 against its own 114.7 of contrast; confidence 0.06 where 0.15 is needed 0.0 px out)
+  f0020  87x154 own=8397  r=32  ref under it: crimson 9% beige 83% backdrop 9%
+          this slot is inside a reference component 1.2x its size and 111x163 px against its 87x154 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 21.9 against its own 114.4 of contrast; confidence 0.07 where 0.22 is needed 5.0 px out)
+  f0021  102x147 own=8607  r=32  ref under it: crimson 8% beige 82% backdrop 11%
+          this slot is inside a reference component 1.2x its size and 159x153 px against its 102x147 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 23.4 against its own 114.5 of contrast; confidence 0.08 where 0.18 is needed 2.0 px out)
+  f0022  85x141 own=7788  r=32  ref under it: crimson 8% beige 86% backdrop 6%
+          this slot is inside a reference component 1.2x its size and 168x154 px against its 85x141 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 17.5 against its own 113.3 of contrast; confidence 0.09 where 0.15 is needed 0.0 px out)
+  f0023  80x128 own=6688  r=32  ref under it: crimson 9% beige 84% backdrop 6%
+          this slot is inside a reference component 1.3x its size and 163x148 px against its 80x128 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 20.4 against its own 112.3 of contrast; confidence 0.01 where 0.23 is needed 5.7 px out)
+  f0024  109x136 own=8250  r=32  ref under it: crimson 7% beige 87% backdrop 5%
+          this slot is inside a reference component 1.3x its size and 163x154 px against its 109x136 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 16.5 against its own 111.6 of contrast; confidence 0.14 where 0.17 is needed 1.4 px out)
+  f0025  85x148 own=8995  r=32  ref under it: crimson 8% beige 88% backdrop 5%
+          this slot is inside a reference component 1.3x its size and 149x143 px against its 85x148 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 16.1 against its own 112.2 of contrast; confidence 0.11 where 0.16 is needed 1.0 px out)
+  f0026  84x153 own=9341  r=32  ref under it: crimson 9% beige 87% backdrop 4%
+          this slot is inside a reference component 1.2x its size and 163x162 px against its 84x153 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 16.7 against its own 112.4 of contrast; confidence 0.09 where 0.23 is needed 6.0 px out)
+  f0027  99x149 own=8355  r=32  ref under it: crimson 9% beige 86% backdrop 4%
+          this slot is inside a reference component 1.2x its size and 182x182 px against its 99x149 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 20.6 against its own 112.8 of contrast; confidence 0.10 where 0.17 is needed 1.4 px out)
+  f0028  106x152 own=9258  r=32  ref under it: crimson 11% beige 87% backdrop 2%
+          this slot is inside a reference component 1.3x its size and 194x154 px against its 106x152 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 17.8 against its own 113.8 of contrast; confidence 0.13 where 0.16 is needed 1.0 px out)
+  f0029  109x103 own=7318  r=32  ref under it: crimson 11% beige 84% backdrop 5%
+          this slot is inside a reference component 1.3x its size and 167x106 px against its 109x103 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 22.4 against its own 115.1 of contrast; confidence 0.16 where 0.17 is needed 1.4 px out)
+  f0030  109x130 own=8996  r=32  ref under it: crimson 4% beige 91% backdrop 5%
+          this slot is inside a reference component 1.4x its size and 161x160 px against its 109x130 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 11.7 against its own 113.1 of contrast; confidence 0.19 where 0.19 is needed 3.2 px out)
+  f0031  81x160 own=8608  r=32  ref under it: crimson 5% beige 88% backdrop 7%
+          this slot is inside a reference component 1.3x its size and 130x158 px against its 81x160 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 17.3 against its own 112.5 of contrast; confidence 0.08 where 0.20 is needed 3.6 px out)
+  f0032  79x156 own=8338  r=32  ref under it: crimson 8% beige 88% backdrop 4%
+          this slot is inside a reference component 1.3x its size and 144x139 px against its 79x156 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 17.6 against its own 112.5 of contrast; confidence 0.08 where 0.16 is needed 1.0 px out)
+  f0033  79x154 own=8101  r=32  ref under it: crimson 10% beige 87% backdrop 3%
+          ATTRIBUTABLE drift 1.52 px
+  f0034  85x153 own=8199  r=32  ref under it: crimson 11% beige 86% backdrop 3%
+          this slot is inside a reference component 1.3x its size and 163x165 px against its 85x153 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 24.8 against its own 112.4 of contrast; confidence 0.04 where 0.18 is needed 2.2 px out)
+=== hello@24fps ===
+  f0000  88x154 own=9177  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.10 px
+  f0069  88x154 own=7951  r=32  ref under it: crimson 11% beige 87% backdrop 2%
+          this slot is inside a reference component 1.4x its size and 142x194 px against its 88x154 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 22.0 against its own 113.2 of contrast; confidence 0.04 where 0.18 is needed 2.0 px out)
+=== hello@30fps ===
+  f0000  88x154 own=9177  r=32  ref under it: crimson 8% beige 91% backdrop 0%
+          ATTRIBUTABLE drift 0.10 px
+  f0086  88x154 own=7951  r=32  ref under it: crimson 11% beige 87% backdrop 3%
+          this slot is inside a reference component 1.4x its size and 145x192 px against its 88x154 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 22.9 against its own 113.2 of contrast; confidence 0.01 where 0.21 is needed 4.0 px out)
+=== walk ===
+  f0000  98x150 own=8359  r=32  ref under it: crimson 7% beige 91% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 8746 px of blob against this slot's own 8237 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 13.5 against its own 115.6 of contrast; confidence 0.15 where 0.17 is needed 1.4 px out)
+  f0001  110x141 own=8450  r=32  ref under it: crimson 7% beige 90% backdrop 3%
+          ATTRIBUTABLE drift 0.82 px
+  f0002  103x132 own=8305  r=32  ref under it: crimson 9% beige 88% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 9012 px of blob against this slot's own 8195 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 18.2 against its own 115.8 of contrast; confidence 0.14 where 0.19 is needed 3.0 px out)
+  f0003  94x136 own=8346  r=32  ref under it: crimson 11% beige 82% backdrop 6%
+          this slot's reference component also holds "cape-back", "cape-front" — 8606 px of blob against this slot's own 8236 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 22.8 against its own 115.7 of contrast; confidence 0.06 where 0.19 is needed 3.2 px out)
+  f0004  86x140 own=7810  r=32  ref under it: crimson 14% beige 82% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 8417 px of blob against this slot's own 7699 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 22.4 against its own 115.4 of contrast; confidence 0.07 where 0.15 is needed 0.0 px out)
+  f0005  78x140 own=7370  r=32  ref under it: crimson 15% beige 83% backdrop 3%
+          this slot's reference component also holds "cape-back", "cape-front" — 8379 px of blob against this slot's own 7267 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 18.6 against its own 115.1 of contrast; confidence 0.15 where 0.17 is needed 1.4 px out)
+  f0006  80x141 own=7533  r=32  ref under it: crimson 11% beige 86% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 8599 px of blob against this slot's own 7414 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 19.3 against its own 115.1 of contrast; confidence 0.16 where 0.22 is needed 5.0 px out)
+  f0007  82x143 own=7808  r=32  ref under it: crimson 9% beige 87% backdrop 4%
+          this slot's reference component also holds "cape-back", "cape-front" — 8663 px of blob against this slot's own 7710 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 18.6 against its own 115.7 of contrast; confidence 0.06 where 0.20 is needed 3.6 px out)
+  f0008  90x139 own=8189  r=32  ref under it: crimson 10% beige 87% backdrop 3%
+          this slot is inside a reference component 1.1x its size and 105x146 px against its 90x139 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 17.1 against its own 115.5 of contrast; confidence 0.14 where 0.18 is needed 2.0 px out)
+=== walk@24fps ===
+  f0000  98x150 own=8359  r=32  ref under it: crimson 7% beige 91% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 8746 px of blob against this slot's own 8237 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 13.5 against its own 115.6 of contrast; confidence 0.15 where 0.17 is needed 1.4 px out)
+  f0016  90x139 own=8189  r=32  ref under it: crimson 10% beige 87% backdrop 3%
+          this slot is inside a reference component 1.1x its size and 105x149 px against its 90x139 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 17.5 against its own 115.5 of contrast; confidence 0.12 where 0.19 is needed 2.8 px out)
+=== walk@30fps ===
+  f0000  98x150 own=8359  r=32  ref under it: crimson 7% beige 91% backdrop 2%
+          this slot's reference component also holds "cape-back", "cape-front" — 8746 px of blob against this slot's own 8237 px, so its centroid is the merged shape's and not this part's; correlating the slot's own pixels found no match within 32 px either (best residual 13.5 against its own 115.6 of contrast; confidence 0.15 where 0.17 is needed 1.4 px out)
+  f0020  90x139 own=8189  r=32  ref under it: crimson 10% beige 87% backdrop 3%
+          this slot is inside a reference component 1.1x its size and 105x148 px against its 90x139 — the reference merged it with something it touches or is drawn behind; correlating the slot's own pixels found no match within 32 px either (best residual 17.1 against its own 115.5 of contrast; confidence 0.14 where 0.19 is needed 2.8 px out)
