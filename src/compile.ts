@@ -650,9 +650,33 @@ function nearMisses(wanted: string, known: Iterable<string>): string[] {
  * parts resolves against a pack of the same parts with no edit. The geometry —
  * `x`/`y`/`width`/`height`/`offsets`/`rotate` — is the atlas's, read rather than
  * invented, and `width`/`height` on the resulting image are the region's
- * `originalWidth`/`originalHeight`: the UNTRIMMED drawing, which is what an
- * attachment's width and height mean and therefore what every downstream
- * measurement in this file already expects.
+ * `originalWidth`/`originalHeight` **divided by the page's `scale:`**: the
+ * UNTRIMMED drawing at its own size, which is what an attachment's width and
+ * height mean and therefore what every downstream measurement in this file
+ * already expects.
+ *
+ * ## 🚨 Why the `scale:` divide is not a refinement (issue #267)
+ *
+ * A region's `originalWidth/Height` are in the PAGE's texels, and a page that
+ * declares `scale: 0.5` holds texels half the size of the drawings it was packed
+ * from — the field says so in as many words, and `atlasScales`
+ * ([`src/render.ts`](render.ts)) already reported it. An attachment's `width` is
+ * in world units, and `SkeletonJson` reads it straight out of the JSON
+ * (`region.width = map.width * scale`) with the atlas nowhere in the expression,
+ * so nothing downstream of rigc will ever undo a scale rigc failed to apply.
+ * Taking the texel count as the world size therefore produced a valid skeleton
+ * drawn at half size, green, with nothing in the report saying so — and NINE of
+ * the ten atlases in the example corpus declare a `scale:`, because an editor
+ * pack is routinely coarser than its art.
+ *
+ * ⚠️ **The divide recovers the drawing to within the pack's own quantisation, not
+ * exactly.** The packer wrote `round(drawing x scale)`, so a region 373 texels
+ * wide at `scale: 0.5` is consistent with a 745- and a 746-pixel drawing and the
+ * pack does not say which. `originalWidth / scale` is the midpoint of that
+ * interval — the unbiased estimate — and it is off by at most `0.5 / scale`
+ * source pixels (one pixel at `scale: 0.5`). That residual is information the
+ * pack destroyed; the only way to be exact is to be handed the loose art, which
+ * is the default route. What the divide removes is the factor-of-two error.
  *
  * ## Three refusals, and why none of them can be a warning
  *
@@ -706,15 +730,20 @@ function resolveFromAtlas(
   }
   const info = readPngInfo(absPath);
   const page = relative(outDir, absPath).split('\\').join('/');
+  const scale = found.page.scale;
   return {
     region,
     page,
     absPath,
-    width: found.region.originalWidth,
-    height: found.region.originalHeight,
+    // `r6` for the same reason every other emitted number takes it: 55 / 0.4 is
+    // 137.49999999999997 in binary floating point, and a size is a number the
+    // artifact states rather than one it accumulates.
+    width: r6(found.region.originalWidth / scale),
+    height: r6(found.region.originalHeight / scale),
     hasAlpha: info.hasAlpha,
     isBase,
     atlas: found.region,
+    ...(scale === 1 ? {} : { atlasScale: scale }),
   };
 }
 
@@ -913,7 +942,8 @@ export function compile(opts: CompileOptions): CompileResult {
   const measuredFrom = (img: CompiledImage, relPath: string): string =>
     img.atlas === undefined
       ? relPath
-      : `region "${img.region}" of ${opts.atlasInPath!} (declared ${img.atlas.originalWidth}x${img.atlas.originalHeight} by its offsets)`;
+      : `region "${img.region}" of ${opts.atlasInPath!} (declared ${img.atlas.originalWidth}x${img.atlas.originalHeight} ` +
+        `by its offsets${img.atlasScale === undefined ? '' : `, at scale: ${img.atlasScale}`})`;
 
   for (const part of parts) {
     const win = partWindow(part, manifest!);
@@ -2053,7 +2083,16 @@ function buildRigRegion(
         throw new CompileError(
           `${where}: the spec says ${field} ${stated} and region "${img.region}" of the imported atlas is ` +
             `${measured} (bounds ${img.atlas.width}x${img.atlas.height}, offsets state a ` +
-            `${img.atlas.originalWidth}x${img.atlas.originalHeight} drawing)`,
+            `${img.atlas.originalWidth}x${img.atlas.originalHeight} drawing` +
+            // The descaled number is in neither file, so the message says how it
+            // was reached — otherwise "the spec says 745 and the region is 746"
+            // reads as an off-by-one in the spec rather than as the pack's own
+            // rounding, and the remedy is the opposite one.
+            (img.atlasScale === undefined
+              ? ''
+              : ` in the page's texels, which its scale: ${img.atlasScale} makes a ` +
+                `${img.width}x${img.height} drawing (+/- ${r6(0.5 / img.atlasScale)}px, the pack's rounding)`) +
+            ')',
         );
       }
     }
@@ -2343,8 +2382,16 @@ function buildContourAttachment(
     throw err;
   }
 
-  const w = plate.width;
-  const h = plate.height;
+  // Two grids, and they are the same one except on an imported page that
+  // declares a `scale:`. The trace happens on the pixels that exist — the
+  // plate's — and the mapping into world units below is the DRAWING's, which is
+  // what `img.width/height` are (`resolveFromAtlas`). Keeping them apart is what
+  // stops a contour mesh and a plain region attachment of the same imported art
+  // from landing in different units (#267); on the loose path and on any pack at
+  // `scale: 1` the two are equal and `toArt` is 1, so nothing moves.
+  const w = img.width;
+  const h = img.height;
+  const toArt = w / plate.width;
   if (att.width !== undefined && att.width !== w) {
     throw new CompileError(`${where}: the spec says width ${att.width} and "${att.image}" measures ${w}`);
   }
@@ -2357,7 +2404,7 @@ function buildContourAttachment(
   if (index < 0) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
   const vertices = encodeWeightedVertices(
     geometry,
-    (px, py) => [r6(anchor.worldX + px - w / 2), r6(anchor.worldY + h / 2 - py)],
+    (px, py) => [r6(anchor.worldX + px * toArt - w / 2), r6(anchor.worldY + h / 2 - py * toArt)],
     { anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) }, controls: [] },
   );
   ctx.meshBones.add(ctx.anchorBone);

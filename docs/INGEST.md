@@ -63,7 +63,7 @@ an upstream `license.txt` (Appendix, and [NOTICE.md](../NOTICE.md)).
 | Command | Takes a foreign `skeleton.json`? | What it needs, and what it gives back |
 | --- | --- | --- |
 | **`validate <skeleton.json>`** | ✅ **yes — this is its foreign-data form** | the `.json`, plus one `.atlas` beside it or named with `--atlas`. Runs the assertions and prints `PASS`/`FAIL`/`SKIP`/`PROF` per rule, naming the profile that judged it. §1.1 |
-| **`render --candidate <skeleton.json>`** | ✅ **yes** | PNG frames plus a contact sheet, per animation. ⭐ **It does not gate** — it drew all seven frames of `spineboy-pro`'s `hoverboard` while `validate` was failing that same file (§3.2) |
+| **`render --candidate <skeleton.json>`** | ✅ **yes** | PNG frames plus a contact sheet, per animation. ⭐ **It does not gate** — it drew all seven frames of `spineboy-pro`'s `hoverboard` while `validate` was failing that same file, which is how the rule rather than the file was found to be wrong (§3.2) |
 | **`preview --candidate <skeleton.json>`** | ✅ **yes** | one self-contained `.html` that plays it in the official Spine Web Player. Needs a network the first time it is opened ([NOTICE.md](../NOTICE.md)) |
 | **`vote --candidate <a> --candidate <b>`** | ✅ **yes, on either side** | a ballot page. Pairing a foreign export against your own transcription is a legitimate ballot, and the panes carry no paths |
 | **`check --candidate <skeleton.json> --frames <dir>`** | ✅ **yes** | ⭐ it reads **frames and never a reference skeleton**, so a foreign export enters this one *twice over*: as the candidate, or — via `render` — as the source of the frames. §1.4 |
@@ -71,7 +71,7 @@ an upstream `license.txt` (Appendix, and [NOTICE.md](../NOTICE.md)).
 | **`pose --images <dir> --frame <png>`** | ⛔ **not the skeleton** | loose part PNGs and one picture. A packed atlas page is not loose parts, and pointing it at one produces a confident answer about nothing — §5 |
 | **`explain --rig … --motion … --out …`** | ⛔ **no** | rig spec + motion spec. It explains **what you wrote**, which makes it a transcription instrument rather than a reading one — §1.5 |
 | **`build --rig … --motion … --images …`** | ⛔ **no** | specs in, skeleton out. The only writer in the toolchain, and the reason §2 exists |
-| **`build … --atlas-in <file.atlas>`** | ⛔ not the skeleton — **but yes, the foreign *atlas*** | resolves your parts against the regions of a pack somebody else made, joining on region name. The one place a foreign *file* becomes an input to `build`. ⚠️ It does not apply the pack's `scale:` line — §2.3 |
+| **`build … --atlas-in <file.atlas>`** | ⛔ not the skeleton — **but yes, the foreign *atlas*** | resolves your parts against the regions of a pack somebody else made, joining on region name. The one place a foreign *file* becomes an input to `build`. It applies the page's `scale:`, so an imported size is the drawing's rather than the pack's — §2.3 |
 | **`build … --pack`** | ⛔ **no** | puts your own loose parts onto shared pages instead of one page per part, losslessly. Not foreign input, but it is what makes a transcription's atlas comparable in shape to an export's — §2.3 |
 | **`bench <rung> --candidate …`** | ✅ mechanically | it is the *benchmark's* instrument: it knows which corpus example is which rung and measures against that one. Not an ingest instrument, and named here only so nobody reaches for it. Use `diff` and `check` directly |
 
@@ -399,8 +399,8 @@ before it was a hand-edit of emitted JSON with nothing checking it.
    the loose `pendulum.png` beside it is exactly 745×212. ⚠️ Do **not** take it from
    the atlas region bounds: that page carries `scale: 0.5`, so `pendulum`'s bounds read
    `373, 106`. Two numbers for one part, and the attachment's is the one in world
-   units — which is also the whole of §2.3's `--atlas-in` trap, arriving here first as
-   a number you could copy by hand.
+   units. `--atlas-in` now does that division for you (§2.3), but it can only land
+   within the pack's own rounding — by hand, off the attachment, it is exact.
 3. **Transcribe the rig spec: header, bones, slots, skins.** Bones parents-first; the
    `slots` array *is* the draw order (AUTHORING R4), so its order is data you are
    copying and not a detail. Leave `invariants` out entirely — it describes rigc's own
@@ -482,7 +482,7 @@ the figures compare:
 | --- | --- | --- |
 | **default** — one region per page, pointing at the loose PNGs | `pendulum 745x212`, `square 159x159` | `in units … x1.0001`; MAE **6.36**, texture floor 6.36, **above it 0.00** |
 | **`--pack`** — the same loose parts onto shared pages | `pendulum 745x212`, `square 159x159` | `in units … x1.0001`; MAE **6.36**, texture floor 6.36, **above it 0.00** |
-| **`--atlas-in <the export's own atlas>`** | ⚠️ `pendulum 373x106`, `square 80x80` | `in units candidate 825.5 x 675.8  reference 1053.5 x 808.7  x0.8092`; MAE **124.97** |
+| **`--atlas-in <the export's own atlas>`** | `pendulum 746x212`, `square 160x160` | `in units candidate 1053.5 x 808.2  reference 1053.5 x 808.7  x0.9997`; MAE **2.03**, texture floor 0.00, **above it 2.03** |
 
 📌 **The first two are exact and indistinguishable**, and `--pack` is the one to reach
 for when the deliverable is meant to look like an export: MaxRects onto shared pages,
@@ -491,23 +491,30 @@ close the 6.36 — nothing that samples full-resolution texels can, against fram
 from a half-resolution pack — so the floor stays, `--texture-from` stays the way to
 attribute it, and *packing does not change what the figure means.*
 
-🚨 **The third row is a live trap, and it is the one an ingest task walks into.**
-`--atlas-in` is exactly the flag this job wants — *resolve my transcription against the
-export's own pack* — and on a pack that declares `scale:` it takes the packed `bounds`
-as the attachment size and **silently halves the geometry**. The build is green; the
-`in units` line is where it shows. And this is not an edge case: **nine of the ten
-atlases in the fetched corpus declare a `scale:`** (eight at 0.5, one at 0.4 — every
-file but `spineboy-run.atlas`), because an editor pack is routinely coarser than the
-art it came from. Filed as
-[issue #267](https://github.com/firejune/rigc/issues/267), with the control that
-isolates it: import a pack with **no** `scale:` line — rigc's own `--pack` output —
-and the same specs come back `745x212 / 159x159` and measure identically to the default
-row.
+⭐ **The third row is the mirror image of the first two, and reading it wrong is the
+easy mistake.** Its MAE is the *lowest* of the three because it draws through the
+reference's own texels — floor 0.00 — so what is left is geometry, and 2.03 of geometry
+is the ONE PIXEL the pack cannot give back. `--atlas-in` divides a region's size by the
+page's `scale:` (nine of the ten corpus atlases declare one — eight at 0.5, one at 0.4,
+every file but `spineboy-run.atlas`), and the packer wrote `round(drawing × scale)`, so
+a 373-texel region at `scale: 0.5` is consistent with both a 745- and a 746-pixel
+drawing. rigc states 746, the export says 745, and putting the pixel back by hand takes
+the same build to `x1.0000` / MAE **0.00** — which is how the residual is known to be
+the rounding and nothing else.
 
-⇒ **Until #267 settles: keep the loose art, build the default way or with `--pack`, and
-attribute the floor with `--texture-from`.** Reach for `--atlas-in` when the pack you
-were handed declares no `scale:`, and check the `in units` line either way — it is the
-line that catches a whole-figure scale error, and it is the only one that does.
+⇒ **The routes now differ in what their MAE is MADE OF rather than in whether they are
+right.** Loose art or `--pack` gives exact geometry through coarser texels; `--atlas-in`
+gives the reference's texels through geometry good to half a texel. Read `above it`
+before the MAE either way, and read the `in units` line first — it is the line that
+catches a whole-figure scale error, and it is the only one that does.
+
+> 🕰️ **This row used to read `pendulum 373x106`, `square 80x80`, `x0.8092`, MAE
+> 124.97 — the pack's texel counts taken as world sizes, so every attachment came out
+> at half size, green, with nothing in the report saying so.** Found while writing this
+> page and fixed as [issue #267](https://github.com/firejune/rigc/issues/267). The
+> control that isolated it is now a selftest: import a pack with **no** `scale:` line
+> (rigc's own `--pack` output writes none) and the skeleton is byte-identical to the
+> loose build.
 
 ### 2.4 The worked precedent, and what to take from it
 
@@ -556,10 +563,11 @@ they are the whole set an ingest task realistically meets.
 
 ### 3.2 Assertions a real export fails
 
-📊 **Eleven of the twelve skeletons in the fetched corpus come back green** under the
-default profile with the right atlas named. That is the baseline, and it is the honest
-headline: **a correct editor export normally passes.** One fails, and its two failures
-are worth a section each because they mean opposite things.
+📊 **All twelve skeletons in the fetched corpus come back green** under the default
+profile with the right atlas named. That is the baseline, and it is the honest headline:
+**a correct editor export passes.** Getting there took one rule fixed, and the two
+sections below are worth reading in full because the failures they describe mean
+opposite things — the first is still reachable, and the second was the rule's fault.
 
 **`A00_ROUNDTRIP_PARSE` — the atlas does not cover the skeleton.**
 
@@ -581,7 +589,7 @@ named attachment, so you can tell "wrong atlas" from "the export is missing a re
 by whether the missing names are a *coherent subset*. Fix by naming the right atlas —
 `spineboy-ess.json` is green against `spineboy.atlas`.
 
-**`A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` — and this one is the rule's fault.**
+**`A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` — and this one was the rule's fault.**
 
 ```bash
 rigc validate examples/spineboy/export/spineboy-pro.json \
@@ -592,24 +600,34 @@ rigc validate examples/spineboy/export/spineboy-pro.json \
   PASS  A00_ROUNDTRIP_PARSE
   PASS  A10_NO_NAN_AFTER_STEPPING
   …
-  FAIL  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: animation "hoverboard" deform default/hoverboard-board/hoverboard-board key 1: offset 1 is odd, so the run's x values land on y slots and back again
-  FAIL  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: animation "hoverboard" deform default/hoverboard-board/hoverboard-board key 1: the run holds 147 numbers and the deform array is x, y pairs
-rigc: 2 assertion(s) failed
+  PASS  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT
+rigc: green
 ```
 
-**What it means:** nothing is wrong with the data. `hoverboard-board` is an unweighted
-mesh with 148 floats; the key carries `offset: 1` and 147 values, covering `1..148` —
-the whole array minus a leading zero the editor trimmed. A trim can land on a y
-component, so an odd offset is what a trimmed run looks like, and Spine's own parser
-copies the run in at the raw index with no alignment requirement anywhere. The proof is
-in the same report: **`A00` and `A10` both PASS on the same file**, and `render` draws
-the `hoverboard` animation.
+**Why it is worth a section anyway.** That line used to be two `FAIL`s:
 
-⭐ **What to do: nothing to the file.** This is filed as
-[issue #262](https://github.com/firejune/rigc/issues/262). The two parity clauses are
-wrong as validity rules; the remaining A35 clauses — the run fitting inside the deform
-array, finite values, a non-empty key array, the attachment existing in the skin — are
-correct and catch real breakage.
+```
+  FAIL  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: … key 1: offset 1 is odd, so the run's x values land on y slots and back again
+  FAIL  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: … key 1: the run holds 147 numbers and the deform array is x, y pairs
+```
+
+and nothing was wrong with the data. `hoverboard-board` is an unweighted mesh with 148
+floats; the key carries `offset: 1` and 147 values, covering `1..148` — the whole array
+minus a leading zero the editor trimmed. A trim can land on a y component, so an odd
+offset is what a trimmed run looks like, and Spine's own parser copies the run in at the
+raw index with no alignment requirement anywhere. The proof was in the same report:
+**`A00` and `A10` both PASSed on that file**, and `render` drew the `hoverboard`
+animation.
+
+⭐ **The lesson survives the fix, and it is the reason to read this.** A validity rule
+stricter than the runtime does not look like a bug — it looks like a finding about
+somebody's file, and the honest reading of that message (*"your x values land on y
+slots"*) sends an agent to change correct data. Fixed as
+[issue #262](https://github.com/firejune/rigc/issues/262): the two parity clauses are
+gone, and the remaining A35 clauses — the run fitting inside the deform array, finite
+values, a non-empty key array, the attachment existing in the skin — are correct and
+catch real breakage. The over-long run in particular is still refused, and still the
+quietest defect the format has.
 
 🚨 **The general lesson matters more than the specific bug.** A `FAIL` on foreign data
 has three possible meanings and the message alone does not separate them:
@@ -647,7 +665,7 @@ be weighted at all is policy.
 
 ⚠️ **`--profile spine-html` on foreign data produces a wall of failures that mean
 nothing about the file.** Same `spineboy-pro.json`, same atlas, one flag changed — the
-run ends `rigc: 55 assertion(s) failed`, and this is the tally with one real message
+run ends `rigc: 53 assertion(s) failed`, and this is the tally with one real message
 per rule:
 
 | Count | Rule | One of its messages |
@@ -655,11 +673,12 @@ per rule:
 | **40** | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | `region "crosshair" has UVs (0.181640625,0.06640625)-(0.2255859375,0.2421875); one part per page must cover the page exactly` |
 | **10** | `A15_IDLE_NO_MESH_BONE_KEYS` | `idle keys bone "front-shoulder", which drives a mesh — meshes never idle-skip` |
 | **2** | `A20_MESH_WEIGHTS_COHERENT` | `mesh "hoverboard-board" is unweighted; the ring tier drives meshes by bones` |
-| **2** | `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | §3.2 — the same two, in both profiles |
 | **1** | `A11_NO_CLIPPING_ATTACHMENTS` | `1 clipping attachment(s); the renderer skips them silently` |
 
 Every one of those is a correct statement about a correct file: the atlas *is* packed,
 a bone *does* key a mesh, a mesh *is* unweighted, a clipping attachment *is* present.
+(The tally was 55 before §3.2's A35 was fixed, and that is the one entry that was *not*
+a correct statement — which is why it belonged in a different section from these.)
 And it is not a big-skeleton problem — `3-timing-and-spacing`, with two regions on one
 page, fails `A06` twice for the same reason. ⇒ **Do not run `spine-html` against
 somebody's export unless they asked whether it satisfies this project's renderer
@@ -1003,9 +1022,9 @@ non-goal used to read *"rigc emits one region per page and cannot do otherwise"*
 [issue #4](https://github.com/firejune/rigc/issues/4) closed it: `build --pack` writes
 shared pages losslessly and `build --atlas-in` resolves against a pack somebody else
 made (AUTHORING §0.1–§0.2). One-region-per-page is now the **default**, not the only
-shape. What is still true, and is the part that matters here, is §2.3's warning: on a
-pack that declares `scale:`, `--atlas-in` halves the geometry
-([issue #267](https://github.com/firejune/rigc/issues/267)).
+shape. `--atlas-in` applies the page's `scale:`, so an imported pack states the
+drawing's size rather than the pack's — to within the pack's own rounding, which is
+§2.3's row and the whole of [issue #267](https://github.com/firejune/rigc/issues/267).
 
 🚫 **No CLI unpacker, so `pose` needs loose art.** `pose` reads *loose part PNGs*
 against one picture. A foreign export hands you a packed page instead, and pointing
@@ -1086,7 +1105,7 @@ The working directories the commands write into — `ref3/`, `ref-big/`, `render
 ⚠️ **`7-anticipation` ships no `license.txt` upstream**, so the redistribution grant its
 siblings carry does not exist for it. No excerpt, figure or image on this page comes
 from it; the only places it appears at all are the two corpus-wide tallies — §3.2's
-*eleven of twelve skeletons* and §2.3's *nine of ten atlases* — both of which count
+*twelve of twelve skeletons* and §2.3's *nine of ten atlases* — both of which count
 every directory the fetch produced.
 `scripts/fetch-examples.sh` prints a warning naming it; [NOTICE.md](../NOTICE.md) has
 the per-directory terms.

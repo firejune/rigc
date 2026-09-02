@@ -622,19 +622,39 @@ export function validate(input: ValidateInput): ValidateReport {
   // its tail and deforms the rest correctly. The result looks nearly right, which
   // is worse than looking wrong.
   //
-  // Two more shapes, both of them equally quiet:
-  //
-  //   * an **odd `offset`** puts every x of the run on a y and every y on the
-  //     next x — the array is pairs, and nothing in the format says so;
-  //   * a **non-finite value** in `vertices` reaches `computeWorldVertices` and
-  //     turns the vertex into NaN, which A10 would only catch if the deformed
-  //     slot's BONE went non-finite, and it does not.
+  // One more shape, equally quiet: a **non-finite value** in `vertices` reaches
+  // `computeWorldVertices` and turns the vertex into NaN, which A10 would only
+  // catch if the deformed slot's BONE went non-finite, and it does not.
   //
   // The length depends on the encoding and the two are the same split
   // `readVertices` makes: unweighted is one pair per vertex, weighted is one pair
   // per bone influence (`vertices.length / 3 * 2`). Deriving it here rather than
   // assuming either is the whole point — assuming would produce a confident,
   // wrong bound on half the meshes in the world.
+  //
+  // ## ⛔ What this rule must NOT require: pair alignment (issue #262)
+  //
+  // It used to refuse an odd `offset` and an odd-length run, on the reading that
+  // "the array is x, y pairs, so a run has to start and end on one". The array is
+  // pairs; the RUN is not, and the parser above is the whole argument — `start` is
+  // a raw index into the deform array, `arrayCopy` copies `verticesValue.length`
+  // floats from it, and the element-wise `deform[i] += vertices[i]` that follows
+  // walks the entire array rather than the run. There is no pair arithmetic
+  // anywhere in that path, so a run may begin and end mid-pair, and every slot the
+  // run does not cover keeps the zero the fresh `Float32Array` came with — which
+  // is the identity delta, i.e. exactly the setup vertex.
+  //
+  // 🚨 That made the rule refuse legitimate editor output. Spine trims leading
+  // zeros off a delta run, and a trim lands wherever the zeros stop: the official
+  // `spineboy-pro` export keys `hoverboard-board` (an unweighted mesh, 148 floats)
+  // with `offset: 1` and 147 values, covering `1..148`. A35 was the only assertion
+  // that failed it — `A00` round-trips it and `A10` steps it clean — and it is a
+  // `'validity'` rule, so it fired in every profile and told an agent holding a
+  // file that every Spine runtime plays to go and change correct data.
+  //
+  // ⭐ The bound that survives is the one the runtime actually has: the run has to
+  // FIT (`offset + vertices.length <= deformLength`). That is the quiet defect the
+  // rule exists for and it is unaffected by where the run starts.
   check('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', () => {
     if (!raw) return skip('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', 'the skeleton JSON did not parse (A00 owns that failure)');
     if (!isObj(raw.animations)) return skip('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', 'the skeleton declares no animations');
@@ -698,18 +718,10 @@ export function validate(input: ValidateInput): ValidateReport {
                 fail('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', `${at} key ${k}: offset is ${JSON.stringify(key.offset)}`);
                 return;
               }
-              if (offset % 2 !== 0) {
-                fail(
-                  'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT',
-                  `${at} key ${k}: offset ${offset} is odd, so the run's x values land on y slots and back again`,
-                );
-              }
-              if (vertices.length % 2 !== 0) {
-                fail(
-                  'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT',
-                  `${at} key ${k}: the run holds ${vertices.length} numbers and the deform array is x, y pairs`,
-                );
-              }
+              // ⛔ No parity clause here, and the header says why: an odd `offset`
+              // and an odd-length run are both what a trimmed editor export looks
+              // like, and the parser has no pair arithmetic to be misaligned
+              // against (#262).
               if (offset + vertices.length > length) {
                 fail(
                   'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT',

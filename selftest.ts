@@ -5286,15 +5286,60 @@ function runConstraintAndDeformSuite(): number {
     'Utils.arrayCopy into a Float32Array drops everything past the end, so the deform is applied to part of the mesh and looks nearly right',
   );
 
-  const misaligned = gateProbeArtifacts(dirs, everything, (skeleton) => {
+  // ⭐ The other direction, and it is the direction that cost a release: A35 used
+  // to refuse an odd `offset` and an odd-length run as "misaligned pairs", which
+  // is what a TRIMMED editor export looks like. `flat` is unweighted with 8
+  // deform floats, so this is `spineboy-pro`'s `hoverboard-board` key in
+  // miniature — `offset: 1` and 7 values, covering `1..8`, the whole array minus
+  // a leading zero the editor trimmed off the delta run (issue #262).
+  //
+  // The mutant is checked for what it IS before it is checked for what A35 says,
+  // because "no failure" is also what a rule that never ran looks like: the run
+  // has to fit, and A35 has to be in `passed`.
+  const trimmed = gateProbeArtifacts(dirs, everything, (skeleton) => {
     const animations = skeleton.animations as Record<string, Record<string, unknown>>;
-    deformKeysOf(animations.move, 'flat')[1].offset = 3;
+    const key = deformKeysOf(animations.move, 'flat')[1];
+    const run = key.vertices as number[];
+    key.offset = 1;
+    key.vertices = [...run, 0, 0, 0, 0, 0].slice(0, 7);
   });
   say(
-    'T19_A35_fires_on_an_odd_offset',
-    misaligned.failures.some((f) => f.assertion === 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT'),
-    misaligned.failures.find((f) => f.assertion === 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT')?.detail ?? 'A35 accepted an odd offset',
-    'the array is pairs; an odd start reads every x as a y, which loads and tears the mesh',
+    'T19_A35_ACCEPTS_A_TRIMMED_RUN_THAT_STARTS_AND_ENDS_MID_PAIR',
+    trimmed.failures.every((f) => f.assertion !== 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT') &&
+      trimmed.passed.includes('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT'),
+    trimmed.passed.includes('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT')
+      ? 'offset 1 with 7 of 8 floats: A35 ran and passed'
+      : `A35 did not pass: [${trimmed.failures
+          .filter((f) => f.assertion === 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT')
+          .map((f) => f.detail)
+          .join('; ')}]`,
+    '`arrayCopy(run, 0, deform, offset, run.length)` copies at a RAW index and the `deform[i] += vertices[i]` after ' +
+      'it walks the whole array — there is no pair arithmetic to be misaligned against, so a validity rule that ' +
+      'demanded one told an agent to edit a file every Spine runtime plays',
+  );
+
+  // The overlap the removal above could have opened: a run from an ODD offset
+  // that also runs past the end. The parity clause used to catch this one for the
+  // wrong reason, so with it gone the fit clause has to be what stops it — one
+  // float longer than T19's, which is the whole difference between the two.
+  const trimmedTooLong = gateProbeArtifacts(dirs, everything, (skeleton) => {
+    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+    const key = deformKeysOf(animations.move, 'flat')[1];
+    key.offset = 1;
+    key.vertices = [1, 2, 3, 4, 5, 6, 7, 8];
+  });
+  // `exactly one` rather than `some`, and that is the tripwire half: a parity
+  // clause put back would refuse this mutant a SECOND time, on a reason the
+  // runtime does not have, and T19 alone would not see it happen here.
+  const tooLong = trimmedTooLong.failures.filter((f) => f.assertion === 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT');
+  say(
+    'T19B_A35_STILL_FIRES_WHEN_A_TRIMMED_RUN_OVERRUNS_THE_ARRAY',
+    tooLong.length === 1 && tooLong[0].detail.includes('1..9') && tooLong[0].detail.includes('8-long'),
+    tooLong.length === 0
+      ? 'A35 accepted a run from offset 1 that covers 1..9 of an 8-long array'
+      : tooLong.map((f) => f.detail).join(' | '),
+    'dropping the parity clauses must not drop the bound the runtime really has — the last float of this run is ' +
+      'copied past the end of the Float32Array and vanishes, which is the silence A35 was built for',
   );
 
   return bad;
@@ -7910,6 +7955,63 @@ function runPackerSuite(): number {
       'meant, and never visible in the file',
   );
 
+  // --- PK17: the page's `scale:` is applied to the size (issue #267) ---------
+  //
+  // 🚨 The refusal above is the loud half of the importer and this is the quiet
+  // one. A page that declares `scale: 0.5` holds texels half the size of the
+  // drawings it was packed from; taking the region's `originalWidth/Height` as
+  // the attachment's size therefore produced a valid skeleton at HALF scale, with
+  // a green gate and nothing in the report to read. Nine of the ten atlases in
+  // the example corpus declare a `scale:`.
+  //
+  // The probe rig is used rather than a PACK fixture because rigc's own packer
+  // writes no `scale:` line (there is nothing to declare — a packed region is a
+  // lossless copy), so the only way to hold the importer to a scaled pack is to
+  // state one. Indented, which is how the editor writes it, so `atlasScales` and
+  // `parseAtlasText` are reading the same line.
+  //
+  // Both directions in one control: the same atlas with and without the line, so
+  // a fix that applied the scale everywhere would fail here as loudly as the bug
+  // it replaced.
+  const scaleDirs = writeProbeRig();
+  const scaleMotion = join(scaleDirs.dir, 'probe.motion.json');
+  writeFileSync(scaleMotion, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+  const scaleBase = { rigPath: scaleDirs.rigPath, motionPath: scaleMotion, imagesDir: scaleDirs.dir };
+  const looseBuild = compile({ ...scaleBase, outDir: join(scaleDirs.dir, 'loose') });
+  // `compile` returns the text and writes nothing, so the directory the atlas is
+  // ANCHORED to has to be made before the two variants can be written into it:
+  // the page names are relative to it, and that is how the importer finds the
+  // PNGs. Both variants live in the same place for exactly that reason.
+  mkdirSync(join(scaleDirs.dir, 'loose'), { recursive: true });
+  const plainAtlas = join(scaleDirs.dir, 'loose', 'plain.atlas');
+  const scaledAtlas = join(scaleDirs.dir, 'loose', 'scaled.atlas');
+  writeFileSync(plainAtlas, looseBuild.atlasText);
+  writeFileSync(scaledAtlas, looseBuild.atlasText.replace(/^pma: false$/gm, 'pma: false\n  scale: 0.5'));
+  const sizesOf = (result: ReturnType<typeof compile>): string =>
+    result.images
+      .map((img) => `${img.region} ${img.width}x${img.height}`)
+      .sort()
+      .join(', ');
+  const importedPlain = compile({ ...scaleBase, outDir: join(scaleDirs.dir, 'in_plain'), atlasInPath: plainAtlas });
+  const importedScaled = compile({ ...scaleBase, outDir: join(scaleDirs.dir, 'in_scaled'), atlasInPath: scaledAtlas });
+  // The drawings are 12x8 and 6x6, so a `scale: 0.5` pack of them says its texels
+  // are half of that — which makes the drawings twice the region, not the region.
+  const wantScaled = 'block 24x16, marker 12x12';
+  const wantPlain = 'block 12x8, marker 6x6';
+  say(
+    'PK17_AN_IMPORTED_PAGES_SCALE_IS_APPLIED_TO_THE_ATTACHMENT_SIZE',
+    sizesOf(importedScaled) === wantScaled &&
+      sizesOf(importedPlain) === wantPlain &&
+      importedPlain.skeletonText === looseBuild.skeletonText &&
+      importedScaled.images.every((img) => img.atlasScale === 0.5) &&
+      importedPlain.images.every((img) => img.atlasScale === undefined),
+    `scale: 0.5 -> ${sizesOf(importedScaled)} (wanted ${wantScaled}); no scale: line -> ${sizesOf(importedPlain)} ` +
+      `(wanted ${wantPlain}), skeleton ${importedPlain.skeletonText === looseBuild.skeletonText ? 'identical to' : 'DIFFERS from'} the loose build`,
+    "the line is an instruction to whoever imports the pack and `--atlas-in` is the importer; a size read out of a " +
+      'coarser page is in the page\'s texels, and nothing downstream of rigc undoes it — `SkeletonJson` reads an ' +
+      'attachment\'s width straight out of the JSON with the atlas nowhere in the expression',
+  );
+
   return bad;
 }
 
@@ -8051,6 +8153,83 @@ function runAtlasReaderSuite(): number | null {
     '`--atlas-in` emits the imported atlas by rewriting its page paths, and a field this compiler has no reader ' +
       'for must survive the trip — dropping one would change the meaning of a file rigc was asked to pass through',
   );
+
+  // The two readers of `scale:` have to agree, because they now do different jobs
+  // with the same line: `atlasScales` reports it in the MAE, and `AtlasPage.scale`
+  // is DIVIDED BY to derive an attachment's size (#267). A page parser that missed
+  // an indented line, or read `0.5` off `scale: 0.05`, would halve geometry as
+  // silently as the bug it replaced — and the corpus is the only collection of
+  // editor-written `scale:` lines here.
+  const scaleReaders: string[] = [];
+  for (const path of atlases) {
+    const text = readFileSync(path, 'utf8');
+    const fromPages = parseAtlasText(text)
+      .pages.map((p) => p.scale)
+      .filter((s) => s !== 1);
+    const fromText = atlasScales(text).filter((s) => s !== 1);
+    if (fromPages.join(',') !== fromText.join(',')) {
+      scaleReaders.push(`${basename(path)}: pages [${fromPages.join(',')}] vs text [${fromText.join(',')}]`);
+    }
+  }
+  const declaredScales = atlases.flatMap((p) => atlasScales(readFileSync(p, 'utf8')).filter((s) => s !== 1));
+  say(
+    'PKR04_THE_PAGE_PARSER_AND_ATLASSCALES_READ_THE_SAME_SCALE_LINES',
+    scaleReaders.length === 0 && declaredScales.length > 0,
+    `${declaredScales.length} declared scale(s) across ${atlases.length} atlas file(s): ` +
+      `${[...new Set(declaredScales)].sort((a, b) => a - b).join(', ')}`,
+    'one line, two consumers, and the importer DIVIDES by it — the reader that feeds a size must not differ from ' +
+      'the reader that reports one',
+  );
+  if (scaleReaders.length > 0) console.log(`          ${scaleReaders.slice(0, 5).join('; ')}`);
+
+  // ⭐ The measurement the fix for #267 actually stands on: for every corpus
+  // region that has its loose drawing beside it, does the descaled region size
+  // land on the drawing's own size?
+  //
+  // ⚠️ Not "exactly", and the bound is the point. The packer wrote
+  // `round(drawing x scale)`, so a 373-texel region at `scale: 0.5` is consistent
+  // with a 745- and a 746-pixel drawing and the pack does not say which:
+  // `originalWidth / scale` is the midpoint of that interval and can be off by
+  // `0.5 / scale` source pixels. What must never come back is the factor of
+  // `1/scale` — the whole of the bug — so the tolerance is the quantisation and
+  // nothing more, and the worst residual is printed rather than merely bounded.
+  const recovery: string[] = [];
+  let recovered = 0;
+  let worstResidual = 0;
+  let scaledRegions = 0;
+  for (const path of atlases) {
+    const imagesDir = join(dirname(dirname(path)), 'images');
+    if (!existsSync(imagesDir)) continue;
+    for (const page of parseAtlasText(readFileSync(path, 'utf8')).pages) {
+      for (const region of page.regions) {
+        const png = join(imagesDir, `${region.name.trim()}.png`);
+        if (!existsSync(png)) continue;
+        const drawing = readPngInfo(png);
+        if (page.scale !== 1) scaledRegions++;
+        const tolerance = 0.5 / page.scale;
+        const dw = Math.abs(region.originalWidth / page.scale - drawing.width);
+        const dh = Math.abs(region.originalHeight / page.scale - drawing.height);
+        worstResidual = Math.max(worstResidual, dw, dh);
+        if (dw <= tolerance && dh <= tolerance) recovered++;
+        else {
+          recovery.push(
+            `${basename(path)} ${region.name.trim()}: ${region.originalWidth}x${region.originalHeight} at scale ` +
+              `${page.scale} -> ${region.originalWidth / page.scale}x${region.originalHeight / page.scale}, drawing ` +
+              `is ${drawing.width}x${drawing.height}`,
+          );
+        }
+      }
+    }
+  }
+  say(
+    'PKR05_DESCALING_A_REGION_RECOVERS_THE_DRAWINGS_OWN_SIZE',
+    recovery.length === 0 && scaledRegions > 0,
+    `${recovered} region(s) checked against the loose drawing beside them, ${scaledRegions} of them on a scaled ` +
+      `page; worst residual ${worstResidual} px, every one inside the pack's own rounding (0.5/scale)`,
+    'issue #267: `--atlas-in` took the texel count as the world size, so importing any of the nine corpus atlases ' +
+      'that declare a `scale:` halved every attachment — green, and with nothing in the report saying so',
+  );
+  if (recovery.length > 0) console.log(`          ${recovery.slice(0, 5).join('; ')}`);
 
   return bad;
 }
@@ -9728,9 +9907,10 @@ function main(): void {
       'refusal), + 2 slot-attribution ' +
       'controls (a blob one part dominates, and two parts that are two blobs), + 6 draw-order controls, ' +
       '+ 7 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
-      '+ 21 constraint- and deform-timeline controls (8 of them a spine-core round trip that reads the ik and ' +
+      '+ 22 constraint- and deform-timeline controls (8 of them a spine-core round trip that reads the ik and ' +
       'transform mixes off the posed constraints, the world position of a deformed vertex, and a weighted ' +
-      "attachment's per-influence deform array), " +
+      "attachment's per-influence deform array, and 2 of them the two sides of a TRIMMED deform run — a run that " +
+      'starts and ends mid-pair accepted, the same run one float longer still refused), ' +
       '+ 25 path / slider / per-skin controls (8 of them a spine-core round trip that reads the world position a ' +
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'and which bones a skin switches on), ' +
@@ -9770,18 +9950,21 @@ function main(): void {
       'elsewhere refused as the typo it is, an animation no candidate has refused by name, `vote` in the help, and ' +
       'the player referenced rather than vendored)' +
       ', + 3 copy-images controls (self-contained out dir, unchanged default, deterministic basename collision)' +
-      ', + 18 packer/importer controls (shared pages on power-of-two edges, every region a lossless copy, two ' +
+      ', + 19 packer/importer controls (shared pages on power-of-two edges, every region a lossless copy, two ' +
       'packs byte-identical from shuffled input, the padding respected on every pair, a packed render that never ' +
       'reads a wrong texel with the gutterless case three orders of magnitude louder, an oversized part and a ' +
       'spill both named, the unpacked emit asserted as literal text, four refused flag pairs, and an importer ' +
       'that round-trips rigc\'s own pack, lands the runtime\'s UVs on the drawing, refuses a missing region, a ' +
-      'size conflict, an absent page and a rectangle off its page, and names the ATLAS rather than a file when an ' +
-      'optional state is not in the pack)' +
+      'size conflict, an absent page and a rectangle off its page, names the ATLAS rather than a file when an ' +
+      "optional state is not in the pack, and divides an imported size by the page's `scale:` while leaving a pack " +
+      'that declares none byte-identical to the loose build)' +
       (atlasReaderBad === null
         ? '\n  ⚠️ The example corpus is absent, so the atlas READER was never compared against spine-core in this ' +
           'run — `src/atlas.ts` holds a second parser for the format and this run does not cover it.'
-        : ', + 3 atlas-reader controls (every field of every corpus region against the runtime\'s own parse, a ' +
-          'rotated region refused rather than guessed, page-name rewriting that touches only the name lines)') +
+        : ', + 5 atlas-reader controls (every field of every corpus region against the runtime\'s own parse, a ' +
+          'rotated region refused rather than guessed, page-name rewriting that touches only the name lines, the ' +
+          'two readers of `scale:` held to one answer, and every descaled corpus region measured against the ' +
+          'loose drawing beside it)') +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (launcher.startsWith(',') ? '' : launcher) +

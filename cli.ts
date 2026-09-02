@@ -447,11 +447,17 @@ function cmdBuild(flags: Record<string, string>): void {
   for (const img of result.images) {
     // An imported part says where on the page it came from, because "resolved
     // against a region" is the claim `--atlas-in` makes and a line that only
-    // repeated the page filename would look identical for all of them.
+    // repeated the page filename would look identical for all of them. A page
+    // that declares a `scale:` also says so and shows the texels it was read
+    // from: the size on the left is the DRAWING's and the rectangle is the
+    // pack's, and issue #267 is the report that printed the second as the first.
     const where =
       img.atlas === undefined
         ? img.page
-        : `${img.page} @ ${img.atlas.x},${img.atlas.y}${img.atlas.degrees ? ` rotate ${img.atlas.degrees}` : ''}`;
+        : `${img.page} @ ${img.atlas.x},${img.atlas.y}${img.atlas.degrees ? ` rotate ${img.atlas.degrees}` : ''}` +
+          (img.atlasScale === undefined
+            ? ''
+            : ` scale ${img.atlasScale} (${img.atlas.originalWidth}x${img.atlas.originalHeight} texels)`);
     console.log(`  ..      ${img.region.padEnd(24)} ${img.width}x${img.height}  <- ${where}`);
   }
   for (const d of result.droppedStates) {
