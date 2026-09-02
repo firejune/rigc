@@ -1,0 +1,115 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "flex",
+  "images": "parts",
+  "skeleton": { "x": 0, "y": 0, "width": 1100, "height": 720, "fps": 30 },
+
+  "bones": [
+    { "name": "root" },
+    { "name": "stage", "parent": "root", "x": 550, "y": 360 },
+
+    { "name": "hip", "parent": "root", "x": 300, "y": 158 },
+    { "name": "leg_l", "parent": "hip", "x": -20, "y": -6, "length": 62 },
+    { "name": "leg_r", "parent": "hip", "x": 18, "y": -6, "length": 62 },
+    { "name": "torso", "parent": "hip", "x": 0, "y": 44, "length": 62 },
+    { "name": "neck", "parent": "torso", "x": 0, "y": 20 },
+    { "name": "scarf", "parent": "neck", "x": 0, "y": -2, "rotation": 6, "length": 70 },
+    { "name": "head", "parent": "torso", "x": 0, "y": 72, "length": 59 },
+    { "name": "ear_l", "parent": "head", "x": -35, "y": 40, "rotation": 16, "length": 57 },
+    { "name": "ear_r", "parent": "head", "x": 35, "y": 40, "rotation": -16, "length": 57 },
+    { "name": "arm_b", "parent": "torso", "x": -34, "y": 22, "rotation": -12, "length": 108 },
+    { "name": "arm_f", "parent": "torso", "x": 32, "y": 24, "rotation": 150, "length": 62 },
+    { "name": "hand_f", "parent": "arm_f", "x": 0, "y": -52, "length": 56 },
+
+    { "name": "sprig", "parent": "root", "x": 150, "y": 96, "rotation": 12, "length": 160 },
+    { "name": "leaf_stem", "parent": "sprig", "x": 0, "y": 150, "rotation": 10, "length": 60 },
+    { "name": "leaf", "parent": "leaf_stem", "x": 0, "y": 86, "length": 85 },
+
+    { "name": "mast", "parent": "root", "x": 600, "y": 100, "length": 340 },
+    { "name": "hinge_a", "parent": "mast", "x": 12, "y": 250, "length": 120 },
+    { "name": "flag_a", "parent": "hinge_a", "x": 48, "y": 0, "length": 60 },
+    { "name": "hinge_b", "parent": "hinge_a", "x": 120, "y": 0, "length": 120 },
+    { "name": "flag_b", "parent": "hinge_b", "x": 48, "y": 0, "length": 60 },
+    { "name": "hinge_c", "parent": "hinge_b", "x": 120, "y": 0, "length": 140 },
+    { "name": "flag_c", "parent": "hinge_c", "x": 58, "y": 0, "length": 70 }
+  ],
+
+  "slots": [
+    { "name": "plate", "bone": "stage", "attachment": "plate" },
+    { "name": "flag_a", "bone": "flag_a", "attachment": "flag_a" },
+    { "name": "flag_b", "bone": "flag_b", "attachment": "flag_b" },
+    { "name": "flag_c", "bone": "flag_c", "attachment": "flag_c" },
+    { "name": "mast", "bone": "mast", "attachment": "mast" },
+    { "name": "sprig", "bone": "sprig", "attachment": "sprig" },
+    { "name": "leaf", "bone": "leaf", "attachment": "leaf" },
+    { "name": "scarf_tail", "bone": "scarf", "attachment": "scarf_tail" },
+    { "name": "ear_l", "bone": "ear_l", "attachment": "ear_l" },
+    { "name": "ear_r", "bone": "ear_r", "attachment": "ear_r" },
+    { "name": "arm_b", "bone": "arm_b", "attachment": "arm_b" },
+    { "name": "leg_l", "bone": "leg_l", "attachment": "leg_l" },
+    { "name": "leg_r", "bone": "leg_r", "attachment": "leg_r" },
+    { "name": "torso", "bone": "torso", "attachment": "torso" },
+    { "name": "head", "bone": "head", "attachment": "head" },
+    { "name": "eyes", "bone": "head", "attachment": "eyes" },
+    { "name": "scarf_knot", "bone": "neck", "attachment": "scarf_knot" },
+    { "name": "arm_f", "bone": "arm_f", "attachment": "arm_f" },
+    { "name": "hand_f", "bone": "hand_f", "attachment": "hand_f" }
+  ],
+
+  "invariants": { "meshSlots": 4, "meshTriangles": 96 },
+
+  "skins": {
+    "default": {
+      "plate": { "plate": { "image": "plate.png" } },
+
+      "mast": { "mast": { "image": "mast.png", "y": 170 } },
+
+      "flag_a": {
+        "flag_a": {
+          "type": "mesh",
+          "image": "flag_a.png",
+          "generator": { "kind": "contour", "tolerance": 0.9, "margin": 1.2, "maxVertices": 96, "alpha": 60 }
+        }
+      },
+      "flag_b": {
+        "flag_b": {
+          "type": "mesh",
+          "image": "flag_b.png",
+          "generator": { "kind": "contour", "tolerance": 0.9, "margin": 1.2, "maxVertices": 96, "alpha": 60 }
+        }
+      },
+      "flag_c": {
+        "flag_c": {
+          "type": "mesh",
+          "image": "flag_c.png",
+          "generator": { "kind": "contour", "tolerance": 0.9, "margin": 1.2, "maxVertices": 96, "alpha": 60 }
+        }
+      },
+
+      "sprig": { "sprig": { "image": "sprig.png", "y": 80 } },
+      "leaf": {
+        "leaf": {
+          "type": "mesh",
+          "image": "leaf.png",
+          "generator": { "kind": "contour", "tolerance": 0.9, "margin": 1.2, "maxVertices": 96, "alpha": 60 }
+        }
+      },
+
+      "scarf_tail": { "scarf_tail": { "image": "scarf_tail.png", "x": -30, "y": -27 } },
+      "ear_l": { "ear_l": { "image": "ear_l.png", "y": 20 } },
+      "ear_r": { "ear_r": { "image": "ear_r.png", "y": 20 } },
+      "arm_b": { "arm_b": { "image": "arm_b.png", "y": -48 } },
+      "leg_l": { "leg_l": { "image": "leg_l.png", "y": -28 } },
+      "leg_r": { "leg_r": { "image": "leg_r.png", "y": -28 } },
+      "torso": { "torso": { "image": "torso.png" } },
+      "head": { "head": { "image": "head.png" } },
+      "eyes": {
+        "eyes": { "image": "eyes.png", "y": 9 },
+        "eyes_shut": { "image": "eyes_shut.png", "y": 9 }
+      },
+      "scarf_knot": { "scarf_knot": { "image": "scarf_knot.png" } },
+      "arm_f": { "arm_f": { "image": "arm_f.png", "y": -26 } },
+      "hand_f": { "hand_f": { "image": "hand_f.png", "y": -24 } }
+    }
+  }
+}

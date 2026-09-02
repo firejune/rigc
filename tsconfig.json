@@ -27,7 +27,7 @@
     "strict": false,
     "strictNullChecks": true
   },
-  "include": ["cli.ts", "selftest.ts", "src/**/*.ts", "bench/**/*.ts", "tools/**/*.ts", "fixtures/**/*.ts", "scripts/**/*.ts"],
+  "include": ["cli.ts", "selftest.ts", "src/**/*.ts", "bench/**/*.ts", "tools/**/*.ts", "fixtures/**/*.ts", "scripts/**/*.ts", "gallery/**/*.ts"],
   // `bench/runs/**` is out of this surface, systematically rather than case by
   // case — see issue #201. Everything under it is a run's committed record
   // (bench/runs/README.md's *After a run*: final once landed, editable only by

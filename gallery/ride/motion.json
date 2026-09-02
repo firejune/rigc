@@ -1,0 +1,141 @@
+{
+  "spec": "rigc-motion/1",
+  "archetype": "ride",
+  "cut": "ride",
+
+  "easings": {
+    "glide": [0.42, 0, 0.58, 1]
+  },
+
+  "groups": {
+    "wheels": ["wheel_b", "wheel_f"],
+    "ears": ["ear_l", "ear_r"]
+  },
+
+  "animations": {
+    "ride": {
+      "duration": 4,
+      "loop": true,
+      "note": "A seamless round trip. position walks 0 -> 1 -> 0, so the cart coasts down into the dip, up the far bank, and rolls back. Every track's last value equals its first, which is what makes the loop join without a jump: the traversal is the only thing that has to return, and the rest is timed against it.",
+      "tracks": [
+        {
+          "path": "ride",
+          "property": "position",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "glide" },
+            { "t": 2, "v": [1], "ease": "glide" },
+            { "t": 4, "v": [0] }
+          ]
+        },
+        {
+          "group": "wheels",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "glide" },
+            { "t": 2, "v": [-1910.006], "ease": "glide" },
+            { "t": 4, "v": [0] }
+          ]
+        },
+        {
+          "bone": "scarf",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "glide" },
+            { "t": 1.2, "v": [-26], "ease": "glide" },
+            { "t": 2.3, "v": [8], "ease": "glide" },
+            { "t": 3.2, "v": [22], "ease": "glide" },
+            { "t": 4, "v": [0] }
+          ]
+        },
+        {
+          "bone": "torso",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "glide" },
+            { "t": 1.1, "v": [-5], "ease": "glide" },
+            { "t": 2.2, "v": [3], "ease": "glide" },
+            { "t": 3.1, "v": [6], "ease": "glide" },
+            { "t": 4, "v": [0] }
+          ]
+        },
+        {
+          "group": "ears",
+          "property": "rotate",
+          "stagger": 0.12,
+          "keys": [
+            { "t": 0, "v": [0], "ease": "glide" },
+            { "t": 1, "v": [-12], "ease": "glide" },
+            { "t": 2.1, "v": [6], "ease": "glide" },
+            { "t": 3, "v": [12], "ease": "glide" },
+            { "t": 3.86, "v": [0] }
+          ]
+        },
+        {
+          "bone": "arm_f",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "glide" },
+            { "t": 1, "v": [-18], "ease": "glide" },
+            { "t": 2, "v": [2], "ease": "glide" },
+            { "t": 3, "v": [-18], "ease": "glide" },
+            { "t": 4, "v": [0] }
+          ]
+        },
+        {
+          "slot": "eyes",
+          "property": "attachment",
+          "keys": [
+            { "t": 0, "v": "eyes" },
+            { "t": 2.399999, "v": "eyes_shut" },
+            { "t": 2.519999, "v": "eyes" }
+          ]
+        }
+      ]
+    },
+
+    "coast": {
+      "duration": 2,
+      "loop": false,
+      "note": "One traversal, end to end, so the position arithmetic is readable off a frame: position 0.5 is halfway along the MEASURED arc length, not halfway across the stage. Nothing here loops.",
+      "tracks": [
+        {
+          "path": "ride",
+          "property": "position",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "glide" },
+            { "t": 2, "v": [1] }
+          ]
+        },
+        {
+          "group": "wheels",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "glide" },
+            { "t": 2, "v": [-1910.006] }
+          ]
+        },
+        {
+          "bone": "scarf",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "glide" },
+            { "t": 0.8, "v": [-24], "ease": "glide" },
+            { "t": 1.6, "v": [-6], "ease": "glide" },
+            { "t": 2, "v": [-2] }
+          ]
+        },
+        {
+          "group": "ears",
+          "property": "rotate",
+          "stagger": 0.1,
+          "keys": [
+            { "t": 0, "v": [0], "ease": "glide" },
+            { "t": 0.7, "v": [-14], "ease": "glide" },
+            { "t": 1.5, "v": [-3], "ease": "glide" },
+            { "t": 1.9, "v": [-1] }
+          ]
+        }
+      ]
+    }
+  }
+}

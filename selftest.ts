@@ -9692,6 +9692,77 @@ function runBallotSuite(): number {
   return bad;
 }
 
+/**
+ * Every example in `gallery/` compiles and gates green.
+ *
+ * ⭐ One check, and it is not a duplicate of the suites above. Those are
+ * fixtures: shapes chosen to make one claim exact, written by the same hand that
+ * wrote the compiler, and none of them is a rig anybody would ship. The gallery
+ * is the other kind of coverage — complete rigs over real art, whose whole job
+ * is to be copied by a stranger. A gallery example that stopped compiling would
+ * be a broken tutorial, and nothing else in this file would notice.
+ *
+ * What it does NOT do is grade the animation, look at a frame, or re-render
+ * anything: the examples' own READMEs carry the commands and the numbers, and a
+ * pixel check here would be a second copy of a claim that lives there. This is
+ * the compile-and-gate floor, run under the **default `spine` profile** — the
+ * one the READMEs tell a reader to use, so a green here means "the commands in
+ * that README still work".
+ *
+ * The gallery ships in git and not in the npm `files` list, so a run against an
+ * installed package has no `gallery/` to look at. Absent is INFO, not FAIL.
+ */
+function runGallerySuite(): { failures: number; examples: number } {
+  console.log('\n── gallery examples (complete rigs over real art) ──');
+  const root = resolve(import.meta.dir, 'gallery');
+  if (!existsSync(root)) {
+    console.log('  INFO  no gallery/ directory, so no example was compiled in this run.');
+    return { failures: 0, examples: 0 };
+  }
+  const names = readdirSync(root)
+    .filter((name) => existsSync(join(root, name, 'rig.json')) && existsSync(join(root, name, 'motion.json')))
+    .sort();
+  if (names.length === 0) {
+    console.log('  INFO  gallery/ holds no directory with both a rig.json and a motion.json.');
+    return { failures: 0, examples: 0 };
+  }
+  let bad = 0;
+  for (const name of names) {
+    const dir = join(root, name);
+    const outDir = mkdtempSync(join(tmpdir(), `rigc-gallery-${name}-`));
+    const opts = { rigPath: join(dir, 'rig.json'), motionPath: join(dir, 'motion.json'), outDir };
+    try {
+      const result = compile(opts);
+      const report = validate({
+        skeletonText: result.skeletonText,
+        atlasText: result.atlasText,
+        atlasDir: outDir,
+        declaredDurations: result.declaredDurations,
+        rig: result.rig,
+        // Twice, so A18's determinism claim means something over real art: the
+        // fixtures' numbers are all round and an example's are not.
+        reEmit: { skeletonText: compile(opts).skeletonText, atlasText: compile(opts).atlasText },
+        profile: 'spine',
+      });
+      if (report.failures.length === 0) {
+        const skips = report.skipped.length ? `, ${report.skipped.length} skipped` : '';
+        console.log(
+          `  PASS  GALLERY_EXAMPLE_IS_GREEN[${name}]  (${report.passed.length} assertions ran${skips}; ` +
+            `${Object.keys(result.declaredDurations).length} animation(s))`,
+        );
+      } else {
+        bad++;
+        console.log(`  FAIL  GALLERY_EXAMPLE_IS_GREEN[${name}]`);
+        for (const f of report.failures) console.log(`          ${f.assertion}: ${f.detail}`);
+      }
+    } catch (err) {
+      bad++;
+      console.log(`  FAIL  GALLERY_EXAMPLE_IS_GREEN[${name}]: ${(err as Error).message}`);
+    }
+  }
+  return { failures: bad, examples: names.length };
+}
+
 function runCutsSuite(): { failures: number; cuts: number } {
   console.log('\n── extra suite: registered cuts ──');
   if (CUTS === null) {
@@ -9844,6 +9915,9 @@ function main(): void {
     bad += checkBad;
     substantive += 3;
   }
+  const gallery = runGallerySuite();
+  bad += gallery.failures;
+  substantive += gallery.examples;
   const cuts = runCutsSuite();
   bad += cuts.failures;
   substantive += cuts.cuts;
@@ -9968,6 +10042,9 @@ function main(): void {
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (launcher.startsWith(',') ? '' : launcher) +
+      (gallery.examples > 0
+        ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled twice and gated green under \`spine\``
+        : '\n  ⚠️ No gallery/ directory, so no complete rig over real art was compiled in this run.') +
       (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : ''),
   );
 }
