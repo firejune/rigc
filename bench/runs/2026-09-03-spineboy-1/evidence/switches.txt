@@ -1,0 +1,10 @@
+aim    fist: closed 25.10 vs open 27.18 over 1 frame(s), closed wins 1/1 -> closed
+death  fist: closed 50.70 vs open 56.15 over 60 frame(s), closed wins 60/60 -> closed
+hit    fist: closed 43.96 vs open 49.63 over 5 frame(s), closed wins 5/5 -> closed
+idle   fist: closed 28.58 vs open 34.68 over 21 frame(s), closed wins 21/21 -> closed
+jump   fist: closed 42.62 vs open 48.01 over 17 frame(s), closed wins 17/17 -> closed
+run    fist: closed 59.14 vs open 62.94 over 9 frame(s), closed wins 8/9 -> closed
+shoot  fist: closed 29.96 vs open 33.43 over 6 frame(s), closed wins 6/6 -> closed
+walk   fist: closed 41.01 vs open 46.86 over 13 frame(s), closed wins 13/13 -> closed
+flare: muzzle rotate -8.0 deg scale x0.33 — 35.73 mean over f2-f4 against 35.76 with no flare drawn
+-> bench/runs/2026-09-03-spineboy-1/fit/switches.json

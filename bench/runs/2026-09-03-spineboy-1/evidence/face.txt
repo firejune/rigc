@@ -1,0 +1,10 @@
+  goggles            offset 51,64  35.565
+goggles  -> goggles at 51,64  35.565 (hidden: 42.953, margin over the runner-up 0.000)
+  eye-indifferent    offset 52,87  42.963
+  eye-surprised      offset 52,85  42.991
+eye      -> eye-indifferent at 52,87  42.963 (hidden: 42.953, margin over the runner-up 0.028)
+  mouth-grind        offset 85,-26  43.437
+  mouth-oooo         offset 88,-33  43.453
+  mouth-smile        offset 92,-23  43.129
+mouth    -> mouth-smile at 92,-23  43.129 (hidden: 42.953, margin over the runner-up 0.309)
+-> bench/runs/2026-09-03-spineboy-1/fit/setup.json

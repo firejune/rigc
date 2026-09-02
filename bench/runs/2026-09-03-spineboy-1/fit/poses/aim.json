@@ -1,0 +1,21 @@
+{
+ "f0000": {
+  "torso.x": 16.891242688144942,
+  "torso.y": 14.739773969598701,
+  "torso.rotate": 8.789,
+  "rear-thigh.rotate": -0.16666666666666663,
+  "front-thigh.rotate": -13.666666666666668,
+  "rear-shin.rotate": -4.833333333333333,
+  "front-shin.rotate": 5.5,
+  "neck.rotate": 0.6666666666666666,
+  "head.rotate": 15.820000000000002,
+  "rear-upper-arm.rotate": 40,
+  "front-upper-arm.rotate": -13.499999999999998,
+  "rear-bracer.rotate": 15.291666666666668,
+  "front-bracer.rotate": 24.27833333333333,
+  "gun.rotate": -3.666666666666666,
+  "front-fist.rotate": 30.166666666666668,
+  "rear-foot.rotate": -1.833333333333333,
+  "front-foot.rotate": -5.622333333333335
+ }
+}

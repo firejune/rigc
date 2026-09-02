@@ -1,0 +1,20 @@
+slot              ceiling  mean vis at                    attributed  of drawn
+eye                  0.0%      0.0%                           0/147  0%
+neck                 1.8%      0.4% shoot/f0003               1/147  1%
+rear-upper-arm      42.8%      8.0% jump/f0012                0/147  0%
+front-thigh         48.0%     31.8% hit/f0002                 1/147  1%
+head                51.1%     50.8% hit@30fps/f0000         129/147  88%
+rear-foot           68.7%     49.4% jump/f0000               44/147  30%
+front-bracer        79.7%     65.2% death/f0059              56/147  38%
+front-shin          81.3%     67.9% death/f0014             118/147  80%
+rear-bracer         84.3%     24.8% jump/f0014               14/147  10%
+torso               89.7%     65.4% run@30fps/f0020         129/147  88%
+mouth               92.8%     90.4% shoot/f0003              26/147  18%
+rear-thigh          95.6%     48.8% jump/f0016                4/147  3%
+rear-shin           96.9%     51.0% death/f0008              56/147  38%
+gun                100.0%     58.9% jump/f0006               54/147  37%
+front-upper-arm    100.0%     65.4% jump/f0000                6/147  4%
+front-fist         100.0%     89.5% jump/f0010               29/147  20%
+front-foot         100.0%     96.3% run@30fps/f0000          95/147  65%
+goggles            100.0%    100.0% death@30fps/f0000       142/147  97%
+-> bench/runs/2026-09-03-spineboy-1/evidence/slot-ceilings.json

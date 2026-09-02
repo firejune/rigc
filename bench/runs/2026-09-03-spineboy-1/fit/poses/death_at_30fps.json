@@ -1,0 +1,40 @@
+{
+ "f0000": {
+  "torso.x": 16.26418279983321,
+  "torso.y": 20.551140148168855,
+  "torso.rotate": 0.7243333333333333,
+  "rear-thigh.rotate": 8.833333333333334,
+  "front-thigh.rotate": -5.333333333333335,
+  "rear-shin.rotate": -4.611111111111095,
+  "front-shin.rotate": 5.2222222222222365,
+  "neck.rotate": -0.6666666666666667,
+  "head.rotate": 9.587666666666665,
+  "rear-upper-arm.rotate": -33.66666666666667,
+  "front-upper-arm.rotate": -40.833333333333336,
+  "rear-bracer.rotate": 1.8333333333333333,
+  "front-bracer.rotate": 16.833333333333332,
+  "gun.rotate": -21.166666666666668,
+  "front-fist.rotate": 11.16666666666667,
+  "rear-foot.rotate": -5.666666666666667,
+  "front-foot.rotate": -10.999999999999998
+ },
+ "f0148": {
+  "torso.x": -258.44893693925354,
+  "torso.y": -188.81600097815235,
+  "torso.rotate": 83.22166666666668,
+  "rear-thigh.rotate": -1.5,
+  "front-thigh.rotate": 7.833333333333333,
+  "rear-shin.rotate": 17.888888888888886,
+  "front-shin.rotate": 10.444444444444457,
+  "neck.rotate": 1.0000000000000002,
+  "head.rotate": -21.229666666666677,
+  "rear-upper-arm.rotate": 105.16666666666663,
+  "front-upper-arm.rotate": 7.166666666666665,
+  "rear-bracer.rotate": 19.666666666666664,
+  "front-bracer.rotate": -17.16666666666666,
+  "gun.rotate": -17.166666666666668,
+  "front-fist.rotate": -12.166666666666668,
+  "rear-foot.rotate": -36.66666666666665,
+  "front-foot.rotate": -17.83333333333334
+ }
+}
