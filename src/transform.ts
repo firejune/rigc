@@ -113,6 +113,19 @@ export function toBoneLocal(m: BoneTransform, worldX: number, worldY: number): [
   return [r6((px * m.d - py * m.b) / det), r6((py * m.a - px * m.c) / det)];
 }
 
+/**
+ * A bone-local point -> world. The inverse of `toBoneLocal`, and the direction
+ * `VertexAttachment.computeWorldVertices` takes at setup.
+ *
+ * ⚠️ **Not rounded**, and that is the difference from every other function here.
+ * Its callers measure with the result — a path's arc lengths are a sum over many
+ * of these — so quantising each point first would bias the sum by up to half a
+ * step per sample. Round the answer, not the samples.
+ */
+export function toWorld(m: BoneTransform, localX: number, localY: number): [number, number] {
+  return [m.a * localX + m.b * localY + m.worldX, m.c * localX + m.d * localY + m.worldY];
+}
+
 /** Normalise degrees into (-180, 180], which is how an editor shows a rotation. */
 export function normaliseDegrees(deg: number): number {
   let v = ((deg % 360) + 360) % 360;

@@ -19,14 +19,18 @@ import {
   AnimationState,
   AnimationStateData,
   AtlasAttachmentLoader,
+  type BoneData,
   BoundingBoxAttachment,
   ClippingAttachment,
   MeshAttachment,
+  PathAttachment,
+  PathConstraintData,
   Physics,
   PhysicsConstraintData,
   RegionAttachment,
   Skeleton,
   SkeletonJson,
+  SliderData,
   TextureAtlas,
 } from '@esotericsoftware/spine-core';
 import { colourTypeName, readPngInfo } from './png.ts';
@@ -135,6 +139,9 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A33_VERTEX_ATTACHMENT_GEOMETRY: 'validity',
   A34_CONSTRAINT_TIMELINE_TARGETS: 'validity',
   A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: 'validity',
+  A36_PATH_CONSTRAINT_EFFECTIVE: 'validity',
+  A37_SLIDER_CONSTRAINT_EFFECTIVE: 'validity',
+  A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED: 'validity',
 };
 
 export interface ValidateInput {
@@ -502,10 +509,13 @@ export function validate(input: ValidateInput): ValidateReport {
     if (!sawATimeline) return skip('A32_EVENT_KEYS_RESOLVE', 'no animation carries an event timeline');
   });
 
-  // --- A34: ik / transform timelines aim at a constraint of that type -------
+  // --- A34: a constraint timeline aims at a constraint of that type ---------
   //
-  // These two groups are one unnamed timeline per constraint
-  // (`animations.<a>.ik.<name>`), and the parser resolves the name AND the type:
+  // Four groups, in two shapes. `ik` and `transform` are ONE unnamed timeline
+  // per constraint (`animations.<a>.ik.<name>` is the key array itself); `path`
+  // and `slider` put named timelines under the constraint
+  // (`animations.<a>.path.<name>.position`), which is the physics shape. Both
+  // shapes resolve the constraint by name AND by type —
   // `findConstraint(name, IkConstraintData)` returns null for a transform
   // constraint that happens to share the name, and `readAnimation` then throws
   // `IK Constraint not found`. That one is loud — A00 reports it, as a parser
@@ -515,7 +525,8 @@ export function validate(input: ValidateInput): ValidateReport {
   //   **An empty key array.** `let keyMap = constraintMap[0]; if (!keyMap)
   //   continue;` — the group is read, the timeline is skipped, and nothing is
   //   said. `"ik": { "leg-ik": [] }` is a timeline that does not exist, written
-  //   by a generator that thought it wrote one.
+  //   by a generator that thought it wrote one. Every one of the four groups has
+  //   that line.
   //
   // Reporting both from here also means a candidate with a misspelled constraint
   // gets told which constraints it does have, rather than being handed the
@@ -528,42 +539,72 @@ export function validate(input: ValidateInput): ValidateReport {
       if (isObj(entry) && typeof entry.name === 'string') typeOf.set(entry.name, String(entry.type));
     }
     let sawATimeline = false;
+    /** One target of one group: the name resolves, the type matches, keys exist. */
+    const checkTarget = (at: string, group: string, name: string, keyArrays: Array<[string, unknown]>): void => {
+      sawATimeline = true;
+      const declared = typeOf.get(name);
+      if (declared === undefined) {
+        const known = [...typeOf.entries()].filter(([, t]) => t === group).map(([n]) => n);
+        fail(
+          'A34_CONSTRAINT_TIMELINE_TARGETS',
+          `${at}: the skeleton's constraints array has no "${name}"` +
+            (known.length ? ` (${group} constraints: ${known.join(', ')})` : `, and no ${group} constraint at all`),
+        );
+        return;
+      }
+      if (declared !== group) {
+        fail(
+          'A34_CONSTRAINT_TIMELINE_TARGETS',
+          `${at}: "${name}" is declared as a "${declared}" constraint, so the ${group} lookup misses it and the loader throws`,
+        );
+        return;
+      }
+      if (keyArrays.length === 0) {
+        fail(
+          'A34_CONSTRAINT_TIMELINE_TARGETS',
+          `${at}: the constraint is named and carries no timeline at all; the group is walked and nothing happens`,
+        );
+        return;
+      }
+      for (const [timeline, keys] of keyArrays) {
+        if (Array.isArray(keys) && keys.length > 0) continue;
+        fail(
+          'A34_CONSTRAINT_TIMELINE_TARGETS',
+          `${at}${timeline ? ` timeline "${timeline}"` : ''}: the key array is ` +
+            `${Array.isArray(keys) ? 'empty' : JSON.stringify(keys)}; the parser reads key 0, finds nothing and ` +
+            'skips the whole timeline without a word',
+        );
+      }
+    };
     for (const [animName, anim] of Object.entries(raw.animations as Json)) {
       if (!isObj(anim)) continue;
+      // group.<constraint> = keys[]
       for (const group of ['ik', 'transform'] as const) {
         if (!isObj(anim[group])) continue;
         for (const [name, keys] of Object.entries(anim[group] as Json)) {
-          sawATimeline = true;
-          const at = `animation "${animName}" ${group} timeline "${name}"`;
-          const declared = typeOf.get(name);
-          if (declared === undefined) {
-            const known = [...typeOf.entries()].filter(([, t]) => t === group).map(([n]) => n);
+          checkTarget(`animation "${animName}" ${group} timeline "${name}"`, group, name, [['', keys]]);
+        }
+      }
+      // group.<constraint>.<timeline> = keys[]
+      for (const group of ['path', 'slider'] as const) {
+        if (!isObj(anim[group])) continue;
+        for (const [name, timelines] of Object.entries(anim[group] as Json)) {
+          const at = `animation "${animName}" ${group} constraint "${name}"`;
+          if (!isObj(timelines)) {
+            sawATimeline = true;
             fail(
               'A34_CONSTRAINT_TIMELINE_TARGETS',
-              `${at}: the skeleton's constraints array has no "${name}"` +
-                (known.length ? ` (${group} constraints: ${known.join(', ')})` : `, and no ${group} constraint at all`),
+              `${at}: this group maps a constraint to NAMED timelines (${group === 'path' ? 'position/spacing/mix' : 'time/mix'}), ` +
+                `and this one holds ${JSON.stringify(timelines)} — a bare key array here is the ik/transform shape and is walked as an object`,
             );
             continue;
           }
-          if (declared !== group) {
-            fail(
-              'A34_CONSTRAINT_TIMELINE_TARGETS',
-              `${at}: "${name}" is declared as a "${declared}" constraint, so the ${group} lookup misses it and the loader throws`,
-            );
-            continue;
-          }
-          if (!Array.isArray(keys) || keys.length === 0) {
-            fail(
-              'A34_CONSTRAINT_TIMELINE_TARGETS',
-              `${at}: the key array is ${Array.isArray(keys) ? 'empty' : JSON.stringify(keys)}; the parser reads ` +
-                'key 0, finds nothing and skips the whole timeline without a word',
-            );
-          }
+          checkTarget(at, group, name, Object.entries(timelines));
         }
       }
     }
     if (!sawATimeline) {
-      return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'no animation carries an ik or transform constraint timeline');
+      return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'no animation carries a constraint timeline');
     }
   });
 
@@ -910,12 +951,60 @@ export function validate(input: ValidateInput): ValidateReport {
     //      Checked on the raw JSON, because a null `endSlot` and an `end` that
     //      was never written are the same loaded object.
     check('A33_VERTEX_ATTACHMENT_GEOMETRY', () => {
-      const polygons: Array<{ what: string; att: BoundingBoxAttachment | ClippingAttachment }> = [];
+      const polygons: Array<{ what: string; att: BoundingBoxAttachment | ClippingAttachment | PathAttachment }> = [];
+      const paths: PathAttachment[] = [];
       for (const skin of data.skins) {
         for (const entry of skin.getAttachments()) {
           const att = entry.attachment;
           if (att instanceof BoundingBoxAttachment) polygons.push({ what: `bounding box "${att.name}"`, att });
           else if (att instanceof ClippingAttachment) polygons.push({ what: `clipping attachment "${att.name}"`, att });
+          else if (att instanceof PathAttachment) {
+            // A path is the same shape with one more rule on top: its vertices
+            // are knots AND handles, walked in groups of three.
+            polygons.push({ what: `path "${att.name}"`, att });
+            paths.push(att);
+          }
+        }
+      }
+      for (const path of paths) {
+        const what = `path "${path.name}"`;
+        const vertexCount = path.worldVerticesLength / 2;
+        if (vertexCount % 3 !== 0) {
+          fail(
+            'A33_VERTEX_ATTACHMENT_GEOMETRY',
+            `${what} has ${vertexCount} vertices, which is not a multiple of 3 — a path is knots and Bezier ` +
+              'handles read in groups of three, and `Utils.newArray(vertexCount / 3, 0)` accepts the fractional ' +
+              'size without a word, so the curves straddle the knots',
+          );
+          continue;
+        }
+        // Curves: 3K + 1 chain points. An open path drops the first and last
+        // vertex (the end knots' outer handles), a closed one repeats the first.
+        const curves = path.closed ? vertexCount / 3 : vertexCount / 3 - 1;
+        if (curves < 1) {
+          fail('A33_VERTEX_ATTACHMENT_GEOMETRY', `${what} has ${vertexCount} vertices, which is not one whole curve`);
+          continue;
+        }
+        // `lengths` is what a `constantSpeed: false` traversal measures with:
+        // `lengths[curve]` bounds each curve and the last entry IS the path
+        // length. The parser sizes the array from `vertexCount / 3` and copies
+        // whatever the file gave, so a short array leaves trailing zeros — and a
+        // zero-length curve makes the parser divide the position by it.
+        const lengths = path.lengths;
+        let previous = 0;
+        for (let c = 0; c < curves; c++) {
+          const value = lengths[c];
+          if (!Number.isFinite(value) || value <= previous) {
+            fail(
+              'A33_VERTEX_ATTACHMENT_GEOMETRY',
+              `${what} lengths[${c}] is ${String(value)}, and the entry before it was ${previous}. The array is the ` +
+                'CUMULATIVE arc length at the end of each of the ' +
+                `${curves} curve(s), so it strictly increases; a value that does not means either a zero-length ` +
+                'curve (the position is divided by it) or an array shorter than the geometry (the tail reads as 0)',
+            );
+            break;
+          }
+          previous = value;
         }
       }
       const slotNames = new Set(data.slots.map((s) => s.name));
@@ -940,7 +1029,10 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
       if (polygons.length === 0 && endsChecked === 0) {
-        return skip('A33_VERTEX_ATTACHMENT_GEOMETRY', 'the skeleton carries no bounding box and no clipping attachment');
+        return skip(
+          'A33_VERTEX_ATTACHMENT_GEOMETRY',
+          'the skeleton carries no bounding box, clipping attachment or path',
+        );
       }
       for (const { what, att } of polygons) {
         const length = att.worldVerticesLength;
@@ -1366,6 +1458,215 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
       stats.physicsConstraints = data.constraints.filter((c) => c instanceof PhysicsConstraintData).length;
+    });
+
+    /**
+     * Does any animation key `<group>.<constraint>.<timeline>`?
+     *
+     * ⭐ The reason the two assertions below need this, and the reason they are
+     * not A23 with a different type name: a constraint whose mixes are all 0 at
+     * setup is **the idiom**, not a defect — spineboy's aim rig is exactly that,
+     * and issue #88 landed the timelines that turn one on. So "muted" is only a
+     * finding when nothing turns it on, and that question lives in the animations
+     * rather than in the constraint.
+     */
+    const keyedBy = (group: string, name: string, timeline: string): boolean => {
+      if (!raw || !isObj(raw.animations)) return false;
+      for (const anim of Object.values(raw.animations as Json)) {
+        if (!isObj(anim) || !isObj(anim[group])) continue;
+        const timelines = (anim[group] as Json)[name];
+        if (!isObj(timelines)) continue;
+        const keys = timelines[timeline];
+        if (Array.isArray(keys) && keys.length > 0) return true;
+      }
+      return false;
+    };
+
+    // --- A36: a path constraint that follows nothing, quietly ---------------
+    //
+    // 🚨 The first failure here is the quietest in the whole constraint half of
+    // the format. `PathConstraint.update` opens with
+    //
+    //   const attachment = this.slot.appliedPose.attachment;
+    //   if (!(attachment instanceof PathAttachment)) return;
+    //
+    // so a path constraint aimed at a slot that never shows a path loads
+    // perfectly, reports every mix it was given, appears in the update cache —
+    // and moves nothing, forever. Nothing in the file is wrong on its face: the
+    // slot exists, the constraint resolves, the mixes are 1.
+    //
+    // The rest are the same shape as A23's: a constraint that parses and does
+    // nothing. All three mixes at 0 is only a finding when no animation keys the
+    // `mix` timeline (see `keyedBy`), and a chain with no bones on it is one
+    // whether or not anything is keyed.
+    check('A36_PATH_CONSTRAINT_EFFECTIVE', () => {
+      const constraints = data.constraints.filter((c) => c instanceof PathConstraintData);
+      if (!constraints.length) return skip('A36_PATH_CONSTRAINT_EFFECTIVE', 'the skeleton declares no path constraint');
+      /** slot index -> how many path attachments any skin gives it. */
+      const pathsBySlot = new Map<number, number>();
+      for (const skin of data.skins) {
+        for (const entry of skin.getAttachments()) {
+          if (!(entry.attachment instanceof PathAttachment)) continue;
+          pathsBySlot.set(entry.slotIndex, (pathsBySlot.get(entry.slotIndex) ?? 0) + 1);
+        }
+      }
+      for (const constraint of constraints) {
+        const where = `path constraint "${constraint.name}"`;
+        if (!constraint.bones.length) {
+          fail('A36_PATH_CONSTRAINT_EFFECTIVE', `${where} constrains no bone; it parses and does nothing`);
+        }
+        const slot = constraint.slot;
+        if (!pathsBySlot.has(slot.index)) {
+          fail(
+            'A36_PATH_CONSTRAINT_EFFECTIVE',
+            `${where} follows slot "${slot.name}", and no skin gives that slot a path attachment — ` +
+              "PathConstraint.update returns immediately unless the slot's attachment is a path, so this " +
+              'constraint reports its mixes and moves nothing',
+          );
+        }
+        const pose = constraint.setupPose;
+        const muted = !(pose.mixRotate > 0) && !(pose.mixX > 0) && !(pose.mixY > 0);
+        if (muted && !keyedBy('path', constraint.name, 'mix')) {
+          fail(
+            'A36_PATH_CONSTRAINT_EFFECTIVE',
+            `${where} has mixRotate ${pose.mixRotate}, mixX ${pose.mixX} and mixY ${pose.mixY} at setup and no ` +
+              'animation keys its mix timeline; update() returns on all-zero mixes, so nothing ever puts a bone on the path',
+          );
+        }
+      }
+      stats.pathConstraints = constraints.length;
+    });
+
+    // --- A37: a slider that applies nothing, quietly ------------------------
+    //
+    // A slider is the only constraint that applies an ANIMATION, so its failure
+    // modes are about that animation rather than about a transform:
+    //
+    //   1. **An animation with no timelines.** `animation.apply` walks an empty
+    //      array. The slider is in the update cache, its time moves, and the
+    //      skeleton never changes.
+    //   2. **`loop` on a zero-length animation.** `Slider.update` computes
+    //      `animation.duration + (p.time % animation.duration)` when looping, so
+    //      a duration of 0 makes the time **NaN** — and it then applies the
+    //      animation at NaN, which is a pose nobody can predict and no error.
+    //      Only reachable with a bone, because that is the branch the loop
+    //      arithmetic lives in.
+    //   3. **`scale` 0 with a bone.** `time = offset + (value - offset) * 0`, so
+    //      the dial turns and the slider holds one frame.
+    //   4. **`mix` 0** with nothing keying it — the same rule as A36's.
+    check('A37_SLIDER_CONSTRAINT_EFFECTIVE', () => {
+      const sliders = data.constraints.filter((c) => c instanceof SliderData);
+      if (!sliders.length) return skip('A37_SLIDER_CONSTRAINT_EFFECTIVE', 'the skeleton declares no slider constraint');
+      for (const slider of sliders) {
+        const where = `slider "${slider.name}"`;
+        const animation = slider.animation;
+        if (!animation) {
+          // The parser's second pass throws on a miss, so this is only reachable
+          // on an artifact that never went through it.
+          fail('A37_SLIDER_CONSTRAINT_EFFECTIVE', `${where} applies no animation`);
+          continue;
+        }
+        if (animation.timelines.length === 0) {
+          fail(
+            'A37_SLIDER_CONSTRAINT_EFFECTIVE',
+            `${where} applies animation "${animation.name}", which carries no timeline at all; the slider runs and ` +
+              'the skeleton never changes',
+          );
+        }
+        if (slider.bone && slider.loop && !(animation.duration > 0)) {
+          fail(
+            'A37_SLIDER_CONSTRAINT_EFFECTIVE',
+            `${where} loops animation "${animation.name}", whose duration is ${animation.duration} — ` +
+              'Slider.update computes `duration + (time % duration)` when looping, so the applied time is NaN',
+          );
+        }
+        if (slider.bone && slider.scale === 0) {
+          fail(
+            'A37_SLIDER_CONSTRAINT_EFFECTIVE',
+            `${where} drives off bone "${slider.bone.name}" with scale 0, so the property cannot move the slider's time`,
+          );
+        }
+        const mix = slider.setupPose.mix;
+        if (!(mix > 0) && !keyedBy('slider', slider.name, 'mix')) {
+          fail(
+            'A37_SLIDER_CONSTRAINT_EFFECTIVE',
+            `${where} has mix ${mix} at setup and no animation keys its mix timeline; update() returns on mix 0`,
+          );
+        }
+      }
+      stats.sliderConstraints = sliders.length;
+    });
+
+    // --- A38: a per-skin member list and its `skin: true` flag agree --------
+    //
+    // 🚨 Two halves of one switch, and either half alone is dead data in silence.
+    // `Skeleton.updateCache` (`:191-217`) starts every bone `active` unless it is
+    // `skinRequired`, then activates the current skin's `bones` **and their whole
+    // ancestor chain**; a constraint is `active` unless `skinRequired`, and then
+    // only while `skin.constraints.includes(data)`. So:
+    //
+    //   * listed without `skin: true` — the object is active under every skin,
+    //     and the list changes nothing at all;
+    //   * `skin: true` and listed nowhere — the object is inactive under every
+    //     skin there is: a bone that never poses, a constraint that never runs.
+    //
+    // Both load. Both animate. Neither is what the author wrote, and no other
+    // check in this file can see either one, because the artifact is internally
+    // consistent — it is the PAIRING that is wrong.
+    check('A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED', () => {
+      /** Every bone a skin can switch on, including the ancestors it drags in. */
+      const activatable = new Set<string>();
+      const listedConstraints = new Map<string, string>();
+      let listed = 0;
+      for (const skin of data.skins) {
+        for (const bone of skin.bones) {
+          listed++;
+          for (let cursor: BoneData | null = bone; cursor; cursor = cursor.parent) activatable.add(cursor.name);
+          if (!bone.skinRequired) {
+            fail(
+              'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
+              `skin "${skin.name}" activates bone "${bone.name}", which is not skinRequired — updateCache starts it ` +
+                'active anyway, so it poses under every skin and this list changes nothing',
+            );
+          }
+        }
+        for (const constraint of skin.constraints) {
+          listed++;
+          listedConstraints.set(constraint.name, skin.name);
+          if (!constraint.skinRequired) {
+            fail(
+              'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
+              `skin "${skin.name}" activates constraint "${constraint.name}", which is not skinRequired — it runs ` +
+                'under every skin, so this list changes nothing',
+            );
+          }
+        }
+      }
+      const required = data.bones.filter((b) => b.skinRequired).length + data.constraints.filter((c) => c.skinRequired).length;
+      if (listed === 0 && required === 0) {
+        return skip(
+          'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
+          'no skin activates a bone or a constraint, and nothing declares itself skinRequired',
+        );
+      }
+      for (const bone of data.bones) {
+        if (bone.skinRequired && !activatable.has(bone.name)) {
+          fail(
+            'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
+            `bone "${bone.name}" is skinRequired and no skin's bones list reaches it, so it is never active — ` +
+              'it and its subtree hold the setup pose under every skin',
+          );
+        }
+      }
+      for (const constraint of data.constraints) {
+        if (constraint.skinRequired && !listedConstraints.has(constraint.name)) {
+          fail(
+            'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
+            `constraint "${constraint.name}" is skinRequired and no skin lists it, so it never runs`,
+          );
+        }
+      }
+      stats.skinMembers = listed;
     });
 
     // --- A08: region names exact-match attachment names --------------------

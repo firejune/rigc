@@ -52,8 +52,11 @@ import {
   EventTimeline,
   IkConstraint,
   MeshAttachment,
+  PathAttachment,
+  PathConstraint,
   Physics,
   Skeleton,
+  Slider,
   TransformConstraint,
   type SkeletonData,
 } from '@esotericsoftware/spine-core';
@@ -2920,11 +2923,14 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R07_constraint_type_the_emitter_cannot_write',
+    name: 'R07_constraint_type_the_format_does_not_have',
     origin: 'SkeletonJson.ts:148-367 — an entry whose `type` matches no case is dropped with no error and no default branch',
-    expect: 'rigc does not emit it yet',
+    // The five types are all emitted now (issue #2 closed the last two), so what
+    // this mutant proves is what it always proved: the parser has no `default:`
+    // branch, so a type nobody recognises has to be refused HERE or it vanishes.
+    expect: 'is not one Spine 4.3 knows',
     mutate: (rig) => {
-      (rig as any).constraints = [{ name: 'probe_path', type: 'path', bones: ['plunger'], slot: 'collar' }];
+      (rig as any).constraints = [{ name: 'probe_twist', type: 'twist', bones: ['plunger'], target: 'collar' }];
     },
   },
 ];
@@ -4522,6 +4528,537 @@ function deformKeysOf(animation: Record<string, unknown>, slot: string): Array<R
 }
 
 // ---------------------------------------------------------------------------
+// path constraints, sliders, and per-skin member lists
+// ---------------------------------------------------------------------------
+//
+// ⭐ The last three expressiveness gaps in the rig spec (issues #2 and #7), and
+// all three are checked the same way: by reading a NUMBER back off a posed
+// skeleton. "It parses" is the failure mode this suite is designed against,
+// because every one of these features has a way to load perfectly and do
+// nothing:
+//
+//   * a path constraint whose slot shows no path attachment — `update()` returns
+//     on the first line and the mixes in the file are a lie;
+//   * a `lengths` array that disagrees with the vertices — invisible until
+//     `constantSpeed` is false, and then it rescales the whole traversal;
+//   * a slider whose animation is never applied, or applied at NaN;
+//   * a per-skin `bones`/constraint list without `skin: true` on the member,
+//     which changes nothing at all.
+//
+// So the geometry here is chosen to make the arithmetic exact rather than
+// approximate. The path is a straight line whose Bezier handles are evenly
+// spaced, which makes the curve parameter equal the arc-length parameter: the
+// knots sit at x = 0, 90, 180, the path is 180 long, and a bone at position p
+// (Percent) must land at exactly `180 * p`. A tolerance would hide a systematic
+// error of a few percent; an exact number cannot.
+const PATH_RIG = {
+  bones: [
+    { name: 'root' },
+    { name: 'rider', parent: 'root', x: 0, y: 0, length: 20 },
+    // The slider's dial and the bone its animation moves. Both hang off the root
+    // so that neither is touched by the path constraint.
+    { name: 'knob', parent: 'root', x: 0, y: 60 },
+    { name: 'flag', parent: 'root', x: 40, y: 60, length: 20 },
+    // The per-skin pair: a bone that only exists under one skin, and the IK
+    // constraint that poses it there.
+    { name: 'pauldron', parent: 'root', x: -40, y: 0, length: 10, skin: true },
+    { name: 'pauldron-target', parent: 'root', x: -40, y: 20 },
+  ],
+  slots: [
+    { name: 'track', bone: 'root', attachment: 'track' },
+    { name: 'block', bone: 'rider', attachment: 'block' },
+  ],
+  skins: {
+    default: {
+      attachments: {
+        track: {
+          track: {
+            type: 'path',
+            vertexCount: 9,
+            // Nine points: the first and last are the end knots' outer handles
+            // and no curve uses them, which is why an open path of K curves
+            // carries 3(K + 1) of them rather than 3K + 1.
+            vertices: [-30, 0, 0, 0, 30, 0, 60, 0, 90, 0, 120, 0, 150, 0, 180, 0, 210, 0],
+          },
+        },
+        block: { block: { image: 'block.png' } },
+      },
+    },
+    // A skin with no attachments at all: everything it does, it does by
+    // activating members. Emitting it is what makes the lists reachable.
+    armoured: { bones: ['pauldron'], ik: ['pauldron-ik'] },
+  },
+  constraints: [
+    {
+      name: 'ride',
+      type: 'path',
+      bones: ['rider'],
+      slot: 'track',
+      positionMode: 'percent',
+      spacingMode: 'percent',
+      rotateMode: 'tangent',
+      position: 0.25,
+    },
+    // 1/90 per degree, so 90° of dial is one second of animation.
+    { name: 'dial', type: 'slider', animation: 'dial-pose', bone: 'knob', property: 'rotate', scale: 0.011111 },
+    { name: 'pauldron-ik', type: 'ik', bones: ['pauldron'], target: 'pauldron-target', mix: 1, skin: true },
+  ],
+};
+
+/** The animation the slider applies, plus whatever `move` is handed. */
+function pathMotion(move: Record<string, unknown>): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      'dial-pose': {
+        duration: 1,
+        loop: false,
+        tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [90] }] }],
+      },
+      move,
+    },
+  };
+}
+
+/** The `move` animation the round-trip cases below all read. */
+const PATH_MOVE = {
+  duration: 1,
+  loop: false,
+  tracks: [
+    // The physics shape: a target, a property, one key list (issue #2's comment).
+    { path: 'ride', property: 'position', keys: [{ t: 0, v: [0] }, { t: 1, v: [0.5] }] },
+    { bone: 'knob', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [90] }] },
+  ],
+};
+
+function runPathAndSliderSuite(): number {
+  const dirs = writeProbeRig(PATH_RIG);
+  let bad = 0;
+  console.log('\n── path constraints, sliders and per-skin lists (self-contained: a straight 180-long path) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const near = (a: number, b: number, tol = 1e-4): boolean => Math.abs(a - b) <= tol;
+  const motion = pathMotion(PATH_MOVE);
+
+  const gate = gateProbe(dirs, motion);
+  const wanted = [
+    'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    'A34_CONSTRAINT_TIMELINE_TARGETS',
+    'A36_PATH_CONSTRAINT_EFFECTIVE',
+    'A37_SLIDER_CONSTRAINT_EFFECTIVE',
+    'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
+  ];
+  say(
+    'CONTROL_A_PATH_A_SLIDER_AND_TWO_SKINS_ARE_GREEN',
+    gate.failures.length === 0 && wanted.every((a) => gate.passed.includes(a)),
+    gate.failures.length === 0
+      ? `${gate.passed.length} assertions ran; ${wanted.filter((a) => !gate.passed.includes(a)).join(', ') || 'all five new ones ran'}`
+      : `[${gate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'a suite of refusals cannot tell a compiler that emits nothing from one that emits the right thing',
+  );
+
+  const data = timelinePosable(dirs, motion).data;
+  const boneOf = (skeleton: Skeleton, name: string) => skeleton.bones.find((b) => b.data.name === name)!.appliedPose;
+
+  // --- the path: is the bone ON the curve? ---------------------------------
+  const emitted = JSON.parse(
+    compile({
+      rigPath: dirs.rigPath,
+      motionPath: join(dirs.dir, 'probe.motion.json'),
+      outDir: dirs.outDir,
+      imagesDir: dirs.dir,
+    }).skeletonText,
+  ) as Record<string, unknown>;
+  const emittedPath = (
+    (emitted.skins as Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }>)[0]
+      .attachments.track.track
+  );
+  say(
+    'PS01_the_path_lengths_are_MEASURED_off_the_geometry',
+    Array.isArray(emittedPath.lengths) &&
+      (emittedPath.lengths as number[]).length === 2 &&
+      near((emittedPath.lengths as number[])[0], 90) &&
+      near((emittedPath.lengths as number[])[1], 180),
+    `lengths = [${(emittedPath.lengths as number[]).join(', ')}] for two curves whose knots sit at x = 0, 90, 180`,
+    'the field has no parser default and a restated number that disagrees with the vertices is invisible until constantSpeed is false',
+  );
+
+  const setup = poseAtSample(data, 'move', 4, 0);
+  const riderSetup = boneOf(setup, 'rider');
+  say(
+    'PS02_a_bone_lands_on_the_path_at_the_position_it_was_given',
+    near(riderSetup.worldX, 0) && near(riderSetup.worldY, 0),
+    `at position 0 the rider is at (${riderSetup.worldX.toFixed(4)}, ${riderSetup.worldY.toFixed(4)}); ` +
+      `the setup constraint's own position 0.25 puts it at ${boneOf(
+        poseAtSample(timelinePosable(dirs, pathMotion({ duration: 0, loop: false, tracks: [] })).data, 'move', 4, 0),
+        'rider',
+      ).worldX.toFixed(4)}`,
+    'PathConstraint.update returns before touching a bone unless the slot shows a path, so "it moved at all" is the claim',
+  );
+
+  const riderAt = (sample: number): [number, number] => {
+    const bone = boneOf(poseAtSample(data, 'move', 4, sample), 'rider');
+    return [bone.worldX, bone.worldY];
+  };
+  const walk = [0, 1, 2, 4].map(riderAt);
+  say(
+    'PS03_a_position_timeline_slides_the_bone_along_the_path',
+    walk.every(([, y]) => near(y, 0)) &&
+      near(walk[0][0], 0) &&
+      near(walk[1][0], 22.5) &&
+      near(walk[2][0], 45) &&
+      near(walk[3][0], 90),
+    `worldX ${walk.map(([x]) => x.toFixed(3)).join(' -> ')} for position 0 -> 0.5 over a 180-long path`,
+    'position is a fraction of the arc length under Percent, so 0.125 of 180 is 22.5 and any other number is a wrong traversal',
+  );
+
+  const slowDirs = writeProbeRig({
+    ...PATH_RIG,
+    skins: {
+      ...PATH_RIG.skins,
+      default: {
+        attachments: {
+          ...PATH_RIG.skins.default.attachments,
+          track: { track: { ...PATH_RIG.skins.default.attachments.track.track, constantSpeed: false } },
+        },
+      },
+    },
+  });
+  const slowRider = boneOf(poseAtSample(timelinePosable(slowDirs, motion).data, 'move', 4, 2), 'rider');
+  say(
+    'PS04_constantSpeed_false_lands_in_the_same_place_as_true',
+    near(slowRider.worldX, 45) && near(slowRider.worldY, 0),
+    `with constantSpeed false the rider is at x=${slowRider.worldX.toFixed(4)}, where the re-measuring traversal puts it at 45`,
+    'this is the only case that reads the emitted lengths at all: `false` trusts them, `true` recomputes, and a wrong array shows up as a different place',
+  );
+
+  // A path weighted across two bones 180 apart is the one shape where measuring
+  // the arc length in a bone's own space and measuring it in the world give
+  // different answers.
+  const spanDirs = writeProbeRig({
+    ...PATH_RIG,
+    bones: [...PATH_RIG.bones, { name: 'left', parent: 'root', x: 0, y: 0 }, { name: 'right', parent: 'root', x: 180, y: 0 }],
+    skins: {
+      ...PATH_RIG.skins,
+      default: {
+        attachments: {
+          ...PATH_RIG.skins.default.attachments,
+          track: {
+            track: {
+              type: 'path',
+              vertexCount: 9,
+              weights: [-30, 0, 30, 60, 90, 120, 150, 180, 210].map((x, i) =>
+                i < 5 ? [{ bone: 'left', x, y: 0, weight: 1 }] : [{ bone: 'right', x: x - 180, y: 0, weight: 1 }],
+              ),
+            },
+          },
+        },
+      },
+    },
+  });
+  const spanRider = boneOf(poseAtSample(timelinePosable(spanDirs, motion).data, 'move', 4, 2), 'rider');
+  say(
+    'PS05_a_weighted_path_is_measured_in_WORLD_space',
+    near(spanRider.worldX, 45) && near(spanRider.worldY, 0),
+    `the same curve bound half to a bone at x=0 and half to one at x=180 puts the rider at x=${spanRider.worldX.toFixed(4)}`,
+    'each influence has to go to the world through its OWN bone before the arc length is summed; a per-attachment shortcut gets this one wrong',
+  );
+
+  // --- the slider: does the animation it applies actually arrive? -----------
+  const dialAt = (sample: number): { time: number; flag: number; knob: number } => {
+    const skeleton = poseAtSample(data, 'move', 4, sample);
+    return {
+      time: skeleton.findConstraint('dial', Slider)!.appliedPose.time,
+      flag: boneOf(skeleton, 'flag').rotation,
+      knob: boneOf(skeleton, 'knob').rotation,
+    };
+  };
+  const dial0 = dialAt(0);
+  const dialHalf = dialAt(2);
+  const dialEnd = dialAt(4);
+  say(
+    'PS06_a_slider_maps_a_bone_property_to_the_time_of_the_animation_it_applies',
+    near(dial0.flag, 0) && near(dialHalf.flag, 45, 0.01) && near(dialEnd.flag, 90, 0.01) && near(dialHalf.time, 0.5, 0.01),
+    `knob ${dial0.knob.toFixed(1)}° -> ${dialHalf.knob.toFixed(1)}° -> ${dialEnd.knob.toFixed(1)}° drives slider time ` +
+      `${dial0.time.toFixed(3)} -> ${dialHalf.time.toFixed(3)} -> ${dialEnd.time.toFixed(3)}, and the animation it applies ` +
+      `puts flag at ${dial0.flag.toFixed(1)}° -> ${dialHalf.flag.toFixed(1)}° -> ${dialEnd.flag.toFixed(1)}°`,
+    'nothing else in this format applies an animation, so the only proof that a slider works is a bone moving that no timeline in the playing animation touches',
+  );
+
+  const muted = timelinePosable(
+    dirs,
+    pathMotion({
+      duration: 1,
+      loop: false,
+      tracks: [
+        { bone: 'knob', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [90] }] },
+        { slider: 'dial', property: 'mix', keys: [{ t: 0, v: [0] }, { t: 1, v: [0] }] },
+      ],
+    }),
+  ).data;
+  const mutedFlag = boneOf(poseAtSample(muted, 'move', 4, 2), 'flag').rotation;
+  say(
+    'PS07_a_slider_mix_timeline_mutes_it',
+    near(mutedFlag, 0),
+    `with the mix keyed to 0 while the dial still turns to 45°, flag stays at ${mutedFlag.toFixed(3)}°`,
+    'update() returns on mix 0, so a mix timeline is the difference between a slider that is off and one nobody keyed',
+  );
+
+  // --- the per-skin lists: which skin has the bone? ------------------------
+  const withSkin = (skin: string | null): { active: boolean; ik: boolean; rotation: number } => {
+    const skeleton = new Skeleton(data);
+    if (skin) skeleton.setSkin(skin);
+    skeleton.setupPose();
+    skeleton.update(0);
+    skeleton.updateWorldTransform(Physics.reset);
+    const bone = skeleton.bones.find((b) => b.data.name === 'pauldron')!;
+    return {
+      active: bone.active,
+      ik: skeleton.findConstraint('pauldron-ik', IkConstraint)!.active,
+      rotation: bone.appliedPose.getWorldRotationX(),
+    };
+  };
+  const bare = withSkin(null);
+  const asDefault = withSkin('default');
+  const armoured = withSkin('armoured');
+  say(
+    'PS08_a_per_skin_list_gates_which_bones_and_constraints_are_active',
+    !bare.active && !bare.ik && !asDefault.active && armoured.active && armoured.ik &&
+      near(asDefault.rotation, 0) && near(armoured.rotation, 90),
+    `pauldron active: no skin ${String(bare.active)}, "default" ${String(asDefault.active)}, "armoured" ` +
+      `${String(armoured.active)}; its IK ${String(armoured.ik)} under "armoured", and the bone poses to ` +
+      `${armoured.rotation.toFixed(2)}° there against ${asDefault.rotation.toFixed(2)}° elsewhere`,
+    'the pose is the claim: skinRequired members are switched off until a skin names them, and "listed" without the flag would look identical here',
+  );
+
+  // --- the refusals ---------------------------------------------------------
+  const noPath = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [{ ...PATH_RIG.constraints[0], slot: 'block' }, PATH_RIG.constraints[1], PATH_RIG.constraints[2]],
+    }),
+    motion,
+  );
+  say(
+    'PS09_a_path_constraint_on_a_slot_with_no_path_is_refused',
+    noPath !== null && noPath.includes('has no path attachment in any skin'),
+    noPath === null ? 'the compile went through' : `refused with: ${noPath}`,
+    'PathConstraint.update returns on its first line unless the slot shows a path, so the constraint loads, reports its mixes and moves nothing',
+  );
+
+  const pathAttachment = (patch: Record<string, unknown>): ProbeDirs =>
+    writeProbeRig({
+      ...PATH_RIG,
+      skins: {
+        ...PATH_RIG.skins,
+        default: {
+          attachments: {
+            ...PATH_RIG.skins.default.attachments,
+            track: { track: { ...PATH_RIG.skins.default.attachments.track.track, ...patch } },
+          },
+        },
+      },
+    });
+
+  const notThree = refusal(pathAttachment({ vertexCount: 8, vertices: new Array(16).fill(0).map((_, i) => (i % 2 ? 0 : i * 10)) }), motion);
+  say(
+    'PS10_a_vertexCount_that_is_not_a_multiple_of_3_is_refused',
+    notThree !== null && notThree.includes('not a multiple of 3'),
+    notThree === null ? 'the compile went through' : `refused with: ${notThree}`,
+    '`Utils.newArray(vertexCount / 3, 0)` accepts a fractional size without a word and the groups of six then straddle the knots',
+  );
+
+  const tooShort = refusal(pathAttachment({ vertexCount: 3, vertices: [0, 0, 30, 0, 60, 0] }), motion);
+  say(
+    'PS11_an_open_path_with_less_than_one_curve_is_refused',
+    tooShort !== null && tooShort.includes('needs at least 6'),
+    tooShort === null ? 'the compile went through' : `refused with: ${tooShort}`,
+    'an open path drops its first and last point, so three of them leave a one-point chain and no curve at all',
+  );
+
+  const restated = refusal(pathAttachment({ lengths: [90, 180] }), motion);
+  say(
+    'PS12_an_authored_lengths_array_is_refused',
+    restated !== null && restated.includes('rigc measures the setup arc length'),
+    restated === null ? 'the compile went through' : `refused with: ${restated}`,
+    'it is a measurement of the vertices two fields above it, exactly like a region\'s size against its PNG — a second copy can only drift',
+  );
+
+  const badMode = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [{ ...PATH_RIG.constraints[0], rotateMode: 'CHAINSCALE' }, PATH_RIG.constraints[1], PATH_RIG.constraints[2]],
+    }),
+    motion,
+  );
+  say(
+    'PS13_an_enum_name_the_parser_cannot_resolve_is_refused',
+    badMode !== null && badMode.includes('rotateMode is "CHAINSCALE"') && badMode.includes('first letter'),
+    badMode === null ? 'the compile went through' : `refused with: ${badMode}`,
+    'enumValue uppercases the first letter and nothing else, so an unresolved name is assigned as undefined and the constraint runs a mode nobody chose',
+  );
+
+  const noAnimation = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [PATH_RIG.constraints[0], { ...PATH_RIG.constraints[1], animation: 'dial-posee' }, PATH_RIG.constraints[2]],
+    }),
+    motion,
+  );
+  say(
+    'PS14_a_slider_naming_an_animation_the_motion_spec_lacks_is_refused',
+    noAnimation !== null && noAnimation.includes('which the motion spec does not declare') && noAnimation.includes('dial-pose'),
+    noAnimation === null ? 'the compile went through' : `refused with: ${noAnimation}`,
+    'a slider is the one field in a rig spec that points across the file boundary, and the parser resolves it in a second pass and throws',
+  );
+
+  const bothModels = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [PATH_RIG.constraints[0], { ...PATH_RIG.constraints[1], time: 0.5 }, PATH_RIG.constraints[2]],
+    }),
+    motion,
+  );
+  say(
+    'PS15_a_slider_that_mixes_its_two_models_is_refused',
+    bothModels !== null && bothModels.includes('declares both a "bone" and "time"'),
+    bothModels === null ? 'the compile went through' : `refused with: ${bothModels}`,
+    '`bone` switches the whole model and the parser reads `time` only in the other branch, so it would be dropped in silence',
+  );
+
+  const unflagged = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      bones: PATH_RIG.bones.map((b) => (b.name === 'pauldron' ? { ...b, skin: undefined } : b)),
+    }),
+    motion,
+  );
+  say(
+    'PS16_a_skin_member_without_skin_true_is_refused',
+    unflagged !== null && unflagged.includes('does not declare `"skin": true`'),
+    unflagged === null ? 'the compile went through' : `refused with: ${unflagged}`,
+    'updateCache starts a bone active unless it is skinRequired, so the list would change nothing and the rig would look skinned',
+  );
+
+  const orphan = refusal(
+    writeProbeRig({ ...PATH_RIG, skins: { default: PATH_RIG.skins.default, armoured: { ik: ['pauldron-ik'] } } }),
+    motion,
+  );
+  say(
+    'PS17_a_skin_true_member_no_skin_activates_is_refused',
+    orphan !== null && orphan.includes('but no skin activates it'),
+    orphan === null ? 'the compile went through' : `refused with: ${orphan}`,
+    'the other direction of the same switch, and the one that costs a pose: the bone is inactive under every skin there is',
+  );
+
+  const strayKey = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      skins: { ...PATH_RIG.skins, armoured: { bones: ['pauldron'], ik: ['pauldron-ik'], block: { block: { image: 'block.png' } } } },
+    }),
+    motion,
+  );
+  say(
+    'PS18_a_slot_left_outside_a_long_form_skin_is_refused',
+    strayKey !== null && strayKey.includes('Move it inside "attachments"'),
+    strayKey === null ? 'the compile went through' : `refused with: ${strayKey}`,
+    'the two spellings of a skin are told apart by these keys, so a slot beside them is an attachment table nobody would read',
+  );
+
+  const wrongType = refusal(
+    dirs,
+    pathMotion({
+      duration: 1,
+      loop: false,
+      tracks: [{ path: 'dial', property: 'position', keys: [{ t: 0, v: [0] }, { t: 1, v: [0.5] }] }],
+    }),
+  );
+  say(
+    'PS19_keying_a_slider_as_a_path_constraint_is_refused_by_type',
+    wrongType !== null && wrongType.includes('but the rig declares it as a "slider"'),
+    wrongType === null ? 'the compile went through' : `refused with: ${wrongType}`,
+    'findConstraint(name, PathConstraintData) resolves by name AND type, so a right name of the wrong type is a miss and the loader throws',
+  );
+
+  const deadSlider = gateProbe(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [PATH_RIG.constraints[0], { ...PATH_RIG.constraints[1], animation: 'still', loop: true }, PATH_RIG.constraints[2]],
+    }),
+    {
+      ...pathMotion(PATH_MOVE),
+      animations: {
+        ...(pathMotion(PATH_MOVE).animations as Record<string, unknown>),
+        still: { duration: 0, loop: false, tracks: [] },
+      },
+    },
+  );
+  say(
+    'PS20_A37_fires_on_a_slider_that_loops_an_empty_animation',
+    deadSlider.failures.filter((f) => f.assertion === 'A37_SLIDER_CONSTRAINT_EFFECTIVE').length === 2,
+    deadSlider.failures
+      .filter((f) => f.assertion === 'A37_SLIDER_CONSTRAINT_EFFECTIVE')
+      .map((f) => f.detail)
+      .join(' | ') || 'A37 accepted a slider whose animation has no timelines and whose loop divides by its duration',
+    'looping divides by the animation duration, so a zero-length one applies the animation at NaN — and an animation with no timelines applies nothing at all',
+  );
+
+  const brokenPath = gateProbeArtifacts(dirs, motion, (skeleton) => {
+    const skins = skeleton.skins as Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }>;
+    skins[0].attachments.track.track.type = 'boundingbox';
+  });
+  say(
+    'PS21_A36_fires_when_the_constrained_slot_stops_showing_a_path',
+    brokenPath.failures.some((f) => f.assertion === 'A36_PATH_CONSTRAINT_EFFECTIVE'),
+    brokenPath.failures.find((f) => f.assertion === 'A36_PATH_CONSTRAINT_EFFECTIVE')?.detail ??
+      'A36 accepted a path constraint whose slot shows no path',
+    'the artifact is internally consistent — the slot exists, the attachment loads, every mix is 1 — and the constraint still does nothing',
+  );
+
+  const brokenLengths = gateProbeArtifacts(dirs, motion, (skeleton) => {
+    const skins = skeleton.skins as Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }>;
+    (skins[0].attachments.track.track.lengths as number[])[1] = 45;
+  });
+  say(
+    'PS22_A33_fires_on_a_lengths_array_that_does_not_increase',
+    brokenLengths.failures.some((f) => f.assertion === 'A33_VERTEX_ATTACHMENT_GEOMETRY'),
+    brokenLengths.failures.find((f) => f.assertion === 'A33_VERTEX_ATTACHMENT_GEOMETRY')?.detail ??
+      'A33 accepted a cumulative length that went backwards',
+    'the array is cumulative, so a value below its predecessor is either a zero-length curve or an array shorter than the geometry',
+  );
+
+  const unflaggedArtifact = gateProbeArtifacts(dirs, motion, (skeleton) => {
+    const bones = skeleton.bones as Array<Record<string, unknown>>;
+    delete bones.find((b) => b.name === 'pauldron')!.skin;
+  });
+  say(
+    'PS23_A38_fires_on_a_listed_bone_that_is_not_skinRequired',
+    unflaggedArtifact.failures.some((f) => f.assertion === 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED'),
+    unflaggedArtifact.failures.find((f) => f.assertion === 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED')?.detail ??
+      'A38 accepted a skin list whose member is active under every skin',
+    'the pairing is what is wrong, so nothing else can see it: the bone loads, the list loads, and the skin changes nothing',
+  );
+
+  const emptyKeys = gateProbeArtifacts(dirs, motion, (skeleton) => {
+    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+    (animations.move.path as Record<string, Record<string, unknown[]>>).ride.position = [];
+  });
+  say(
+    'PS24_A34_fires_on_a_path_timeline_with_no_keys',
+    emptyKeys.failures.some((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS'),
+    emptyKeys.failures.find((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS')?.detail ??
+      'A34 accepted an empty key array on a path timeline',
+    '`let keyMap = timelineMap[0]; if (!keyMap) continue;` — the group is walked, the timeline is skipped, and nothing is said',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // bounding boxes and clipping attachments
 // ---------------------------------------------------------------------------
 //
@@ -5673,16 +6210,16 @@ function runCliSuite(): number {
     const optedAll = assertions(opted.stdout);
     const optedProf = [...opted.stdout.matchAll(/^ {2}PROF {2}A\d\d_/gm)].length;
     say(
-      'CLI07_PROFILE_SPINE_HTML_STILL_RUNS_ALL_36',
+      'CLI07_PROFILE_SPINE_HTML_STILL_RUNS_ALL_39',
       opted.status !== 0 &&
         opted.status !== null &&
-        optedAll.size === 36 &&
+        optedAll.size === 39 &&
         optedProf === 0 &&
         new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout),
-      `exit=${String(opted.status)}, ${optedAll.size}/36 assertions reported, ${optedProf} PROF, ` +
+      `exit=${String(opted.status)}, ${optedAll.size}/39 assertions reported, ${optedProf} PROF, ` +
         `A19 ${new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout) ? 'FAILED as it must' : 'did not fire'}`,
       'flipping a default is only safe if the old one is still reachable and still complete — the opt-in has to be ' +
-        'the same 36 rules it always was, not a weakened copy',
+        'every rule it always was, not a weakened copy',
     );
   }
 
@@ -6999,6 +7536,8 @@ function main(): void {
   substantive += 8;
   bad += runConstraintAndDeformSuite();
   substantive += 21;
+  bad += runPathAndSliderSuite();
+  substantive += 25;
   bad += runPolygonSuite();
   substantive += 6;
   bad += runMeshSuite();
@@ -7095,12 +7634,15 @@ function main(): void {
       '+ 21 constraint- and deform-timeline controls (8 of them a spine-core round trip that reads the ik and ' +
       'transform mixes off the posed constraints, the world position of a deformed vertex, and a weighted ' +
       "attachment's per-influence deform array), " +
+      '+ 25 path / slider / per-skin controls (8 of them a spine-core round trip that reads the world position a ' +
+      'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
+      'and which bones a skin switches on), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       ', + 2 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number), + 7 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
-      'builds green with no flag and is refused by all 36 rules under `--profile spine-html`)' +
+      'builds green with no flag and is refused by every rule under `--profile spine-html`)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
       ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +

@@ -24,6 +24,12 @@ import { CompileError, NotImplementedError } from './errors.ts';
 import { parseJsonWithPosition } from './json-position.ts';
 import {
   parseRigSpec,
+  RIG_FROM_PROPERTIES,
+  RIG_PATH_POSITION_MODES,
+  RIG_PATH_ROTATE_MODES,
+  RIG_PATH_SPACING_MODES,
+  RIG_SKIN_CONSTRAINT_KEYS,
+  splitRigSkin,
   type RigAttachment,
   type RigBone,
   type RigBoundingBoxAttachment,
@@ -31,7 +37,9 @@ import {
   type RigEvent,
   type RigMeshAttachment,
   type RigMeshBinding,
+  type RigPathAttachment,
   type RigRegionAttachment,
+  type RigSkinConstraintKey,
   type RigSpec,
   type RigVertexGeometry,
 } from './rig.ts';
@@ -43,6 +51,7 @@ import {
   normaliseDegrees,
   screenToSpineDegrees,
   toBoneLocal,
+  toWorld,
   TransformError,
   type BoneTransform,
 } from './transform.ts';
@@ -67,6 +76,7 @@ import type {
   SpineConstraint,
   SpineEvent,
   SpineMeshAttachment,
+  SpinePathAttachment,
   SpineRegionAttachment,
   SpineSkeletonJson,
   SpineSlot,
@@ -208,6 +218,79 @@ const PHYSICS_TRACKS: Record<string, { fields: string[]; identity: number[] }> =
   mix: { fields: ['value'], identity: [1] },
   reset: { fields: [], identity: [] },
 };
+
+/**
+ * Path constraint timelines (`animations.<a>.path.<constraint>.<timeline>`).
+ *
+ * ⭐ Same shape as the physics group — a constraint name, a timeline name under
+ * it — which is why they share `compileValueTrack` and a `MotionTrack` rather
+ * than getting the `ik`/`transform` treatment: those two are ONE unnamed
+ * timeline per constraint and needed a key type of their own, and these are not.
+ *
+ * `mix` is the exception inside the group: one timeline, three values in a key,
+ * three curve channels, in the order the parser reads them (`:1027-1029`). ⚠️ Its
+ * `mixY` defaults to the same key's `mixX` in the file, so rigc writes all three
+ * out — `compileValueTrack` never omits a field, which is what keeps "the author
+ * wrote mixY" and "mixY happened to equal mixX" from emitting the same file.
+ */
+const PATH_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
+  position: { fields: ['value'], identity: [0] },
+  spacing: { fields: ['value'], identity: [0] },
+  mix: { fields: ['mixRotate', 'mixX', 'mixY'], identity: [1, 1, 1] },
+};
+
+/**
+ * Slider timelines (`animations.<a>.slider.<constraint>.<timeline>`).
+ *
+ * ⚠️ `time`'s per-key default is **1**, not 0 (`:1121` passes `defaultValue` 1
+ * to `readTimeline1` for both timelines). Nothing here depends on that, because
+ * `compileValueTrack` writes every field explicitly — it is recorded because it
+ * is the one timeline in the format whose default is neither its own identity nor
+ * a copy of a neighbour, and a reader checking rigc against the parser will trip
+ * over it.
+ */
+const SLIDER_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
+  time: { fields: ['value'], identity: [1] },
+  mix: { fields: ['value'], identity: [1] },
+};
+
+/**
+ * The three constraint families a `MotionTrack` can target, and the table of
+ * timelines each one accepts.
+ *
+ * 🚨 The key here is the field a track names its target with, NOT the property.
+ * All three families have a timeline called `mix`, so dispatching on `property`
+ * — which is what this file did while `physics` was the only such family — would
+ * send a path constraint's mix keys into the physics group, where the parser
+ * would look for a physics constraint of that name and throw.
+ */
+const CONSTRAINT_TRACK_FAMILIES = {
+  physics: { tracks: PHYSICS_TRACKS, label: 'physics constraint' },
+  path: { tracks: PATH_TRACKS, label: 'path constraint' },
+  slider: { tracks: SLIDER_TRACKS, label: 'slider' },
+} as const;
+
+type ConstraintTrackFamily = keyof typeof CONSTRAINT_TRACK_FAMILIES;
+
+const CONSTRAINT_TRACK_TARGETS = Object.keys(CONSTRAINT_TRACK_FAMILIES) as ConstraintTrackFamily[];
+
+/**
+ * Which family a track belongs to, from the target it names — or null for the
+ * slot and bone tracks that name none.
+ *
+ * The `group` form is physics-only and stays that way: a group of physics
+ * constraints is how the ring's four grips are tuned in one track, and no path
+ * constraint or slider in this format is ever authored in bulk. A `group` track
+ * whose property is one of theirs is refused below rather than silently read as
+ * a slot track.
+ */
+function constraintFamilyOf(track: MotionTrack): ConstraintTrackFamily | null {
+  for (const family of CONSTRAINT_TRACK_TARGETS) {
+    if (track[family] !== undefined) return family;
+  }
+  if (track.group !== undefined && track.property in PHYSICS_TRACKS) return 'physics';
+  return null;
+}
 
 /**
  * One numeric channel of a constraint timeline: the JSON field, the value the
@@ -657,9 +740,15 @@ export function compile(opts: CompileOptions): CompileResult {
   // and states them here. A slot filled from both is a compile error, because the
   // two would then be two records of one thing.
   const skinNames = Object.keys(rig.skins ?? {});
+  // The two spellings of a skin entry, normalised once — every reader below takes
+  // its attachments and its member lists from here rather than re-deciding which
+  // form the spec used.
+  const skinParts = new Map(
+    skinNames.map((skinName) => [skinName, splitRigSkin(rig.skins![skinName], `rig skin "${skinName}"`)] as const),
+  );
   const rigAttachmentNames = new Map<string, string[]>();
   for (const skinName of skinNames) {
-    for (const [slotName, placeholders] of Object.entries(rig.skins![skinName])) {
+    for (const [slotName, placeholders] of Object.entries(skinParts.get(skinName)!.attachments)) {
       if (!rigSlotIndex.has(slotName)) {
         throw new CompileError(`rig skin "${skinName}" gives attachments to slot "${slotName}", which the rig does not declare`);
       }
@@ -732,6 +821,10 @@ export function compile(opts: CompileOptions): CompileResult {
     return table;
   };
   tableFor('default'); // rigc always emits a default skin, even when it is empty
+  // ...and every skin the rig declares, for the same reason: a skin can now carry
+  // `bones`/constraint lists with no attachments at all, and a skin that only
+  // switches bones on would otherwise never reach the emitted array.
+  for (const skinName of skinNames) tableFor(skinName);
   const meshBones = new Set<string>();
   const meshes: CompileResult['meshes'] = [];
 
@@ -803,7 +896,7 @@ export function compile(opts: CompileOptions): CompileResult {
     }
 
     for (const skinName of skinNames) {
-      const placeholders = rig.skins![skinName][rigSlot.name];
+      const placeholders = skinParts.get(skinName)!.attachments[rigSlot.name];
       if (!placeholders) continue;
       const perSlot: Record<string, SpineAttachment> = {};
       for (const [placeholder, att] of Object.entries(placeholders)) {
@@ -847,8 +940,30 @@ export function compile(opts: CompileOptions): CompileResult {
   // constraint of the same name and the parser then throws. Keeping the type
   // beside the name is what lets the refusal say which of the two it is.
   const constraintTypes = new Map<string, string>();
-  for (const spec of rig.constraints ?? []) {
-    constraints.push(buildRigConstraint(spec as RigConstraintInput, boneNames));
+  // Which slots can actually show a path, for the path constraint's own check.
+  // Read off the emitted skin tables rather than the spec, so it answers the
+  // question the runtime asks: is there an attachment of that type on that slot?
+  const pathSlots = new Map<string, string[]>();
+  for (const [skinName, table] of skinTables) {
+    for (const [slotName, perSlot] of Object.entries(table)) {
+      for (const att of Object.values(perSlot)) {
+        if ((att as { type?: string }).type !== 'path') continue;
+        pathSlots.set(slotName, [...(pathSlots.get(slotName) ?? []), skinName]);
+        break;
+      }
+    }
+  }
+  const constraintCtx: ConstraintContext = {
+    boneNames,
+    slotNames: new Set(rig.slots.map((s) => s.name)),
+    pathSlots,
+    animationNames: new Set(Object.keys(motion.animations ?? {})),
+  };
+  // Read as the raw records they are on disk: `buildRigConstraint` checks every
+  // field itself, because a spec that came off a file has whatever the author
+  // wrote in it and the union above is a claim about a correct one.
+  for (const spec of (rig.constraints ?? []) as unknown as RigConstraintInput[]) {
+    constraints.push(buildRigConstraint(spec, constraintCtx));
     constraintNames.add(spec.name);
     constraintTypes.set(spec.name, spec.type);
   }
@@ -907,18 +1022,39 @@ export function compile(opts: CompileOptions): CompileResult {
       declaredDurations[animName] = anim.duration;
       const slotTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
       const boneTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
-      const physicsTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
+      /** One table per constraint family, keyed the way the file is. */
+      const familyTimelines: Record<ConstraintTrackFamily, Record<string, Record<string, SpineTimelineKey[]>>> = {
+        physics: {},
+        path: {},
+        slider: {},
+      };
       const claimed = new Set<string>();
       let compiledDuration = 0;
 
       for (const track of anim.tracks) {
-        const isPhysicsTrack = track.property in PHYSICS_TRACKS;
-        const isBoneTrack = !isPhysicsTrack && track.property in BONE_TRACKS;
+        const family = constraintFamilyOf(track);
+        const isBoneTrack = family === null && track.property in BONE_TRACKS;
         const targets = resolveTargets(track, motion, animName);
         targets.forEach((target, index) => {
-          if (isPhysicsTrack) {
+          if (family !== null) {
+            const label = CONSTRAINT_TRACK_FAMILIES[family].label;
             if (!constraintNames.has(target)) {
-              throw new CompileError(`animation "${animName}" keys unknown physics constraint "${target}"`);
+              const known = [...constraintTypes.entries()].filter(([, t]) => t === family).map(([n]) => n);
+              throw new CompileError(
+                `animation "${animName}" keys unknown ${label} "${target}"` +
+                  (known.length ? ` (the rig declares: ${known.join(', ')})` : `, and the rig declares no ${family} constraint at all`),
+              );
+            }
+            // Resolved by name AND by type in the parser
+            // (`findConstraint(name, PathConstraintData)`), which returns null on
+            // a type mismatch and makes `readAnimation` throw in the consumer's
+            // process. Named here instead, where the motion file can be named too.
+            const declared = constraintTypes.get(target);
+            if (declared !== family) {
+              throw new CompileError(
+                `animation "${animName}" keys "${target}" as a ${label}, but the rig declares it as a "${declared}" ` +
+                  'constraint — a timeline group resolves its target by name AND type, misses, and the loader throws',
+              );
             }
           } else if (isBoneTrack) {
             if (!boneNames.has(target)) {
@@ -936,13 +1072,23 @@ export function compile(opts: CompileOptions): CompileResult {
           claimed.add(claim);
 
           const shift = (track.lag ?? 0) + (track.stagger ?? 0) * index;
-          const keys = isPhysicsTrack
-            ? compileValueTrack(track, motion, animName, anim.duration, target, shift, PHYSICS_TRACKS, 'physics constraint')
-            : isBoneTrack
-              ? compileValueTrack(track, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
-              : compileTrack(track, motion, animName, anim.duration, target, shift, tableFor('default'));
+          const keys =
+            family !== null
+              ? compileValueTrack(
+                  track,
+                  motion,
+                  animName,
+                  anim.duration,
+                  target,
+                  shift,
+                  CONSTRAINT_TRACK_FAMILIES[family].tracks,
+                  CONSTRAINT_TRACK_FAMILIES[family].label,
+                )
+              : isBoneTrack
+                ? compileValueTrack(track, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
+                : compileTrack(track, motion, animName, anim.duration, target, shift, tableFor('default'));
           for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
-          if (isPhysicsTrack) (physicsTimelines[target] ??= {})[track.property] = keys;
+          if (family !== null) (familyTimelines[family][target] ??= {})[track.property] = keys;
           else if (isBoneTrack) (boneTimelines[target] ??= {})[track.property] = keys;
           else (slotTimelines[target] ??= {})[track.property] = keys;
         });
@@ -1078,7 +1224,9 @@ export function compile(opts: CompileOptions): CompileResult {
       if (Object.keys(constraintTimelines.transform).length) {
         animations[animName].transform = constraintTimelines.transform;
       }
-      if (Object.keys(physicsTimelines).length) animations[animName].physics = physicsTimelines;
+      if (Object.keys(familyTimelines.path).length) animations[animName].path = familyTimelines.path;
+      if (Object.keys(familyTimelines.physics).length) animations[animName].physics = familyTimelines.physics;
+      if (Object.keys(familyTimelines.slider).length) animations[animName].slider = familyTimelines.slider;
       if (Object.keys(deformTimelines).length) animations[animName].attachments = deformTimelines;
       if (drawOrder) animations[animName].drawOrder = drawOrder;
       if (eventKeys) animations[animName].events = eventKeys;
@@ -1115,7 +1263,24 @@ export function compile(opts: CompileOptions): CompileResult {
     skeleton: header,
     bones,
     slots,
-    skins: [...skinTables.entries()].map(([name, attachments]) => ({ name, attachments })),
+    // A skin entry is `name`, then whatever it activates, then `attachments` —
+    // `readSkeletonData`'s own order (`:372-443`). Every member list is a
+    // conditional spread, so a rig that declares none emits the two-key entry it
+    // always did, byte for byte.
+    skins: [...skinTables.entries()].map(([name, attachments]) => {
+      const parts = skinParts.get(name);
+      return {
+        name,
+        ...(parts?.bones.length ? { bones: parts.bones } : {}),
+        ...Object.fromEntries(
+          RIG_SKIN_CONSTRAINT_KEYS.filter((key) => parts?.constraints[key].length).map((key) => [
+            key,
+            parts!.constraints[key],
+          ]),
+        ),
+        attachments,
+      };
+    }),
     // Between `skins` and `animations`, which is where the editor writes it. A
     // conditional spread rather than an assignment after the literal, so the key
     // lands in that position instead of at the end.
@@ -1305,11 +1470,12 @@ function buildRigAttachment(
   if (type === 'mesh') return buildRigMesh(att as RigMeshAttachment, where, ctx);
   if (type === 'boundingbox') return buildRigBoundingBox(att as RigBoundingBoxAttachment, where, ctx);
   if (type === 'clipping') return buildRigClipping(att as RigClippingAttachment, where, ctx);
+  if (type === 'path') return buildRigPath(att as RigPathAttachment, where, ctx);
   throw new NotImplementedError(
     `${where}: attachment type "${String(type)}" is in the Spine 4.3 format and rigc does not emit it yet. ` +
-      'Implemented: region, mesh, boundingbox, clipping. ' +
-      'point, path and linkedmesh are deliberately deferred: not one of them appears anywhere in the benchmark ' +
-      'corpus (docs/SPEC_COVERAGE.md parts 3-1 and 4-2), so none is on the ladder\'s critical path. ' +
+      'Implemented: region, mesh, boundingbox, clipping, path. ' +
+      'point and linkedmesh are deliberately deferred: neither appears anywhere in the benchmark ' +
+      'corpus (docs/SPEC_COVERAGE.md parts 3-1 and 4-2), so neither is on the ladder\'s critical path. ' +
       'docs/SPEC_COVERAGE.md part 1-6 lists what each type would have to carry.',
   );
 }
@@ -1444,6 +1610,178 @@ function buildRigClipping(
   };
   if (att.color !== undefined) out.color = att.color;
   return out;
+}
+
+/**
+ * Setup-pose world position of every vertex of an emitted vertex run.
+ *
+ * The two encodings again, and the same split `readVertices` makes: an unweighted
+ * run is one `x, y` in the SLOT BONE's space; a weighted one is
+ * `boneCount, (boneIndex, bindX, bindY, weight) × n` per vertex, and the vertex
+ * is the weighted sum of each influence's bind point taken to world through its
+ * own bone. This is `VertexAttachment.computeWorldVertices` at setup, restated in
+ * the compiler because the compiler must not link the runtime.
+ */
+function setupWorldVertices(
+  vertices: number[],
+  vertexCount: number,
+  anchor: BoneTransform,
+  bones: SpineBone[],
+  transforms: Map<string, BoneTransform>,
+  where: string,
+): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  if (vertices.length === vertexCount * 2) {
+    for (let i = 0; i < vertices.length; i += 2) out.push(toWorld(anchor, vertices[i], vertices[i + 1]));
+    return out;
+  }
+  for (let i = 0; i < vertices.length; ) {
+    const count = vertices[i++];
+    let x = 0;
+    let y = 0;
+    for (let n = 0; n < count; n++, i += 4) {
+      const bone = bones[vertices[i]];
+      const m = bone === undefined ? undefined : transforms.get(bone.name);
+      if (!m) throw new CompileError(`${where}: vertex ${out.length} binds bone index ${vertices[i]}, which is not in the bone list`);
+      const [wx, wy] = toWorld(m, vertices[i + 1], vertices[i + 2]);
+      const weight = vertices[i + 3];
+      x += wx * weight;
+      y += wy * weight;
+    }
+    out.push([x, y]);
+  }
+  return out;
+}
+
+/**
+ * How many samples per curve the arc-length measurement takes.
+ *
+ * 64 is a choice about accuracy, and the accuracy that matters is against the
+ * runtime rather than against calculus: `PathConstraint` re-measures a
+ * `constantSpeed` path with a **4-sample** forward difference per curve, so the
+ * number here only has to be fine enough that the two agree to well inside the
+ * tolerance anything downstream compares at. It is a constant rather than a
+ * parameter because a per-call sample count would make `lengths` depend on the
+ * caller, and A18 compares two emits byte for byte.
+ */
+const PATH_LENGTH_SAMPLES = 64;
+
+/**
+ * The knot-and-handle chain a path attachment's vertices actually form, in the
+ * runtime's own order (`PathConstraint.computeWorldPositions`).
+ *
+ * ⭐ This is the part of the format a reader guesses wrong. The vertices are NOT
+ * `3K + 1` Bezier points: the parser hands them to `readVertices` untouched, and
+ * the constraint then **drops the first and last** on an open path (it computes
+ * world vertices from offset 2 for `verticesLength - 4` numbers) because those
+ * two are the outer control handles of the end knots, which no curve uses. A
+ * closed path instead rotates by one and repeats the first knot at the end.
+ * Either way what comes out is a `3K + 1` chain: knot, handle, handle, knot, …
+ */
+function pathChain(points: Array<[number, number]>, closed: boolean): Array<[number, number]> {
+  if (!closed) return points.slice(1, points.length - 1);
+  return [...points.slice(1), points[0], points[1]];
+}
+
+/**
+ * Cumulative arc length at the end of each curve of the chain, in world units.
+ *
+ * One entry per curve, which is what `lengths[curve]` indexes: the parser walks
+ * curves with `if (p > lengths[curve]) continue`, and reads `lengths[curveCount]`
+ * — where `curveCount` is the LAST curve's index — as the total path length.
+ */
+function pathCurveLengths(chain: Array<[number, number]>): number[] {
+  const out: number[] = [];
+  let total = 0;
+  for (let c = 0; c + 3 < chain.length; c += 3) {
+    const [x1, y1] = chain[c];
+    const [cx1, cy1] = chain[c + 1];
+    const [cx2, cy2] = chain[c + 2];
+    const [x2, y2] = chain[c + 3];
+    let px = x1;
+    let py = y1;
+    for (let s = 1; s <= PATH_LENGTH_SAMPLES; s++) {
+      const t = s / PATH_LENGTH_SAMPLES;
+      const u = 1 - t;
+      const a = u * u * u;
+      const b = 3 * u * u * t;
+      const d = 3 * u * t * t;
+      const e = t * t * t;
+      const x = a * x1 + b * cx1 + d * cx2 + e * x2;
+      const y = a * y1 + b * cy1 + d * cy2 + e * y2;
+      total += Math.hypot(x - px, y - py);
+      px = x;
+      py = y;
+    }
+    out.push(total);
+  }
+  return out;
+}
+
+/**
+ * `type: "path"` — the curve a path constraint slides bones along.
+ *
+ * Three things happen here that the parser will not do:
+ *
+ *   1. **`vertexCount` is checked against the group-of-three structure.** A count
+ *      that is not a multiple of 3 does not throw anywhere:
+ *      `Utils.newArray(vertexCount / 3, 0)` takes a fractional size happily, the
+ *      groups of six then straddle the knots, and bones slide along a curve
+ *      nobody drew. Too few points is the same failure with fewer symptoms — an
+ *      open path needs 6 for one curve, a closed one 3.
+ *   2. **`lengths` is measured, not copied.** See `RigPathAttachment`: it is the
+ *      setup arc length of the geometry two fields above it, and a restated
+ *      number that disagrees is only visible under `constantSpeed: false`, where
+ *      it silently rescales the whole traversal.
+ *   3. **An authored `lengths` is refused**, for that reason.
+ */
+function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentContext): SpinePathAttachment {
+  if (att.lengths !== undefined) {
+    throw new CompileError(
+      `${where}: "lengths" is not authored — rigc measures the setup arc length of each curve off the geometry, the ` +
+        'same way it measures a region\'s size off its PNG. A restated length that disagrees with the vertices is ' +
+        'invisible until `constantSpeed` is false, and then it rescales the whole traversal in silence.',
+    );
+  }
+  const vertices = buildVertexGeometry(att, where, ctx);
+  const count = att.vertexCount;
+  const closed = att.closed === true;
+  if (count % 3 !== 0) {
+    throw new CompileError(
+      `${where}: vertexCount is ${count}, which is not a multiple of 3. A path's vertices are knots AND their ` +
+        'Bezier handles, read in groups of three; the parser sizes its lengths array with `vertexCount / 3` and ' +
+        'accepts a fractional size without a word, so the curves would straddle the knots.',
+    );
+  }
+  const minimum = closed ? 3 : 6;
+  if (count < minimum) {
+    throw new CompileError(
+      `${where}: vertexCount is ${count} and ${closed ? 'a closed' : 'an open'} path needs at least ${minimum} — ` +
+        `${closed ? 'a closed path of K curves carries 3K points' : 'an open one carries 3(K + 1), the first and last being the end knots\' outer handles'}`,
+    );
+  }
+  const anchor = ctx.transforms.get(ctx.anchorBone);
+  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  const points = setupWorldVertices(vertices, count, anchor, ctx.bones, ctx.transforms, where);
+  const lengths = pathCurveLengths(pathChain(points, closed));
+  if (!lengths.length || !lengths.every((n) => Number.isFinite(n)) || lengths[lengths.length - 1] <= 0) {
+    throw new CompileError(
+      `${where}: the geometry measures ${lengths.length} curve(s) of total length ${String(lengths[lengths.length - 1])}; ` +
+        'a path of zero length divides by zero the first time a bone is placed on it',
+    );
+  }
+  // Field order is the parser's reading order (`:606-623`), and each optional key
+  // is present exactly when the spec declared it — the rule the whole rig spec
+  // follows, so Spine's own defaults stand for the rest.
+  return {
+    type: 'path',
+    ...(att.closed !== undefined ? { closed: att.closed } : {}),
+    ...(att.constantSpeed !== undefined ? { constantSpeed: att.constantSpeed } : {}),
+    vertexCount: count,
+    vertices,
+    lengths: lengths.map(r6),
+    ...(att.color !== undefined ? { color: att.color } : {}),
+  };
 }
 
 function buildRigRegion(
@@ -1680,18 +2018,53 @@ type RigConstraintInput = { name: string; type: string } & Record<string, unknow
 /** The six property names a transform constraint may map between (`:241`, `:521`). */
 const TRANSFORM_PROPERTIES = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'];
 
+/** What a constraint's names resolve against. */
+interface ConstraintContext {
+  boneNames: Set<string>;
+  slotNames: Set<string>;
+  /** slot -> the skins whose table gives that slot a path attachment. */
+  pathSlots: Map<string, string[]>;
+  /** Animations the motion spec declares — a slider names one of them. */
+  animationNames: Set<string>;
+}
+
 /**
  * 4.3 puts every constraint in one array and branches on `type`. An entry whose
  * type matches no case is dropped with no error and no `default:` branch, so an
  * unimplemented type is refused here by name rather than emitted and lost.
  */
-function buildRigConstraint(spec: RigConstraintInput, boneNames: Set<string>): SpineConstraint {
+function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): SpineConstraint {
   const where = `rig constraint "${spec.name}"`;
+  const boneNames = ctx.boneNames;
   const needBone = (name: unknown, field: string): string => {
     if (typeof name !== 'string' || !boneNames.has(name)) {
       throw new CompileError(`${where}: ${field} names ${JSON.stringify(name)}, which the rig does not declare as a bone`);
     }
     return name;
+  };
+  /**
+   * One of the enum names the parser's `Utils.enumValue` can resolve.
+   *
+   * The rule is exactly `enumValue`'s own: only the first letter's case is free,
+   * because that is the single character it normalises. Anything else resolves to
+   * `undefined` and is assigned without a word, and the constraint then runs a
+   * mode nobody chose — see `RIG_PATH_POSITION_MODES`.
+   */
+  const needEnum = (value: unknown, field: string, allowed: readonly string[]): string => {
+    if (typeof value !== 'string' || !allowed.includes(value.charAt(0).toUpperCase() + value.slice(1))) {
+      throw new CompileError(
+        `${where}: ${field} is ${JSON.stringify(value)}; known: ${allowed.join(', ')} (only the first letter's case is ` +
+          "free — the parser's enumValue uppercases that one character and nothing else, and an unresolved name " +
+          'becomes undefined without an error)',
+      );
+    }
+    return value;
+  };
+  const needNumber = (value: unknown, field: string): number => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new CompileError(`${where}: ${field} is ${JSON.stringify(value)}, which is not a finite number`);
+    }
+    return value;
   };
   const out: SpineConstraint = { name: spec.name, type: spec.type };
   const copy = (fields: readonly string[]) => {
@@ -1753,6 +2126,111 @@ function buildRigConstraint(spec: RigConstraintInput, boneNames: Set<string>): S
     ]);
     return out;
   }
+  if (spec.type === 'path') {
+    out.bones = boneList();
+    // The parser throws `Couldn't find slot X for path constraint Y` on a miss —
+    // loud, but in the consumer's process. The silent half is the one below it.
+    const slot = spec.slot;
+    if (typeof slot !== 'string' || !ctx.slotNames.has(slot)) {
+      throw new CompileError(`${where}: slot names ${JSON.stringify(slot)}, which the rig does not declare as a slot`);
+    }
+    if (!ctx.pathSlots.has(slot)) {
+      // `PathConstraint.update` opens with
+      // `if (!(attachment instanceof PathAttachment)) return`, so a constraint
+      // aimed at a slot that never shows a path does nothing whatsoever — no
+      // error, no warning, and every mix in the file still says it is on.
+      throw new CompileError(
+        `${where}: slot "${slot}" has no path attachment in any skin, so the constraint has no curve to follow — ` +
+          'PathConstraint.update returns immediately unless the slot\'s attachment is a path, which means this ' +
+          'constraint would load, report every mix it was given, and move nothing. ' +
+          'Give that slot an attachment with "type": "path".',
+      );
+    }
+    out.slot = slot;
+    for (const [field, allowed] of [
+      ['positionMode', RIG_PATH_POSITION_MODES],
+      ['spacingMode', RIG_PATH_SPACING_MODES],
+      ['rotateMode', RIG_PATH_ROTATE_MODES],
+    ] as const) {
+      if (spec[field] !== undefined) out[field] = needEnum(spec[field], field, allowed);
+    }
+    for (const field of ['rotation', 'position', 'spacing', 'mixRotate', 'mixX', 'mixY'] as const) {
+      if (spec[field] !== undefined) out[field] = r6(needNumber(spec[field], field));
+    }
+    copy(['skin']);
+    return out;
+  }
+  if (spec.type === 'slider') {
+    // ⭐ The one field in a rig spec that points at the MOTION spec. It is
+    // resolved in a second pass over the constraints array once the animations
+    // are read (`:495-507`) and a miss throws `Slider animation not found`, so
+    // the refusal here is what turns that into a message naming both files.
+    const animation = spec.animation;
+    if (typeof animation !== 'string' || animation.length === 0) {
+      throw new CompileError(
+        `${where}: a slider needs an "animation" — the animation it applies. Without one the parser's second pass ` +
+          'over the constraints array throws `Slider animation not found`.',
+      );
+    }
+    if (!ctx.animationNames.has(animation)) {
+      const known = [...ctx.animationNames];
+      throw new CompileError(
+        `${where}: applies animation "${animation}", which the motion spec does not declare` +
+          (known.length ? ` (it declares: ${known.join(', ')})` : ' (it declares none at all)'),
+      );
+    }
+    out.animation = animation;
+    for (const field of ['additive', 'loop'] as const) {
+      if (spec[field] !== undefined) out[field] = spec[field];
+    }
+    if (spec.mix !== undefined) out.mix = r6(needNumber(spec.mix, 'mix'));
+    // `bone` is the switch between the two models, so the fields of the model
+    // that was NOT chosen are refused rather than emitted: the parser reads
+    // `time` only in the `else` branch and the property fields only in the `if`,
+    // so the losing half is data no runtime will ever look at.
+    const timeSide = ['time'] as const;
+    const boneSide = ['property', 'from', 'to', 'scale', 'max', 'local'] as const;
+    if (spec.bone !== undefined) {
+      out.bone = needBone(spec.bone, 'bone');
+      const property = spec.property;
+      if (typeof property !== 'string' || !RIG_FROM_PROPERTIES.includes(property as (typeof RIG_FROM_PROPERTIES)[number])) {
+        throw new CompileError(
+          `${where}: drives off bone "${String(spec.bone)}" but its property is ${JSON.stringify(property)}; ` +
+            `known: ${RIG_FROM_PROPERTIES.join(', ')} (the parser throws on anything else)`,
+        );
+      }
+      out.property = property;
+      for (const field of ['from', 'to', 'scale', 'max'] as const) {
+        if (spec[field] !== undefined) out[field] = r6(needNumber(spec[field], field));
+      }
+      if (spec.local !== undefined) out.local = spec.local;
+      if (spec.scale !== undefined && spec.scale === 0) {
+        // time = to + (value - from) * 0, so the slider holds one frame forever.
+        throw new CompileError(`${where}: scale is 0, so the bone's property cannot move the slider's time at all`);
+      }
+      for (const field of timeSide) {
+        if (spec[field] !== undefined) {
+          throw new CompileError(
+            `${where}: declares both a "bone" and "${field}". A slider with a bone takes its time from that bone's ` +
+              `property; "${field}" is read only by the bone-less form (\`:361\`), so it would be dropped in silence.`,
+          );
+        }
+      }
+    } else {
+      if (spec.time !== undefined) out.time = r6(needNumber(spec.time, 'time'));
+      for (const field of boneSide) {
+        if (spec[field] !== undefined) {
+          throw new CompileError(
+            `${where}: declares "${field}" but no "bone". Every one of ${boneSide.join('/')} is read only inside the ` +
+              "parser's `if (boneName)` branch (`:350-360`), so it would be dropped in silence. Name the driving bone, " +
+              'or key `slider.<name>.time` in the motion spec instead.',
+          );
+        }
+      }
+    }
+    copy(['skin']);
+    return out;
+  }
   if (spec.type === 'physics') {
     out.bone = needBone(spec.bone, 'bone');
     copy([
@@ -1782,10 +2260,13 @@ function buildRigConstraint(spec: RigConstraintInput, boneNames: Set<string>): S
     ]);
     return out;
   }
+  // Every type 4.3 has is implemented, so this is now only reachable from a typo
+  // — and a typo is exactly what the parser drops in silence (no `default:`
+  // branch, `:148-367`), which is why the refusal stays.
   throw new NotImplementedError(
-    `${where}: constraint type "${String(spec.type)}" is in the Spine 4.3 format and rigc does not emit it yet. ` +
-      'Implemented: ik, transform, physics. Neither path nor slider appears anywhere in the benchmark corpus ' +
-      '(docs/SPEC_COVERAGE.md part 4-2).',
+    `${where}: constraint type ${JSON.stringify(spec.type)} is not one Spine 4.3 knows. ` +
+      'The five are: ik, transform, path, physics, slider. An unrecognised type matches no case in the parser and ' +
+      'the constraint is dropped without a word.',
   );
 }
 
@@ -2723,24 +3204,38 @@ function deformKeyCurve(
 }
 
 function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string): string[] {
-  const named = [track.slot, track.group, track.bone, track.physics].filter((v) => v !== undefined);
+  const targetFields = ['slot', 'group', 'bone', ...CONSTRAINT_TRACK_TARGETS] as const;
+  const named = targetFields.filter((field) => track[field] !== undefined);
   if (named.length > 1) {
-    throw new CompileError(`animation "${animName}": a track names more than one target (slot/group/bone/physics)`);
-  }
-  if (track.property in PHYSICS_TRACKS) {
-    if (track.physics) return [track.physics];
-    if (track.group) {
-      const members = motion.groups?.[track.group];
-      if (!members) throw new CompileError(`animation "${animName}": unknown group "${track.group}"`);
-      return members;
-    }
     throw new CompileError(
-      `animation "${animName}": "${track.property}" is a physics timeline but no constraint or group is named`,
+      `animation "${animName}": a track names more than one target (${named.join(', ')}); the list is ` +
+        `${targetFields.join('/')} and a track names exactly one`,
     );
   }
-  if (track.physics) {
+  const family = constraintFamilyOf(track);
+  if (family) {
+    const { tracks, label } = CONSTRAINT_TRACK_FAMILIES[family];
+    const direct = track[family];
+    const who = direct === undefined ? `group "${String(track.group)}"` : `${label} "${direct}"`;
+    if (!(track.property in tracks)) {
+      throw new CompileError(
+        `animation "${animName}": ${who} has no timeline "${track.property}" (it has: ${Object.keys(tracks).join(', ')})`,
+      );
+    }
+    if (direct !== undefined) return [direct];
+    const members = motion.groups?.[String(track.group)];
+    if (!members) throw new CompileError(`animation "${animName}": unknown group "${String(track.group)}"`);
+    return members;
+  }
+  // A constraint timeline with no constraint named. Worth its own refusal: the
+  // property names a family, so the message can say which field would carry it
+  // rather than leaving the track to be read as a slot track and refused for
+  // targeting a slot nobody declared.
+  const owning = CONSTRAINT_TRACK_TARGETS.filter((f) => track.property in CONSTRAINT_TRACK_FAMILIES[f].tracks);
+  if (owning.length) {
     throw new CompileError(
-      `animation "${animName}": physics constraint "${track.physics}" cannot take property "${track.property}"`,
+      `animation "${animName}": "${track.property}" is a ${owning.map((f) => CONSTRAINT_TRACK_FAMILIES[f].label).join(' / ')} ` +
+        `timeline, and this track names no constraint — put the name in "${owning.join('" or "')}"`,
     );
   }
   const isBoneTrack = track.property in BONE_TRACKS;
