@@ -54,6 +54,15 @@ import { diffLines, diffSkeletons, sectionFigures, type DiffReport } from './src
 import { copyAtlasImages } from './src/emit.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
+import {
+  DEFAULT_MAX_RESIDUAL,
+  DEFAULT_SCALE_MAX,
+  DEFAULT_SCALE_MIN,
+  estimatePose,
+  PoseError,
+  poseLines,
+  type PoseOptions,
+} from './src/pose.ts';
 import { buildPreview, PLAYER_LINE, type PreviewPage } from './src/preview.ts';
 import {
   atlasPageNames,
@@ -774,6 +783,71 @@ function cmdPreview(flags: Record<string, string>): void {
 }
 
 // ---------------------------------------------------------------------------
+// reading a given condition — pose
+// ---------------------------------------------------------------------------
+//
+// ⭐ Every other command here takes a spec and looks at what came out. This one
+// runs the other way: it takes a PICTURE the user already has — a key pose — and
+// reads spec coordinates out of it, so an agent can state those poses in a rig and
+// a motion by construction and spend its loops on the part nobody can measure, the
+// movement between them.
+//
+// 🚫 It grades nothing, and the distinction is load-bearing rather than modest.
+// `check` and `bench` compare a build against a reference and their numbers mean
+// "how close"; a pose frame is not a reference, it is an INPUT, and once the spec
+// states it there is nothing left to be close to. So the residual here is a trust
+// signal — how much of the frame this placement actually explains — and the only
+// threshold in `src/pose.ts` is the one that decides whether to print an answer at
+// all, which the caller can move.
+//
+//   rigc pose --images parts/ --frame poseA.png [--out pose.json]
+
+const DEFAULT_POSE_OUT = 'pose.json';
+
+/** `--scale 0.5,2` / `--rotation -30,30` — a pair of numbers, low first. */
+function readRange(flags: Record<string, string>, key: string): { low: number; high: number } | undefined {
+  const raw = flags[key];
+  if (raw === undefined) return undefined;
+  const parts = raw.split(',').map((s) => Number(s.trim()));
+  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n))) {
+    throw new UsageError(`--${key} takes two numbers: <min>,<max>`);
+  }
+  if (parts[1] < parts[0]) throw new UsageError(`--${key} ${JSON.stringify(raw)}: the minimum must not exceed the maximum`);
+  return { low: parts[0], high: parts[1] };
+}
+
+function cmdPose(flags: Record<string, string>): void {
+  if (flags.images === undefined) throw new UsageError('pose needs --images <dir> — the directory the loose part PNGs are in');
+  if (flags.frame === undefined) throw new UsageError('pose needs --frame <path> — one pose frame to read the placements out of');
+  const options: PoseOptions = { imagesDir: flags.images, framePath: flags.frame };
+  const scale = readRange(flags, 'scale');
+  if (scale) {
+    if (scale.low <= 0) throw new UsageError('--scale minimum must be greater than zero');
+    options.scale = { min: scale.low, max: scale.high };
+  }
+  const rotation = readRange(flags, 'rotation');
+  if (rotation) {
+    if (rotation.high - rotation.low > 360) throw new UsageError('--rotation cannot span more than a full turn');
+    options.rotation = { minDeg: rotation.low, maxDeg: rotation.high };
+  }
+  if (flags['max-residual'] !== undefined) {
+    const value = Number(flags['max-residual']);
+    if (!Number.isFinite(value) || value <= 0 || value > 1) throw new UsageError('--max-residual must be a number in (0, 1]');
+    options.maxResidual = value;
+  }
+
+  console.log('rigc pose');
+  const report = estimatePose(options);
+  for (const line of poseLines(report)) console.log(line);
+
+  // Same `--out` shape as `preview` and `vote`: one file, and a directory means
+  // "the default name in here" rather than a report written over a directory.
+  const target = resolve(flags.out ?? DEFAULT_POSE_OUT);
+  const out = existsSync(target) && statSync(target).isDirectory() ? join(target, DEFAULT_POSE_OUT) : target;
+  writeJson(out, report);
+}
+
+// ---------------------------------------------------------------------------
 // choosing between results — vote
 // ---------------------------------------------------------------------------
 //
@@ -1390,6 +1464,12 @@ const FLAG_MEANINGS: Record<string, string> = {
   as: 'the candidate animation to play, when it is named differently from the frame set',
   'all-frames': 'print every frame, not just the worst by MAE',
   json: 'also write the whole report to this path',
+  frame: 'one pose frame — a picture of the pose to read the part placements out of',
+  scale: `the scale window to search, as frame pixels per part pixel (default \`${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}\`)`,
+  rotation: 'the rotation window to search, in screen degrees (default `-180,180`, a full turn)',
+  'max-residual':
+    `above this residual a placement is refused by name instead of reported flat (default ${DEFAULT_MAX_RESIDUAL}); ` +
+    'it is a reporting threshold, not a pass bar',
   animation: 'which animation to show; the default is every one for `render` and the first for `preview`',
   max: 'longest side of a rendered frame, in pixels (default 256)',
   record: 'a saved vote to check against its ballot and append to the ledger, instead of writing a ballot',
@@ -1417,6 +1497,10 @@ const FLAG_VALUES: Record<string, string> = {
   framing: 'per-shot|shared',
   as: '<name>',
   json: '<out>',
+  frame: '<path>',
+  scale: '<min,max>',
+  rotation: '<min,max>',
+  'max-residual': '<0..1>',
   animation: '<name>',
   max: '<px>',
   record: '<result.json>',
@@ -1506,6 +1590,20 @@ const COMMANDS: CommandDoc[] = [
     },
   },
   {
+    name: 'pose',
+    usage: [
+      `rigc pose --images <dir> --frame <path> [--scale ${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}] [--rotation -180,180] [--out ${DEFAULT_POSE_OUT}]`,
+    ],
+    flags: ['images', 'frame', 'scale', 'rotation', 'max-residual', 'out'],
+    overrides: {
+      images: { value: '<dir>', meaning: 'the loose part PNGs to place; every `.png` in it is a part, in name order' },
+      out: {
+        value: '<file>',
+        meaning: `the .json report to write (default \`${DEFAULT_POSE_OUT}\`); a directory means "the default name in here"`,
+      },
+    },
+  },
+  {
     name: 'vote',
     usage: [
       `rigc vote --candidate <dir | skeleton.json> --candidate <…> [--candidate …] [--animation <name>] [--out ${DEFAULT_BALLOT}]`,
@@ -1582,6 +1680,16 @@ const USAGE = [
   'draws with rigc\'s own rasteriser; preview embeds the artifact in a page that plays',
   'it in the official Spine Web Player, which is also the interop proof.',
   '',
+  'pose runs the other way round from everything above: it reads a picture you already',
+  'have — one key pose — and reports where each loose part PNG sits in it (x, y, rotation,',
+  'scale) so an agent can state those poses in a spec by construction:',
+  '  rigc pose --images parts/ --frame poseA.png       pose.json, one entry per part',
+  'It grades nothing and no pass bar attaches to its numbers. The residual is a trust',
+  'signal, and where two placements are equally good it reports BOTH rather than picking —',
+  'two identical limbs look exactly like that. A part that matches nowhere, a part the',
+  'canvas cannot contain and a part whose rotation is a free degree of freedom are each',
+  'named as such. See `rigc pose --help`.',
+  '',
   'vote is the same page with two to four builds in it and an answer coming back:',
   '  rigc vote --candidate <build A> --candidate <build B>   ballot.html, panes labelled A and B',
   '  rigc vote --record vote-<id>.json --ballot ballot.html  check it, append it to votes.jsonl',
@@ -1626,6 +1734,7 @@ try {
   else if (command === 'bench') cmdBench(flags, positional);
   else if (command === 'render') cmdRender(flags);
   else if (command === 'preview') cmdPreview(flags);
+  else if (command === 'pose') cmdPose(flags);
   else if (command === 'vote') cmdVote(flags, lists.candidate ?? []);
 } catch (err) {
   if (err instanceof UsageError) {
@@ -1645,6 +1754,13 @@ try {
   if (err instanceof CheckError) {
     console.error(`rigc check error: ${err.message}`);
     process.exit(1);
+  }
+  // Like a usage error in kind — a missing directory, an unreadable frame — but
+  // its messages name a path and a reason, and reprinting the whole usage under
+  // them buries that.
+  if (err instanceof PoseError) {
+    console.error(`rigc pose: ${err.message}`);
+    process.exit(2);
   }
   throw err;
 }

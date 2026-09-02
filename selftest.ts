@@ -76,6 +76,13 @@ import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.
 import { copyAtlasImages } from './src/emit.ts';
 import { isContent } from './src/framing.ts';
 import {
+  DEFAULT_MAX_RESIDUAL,
+  estimatePose,
+  POSE_SPEC,
+  ROTATION_FREE_TOLERANCE,
+  type PosePlacement,
+} from './src/pose.ts';
+import {
   atlasPageNames,
   BACKGROUND,
   EMPTY_FOOTPRINT,
@@ -97,6 +104,7 @@ import {
   SHEET_COLUMNS,
   SHEET_FILE,
   SHEET_GAP,
+  unionBounds,
   viewportOfSize,
   type Footprint,
   type Frame,
@@ -6036,6 +6044,512 @@ function runSeeItSuite(): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// reading a pose frame — pose (issue #241)
+// ---------------------------------------------------------------------------
+//
+// ⭐ Why this suite can exist at all, and what shape that gives it. Every number
+// `rigc pose` prints is an estimate of something nobody wrote down: it is handed
+// a picture and loose parts and it has to work out where each part sits. So the
+// only honest way to check it is to build the picture from placements we DO know
+// — a rig with chosen bone angles, rendered by `src/render.ts` — and then ask the
+// estimator, which never sees the rig, whether it can read them back.
+//
+// 🔒 The ground truth is derived from the posed quads and the viewport, not from
+// the numbers in the rig spec: three corners of a region and its own UVs give the
+// affine map from part pixels to frame pixels, and the placement is that map's
+// centre, rotation and scale. That keeps the yardstick on the side of the drawing
+// rather than the side of the arithmetic — a compiler bug that moved the art would
+// move the truth with it, and the estimator would still have to agree.
+//
+// ⚠️ The tolerances are the METHOD FLOOR of a raster compare, and they are stated
+// here with what was measured rather than left as round numbers. The frame is a
+// bilinear resampling of the part with its edge pixels dropped below half
+// coverage, so the pixels the estimator matches are not the part's pixels; and the
+// objective charges for every part pixel that lands off the figure while charging
+// nothing for figure left uncovered, which puts the optimum a fraction inside the
+// true silhouette. Measured on this fixture: translation within 0.12 px, rotation
+// within 0.4°, scale 2–4% LOW on every one of five parts — a consistent sign,
+// which is what a systematic half-pixel of silhouette looks like over a part 26 px
+// across. The bars below sit a few times clear of each.
+const POSE_TOLERANCE = { translate: 1, rotateDeg: 2, scaleRatio: 0.08 };
+
+/** A checkerboard, for parts whose interior has to be identifiable. */
+function poseChecker(w: number, h: number, a: RGBA, b: RGBA, band: number): Plate {
+  const p = new Plate(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) p.set(x, y, (Math.floor(x / band) + Math.floor(y / band)) % 2 === 0 ? a : b);
+  }
+  return p;
+}
+
+/**
+ * A smoothly shaded ball of concentric rings.
+ *
+ * Rotation-symmetric on purpose — that is the degree of freedom `pose` has to
+ * report as free — while the ring spacing still pins its SCALE, so the control is
+ * about rotation alone and not about a uniform disc nothing can size.
+ */
+function poseBall(size: number): Plate {
+  const p = new Plate(size, size);
+  const r = size / 2 - 1;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2);
+      if (d > r + 0.5) continue;
+      const wave = (Math.cos((d / r) * Math.PI * 3) + 1) / 2;
+      p.set(x, y, [
+        Math.round(60 + wave * 150),
+        Math.round(160 + wave * 60),
+        Math.round(90 + wave * 40),
+        Math.round(255 * Math.max(0, Math.min(1, r + 0.5 - d))),
+      ]);
+    }
+  }
+  return p;
+}
+
+/** One placement in frame pixels, the shape both the truth and the estimate take. */
+interface PosePlacementTruth {
+  x: number;
+  y: number;
+  rotationDeg: number;
+  scale: number;
+}
+
+/**
+ * The affine map one posed region applies to its own page, read off three corners.
+ *
+ * `world` carries the corners in spine-core's order and `uvs` carries the same
+ * corners' page coordinates, so multiplying one basis by the other's inverse gives
+ * the map without this file needing to know how the atlas packed the region — a
+ * rotated or trimmed region would change both sides together.
+ */
+function poseTruthOf(piece: Piece, page: Plate, project: (wx: number, wy: number) => [number, number]): PosePlacementTruth {
+  const part = (i: number): [number, number] => [piece.uvs[i * 2] * page.width, piece.uvs[i * 2 + 1] * page.height];
+  const frame = (i: number): [number, number] => project(piece.world[i * 2], piece.world[i * 2 + 1]);
+  const [p0, p1, p2] = [part(1), part(0), part(2)];
+  const [f0, f1, f2] = [frame(1), frame(0), frame(2)];
+  const e1p = [p1[0] - p0[0], p1[1] - p0[1]];
+  const e2p = [p2[0] - p0[0], p2[1] - p0[1]];
+  const e1f = [f1[0] - f0[0], f1[1] - f0[1]];
+  const e2f = [f2[0] - f0[0], f2[1] - f0[1]];
+  const det = e1p[0] * e2p[1] - e1p[1] * e2p[0];
+  const a = (e1f[0] * e2p[1] - e2f[0] * e1p[1]) / det;
+  const b = (e2f[0] * e1p[0] - e1f[0] * e2p[0]) / det;
+  const c = (e1f[1] * e2p[1] - e2f[1] * e1p[1]) / det;
+  const d = (e2f[1] * e1p[0] - e1f[1] * e2p[0]) / det;
+  const tx = f0[0] - (a * p0[0] + b * p0[1]);
+  const ty = f0[1] - (c * p0[0] + d * p0[1]);
+  return {
+    x: a * (page.width / 2) + b * (page.height / 2) + tx,
+    y: c * (page.width / 2) + d * (page.height / 2) + ty,
+    rotationDeg: (Math.atan2(c, a) * 180) / Math.PI,
+    scale: Math.sqrt(Math.abs(a * d - b * c)),
+  };
+}
+
+/** How far one estimate is from one truth, in the three units the tolerances are stated in. */
+function poseDelta(got: PosePlacement, want: PosePlacementTruth): { translate: number; rotateDeg: number; scaleRatio: number } {
+  let turn = (((got.rotationDeg - want.rotationDeg) % 360) + 360) % 360;
+  if (turn > 180) turn -= 360;
+  return {
+    translate: Math.hypot(got.x - want.x, got.y - want.y),
+    rotateDeg: Math.abs(turn),
+    scaleRatio: Math.abs(got.scale / want.scale - 1),
+  };
+}
+
+function poseWithin(d: { translate: number; rotateDeg: number; scaleRatio: number }): boolean {
+  return (
+    d.translate <= POSE_TOLERANCE.translate &&
+    d.rotateDeg <= POSE_TOLERANCE.rotateDeg &&
+    d.scaleRatio <= POSE_TOLERANCE.scaleRatio
+  );
+}
+
+function poseSay(d: { translate: number; rotateDeg: number; scaleRatio: number }): string {
+  return `Δpos ${d.translate.toFixed(2)}px Δrot ${d.rotateDeg.toFixed(2)}° Δscale ${(d.scaleRatio * 100).toFixed(1)}%`;
+}
+
+/**
+ * The fixture: five plates, a rig that poses them at chosen angles, and one
+ * rendered frame with the placements it implies.
+ *
+ * ⚠️ The viewport is built by hand rather than by `framingViewport`, and the scale
+ * 1.15 is the reason. A fitted viewport lands wherever the figure's bounds put it,
+ * which for this rig is a scale outside `pose`'s own default window — the control
+ * would then be measuring the window rather than the estimator. 1.15 also sits
+ * deliberately BETWEEN two rungs of the coarse scale ladder (1.0 and 1.26), so a
+ * pass means the refinement actually moved rather than landing on a rung.
+ *
+ * The two arms carry the SAME plate at mirrored angles. That is the ambiguity
+ * control: one PNG, two places in the picture that explain it equally well, and
+ * the instrument must report both rather than pick.
+ */
+function buildPoseFixture(): {
+  dir: string;
+  parts: string;
+  framePath: string;
+  clearPath: string;
+  truth: Map<string, PosePlacementTruth>;
+} {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-pose-'));
+  const parts = join(dir, 'parts');
+  mkdirSync(parts, { recursive: true });
+
+  const torso = poseChecker(24, 36, [60, 90, 160, 255], [110, 140, 200, 255], 6);
+  torso.rect(0, 0, 24, 4, [220, 60, 60, 255]);
+  torso.writePng(join(parts, 'torso.png'));
+
+  const arm = poseChecker(10, 26, [200, 160, 60, 255], [150, 110, 30, 255], 5);
+  arm.rect(0, 0, 10, 3, [40, 40, 40, 255]);
+  arm.writePng(join(parts, 'arm.png'));
+
+  const head = poseChecker(22, 22, [230, 200, 170, 255], [200, 160, 130, 255], 11);
+  head.rect(2, 4, 5, 4, [30, 30, 30, 255]);
+  head.rect(15, 4, 5, 4, [30, 30, 30, 255]);
+  head.writePng(join(parts, 'head.png'));
+
+  poseBall(32).writePng(join(parts, 'ball.png'));
+
+  // The three decoys. None of them is in the rig, so none of them is in the
+  // picture, and each has to come back refused for its own reason.
+  poseChecker(20, 20, [255, 0, 255, 255], [0, 255, 255, 255], 4).writePng(join(parts, 'foreign.png'));
+  poseChecker(700, 700, [10, 10, 10, 255], [250, 250, 250, 255], 40).writePng(join(parts, 'toobig.png'));
+  new Plate(16, 16).writePng(join(parts, 'blank.png'));
+
+  const rigPath = join(dir, 'pose.rig.json');
+  writeFileSync(
+    rigPath,
+    `${JSON.stringify(
+      {
+        spec: 'rigc-rig/1',
+        name: 'pose_probe',
+        skeleton: { width: 200, height: 200 },
+        bones: [
+          { name: 'root' },
+          { name: 'torso', parent: 'root', x: 0, y: 0 },
+          { name: 'head', parent: 'torso', x: 0, y: 34 },
+          // Inboard enough that each arm covers part of the torso: the torso is
+          // then the occlusion control, measured rather than asserted.
+          { name: 'arm_l', parent: 'torso', x: -15, y: 8, rotation: 35 },
+          { name: 'arm_r', parent: 'torso', x: 15, y: 8, rotation: -35 },
+          { name: 'ball', parent: 'torso', x: 0, y: -34 },
+        ],
+        slots: [
+          { name: 'torso', bone: 'torso', attachment: 'torso' },
+          { name: 'head', bone: 'head', attachment: 'head' },
+          { name: 'arm_l', bone: 'arm_l', attachment: 'arm_l' },
+          { name: 'arm_r', bone: 'arm_r', attachment: 'arm_r' },
+          { name: 'ball', bone: 'ball', attachment: 'ball' },
+        ],
+        skins: {
+          default: {
+            torso: { torso: { image: 'torso.png' } },
+            head: { head: { image: 'head.png' } },
+            arm_l: { arm_l: { image: 'arm.png' } },
+            arm_r: { arm_r: { image: 'arm.png' } },
+            ball: { ball: { image: 'ball.png' } },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const motionPath = join(dir, 'pose.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify({ spec: 'rigc-motion/1', archetype: 'pose_probe', cut: 'pose_probe', easings: {}, animations: {} }, null, 2)}\n`,
+  );
+  const outDir = join(dir, 'spine');
+  const built = compile({ rigPath, motionPath, outDir, imagesDir: parts });
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(join(outDir, 'skeleton.json'), built.skeletonText);
+  writeFileSync(join(outDir, 'skeleton.atlas'), built.atlasText);
+
+  const posable = loadPosable(join(outDir, 'skeleton.json'), join(outDir, 'skeleton.atlas'), outDir);
+  const frames = sampleSetupPose(posable.data);
+  const bounds = unionBounds([frames]);
+  const scale = 1.15;
+  const pad = 12;
+  const worldW = bounds.maxX - bounds.minX + pad * 2;
+  const worldH = bounds.maxY - bounds.minY + pad * 2;
+  const viewport = viewportOfSize(
+    bounds.minX - pad,
+    bounds.minY - pad,
+    worldW,
+    worldH,
+    scale,
+    Math.round(worldW * scale),
+    Math.round(worldH * scale),
+  );
+  const plate = renderFrame(frames[0], posable.pages, viewport, BACKGROUND);
+  const framePath = join(dir, 'poseA.png');
+  plate.writePng(framePath);
+
+  // The same picture with the flat ground knocked out to transparency, so the
+  // other branch of background detection has something real to read.
+  const clear = new Plate(plate.width, plate.height);
+  for (let y = 0; y < plate.height; y++) {
+    for (let x = 0; x < plate.width; x++) {
+      const c = plate.get(x, y);
+      clear.set(x, y, c[0] === BACKGROUND[0] && c[1] === BACKGROUND[1] && c[2] === BACKGROUND[2] ? [0, 0, 0, 0] : c);
+    }
+  }
+  const clearPath = join(dir, 'poseA_clear.png');
+  clear.writePng(clearPath);
+
+  const project = projector(viewport);
+  const truth = new Map<string, PosePlacementTruth>();
+  for (const piece of frames[0].pieces) {
+    const page = posable.pages.get(piece.page);
+    if (piece.kind !== 'region' || !page) continue;
+    truth.set(piece.slot, poseTruthOf(piece, page, project));
+  }
+  return { dir, parts, framePath, clearPath, truth };
+}
+
+function runPoseSuite(): number {
+  console.log('\n── reading a pose frame: pose (issue #241) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const fixture = buildPoseFixture();
+  const report = estimatePose({ imagesDir: fixture.parts, framePath: fixture.framePath });
+  const byName = new Map(report.parts.map((p) => [p.part, p]));
+  const want = (slot: string): PosePlacementTruth => {
+    const t = fixture.truth.get(slot);
+    if (!t) throw new Error(`internal: the fixture posed no slot "${slot}"`);
+    return t;
+  };
+
+  // --- the placements themselves -------------------------------------------
+  {
+    const singles: [string, string][] = [
+      ['torso.png', 'torso'],
+      ['head.png', 'head'],
+      ['ball.png', 'ball'],
+    ];
+    const rows = singles.map(([file, slot]) => {
+      const got = byName.get(file)?.placement;
+      return { file, ok: got !== undefined && got !== null, delta: got ? poseDelta(got, want(slot)) : null };
+    });
+    const ok = rows.every((r) => r.ok && r.delta !== null && poseWithin(r.delta));
+    say(
+      'PS01_KNOWN_PLACEMENTS_ARE_READ_BACK_OUT_OF_THE_PICTURE',
+      ok,
+      rows.map((r) => `${r.file}: ${r.delta ? poseSay(r.delta) : 'no placement'}`).join('  ·  '),
+      'the whole command is this claim; a `pose` that cannot recover a placement it was shown is a plausible-number generator',
+    );
+  }
+
+  // --- two identical limbs --------------------------------------------------
+  {
+    const arm = byName.get('arm.png');
+    const found = arm?.placement ? [arm.placement, ...arm.alternates] : [];
+    const nearest = (slot: string): { translate: number; rotateDeg: number; scaleRatio: number } | null => {
+      const t = want(slot);
+      let best: { translate: number; rotateDeg: number; scaleRatio: number } | null = null;
+      for (const p of found) {
+        const d = poseDelta(p, t);
+        if (best === null || d.translate < best.translate) best = d;
+      }
+      return best;
+    };
+    const left = nearest('arm_l');
+    const right = nearest('arm_r');
+    const ok =
+      arm !== undefined &&
+      arm.ambiguous &&
+      arm.alternates.length >= 1 &&
+      left !== null &&
+      right !== null &&
+      poseWithin(left) &&
+      poseWithin(right);
+    say(
+      'PS02_TWO_IDENTICAL_LIMBS_COME_BACK_AS_TWO_PLACEMENTS',
+      ok,
+      arm === undefined
+        ? 'arm.png is not in the report'
+        : `ambiguous=${arm.ambiguous}, ${1 + arm.alternates.length} placement(s); ` +
+          `arm_l ${left ? poseSay(left) : 'unmatched'}; arm_r ${right ? poseSay(right) : 'unmatched'}`,
+      'picking one of two equally good optima silently is the failure this instrument was specified to refuse',
+    );
+  }
+
+  // --- rotation as a degree of freedom -------------------------------------
+  {
+    const ball = byName.get('ball.png');
+    const others = report.parts.filter((p) => p.part !== 'ball.png' && p.part !== 'blank.png');
+    const ok =
+      ball !== undefined &&
+      ball.rotationFree &&
+      ball.rotationSelfSimilarity <= ROTATION_FREE_TOLERANCE &&
+      others.every((p) => !p.rotationFree);
+    say(
+      'PS03_A_ROUND_PART_REPORTS_ROTATION_AS_FREE_AND_NOTHING_ELSE_DOES',
+      ok,
+      `ball self-residual ${ball?.rotationSelfSimilarity ?? 'n/a'} (tolerance ${ROTATION_FREE_TOLERANCE}); ` +
+        `others: ${others.map((p) => `${p.part} ${p.rotationSelfSimilarity}`).join(', ')}`,
+      'a ball has no rotation to get right; reporting one is a made-up number and refusing the part is worse',
+    );
+  }
+
+  // --- the three refusals ---------------------------------------------------
+  {
+    const foreign = byName.get('foreign.png');
+    const ok =
+      foreign !== undefined &&
+      foreign.refusal?.reason === 'no-match' &&
+      foreign.refusal.detail.includes('foreign.png') &&
+      // Still reported: a refusal here names why not to trust a number, it does
+      // not hide it, and an agent that disagrees has to be able to read past it.
+      foreign.placement !== null &&
+      foreign.placement.residual > DEFAULT_MAX_RESIDUAL;
+    say(
+      'PS04_A_PART_THAT_IS_IN_NO_PICTURE_IS_REFUSED_BY_NAME',
+      ok,
+      foreign === undefined
+        ? 'foreign.png is not in the report'
+        : `${foreign.refusal?.reason ?? 'accepted'}: best residual ${foreign.placement?.residual ?? 'n/a'} against ${DEFAULT_MAX_RESIDUAL}`,
+      'the alternative is a confident placement for a part that is not there, which is the one output an agent cannot detect',
+    );
+  }
+
+  {
+    const big = byName.get('toobig.png');
+    const ok =
+      big !== undefined &&
+      big.refusal?.reason === 'larger-than-canvas' &&
+      big.placement === null &&
+      big.refusal.detail.includes('700x700');
+    say(
+      'PS05_A_PART_THE_CANVAS_CANNOT_HOLD_IS_REFUSED_BY_NAME',
+      ok,
+      big === undefined ? 'toobig.png is not in the report' : `${big.refusal?.reason ?? 'accepted'}: ${big.refusal?.detail ?? ''}`,
+      'nothing was searched, so a placement here would be arithmetic about a case that does not exist',
+    );
+  }
+
+  {
+    const blank = byName.get('blank.png');
+    const ok = blank !== undefined && blank.refusal?.reason === 'empty-part' && blank.placement === null;
+    say(
+      'PS06_A_PART_WITH_NO_MATERIAL_IS_REFUSED_BY_NAME',
+      ok,
+      blank === undefined ? 'blank.png is not in the report' : `${blank.refusal?.reason ?? 'accepted'}: ${blank.refusal?.detail ?? ''}`,
+      'an all-transparent PNG divides by a zero footprint; the honest answer names the file',
+    );
+  }
+
+  // --- occlusion ------------------------------------------------------------
+  {
+    const torso = byName.get('torso.png');
+    const arm = byName.get('arm.png');
+    const ok =
+      torso?.placement != null &&
+      arm?.placement != null &&
+      poseWithin(poseDelta(torso.placement, want('torso'))) &&
+      // The arms cover part of it, so its residual and its unexplained share are
+      // both well above an unoccluded part's while the PLACEMENT is unmoved.
+      torso.placement.unexplained > arm.placement.unexplained * 3 &&
+      torso.placement.residual > arm.placement.residual * 2;
+    say(
+      'PS07_OCCLUSION_RAISES_THE_RESIDUAL_WITHOUT_MOVING_THE_PLACEMENT',
+      ok,
+      torso?.placement == null || arm?.placement == null
+        ? 'torso.png or arm.png has no placement'
+        : `torso residual ${torso.placement.residual} unexplained ${torso.placement.unexplained} at ` +
+          `${poseSay(poseDelta(torso.placement, want('torso')))}; unoccluded arm ${arm.placement.residual}/${arm.placement.unexplained}`,
+      'the documented caveat is exactly this pair of facts; if the residual did not move, the caveat is fiction, and if the placement did, the number is not a trust signal',
+    );
+  }
+
+  // --- background detection -------------------------------------------------
+  {
+    const clear = estimatePose({ imagesDir: fixture.parts, framePath: fixture.clearPath });
+    const clearByName = new Map(clear.parts.map((p) => [p.part, p]));
+    const same = (['torso.png', 'head.png', 'ball.png'] as const).every((file) => {
+      const a = byName.get(file)?.placement;
+      const b = clearByName.get(file)?.placement;
+      return a != null && b != null && Math.hypot(a.x - b.x, a.y - b.y) <= 0.5 && Math.abs(a.scale / b.scale - 1) <= 0.02;
+    });
+    const ok = clear.frame.background.kind === 'transparent' && report.frame.background.kind === 'colour' && same;
+    say(
+      'PS08_A_TRANSPARENT_GROUND_AND_A_FLAT_ONE_READ_THE_SAME',
+      ok,
+      `flat ground: ${report.frame.background.kind} ${JSON.stringify(report.frame.background.colour)}; ` +
+        `knocked out: ${clear.frame.background.kind}; placements agree: ${same}`,
+      'the objective needs to know where the picture has nothing in it; a ground it misreads turns the silhouette signal off silently',
+    );
+  }
+
+  // --- the window the report says it searched -------------------------------
+  //
+  // ⚠️ Two halves, and the first one is deliberately NOT "a wrong window is
+  // refused". It is not: a checkerboard shrunk to a third of its size still sits
+  // inside the blob it came from and explains those pixels well enough to clear
+  // the refusal threshold. That is the honest limit of a footprint-only objective
+  // and the reason the window is a reported field rather than an implementation
+  // detail — an agent that narrowed it wrongly can see that it did.
+  {
+    const wrong = estimatePose({ imagesDir: fixture.parts, framePath: fixture.framePath, scale: { min: 0.2, max: 0.4 } });
+    const inside = wrong.parts.every(
+      (p) => p.placement === null || (p.placement.scale >= 0.2 - 1e-9 && p.placement.scale <= 0.4 + 1e-9),
+    );
+    const stated = wrong.search.scale.min === 0.2 && wrong.search.scale.max === 0.4;
+    const right = estimatePose({ imagesDir: fixture.parts, framePath: fixture.framePath, scale: { min: 1.1, max: 1.25 } });
+    const rows = (['torso.png', 'head.png', 'ball.png'] as const).map((file) => {
+      const got = right.parts.find((p) => p.part === file)?.placement ?? null;
+      const slot = file.replace('.png', '');
+      return { file, delta: got ? poseDelta(got, want(slot)) : null };
+    });
+    const recovered = rows.every((r) => r.delta !== null && poseWithin(r.delta));
+    say(
+      'PS09_THE_SEARCH_WINDOW_IS_A_PROMISE_THE_REPORT_KEEPS',
+      inside && stated && recovered,
+      `--scale 0.2,0.4: every reported scale inside it = ${inside}, report states it = ${stated}; ` +
+        `--scale 1.1,1.25: ${rows.map((r) => `${r.file} ${r.delta ? poseSay(r.delta) : 'no placement'}`).join('  ·  ')}`,
+      'a polish free to walk outside the ladder would report a scale nobody searched, and a narrowed window that stopped working would make the flag useless',
+    );
+  }
+
+  // --- the command ----------------------------------------------------------
+  {
+    const out = join(fixture.dir, 'pose.json');
+    const run = runCli(['pose', '--images', fixture.parts, '--frame', fixture.framePath, '--out', out]);
+    let written: { spec?: string; parts?: unknown[] } | null = null;
+    if (existsSync(out)) written = JSON.parse(readFileSync(out, 'utf8')) as { spec?: string; parts?: unknown[] };
+    const help = runCli(['pose', '--help']);
+    const missing = runCli(['pose', '--images', join(fixture.dir, 'nope'), '--frame', fixture.framePath]);
+    const ok =
+      run.status === 0 &&
+      written?.spec === POSE_SPEC &&
+      (written.parts?.length ?? 0) === 7 &&
+      run.stdout.includes('AMBIG') &&
+      run.stdout.includes('REFUSE') &&
+      help.status === 0 &&
+      help.stdout.includes('--frame') &&
+      help.stdout.includes('--max-residual') &&
+      missing.status === 2 &&
+      missing.stderr.includes('no parts directory at');
+    say(
+      'PS10_THE_COMMAND_WRITES_ITS_REPORT_AND_REFUSES_A_BAD_PATH',
+      ok,
+      `pose exit=${String(run.status)} spec=${written?.spec ?? 'none'} parts=${written?.parts?.length ?? 0}; ` +
+        `--help exit=${String(help.status)}; missing dir exit=${String(missing.status)} ` +
+        `${JSON.stringify(missing.stderr.split('\n')[0])}`,
+      'the JSON is the whole product — an agent reads it and never sees the table — and a mistyped directory must not read as an empty pose',
+    );
+  }
+
+  return bad;
+}
+
 /**
  * The A/B ballot and its ledger (issue #151).
  *
@@ -6512,6 +7026,8 @@ function main(): void {
   }
   bad += runSeeItSuite();
   substantive += 11;
+  bad += runPoseSuite();
+  substantive += 10;
   bad += runBallotSuite();
   substantive += 13;
   bad += runCopyImagesSuite();
@@ -6591,6 +7107,13 @@ function main(): void {
       'to RGBA while still refusing a colour type that is not one, a preview embedding the skeleton, the atlas and ' +
       'one data URI per page under the names the player asks for, the player referenced rather than vendored, both ' +
       'commands in the help, and a misspelled --animation refused by name)' +
+      ', + 10 pose controls (a rig rendered at a chosen scale and its placements read back out of the picture ' +
+      'within a pixel, a degree and 8% — one PNG posed twice reported as TWO placements rather than picked ' +
+      "between, a round part's rotation reported as free where nothing else is, a foreign part / a part the " +
+      'canvas cannot hold / an all-transparent part each refused by their own reason, an occluded part whose ' +
+      'residual rises while its placement does not move, a knocked-out ground read the same as a flat one, the ' +
+      'declared scale window honoured in both directions, and the command writing its JSON while a mistyped ' +
+      'directory is refused by name)' +
       ', + 13 ballot controls (two candidates embedded whole in one page, neutral A/B panes with both source paths ' +
       'in the manifest and nowhere else, a ballot id that derives from the candidate digests and changes when the ' +
       'panes swap, a winner and a tie each landing as a ledger line carrying the winning DIGEST and its coverage, ' +
