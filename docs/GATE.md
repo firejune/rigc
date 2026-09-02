@@ -4,7 +4,7 @@
 clause: the measure it reads, the comparator, the number, and what it does when there is
 nothing to read.
 
-Current version: **gate v2.2**, released 2026-08-29.
+Current version: **gate v2.3**, released 2026-09-02.
 
 ✅ **A run may read this file.** It is on the allowed list in
 [`bench/runs/README.md`](../bench/runs/README.md), *What a run may read*, and the prompt
@@ -76,6 +76,38 @@ in the one clause that measures placement — while a blank drift row is the lou
 a part the reference has merged into a larger connected component, which on a dense figure
 is routine and benign; the limb says that such a part is named and accounted for rather than
 passing unread. Nothing about it changes the 6.0 px bar.
+
+🆕 **What a read-down has to satisfy — gate v2.3.** Three requirements, and the first two hold
+for every read-down whatever ground it rests on.
+
+- **A read-down states the framing each figure it cites was measured at**, and where the same
+  fact is available both as a **framing-independent** quantity and as a **per-pixel** one, it
+  cites the framing-independent one. *What never gates* calls a per-pixel mean incomparable
+  across framings, so evidence resting on one is worth no more than the framing it was taken
+  in, and a read-down that does not say which framing that was has not stated its evidence.
+- **A read-down resting on another instance of the same part needs that instance attributable
+  at the framing the verdict is read in** — the framing the instrument takes by itself, which
+  is the frames' own declared box wherever a set can be measured in it. An instance that exists
+  only under some other framing is not a control: it can appear and vanish with the artifact,
+  the frames and the rig all unchanged.
+- **A slot the frames cannot make attributable reads down by name, on two halves that both have
+  to hold.** Where a slot draws and is attributable in no frame of any measured set:
+  1. **a measured ceiling on its attributability, below the bar attribution requires.** The
+     ceiling is an instrument-side geometric fact about the slot's **visible footprint** — the
+     share of a covering placement of it that the frames put on screen at all — measured on
+     **every frame of every set** rather than argued from one, and computed from stated
+     conventions. The bar is **calibrated on the slots of the same corpus that the instrument
+     does attribute**. ⇒ **Both measurements are quoted, and the verdict says which is which.**
+  2. **everything observable about that slot verified strict, and verified without the
+     attribution that is missing.** Its placement is pinned by a sweep that does not use the
+     matcher and that carries a **known-answer control on a slot the clause does attribute**,
+     and its draw order is settled by the frames.
+
+🚫 **A ceiling without half 2 is not a read-down.** This ground excuses what is **measured**
+unobservable and never what was merely not measured: an unobservable is reported and never
+blocks a pass, while everything observable about the same slot stays strict. ⇒ **A verdict
+reaching this ground names it**, the way every other ground is named, and a slot whose
+observable half is unverified fails the clause exactly as an unexplained blank does.
 
 ## G3: per-frame motion
 
@@ -194,4 +226,5 @@ ladder's *Operating rules* and *Status*.
 | v1 | 2026-08-25 | the first written pass definition over the existing measures |
 | v2 | 2026-08-25 | G4's length limb reformulated as a tolerance; **G7** added on the contact-sheet observable |
 | v2.1 | 2026-08-26 | G3's scope on a single-pose set, and the SKIP that follows from it |
-| **v2.2** | **2026-08-29** | **G2's per-slot limb** — a slot that draws but is attributable in no frame of a set is read down explicitly, or the clause fails for that set |
+| v2.2 | 2026-08-29 | **G2's per-slot limb** — a slot that draws but is attributable in no frame of a set is read down explicitly, or the clause fails for that set |
+| **v2.3** | **2026-09-02** | **G2's read-down, stated in full** — it names the framing of every figure it cites and prefers a framing-independent quantity to a per-pixel one; a control instance must be attributable at the framing the verdict is read in; and a slot with a **measured** attributability ceiling below the calibrated bar reads down, provided everything observable about it is independently verified strict |

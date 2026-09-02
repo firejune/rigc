@@ -424,21 +424,27 @@ rigc is measured against **Spine's own official example projects** — the
 `1-weight-and-mass` … `8-follow-through` series as a difficulty ladder, with spineboy
 as the graduation exam.
 
-🎓 **The ladder was completed 2026-08-28.** All eight numbered rungs and the
-spineboy graduation exam cleared under gate v2.1 and held under **v2.2**, every clause PASS or SKIP:
+🎓 **The ladder is complete, 2026-08-28.** All eight numbered rungs and the
+spineboy graduation exam are cleared and hold under the current gate, **v2.3**, every clause PASS or SKIP:
 worst attributable slot drift **5.55 px** against a 6.0 px bar, and **0 of 124**
 frame-change disagreements. Recompiling the same spec in a different session
 reproduced every field of the measurement record **to the digit**. The rungs stay
 in place as regression gates.
 
-⚠️ **Current state, 2026-09-02: seven of the eight hold, and rung 7 is open.**
-`check`'s extent tolerance ([PR #254](https://github.com/firejune/rigc/pull/254))
-changed which box a set is measured in, and rung 7's stored candidate fails **G2**
+🗓️ **One rung's pass was withdrawn and restored on 2026-09-02, and both are dated
+facts.** `check`'s extent tolerance ([PR #254](https://github.com/firejune/rigc/pull/254))
+changed which box a set is measured in, and rung 7's stored candidate failed **G2**
 under it — one of its three slots draws in every set and is attributable in none,
-and no read-down kind survives the framing change. **Rungs 1–6 and 8 and the
-graduation exam are unaffected**: each reproduces its gated figures to the digit,
-and the 5.55 px and 0-of-124 figures above are among them. Verdict and reasoning
-in [docs/LADDER.md](docs/LADDER.md)'s *PR #254 instrument re-inspection*.
+and no read-down ground survived the framing change. The gate then answered the two
+clause questions that exposed, as **v2.3**: a read-down names the framing of its
+evidence, and a slot whose attributability is **measured** to be capped below the bar
+reads down when everything observable about it is independently verified strict. That
+rung's third attempt clears on those grounds, on the candidate it already had.
+**Rungs 1–6 and 8 and the graduation exam were unaffected throughout**: each reproduces
+its gated figures to the digit, and the 5.55 px and 0-of-124 figures above are among
+them. Both verdicts, and the sweep of every candidate under the new gate, are in
+[docs/LADDER.md](docs/LADDER.md)'s *PR #254 instrument re-inspection* and *gate-v2.3
+re-inspection*.
 
 ⚠️ **What that certifies, stated exactly.** That **the tool, the guide and the
 protocol reach the bar across a bounded series of honest attempts, each residual
