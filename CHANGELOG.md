@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/firejune/rigc/compare/v0.10.0...v0.11.0) (2026-09-02)
+
+
+### Features
+
+* **gallery:** ride and flex — a path constraint carries a rider, and a contour mesh is the art ([#276](https://github.com/firejune/rigc/issues/276)) ([be484e1](https://github.com/firejune/rigc/commit/be484e1f0ddbdc0b0e0ea2147fc2def9ead51e23))
+
+
+### Bug Fixes
+
+* four gallery dogfood findings in the compiler and the mesh report ([#280](https://github.com/firejune/rigc/issues/280)) ([101ab83](https://github.com/firejune/rigc/commit/101ab83b572507c7438223dbbd4c43b6571e7112))
+* **render:** correct the Quad corner-order comment (bl, ul, ur, br) ([#283](https://github.com/firejune/rigc/issues/283)) ([3afb7d8](https://github.com/firejune/rigc/commit/3afb7d8b98ee254f4bacb34f77550ba0212d8547))
+
 ## [0.10.0](https://github.com/firejune/rigc/compare/v0.9.0...v0.10.0) (2026-09-02)
 
 
