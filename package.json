@@ -50,6 +50,7 @@
     "explain": "bun cli.ts explain",
     "selftest": "bun selftest.ts",
     "typecheck": "bunx tsc --noEmit",
+    "typecheck:runs": "bunx tsc --noEmit -p tsconfig.runs.json",
     "lint": "bunx eslint .",
     "fetch-examples": "bash scripts/fetch-examples.sh",
     "bench:usage": "bun bench/count_features.ts",

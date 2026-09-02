@@ -1,0 +1,11 @@
+{
+  // Opt-in only — never part of `bun run typecheck`, `prepublishOnly`, or CI.
+  // See tsconfig.json's exclude comment (issue #201) for why `bench/runs/**` is
+  // out of the repo-wide surface. This config is the other half of that
+  // boundary: it makes a run's tooling checkable on demand, both while
+  // authoring it (before landing) and afterwards, to surface drift against
+  // `src/` deliberately rather than silently. Run with `bun run typecheck:runs`.
+  "extends": "./tsconfig.json",
+  "include": ["bench/runs/**/*.ts"],
+  "exclude": ["node_modules", "examples"]
+}

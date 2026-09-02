@@ -28,9 +28,19 @@
     "strictNullChecks": true
   },
   "include": ["cli.ts", "selftest.ts", "src/**/*.ts", "bench/**/*.ts", "tools/**/*.ts", "fixtures/**/*.ts", "scripts/**/*.ts"],
-  // A pilot run directory is another agent's artifact, committed verbatim —
-  // docs/pilot/verdicts/ records that this one does not typecheck (hallucinated
-  // spine-core methods in an abandoned helper). Excluded rather than repaired,
-  // because a run record is evidence, not code we maintain.
-  "exclude": ["node_modules", "examples", "bench/runs/2026-08-24-rung3-1"]
+  // `bench/runs/**` is out of this surface, systematically rather than case by
+  // case — see issue #201. Everything under it is a run's committed record
+  // (bench/runs/README.md's *After a run*: final once landed, editable only by
+  // a labelled amendment commit, per #181), so a type error in one cannot be
+  // fixed the ordinary way regardless — it needs an amendment or an exclusion
+  // either way, and this exclusion is the standing answer. The boundary: a run's
+  // tooling is checked when it is written (an author typechecks their own
+  // harness while authoring it — `bun run typecheck:runs` covers a landed run on
+  // demand), archived thereafter — it does not sit in the repo-wide gate, so a
+  // future change to `src/` cannot red a dozen harnesses nobody will run again,
+  // and the surface does not grow with every run the ladder completes. This
+  // replaces the single ad-hoc entry that used to live here for
+  // `bench/runs/2026-08-24-rung3-1` (landed in #150, the first external pilot
+  // run — a hallucinated spine-core call in an abandoned helper).
+  "exclude": ["node_modules", "examples", "bench/runs/**"]
 }
