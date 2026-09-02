@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0](https://github.com/firejune/rigc/compare/v0.9.0...v0.10.0) (2026-09-02)
+
+
+### Features
+
+* **bench:** three reported instruments — mesh edges, key density, stage-3 pose distance ([#269](https://github.com/firejune/rigc/issues/269)) ([02b838e](https://github.com/firejune/rigc/commit/02b838e3efdd2cf9d0bb8eda981edde4118c092f))
+* **emitter:** atlas packer and importer — parts onto shared pages, and a pack as an input ([#263](https://github.com/firejune/rigc/issues/263)) ([28bf37f](https://github.com/firejune/rigc/commit/28bf37ff8034d56c46296efcfb562f4c8569638f))
+
+
+### Bug Fixes
+
+* **emitter:** the two INGEST findings — an imported page's scale:, and A35's deform-run parity ([#272](https://github.com/firejune/rigc/issues/272)) ([a89a450](https://github.com/firejune/rigc/commit/a89a4507048e1d3f347efe352d368a1469e69596))
+
 ## [0.9.0](https://github.com/firejune/rigc/compare/v0.8.1...v0.9.0) (2026-09-02)
 
 
