@@ -14,6 +14,14 @@ their own work.
 
 ## What you get
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/rigc-demo.gif" alt="Loose part PNGs assembling themselves into a character that breathes, blinks and waves" width="600" />
+</p>
+
+<p align="center"><em>Fourteen hand-drawn part PNGs, one rig spec, one motion spec — the assembly,
+the breathing and the wave are all rigc-compiled Spine animations, rendered with
+<code>rigc render</code>.</em></p>
+
 Loose part PNGs and two small JSON files in; **Spine 4.3 skeleton data out** — a
 `skeleton.json` and a `skeleton.atlas` that load in any Spine runtime and **import
 into the Spine editor**. Nothing is written unless a round-trip through Spine's own
