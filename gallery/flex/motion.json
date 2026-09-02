@@ -1,0 +1,250 @@
+{
+  "spec": "rigc-motion/1",
+  "archetype": "flex",
+  "cut": "flex",
+
+  "easings": {
+    "swing": [0.42, 0, 0.58, 1],
+    "snap": [0.1, 0.85, 0.25, 1],
+    "settle": [0.34, 0, 0.2, 1]
+  },
+
+  "groups": {
+    "ears": ["ear_l", "ear_r"]
+  },
+
+  "animations": {
+    "wave": {
+      "duration": 2.4,
+      "loop": true,
+      "note": "A travelling wave down the banner: each hinge lags the one before it by a quarter of the cycle, which is what makes the bend move outward instead of the whole strip rocking. Amplitude grows toward the free end. The leaf's own ripple is a deform timeline on its contour vertices, so the mesh's silhouette moves where the silhouette actually is.",
+      "tracks": [
+        {
+          "bone": "hinge_a",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swing" },
+            { "t": 0.6, "v": [5], "ease": "swing" },
+            { "t": 1.2, "v": [0], "ease": "swing" },
+            { "t": 1.8, "v": [-5], "ease": "swing" },
+            { "t": 2.4, "v": [0] }
+          ]
+        },
+        {
+          "bone": "hinge_b",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [7], "ease": "swing" },
+            { "t": 0.6, "v": [0], "ease": "swing" },
+            { "t": 1.2, "v": [-7], "ease": "swing" },
+            { "t": 1.8, "v": [0], "ease": "swing" },
+            { "t": 2.4, "v": [7] }
+          ]
+        },
+        {
+          "bone": "hinge_c",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swing" },
+            { "t": 0.6, "v": [-9], "ease": "swing" },
+            { "t": 1.2, "v": [0], "ease": "swing" },
+            { "t": 1.8, "v": [9], "ease": "swing" },
+            { "t": 2.4, "v": [0] }
+          ]
+        },
+        {
+          "bone": "sprig",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swing" },
+            { "t": 0.6, "v": [4], "ease": "swing" },
+            { "t": 1.2, "v": [0], "ease": "swing" },
+            { "t": 1.8, "v": [-4], "ease": "swing" },
+            { "t": 2.4, "v": [0] }
+          ]
+        },
+        {
+          "bone": "leaf_stem",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [7], "ease": "swing" },
+            { "t": 0.6, "v": [0], "ease": "swing" },
+            { "t": 1.2, "v": [-7], "ease": "swing" },
+            { "t": 1.8, "v": [0], "ease": "swing" },
+            { "t": 2.4, "v": [7] }
+          ]
+        },
+        {
+          "bone": "scarf",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swing" },
+            { "t": 0.75, "v": [11], "ease": "swing" },
+            { "t": 1.5, "v": [0], "ease": "swing" },
+            { "t": 2.05, "v": [-9], "ease": "swing" },
+            { "t": 2.4, "v": [0] }
+          ]
+        },
+        {
+          "group": "ears",
+          "property": "rotate",
+          "stagger": 0.1,
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swing" },
+            { "t": 0.6, "v": [-7], "ease": "swing" },
+            { "t": 1.2, "v": [0], "ease": "swing" },
+            { "t": 1.8, "v": [7], "ease": "swing" },
+            { "t": 2.3, "v": [0] }
+          ]
+        },
+        {
+          "slot": "eyes",
+          "property": "attachment",
+          "keys": [
+            { "t": 0, "v": "eyes" },
+            { "t": 1.599999, "v": "eyes_shut" },
+            { "t": 1.719999, "v": "eyes" }
+          ]
+        }
+      ],
+      "deform": [
+        {
+          "slot": "leaf",
+          "attachment": "leaf",
+          "keys": [
+            { "t": 0, "ease": "swing" },
+            {
+              "t": 0.6,
+              "fromVertex": 1,
+              "vertices": [
+                0.0, 2.72, 3.81, 2.39, 6.7, 1.49, 7.97, 0.22, 7.33, -1.09, 4.91, -2.15, 1.32, -2.68, -2.6, -2.57,
+                -5.89, -1.84, -7.76, -0.67, -7.76, 0.67, -5.89, 1.84, -2.6, 2.57, 1.32, 2.68, 4.91, 2.15, 7.33, 1.09,
+                7.97, -0.22, 6.7, -1.49, 3.81, -2.39, 0.0, -2.72
+              ],
+              "ease": "swing"
+            },
+            { "t": 1.2, "ease": "swing" },
+            {
+              "t": 1.8,
+              "fromVertex": 57,
+              "vertices": [
+                -6.27, 1.69, -7.88, 0.47, -7.59, -0.86, -5.47, -1.98, -2.04, -2.63, 1.89, -2.64, 5.36, -2.02, 7.54,
+                -0.91, 7.9, 0.42, 6.36, 1.65, 3.28, 2.48, -0.59, 2.71, -4.31, 2.29, -7.0, 1.32, -8.0, 0.03, -7.07,
+                -1.27, -4.44, -2.26, -0.74, -2.71, 3.14, -2.5, 6.27, -1.69
+              ],
+              "ease": "swing"
+            },
+            { "t": 2.4 }
+          ]
+        }
+      ]
+    },
+
+    "gust": {
+      "duration": 1.1,
+      "loop": false,
+      "note": "One hard gust, so the panels are seen at a deflection a gentle loop never reaches: fast out, slow in, each hinge later than its parent, and one big deform on the leaf at the peak. Nothing loops.",
+      "tracks": [
+        {
+          "bone": "hinge_a",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "snap" },
+            { "t": 0.2, "v": [14], "ease": "settle" },
+            { "t": 0.62, "v": [-6], "ease": "settle" },
+            { "t": 1.1, "v": [0] }
+          ]
+        },
+        {
+          "bone": "hinge_b",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "snap" },
+            { "t": 0.3, "v": [17], "ease": "settle" },
+            { "t": 0.72, "v": [-8], "ease": "settle" },
+            { "t": 1.1, "v": [0] }
+          ]
+        },
+        {
+          "bone": "hinge_c",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "snap" },
+            { "t": 0.4, "v": [20], "ease": "settle" },
+            { "t": 0.85, "v": [-10], "ease": "settle" },
+            { "t": 1.1, "v": [0] }
+          ]
+        },
+        {
+          "bone": "sprig",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "snap" },
+            { "t": 0.2, "v": [12], "ease": "settle" },
+            { "t": 0.65, "v": [-4], "ease": "settle" },
+            { "t": 1.1, "v": [0] }
+          ]
+        },
+        {
+          "bone": "leaf_stem",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "snap" },
+            { "t": 0.26, "v": [28], "ease": "settle" },
+            { "t": 0.7, "v": [-9], "ease": "settle" },
+            { "t": 1.1, "v": [0] }
+          ]
+        },
+        {
+          "bone": "scarf",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "snap" },
+            { "t": 0.24, "v": [26], "ease": "settle" },
+            { "t": 0.7, "v": [-7], "ease": "settle" },
+            { "t": 1.1, "v": [0] }
+          ]
+        },
+        {
+          "bone": "torso",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "snap" },
+            { "t": 0.22, "v": [5], "ease": "settle" },
+            { "t": 0.66, "v": [-2], "ease": "settle" },
+            { "t": 1.1, "v": [0] }
+          ]
+        },
+        {
+          "slot": "eyes",
+          "property": "attachment",
+          "keys": [
+            { "t": 0, "v": "eyes" },
+            { "t": 0.079999, "v": "eyes_shut" },
+            { "t": 0.339999, "v": "eyes" }
+          ]
+        }
+      ],
+      "deform": [
+        {
+          "slot": "leaf",
+          "attachment": "leaf",
+          "keys": [
+            { "t": 0, "ease": "snap" },
+            {
+              "t": 0.26,
+              "fromVertex": 1,
+              "vertices": [
+                5.84, 4.7, 11.71, 3.19, 14.76, 0.91, 14.25, -1.59, 10.31, -3.71, 3.88, -4.93, -3.49, -4.96, -10.01,
+                -3.8, -14.12, -1.72, -14.83, 0.77, -11.96, 3.08, -6.21, 4.64, 1.04, 5.09, 8.04, 4.31, 13.1, 2.49, 15.0,
+                0.07, 13.29, -2.37, 8.37, -4.23, 1.44, -5.08, -5.84, -4.7
+              ],
+              "ease": "settle"
+            },
+            { "t": 1.1 }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -20,3 +20,10 @@ examples/
 # this repository — the reference frames that DO live here are under bench/.
 /render/
 /preview.html
+# The gallery's examples ship their SOURCE — parts, rig, motion — and nothing
+# built from it. Each README's commands write the skeleton, the frames and the
+# preview beside the example so they can be run verbatim from a clean checkout,
+# and these lines are what keeps doing that from dirtying the tree.
+/gallery/*/build/
+/gallery/*/render/
+/gallery/*/preview.html

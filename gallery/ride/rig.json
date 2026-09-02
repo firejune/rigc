@@ -1,0 +1,105 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "ride",
+  "images": "parts",
+  "skeleton": { "x": 0, "y": 0, "width": 1280, "height": 720, "fps": 30 },
+
+  "bones": [
+    { "name": "root" },
+    { "name": "stage", "parent": "root", "x": 640, "y": 360 },
+
+    { "name": "cart", "parent": "root", "x": 150, "y": 360, "length": 100 },
+    { "name": "wheel_b", "parent": "cart", "x": -96, "y": 0, "length": 34 },
+    { "name": "wheel_f", "parent": "cart", "x": 96, "y": 0, "length": 34 },
+
+    { "name": "hip", "parent": "cart", "x": -14, "y": 98 },
+    { "name": "leg_l", "parent": "hip", "x": -20, "y": -6, "length": 62 },
+    { "name": "leg_r", "parent": "hip", "x": 18, "y": -6, "length": 62 },
+    { "name": "torso", "parent": "hip", "x": 0, "y": 44, "length": 62 },
+    { "name": "neck", "parent": "torso", "x": 0, "y": 20 },
+    { "name": "scarf", "parent": "neck", "x": 0, "y": -2, "rotation": -4, "length": 70 },
+    { "name": "head", "parent": "torso", "x": 0, "y": 72, "length": 59 },
+    { "name": "ear_l", "parent": "head", "x": -35, "y": 40, "rotation": 16, "length": 57 },
+    { "name": "ear_r", "parent": "head", "x": 35, "y": 40, "rotation": -16, "length": 57 },
+    { "name": "arm_b", "parent": "torso", "x": -34, "y": 22, "rotation": 8, "length": 108 },
+    { "name": "arm_f", "parent": "torso", "x": 32, "y": 24, "rotation": 148, "length": 62 },
+    { "name": "hand_f", "parent": "arm_f", "x": 0, "y": -52, "length": 56 }
+  ],
+
+  "slots": [
+    { "name": "plate", "bone": "stage", "attachment": "plate" },
+    { "name": "rail", "bone": "stage", "attachment": "rail" },
+    { "name": "cart", "bone": "cart", "attachment": "cart" },
+    { "name": "wheel_b", "bone": "wheel_b", "attachment": "wheel_b" },
+    { "name": "wheel_f", "bone": "wheel_f", "attachment": "wheel_f" },
+    { "name": "scarf_tail", "bone": "scarf", "attachment": "scarf_tail" },
+    { "name": "ear_l", "bone": "ear_l", "attachment": "ear_l" },
+    { "name": "ear_r", "bone": "ear_r", "attachment": "ear_r" },
+    { "name": "arm_b", "bone": "arm_b", "attachment": "arm_b" },
+    { "name": "leg_l", "bone": "leg_l", "attachment": "leg_l" },
+    { "name": "leg_r", "bone": "leg_r", "attachment": "leg_r" },
+    { "name": "torso", "bone": "torso", "attachment": "torso" },
+    { "name": "head", "bone": "head", "attachment": "head" },
+    { "name": "eyes", "bone": "head", "attachment": "eyes" },
+    { "name": "scarf_knot", "bone": "neck", "attachment": "scarf_knot" },
+    { "name": "arm_f", "bone": "arm_f", "attachment": "arm_f" },
+    { "name": "hand_f", "bone": "hand_f", "attachment": "hand_f" },
+    { "name": "track", "bone": "root", "attachment": "track" }
+  ],
+
+  "skins": {
+    "default": {
+      "plate": { "plate": { "image": "plate.png" } },
+      "rail": { "rail": { "image": "rail.png" } },
+
+      "scarf_tail": { "scarf_tail": { "image": "scarf_tail.png", "x": -30, "y": -27 } },
+      "ear_l": { "ear_l": { "image": "ear_l.png", "y": 20 } },
+      "ear_r": { "ear_r": { "image": "ear_r.png", "y": 20 } },
+      "arm_b": { "arm_b": { "image": "arm_b.png", "y": -48 } },
+      "leg_l": { "leg_l": { "image": "leg_l.png", "y": -28 } },
+      "leg_r": { "leg_r": { "image": "leg_r.png", "y": -28 } },
+      "torso": { "torso": { "image": "torso.png" } },
+      "head": { "head": { "image": "head.png" } },
+      "eyes": {
+        "eyes": { "image": "eyes.png", "y": 9 },
+        "eyes_shut": { "image": "eyes_shut.png", "y": 9 }
+      },
+      "scarf_knot": { "scarf_knot": { "image": "scarf_knot.png" } },
+      "arm_f": { "arm_f": { "image": "arm_f.png", "y": -26 } },
+      "hand_f": { "hand_f": { "image": "hand_f.png", "y": -24 } },
+
+      "cart": { "cart": { "image": "cart.png", "y": 44 } },
+      "wheel_b": { "wheel_b": { "image": "wheel_b.png" } },
+      "wheel_f": { "wheel_f": { "image": "wheel_f.png" } },
+
+      "track": {
+        "track": {
+          "type": "path",
+          "vertexCount": 12,
+          "vertices": [
+            0, 370, 150, 360, 300, 350, 400, 155, 520, 150, 640, 148, 760, 330, 880, 330, 960, 330, 1060, 232, 1150,
+            230, 1240, 228
+          ],
+          "color": "ff6b3cff"
+        }
+      }
+    }
+  },
+
+  "constraints": [
+    {
+      "name": "ride",
+      "type": "path",
+      "bones": ["cart"],
+      "slot": "track",
+      "positionMode": "percent",
+      "spacingMode": "percent",
+      "rotateMode": "tangent",
+      "position": 0,
+      "spacing": 0,
+      "mixRotate": 1,
+      "mixX": 1,
+      "mixY": 1
+    }
+  ]
+}
