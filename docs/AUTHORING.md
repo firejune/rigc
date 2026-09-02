@@ -450,6 +450,10 @@ skin's slot key can cost you a slot quietly, so check `explain`'s slot table.
 uses a named skin — all twelve official example skeletons have exactly one skin,
 called `default`.)
 
+A skin can also say which bones and constraints it **switches on**, and that needs
+one more level, so a skin entry has a second spelling — see §3.4.1. The short one
+above is unchanged and is what almost every rig wants.
+
 **Region attachment** ([Spine: region attachments](http://esotericsoftware.com/spine-regions)),
 the default `type`:
 
@@ -573,16 +577,122 @@ everything after this one", and is left alone.
 was supposed to hide something would not. It is valid Spine and the default
 `--profile spine` accepts it; the refusal is policy, not validity.
 
+**Path attachment** ([Spine: paths](http://esotericsoftware.com/spine-paths)) — a
+composite cubic Bezier, and the only attachment whose purpose is to be *followed*.
+
+**When you need one:** a path constraint has nowhere to aim without it (§3.5). The
+curve is not drawn — no runtime renders a path — and it deforms with its slot's
+bone like any other vertex attachment, so an animated path is a moving track.
+
+```json
+"track": { "track": { "type": "path", "vertexCount": 9,
+                      "vertices": [-30, 0,  0, 0,  30, 0,  60, 0,  90, 0,
+                                   120, 0,  150, 0,  180, 0,  210, 0] } }
+```
+
+That is nine invented points forming a straight line: knots at x = 0, 90 and 180
+with their handles evenly spaced between them, which is the simplest path there is
+and the one worth reading twice.
+
+| Field | Meaning |
+| --- | --- |
+| `vertexCount` | **required**, and a multiple of 3 — see below |
+| `vertices` / `weights` | the same two encodings a mesh's geometry uses, with the same by-name default |
+| `closed` | default false. When true the last knot joins the first |
+| `constantSpeed` | default **true**: the runtime re-measures the curve every frame so travel along it is even. `false` makes it trust the emitted `lengths` instead — cheaper, and exact only while the path holds its setup shape |
+| `color` | `rrggbbaa`; the colour the editor draws the curve in |
+
+🚨 **`vertexCount` counts knots AND handles, and the arithmetic is not the one you
+would guess.** The vertices are walked in groups of three, and an **open** path
+drops the first and last point — those two are the outer control handles of the end
+knots, and no curve uses them. So:
+
+- an open path of K curves has `vertexCount = 3(K + 1)`, minimum **6** (one curve);
+- a closed one has `vertexCount = 3K`, minimum **3**, because the chain wraps.
+
+A count that is not a multiple of 3 does not throw anywhere:
+`Utils.newArray(vertexCount / 3, 0)` takes a fractional size happily, the groups of
+six then straddle the knots, and bones slide along a curve nobody drew. rigc refuses
+it, and `A33_VERTEX_ATTACHMENT_GEOMETRY` refuses it again on the artifact.
+
+⚠️ **`lengths` is not yours to write.** The emitted file carries one — the
+cumulative arc length at the end of each curve, in world units, in the setup pose —
+and rigc **measures** it off the geometry above, exactly as it measures a region's
+`width`/`height` off its PNG (R5). Writing one is a `CompileError`: it is a second
+copy of a number the vertices already determine, a copy that disagrees is only
+visible under `constantSpeed: false`, and there it silently rescales the whole
+traversal. `explain` prints the measurement, so `position: 0.25` on a curve that
+reports `180 long` is a bone at 45 units along it.
+
+#### 3.4.1 A skin that switches bones and constraints on
+
+**When you need one:** a skin that is more than a change of art — a variant with an
+extra bone (a pauldron, a tail, a hat with its own physics), or one where a
+constraint should only run while that skin is applied.
+
+A skin entry has two spellings. The short one is `slotName → placeholder →
+attachment`, above. The long one puts that table under `attachments` and adds the
+lists:
+
+```json
+"skins": {
+  "default": {
+    "attachments": {
+      "torso": { "torso": { "image": "torso.png" } }
+    }
+  },
+  "armoured": {
+    "attachments": {
+      "torso": { "torso_armoured": { "image": "torso_armoured.png" } }
+    },
+    "bones": ["pauldron"],
+    "ik": ["pauldron-ik"]
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `attachments` | the short form's whole table, moved one level down |
+| `bones` | bone names this skin activates |
+| `ik`, `transform`, `path`, `physics`, `slider` | constraint names this skin activates, **still split per type** even though the top-level `constraints` array is unified |
+
+⭐ **The list is half a switch, and the other half is `skin: true` on the member.**
+A bone's `skin: true` and a constraint's `skin: true` set `skinRequired`, and
+`Skeleton.updateCache` starts every `skinRequired` object **inactive**, turning it
+on only for the skin that names it (a listed bone activates its whole ancestor
+chain with it). So the two fields only mean anything together, and either one alone
+is dead data in silence:
+
+- listed **without** `skin: true` — the bone poses under every skin, the constraint
+  runs under every skin, and the list changes nothing at all;
+- `skin: true` **listed nowhere** — the bone never poses and the constraint never
+  runs, under any skin there is.
+
+rigc refuses both halves by name, and `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` checks
+the artifact for them. A bone or constraint belongs to **one** skin; two skins
+naming the same one is also refused.
+
+⚠️ **The two spellings are told apart by these seven keys** — `attachments`,
+`bones`, `ik`, `transform`, `path`, `physics`, `slider` — so a skin that uses any of
+them is the long form and every one of its keys must be one of them. A slot left
+beside them is refused rather than ignored (an ignored slot is an attachment that
+vanishes), and a rig with a *slot* of one of those names is refused too, because
+there the two forms are genuinely ambiguous. Rename the slot.
+
 ### 3.5 `constraints` — 4.3's single typed array
 
 Spine 4.3 folds every constraint into one `constraints` array with a `type`
 discriminator. The 4.1/4.2 shape (top-level `ik`/`transform`/`path`/`physics`
 arrays) still loads clean and **the constraints simply vanish** — that is `A01`.
 
-rigc emits `ik` ([IK constraints](http://esotericsoftware.com/spine-ik-constraints)),
-`transform` ([transform constraints](http://esotericsoftware.com/spine-transform-constraints))
-and `physics` ([physics constraints](http://esotericsoftware.com/spine-physics-constraints)).
-Field lists are in [`src/rig.ts`](../src/rig.ts); three traps worth carrying here:
+rigc emits all five: `ik`
+([IK constraints](http://esotericsoftware.com/spine-ik-constraints)), `transform`
+([transform constraints](http://esotericsoftware.com/spine-transform-constraints)),
+`path` ([path constraints](http://esotericsoftware.com/spine-path-constraints)),
+`physics` ([physics constraints](http://esotericsoftware.com/spine-physics-constraints))
+and `slider`. Field lists are in [`src/rig.ts`](../src/rig.ts); three traps worth
+carrying here:
 
 - A transform constraint's `properties` names come from a fixed six — `rotate`,
   `x`, `y`, `scaleX`, `scaleY`, `shearY`. rigc refuses anything else by name; in
@@ -592,6 +702,106 @@ Field lists are in [`src/rig.ts`](../src/rig.ts); three traps worth carrying her
 - A physics constraint's five components all default to 0, so one that names none of
   them parses cleanly and does nothing at all. rigc refuses it up front, and `A23`
   catches it from the other side.
+
+Every constraint may also carry `skin: true`, which makes it run only under the skin
+that lists it — see §3.4.1, and note that the flag alone does nothing.
+
+#### 3.5.1 `path` — bones that travel along a curve
+
+**When you need one:** anything that moves *along* something rather than around a
+joint — a cart on a track, a fish in a current, a chain of links wrapping a pulley.
+One `position` key moves the whole train, and the shape of the motion lives in the
+curve instead of in the keys.
+
+```json
+{ "name": "ride", "type": "path", "bones": ["cart"], "slot": "track",
+  "positionMode": "percent", "spacingMode": "percent", "rotateMode": "tangent",
+  "position": 0.25 }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `bones` | at least one, in the order they ride the path |
+| `slot` | **required.** The slot whose path attachment they follow (§3.4) |
+| `positionMode` | default `"Percent"`: `position` is a fraction of the arc length. `"Fixed"` makes it world units |
+| `spacingMode` | default `"Length"` — `Length`, `Fixed`, `Percent` or `Proportional` |
+| `rotateMode` | default `"Tangent"`: each bone turns to the curve's tangent where it sits. `"Chain"`, `"ChainScale"` |
+| `rotation` | default 0. Degrees added after the path's own rotation |
+| `position` | default 0. Where the first bone sits |
+| `spacing` | default 0. The gap between bones, in the unit `spacingMode` chose |
+| `mixRotate`, `mixX` | default 1. `mixY` defaults to the same entry's `mixX` |
+
+With the nine-point path of §3.4 — 180 units long — that constraint puts `cart` at
+exactly `x = 45`, and a `position` timeline walking 0 → 0.5 walks it 0 → 90.
+
+🚨 **The slot has to be able to show a path.** `PathConstraint.update` opens with
+`if (!(attachment instanceof PathAttachment)) return`, so a constraint aimed at a
+slot that never shows one loads perfectly, reports every mix it was given, and moves
+nothing at all — there is no error anywhere in that. rigc refuses a slot with no
+path attachment in any skin, and `A36_PATH_CONSTRAINT_EFFECTIVE` refuses it again on
+the artifact.
+
+⚠️ **The three mode names are checked, and only the first letter's case is free.**
+The parser resolves them with `type[name[0].toUpperCase() + name.slice(1)]`, so
+`"percent"` and `"Percent"` both work and `"PERCENT"` resolves to **`undefined`** —
+which is then assigned without a word, and the constraint runs some *other* mode. An
+unresolved `spacingMode` fails the `=== Length` test and spaces bones as though
+`Fixed` had been asked for; an unresolved `rotateMode` is neither `Tangent` nor
+`ChainScale`, so bones follow the curve and never turn along it.
+
+#### 3.5.2 `slider` — a value that drives an animation
+
+**When you need one:** a pose that has to be driven by a value instead of by time —
+a dial that opens a door, a blend shape on a face, a suspension that compresses as
+the wheel rises. A slider is the only constraint that applies an **animation**: the
+animation is under its control while it is on, and `mix` is how much of it lands.
+
+It comes in two shapes, and `bone` is the switch.
+
+**Property-driven** — a bone's transform property maps to a time:
+
+```json
+{ "name": "knob", "type": "slider", "animation": "gate-swing",
+  "bone": "dial", "property": "rotate", "from": 0, "to": 0, "scale": 0.011111 }
+```
+
+`time = to + (value - from) * scale`, so at `scale: 0.011111` (≈ 1/90) a dial turned
+90° applies `gate-swing` at one second — which is the whole mechanism: turn the
+dial, the gate swings.
+
+**Time-driven** — no bone, and the time is the slider's own pose value, keyed by an
+`animations.<a>.slider.<name>.time` timeline (§4.12):
+
+```json
+{ "name": "reveal", "type": "slider", "animation": "curtain", "time": 0 }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `animation` | **required.** An animation the **motion spec** declares |
+| `mix` | default 1. The slider's authority over what its animation keys |
+| `additive` | default false. Add to the current pose instead of overwriting it |
+| `loop` | default false. Repeat past the duration instead of holding the last frame |
+| `bone` | the driving bone. Its presence switches the model |
+| `property` | required with a bone: one of `rotate`, `x`, `y`, `scaleX`, `scaleY`, `shearY` |
+| `from`, `to`, `scale` | the mapping above. Defaults 0, 0, 1 |
+| `max` | default 0. Nonessential: the top of the editor's slider range |
+| `local` | default false. Read the bone's local transform instead of its world one |
+| `time` | the bone-less form's setup time |
+
+⭐ **`animation` is the one field in a rig spec that points at the motion spec.** It
+is the mirror of `events`, where the rig declares a name the motion spec fires. The
+parser resolves it in a **second pass** over the constraints array, after the
+animations are read, and a miss throws `Slider animation not found`; rigc refuses it
+where the message can name both files.
+
+⚠️ **The fields of the model you did not choose are refused, not ignored.** The
+parser reads `time` only in the bone-less branch and `property`/`from`/`to`/`scale`/
+`max`/`local` only in the other, so the losing half would be data no runtime ever
+looks at. Two more shapes `A37_SLIDER_CONSTRAINT_EFFECTIVE` catches from the
+artifact side: an animation with no timelines (the slider runs and the skeleton
+never changes), and `loop: true` on a zero-length animation — looping computes
+`duration + (time % duration)`, so the animation is applied at **NaN**.
 
 ### 3.6 `events` — names the animation can fire
 
@@ -678,8 +888,14 @@ member order.
 
 ### 4.4 `tracks` — one target, one property
 
-A track names **exactly one** of `bone`, `slot`, `group`, `physics`. Two tracks on
-the same `target.property` is a compile error: merge them.
+A track names **exactly one** of `bone`, `slot`, `group`, `physics`, `path`,
+`slider`. Two tracks on the same `target.property` is a compile error: merge them.
+
+⭐ **The target field picks the family, not the property.** All three constraint
+families have a timeline called `mix`, so `{ "physics": "hair", "property": "mix" }`
+and `{ "path": "ride", "property": "mix" }` are different timelines with the same
+property name — which is why the constraint's name goes in a field named after its
+type rather than in a shared `constraint` key.
 
 Three families are **not** tracks and sit beside `tracks` instead — `ik` (§4.9),
 `transform` (§4.10) and `deform` (§4.11). The reason is the key rather than the
@@ -696,6 +912,10 @@ a deform). Folding them in would make `v` mean four different things depending o
 | `slot` | `attachment` | the attachment name, or `null` for "show nothing" |
 | `physics` | `mix` | `[mix]`, 0..1 — the constraint's authority |
 | `physics` | `reset` | `null` — the key *is* the event |
+| `path` | `position`, `spacing` | `[value]` — see §4.12 |
+| `path` | `mix` | `[mixRotate, mixX, mixY]` — one timeline, three channels |
+| `slider` | `time` | `[seconds]` — where in its animation the slider sits |
+| `slider` | `mix` | `[mix]` — the slider's authority |
 
 Translate values are **relative to the bone's setup position**; scale values are
 multipliers where `1` is setup; rotation is in degrees.
@@ -1108,6 +1328,50 @@ an encoding.
 
 ---
 
+### 4.12 `path` and `slider` timelines — tracks, not their own groups
+
+Unlike `ik` and `transform`, these two are ordinary `tracks` entries: the format
+writes them as `animations.<a>.path.<constraint>.<timeline>` — a constraint name,
+then a timeline name under it — which is the same shape as `physics`, and a key that
+carries one `v` fits it.
+
+```json
+"tracks": [
+  { "path": "ride", "property": "position", "keys": [
+      { "t": 0, "v": [0], "ease": "smooth" }, { "t": 2, "v": [1] } ] },
+  { "path": "ride", "property": "mix", "keys": [
+      { "t": 0, "v": [0, 0, 0] }, { "t": 0.4, "v": [1, 1, 1] } ] },
+  { "slider": "knob", "property": "mix", "keys": [
+      { "t": 0, "v": [0] }, { "t": 0.5, "v": [1] } ] }
+]
+```
+
+Those numbers are invented, and the first track is the one to read: `position` 0 → 1
+under `positionMode: "percent"` walks the constrained bones from one end of the
+curve to the other over two seconds. On the 180-long path of §3.4 the bone passes
+through exactly `x = 90` at the halfway point of a linear key pair, which is how you
+tell a working traversal from a plausible one.
+
+| Group | `property` | Channels | Note |
+| --- | --- | --- | --- |
+| `path` | `position` | 1 | a fraction of the arc length, or world units under `positionMode: "fixed"` |
+| `path` | `spacing` | 1 | in the unit `spacingMode` chose |
+| `path` | `mix` | **3** | `[mixRotate, mixX, mixY]` in one key, so a raw `curve` is 12 numbers |
+| `slider` | `time` | 1 | the bone-less slider's own time. A slider WITH a bone takes its time from the bone and this timeline is not what drives it |
+| `slider` | `mix` | 1 | mix 0 makes `update()` return, so this is the on/off switch |
+
+⚠️ **A `path.mix` key states all three mixes.** In the file `mixY` defaults to the
+same key's `mixX`, and every field has a per-key default rather than carrying the
+previous key's value forward — the same trap as §4.9's. rigc writes all three out,
+so `v` is three numbers and not one.
+
+⚠️ **A muted constraint with no timeline is a finding, not an idiom.** Turning a
+constraint on from an animation is the idiom (§4.10), so `A36`/`A37` only object to
+all-zero mixes when **no** animation keys that constraint's `mix`. If you mute one
+at setup, key it somewhere.
+
+---
+
 ## 5. Reading a failure
 
 Failures arrive in two layers, and they read differently.
@@ -1152,6 +1416,19 @@ the frequent ones, verbatim:
 | `deform … (t=…): offset 3 is odd` | §4.11 — the deform array is `x, y` pairs, so a run starts on an even index |
 | `deform …: "fromVertex" counts VERTICES, and this attachment is weighted … vertex 2 has 2 of them` | §4.11 — key the control bone, or write bind-space pairs and start with `offset` |
 | `deform …: slot "X" in skin "default" has no attachment "Y" (it has: …)` | §4.11 — fix the placeholder name |
+| `vertexCount is N, which is not a multiple of 3` | §3.4 — a path's vertices are knots and handles read in groups of three: `3(K + 1)` open, `3K` closed |
+| `vertexCount is N and an open path needs at least 6` | §3.4 — an open path drops its first and last point, so it needs six for one curve |
+| `"lengths" is not authored — rigc measures the setup arc length of each curve` | §3.4 — delete the array; it is a measurement of the vertices above it |
+| `rig constraint "X": slot "Y" has no path attachment in any skin` | §3.5.1 — give that slot a `"type": "path"` attachment, or aim the constraint at the slot that has one |
+| `rig constraint "X": rotateMode is "CHAINSCALE"; known: Tangent, Chain, ChainScale` | §3.5.1 — only the first letter's case is free; anything else resolves to `undefined` in the parser |
+| `rig constraint "X": applies animation "Y", which the motion spec does not declare (it declares: …)` | §3.5.2 — fix the slider's `animation`, or add it to the motion spec |
+| `rig constraint "X": declares both a "bone" and "time"` | §3.5.2 — `bone` picks the model and `time` belongs to the other one |
+| `rig constraint "X": declares "property" but no "bone"` | §3.5.2 — name the driving bone, or key `slider.<name>.time` instead |
+| `skin "S" activates bone "B", but that bone does not declare \`"skin": true\`` | §3.4.1 — the list and the flag are one switch; add the flag or drop the list |
+| `bone "B" declares \`"skin": true\` but no skin activates it` | §3.4.1 — the other half: list it in the skin it belongs to, or drop the flag |
+| `skin "S": uses the long form … and also has a key "X"` | §3.4.1 — move the slot inside `attachments` |
+| `animation "A" keys "X" as a path constraint, but the rig declares it as a "slider"` | §4.12 — a timeline group resolves by name AND type; use the field named after the constraint's own type |
+| `animation "A": "position" is a path constraint timeline, and this track names no constraint` | §4.12 — put the name in `"path"` |
 
 ### 5.2 Assertions — the gate
 
@@ -1211,9 +1488,12 @@ The report prints one line per assertion:
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the animation drives past the measured containment ceiling, or scales a bone in the axis subtree |
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | a draw-order key names a slot the skeleton does not have, offsets one slot twice, puts a slot outside the slots array, or lists its offsets out of slot order (§4.7). The only assertion that runs **before** `A00` — the last of those shapes makes the loader spin rather than return, so the round trip is refused instead of attempted |
 | `A32_EVENT_KEYS_RESOLVE` | both | an event key fires a name the skeleton's `events` block does not declare, sits earlier in time than the key before it, or sets `volume`/`balance` on an event with no `audio` (§4.8). **SKIP** when no animation carries an event timeline |
-| `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | a bounding box or clipping polygon whose `vertexCount` is missing or disagrees with its vertex array, a weighted run that decodes to the wrong number of vertices or an out-of-range bone index, or a clipping `end` naming a slot the skeleton does not have (§3.4). **SKIP** when the skeleton carries neither type |
-| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | an `ik` or `transform` timeline names a constraint the skeleton does not declare, names one of the other type, or carries no keys at all (§4.9, §4.10). The last is silent: the parser reads key 0, finds nothing, and skips the timeline. **SKIP** when no animation carries one |
+| `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | a bounding box, clipping polygon or path whose `vertexCount` is missing or disagrees with its vertex array, a weighted run that decodes to the wrong number of vertices or an out-of-range bone index, a clipping `end` naming a slot the skeleton does not have, a path whose vertex count is not a multiple of 3, or a path `lengths` array that does not strictly increase (§3.4). **SKIP** when the skeleton carries none of the three |
+| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | an `ik`, `transform`, `path` or `slider` timeline names a constraint the skeleton does not declare, names one of another type, or carries no keys at all (§4.9, §4.10, §4.12). The last is silent: the parser reads key 0, finds nothing, and skips the timeline. **SKIP** when no animation carries one |
 | `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | both | a deform key's run runs past the end of the attachment's deform array, starts on an odd index, holds an odd count of numbers or a non-finite one, or names a skin/slot/attachment triple that does not resolve (§4.11). The overrun is the quiet one — the parser copies into a `Float32Array` and drops the tail. **SKIP** when no animation carries a deform timeline |
+| `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying its `mix` (§3.5.1). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. **SKIP** when the skeleton declares no path constraint |
+| `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |
+| `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
@@ -1228,15 +1508,17 @@ worse: an unknown attachment `type` returns `null` and the attachment disappears
 and a constraint entry with an unrecognised `type` matches no case and vanishes.
 
 Each is deferred for a stated reason, and the reason is the same one in every row:
-**not one of these types appears anywhere in the benchmark corpus** (SPEC_COVERAGE
-parts 3-1 and 4-2), so none of them is on the ladder's critical path. The message
+**neither of these types appears anywhere in the benchmark corpus** (SPEC_COVERAGE
+parts 3-1 and 4-2), so neither is on the ladder's critical path. The message
 says so, because a deferral without its reason is a wall rather than a work item.
 
 | You wrote | You get |
 | --- | --- |
-| attachment `type` of `point`, `path`, `linkedmesh` | `attachment type "X" is in the Spine 4.3 format and rigc does not emit it yet. Implemented: region, mesh, boundingbox, clipping. point, path and linkedmesh are deliberately deferred: not one of them appears anywhere in the benchmark corpus …` |
-| constraint `type` of `path` or `slider` | `constraint type "X" … Implemented: ik, transform, physics.` |
+| attachment `type` of `point` or `linkedmesh` | `attachment type "X" is in the Spine 4.3 format and rigc does not emit it yet. Implemented: region, mesh, boundingbox, clipping, path. point and linkedmesh are deliberately deferred: neither appears anywhere in the benchmark corpus …` |
+| constraint `type` of anything else | `constraint type "X" is not one Spine 4.3 knows. The five are: ik, transform, path, physics, slider.` — all five are emitted, so this is a typo, and a typo is what the parser drops in silence |
 | mesh `generator.kind` of `contour` | `the "contour" generator would triangulate a part's own alpha mask, and src/mesh.ts has no triangulator` |
+| a path attachment's `lengths` | `"lengths" is not authored — rigc measures the setup arc length of each curve off the geometry` (§3.4). Not a deferral: a second copy of a number the vertices already fix |
+| a `deform` timeline on a path attachment | `a path attachment does have a vertex array, and rigc does not key it yet` — the format allows it and an animated track is a real idiom, but a deformed path invalidates the `lengths` a `constantSpeed: false` traversal reads. Move the curve by posing the bones its vertices are bound to |
 
 Two more limits that are not errors but will shape what you can attempt:
 
@@ -1244,13 +1526,12 @@ Two more limits that are not errors but will shape what you can attempt:
   region covers its whole page, `pma: false`. To reproduce a skeleton whose art
   ships as a packed atlas you either supply loose PNGs and let rigc build its own
   atlas, or hand the packed atlas to `validate`/`bench` alongside the candidate.
-- **`sequence` timelines, `drawOrderFolder` and `slider` / `path` constraint
-  timelines** are walked by the validator (so `A05` checks their curves and `diff`
-  counts their keys) and cannot be *written*: there is no motion-spec property for
-  any of them. The two constraint groups are blocked one level down — rigc emits no
-  `path` or `slider` constraint to key. Everything a motion spec **can** key is
-  §4.4's track table plus the five families that sit beside `tracks`: `drawOrder`
-  (§4.7), `events` (§4.8), `ik` (§4.9), `transform` (§4.10) and `deform` (§4.11).
+- **`sequence` timelines and `drawOrderFolder`** are walked by the validator (so
+  `A05` checks their curves and `diff` counts their keys) and cannot be *written*:
+  there is no motion-spec property for either. Everything a motion spec **can** key
+  is §4.4's track table — which now includes the `path` and `slider` groups (§4.12)
+  — plus the five families that sit beside `tracks`: `drawOrder` (§4.7), `events`
+  (§4.8), `ik` (§4.9), `transform` (§4.10) and `deform` (§4.11).
 
 ---
 

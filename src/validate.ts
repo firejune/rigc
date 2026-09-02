@@ -47,7 +47,7 @@ export interface Failure {
  *
  * ⭐ The distinction this draws is the difference between "wrong" and "not how we
  * do it here", and conflating the two is how a validator stops being usable on
- * anybody else's data. Fourteen of the 36 assertions are policy — seven for one
+ * anybody else's data. Fourteen of the 39 assertions are policy — seven for one
  * renderer (`spine-html`) and one project's canvas budget, seven for rigc's own
  * formations — and every one of them fires
  * on real, correct, editor-produced Spine data — the official example projects

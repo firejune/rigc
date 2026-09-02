@@ -2967,6 +2967,16 @@ function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
     worldVerticesLength = (att as SpineMeshAttachment).uvs.length;
   } else if (type === 'boundingbox' || type === 'clipping') {
     worldVerticesLength = (att as SpineBoundingBoxAttachment).vertexCount * 2;
+  } else if (type === 'path') {
+    // The one type that HAS a vertex array and is still refused here. Deforming
+    // a path is a real idiom — an animated track — but it also invalidates the
+    // measured `lengths` that a `constantSpeed: false` traversal reads, so it is
+    // a feature with a rule attached rather than one line of plumbing.
+    throw new NotImplementedError(
+      `${where}: a path attachment does have a vertex array, and rigc does not key it yet — a deformed path ` +
+        'changes the arc lengths its `lengths` array records, which only `constantSpeed: false` reads. ' +
+        'Move the curve by posing the bones its vertices are bound to.',
+    );
   } else {
     throw new CompileError(
       `${where}: a deform timeline keys the vertices of an attachment, and this one is a "${type}" — ` +

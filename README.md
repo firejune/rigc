@@ -394,9 +394,9 @@ work on any frames you have, and `bench` is a repository workflow that needs a c
 and `bun run fetch-examples`. The reasoning behind all three is in
 [the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md).
 
-`build` and `validate` both default to `--profile spine` — the 22 validity rules, which
+`build` and `validate` both default to `--profile spine` — the 25 validity rules, which
 ask *is this valid Spine 4.3 that any runtime plays correctly?* `--profile spine-html`
-adds all 36: the other 14 are one renderer's policy and one canvas budget's, and they
+adds all 39: the other 14 are one renderer's policy and one canvas budget's, and they
 fire on perfectly correct editor-produced Spine data, so reach for that profile when
 you are shipping into *that* project rather than to be thorough. A report always names
 the profile it ran and lists what that profile left out.
@@ -439,7 +439,7 @@ that an agent authors a spineboy-scale rig from the brief alone in one run: the
 ladder has not demonstrated that, and each row records which of the two it is.
 
 The whole dossier — the yardstick, `diff` and `check` and what neither of them can
-see, every rung, the run viewer, the 36 assertions and the selftest behind them — is
+see, every rung, the run viewer, the 39 assertions and the selftest behind them — is
 [docs/BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md).
 Live rung status is
 [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).

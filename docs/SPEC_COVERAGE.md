@@ -10,7 +10,7 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 
 > 🔼 **This note is dated and does not move; the measurements below are the corpus as it
 > stood on 2026-08-22 and stay as written. Its statements about what rigc *does* have gone
-> stale in five places, and the live ledger is [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md):**
+> stale in six places, and the live ledger is [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md):**
 >
 > - **B2 is fixed** — A16 accepts `4.3`, `4.3.N` and `4.3.N-<suffix>`, so all twelve example
 >   exports pass it.
@@ -19,6 +19,12 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 >   renderer-policy assertions of §2.2 no longer apply to foreign data, and no longer apply
 >   unasked. That closes the validator half of B3; the emitter half (no packer, no atlas
 >   importer) is untouched.
+> - **Part 4-2's ❌ rows for `path`, `slider` and per-skin members are gone (issues #2, #7)** —
+>   rigc emits path attachments and path constraints, sliders in both of their models, per-skin
+>   `bones` and constraint lists, and the `path` / `slider` timeline groups. Three assertions came
+>   with them (A36, A37, A38). The **corpus** measurements in part 3 are untouched and still true:
+>   none of these features appears in any of the twelve example files, which is why they were
+>   off the ladder and why nothing in it moved.
 > - **`walkTimelines` reaches all eleven groups** — §2.3 item 1 and §4.3 item 4 are done, so
 >   A05 is no longer blind to `ik` / `transform` / `path` / `slider` / `drawOrder` /
 >   `drawOrderFolder` / `events`.
@@ -561,8 +567,12 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 | `visible` | ❌ |
 | draw order = slots array order | ✅, and **A26_SLOT_DRAW_ORDER** pins it to the archetype's `slotOrder` table |
 
-**Skins** — ✅ exactly one, hard-coded `{ name: 'default', attachments }` (`compile.ts:644`).
-❌ named skins, ❌ per-skin `bones`/constraint lists, ❌ `color` (JSON-inexpressible).
+**Skins** — ✅ named skins, each `{ name, bones?, ik?, transform?, path?, physics?, slider?, attachments }`
+in the parser's own reading order; `default` is always emitted even when empty. ✅ per-skin `bones` and
+per-type constraint lists (issue #7), which a rig spec writes in a skin entry's long form and rigc pairs
+with the member's own `skin: true` — either half alone is refused, because `Skeleton.updateCache` starts a
+`skinRequired` object inactive and activates only what the applied skin names (**A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED**).
+❌ `color` (JSON-inexpressible).
 
 **Attachments**
 
@@ -572,7 +582,7 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 | `mesh` | 🟡 | emits `type`, `uvs`, `triangles`, `vertices` (**weighted encoding only**), `hull`, `width`, `height`, `edges` (`compile.ts:1343`, and part 4's rung-6 entry measures it byte-identical to the reference), `path`, `color`. ❌ `sequence`. Unweighted meshes are 🚫 **A20_MESH_WEIGHTS_COHERENT** (`validate.ts:430-433`) |
 | `linkedmesh` | ❌ | deliberately deferred — never appears in the corpus (part 3-1) |
 | `boundingbox` | ✅ | `vertexCount` (required and cross-checked), `vertices` **or** by-name `weights`, `color`. **A33_VERTEX_ATTACHMENT_GEOMETRY** |
-| `path` | ❌ | deliberately deferred — never appears in the corpus (part 3-1) |
+| `path` | ✅ | `vertexCount` (required, and checked as a multiple of 3 — the parser's own `vertexCount / 3` takes a fractional size in silence), `vertices` **or** by-name `weights`, `closed`, `constantSpeed`, `color`, and a **measured** `lengths`: the cumulative setup arc length of each curve, taken through each influence's own bone, refused if authored. **A33_VERTEX_ATTACHMENT_GEOMETRY** re-checks the structure and the array's monotonicity. ❌ a `deform` timeline on one |
 | `point` | ❌ | deliberately deferred — never appears in the corpus (part 3-1) |
 | `clipping` | ✅ under `--profile spine` · 🚫 under `spine-html` | `end` (refused when it names no slot), `convex`, `inverse`, `vertexCount`, geometry, `color`. **A33**, and **A11_NO_CLIPPING_ATTACHMENTS** is the renderer-profile refusal |
 | `sequence` block | ❌ | |
@@ -588,8 +598,8 @@ chain). There is **no triangulator for arbitrary art** and no importer for edito
 | `physics` | ✅ — full field set: `bone`, the five components `x`/`y`/`rotate`/`scaleX`/`shearX`, `scaleY` (ScaleYMode), `inertia`/`strength`/`damping`/`mass`/`wind`/`gravity`/`mix`/`fps`/`limit`, the seven `*Global` flags and `skin` (`compile.ts:1522-1548`). A field the rig spec does not give is **omitted**, never guessed (`compile.ts:1463-1468`), so the parser's own default stands. The motion spec's `physics` tuning table is the second path into this same array and is narrower: no `scaleY`, no `*Global`, no `skin`, and it drops a value that equals the parser default even when the table gives it (`compile.ts:758-761`) |
 | `ik` | ✅ — `bones`, `target`, `scaleY`/`mix`/`softness`/`bendPositive`/`compress`/`stretch`/`skin` (`compile.ts:1425-1430`, landed in `c5eda3b`) |
 | `transform` | ✅ — `bones`, `source`, the 4.3 `properties{from→to}` model, and the full field set (`compile.ts:1431-1462`, landed in `c5eda3b`) |
-| `path` | ❌ |
-| `slider` | ❌ |
+| `path` | ✅ — `bones`, `slot`, `positionMode`/`spacingMode`/`rotateMode` (checked against the enum names `Utils.enumValue` can resolve, where only the first letter's case is free), `rotation`, `position`, `spacing`, `mixRotate`/`mixX`/`mixY`, `skin`. The slot must carry a path attachment in some skin: `PathConstraint.update` returns on its first line otherwise, so the constraint loads and moves nothing (**A36_PATH_CONSTRAINT_EFFECTIVE**) |
+| `slider` | ✅ — `animation` (an animation the MOTION spec declares; the parser resolves it in a second pass and throws on a miss), `mix`, `additive`, `loop`, and one of the two models `bone` switches between: `bone` + `property`/`from`/`to`/`scale`/`max`/`local`, or the bone-less `time`. The losing model's fields are refused rather than emitted, because the parser reads each set only inside its own branch (**A37_SLIDER_CONSTRAINT_EFFECTIVE** covers the rest) |
 | flat `constraints[]` shape | ✅ — and **A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS** actively rejects the 4.1/4.2 shape (`validate.ts:225-235`), which is the machine form of case 6a |
 
 **Timelines** (`compile.ts:570-631`, `:877-936`, `:981-1041`)
@@ -604,7 +614,8 @@ chain). There is **no triangulator for arbitrary art** and no importer for edito
 | `slots.rgba2`, `rgb2` | 🚫 **A12_NO_DARK_COLOR** (`validate.ts:257-261`) |
 | `physics.mix`, `physics.reset` | ✅ (`PHYSICS_TRACKS`, `compile.ts:87-90`) |
 | `physics.inertia/strength/damping/mass/wind/gravity` | ❌ |
-| `ik`, `transform`, `path`, `slider` | ❌ |
+| `ik`, `transform` | ✅ — one unnamed timeline per constraint, keyed by the motion spec's `ik` / `transform` arrays |
+| `path.position/spacing/mix`, `slider.time/mix` | ✅ (`PATH_TRACKS` / `SLIDER_TRACKS`) — authored as `tracks` entries naming `path` or `slider`, the same shape as `physics`, since both groups put named timelines under a constraint name. `path.mix` is one timeline of three channels |
 | `attachments.<skin>.…deform` | ❌ (validator knows it: 1 channel, `validate.ts:104-107`) |
 | `attachments.…sequence` | ❌ |
 | `drawOrder` | ✅ — the motion spec's per-animation `drawOrder` array of `{ t, offsets: [{ slot, offset }] }` (`compile.ts:823`, `:850`, `compileDrawOrder` `:1918-1970`). A key with no `offsets`, and a key with an empty one, both emit the parser's reset-to-setup encoding, so two spellings cannot make two files. An unknown slot, a slot offset twice in one key, a non-whole offset and a landing outside the emitted slots are each refused by name, and **A31_DRAW_ORDER_OFFSETS_RESOLVE** re-checks the emitted file |
@@ -1058,7 +1069,7 @@ rung 6. `pro-pendulum` is region-only and is effectively a rung-3-class file.
 | Bounding box | **spineboy** | `spineboy-ess` and `-pro` (1 each) |
 | Events | **spineboy** | both spineboy files (1 def, 5 keys) |
 | Unweighted meshes | **spineboy** | `spineboy-pro` (2) |
-| **Skins** | **never** | 🔵 **no example in the ladder uses a non-default skin.** Every one of the 12 files has exactly one skin, named `default`. Named skins, per-skin bones, and per-skin constraint lists are **not on this ladder at all** and should be scheduled by some other justification. |
+| **Skins** | **never** | 🔵 **no example in the ladder uses a non-default skin.** Every one of the 12 files has exactly one skin, named `default`. Named skins, per-skin bones, and per-skin constraint lists are **not on this ladder at all** and were scheduled by some other justification: they landed with issues #2 and #7, off the ladder, and no rung's status depends on them. |
 | Path constraints, sliders, sequences, linked meshes, dark colour, `drawOrderFolder` | **never** | absent from the entire corpus |
 
 ### 4.3 (c) The validator changes, consolidated
