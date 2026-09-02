@@ -1184,6 +1184,21 @@ remaining work is taken in.
    > **observable** — the panel's pose was recorded by that run as partly a prior rather than a
    > measurement — so it stays a re-climb. Verdict in *Rung 7, attempt 2*, under *PR #254
    > instrument re-inspection*.
+   > ➡️ **The re-climb landed the same day, FAILs the same clause, and in doing so overturns the
+   > *observable* reading above.** `2026-09-02-rung7-3` closes G2's set-level 🕳️ and takes the
+   > blank surface from three slots to two, and still fails G2 on `cape-back`. ⚠️ **What it
+   > measured is that the residual is *not* observable**: attribution of that slot is capped by
+   > the **shot** at 5–19 % agreement against the ~66 % floor below which nothing in this corpus
+   > is attributed, and the panel's own placement is independently pinned to **≤ 2–3 px** — so no
+   > placement, scale, rotation, pivot or region-versus-mesh choice can move the failing measure.
+   > ⇒ **By item 2's own test this stops being a re-climb**: *"a rung whose whole residual is
+   > unobservable is adjudicated, not re-run."* It has now been adjudicated three times and fails
+   > each time, because the clause asks for a read-down the four kinds cannot supply for a slot
+   > the frames will not let the matcher read. **The queue item is a clause decision —
+   > [#258](https://github.com/firejune/rigc/issues/258) — not a fourth attempt**, which is the
+   > shape rung 1's `drop` had before v2.1 took its clause decision. 🚫 The FAIL stands
+   > meanwhile; a rung is not cleared by the reason it cannot be cleared. Verdict in *Rung 7,
+   > attempt 3*, and in *The attempt-3 adjudication* under **Status**.
 3. **spineboy `ess` is the graduation exam**, taken last, on the matured guide.
    `pro`'s tool gate is gone — [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)
    shipped 2026-08-29 (PR #233, in v0.7.0) and the transcription reads 1.000 on every measure
@@ -1285,7 +1300,7 @@ worth noticing before it becomes a habit of bumping whenever a decision queue lo
 | 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung5-1` |
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ✅ *gate v2, 2026-08-25* — re-inspected, holds |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ✅ *gate v2, 2026-08-25* — both skeletons, re-inspected |
-| 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | 🟨 **re-opened 2026-09-02** — passed *gate v2.1/v2.2* on `2026-08-28-rung7-2` (G2 7.33 → 2.76 px), and that pass stays true of the instrument it was measured on. Under the [#254](https://github.com/firejune/rigc/pull/254) instrument the same candidate reads G2 **FAIL**: `cape-back` draws in all twelve sets, is attributable in none, and **no read-down kind is available** — see *The PR #254 instrument re-inspection*. Frames **local-only** |
+| 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | 🟨 **open on G2** — passed *gate v2.1/v2.2* on `2026-08-28-rung7-2` (G2 7.33 → 2.76 px), and that pass stays true of the instrument it was measured on; **re-opened 2026-09-02** under the [#254](https://github.com/firejune/rigc/pull/254) instrument, where the same candidate reads G2 **FAIL**. **Attempt 3** (`2026-09-02-rung7-3`, [#257](https://github.com/firejune/rigc/pull/257)) closes G2's set-level 🕳️ and takes the blanks from 3 slots to 2, and still **FAILs G2**: `cape-back` draws in all twelve sets, is attributable in none, and **reaches no read-down kind** — see *The attempt-3 adjudication*. Frames **local-only** |
 | 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🎓 ✅ *gate v2.1, 2026-08-28* — `ess` cleared on `2026-08-28-spineboy-2`, every clause PASS/SKIP; worst drift **5.55 px** (⚠️ 1.08×, the ladder's thinnest margin). ⚠️ **Inherited attempt** under protocol item 10 — its figures measure the lever; the **from-zero trajectory is attempts 1–4** (18.8 → 14.6 → 7.86 px; 14 → 3 → 0 disagreements) · `pro` ⬜, not a graduation requirement |
 
 ### The gate-v2.2 re-inspection — 2026-08-29
@@ -1738,6 +1753,263 @@ and rung 7 is open again.
    📌 The cheap repair is for a re-inspection to A/B the two builds directly, as this pass did,
    rather than to infer stability from `bench`.
 
+### The attempt-3 adjudication — rung 7 — 2026-09-02
+
+🔴 **FAIL on G2 alone, and the rung stays open.** The adjudication of
+[`bench/runs/2026-09-02-rung7-3/`](../bench/runs/2026-09-02-rung7-3/)
+([PR #257](https://github.com/firejune/rigc/pull/257), `8f1f996`), the first attempt authored
+under the [#254](https://github.com/firejune/rigc/pull/254) instrument, against **gate v2.2**.
+Six clauses read PASS or SKIP, every figure the run reported reproduces, and one blank does not
+reach any read-down kind the clause has. 🚫 **Zero authoring: nothing in the run directory,
+no brief, no gate rule and no `src/` was touched, and `bench.json` was not rewritten.**
+
+⭐ **The control, and it is the strongest one an adjudication on this ladder has had.** The
+candidate was **recompiled from its own two specs** rather than read from `spine/`, and
+`skeleton.json` comes back **byte-identical** — sha256 `3225dd73f10f78b6c1573143f1b01f14f6af25d6fe7073c52ed318b838a34908`
+on both — with `skeleton.atlas` identical once built at the same directory depth, because the
+atlas writes its page paths relative to `--out`. The frames were rendered again at the brief's
+exact flags, reproducing the twelve counts (37/21/35/9 · 73/41/70/17 · 91/51/87/21), and **no
+frame is committed**: `git ls-files bench/reference-local` reports **0**. Then, from the
+repository root with **no `--atlas` and no `--viewport` override**:
+
+| What was re-run independently | Against the run's own stored output |
+| --- | --- |
+| `check` — twelve sets | reproduces [`check.txt`](../bench/runs/2026-09-02-rung7-3/check.txt) **digit for digit**; the only differing lines are the three path lines in the header |
+| `check --all-frames` | reproduces [`check-all-frames.txt`](../bench/runs/2026-09-02-rung7-3/check-all-frames.txt) digit for digit, same three lines |
+| `check --texture-from …/7-anticipation.atlas` | reproduces [`check-texture-from.txt`](../bench/runs/2026-09-02-rung7-3/check-texture-from.txt) digit for digit, same three lines |
+| `bench 7` | matches [`bench.json`](../bench/runs/2026-09-02-rung7-3/bench.json) in **all 10,036 leaves but 133 path strings** — 0 numeric differences. Neither file carries a gate string ([#137](https://github.com/firejune/rigc/issues/137)) |
+| `validate --profile spine` | **15 PASS, 0 FAIL, 10 SKIP, 14 PROF** |
+| the run's own harness, re-run from `tools/`: `panel-ceiling.ts`, `pin.ts` (`panel`), `draw-order.ts`, `probe-slot.ts` ×2 | all five reproduce `evidence/` **byte for byte**, 0 diff lines each |
+
+⇒ **The candidate, the reading and the evidence are all reproducible, and what decides this
+verdict is the clause and not the reading.** 📌 That matters more than usual here: the run's
+whole case for `cape-back` rests on instruments it wrote itself, and every one of them
+reproduces exactly — so the case is refused on what it *is*, never on whether it is true.
+
+#### The figures, and what the repairs moved
+
+The rig spec is **byte-identical** to attempt 2's; the repairs are motion-only (367 diff lines).
+Stage 0 — the mandatory unchanged recompile in
+[`check-baseline-inherited/`](../bench/runs/2026-09-02-rung7-3/check-baseline-inherited/) —
+reproduces the #254 re-inspection's reading of attempt 2 exactly: **18** blank pairs over three
+slots, and `hello@24fps` / `hello@30fps` attributing **nothing at all**.
+
+| | stage 0 (inherited, unchanged) | attempt 3 | |
+| --- | --- | --- | --- |
+| G2 worst attributable slot drift | **3.9352 px** `sack` `cape-follow-example` f0022 | **3.9352 px**, same slot, same frame | unmoved — the worst is inherited |
+| sets attributing nothing — G2's 🕳️ | **2** (`hello@24fps`, `hello@30fps`) | **0** | ✅ the 🕳️ closes |
+| blank (set, slot) pairs | **18** over 3 slots | **14** over **2** slots | `cape-front` 2 → **0**, `sack` 4 → 2 |
+| `changeDisagreements` | 0 of 98 | 0 of 98 | unmoved |
+| worst sheet ratio | 3.226 `fall-in@30fps` | 3.226 `fall-in@30fps` | unmoved |
+| mean MAE, four best-improved sets | 20.59 · 26.51 · 26.05 · 20.79 | **13.87 · 19.68 · 19.21 · 17.64** | reported, gates nothing |
+
+⭐ **What attempt 3 actually earned is the 🕳️.** The first firing of G2's set-level hole anywhere
+on this corpus — recorded six sections above, on these two sets, six days ago — is **closed**:
+`hello@24fps` and `hello@30fps` now attribute `cape-front` at **0.1998 px** and `sack` at
+**0.0977 px** on f0000. `framesWithoutDrift` over the twelve sets reads 7/37 · 0/2 · 0/2 ·
+7/21 · 0/2 · 0/2 · 20/35 · 1/2 · 1/2 · 2/9 · 1/2 · 1/2, and equals the frame count nowhere.
+
+**Framing.** Ten of twelve sets take `frames.json`'s own box under `extent-spread`;
+`walk@24fps` and `walk@30fps` are **refused** it on `coordinates` (a fit asks **8.03 px** and
+**7.82 px** against the tolerance's own 7.40 px reach) and fall back to the one shared framing
+(`x0.999059`, offset −1.03, −1.03 px, rms 9.41 px over 472 edges). The refusal is the same one
+the #254 re-inspection found on attempt 2, one decimal wider because the collar repair moved the
+candidate's content box.
+
+**The chain rollup, per reference pixel, over the whole candidate**: `sack1` **14.96** ·
+`collar` **35.41** · `panel` **41.69**, carrying **67.4 % / 15.9 % / 16.7 %** of the difference.
+Per set, `panel` reads 48.35 · 21.62 · 22.15 · 35.91 · 54.30 · 54.33 · 40.10 · 40.89 · 38.74 ·
+37.21 · 60.51 · 52.72.
+
+**The two standing columns rule 2 requires of every read-down below**: `(unattributed)` is
+**1.891 %** over the twelve sets — **0.000 %** on both `walk` stills sets, the ones a read-down
+is asked for — and **0** reference components go unreached on **any** of the 118 frames. 📌 And
+the structural fact that bears on all three slots, measured again here: the reference figure is
+**one connected component on all 118 frames** (`components` 1 everywhere), so every slot is
+merged into it by construction and the component pass has nothing to try.
+
+#### The two read-downs, judged against the clause as written
+
+**Three slots draw in every set**, and **each of the three chains owns exactly one** —
+`slots 1/1` on all three rows of all twelve sets. ⚠️ **So kind 2 is structurally unavailable on
+this rung**, as the #254 re-inspection found: there is no sibling on any chain to read through.
+
+⭐ **`sack` — 2 blanks, kind 1, and it reads down cleanly.** Blank in `walk@24fps` and
+`walk@30fps`, which commit `{f0000, f0016}` and `{f0000, f0020}` and nothing between.
+
+- **The clause reads this part's placement, in ten of the twelve sets** — **36** attributed
+  frames, 0.0274–3.9352 px, worst **3.9352 px** at `cape-follow-example` f0022, which is the
+  rung's own G2 figure. Kind 1 asks for the set and its figure: the blank shot is *also*
+  committed in full at 12 fps, where `sack` is attributed on **`walk` f0001 at 0.8172 px**.
+  A blank on the sampled set of a shot the clause reads frame by frame at another rate carries
+  no information about the part — rung 5's `speedy@24fps` pattern, and the cleanest form the
+  limb takes.
+- **Corroborated from the matcher's own side**, in the run's stored probe: at the two committed
+  instants the best correlation residual is **13.5** and **17.5 / 17.1** against **115.5–115.6**
+  of contrast, with confidence **0.15 against a 0.17 bar** and **0.12–0.14 against 0.19** — a
+  large, smooth, self-similar beige shape on a large smooth beige shape has almost no peak. Two
+  refits, one narrowed to a pure relocation, moved it not at all.
+- **The two standing columns**: `(unattributed)` **0.000 %** on both sets, **0** unreached
+  reference components on either frame.
+- ⚠️ **One thing a verdict should say out loud**: the two blank sets are the two measured in the
+  *shared* framing, while the ten attributing sets are at the declared box, so this read-down is
+  **cross-framing**. It survives on the card's own reasoning where kind 4's could not — kind 1
+  quotes a **drift**, which *What never gates* calls *"per slot and framing-independent in a way
+  the means are not"*, while kind 4 quotes a **per-pixel MAE**, which the same passage says is
+  *"not comparable across rungs or across framings"*. That asymmetry is the sharpest thing this
+  pass can add to [#256](https://github.com/firejune/rigc/issues/256).
+
+⇒ ✅ **`sack`'s blank reads down under kind 1 in both sets.**
+
+🔴 **`cape-back` — 12 blanks, and it does not reach any kind. This is what fails the clause.**
+It **draws on all 118 compared frames of all twelve sets** and is **attributable in none**, and
+the `panel` chain carries **16.7 %** of the candidate's difference at **41.69** per reference
+pixel. It is drawn and it is scored. All four kinds were worked, on this candidate's own
+figures:
+
+| Kind | What the clause's own text asks for | What attempt 3 has | |
+| --- | --- | --- | :---: |
+| **1** | the slot attributed in another set of the same skeleton — *"name the set and its figure"* | **0** attributed frames in **0** of 12 sets, 0 of 118 frames | ✗ unavailable |
+| **2** | an attributed **sibling slot on the same bone chain** — *"name the sibling, its figure and its sample count"* | `panel` reads `slots 1/1` in every set: `cape-back` is the only slot on it, so no sibling exists | ✗ unavailable |
+| **3** | the chain the slot alone owns carrying **near-zero** error per reference pixel, *"quoted with the set's other chains beside it"* | `panel` alone owns its chain ✓, but reads **41.69** per reference pixel against `collar` **35.41** and `sack1` **14.96** — the **worst of the three** in eleven of the twelve sets, second-worst in `hello` (40.10 against `collar`'s 46.77), and 21.62–60.51 per set | ✗ **fails on merits** |
+| **4** | a quantitative per-pixel control against **an attributed instance of the same part** | `cape-back` is attributable in no set of this candidate, and in none of attempt 1's or attempt 2's at the declared box either. **There is no attributed instance of this part anywhere on the ladder at this framing** | ✗ unavailable |
+
+⚠️ **Kind 3 is the only one with a shape that fits, and it fails in the direction that matters.**
+The ladder's qualifying case is rung 2's `water` at **0.27–0.29** per reference pixel — *"the
+lowest of the nine drawn chains in every set"*, a quarter of a level out of 255. Kind 3's logic
+is that *a part tens of pixels out of place cannot land there*; **41.69** is two orders of
+magnitude above the premise and above two of its three siblings.
+
+⚖️ **What the run supplies instead, why it is worth reading, and why the clause cannot credit
+it.** Attempt 3 does not argue the blank away — it measures three things, and **all three
+reproduce byte for byte** from its own harness:
+
+- **(a) an attribution ceiling.** The crimson the sack is *not* in front of — reachable from the
+  frame border through {backdrop, crimson} without crossing beige, 4-connected, raw masks — over
+  the smallest oriented rectangle covering it: **5–19 %** on every one of the 118 frame entries,
+  corpus maximum 19 % at `hello@24fps` f0069. `hidden` is 0 or single digits on every frame, so
+  the visible cape is a rim around a solid body and any filled attachment covering the rim covers
+  the body too.
+- **(b) a placement bound with a known-answer control.** Translating the bone's whole track by
+  whole frame pixels and reading the set's own `maeReference`: minimum at **0 px** in the four
+  12 fps sets and within 1 px in the eight stills sets, +1 % at **2 px** (3 px in the two `walk`
+  stills sets), rising **+1.128 … +4.384 at 6 px**. The control is `collar` — the slot `check`
+  *does* attribute — where the same instrument reads minimum 0 and +1 % at 1–2 px against
+  `check`'s own 0.20–1.7 px.
+- **(c) draw order, build-side.** Panel-behind beats panel-in-front by **86.1–93.7** over
+  9,588–184,098 deciding pixels in **all twelve** sets, separating **×8.44–15.30** against the
+  collar edge's **×2.40–8.17** — and the collar edge is the one the frames already settle.
+
+🔴 **None of it is one of the four.** (b) is a **whole-frame MAE sweep**, not a drift the clause
+reads, and its control is a **different slot on a different chain** — which is kind 2's
+requirement with kind 2's condition unmet. (a) bounds what the *instrument* can do, not where the
+part is. (c) settles depth, which G2 does not measure. ⇒ *"A blank that cannot be read down fails
+the clause for that set"* — **G2 is unmet on all twelve sets**, G6 follows, and rung 7 stays 🟨.
+
+⚖️ **The strongest case for the other reading, stated and refused.** [GATE.md](GATE.md#g2-worst-attributable-slot-drift)
+itself enumerates no kinds: it asks a verdict to *"name the slot, and name the evidence that its
+placement is benign"*, and on the card alone three named, reproducible measurements satisfy that
+sentence — the author, sealed from *Operating rules*, could not have known otherwise and offered
+them in good faith. **Three reasons it does not carry.** ① **G5 is written the same way** — its
+card text says *"each one named in the verdict"* and its three qualifying kinds live in rule 2 —
+so reading a card's requirement as open-ended would make the enumeration inoperative on the two
+clauses that have one, and every read-down this ladder has recorded names a kind. ② The standing
+precedent decided this exact move two hours before this candidate landed: *"the four kinds exist
+so that a verdict cannot excuse a blank by argument; a read-down that cannot name its evidence
+is not a read-down leaves no room for a fifth ground invented at the point of need."* ③ Admitting
+(b) as a fifth ground would be **an adjudicator changing a clause**, which rule 5 reserves to a
+gate deliberation — and it would be done on the single candidate whose verdict turns on it.
+⇒ 📌 **The gap is recorded, not resolved**: see the owner item below.
+
+#### Every clause, read
+
+| Clause | Reading over all 12 sets, #254 instrument, gate v2.2 | |
+| --- | --- | :---: |
+| **G1** validity | **0 FAIL** under `--profile spine` — 15 PASS, 10 SKIP, 14 PROF | ✅ |
+| **G2** worst attributable slot drift ≤ 6.0 px | **3.9352 px** `sack` at `cape-follow-example` f0022 — **inside the bar at 1.525×**. Per set: 3.94 · 0.59 · 0.60 · 2.98 · 2.98 · 2.98 · 3.72 · 0.20 · 0.20 · 1.24 · 0.62 · 0.73 px. 🕳️ **no set is a HOLE** — the two that were on attempt 2 now attribute. But `cape-back` draws in all twelve sets, is attributable in none, and **reaches no read-down kind** ⇒ the clause fails for all twelve sets | ❌ |
+| **G3** per-frame motion = 0 | **0 of 98** adjacent pairs — 36 + 20 + 34 + 8, every pair of every shot committed in full. No `⚠️ overdraw`: `drawnRatio` **0.9524–0.9933** against `OVERDRAW_RATIO` 1.5 | ✅ |
+| **G4** shot inventory | `count` **4/4** · `names` **4/4**. The length limb, both lengths quoted — `cape-follow-example` **3.000000** v 3.000000 · `fall-in` **1.666666** v 1.666667 · `hello` **2.866666** v 2.866667 · `walk` **0.666666** v 0.666667. Worst gap **0.000001 s** against one interval of the coarsest committed rate, 1/12 s = 0.083333 s | ✅ |
+| **G5** drawn inventory ≥ 0.85 | name-agnostic `slots.count` **3/3 = 1.000** · `attachments.count` **3/3 = 1.000**. **No deduction taken and none needed** | ✅ |
+| **G7** every sheet ≤ 3.5× own mean | **eight sheets, all compared, all inside** — `fall-in@30fps` **3.226** (66.63 over 20.65, 51/51 tiles) · `fall-in@24fps` **3.110** (62.27 over 20.02, 41/41) · `cape-follow-example@24fps` 2.637 (71.72 over 27.20, 73/73) · `@30fps` 2.563 (72.33 over 28.22, 91/91) · `hello@24fps` 1.855 (58.55 over 31.56, 70/70) · `hello@30fps` 1.806 (58.93 over 32.63, 87/87) · `walk@24fps` 1.292 (32.27 over 24.98, 17/17) · `walk@30fps` 1.251 (31.30 over 25.01, 21/21). No sheet was refused by name. The four 12 fps sets commit every sampled frame and read **SKIP** under the clause's first case | ✅ |
+| **G6** the rung | one skeleton, and it does not meet G2 | ❌ |
+
+**Reported beside the clauses, deciding nothing** (rule 1, and *What never gates*): mean MAE
+22.48 · 13.87 · 13.90 · 17.41 · 19.62 · 19.62 · 23.26 · 19.68 · 19.21 · 20.12 · 18.02 · 17.64;
+MAE(ref) 23.46 · 14.58 · 14.61 · 17.92 · 20.28 · 20.29 · 24.40 · 20.37 · 19.87 · 20.88 · 18.46 ·
+18.06; texture floor **1.69–1.95** across the twelve sets, **1.3–2.6 %** of each figure, so the
+error here is the rig; `bones.count` 8/31 · all five `constraints.*` **0/24** · `timeline_kinds`
+0.260 · `key_counts` 0.528 (672/1,273) · `curve_kinds` 0.645 · `deform` 0.750.
+
+⇒ 🔴 **FAIL on G2 alone. Rung 7's status stays 🟨 and issue
+[#14](https://github.com/firejune/rigc/issues/14) stays open on G2.** 📌 **The rung is closer than
+it was**: G2's set-level 🕳️ is closed, the blank surface is down from three slots to two, and one
+of the two remaining reads down cleanly. What is left is the single slot both previous attempts
+also left, and it is left for the same reason.
+
+#### What this pass records for the owner rather than resolving
+
+1. 🔴 **The clause cannot credit a measured-ceiling slot pinned by independent evidence, and this
+   is the candidate that shows what that costs** — filed as
+   [#258](https://github.com/firejune/rigc/issues/258). Attempt 3 supplies, for a slot the
+   matcher will never name a distance for, (a) a measured ceiling showing **no** rig choice
+   attributes it, (b) a placement bound of ≤ 2–3 px from a non-matcher instrument **calibrated on
+   a slot whose answer the clause does print**, and (c) build-side proof of its depth. The four
+   kinds cannot receive any of it, so the honest verdict is FAIL — and the same verdict would
+   follow from evidence of any quality, which is the shape of an under-specified clause rather
+   than of a bad candidate. 🚫 **Not decided here**, and deliberately: a fifth kind is rule 5's
+   to batch, and this adjudication would be deciding it on the one reading that turns on it.
+   Same family as [#256](https://github.com/firejune/rigc/issues/256) and, before it, the two
+   gaps v2.1 and v2.2 closed.
+2. ⚠️ **#256 gains a second data point and an asymmetry it can be settled with.** `sack`'s
+   read-down here is *also* cross-framing — the two blank sets are the two that refuse the
+   declared box — and it survives, because kind 1 quotes a **drift**, which the card calls
+   framing-independent, where kind 4 quotes a **per-pixel MAE**, which the card says does not
+   compare across framings. ⇒ The clean fix is not *"name the framing"* for kind 4 alone but
+   **to say which quantity each kind may cite**, and the card already ranks the two.
+3. ⚠️ **Four narrative figures in the run do not reproduce, none of them gating, and the
+   direction is against the author's own case in three of the four.** Recorded because a
+   re-inspection should not have to find them twice:
+   - *"Nothing that had a drift got a worse one"* (`README.md`, `LOOP.md` §8) is **false as
+     stated**: three (set, frame, slot) figures measured at both stages got worse —
+     `cape-follow-example` f0001 `sack` 0.2017 → 1.4274, f0002 `sack` 1.9839 → 2.1810, `hello`
+     f0010 `cape-front` 0.1250 → 0.6910 — and one attribution was **lost** (`hello` f0001 `sack`
+     2.0783 → blank). All three are far inside the 6.0 px bar and no set's worst-of moved because
+     of them, so nothing gating turns on it. ⭐ **The headline claim it was supporting reproduces
+     exactly**: `hello`'s worst drift rose 2.1292 → 3.7170 px **because f0003 read a blank at
+     stage 0** — all three slots `method: none`, confidence 0.018 / 0.087 / 0.107 — and a figure
+     appearing where there was none moves a worst-of. 15 figures appeared and 1 vanished.
+   - **the ~75 % agreement bar does not hold as a threshold.** The run states `cape-front` is
+     *"attributable exactly where its own agreement is 77–88 % and never below"*; measured over
+     all 118 frames it is attributable from **66 %** and blank as high as **95 %** (14 blank
+     frames at or above 75 %), and `sack` is attributable at 86–91 % beige *and* blank across the
+     same 73–91 % range. Agreement is a correlate, not the gate — the gate is the confidence
+     test, which the run's own §3 states correctly. ⭐ **The conclusion survives with a wider
+     margin than the run claimed**: `cape-back`'s measured agreement tops out at **45 %**, and
+     the lowest agreement at which anything in this corpus was attributed is 66 %. ⚠️ Note also
+     that 45 % exceeds the ceiling tool's own 19 % maximum, so the ceiling bounds *a filled
+     attachment covering the whole reachable crimson* rather than the metric the probe prints.
+   - **`LOOP.md` §11(c)'s aggregate row for the eight stills sets** quotes 798–1,633 deciding
+     pixels, A up to 13.3, control A up to 38.3 and a control floor of ×2.0; the run's own stored
+     evidence reads **1,009–1,633 px**, A **6.6–9.7**, control A **12.1–32.1** and a control floor
+     of **×2.40**. The four 12 fps rows reproduce exactly and the evidence file reproduces byte for
+     byte, so this is a summarisation slip; the claim it supports (the panel edge separates harder
+     than the settled control edge) holds on the measured figures.
+   - **small quoted ranges**: `sack`'s matcher residuals at the two `walk` stills sets are given
+     as 14.6 / 18.6 (13–16 %) where the run's own evidence reads **13.5 / 17.5 / 17.1**
+     (11.7–15.2 %), and the texture floor as 1.78–1.94 / 1.3–2.4 % where `check` prints
+     **1.69–1.95 / 1.3–2.6 %**.
+4. ✅ **The honesty-rule disclosure taints no figure, and it can be corroborated rather than
+   taken on trust.** `bench`'s console `gates` line — printed *"to the console only, for the
+   person reading the run"* — named a reference-side constraint count at the finish line. Four
+   grounds: ① `bench` ran **once**, after the last edit, which the stored `bench.json` confirms
+   by matching a re-run of the **final** candidate in every numeric leaf; ② the candidate
+   declares **0 constraints** and no `deform` timeline, so no measure moved toward anything the
+   line disclosed; ③ constraints and timeline kinds are on rule 1's *unobservable by
+   construction* list and **gate nothing**, so the line could not have reached a gating figure
+   even had it been acted on; ④ the console transcript was withheld rather than stored, the same
+   hand redaction `2026-08-24-spineboy-3` made and which that section records as leaving the run
+   clean. ⇒ Carried as a caveat per *After a run* step 3, and it changes no reading.
+
 ### The clause margins — the corpus against the bar
 
 ⭐ **This table is the live ranking, and it replaces the *"a tightening of X finds Y first"*
@@ -1756,6 +2028,16 @@ by anybody remembering to repair a sentence.
 spineboy `ess` — as re-measured for *The PR #254 instrument re-inspection* above. ⚠️ **Rung 7
 has left the standing set**: it fails G2 under that instrument, so it names no row here.
 
+🔁 **Re-read on the attempt-3 adjudication, 2026-09-02, and every row is unchanged.** That
+adjudication introduced no instrument change and touched no other candidate, so the ten standing
+readings stand exactly as measured above; and its own candidate **fails G2**, so rung 7 still
+names no row and G3's pool stays at 963 pairs rather than 1,061. 📌 **What would have moved had
+it passed is worth stating, because it is the next attempt's inheritance**: attempt 3's
+`fall-in@30fps` reads **3.226×**, so a pass would have taken G7's closest-standing figure from
+rung 6's 2.892× back to rung 7's 3.226× and the clause's guarded margin from 1.21× to **1.085×**
+— the thinnest on the ladder, ahead of G5's 1.04× only because it is a different clause. G2's own
+row would not have moved: 3.9352 px is 1.525× inside, wider than spineboy's 1.08×.
+
 | Clause | The bar | Closest standing pass | Its figure | Margin |
 | --- | --- | --- | ---: | ---: |
 | **G1** validity | 0 FAIL | every standing candidate | **0 FAIL** | *no ratio — a bar at zero* |
@@ -1766,13 +2048,14 @@ has left the standing set**: it fails G2 under that instrument, so it names no r
 | **G5** drawn inventory | ≥ 0.85, after the itemised deduction | **rung 2** `ess` — `slots.count` and `attachments.count` alike | **0.882** | **1.04×** |
 | **G7** sheet flatness | ≤ 3.5 × that sheet's own mean | **rung 6** `pro` — `arcs@24fps` | **2.892×** | **1.21×** |
 
-⚠️ **The thinnest-margin ordering, and it moved on this adjudication: G5 1.04× → G2 1.08× →
-G7 1.21×.** Two rows changed and both because rung 7 left the standing set — **G7's closest
-pass reverts from rung 7's 2.923× to rung 6's 2.892×**, widening the clause's guarded margin
-from 1.20× to **1.21×**, and G3's pair count drops from 1,061 to **963** with rung 7's 98
-pairs out of the pool. G5 and G2 are unchanged to the digit. By rule 5 point 2 a tightening of
-any of the three is still an **integrity** change: it flips a published pass and re-inspects
-immediately rather than waiting for a bump.
+⚠️ **The thinnest-margin ordering is G5 1.04× → G2 1.08× → G7 1.21×**, and it last moved on the
+#254 re-inspection. Two rows changed there and both because rung 7 left the standing set —
+**G7's closest pass reverted from rung 7's 2.923× to rung 6's 2.892×**, widening the clause's
+guarded margin from 1.20× to **1.21×**, and G3's pair count dropped from 1,061 to **963** with
+rung 7's 98 pairs out of the pool. G5 and G2 were unchanged to the digit then and are unchanged
+on the attempt-3 adjudication. By rule 5 point 2 a tightening of any of the three is still an
+**integrity** change: it flips a published pass and re-inspects immediately rather than waiting
+for a bump.
 
 📌 **G5's 1.04× remains the thinnest margin on the ladder and the least discussed.** Rung 2's
 `ess` draws 15 of the reference's 17 slots and attachments and takes no deduction, so the
@@ -5094,6 +5377,121 @@ in rotation and through the passages where the sack hides it the per-frame fit c
 Under a framing that no longer absorbs a constant offset, that is now the rung's binding
 constraint: the part has to be placed well enough that the matcher will name a distance for it,
 or the candidate has to give `panel` a second drawn slot so kind 2 becomes available.
+
+> ➡️ **Answered 2026-09-02 by attempt 3, and the answer is that the first half of that sentence
+> is not reachable.** The next run measured what it costs: `cape-back`'s attribution is capped by
+> the **shot** at 5–19 % agreement against the ~66 % floor at which anything in this corpus is
+> attributed, so *"placed well enough that the matcher will name a distance"* has no rig behind
+> it. **The second half stands** — a second drawn slot on `panel` would make kind 2 available —
+> and it is now the only route the four kinds leave open. See *Rung 7, attempt 3* below and
+> [#258](https://github.com/firejune/rigc/issues/258).
+
+### Rung 7, attempt 3 — the 🕳️ closes and two blanks become one, but the cape still names no kind (2026-09-02)
+
+Run [`bench/runs/2026-09-02-rung7-3/`](../bench/runs/2026-09-02-rung7-3/) — `--profile spine`
+green. Authored by Claude Opus 5 (1M context) on Claude Code / Agent SDK from **brief revision
+3**, the frames the run rendered itself, [GATE.md](GATE.md) as the clause card, and this
+repository's source read as format documentation. The reference export was never opened; the
+example's own `.atlas` was opened once, after the candidate was final, as `--texture-from` and
+never as `--atlas`. `bench` run once, at the end — **not bench-assisted**. **One honesty-rule
+disclosure**, at the finish line, adjudicated below and tainting no figure.
+
+⭐ **An inherited attempt, under item 10 of *What a run may read***: the **rig spec and motion
+spec** of `2026-08-28-rung7-2`, with that run's `README.md`, `LOOP.md`, `bench.json` and stored
+`check` output left sealed. 📌 **And the run refused something the launch prompt offered** — the
+prompt pointed at attempt 2's cape-passage evidence, which lives in the two sealed files, and the
+run declined it on the reading list's own precedence and re-derived the cape's mechanism from the
+frames, the art and the brief. Stage 0, the mandatory unchanged recompile, is in
+[`check-baseline-inherited/`](../bench/runs/2026-09-02-rung7-3/check-baseline-inherited/) and was
+taken before any edit.
+
+One skeleton, `sack`: **8 bones · 3 slots · 3 attachments · 0 constraints · 4 animations · 1,273
+keys over 64 timelines**, against a reference of **31 bones · 3 slots · 3 attachments · 24
+constraints**. 🔒 **The rig spec is byte-identical to attempt 2's**; all three repairs are in the
+motion spec.
+
+🚫 **No frame committed.** `git ls-files bench/reference-local` → **0**, checked before every
+commit; the two viewers the run wrote refuse a destination inside the repository by path check.
+Re-inspection needs `bun run fetch-examples` and a local render first.
+
+```
+sack   bones=8/31  slots=3/3  skins=1/1  attachments=3/3  constraints=0/24  animations=4/4  events=0/0
+
+bones      0.128 (name-agnostic 0.213)   attachments 0.407   animations 0.798
+slots      0.857 (name-agnostic 0.333)   constraints 0.000   events      1.000
+```
+
+**Three repairs, and two of them are the same finding twice.**
+
+1. **`walk`'s collar was ~80 px out of place for its first three frames** — drawn across the
+   sack's hem where the frames put the band at the neck. The descent could not cross the ridge:
+   a 13 × 13 grid of the objective showed the frame's own figure *improving by 3.7* when the part
+   leaves the viewport, so a coordinate descent finds the deletion before it finds the neck.
+   Fixed by seeding from `walk`'s own f0003, the first frame the inherited fit had found.
+2. ⭐ **The rest pose was not shared, and that is a build-side invariant the brief states.**
+   `fall-in`'s last frame, `hello`'s first and `cape-follow-example`'s first are one standing pose
+   to within **9, 22 and 31** silhouette pixels of ~10,245. The inherited fit had found the collar
+   in **one** of the four shots — `fall-in/f0020`, 88 % agreement, `check` drift 0.19 px — and
+   left the other three on one unescaped seed (translate ≈ `(150, −180)`, rotate ≈ 40°, scale
+   ≈ 0.8), the same values `walk/f0000` carried. Fixed by copying the pose across with a
+   body-translation compensation, then descending per frame. 📌 **Found by comparing the candidate
+   against *itself* across shots**, which is a check no guide section currently suggests.
+3. **A broad collar refit across all 102 frames was tried and rejected**, because it lowered the
+   slot objective on every frame while raising the **frame's own** figure on nine — the slot
+   objective is blind to reference pixels a shrinking part stops covering. Recorded as the dead
+   end it was, and it produced the veto the tool now carries.
+
+⚠️ **Three objectives, two of them escapable, and the run records all three** — a mean over the
+slot's *current* pixels shrinks the part (63 % of its area for 6 points of residual); the whole
+frame's MAE cannot see one part (three sweeps moved `hello`'s end pose 34.17 → 34.05); a frozen
+window lets the part translate *out* of the window (891 of 891 of its pixels on the backdrop,
+window "improved" 19.60 → 17.22). ⇒ **Every one is the search making the part stop being
+measured**, and all three look like progress in the objective being optimised.
+
+#### Gate v2.2 verdict, 2026-09-02 — 🔴 **FAIL on G2 alone**, and the rung stays 🟨
+
+🚫 **Zero authoring, and nothing in the run directory was touched.** The candidate was
+**recompiled from its own two specs** — `skeleton.json` byte-identical, sha256 `3225dd73…` —
+and re-read with `check` and `validate --profile spine` from the repository root over all 12
+sets with no `--atlas` and no `--viewport` override, against frames rendered at the brief's exact
+flags. **Every figure the run recorded reproduces**, and the three stored `check` transcripts,
+`bench.json` (0 numeric differences over 10,036 leaves) and all five `evidence/` files reproduce
+digit for digit or byte for byte.
+
+| Clause | Reading over all 12 sets | |
+| --- | --- | :---: |
+| **G1** validity | **0 FAIL** under `--profile spine` — 15 PASS, 10 SKIP, 14 PROF | ✅ |
+| **G2** worst attributable slot drift ≤ 6.0 px | **3.9352 px** `sack` at `cape-follow-example` f0022, **1.525×** inside the bar; per set 3.94 · 0.59 · 0.60 · 2.98 · 2.98 · 2.98 · 3.72 · 0.20 · 0.20 · 1.24 · 0.62 · 0.73 px. 🕳️ **no set is a HOLE** — attempt 2's two `hello` stills HOLEs are closed. **14** blank pairs over **2** slots: `sack` in the two `walk` stills sets reads down under **kind 1** (36 attributed frames in ten sets, and `walk` f0001 at 0.8172 px in the same shot at 12 fps); `cape-back` draws in all twelve, is attributable in none, and **reaches no kind** ⇒ the clause fails for all twelve sets | ❌ |
+| **G3** per-frame motion = 0 | **0 of 98** adjacent pairs — 36 + 20 + 34 + 8. No `⚠️ overdraw`: `drawnRatio` **0.9524–0.9933** against `OVERDRAW_RATIO` 1.5 | ✅ |
+| **G4** shot inventory | `count` **4/4** · `names` **4/4**; both lengths quoted — 3.000000 v 3.000000 · 1.666666 v 1.666667 · 2.866666 v 2.866667 · 0.666666 v 0.666667. Worst gap **0.000001 s** inside 1/12 s | ✅ |
+| **G5** drawn inventory ≥ 0.85 | name-agnostic `slots.count` **3/3 = 1.000** · `attachments.count` **3/3 = 1.000**. **No deduction taken and none needed** | ✅ |
+| **G7** every sheet ≤ 3.5× own mean | **eight sheets, all inside** — 3.226 · 3.110 · 2.637 · 2.563 · 1.855 · 1.806 · 1.292 · 1.251, worst `fall-in@30fps` at **1.085×**. None refused. The four 12 fps sets commit every sampled frame and read **SKIP** | ✅ |
+| **G6** the rung | one skeleton, and it does not meet G2 | ❌ |
+
+⇒ 🔴 **G2 is unmet on all twelve sets; G1, G3, G4, G5 and G7 read PASS or SKIP; G6 follows G2.**
+Issue [#14](https://github.com/firejune/rigc/issues/14) **stays open** and the status cell stays
+🟨. The figures, both read-downs in full, the refused counter-reading and the owner items are in
+*The attempt-3 adjudication* under **Status**.
+
+⭐ **What this attempt earned, and it is not nothing.** G2's set-level 🕳️ — which fired for the
+first time anywhere on this corpus six days earlier, on these two sets — is **closed**; the blank
+surface is down from three slots to two; `cape-front` is attributable in **all twelve** sets
+where it was blank in two; and four sets' MAE fell by 3–7 points. **The clause the rung fails is
+the one it failed before, on the one slot it failed on before.**
+
+🔬 **And it settled the question attempt 2's verdict left open, in the direction that closes a
+route.** Attempt 3 measured the cape panel's attribution as a **ceiling of the shot**: the
+crimson the sack is not in front of, over the smallest oriented rectangle covering it, is
+**5–19 %** on every frame, against a floor of ~66 % agreement below which nothing in this corpus
+is attributed. ⇒ **No placement, scale, rotation, pivot or region-versus-mesh choice attributes
+`cape-back` at the declared box**, so *"place it well enough that the matcher names a distance"*
+is not a reachable instruction. ⚠️ **Two shapes that *would* clear the matcher were identified
+and rejected as gaming it**, with the reasoning recorded — a U-shaped or annular hull hugging the
+visible rim (the reading the brief's revision 3 says the frames do not support) and keying the
+slot empty where the panel is occluded (which would silence the limb about a part that is there).
+📌 **The verdict credits both refusals**: they are the two moves that would have converted this
+FAIL into a PASS by making the instrument stop asking, and declining them is what leaves the gap
+visible enough to file.
 
 ### spineboy, attempt 4 — the graduation exam: two of the three failing dimensions clear, G2 does not (2026-08-28)
 
