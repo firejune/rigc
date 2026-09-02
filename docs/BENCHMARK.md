@@ -103,9 +103,10 @@ per animation and per frame:
 - **The texture floor** — how much of that MAE is **resampling** rather than the
   rig, when you ask for it with `--texture-from <atlas>`. The reference frames come
   through the example's own **packed** atlas, which may carry a `scale:` line (the
-  ladder's are packed at 0.4 and 0.5) while rigc has no packer, so a candidate
-  samples the loose art at twice the resolution and every edge of every part is
-  filtered from a different source in every frame. It is a constant of the
+  ladder's are packed at 0.4 and 0.5) while a candidate samples the art at its own
+  resolution, so every edge of every part is filtered from a different source in
+  every frame. `--pack` does not change that in either direction: rigc's packer is
+  lossless and writes no `scale:` line. It is a constant of the
   *pipeline*: invisible to the content box, to the fit residual and to the
   whole-pixel refinement, and **no key moves it**. Measured twice by hand before it
   was attributed here — about two thirds of rung 3's figure — and the report said
@@ -278,7 +279,10 @@ than data, so no example could be expressed at all; **B2**, `A16`'s regex reject
 that every example declares; and **B3**, every example ships a **packed** atlas (13–50 regions per
 page) against rigc's one-part-per-page model, which `A06` enforced unconditionally. **B1 and B2 are
 closed**; B3's validator half is (the packed-atlas clauses live behind `--profile`, above) and its
-emitter half — no packer, no atlas importer — is not. Ordered gap list in Part 4 of that document;
+emitter half closed on 2026-09-03 (issue #4): `build --pack` packs the loose parts onto shared pages
+and `build --atlas-in` resolves them against a pack somebody else made — both opt-in, both narrow
+(no trimming, no rotation, no scaling), with the limits in
+[AUTHORING §0.1–§0.2](AUTHORING.md). Ordered gap list in Part 4 of that document;
 live status, and B1's proof, in [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).
 
 ## Looking at a rig — `rigc render` and `rigc preview`
@@ -495,9 +499,13 @@ the rest of the repository must not have) and is type-checked on its own with
   skins with their attachments and the bones and constraints each one activates,
   animations, and constraints in the 4.3 single `constraints` array — all five
   types of them.
-- `skeleton.atlas` — a **one-part-per-page** atlas: every region covers its whole
-  page, `pma: false`. That convention is what makes the region/attachment/filename
-  join key checkable exactly rather than by convention.
+- `skeleton.atlas` — by default a **one-part-per-page** atlas: every region covers
+  its whole page, `pma: false`. That convention is what makes the
+  region/attachment/filename join key checkable exactly rather than by convention.
+  `--pack` writes the other shape — the parts arranged onto shared pages, emitted
+  beside the pair as real PNGs — and `--atlas-in` re-emits a pack somebody else
+  made; the join key is unchanged either way, because a region's name is still the
+  PNG basename ([AUTHORING §0.1–§0.2](AUTHORING.md)).
 
 **Where the three meet.** A manifest part joins a rig slot by its `rig_slot` field
 (falling back to `slot`), and that slot's position in the rig's `slots` array **is**
@@ -622,7 +630,10 @@ bun cli.ts build \
 By default, atlas page paths point back at the source art wherever it lives —
 often outside `--out` — so add `--copy-images` when `spine/` itself needs to be
 self-contained (zipped, committed, or handed off on its own): it copies every
-referenced page PNG into `--out` and rewrites the atlas to match.
+referenced page PNG into `--out` and rewrites the atlas to match. `--pack` is the
+other way to get there and gives you one texture instead of many; the two are
+refused together, because a packed atlas does not reference the loose PNGs a copy
+would bring along.
 
 …or register cuts in a `cuts.json` and build them by name. Every path in the table
 resolves **relative to the `cuts.json` file itself**, so the table lives with the
@@ -775,6 +786,10 @@ selftest.ts     the validator's own negative controls, and diff's and check's
 fixtures/       public.ts — the three synthetic cuts the selftest breaks
 src/
   compile.ts    rig + motion spec (+ manifest) -> skeleton JSON + atlas text (pure data assembly)
+  atlas.ts      the atlas as a structure: the format read back in (`--atlas-in`), a
+                MaxRects packer that arranges the parts onto shared pages (`--pack`),
+                and the one emitter both shapes are written through
+  emit.ts       `--copy-images` — the pages copied into `--out` and the atlas rewritten
   rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
   validate.ts   spine-core round trip + the 39 assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure

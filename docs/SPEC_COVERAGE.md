@@ -17,8 +17,15 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 > - **The profile split exists** — `--profile spine | spine-html`, **default `spine` since
 >   2026-08-29** (issue #221; it was `spine-html` when this survey was written), so the nine
 >   renderer-policy assertions of §2.2 no longer apply to foreign data, and no longer apply
->   unasked. That closes the validator half of B3; the emitter half (no packer, no atlas
->   importer) is untouched.
+>   unasked. That closes the validator half of B3; **the emitter half closed on 2026-09-03
+>   (issue #4)** — `build --pack` arranges the parts onto shared power-of-two pages written into
+>   `--out`, and `build --atlas-in <file.atlas>` resolves every part against the regions of a
+>   pack somebody else made. Both are opt-in and both are narrow: no trimming, no rotation
+>   (`rotate: 0` on every region rigc writes), no scaling, and a packed atlas is refused under
+>   `--profile spine-html`, whose A06 clause **is** the one-part-per-page convention. So §3-2's
+>   atlas table, §4-0's B3 row and its "no packer *and* no importer" both describe a state that
+>   no longer exists; what remains true of them is the DEFAULT, which is still one part per page.
+>   Limits and flag shapes: [AUTHORING §0.1–§0.2](https://github.com/firejune/rigc/blob/main/docs/AUTHORING.md).
 > - **Part 4-2's ❌ rows for `path`, `slider` and per-skin members are gone (issues #2, #7)** —
 >   rigc emits path attachments and path constraints, sliders in both of their models, per-skin
 >   `bones` and constraint lists, and the `path` / `slider` timeline groups. Three assertions came

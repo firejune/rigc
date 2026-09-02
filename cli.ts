@@ -52,6 +52,7 @@ import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type Che
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
 import { diffLines, diffSkeletons, sectionFigures, type DiffReport } from './src/diff.ts';
 import { copyAtlasImages } from './src/emit.ts';
+import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
 import {
@@ -152,7 +153,7 @@ function repositoryUrl(): string {
  * flag": inferring it would turn `--out --json report.json` — a real typo, a
  * missing value — into a silently accepted switch plus a stray positional.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'help', 'copy-images', 'again']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'help', 'copy-images', 'again', 'pack']);
 
 /**
  * The flags a command is allowed to spell more than once.
@@ -276,6 +277,7 @@ function resolveCut(flags: Record<string, string>): { label: string; opts: Compi
     };
     if (flags.manifest !== undefined) opts.manifestPath = resolve(flags.manifest);
     if (flags.images !== undefined) opts.imagesDir = resolve(flags.images);
+    if (flags['atlas-in'] !== undefined) opts.atlasInPath = resolve(flags['atlas-in']);
     return { label: flags.rig, opts };
   }
   if (flags.cut === undefined) throw new UsageError('give either --cut <name> --cuts <cuts.json>, or --rig/--motion/--out');
@@ -287,7 +289,13 @@ function resolveCut(flags: Record<string, string>): { label: string; opts: Compi
       `unknown cut ${JSON.stringify(flags.cut)} in ${resolve(flags.cuts)}. known: ${Object.keys(table).join(', ') || '(none)'}`,
     );
   }
-  return { label: flags.cut, opts: entryToOptions(dir, flags.cut, entry) };
+  const opts = entryToOptions(dir, flags.cut, entry);
+  // `--atlas-in` is not part of the cuts table: a cut names its rig, motion and
+  // manifest, and where the pixels are delivered from is a property of the BUILD.
+  // Resolved against the working directory, like every other path on the command
+  // line, rather than against the table's directory.
+  if (flags['atlas-in'] !== undefined) opts.atlasInPath = resolve(flags['atlas-in']);
+  return { label: flags.cut, opts };
 }
 
 // ---------------------------------------------------------------------------
@@ -311,15 +319,35 @@ function readProfile(flags: Record<string, string>): ValidateProfile {
   return found;
 }
 
-function runGate(result: CompileResult, opts: CompileOptions, profile: ValidateProfile): number {
+/**
+ * An atlas text to gate INSTEAD of the compile's own, with the second, independent
+ * emit A18 compares it against.
+ *
+ * `--pack` is the only caller. A packed build is gated twice on purpose — once as
+ * compiled (which is the gate that reads the loose PNGs, so `A06`'s size-vs-file
+ * clause still measures the art R5 measures) and once as packed (which is the pair
+ * that actually ships). Handing the second pass its texts rather than re-deriving
+ * them here keeps `runGate` ignorant of what a pack is.
+ */
+interface AtlasOverride {
+  text: string;
+  again: string;
+}
+
+function runGate(
+  result: CompileResult,
+  opts: CompileOptions,
+  profile: ValidateProfile,
+  atlas?: AtlasOverride,
+): number {
   // The determinism check compares a second, independent compile.
   const again = compile(opts);
   const report = validate({
     skeletonText: result.skeletonText,
-    atlasText: result.atlasText,
+    atlasText: atlas ? atlas.text : result.atlasText,
     atlasDir: opts.outDir,
     declaredDurations: result.declaredDurations,
-    reEmit: { skeletonText: again.skeletonText, atlasText: again.atlasText },
+    reEmit: { skeletonText: again.skeletonText, atlasText: atlas ? atlas.again : again.atlasText },
     rig: result.rig,
     profile,
   });
@@ -352,9 +380,51 @@ function meshFit(m: CompileResult['meshes'][number]): string {
   return `  covers ${(m.coverage * 100).toFixed(2)}% of the art, reaching ${m.overshoot?.toFixed(2) ?? '?'}px past it`;
 }
 
+/**
+ * Read one non-negative integer flag, or its default.
+ *
+ * A usage error rather than a `NaN` that reaches the packer: `--padding two`
+ * would otherwise place every region at NaN and write a blank page, which is a
+ * green build and an empty picture.
+ */
+function readIntFlag(flags: Record<string, string>, name: string, fallback: number): number {
+  const raw = flags[name];
+  if (raw === undefined) return fallback;
+  if (!/^\d+$/.test(raw)) throw new UsageError(`--${name} takes a non-negative integer, got ${JSON.stringify(raw)}`);
+  return Number(raw);
+}
+
 function cmdBuild(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
   const profile = readProfile(flags);
+  const packing = flags.pack !== undefined;
+  // Three combinations are refused rather than silently resolved, because in each
+  // one the two flags disagree about a single question and there is no answer
+  // that is not a guess about which the caller meant.
+  if (packing && opts.atlasInPath !== undefined) {
+    throw new UsageError(
+      '--pack and --atlas-in are opposite directions through the same door: --pack MAKES an atlas out of the ' +
+        'loose parts, --atlas-in resolves the parts against one somebody already made. Pick one',
+    );
+  }
+  if (packing && flags['copy-images'] !== undefined) {
+    throw new UsageError(
+      '--pack already writes self-contained pages into --out (that is what packing is), and --copy-images copies ' +
+        'the loose part PNGs, which a packed atlas does not reference. Drop --copy-images',
+    );
+  }
+  if (packing && profile === 'spine-html') {
+    throw new UsageError(
+      "--profile spine-html asserts one part per page (A06's full-page coverage clause), which is rigc's unpacked " +
+        'convention and exactly what --pack stops being true. A packed atlas is valid Spine — build it under the ' +
+        'default --profile spine',
+    );
+  }
+  if (!packing) {
+    for (const name of ['page-size', 'padding'] as const) {
+      if (flags[name] !== undefined) throw new UsageError(`--${name} only means something with --pack`);
+    }
+  }
   console.log(`rigc build ${label}`);
   // Named explicitly and on their own lines rather than folded into the header
   // above: with two input files, a header that names only one of them (the rig,
@@ -364,12 +434,20 @@ function cmdBuild(flags: Record<string, string>): void {
   console.log(`  ..    motion ${opts.motionPath}`);
   const result = compile(opts);
 
+  if (opts.atlasInPath !== undefined) console.log(`  ..    atlas-in ${opts.atlasInPath}`);
   console.log(`  ..    ${result.images.length} part page(s):`);
   for (const img of result.images) {
-    console.log(`  ..      ${img.region.padEnd(24)} ${img.width}x${img.height}  <- ${img.page}`);
+    // An imported part says where on the page it came from, because "resolved
+    // against a region" is the claim `--atlas-in` makes and a line that only
+    // repeated the page filename would look identical for all of them.
+    const where =
+      img.atlas === undefined
+        ? img.page
+        : `${img.page} @ ${img.atlas.x},${img.atlas.y}${img.atlas.degrees ? ` rotate ${img.atlas.degrees}` : ''}`;
+    console.log(`  ..      ${img.region.padEnd(24)} ${img.width}x${img.height}  <- ${where}`);
   }
   for (const d of result.droppedStates) {
-    console.log(`  DROP  ${d.slot}/${d.state}: no PNG at ${d.path} (state not emitted)`);
+    console.log(`  DROP  ${d.slot}/${d.state}: ${d.why ?? `no PNG at ${d.path}`} (state not emitted)`);
   }
   // "The optional slots are optional" is a claim about this code path, so this
   // code path says which ones it left out rather than being silently right.
@@ -411,6 +489,64 @@ function cmdBuild(flags: Record<string, string>): void {
     for (const p of copied.pages) {
       const note = p.to === basename(p.from) ? '' : `  (renamed from ${basename(p.from)} — basename collision)`;
       console.log(`  ..      ${p.region.padEnd(24)} <- ${p.to}${note}`);
+    }
+  }
+
+  // `--pack`: the parts go onto shared pages, which are written here as real
+  // PNGs, so `--out` is self-contained by construction. The atlas above stays
+  // the one the gate just read — packing changes only the ARRANGEMENT of the
+  // bytes, and the sizes in `result.images` are still the ones measured off the
+  // loose PNGs (see src/atlas.ts's header).
+  if (packing) {
+    const packOpts = {
+      pageSize: readIntFlag(flags, 'page-size', DEFAULT_PAGE_SIZE),
+      padding: readIntFlag(flags, 'padding', DEFAULT_PADDING),
+      pageStem: 'skeleton',
+    };
+    const inputs = result.images.map((img) => ({
+      region: img.region,
+      absPath: img.absPath,
+      width: img.width,
+      height: img.height,
+    }));
+    const packed = packAtlas(inputs, packOpts);
+    atlasText = packed.atlasText;
+    for (const page of packed.pages) {
+      page.plate.writePng(join(opts.outDir, page.name));
+      console.log(
+        `  ..    pack: ${page.name} ${page.width}x${page.height}, ` +
+          `${packed.placements.filter((p) => packed.pages[p.page].name === page.name).length} region(s), ` +
+          `${(page.occupancy * 100).toFixed(1)}% covered, padding ${packed.padding}`,
+      );
+    }
+    for (const place of packed.placements) {
+      console.log(
+        `  ..      ${place.region.padEnd(24)} ${place.width}x${place.height} -> ` +
+          `${packed.pages[place.page].name} @ ${place.x},${place.y}`,
+      );
+    }
+    // The pages are on disk now, so the packed pair can be gated as an artifact
+    // rather than trusted as a construction: A17 stats every page, A06 reads its
+    // IHDR back, A07 re-reads the text shape, A08 re-joins every attachment onto
+    // a region, and A18 compares a second independent compile+pack. Two gates on
+    // one build is the cost of shipping a second atlas shape.
+    console.log('  ..    validate (packed atlas, pages on disk)');
+    const packAgain = packAtlas(
+      compile(opts).images.map((img) => ({
+        region: img.region,
+        absPath: img.absPath,
+        width: img.width,
+        height: img.height,
+      })),
+      packOpts,
+    );
+    const packFailures = runGate(result, opts, profile, { text: atlasText, again: packAgain.atlasText });
+    if (packFailures > 0) {
+      console.error(
+        `rigc: ${packFailures} assertion(s) failed on the PACKED atlas — the pages were written to ` +
+          `${opts.outDir}, the skeleton/atlas pair was not`,
+      );
+      process.exit(1);
     }
   }
 
@@ -1555,6 +1691,16 @@ const FLAG_MEANINGS: Record<string, string> = {
   'copy-images':
     'also copy every referenced page PNG into --out and rewrite the atlas to the copies, so the directory is ' +
     'self-contained enough to zip or commit on its own (default: page paths still point at the source art)',
+  pack: 'arrange every part PNG onto shared atlas page(s) written into --out as real PNGs, instead of one page ' +
+    'per part. Lossless: every region is a byte-for-byte copy and nothing is resampled, trimmed or rotated ' +
+    '(default: one part, one page, pointing at the source art)',
+  'page-size': `largest page edge, --pack only (default ${DEFAULT_PAGE_SIZE}); pages are powers of two and the ` +
+    'one written is the smallest that holds the pack, spilling to more pages only when the set will not fit',
+  padding: `gutter each region reserves on every side, --pack only (default ${DEFAULT_PADDING}); it is filled by ` +
+    "extending the region's own edge pixels outwards, which is what stops a neighbour bleeding in",
+  'atlas-in':
+    'resolve every part against the regions of this pre-packed .atlas instead of against loose PNGs — region ' +
+    'geometry (bounds/offsets/rotate) is read from the file and the atlas is re-emitted into --out, re-anchored',
   cut: 'look up a named cut in --cuts <cuts.json>, instead of --rig/--motion/--out',
   cuts: 'the cuts.json --cut names',
   profile:
@@ -1600,6 +1746,9 @@ const FLAG_VALUES: Record<string, string> = {
   cuts: '<path>',
   profile: 'spine|spine-html',
   atlas: '<path>',
+  'atlas-in': '<file.atlas>',
+  'page-size': '<px>',
+  padding: '<px>',
   'texture-from': '<path>',
   candidate: '<dir|skeleton.json>',
   frames: '<dir>',
@@ -1646,9 +1795,25 @@ const COMMANDS: CommandDoc[] = [
     name: 'build',
     usage: [
       'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images]',
+      `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}]   (parts onto shared pages, written into --out)`,
+      'rigc build … --atlas-in <skeleton.atlas>                    (resolve the parts against a pack somebody already made)',
       'rigc build --cut <name> --cuts <cuts.json>',
     ],
-    flags: ['rig', 'motion', 'out', 'manifest', 'images', 'copy-images', 'cut', 'cuts', 'profile'],
+    flags: [
+      'rig',
+      'motion',
+      'out',
+      'manifest',
+      'images',
+      'copy-images',
+      'pack',
+      'page-size',
+      'padding',
+      'atlas-in',
+      'cut',
+      'cuts',
+      'profile',
+    ],
   },
   {
     name: 'explain',
