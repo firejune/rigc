@@ -515,10 +515,93 @@ is weighted; a generated mesh binds only bones that move it) do not apply to one
 #44; before it was fixed, `A21` reported 40 failures on a correct 40-vertex editor
 mesh because an absent `meshKinds` entry read as `ring`.
 
-The two generators are `ring` and `ribbon` (see [`src/mesh.ts`](../src/mesh.ts));
-they encode a deformation model rather than a table of numbers, which is why they
-are code invoked by data. A generator is for a skeleton with **no** manifest; a cut
-that has one invokes the same builders through the manifest's `mesh` block.
+The generators are `ring`, `ribbon` and `contour` (see
+[`src/mesh.ts`](../src/mesh.ts)); the first two encode a deformation model rather
+than a table of numbers, which is why they are code invoked by data. A generator
+is for a skeleton with **no** manifest; a cut that has one invokes the same
+builders through the manifest's `mesh` block.
+
+⭐ **The no-manifest path centres the part window on its own slot bone.** There is
+no crop to flip against, so `size` (or, for a contour, the PNG's own size) is
+placed with its centre on the bone the slot names — which is also exactly where a
+plain region attachment with no `x`/`y` would have drawn it. Measured on a ring, a
+ribbon and a moved bone by `CT05` in the selftest (issue #1).
+
+#### `contour` — the mesh is the art's own silhouette
+
+**When you need one:** the part's outline is the interesting thing and a
+rectangle of region is the wrong shape — a leaf, a cape, a splash, anything whose
+quad is mostly transparent pixels the renderer still blends. Or you want real
+vertices to push with a `deform` timeline (§4.11) at the places the silhouette
+actually is, instead of at four corners.
+
+It takes **no geometry and no size**: the shape is traced off the attachment's own
+`image`, so there is no number here that can disagree with the pixels.
+
+```json
+"cape": {
+  "cape": {
+    "type": "mesh",
+    "image": "cape.png",
+    "generator": { "kind": "contour", "tolerance": 1.5, "margin": 2, "maxVertices": 48 }
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `tolerance` | **required.** Douglas-Peucker tolerance, in part pixels. Bigger spends fewer vertices and cuts more corners |
+| `margin` | how far the outline is pushed out past the traced silhouette, in pixels. Default `1` |
+| `maxVertices` | refuse rather than emit more outline vertices than this. Default `64` |
+| `alpha` | the alpha at or above which a pixel counts as art, `1`..`255`. Default `1` — any pixel that is not fully transparent |
+
+The numbers above are invented, and the pair that matters is `tolerance` and
+`margin`: simplification may bite **`tolerance` pixels into the art**, and the
+margin is what pays that back, so **`margin >= tolerance`** is the setting that
+survives the coverage check below. `alpha` is the lever for art with a long soft
+feather — raise it and the outline hugs the solid core instead of the last
+almost-invisible pixel.
+
+**What it does, in order:** trace the alpha mask on the pixel-corner lattice (so
+the raw outline encloses every art pixel *whole*), simplify it, push it out by
+`margin`, clamp it to the part window, ear-clip it, and then **measure the result
+against the mask it came from**. `build` and `explain` print what it measured:
+
+```
+  MESH  cape         contour  15 vertices / 13 triangles  (budget 80)  bones=[cape]  attachments=[cape]  covers 100.00% of the art, reaching 3.16px past it
+```
+
+🚨 **It is geometry, not a deformation model.** Every vertex is pinned to the slot
+bone at weight 1, so a contour mesh at rest draws what the region drew and **no
+bone can bend it**. What you gain over a region is a real outline, real triangles
+and a `hull` other tools can read; what you do not gain is bone-driven motion —
+that is what `ring` is for, or authored `weights` (§3.4) if you have an editor's
+auto-weighting to transcribe. `A21_MESH_RIM_PINNED` therefore reads over the whole
+mesh rather than a rim prefix, and `A28_RIBBON_ROWS_SHARE_WEIGHTS` **SKIPs** with
+"a contour is one silhouette loop" as the reason.
+
+**Stated limits, each a named refusal rather than a mesh that loads wrong:**
+
+| The art | What you get |
+| --- | --- |
+| every pixel opaque | `every pixel of the 96x64 part reaches alpha 1, so its silhouette IS the part window and a contour mesh of it is a region attachment with extra vertices` |
+| two or more islands | `the art is 2 separate islands and one outline can only enclose the largest (529 of 989 px, 53.49%)` — one outline encloses one region; give each island its own slot |
+| a **hole** (a donut) | **accepted, and the hole is inside the mesh.** Ear clipping has no bridging step, so the outline is the art's *outer* boundary; those pixels draw nothing (their alpha is still 0) and the extra triangles are the whole cost. `explain` reports the coverage either way |
+| a **diagonal pinch** — two parts of the art meeting at one pixel corner | `the alpha silhouette pinches to a single point at pixel corner (2,2) … one outline cannot pass through one point twice` |
+| a neck narrower than `margin` | `the outline crosses itself: edge 0 meets edge 3 after a margin of 3px was pushed out of a silhouette narrower than that` |
+| more outline than `maxVertices` | `the silhouette simplified to 15 vertices at tolerance 1.5, past the 4 this mesh allows` — refused, never silently decimated |
+| a `margin` too small for the `tolerance` | `the mesh covers 91.81% of the art (2936 of 3198 px), under the 99.5% a contour mesh guarantees` |
+
+That last one is the guarantee: **the emitted triangles cover at least 99.5% of
+the art**, measured by rasterising them back over the mask, and a build that would
+clip the art is refused rather than shipped. It is not 100% because a
+simplification that could never cut a corner would not be one — the figure a
+given part actually measures is in the `build`/`explain` line above, and the
+selftest's fixture measures 100.000%.
+
+Self-intersection is refused; **holes are not cut out**; and nothing here does
+interior/Steiner points, so a contour mesh bends only where its outline has
+vertices.
 
 **Bounding box** ([Spine: bounding boxes](http://esotericsoftware.com/spine-bounding-boxes))
 and **clipping** ([Spine: clipping](http://esotericsoftware.com/spine-clipping))
@@ -1199,14 +1282,14 @@ The report prints one line per assertion:
 | `A18_DETERMINISTIC_EMIT` | both | a second compile of the same inputs differed. That is a compiler bug, not a spec bug — report it |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | an overlay part image can never be transparent: no alpha channel (colour type 4 or 6) and no `tRNS` chunk either, so it would paint a solid rectangle over what is behind it. Re-export it as RGBA, or as an indexed / greyscale PNG that keeps its `tRNS`. Only the full-stage base plate may be opaque. Indexed-with-`tRNS` — the usual output of ImageMagick, "Export as PNG-8", GIMP's indexed mode, aseprite and pngquant — **passes**: it is transparent art |
 | `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, or a binding at weight 0 |
-| `A21_MESH_RIM_PINNED` | archetype | a generated ring's rim, or a ribbon's entry row, is not pinned to its anchor bone at weight 1 |
+| `A21_MESH_RIM_PINNED` | archetype | a generated ring's rim, a ribbon's entry row, or a contour's outline (which is all of it) is not pinned to its anchor bone at weight 1 |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | a mesh UV outside its region, or a UV array that disagrees with the vertex count |
 | `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | a physics constraint that drives no component, is muted by `mix: 0`, has `mass: 0`, has `strength: 0`, or has `damping` outside `(0, 1)` so it never settles |
 | `A24_AXIS_SPACE_STROKE` | archetype | a bone under the rig's `axisBone` was keyed with a screen-space Y component, or the axis bone itself was keyed |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | a bone the rig declares `detached` is a descendant of the bone it must never hang under |
 | `A26_SLOT_DRAW_ORDER` | archetype | the emitted slots are not a subsequence of the rig's slot table — a slot is out of order, or is not in the table at all |
 | `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | renderer | a single-region page whose region name is not the PNG's basename |
-| `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | the two vertices of a ribbon row carry different weights, so the strip would change width |
+| `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | the two vertices of a ribbon row carry different weights, so the strip would change width. **SKIPs** on authored geometry and on a contour mesh — neither has rows rigc paired |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the animation drives deeper than the manifest's measured contact depth |
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the animation drives past the measured containment ceiling, or scales a bone in the axis subtree |
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | a draw-order key names a slot the skeleton does not have, offsets one slot twice, puts a slot outside the slots array, or lists its offsets out of slot order (§4.7). The only assertion that runs **before** `A00` — the last of those shapes makes the loader spin rather than return, so the round trip is refused instead of attempted |
@@ -1236,7 +1319,6 @@ says so, because a deferral without its reason is a wall rather than a work item
 | --- | --- |
 | attachment `type` of `point`, `path`, `linkedmesh` | `attachment type "X" is in the Spine 4.3 format and rigc does not emit it yet. Implemented: region, mesh, boundingbox, clipping. point, path and linkedmesh are deliberately deferred: not one of them appears anywhere in the benchmark corpus …` |
 | constraint `type` of `path` or `slider` | `constraint type "X" … Implemented: ik, transform, physics.` |
-| mesh `generator.kind` of `contour` | `the "contour" generator would triangulate a part's own alpha mask, and src/mesh.ts has no triangulator` |
 
 Two more limits that are not errors but will shape what you can attempt:
 

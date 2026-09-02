@@ -35,7 +35,15 @@ import {
   type RigSpec,
   type RigVertexGeometry,
 } from './rig.ts';
-import { buildRibbonMesh, buildRingMesh, encodeWeightedVertices, MeshError, type MeshBoneRef } from './mesh.ts';
+import {
+  buildContourMesh,
+  buildRibbonMesh,
+  buildRingMesh,
+  encodeWeightedVertices,
+  MeshError,
+  type MeshBoneRef,
+} from './mesh.ts';
+import { readPlate } from '../tools/plate.ts';
 import { KEY_TIME_EPSILON } from './timelines.ts';
 import {
   computeWorldTransforms,
@@ -1302,7 +1310,7 @@ function buildRigAttachment(
 ): SpineAttachment {
   const type = att.type ?? 'region';
   if (type === 'region') return buildRigRegion(att as RigRegionAttachment, placeholder, where, ctx);
-  if (type === 'mesh') return buildRigMesh(att as RigMeshAttachment, where, ctx);
+  if (type === 'mesh') return buildRigMesh(att as RigMeshAttachment, placeholder, where, ctx);
   if (type === 'boundingbox') return buildRigBoundingBox(att as RigBoundingBoxAttachment, where, ctx);
   if (type === 'clipping') return buildRigClipping(att as RigClippingAttachment, where, ctx);
   throw new NotImplementedError(
@@ -1509,13 +1517,18 @@ function encodeNamedWeights(weights: RigMeshBinding[][], where: string, ctx: Att
   return out;
 }
 
-function buildRigMesh(att: RigMeshAttachment, where: string, ctx: AttachmentContext): SpineMeshAttachment {
+function buildRigMesh(
+  att: RigMeshAttachment,
+  placeholder: string,
+  where: string,
+  ctx: AttachmentContext,
+): SpineMeshAttachment {
   const authored =
     att.uvs !== undefined || att.triangles !== undefined || att.vertices !== undefined || att.weights !== undefined;
   if (authored && att.generator) {
     throw new CompileError(`${where}: a mesh is either authored geometry or a generator, never both`);
   }
-  if (att.generator) return buildGeneratedMesh(att, att.generator, where, ctx);
+  if (att.generator) return buildGeneratedMesh(att, att.generator, placeholder, where, ctx);
   if (att.vertices && att.weights) {
     throw new CompileError(
       `${where}: a mesh gives geometry as "vertices" or as "weights", never both — "weights" is the by-name form of the same data`,
@@ -1603,15 +1616,11 @@ function buildRigMesh(att: RigMeshAttachment, where: string, ctx: AttachmentCont
 function buildGeneratedMesh(
   att: RigMeshAttachment,
   generator: NonNullable<RigMeshAttachment['generator']>,
+  placeholder: string,
   where: string,
   ctx: AttachmentContext,
 ): SpineMeshAttachment {
-  if (generator.kind === 'contour') {
-    throw new NotImplementedError(
-      `${where}: the "contour" generator would triangulate a part's own alpha mask, and src/mesh.ts has no triangulator — ` +
-        'it holds buildRingMesh and buildRibbonMesh only',
-    );
-  }
+  if (generator.kind === 'contour') return buildContourAttachment(att, generator, placeholder, where, ctx);
   const controls = generator.kind === 'ring' ? generator.controls : generator.chain;
   const refFor = (name: string): MeshBoneRef => {
     const index = ctx.bones.findIndex((b) => b.name === name);
@@ -1666,6 +1675,119 @@ function buildGeneratedMesh(
     height: r6(h),
   };
   if (att.path !== undefined) out.path = att.path;
+  if (att.color !== undefined) out.color = att.color;
+  return out;
+}
+
+/** Defaults for the `contour` generator's optional parameters, stated once. */
+const CONTOUR_DEFAULTS = { margin: 1, maxVertices: 64, alpha: 1 } as const;
+
+/**
+ * Build a `contour` mesh: measure the attachment's own PNG, trace it, mesh it.
+ *
+ * ## Why this branch does not share the one above
+ *
+ * A `ring` or a `ribbon` takes its window size from the spec and its authority
+ * from control bones. A contour takes both from the art: the size is the PNG's
+ * own (so there is no number to disagree with the pixels), and there are no
+ * control bones at all, because every vertex is pinned to the slot bone —
+ * `buildContourMesh`'s header says why that is the whole weighting model.
+ *
+ * ⚠️ It reads PIXELS, which nothing else in this compiler does. `src/png.ts`
+ * deliberately stops at the header, so the decode comes from
+ * [`tools/plate.ts`](../tools/plate.ts) — the same codec `render` and `check`
+ * already sample pages with, so "what alpha does this file have" has one answer
+ * in this repository rather than two.
+ *
+ * The placement is the one the generator path documents: no manifest means no
+ * crop to flip against, so the part window is centred on its own slot bone —
+ * which is also what puts an undeformed contour mesh exactly where the plain
+ * region attachment would have drawn it.
+ */
+function buildContourAttachment(
+  att: RigMeshAttachment,
+  generator: Extract<NonNullable<RigMeshAttachment['generator']>, { kind: 'contour' }>,
+  placeholder: string,
+  where: string,
+  ctx: AttachmentContext,
+): SpineMeshAttachment {
+  if (att.image === undefined) {
+    throw new CompileError(
+      `${where}: a "contour" generator traces the part's own alpha, so the attachment needs an "image" — ` +
+        'there is nothing else here that says which pixels to measure',
+    );
+  }
+  const region = basename(att.image, '.png');
+  const img = ctx.images.find((im) => im.region === region);
+  if (!img) throw new CompileError(`${where}: no compiled image for "${att.image}"`);
+  // ⚠️ Nothing here reads the PNG's colour type. `hasAlpha` answers "where does
+  // this file keep its alpha", not "is any pixel of it transparent" — a tRNS
+  // chunk is real transparency (issue #215) and an all-255 alpha channel is
+  // none — so "this part has no silhouette to trace" is a question about pixels,
+  // and `buildContourMesh` refuses it by counting them.
+  const plate = readPlate(img.absPath);
+  const alpha = new Uint8Array(plate.width * plate.height);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = plate.data[i * 4 + 3];
+
+  const margin = generator.margin ?? CONTOUR_DEFAULTS.margin;
+  const maxVertices = generator.maxVertices ?? CONTOUR_DEFAULTS.maxVertices;
+  const threshold = generator.alpha ?? CONTOUR_DEFAULTS.alpha;
+  let geometry;
+  try {
+    geometry = buildContourMesh({
+      mask: { width: plate.width, height: plate.height, alpha },
+      threshold,
+      tolerance: generator.tolerance,
+      margin,
+      maxVertices,
+    });
+  } catch (err) {
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
+    throw err;
+  }
+
+  const w = plate.width;
+  const h = plate.height;
+  if (att.width !== undefined && att.width !== w) {
+    throw new CompileError(`${where}: the spec says width ${att.width} and "${att.image}" measures ${w}`);
+  }
+  if (att.height !== undefined && att.height !== h) {
+    throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`);
+  }
+  const anchor = ctx.transforms.get(ctx.anchorBone);
+  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  const index = ctx.bones.findIndex((b) => b.name === ctx.anchorBone);
+  if (index < 0) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
+  const vertices = encodeWeightedVertices(
+    geometry,
+    (px, py) => [r6(anchor.worldX + px - w / 2), r6(anchor.worldY + h / 2 - py)],
+    { anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) }, controls: [] },
+  );
+  ctx.meshBones.add(ctx.anchorBone);
+  ctx.meshes.push({
+    slot: ctx.slotName,
+    kind: 'contour',
+    attachments: [placeholder],
+    vertices: geometry.uvs.length / 2,
+    triangles: geometry.triangles.length / 3,
+    bones: [ctx.anchorBone],
+    coverage: geometry.contour?.coverage,
+    overshoot: geometry.contour?.overshoot,
+  });
+  const out: SpineMeshAttachment = {
+    type: 'mesh',
+    uvs: geometry.uvs,
+    triangles: geometry.triangles,
+    vertices,
+    hull: geometry.hullVertices,
+    width: r6(w),
+    height: r6(h),
+  };
+  // Same rule a region attachment follows: the atlas region is the PNG's
+  // basename, so a placeholder named anything else needs `path` written down or
+  // the loader resolves nothing.
+  if (att.path !== undefined) out.path = att.path;
+  else if (region !== placeholder) out.path = region;
   if (att.color !== undefined) out.color = att.color;
   return out;
 }
@@ -1819,7 +1941,7 @@ function buildRigInfo(
       }
     }
   }
-  const meshKinds: Record<string, 'ring' | 'ribbon' | 'authored'> = {};
+  const meshKinds: RigInfo['meshKinds'] = {};
   for (const mesh of meshes) meshKinds[mesh.slot] = mesh.kind;
   // Inward, in Spine world. Off-axis keys (the mass bone usually hangs outside
   // the axis subtree) have to be projected onto it before they can be compared

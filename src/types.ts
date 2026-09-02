@@ -14,6 +14,7 @@
  * Nothing else is an input, and the compiler never invents a value that is in
  * none of them.
  */
+import type { MeshKind } from './mesh.ts';
 
 // ---------------------------------------------------------------------------
 // Cut manifest (face class)
@@ -772,15 +773,16 @@ export interface RigInfo {
   /**
    * slot -> what built this mesh, for the kind-aware mesh assertions.
    *
-   * `ring` and `ribbon` are rigc's own generators, whose topology it therefore
-   * knows: where the rim is, which edge is the entry row, that the rows pair up.
+   * `ring`, `ribbon` and `contour` are rigc's own generators, whose topology it
+   * therefore knows: where the rim is, which edge is the entry row, that the
+   * rows pair up, that a contour's hull IS every vertex it has.
    * **`authored`** is geometry that came in through the rig spec — drawn by an
    * animator, transcribed from an export — and rigc knows nothing about its
    * topology at all. An assertion that measures generator topology has nothing
    * to say about one, so it SKIPs with that as the reason rather than checking
    * a ring the mesh was never supposed to be.
    */
-  meshKinds: Record<string, 'ring' | 'ribbon' | 'authored'>;
+  meshKinds: Record<string, MeshKind | 'authored'>;
   /** Mesh slots this rig budgets for, or null when it declares no budget. */
   meshSlotBudget: number | null;
   /** Triangles one mesh may carry, or null when the rig declares no budget. */
@@ -823,11 +825,19 @@ export interface CompileResult {
   /** Mesh slots emitted, with triangle counts — reported by `build`. */
   meshes: Array<{
     slot: string;
-    kind: 'ring' | 'ribbon' | 'authored';
+    kind: MeshKind | 'authored';
     attachments: string[];
     vertices: number;
     triangles: number;
     bones: string[];
+    /**
+     * Share of the part's own art the triangles cover, 0..1. Only a `contour`
+     * mesh has one — it is the only generator whose shape is a claim ABOUT the
+     * art, so it is the only one with something to measure against it.
+     */
+    coverage?: number;
+    /** How far past the silhouette that mesh reaches, in part pixels. */
+    overshoot?: number;
   }>;
   /** Structural expectations handed to the validator. */
   rig: RigInfo;
