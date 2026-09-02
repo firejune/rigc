@@ -39,6 +39,7 @@
     "docs/AUTHORING.md",
     "docs/SPEC_COVERAGE.md",
     "docs/PROMPTING.md",
+    "docs/MOTION.md",
     "NOTICE.md"
   ],
   "publishConfig": {

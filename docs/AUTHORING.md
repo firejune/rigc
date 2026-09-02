@@ -3092,6 +3092,11 @@ one"*. Read both frames, write the two key poses into the rig and the motion fro
 the numbers it gives you, and spend your loops on the part no instrument can
 measure: the movement between them.
 
+📘 **The recipe that consumes this report is [MOTION.md](MOTION.md)** — how these
+placements become a rig and a motion, what goes between two key poses when nothing
+was given for the in-betweens, and how to spread candidates so a `vote` ballot
+informs.
+
 ### 11.1 It measures an input, so nothing here is a score
 
 🚨 **No number in this report has a pass bar, and none of them is a grade.** The

@@ -531,6 +531,10 @@ They complement each other rather than overlap. `render` is offline, determinist
 and measurable — its pixels are the ones `check` reports on. `preview` is the
 interop proof: what plays there was played by Esoteric's own runtime, not by ours.
 
+🎞️ **Authoring the movement that these two show you** — key poses, in-betweening,
+and how to spread candidates so a ballot informs — is
+[docs/MOTION.md](docs/MOTION.md).
+
 ### Letting someone choose — `rigc vote`
 
 Sometimes looking is not enough on its own, because there is more than one
