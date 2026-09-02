@@ -418,6 +418,7 @@ the art. Its shape is under
 | --- | --- |
 | 📘 **[docs/AUTHORING.md](docs/AUTHORING.md)** | **the format guide, and the one to read before writing a spec.** Both input files field by field with a complete minimal example each, every field with its Spine meaning, the rules that decide what is emitted, the build → read the report → fix → repeat loop, the map from every named failure to the file that has to change, and the features rigc refuses by name so you do not spend a loop discovering them. It travels **inside the npm package**, at `node_modules/spine-rigc/docs/AUTHORING.md` |
 | 🎞️ **[docs/MOTION.md](docs/MOTION.md)** | **the key-pose recipe.** How to get two poses, what a pair of poses does and does not fix, the in-betweening rules and where each comes from, and how to spread candidates so a ballot informs. Ships in the package too |
+| 📥 **[docs/INGEST.md](docs/INGEST.md)** | **working with a skeleton you did not author.** What every command can and cannot do with a foreign `skeleton.json`, reading it with the toolchain, transcription as the route that makes it yours, what each validator complaint means on an export, and the re-pivot/rename/extend recipes. Ships in the package too |
 | 🤖 **[docs/PROMPTING.md](docs/PROMPTING.md)** | **handing the authoring to an AI agent** — the prompt clauses a measured pilot run paid for, and what you can leave unsaid. Ships in the package too |
 | 🔬 **[docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md)** | Spine 4.3's full export surface against what rigc emits and what the official examples measurably use, with the ordered gap list |
 | 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 36 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
@@ -448,7 +449,7 @@ rung's third attempt clears on those grounds, on the candidate it already had.
 **Rungs 1–6 and 8 and the graduation exam were unaffected throughout**: each reproduces
 its gated figures to the digit, and the 5.55 px and 0-of-124 figures above are among
 them. Both verdicts, and the sweep of every candidate under the new gate, are in
-[docs/LADDER.md](docs/LADDER.md)'s *PR #254 instrument re-inspection* and *gate-v2.3
+[docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md)'s *PR #254 instrument re-inspection* and *gate-v2.3
 re-inspection*.
 
 ⚠️ **What that certifies, stated exactly.** That **the tool, the guide and the
