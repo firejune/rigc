@@ -508,8 +508,10 @@ function cmdDiff(flags: Record<string, string>, positional: string[]): void {
  *
  * There is no pass mark, for the same reason `diff` has none.
  */
-function readCheckFlags(flags: Record<string, string>): Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing'> {
-  const out: Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing'> = {};
+function readCheckFlags(
+  flags: Record<string, string>,
+): Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing' | 'textureFrom'> {
+  const out: Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing' | 'textureFrom'> = {};
   if (flags.framing !== undefined) {
     if (flags.framing !== 'per-shot' && flags.framing !== 'shared') {
       throw new UsageError('--framing takes per-shot (the default) or shared');
@@ -530,6 +532,16 @@ function readCheckFlags(flags: Record<string, string>): Pick<CheckOptions, 'fps'
     out.viewport = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
   }
   if (flags.as !== undefined) out.as = flags.as;
+  if (flags['texture-from'] !== undefined) {
+    const path = resolve(flags['texture-from']);
+    if (!existsSync(path)) {
+      throw new UsageError(
+        `--texture-from ${path} is not a file. It takes the ATLAS the reference frames were rendered through — the ` +
+          "example's own .atlas — so check can measure how much of the MAE is texture resampling.",
+      );
+    }
+    out.textureFrom = { atlasText: readFileSync(path, 'utf8'), atlasDir: dirname(path), label: flags['texture-from'] };
+  }
   return out;
 }
 
@@ -1456,6 +1468,11 @@ const FLAG_MEANINGS: Record<string, string> = {
     'which rulebook to check against (default: spine) — spine = valid Spine 4.3 that any runtime plays ' +
     "correctly; spine-html = also this project's renderer/archetype policy",
   atlas: "the candidate's atlas, when it is not beside the skeleton",
+  'texture-from':
+    "also measure this run through this atlas's texels, keeping the candidate's own geometry, and report how much " +
+    'of the MAE is texture resampling rather than the rig — pass the atlas the reference frames were rendered ' +
+    'through. ⚠️ NOT --atlas: that one names the candidate\'s own atlas and loading a foreign one there re-seats ' +
+    'every region attachment on its packing, so a rotated or trimmed pack moves the geometry too',
   candidate: 'a compiled skeleton: a directory holding skeleton.json + skeleton.atlas, or a skeleton.json path',
   frames: 'a rendered reference frame set (a skeleton root, or one animation directory)',
   fps: 'frame rate, only for a frame set with no frames.json sidecar',
@@ -1490,6 +1507,7 @@ const FLAG_VALUES: Record<string, string> = {
   cuts: '<path>',
   profile: 'spine|spine-html',
   atlas: '<path>',
+  'texture-from': '<path>',
   candidate: '<dir|skeleton.json>',
   frames: '<dir>',
   fps: '<n>',
@@ -1560,7 +1578,7 @@ const COMMANDS: CommandDoc[] = [
   {
     name: 'check',
     usage: ['rigc check --candidate <dir | skeleton.json> --frames <dir> [flags]'],
-    flags: ['candidate', 'frames', 'atlas', 'fps', 'viewport', 'framing', 'as', 'all-frames', 'json'],
+    flags: ['candidate', 'frames', 'atlas', 'texture-from', 'fps', 'viewport', 'framing', 'as', 'all-frames', 'json'],
   },
   {
     name: 'bench',

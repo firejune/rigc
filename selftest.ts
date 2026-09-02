@@ -54,6 +54,7 @@ import {
   MeshAttachment,
   Physics,
   Skeleton,
+  TextureAtlas,
   TransformConstraint,
   type SkeletonData,
 } from '@esotericsoftware/spine-core';
@@ -62,6 +63,7 @@ import {
   checkAgainstFrames,
   checkLines,
   componentField,
+  EXTENT_SPREAD_REACH,
   matchSlots,
   OVERDRAW_RATIO,
   type AnimationCheck,
@@ -104,6 +106,8 @@ import {
   SHEET_COLUMNS,
   SHEET_FILE,
   SHEET_GAP,
+  substituteTexture,
+  textureSubstitutionFromText,
   unionBounds,
   viewportOfSize,
   type Footprint,
@@ -1376,8 +1380,20 @@ const FRAMING_SCALE = 1.02;
 const DECLARED_MAE_TOLERANCE = 0.01;
 /** The whole-rig translation C06 asks `check` to refuse the declared box for. */
 const FRAMING_MOVE = 300;
-/** The ONE-shot translation C07 offsets `light` by, in the rig's own units (~35 px). */
-const SHOT_OFFSET = 300;
+/**
+ * The ONE-shot translation C07 offsets `light` by, in the rig's own units (~71 px).
+ *
+ * ⚠️ Its job is to be **big enough that a shared framing cannot absorb it**, and
+ * that bar moved when the declared box gained its extent-spread tolerance (issue
+ * #194): at the old 300 units the pooled probe now asks for a 9.64 px correction
+ * against an 11.74 px reach and takes `frames.json`'s own box, which is the right
+ * answer — 65 of the 86 pooled frames land there — and leaves the untouched shot
+ * reading its own baseline under BOTH scopes, so the control could no longer tell
+ * a report that does not move from one that cannot. At 600 the pooled correction
+ * is 21.71 px, past the reach, the shared framing is a fit again, and the
+ * untouched shot reads 133.45 there against 6.42 on its own box.
+ */
+const SHOT_OFFSET = 600;
 /** How far C07 lets the untouched shot's MAE move when another shot is offset. */
 const SCOPE_TOLERANCE = 0.01;
 /** How far C07 needs a SHARED framing to move it, for the per-shot claim to mean anything. */
@@ -1413,6 +1429,36 @@ const CHAIN_UNATTRIBUTED_TOLERANCE = 0.01;
 const REFINE_PART_OFFSET = 20;
 /** How far C13 pins the box off the frames' own, in frame pixels. */
 const REFINE_PIN_PIXELS = 2;
+/**
+ * How far C16 displaces ONE part, in the rig's own units (~7 px).
+ *
+ * Chosen to land in the **extent-spread** regime and measured there: at the
+ * declared box this fixture's fit asks for 6.79 / 5.48 px against reaches of
+ * 11.74 / 6.20, and leaves 1.43 / 2.12 px rms that no similarity can absorb. Its
+ * negatives are C04 (a rig at 2 % different units: 0.20–0.27 px rms, refused) and
+ * C06 (a rig 300 units away: past the reach, refused) — see `EXTENT_SPREAD_REACH`.
+ */
+const SPREAD_PART_OFFSET = 60;
+/** How far C16 lets the extent-spread box differ from pinning the same box by hand. */
+const SPREAD_MAE_TOLERANCE = 0.01;
+/** Transparent border C17's repacked atlas trims off each part before rotating it. */
+const REPACK_GAP = 4;
+/**
+ * How far C17 lets a rotated, trimmed REPACK of the same texels move the picture.
+ *
+ * A whole MAE point, against a measured 0.46 on the long thin part and 0.08 on the
+ * square one — which is bilinear resampling of a turned texel grid and nothing
+ * else. Read it beside `REPACK_GEOMETRY_MOVE`: the same atlas down the old path
+ * moves the same figures by 234, so the two legs of this control are three orders
+ * of magnitude apart and the threshold between them is not delicate.
+ */
+const REPACK_FLOOR = 1;
+/** How far C17 needs the old `--atlas` path to move it, for the claim to mean anything. */
+const REPACK_GEOMETRY_MOVE = 10;
+/** How exactly C18's decomposition has to obey its own triangle bound, in MAE points. */
+const FLOOR_BOUND_TOLERANCE = 1e-9;
+/** How much of the ladder's MAE C18 needs the `scale: 0.5` pack to account for. */
+const FLOOR_SHARE = 0.5;
 /** How exactly re-measuring at the refined box must reproduce the search's figure. */
 const REFINE_REPORT_TOLERANCE = 0.01;
 /** Which rung-3 set C14 and C15 rebuild as a stills-plus-sheet frame set. */
@@ -1436,6 +1482,100 @@ const SHEET_STRAY_COLUMN = 1;
 const CHECK_TRANSCRIPTION = resolve(import.meta.dir, 'bench/transcriptions/3-timing-and-spacing');
 const CHECK_FRAMES = resolve(import.meta.dir, 'bench/reference/3-timing-and-spacing');
 const CHECK_IMAGES = resolve(import.meta.dir, 'examples/3-timing-and-spacing/images');
+
+/**
+ * The candidate's own art, repacked onto ONE page **rotated 90° and trimmed** —
+ * the atlas shape issue #199 is about.
+ *
+ * ## Why this fixture is self-checking
+ *
+ * It carries **the same texels** as the candidate's own pages: every part is
+ * cropped to its opaque bounds, turned a quarter turn and laid into a single page
+ * with a gap between the parts. So a *texture-only* substitution against it must
+ * change the picture by almost nothing — same drawing, same resolution, different
+ * place on a different page — and that is what C17 asserts. Nothing has to be
+ * believed about the packing arithmetic: if a byte of it is wrong the picture
+ * moves and the control fires.
+ *
+ * ## Why `rotate: 270` and not 90
+ *
+ * Because that is rung 7's own packing, and because it is the case the old recipe
+ * gets **wrong**: `RegionAttachment.computeUVs` implements the rotated corner
+ * assignment for `degrees === 90` and for nothing else, and `TextureAtlas` only
+ * transposes a rotated region's page rectangle at 90 too. So a region attachment
+ * loaded against a 270-packed, non-square region samples the wrong sub-rectangle
+ * of the page altogether — which is what makes C17's negative leg loud, and what
+ * sent rung 7's `--atlas` figures the wrong way.
+ *
+ * The mapping is derived from `MeshAttachment.computeUVs`, which is the routine
+ * `substituteTexture` goes through and the only one in `spine-core` that
+ * implements all four rotations. At 270 it maps the drawing's `(s, t)` to
+ * `u = x − offsetY + (1 − t)·originalHeight` and `v = y − offsetX + s·originalWidth`;
+ * inverting that on texel centres puts art pixel `(ax, ay)` of the trimmed
+ * rectangle at page pixel `(height − 1 − ay, ax)` inside a rectangle that is
+ * `height` wide and `width` tall. `bounds` stays in the drawing's own orientation,
+ * which is what the format records.
+ */
+function repackRotatedTrimmed(atlasText: string, atlasDir: string): { atlasText: string; atlasDir: string } {
+  const atlas = new TextureAtlas(atlasText);
+  const parts = atlas.regions.map((region) => {
+    const page = readPlate(join(atlasDir, region.page.name));
+    // The opaque bounds of the region's own rectangle. rigc packs one untrimmed,
+    // unrotated part per page, so the rectangle is the whole page here — the scan
+    // is over the art itself and its result is the trim this repack records.
+    let left = page.width;
+    let top = page.height;
+    let right = -1;
+    let bottom = -1;
+    for (let y = 0; y < page.height; y++) {
+      for (let x = 0; x < page.width; x++) {
+        if (page.get(x, y)[3] === 0) continue;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+    if (right < left || bottom < top) throw new Error(`selftest: region "${region.name}" is all transparent`);
+    return {
+      name: region.name.trim(),
+      page,
+      left,
+      top,
+      width: right - left + 1,
+      height: bottom - top + 1,
+    };
+  });
+
+  // One column of rotated rectangles: each is `height x width` on the page.
+  const pageWidth = Math.max(...parts.map((p) => p.height)) + REPACK_GAP * 2;
+  const pageHeight = parts.reduce((sum, p) => sum + p.width + REPACK_GAP, REPACK_GAP);
+  const packed = new Plate(pageWidth, pageHeight);
+  const lines: string[] = ['repacked.png', `\tsize: ${pageWidth}, ${pageHeight}`, '\tfilter: Linear, Linear'];
+  let at = REPACK_GAP;
+  for (const part of parts) {
+    for (let ay = 0; ay < part.height; ay++) {
+      for (let ax = 0; ax < part.width; ax++) {
+        packed.set(REPACK_GAP + (part.height - 1 - ay), at + ax, part.page.get(part.left + ax, part.top + ay));
+      }
+    }
+    lines.push(
+      part.name,
+      // `bounds` stays in the DRAWING's orientation — the page rectangle is its
+      // transpose — and `offsets` is the trim measured from the drawing's left and
+      // BOTTOM, then its untrimmed size.
+      `\tbounds: ${REPACK_GAP}, ${at}, ${part.width}, ${part.height}`,
+      `\toffsets: ${part.left}, ${part.page.height - (part.top + part.height)}, ${part.page.width}, ${part.page.height}`,
+      '\trotate: 270',
+    );
+    at += part.width + REPACK_GAP;
+  }
+  const outDir = mkdtempSync(join(tmpdir(), 'rigc-repack-'));
+  packed.writePng(join(outDir, 'repacked.png'));
+  const text = `${lines.join('\n')}\n`;
+  writeFileSync(join(outDir, 'repacked.atlas'), text);
+  return { atlasText: text, atlasDir: outDir };
+}
 
 /** Compile the rung-3 transcription, optionally against a rewritten motion spec. */
 function compileTranscription(
@@ -2544,7 +2684,243 @@ function runCheckSuite(): number | null {
         `${JSON.stringify(movedRefinements)}, pinned ${REFINE_PIN_PIXELS} px off ${JSON.stringify(pinnedRefinements)}`,
     );
   }
+
+  // --- the extent test does not punish a silhouette for the coordinates ------
+  // Issue #194. The declared-box test is on EXTENT, and `fitFraming` registers
+  // extent — so a candidate whose union content box differs by a few per cent at
+  // the extremes reads as a few per cent of scale, which is arithmetically what a
+  // units error reads as, and the frames' own box is refused for a candidate that
+  // is in the frames' own coordinates. Rung 7 is that case on all twelve of its
+  // sets, and pinning the declared box there reads better on every one of them, by
+  // 0.28 to 2.01 MAE over the reference's own pixels.
+  //
+  // The fixture displaces ONE part far enough that no similarity can reconcile the
+  // two extents (`SPREAD_PART_OFFSET`), and the claim is the one C05 makes for a
+  // coincident candidate: taking the box is worth exactly what pinning it by hand
+  // is worth. Its negatives are already above — C04's rig at other units and C06's
+  // rig 300 units away must both still be REFUSED, and are — and the third leg
+  // here is the same fixture moved, so "extent-spread takes the box" cannot be
+  // "the box is always taken". Remove either half of the clause and the framing
+  // comes back `candidate-pixels` and this fires.
+  const spread = compileTranscription(null);
+  const spreadText = offsetOneChain(spread.skeletonText, 'square', SPREAD_PART_OFFSET, 0);
+  const spreadReport = checkAgainstFrames({ ...spread, skeletonText: spreadText, framesDir: CHECK_FRAMES });
+  const spreadPinned = checkAgainstFrames({
+    ...spread,
+    skeletonText: spreadText,
+    framesDir: CHECK_FRAMES,
+    viewport: sidecarViewport(),
+  });
+  const spreadMoved = checkAgainstFrames({
+    ...spread,
+    skeletonText: moveWholeRig(spreadText, FRAMING_MOVE, FRAMING_MOVE),
+    framesDir: CHECK_FRAMES,
+  });
+  const probes = comparedSets(spreadReport).map((a) => a.declaredBox);
+  const spreadGaps = comparedSets(spreadReport).map((anim, i) =>
+    Math.abs(anim.meanMaeReference - (comparedSets(spreadPinned)[i]?.meanMaeReference ?? Number.NaN)),
+  );
+  const spreadOk =
+    probes.length > 0 &&
+    framedBy(spreadReport, 'frames-viewport', 'declared') &&
+    probes.every((p) => p !== null && p.taken && p.clause === 'extent-spread' && p.distance > 1 && p.rms > 1) &&
+    spreadGaps.every((gap) => gap <= SPREAD_MAE_TOLERANCE) &&
+    // The tolerance says so when it engages: a number without its convention is
+    // the defect, not the number.
+    comparedSets(spreadReport).every((anim) => anim.notes.some((note) => note.includes('EXTENT-SPREAD'))) &&
+    // ...and it is a tolerance, not a default.
+    framedBy(spreadMoved, 'candidate-pixels', 'derived');
+  if (spreadOk) {
+    const p = probes[0] as { distance: number; rms: number; reach: number };
+    console.log(
+      `  PASS  C16_A_SILHOUETTE_SPREAD_DOES_NOT_COST_THE_FRAMES_OWN_BOX  ` +
+        `(one part +${SPREAD_PART_OFFSET} units: a fit at the declared box asks ${p.distance.toFixed(2)} px within ` +
+        `${p.reach.toFixed(2)} and leaves ${p.rms.toFixed(2)} px rms, so the box is taken and reads within ` +
+        `${SPREAD_MAE_TOLERANCE} of pinning it by hand; the same rig moved +${FRAMING_MOVE} units is still fitted)`,
+    );
+    console.log(
+      '          origin: rung 7 was refused the frames\' own box on all 12 sets, on extent, and pinning it read ' +
+        'better on every one (issue #194)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C16_A_SILHOUETTE_SPREAD_DOES_NOT_COST_THE_FRAMES_OWN_BOX: framing ` +
+        `${JSON.stringify(comparedSets(spreadReport).map((a) => `${a.dir}:${a.framing}/${a.framingFit?.source ?? null}`))}, ` +
+        `probes ${JSON.stringify(probes)}, gaps ${JSON.stringify(spreadGaps.map((g) => Number(g.toFixed(3))))}, ` +
+        `moved ${JSON.stringify(comparedSets(spreadMoved).map((a) => a.framing))}, reach ${EXTENT_SPREAD_REACH}`,
+    );
+  }
+
+  // --- a texture-only substitution leaves the geometry alone -----------------
+  // Issue #199. The atlas-floor recipe used to be run as `check --atlas <the
+  // example's own>`, and that re-loads the skeleton against it — so a `rotate:` or
+  // a trim in the substituting pack re-seats every region attachment's quad and the
+  // diagnostic substitutes GEOMETRY as well as texels. Measured on rung 7, whose
+  // pack is `rotate: 270` and trimmed, it sends the reported MAE *up* on every set,
+  // which a texture floor cannot do: a coarser texture can only explain error.
+  //
+  // The fixture is the candidate's own art repacked rotated and trimmed
+  // (`repackRotatedTrimmed`) — the SAME texels in a different place — so a
+  // texture-only substitution must draw almost the same picture and the floor must
+  // be near zero. The control that makes it mean something is the other half: the
+  // same atlas down the `--atlas` path has to MOVE the picture, or "the geometry did
+  // not move" would be indistinguishable from a substitution that does nothing.
+  const repacked = repackRotatedTrimmed(spread.atlasText, spread.atlasDir);
+  // The claim itself, asserted on the geometry rather than inferred from the
+  // picture: every world vertex of every piece survives the substitution
+  // unchanged, and only the page and the UVs move.
+  const posed = posableFromText(spread.skeletonText, spread.atlasText, spread.atlasDir);
+  const before = sampleAnimation(posed.data, posed.data.animations[0].name, PROTOCOL_FPS, { texture: true });
+  const substitution = textureSubstitutionFromText(repacked.atlasText, repacked.atlasDir);
+  let verticesMoved = 0;
+  let uvsHeld = 0;
+  for (const frame of before) {
+    const after = substituteTexture(frame, substitution);
+    for (let i = 0; i < frame.pieces.length; i++) {
+      const mine = frame.pieces[i];
+      const theirs = after.frame.pieces[i];
+      if (mine.world.length !== theirs.world.length) verticesMoved++;
+      else for (let v = 0; v < mine.world.length; v++) if (mine.world[v] !== theirs.world[v]) verticesMoved++;
+      if (mine.page === theirs.page) uvsHeld++;
+      else for (let v = 0; v < mine.uvs.length; v++) if (mine.uvs[v] === theirs.uvs[v]) uvsHeld++;
+    }
+  }
+  const textureOnly = checkAgainstFrames({
+    ...spread,
+    framesDir: CHECK_FRAMES,
+    textureFrom: { ...repacked, label: 'repacked.atlas' },
+  });
+  const viaAtlas = checkAgainstFrames({ ...spread, ...repacked, framesDir: CHECK_FRAMES });
+  const geometryMoved = comparedSets(viaAtlas).map((anim, i) =>
+    Math.abs(anim.meanMaeReference - (comparedSets(spreadFaithfulFor(spread))[i]?.meanMaeReference ?? Number.NaN)),
+  );
+  const floors = comparedSets(textureOnly).map((a) => a.textureFloor);
+  const unmatchedRegions = textureOnly.textureFrom?.unmatched ?? ['(no report)'];
+  const textureOnlyOk =
+    floors.length > 0 &&
+    unmatchedRegions.length === 0 &&
+    // not one vertex moved, and not one UV stayed
+    verticesMoved === 0 &&
+    uvsHeld === 0 &&
+    floors.every((t) => t !== null && t.floor <= REPACK_FLOOR) &&
+    // The graded figures are untouched: this is additive reporting, and `mae` keeps
+    // its meaning to the last decimal.
+    comparedSets(textureOnly).every(
+      (anim, i) => anim.meanMaeReference === (comparedSets(spreadFaithfulFor(spread))[i]?.meanMaeReference ?? Number.NaN),
+    ) &&
+    // ...and the old path does move the picture, on the same atlas.
+    geometryMoved.every((moved) => moved > REPACK_GEOMETRY_MOVE);
+  if (textureOnlyOk) {
+    console.log(
+      `  PASS  C17_A_TEXTURE_ONLY_SUBSTITUTION_LEAVES_THE_GEOMETRY_ALONE  ` +
+        `(the same art repacked rotate: 270 + trimmed: not one of ${before.length} frame(s)' world vertices moved ` +
+        'and not one UV stayed, floor ' +
+        `${(floors[0] as { floor: number }).floor.toFixed(2)} and every graded figure identical, where loading the ` +
+        `same atlas as the candidate's own moves them ${geometryMoved.map((m) => m.toFixed(2)).join(' / ')} MAE)`,
+    );
+    console.log(
+      "          origin: rung 7's `--atlas` floor diagnostic sent the MAE up on every set, which is geometry rather " +
+        'than texture (issue #199)',
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C17_A_TEXTURE_ONLY_SUBSTITUTION_LEAVES_THE_GEOMETRY_ALONE: ${verticesMoved} vertex/vertices moved, ` +
+        `${uvsHeld} UV(s) held, floors ${JSON.stringify(floors)}, ` +
+        `unmatched ${JSON.stringify(unmatchedRegions)}, graded ` +
+        `${JSON.stringify(comparedSets(textureOnly).map((a) => a.meanMaeReference))} against ` +
+        `${JSON.stringify(comparedSets(spreadFaithfulFor(spread)).map((a) => a.meanMaeReference))}, --atlas moved ` +
+        `${JSON.stringify(geometryMoved.map((m) => Number(m.toFixed(2))))} (needs > ${REPACK_GEOMETRY_MOVE})`,
+    );
+  }
+
+  // --- and the resampling is ATTRIBUTED rather than left in the figure -------
+  // Issue #171, measured twice before it was filed: the ladder's examples ship
+  // packed atlases at `scale: 0.4`–`0.5` and rigc has no packer, so a candidate
+  // samples the loose art at twice the resolution and about two thirds of the
+  // reported MAE is resampling that no key can move. Nothing in the report said so.
+  //
+  // Three legs, and the second is what makes this a decomposition rather than a
+  // second number: the bound `|mae − aboveFloor| ≤ floor` is the triangle
+  // inequality on the same pixels, so it is arithmetic and holds exactly. The third
+  // is the identity control — substituting the candidate's OWN atlas has to report
+  // a floor of exactly nothing, which a mis-wired substitution cannot do.
+  const ladderAtlas = join(resolve(import.meta.dir, 'examples/3-timing-and-spacing/export'), '3-timing-and-spacing.atlas');
+  const attributed = existsSync(ladderAtlas)
+    ? checkAgainstFrames({
+        ...spread,
+        framesDir: CHECK_FRAMES,
+        textureFrom: { atlasText: readFileSync(ladderAtlas, 'utf8'), atlasDir: dirname(ladderAtlas), label: ladderAtlas },
+      })
+    : null;
+  const itself = checkAgainstFrames({
+    ...spread,
+    framesDir: CHECK_FRAMES,
+    textureFrom: { atlasText: spread.atlasText, atlasDir: spread.atlasDir, label: 'its own' },
+  });
+  const bounded = attributed === null ? [] : comparedSets(attributed);
+  const attributedOk =
+    attributed !== null &&
+    bounded.length > 0 &&
+    attributed.textureFrom !== null &&
+    attributed.textureFrom.scales.length > 0 &&
+    bounded.every((anim) => {
+      const t = anim.textureFloor;
+      if (t === null) return false;
+      const explained = anim.meanMae - t.aboveFloor;
+      return (
+        t.floor >= 0 &&
+        t.aboveFloor >= 0 &&
+        // the bound, in both directions
+        Math.abs(explained) <= t.floor + FLOOR_BOUND_TOLERANCE &&
+        // a floor can only EXPLAIN error, never add it
+        t.aboveFloor < anim.meanMae &&
+        // and on this pack it explains most of the figure
+        explained >= FLOOR_SHARE * anim.meanMae
+      );
+    }) &&
+    // The identity control: its own texels, so there is nothing to attribute.
+    comparedSets(itself).every((anim) => {
+      const t = anim.textureFloor;
+      return t !== null && t.floor === 0 && t.floorReference === 0 && t.aboveFloor === anim.meanMae;
+    });
+  if (attributedOk) {
+    const first = bounded[0];
+    const t = first.textureFloor as { floor: number; aboveFloor: number };
+    console.log(
+      `  PASS  C18_THE_TEXTURE_RESAMPLING_IS_ATTRIBUTED_NOT_LEFT_IN_THE_MAE  ` +
+        `(scale: ${(attributed as CheckReport).textureFrom?.scales.join(', ')} pack: MAE ${first.meanMae.toFixed(2)} ` +
+        `= ${(first.meanMae - t.aboveFloor).toFixed(2)} texture + ${t.aboveFloor.toFixed(2)} above a floor of ` +
+        `${t.floor.toFixed(2)}, bound |MAE − above| ≤ floor holds; its own atlas reports a floor of exactly 0)`,
+    );
+    console.log(
+      '          origin: rung 3 read MAE 6.13 from the loose art and 2.25 through the supplied pack, and the report ' +
+        'attributed none of it (issue #171)',
+    );
+  } else if (attributed === null) {
+    console.log(`  SKIP  C18_THE_TEXTURE_RESAMPLING_IS_ATTRIBUTED_NOT_LEFT_IN_THE_MAE  (no example corpus at ${ladderAtlas})`);
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  C18_THE_TEXTURE_RESAMPLING_IS_ATTRIBUTED_NOT_LEFT_IN_THE_MAE: ` +
+        `${JSON.stringify(bounded.map((a) => ({ mae: a.meanMae, floor: a.textureFloor })))}, own-atlas ` +
+        `${JSON.stringify(comparedSets(itself).map((a) => ({ mae: a.meanMae, floor: a.textureFloor })))}, ` +
+        `report ${JSON.stringify(attributed.textureFrom)}`,
+    );
+  }
   return bad;
+}
+
+/**
+ * The same fixture `check`ed with nothing substituted — C17's like-for-like.
+ *
+ * A function rather than a value because C17 compares three reports of one
+ * candidate and the graded one has to be built from exactly the artifact the other
+ * two were, with no flag set.
+ */
+function spreadFaithfulFor(artifact: { skeletonText: string; atlasText: string; atlasDir: string }): CheckReport {
+  return checkAgainstFrames({ ...artifact, framesDir: CHECK_FRAMES });
 }
 
 // ---------------------------------------------------------------------------
@@ -7061,16 +7437,20 @@ function main(): void {
         [diffBad === null ? 'diff' : null, checkBad === null ? 'check' : null].filter(Boolean).join(' and ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
       : `, + 2 diff identity controls (name-matched and name-agnostic), + ${DIFF_CASES.length} diff measure controls, ` +
-        '+ 16 check controls (frames-only reads, a faithful ' +
+        '+ 19 check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +
         "not, one offset shot that must not move another shot's numbers, one bloated sprite that must " +
         'lower the union mean, raise the figure over the reference’s own pixels, and be named as overdraw, ' +
         'one offset bone CHAIN that must be blamed while its neighbour and a faithful build stay on the floor, ' +
         'a constant framing pixel that must be taken out of the figure on a displaced silhouette and ' +
-        'invented on neither a faithful nor a bodily moved one, and a defect between two committed stills that ' +
+        'invented on neither a faithful nor a bodily moved one, a defect between two committed stills that ' +
         'must be loud on the contact sheet holding the frames between them while a sheet that is not a grid of ' +
-        'those frames is refused by name)';
+        "those frames is refused by name, a silhouette spread that must NOT cost the frames' own box while a rig " +
+        'at other units and a rig somewhere else still do, a rotated and trimmed repack of the same texels that ' +
+        'must leave every world vertex where it was and every graded figure to the decimal — where loading it as ' +
+        "the candidate's own atlas moves them by 234 MAE — and the texture resampling attributed under a bound the " +
+        "decomposition obeys as arithmetic, with the candidate's own atlas reporting a floor of exactly nothing)";
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'

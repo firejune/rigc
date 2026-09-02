@@ -65,6 +65,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import {
+  atlasScales,
   BACKGROUND,
   frameGeometry,
   PROTOCOL_FPS,
@@ -72,6 +73,8 @@ import {
   renderFrame,
   sampleAnimation,
   sampleSetupPose,
+  substituteTexture,
+  textureSubstitutionFromText,
   trimmedUnionBounds,
   viewportOfSize,
   PAD,
@@ -84,6 +87,8 @@ import {
   type Frame,
   type FramesSidecar,
   type FrameSet,
+  type PoseOptions,
+  type TextureSubstitution,
   type Viewport,
 } from './render.ts';
 import {
@@ -277,6 +282,69 @@ export interface FrameChange {
   verdict: 'agrees' | 'moves' | 'holds';
 }
 
+/**
+ * How much of a difference is the **texture** rather than the rig — the
+ * decomposition `--texture-from` measures, and the hole issue #171 filed.
+ *
+ * ## What was unattributed, and what it was worth
+ *
+ * The reference frames are rendered through the example's own **packed** atlas,
+ * which may carry a `scale:` line — the ladder's examples are packed at 0.4 and
+ * 0.5 — while rigc has no packer and a candidate samples the loose art at its own
+ * resolution. Every edge of every part is then filtered from a different source.
+ * That difference is a constant of the *pipeline*: it is invisible to the content
+ * box, to the fit residual and to the whole-pixel refinement (a resampling
+ * difference is not an offset), and **no key an author writes can move it**.
+ *
+ * It was measured twice by hand before it was measured here — rung 3 read MAE
+ * 6.13/6.01 from the loose art against 2.25/2.30 through the supplied pack, and
+ * rung 5's re-climb found the same mechanism — so about two thirds of those
+ * figures was texture. Nothing in the report said so, which is the part that
+ * matters: a run that does not know it spends its budget hunting a rig that is
+ * already right, and two runs whose atlases differ cannot be compared at all.
+ *
+ * ## The three figures, and what relates them
+ *
+ * Everything here is measured over **the same pixels** `mae` and `maeReference`
+ * average, in the same box, from the same pose — the substitution changes texels
+ * and nothing else (`substituteTexture`). Writing `a` for the candidate's own
+ * render, `f` for its substituted render and `b` for the reference frame:
+ *
+ * - `mae` is `mean|a − b|` and is **unchanged** by any of this;
+ * - `floor` is `mean|a − f|` — the resampling on its own. Same geometry, same
+ *   pose, same rasteriser: there is no rig content in it at all;
+ * - `aboveFloor` is `mean|f − b|` — the figure with the texture difference taken
+ *   out, which is what the hand-run diagnostic was reporting.
+ *
+ * ⭐ **The floor bounds the claim rather than subtracting from it.** Absolute
+ * errors do not add, so `mae = floor + aboveFloor` would be false. What is true,
+ * per pixel and therefore of the means, is the triangle inequality:
+ *
+ *     |mae − aboveFloor| ≤ floor
+ *
+ * so the floor is an upper bound on how much of the MAE the texture can explain,
+ * and `mae − aboveFloor` is what it actually explained on these frames. A
+ * `floor` near zero is a proof that the texture is *not* the story here; a
+ * `floor` that accounts for most of `mae` says the rest of the report is being
+ * read at the wrong scale.
+ *
+ * ⚠️ **`aboveFloor` is not a better number and must not be recorded as one.** The
+ * artifact under measurement ships its own atlas, so `mae` is the figure that
+ * belongs in a record and this is the explanation of where it went. And the
+ * coarser texture **loses** detail the finer one has: on rung 3 a one-pixel move
+ * the reference makes stops being visible through the half-scale pack, so a
+ * substituted run can miss a frame-change disagreement the graded run reports.
+ */
+export interface TextureFloor {
+  /** `mean|own − substituted|` over the union alpha — the resampling alone. */
+  floor: number;
+  /** `mean|substituted − reference|` over the same pixels — the MAE without it. */
+  aboveFloor: number;
+  /** The same two over the REFERENCE's own drawn pixels — `maeReference`'s denominator. */
+  floorReference: number;
+  aboveFloorReference: number;
+}
+
 export interface FrameCheck {
   index: number;
   /** The reference PNG, so a worst-frame line is directly openable. */
@@ -326,6 +394,8 @@ export interface FrameCheck {
   slots: SlotTrack[];
   /** This frame against the one before it, on each side — `null` unless adjacent. */
   change: FrameChange | null;
+  /** What of this frame's difference is texture — `null` without `--texture-from`. */
+  textureFloor: TextureFloor | null;
 }
 
 /**
@@ -458,6 +528,11 @@ export interface AnimationCheck {
   drawnRatio: number;
   /** Mean of the per-frame whole-frame MAE — see `FrameCheck.maeFrame`. */
   meanMaeFrame: number;
+  /**
+   * The mean over this set's frames of each frame's own decomposition — see
+   * `TextureFloor`. `null` without `--texture-from`.
+   */
+  textureFloor: TextureFloor | null;
   worstMae: number;
   worstMaeFrame: number;
   worstDrift: number;
@@ -504,6 +579,12 @@ export interface AnimationCheck {
   /** Where this set's drawn pixels ended up against the reference's. */
   framingFit: FramingReport | null;
   /**
+   * What the declared-box probe measured for this set, taken or not — see
+   * `DeclaredBoxProbe`. Reported either way, because "refused, and by this much,
+   * on this ground" is the fact issue #194 found missing.
+   */
+  declaredBox: DeclaredBoxProbe | null;
+  /**
    * The whole shot against the contact sheet, when the set ships one and does not
    * ship every frame — see `SheetCheck`. `null` when there is nothing to add: no
    * sheet, or every sampled frame already on disk as a frame of its own.
@@ -538,6 +619,59 @@ export type FramingSource = 'derived' | 'declared' | 'pinned';
 
 /** The same three, named for the report line rather than for the code path. */
 export type FramingHow = 'candidate-pixels' | 'frames-viewport' | 'viewport-flag';
+
+/**
+ * Why `frames.json`'s own box was taken for a set, or was not — and the two
+ * numbers that decided it.
+ *
+ * ## 🎯 The clause it exists to state, and the case that made it necessary
+ *
+ * Taking the frames' own box is the single largest thing `check` decides on its
+ * own: it is the difference between measuring in the box the frames were drawn at
+ * and measuring in a fit of it, and `frameByDeclaredBox` records the MAE that
+ * costs. The decision used to be reported only by its *outcome* — one word on the
+ * `framed to` line — so a set that was refused said nothing about how far it
+ * missed by or on which of the two grounds.
+ *
+ * That is issue #194. Rung 7's candidate has its setup box on the reference's to
+ * the pixel and is refused on all twelve sets, because the test is on **extent**
+ * and its union content box is 15.4 px narrower at the extremes. The refusal cost
+ * every set 0.7–1.3 MAE against the declared box, and the run had no way to say
+ * whether that was a coordinate error or a silhouette — the two readings the
+ * numbers here separate. See `EXTENT_SPREAD` for the clause that now settles it.
+ */
+export interface DeclaredBoxProbe {
+  /**
+   * The correction a fit at the declared box asks for, in frame pixels — the
+   * worst displacement over the candidate's own content box corners.
+   */
+  distance: number;
+  /** What that same fit leaves over across every edge of every frame, in px rms. */
+  rms: number;
+  /** How far the correction was allowed to reach — see `EXTENT_SPREAD_REACH`. */
+  reach: number;
+  /** How many frames the probe was made from. */
+  frames: number;
+  /** Was the box taken for this set? */
+  taken: boolean;
+  /**
+   * Which clause decided it.
+   *
+   * - `coincident` — the correction is under `COINCIDENT_PIXELS`. Taken; the
+   *   original clause, and unchanged.
+   * - `extent-spread` — the correction is larger than that but reaches no further
+   *   than `reach`, and `rms` says one similarity still cannot put the two shots on
+   *   each other. Both halves are needed — see `EXTENT_SPREAD_REACH`, which records
+   *   the fixture that proves it. Taken.
+   * - `coordinates` — the correction reaches too far, or the fit explains it to
+   *   within a pixel, so the two shots are in different coordinates (a different
+   *   origin, or different units). Refused, and framed by the fitted path where the
+   *   blindness to units lives.
+   * - `no-pixels` — the candidate drew nothing at all in the declared box, which
+   *   is the loudest possible "not these coordinates". Refused.
+   */
+  clause: 'coincident' | 'extent-spread' | 'coordinates' | 'no-pixels';
+}
 
 /**
  * Whether the framing is decided per frame set, or once across every set.
@@ -705,6 +839,23 @@ export interface Extent {
   height: number;
 }
 
+/** The substitution `--texture-from` made, and what it could not reach. */
+export interface TextureFromReport {
+  /** The atlas whose texels stood in, as it was named on the command line. */
+  atlas: string;
+  /** Every `scale:` its text declares — the line that says a pack is coarser. */
+  scales: number[];
+  /** The same for the CANDIDATE's own atlas, so the two are read side by side. */
+  candidateScales: number[];
+  /**
+   * Regions the substituting atlas does not have, or the candidate packs rotated
+   * so its own corner order cannot be inverted — see `artUvsOf`. Those pieces kept
+   * their own texture, so a non-empty list means the floor below is a MIXTURE and
+   * is not the whole of the resampling.
+   */
+  unmatched: string[];
+}
+
 export interface CheckReport {
   candidate: { skeleton: string; atlas: string };
   framesDir: string;
@@ -724,6 +875,15 @@ export interface CheckReport {
   viewport: Framing | null;
   /** Where the candidate's drawn pixels ended up against the reference's. */
   framingFit: FramingReport | null;
+  /**
+   * The declared-box probe over every set pooled — see `DeclaredBoxProbe`.
+   *
+   * The run-level answer, which is the one a shared scope is measured by. Under a
+   * per-shot scope each `AnimationCheck` carries its own and that is the one that
+   * decided its framing; this stays reported because it is the figure the shared
+   * box on the line beside it came from.
+   */
+  declaredBox: DeclaredBoxProbe | null;
   /**
    * The framing ONE shared box gives across every set compared.
    *
@@ -756,6 +916,8 @@ export interface CheckReport {
    */
   chains: BoneChain[];
   animations: AnimationCheck[];
+  /** The texture-only substitution, when one was asked for — `null` otherwise. */
+  textureFrom: TextureFromReport | null;
   notes: string[];
 }
 
@@ -791,6 +953,17 @@ export interface CheckOptions {
    * coordinates, and those do not change between shots).
    */
   framing?: FramingScope;
+  /**
+   * Also measure the run through **this atlas's texels**, keeping the candidate's
+   * own geometry, and attribute the difference — see `TextureFloor`.
+   *
+   * ⚠️ Not the same thing as pointing `atlasText` at another atlas, which loads
+   * the skeleton against it and moves the geometry too (issue #199). Nothing about
+   * the graded figures changes when this is set: the framing is decided, and every
+   * existing measure taken, from the candidate's own atlas exactly as before, and
+   * this adds a second render per compared frame beside them.
+   */
+  textureFrom?: { atlasText: string; atlasDir: string; label: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -844,6 +1017,13 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   const notes: string[] = [];
 
   const posable = posableFromText(options.skeletonText, options.atlasText, options.atlasDir);
+  // The substitution is loaded before anything is posed, because posing has to
+  // record each piece's original-art UVs for it and that is the one thing about
+  // this measure that cannot be added afterwards — see `PieceTexture`.
+  const substitution = options.textureFrom
+    ? textureSubstitutionFromText(options.textureFrom.atlasText, options.textureFrom.atlasDir)
+    : null;
+  const poseOptions: PoseOptions | undefined = substitution ? { texture: true } : undefined;
   let background: RGBA;
   let sets: FrameSet[];
   let pixelWidth: number;
@@ -906,7 +1086,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   // Pose every set once. Its frames are wanted twice — to frame the candidate and
   // to compare it — and posing twice is both slower and a chance for the framing
   // and the comparison to disagree about what they measured.
-  const prepared = sets.map((set) => prepareSet(located.root, set, posable, options.as));
+  const prepared = sets.map((set) => prepareSet(located.root, set, posable, options.as, poseOptions));
   const pairs = prepared.flatMap((p) => p.pairs);
   if (pairs.length === 0) {
     notes.push('no reference frame has a candidate frame at the same index — nothing below was measured');
@@ -927,6 +1107,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   let topViewport: Viewport | null = null;
   let topHow: FramingHow | null = null;
   let topFit: FramingReport | null = null;
+  let topProbe: DeclaredBoxProbe | null = null;
   let sharedFraming: FramingReport | null = null;
 
   const reportFor = (fit: FramingFit, at: Viewport, over: Omit<FramingReport, 'units' | 'fit'>): FramingReport => ({
@@ -964,6 +1145,9 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
             ? null
             : reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS, refinement }),
         notes: [],
+        // A pin overrides the declared box outright, so there is no probe to
+        // report: nothing was measured about whether that box applies here.
+        declaredBox: null,
       });
     }
     const all = perSet.flat();
@@ -1002,11 +1186,14 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       refinement,
     };
     const how = HOW_BY_SOURCE[framed.report.source];
-    for (let i = 0; i < prepared.length; i++) framings.push({ viewport, how, fit, notes: [] });
+    for (let i = 0; i < prepared.length; i++) {
+      framings.push({ viewport, how, fit, notes: [], declaredBox: framed.probe });
+    }
     topViewport = viewport;
     topHow = how;
     topFit = fit;
-    notes.push(...framingNotes(framed.report));
+    topProbe = framed.probe;
+    notes.push(...framingNotes(framed.report, framed.probe));
     if (prepared.length > 1) {
       notes.push(
         `one framing was fitted across all ${prepared.length} frame set(s) (--framing shared). Its absolute numbers ` +
@@ -1054,14 +1241,16 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       how: HOW_BY_SOURCE[shared.report.source],
       fit: { ...shared.report, units: extentsOf(shared.report.fit, shared.viewport.scale, referenceViewport) },
       notes: [],
+      declaredBox: shared.probe,
     };
     sharedFraming = sharedShape.fit;
+    topProbe = shared.probe;
     let own = 0;
     for (let i = 0; i < prepared.length; i++) {
       const p = prepared[i];
-      const declared =
+      const probed =
         p.pairs.length === 0
-          ? null
+          ? { framed: null, probe: null }
           : frameByDeclaredBox(
               [p],
               posable.pages,
@@ -1072,6 +1261,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
               pixelHeight,
               referenceViewport,
             );
+      const declared = probed.framed;
       const chosen: SetFraming = declared
         ? {
             viewport: declared.viewport,
@@ -1080,9 +1270,10 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
               ...declared.report,
               units: extentsOf(declared.report.fit, declared.viewport.scale, referenceViewport),
             },
-            notes: framingNotes(declared.report),
+            notes: framingNotes(declared.report, probed.probe),
+            declaredBox: probed.probe,
           }
-        : { ...sharedShape, notes: framingNotes(shared.report) };
+        : { ...sharedShape, notes: framingNotes(shared.report, probed.probe), declaredBox: probed.probe };
       if (declared) own++;
       // Per set, because the constant this pass removes is per set: issue #146
       // measured spineboy's `death` wanting (−1, +1) and its `jump` (0, −1) in the
@@ -1113,9 +1304,37 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   });
 
   const animations: AnimationCheck[] = [];
+  const unmatched = new Set<string>();
   for (let i = 0; i < prepared.length; i++) {
     const f = framings[i];
-    animations.push(checkOneSet(located.root, prepared[i], posable, f, background, chains, chainOfSlot));
+    animations.push(
+      checkOneSet(located.root, prepared[i], posable, f, background, chains, chainOfSlot, substitution, unmatched),
+    );
+  }
+
+  const candidateScales = atlasScales(options.atlasText);
+  if (substitution === null) {
+    // ⭐ Named at the top of every report rather than only when it is measured.
+    // Issue #171's finding was not that the floor was mis-measured; it was that
+    // nothing in the report said the figures had one — so a reader could take a
+    // texture difference for rig error twice over, on two rungs, before anybody
+    // noticed the atlas.
+    notes.push(
+      'part of every MAE below is TEXTURE, not animation, and it is not attributed here. The frames were rendered ' +
+        "through the reference's own atlas; this candidate samples its own" +
+        `${candidateScales.length > 0 ? ` (declared at scale: ${[...new Set(candidateScales)].join(', ')})` : ''}` +
+        ', and if the two were packed at different scales every edge of every part is filtered from a different ' +
+        'source in every frame. That difference is a constant no key can move and is invisible to the content box, ' +
+        'the fit residual and the whole-pixel refinement. Pass --texture-from <the atlas the frames were rendered ' +
+        "through> to measure it: the candidate's own geometry is kept and only the texels are swapped, so the run " +
+        'reports the floor and what sits above it beside the figure of record.',
+    );
+  } else if (options.textureFrom) {
+    notes.push(
+      `the texture floor below was measured against ${options.textureFrom.label} — the candidate's own geometry ` +
+        'through that atlas\'s texels. It is a DIAGNOSTIC and not a better number: the artifact ships its own ' +
+        'atlas, so the MAE is still the figure of record and the floor is the account of where part of it went.',
+    );
   }
 
   return {
@@ -1129,11 +1348,21 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     framing: topHow,
     viewport: topViewport === null ? null : framingOfViewport(topViewport),
     framingFit: topFit,
+    declaredBox: topProbe,
     sharedFraming,
     referenceViewport,
     background,
     chains,
     animations,
+    textureFrom:
+      substitution === null || !options.textureFrom
+        ? null
+        : {
+            atlas: options.textureFrom.label,
+            scales: substitution.scales,
+            candidateScales,
+            unmatched: [...unmatched].sort(),
+          },
     notes,
   };
 }
@@ -1144,6 +1373,12 @@ interface SetFraming {
   how: FramingHow;
   fit: FramingReport | null;
   notes: string[];
+  /**
+   * What the declared-box probe measured for this set, taken or not — see
+   * `DeclaredBoxProbe`. `null` when there was no box to probe (no sidecar) or
+   * nothing to probe it with (`--viewport`, or a set with no compared frame).
+   */
+  declaredBox: DeclaredBoxProbe | null;
 }
 
 /** `FramingSource` said in the report's own words. */
@@ -1233,6 +1468,82 @@ const FRAMING_PASSES = 8;
  * about 0.07 after. Nothing measured so far lands between 1 and 5.
  */
 export const COINCIDENT_PIXELS = 1;
+
+/**
+ * How far the correction may **reach**, as a fraction of the reference's own
+ * content box, for the disagreement to be read as a silhouette rather than as
+ * coordinates.
+ *
+ * ## 🎯 The question this settles, in the terms it is decidable in
+ *
+ * `COINCIDENT_PIXELS` above answers *"is this candidate in the frames' own
+ * coordinates?"* with the worst corner displacement of one similarity fit, and on
+ * a candidate whose silhouette is right that is a clean answer: a different origin
+ * or a different unit is worth tens to hundreds of pixels, a right one 0.07.
+ *
+ * It is **not** clean on a candidate whose silhouette differs at the extremes,
+ * because `fitFraming` registers extent: a union box a few per cent narrower than
+ * the reference's reads as a few per cent of scale, which is arithmetically the
+ * same displacement a units error gives. Rung 7 is that case twice over — the
+ * candidate's setup box lands on the reference's **to the pixel** and it is
+ * refused on all twelve sets — and the refusal is not free: pinned to the declared
+ * box, that candidate reads better on **every one** of its twelve sets, by 0.28 to
+ * 2.01 MAE over the reference's own pixels (issue #194).
+ *
+ * ## Two conditions, because one is not enough — measured
+ *
+ * The fixtures that must keep being refused are `selftest` C04 (the same rig at
+ * 2 % different units, which the framing must stay blind to) and C06 (the same rig
+ * 300 units away, which is the ordinary candidate under the ladder's honesty
+ * rule). Probed at the declared box, per set:
+ *
+ * | candidate | correction | correction ÷ reference box | rms |
+ * | --- | --- | --- | --- |
+ * | rung 3, faithful | 0.08 px | 0.03 % | 0.10 px |
+ * | rung 3, x1.02 units (C04) | 2.60–3.65 px | 1.1–1.6 % | **0.20–0.27 px** |
+ * | rung 3, one part +20 units (C12) | 2.07–2.11 px | 0.9–1.8 % | **0.53–0.83 px** |
+ * | rung 3, +300 units (C06) | 40.32 px | **17.2 %** | 44.15 px |
+ * | rung 7, twelve sets | 1.67–13.02 px | 0.18–1.4 % | **3.32–16.85 px** |
+ *
+ * ⚠️ The obvious single clause — *"take it when the fit admits it cannot explain
+ * what it asks for", `rms ≥ distance`* — was written first and **is wrong**: the
+ * moved rig draws partly outside the declared box, so its content box is truncated
+ * and the fit is garbage with a 44 px residual. That reads 1.09 against the
+ * faithful candidate's own 1.25 and takes the box, framing a rig 300 units away as
+ * though it were in the frames' coordinates (MAE 144). C06 caught it, which is
+ * what C06 is for.
+ *
+ * ⇒ Both halves have to be asserted, and each carries its own margin:
+ *
+ * - **the correction reaches no further than `EXTENT_SPREAD_REACH` of the
+ *   reference's own content box** — the two shots are in the same *place*. This is
+ *   the half C06 fails: 17.2 % against a 5 % ceiling, with rung 7 at 1.4 %, so the
+ *   line is 3.4x clear on both sides. Relative to the shot rather than in pixels,
+ *   because a pixel count would have to be re-derived for every frame size;
+ * - **and one similarity still cannot put the two shots on each other**, which is
+ *   `rms` past `COINCIDENT_PIXELS` — the same pixel the report already warns at
+ *   (*"no single scale and offset puts the two shots on each other — they are
+ *   different shapes, not the same shape misframed"*). This is the half that says
+ *   *silhouette*, and it is the half C04 fails: a pure difference of units is a
+ *   similarity, so the fit absorbs it **exactly** and leaves 0.27 px where rung 7
+ *   leaves 3.32 at its quietest. 3.3x clear above, 3.7x clear below.
+ *
+ * ⚠️ **What this deliberately does not do is widen `COINCIDENT_PIXELS`.** A plain
+ * tolerance of "a few px at the extremes" accepts C04, whose whole point is that
+ * the framing must stay blind to units and must not pay a fit's floor for a
+ * candidate with no silhouette disagreement to plead. Both halves fire only on
+ * evidence the fit itself produced, and `DeclaredBoxProbe` makes the report say
+ * which clause decided, with its numbers.
+ *
+ * ⚠️ **What it leaves open, stated rather than hidden**: a candidate whose units
+ * are off by *less* than this reach AND whose silhouette genuinely differs is
+ * taken, and pays that scale error inside the declared box instead of having it
+ * absorbed by a fit. On the shots measured that is a few pixels either way, the
+ * same order as the fit's own floor — and the probe line prints the correction it
+ * declined to apply, so the trade is visible rather than silent. `--viewport` and
+ * `--framing shared` both override it.
+ */
+export const EXTENT_SPREAD_REACH = 0.05;
 
 /**
  * The two content boxes in world units, each divided by its own render scale.
@@ -1438,7 +1749,7 @@ function frameCandidate(
   pixelWidth: number,
   pixelHeight: number,
   referenceViewport: Framing | null,
-): FramedSets {
+): FramedSets & { probe: DeclaredBoxProbe | null } {
   const declared = frameByDeclaredBox(
     prepared,
     pages,
@@ -1453,7 +1764,7 @@ function frameCandidate(
   // whether or not it ends up being used, and that measurement is the only one
   // taken in a box every set shares. Handing it back is what lets a per-shot run
   // report `sharedFit` without a second render — see `CheckReport.sharedFit`.
-  if (declared) return declared;
+  if (declared.framed) return { ...declared.framed, probe: declared.probe };
 
   const chain = runFramingChain(
     seedFromGeometry(prepared, pages, referenceBoxes, pixelWidth, pixelHeight),
@@ -1483,6 +1794,7 @@ function frameCandidate(
       // Filled in by the refined pass, which runs once the box is decided.
       refinement: null,
     },
+    probe: declared.probe,
   };
 }
 
@@ -1632,8 +1944,8 @@ function frameByDeclaredBox(
   pixelWidth: number,
   pixelHeight: number,
   referenceViewport: Framing | null,
-): { viewport: Viewport; report: Omit<FramingReport, 'units'> } | null {
-  if (!referenceViewport || referenceViewport.scale <= 0) return null;
+): { framed: FramedSets | null; probe: DeclaredBoxProbe | null } {
+  if (!referenceViewport || referenceViewport.scale <= 0) return { framed: null, probe: null };
   const viewport = viewportOfSize(
     referenceViewport.x,
     referenceViewport.y,
@@ -1646,22 +1958,51 @@ function frameByDeclaredBox(
   const boxes = pairUpBoxes(prepared, pages, viewport, background, level, referenceBoxes);
   // Nothing drawn in the declared box is the loudest possible "not these
   // coordinates", not a failure: rung 1's `drop` candidate is nowhere near it.
-  if (boxes.length === 0) return null;
+  if (boxes.length === 0) {
+    return {
+      framed: null,
+      probe: { distance: 0, rms: 0, reach: 0, frames: 0, taken: false, clause: 'no-pixels' },
+    };
+  }
   const fit = fitFraming(boxes);
   const distance = fitDistance(fit);
-  if (distance > COINCIDENT_PIXELS) return null;
+  const reach = EXTENT_SPREAD_REACH * Math.max(boxWidth(fit.reference), boxHeight(fit.reference));
+  // The two clauses, in the order they are decidable — see `EXTENT_SPREAD_REACH`.
+  // The first is a measurement of coincidence; the second needs BOTH of its halves,
+  // and the comment above the constant records the fixture that proves it.
+  const clause =
+    distance <= COINCIDENT_PIXELS
+      ? 'coincident'
+      : distance <= reach && fit.rms > COINCIDENT_PIXELS
+        ? 'extent-spread'
+        : 'coordinates';
+  const probe: DeclaredBoxProbe = {
+    distance,
+    rms: fit.rms,
+    reach,
+    frames: fit.frames,
+    taken: clause !== 'coordinates',
+    clause,
+  };
+  if (!probe.taken) return { framed: null, probe };
   return {
-    viewport,
-    report: {
-      fit,
-      passes: 1,
-      settled: fitIsSettled(fit),
-      source: 'declared',
-      cycled: false,
-      agrees: true,
-      applied: true,
-      refinement: null,
+    framed: {
+      viewport,
+      report: {
+        fit,
+        passes: 1,
+        settled: fitIsSettled(fit),
+        source: 'declared',
+        cycled: false,
+        // A measurement, not a constant: under the extent-spread clause the two
+        // content boxes do NOT coincide, and a report that said they did would be
+        // hiding the very disagreement that clause was invoked to name.
+        agrees: distance <= COINCIDENT_PIXELS,
+        applied: true,
+        refinement: null,
+      },
     },
+    probe,
   };
 }
 
@@ -1753,7 +2094,24 @@ function refined(
  * floor, "did not settle, and they are not" is a finding about the candidate, and
  * "the correction is cycling" says more passes cannot change either answer.
  */
-function framingNotes(report: Omit<FramingReport, 'units'>): string[] {
+function framingNotes(report: Omit<FramingReport, 'units'>, probe: DeclaredBoxProbe | null): string[] {
+  if (report.source === 'declared' && probe !== null && probe.clause === 'extent-spread') {
+    // ⭐ The tolerance states itself. A clause that widens what `check` accepts
+    // and says nothing about having done so would be the same defect the
+    // framing line was built to close: a number without its convention.
+    return [
+      `the candidate's world box was taken from ${FRAMES_SIDECAR} rather than fitted even though the two content ` +
+        `boxes do NOT coincide — the EXTENT-SPREAD tolerance engaged. A fit at that box asks to move the candidate ` +
+        `${probe.distance.toFixed(2)} px, which reaches less than the ${probe.reach.toFixed(2)} px this clause allows ` +
+        `(${(EXTENT_SPREAD_REACH * 100).toFixed(0)}% of the reference's own content box), and it leaves ` +
+        `${probe.rms.toFixed(2)} px rms across the frames' edges — so no single scale and offset puts the two shots ` +
+        `on each other, over ${probe.frames} frame(s). A difference of origin or of units IS a similarity and would ` +
+        "be absorbed exactly; a residual this size is a SILHOUETTE difference at the extremes, and the frames' own " +
+        "box is where the frames were drawn whatever this candidate's outline does out there. ⇒ Read the `union " +
+        'residual` and `aspect` on the framing line as the finding; the box below is exact and carries no fit floor. ' +
+        'Pass --viewport to override, or --framing shared to measure every set in the fitted box instead.',
+    ];
+  }
   if (report.source === 'declared') {
     return [
       `the candidate's world box was taken from ${FRAMES_SIDECAR} rather than fitted, because rendering it into ` +
@@ -1764,12 +2122,23 @@ function framingNotes(report: Omit<FramingReport, 'units'>): string[] {
         'Pass --viewport to override.',
     ];
   }
-  if (report.settled) return [];
+  const refused =
+    probe === null || probe.clause !== 'coordinates'
+      ? []
+      : [
+          `${FRAMES_SIDECAR}'s own box was refused for this set: a fit at it asks to move the candidate ` +
+            `${probe.distance.toFixed(2)} px — ${probe.distance > probe.reach ? `further than the ${probe.reach.toFixed(2)} px the extent-spread tolerance reaches` : `and explains all but ${probe.rms.toFixed(2)} px rms of it, which a silhouette difference cannot be`}` +
+            ` — over ${probe.frames} frame(s). That is what a different origin or a different unit looks like, so ` +
+            'this candidate is in its own coordinates and is framed by the fitted path, which is blind to units by ' +
+            "design and pays the extent fit's own floor for it.",
+        ];
+  if (report.settled) return refused;
   const how = report.cycled
     ? `the framing correction fell into a repeating orbit after ${report.passes} pass(es) rather than settling, so ` +
       'more passes cannot help: the fit has no fixed point on this shot'
     : `the framing did not settle in ${report.passes} pass(es)`;
   return [
+    ...refused,
     report.agrees
       ? `${how}. The two content boxes nevertheless agree to within ${report.fit.rms.toFixed(2)} px rms, so this is ` +
         "the fit's own floor and not a shape mismatch — the fit registers extent, and on a silhouette that differs " +
@@ -1819,6 +2188,7 @@ function prepareSet(
   set: FrameSet,
   posable: ReturnType<typeof posableFromText>,
   as: string | undefined,
+  poseOptions: PoseOptions | undefined,
 ): PreparedSet {
   const notes: string[] = [];
   const wanted = as ?? set.animation;
@@ -1850,10 +2220,10 @@ function prepareSet(
           `[${have.join(', ')}] — the setup pose is what was compared`,
       );
     }
-    candidateFrames = sampleSetupPose(posable.data);
+    candidateFrames = sampleSetupPose(posable.data, poseOptions);
     candidateAnimation = null;
   } else {
-    candidateFrames = sampleAnimation(posable.data, wanted, set.fps);
+    candidateFrames = sampleAnimation(posable.data, wanted, set.fps, poseOptions);
     candidateAnimation = wanted;
   }
 
@@ -1895,6 +2265,10 @@ function checkOneSet(
   chains: BoneChain[],
   /** Slot name → its index in `chains`. */
   chainOfSlot: Map<string, number>,
+  /** The texture-only substitution to attribute against, when one was asked for. */
+  substitution: TextureSubstitution | null,
+  /** Region names it could not reach, unioned across every set by the caller. */
+  unmatched: Set<string>,
 ): AnimationCheck {
   const { set } = prepared;
   const viewport = framing.viewport;
@@ -1910,6 +2284,7 @@ function checkOneSet(
     meanMaeReference: 0,
     drawnRatio: 1,
     meanMaeFrame: 0,
+    textureFloor: null,
     worstMae: 0,
     worstMaeFrame: -1,
     worstDrift: 0,
@@ -1926,6 +2301,7 @@ function checkOneSet(
     viewport: framingOfViewport(viewport),
     framing: framing.how,
     framingFit: framing.fit,
+    declaredBox: framing.declaredBox,
     sheet: null,
     notes: prepared.missing ? [prepared.missing] : [...framing.notes, ...prepared.notes],
   };
@@ -1957,9 +2333,22 @@ function checkOneSet(
     total: 0,
   };
 
+  // One page map for the substituted render, holding both sides: a piece whose
+  // region the substituting atlas does not have keeps its own page, and a page
+  // that happens to share a filename with one of the candidate's cannot shadow it
+  // because `substituteTexture` prefixes every name it writes.
+  const floorPages = substitution === null ? null : new Map([...posable.pages, ...substitution.pages]);
+  const floorSum = { floor: 0, aboveFloor: 0, floorReference: 0, aboveFloorReference: 0 };
+
   for (const { index, file, frame } of prepared.pairs) {
     const reference = readPlateFrom(root, file);
     const rendered = renderFrame(frame, posable.pages, viewport, background);
+    let floorPlate: Plate | null = null;
+    if (substitution !== null && floorPages !== null) {
+      const swapped = substituteTexture(frame, substitution);
+      for (const name of swapped.unmatched) unmatched.add(name);
+      floorPlate = renderFrame(swapped.frame, floorPages, viewport, background);
+    }
     const check = checkOneFrame(
       index,
       file,
@@ -1971,12 +2360,19 @@ function checkOneSet(
       rendered,
       chainOfSlot,
       tally,
+      floorPlate,
     );
     check.change = previous && previous.index === index - 1 ? frameChange(previous, rendered, reference) : null;
     previous = { index, candidate: rendered, reference };
     frames.push(check);
     maeSum += check.mae;
     maeReferenceSum += check.maeReference;
+    if (check.textureFloor !== null) {
+      floorSum.floor += check.textureFloor.floor;
+      floorSum.aboveFloor += check.textureFloor.aboveFloor;
+      floorSum.floorReference += check.textureFloor.floorReference;
+      floorSum.aboveFloorReference += check.textureFloor.aboveFloorReference;
+    }
     drawnRatioSum += check.referencePixels === 0 ? 1 : check.candidatePixels / check.referencePixels;
     maeFrameSum += check.maeFrame;
     if (check.attributed === 0) framesWithoutDrift++;
@@ -2018,6 +2414,15 @@ function checkOneSet(
     meanMaeReference: maeReferenceSum / frames.length,
     drawnRatio: drawnRatioSum / frames.length,
     meanMaeFrame: maeFrameSum / frames.length,
+    textureFloor:
+      substitution === null
+        ? null
+        : {
+            floor: floorSum.floor / frames.length,
+            aboveFloor: floorSum.aboveFloor / frames.length,
+            floorReference: floorSum.floorReference / frames.length,
+            aboveFloorReference: floorSum.aboveFloorReference / frames.length,
+          },
     worstMae,
     worstMaeFrame,
     worstDrift,
@@ -2319,6 +2724,11 @@ function checkOneFrame(
   chainOfSlot: Map<string, number>,
   /** Accumulated across the set by the caller — see `ChainTally`. */
   tally: ChainTally,
+  /**
+   * The same frame drawn through another atlas's texels, when one was asked for —
+   * see `TextureFloor`. `null` is the ordinary case and costs nothing.
+   */
+  floorPlate: Plate | null,
 ): FrameCheck {
   const { coverage, footprints, owner } = frameGeometry(frame, pages, viewport, chainOfSlot);
   // Only worth the transform when something was drawn to be nearest TO.
@@ -2331,6 +2741,13 @@ function checkOneFrame(
   let referencePixels = 0;
   let sum = 0;
   let sumAll = 0;
+  // The decomposition's two numerators, over exactly the pixels `sum` runs over —
+  // one denominator for all three figures is what makes the triangle bound in
+  // `TextureFloor` hold as arithmetic rather than as an approximation.
+  let floorSum = 0;
+  let aboveSum = 0;
+  let floorReferenceSum = 0;
+  let aboveReferenceSum = 0;
   for (let y = 0; y < viewport.height; y++) {
     for (let x = 0; x < viewport.width; x++) {
       const inCandidate = coverage[y * viewport.width + x] === 1;
@@ -2341,6 +2758,17 @@ function checkOneFrame(
       const b = reference.get(x, y);
       const delta = (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
       sumAll += delta;
+      if (floorPlate !== null && (inCandidate || inReference)) {
+        const f = floorPlate.get(x, y);
+        const floor = (Math.abs(a[0] - f[0]) + Math.abs(a[1] - f[1]) + Math.abs(a[2] - f[2])) / 3;
+        const above = (Math.abs(f[0] - b[0]) + Math.abs(f[1] - b[1]) + Math.abs(f[2] - b[2])) / 3;
+        floorSum += floor;
+        aboveSum += above;
+        if (inReference) {
+          floorReferenceSum += floor;
+          aboveReferenceSum += above;
+        }
+      }
       if (inReference) {
         // The share's denominator is the reference's own drawn pixels, and the
         // split is over exactly those — issue #119's lesson, as a partition.
@@ -2407,6 +2835,15 @@ function checkOneFrame(
     // Filled in by the caller, which is the only place that has the frame before
     // this one — see `frameChange`.
     change: null,
+    textureFloor:
+      floorPlate === null
+        ? null
+        : {
+            floor: union === 0 ? 0 : floorSum / union,
+            aboveFloor: union === 0 ? 0 : aboveSum / union,
+            floorReference: referencePixels === 0 ? 0 : floorReferenceSum / referencePixels,
+            aboveFloorReference: referencePixels === 0 ? 0 : aboveReferenceSum / referencePixels,
+          },
   };
 }
 
@@ -2695,6 +3132,9 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
     lines.push('             ⤷ the two world boxes are different coordinate systems and do not compare; the pixel grid does.');
   }
   for (const line of framingLines(report.framingFit)) lines.push(line);
+  if (report.framingScope !== 'per-shot' || report.viewport !== null) {
+    for (const line of declaredBoxLines(report.declaredBox)) lines.push(line);
+  }
   if (report.sharedFraming) {
     const shared = report.sharedFraming;
     const f = shared.fit;
@@ -2708,6 +3148,26 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
       "             ⤷ how far one shared framing is from serving every set. A set below that took the frames' own " +
         'box instead is measured with no such correction at all; --framing shared measures every set here.',
     );
+  }
+  if (report.textureFrom) {
+    const t = report.textureFrom;
+    const scale = (values: number[]): string =>
+      values.length === 0 ? 'no scale: line' : `scale: ${[...new Set(values)].join(', ')}`;
+    lines.push(
+      `  texture    from ${t.atlas} (${scale(t.scales)}) against the candidate's own (${scale(t.candidateScales)})` +
+        `${t.unmatched.length === 0 ? '' : `   ⚠️ ${t.unmatched.length} region(s) not substituted`}`,
+    );
+    lines.push(
+      "             ⤷ the candidate's own GEOMETRY through that atlas's texels — every world vertex is the " +
+        'candidate\'s, only the page and the UVs are swapped, and they are swapped through the drawing\'s own ' +
+        'coordinates so a rotated or trimmed pack re-seats nothing. What the two renders differ by is texture.',
+    );
+    if (t.unmatched.length > 0) {
+      lines.push(
+        `             ⚠️ not substituted: ${t.unmatched.join(', ')}. Those pieces kept their own texture, so the ` +
+          'floor below is a MIXTURE and is a lower bound on the resampling rather than the whole of it.',
+      );
+    }
   }
   for (const note of report.notes) lines.push(`  ⚠️ ${note}`);
   lines.push('');
@@ -2729,6 +3189,7 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
     if (report.framingScope === 'per-shot' && report.viewport === null) {
       for (const line of framedToLines(anim.viewport, anim.framing, '   ')) lines.push(line);
       for (const line of framingLines(anim.framingFit, '   ')) lines.push(line);
+      for (const line of declaredBoxLines(anim.declaredBox, '   ')) lines.push(line);
     }
     for (const note of anim.notes) lines.push(`     ⚠️ ${note}`);
     if (anim.compared === 0) {
@@ -2743,6 +3204,7 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
       `                ⤷ over the REFERENCE's own drawn pixels, mean ${f2(anim.meanMaeReference)} — the union figure ` +
         'compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.',
     );
+    for (const line of textureFloorLines(anim)) lines.push(line);
     if (anim.drawnRatio > OVERDRAW_RATIO) {
       const mine = Math.round(anim.frames.reduce((sum, f) => sum + f.candidatePixels, 0) / anim.frames.length);
       const theirs = Math.round(anim.frames.reduce((sum, f) => sum + f.referencePixels, 0) / anim.frames.length);
@@ -2821,6 +3283,31 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   lines.push('  not held, or a one-frame event that never fired: both are small in every frame and');
   lines.push('  wrong only in the relation between two, which is where the MAE cannot look.');
   return lines;
+}
+
+/**
+ * One set's texture decomposition, as the two lines under its MAE — see
+ * `TextureFloor`.
+ *
+ * ⭐ The **bound** is printed as arithmetic and not as prose. `mae − aboveFloor`
+ * is what the texture explained on these frames and `floor` is the most it could
+ * have; a reader who is given only the second is one subtraction away from
+ * treating it as the first, which is the error `TextureFloor`'s own doc exists to
+ * head off.
+ */
+function textureFloorLines(anim: AnimationCheck): string[] {
+  const t = anim.textureFloor;
+  if (t === null) return [];
+  const explained = anim.meanMae - t.aboveFloor;
+  const share = anim.meanMae > 0 ? ` (${((explained / anim.meanMae) * 100).toFixed(1)}% of the figure above)` : '';
+  return [
+    `                ⭐ texture floor ${f2(t.floor)}  above it ${f2(t.aboveFloor)}   (over the reference's own ` +
+      `pixels, ${f2(t.floorReference)} and ${f2(t.aboveFloorReference)})`,
+    `                   ⤷ the same geometry through the other atlas's texels reads ${f2(t.aboveFloor)}, so the ` +
+      `texture accounts for ${f2(explained)} of this set's MAE${share} and cannot account for more than ` +
+      `${f2(t.floor)} — |MAE − above| ≤ floor, because absolute errors bound rather than add. A floor near zero ` +
+      'is proof the texture is not the story here. 🚫 The figure of record is the MAE above, not this.',
+  ];
 }
 
 /** One drift, as the table says it: distance, slot, frame. */
@@ -3046,8 +3533,44 @@ function changeNote(change: FrameChange | null): string {
  */
 function convergence(framing: FramingReport): string {
   if (framing.settled) return 'settled';
-  if (framing.source === 'declared') return 'coincident';
+  // `extent-spread` cannot collide with `settled` above: it is only reached when
+  // the correction is over `COINCIDENT_PIXELS`, and settled is under a tenth of one.
+  if (framing.source === 'declared') return framing.agrees ? 'coincident' : 'extent-spread';
   return framing.cycled ? 'cycling' : 'unsettled';
+}
+
+/**
+ * The declared-box probe, as the one line that says which clause decided and by
+ * how much — see `DeclaredBoxProbe`.
+ *
+ * Printed whether the box was taken or refused. A refusal used to be legible only
+ * as the *absence* of `frames.json's own box` from the line above it, which is
+ * exactly the shape of report a reader cannot check: rung 7 was refused on twelve
+ * sets and the run had to reconstruct why from a diagnostic re-run (issue #194).
+ */
+function declaredBoxLines(probe: DeclaredBoxProbe | null, indent = ''): string[] {
+  if (probe === null) return [];
+  if (probe.clause === 'no-pixels') {
+    return [
+      `${indent}  declared   ${FRAMES_SIDECAR}'s own box: REFUSED — the candidate draws no pixel at all in it, ` +
+        'which is the loudest possible "not these coordinates".',
+    ];
+  }
+  const asks = `a fit there asks for ${probe.distance.toFixed(2)} px`;
+  const said =
+    probe.clause === 'coincident'
+      ? `TAKEN, coincident — ${asks}, under the ${COINCIDENT_PIXELS} px that separates a candidate in the frames' ` +
+        'coordinates from one in its own'
+      : probe.clause === 'extent-spread'
+        ? `TAKEN, extent-spread — ${asks}, within the ${probe.reach.toFixed(2)} px this tolerance reaches ` +
+          `(${(EXTENT_SPREAD_REACH * 100).toFixed(0)}% of the reference's box), and leaves ${probe.rms.toFixed(2)} ` +
+          'px rms no similarity can absorb, which is a silhouette and not a transform'
+        : `REFUSED, coordinates — ${asks}, ` +
+          (probe.distance > probe.reach
+            ? `past the ${probe.reach.toFixed(2)} px the extent-spread tolerance reaches`
+            : `and explains all but ${probe.rms.toFixed(2)} px rms of it`) +
+          ' — a different origin or a different unit';
+  return [`${indent}  declared   ${FRAMES_SIDECAR}'s own box: ${said}, over ${probe.frames} frame(s).`];
 }
 
 /** The framing, as the line an author reads before anything else. */
