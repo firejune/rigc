@@ -214,6 +214,60 @@ export interface PieceCommon {
   slot: string;
   /** The atlas page name this samples, so a multi-page atlas resolves. */
   page: string;
+  /**
+   * What a **texture-only** substitution needs to re-seat this piece on another
+   * atlas — see `PieceTexture`.
+   *
+   * Absent unless `piecesOf` was asked for it, because it is a second copy of the
+   * UVs and every posed frame of every set is held in memory at once.
+   */
+  texture?: PieceTexture;
+  /**
+   * The page-UV rectangle this piece may sample, and no further — see `UvWindow`.
+   *
+   * Absent on a piece posed from its own atlas: its UVs cover its own region's
+   * rectangle exactly, so there is nothing to fence off. It is set by
+   * `substituteTexture`, where the piece's geometry spans an area of the original
+   * drawing that the substituting atlas may have trimmed away.
+   */
+  uvWindow?: UvWindow;
+}
+
+/**
+ * One piece's texture coordinates in the **original drawing's** own space, plus
+ * the name of the region it came from.
+ *
+ * ## Why original-art space and not the page's
+ *
+ * Page UVs are useless for substitution: they name texels in *this* atlas, and
+ * two atlases pack the same drawing at different places, at different scales, and
+ * possibly rotated or trimmed. What survives a repack is the position **within the
+ * drawing** — the coordinate an artist would point at — so that is the space a
+ * substitution goes through. `(0, 0)` is the untrimmed drawing's top-left corner
+ * and `(1, 1)` its bottom-right, which is the convention `spine-core`'s own
+ * `MeshAttachment.computeUVs` reads its `regionUVs` in; going through it is what
+ * lets `substituteTexture` reuse the runtime's rotation and trim arithmetic
+ * instead of holding a second opinion about it.
+ */
+export interface PieceTexture {
+  /** The atlas region this piece samples, by the name its atlas gives it. */
+  region: string;
+  /** Original-art coordinates, `u, v` per vertex, parallel to `uvs`. */
+  artUvs: number[];
+}
+
+/** A page-UV rectangle outside which a piece samples nothing. */
+export interface UvWindow {
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+}
+
+/** Options for `piecesOf` and the samplers that call it. */
+export interface PoseOptions {
+  /** Also record each piece's original-art UVs — see `PieceTexture`. */
+  texture?: boolean;
 }
 
 export interface Quad extends PieceCommon {
@@ -319,7 +373,7 @@ export function posableFromText(skeletonText: string, atlasText: string, atlasDi
  * because that is the path a runtime actually takes, and 4.3's `Animation.apply`
  * takes a `MixFrom` that only the state machine has any business choosing.
  */
-export function sampleAnimation(data: SkeletonData, name: string, fps: number): Frame[] {
+export function sampleAnimation(data: SkeletonData, name: string, fps: number, opts?: PoseOptions): Frame[] {
   const animation = data.findAnimation(name);
   if (!animation) {
     throw new Error(
@@ -347,7 +401,7 @@ export function sampleAnimation(data: SkeletonData, name: string, fps: number): 
       skeleton.update(0);
       skeleton.updateWorldTransform(Physics.reset);
     }
-    frames.push({ index: i, time: i * step, pieces: piecesOf(skeleton) });
+    frames.push({ index: i, time: i * step, pieces: piecesOf(skeleton, opts) });
   }
   return frames;
 }
@@ -360,12 +414,12 @@ export function sampleAnimation(data: SkeletonData, name: string, fps: number): 
  * ladder's first rung ships one (`1-weight-and-mass`'s second export), and its
  * whole content is the setup pose.
  */
-export function sampleSetupPose(data: SkeletonData): Frame[] {
+export function sampleSetupPose(data: SkeletonData, opts?: PoseOptions): Frame[] {
   const skeleton = new Skeleton(data);
   skeleton.setupPose();
   skeleton.update(0);
   skeleton.updateWorldTransform(Physics.reset);
-  return [{ index: 0, time: 0, pieces: piecesOf(skeleton) }];
+  return [{ index: 0, time: 0, pieces: piecesOf(skeleton, opts) }];
 }
 
 /**
@@ -390,7 +444,7 @@ export function sampleAll(data: SkeletonData, fps: number): Map<string, Frame[]>
  * and a clipping attachment are all things a rig legitimately carries and none
  * of them draws a pixel.
  */
-export function piecesOf(skeleton: Skeleton): Piece[] {
+export function piecesOf(skeleton: Skeleton, opts?: PoseOptions): Piece[] {
   const pieces: Piece[] = [];
   for (const slot of skeleton.drawOrder.appliedPose) {
     const pose = slot.appliedPose;
@@ -416,6 +470,7 @@ export function piecesOf(skeleton: Skeleton): Piece[] {
       colour.a * own.a,
     ];
     const common = { tint, slot: slot.data.name, page: region.page.name };
+    const texture = opts?.texture !== true ? undefined : artUvsOf(attachment, region);
 
     if (isMesh) {
       // `worldVerticesLength` is 2 per vertex whether or not the mesh is
@@ -424,15 +479,223 @@ export function piecesOf(skeleton: Skeleton): Piece[] {
       // offsets, if the pose carries any, are applied inside it.
       const world = new Array<number>(attachment.worldVerticesLength).fill(0);
       attachment.computeWorldVertices(skeleton, slot, 0, attachment.worldVerticesLength, world, 0, 2);
-      pieces.push({ kind: 'mesh', ...common, world, uvs: attachment.sequence.getUVs(index), triangles: attachment.triangles });
+      pieces.push({
+        kind: 'mesh',
+        ...common,
+        texture,
+        world,
+        uvs: attachment.sequence.getUVs(index),
+        triangles: attachment.triangles,
+      });
       continue;
     }
 
     const world = new Array<number>(8).fill(0);
     attachment.computeWorldVertices(slot, attachment.getOffsets(pose), world, 0, 2);
-    pieces.push({ kind: 'region', ...common, world, uvs: attachment.sequence.getUVs(index) });
+    pieces.push({ kind: 'region', ...common, texture, world, uvs: attachment.sequence.getUVs(index) });
   }
   return pieces;
+}
+
+// ---------------------------------------------------------------------------
+// texture-only substitution — see `substituteTexture`
+// ---------------------------------------------------------------------------
+
+/**
+ * One piece's UVs in the drawing's own space, for the region it resolved to.
+ *
+ * ## The two shapes, and why only one needs arithmetic
+ *
+ * A **mesh** already carries them. `MeshAttachment.regionUVs` are read by
+ * `spine-core` as coordinates over the *untrimmed* drawing — that is what its own
+ * `u -= region.offsetX / textureWidth` and `width = region.originalWidth /
+ * textureWidth` mean — so a mesh's authored UVs are atlas-independent by
+ * construction, and so is its geometry: `MeshAttachment.computeWorldVertices`
+ * reads `vertices` and bones and never touches the region at all. A mesh
+ * therefore has nothing an atlas swap could move except its texels.
+ *
+ * A **region** is the case issue #199 is about. Its quad is derived from the
+ * region rectangle — `RegionAttachment.computeUVs` insets it by `offsetX/offsetY`
+ * and sizes it by `region.width/height` over `originalWidth/originalHeight` — so
+ * swapping the atlas re-seats the quad as well as the texels. Its four corners
+ * span the sub-rectangle of the drawing its own atlas kept, in `spine-core`'s
+ * corner order (left-bottom, left-top, right-top, right-bottom, read straight off
+ * that function's `uvs` assignments).
+ *
+ * ⚠️ `null` for a region whose own atlas packs it **rotated**: the corner order
+ * above is the unrotated one, and `RegionAttachment.computeUVs` assigns a
+ * different one at 90°. rigc emits one unrotated part per page and never packs, so
+ * no candidate this ships for reaches that branch; a refusal that names itself is
+ * better than a fourth opinion about a mapping only three callers have.
+ */
+function artUvsOf(attachment: MeshAttachment | RegionAttachment, region: TextureAtlasRegion): PieceTexture | undefined {
+  if (attachment instanceof MeshAttachment) {
+    return { region: regionKey(region), artUvs: Array.from(attachment.regionUVs) };
+  }
+  if (region.degrees !== 0) return undefined;
+  const ow = region.originalWidth;
+  const oh = region.originalHeight;
+  if (!(ow > 0) || !(oh > 0)) return undefined;
+  const s0 = region.offsetX / ow;
+  const s1 = (region.offsetX + region.width) / ow;
+  // `offsetY` is the trim measured from the drawing's BOTTOM and art space runs
+  // downwards, so the region's bottom edge is the larger of the two.
+  const tBottom = 1 - region.offsetY / oh;
+  const tTop = 1 - (region.offsetY + region.height) / oh;
+  return { region: regionKey(region), artUvs: [s0, tBottom, s0, tTop, s1, tTop, s1, tBottom] };
+}
+
+/**
+ * The name two atlases have to agree on for a substitution to find a region.
+ *
+ * Trimmed, because `TextureAtlas` names a region after the raw line it was read
+ * from — so the same region in a file written with CRLF and one without would be
+ * two different strings, and a substitution would report every region unmatched
+ * for a reason that is invisible in both files. The index is folded in because a
+ * sequence packs several regions under one name and `findRegion` returns only the
+ * first of them.
+ */
+function regionKey(region: TextureAtlasRegion): string {
+  return `${region.name.trim()}#${region.index}`;
+}
+
+/**
+ * Page names of a substituting atlas carry this prefix, so an own page and a
+ * substituted page that happen to share a filename cannot be taken for each other.
+ */
+export const SUBSTITUTE_PAGE = 'texture-from:';
+
+/** An atlas whose texels can stand in for another's — see `substituteTexture`. */
+export interface TextureSubstitution {
+  /** Prefixed page name → the page, ready to merge into a render's page map. */
+  pages: Map<string, Plate>;
+  /** The atlas's regions, by the key both sides agree on — see `regionKey`. */
+  regions: Map<string, TextureAtlasRegion>;
+  /** Every `scale:` the atlas text declares, in the order the pages declare them. */
+  scales: number[];
+}
+
+/** Load an atlas and its pages as a substitution source. */
+export function textureSubstitutionFromText(atlasText: string, atlasDir: string): TextureSubstitution {
+  const atlas = new TextureAtlas(atlasText);
+  const pages = new Map<string, Plate>();
+  for (const page of atlas.pages) {
+    if (page.name.startsWith(SUBSTITUTE_PAGE)) {
+      throw new Error(`atlas page "${page.name}" starts with the reserved prefix ${JSON.stringify(SUBSTITUTE_PAGE)}`);
+    }
+    pages.set(SUBSTITUTE_PAGE + page.name, readPlate(join(atlasDir, page.name)));
+  }
+  const regions = new Map<string, TextureAtlasRegion>();
+  for (const region of atlas.regions) regions.set(regionKey(region), region);
+  return { pages, regions, scales: atlasScales(atlasText) };
+}
+
+/**
+ * The `scale:` values an atlas text declares, read off the text.
+ *
+ * ⚠️ Off the text, and reluctantly: `TextureAtlas` drops the field (its page
+ * reader silently ignores every key it has no handler for), because `scale:` is
+ * an instruction to whoever *imports* the pack — "the artwork was this much
+ * bigger than these texels" — and a runtime has nothing to do with it. It is
+ * nevertheless the one line that says a pack is coarser than the drawing it came
+ * from, which is exactly the fact a reader of an MAE needs (issue #171), so it is
+ * read here rather than left unreported.
+ *
+ * Narrow on purpose: an indented `scale:` line inside a page block, and nothing
+ * else. It is not a second parser for the format and must not grow into one.
+ */
+export function atlasScales(atlasText: string): number[] {
+  const out: number[] = [];
+  for (const line of atlasText.split(/\r\n|\r|\n/)) {
+    const m = /^[ \t]+scale:[ \t]*([0-9.eE+-]+)[ \t]*$/.exec(line);
+    if (!m) continue;
+    const value = Number(m[1]);
+    if (Number.isFinite(value)) out.push(value);
+  }
+  return out;
+}
+
+/**
+ * The page rectangle a region occupies, as UVs — the fence `substituteTexture`
+ * puts around a substituted piece.
+ *
+ * ⚠️ Derived from `region.x/y/width/height` and its rotation rather than read off
+ * `region.u2/v2`, and that is not fastidiousness: `TextureAtlas` transposes a
+ * rotated region's rectangle when computing `u2/v2` **only at `degrees === 90`**,
+ * so at 180 and 270 those two numbers describe a rectangle the page does not have.
+ * (The same gap is why `RegionAttachment.computeUVs` draws a 270-packed region
+ * wrong, which is what `--atlas` was measuring on rung 7 — issue #199.)
+ * `region.u/v` are always `x/pageWidth, y/pageHeight` and are used as they are; the
+ * size is the region's own, transposed for a quarter turn, which is what the atlas
+ * format means by `bounds` on a rotated region.
+ */
+function windowOf(region: TextureAtlasRegion): UvWindow {
+  const turned = region.degrees === 90 || region.degrees === 270;
+  const rectWidth = turned ? region.height : region.width;
+  const rectHeight = turned ? region.width : region.height;
+  const page = region.page;
+  return {
+    u0: region.x / page.width,
+    v0: region.y / page.height,
+    u1: (region.x + rectWidth) / page.width,
+    v1: (region.y + rectHeight) / page.height,
+  };
+}
+
+/**
+ * The same posed frame, drawn from another atlas's **texels only**.
+ *
+ * ## 🔒 What is and is not substituted, and why that is the whole point
+ *
+ * `world` is copied across untouched — every vertex, both shapes — so the
+ * substituted frame draws the candidate's own geometry and nothing else. Only
+ * `page` and `uvs` change, and they change through the drawing's own coordinates
+ * (`PieceTexture`), so the same point of the artwork lands at the same world
+ * position on both sides. What is left between the two renders is a difference of
+ * **texels**: the same shapes, in the same places, filtered from a different
+ * source.
+ *
+ * That is what `rigc check --atlas <the frames' own atlas>` was being used for and
+ * is not: pointing `--atlas` at another atlas re-loads the skeleton against it, and
+ * a region attachment's quad is derived from the region rectangle, so a `rotate:`
+ * or a trim in the substituting pack moves the geometry too. Measured on rung 7,
+ * whose pack is `rotate: 270` and trimmed: that swap sends the reported MAE **up**
+ * on every set, which a texture floor cannot do — a coarser texture can only
+ * explain error, never add it (issue #199).
+ *
+ * ## The window
+ *
+ * A trimmed pack keeps only the drawing's opaque sub-rectangle, while the
+ * candidate's own quad spans the whole drawing. Art-space coordinates outside what
+ * the pack kept map to page texels **belonging to whatever was packed next door**,
+ * so the substituted piece is fenced to its own rectangle (`UvWindow`) and draws
+ * nothing outside it. That is the faithful answer rather than a convenience: a
+ * packer trims only fully transparent border, so outside the rectangle the drawing
+ * *is* empty.
+ */
+export function substituteTexture(
+  frame: Frame,
+  into: TextureSubstitution,
+): { frame: Frame; unmatched: string[] } {
+  const unmatched: string[] = [];
+  const pieces: Piece[] = [];
+  for (const piece of frame.pieces) {
+    const texture = piece.texture;
+    const region = texture ? (into.regions.get(texture.region) ?? null) : null;
+    if (!texture || !region) {
+      unmatched.push(texture ? texture.region : piece.slot);
+      pieces.push(piece);
+      continue;
+    }
+    const uvs = new Array<number>(texture.artUvs.length).fill(0);
+    // `spine-core`'s own mapping from the drawing's coordinates into a page's,
+    // which is where `rotate:` (all four of them) and the trim offsets are
+    // handled. Calling it rather than repeating it is what keeps this from being
+    // a second opinion about the atlas format.
+    MeshAttachment.computeUVs(region, texture.artUvs, uvs);
+    pieces.push({ ...piece, page: SUBSTITUTE_PAGE + region.page.name, uvs, uvWindow: windowOf(region) });
+  }
+  return { frame: { ...frame, pieces }, unmatched };
 }
 
 // ---------------------------------------------------------------------------
@@ -710,6 +973,7 @@ export function rasteriseQuad(
       if (s < 0 || s > 1 || t < 0 || t > 1) continue;
       const u = ubl + s * (ubr - ubl) + t * (uul - ubl);
       const v = vbl + s * (vbr - vbl) + t * (vul - vbl);
+      if (outsideWindow(quad.uvWindow, u, v)) continue;
       const sample = bilinear(page, u * page.width - 0.5, v * page.height - 0.5);
       const alpha = sample[3] * quad.tint[3];
       if (alpha <= 0.5) continue;
@@ -727,6 +991,34 @@ export function rasteriseQuad(
 
 /** A destination pixel and the straight-alpha colour a piece put there. */
 export type EmitPixel = (px: number, py: number, r: number, g: number, b: number, a: number) => void;
+
+/**
+ * Slack on a `UvWindow`'s edges, in page UVs.
+ *
+ * The window's bounds *are* the region rectangle's own UVs, and a piece's
+ * interpolated UV reaches them exactly at its edge — so the test has to admit
+ * equality, and a bare `<` would drop a boundary pixel whenever the arithmetic
+ * lands a bit under. A billionth of a page is far below a texel and far above the
+ * error of two multiplies.
+ */
+const WINDOW_SLACK = 1e-9;
+
+/**
+ * Is this texel outside the rectangle its piece is allowed to sample?
+ *
+ * `undefined` is the ordinary case — a piece posed from its own atlas has no
+ * window — and answers `false` without arithmetic, which keeps this off the cost
+ * of every reference frame ever rendered.
+ */
+function outsideWindow(window: UvWindow | undefined, u: number, v: number): boolean {
+  if (window === undefined) return false;
+  return (
+    u < window.u0 - WINDOW_SLACK ||
+    u > window.u1 + WINDOW_SLACK ||
+    v < window.v0 - WINDOW_SLACK ||
+    v > window.v1 + WINDOW_SLACK
+  );
+}
 
 /**
  * Is this edge a top or a left one, for the winding `rasteriseMesh` normalises to?
@@ -837,6 +1129,7 @@ export function rasteriseMesh(
         const b2 = w2 / area;
         const u = b0 * u0 + b1 * u1 + b2 * u2;
         const v = b0 * v0 + b1 * v1 + b2 * v2;
+        if (outsideWindow(mesh.uvWindow, u, v)) continue;
         const sample = bilinear(page, u * page.width - 0.5, v * page.height - 0.5);
         const alpha = sample[3] * mesh.tint[3];
         if (alpha <= 0.5) continue;

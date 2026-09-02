@@ -2105,7 +2105,10 @@ which checks every animation of that shot, framed per set — see the scope note
 below) or **one animation directory** inside it. Everything else is optional:
 `--atlas` when the candidate's atlas is not beside its skeleton, `--as <name>` when
 your animation is called something the frame directory is not, `--framing shared`
-to fit one framing across every set instead of one each, `--all-frames` to list
+to fit one framing across every set instead of one each,
+`--texture-from <atlas>` to attribute how much of the MAE is texture resampling
+rather than the rig (**§9.2**'s atlas floor — and note that it is *not* `--atlas`,
+which re-seats your geometry on that atlas's packing), `--all-frames` to list
 every frame instead of the worst by MAE, `--json <out>` for the whole per-frame,
 per-slot report.
 
@@ -2459,11 +2462,14 @@ of them.
              ⤷ fit x0.999256  offset +0.05, -0.02 px   rms 0.42 px over 344 edge(s)   union residual -0.27 x +0.17 px   aspect -0.30%  (derived, 4 pass(es), settled)
              ⭐ MAE-refined by -1, +1 px: 54.31 → 48.47 over the reference's own pixels (10.7% of the figure). …
   in units   candidate 1995.3 x 809.7   reference 1995.3 x 809.9   x0.9999
+  declared   frames.json's own box: REFUSED, coordinates — a fit there asks for … px, past the … px the
+             extent-spread tolerance reaches — a different origin or a different unit, over 86 frame(s).
 
   ── heavy — candidate animation "heavy", 12 fps ──
      frames     65 on disk, candidate samples 65, 65 compared
      MAE        mean 23.10  worst 43.36 at f0029   (0..255 over the union alpha; …)
                 ⤷ over the REFERENCE's own drawn pixels, mean 23.90 — the union figure compares two builds …
+                (a ⭐ texture floor line joins these two when --texture-from is given — see below)
      slot drift worst 2.1 px  "pendulum" at f0029
      per-frame 1 of 64 adjacent pair(s) change by a different amount than the reference does; worst
                f0018, yours moved 0 px where the reference moved 374
@@ -2497,6 +2503,11 @@ pass count, then one of
   The fit beside it is what a fit would still ask for, and on a shot whose
   silhouette differs anywhere that is not zero; it is the fit's floor, not your
   keys.
+- `extent-spread` — the frames' own box was kept even though your pixels did *not*
+  land in it to within a pixel, because the correction a fit asks for is small
+  relative to the shot and the fit admits it cannot explain it (see the `declared`
+  line and the ⚖️ below). What is left over is a **silhouette** difference at the
+  extremes and is a finding about your own outline, not about the box.
 - `cycling` — the correction fell into a repeating orbit instead of converging.
   **More passes cannot help**: the fit has no fixed point here. Read the `⚠️` line
   under it, which says whether the two content boxes agree anyway (the fit's own
@@ -2539,6 +2550,11 @@ The lines, in order:
 - `in units` — the same two boxes in world units. The framing absorbs a pure scale
   on purpose, so this is the only place one shows; it compares only if you measured
   the shot in the frames' own units.
+- `declared` — whether `frames.json`'s own box was taken for this set and on which
+  clause, with the correction a fit there asks for and what that fit could not
+  explain. It is printed whether the box was taken or refused, because *"refused,
+  and by this much, on this ground"* is the part an author has to act on. The ⚖️
+  passage below is what the three answers mean.
 
 ⚠️ **The framing is fitted to extent, and extent is not the same as alignment.**
 When your silhouette genuinely differs somewhere — a limb that overreaches, a part
@@ -2597,55 +2613,76 @@ much ink as the reference does gets `⚠️ overdraw` beside those two numbers, 
 both pixel counts, because at that point the first figure is cheap for a reason
 that has nothing to do with your keys.
 
-🚨 **Part of your MAE is the texture, not the animation, and nothing in the report
-says so.** The reference frames are rendered through the example's **own packed
-atlas**, and a packed atlas may carry a `scale:` line — the ladder has one at
-`scale: 0.5`, whose 745x212 part is packed at 373x106. rigc has no packer (**§6**), so
-a candidate built from the loose PNGs samples a texture at twice that resolution and
-resamples every edge differently. The pixels are the same shape in the same place; they
-are filtered from a different source, and the difference lands on the outline of every
-part in every frame. It is a constant, it is invisible to `content`, `rms` and the
-`±2 px` refinement — a resampling difference is not an offset — and **no key you write
-can move it**.
+🚨 **Part of your MAE is the texture, not the animation.** The reference frames are
+rendered through the example's **own packed atlas**, and a packed atlas may carry a
+`scale:` line — the ladder has one at `scale: 0.5`, whose 745x212 part is packed at
+373x106. rigc has no packer (**§6**), so a candidate built from the loose PNGs samples
+a texture at twice that resolution and resamples every edge differently. The pixels are
+the same shape in the same place; they are filtered from a different source, and the
+difference lands on the outline of every part in every frame. It is a constant, it is
+invisible to `content`, `rms` and the `±2 px` refinement — a resampling difference is
+not an offset — and **no key you write can move it**.
 
-⇒ **When the MAE is flat across the whole set and the drift is already at the floor,
-check the atlas before you look for keys.** The example's `.atlas` is an allowed input
-in its own right (`bench/runs/README.md`, *What a run may read*, item 4), and one line
-of it answers the question. To size the floor, re-run `check` once with
-`--atlas <the example's own .atlas>`: same skeleton, same keys, the reference's own
-texture. Measured on rung 3, MAE **6.13 / 6.01** with the candidate's own
-full-resolution atlas against **2.25 / 2.30** with the supplied one — **two thirds of
-the figure was the texture**, and the run that did not know it would have spent its
-whole budget hunting a rig that was already right.
+⇒ **`check` attributes it when you tell it where the frames' own atlas is.** Pass
+`--texture-from <the example's own .atlas>` (its `.atlas` is an allowed input in its
+own right — `bench/runs/README.md`, *What a run may read*, item 4) and two figures
+appear under the MAE:
 
-⚠️ Two things about that diagnostic. It is a **diagnostic and not a better number**:
-the artifact `bench` validates ships its own atlas, so the first figure is the one
-that belongs in a run's record and the second is the explanation of where it went.
-And the coarser texture **loses** resolution the finer one has — on the same rung a
-pair the reference moves *one pixel* across stopped being visible at half scale, so
-the diagnostic run reported a frame-change disagreement the graded run does not have.
-Read it for the floor, never as the verdict.
+```
+     MAE        mean 6.13  worst 7.51 at f0021   (0..255 over the union alpha; …)
+                ⤷ over the REFERENCE's own drawn pixels, mean 6.13 — …
+                ⭐ texture floor 5.84  above it 1.68   (over the reference's own pixels, 5.83 and 1.67)
+                   ⤷ … the texture accounts for 4.45 of this set's MAE (72.6% of the figure above) and
+                     cannot account for more than 5.84 — |MAE − above| ≤ floor …
+```
 
-🚨 **And a third, which decides whether the recipe measures anything at all: `--atlas`
-substitutes region *geometry* as well as texture.** The diagnostic's logic is *"same
-skeleton, same keys, the reference's own texture"* — but an atlas entry is not only a
-page and a rectangle. It also carries how the region was packed: **`rotate`**, and the
-trim offsets that say where the opaque part sits inside the original image. Swap the
-atlas and your attachments are re-seated on those, so the quads change too.
+- `texture floor` is your **own geometry through their texels** measured against your
+  own render: same pose, same quads, same rasteriser, so there is no rig content in it
+  at all.
+- `above it` is the MAE with that difference taken out.
+- ⭐ **They bound rather than subtract.** Absolute errors do not add, so
+  `MAE = floor + above` is false; what is true, per pixel and therefore of the means,
+  is `|MAE − above| ≤ floor`. So `MAE − above` is what the texture explained on these
+  frames and `floor` is the most it could ever explain. **A floor near zero is a proof
+  that the texture is not your problem** — which is a finding worth having before a
+  day of key-hunting, and one the old recipe could not give.
 
-⇒ **The recipe measures a floor only when the substitution is *"same quads, coarser
-texture"*.** Where the supplied atlas packs its regions **rotated or trimmed** and your
-attachments were measured off the loose PNGs, it is not — and the tell is unmistakable:
-**the number goes the wrong way.** A texture floor can only *explain* error, so a
-diagnostic that sends the MAE **up** on every set has substituted geometry, not just
-pixels, and the run's own atlas was the more faithful of the two.
+Measured on rung 3: **6.13 / 6.01** with the candidate's own full-resolution atlas,
+of which **4.45 and 4.10 is texture** — about **70 %** — leaving **1.68 / 1.91** that
+is the rig. A run that did not know that would have spent its whole budget hunting a
+rig that was already right.
 
-⚠️ **Then the honest verdict is *inconclusive*, not *no floor*.** Both readings stay
-open — there may be a texture floor this diagnostic cannot isolate — so record the
-figures, say the substitution changed the quads, and do **not** convert a failed
-diagnostic into a claim about the shot. ⇒ Check the atlas's own entries for `rotate` and
-for trim before you run it; that is one look at a text file, and it tells you in advance
-whether the number you are about to take will mean anything.
+⚠️ Two things about it. It is a **diagnostic and not a better number**: the artifact
+`bench` validates ships its own atlas, so the MAE is the figure that belongs in a run's
+record and the floor is the account of where part of it went. And the coarser texture
+**loses** resolution the finer one has — on rung 3 a pair the reference moves *one
+pixel* across stopped being visible at half scale, so a substituted run can report a
+frame-change disagreement the graded run does not have. Read it for the floor, never as
+the verdict.
+
+🚨 **Do not run this with `--atlas`, which is what the recipe used to say and which
+substitutes region *geometry* along with the texture.** `--atlas` names **your own**
+atlas for the case where it is not beside your skeleton; point it at a foreign one and
+the skeleton is re-loaded against that atlas. An atlas entry is not only a page and a
+rectangle — it carries **`rotate:`** and the trim offsets that say where the opaque part
+sits inside the original image, and a region attachment's quad is derived from those, so
+your attachments are re-seated and the quads change. Worse, `spine-core` implements a
+region's rotated corner assignment for `rotate: 90` and for nothing else, so a
+270-packed region is sampled from the wrong part of the page outright.
+
+⇒ **The tell was unmistakable and it is the reason this is now a flag of its own: the
+number went the wrong way.** A texture floor can only *explain* error, so a diagnostic
+that sends the MAE **up** on every set has substituted geometry rather than pixels.
+Rung 7 is that case — its pack is `rotate: 270` — and under `--atlas` it read
+24.93 → 28.84 and 19.17 → 27.75, which had to be recorded as **inconclusive**. Under
+`--texture-from` the same rung measures a floor of **1.7 MAE** on every set, about 2 %
+of each figure: there *is* a floor, it is small, and the rig is the story after all.
+
+⇒ **You no longer have to inspect the atlas for `rotate` or trim before running it.**
+`--texture-from` keeps every world vertex where your own atlas put it and remaps only
+the texture coordinates, through the drawing's own coordinate space, so a rotated or
+trimmed pack lands the same artwork in the same place. If a region of yours is missing
+from the substituting atlas the report names it and says the floor is a mixture.
 
 🚨 **The precondition the advice above does not state: a floor measured with another
 part misplaced is not a floor.** Measuring at the rest pose is right — it is the one
@@ -2679,27 +2716,54 @@ the floor is an upper bound on the error rather than a floor under it. ⚠️ Th
 same failure as capturing a guard's expected value from a screen that is already
 broken: the baseline records the defect, and then the *repair* is what looks wrong.
 
-⚖️ **`frames.json`'s own box can be refused for a reason that is not a coordinate
-error, and there is an honest answer.** The test is on **extent**: a candidate authored
-in the frames' own world units — one whose setup box lands on the reference's to the
-pixel — still fails it if its union content box differs by a few pixels at the
-extremes, because one part reaching somewhere nothing in the frames reaches is enough.
-`check` then fits its own box, and on a multi-shot root the fitted framing costs every
-set some MAE against the declared one — the same order as the shared-versus-per-set gap
-the `--framing` flag's own help quotes, and easily more than a round of fitting buys.
-That cost is real and it is **not** a sign you got the coordinates wrong.
+⚖️ **`frames.json`'s own box, and the `declared` line that says whether you got it.**
+Every set now prints one, taken or refused, with the numbers that decided:
 
-⇒ **Report both, label which is which, and say what separates them.** Run `check`
-unaided — that is the figure the artifact produces on its own and the one that belongs
-in a run's record — then run it once more with `--viewport` on the declared box and keep
-that output as a **named diagnostic file** beside the first. The gap between them is the
-framing; what is left is the keys, which is the only reason to want the second number.
-🚫 **The pinned run is never the record.** `--viewport` is a claim about your own
-coordinates and `check` says so above every figure it prints under one: *nothing checks
-it*. And do not chase the refusal by shrinking a part to fit the box — that trades a
-framing cost for a wrong silhouette, which is worse in every column that matters.
-Instead read the `content` line's own advice: it names how much wider and shorter you
-cover, and **which part reaches too far is a drift question**, not a framing one.
+```
+     declared   frames.json's own box: TAKEN, coincident — a fit there asks for 0.08 px, under
+                the 1 px that separates a candidate in the frames' coordinates from one in its
+                own, over 65 frame(s).
+```
+
+Two clauses take the box. **`coincident`** is the plain one: rendering into that box
+put your pixels on the reference's, so you are authored in the frames' own
+coordinates — measured, not assumed. **`extent-spread`** is the tolerance for the case
+below, and when it engages the report names it and gives both of its numbers. A
+**`coordinates`** refusal means one scale and one offset account for the whole
+correction, which is what a different origin or a different unit looks like, and
+`check` frames you by a fit instead — where it is blind to your units by design.
+
+⚠️ **The test is on extent, and extent is not the same claim as coordinates.** A
+candidate authored in the frames' own world units — one whose setup box lands on the
+reference's to the pixel — used to fail it whenever its union content box differed by
+a few per cent at the extremes, because `fitFraming` registers extent and a box 6 %
+narrower reads as 6 % of scale, which is arithmetically what a units error reads as.
+Rung 7 was refused on **all twelve** of its sets that way, and the fitted framing it
+fell back to cost every one of them 0.28–2.01 MAE against the declared box. That cost
+was real and it was **not** a sign the coordinates were wrong.
+
+⇒ **`check` now separates the two by asking whether one similarity can explain the
+disagreement at all.** A difference of units or of origin *is* a similarity, so the fit
+absorbs it exactly and leaves a residual near zero — a rig at 2 % different units leaves
+0.27 px rms. A silhouette differing at the extremes is not a similarity, so the residual
+stays the size of the disagreement — rung 7 leaves 3.32–16.85 px. So the box is taken
+when the correction reaches no further than **5 % of the reference's own content box**
+*and* the fit leaves **more than a pixel rms** it cannot explain. Both halves matter:
+the residual test on its own also takes a rig 300 units away, whose content box is
+truncated by the box it is being probed in and whose fit is therefore meaningless.
+
+⇒ **When the box is still refused, report both figures and label which is which.** Run
+`check` unaided — that is the figure the artifact produces on its own and the one that
+belongs in a run's record — then run it once more with `--viewport` on the declared box
+and keep that output as a **named diagnostic file** beside the first. The gap between
+them is the framing; what is left is the keys, which is the only reason to want the
+second number. 🚫 **The pinned run is never the record.** `--viewport` is a claim about
+your own coordinates and `check` says so above every figure it prints under one:
+*nothing checks it*. And do not chase a refusal by shrinking a part to fit the box —
+that trades a framing cost for a wrong silhouette, which is worse in every column that
+matters. Read the `content` line's own advice instead: it names how much wider and
+shorter you cover, and **which part reaches too far is a drift question**, not a
+framing one.
 
 **`Δpx` and `ref Δ`** are the two columns that do **not** compare you against the
 reference. They compare each side against **itself one frame earlier**: how many

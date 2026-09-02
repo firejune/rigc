@@ -100,6 +100,23 @@ per animation and per frame:
   instead of it: most of a frame is background on both sides, so that number is
   small for every candidate and the gap between a good one and a bad one smaller
   still.
+- **The texture floor** — how much of that MAE is **resampling** rather than the
+  rig, when you ask for it with `--texture-from <atlas>`. The reference frames come
+  through the example's own **packed** atlas, which may carry a `scale:` line (the
+  ladder's are packed at 0.4 and 0.5) while rigc has no packer, so a candidate
+  samples the loose art at twice the resolution and every edge of every part is
+  filtered from a different source in every frame. It is a constant of the
+  *pipeline*: invisible to the content box, to the fit residual and to the
+  whole-pixel refinement, and **no key moves it**. Measured twice by hand before it
+  was attributed here — about two thirds of rung 3's figure — and the report said
+  nothing (issue #171). The flag renders the candidate's **own geometry** through
+  that atlas's texels and prints two figures beside the MAE: `floor`, the
+  resampling on its own, and `above it`, the MAE with that difference taken out.
+  They **bound** rather than subtract: absolute errors do not add, so what holds is
+  `|MAE − above| ≤ floor` — the triangle inequality over the pixels all three are
+  averaged on. 🚫 `above it` is not a better number and the MAE stays the figure of
+  record; a floor near zero is a proof the texture is *not* the story. See the
+  atlas-floor recipe in [AUTHORING §9.2](AUTHORING.md).
 - **The framing** — where the candidate's drawn pixels sit against the reference's,
   as a scale, an offset and a residual. It is printed first because it is upstream
   of everything else: get it wrong and the error arrives disguised as motion. On a
@@ -115,6 +132,25 @@ per animation and per frame:
   well. A box that is **not** an estimate — `frames.json`'s own, or one you pinned —
   is never moved: there the same search is reported as a finding, because a constant
   pixel inside the right box is the candidate's own figure sitting off, not framing.
+- **Whether the frames' own box applies, and on which clause** — one `declared`
+  line per set, whether the box was taken or refused, with the numbers that decided.
+  Two clauses take it. **Coincident** is the original: the correction a fit at that
+  box asks for is under a pixel, which separates a candidate in the frames' own
+  coordinates from one in its own (those differ by an origin or a unit — tens to
+  hundreds of pixels — not a fraction of one). **Extent-spread** is the tolerance
+  issue #194 asked for: the correction reaches no further than 5 % of the
+  reference's own content box *and* the fit leaves more than a pixel rms it cannot
+  explain. A difference of units or of origin **is** a similarity and the fit
+  absorbs it exactly, so a residual that size is a silhouette differing at the
+  extremes — and the frames' own box is where the frames were drawn whatever a
+  candidate's outline does out there. Without it, a candidate whose setup box lands
+  on the reference's to the pixel was refused for a few per cent of extent and paid
+  a fitted framing for it: rung 7 was refused on all twelve sets and reads better on
+  every one in the declared box, by 0.28 to 2.01 MAE. ⚠️ Both halves are load-bearing
+  — the residual test alone takes a rig 300 units away, whose content box is
+  truncated by the box it is being probed in and whose fit is therefore garbage.
+  When the tolerance engages the report says so by name, with the reach it stayed
+  inside and the residual it stood on.
 - **The whole shot, against the contact sheet** — a set that ships a couple of
   stills and folds every sampled frame into one `contact.png` (rung 2's do,
   spineboy's `@30fps` sets do) used to be compared on the stills alone, honestly
@@ -149,6 +185,23 @@ refuses a path which is not a `.png` or the frame set's `frames.json`, and the
 selftest makes that guard fire. That is what lets `check` sit *inside* an
 authoring loop where `bench` cannot — running it as often as you like does not
 stop a run being an authoring run.
+
+⚠️ **`--texture-from` and `--atlas` are not the same flag, and the difference is
+the whole of issue #199.** `--atlas` names the **candidate's own** atlas for the
+case where it does not sit beside the skeleton, and pointing it at a foreign one
+re-loads the skeleton against that atlas — a region attachment's quad is derived
+from the region rectangle (`RegionAttachment.computeUVs` insets it by the trim
+offsets and sizes it against `orig`), so a `rotate:` or a trim in the substituting
+pack re-seats the **geometry** as well as the texels. On rung 7, whose pack is
+`rotate: 270` and whose non-square regions `TextureAtlas` transposes only at 90,
+that swap sends the reported MAE *up* on every set — and a texture floor cannot do
+that, because a coarser texture can only ever explain error. `--texture-from`
+copies every world vertex across untouched and swaps only the page and the UVs,
+remapping them through the drawing's own coordinates, so the same point of the
+artwork lands at the same world position on both sides and the two renders differ
+by texels alone. It is fenced to each substituting region's own rectangle as well,
+because a trimmed pack keeps only the drawing's opaque part and art-space outside
+it maps onto whatever was packed next door.
 
 The candidate is framed **by its own drawn pixels**, not by the reference's world
 box. A candidate is authored in its own coordinate system and under the ladder's
