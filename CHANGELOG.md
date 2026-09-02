@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/firejune/rigc/compare/v0.7.0...v0.8.0) (2026-09-02)
+
+
+### Features
+
+* **cli:** rigc pose — read each part's rigid placement out of a pose frame ([#243](https://github.com/firejune/rigc/issues/243)) ([1a10489](https://github.com/firejune/rigc/commit/1a104894b42e485dbdcbe35fc4566945ca264a81)), closes [#241](https://github.com/firejune/rigc/issues/241)
+
 ## [0.7.0](https://github.com/firejune/rigc/compare/v0.6.0...v0.7.0) (2026-08-29)
 
 
