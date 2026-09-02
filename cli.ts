@@ -382,10 +382,41 @@ const MESH_KIND_NOTES: Record<CompileResult['meshes'][number]['kind'], string> =
   authored: 'authored  geometry rigc did not build; it assumes nothing about the topology',
 };
 
-/** What a contour mesh measured about its own fit, or nothing for the others. */
+/**
+ * What a mesh measured about its own fit against the art it names, or nothing
+ * for a mesh with no art to measure against.
+ *
+ * Printed for authored geometry as well as for a `contour` (issue #277): the
+ * figure is a measurement between the emitted triangles and the PNG, so it means
+ * the same thing whoever drew the vertices, and the silence was the defect —
+ * an octagon rim placed on a round part's silhouette clips its own ink outline
+ * at 94.31% and used to print nothing at all.
+ *
+ * The hole is appended only when there is one, so the common line is unchanged.
+ * It is the one figure in the report that a hole moves: `coverage` and
+ * `overshoot` are both measured against the FILLED silhouette, so spanning an
+ * interior hole is neither missing coverage nor reaching past anything, and an
+ * unintentional hole — a gap in the art, a stroke that failed to join — bought
+ * fill over transparent pixels with nothing anywhere saying so (issue #275).
+ */
 function meshFit(m: CompileResult['meshes'][number]): string {
   if (m.coverage === undefined) return '';
-  return `  covers ${(m.coverage * 100).toFixed(2)}% of the art, reaching ${m.overshoot?.toFixed(2) ?? '?'}px past it`;
+  const hole = m.holePixels ? `, enclosing ${m.holePixels}px of hole` : '';
+  return `  covers ${(m.coverage * 100).toFixed(2)}% of the art, reaching ${m.overshoot?.toFixed(2) ?? '?'}px past it${hole}`;
+}
+
+/**
+ * The triangle budget a `MESH` line is read against: the rig's, or nothing.
+ *
+ * 📐 It used to be the literal `80`, which was nobody's budget — the rig quoted
+ * in issue #275 declared 64, `A13_MESH_BUDGET` measured against that 64
+ * correctly, and the line an author actually reads printed 80. Under the default
+ * `--profile spine` `A13` is `PROF`, so the printed number is the only budget
+ * figure in the output and it has to be the declared one. A rig that declares
+ * none says so in the same words `A13` SKIPs in, rather than being given a wall.
+ */
+function meshBudget(rig: CompileResult['rig']): string {
+  return rig.meshTriangleBudget === null ? '(no budget declared)' : `(budget ${rig.meshTriangleBudget})`;
 }
 
 /**
@@ -471,7 +502,7 @@ function cmdBuild(flags: Record<string, string>): void {
   for (const m of result.meshes) {
     console.log(
       `  MESH  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
-        `(budget 80)  bones=[${m.bones.join(', ')}]  attachments=[${m.attachments.join(', ')}]${meshFit(m)}`,
+        `${meshBudget(result.rig)}  bones=[${m.bones.join(', ')}]  attachments=[${m.attachments.join(', ')}]${meshFit(m)}`,
     );
   }
   for (const ph of result.physics) {
@@ -1763,7 +1794,8 @@ function cmdExplain(flags: Record<string, string>): void {
     for (const kind of new Set(result.meshes.map((m) => m.kind))) console.log(`  ${MESH_KIND_NOTES[kind]}`);
     for (const m of result.meshes) {
       console.log(
-        `  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  bones=[${m.bones.join(', ')}]${meshFit(m)}`,
+        `  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
+          `${meshBudget(result.rig)}  bones=[${m.bones.join(', ')}]${meshFit(m)}`,
       );
     }
   }

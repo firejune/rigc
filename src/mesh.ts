@@ -981,8 +981,19 @@ export function traceAlphaOutline(
     dir = next;
   }
 
-  // Holes: background pixels the island encloses. Flooded from outside the part,
-  // so "enclosed" is decided by reachability rather than by a winding rule.
+  const { filled, holePixels } = fillEnclosed(inside, w, h);
+  return { outline, artPixels, islandPixels: sizes[biggest - 1], islands: sizes.length, holePixels, filled };
+}
+
+/**
+ * A set of pixels plus every background pixel it encloses.
+ *
+ * Flooded from outside the part, so "enclosed" is decided by REACHABILITY rather
+ * than by a winding rule — which is what makes it answer the same question for a
+ * mask of one island and a mask of several, and is why the authored-mesh
+ * measurement can pass it all the art where the trace passes it one island.
+ */
+function fillEnclosed(inside: Uint8Array, w: number, h: number): { filled: Uint8Array; holePixels: number } {
   const outsideReach = new Uint8Array(w * h);
   const queue: number[] = [];
   const seed = (x: number, y: number): void => {
@@ -1018,8 +1029,37 @@ export function traceAlphaOutline(
       holePixels++;
     }
   }
+  return { filled, holePixels };
+}
 
-  return { outline, artPixels, islandPixels: sizes[biggest - 1], islands: sizes.length, holePixels, filled };
+/**
+ * Which pixels of a `w`x`h` grid a triangle set draws over.
+ *
+ * A pixel counts as covered when its CENTRE is in or on a triangle, which is the
+ * same convention `src/render.ts` rasterises by. A degenerate triangle — zero
+ * doubled area — is skipped rather than given an orientation it does not have.
+ */
+function rasteriseTriangles(points: Array<[number, number]>, triangles: number[], w: number, h: number): Uint8Array {
+  const covered = new Uint8Array(w * h);
+  for (let t = 0; t + 2 < triangles.length; t += 3) {
+    const a = points[triangles[t]];
+    const b = points[triangles[t + 1]];
+    const c = points[triangles[t + 2]];
+    const twice = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (Math.abs(twice) < 1e-12) continue;
+    const orient = twice > 0 ? 1 : -1;
+    const minX = Math.max(0, Math.floor(Math.min(a[0], b[0], c[0]) - 1));
+    const maxX = Math.min(w - 1, Math.ceil(Math.max(a[0], b[0], c[0]) + 1));
+    const minY = Math.max(0, Math.floor(Math.min(a[1], b[1], c[1]) - 1));
+    const maxY = Math.min(h - 1, Math.ceil(Math.max(a[1], b[1], c[1]) + 1));
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        if (covered[y * w + x]) continue;
+        if (pointInTriangle([x + 0.5, y + 0.5], a, b, c, orient)) covered[y * w + x] = 1;
+      }
+    }
+  }
+  return covered;
 }
 
 /**
@@ -1049,25 +1089,7 @@ export function measureContourFit(
 ): { coverage: number; overshoot: number; artPixels: number; coveredArt: number } {
   const { width: w, height: h } = mask;
   const art = artOf(mask, threshold);
-  const covered = new Uint8Array(w * h);
-  for (let t = 0; t + 2 < triangles.length; t += 3) {
-    const a = points[triangles[t]];
-    const b = points[triangles[t + 1]];
-    const c = points[triangles[t + 2]];
-    const twice = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-    if (Math.abs(twice) < 1e-12) continue;
-    const orient = twice > 0 ? 1 : -1;
-    const minX = Math.max(0, Math.floor(Math.min(a[0], b[0], c[0]) - 1));
-    const maxX = Math.min(w - 1, Math.ceil(Math.max(a[0], b[0], c[0]) + 1));
-    const minY = Math.max(0, Math.floor(Math.min(a[1], b[1], c[1]) - 1));
-    const maxY = Math.min(h - 1, Math.ceil(Math.max(a[1], b[1], c[1]) + 1));
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        if (covered[y * w + x]) continue;
-        if (pointInTriangle([x + 0.5, y + 0.5], a, b, c, orient)) covered[y * w + x] = 1;
-      }
-    }
-  }
+  const covered = rasteriseTriangles(points, triangles, w, h);
   let artPixels = 0;
   let coveredArt = 0;
   for (let i = 0; i < art.length; i++) {
@@ -1102,6 +1124,145 @@ export function measureContourFit(
     artPixels,
     coveredArt,
   };
+}
+
+/** What a mesh's triangles measure against the art the attachment names. */
+export interface MeshFitReport {
+  /** Pixels at or above the threshold. */
+  artPixels: number;
+  /** How many of them a triangle covers. */
+  coveredArt: number;
+  /** `coveredArt / artPixels`, 0..1. */
+  coverage: number;
+  /** Furthest a covered pixel sits outside the filled silhouette, in pixels. */
+  overshoot: number;
+}
+
+/**
+ * The same measurement for geometry rigc did NOT build — issue #277.
+ *
+ * ## Why an authored mesh can be measured at all
+ *
+ * Issue #44's lesson was that rigc must not apply a GENERATOR's topology rules to
+ * authored geometry: where a rim is, how rows pair, which edge is pinned. It did
+ * not build the mesh, so it cannot know any of that. Coverage is not topology.
+ * It is a number between two things the compiler has in front of it — the emitted
+ * triangles, and the PNG the attachment names with `image` — and it assumes
+ * nothing whatever about how the vertices are arranged. The defect it catches is
+ * the renderer's, not the author's: texture outside the triangles is not drawn,
+ * so art outside the mesh disappears on every runtime. A 9-vertex fan whose 8 rim
+ * vertices sit exactly on a round part's silhouette loses its whole ink outline
+ * between the spokes — an octagon's sides pass `R·cos(π/8)` from its centre — and
+ * measured 94.31%, five points under the bar the same art would have been refused
+ * at as a `contour`, with nothing in the report saying so.
+ *
+ * ## Two differences from `measureContourFit`, both deliberate
+ *
+ * **The filled silhouette is ALL the art plus what it encloses**, not the largest
+ * island plus what that encloses. A contour is one traced loop and can only ever
+ * enclose one island; an authored mesh over a part drawn as several islands is
+ * ordinary, correct data.
+ *
+ * **The overshoot search has no radius.** `measureContourFit` bounds it because a
+ * contour past its bound is refused and needs no exact figure. An authored mesh
+ * is never refused, so every figure needs a number — hence the exact distance
+ * transform below rather than a neighbourhood search that would have to stop
+ * somewhere.
+ */
+export function measureAuthoredMeshFit(
+  mask: AlphaMask,
+  threshold: number,
+  points: Array<[number, number]>,
+  triangles: number[],
+): MeshFitReport {
+  const { width: w, height: h } = mask;
+  const art = artOf(mask, threshold);
+  const { filled } = fillEnclosed(art, w, h);
+  const covered = rasteriseTriangles(points, triangles, w, h);
+  let artPixels = 0;
+  let coveredArt = 0;
+  for (let i = 0; i < art.length; i++) {
+    if (!art[i]) continue;
+    artPixels++;
+    if (covered[i]) coveredArt++;
+  }
+  const squared = squaredDistanceToSet(filled, w, h);
+  let worst = 0;
+  for (let i = 0; i < covered.length; i++) {
+    if (!covered[i] || filled[i]) continue;
+    if (squared[i] > worst) worst = squared[i];
+  }
+  return {
+    artPixels,
+    coveredArt,
+    coverage: artPixels === 0 ? 0 : coveredArt / artPixels,
+    overshoot: r6(Math.sqrt(worst)),
+  };
+}
+
+/**
+ * Exact squared Euclidean distance from every pixel to the nearest set pixel of
+ * `inside`, by the two-pass lower-envelope transform (Felzenszwalb-Huttenlocher).
+ *
+ * Two one-dimensional passes — down each column, then along each row of the
+ * result — because the squared Euclidean distance separates across axes:
+ * `min_p (x-px)² + (y-py)²` is the lower envelope of one parabola per candidate,
+ * and a pass builds that envelope in one sweep. Exact, and linear in the number
+ * of pixels, which is the reason it is here at all: the bounded neighbourhood
+ * search `measureContourFit` uses costs `radius²` per pixel and has to be told
+ * where to stop, and the authored path has nowhere to stop.
+ *
+ * `INF` is one past the furthest two pixels of this grid can be, so a column with
+ * no set pixel survives the first pass as "nothing in this column" rather than as
+ * a distance. A grid with no set pixel at all comes back all `INF`; the one caller
+ * never asks (a mask with no art has no covered-outside pixel to ask about).
+ */
+function squaredDistanceToSet(inside: Uint8Array, w: number, h: number): Float64Array {
+  const INF = w * w + h * h + 1;
+  const dist = new Float64Array(w * h);
+  for (let i = 0; i < dist.length; i++) dist[i] = inside[i] ? 0 : INF;
+
+  const span = Math.max(w, h);
+  const f = new Float64Array(span);
+  const out = new Float64Array(span);
+  /** The parabolas still on the envelope, as the sample index each rises from. */
+  const v = new Int32Array(span);
+  /** Where consecutive envelope parabolas cross. One longer than `v` by nature. */
+  const z = new Float64Array(span + 1);
+  const envelope = (n: number): void => {
+    let k = 0;
+    v[0] = 0;
+    z[0] = -Infinity;
+    z[1] = Infinity;
+    for (let q = 1; q < n; q++) {
+      let s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      while (s <= z[k]) {
+        k--;
+        s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      }
+      k++;
+      v[k] = q;
+      z[k] = s;
+      z[k + 1] = Infinity;
+    }
+    k = 0;
+    for (let q = 0; q < n; q++) {
+      while (z[k + 1] < q) k++;
+      out[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+    }
+  };
+
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) f[y] = dist[y * w + x];
+    envelope(h);
+    for (let y = 0; y < h; y++) dist[y * w + x] = out[y];
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) f[x] = dist[y * w + x];
+    envelope(w);
+    for (let x = 0; x < w; x++) dist[y * w + x] = out[x];
+  }
+  return dist;
 }
 
 /**

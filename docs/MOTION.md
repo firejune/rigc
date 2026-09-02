@@ -600,6 +600,13 @@ Nothing here is an answer to anything.
 What *is* real: every command line below was run, and every figure printed in an
 output block is what the command actually printed.
 
+🖼️ **For the same recipe on art that ships, the four
+[`gallery/`](https://github.com/firejune/rigc/tree/main/gallery) examples are worked
+in-betweening material** — `walk` is §3.5's arcs and §3.7's phase offsets on two leg
+chains, `ride` puts the same offsets in `groups` + `stagger`, and `squash` is §3.9's
+pivot written as a `deform` about a contact point. Each README says what every key is
+*for* rather than only what it is, and what looking at the render changed.
+
 ### The request
 
 > *"Here are the parts and two pictures of the signal arm — hanging down in the

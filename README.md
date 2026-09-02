@@ -373,6 +373,22 @@ A part that matches nowhere is refused by name, two near-equal placements are re
 as both, and nothing it prints is a score. Fields, the coordinate contract and the
 limits: [AUTHORING.md §11](docs/AUTHORING.md).
 
+## The gallery — four complete rigs over art that ships with them
+
+Each directory in [`gallery/`](https://github.com/firejune/rigc/tree/main/gallery) is
+one rig spec, one motion spec and the PNGs they name, small enough to read in one
+sitting. Each stars a single feature, so *how do I do X* has a working answer rather
+than a field table, and each README carries the frame rate it was authored at, what
+was verified, and what writing it cost. Repository material: a clone and
+`bun install` runs them.
+
+| Example | Stars | What it is |
+| --- | --- | --- |
+| [`gallery/walk`](https://github.com/firejune/rigc/tree/main/gallery/walk) | `ik` constraints + **`ik` timelines** | Two two-bone leg chains solved to foot targets — the planted leg nailed down, the swinging one let go at the top of its lift |
+| [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash) | **`deform` timelines** | A ball squashed about its contact point and stretched along its travel, from two affine transforms written out in the README |
+| [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex) | **`contour` meshes** | A swallow-tailed banner and a serrated leaf: four meshes traced off their own alpha, waved by bone timelines and rippled by a `deform` |
+| [`gallery/ride`](https://github.com/firejune/rigc/tree/main/gallery/ride) | `path` attachments + **path constraints** | A trolley coasting down a drawn rail and rolling back, driven by a `position` timeline, with `groups` + `stagger` keying the wheels and the ears |
+
 ## Commands
 
 Every command takes its paths explicitly. `rigc <command> --help` prints its flags, and
