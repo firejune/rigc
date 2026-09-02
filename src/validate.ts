@@ -1694,8 +1694,9 @@ export function validate(input: ValidateInput): ValidateReport {
           // 📐 PROFILE. That the join RESOLVES is validity — an attachment
           // pointing at a region the atlas does not have is a hole in the rig
           // whoever loads it. That the two names are IDENTICAL is rigc's v0
-          // policy: it holds because there is no packer, and a real packer
-          // renames regions by design (spineboy's `path` differs from its
+          // policy: it holds because a region name IS the PNG basename here, and
+          // rigc's own packer keeps it that way (issue #4), while a foreign
+          // packer renames regions by design (spineboy's `path` differs from its
           // placeholder in 26 attachments).
           if (policy && entry.placeholder !== lookup) {
             fail('A08_REGION_NAMES_MATCH_ATTACHMENTS', `attachment "${entry.placeholder}" resolves to region "${lookup}"; v0 requires them identical`);
@@ -1836,6 +1837,12 @@ export function validate(input: ValidateInput): ValidateReport {
       // attachment -> region -> file chain checkable exactly (A27), so it stays
       // on for spine-html; under `spine` an atlas is judged only on whether its
       // declared size matches the file it names.
+      //
+      // ⚠️ Since issue #4 rigc can produce a multi-region page itself
+      // (`build --pack`), so this clause is no longer "nobody can have made
+      // this". It is still the convention `spine-html` asks for, and the CLI
+      // therefore refuses `--pack --profile spine-html` by name rather than
+      // letting a legitimate pack arrive here and read as a defect.
       if (policy && page.pma) {
         fail('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', `page "${page.name}" claims premultiplied alpha; parts are straight alpha`);
       }
@@ -1849,7 +1856,11 @@ export function validate(input: ValidateInput): ValidateReport {
         );
       }
       if (region.degrees !== 0) {
-        fail('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', `region "${region.name}" is rotated; there is no packer, so nothing can be`);
+        fail(
+          'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+          `region "${region.name}" is rotated; rigc's own packer never turns a region (see PACK_NO_ROTATE in ` +
+            'src/atlas.ts), so this atlas came from somewhere else',
+        );
       }
     }
   });

@@ -30,6 +30,8 @@ parser and a list of named assertions all come back green.
 | You have | You run | You get |
 | --- | --- | --- |
 | part PNGs, a rig spec and a motion spec | `rigc build` | `skeleton.json` + `skeleton.atlas` — or a failure named by rule, and **nothing on disk** |
+| the same, and one texture instead of many | `rigc build --pack` | the parts arranged onto shared atlas pages, written beside the skeleton — losslessly, so the picture is the picture |
+| a pack somebody already made | `rigc build --atlas-in` | the same skeleton, with every part resolved to a region of that atlas — or a named refusal, never a part that silently does not draw |
 | a compiled rig | `rigc render` | every animation as PNG frames, plus one labelled contact sheet of the whole shot |
 | a compiled rig | `rigc preview` | one self-contained `.html` that plays it in Spine's own web player |
 | two to four compiled rigs | `rigc vote` | one ballot page a human picks from, and the answer checked into a ledger |
@@ -81,10 +83,11 @@ run a list of named assertions, and **write nothing unless all of them are green
 
 ## Install
 
-📦 **rigc measures loose PNGs directly — one atlas page per image.** It is not an
-atlas packer: packing several regions onto one page is tracked as
-[issue #4](https://github.com/firejune/rigc/issues/4), not something the tool does
-today.
+📦 **rigc measures loose PNGs directly, and emits one atlas page per image unless
+you ask otherwise.** `rigc build --pack` arranges every part onto shared pages and
+writes them into `--out`; `--atlas-in` builds against a pack somebody else made.
+Both are opt-in and both are narrow — no trimming, no rotation, no scaling — and
+[AUTHORING §0.1–§0.2](docs/AUTHORING.md) states the limits before you hit them.
 
 rigc runs on [Bun](https://bun.sh). The package ships its TypeScript sources and
 Bun runs them, so there is no build step and no `dist/` that can drift from the
@@ -379,6 +382,8 @@ commands take it and what its default is.
 | Command | Does |
 | --- | --- |
 | `build --rig … --motion … --out …` | compiles, gates, and **writes only if the gate is green**. `--images <dir>` says where the rig spec's `image` names resolve, `--manifest` adds measured art, and `--copy-images` copies every page PNG into `--out` so the directory is self-contained |
+| `build … --pack` | the same build with every part arranged onto **shared** atlas pages, written into `--out` — losslessly, and gated a second time as the pair that ships. `--page-size` and `--padding` tune it |
+| `build … --atlas-in <file.atlas>` | the same build with every part resolved to a **region of an existing pack** instead of a loose PNG; a name the atlas lacks, a size the spec disagrees with or a rectangle off its page is refused by name |
 | `validate <dir>` | re-gates artifacts already on disk |
 | `explain --rig … --motion …` | the compiled rig as a table — every bone with its resolved parent, the slots in draw order, every timeline key by key. Writes nothing. What to reach for when a rig compiles and still looks wrong |
 | `render --candidate <dir>` | PNG frames plus a contact sheet, in `render/` |

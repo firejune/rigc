@@ -290,8 +290,11 @@ export interface FrameChange {
  *
  * The reference frames are rendered through the example's own **packed** atlas,
  * which may carry a `scale:` line — the ladder's examples are packed at 0.4 and
- * 0.5 — while rigc has no packer and a candidate samples the loose art at its own
- * resolution. Every edge of every part is then filtered from a different source.
+ * 0.5 — while a candidate samples the art at its own resolution. That stays true
+ * of a `--pack`ed candidate (issue #4): rigc's packer is lossless and writes no
+ * `scale:` line, so it rearranges texels without resampling one and the constant
+ * measured here is unchanged by it.
+ * Every edge of every part is then filtered from a different source.
  * That difference is a constant of the *pipeline*: it is invisible to the content
  * box, to the fit residual and to the whole-pixel refinement (a resampling
  * difference is not an offset), and **no key an author writes can move it**.

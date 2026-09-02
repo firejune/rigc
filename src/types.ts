@@ -14,6 +14,7 @@
  * Nothing else is an input, and the compiler never invents a value that is in
  * none of them.
  */
+import type { AtlasRegion } from './atlas.ts';
 import type { MeshKind } from './mesh.ts';
 
 // ---------------------------------------------------------------------------
@@ -812,6 +813,20 @@ export interface CompiledImage {
    */
   hasAlpha: boolean;
   isBase: boolean;
+  /**
+   * The atlas region this part was resolved FROM, when it came out of a
+   * pre-packed atlas (`build --atlas-in`). Absent for the ordinary case, where
+   * the part is a loose PNG and its region covers its page exactly.
+   *
+   * Carried rather than flattened because a packed region says things a loose
+   * PNG cannot: where on the page it sits, how much border the packer trimmed,
+   * whether it is turned. `width`/`height` above are already the region's
+   * `originalWidth`/`originalHeight` — the untrimmed drawing — so every existing
+   * reader of this interface keeps the meaning it had; this field is for the two
+   * that need the rectangle itself (lifting the drawing back off the page, and
+   * reporting the pack).
+   */
+  atlas?: AtlasRegion;
 }
 
 /**
@@ -875,7 +890,20 @@ export interface CompileResult {
   atlasText: string;
   images: CompiledImage[];
   /** States listed in the manifest whose PNG is not on disk. */
-  droppedStates: Array<{ slot: string; state: string; path: string }>;
+  droppedStates: Array<{
+    slot: string;
+    state: string;
+    path: string;
+    /**
+     * What was consulted and came up empty, when it was not a file on disk.
+     *
+     * Absent on the ordinary path, where "no PNG at <path>" says everything. An
+     * `--atlas-in` build opened no such file — it looked for a REGION — so
+     * reporting the path would send the reader to a directory instead of to the
+     * pack that is missing it.
+     */
+    why?: string;
+  }>;
   /**
    * Parts the manifest declares and the cut does not carry (`image: null`, no
    * states). Reported rather than swallowed: "the optional slots are optional" is
