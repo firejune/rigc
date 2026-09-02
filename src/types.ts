@@ -820,13 +820,26 @@ export interface CompiledImage {
    *
    * Carried rather than flattened because a packed region says things a loose
    * PNG cannot: where on the page it sits, how much border the packer trimmed,
-   * whether it is turned. `width`/`height` above are already the region's
-   * `originalWidth`/`originalHeight` — the untrimmed drawing — so every existing
-   * reader of this interface keeps the meaning it had; this field is for the two
-   * that need the rectangle itself (lifting the drawing back off the page, and
-   * reporting the pack).
+   * whether it is turned. `width`/`height` above are the untrimmed DRAWING's
+   * size — the region's `originalWidth`/`originalHeight` divided by the page's
+   * `scale:` — so every existing reader of this interface keeps the meaning it
+   * had; this field is for the two that need the rectangle itself, in the page's
+   * own texels (lifting the drawing back off the page, and reporting the pack).
+   *
+   * ⚠️ So these two are in DIFFERENT units whenever the page declares a `scale:`
+   * other than 1: `width` is world/art size, `atlas.width` is texels. See
+   * `atlasScale`.
    */
   atlas?: AtlasRegion;
+  /**
+   * The `scale:` of the page the region above sits on, when it declares one
+   * other than 1. Absent otherwise, and absent for a loose PNG.
+   *
+   * Present only so a message can show its work: `width`/`height` are already
+   * descaled, and a refusal that says "region X is 746" without saying it read
+   * 373 texels at `scale: 0.5` names a number that is in neither file.
+   */
+  atlasScale?: number;
 }
 
 /**

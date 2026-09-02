@@ -116,6 +116,26 @@ export interface AtlasPage {
   width: number;
   height: number;
   pma: boolean;
+  /**
+   * The page's `scale:` line — how much SMALLER these texels are than the
+   * drawings they were packed from — or `1` when the page declares none.
+   *
+   * ⚠️ The second field on this interface that `TextureAtlas` does not have, and
+   * for the same kind of reason as `nameLine`: the runtime drops `scale:` because
+   * an attachment's size comes out of the skeleton JSON (`region.width =
+   * map.width * scale` in `SkeletonJson`, no atlas involved), so a player never
+   * needs it. An IMPORTER does. `--atlas-in` derives an attachment's size from
+   * the region when the rig spec declares none, and the region's
+   * `originalWidth/Height` are in the page's own texels — at `scale: 0.5` they
+   * are half the drawing. Reading the line here is what lets the importer state
+   * the drawing's size instead of the pack's (issue #267); dropping it is what
+   * made an imported `scale: 0.5` pack halve every attachment in silence.
+   *
+   * `atlasScales` in [`src/render.ts`](render.ts) reads the same field off the
+   * raw text for the MAE report, and the selftest holds the two readers to the
+   * same answer on every corpus atlas.
+   */
+  scale: number;
   regions: AtlasRegion[];
 }
 
@@ -167,8 +187,10 @@ function int(text: string | undefined): number {
  * Read an atlas file's text into pages and regions.
  *
  * A transcription of `TextureAtlas`'s constructor, and deliberately a dull one —
- * every branch below is there because the runtime has it. The one addition is
- * `nameLine`, which the runtime has no use for and `rewritePageNames` needs.
+ * every branch below is there because the runtime has it. Two additions, both of
+ * them fields a PLAYER has no use for and an IMPORTER does: `nameLine`, which
+ * `rewritePageNames` needs, and the page's `scale:`, which is what turns a
+ * region's texels back into the drawing's own size (`AtlasPage.scale`).
  */
 export function parseAtlasText(text: string): ParsedAtlas {
   const lines = text.split(/\r\n|\r|\n/);
@@ -194,7 +216,7 @@ export function parseAtlasText(text: string): ParsedAtlas {
       continue;
     }
     if (!page) {
-      page = { name: line.trim(), nameLine: at - 1, width: 0, height: 0, pma: false, regions: [] };
+      page = { name: line.trim(), nameLine: at - 1, width: 0, height: 0, pma: false, scale: 1, regions: [] };
       for (;;) {
         line = readLine();
         const entry = readEntry(line);
@@ -204,6 +226,15 @@ export function parseAtlasText(text: string): ParsedAtlas {
           page.height = int(entry.values[1]);
         } else if (entry.key === 'pma') {
           page.pma = entry.values[0] === 'true';
+        } else if (entry.key === 'scale') {
+          // The one key this reader takes that the runtime's `pageFields` does
+          // not — see `AtlasPage.scale`. A value that is not a positive finite
+          // number leaves the default of 1 rather than poisoning every size
+          // derived from it: `scale: 0` would divide the pack into infinity, and
+          // a page whose own scale line is unreadable is a page whose texels are
+          // the only measurement left.
+          const value = Number(entry.values[0]);
+          if (Number.isFinite(value) && value > 0) page.scale = value;
         }
         // `format`, `filter` and `repeat` are read by the runtime into fields no
         // consumer here has; they pass through `rewritePageNames` untouched.
