@@ -2,7 +2,7 @@
   "spec": "rigc-motion/1",
   "archetype": "spineboy-pro",
   "cut": "spineboy-pro",
-  "note": "Mechanical transcription of the same export's animations. Every curve is a raw `curve` array — absolute (time, value) control points copied verbatim — because an editor export carries a different bezier per key per channel and no named easing can say that. Each animation's `duration` is its own largest key time, because skeleton JSON has no duration field and that is the number a runtime loads. NOT COMPLETE: 24 timeline(s) in the export have no motion-spec property and are absent here — aim: ik constraint timeline on \"aim-ik\" (1 keys); aim: transform constraint timeline on \"aim-front-arm-transform\" (1 keys); aim: transform constraint timeline on \"aim-head-transform\" (1 keys); aim: transform constraint timeline on \"aim-torso-transform\" (1 keys); death: ik constraint timeline on \"front-foot-ik\" (1 keys); death: ik constraint timeline on \"front-leg-ik\" (1 keys); death: ik constraint timeline on \"rear-foot-ik\" (1 keys); death: ik constraint timeline on \"rear-leg-ik\" (1 keys); hoverboard: transform constraint timeline on \"front-foot-board-transform\" (1 keys); hoverboard: transform constraint timeline on \"rear-foot-board-transform\" (1 keys); hoverboard: transform constraint timeline on \"toes-board\" (1 keys); hoverboard: attachments.default.front-foot.front-foot.deform (1 keys); hoverboard: attachments.default.front-shin.front-shin.deform (4 keys); hoverboard: attachments.default.hoverboard-board.hoverboard-board.deform (3 keys); hoverboard: attachments.default.rear-foot.rear-foot.deform (1 keys); jump: ik constraint timeline on \"front-foot-ik\" (2 keys); jump: ik constraint timeline on \"front-leg-ik\" (2 keys); jump: ik constraint timeline on \"rear-foot-ik\" (1 keys); jump: ik constraint timeline on \"rear-leg-ik\" (1 keys); portal: ik constraint timeline on \"rear-leg-ik\" (1 keys); run: ik constraint timeline on \"front-leg-ik\" (4 keys); run: ik constraint timeline on \"rear-leg-ik\" (4 keys); walk: ik constraint timeline on \"front-leg-ik\" (4 keys); walk: ik constraint timeline on \"rear-leg-ik\" (5 keys).",
+  "note": "Mechanical transcription of the same export's animations. Every curve is a raw `curve` array — absolute (time, value) control points copied verbatim — because an editor export carries a different bezier per key per channel and no named easing can say that. Each animation's `duration` is its own largest key time, because skeleton JSON has no duration field and that is the number a runtime loads. COMPLETE: every timeline the export carries is stated here, including the ik, transform and deform groups. Two restatements the format's own defaults make lossless: (1) a field the export omits on some keys of a constraint timeline is written out loud on every key of it, because the parser reads each key with its own default rather than holding the previous key's value — the effective values are identical and the field set is uniform, which is what rigc requires; (2) `hoverboard`'s `hoverboard-board` deform run starts at export offset 1, mid-pair, because that run's leading x is exactly 0 — it is restated as offset 0 with that 0 written, which the zero-filled deform array makes the same geometry.",
   "easings": {},
   "animations": {
     "aim": {
@@ -75,6 +75,46 @@
             {
               "t": 0,
               "v": "crosshair"
+            }
+          ]
+        }
+      ],
+      "ik": [
+        {
+          "constraint": "aim-ik",
+          "keys": [
+            {
+              "t": 0,
+              "mix": 0.995
+            }
+          ]
+        }
+      ],
+      "transform": [
+        {
+          "constraint": "aim-front-arm-transform",
+          "keys": [
+            {
+              "t": 0,
+              "mixRotate": 0.784
+            }
+          ]
+        },
+        {
+          "constraint": "aim-head-transform",
+          "keys": [
+            {
+              "t": 0,
+              "mixRotate": 0.659
+            }
+          ]
+        },
+        {
+          "constraint": "aim-torso-transform",
+          "keys": [
+            {
+              "t": 0,
+              "mixRotate": 0.423
             }
           ]
         }
@@ -3872,6 +3912,46 @@
             }
           ]
         }
+      ],
+      "ik": [
+        {
+          "constraint": "front-foot-ik",
+          "keys": [
+            {
+              "t": 0,
+              "mix": 0
+            }
+          ]
+        },
+        {
+          "constraint": "front-leg-ik",
+          "keys": [
+            {
+              "t": 0,
+              "mix": 0,
+              "bendPositive": false
+            }
+          ]
+        },
+        {
+          "constraint": "rear-foot-ik",
+          "keys": [
+            {
+              "t": 0,
+              "mix": 0.005
+            }
+          ]
+        },
+        {
+          "constraint": "rear-leg-ik",
+          "keys": [
+            {
+              "t": 0,
+              "mix": 0.005,
+              "bendPositive": false
+            }
+          ]
+        }
       ]
     },
     "hoverboard": {
@@ -7165,6 +7245,652 @@
             {
               "t": 0.9666666,
               "v": null
+            }
+          ]
+        }
+      ],
+      "transform": [
+        {
+          "constraint": "front-foot-board-transform",
+          "keys": [
+            {
+              "t": 0,
+              "mixRotate": 0.9969877
+            }
+          ]
+        },
+        {
+          "constraint": "rear-foot-board-transform",
+          "keys": [
+            {
+              "t": 0
+            }
+          ]
+        },
+        {
+          "constraint": "toes-board",
+          "keys": [
+            {
+              "t": 0
+            }
+          ]
+        }
+      ],
+      "deform": [
+        {
+          "slot": "front-foot",
+          "attachment": "front-foot",
+          "keys": [
+            {
+              "t": 0,
+              "offset": 26,
+              "vertices": [
+                -0.02832031,
+                -5.370239,
+                -0.02832031,
+                -5.370239,
+                3.818802,
+                -3.7757006,
+                -0.02832031,
+                -5.370239,
+                -3.821594,
+                3.7784686
+              ]
+            }
+          ]
+        },
+        {
+          "slot": "front-shin",
+          "attachment": "front-shin",
+          "keys": [
+            {
+              "t": 0,
+              "offset": 14,
+              "vertices": [
+                0.5298004,
+                -1.12677,
+                -0.855072,
+                -4.205871,
+                -11.351578,
+                -10.192245,
+                -10.798645,
+                -8.437653,
+                -6.064468,
+                -6.897568,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0.5489197,
+                -3.060211,
+                1.4846344,
+                -2.296631,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                -4.804367,
+                -7.018173
+              ]
+            },
+            {
+              "t": 0.3666667,
+              "offset": 14,
+              "vertices": [
+                0.5298004,
+                -1.12677,
+                -11.66571,
+                -9.072113,
+                -25.65866,
+                -17.537354,
+                -25.532166,
+                -16.50978,
+                -11.782318,
+                -11.26097,
+                0,
+                0,
+                0.6048736,
+                -1.6358948,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0.6048736,
+                -1.6358948,
+                0,
+                0,
+                -2.645218,
+                -7.357391,
+                1.4846344,
+                -2.296631,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0.6048736,
+                -1.6358948,
+                0.6048736,
+                -1.6358948,
+                0.6048736,
+                -1.6358948,
+                0.6048736,
+                -1.6358948,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0.6048736,
+                -1.6358948,
+                0,
+                0,
+                -10.068726,
+                -12.0999
+              ]
+            },
+            {
+              "t": 0.5333333,
+              "offset": 14,
+              "vertices": [
+                0.5298004,
+                -1.12677,
+                -0.855072,
+                -4.205871,
+                -7.007751,
+                -8.24771,
+                -6.454819,
+                -6.493118,
+                -6.064468,
+                -6.897568,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0.5489197,
+                -3.060211,
+                1.4846344,
+                -2.296631,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                -4.804367,
+                -7.018173
+              ]
+            },
+            {
+              "t": 1,
+              "offset": 14,
+              "vertices": [
+                0.5298004,
+                -1.12677,
+                -0.855072,
+                -4.205871,
+                -11.351578,
+                -10.192245,
+                -10.798645,
+                -8.437653,
+                -6.064468,
+                -6.897568,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0.5489197,
+                -3.060211,
+                1.4846344,
+                -2.296631,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                -4.804367,
+                -7.018173
+              ]
+            }
+          ]
+        },
+        {
+          "slot": "hoverboard-board",
+          "attachment": "hoverboard-board",
+          "keys": [
+            {
+              "t": 0,
+              "curve": [
+                0.06666667,
+                0,
+                0.2,
+                1
+              ]
+            },
+            {
+              "t": 0.2666667,
+              "vertices": [
+                0,
+                2.458557,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                3.5567284,
+                -0.0002975464,
+                3.5567284,
+                -0.0002975464,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                -0.0007591247,
+                -9.841583,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                -4.905582,
+                0.11214447,
+                -9.407063,
+                0.000617981,
+                -6.348713,
+                0.0004348755,
+                -6.349247,
+                -6.570183,
+                -6.349247,
+                -6.570183,
+                -6.348713,
+                0.0004348755,
+                -2.330795,
+                0.0001678467,
+                -2.331329,
+                -6.57045,
+                -2.331329,
+                -6.57045,
+                -2.330795,
+                0.0001678467,
+                0,
+                0,
+                0.00012207031,
+                2.458557,
+                0.00012207031,
+                2.458557,
+                0.00012207031,
+                2.458557,
+                0.00012207031,
+                2.458557,
+                3.3297005,
+                4.440048,
+                3.3297005,
+                4.440048,
+                3.3297005,
+                4.440048,
+                0.00012207031,
+                2.458557,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                -2.462269,
+                0.0001678467,
+                -2.462269,
+                0.0001678467,
+                -2.523163,
+                1.131302,
+                -2.523163,
+                1.131302,
+                -2.523163,
+                1.131302,
+                0.00012207031,
+                2.458557,
+                0.00012207031,
+                2.458557,
+                -9.40694,
+                2.459175,
+                1.8806305,
+                0.4419708,
+                -0.000289917,
+                -3.5480804,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                -2.523163,
+                1.131302,
+                -2.523163,
+                1.131302,
+                -2.523163,
+                1.131302,
+                -2.462269,
+                0.0001678467,
+                -2.462269,
+                0.0001678467,
+                -2.462269,
+                0.0001678467,
+                0,
+                0,
+                0,
+                0,
+                0.00012207031,
+                2.458557
+              ],
+              "curve": [
+                0.45,
+                0,
+                0.8166666,
+                1
+              ]
+            },
+            {
+              "t": 1
+            }
+          ]
+        },
+        {
+          "slot": "rear-foot",
+          "attachment": "rear-foot",
+          "keys": [
+            {
+              "t": 0,
+              "offset": 28,
+              "vertices": [
+                -1.9307785,
+                1.3478165,
+                -0.3141708,
+                2.333626,
+                3.051224,
+                0.3394623,
+                2.31472,
+                -2.016785,
+                2.175835,
+                -2.057953,
+                -0.04277039,
+                -2.994591,
+                1.1542892,
+                0.2632828,
+                0.9750137,
+                -0.6716919
+              ]
             }
           ]
         }
@@ -11507,6 +12233,75 @@
           ]
         }
       ],
+      "ik": [
+        {
+          "constraint": "front-foot-ik",
+          "keys": [
+            {
+              "t": 0,
+              "mix": 0,
+              "curve": [
+                0.3,
+                0,
+                0.9,
+                1,
+                0.3,
+                0,
+                0.9,
+                0
+              ]
+            },
+            {
+              "t": 1.2,
+              "mix": 1
+            }
+          ]
+        },
+        {
+          "constraint": "front-leg-ik",
+          "keys": [
+            {
+              "t": 0,
+              "mix": 0,
+              "bendPositive": false,
+              "curve": [
+                0.3,
+                0,
+                0.9,
+                1,
+                0.3,
+                0,
+                0.9,
+                0
+              ]
+            },
+            {
+              "t": 1.2,
+              "mix": 1,
+              "bendPositive": false
+            }
+          ]
+        },
+        {
+          "constraint": "rear-foot-ik",
+          "keys": [
+            {
+              "t": 0,
+              "mix": 0
+            }
+          ]
+        },
+        {
+          "constraint": "rear-leg-ik",
+          "keys": [
+            {
+              "t": 0,
+              "mix": 0,
+              "bendPositive": false
+            }
+          ]
+        }
+      ],
       "events": [
         {
           "t": 1.2,
@@ -15457,6 +16252,18 @@
             }
           ]
         }
+      ],
+      "ik": [
+        {
+          "constraint": "rear-leg-ik",
+          "keys": [
+            {
+              "t": 3.166667,
+              "softness": 10,
+              "bendPositive": false
+            }
+          ]
+        }
       ]
     },
     "run": {
@@ -17790,6 +18597,58 @@
             {
               "t": 0,
               "v": "mouth-grind"
+            }
+          ]
+        }
+      ],
+      "ik": [
+        {
+          "constraint": "front-leg-ik",
+          "keys": [
+            {
+              "t": 0,
+              "softness": 10,
+              "bendPositive": false
+            },
+            {
+              "t": 0.5666666,
+              "softness": 14.8,
+              "bendPositive": false
+            },
+            {
+              "t": 0.6,
+              "softness": 48.2,
+              "bendPositive": false
+            },
+            {
+              "t": 0.6666667,
+              "softness": 10,
+              "bendPositive": false
+            }
+          ]
+        },
+        {
+          "constraint": "rear-leg-ik",
+          "keys": [
+            {
+              "t": 0,
+              "softness": 0,
+              "bendPositive": false
+            },
+            {
+              "t": 0.16666667,
+              "softness": 22.5,
+              "bendPositive": false
+            },
+            {
+              "t": 0.3,
+              "softness": 61.4,
+              "bendPositive": false
+            },
+            {
+              "t": 0.6666667,
+              "softness": 0,
+              "bendPositive": false
             }
           ]
         }
@@ -21345,6 +22204,93 @@
               "v": [
                 -1.810024
               ]
+            }
+          ]
+        }
+      ],
+      "ik": [
+        {
+          "constraint": "front-leg-ik",
+          "keys": [
+            {
+              "t": 0,
+              "softness": 25.7,
+              "bendPositive": false,
+              "curve": [
+                0.008333334,
+                1,
+                0.025,
+                1,
+                0.008333334,
+                25.7,
+                0.025,
+                9.9
+              ]
+            },
+            {
+              "t": 0.03333333,
+              "softness": 9.9,
+              "bendPositive": false,
+              "curve": [
+                0.15,
+                1,
+                0.3833333,
+                1,
+                0.15,
+                9.9,
+                0.3833333,
+                43.2
+              ]
+            },
+            {
+              "t": 0.5,
+              "softness": 43.2,
+              "bendPositive": false,
+              "curve": [
+                0.625,
+                1,
+                0.875,
+                1,
+                0.625,
+                43.2,
+                0.8455136,
+                45.56755
+              ]
+            },
+            {
+              "t": 1,
+              "softness": 25.7,
+              "bendPositive": false
+            }
+          ]
+        },
+        {
+          "constraint": "rear-leg-ik",
+          "keys": [
+            {
+              "t": 0,
+              "softness": 5,
+              "bendPositive": false
+            },
+            {
+              "t": 0.4333333,
+              "softness": 4.9,
+              "bendPositive": false
+            },
+            {
+              "t": 0.5,
+              "softness": 28.81148,
+              "bendPositive": false
+            },
+            {
+              "t": 0.6,
+              "softness": 43.8,
+              "bendPositive": false
+            },
+            {
+              "t": 1,
+              "softness": 5,
+              "bendPositive": false
             }
           ]
         }
