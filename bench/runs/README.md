@@ -309,8 +309,9 @@ frames is not answer-bearing, so it is not swept out.
    path is gitignored and `render_reference.ts` will not write outside it);
 3. the art, `examples/<example>/images/`;
 4. that example's **`.atlas`** — the atlas is a supplied input rather than something
-   the agent authors (rigc has no packer, B3), and it is packed *from* the loose PNGs
-   in (3). It is the one file under `examples/*/export/` a run may open, and the
+   the agent authors (by protocol, not by tool gap: rigc gained a packer with #4/B3,
+   but a run never packs its own — the reference frames sample exactly this atlas),
+   and it is packed *from* the loose PNGs in (3). It is the one file under `examples/*/export/` a run may open, and the
    skeleton JSON beside it stays the answer. A run that does not need it — rigc emits
    its own atlas from the PNGs — should say so and skip it;
 5. [docs/AUTHORING.md](../../docs/AUTHORING.md) in full, §8, §9 and §10 included;
