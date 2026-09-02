@@ -1,7 +1,15 @@
 /**
- * Procedural mesh geometry.
+ * Procedural mesh geometry — three builders, two different jobs.
  *
- * The shape this builds is the one a deformable aperture asks for: **the rim is
+ * `buildRingMesh` and `buildRibbonMesh` build the shape a DEFORMATION asks for,
+ * and the long note below is theirs: what is pinned, what may move, how
+ * authority falls off. `buildContourMesh` builds the shape the ART already is —
+ * it traces a part's own alpha and triangulates it, and its own section further
+ * down says why that makes it a shape rather than a deformation model.
+ *
+ * ## The ring and the ribbon
+ *
+ * The shape they build is the one a deformable aperture asks for: **the rim is
  * nailed down and only the inside moves.** For a face cut that ring is the mouth
  * aperture, and the rim already exists as data — the mask polygon in the cut
  * manifest is exactly the contour where the generated part fades into untouched
@@ -63,8 +71,11 @@ export interface MeshVertexWeight {
   weight: number;
 }
 
+/** Which builder in this file made a mesh's geometry. */
+export type MeshKind = 'ring' | 'ribbon' | 'contour';
+
 export interface MeshGeometry {
-  kind: 'ring' | 'ribbon';
+  kind: MeshKind;
   /** Vertex positions in part-local pixels, y down. */
   points: Array<[number, number]>;
   /** Normalised region UVs, v measured from the top edge. */
@@ -75,6 +86,8 @@ export interface MeshGeometry {
   weights: MeshVertexWeight[][];
   /** Hull vertex count — emitted as `hull`, which the loader doubles. */
   hullVertices: number;
+  /** What the contour builder measured about its own fit. Only `contour` has one. */
+  contour?: ContourReport;
 }
 
 /**
@@ -390,6 +403,822 @@ export function buildRibbonMesh(input: RibbonSpecInput): MeshGeometry {
   }
 
   return { kind: 'ribbon', points, uvs, triangles, weights, hullVertices: 2 * rows };
+}
+
+// ---------------------------------------------------------------------------
+// contour — a mesh cut to the part's own alpha silhouette
+// ---------------------------------------------------------------------------
+//
+// The ring and the ribbon build a shape the DEFORMATION wants. This one builds
+// the shape the ART already is: trace the alpha mask, simplify the outline,
+// push it out by a margin, triangulate. What it is for is the case those two
+// cannot express — a part whose outline is the interesting thing, where a
+// rectangle of region is either too much geometry (a whole quad of transparent
+// pixels to blend) or too little (no vertices to move where the silhouette is).
+//
+// 🚨 **It is geometry, not a deformation model.** Every vertex is pinned to the
+// slot bone at weight 1, so a contour mesh at rest draws what the region drew
+// and a bone cannot bend it. What it gains over a region is a real outline and
+// real triangles: a `deform` timeline has somewhere to push, `hull` states the
+// silhouette other tools can read, and the shape is measured rather than
+// declared. Bone-driven interior motion is what `ring` is for, and authored
+// `weights` is what an editor's own auto-weighting arrives as.
+//
+// Every claim this builder makes about its own output it MEASURES:
+// `measureContourFit` rasterises the emitted triangles against the very mask
+// they were traced from and the build is refused unless the triangles cover
+// `CONTOUR_MIN_COVERAGE` of the art and stay within the margin the author asked
+// for. A mesh that clips the art is the one failure mode that cannot be seen in
+// the numbers of a skeleton file, so it is not left to a reader to notice.
+
+/** One part's alpha channel, as the tracer wants it. */
+export interface AlphaMask {
+  width: number;
+  height: number;
+  /** One byte per pixel, row major, y down. `width * height` long. */
+  alpha: Uint8Array;
+}
+
+export interface ContourSpecInput {
+  mask: AlphaMask;
+  /** Alpha at or above this counts as art. 1 means "any pixel that is not fully transparent". */
+  threshold: number;
+  /** Douglas-Peucker tolerance, in part-local pixels. */
+  tolerance: number;
+  /** How far the outline is pushed out past the traced silhouette, in pixels. */
+  margin: number;
+  /** Refuse rather than emit more outline vertices than this. */
+  maxVertices: number;
+}
+
+/** What the contour builder measured while building — reported, not asserted in prose. */
+export interface ContourReport {
+  /** Pixels at or above the threshold. */
+  artPixels: number;
+  /** Pixels in the largest 4-connected island of art. */
+  islandPixels: number;
+  /** How many 4-connected islands of art the mask holds. */
+  islands: number;
+  /** Transparent pixels the traced outline encloses — inside the mesh, drawing nothing. */
+  holePixels: number;
+  /** Corner-lattice vertices the trace produced, before simplification. */
+  tracedVertices: number;
+  /** Fraction of art pixels the emitted triangles cover, 0..1. */
+  coverage: number;
+  /** Furthest a covered pixel sits outside the filled silhouette, in pixels. */
+  overshoot: number;
+}
+
+/**
+ * The share of the art the triangles must cover, or the build is refused.
+ *
+ * Not 1. The outline is simplified, and a simplification that could never cut a
+ * corner is not a simplification — so the guarantee is a stated fraction and the
+ * measured number goes in the report, rather than an exactness nobody can hold.
+ */
+export const CONTOUR_MIN_COVERAGE = 0.995;
+
+/**
+ * How far a mitred corner may travel, as a multiple of `margin`.
+ *
+ * A sharp spike's angle bisector runs away to infinity — `margin / sin(θ/2)` —
+ * and an unlimited miter turns a 5-degree point into a vertex hundreds of pixels
+ * off the art. Clamping the travel gives that corner a slightly cut tip instead,
+ * which the coverage measurement then either accepts or refuses.
+ */
+export const CONTOUR_MITER_LIMIT = 4;
+
+/**
+ * The furthest a contour mesh CAN reach past the filled silhouette, in pixels,
+ * derived rather than chosen.
+ *
+ * Three terms, and each one is a step of the build: the offset moves a vertex at
+ * most `margin * CONTOUR_MITER_LIMIT` (the miter clamp is what makes that a
+ * bound at all), simplification can bow an edge `tolerance` outward, and a pixel
+ * whose CENTRE lands inside a triangle can sit up to one pixel from the shape's
+ * true edge. So a build that exceeds this is not an author's margin being
+ * generous — it is this file's arithmetic being wrong, and `buildContourMesh`
+ * refuses it in those words.
+ *
+ * ⭐ It is a ceiling, not a forecast. The number a given part actually measures
+ * is in its `ContourReport.overshoot`, which is where to read "how closely does
+ * this mesh hug this art": the selftest's blob measures 3.16px against a ceiling
+ * of 10.50px at the same settings.
+ */
+export function contourOvershootBound(margin: number, tolerance: number): number {
+  return margin * CONTOUR_MITER_LIMIT + tolerance + 1;
+}
+
+/** Cracks run clockwise on screen (y down): +x, +y, -x, -y. */
+const CRACK_DIRS: ReadonlyArray<readonly [number, number]> = [
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+  [0, -1],
+];
+
+/** Perpendicular distance from `p` to the segment `a`-`b`, clamped to its ends. */
+function distanceToSegment(
+  p: readonly [number, number],
+  a: readonly [number, number],
+  b: readonly [number, number],
+): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = dx * dx + dy * dy;
+  if (len === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p[0] - (a[0] + dx * t), p[1] - (a[1] + dy * t));
+}
+
+/**
+ * Douglas-Peucker over one open polyline, returning the indices it keeps.
+ *
+ * Iterative rather than recursive: a 4000-vertex staircase (a 1000x1000 part
+ * traced on the corner lattice) recurses deeper than is comfortable, and the
+ * stack version is the same algorithm with the frames written down.
+ */
+function simplifyRun(points: Array<[number, number]>, from: number, to: number, tolerance: number): number[] {
+  const keep = new Uint8Array(to - from + 1);
+  keep[0] = 1;
+  keep[to - from] = 1;
+  const stack: Array<[number, number]> = [[from, to]];
+  while (stack.length) {
+    const [lo, hi] = stack.pop()!;
+    if (hi <= lo + 1) continue;
+    let worst = -1;
+    let worstAt = -1;
+    for (let i = lo + 1; i < hi; i++) {
+      const d = distanceToSegment(points[i], points[lo], points[hi]);
+      if (d > worst) {
+        worst = d;
+        worstAt = i;
+      }
+    }
+    if (worst <= tolerance || worstAt < 0) continue;
+    keep[worstAt - from] = 1;
+    stack.push([lo, worstAt], [worstAt, hi]);
+  }
+  const out: number[] = [];
+  for (let i = 0; i < keep.length; i++) if (keep[i]) out.push(from + i);
+  return out;
+}
+
+/**
+ * Douglas-Peucker over a CLOSED ring.
+ *
+ * The algorithm is defined for a polyline with two fixed ends, and a ring has
+ * none — so the ring is cut at its first vertex and at the vertex furthest from
+ * it, and the two arcs are simplified independently. Cutting at the diameter
+ * rather than at an arbitrary second point is what keeps the two arcs from being
+ * a long one and a stub, whose simplification would then be lopsided.
+ */
+export function simplifyClosedPolygon(poly: Array<[number, number]>, tolerance: number): Array<[number, number]> {
+  const n = poly.length;
+  if (n < 4 || !(tolerance > 0)) return poly.slice();
+  let far = 1;
+  let farD = -1;
+  for (let i = 1; i < n; i++) {
+    const d = Math.hypot(poly[i][0] - poly[0][0], poly[i][1] - poly[0][1]);
+    if (d > farD) {
+      farD = d;
+      far = i;
+    }
+  }
+  const rotated = [...poly.slice(0), poly[0]]; // one open run 0..far, one far..n
+  const first = simplifyRun(rotated, 0, far, tolerance);
+  const second = simplifyRun(rotated, far, n, tolerance);
+  const out: Array<[number, number]> = [];
+  for (const i of first) out.push(poly[i]);
+  for (const i of second.slice(1, second.length - 1)) out.push(poly[i % n]);
+  return out;
+}
+
+/**
+ * Push a simple polygon out along its own vertex bisectors.
+ *
+ * ⭐ The traced outline runs on the corner lattice, so it already encloses every
+ * art pixel WHOLE and a margin of 0 clips nothing. What the margin is actually
+ * for is the simplification: Douglas-Peucker moves a vertex up to `tolerance` in
+ * either direction, and the inward half of that is a bite out of the art. So the
+ * useful setting is `margin >= tolerance`, and the coverage measurement is what
+ * says whether a given pair got there.
+ *
+ * `poly` must be clockwise on screen (positive `signedArea` in y-down pixels),
+ * which is what the tracer produces; outward is then to the left of travel.
+ */
+export function offsetPolygon(poly: Array<[number, number]>, margin: number): Array<[number, number]> {
+  const n = poly.length;
+  if (margin === 0) return poly.map(([x, y]) => [x, y] as [number, number]);
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < n; i++) {
+    const prev = poly[(i + n - 1) % n];
+    const here = poly[i];
+    const next = poly[(i + 1) % n];
+    const e1 = unit(here[0] - prev[0], here[1] - prev[1]);
+    const e2 = unit(next[0] - here[0], next[1] - here[1]);
+    // Outward normal of an edge running (dx, dy) on a clockwise screen polygon.
+    const n1: [number, number] = [e1[1], -e1[0]];
+    const n2: [number, number] = [e2[1], -e2[0]];
+    let bx = n1[0] + n2[0];
+    let by = n1[1] + n2[1];
+    let len = Math.hypot(bx, by);
+    if (len < 1e-9) {
+      // A 180-degree turn: the two edges double back, so there is no bisector.
+      // The incoming edge's own normal is the only direction that is outward for
+      // both, and a spike this thin is a candidate for the coverage refusal.
+      bx = n1[0];
+      by = n1[1];
+      len = 1;
+    }
+    bx /= len;
+    by /= len;
+    const project = Math.max(bx * n1[0] + by * n1[1], 1 / CONTOUR_MITER_LIMIT);
+    out.push([here[0] + (bx * margin) / project, here[1] + (by * margin) / project]);
+  }
+  return out;
+}
+
+function unit(dx: number, dy: number): [number, number] {
+  const len = Math.hypot(dx, dy);
+  return len < 1e-12 ? [0, 0] : [dx / len, dy / len];
+}
+
+/** Drop repeated and exactly collinear vertices, so no ear can have zero area. */
+export function prunePolygon(poly: Array<[number, number]>): Array<[number, number]> {
+  const dedup: Array<[number, number]> = [];
+  for (const p of poly) {
+    const last = dedup[dedup.length - 1];
+    if (last && Math.abs(last[0] - p[0]) < 1e-9 && Math.abs(last[1] - p[1]) < 1e-9) continue;
+    dedup.push([p[0], p[1]]);
+  }
+  while (dedup.length > 1) {
+    const a = dedup[0];
+    const b = dedup[dedup.length - 1];
+    if (Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9) dedup.pop();
+    else break;
+  }
+  // Collinear runs, repeatedly: removing one vertex can make its neighbours
+  // collinear in turn, and a single pass would leave those behind.
+  let changed = true;
+  while (changed && dedup.length > 3) {
+    changed = false;
+    for (let i = 0; i < dedup.length; i++) {
+      const p = dedup[(i + dedup.length - 1) % dedup.length];
+      const h = dedup[i];
+      const q = dedup[(i + 1) % dedup.length];
+      const cross = (h[0] - p[0]) * (q[1] - h[1]) - (h[1] - p[1]) * (q[0] - h[0]);
+      if (Math.abs(cross) < 1e-9) {
+        dedup.splice(i, 1);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return dedup;
+}
+
+/** Do two segments share a point? Touching counts — an ear needs strict simplicity. */
+function segmentsMeet(
+  a: readonly [number, number],
+  b: readonly [number, number],
+  c: readonly [number, number],
+  d: readonly [number, number],
+): boolean {
+  const o = (p: readonly [number, number], q: readonly [number, number], r: readonly [number, number]): number => {
+    const v = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+    return Math.abs(v) < 1e-9 ? 0 : Math.sign(v);
+  };
+  const onSegment = (p: readonly [number, number], q: readonly [number, number], r: readonly [number, number]): boolean =>
+    o(p, q, r) === 0 &&
+    Math.min(p[0], q[0]) - 1e-9 <= r[0] &&
+    r[0] <= Math.max(p[0], q[0]) + 1e-9 &&
+    Math.min(p[1], q[1]) - 1e-9 <= r[1] &&
+    r[1] <= Math.max(p[1], q[1]) + 1e-9;
+  const o1 = o(a, b, c);
+  const o2 = o(a, b, d);
+  const o3 = o(c, d, a);
+  const o4 = o(c, d, b);
+  if (o1 !== o2 && o3 !== o4) return true;
+  return onSegment(a, b, c) || onSegment(a, b, d) || onSegment(c, d, a) || onSegment(c, d, b);
+}
+
+/**
+ * The first pair of non-adjacent edges that meet, or null when the polygon is
+ * strictly simple.
+ *
+ * "Meet" includes touching at a point, and that strictness is load-bearing: the
+ * two-ears theorem holds for a strictly simple polygon, so an ear-clipper that
+ * runs on one cannot stall. Accepting a polygon that touches itself would trade a
+ * named refusal for a build that either stalls or emits a fan of slivers.
+ */
+export function findSelfIntersection(poly: Array<[number, number]>): [number, number] | null {
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % n];
+    for (let j = i + 1; j < n; j++) {
+      if (j === i || (j + 1) % n === i || (i + 1) % n === j) continue;
+      if (segmentsMeet(a, b, poly[j], poly[(j + 1) % n])) return [i, j];
+    }
+  }
+  return null;
+}
+
+/** Is `p` inside (or on) the triangle `a,b,c` wound in `orient`? */
+function pointInTriangle(
+  p: readonly [number, number],
+  a: readonly [number, number],
+  b: readonly [number, number],
+  c: readonly [number, number],
+  orient: number,
+): boolean {
+  const side = (u: readonly [number, number], v: readonly [number, number]): number =>
+    ((v[0] - u[0]) * (p[1] - u[1]) - (v[1] - u[1]) * (p[0] - u[0])) * orient;
+  return side(a, b) >= -1e-9 && side(b, c) >= -1e-9 && side(c, a) >= -1e-9;
+}
+
+/**
+ * Ear clipping over one strictly simple polygon, concave welcome.
+ *
+ * ## What it does
+ *
+ * Repeatedly find a vertex whose two edges make a convex turn in the polygon's
+ * own winding and whose triangle holds no other vertex, emit it as a triangle,
+ * and remove it. The emitted triples carry the polygon's own winding, so a
+ * clockwise-on-screen outline yields triangles that are counter-clockwise in
+ * Spine world after the y flip — the convention the rest of this file keeps.
+ *
+ * ## What it refuses, and why by name
+ *
+ * - **Holes.** There is no bridging step here, so a polygon is an outline and
+ *   nothing else. `traceAlphaOutline` therefore hands over the OUTER boundary and
+ *   reports the enclosed transparent area rather than cutting it out; those
+ *   pixels are inside the mesh and draw nothing, because their alpha is still 0.
+ * - **Self-intersection**, including a polygon that merely touches itself:
+ *   refused upstream by `findSelfIntersection`, because the two-ears theorem — the
+ *   guarantee that this loop terminates — is a statement about a strictly simple
+ *   polygon.
+ * - **No ear found** while three or more vertices remain. On a strictly simple
+ *   polygon that cannot happen, so reaching it means an input this function was
+ *   promised it would not get, and it says so instead of emitting a fan of
+ *   slivers that would load and render as folded art.
+ *
+ * O(n²) per ear, O(n³) overall, and deliberately so: `maxVertices` bounds n at
+ * the tens, an outline that needs thousands of vertices is not a mesh anybody
+ * wants in a runtime's inner loop, and a sweep-line would be a second geometry
+ * kernel to be wrong in.
+ */
+export function earClip(poly: Array<[number, number]>): number[] {
+  const n = poly.length;
+  if (n < 3) throw new MeshError(`a polygon needs at least 3 vertices to triangulate, got ${n}`);
+  const area = signedArea(poly);
+  if (Math.abs(area) < 1e-9) throw new MeshError('the polygon encloses no area, so it has no triangles');
+  const orient = area > 0 ? 1 : -1;
+  const live: number[] = [];
+  for (let i = 0; i < n; i++) live.push(i);
+  const triangles: number[] = [];
+  while (live.length > 3) {
+    let clipped = false;
+    for (let k = 0; k < live.length; k++) {
+      const ia = live[(k + live.length - 1) % live.length];
+      const ib = live[k];
+      const ic = live[(k + 1) % live.length];
+      const a = poly[ia];
+      const b = poly[ib];
+      const c = poly[ic];
+      const turn = ((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])) * orient;
+      if (turn <= 1e-12) continue; // reflex or straight: not an ear
+      let blocked = false;
+      for (const j of live) {
+        if (j === ia || j === ib || j === ic) continue;
+        if (pointInTriangle(poly[j], a, b, c, orient)) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked) continue;
+      triangles.push(ia, ib, ic);
+      live.splice(k, 1);
+      clipped = true;
+      break;
+    }
+    if (!clipped) {
+      throw new MeshError(
+        `ear clipping stalled with ${live.length} of ${n} vertices left: every remaining corner is reflex or ` +
+          'covers another vertex, which a strictly simple polygon cannot be — the outline is degenerate',
+      );
+    }
+  }
+  triangles.push(live[0], live[1], live[2]);
+  return triangles;
+}
+
+/** Which pixels of a mask are art, as 1/0 bytes. */
+function artOf(mask: AlphaMask, threshold: number): Uint8Array {
+  const out = new Uint8Array(mask.width * mask.height);
+  for (let i = 0; i < out.length; i++) out[i] = mask.alpha[i] >= threshold ? 1 : 0;
+  return out;
+}
+
+/** 4-connected island labels, 1-based; 0 is background. */
+function labelIslands(art: Uint8Array, w: number, h: number): { label: Int32Array; sizes: number[] } {
+  const label = new Int32Array(w * h);
+  const sizes: number[] = [];
+  const stack: number[] = [];
+  for (let start = 0; start < art.length; start++) {
+    if (!art[start] || label[start]) continue;
+    const id = sizes.length + 1;
+    let size = 0;
+    label[start] = id;
+    stack.push(start);
+    while (stack.length) {
+      const at = stack.pop()!;
+      size++;
+      const x = at % w;
+      const y = (at - x) / w;
+      const push = (nx: number, ny: number): void => {
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) return;
+        const to = ny * w + nx;
+        if (!art[to] || label[to]) return;
+        label[to] = id;
+        stack.push(to);
+      };
+      push(x - 1, y);
+      push(x + 1, y);
+      push(x, y - 1);
+      push(x, y + 1);
+    }
+    sizes.push(size);
+  }
+  return { label, sizes };
+}
+
+/**
+ * Trace the outer boundary of the largest island of art, on the pixel-CORNER
+ * lattice.
+ *
+ * ## Why the corner lattice and not the pixel centres
+ *
+ * A contour through pixel centres runs half a pixel inside the art all the way
+ * round, so the outermost row of every edge falls outside the mesh — a mesh that
+ * clips the art by half a pixel everywhere, which is exactly the defect this
+ * whole builder has to not have. On the corner lattice the traced polygon
+ * encloses every art pixel's full square, so the raw trace clips nothing at all
+ * and everything after it is a controlled retreat from that.
+ *
+ * ## The walk
+ *
+ * Each art pixel whose neighbour is background contributes one directed "crack"
+ * along the shared edge, wound so that the art stays on the walker's right: top
+ * edge to +x, right edge to +y, bottom to -x, left to -y. Those cracks form
+ * closed loops. Starting at the first art pixel in row order — whose top
+ * neighbour is background by construction — and always taking the sharpest
+ * clockwise turn available walks the island's outer loop.
+ *
+ * ⚠️ The clockwise rule is not a preference. At a corner where two art pixels
+ * meet diagonally, two cracks leave the same point and the choice decides whether
+ * the walk treats the diagonal as connected. Clockwise keeps it disconnected,
+ * which is the same 4-connectivity `labelIslands` used — the alternative would
+ * trace a boundary for an island the labelling says is two.
+ */
+export function traceAlphaOutline(
+  mask: AlphaMask,
+  threshold: number,
+): {
+  outline: Array<[number, number]>;
+  artPixels: number;
+  islandPixels: number;
+  islands: number;
+  holePixels: number;
+  /** The filled silhouette: the island plus every transparent pixel it encloses. */
+  filled: Uint8Array;
+} {
+  const { width: w, height: h } = mask;
+  if (!(w > 0 && h > 0)) throw new MeshError(`bad part size ${w}x${h}`);
+  if (mask.alpha.length !== w * h) {
+    throw new MeshError(`the alpha mask holds ${mask.alpha.length} bytes for a ${w}x${h} part`);
+  }
+  const art = artOf(mask, threshold);
+  let artPixels = 0;
+  for (const bit of art) artPixels += bit;
+  if (artPixels === 0) {
+    throw new MeshError(`no pixel of the ${w}x${h} part reaches alpha ${threshold}; there is no silhouette to trace`);
+  }
+  const { label, sizes } = labelIslands(art, w, h);
+  let biggest = 1;
+  for (let i = 0; i < sizes.length; i++) if (sizes[i] > sizes[biggest - 1]) biggest = i + 1;
+  const inside = new Uint8Array(w * h);
+  for (let i = 0; i < inside.length; i++) inside[i] = label[i] === biggest ? 1 : 0;
+
+  const at = (x: number, y: number): number => (x < 0 || y < 0 || x >= w || y >= h ? 0 : inside[y * w + x]);
+  /** Outgoing cracks at one lattice corner, as direction indices. */
+  const outgoing = (cx: number, cy: number): number[] => {
+    const dirs: number[] = [];
+    if (at(cx, cy) && !at(cx, cy - 1)) dirs.push(0); // this pixel's top edge
+    if (at(cx - 1, cy) && !at(cx, cy)) dirs.push(1); // left neighbour's right edge
+    if (at(cx - 1, cy - 1) && !at(cx - 1, cy)) dirs.push(2); // upper-left's bottom edge
+    if (at(cx, cy - 1) && !at(cx - 1, cy - 1)) dirs.push(3); // upper's left edge
+    return dirs;
+  };
+
+  // A DIAGONAL PINCH is refused before the walk, not during it. At a corner where
+  // two art pixels meet diagonally with background on the other diagonal, two
+  // cracks leave the same point — so the boundary is not a set of simple loops
+  // any more, and whichever pairing the walk chooses it either passes through one
+  // point twice or leaves part of the outline untraced. Both are silent: the
+  // second one produces a perfectly valid mesh of the wrong region. Scanning for
+  // it costs one pass and names the pixel corner.
+  for (let cy = 0; cy <= h; cy++) {
+    for (let cx = 0; cx <= w; cx++) {
+      const tl = at(cx - 1, cy - 1);
+      const tr = at(cx, cy - 1);
+      const bl = at(cx - 1, cy);
+      const br = at(cx, cy);
+      if ((tl && br && !tr && !bl) || (tr && bl && !tl && !br)) {
+        throw new MeshError(
+          `the alpha silhouette pinches to a single point at pixel corner (${cx},${cy}), where two parts of the art ` +
+            'meet diagonally — one outline cannot pass through one point twice. Raise the alpha threshold so the ' +
+            'pinch closes or opens, or author the geometry as weights',
+        );
+      }
+    }
+  }
+
+  let startAt = -1;
+  for (let i = 0; i < inside.length; i++) {
+    if (inside[i]) {
+      startAt = i;
+      break;
+    }
+  }
+  const sx = startAt % w;
+  const sy = (startAt - sx) / w;
+  // With no pinch anywhere, every corner has at most one outgoing crack, so the
+  // boundary is a disjoint union of simple loops and this walk traces exactly
+  // one of them. Starting on the top edge of the first art pixel in row order
+  // puts it on the OUTER loop; a hole's loop is never entered, which is what
+  // makes "holes are filled" a property of the trace rather than a later repair.
+  const outline: Array<[number, number]> = [];
+  let cx = sx;
+  let cy = sy;
+  let dir = 0;
+  const limit = 2 * (w + 1) * (h + 1) + 8;
+  for (let step = 0; ; step++) {
+    if (step > limit) throw new MeshError('the alpha trace did not close; the mask is not a closed region');
+    outline.push([cx, cy]);
+    cx += CRACK_DIRS[dir][0];
+    cy += CRACK_DIRS[dir][1];
+    if (cx === sx && cy === sy) break;
+    const dirs = outgoing(cx, cy);
+    // Sharpest clockwise turn first: right, straight, left. A reversal is not
+    // reachable on a crack set, so its absence is not a case to handle.
+    const next = [(dir + 1) % 4, dir, (dir + 3) % 4].find((d) => dirs.includes(d));
+    if (next === undefined) {
+      throw new MeshError(`the alpha trace reached a dead end at corner (${cx},${cy}); the mask is not a closed region`);
+    }
+    dir = next;
+  }
+
+  // Holes: background pixels the island encloses. Flooded from outside the part,
+  // so "enclosed" is decided by reachability rather than by a winding rule.
+  const outsideReach = new Uint8Array(w * h);
+  const queue: number[] = [];
+  const seed = (x: number, y: number): void => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const i = y * w + x;
+    if (inside[i] || outsideReach[i]) return;
+    outsideReach[i] = 1;
+    queue.push(i);
+  };
+  for (let x = 0; x < w; x++) {
+    seed(x, 0);
+    seed(x, h - 1);
+  }
+  for (let y = 0; y < h; y++) {
+    seed(0, y);
+    seed(w - 1, y);
+  }
+  while (queue.length) {
+    const i = queue.pop()!;
+    const x = i % w;
+    const y = (i - x) / w;
+    seed(x - 1, y);
+    seed(x + 1, y);
+    seed(x, y - 1);
+    seed(x, y + 1);
+  }
+  const filled = new Uint8Array(w * h);
+  let holePixels = 0;
+  for (let i = 0; i < filled.length; i++) {
+    if (inside[i]) filled[i] = 1;
+    else if (!outsideReach[i]) {
+      filled[i] = 1;
+      holePixels++;
+    }
+  }
+
+  return { outline, artPixels, islandPixels: sizes[biggest - 1], islands: sizes.length, holePixels, filled };
+}
+
+/**
+ * Rasterise a triangle set over the part's pixel grid and measure two things the
+ * skeleton file cannot say: how much of the art the mesh covers, and how far past
+ * the silhouette it reaches.
+ *
+ * Coverage is against the ART (every pixel at or above the threshold, on any
+ * island), so a second island the outline could never reach shows up as missing
+ * coverage rather than as a passing build. Overshoot is against the FILLED
+ * silhouette — the island plus the transparent pixels it encloses — because a
+ * hole the mesh spans is not the mesh reaching past the art, it is the mesh
+ * spanning a gap in it, and those pixels draw nothing either way.
+ *
+ * A pixel counts as covered when its CENTRE is in or on a triangle, which is the
+ * same convention `src/render.ts` rasterises by. `radius` bounds the distance
+ * search: nothing beyond it needs a number, because a mesh that reaches that far
+ * out is refused whatever the exact figure is.
+ */
+export function measureContourFit(
+  mask: AlphaMask,
+  threshold: number,
+  filled: Uint8Array,
+  points: Array<[number, number]>,
+  triangles: number[],
+  radius: number,
+): { coverage: number; overshoot: number; artPixels: number; coveredArt: number } {
+  const { width: w, height: h } = mask;
+  const art = artOf(mask, threshold);
+  const covered = new Uint8Array(w * h);
+  for (let t = 0; t + 2 < triangles.length; t += 3) {
+    const a = points[triangles[t]];
+    const b = points[triangles[t + 1]];
+    const c = points[triangles[t + 2]];
+    const twice = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (Math.abs(twice) < 1e-12) continue;
+    const orient = twice > 0 ? 1 : -1;
+    const minX = Math.max(0, Math.floor(Math.min(a[0], b[0], c[0]) - 1));
+    const maxX = Math.min(w - 1, Math.ceil(Math.max(a[0], b[0], c[0]) + 1));
+    const minY = Math.max(0, Math.floor(Math.min(a[1], b[1], c[1]) - 1));
+    const maxY = Math.min(h - 1, Math.ceil(Math.max(a[1], b[1], c[1]) + 1));
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        if (covered[y * w + x]) continue;
+        if (pointInTriangle([x + 0.5, y + 0.5], a, b, c, orient)) covered[y * w + x] = 1;
+      }
+    }
+  }
+  let artPixels = 0;
+  let coveredArt = 0;
+  for (let i = 0; i < art.length; i++) {
+    if (!art[i]) continue;
+    artPixels++;
+    if (covered[i]) coveredArt++;
+  }
+  const reach = Math.max(1, Math.ceil(radius));
+  let overshoot = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!covered[i] || filled[i]) continue;
+      let best = reach + 1;
+      for (let dy = -reach; dy <= reach; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= h) continue;
+        for (let dx = -reach; dx <= reach; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= w) continue;
+          if (!filled[ny * w + nx]) continue;
+          const d = Math.hypot(dx, dy);
+          if (d < best) best = d;
+        }
+      }
+      if (best > overshoot) overshoot = best;
+    }
+  }
+  return {
+    coverage: artPixels === 0 ? 0 : coveredArt / artPixels,
+    overshoot: r6(overshoot),
+    artPixels,
+    coveredArt,
+  };
+}
+
+/**
+ * Build a mesh cut to the part's own alpha silhouette.
+ *
+ * Trace, simplify, push out, clamp to the window, triangulate, and then MEASURE
+ * the result against the mask it came from. Every vertex is pinned to the slot
+ * bone at weight 1 — see the section header for why that is the whole weighting
+ * model and what to reach for instead when a bone has to bend the art.
+ */
+export function buildContourMesh(input: ContourSpecInput): MeshGeometry {
+  const { mask, threshold, tolerance, margin, maxVertices } = input;
+  const [w, h] = [mask.width, mask.height];
+  if (!Number.isInteger(threshold) || threshold < 1 || threshold > 255) {
+    throw new MeshError(`the alpha threshold must be a whole number in 1..255, got ${threshold}`);
+  }
+  if (!(tolerance > 0) || !Number.isFinite(tolerance)) {
+    throw new MeshError(`the simplification tolerance must be a positive number of pixels, got ${tolerance}`);
+  }
+  if (!(margin >= 0) || !Number.isFinite(margin)) throw new MeshError(`the margin must be 0 or more pixels, got ${margin}`);
+  if (!Number.isInteger(maxVertices) || maxVertices < 3) {
+    throw new MeshError(`maxVertices must be a whole number of at least 3, got ${maxVertices}`);
+  }
+
+  const traced = traceAlphaOutline(mask, threshold);
+  // ⭐ A part with no transparent pixel at all, MEASURED rather than read off the
+  // PNG's colour type. A truecolour+alpha file whose alpha is 255 everywhere has
+  // an alpha channel and no transparency, so the header answers the wrong
+  // question — and the silhouette of such a part is the part window, which makes
+  // a contour mesh of it a region attachment with extra vertices to pose.
+  if (traced.artPixels === w * h) {
+    throw new MeshError(
+      `every pixel of the ${w}x${h} part reaches alpha ${threshold}, so its silhouette IS the part window and a ` +
+        'contour mesh of it is a region attachment with extra vertices — give the art a transparent margin, ' +
+        'raise the alpha threshold, or use a region',
+    );
+  }
+  // Islands, named before anything is triangulated. One outline encloses one
+  // region, so art scattered over several would come out as missing coverage
+  // further down — a true refusal with a message about margins, which is not
+  // the thing to change.
+  if (traced.islandPixels / traced.artPixels < CONTOUR_MIN_COVERAGE) {
+    throw new MeshError(
+      `the art is ${traced.islands} separate islands and one outline can only enclose the largest ` +
+        `(${traced.islandPixels} of ${traced.artPixels} px, ` +
+        `${((traced.islandPixels / traced.artPixels) * 100).toFixed(2)}%) — raise the alpha threshold if the ` +
+        'strays are feathering, or give each island its own slot',
+    );
+  }
+  const simplified = simplifyClosedPolygon(traced.outline, tolerance);
+  const pushed = offsetPolygon(simplified, margin);
+  // Clamped to the part window, because a uv outside 0..1 is a different failure
+  // (A22) and because there is no art out there to reach for anyway.
+  const clamped = pushed.map(
+    ([x, y]) => [Math.min(w, Math.max(0, x)), Math.min(h, Math.max(0, y))] as [number, number],
+  );
+  const points = prunePolygon(clamped).map(([x, y]) => [r6(x), r6(y)] as [number, number]);
+  if (points.length < 3) {
+    throw new MeshError(
+      `the ${w}x${h} silhouette simplified to ${points.length} distinct vertices at tolerance ${tolerance}; ` +
+        'lower the tolerance',
+    );
+  }
+  if (points.length > maxVertices) {
+    throw new MeshError(
+      `the silhouette simplified to ${points.length} vertices at tolerance ${tolerance}, past the ${maxVertices} ` +
+        'this mesh allows — raise the tolerance to spend fewer vertices, or raise maxVertices if the shape needs them',
+    );
+  }
+  const crossing = findSelfIntersection(points);
+  if (crossing) {
+    throw new MeshError(
+      `the outline crosses itself: edge ${crossing[0]} meets edge ${crossing[1]} after a margin of ${margin}px ` +
+        'was pushed out of a silhouette narrower than that — lower the margin, or the art has a neck too thin to mesh',
+    );
+  }
+  const triangles = earClip(points);
+
+  const allowed = contourOvershootBound(margin, tolerance);
+  const fit = measureContourFit(mask, threshold, traced.filled, points, triangles, allowed + 1);
+  if (fit.coverage < CONTOUR_MIN_COVERAGE) {
+    throw new MeshError(
+      `the mesh covers ${(fit.coverage * 100).toFixed(2)}% of the art (${fit.coveredArt} of ${fit.artPixels} px), ` +
+        `under the ${(CONTOUR_MIN_COVERAGE * 100).toFixed(1)}% a contour mesh guarantees — raise the margin ` +
+        `(now ${margin}px) above the tolerance (${tolerance}px), which is how far simplification is allowed to ` +
+        'cut inward, or lower the tolerance',
+    );
+  }
+  if (fit.overshoot > allowed) {
+    throw new MeshError(
+      `the mesh reaches ${fit.overshoot.toFixed(2)}px past the silhouette, past the ${allowed.toFixed(2)}px that a ` +
+        `margin of ${margin} and a tolerance of ${tolerance} can produce — the outline is not the one this builder ` +
+        'promises, which is a defect in the builder rather than in the art',
+    );
+  }
+
+  const uvs: number[] = [];
+  for (const [x, y] of points) uvs.push(r6(x / w), r6(y / h));
+  const weights: MeshVertexWeight[][] = points.map(() => [{ bone: 'anchor', weight: 1 }]);
+
+  return {
+    kind: 'contour',
+    points,
+    uvs,
+    triangles,
+    weights,
+    hullVertices: points.length,
+    contour: {
+      artPixels: fit.artPixels,
+      islandPixels: traced.islandPixels,
+      islands: traced.islands,
+      holePixels: traced.holePixels,
+      tracedVertices: traced.outline.length,
+      coverage: r6(fit.coverage),
+      overshoot: fit.overshoot,
+    },
+  };
 }
 
 /** One bone a weighted vertex can bind to: its index, and its world inverse. */

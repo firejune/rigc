@@ -1099,7 +1099,7 @@ export function validate(input: ValidateInput): ValidateReport {
      * a mesh the string `ring`, and A21 then checked ring topology on a shape
      * that was never a ring — 40 failures on correct data (issue #44).
      */
-    const kindOf = (target: MeshAttachment): 'ring' | 'ribbon' | 'authored' => {
+    const kindOf = (target: MeshAttachment): RigInfo['meshKinds'][string] => {
       const slot = slotOfAttachment(target);
       return (slot && input.rig?.meshKinds[slot]) || 'ring';
     };
@@ -1212,6 +1212,14 @@ export function validate(input: ValidateInput): ValidateReport {
         // cannot move, because that row is where the strip joins the part it
         // comes out of. Both rules protect the same thing (the mesh's join to the
         // plate underneath); they just live at different edges of the mesh.
+        //
+        // A `contour` takes the hull path below, and that is the check it wants
+        // rather than a third branch: a contour mesh's hull IS every vertex it
+        // has, and every one is pinned to the slot bone at weight 1, so "the rim
+        // is pinned" reads over the whole mesh. If a later contour tier ever
+        // moves interior vertices, this is the assertion that has to grow a
+        // branch — it will fail rather than pass quietly, which is the right way
+        // round.
         if (kindOf(mesh) === 'ribbon') {
           const uvs = mesh.regionUVs ?? [];
           let entryRow = 0;
@@ -1787,16 +1795,16 @@ export function validate(input: ValidateInput): ValidateReport {
     const kinds = input.rig.meshKinds;
     if (!Object.values(kinds).includes('ribbon')) {
       // Say WHICH kind of "no ribbon" this is. "declares no ribbon" is true of a
-      // cut with no mesh at all and of one whose meshes are authored geometry,
-      // and only the second is a case where a reader should know that a mesh
-      // went unmeasured on purpose.
-      const authored = Object.entries(kinds)
-        .filter(([, kind]) => kind === 'authored')
-        .map(([slot]) => `"${slot}"`);
+      // cut with no mesh at all, of one whose meshes are authored geometry, and
+      // of one whose meshes are contours — and the last two are cases where a
+      // reader should know that a mesh went unmeasured on purpose.
+      const unpaired = Object.entries(kinds)
+        .filter(([, kind]) => kind === 'authored' || kind === 'contour')
+        .map(([slot, kind]) => `"${slot}" (${kind})`);
       return skip(
         'A28_RIBBON_ROWS_SHARE_WEIGHTS',
-        authored.length
-          ? `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut — its mesh slot(s) ${authored.join(', ')} carry authored geometry, whose rows rigc did not pair`
+        unpaired.length
+          ? `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut — its mesh slot(s) ${unpaired.join(', ')} have no rows to pair: authored geometry is somebody else's topology, and a contour is one silhouette loop`
           : `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut`,
       );
     }
