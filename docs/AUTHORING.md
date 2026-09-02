@@ -142,7 +142,7 @@ What the flags mean:
 | `--pack` | `build` only: arrange every part onto **shared** atlas page(s), written into `--out` as real PNGs, instead of one page per part. Lossless — nothing is resampled, trimmed or rotated. Default is unchanged (issue #4) — **§0.1** |
 | `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
 | `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1** |
-| `--atlas-in` | `build` only: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file; the atlas is re-emitted into `--out`, re-anchored — **§0.2** |
+| `--atlas-in` | `build` only: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; the atlas is re-emitted into `--out`, re-anchored — **§0.2** |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |
@@ -261,15 +261,33 @@ The join key is the region **name**, which rigc already equates with the PNG
 basename everywhere else — so a rig written against loose parts resolves against
 a pack of the same parts with no edit. Geometry (`bounds`/`offsets`/`rotate`)
 comes off the file, and a part's width and height are the region's
-`originalWidth`/`originalHeight`: the untrimmed drawing, which is what an
-attachment's size means.
+`originalWidth`/`originalHeight` **divided by the page's `scale:`**: the untrimmed
+drawing at its own size, which is what an attachment's size means.
+
+⚠️ **That division is load-bearing, and it is not exact.** A page declaring
+`scale: 0.5` holds texels half the size of the drawings it was packed from — the
+line says so, and an attachment's `width` is in world units, which the runtime
+reads straight out of the skeleton JSON with the atlas nowhere in the expression.
+So the scale has to be undone here or never (issue #267). But the packer wrote
+`round(drawing × scale)`, so a 373-texel region at `scale: 0.5` is consistent with
+a 745- and a 746-pixel drawing and the file does not say which: an imported size
+is right to within `0.5 / scale` source pixels, and the build report prints the
+texel count beside it so both numbers are visible:
+
+```bash
+#   ..      pendulum   746x212  <- ../export/atlas.png @ 2,2 scale 0.5 (373x106 texels)
+```
+
+⇒ **If the size has to be exact, supply the loose art** — the default route
+measures the PNG. Reach for `--atlas-in` when the pack is what you were handed, or
+when drawing through the pack's own texels is the point.
 
 The emitted `skeleton.atlas` **is** the imported one, verbatim except for its page
-name lines, which are paths and have to be re-anchored to `--out`. Fields rigc has
-no reader for (`scale:`, `format:`, `repeat:`) survive the trip; regions the rig
-does not use stay in the file, because a real pack is shared between cuts and an
-importer that quietly dropped half of one would make `--out` disagree with the
-pack it was built from.
+name lines, which are paths and have to be re-anchored to `--out`. Fields rigc
+does not re-serialise (`format:`, `repeat:`, and `scale:` itself) survive the trip
+because the text passes through by line; regions the rig does not use stay in the
+file, because a real pack is shared between cuts and an importer that quietly
+dropped half of one would make `--out` disagree with the pack it was built from.
 
 Four things are refused rather than warned about, because each of them otherwise
 **loads clean and draws wrong**:
@@ -1537,9 +1555,19 @@ The overrun is the one to fear. `readAnimation` copies with
 JavaScript** — no throw, no warning, no `NaN`. A run one pair too long loses its
 tail and deforms the rest of the mesh correctly, which looks nearly right, and
 "nearly right" is the hardest kind of wrong to find.
-`A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` checks all of it from the other side, on the
+`A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` checks the overrun from the other side, on the
 emitted file, measuring the array's length from the attachment rather than assuming
 an encoding.
+
+📌 **The two parity rows above are an AUTHORING rule and not a validity one, and
+the distinction is deliberate** (issue #262). Nothing in the runtime aligns a run
+to a pair — `arrayCopy` copies at the raw index and the `deform[i] += vertices[i]`
+after it walks the whole array — so a run may legitimately begin and end mid-pair,
+which is what an editor's trimmed delta run looks like. In *this* spec an odd
+`offset` is a typo with a better spelling (`fromVertex`), so it is refused here,
+where the remedy is a line you own. `A35` does **not** refuse it: it is pointed at
+other people's files, and a rule stricter than the runtime tells its reader to go
+and break correct data.
 
 ---
 
@@ -1628,7 +1656,7 @@ the frequent ones, verbatim:
 | `ik constraint "X": key 0 names "softness" and key 1 (t=…) does not` | §4.9 — every key is read with its own default, so state the field on every key or on none |
 | `ik constraint "X" (t=…): mix is 1.5, outside 0..1` | §4.9 — an IK mix is a percentage; a transform mix is unbounded |
 | `deform …: the run starts at deform index 4 and is 6 long, which ends at 10; this attachment's deform array is 8 long` | §4.11 — shorten the run or move its start; the parser would drop the tail in silence |
-| `deform … (t=…): offset 3 is odd` | §4.11 — the deform array is `x, y` pairs, so a run starts on an even index |
+| `deform … (t=…): offset 3 is odd` | §4.11 — in **this spec** a run starts on an even index, or names its vertex with `fromVertex`. Not a validity rule; the runtime allows either (issue #262) |
 | `deform …: "fromVertex" counts VERTICES, and this attachment is weighted … vertex 2 has 2 of them` | §4.11 — key the control bone, or write bind-space pairs and start with `offset` |
 | `deform …: slot "X" in skin "default" has no attachment "Y" (it has: …)` | §4.11 — fix the placeholder name |
 | `vertexCount is N, which is not a multiple of 3` | §3.4 — a path's vertices are knots and handles read in groups of three: `3(K + 1)` open, `3K` closed |
@@ -1705,7 +1733,7 @@ The report prints one line per assertion:
 | `A32_EVENT_KEYS_RESOLVE` | both | an event key fires a name the skeleton's `events` block does not declare, sits earlier in time than the key before it, or sets `volume`/`balance` on an event with no `audio` (§4.8). **SKIP** when no animation carries an event timeline |
 | `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | a bounding box, clipping polygon or path whose `vertexCount` is missing or disagrees with its vertex array, a weighted run that decodes to the wrong number of vertices or an out-of-range bone index, a clipping `end` naming a slot the skeleton does not have, a path whose vertex count is not a multiple of 3, or a path `lengths` array that does not strictly increase (§3.4). **SKIP** when the skeleton carries none of the three |
 | `A34_CONSTRAINT_TIMELINE_TARGETS` | both | an `ik`, `transform`, `path` or `slider` timeline names a constraint the skeleton does not declare, names one of another type, or carries no keys at all (§4.9, §4.10, §4.12). The last is silent: the parser reads key 0, finds nothing, and skips the timeline. **SKIP** when no animation carries one |
-| `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | both | a deform key's run runs past the end of the attachment's deform array, starts on an odd index, holds an odd count of numbers or a non-finite one, or names a skin/slot/attachment triple that does not resolve (§4.11). The overrun is the quiet one — the parser copies into a `Float32Array` and drops the tail. **SKIP** when no animation carries a deform timeline |
+| `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | both | a deform key's run runs past the end of the attachment's deform array, holds a non-finite number, has an empty key array, or names a skin/slot/attachment triple that does not resolve (§4.11). The overrun is the quiet one — the parser copies into a `Float32Array` and drops the tail. ⛔ It does **not** require pair alignment: the runtime has no such rule and a trimmed editor run legitimately starts and ends mid-pair (§4.11, issue #262). **SKIP** when no animation carries a deform timeline |
 | `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying its `mix` (§3.5.1). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. **SKIP** when the skeleton declares no path constraint |
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
