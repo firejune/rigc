@@ -1,0 +1,15 @@
+torso            -> neck             n= 52 rel -68..160 (229°)  rms 1.55px  jitter 4.8px  child-pivot 4.7,-7.7  parent-pivot -19.3,-120.6
+neck             -> head             n= 64 rel -174..55 (228°)  rms 0.33px  jitter 5.4px  child-pivot -68.7,89.6  parent-pivot 0.7,-2.4
+torso            -> rear-upper-arm   n= 52 rel -114..84 (198°)  rms 9.38px  jitter 5.8px  child-pivot -68.1,-94.0  parent-pivot 9.2,88.3
+SKIP  rear-upper-arm -> rear-bracer: only 3 reliable frame(s)
+SKIP  rear-bracer -> gun: only 0 reliable frame(s)
+torso            -> front-upper-arm  n= 51 rel -80..70 (150°)  rms 8.86px  jitter 7.7px  child-pivot -114.5,7.1  parent-pivot -55.3,74.7
+SKIP  front-upper-arm -> front-bracer: only 0 reliable frame(s)
+SKIP  front-bracer -> front-fist: only 0 reliable frame(s)
+torso            -> rear-thigh       n= 52 rel -25..68 (93°)  rms 4.04px  jitter 4.0px  child-pivot -107.7,-156.6  parent-pivot -23.7,42.8
+rear-thigh       -> rear-shin        n= 62 rel -30..-7 (23°)  rms 0.91px  jitter 29.0px  child-pivot 21.3,-41.2  parent-pivot 11.9,-61.5
+rear-shin        -> rear-foot        n= 29 rel 23..25 (2°)  rms 0.00px  jitter 6.3px  child-pivot -59.2,-65.9  parent-pivot -0.1,3.8
+torso            -> front-thigh      n= 52 rel -54..45 (99°)  rms 7.73px  jitter 6.1px  child-pivot -22.4,-159.5  parent-pivot -1.0,65.0
+front-thigh      -> front-shin       n= 47 rel -75..48 (123°)  rms 6.21px  jitter 5.5px  child-pivot -6.6,-188.7  parent-pivot -25.6,-203.3
+front-shin       -> front-foot       n= 30 rel 24..24 (0°)  rms 0.00px  jitter 3.2px  child-pivot -28.2,-35.7  parent-pivot 10.9,44.1
+-> /tmp/joints-report.json

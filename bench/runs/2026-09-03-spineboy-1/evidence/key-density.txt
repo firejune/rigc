@@ -1,0 +1,23 @@
+declared tolerance 0.35 frame px at the lever
+channel                   median cost      p90  of skipping one sample
+rear-upper-arm.rotate          10.471  278.777 px
+gun.rotate                      5.547   36.334 px
+rear-bracer.rotate              5.393   26.578 px
+front-bracer.rotate             3.151   17.174 px
+front-upper-arm.rotate          2.961  125.127 px
+front-fist.rotate               2.823   14.329 px
+front-shin.rotate               1.614   75.050 px
+rear-shin.rotate                1.424   73.991 px
+neck.rotate                     1.360   38.924 px
+front-thigh.rotate              1.275  146.613 px
+head.rotate                     1.225   70.920 px
+rear-thigh.rotate               1.108  116.179 px
+front-foot.rotate               0.749    9.434 px
+rear-foot.rotate                0.601    8.130 px
+torso.rotate                    0.250  211.891 px
+torso.y                         0.165   38.865 px
+torso.x                         0.114   15.302 px
+
+over every channel and every interior sample: median 1.625 frame px, which is 4.6x the declared 0.35 px tolerance.
+=> the key density is a fact about the subject, not a choice: no tolerance under that
+   figure lets a span skip anything, so the trade bought accuracy and never sparsity.

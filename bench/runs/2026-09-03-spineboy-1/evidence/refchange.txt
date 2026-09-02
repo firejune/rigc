@@ -1,0 +1,15 @@
+death            59 pair(s), 8 dead  min 0  max 9527  dead at f17->18 f18->19 f19->20 f20->21 f21->22 f23->24 f24->25 f25->26
+death@30fps      1 pair(s), 0 dead  min 9635  max 9635
+hit              4 pair(s), 0 dead  min 7571  max 8416
+hit@30fps        1 pair(s), 0 dead  min 10618  max 10618
+idle             20 pair(s), 0 dead  min 2061  max 2994
+idle@30fps       1 pair(s), 0 dead  min 142  max 142
+jump             16 pair(s), 0 dead  min 5057  max 10666
+jump@30fps       1 pair(s), 0 dead  min 3147  max 3147
+run              8 pair(s), 0 dead  min 6570  max 7685
+run@30fps        1 pair(s), 0 dead  min 1  max 1
+shoot            5 pair(s), 1 dead  min 0  max 5878  dead at f0->1
+shoot@30fps      1 pair(s), 1 dead  min 0  max 0  dead at f0->1
+walk             12 pair(s), 0 dead  min 4552  max 6345
+walk@30fps       1 pair(s), 0 dead  min 21  max 21
+-> bench/runs/2026-09-03-spineboy-1/fit/refchange.json

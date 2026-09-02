@@ -1,0 +1,8 @@
+death    59 pair(s), 0 out of band   worst ratio f56: ours 2024 vs 565
+hit      4 pair(s), 0 out of band   worst ratio f2: ours 8359 vs 8416
+idle     20 pair(s), 0 out of band   worst ratio f9: ours 3215 vs 2348
+jump     16 pair(s), 0 out of band   worst ratio f15: ours 6635 vs 6106
+run      8 pair(s), 0 out of band   worst ratio f2: ours 7074 vs 7305
+shoot    5 pair(s), 0 out of band   worst ratio f2: ours 3124 vs 5878
+walk     12 pair(s), 0 out of band   worst ratio f6: ours 5809 vs 5883
+0 pair(s) repaired

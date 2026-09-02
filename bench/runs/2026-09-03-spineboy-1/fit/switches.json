@@ -1,0 +1,16 @@
+{
+ "fist": {
+  "aim": "front-fist-closed",
+  "death": "front-fist-closed",
+  "hit": "front-fist-closed",
+  "idle": "front-fist-closed",
+  "jump": "front-fist-closed",
+  "run": "front-fist-closed",
+  "shoot": "front-fist-closed",
+  "walk": "front-fist-closed"
+ },
+ "muzzle": {
+  "rotate": -7.999999999999999,
+  "scale": 0.3333333333333333
+ }
+}

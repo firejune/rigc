@@ -1,0 +1,5 @@
+source=pose gate=42: 551 observations (dropped 0 on a near-identical clash, 0 off their own chain), 551 kept by IRLS over 147 frames, rms 7.36 units = 1.64 frame px
+  torso          n=121  rms 13.7u (3.06px)  worst 9.4px
+  neck           n=147  rms 6.2u (1.38px)  worst 6.8px
+  goggles        n=137  rms 2.3u (0.50px)  worst 1.4px
+  head           n=146  rms 2.2u (0.50px)  worst 1.3px

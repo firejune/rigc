@@ -1,0 +1,128 @@
+{
+ "eye": {
+  "visibleCeiling": 0,
+  "meanVisible": 0,
+  "ceilingFrame": "",
+  "framesDrawn": 147,
+  "framesAttributed": 0
+ },
+ "neck": {
+  "visibleCeiling": 0.017505278266877207,
+  "meanVisible": 0.0037753198838175765,
+  "ceilingFrame": "shoot/f0003",
+  "framesDrawn": 147,
+  "framesAttributed": 1
+ },
+ "rear-upper-arm": {
+  "visibleCeiling": 0.42771804134451563,
+  "meanVisible": 0.08037847085883579,
+  "ceilingFrame": "jump/f0012",
+  "framesDrawn": 147,
+  "framesAttributed": 0
+ },
+ "front-thigh": {
+  "visibleCeiling": 0.47955483892778367,
+  "meanVisible": 0.318422684419347,
+  "ceilingFrame": "hit/f0002",
+  "framesDrawn": 147,
+  "framesAttributed": 1
+ },
+ "head": {
+  "visibleCeiling": 0.5111227437670571,
+  "meanVisible": 0.5082170171125753,
+  "ceilingFrame": "hit@30fps/f0000",
+  "framesDrawn": 147,
+  "framesAttributed": 129
+ },
+ "rear-foot": {
+  "visibleCeiling": 0.6867623842719306,
+  "meanVisible": 0.4941126635945416,
+  "ceilingFrame": "jump/f0000",
+  "framesDrawn": 147,
+  "framesAttributed": 44
+ },
+ "front-bracer": {
+  "visibleCeiling": 0.7971756414512307,
+  "meanVisible": 0.6515784919175208,
+  "ceilingFrame": "death/f0059",
+  "framesDrawn": 147,
+  "framesAttributed": 56
+ },
+ "front-shin": {
+  "visibleCeiling": 0.8131916712961278,
+  "meanVisible": 0.6785210671045909,
+  "ceilingFrame": "death/f0014",
+  "framesDrawn": 147,
+  "framesAttributed": 118
+ },
+ "rear-bracer": {
+  "visibleCeiling": 0.8426435157094238,
+  "meanVisible": 0.24822152985280996,
+  "ceilingFrame": "jump/f0014",
+  "framesDrawn": 147,
+  "framesAttributed": 14
+ },
+ "torso": {
+  "visibleCeiling": 0.8971480898580333,
+  "meanVisible": 0.6535193809670791,
+  "ceilingFrame": "run@30fps/f0020",
+  "framesDrawn": 147,
+  "framesAttributed": 129
+ },
+ "mouth": {
+  "visibleCeiling": 0.9280044965197679,
+  "meanVisible": 0.9038857443453912,
+  "ceilingFrame": "shoot/f0003",
+  "framesDrawn": 147,
+  "framesAttributed": 26
+ },
+ "rear-thigh": {
+  "visibleCeiling": 0.9563406063119219,
+  "meanVisible": 0.48752629718987517,
+  "ceilingFrame": "jump/f0016",
+  "framesDrawn": 147,
+  "framesAttributed": 4
+ },
+ "rear-shin": {
+  "visibleCeiling": 0.9692922911945718,
+  "meanVisible": 0.5097012643400817,
+  "ceilingFrame": "death/f0008",
+  "framesDrawn": 147,
+  "framesAttributed": 56
+ },
+ "gun": {
+  "visibleCeiling": 1.0000000013750474,
+  "meanVisible": 0.5892447203166938,
+  "ceilingFrame": "jump/f0006",
+  "framesDrawn": 147,
+  "framesAttributed": 54
+ },
+ "front-upper-arm": {
+  "visibleCeiling": 1.0000000017117816,
+  "meanVisible": 0.6536259275639731,
+  "ceilingFrame": "jump/f0000",
+  "framesDrawn": 147,
+  "framesAttributed": 6
+ },
+ "front-fist": {
+  "visibleCeiling": 1.0000000018295807,
+  "meanVisible": 0.8947856306087617,
+  "ceilingFrame": "jump/f0010",
+  "framesDrawn": 147,
+  "framesAttributed": 29
+ },
+ "front-foot": {
+  "visibleCeiling": 1.0000000024572149,
+  "meanVisible": 0.9628623002766258,
+  "ceilingFrame": "run@30fps/f0000",
+  "framesDrawn": 147,
+  "framesAttributed": 95
+ },
+ "goggles": {
+  "visibleCeiling": 1.0000000088516992,
+  "meanVisible": 1.0000000084431568,
+  "ceilingFrame": "death@30fps/f0000",
+  "framesDrawn": 147,
+  "framesAttributed": 142
+ }
+}
