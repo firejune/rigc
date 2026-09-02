@@ -203,15 +203,19 @@ it asserts 0 and interpolates down to it.
 
 **An `ik` timeline silently reverted the rig's `bendPositive`, and it took a
 measurement to see it.**
-[Issue #273](https://github.com/firejune/rigc/issues/273). Four builds differing
-only in the rig's two `bendPositive` values produced **one pose** — `shin_f`
-world x = 366.2 in all four. `SkeletonJson` reads the bend direction per
+[Issue #273](https://github.com/firejune/rigc/issues/273), **fixed**. Four builds
+differing only in the rig's two `bendPositive` values produced **one pose** —
+`shin_f` world x = 366.2 in all four. `SkeletonJson` reads the bend direction per
 *timeline key* as well as per constraint, with the same default of `true`, so any
-IK timeline that does not restate it overwrites the constraint's value for the
-whole animation. The gate is green either way; `bendPositive` in the rig is simply
-inert. The workaround is in `motion.json` above — state it on every key — and the
-issue proposes a compile error, because a declared value nothing can reach is the
-same defect `A36`/`A37` already refuse for a muted constraint.
+IK timeline that did not restate it overwrote the constraint's value for the whole
+animation, with the field still in the file and the gate green either way. rigc
+now stamps the rig's value onto every emitted ik key, so the same four builds pose
+four poses (`shin_f` 366.2 / 397.8 / 397.8 / 366.2). The explicit
+`bendPositive` on every key of `motion.json` above is kept: it was the workaround,
+it is still exactly what the fix would have written, and it is what the editor's
+own export does — so this example goes on showing what a complete ik key looks
+like. Stating a flag on every key still overrides the rig, which is the point of
+keying it at all.
 
 **A cyclic track cannot be lagged with `stagger` or `lag`.** [MOTION.md
 §3.7](../../docs/MOTION.md)'s follow-through is a timing offset, and the motion

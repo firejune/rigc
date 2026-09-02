@@ -18,8 +18,9 @@ character rather than four characters.
 | [`walk/`](walk/) | `ik` constraints + **`ik` timelines** (AUTHORING §3.5, §4.9) | Rigby walks on the spot. Two two-bone leg chains solved to foot targets under a `ground` bone, with the planted leg nailed down and the swinging one let go at the top of its lift |
 | [`squash/`](squash/) | **`deform` timelines** (AUTHORING §4.11) | Rigby's ball bounces. A 9-vertex mesh squashed about its contact point and stretched along its travel, from two affine transforms written out in the README |
 
-The root [README.md](../README.md) will index these once the gallery is
-complete.
+The root [README.md](../README.md) indexes these under *The gallery*, and
+[AUTHORING.md](../docs/AUTHORING.md) points at each one from the section that
+documents the feature it stars.
 
 ---
 

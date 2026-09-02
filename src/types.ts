@@ -937,13 +937,24 @@ export interface CompileResult {
     triangles: number;
     bones: string[];
     /**
-     * Share of the part's own art the triangles cover, 0..1. Only a `contour`
-     * mesh has one — it is the only generator whose shape is a claim ABOUT the
-     * art, so it is the only one with something to measure against it.
+     * Share of the part's own art the triangles cover, 0..1.
+     *
+     * Measured for every mesh that names an `image`, generated or authored: it is
+     * a number between two things the compiler has in front of it — the emitted
+     * triangles and the PNG — and it assumes nothing about how the vertices are
+     * arranged (issue #277). Absent on a mesh with no `image`, which has nothing
+     * to be measured against, and on a `ring` or `ribbon`, whose window size
+     * comes from the spec rather than from art.
      */
     coverage?: number;
     /** How far past the silhouette that mesh reaches, in part pixels. */
     overshoot?: number;
+    /**
+     * Transparent pixels the traced outline encloses — inside the mesh, drawing
+     * nothing. Only a `contour` has one: it is a property of the trace, and an
+     * authored mesh was not traced.
+     */
+    holePixels?: number;
   }>;
   /** Structural expectations handed to the validator. */
   rig: RigInfo;

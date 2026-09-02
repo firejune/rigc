@@ -5031,6 +5031,92 @@ function runConstraintAndDeformSuite(): number {
     '`bendPositive` in the file becomes `bendDirection` ±1 in the pose, and the three booleans are stepped by nature',
   );
 
+  // --- issue #273: the rig's bend direction survives an ik timeline ----------
+  //
+  // 🚨 This one cannot be checked by reading the emitted file, and that is the
+  // whole shape of the defect. `SkeletonJson` reads `bendPositive` in TWO places
+  // with the same default — the constraint (`:155`) and every timeline key
+  // (`:912`) — so a key that omits it does not inherit the constraint's value,
+  // it asserts `true`. The field stayed in the file, `diff` showed it, `A34`
+  // passed, and the runtime threw it away: four builds differing only in the
+  // rig's two `bendPositive` values posed ONE pose.
+  //
+  // So the control poses the skeleton and reads the KNEE. `shin` is the second
+  // bone of the chain, which is the joint the bend direction mirrors, and the
+  // timeline below keys `mix` and `softness` and states no flag at all — the
+  // ordinary walk-cycle idiom and the shape AUTHORING §4.9's own example prints.
+  const silentFlagMotion = timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    ik: [
+      {
+        constraint: 'leg-ik',
+        keys: [
+          { t: 0, mix: 1, softness: 0 },
+          { t: 1, mix: 1, softness: 0 },
+        ],
+      },
+    ],
+  });
+  const kneeUnderRigBend = (bendPositive: boolean): { bend: number; x: number; y: number } => {
+    const bendDirs = writeProbeRig({
+      ...TIMELINE_RIG,
+      constraints: [
+        // mix 1 at setup, because what is being measured is the direction the
+        // chain solves in and a muted constraint solves in neither.
+        { name: 'leg-ik', type: 'ik', bones: ['thigh', 'shin'], target: 'foot-target', mix: 1, bendPositive },
+      ],
+    });
+    const posed = poseAtSample(timelinePosable(bendDirs, silentFlagMotion).data, 'move', 4, 4);
+    const constraint = posed.findConstraint('leg-ik', IkConstraint)!;
+    const shin = posed.bones.find((b) => b.data.name === 'shin')!;
+    return { bend: constraint.pose.bendDirection, x: shin.appliedPose.worldX, y: shin.appliedPose.worldY };
+  };
+  const rigBendTrue = kneeUnderRigBend(true);
+  const rigBendFalse = kneeUnderRigBend(false);
+  const kneesApart = Math.hypot(rigBendTrue.x - rigBendFalse.x, rigBendTrue.y - rigBendFalse.y);
+  say(
+    'T02b_a_rig_bendPositive_reaches_a_timeline_that_does_not_state_it',
+    rigBendTrue.bend === 1 && rigBendFalse.bend === -1 && kneesApart > 1,
+    `two rigs differing only in \`bendPositive\`, keyed by one ik timeline that states no flag: bendDirection ` +
+      `${rigBendTrue.bend} vs ${rigBendFalse.bend}, knee at (${rigBendTrue.x.toFixed(2)}, ${rigBendTrue.y.toFixed(2)}) ` +
+      `vs (${rigBendFalse.x.toFixed(2)}, ${rigBendFalse.y.toFixed(2)}) — ${kneesApart.toFixed(2)} units apart`,
+    'issue #273: the rig-declared value was overwritten by the per-key default for the whole animation, so every ' +
+      'knee bent the wrong way with the field still in the file and the gate green',
+  );
+  say(
+    'T02c_a_timeline_that_states_the_flag_still_overrides_the_rig',
+    (() => {
+      const overrides = timelineMotion({
+        duration: 1,
+        loop: false,
+        tracks: [],
+        ik: [
+          {
+            constraint: 'leg-ik',
+            keys: [
+              { t: 0, mix: 1, softness: 0, bendPositive: true },
+              { t: 1, mix: 1, softness: 0, bendPositive: true },
+            ],
+          },
+        ],
+      });
+      const rigSaysFalse = writeProbeRig({
+        ...TIMELINE_RIG,
+        constraints: [
+          { name: 'leg-ik', type: 'ik', bones: ['thigh', 'shin'], target: 'foot-target', mix: 1, bendPositive: false },
+        ],
+      });
+      const posed = poseAtSample(timelinePosable(rigSaysFalse, overrides).data, 'move', 4, 4);
+      return posed.findConstraint('leg-ik', IkConstraint)!.pose.bendDirection === 1;
+    })(),
+    'a rig declaring `bendPositive: false` under a timeline that states `true` on every key poses bendDirection +1',
+    'the format keys these per key on purpose and they are stepped by nature, so a bend that flips partway through ' +
+      "an animation is a real thing to write — the fix carries the rig's value into SILENCE, it does not overrule a " +
+      'stated one. The editor\'s own export restates the flag on every key: spineboy-pro does it six times',
+  );
+
   // --- the round trip: transform constraint ---------------------------------
   //
   // The mix alone is not the claim: a mix the runtime holds and never applies
@@ -6120,6 +6206,70 @@ function contourBlob(x: number, y: number): boolean {
   return inEllipse && !inBite;
 }
 
+// ---------------------------------------------------------------------------
+// issue #277's fixture: a round part meshed as a fan
+// ---------------------------------------------------------------------------
+//
+// 🚨 The geometry that was green and clipped its own art. A ball meshed as a
+// centre vertex plus 8 rim vertices is the obvious topology for a round part you
+// want to squash — and putting those 8 on the silhouette is the obvious placement
+// for them. Eight rim vertices form an OCTAGON, and an octagon's sides pass
+// `R · cos(π/8)` from its centre, so the rim is outside the art along the eight
+// spokes and inside it everywhere between them: with the rim exactly on the
+// silhouette, `2√2 / π` ≈ 90% of the disc is inside the triangles and the rest —
+// including the whole outline — is not drawn on any runtime.
+//
+// The same art as a `contour` would have been refused by name at 99.5%; authored,
+// it built green with 18 assertions running and nothing anywhere saying so. The
+// two cases below are that shape and its correction, and what they assert is that
+// the REPORT tells them apart.
+const FAN_SIZE = 200;
+const FAN_ART_R = 80;
+/** `96 · cos(π/8) = 88.7 > 80`, the arithmetic `gallery/squash/README.md` records. */
+const FAN_RIM_COVERING = 96;
+
+/** A centred disc of radius `r`, sampled at pixel centres — the mesh's convention. */
+function discArt(r: number, size: number): (x: number, y: number) => boolean {
+  return (x, y) => Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2) <= r;
+}
+
+/**
+ * An authored 8-spoke fan over a `size`x`size` part: a centre vertex, 8 rim
+ * vertices at `rim` pixels, and the 8 triangles between them.
+ *
+ * The two coordinate systems are the ones `gallery/squash`'s ball uses:
+ * `vertices` are slot-bone local pixels with y UP, and `uvs` are the part window
+ * in 0..1 with y DOWN. Unweighted, so `vertices.length === uvs.length` and the
+ * parser reads x/y pairs — nothing here binds a bone, which is what makes the
+ * case about geometry rather than about weights.
+ */
+function fanMeshAttachment(rim: number, size: number): Record<string, unknown> {
+  const uvs: number[] = [];
+  const vertices: number[] = [];
+  const triangles: number[] = [];
+  const round = (n: number): number => Math.round(n * 1e6) / 1e6;
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * 2 * Math.PI;
+    const vx = rim * Math.cos(angle);
+    const vy = rim * Math.sin(angle);
+    vertices.push(round(vx), round(vy));
+    uvs.push(round((size / 2 + vx) / size), round((size / 2 - vy) / size));
+    triangles.push(8, i, (i + 1) % 8);
+  }
+  vertices.push(0, 0);
+  uvs.push(0.5, 0.5);
+  return {
+    type: 'mesh',
+    image: 'blob.png',
+    uvs,
+    vertices,
+    triangles,
+    hull: 8,
+    width: size,
+    height: size,
+  };
+}
+
 function writeContourArt(path: string, art: (x: number, y: number) => boolean, width: number, height: number): void {
   const plate = new Plate(width, height);
   const cell = 6;
@@ -6147,7 +6297,9 @@ interface ContourBuild {
  * `invariants.meshSlots` is declared because it has to be: a rig that states no
  * budget has an implicit one of ZERO for rigc's own generators (compile.ts's
  * `budgeted`), so "the rig never asked rigc to build a mesh" is itself a
- * refusal. A suite that omitted it would be testing that refusal.
+ * refusal. `CT10` is the case that tests that refusal on purpose, by passing
+ * `invariants: null`; every other generator case here declares the budget so
+ * that it is testing something else.
  */
 function buildContourRig(
   attachment: Record<string, unknown>,
@@ -6631,6 +6783,105 @@ function runContourMeshSuite(): number {
       ? `two compiles of the same art produced identical skeleton text (${build.result.skeletonText.length} bytes)`
       : 'the second compile of the same art differed from the first',
     'a mesh whose vertices move between runs makes every artifact hash in this repository meaningless',
+  );
+
+  // --- issue #277: an authored mesh is measured against its art too ---------
+  //
+  // 🚨 The point is the PAIR. One case measuring 90% would only say the number
+  // exists; two cases over the same disc, differing only in where the rim sits,
+  // say the number tracks the geometry — and the clipping one is the shape that
+  // was green. Both build and gate green: a coverage figure on authored geometry
+  // is a report and not a bar (#44's rule — rigc did not draw it), so the case
+  // that clips has to still compile, and what changes is that the report says so.
+  const fanFor = (rim: number): ContourBuild =>
+    buildContourRig(fanMeshAttachment(rim, FAN_SIZE), {
+      art: discArt(FAN_ART_R, FAN_SIZE),
+      width: FAN_SIZE,
+      height: FAN_SIZE,
+      // No budget declared, on purpose: an authored mesh is exempt from the
+      // generator refusal, and the pair would not compile at all if it were not.
+      invariants: null,
+    });
+  const clipsItsArt = fanFor(FAN_ART_R);
+  const coversItsArt = fanFor(FAN_RIM_COVERING);
+  const clipsMesh = clipsItsArt.result.meshes[0];
+  const coversMesh = coversItsArt.result.meshes[0];
+  const gateFan = (fan: ContourBuild): ReturnType<typeof validate> =>
+    validate({
+      skeletonText: fan.result.skeletonText,
+      atlasText: fan.result.atlasText,
+      atlasDir: fan.opts.outDir,
+      declaredDurations: fan.result.declaredDurations,
+      rig: fan.result.rig,
+      profile: 'spine',
+    });
+  const clipsGate = gateFan(clipsItsArt);
+  // `2√2 / π` is the octagon-in-its-own-circumcircle share, which is what a rim
+  // exactly on the silhouette measures. Bounded on both sides so the case fails
+  // if the measurement stops being a measurement of that.
+  const octagonShare = (2 * Math.SQRT2) / Math.PI;
+  say(
+    'CT08_AN_AUTHORED_MESH_REPORTS_THE_SHARE_OF_ITS_ART_IT_COVERS',
+    clipsMesh?.kind === 'authored' &&
+      coversMesh?.kind === 'authored' &&
+      clipsMesh.coverage !== undefined &&
+      coversMesh.coverage !== undefined &&
+      clipsMesh.coverage < CONTOUR_MIN_COVERAGE &&
+      Math.abs(clipsMesh.coverage - octagonShare) < 0.01 &&
+      coversMesh.coverage >= 0.9999 &&
+      clipsGate.failures.length === 0,
+    clipsMesh?.coverage === undefined || coversMesh?.coverage === undefined
+      ? `authored mesh coverage is ${clipsMesh?.coverage === undefined ? 'not reported' : 'reported'} for a rim on ` +
+          `the silhouette and ${coversMesh?.coverage === undefined ? 'not reported' : 'reported'} for one outside it`
+      : `rim ${FAN_ART_R} (on the silhouette of a radius-${FAN_ART_R} disc) covers ` +
+          `${(clipsMesh.coverage * 100).toFixed(2)}% of the art against an octagon share of ` +
+          `${(octagonShare * 100).toFixed(2)}%, under the ${(CONTOUR_MIN_COVERAGE * 100).toFixed(1)}% a contour of ` +
+          `the same art is refused at; rim ${FAN_RIM_COVERING} covers ${(coversMesh.coverage * 100).toFixed(2)}% ` +
+          `— and the clipping one still gates green over ${clipsGate.passed.length} assertions, because the figure ` +
+          'is a report and not a bar',
+    'issue #277: a contour that clipped its art was refused by name and the same geometry authored printed nothing ' +
+      'at all — 5.7% of a drawing was not going to be drawn and 18 assertions passed',
+  );
+  say(
+    'CT09_A_MESH_WITH_NO_IMAGE_TO_MEASURE_AGAINST_REPORTS_NOTHING',
+    (() => {
+      const noImage = { ...fanMeshAttachment(FAN_ART_R, FAN_SIZE) };
+      delete noImage.image;
+      const built = buildContourRig(noImage, {
+        art: discArt(FAN_ART_R, FAN_SIZE),
+        width: FAN_SIZE,
+        height: FAN_SIZE,
+        invariants: null,
+      });
+      return built.result.meshes[0]?.coverage === undefined && built.result.meshes[0]?.kind === 'authored';
+    })(),
+    'the same fan with no `image` reports no coverage at all',
+    'coverage is a measurement between the triangles and a named PNG; with no PNG there is nothing to compare, and ' +
+      'inventing a denominator would report a percentage of nothing',
+  );
+
+  // --- issue #274: the refusal names the field that fixes it ----------------
+  //
+  // The refusal itself is deliberate and stays: geometry rigc BUILT is geometry
+  // it will not ship unmeasured, and `A13_MESH_BUDGET` has nothing to measure a
+  // generated mesh against until the rig declares a budget. What was wrong is
+  // that it was the first thing to happen to the first stranger who copied
+  // AUTHORING §3.4's own worked example, and the message named no remedy — while
+  // three places a reader checks (§3.4's example, §3.7's "optional", §5.2's
+  // "SKIP when the rig declares neither") all read as "you do not need this".
+  const noBudget = contourRefusal(CONTOUR_ATTACHMENT, { invariants: null });
+  say(
+    'CT10_A_GENERATOR_WITH_NO_DECLARED_BUDGET_IS_REFUSED_BY_THE_FIELD_THAT_FIXES_IT',
+    noBudget !== null &&
+      noBudget.includes('allows 0') &&
+      noBudget.includes('`invariants.meshSlots`') &&
+      noBudget.includes('"meshTriangles"') &&
+      noBudget.includes('Authored geometry is exempt'),
+    noBudget === null
+      ? 'a contour generator under a rig that declares no `invariants.meshSlots` compiled'
+      : `refused with: ${noBudget}`,
+    'issue #274: `1 mesh slot(s) emitted but the rig "hello" allows 0` named the count, the rig and the number 0, ' +
+      'and not one of the three was the thing to change',
   );
 
   return bad;
@@ -8472,6 +8723,74 @@ function runCliSuite(): number {
     );
   }
 
+  // --- issues #275 and #277: what the MESH line actually says ---------------
+  //
+  // 🚨 A subprocess, because the line is printed by `cli.ts` and by nothing else,
+  // and both defects were in the SENTENCE rather than in the numbers. A control
+  // that imported `compile` and read `result.meshes` would have gone on passing
+  // while the report said `(budget 80)` to a rig that declared 64 and never
+  // mentioned the hole it had measured.
+  {
+    /** A donut: art whose traced outline encloses transparent pixels. */
+    const donut = (x: number, y: number): boolean => {
+      const d = Math.hypot(x + 0.5 - 48, y + 0.5 - 48);
+      return d <= 40 && d >= 16;
+    };
+    const meshLine = (build: ContourBuild): string =>
+      runCli([
+        'build',
+        '--rig',
+        build.opts.rigPath,
+        '--motion',
+        build.opts.motionPath,
+        '--images',
+        build.opts.imagesDir ?? build.dir,
+        '--out',
+        build.opts.outDir,
+      ])
+        .stdout.split('\n')
+        .find((row) => row.startsWith('  MESH')) ?? '';
+
+    // 41 rather than 80, so a hardcoded literal and the declared budget cannot
+    // agree by accident — which is exactly how the old line went unnoticed on
+    // every rig that happened to budget 80.
+    const declared = meshLine(
+      buildContourRig(CONTOUR_ATTACHMENT, {
+        art: donut,
+        width: 96,
+        height: 96,
+        invariants: { meshSlots: 1, meshTriangles: 41 },
+      }),
+    );
+    const holeFigure = /enclosing (\d+)px of hole/.exec(declared);
+    say(
+      'CLI08_THE_MESH_LINE_PRINTS_THE_RIGS_BUDGET_AND_THE_HOLE_IT_MEASURED',
+      declared.includes('(budget 41)') && !declared.includes('(budget 80)') && Number(holeFigure?.[1]) > 0,
+      declared === '' ? 'the build printed no MESH line at all' : declared.trim(),
+      'issue #275: `(budget 80)` was a literal, and under the default `--profile spine` A13 is PROF, so the printed ' +
+        'number is the only budget figure in the output; and `holePixels` was measured and never printed, which ' +
+        'left an unintentional hole — a gap in the art, a stroke that failed to join — invisible in the loop',
+    );
+
+    const undeclared = meshLine(
+      buildContourRig(fanMeshAttachment(FAN_ART_R, FAN_SIZE), {
+        art: discArt(FAN_ART_R, FAN_SIZE),
+        width: FAN_SIZE,
+        height: FAN_SIZE,
+        invariants: null,
+      }),
+    );
+    say(
+      'CLI09_AN_AUTHORED_MESH_WITH_NO_BUDGET_SAYS_SO_AND_STILL_REPORTS_ITS_COVERAGE',
+      undeclared.includes('(no budget declared)') &&
+        undeclared.includes('authored') &&
+        /covers 9\d\.\d\d% of the art/.test(undeclared),
+      undeclared === '' ? 'the build printed no MESH line at all' : undeclared.trim(),
+      'the same distinction A13 SKIPs on — an undeclared budget is unmeasured and not a wall — and issue #277\'s ' +
+        'octagon rim, which used to print counts and nothing else',
+    );
+  }
+
   return bad;
 }
 
@@ -9981,27 +10300,34 @@ function main(): void {
       'refusal), + 2 slot-attribution ' +
       'controls (a blob one part dominates, and two parts that are two blobs), + 6 draw-order controls, ' +
       '+ 7 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
-      '+ 22 constraint- and deform-timeline controls (8 of them a spine-core round trip that reads the ik and ' +
+      '+ 24 constraint- and deform-timeline controls (10 of them a spine-core round trip that reads the ik and ' +
       'transform mixes off the posed constraints, the world position of a deformed vertex, and a weighted ' +
-      "attachment's per-influence deform array, and 2 of them the two sides of a TRIMMED deform run — a run that " +
-      'starts and ends mid-pair accepted, the same run one float longer still refused), ' +
+      "attachment's per-influence deform array, 2 of them the two sides of a TRIMMED deform run — a run that " +
+      'starts and ends mid-pair accepted, the same run one float longer still refused, and 2 of them the knee an ik ' +
+      "timeline reverted: the rig's own `bendPositive` reaching a timeline that states none, and a timeline that " +
+      'states one still overriding it), ' +
       '+ 25 path / slider / per-skin controls (8 of them a spine-core round trip that reads the world position a ' +
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'and which bones a skin switches on), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
-      '+ 8 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      '+ 11 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
       'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
       'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
       'trip of the indices, the hull and the pin to the slot bone, the undeformed mesh drawn beside the plain ' +
       'region of the same part with the same part moved two pixels as the instrument\'s control, the no-manifest ' +
       'placement convention measured on a ring and a ribbon and on a moved slot bone, six ways to ask for an ' +
-      'impossible mesh each refused by name, and two traces of one PNG emitting the same bytes), ' +
+      'impossible mesh each refused by name, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
+      'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
+      "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
+      'under a rig that declares no budget refused by the field that fixes it), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       ', + 2 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
-      'reports a line number), + 7 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
+      'reports a line number), + 9 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
-      'builds green with no flag and is refused by every rule under `--profile spine-html`)' +
+      'builds green with no flag and is refused by every rule under `--profile spine-html`, and the MESH report line ' +
+      "quoting the rig's own triangle budget with the hole its outline encloses, or saying no budget is declared " +
+      'while still reporting an authored coverage)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
       ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +

@@ -47,8 +47,10 @@ import {
   buildRibbonMesh,
   buildRingMesh,
   encodeWeightedVertices,
+  measureAuthoredMeshFit,
   MeshError,
   type MeshBoneRef,
+  type MeshFitReport,
 } from './mesh.ts';
 import { Plate, readPlate } from '../tools/plate.ts';
 import {
@@ -1192,16 +1194,33 @@ export function compile(opts: CompileOptions): CompileResult {
       tableFor(skinName)[rigSlot.name] = perSlot;
     }
   }
-  // 📐 The implicit budget of 0 is a statement about rigc's own GENERATORS: a rig
-  // that declares no `invariants.meshSlots` has not asked rigc to build any mesh,
-  // so building one is a mistake. It is not a statement about geometry somebody
+  // 📐 The implicit budget of 0 is a statement about rigc's own GENERATORS:
+  // geometry rigc built is geometry rigc will not ship unmeasured, and
+  // `A13_MESH_BUDGET` has nothing to measure a generated mesh against until the
+  // rig states a budget out loud. It is not a statement about geometry somebody
   // else drew — `RigInvariants.meshTriangles` says the same thing in words:
   // a number baked in here would be one project's frame time masquerading as a
   // property of the format. So authored meshes count against a budget the rig
-  // states out loud, and against nothing when it states none.
+  // states out loud, and against nothing when it states none: rigc did not draw
+  // them, so leaving them unmeasured is the author's call (issue #44's rule).
+  // #277's coverage report splits the same way and lands on the other side of it:
+  // both kinds are MEASURED, and only rigc's own output gets a wall.
+  //
+  // ⚠️ The message has to name the field, because the three doc places a reader
+  // checks all read as "you do not need this" and one of them is §3.4's own
+  // worked example (issue #274).
   const budgeted = rig.invariants?.meshSlots === undefined ? meshes.filter((m) => m.kind !== 'authored') : meshes;
   if (budgeted.length > meshBudget) {
-    throw new CompileError(`${budgeted.length} mesh slot(s) emitted but the rig "${rig.name}" allows ${meshBudget}`);
+    throw new CompileError(
+      `${budgeted.length} mesh slot(s) emitted but the rig "${rig.name}" allows ${meshBudget}` +
+        (rig.invariants?.meshSlots === undefined
+          ? ' — a mesh rigc GENERATED counts against `invariants.meshSlots`, and this rig declares none, which is a ' +
+            'budget of 0. Add `"invariants": { "meshSlots": ' +
+            `${budgeted.length}, "meshTriangles": <triangles one mesh may carry> }\` to the rig spec: geometry rigc ` +
+            'built is geometry it will not ship unmeasured, and `A13_MESH_BUDGET` has nothing to measure against ' +
+            'until that budget is stated. (Authored geometry is exempt — rigc did not draw it.)'
+          : ' — raise `invariants.meshSlots` in the rig spec if that budget is the thing being changed'),
+    );
   }
 
   // -- 4b. constraints -------------------------------------------------------
@@ -1217,6 +1236,22 @@ export function compile(opts: CompileOptions): CompileResult {
   // constraint of the same name and the parser then throws. Keeping the type
   // beside the name is what lets the refusal say which of the two it is.
   const constraintTypes = new Map<string, string>();
+  /**
+   * ik constraint -> the booleans it declares that the timeline format would
+   * otherwise take away from it. Issue #273.
+   *
+   * 🚨 `SkeletonJson` reads `bendPositive`, `compress` and `stretch` in TWO
+   * places with the same defaults: once on the constraint (`:155`) and once on
+   * **every timeline key** (`:912`). A key that omits one does not inherit the
+   * constraint's value — it asserts the parser's default. So a rig that declares
+   * `bendPositive: false` and an `ik` timeline that keys only `mix` produce a
+   * constraint that bends the other way for the whole animation, with the field
+   * still in the file and inert: four builds differing only in these flags posed
+   * one pose. What goes in this map is only the values that DIFFER from the
+   * per-key default, because a rig that says nothing and a key that says nothing
+   * already agree and there is nothing to carry.
+   */
+  const ikRigFlags = new Map<string, Record<string, boolean>>();
   // Which slots can actually show a path, for the path constraint's own check.
   // Read off the emitted skin tables rather than the spec, so it answers the
   // question the runtime asks: is there an attachment of that type on that slot?
@@ -1243,6 +1278,14 @@ export function compile(opts: CompileOptions): CompileResult {
     constraints.push(buildRigConstraint(spec, constraintCtx));
     constraintNames.add(spec.name);
     constraintTypes.set(spec.name, spec.type);
+    if (spec.type === 'ik') {
+      const carried: Record<string, boolean> = {};
+      for (const flag of CONSTRAINT_TIMELINES.ik.flags) {
+        const declared = spec[flag.field];
+        if (typeof declared === 'boolean' && declared !== flag.dflt) carried[flag.field] = declared;
+      }
+      if (Object.keys(carried).length) ikRigFlags.set(spec.name, carried);
+    }
   }
   withMotionSource(() => {
     for (const [name, spec] of Object.entries(motion.physics ?? {})) {
@@ -1414,7 +1457,14 @@ export function compile(opts: CompileOptions): CompileResult {
                 'the group holds one timeline per constraint, so merge them into one',
             );
           }
-          const keys = compileConstraintTrack(group, track, motion, animName, anim.duration);
+          const keys = compileConstraintTrack(
+            group,
+            track,
+            motion,
+            animName,
+            anim.duration,
+            ikRigFlags.get(name) ?? {},
+          );
           for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
           constraintTimelines[group][name] = keys;
         }
@@ -2153,6 +2203,44 @@ function encodeNamedWeights(weights: RigMeshBinding[][], where: string, ctx: Att
   return out;
 }
 
+/**
+ * Measure an authored mesh against the art it names, or report nothing.
+ *
+ * 🚨 A measurement, never a refusal — and that asymmetry with `contour` is the
+ * whole decision (issue #277). A contour mesh is refused under 99.5% because rigc
+ * GENERATED that geometry as a claim about the art: below the bar, rigc's own
+ * arithmetic clipped the drawing. Authored geometry is the author's intent, and a
+ * mesh that sits inside its art is a legitimate thing to draw — a soft feather, a
+ * deliberately trimmed hull, a mesh meant to bend a core while its edges stretch.
+ * Refusing those would be #44's mistake in a new place. So the figure is printed
+ * and the decision stays with the author.
+ *
+ * Nothing is reported in the two cases where there is nothing to compare:
+ * an attachment with no `image` (there is no PNG the mesh is a claim about), and
+ * a part with no art at all (0 of 0 pixels is not a percentage). Neither is an
+ * error here — a mesh with no image is ordinary data, and an all-transparent part
+ * is somebody else's assertion to make.
+ */
+function measureAuthoredFit(att: RigMeshAttachment, ctx: AttachmentContext): MeshFitReport | null {
+  if (att.image === undefined || att.uvs === undefined || att.triangles === undefined) return null;
+  const region = basename(att.image, '.png');
+  const img = ctx.images.find((im) => im.region === region);
+  if (!img) return null;
+  const plate = partPlate(img);
+  const alpha = new Uint8Array(plate.width * plate.height);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = plate.data[i * 4 + 3];
+  // uvs are the part window in 0..1 — the same normalisation `buildContourMesh`
+  // emits — so the pixel grid they land on is the PLATE's, which is the grid the
+  // alpha was read off. On an imported page that declares a `scale:` the
+  // drawing's size and the plate's differ, and it is the plate that has pixels.
+  const points = [] as Array<[number, number]>;
+  for (let i = 0; i + 1 < att.uvs.length; i += 2) {
+    points.push([att.uvs[i] * plate.width, att.uvs[i + 1] * plate.height]);
+  }
+  const fit = measureAuthoredMeshFit({ width: plate.width, height: plate.height, alpha }, 1, points, att.triangles);
+  return fit.artPixels === 0 ? null : fit;
+}
+
 function buildRigMesh(
   att: RigMeshAttachment,
   placeholder: string,
@@ -2230,6 +2318,7 @@ function buildRigMesh(
   // read this and skip rather than measuring a ring that was never a ring.
   ctx.meshBones.add(ctx.anchorBone);
   for (const name of boundBones) ctx.meshBones.add(name);
+  const fit = measureAuthoredFit(att, ctx);
   ctx.meshes.push({
     slot: ctx.slotName,
     kind: 'authored',
@@ -2237,6 +2326,8 @@ function buildRigMesh(
     vertices: uvCount / 2,
     triangles: att.triangles.length / 3,
     bones: boundBones.length ? boundBones : [ctx.anchorBone],
+    coverage: fit === null ? undefined : r6(fit.coverage),
+    overshoot: fit?.overshoot,
   });
   return out;
 }
@@ -2417,6 +2508,7 @@ function buildContourAttachment(
     bones: [ctx.anchorBone],
     coverage: geometry.contour?.coverage,
     overshoot: geometry.contour?.overshoot,
+    holePixels: geometry.contour?.holePixels,
   });
   const out: SpineMeshAttachment = {
     type: 'mesh',
@@ -3233,6 +3325,23 @@ function compileEvents(
  * That is reading the format, not inventing a value: it is exactly what the
  * runtime will interpolate, and a bezier built against anything else would
  * describe a curve the player does not play.
+ *
+ * 🚨 `rigFlags` is the same reading applied one level up, for the three ik
+ * booleans (issue #273). The parser reads them per KEY as well as on the
+ * constraint, with the same defaults in both places, so an ik timeline whose keys
+ * omit `bendPositive` does not inherit the rig's — it asserts `true`, and a rig
+ * that declared `false` bends the other way for the whole animation with the
+ * field still sitting in the file. Every key therefore carries the EFFECTIVE
+ * direction: the motion's where the motion states one, and the rig's where it
+ * does not.
+ *
+ * **A motion key may still override.** The format keys these per key on purpose
+ * — they are stepped by nature, and a bend that flips partway through an
+ * animation is a real thing to write — so a track that states a flag on every key
+ * is honoured as written, whatever the rig says. That is also what the editor's
+ * own export does: spineboy-pro declares `bendPositive: false` on both leg chains
+ * and restates it on every key of all six ik timelines that touch them. What
+ * changes here is only the silent case.
  */
 function compileConstraintTrack(
   group: 'ik' | 'transform',
@@ -3240,6 +3349,8 @@ function compileConstraintTrack(
   motion: MotionSpec,
   animName: string,
   duration: number,
+  /** Non-default ik booleans the rig declared, by field. Empty for `transform`. */
+  rigFlags: Record<string, boolean>,
 ): SpineTimelineKey[] {
   const shape = CONSTRAINT_TIMELINES[group];
   const article = group === 'ik' ? 'an' : 'a';
@@ -3316,7 +3427,15 @@ function compileConstraintTrack(
     }
     for (const flag of shape.flags) {
       const v = read(key, flag.field);
-      if (v === undefined) continue;
+      if (v === undefined) {
+        // The rig's value, stamped on this key because nothing else will carry
+        // it there. Absent from `rigFlags` means the rig's value IS the per-key
+        // default, so omitting the field says the same thing and the emitted
+        // bytes do not move.
+        const carried = rigFlags[flag.field];
+        if (carried !== undefined) entry[flag.field] = carried;
+        continue;
+      }
       if (typeof v !== 'boolean') {
         throw new CompileError(`${where} (t=${key.t}): ${flag.field} is ${JSON.stringify(v)}, not true or false`);
       }

@@ -90,9 +90,19 @@ The inradius is what has to clear the art:
 
 Measured by the metric the `contour` generator already applies to itself — the
 emitted triangles rasterised back over the part's own alpha — the first version
-covered **94.31%** of the art and the corrected one covers **100.00%**. A
-`contour` at 94.31% is refused by name; authored geometry gets no such check, and
-that gap is [issue #277](https://github.com/firejune/rigc/issues/277).
+covered **94.31%** of the art and the corrected one covers **100.00%**. That
+measurement is now on the `MESH` line for authored geometry too, which is
+[issue #277](https://github.com/firejune/rigc/issues/277), **fixed**:
+
+```
+MESH  ball         authored 9 vertices / 8 triangles  (budget 8)  bones=[ball]  attachments=[ball]  covers 100.00% of the art, reaching 15.00px past it
+```
+
+A `contour` under 99.5% is still refused by name and an authored mesh is still
+not — rigc did not draw it, and a mesh that deliberately sits inside its art is a
+real thing to author — so what changed is that the number is printed and the
+decision is the author's. The first version would have said `covers 94.31%` in
+its very first build.
 
 The uvs are round numbers because the part is 240×240 and the rim is 110:
 `(120 ± 110) / 240` is `0.0416667` and `0.958333`, and the diagonal
@@ -210,13 +220,16 @@ At `0.4` the blink would have missed frame 10, which is the impact frame.
 
 ## What this cost — the authoring notes
 
-**A mesh that clips its own art is green, and a `contour` of the same art is
-refused.** [Issue #277](https://github.com/firejune/rigc/issues/277). The numbers
-are in *The rim is not on the silhouette* above: 94.31% coverage, 18 assertions
-passed, nothing said. The generator that builds its own geometry measures the
-result against the mask it came from and refuses under 99.5%; authored geometry
-gets the counts and no measurement. Reporting the figure on the `MESH` line for
-any mesh with an `image` would have caught this in the first build.
+**A mesh that clipped its own art was green, and a `contour` of the same art was
+refused.** [Issue #277](https://github.com/firejune/rigc/issues/277), **fixed**.
+The numbers are in *The rim is not on the silhouette* above: 94.31% coverage, 18
+assertions passed, nothing said. The generator that builds its own geometry
+measures the result against the mask it came from and refuses under 99.5%;
+authored geometry got the counts and no measurement at all. It now gets the same
+measurement — a report rather than a bar — and this example's octagon is the
+selftest's `CT08` fixture, at 90% with its rim on the silhouette against 100%
+with the rim an octagon's apothem outside it. What found it in the first place
+was looking at a 1:1 render and noticing the ball had no line around it.
 
 **An eight-vertex rim is enough, and I expected it not to be.** The worry was
 faceting: eight chords around a circle leaves 7.5 units of sag, and a squashed

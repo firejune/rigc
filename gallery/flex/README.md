@@ -45,11 +45,16 @@ bun gallery/flex/make_parts.ts
 line to read rather than the parameters you asked for:
 
 ```
-MESH  flag_a       contour  52 vertices / 50 triangles  bones=[flag_a]  covers 100.00% of the art, reaching 2.00px past it
-MESH  flag_b       contour  48 vertices / 46 triangles  bones=[flag_b]  covers 100.00% of the art, reaching 2.00px past it
-MESH  flag_c       contour  81 vertices / 79 triangles  bones=[flag_c]  covers  99.96% of the art, reaching 2.00px past it
-MESH  leaf         contour  77 vertices / 75 triangles  bones=[leaf]    covers 100.00% of the art, reaching 2.00px past it
+MESH  flag_a       contour  52 vertices / 50 triangles  (budget 96)  bones=[flag_a]  covers 100.00% of the art, reaching 2.00px past it
+MESH  flag_b       contour  48 vertices / 46 triangles  (budget 96)  bones=[flag_b]  covers 100.00% of the art, reaching 2.00px past it, enclosing 848px of hole
+MESH  flag_c       contour  81 vertices / 79 triangles  (budget 96)  bones=[flag_c]  covers  99.96% of the art, reaching 2.00px past it
+MESH  leaf         contour  77 vertices / 75 triangles  (budget 96)  bones=[leaf]    covers 100.00% of the art, reaching 2.00px past it
 ```
+
+The budget is this rig's declared `invariants.meshTriangles`, and `flag_c` at 79
+triangles against 96 is the reading that matters — it is 82 % of the way to the
+wall, which is a thing to know before raising the tolerance. `flag_b`'s hole is
+the star punched through it, below.
 
 All four ship at `tolerance: 0.9, margin: 1.2, maxVertices: 96, alpha: 60`.
 Those were not guessed — here is the sweep that picked them, on this art:
@@ -110,15 +115,15 @@ stops being fine: a hole large enough that the wasted fill matters, and a hole
 you did not know you had — a gap in the art, a soft interior you expected the
 threshold to close. So:
 
-⚠️ **Nothing prints the hole size.** The generator measures it — `holePixels` is
-a field of the report it builds — but the `build`/`explain` line shows only
-coverage and overshoot, both of which are *unaffected* by a hole (the overshoot
-is measured against the **filled** silhouette). So an unintended hole is
-invisible in the loop, and 848 above is a number that needed a direct call into
-`buildContourMesh` to get. Filed as
-[issue #275](https://github.com/firejune/rigc/issues/275), together with a
-second thing the same line gets wrong: its `(budget N)` figure is a hardcoded
-literal rather than the rig's declared `invariants.meshTriangles`.
+✅ **The hole size is on the `MESH` line** — `enclosing 848px of hole`, above.
+[Issue #275](https://github.com/firejune/rigc/issues/275), **fixed**. It was
+measured all along (`holePixels` is a field of the report the generator builds)
+and printed nowhere, while coverage and overshoot are both *unaffected* by a hole
+(the overshoot is measured against the **filled** silhouette) — so an unintended
+hole was invisible in the loop, and the 848 in this README originally needed a
+direct call into `buildContourMesh` to get. The same fix retired the second thing
+that line got wrong: `(budget N)` was a hardcoded `80` rather than the rig's
+declared `invariants.meshTriangles`, which for this example is 96.
 
 ### The other two refusals, on this example's own art
 
@@ -244,6 +249,9 @@ The rig declares `"invariants": { "meshSlots": 4, "meshTriangles": 96 }`, and
 that is **not optional for a generator**: a rig that declares no
 `invariants.meshSlots` has an implicit budget of 0 generated meshes, so a
 contour build without it is refused before the gate with
-`4 mesh slot(s) emitted but the rig "flex" allows 0`. AUTHORING.md's own contour
-example does not carry one and does not compile as written — filed as
-[issue #274](https://github.com/firejune/rigc/issues/274).
+`4 mesh slot(s) emitted but the rig "flex" allows 0`. That requirement is
+deliberate — geometry rigc built is geometry it will not ship unmeasured — and
+[issue #274](https://github.com/firejune/rigc/issues/274) was that nothing said
+so: AUTHORING.md's own contour example did not carry one and did not compile as
+written. **Fixed**: the example carries it, §3.7 states the exception, §5.1 lists
+the refusal, and the refusal itself now names the field.

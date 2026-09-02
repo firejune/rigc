@@ -669,11 +669,43 @@ is weighted; a generated mesh binds only bones that move it) do not apply to one
 #44; before it was fixed, `A21` reported 40 failures on a correct 40-vertex editor
 mesh because an absent `meshKinds` entry read as `ring`.
 
+⭐ **Coverage is the exception, and it is reported for an authored mesh too.** Those
+rules are about a mesh's **structure** — where its rim is, how its rows pair —
+which rigc cannot know about geometry it did not build. Coverage is a measurement
+between two things it has in front of it: the emitted triangles, and the PNG the
+attachment names with `image`. So any mesh that names one gets the figure on its
+`MESH` line, authored or generated:
+
+```
+  MESH  ball         authored 9 vertices / 8 triangles  (budget 8)  bones=[ball]  attachments=[ball]  covers 94.31% of the art, reaching 2.50px past it
+```
+
+**A number, not a bar.** A `contour` under 99.5% is *refused* because rigc
+generated that geometry as a claim about the art; an authored mesh that sits inside
+its art is a legitimate thing to draw — a soft feather, a trimmed hull, a mesh
+meant to bend a core while its edges stretch — so the figure informs and the
+decision stays with the author. A mesh with no `image` reports nothing, because
+there is nothing to measure it against. The silence was worth closing: the line
+above is a round part meshed as a centre vertex plus 8 rim vertices placed on the
+silhouette, and an octagon's sides pass `R · cos(π/8)` from its centre, so 5.7% of
+the drawing — its whole ink outline, between the spokes — was not going to be
+drawn, and every assertion passed (issue #277).
+
 The generators are `ring`, `ribbon` and `contour` (see
 [`src/mesh.ts`](../src/mesh.ts)); the first two encode a deformation model rather
 than a table of numbers, which is why they are code invoked by data. A generator
 is for a skeleton with **no** manifest; a cut that has one invokes the same
 builders through the manifest's `mesh` block.
+
+🚨 **A rig that invokes a generator must declare `invariants.meshSlots` (§3.7).**
+Geometry rigc built is geometry rigc will not ship **unmeasured**: a generated
+mesh counts against that budget, a rig that declares none has a budget of
+**zero**, and the build is refused before the gate —
+`1 mesh slot(s) emitted but the rig "hello" allows 0`. Declare `meshTriangles`
+beside it: without it `A13_MESH_BUDGET` has nothing to measure against and SKIPs,
+and the `MESH` report line has no budget to print. Authored geometry is exempt in
+the other direction and for the same reason — rigc did not draw it, so leaving it
+unmeasured is the author's call (issue #274).
 
 ⭐ **The no-manifest path centres the part window on its own slot bone.** There is
 no crop to flip against, so `size` (or, for a contour, the PNG's own size) is
@@ -690,17 +722,30 @@ vertices to push with a `deform` timeline (§4.11) at the places the silhouette
 actually is, instead of at four corners.
 
 It takes **no geometry and no size**: the shape is traced off the attachment's own
-`image`, so there is no number here that can disagree with the pixels.
+`image`, so there is no number here that can disagree with the pixels. The rig
+header still budgets for it, which is the `invariants` block below and not a
+detail of the attachment.
 
 ```json
-"cape": {
-  "cape": {
-    "type": "mesh",
-    "image": "cape.png",
-    "generator": { "kind": "contour", "tolerance": 1.5, "margin": 2, "maxVertices": 48 }
+"invariants": { "meshSlots": 1, "meshTriangles": 64 },
+"skins": {
+  "default": {
+    "cape": {
+      "cape": {
+        "type": "mesh",
+        "image": "cape.png",
+        "generator": { "kind": "contour", "tolerance": 1.5, "margin": 2, "maxVertices": 48 }
+      }
+    }
   }
 }
 ```
+
+⭐ **Both keys are the fragment.** Drop the two of them into §1.1's minimal rig in
+place of its `skins`, rename its `box` bone and slot to `cape`, put a
+transparent-margined `cape.png` in `images/`, and it compiles — `invariants`
+included, because without it the generator is refused (issue #274). The
+`meshTriangles` figure is invented; pick the one your renderer can afford.
 
 | Field | Meaning |
 | --- | --- |
@@ -722,7 +767,18 @@ the raw outline encloses every art pixel *whole*), simplify it, push it out by
 against the mask it came from**. `build` and `explain` print what it measured:
 
 ```
-  MESH  cape         contour  15 vertices / 13 triangles  (budget 80)  bones=[cape]  attachments=[cape]  covers 100.00% of the art, reaching 3.16px past it
+  MESH  cape         contour  15 vertices / 13 triangles  (budget 64)  bones=[cape]  attachments=[cape]  covers 100.00% of the art, reaching 3.16px past it
+```
+
+The budget in that line is the rig's `invariants.meshTriangles` — `(no budget
+declared)` when it declares none, which is the same distinction `A13` SKIPs on. It
+used to be the literal `80` whatever the rig said, so the line an author reads and
+the assertion that measures could print two different numbers (issue #275). A part
+whose outline encloses a hole says so too, because nothing else in the output
+moves when one appears:
+
+```
+  MESH  flag_b       contour  48 vertices / 46 triangles  (budget 96)  bones=[flag_b]  attachments=[flag_b]  covers 100.00% of the art, reaching 2.00px past it, enclosing 848px of hole
 ```
 
 🚨 **It is geometry, not a deformation model.** Every vertex is pinned to the slot
@@ -740,7 +796,7 @@ mesh rather than a rim prefix, and `A28_RIBBON_ROWS_SHARE_WEIGHTS` **SKIPs** wit
 | --- | --- |
 | every pixel opaque | `every pixel of the 96x64 part reaches alpha 1, so its silhouette IS the part window and a contour mesh of it is a region attachment with extra vertices` |
 | two or more islands | `the art is 2 separate islands and one outline can only enclose the largest (529 of 989 px, 53.49%)` — one outline encloses one region; give each island its own slot |
-| a **hole** (a donut) | **accepted, and the hole is inside the mesh.** Ear clipping has no bridging step, so the outline is the art's *outer* boundary; those pixels draw nothing (their alpha is still 0) and the extra triangles are the whole cost. `explain` reports the coverage either way |
+| a **hole** (a donut) | **accepted, and the hole is inside the mesh.** Ear clipping has no bridging step, so the outline is the art's *outer* boundary; those pixels draw nothing (their alpha is still 0) and the extra triangles are the whole cost. `build` and `explain` print the hole in pixels, because `coverage` and `overshoot` are both measured against the FILLED silhouette and neither of them moves when a part gains one |
 | a **diagonal pinch** — two parts of the art meeting at one pixel corner | `the alpha silhouette pinches to a single point at pixel corner (2,2) … one outline cannot pass through one point twice` |
 | a neck narrower than `margin` | `the outline crosses itself: edge 0 meets edge 3 after a margin of 3px was pushed out of a silhouette narrower than that` |
 | more outline than `maxVertices` | `the silhouette simplified to 15 vertices at tolerance 1.5, past the 4 this mesh allows` — refused, never silently decimated |
@@ -756,6 +812,9 @@ selftest's fixture measures 100.000%.
 Self-intersection is refused; **holes are not cut out**; and nothing here does
 interior/Steiner points, so a contour mesh bends only where its outline has
 vertices.
+
+🖼️ **Worked example: [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex)** — four contours over real art, with
+the `tolerance`/`margin` sweep that picked their settings and what each one measured.
 
 **Bounding box** ([Spine: bounding boxes](http://esotericsoftware.com/spine-bounding-boxes))
 and **clipping** ([Spine: clipping](http://esotericsoftware.com/spine-clipping))
@@ -982,6 +1041,9 @@ unresolved `spacingMode` fails the `=== Length` test and spaces bones as though
 `Fixed` had been asked for; an unresolved `rotateMode` is neither `Tangent` nor
 `ChainScale`, so bones follow the curve and never turn along it.
 
+🖼️ **Worked example: [`gallery/ride`](https://github.com/firejune/rigc/tree/main/gallery/ride)** — a trolley on a drawn rail, moved
+by a `position` timeline, with `groups` + `stagger` keying the wheels.
+
 #### 3.5.2 `slider` — a value that drives an animation
 
 **When you need one:** a pose that has to be driven by a value instead of by time —
@@ -1069,15 +1131,24 @@ is not an array. Every field is optional and each is the payload a firing
 
 ### 3.7 `invariants` — what the artifact cannot say about itself
 
-Optional, and only meaningful for rigc's own formations: `meshSlots` and
-`meshTriangles` (the two halves of the mesh budget `A13` measures against),
-`axisBone`, `massBone`, `detached`. Nothing in skeleton JSON records that a
+Optional with one exception, and only meaningful for rigc's own formations:
+`meshSlots` and `meshTriangles` (the two halves of the mesh budget `A13` measures
+against), `axisBone`, `massBone`, `detached`. Nothing in skeleton JSON records that a
 bone carries a cut's axis or that a parentage is forbidden, so the rig spec says it
 and the validator's archetype assertions read it. **An assertion whose field is
 absent reports SKIP, never a pass.** If you are reproducing a foreign skeleton,
 leave this out entirely and run `--profile spine` — and expect `PROF` rather than
 that SKIP, because the profile excludes an archetype assertion before its body
 could notice the missing field (§5.2).
+
+🚨 **The exception: `meshSlots` is required by a rig that invokes a mesh
+generator** (`ring`, `ribbon`, `contour` — §3.4), and it is a **compile-time**
+refusal rather than an assertion. Undeclared means a budget of zero, so the build
+stops before the gate with `N mesh slot(s) emitted but the rig "X" allows 0`.
+Geometry rigc built is geometry rigc will not ship unmeasured; geometry the author
+drew is exempt, because rigc did not draw it. So `A13`'s **SKIP** means *this rig
+is unmeasured*, not *this budget is inert* — those are two code paths with one
+name, and reading the SKIP as the whole story is what issue #274 was.
 
 ---
 
@@ -1369,13 +1440,25 @@ here was measured off a real rig. Copy the shape, not the values.
 | --- | --- | --- |
 | `mix` | 0..1, how much of the solved rotation is applied | `1` |
 | `softness` | distance from full reach at which the bones stop straightening | `0` |
-| `bendPositive` | two-bone bend direction | `true` |
-| `compress` | one-bone IK scales the bone down to reach a close target | `false` |
-| `stretch` | scales the bone up to reach a far target | `false` |
+| `bendPositive` | two-bone bend direction | **the rig's** (`true` if the rig says nothing) |
+| `compress` | one-bone IK scales the bone down to reach a close target | **the rig's** (`false` if the rig says nothing) |
+| `stretch` | scales the bone up to reach a far target | **the rig's** (`false` if the rig says nothing) |
 
 - **`mix` and `softness` are the two curve channels, in that order.** A raw
   `curve` is therefore 8 numbers, and the three booleans are stepped by nature —
   nothing interpolates a bend direction.
+- 🚨 **The three booleans are the one place a key's absent value is the RIG's and
+  not the format's.** The parser reads them twice with the same defaults — once on
+  the constraint (`SkeletonJson:155`) and once on **every timeline key**
+  (`:912`) — so a key that omits `bendPositive` does not inherit the constraint's
+  value, it asserts `true`. A rig declaring `bendPositive: false` under a timeline
+  that keys only `mix` therefore bent the *other* way for the whole animation,
+  with the field still in the file and inert: four builds differing only in those
+  values posed one pose, and the gate was green throughout (issue #273). rigc now
+  stamps the rig's value onto every emitted key, so the declaration reaches the
+  runtime. **Stating a flag on every key still overrides the rig** — the format
+  keys them per key on purpose, a bend that flips partway through is a real thing
+  to write, and it is what the editor's own export does.
 - `mix` outside `0..1` is a compile error: `IkConstraintPose.mix` is documented as
   a percentage. A **transform** mix is documented *unbounded*, which is why §4.10
   has no such rule — the asymmetry is the runtime's, not ours.
@@ -1403,6 +1486,10 @@ constraint of the same name, returns null, and `readAnimation` throws — in the
 consumer's process, which is late. `A34_CONSTRAINT_TIMELINE_TARGETS` checks the
 same two from the other side, plus one thing the compiler cannot produce and a
 hand-edited file can: an **empty key array**, which the parser skips in silence.
+
+🖼️ **Worked example: [`gallery/walk`](https://github.com/firejune/rigc/tree/main/gallery/walk)** — two mirrored two-bone leg chains
+whose `mix`, `softness` and `bendPositive` are keyed through a stance and a swing,
+with the README's table of what each key is for.
 
 ### 4.10 `transform` — turning a muted transform constraint on
 
@@ -1569,6 +1656,9 @@ where the remedy is a line you own. `A35` does **not** refuse it: it is pointed 
 other people's files, and a rule stricter than the runtime tells its reader to go
 and break correct data.
 
+🖼️ **Worked example: [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash)** — a 9-vertex ball squashed about
+its contact point, with the two affine transforms its keys were derived from.
+
 ---
 
 ### 4.12 `path` and `slider` timelines — tracks, not their own groups
@@ -1643,6 +1733,7 @@ the frequent ones, verbatim:
 | `key times must strictly increase (at t=…)` | including after `lag` and `stagger` |
 | `animation "A" has two tracks on X.property; merge them into one track` | one timeline per target property |
 | `no stage size: give the rig spec a \`skeleton.width\`/\`skeleton.height\`` | §3.1 |
+| `N mesh slot(s) emitted but the rig "X" allows 0 — a mesh rigc GENERATED counts against \`invariants.meshSlots\`…` | §3.4 / §3.7 — a rig that invokes a mesh generator declares the budget; undeclared is zero. Add `"invariants": { "meshSlots": N, "meshTriangles": M }` |
 | `drawOrder at t=…: slot "X" is not one this rig emits` / `is offset twice in one key` / `puts it at N, outside the … emitted slots` | §4.7 |
 | `events at t=…: event "X" is not declared in the rig spec's "events" block` | declare it in the rig spec (§3.6), or fix the name |
 | `events: key times must not go backwards` | put the firings in time order (§4.8) |
@@ -1711,7 +1802,7 @@ The report prints one line per assertion:
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping the animation produced a `NaN` pose. Look for a degenerate curve or a zero scale |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | a clipping attachment; the target renderer skips them silently |
 | `A12_NO_DARK_COLOR` | renderer | a slot `dark` colour or an `rgba2`/`rgb2` timeline; parsed, then ignored |
-| `A13_MESH_BUDGET` | renderer | more mesh slots than the rig's `invariants.meshSlots`, or a mesh over its `invariants.meshTriangles`. Thin the mesh, or raise the budget in the rig spec. **SKIP** when the rig declares neither |
+| `A13_MESH_BUDGET` | renderer | more mesh slots than the rig's `invariants.meshSlots`, or a mesh over its `invariants.meshTriangles`. Thin the mesh, or raise the budget in the rig spec. **SKIP** when the rig declares neither — which means *unmeasured*, not that the budget is inert: the same `meshSlots` is a **compile-time** refusal for rigc's own generators, before the gate (§3.7, issue #274) |
 | `A14_NO_FULL_FRAME_MESH` | renderer | a mesh spans the whole stage — a full-frame canvas that can never dirty-skip |
 | `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | the `idle` animation keys a bone that drives a mesh, directly or as a control bone |
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` label is not on the 4.3 line (`4.3`, `4.3.N`, `4.3.N-suffix`) |
