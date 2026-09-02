@@ -268,6 +268,64 @@ export interface UvWindow {
 export interface PoseOptions {
   /** Also record each piece's original-art UVs — see `PieceTexture`. */
   texture?: boolean;
+  /**
+   * Also record every bone's world transform — see `BoneSnapshot` and
+   * `Frame.bones`. Off by default: nothing that draws needs it, and the
+   * one instrument that does (`bonedist.ts`) needs it on every frame.
+   */
+  bones?: boolean;
+}
+
+/**
+ * One bone's world transform in one posed frame.
+ *
+ * ⚠️ Read off `spine-core`'s own `BonePose` and derived by its own routines —
+ * `getWorldRotationX`, `getWorldScaleX` and friends — rather than recomputed
+ * from `a b c d` here. A second opinion about what a bone's world rotation *is*
+ * is exactly what an instrument comparing two skeletons must not carry: it
+ * would show up as a difference between the two rigs.
+ */
+export interface BoneSnapshot {
+  name: string;
+  /** World origin. */
+  worldX: number;
+  worldY: number;
+  /**
+   * The world matrix's linear part, `[a b][c d]`. **Complete**: rotation, scale
+   * and shear all live in these four numbers, and they are dimensionless — they
+   * map a local offset to a world offset, both in world units.
+   */
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  /** The direction the bone points, in degrees CCW. */
+  rotationX: number;
+  /** The y axis's own direction — the pair with `rotationX` is where shear shows. */
+  rotationY: number;
+  /** Magnitudes, always positive. */
+  scaleX: number;
+  scaleY: number;
+}
+
+/** Every bone's world transform in the skeleton's own declaration order. */
+export function boneSnapshots(skeleton: Skeleton): BoneSnapshot[] {
+  return skeleton.bones.map((bone) => {
+    const pose = bone.appliedPose;
+    return {
+      name: bone.data.name,
+      worldX: pose.worldX,
+      worldY: pose.worldY,
+      a: pose.a,
+      b: pose.b,
+      c: pose.c,
+      d: pose.d,
+      rotationX: pose.getWorldRotationX(),
+      rotationY: pose.getWorldRotationY(),
+      scaleX: pose.getWorldScaleX(),
+      scaleY: pose.getWorldScaleY(),
+    };
+  });
 }
 
 export interface Quad extends PieceCommon {
@@ -310,6 +368,21 @@ export interface Frame {
    * and then indexes `world[6]` through.
    */
   pieces: Piece[];
+  /**
+   * Every bone's world transform at this frame — present only when
+   * `PoseOptions.bones` asked for it, so a renderer neither pays for it nor
+   * sees a field it would have to ignore.
+   *
+   * ⭐ It rides on `Frame` rather than being sampled by a loop of its own so
+   * that the ladder's stage 3 and the reference frames step a skeleton through
+   * **one** recipe. `sampleAnimation`'s stepping order — `state.update`,
+   * `state.apply`, `skeleton.update`, `updateWorldTransform(Physics.update)`,
+   * and `Physics.reset` on the first frame alone — is a sequence two
+   * implementations would drift on, and a per-frame pose comparison that
+   * drifted from the renderer would report the drift as a difference between
+   * the two rigs.
+   */
+  bones?: BoneSnapshot[];
 }
 
 /** Where the world sits in a frame: the four world numbers plus the scale. */
@@ -401,7 +474,12 @@ export function sampleAnimation(data: SkeletonData, name: string, fps: number, o
       skeleton.update(0);
       skeleton.updateWorldTransform(Physics.reset);
     }
-    frames.push({ index: i, time: i * step, pieces: piecesOf(skeleton, opts) });
+    frames.push({
+      index: i,
+      time: i * step,
+      pieces: piecesOf(skeleton, opts),
+      ...(opts?.bones ? { bones: boneSnapshots(skeleton) } : {}),
+    });
   }
   return frames;
 }
@@ -419,7 +497,14 @@ export function sampleSetupPose(data: SkeletonData, opts?: PoseOptions): Frame[]
   skeleton.setupPose();
   skeleton.update(0);
   skeleton.updateWorldTransform(Physics.reset);
-  return [{ index: 0, time: 0, pieces: piecesOf(skeleton, opts) }];
+  return [
+    {
+      index: 0,
+      time: 0,
+      pieces: piecesOf(skeleton, opts),
+      ...(opts?.bones ? { bones: boneSnapshots(skeleton) } : {}),
+    },
+  ];
 }
 
 /**

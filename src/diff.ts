@@ -46,9 +46,24 @@
  *    wrong; name-agnostic low alone is impossible, since a wrong shape cannot
  *    have right names.
  *
+ * 4. **A measure that cannot gate is not in the mean.** `section.reported`
+ *    carries the measures `docs/GATE.md`'s *What never gates* calls
+ *    unobservable by construction — *"could any reading of the frames have
+ *    decided it?"*, and for these the answer is no whatever the frames are.
+ *    They are printed beside the section, with their conventions, and they have
+ *    **no mean at all**: an average of "does this mesh declare edges" and "how
+ *    many keys per second" is a number with no referent, and a section mean is
+ *    the one figure a stored ladder row quotes. Same discipline as point 3 and
+ *    the same reason — `section.ratio` does not move when a reported measure is
+ *    added, so every `bench.json` already on disk stays comparable — with one
+ *    addition of its own: *reports, never gates* becomes a property of where the
+ *    measure sits rather than of a sentence somebody has to remember.
+ *
  * Pure JSON reading — no spine-core, no filesystem. Validity is `validate.ts`'s
  * job and this file assumes nothing about it. In particular the name-agnostic
  * measures resolve nothing through the atlas: see `attachments.region_size`.
+ * The per-frame pose comparison that DOES need spine-core is a separate
+ * instrument — [`bonedist.ts`](bonedist.ts), the ladder's stage 3.
  */
 import { walkTimelines } from './timelines.ts';
 
@@ -102,6 +117,28 @@ export interface DiffAgnostic {
   measures: DiffMeasure[];
 }
 
+/**
+ * Measures that are **reported and never gate**, with no mean over them.
+ *
+ * `docs/GATE.md`'s *What never gates* seals off "anything unobservable by
+ * construction", and its test is *could any reading of the frames have decided
+ * it?* — mesh `edges` draw no pixel at all, and two keyings of one curve render
+ * the same frames at every rate. Those measures still belong in the report:
+ * `bench` is a structural comparison against the reference export and a feature
+ * the reference declares that a candidate drops is a finding, whether or not a
+ * clause may read it.
+ *
+ * ⚠️ No `ratio` field, deliberately, and not for lack of arithmetic. The
+ * measures here have unlike units — a presence share, a keys-per-second
+ * agreement — so their mean would be a number with no referent, and the one
+ * number a stored ladder row quotes per section is `DiffSection.ratio`. Keeping
+ * these out of it is what lets a measure be added without moving a figure
+ * somebody has already recorded.
+ */
+export interface DiffReported {
+  measures: DiffMeasure[];
+}
+
 export interface DiffSection {
   name: string;
   /** Unweighted mean of this section's measures. NOT a quality score. */
@@ -114,6 +151,11 @@ export interface DiffSection {
    * no name-agnostic comparison defined should say so by having none.
    */
   nameAgnostic?: DiffAgnostic;
+  /**
+   * Measures reported beside this section and folded into nothing. Absent
+   * rather than empty, for the same reason `nameAgnostic` is.
+   */
+  reported?: DiffReported;
 }
 
 export interface DiffReport {
@@ -207,12 +249,70 @@ function meanRatio(measures: DiffMeasure[]): number {
   return measures.length === 0 ? 1 : measures.reduce((s, m) => s + m.ratio, 0) / measures.length;
 }
 
-function sectionOf(name: string, measures: DiffMeasure[], nameAgnostic?: DiffMeasure[]): DiffSection {
+function sectionOf(
+  name: string,
+  measures: DiffMeasure[],
+  nameAgnostic?: DiffMeasure[],
+  reported?: DiffMeasure[],
+): DiffSection {
   return {
     name,
     ratio: meanRatio(measures),
     measures,
     ...(nameAgnostic === undefined ? {} : { nameAgnostic: { ratio: meanRatio(nameAgnostic), measures: nameAgnostic } }),
+    ...(reported === undefined ? {} : { reported: { measures: reported } }),
+  };
+}
+
+/**
+ * How many decimal places a reported RATE is compared at.
+ *
+ * The counts column prints `matched`/`total` verbatim, so a rate measured to
+ * full float precision would print seventeen digits of it. Rounding here rather
+ * than at print time keeps `ratio === matched / total` true in the data — a
+ * printed figure that is not the compared quantity is the same defect as a
+ * measure nobody asserts on, one layer down.
+ */
+const RATE_PLACES = 3;
+
+function atPlaces(n: number): number {
+  const scale = 10 ** RATE_PLACES;
+  return Math.round(n * scale) / scale;
+}
+
+/**
+ * Two rates compared as `min / max`, so that identity reads 1.000 and either
+ * direction of disagreement reads below it.
+ *
+ * ⚠️ The direction is the whole point of the measure and a ratio cannot carry
+ * it, so `note` states both rates and which side is the bigger one. A histogram
+ * intersection over the same quantity reads 421/1339 whether the candidate has
+ * a third of the reference's keys or three times them — that ambiguity is what
+ * [issue #20](https://github.com/firejune/rigc/issues/20) turned on, and a
+ * figure that repeated it would be the second copy of the same defect.
+ */
+function rateAgreement(id: string, what: string, unit: string, a: number, b: number, convention: string): DiffMeasure {
+  const candidate = atPlaces(a);
+  const reference = atPlaces(b);
+  const lo = Math.min(candidate, reference);
+  const hi = Math.max(candidate, reference);
+  const direction =
+    hi === 0
+      ? 'neither side has any'
+      : candidate === reference
+        ? 'the two agree'
+        : reference === 0
+          ? 'the reference has none'
+          : candidate === 0
+            ? 'the candidate has none'
+            : `candidate carries ${(candidate / reference).toFixed(2)}x — ${candidate > reference ? 'OVER' : 'UNDER'}-keyed`;
+  return {
+    id,
+    what,
+    matched: lo,
+    total: hi,
+    ratio: ratioOf(lo, hi),
+    note: `candidate ${candidate} vs reference ${reference} ${unit}; ${direction}. ${convention}`,
   };
 }
 
@@ -502,6 +602,11 @@ interface AttachmentFact {
   triangles: number | null;
   weighted: boolean | null;
   hull: number | null;
+  /**
+   * Whether the mesh DECLARES an `edges` key at all — see
+   * `attachments.mesh_edges` for why that is the granularity and not the list.
+   */
+  edgesPresent: boolean | null;
   /** `<width>x<height>` as stated, or `unstated` — see `attachments.region_size`. */
   size: string;
 }
@@ -531,6 +636,13 @@ function attachmentFacts(root: Json): { skins: Set<string>; byKey: Map<string, A
           triangles: type === 'mesh' ? arr(att.triangles).length / 3 : null,
           weighted: type === 'mesh' ? weighted : null,
           hull: type === 'mesh' ? num(att.hull) : null,
+          // `'edges' in att` rather than a length test, so a mesh that declares
+          // `"edges": []` reads as DECLARED. That is a different statement from
+          // omitting the key — the parser stores it as a different thing — and
+          // `bench/count_features.ts`'s `mesh_hasEdges` survey counts presence
+          // the same way, so the corpus census and this measure agree on what
+          // "has edges" means.
+          edgesPresent: type === 'mesh' ? 'edges' in att : null,
           size: num(att.width) !== null && num(att.height) !== null ? `${num(att.width)}x${num(att.height)}` : 'unstated',
         });
       }
@@ -591,6 +703,38 @@ function diffAttachments(c: Json, r: Json): DiffSection {
       'NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)',
       counted([...ar.values()].map((f) => f.size)),
       counted([...br.values()].map((f) => f.size)),
+    ),
+  ],
+  undefined,
+  // ── reported (issue #46) ────────────────────────────────────────────────
+  //
+  // `docs/LADDER.md` gates rung 6 on three features — transform constraints,
+  // weighted meshes from authored geometry, and mesh `edges` — and this section
+  // measured nine things, none of which read the third. A candidate that
+  // dropped one of the rung's own gating features scored a clean 1.000 for the
+  // meshes it kept, which is the shape of a measurement that flatters whatever
+  // is missing.
+  //
+  // ⭐ Present-vs-absent, and not the list. `edges` constrains triangulation in
+  // the editor and has no runtime effect whatever — it draws no pixel — so two
+  // candidates can carry different-but-equivalent lists and mean the same rig,
+  // and index equality would score a correct rig below 1.000. `edges.length`
+  // has the same defect in weaker form: `6-arcs`' `tail` declares 116 entries
+  // and a mesh triangulated differently declares a different number while
+  // being just as right. Present-vs-absent is the only distinction that is
+  // unambiguous, and it is exactly the one that was invisible.
+  //
+  // 🚫 Reported rather than in the mean, and on principle rather than for
+  // compatibility: `edges` is unobservable by construction under GATE.md's own
+  // test — no reading of the frames could decide it, because no reading of the
+  // frames can see it.
+  [
+    agreement(
+      'attachments.mesh_edges',
+      'each mesh declares an edge list, or declares none, alike',
+      am,
+      bm,
+      (x, y) => x.edgesPresent === y.edgesPresent,
     ),
   ]);
 }
@@ -694,9 +838,33 @@ function animationFacts(root: Json): AnimationFacts {
   return facts;
 }
 
+/**
+ * What a side's keying costs, in the two shapes that separate the two ways a
+ * key total can differ: more timelines, or more keys inside a timeline.
+ *
+ * Every number here is already collected by `animationFacts` — this only sums
+ * it. `seconds` is the sum of each animation's last key time, which is what
+ * `animations.duration` compares, because skeleton JSON carries no duration
+ * field of its own.
+ */
+interface KeyingTotals {
+  keys: number;
+  timelines: number;
+  seconds: number;
+}
+
+function keyingTotals(f: AnimationFacts): KeyingTotals {
+  const sum = (m: Map<string, number>): number => [...m.values()].reduce((x, y) => x + y, 0);
+  return { keys: sum(f.keys), timelines: sum(f.kinds), seconds: sum(f.duration) };
+}
+
 function diffAnimations(c: Json, r: Json): DiffSection {
   const a = animationFacts(c);
   const b = animationFacts(r);
+  const at = keyingTotals(a);
+  const bt = keyingTotals(b);
+  const perSecond = (t: KeyingTotals): number => (t.seconds === 0 ? 0 : t.keys / t.seconds);
+  const perTimeline = (t: KeyingTotals): number => (t.timelines === 0 ? 0 : t.keys / t.timelines);
   return sectionOf('animations', [
     measure('animations.count', 'how many animations', Math.min(a.names.length, b.names.length), Math.max(a.names.length, b.names.length)),
     jaccard('animations.names', 'the animation names', new Set(a.names), new Set(b.names)),
@@ -713,6 +881,59 @@ function diffAnimations(c: Json, r: Json): DiffSection {
     histogram('animations.event_keys', 'as many event firings', a.events, b.events),
     agreement('animations.draw_order', 'a draw-order timeline is present or absent alike', a.hasDrawOrder, b.hasDrawOrder, (x, y) => x === y),
     agreement('animations.deform', 'a deform timeline is present or absent alike', a.hasDeform, b.hasDeform, (x, y) => x === y),
+  ],
+  undefined,
+  // ── reported (issue #20) ────────────────────────────────────────────────
+  //
+  // 🔍 What #20 asked and what was actually wrong. The issue proposed making key
+  // density OBSERVABLE — 24/30 fps reference renders, or a hint in the brief —
+  // and both routes were measured before either was built (the figures are in
+  // [BENCHMARK.md](../docs/BENCHMARK.md), *Key density*). Neither works, and the
+  // reason is the same one twice: **the two keyings render the same pictures.**
+  // A candidate that lays extra keys along the curve the reference already
+  // describes poses identically at every instant, so a higher sampling rate
+  // samples the same curve more often and sees the same thing — the frames'
+  // rate is not the ceiling, the pixels are. And a hint in the brief does not
+  // make density observable; it makes it TOLD, which turns a scored measure into
+  // an input and would be a reference-side value of a scored row landing in an
+  // allowed-reading surface — the exact text LADDER.md's honesty rule seals.
+  //
+  // ⭐ So what the issue found is a REPORTING defect, and it is here.
+  // `animations.key_counts` is a histogram intersection over
+  // `max(candidate, reference)`, so **it cannot say which side is the bigger
+  // one**: rung 4 read 421/1339 for a candidate carrying three times the
+  // reference's keys, and that figure is indistinguishable from one carrying a
+  // third of them. The author read it as a gap and left it, correctly, because
+  // nothing in the report said "over-keyed". These two measures say so, with
+  // their conventions, in the direction the ratio drops.
+  //
+  // Two figures and not one, because a key total can differ two ways and the
+  // repairs are opposite: `key_density` moves when the shot is keyed harder,
+  // `keys_per_timeline` when each timeline is, and a candidate with the
+  // reference's density spread over twice the timelines shows up on the second
+  // alone. 🚫 Neither gates — GATE.md's *What never gates* names key density
+  // outright, and gate v2.3 (#153) settled that a clause does not read a figure
+  // the authoring loop cannot see.
+  [
+    rateAgreement(
+      'animations.key_density',
+      'how hard the shot is keyed, as keys per second',
+      'keys/s',
+      perSecond(at),
+      perSecond(bt),
+      `Convention: every key of every timeline (${at.keys} vs ${bt.keys}) over the summed last-key time of ` +
+        `every animation (${atPlaces(at.seconds)}s vs ${atPlaces(bt.seconds)}s), compared as min/max at ${RATE_PLACES} decimal places.`,
+    ),
+    rateAgreement(
+      'animations.keys_per_timeline',
+      'how hard each timeline is keyed, as keys per timeline',
+      'keys/timeline',
+      perTimeline(at),
+      perTimeline(bt),
+      `Convention: every key of every timeline (${at.keys} vs ${bt.keys}) over the number of timelines that exist ` +
+        `(${at.timelines} vs ${bt.timelines}), compared as min/max at ${RATE_PLACES} decimal places. Read beside ` +
+        '`key_density`: this one alone moving means the same keying spread over a different number of timelines.',
+    ),
   ]);
 }
 
@@ -793,7 +1014,35 @@ export function movedAgnosticMeasures(report: DiffReport): string[] {
   return report.sections.flatMap((s) => (s.nameAgnostic?.measures ?? []).filter((m) => m.ratio < 1).map((m) => m.id));
 }
 
+/**
+ * The same, over the reported measures.
+ *
+ * A third list rather than a third of one flattened list, for the reason
+ * `movedAgnosticMeasures` gives: a case's expectation should not depend on how
+ * many measures a different report happens to define. Pinned on every case and
+ * not only the ones about a mesh or a curve — a figure nothing asserts on is a
+ * figure that can quietly stop moving, and these gate nothing, so nothing else
+ * would notice.
+ */
+export function movedReportedMeasures(report: DiffReport): string[] {
+  return report.sections.flatMap((s) => (s.reported?.measures ?? []).filter((m) => m.ratio < 1).map((m) => m.id));
+}
+
 const fmt = (n: number): string => n.toFixed(3);
+
+/**
+ * `mesh_edges 1.000 · key_density 0.333`, or `null` when nothing is reported.
+ *
+ * Every reported measure by name, and no roll-up of any kind: these have unlike
+ * units, so a digest over them would be the mean `DiffReported` exists to
+ * refuse. The section is dropped from the id because the ids are unique across
+ * the report and the line is a summary.
+ */
+export function reportedFigures(report: DiffReport): string | null {
+  const measures = report.sections.flatMap((s) => s.reported?.measures ?? []);
+  if (measures.length === 0) return null;
+  return measures.map((m) => `${m.id.slice(m.id.indexOf('.') + 1)} ${fmt(m.ratio)}`).join(' · ');
+}
 
 /** `bones 0.567 (name-matched) · 1.000 (name-agnostic)`, or just the one figure. */
 export function sectionFigures(section: DiffSection): string {
@@ -833,6 +1082,19 @@ export function diffLines(report: DiffReport, labels: { candidate: string; refer
       );
       lines.push(...measureLines(agnostic.measures, section.name.length + '.agnostic.'.length));
     }
+    // No mean on this heading, and the absence is the statement: see
+    // `DiffReported`. `(no mean)` sits where `mean 0.000` would, so the column
+    // the eye follows down the report is unbroken.
+    const reported = section.reported;
+    if (reported) {
+      lines.push('');
+      lines.push(
+        `  ${`${section.name} (reported)`.padEnd(21)} (no mean)   over ${reported.measures.length} ` +
+          `measure${reported.measures.length === 1 ? '' : 's'}` +
+          '  — unobservable from the frames, so reported and folded into nothing',
+      );
+      lines.push(...measureLines(reported.measures, section.name.length + 1));
+    }
     lines.push('');
   }
   lines.push('  There is no overall score, on purpose: a section mean is an average of the');
@@ -843,5 +1105,11 @@ export function diffLines(report: DiffReport, labels: { candidate: string; refer
   lines.push('  keyed on names, and a candidate is entitled to its own. They are two');
   lines.push('  comparisons, not two halves of one: name-agnostic 1.000 beside a low');
   lines.push('  name-matched figure means the shape is right and the vocabulary differs.');
+  lines.push('');
+  lines.push('  A `(reported)` block has no mean because its measures have unlike units, and');
+  lines.push('  it stays out of the section mean above it for the same reason no clause may');
+  lines.push('  read it: no reading of the reference frames could have decided these. They are');
+  lines.push('  findings against the reference export all the same — each states its own');
+  lines.push('  convention, and a rate states which side is the bigger one.');
   return lines;
 }

@@ -48,9 +48,17 @@ import {
   type BallotCandidateInput,
   type BallotInput,
 } from './src/ballot.ts';
+import {
+  boneDistance,
+  BONEDIST_SPEC,
+  boneDistLines,
+  BoneDistError,
+  IDENTITY_CORRESPONDENCE,
+  type BoneDistReport,
+} from './src/bonedist.ts';
 import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type CheckReport } from './src/check.ts';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
-import { diffLines, diffSkeletons, sectionFigures, type DiffReport } from './src/diff.ts';
+import { diffLines, diffSkeletons, reportedFigures, sectionFigures, type DiffReport } from './src/diff.ts';
 import { copyAtlasImages } from './src/emit.ts';
 import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
@@ -1308,6 +1316,38 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
     diffs.push({ skeleton, reference: referencePath, report: diff });
   }
 
+  // Stage 3, optional and behind a flag because the correspondence is an INPUT:
+  // a candidate is entitled to its own bone names, so there is nothing sensible
+  // to default to and a derived mapping would be a guess reported as a
+  // measurement (issue #8). Nothing here gates, and without the flag the report
+  // above is unchanged to the byte.
+  const boneDists: Array<{ skeleton: RungSkeleton; report: BoneDistReport }> = [];
+  if (flags.bones !== undefined) {
+    for (const skeleton of rung.skeletons) {
+      const referencePath = join(exportDir, skeleton.file);
+      if (!existsSync(referencePath)) continue;
+      console.log(`  ── bonedist vs ${rung.example}/${skeleton.label} (stage 3) ──`);
+      const boneDist = boneDistance({
+        candidateSkeleton: skeletonPath,
+        candidateAtlas: atlasPath,
+        candidateAtlasDir: dirname(atlasPath),
+        referenceSkeleton: referencePath,
+        referenceAtlas: join(exportDir, skeleton.atlas),
+        referenceAtlasDir: exportDir,
+        bones: flags.bones,
+        // Deliberately NOT `flags.fps`. Inside `bench` that flag already means
+        // "the rate this frame set was recorded at, for a set with no sidecar",
+        // and one flag doing two unrelated things in one command is how a
+        // reader ends up quoting a figure measured at a rate they did not ask
+        // for. A run wanting another sampling rate calls `rigc bonedist`, where
+        // `--fps` has exactly one meaning.
+      });
+      for (const line of boneDistLines(boneDist, { allBones: flags['all-bones'] !== undefined })) console.log(`  ${line}`);
+      console.log('');
+      boneDists.push({ skeleton, report: boneDist });
+    }
+  }
+
   // Third, optional and third for a reason: is it the same MOTION? `diff`
   // compares structure, and a reversed easing is the same key count and the same
   // curve kind — so a row of this ladder carrying only `validate` and `diff`
@@ -1333,6 +1373,13 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
     // name-agnostic figure printed beside — issue #21.
     const split = d.report.sections.filter((s) => s.nameAgnostic !== undefined);
     if (split.length > 0) console.log(`  ${''.padEnd(10)} ${split.map(sectionFigures).join('   ')}`);
+    // A third line, for the same reason the second one is not folded into the
+    // first: the reported measures are unobservable by construction, so they
+    // roll into no mean at all and cannot be shown as one. Each is named with
+    // its own figure — a per-section digest would be the mean this block exists
+    // to refuse.
+    const reported = reportedFigures(d.report);
+    if (reported !== null) console.log(`  ${''.padEnd(10)} reported: ${reported}`);
   }
   if (check) {
     // The framing goes first because it is upstream of every MAE below it: a
@@ -1407,6 +1454,19 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
     console.log('  check      not run — pass --frames <dir> to compare against the rendered reference frames.');
     console.log('             Without it this report says nothing about whether the ANIMATION is right.');
   }
+  if (boneDists.length > 0) {
+    for (const b of boneDists) {
+      const w = b.report.worst;
+      console.log(
+        `  ${b.skeleton.label.padEnd(10)} bonedist worst position ${w.position.value.toFixed(6)} skeleton-size(s), ` +
+          `rotation ${w.rotation.value.toFixed(4)}°, scale ${w.scale.value.toFixed(6)}, linear ${w.linear.value.toFixed(6)}  ` +
+          `over ${b.report.animations.reduce((n, a) => n + a.compared, 0)} frame(s) × ${b.report.correspondence.pairs} bone pair(s)`,
+      );
+    }
+  } else {
+    console.log('  bonedist   not run — pass --bones <correspondence.json | identity> for the stage-3 per-frame');
+    console.log('             bone world-transform distance. It reports and gates nothing.');
+  }
   console.log('  Section figures are means of their own measures. There is no rung score:');
   console.log('  a rung is cleared by a person reading the measures, and docs/LADDER.md records it.');
 
@@ -1434,6 +1494,12 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
         ...d.report,
       })),
       check,
+      // Absent rather than null when the flag was not passed: `bonedist: null`
+      // in a stored record would read as "measured, nothing to report", and
+      // that is the opposite of "not measured".
+      ...(boneDists.length === 0
+        ? {}
+        : { boneDists: boneDists.map((b) => ({ label: b.skeleton.label, role: b.skeleton.role, ...b.report })) }),
     });
   }
 
@@ -1441,6 +1507,39 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
     console.error(`rigc: candidate is not valid Spine — ${report.failures.length} assertion(s) failed`);
     process.exit(1);
   }
+}
+
+/**
+ * bonedist — the ladder's stage 3, run on its own.
+ *
+ * ⚠️ It reads BOTH skeletons, so it is a finish-line instrument like `bench` and
+ * unlike `check`. Every convention behind every figure is printed above the
+ * tables, and there is no score — see [`src/bonedist.ts`](src/bonedist.ts).
+ */
+function cmdBoneDist(flags: Record<string, string>): void {
+  if (flags.candidate === undefined) throw new UsageError('bonedist needs --candidate <dir | skeleton.json>');
+  if (flags.reference === undefined) throw new UsageError('bonedist needs --reference <skeleton.json>');
+  if (flags.bones === undefined) {
+    throw new UsageError(
+      `bonedist needs --bones <correspondence.json | ${IDENTITY_CORRESPONDENCE}> — a candidate is entitled to its own bone ` +
+        'names, so the mapping is an input and never a guess; pass `identity` to state that the two use the same names',
+    );
+  }
+  const candidate = resolveArtifacts(flags.candidate, flags.atlas);
+  const reference = resolveArtifacts(flags.reference, flags['reference-atlas']);
+  const report = boneDistance({
+    candidateSkeleton: candidate.skeletonPath,
+    candidateAtlas: candidate.atlasPath,
+    candidateAtlasDir: dirname(candidate.atlasPath),
+    referenceSkeleton: reference.skeletonPath,
+    referenceAtlas: reference.atlasPath,
+    referenceAtlasDir: dirname(reference.atlasPath),
+    bones: flags.bones,
+    ...(flags.fps === undefined ? {} : { fps: Number(flags.fps) }),
+  });
+  console.log('rigc bonedist — per-frame bone world-transform distance (the ladder\'s stage 3)');
+  for (const line of boneDistLines(report, { allBones: flags['all-bones'] !== undefined })) console.log(line);
+  if (flags.json !== undefined) writeJson(flags.json, report);
 }
 
 function cmdExplain(flags: Record<string, string>): void {
@@ -1707,6 +1806,13 @@ const FLAG_MEANINGS: Record<string, string> = {
     'which rulebook to check against (default: spine) — spine = valid Spine 4.3 that any runtime plays ' +
     "correctly; spine-html = also this project's renderer/archetype policy",
   atlas: "the candidate's atlas, when it is not beside the skeleton",
+  reference: 'the reference skeleton to pose beside the candidate — a directory or a skeleton.json path',
+  'reference-atlas': "the reference's atlas, when it is not beside the reference skeleton",
+  bones: `a bone correspondence — { "spec": "${BONEDIST_SPEC}", "bones": { "<candidate bone>": "<reference bone>" }, ` +
+    '"animations"?: { … } } — or `identity` to state that the two skeletons use the same names. An INPUT, never ' +
+    'derived: a candidate is entitled to its own vocabulary, so a mapping worked out here would be a guess reported ' +
+    'as a measurement',
+  'all-bones': 'print every bone pair, not just the worst by position',
   'texture-from':
     "also measure this run through this atlas's texels, keeping the candidate's own geometry, and report how much " +
     'of the MAE is texture resampling rather than the rig — pass the atlas the reference frames were rendered ' +
@@ -1750,6 +1856,9 @@ const FLAG_VALUES: Record<string, string> = {
   'page-size': '<px>',
   padding: '<px>',
   'texture-from': '<path>',
+  reference: '<dir|skeleton.json>',
+  'reference-atlas': '<path>',
+  bones: `<correspondence.json|${IDENTITY_CORRESPONDENCE}>`,
   candidate: '<dir|skeleton.json>',
   frames: '<dir>',
   fps: '<n>',
@@ -1841,7 +1950,25 @@ const COMMANDS: CommandDoc[] = [
   {
     name: 'bench',
     usage: [`rigc bench <${RUNG_IDS.join(' | ')}> --candidate <dir | skeleton.json> [--frames <dir>] [flags]`],
-    flags: ['candidate', 'atlas', 'frames', 'profile', 'all-frames', 'json'],
+    flags: ['candidate', 'atlas', 'frames', 'profile', 'bones', 'all-frames', 'all-bones', 'json'],
+    overrides: {
+      bones: {
+        meaning:
+          'also run the stage-3 per-frame bone world-transform distance against each of the rung\'s reference ' +
+          `skeletons, with this correspondence (or \`identity\`), at ${PROTOCOL_FPS} fps. Reports; gates nothing — ` +
+          'for another sampling rate call `rigc bonedist` directly, where --fps means only that',
+      },
+    },
+  },
+  {
+    name: 'bonedist',
+    usage: [
+      `rigc bonedist --candidate <dir | skeleton.json> --reference <dir | skeleton.json> --bones <path | ${IDENTITY_CORRESPONDENCE}> [--fps ${PROTOCOL_FPS}] [--all-bones] [--json <out>]`,
+    ],
+    flags: ['candidate', 'atlas', 'reference', 'reference-atlas', 'bones', 'fps', 'all-bones', 'json'],
+    overrides: {
+      fps: { meaning: `the rate both skeletons are sampled at, from t=0 over their own durations (default ${PROTOCOL_FPS})` },
+    },
   },
   {
     name: 'render',
@@ -2008,6 +2135,7 @@ try {
   else if (command === 'diff') cmdDiff(flags, positional);
   else if (command === 'check') cmdCheck(flags);
   else if (command === 'bench') cmdBench(flags, positional);
+  else if (command === 'bonedist') cmdBoneDist(flags);
   else if (command === 'render') cmdRender(flags);
   else if (command === 'preview') cmdPreview(flags);
   else if (command === 'pose') cmdPose(flags);
@@ -2029,6 +2157,10 @@ try {
   }
   if (err instanceof CheckError) {
     console.error(`rigc check error: ${err.message}`);
+    process.exit(1);
+  }
+  if (err instanceof BoneDistError) {
+    console.error(`rigc bonedist error: ${err.message}`);
     process.exit(1);
   }
   // Like a usage error in kind — a missing directory, an unreadable frame — but
