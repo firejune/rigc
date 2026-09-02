@@ -330,7 +330,7 @@ export function boneSnapshots(skeleton: Skeleton): BoneSnapshot[] {
 
 export interface Quad extends PieceCommon {
   kind: 'region';
-  /** World-space corners, in spine-core's region order: br, bl, ul, ur. */
+  /** World-space corners, in spine-core's region order: bl, ul, ur, br (verified against computeWorldVertices — the 2026-09-03 run reconstructed this from measurement after the old comment cost it days). */
   world: number[];
   /** Page UVs for the same four corners. */
   uvs: ArrayLike<number>;
