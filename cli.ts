@@ -332,6 +332,26 @@ function runGate(result: CompileResult, opts: CompileOptions, profile: ValidateP
   return report.failures.length;
 }
 
+/**
+ * One line per mesh kind on this cut, printed above the table.
+ *
+ * A legend rather than a heading: the heading used to describe the ring tier
+ * unconditionally, so a build whose only mesh was a ribbon or a contour got a
+ * sentence about a rim ring and a seam it does not have.
+ */
+const MESH_KIND_NOTES: Record<CompileResult['meshes'][number]['kind'], string> = {
+  ring: 'ring      rim ring pinned on the window edge, seam ring pinned on the mask contour, aperture moves',
+  ribbon: 'ribbon    entry row pinned, rows share their weights so the strip lengthens without widening',
+  contour: 'contour   the art\'s own silhouette, every vertex pinned to the slot bone (geometry, not a deformation)',
+  authored: 'authored  geometry rigc did not build; it assumes nothing about the topology',
+};
+
+/** What a contour mesh measured about its own fit, or nothing for the others. */
+function meshFit(m: CompileResult['meshes'][number]): string {
+  if (m.coverage === undefined) return '';
+  return `  covers ${(m.coverage * 100).toFixed(2)}% of the art, reaching ${m.overshoot?.toFixed(2) ?? '?'}px past it`;
+}
+
 function cmdBuild(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
   const profile = readProfile(flags);
@@ -358,8 +378,8 @@ function cmdBuild(flags: Record<string, string>): void {
   }
   for (const m of result.meshes) {
     console.log(
-      `  MESH  ${m.slot.padEnd(12)} ${m.kind.padEnd(6)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
-        `(budget 80)  bones=[${m.bones.join(', ')}]  attachments=[${m.attachments.join(', ')}]`,
+      `  MESH  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
+        `(budget 80)  bones=[${m.bones.join(', ')}]  attachments=[${m.attachments.join(', ')}]${meshFit(m)}`,
     );
   }
   for (const ph of result.physics) {
@@ -1380,6 +1400,24 @@ function cmdExplain(flags: Record<string, string>): void {
         }
       }
     }
+    // The other two constraint groups. These DO carry a timeline name under the
+    // constraint (`path.<name>.position`), which is the physics shape rather
+    // than the ik/transform one, so the name printed is both.
+    for (const group of ['path', 'slider'] as const) {
+      for (const [name, timelines] of Object.entries(anim[group] ?? {})) {
+        for (const [timelineName, keys] of Object.entries(timelines)) {
+          console.log(`    ${group}.${name}.${timelineName}  ${keys.length} key(s)`);
+          for (const key of keys) {
+            const fields = Object.entries(key)
+              .filter(([k]) => k !== 'time' && k !== 'curve')
+              .map(([k, v]) => `${k}=${String(v)}`)
+              .join(' ');
+            const curve = Array.isArray(key.curve) ? `bezier[${key.curve.length}]` : key.curve === 'stepped' ? 'stepped' : 'linear';
+            console.log(`      t=${String(key.time).padEnd(7)} ${(fields || '(all defaults)').padEnd(46)} ${curve}`);
+          }
+        }
+      }
+    }
     // Deform timelines are keyed on a skin/slot/attachment triple, and the run
     // is printed as its span rather than its numbers: `offset` plus a length is
     // what tells a reader whether the key lands where they meant, and a hundred
@@ -1425,11 +1463,66 @@ function cmdExplain(flags: Record<string, string>): void {
     }
   }
 
+  // Path constraints, with the curve each one follows MEASURED — its length and
+  // its curve count are the two numbers an author cannot get from the spec, and
+  // `position` means nothing without the first of them under `positionMode:
+  // "percent"`. Read off the emitted attachment rather than recomputed here.
+  const constraintsOf = (type: string) => (result.skeleton.constraints ?? []).filter((c) => c.type === type);
+  const pathConstraints = constraintsOf('path');
+  if (pathConstraints.length) {
+    console.log('\npath constraints  (position is a fraction of the measured length under positionMode "percent")');
+    for (const c of pathConstraints) {
+      const slot = String(c.slot);
+      const attachments = result.skeleton.skins.flatMap((skin) => Object.values(skin.attachments[slot] ?? {}));
+      const curve = attachments.find((att) => (att as { type?: string }).type === 'path') as
+        | { lengths?: number[]; closed?: boolean; constantSpeed?: boolean }
+        | undefined;
+      const lengths = curve?.lengths ?? [];
+      console.log(
+        `  ${c.name.padEnd(12)} slot=${slot.padEnd(12)} bones=[${(c.bones as string[]).join(', ')}] ` +
+          `position=${c.position ?? 0} ${String(c.positionMode ?? 'percent')}/${String(c.spacingMode ?? 'length')}/${String(c.rotateMode ?? 'tangent')}`,
+      );
+      console.log(
+        `  ${''.padEnd(12)} curve: ${lengths.length} curve(s), ${lengths[lengths.length - 1] ?? 0} long, ` +
+          `${curve?.closed ? 'closed' : 'open'}, constantSpeed=${curve?.constantSpeed ?? true}`,
+      );
+    }
+  }
+
+  const sliders = constraintsOf('slider');
+  if (sliders.length) {
+    console.log('\nsliders  (each applies one animation at a time it chooses)');
+    for (const c of sliders) {
+      const driver = c.bone === undefined ? `time=${c.time ?? 0} (keyed by slider.${c.name}.time)` : `bone=${String(c.bone)}.${String(c.property)}`;
+      console.log(
+        `  ${c.name.padEnd(12)} applies=${String(c.animation).padEnd(14)} ${driver}  ` +
+          `mix=${c.mix ?? 1} loop=${c.loop ?? false} additive=${c.additive ?? false}`,
+      );
+    }
+  }
+
+  // Which bones and constraints a skin switches on. Printed because the pairing
+  // with `skin: true` is invisible in the emitted file: a member list and a
+  // skinRequired flag are two keys in two places, and only together do they mean
+  // "this bone belongs to this skin".
+  const skinMembers = result.skeleton.skins.filter((skin) => skin.bones?.length || skin.ik?.length || skin.transform?.length || skin.path?.length || skin.physics?.length || skin.slider?.length);
+  if (skinMembers.length) {
+    console.log('\nskin members  (skinRequired bones and constraints, active only under their own skin)');
+    for (const skin of skinMembers) {
+      const lists = (['bones', 'ik', 'transform', 'path', 'physics', 'slider'] as const)
+        .filter((key) => skin[key]?.length)
+        .map((key) => `${key}=[${skin[key]!.join(', ')}]`)
+        .join(' ');
+      console.log(`  ${skin.name.padEnd(12)} ${lists}`);
+    }
+  }
+
   if (result.meshes.length) {
-    console.log('\nmeshes  (ring tier: rim ring pinned on the window edge, seam ring pinned on the mask contour)');
+    console.log('\nmeshes');
+    for (const kind of new Set(result.meshes.map((m) => m.kind))) console.log(`  ${MESH_KIND_NOTES[kind]}`);
     for (const m of result.meshes) {
       console.log(
-        `  ${m.slot.padEnd(12)} ${m.kind.padEnd(6)} ${m.vertices} vertices / ${m.triangles} triangles  bones=[${m.bones.join(', ')}]`,
+        `  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  bones=[${m.bones.join(', ')}]${meshFit(m)}`,
       );
     }
   }

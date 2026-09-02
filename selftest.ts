@@ -52,8 +52,11 @@ import {
   EventTimeline,
   IkConstraint,
   MeshAttachment,
+  PathAttachment,
+  PathConstraint,
   Physics,
   Skeleton,
+  Slider,
   TextureAtlas,
   TransformConstraint,
   type SkeletonData,
@@ -74,6 +77,12 @@ import {
   type FramingSource,
 } from './src/check.ts';
 import { compile, CompileError } from './src/compile.ts';
+import {
+  contourOvershootBound,
+  CONTOUR_MIN_COVERAGE,
+  measureContourFit,
+  traceAlphaOutline,
+} from './src/mesh.ts';
 import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
 import { copyAtlasImages } from './src/emit.ts';
 import { isContent } from './src/framing.ts';
@@ -109,6 +118,7 @@ import {
   substituteTexture,
   textureSubstitutionFromText,
   unionBounds,
+  viewportFor,
   viewportOfSize,
   type Footprint,
   type Frame,
@@ -3296,11 +3306,14 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R07_constraint_type_the_emitter_cannot_write',
+    name: 'R07_constraint_type_the_format_does_not_have',
     origin: 'SkeletonJson.ts:148-367 — an entry whose `type` matches no case is dropped with no error and no default branch',
-    expect: 'rigc does not emit it yet',
+    // The five types are all emitted now (issue #2 closed the last two), so what
+    // this mutant proves is what it always proved: the parser has no `default:`
+    // branch, so a type nobody recognises has to be refused HERE or it vanishes.
+    expect: 'is not one Spine 4.3 knows',
     mutate: (rig) => {
-      (rig as any).constraints = [{ name: 'probe_path', type: 'path', bones: ['plunger'], slot: 'collar' }];
+      (rig as any).constraints = [{ name: 'probe_twist', type: 'twist', bones: ['plunger'], target: 'collar' }];
     },
   },
 ];
@@ -4898,6 +4911,537 @@ function deformKeysOf(animation: Record<string, unknown>, slot: string): Array<R
 }
 
 // ---------------------------------------------------------------------------
+// path constraints, sliders, and per-skin member lists
+// ---------------------------------------------------------------------------
+//
+// ⭐ The last three expressiveness gaps in the rig spec (issues #2 and #7), and
+// all three are checked the same way: by reading a NUMBER back off a posed
+// skeleton. "It parses" is the failure mode this suite is designed against,
+// because every one of these features has a way to load perfectly and do
+// nothing:
+//
+//   * a path constraint whose slot shows no path attachment — `update()` returns
+//     on the first line and the mixes in the file are a lie;
+//   * a `lengths` array that disagrees with the vertices — invisible until
+//     `constantSpeed` is false, and then it rescales the whole traversal;
+//   * a slider whose animation is never applied, or applied at NaN;
+//   * a per-skin `bones`/constraint list without `skin: true` on the member,
+//     which changes nothing at all.
+//
+// So the geometry here is chosen to make the arithmetic exact rather than
+// approximate. The path is a straight line whose Bezier handles are evenly
+// spaced, which makes the curve parameter equal the arc-length parameter: the
+// knots sit at x = 0, 90, 180, the path is 180 long, and a bone at position p
+// (Percent) must land at exactly `180 * p`. A tolerance would hide a systematic
+// error of a few percent; an exact number cannot.
+const PATH_RIG = {
+  bones: [
+    { name: 'root' },
+    { name: 'rider', parent: 'root', x: 0, y: 0, length: 20 },
+    // The slider's dial and the bone its animation moves. Both hang off the root
+    // so that neither is touched by the path constraint.
+    { name: 'knob', parent: 'root', x: 0, y: 60 },
+    { name: 'flag', parent: 'root', x: 40, y: 60, length: 20 },
+    // The per-skin pair: a bone that only exists under one skin, and the IK
+    // constraint that poses it there.
+    { name: 'pauldron', parent: 'root', x: -40, y: 0, length: 10, skin: true },
+    { name: 'pauldron-target', parent: 'root', x: -40, y: 20 },
+  ],
+  slots: [
+    { name: 'track', bone: 'root', attachment: 'track' },
+    { name: 'block', bone: 'rider', attachment: 'block' },
+  ],
+  skins: {
+    default: {
+      attachments: {
+        track: {
+          track: {
+            type: 'path',
+            vertexCount: 9,
+            // Nine points: the first and last are the end knots' outer handles
+            // and no curve uses them, which is why an open path of K curves
+            // carries 3(K + 1) of them rather than 3K + 1.
+            vertices: [-30, 0, 0, 0, 30, 0, 60, 0, 90, 0, 120, 0, 150, 0, 180, 0, 210, 0],
+          },
+        },
+        block: { block: { image: 'block.png' } },
+      },
+    },
+    // A skin with no attachments at all: everything it does, it does by
+    // activating members. Emitting it is what makes the lists reachable.
+    armoured: { bones: ['pauldron'], ik: ['pauldron-ik'] },
+  },
+  constraints: [
+    {
+      name: 'ride',
+      type: 'path',
+      bones: ['rider'],
+      slot: 'track',
+      positionMode: 'percent',
+      spacingMode: 'percent',
+      rotateMode: 'tangent',
+      position: 0.25,
+    },
+    // 1/90 per degree, so 90° of dial is one second of animation.
+    { name: 'dial', type: 'slider', animation: 'dial-pose', bone: 'knob', property: 'rotate', scale: 0.011111 },
+    { name: 'pauldron-ik', type: 'ik', bones: ['pauldron'], target: 'pauldron-target', mix: 1, skin: true },
+  ],
+};
+
+/** The animation the slider applies, plus whatever `move` is handed. */
+function pathMotion(move: Record<string, unknown>): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      'dial-pose': {
+        duration: 1,
+        loop: false,
+        tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [90] }] }],
+      },
+      move,
+    },
+  };
+}
+
+/** The `move` animation the round-trip cases below all read. */
+const PATH_MOVE = {
+  duration: 1,
+  loop: false,
+  tracks: [
+    // The physics shape: a target, a property, one key list (issue #2's comment).
+    { path: 'ride', property: 'position', keys: [{ t: 0, v: [0] }, { t: 1, v: [0.5] }] },
+    { bone: 'knob', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [90] }] },
+  ],
+};
+
+function runPathAndSliderSuite(): number {
+  const dirs = writeProbeRig(PATH_RIG);
+  let bad = 0;
+  console.log('\n── path constraints, sliders and per-skin lists (self-contained: a straight 180-long path) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const near = (a: number, b: number, tol = 1e-4): boolean => Math.abs(a - b) <= tol;
+  const motion = pathMotion(PATH_MOVE);
+
+  const gate = gateProbe(dirs, motion);
+  const wanted = [
+    'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    'A34_CONSTRAINT_TIMELINE_TARGETS',
+    'A36_PATH_CONSTRAINT_EFFECTIVE',
+    'A37_SLIDER_CONSTRAINT_EFFECTIVE',
+    'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
+  ];
+  say(
+    'CONTROL_A_PATH_A_SLIDER_AND_TWO_SKINS_ARE_GREEN',
+    gate.failures.length === 0 && wanted.every((a) => gate.passed.includes(a)),
+    gate.failures.length === 0
+      ? `${gate.passed.length} assertions ran; ${wanted.filter((a) => !gate.passed.includes(a)).join(', ') || 'all five new ones ran'}`
+      : `[${gate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'a suite of refusals cannot tell a compiler that emits nothing from one that emits the right thing',
+  );
+
+  const data = timelinePosable(dirs, motion).data;
+  const boneOf = (skeleton: Skeleton, name: string) => skeleton.bones.find((b) => b.data.name === name)!.appliedPose;
+
+  // --- the path: is the bone ON the curve? ---------------------------------
+  const emitted = JSON.parse(
+    compile({
+      rigPath: dirs.rigPath,
+      motionPath: join(dirs.dir, 'probe.motion.json'),
+      outDir: dirs.outDir,
+      imagesDir: dirs.dir,
+    }).skeletonText,
+  ) as Record<string, unknown>;
+  const emittedPath = (
+    (emitted.skins as Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }>)[0]
+      .attachments.track.track
+  );
+  say(
+    'PS01_the_path_lengths_are_MEASURED_off_the_geometry',
+    Array.isArray(emittedPath.lengths) &&
+      (emittedPath.lengths as number[]).length === 2 &&
+      near((emittedPath.lengths as number[])[0], 90) &&
+      near((emittedPath.lengths as number[])[1], 180),
+    `lengths = [${(emittedPath.lengths as number[]).join(', ')}] for two curves whose knots sit at x = 0, 90, 180`,
+    'the field has no parser default and a restated number that disagrees with the vertices is invisible until constantSpeed is false',
+  );
+
+  const setup = poseAtSample(data, 'move', 4, 0);
+  const riderSetup = boneOf(setup, 'rider');
+  say(
+    'PS02_a_bone_lands_on_the_path_at_the_position_it_was_given',
+    near(riderSetup.worldX, 0) && near(riderSetup.worldY, 0),
+    `at position 0 the rider is at (${riderSetup.worldX.toFixed(4)}, ${riderSetup.worldY.toFixed(4)}); ` +
+      `the setup constraint's own position 0.25 puts it at ${boneOf(
+        poseAtSample(timelinePosable(dirs, pathMotion({ duration: 0, loop: false, tracks: [] })).data, 'move', 4, 0),
+        'rider',
+      ).worldX.toFixed(4)}`,
+    'PathConstraint.update returns before touching a bone unless the slot shows a path, so "it moved at all" is the claim',
+  );
+
+  const riderAt = (sample: number): [number, number] => {
+    const bone = boneOf(poseAtSample(data, 'move', 4, sample), 'rider');
+    return [bone.worldX, bone.worldY];
+  };
+  const walk = [0, 1, 2, 4].map(riderAt);
+  say(
+    'PS03_a_position_timeline_slides_the_bone_along_the_path',
+    walk.every(([, y]) => near(y, 0)) &&
+      near(walk[0][0], 0) &&
+      near(walk[1][0], 22.5) &&
+      near(walk[2][0], 45) &&
+      near(walk[3][0], 90),
+    `worldX ${walk.map(([x]) => x.toFixed(3)).join(' -> ')} for position 0 -> 0.5 over a 180-long path`,
+    'position is a fraction of the arc length under Percent, so 0.125 of 180 is 22.5 and any other number is a wrong traversal',
+  );
+
+  const slowDirs = writeProbeRig({
+    ...PATH_RIG,
+    skins: {
+      ...PATH_RIG.skins,
+      default: {
+        attachments: {
+          ...PATH_RIG.skins.default.attachments,
+          track: { track: { ...PATH_RIG.skins.default.attachments.track.track, constantSpeed: false } },
+        },
+      },
+    },
+  });
+  const slowRider = boneOf(poseAtSample(timelinePosable(slowDirs, motion).data, 'move', 4, 2), 'rider');
+  say(
+    'PS04_constantSpeed_false_lands_in_the_same_place_as_true',
+    near(slowRider.worldX, 45) && near(slowRider.worldY, 0),
+    `with constantSpeed false the rider is at x=${slowRider.worldX.toFixed(4)}, where the re-measuring traversal puts it at 45`,
+    'this is the only case that reads the emitted lengths at all: `false` trusts them, `true` recomputes, and a wrong array shows up as a different place',
+  );
+
+  // A path weighted across two bones 180 apart is the one shape where measuring
+  // the arc length in a bone's own space and measuring it in the world give
+  // different answers.
+  const spanDirs = writeProbeRig({
+    ...PATH_RIG,
+    bones: [...PATH_RIG.bones, { name: 'left', parent: 'root', x: 0, y: 0 }, { name: 'right', parent: 'root', x: 180, y: 0 }],
+    skins: {
+      ...PATH_RIG.skins,
+      default: {
+        attachments: {
+          ...PATH_RIG.skins.default.attachments,
+          track: {
+            track: {
+              type: 'path',
+              vertexCount: 9,
+              weights: [-30, 0, 30, 60, 90, 120, 150, 180, 210].map((x, i) =>
+                i < 5 ? [{ bone: 'left', x, y: 0, weight: 1 }] : [{ bone: 'right', x: x - 180, y: 0, weight: 1 }],
+              ),
+            },
+          },
+        },
+      },
+    },
+  });
+  const spanRider = boneOf(poseAtSample(timelinePosable(spanDirs, motion).data, 'move', 4, 2), 'rider');
+  say(
+    'PS05_a_weighted_path_is_measured_in_WORLD_space',
+    near(spanRider.worldX, 45) && near(spanRider.worldY, 0),
+    `the same curve bound half to a bone at x=0 and half to one at x=180 puts the rider at x=${spanRider.worldX.toFixed(4)}`,
+    'each influence has to go to the world through its OWN bone before the arc length is summed; a per-attachment shortcut gets this one wrong',
+  );
+
+  // --- the slider: does the animation it applies actually arrive? -----------
+  const dialAt = (sample: number): { time: number; flag: number; knob: number } => {
+    const skeleton = poseAtSample(data, 'move', 4, sample);
+    return {
+      time: skeleton.findConstraint('dial', Slider)!.appliedPose.time,
+      flag: boneOf(skeleton, 'flag').rotation,
+      knob: boneOf(skeleton, 'knob').rotation,
+    };
+  };
+  const dial0 = dialAt(0);
+  const dialHalf = dialAt(2);
+  const dialEnd = dialAt(4);
+  say(
+    'PS06_a_slider_maps_a_bone_property_to_the_time_of_the_animation_it_applies',
+    near(dial0.flag, 0) && near(dialHalf.flag, 45, 0.01) && near(dialEnd.flag, 90, 0.01) && near(dialHalf.time, 0.5, 0.01),
+    `knob ${dial0.knob.toFixed(1)}° -> ${dialHalf.knob.toFixed(1)}° -> ${dialEnd.knob.toFixed(1)}° drives slider time ` +
+      `${dial0.time.toFixed(3)} -> ${dialHalf.time.toFixed(3)} -> ${dialEnd.time.toFixed(3)}, and the animation it applies ` +
+      `puts flag at ${dial0.flag.toFixed(1)}° -> ${dialHalf.flag.toFixed(1)}° -> ${dialEnd.flag.toFixed(1)}°`,
+    'nothing else in this format applies an animation, so the only proof that a slider works is a bone moving that no timeline in the playing animation touches',
+  );
+
+  const muted = timelinePosable(
+    dirs,
+    pathMotion({
+      duration: 1,
+      loop: false,
+      tracks: [
+        { bone: 'knob', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [90] }] },
+        { slider: 'dial', property: 'mix', keys: [{ t: 0, v: [0] }, { t: 1, v: [0] }] },
+      ],
+    }),
+  ).data;
+  const mutedFlag = boneOf(poseAtSample(muted, 'move', 4, 2), 'flag').rotation;
+  say(
+    'PS07_a_slider_mix_timeline_mutes_it',
+    near(mutedFlag, 0),
+    `with the mix keyed to 0 while the dial still turns to 45°, flag stays at ${mutedFlag.toFixed(3)}°`,
+    'update() returns on mix 0, so a mix timeline is the difference between a slider that is off and one nobody keyed',
+  );
+
+  // --- the per-skin lists: which skin has the bone? ------------------------
+  const withSkin = (skin: string | null): { active: boolean; ik: boolean; rotation: number } => {
+    const skeleton = new Skeleton(data);
+    if (skin) skeleton.setSkin(skin);
+    skeleton.setupPose();
+    skeleton.update(0);
+    skeleton.updateWorldTransform(Physics.reset);
+    const bone = skeleton.bones.find((b) => b.data.name === 'pauldron')!;
+    return {
+      active: bone.active,
+      ik: skeleton.findConstraint('pauldron-ik', IkConstraint)!.active,
+      rotation: bone.appliedPose.getWorldRotationX(),
+    };
+  };
+  const bare = withSkin(null);
+  const asDefault = withSkin('default');
+  const armoured = withSkin('armoured');
+  say(
+    'PS08_a_per_skin_list_gates_which_bones_and_constraints_are_active',
+    !bare.active && !bare.ik && !asDefault.active && armoured.active && armoured.ik &&
+      near(asDefault.rotation, 0) && near(armoured.rotation, 90),
+    `pauldron active: no skin ${String(bare.active)}, "default" ${String(asDefault.active)}, "armoured" ` +
+      `${String(armoured.active)}; its IK ${String(armoured.ik)} under "armoured", and the bone poses to ` +
+      `${armoured.rotation.toFixed(2)}° there against ${asDefault.rotation.toFixed(2)}° elsewhere`,
+    'the pose is the claim: skinRequired members are switched off until a skin names them, and "listed" without the flag would look identical here',
+  );
+
+  // --- the refusals ---------------------------------------------------------
+  const noPath = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [{ ...PATH_RIG.constraints[0], slot: 'block' }, PATH_RIG.constraints[1], PATH_RIG.constraints[2]],
+    }),
+    motion,
+  );
+  say(
+    'PS09_a_path_constraint_on_a_slot_with_no_path_is_refused',
+    noPath !== null && noPath.includes('has no path attachment in any skin'),
+    noPath === null ? 'the compile went through' : `refused with: ${noPath}`,
+    'PathConstraint.update returns on its first line unless the slot shows a path, so the constraint loads, reports its mixes and moves nothing',
+  );
+
+  const pathAttachment = (patch: Record<string, unknown>): ProbeDirs =>
+    writeProbeRig({
+      ...PATH_RIG,
+      skins: {
+        ...PATH_RIG.skins,
+        default: {
+          attachments: {
+            ...PATH_RIG.skins.default.attachments,
+            track: { track: { ...PATH_RIG.skins.default.attachments.track.track, ...patch } },
+          },
+        },
+      },
+    });
+
+  const notThree = refusal(pathAttachment({ vertexCount: 8, vertices: new Array(16).fill(0).map((_, i) => (i % 2 ? 0 : i * 10)) }), motion);
+  say(
+    'PS10_a_vertexCount_that_is_not_a_multiple_of_3_is_refused',
+    notThree !== null && notThree.includes('not a multiple of 3'),
+    notThree === null ? 'the compile went through' : `refused with: ${notThree}`,
+    '`Utils.newArray(vertexCount / 3, 0)` accepts a fractional size without a word and the groups of six then straddle the knots',
+  );
+
+  const tooShort = refusal(pathAttachment({ vertexCount: 3, vertices: [0, 0, 30, 0, 60, 0] }), motion);
+  say(
+    'PS11_an_open_path_with_less_than_one_curve_is_refused',
+    tooShort !== null && tooShort.includes('needs at least 6'),
+    tooShort === null ? 'the compile went through' : `refused with: ${tooShort}`,
+    'an open path drops its first and last point, so three of them leave a one-point chain and no curve at all',
+  );
+
+  const restated = refusal(pathAttachment({ lengths: [90, 180] }), motion);
+  say(
+    'PS12_an_authored_lengths_array_is_refused',
+    restated !== null && restated.includes('rigc measures the setup arc length'),
+    restated === null ? 'the compile went through' : `refused with: ${restated}`,
+    'it is a measurement of the vertices two fields above it, exactly like a region\'s size against its PNG — a second copy can only drift',
+  );
+
+  const badMode = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [{ ...PATH_RIG.constraints[0], rotateMode: 'CHAINSCALE' }, PATH_RIG.constraints[1], PATH_RIG.constraints[2]],
+    }),
+    motion,
+  );
+  say(
+    'PS13_an_enum_name_the_parser_cannot_resolve_is_refused',
+    badMode !== null && badMode.includes('rotateMode is "CHAINSCALE"') && badMode.includes('first letter'),
+    badMode === null ? 'the compile went through' : `refused with: ${badMode}`,
+    'enumValue uppercases the first letter and nothing else, so an unresolved name is assigned as undefined and the constraint runs a mode nobody chose',
+  );
+
+  const noAnimation = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [PATH_RIG.constraints[0], { ...PATH_RIG.constraints[1], animation: 'dial-posee' }, PATH_RIG.constraints[2]],
+    }),
+    motion,
+  );
+  say(
+    'PS14_a_slider_naming_an_animation_the_motion_spec_lacks_is_refused',
+    noAnimation !== null && noAnimation.includes('which the motion spec does not declare') && noAnimation.includes('dial-pose'),
+    noAnimation === null ? 'the compile went through' : `refused with: ${noAnimation}`,
+    'a slider is the one field in a rig spec that points across the file boundary, and the parser resolves it in a second pass and throws',
+  );
+
+  const bothModels = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [PATH_RIG.constraints[0], { ...PATH_RIG.constraints[1], time: 0.5 }, PATH_RIG.constraints[2]],
+    }),
+    motion,
+  );
+  say(
+    'PS15_a_slider_that_mixes_its_two_models_is_refused',
+    bothModels !== null && bothModels.includes('declares both a "bone" and "time"'),
+    bothModels === null ? 'the compile went through' : `refused with: ${bothModels}`,
+    '`bone` switches the whole model and the parser reads `time` only in the other branch, so it would be dropped in silence',
+  );
+
+  const unflagged = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      bones: PATH_RIG.bones.map((b) => (b.name === 'pauldron' ? { ...b, skin: undefined } : b)),
+    }),
+    motion,
+  );
+  say(
+    'PS16_a_skin_member_without_skin_true_is_refused',
+    unflagged !== null && unflagged.includes('does not declare `"skin": true`'),
+    unflagged === null ? 'the compile went through' : `refused with: ${unflagged}`,
+    'updateCache starts a bone active unless it is skinRequired, so the list would change nothing and the rig would look skinned',
+  );
+
+  const orphan = refusal(
+    writeProbeRig({ ...PATH_RIG, skins: { default: PATH_RIG.skins.default, armoured: { ik: ['pauldron-ik'] } } }),
+    motion,
+  );
+  say(
+    'PS17_a_skin_true_member_no_skin_activates_is_refused',
+    orphan !== null && orphan.includes('but no skin activates it'),
+    orphan === null ? 'the compile went through' : `refused with: ${orphan}`,
+    'the other direction of the same switch, and the one that costs a pose: the bone is inactive under every skin there is',
+  );
+
+  const strayKey = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      skins: { ...PATH_RIG.skins, armoured: { bones: ['pauldron'], ik: ['pauldron-ik'], block: { block: { image: 'block.png' } } } },
+    }),
+    motion,
+  );
+  say(
+    'PS18_a_slot_left_outside_a_long_form_skin_is_refused',
+    strayKey !== null && strayKey.includes('Move it inside "attachments"'),
+    strayKey === null ? 'the compile went through' : `refused with: ${strayKey}`,
+    'the two spellings of a skin are told apart by these keys, so a slot beside them is an attachment table nobody would read',
+  );
+
+  const wrongType = refusal(
+    dirs,
+    pathMotion({
+      duration: 1,
+      loop: false,
+      tracks: [{ path: 'dial', property: 'position', keys: [{ t: 0, v: [0] }, { t: 1, v: [0.5] }] }],
+    }),
+  );
+  say(
+    'PS19_keying_a_slider_as_a_path_constraint_is_refused_by_type',
+    wrongType !== null && wrongType.includes('but the rig declares it as a "slider"'),
+    wrongType === null ? 'the compile went through' : `refused with: ${wrongType}`,
+    'findConstraint(name, PathConstraintData) resolves by name AND type, so a right name of the wrong type is a miss and the loader throws',
+  );
+
+  const deadSlider = gateProbe(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [PATH_RIG.constraints[0], { ...PATH_RIG.constraints[1], animation: 'still', loop: true }, PATH_RIG.constraints[2]],
+    }),
+    {
+      ...pathMotion(PATH_MOVE),
+      animations: {
+        ...(pathMotion(PATH_MOVE).animations as Record<string, unknown>),
+        still: { duration: 0, loop: false, tracks: [] },
+      },
+    },
+  );
+  say(
+    'PS20_A37_fires_on_a_slider_that_loops_an_empty_animation',
+    deadSlider.failures.filter((f) => f.assertion === 'A37_SLIDER_CONSTRAINT_EFFECTIVE').length === 2,
+    deadSlider.failures
+      .filter((f) => f.assertion === 'A37_SLIDER_CONSTRAINT_EFFECTIVE')
+      .map((f) => f.detail)
+      .join(' | ') || 'A37 accepted a slider whose animation has no timelines and whose loop divides by its duration',
+    'looping divides by the animation duration, so a zero-length one applies the animation at NaN — and an animation with no timelines applies nothing at all',
+  );
+
+  const brokenPath = gateProbeArtifacts(dirs, motion, (skeleton) => {
+    const skins = skeleton.skins as Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }>;
+    skins[0].attachments.track.track.type = 'boundingbox';
+  });
+  say(
+    'PS21_A36_fires_when_the_constrained_slot_stops_showing_a_path',
+    brokenPath.failures.some((f) => f.assertion === 'A36_PATH_CONSTRAINT_EFFECTIVE'),
+    brokenPath.failures.find((f) => f.assertion === 'A36_PATH_CONSTRAINT_EFFECTIVE')?.detail ??
+      'A36 accepted a path constraint whose slot shows no path',
+    'the artifact is internally consistent — the slot exists, the attachment loads, every mix is 1 — and the constraint still does nothing',
+  );
+
+  const brokenLengths = gateProbeArtifacts(dirs, motion, (skeleton) => {
+    const skins = skeleton.skins as Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }>;
+    (skins[0].attachments.track.track.lengths as number[])[1] = 45;
+  });
+  say(
+    'PS22_A33_fires_on_a_lengths_array_that_does_not_increase',
+    brokenLengths.failures.some((f) => f.assertion === 'A33_VERTEX_ATTACHMENT_GEOMETRY'),
+    brokenLengths.failures.find((f) => f.assertion === 'A33_VERTEX_ATTACHMENT_GEOMETRY')?.detail ??
+      'A33 accepted a cumulative length that went backwards',
+    'the array is cumulative, so a value below its predecessor is either a zero-length curve or an array shorter than the geometry',
+  );
+
+  const unflaggedArtifact = gateProbeArtifacts(dirs, motion, (skeleton) => {
+    const bones = skeleton.bones as Array<Record<string, unknown>>;
+    delete bones.find((b) => b.name === 'pauldron')!.skin;
+  });
+  say(
+    'PS23_A38_fires_on_a_listed_bone_that_is_not_skinRequired',
+    unflaggedArtifact.failures.some((f) => f.assertion === 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED'),
+    unflaggedArtifact.failures.find((f) => f.assertion === 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED')?.detail ??
+      'A38 accepted a skin list whose member is active under every skin',
+    'the pairing is what is wrong, so nothing else can see it: the bone loads, the list loads, and the skin changes nothing',
+  );
+
+  const emptyKeys = gateProbeArtifacts(dirs, motion, (skeleton) => {
+    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+    (animations.move.path as Record<string, Record<string, unknown[]>>).ride.position = [];
+  });
+  say(
+    'PS24_A34_fires_on_a_path_timeline_with_no_keys',
+    emptyKeys.failures.some((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS'),
+    emptyKeys.failures.find((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS')?.detail ??
+      'A34 accepted an empty key array on a path timeline',
+    '`let keyMap = timelineMap[0]; if (!keyMap) continue;` — the group is walked, the timeline is skipped, and nothing is said',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // bounding boxes and clipping attachments
 // ---------------------------------------------------------------------------
 //
@@ -5047,6 +5591,605 @@ function runPolygonSuite(): number {
       notImplemented.includes('benchmark corpus'),
     notImplemented === null ? 'the compile went through' : `refused with: ${notImplemented}`,
     'a NotImplementedError is a promise about the failure mode, and a deferral without its reason is a wall (issue #5)',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// contour meshes, and the rig-spec generator path (issues #6 and #1)
+// ---------------------------------------------------------------------------
+//
+// Two gaps, one suite, because they are the same missing fixture. `generator` on
+// a rig-spec mesh attachment — the path a skeleton with NO manifest takes — had
+// no coverage at all (#1): every ring and ribbon in this repository reaches
+// `src/mesh.ts` through a manifest's `mesh` block, so the placement convention
+// that path documents ("no crop to flip against, so the part window is centred
+// on its own slot bone") was a comment nothing measured. `contour` is a third
+// generator that only exists on that path, because the shape it builds is
+// measured off the attachment's own PNG rather than declared anywhere.
+//
+// ⭐ What makes this suite different from the ones above it: a contour mesh's
+// geometry is a CLAIM ABOUT THE ART — "these triangles are that silhouette" —
+// and no assertion over a skeleton file can check it, because the file does not
+// carry the art. So the cases below rasterise the emitted triangles back against
+// the very PNG they were traced from, and render the mesh beside the plain region
+// attachment of the same part. Everything they read comes back out of the
+// artifact through spine-core; nothing here asks the compiler what it built.
+//
+// ⚠️ What they do NOT claim: that a contour mesh looks better than a region, or
+// that this outline is the outline an artist would draw. The blob below is a
+// generated checkerboard. What they claim is that the mesh covers the art, does
+// not reach past it, is a well-formed triangulation, and draws the SAME PICTURE
+// as the region does at rest — which is the honesty check, since a mesh that
+// distorted the art at rest would be a defect no other number here would show.
+
+/** The part window every case in this suite traces. */
+const CONTOUR_W = 96;
+const CONTOUR_H = 64;
+
+/**
+ * Where the slot bone sits, away from the origin on both axes.
+ *
+ * At (0,0) "the window is centred on its slot bone" and "the window is centred
+ * on the world origin" are the same measurement, and issue #1's convention is
+ * the first of those. A bone off both axes tells them apart.
+ */
+const CONTOUR_BONE: [number, number] = [20, -10];
+
+/** Tolerance and margin every accepted case uses, so the numbers are comparable. */
+const CONTOUR_TOLERANCE = 1.5;
+const CONTOUR_MARGIN = 2;
+
+/**
+ * How far apart the contour build and the region build of one part may draw.
+ *
+ * 1/255 on the worst channel of the worst pixel. Not 0, and the reason is
+ * arithmetic rather than art: `rasteriseQuad` inverts one affine map to get its
+ * (u,v) and `rasteriseMesh` interpolates barycentrics, so the two agree to
+ * floating-point and then round to bytes — a pixel whose sample lands on x.5
+ * can round either way. Anything a mesh could do WRONG here (a clipped
+ * silhouette, a distorted uv, a vertex in the wrong place) moves whole pixels of
+ * colour, which is what the 2px control below measures for comparison.
+ */
+const CONTOUR_REST_TOLERANCE = 1;
+
+const CONTOUR_MOTION = {
+  spec: 'rigc-motion/1',
+  archetype: 'contour_probe',
+  cut: 'contour_probe',
+  easings: {},
+  animations: {},
+};
+
+/**
+ * The blob every case traces: a checkered ellipse with a bite out of one side.
+ *
+ * Concave on purpose — a convex outline is triangulated correctly by a fan, so an
+ * ear-clipper that could only do fans would pass a convex fixture. The bite is
+ * what makes at least one corner reflex.
+ *
+ * Checkered rather than flat for the reason every plate in this repository is:
+ * a flat fill makes a wrong uv invisible, and the rest-pose comparison is
+ * exactly a claim about uvs.
+ */
+function contourBlob(x: number, y: number): boolean {
+  const inEllipse = Math.hypot((x - 44) / 40, (y - 32) / 28) <= 1;
+  const inBite = Math.hypot(x - 92, y - 32) <= 22;
+  return inEllipse && !inBite;
+}
+
+function writeContourArt(path: string, art: (x: number, y: number) => boolean, width: number, height: number): void {
+  const plate = new Plate(width, height);
+  const cell = 6;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!art(x, y)) continue;
+      const on = (Math.floor(x / cell) + Math.floor(y / cell)) % 2 === 0;
+      plate.set(x, y, on ? [206, 212, 226, 255] : [24, 28, 36, 255]);
+    }
+  }
+  plate.writePng(path);
+}
+
+interface ContourBuild {
+  dir: string;
+  opts: Options;
+  artPath: string;
+  result: CompileResult;
+}
+
+/**
+ * One bare rig spec — no manifest — showing `attachment` on a slot whose bone
+ * sits at `CONTOUR_BONE`, plus whatever extra bones the generator needs.
+ *
+ * `invariants.meshSlots` is declared because it has to be: a rig that states no
+ * budget has an implicit one of ZERO for rigc's own generators (compile.ts's
+ * `budgeted`), so "the rig never asked rigc to build a mesh" is itself a
+ * refusal. A suite that omitted it would be testing that refusal.
+ */
+function buildContourRig(
+  attachment: Record<string, unknown>,
+  extra: {
+    bones?: Array<Record<string, unknown>>;
+    art?: (x: number, y: number) => boolean;
+    width?: number;
+    height?: number;
+    bone?: [number, number];
+    invariants?: Record<string, unknown> | null;
+  } = {},
+): ContourBuild {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-contour-'));
+  const artPath = join(dir, 'blob.png');
+  writeContourArt(artPath, extra.art ?? contourBlob, extra.width ?? CONTOUR_W, extra.height ?? CONTOUR_H);
+  const [bx, by] = extra.bone ?? CONTOUR_BONE;
+  const rigPath = join(dir, 'probe.rig.json');
+  writeFileSync(
+    rigPath,
+    `${JSON.stringify(
+      {
+        spec: 'rigc-rig/1',
+        name: 'contour_probe',
+        skeleton: { width: 256, height: 256 },
+        ...(extra.invariants === null ? {} : { invariants: extra.invariants ?? { meshSlots: 1, meshTriangles: 120 } }),
+        bones: [{ name: 'root' }, { name: 'blob', parent: 'root', x: bx, y: by }, ...(extra.bones ?? [])],
+        slots: [{ name: 'blob', bone: 'blob', attachment: 'blob' }],
+        skins: { default: { blob: { blob: attachment } } },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const motionPath = join(dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(CONTOUR_MOTION, null, 2)}\n`);
+  const opts: Options = { rigPath, motionPath, outDir: join(dir, 'spine'), imagesDir: dir };
+  return { dir, opts, artPath, result: compile(opts) };
+}
+
+/** The `contour` generator every accepted case in this suite declares. */
+const CONTOUR_ATTACHMENT = {
+  type: 'mesh',
+  image: 'blob.png',
+  generator: { kind: 'contour', tolerance: CONTOUR_TOLERANCE, margin: CONTOUR_MARGIN, maxVertices: 48 },
+};
+
+/**
+ * A `ring` generator on the same window, for issue #1's placement case.
+ *
+ * The hull is an invented octagon inside the window, star-shaped about its
+ * centre — the two things `buildRingMesh` refuses without. Nothing about it is
+ * measured off the blob: the ring's rim sits on the WINDOW edge whatever the
+ * hull is, and the window is what this case is about.
+ */
+const RING_ATTACHMENT = {
+  type: 'mesh',
+  image: 'blob.png',
+  generator: {
+    kind: 'ring',
+    size: [CONTOUR_W, CONTOUR_H],
+    center: [CONTOUR_W / 2, CONTOUR_H / 2],
+    inner: 0.45,
+    controls: ['blob_ctl'],
+    hull: [
+      [36, 8],
+      [60, 8],
+      [88, 24],
+      [88, 40],
+      [60, 56],
+      [36, 56],
+      [8, 40],
+      [8, 24],
+    ],
+  },
+};
+
+/** The compile message a rig spec was refused with, or null if it went through. */
+function contourRefusal(attachment: Record<string, unknown>, extra?: Parameters<typeof buildContourRig>[1]): string | null {
+  try {
+    buildContourRig(attachment, extra);
+    return null;
+  } catch (err) {
+    return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+  }
+}
+
+/** The mesh attachment a build emitted, read back off the artifact through spine-core. */
+function loadedContourMesh(build: ContourBuild): { posable: Posable; mesh: MeshAttachment } {
+  const posable = posableFromText(build.result.skeletonText, build.result.atlasText, build.opts.outDir);
+  const slot = posable.data.findSlot('blob');
+  const attachment = slot ? posable.data.findSkin('default')?.getAttachment(slot.index, 'blob') : null;
+  if (!(attachment instanceof MeshAttachment)) {
+    throw new Error(`the contour build's slot shows ${attachment ? attachment.constructor.name : 'nothing'}`);
+  }
+  return { posable, mesh: attachment };
+}
+
+/** The part-local pixel positions of a loaded mesh, recovered from its own uvs. */
+function contourPointsOf(mesh: MeshAttachment): Array<[number, number]> {
+  const uvs = mesh.regionUVs ?? [];
+  const points: Array<[number, number]> = [];
+  for (let i = 0; i < uvs.length; i += 2) points.push([uvs[i] * mesh.width, uvs[i + 1] * mesh.height]);
+  return points;
+}
+
+/**
+ * Every geometric property a triangle set has to have, measured in one pass.
+ *
+ * Written as a function taking geometry rather than as four inline loops so that
+ * every case below can run it on a DELIBERATELY BROKEN set as its own control.
+ * A property checker nobody has watched reject something is not a check.
+ */
+function triangleFaults(points: Array<[number, number]>, triangles: ArrayLike<number>): string[] {
+  const faults: string[] = [];
+  const seen = new Map<string, number>();
+  points.forEach(([x, y], i) => {
+    const key = `${x.toFixed(6)},${y.toFixed(6)}`;
+    const at = seen.get(key);
+    if (at !== undefined) faults.push(`vertices ${at} and ${i} are the same point (${key})`);
+    else seen.set(key, i);
+  });
+  if (triangles.length === 0 || triangles.length % 3 !== 0) faults.push(`${triangles.length} indices is not whole triangles`);
+  const edges = new Map<string, number>();
+  const signs = new Set<number>();
+  for (let t = 0; t + 2 < triangles.length; t += 3) {
+    const ids = [triangles[t], triangles[t + 1], triangles[t + 2]];
+    for (const id of ids) {
+      if (!(id >= 0 && id < points.length)) faults.push(`triangle ${t / 3} indexes vertex ${id} of ${points.length}`);
+    }
+    const [a, b, c] = ids.map((id) => points[id] ?? [0, 0]);
+    const twice = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (Math.abs(twice) < 1e-9) faults.push(`triangle ${t / 3} has no area`);
+    else signs.add(Math.sign(twice));
+    for (let k = 0; k < 3; k++) {
+      const u = ids[k];
+      const v = ids[(k + 1) % 3];
+      const key = `${Math.min(u, v)}-${Math.max(u, v)}`;
+      edges.set(key, (edges.get(key) ?? 0) + 1);
+    }
+  }
+  if (signs.size > 1) faults.push(`the triangles wind both ways (${[...signs].join(' and ')})`);
+  for (const [edge, n] of edges) {
+    // 1 = a boundary edge of the mesh, 2 = an interior edge shared by its two
+    // triangles. 3 or more is a fold: two triangles claim the same side of one
+    // edge, which the rasteriser draws twice and source-over blends twice.
+    if (n > 2) faults.push(`edge ${edge} is shared by ${n} triangles`);
+  }
+  return faults;
+}
+
+/** Worst and mean per-channel difference between two plates of the same size. */
+function plateDifference(a: Plate, b: Plate): { worst: number; mean: number; differing: number } {
+  if (a.width !== b.width || a.height !== b.height) throw new Error('comparing plates of different sizes');
+  let worst = 0;
+  let sum = 0;
+  let differing = 0;
+  for (let i = 0; i < a.data.length; i += 4) {
+    let d = 0;
+    for (let c = 0; c < 4; c++) d = Math.max(d, Math.abs(a.data[i + c] - b.data[i + c]));
+    worst = Math.max(worst, d);
+    sum += d;
+    if (d > 0) differing++;
+  }
+  return { worst, mean: sum / (a.data.length / 4), differing };
+}
+
+/** The world box of one slot's posed vertices, at the setup pose. */
+function slotWorldBox(posable: Posable, slot: string): { cx: number; cy: number; w: number; h: number } {
+  const frame = sampleSetupPose(posable.data)[0];
+  const piece = frame.pieces.find((p) => p.slot === slot);
+  if (!piece) throw new Error(`the setup pose draws nothing on slot "${slot}"`);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < piece.world.length; i += 2) {
+    minX = Math.min(minX, piece.world[i]);
+    maxX = Math.max(maxX, piece.world[i]);
+    minY = Math.min(minY, piece.world[i + 1]);
+    maxY = Math.max(maxY, piece.world[i + 1]);
+  }
+  return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, w: maxX - minX, h: maxY - minY };
+}
+
+function runContourMeshSuite(): number {
+  let bad = 0;
+  console.log('\n── contour meshes and the rig-spec generator path (self-contained) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const build = buildContourRig(CONTOUR_ATTACHMENT);
+  const gate = validate({
+    skeletonText: build.result.skeletonText,
+    atlasText: build.result.atlasText,
+    atlasDir: build.opts.outDir,
+    declaredDurations: build.result.declaredDurations,
+    rig: build.result.rig,
+    profile: 'spine-html',
+  });
+  const emitted = build.result.meshes[0];
+  say(
+    'CT00_CONTROL_A_CONTOUR_MESH_COMPILES_AND_GATES_GREEN',
+    gate.failures.length === 0 &&
+      gate.passed.includes('A21_MESH_RIM_PINNED') &&
+      emitted?.kind === 'contour' &&
+      emitted.triangles > 0,
+    gate.failures.length === 0
+      ? `${gate.passed.length} assertions ran under the renderer profile; slot "${emitted?.slot}" is a ` +
+          `${emitted?.kind} of ${emitted?.vertices} vertices / ${emitted?.triangles} triangles, and ` +
+          `A21_MESH_RIM_PINNED ${gate.passed.includes('A21_MESH_RIM_PINNED') ? 'ran' : 'did NOT run'}`
+      : `[${gate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'the generator used to be a NotImplementedError naming itself; everything below would be vacuous without this',
+  );
+  if (gate.failures.length > 0 || !emitted) return bad + 8;
+
+  // --- the triangulation, and the checker's own control --------------------
+  const { posable, mesh } = loadedContourMesh(build);
+  const points = contourPointsOf(mesh);
+  const faults = triangleFaults(points, mesh.triangles);
+  // The control: fold one triangle back on top of its neighbour, which makes a
+  // third claimant for their shared edge and reverses a winding. A checker that
+  // cannot see this cannot report the clean set above as evidence.
+  const folded = [...Array.from(mesh.triangles), mesh.triangles[0], mesh.triangles[2], mesh.triangles[1]];
+  const foldFaults = triangleFaults(points, folded);
+  say(
+    'CT01_THE_TRIANGULATION_IS_WELL_FORMED_AND_THE_CHECK_CAN_SAY_OTHERWISE',
+    faults.length === 0 && foldFaults.length > 0,
+    faults.length === 0
+      ? `${mesh.triangles.length / 3} triangles over ${points.length} distinct vertices: every one has area, all ` +
+          `wind the same way, no edge is claimed more than twice — while one triangle folded back on its ` +
+          `neighbour reports [${foldFaults.join('; ')}]`
+      : `[${faults.join('; ')}]`,
+    'a folded or zero-area triangle loads clean, sums its weights to 1, and renders as a double-blended crease',
+  );
+
+  // --- the claim about the art ---------------------------------------------
+  // Measured through `src/mesh.ts`'s own instruments on purpose: the generator
+  // refuses a build below CONTOUR_MIN_COVERAGE using this same function, so a
+  // second implementation here would be a second opinion about what "covered"
+  // means. What is independent is the GEOMETRY — it comes back out of the
+  // artifact through spine-core, not from the builder.
+  const plate = readPlate(build.artPath);
+  const alpha = new Uint8Array(plate.width * plate.height);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = plate.data[i * 4 + 3];
+  const artMask = { width: plate.width, height: plate.height, alpha };
+  const traced = traceAlphaOutline(artMask, 1);
+  const bound = contourOvershootBound(CONTOUR_MARGIN, CONTOUR_TOLERANCE);
+  const fit = measureContourFit(artMask, 1, traced.filled, points, Array.from(mesh.triangles), bound + 1);
+  // The wall, from the other side: a margin that cannot pay for the tolerance
+  // must be REFUSED rather than shipped as a mesh that bites into the art.
+  const clipped = contourRefusal({
+    type: 'mesh',
+    image: 'blob.png',
+    generator: { kind: 'contour', tolerance: 9, margin: 0, maxVertices: 48 },
+  });
+  say(
+    'CT02_THE_EMITTED_TRIANGLES_COVER_THE_ART_AND_A_MESH_THAT_WOULD_NOT_IS_REFUSED',
+    fit.coverage >= CONTOUR_MIN_COVERAGE &&
+      fit.overshoot <= bound &&
+      clipped !== null &&
+      clipped.includes('of the art') &&
+      clipped.includes('a contour mesh guarantees'),
+    fit.coverage >= CONTOUR_MIN_COVERAGE
+      ? `${(fit.coverage * 100).toFixed(3)}% of ${fit.artPixels} art px are inside the emitted triangles ` +
+          `(guarantee ${(CONTOUR_MIN_COVERAGE * 100).toFixed(1)}%), reaching ${fit.overshoot.toFixed(2)}px past the ` +
+          `silhouette against a ${bound.toFixed(2)}px ceiling — and tolerance 9 with margin 0 is refused: ` +
+          `${clipped?.split(': ').slice(1).join(': ')}`
+      : `only ${(fit.coverage * 100).toFixed(3)}% of ${fit.artPixels} art px are covered ` +
+          `(${fit.coveredArt}); the mesh clips the art`,
+    'a mesh that clips its own art is invisible in every number a skeleton file carries',
+  );
+
+  // --- the spine-core round trip -------------------------------------------
+  const emittedJson = JSON.parse(build.result.skeletonText) as {
+    skins: Array<{ attachments: Record<string, Record<string, { triangles: number[]; hull: number; uvs: number[] }>> }>;
+  };
+  const onDisk = emittedJson.skins[0].attachments.blob.blob;
+  const slotBone = posable.data.findSlot('blob')?.boneData.name;
+  // ⚠️ NOT `weightRuns`: that walks the JSON's `boneCount, (index, x, y, weight)`
+  // run, and spine-core splits the same data into two arrays with two strides —
+  // `bones` holds `boneCount, index...` and `vertices` holds an `x, y, weight`
+  // triple per influence. Reading one with the other's stride finds bone indices
+  // where the weights are and reports a correct mesh as unpinned.
+  const perVertex: Array<Array<{ bone: number; weight: number }>> = [];
+  if (mesh.bones) {
+    for (let bi = 0, vi = 0; bi < mesh.bones.length; ) {
+      const boneCount = mesh.bones[bi++];
+      const vertex: Array<{ bone: number; weight: number }> = [];
+      for (let n = 0; n < boneCount; n++, bi++, vi += 3) {
+        vertex.push({ bone: mesh.bones[bi], weight: mesh.vertices[vi + 2] });
+      }
+      perVertex.push(vertex);
+    }
+  }
+  const pinnedToSlot =
+    perVertex.length === points.length &&
+    perVertex.every(
+      (vertex) =>
+        vertex.length === 1 &&
+        Math.abs(vertex[0].weight - 1) < 1e-9 &&
+        posable.data.bones[vertex[0].bone]?.name === slotBone,
+    );
+  say(
+    'CT03_THE_ARTIFACT_LOADS_BACK_AS_THE_MESH_THAT_WAS_WRITTEN',
+    mesh.worldVerticesLength === points.length * 2 &&
+      mesh.hullLength === points.length * 2 &&
+      onDisk.hull === points.length &&
+      Array.from(mesh.triangles).join(',') === onDisk.triangles.join(',') &&
+      pinnedToSlot,
+    `${points.length} vertices and ${mesh.triangles.length / 3} triangles came back with indices identical to the ` +
+      `file's, hull ${onDisk.hull} loading as ${mesh.hullLength} (the loader doubles it), and every vertex ` +
+      `${pinnedToSlot ? `bound to one bone — the slot's own "${slotBone}" — at weight 1` : 'NOT pinned to the slot bone'}`,
+    'the weighted run carries no encoding flag, so a wrong length reads weights as coordinates in silence',
+  );
+
+  // --- the honesty check: does the mesh distort the art at rest? -----------
+  const regionBuild = buildContourRig({ type: 'region', image: 'blob.png' }, { invariants: null });
+  const regionPosable = posableFromText(
+    regionBuild.result.skeletonText,
+    regionBuild.result.atlasText,
+    regionBuild.opts.outDir,
+  );
+  // One viewport for every render here, generously bigger than the part: fitting
+  // each build to its own content would move the pixel grid between them and
+  // report the framing as a difference.
+  const viewport = viewportFor(-60, -80, 100, 60, 320);
+  const drawn = (p: Posable): Plate => renderFrame(sampleSetupPose(p.data)[0], p.pages, viewport, BACKGROUND);
+  const asMesh = drawn(posable);
+  const asRegion = drawn(regionPosable);
+  const rest = plateDifference(asMesh, asRegion);
+  // The instrument's control: the same measurement between the region and the
+  // same region moved two pixels. Without it, "worst channel 1" is a number with
+  // nothing to be small compared to.
+  const nudgedBuild = buildContourRig({ type: 'region', image: 'blob.png', x: 2 }, { invariants: null });
+  const nudged = plateDifference(
+    asRegion,
+    drawn(posableFromText(nudgedBuild.result.skeletonText, nudgedBuild.result.atlasText, nudgedBuild.opts.outDir)),
+  );
+  say(
+    'CT04_AN_UNDEFORMED_CONTOUR_MESH_DRAWS_WHAT_THE_REGION_DRAWS',
+    rest.worst <= CONTOUR_REST_TOLERANCE && nudged.worst > 8 * CONTOUR_REST_TOLERANCE,
+    `over ${viewport.width}x${viewport.height} px the two builds differ by at most ${rest.worst}/255 on any ` +
+      `channel (mean ${rest.mean.toFixed(4)}, ${rest.differing} px differ at all), while the same region moved ` +
+      `two pixels differs by ${nudged.worst}/255 (mean ${nudged.mean.toFixed(4)}, ${nudged.differing} px)`,
+    'a mesh that stretched, clipped or mis-mapped the art at rest would still gate green on every assertion there is',
+  );
+
+  // --- issue #1: the placement convention of the no-manifest path ----------
+  // ⭐ Ring and ribbon, not contour. A contour's vertices sit on the SILHOUETTE,
+  // so its world box is the art's box and not the window's; the two generators
+  // that do span their window are the ones this convention is measurable on, and
+  // they are the two the issue names.
+  const ringControl = [{ name: 'blob_ctl', parent: 'blob', x: 0, y: 0 }];
+  const ring = buildContourRig(RING_ATTACHMENT, { bones: ringControl });
+  const ribbon = buildContourRig(
+    {
+      type: 'mesh',
+      image: 'blob.png',
+      generator: { kind: 'ribbon', size: [CONTOUR_W, CONTOUR_H], rows: 6, chain: ['trail_a', 'trail_b'] },
+    },
+    {
+      bones: [
+        { name: 'trail_a', parent: 'blob', x: 0, y: -20 },
+        { name: 'trail_b', parent: 'trail_a', x: 0, y: -20 },
+      ],
+    },
+  );
+  // The control: the same rig with its slot bone somewhere else. If the boxes did
+  // not move with it, the measurement would be about the world origin instead.
+  const moved: [number, number] = [-35, 45];
+  const ringMoved = buildContourRig(RING_ATTACHMENT, { bones: ringControl, bone: moved });
+  const boxes = [
+    ['ring', slotWorldBox(posableFromText(ring.result.skeletonText, ring.result.atlasText, ring.opts.outDir), 'blob')],
+    [
+      'ribbon',
+      slotWorldBox(posableFromText(ribbon.result.skeletonText, ribbon.result.atlasText, ribbon.opts.outDir), 'blob'),
+    ],
+  ] as const;
+  const movedBox = slotWorldBox(
+    posableFromText(ringMoved.result.skeletonText, ringMoved.result.atlasText, ringMoved.opts.outDir),
+    'blob',
+  );
+  // A thousandth of a pixel. Not exact equality: the bind coordinates are
+  // rounded to six decimals on the way into the file and spine-core walks them
+  // back out through a world transform, so "centred" is a statement about
+  // pixels and has to be measured in them.
+  const near = (got: number, want: number): boolean => Math.abs(got - want) < 1e-3;
+  const centred = boxes.every(
+    ([, box]) => near(box.cx, CONTOUR_BONE[0]) && near(box.cy, CONTOUR_BONE[1]) && near(box.w, CONTOUR_W) && near(box.h, CONTOUR_H),
+  );
+  const followed = near(movedBox.cx, moved[0]) && near(movedBox.cy, moved[1]);
+  say(
+    'CT05_A_GENERATOR_WITH_NO_MANIFEST_CENTRES_THE_PART_WINDOW_ON_ITS_SLOT_BONE',
+    centred && followed,
+    centred
+      ? `${boxes.map(([kind, box]) => `${kind} spans ${box.w.toFixed(3)}x${box.h.toFixed(3)} centred on (${box.cx.toFixed(3)}, ${box.cy.toFixed(3)})`).join(', ')}` +
+          `, which is the slot bone at (${CONTOUR_BONE.join(', ')}) and the declared ${CONTOUR_W}x${CONTOUR_H} ` +
+          `window — and moving that bone to (${moved.join(', ')}) moves the box with it${followed ? '' : ' — IT DID NOT'}`
+      : `${boxes
+          .map(([kind, box]) => `${kind} spans ${box.w.toFixed(3)}x${box.h.toFixed(3)} centred on (${box.cx.toFixed(3)}, ${box.cy.toFixed(3)})`)
+          .join(', ')}; the slot bone is at (${CONTOUR_BONE.join(', ')}), and the moved ring landed at (${movedBox.cx.toFixed(3)}, ${movedBox.cy.toFixed(3)}) for (${moved.join(', ')})`,
+    'the convention was a comment on compile.ts and every ring in this repository reaches the builder through a manifest instead (issue #1)',
+  );
+
+  // --- what it refuses, by name -------------------------------------------
+  // Each of these is a way to get geometry that loads, validates and draws
+  // WRONG art, so each has to be refused where the author can read it rather
+  // than measured later by somebody comparing pictures.
+  const refusals: Array<[string, string | null, string]> = [
+    [
+      'no image to trace',
+      contourRefusal({ type: 'mesh', generator: { kind: 'contour', tolerance: CONTOUR_TOLERANCE } }),
+      'needs an "image"',
+    ],
+    [
+      'art with no transparency at all',
+      contourRefusal(
+        { type: 'mesh', image: 'blob.png', generator: { kind: 'contour', tolerance: CONTOUR_TOLERANCE } },
+        { art: () => true },
+      ),
+      'silhouette IS the part window',
+    ],
+    [
+      'more vertices than the mesh allows',
+      contourRefusal({
+        type: 'mesh',
+        image: 'blob.png',
+        generator: { kind: 'contour', tolerance: CONTOUR_TOLERANCE, maxVertices: 4 },
+      }),
+      'this mesh allows',
+    ],
+    [
+      'art in two islands',
+      contourRefusal(
+        { type: 'mesh', image: 'blob.png', generator: { kind: 'contour', tolerance: CONTOUR_TOLERANCE } },
+        { art: (x, y) => y > 8 && y < 56 && (x < 30 || x > 66) },
+      ),
+      'one outline can only enclose the largest',
+    ],
+    [
+      'a silhouette pinched to one corner',
+      contourRefusal(
+        { type: 'mesh', image: 'blob.png', generator: { kind: 'contour', tolerance: CONTOUR_TOLERANCE } },
+        {
+          width: 12,
+          height: 10,
+          art: (x, y) => new Set(['2,2', '3,2', '4,2', '2,3', '4,3', '4,4', '3,4']).has(`${x},${y}`),
+        },
+      ),
+      'pinches to a single point',
+    ],
+    [
+      'a tolerance of zero',
+      contourRefusal({ type: 'mesh', image: 'blob.png', generator: { kind: 'contour', tolerance: 0 } }),
+      'must be a positive number of pixels',
+    ],
+  ];
+  const missed = refusals.filter(([, got, want]) => got === null || !got.includes(want));
+  say(
+    'CT06_THE_SIX_WAYS_TO_ASK_FOR_A_MESH_THAT_CANNOT_EXIST_ARE_REFUSED_BY_NAME',
+    missed.length === 0,
+    missed.length === 0
+      ? refusals.map(([label]) => label).join('; ')
+      : missed
+          .map(([label, got, want]) => `${label}: expected "${want}", got ${got === null ? 'a clean compile' : got}`)
+          .join(' | '),
+    'the parser drops an attachment it cannot read and says nothing, so a generator that cannot deliver has to say so itself',
+  );
+
+  // --- determinism ---------------------------------------------------------
+  // A18 says this about a re-emit of the same compile; this says it about the
+  // whole pipeline from PIXELS, which is where a contour mesh's numbers come
+  // from. Ear clipping picks vertices by scanning a list, and a scan whose order
+  // depended on a Map or a Set would produce a different fan every run.
+  const again = compile(build.opts);
+  say(
+    'CT07_TRACING_THE_SAME_PIXELS_TWICE_EMITS_THE_SAME_BYTES',
+    again.skeletonText === build.result.skeletonText,
+    again.skeletonText === build.result.skeletonText
+      ? `two compiles of the same art produced identical skeleton text (${build.result.skeletonText.length} bytes)`
+      : 'the second compile of the same art differed from the first',
+    'a mesh whose vertices move between runs makes every artifact hash in this repository meaningless',
   );
 
   return bad;
@@ -6049,16 +7192,16 @@ function runCliSuite(): number {
     const optedAll = assertions(opted.stdout);
     const optedProf = [...opted.stdout.matchAll(/^ {2}PROF {2}A\d\d_/gm)].length;
     say(
-      'CLI07_PROFILE_SPINE_HTML_STILL_RUNS_ALL_36',
+      'CLI07_PROFILE_SPINE_HTML_STILL_RUNS_ALL_39',
       opted.status !== 0 &&
         opted.status !== null &&
-        optedAll.size === 36 &&
+        optedAll.size === 39 &&
         optedProf === 0 &&
         new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout),
-      `exit=${String(opted.status)}, ${optedAll.size}/36 assertions reported, ${optedProf} PROF, ` +
+      `exit=${String(opted.status)}, ${optedAll.size}/39 assertions reported, ${optedProf} PROF, ` +
         `A19 ${new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout) ? 'FAILED as it must' : 'did not fire'}`,
       'flipping a default is only safe if the old one is still reachable and still complete — the opt-in has to be ' +
-        'the same 36 rules it always was, not a weakened copy',
+        'every rule it always was, not a weakened copy',
     );
   }
 
@@ -7375,8 +8518,12 @@ function main(): void {
   substantive += 8;
   bad += runConstraintAndDeformSuite();
   substantive += 21;
+  bad += runPathAndSliderSuite();
+  substantive += 25;
   bad += runPolygonSuite();
   substantive += 6;
+  bad += runContourMeshSuite();
+  substantive += 8;
   bad += runMeshSuite();
   substantive += 4;
   const meshRungBad = runMeshRungSuite();
@@ -7475,12 +8622,23 @@ function main(): void {
       '+ 21 constraint- and deform-timeline controls (8 of them a spine-core round trip that reads the ik and ' +
       'transform mixes off the posed constraints, the world position of a deformed vertex, and a weighted ' +
       "attachment's per-influence deform array), " +
+      '+ 25 path / slider / per-skin controls (8 of them a spine-core round trip that reads the world position a ' +
+      'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
+      'and which bones a skin switches on), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
+      '+ 8 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
+      'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
+      'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
+      'trip of the indices, the hull and the pin to the slot bone, the undeformed mesh drawn beside the plain ' +
+      'region of the same part with the same part moved two pixels as the instrument\'s control, the no-manifest ' +
+      'placement convention measured on a ring and a ribbon and on a moved slot bone, six ways to ask for an ' +
+      'impossible mesh each refused by name, and two traces of one PNG emitting the same bytes), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       ', + 2 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number), + 7 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
-      'builds green with no flag and is refused by all 36 rules under `--profile spine-html`)' +
+      'builds green with no flag and is refused by every rule under `--profile spine-html`)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
       ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +

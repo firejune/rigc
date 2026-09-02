@@ -6,7 +6,7 @@ yardstick rigc is measured against, the two instruments that do the measuring
 (`rigc diff` and `rigc check`) and what neither of them can see, the eight-rung
 benchmark ladder and the spineboy graduation exam, the commands that let you look at a
 rig with no reference at all, the run viewer, the input and output surface as it stands
-today, the 36 named assertions and their profiles, the selftest that has watched every
+today, the 39 named assertions and their profiles, the selftest that has watched every
 one of them fire, and the layout of the repository all of that lives in.
 
 It is **repository material rather than package material** — most of what it names
@@ -468,12 +468,16 @@ the rest of the repository must not have) and is type-checked on its own with
   `drawOrder` and `events`, which name no target at all, and `ik`, `transform`
   and `deform`, whose keys carry named fields instead of one value (an IK mix and
   softness, six transform mixes, a sparse run of vertex offsets) — which is also
-  where 4.3 writes each of them.
+  where 4.3 writes each of them. The `path` and `slider` groups are ordinary
+  tracks, because the format gives them a timeline name under the constraint the
+  way `physics` has one, and a key that carries one value fits that.
 
 **Outputs — two files per cut**, written to the cut's `out` directory:
 
-- `skeleton.json` — Spine **4.3** skeleton data. Bones, slots in draw order, one
-  skin, animations, and constraints in the 4.3 single `constraints` array.
+- `skeleton.json` — Spine **4.3** skeleton data. Bones, slots in draw order, the
+  skins with their attachments and the bones and constraints each one activates,
+  animations, and constraints in the 4.3 single `constraints` array — all five
+  types of them.
 - `skeleton.atlas` — a **one-part-per-page** atlas: every region covers its whole
   page, `pma: false`. That convention is what makes the region/attachment/filename
   join key checkable exactly rather than by convention.
@@ -494,7 +498,7 @@ model (what is pinned, what may move, how authority falls off), and the
 ### The validator
 
 [`src/validate.ts`](../src/validate.ts) parses the emitted artifacts with `spine-core`
-and then runs 36 named assertions over the loaded skeleton. Each one exists because
+and then runs 39 named assertions over the loaded skeleton. Each one exists because
 the failure it catches is **silent**: the file loads, animates, and lies.
 
 Assertions whose data is absent are reported as **SKIP**, never folded into the pass
@@ -515,12 +519,12 @@ So `validate` and `build` take a `--profile`:
 
 | Profile | Runs | For |
 | --- | --- | --- |
-| `spine` | the 22 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
+| `spine` | the 25 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
 | `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |
 
 `spine` is the default because it is the question this package's output answers:
 the artifact imports into the Spine editor and plays in any 4.3 runtime, and
-that is what the 22 validity rules are about. The other 14 are somebody's policy
+that is what the 25 validity rules are about. The other 14 are somebody's policy
 — one renderer's, one canvas budget's, one compiler's own formations' — and a
 rig arriving from anywhere else has no stake in them. Ask for them with
 `--profile spine-html` when you want them.
@@ -556,21 +560,24 @@ the renderer policy*.
 | `A18_DETERMINISTIC_EMIT` | both | a second, independent compile of the same inputs is byte-identical. SKIPs when re-gating artifacts already on disk |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | every overlay part image can be transparent somewhere — an alpha channel (colour type 4 or 6) **or** a `tRNS` chunk, which is where indexed and greyscale PNGs keep theirs. Only the base plate — identified structurally as the region covering the stage — may be opaque |
 | `A20_MESH_WEIGHTS_COHERENT` | both ◑ | every weighted vertex has at least one bone, no negative weight, bone indices in range, and each vertex's weights sum to 1. `spine-html` also requires that a mesh be weighted at all and that no binding sit at weight 0 |
-| `A21_MESH_RIM_PINNED` | archetype | a ring mesh's rim vertices are pinned to the anchor bone and its hull is a real ring; a ribbon's entry row stays put. **SKIPs on authored geometry** — rigc did not place its rim |
+| `A21_MESH_RIM_PINNED` | archetype | a ring mesh's rim vertices are pinned to the anchor bone and its hull is a real ring; a ribbon's entry row stays put; a contour's outline — which is every vertex it has — is pinned. **SKIPs on authored geometry** — rigc did not place its rim |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | every UV lies inside its region |
 | `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | each physics constraint actually drives a component, is not muted by `mix: 0`, has non-zero mass, and has `damping < 1` so it settles |
 | `A24_AXIS_SPACE_STROKE` | archetype | the stroke is authored in **axis space** — no screen-space Y component anywhere in the axis subtree, and no keys at all on the axis bone (its rotation is the one per-cut setup value) |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | bones that must stay detached are not parented under a moving part |
 | `A26_SLOT_DRAW_ORDER` | archetype | the slots array — which *is* the draw order — matches the rig spec's slot table |
 | `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | renderer | each region's name equals its page's basename, closing the second link of the attachment → region → file chain |
-| `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | both vertices of a ribbon row carry the same bones at the same weights, so the strip can lengthen and curve but never widen. **SKIPs on authored geometry** — rigc did not pair its rows |
+| `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | both vertices of a ribbon row carry the same bones at the same weights, so the strip can lengthen and curve but never widen. **SKIPs on authored geometry and on contour meshes** — rigc did not pair the first's rows, and the second is one silhouette loop |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the stroke plus any inward keys stays within the cut's measured contact depth (skipped when the manifest declares none) |
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the stroke stays within the cut's measured containment ceiling, and nothing in the axis subtree scales — a scale key changes the contour the ceiling was measured on (skipped when the manifest declares none) |
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | every draw-order key resolves to a real permutation: known slots, one entry per slot, each landing inside the slots array, offsets in ascending slot order. The **only assertion that runs before `A00`** — descending offsets make `readDrawOrder`'s forward-only cursor spin rather than return, so the round trip is refused by name instead of attempted |
 | `A32_EVENT_KEYS_RESOLVE` | both | every event key fires an event the skeleton declares, no key sits earlier in time than the one before it, and `volume`/`balance` appear only on an event with an `audio` path. Only the first of those is loud in the parser; the other two load clean and drop the firing or the value in silence. SKIPs when no animation carries an event timeline |
-| `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | every bounding box and clipping polygon states a `vertexCount` that agrees with its vertex array, its weighted run decodes to that many vertices with bone indices in range, and a clipping `end` names a slot that exists. All three load clean: a missing count reads as zero and empties the polygon, and a missing end slot makes the clip run to the bottom of the draw order. SKIPs when the skeleton carries neither type |
-| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | every `ik` / `transform` timeline names a constraint of that type and carries at least one key. The name-and-type miss is loud in the parser (`IK Constraint not found`) and this one says which constraints the skeleton *does* have; the empty key array is silent — `readAnimation` reads key 0, finds nothing and skips the timeline without a word. SKIPs when no animation carries one |
+| `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | every bounding box, clipping polygon and path states a `vertexCount` that agrees with its vertex array, its weighted run decodes to that many vertices with bone indices in range, a clipping `end` names a slot that exists, and a path's count is a multiple of 3 with a strictly increasing `lengths` array. Every one of those loads clean: a missing count reads as zero and empties the polygon, a missing end slot makes the clip run to the bottom of the draw order, and a path whose count is not a multiple of 3 walks curves that straddle its knots. SKIPs when the skeleton carries none of the three |
+| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | every `ik` / `transform` / `path` / `slider` timeline names a constraint of that type and carries at least one key. The name-and-type miss is loud in the parser (`IK Constraint not found`) and this one says which constraints the skeleton *does* have; the empty key array is silent — `readAnimation` reads key 0, finds nothing and skips the timeline without a word. SKIPs when no animation carries one |
 | `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | both | every deform key's run lands inside the attachment's own deform array, starts on an even index, holds an even count of finite numbers, and names a skin/slot/attachment triple that resolves. The array is one `x, y` pair per **vertex** on an unweighted attachment and one per **bone influence** on a weighted one, so its length is measured from the attachment rather than assumed. An overlong run is the format's quietest defect: `Utils.arrayCopy` into a `Float32Array` drops everything past the end, so part of the mesh deforms and it looks nearly right. SKIPs when no animation carries a deform timeline |
+| `A36_PATH_CONSTRAINT_EFFECTIVE` | both | every path constraint follows a slot that some skin gives a path attachment, constrains at least one bone, and is either mixed in at setup or keyed by an animation. The first is the quietest failure in the constraint half of the format: `PathConstraint.update` opens with `if (!(attachment instanceof PathAttachment)) return`, so a constraint aimed at a slot showing a region loads, appears in the update cache, reports the mixes it was given, and moves nothing at all. SKIPs when the skeleton declares no path constraint |
+| `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | every slider applies an animation that carries at least one timeline, does not loop a zero-length one, does not read a bone property at `scale: 0`, and is either mixed in at setup or keyed. A slider is the only constraint that applies an **animation**, so its failures are about that animation: an empty one changes nothing, and looping a zero-length one computes `duration + (time % duration)` and applies the animation at **NaN**. SKIPs when the skeleton declares no slider |
+| `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates is `skinRequired`, and everything `skinRequired` is activated by some skin. Two halves of one switch that live in two places — the member's own `skin: true` and the skin's list — and either half alone is dead data in silence: listed without the flag, the object is active under every skin and the list changes nothing; flagged and listed nowhere, it is inactive under every skin there is. The artifact is internally consistent either way, which is why nothing else can see it. SKIPs when no skin activates anything and nothing is `skinRequired` |
 
 ## Usage
 
@@ -640,7 +647,7 @@ bun cli.ts pose    --images path/to/parts --frame poseA.png # read a pose OUT of
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
 it re-derive the declared durations and the structural expectations too, and the
 report says which it had. `build` and `validate` both default to `--profile spine`,
-the 22 validity rules; `--profile spine-html` adds this project's renderer and
+the 25 validity rules; `--profile spine-html` adds this project's renderer and
 archetype policy on top.
 
 `render` and `preview` are the two that need no reference at all — see
@@ -752,7 +759,7 @@ fixtures/       public.ts — the three synthetic cuts the selftest breaks
 src/
   compile.ts    rig + motion spec (+ manifest) -> skeleton JSON + atlas text (pure data assembly)
   rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
-  validate.ts   spine-core round trip + the 36 assertions
+  validate.ts   spine-core round trip + the 39 assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure
   render.ts     the rasteriser (regions + meshes), shared by the reference renderer,
                 `rigc render` and check

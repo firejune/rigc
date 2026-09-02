@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/firejune/rigc/compare/v0.8.0...v0.8.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* **packaging:** ship the remaining tools/ files (contact, png_probe, measure_contact_depth) ([#249](https://github.com/firejune/rigc/issues/249)) ([cc00c99](https://github.com/firejune/rigc/commit/cc00c996ec633e168f56f0158ae467246fc82d84))
+
 ## [0.8.0](https://github.com/firejune/rigc/compare/v0.7.0...v0.8.0) (2026-09-02)
 
 
