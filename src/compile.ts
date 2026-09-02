@@ -50,7 +50,15 @@ import {
   MeshError,
   type MeshBoneRef,
 } from './mesh.ts';
-import { readPlate } from '../tools/plate.ts';
+import { Plate, readPlate } from '../tools/plate.ts';
+import {
+  extractRegion,
+  parseAtlasText,
+  rewritePageNames,
+  writeAtlasText,
+  type AtlasRegion,
+  type ParsedAtlas,
+} from './atlas.ts';
 import { KEY_TIME_EPSILON } from './timelines.ts';
 import {
   computeWorldTransforms,
@@ -492,15 +500,25 @@ export interface CompileOptions {
   manifestPath?: string;
   /** Overrides the rig spec's own `images` directory (CLI `--images <dir>`). */
   imagesDir?: string;
+  /**
+   * A pre-packed atlas to resolve `image` entries against, instead of loose PNGs
+   * (CLI `--atlas-in <file>`). Every region a part names is looked up in this
+   * file and its geometry read from it; the emitted atlas is this one, re-anchored
+   * to `outDir`. See `resolveFromAtlas`.
+   */
+  atlasInPath?: string;
 }
 
 /**
- * One part = one page. No packer, so no PMA trap, no rotation, no strip
- * offsets. Region covers the page exactly => u2=v2=1.
+ * One part = one page. No packer in this shape, so no PMA trap, no rotation, no
+ * strip offsets. Region covers the page exactly => u2=v2=1.
  *
- * Two text-shape traps are load-bearing here:
- *   * a region name is the RAW line, not a trimmed one -> no indentation;
- *   * a blank line closes the page block -> none between header and regions.
+ * ⭐ The BODY of the emit moved to [`src/atlas.ts`](atlas.ts) in issue #4, and
+ * that is the whole point of the move: `--pack` writes a different arrangement
+ * through the same `writeAtlasText`, so "the defaults change nothing" is a
+ * property of one function rather than a promise made by two that look alike.
+ * The two text-shape traps A07 checks (a region name is the RAW line; a blank
+ * line closes a page block) live there now.
  *
  * Exported (rather than inlined into `compile`) so `--copy-images` can call it a
  * second time with `page` rewritten to the copies' filenames, after the copy
@@ -509,19 +527,209 @@ export interface CompileOptions {
  * bytes live moved.
  */
 export function buildAtlasText(images: CompiledImage[]): string {
-  const atlasLines: string[] = [];
-  images.forEach((img, i) => {
-    if (i > 0) atlasLines.push(''); // exactly one blank line BETWEEN pages
-    atlasLines.push(img.page);
-    atlasLines.push(`size: ${img.width}, ${img.height}`);
-    atlasLines.push('filter: Linear, Linear');
-    atlasLines.push('pma: false');
-    atlasLines.push(img.region);
-    atlasLines.push(`bounds: 0, 0, ${img.width}, ${img.height}`);
-    atlasLines.push(`offsets: 0, 0, ${img.width}, ${img.height}`);
-    atlasLines.push('rotate: 0');
-  });
-  return `${atlasLines.join('\n')}\n`;
+  return writeAtlasText(
+    images.map((img) => ({
+      name: img.page,
+      width: img.width,
+      height: img.height,
+      regions: [
+        {
+          name: img.region,
+          x: 0,
+          y: 0,
+          width: img.width,
+          height: img.height,
+          offsetX: 0,
+          offsetY: 0,
+          originalWidth: img.width,
+          originalHeight: img.height,
+        },
+      ],
+    })),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// where a part's pixels come from: a loose PNG, or a region of a packed atlas
+// ---------------------------------------------------------------------------
+
+/** One part resolved out of a loose PNG on disk — the default, and unchanged. */
+function fromLoosePng(
+  relPath: string,
+  absPath: string,
+  region: string,
+  isBase: boolean,
+  outDir: string,
+): CompiledImage {
+  if (!existsSync(absPath)) {
+    // Left to `readFileSync` this arrives as a raw ENOENT with a stack, which
+    // is the tool telling an agent about its own internals instead of about
+    // the rig. The validator's messages are the UI, and so are these.
+    throw new CompileError(`image "${relPath}" is not on disk at ${absPath}`);
+  }
+  const info = readPngInfo(absPath);
+  // Page name is the PNG path *relative to the atlas file*, so the viewer
+  // resolves it the way every Spine consumer does: against the atlas URL.
+  // The PNGs are not copied: they pass through untouched, and the atlas points
+  // at wherever they already live.
+  const page = relative(outDir, absPath).split('\\').join('/');
+  return { region, page, absPath, width: info.width, height: info.height, hasAlpha: info.hasAlpha, isBase };
+}
+
+/** A pre-packed atlas plus where it was read from, so messages can name it. */
+interface AtlasSource {
+  path: string;
+  dir: string;
+  parsed: ParsedAtlas;
+  /** Trimmed region name -> the region, first occurrence wins (as `findRegion` does). */
+  byName: Map<string, { region: AtlasRegion; page: ParsedAtlas['pages'][number] }>;
+}
+
+function readAtlasIn(path: string): AtlasSource {
+  if (!existsSync(path)) throw new CompileError(`--atlas-in names ${path}, which is not on disk`);
+  const parsed = parseAtlasText(readFileSync(path, 'utf8'));
+  const byName = new Map<string, { region: AtlasRegion; page: ParsedAtlas['pages'][number] }>();
+  for (const page of parsed.pages) {
+    for (const region of page.regions) {
+      const key = region.name.trim();
+      // `TextureAtlas.findRegion` returns the FIRST match, so a sequence's later
+      // indices are not separately addressable by name. Mirrored rather than
+      // improved on: the runtime is what will resolve these at load time.
+      if (!byName.has(key)) byName.set(key, { region, page });
+    }
+  }
+  if (byName.size === 0) throw new CompileError(`--atlas-in ${path} declares no regions`);
+  return { path, dir: dirname(path), parsed, byName };
+}
+
+/**
+ * How far apart two names are, for the "did you mean" list on a missing region.
+ *
+ * Plain Levenshtein. An atlas has tens of regions and this runs once per
+ * refusal, so the O(n*m) table is free and a cheaper heuristic (shared prefix,
+ * substring) would miss the commonest real case — a transposition or one wrong
+ * character in a hand-typed `image`.
+ */
+function nameDistance(a: string, b: string): number {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  let previous = new Array<number>(cols);
+  for (let j = 0; j < cols; j++) previous[j] = j;
+  for (let i = 1; i < rows; i++) {
+    const current = new Array<number>(cols);
+    current[0] = i;
+    for (let j = 1; j < cols; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
+    }
+    previous = current;
+  }
+  return previous[cols - 1];
+}
+
+/** Up to five region names closest to the one that was not found. */
+function nearMisses(wanted: string, known: Iterable<string>): string[] {
+  const scored: Array<{ name: string; d: number }> = [];
+  for (const name of known) {
+    const d = nameDistance(wanted.toLowerCase(), name.toLowerCase());
+    // Half the name's length, floored at 2: "leg" must not suggest "arm", and a
+    // long name may still be recognisable through several typos.
+    if (d <= Math.max(2, Math.floor(wanted.length / 2))) scored.push({ name, d });
+  }
+  scored.sort((x, y) => x.d - y.d || (x.name < y.name ? -1 : 1));
+  return scored.slice(0, 5).map((s) => s.name);
+}
+
+/**
+ * One part resolved out of a region of a pre-packed atlas — CLI `--atlas-in`.
+ *
+ * ## What comes from where
+ *
+ * The join key is the region NAME, which rigc already equates with the PNG
+ * basename everywhere else (`addImage`), so a rig spec written against loose
+ * parts resolves against a pack of the same parts with no edit. The geometry —
+ * `x`/`y`/`width`/`height`/`offsets`/`rotate` — is the atlas's, read rather than
+ * invented, and `width`/`height` on the resulting image are the region's
+ * `originalWidth`/`originalHeight`: the UNTRIMMED drawing, which is what an
+ * attachment's width and height mean and therefore what every downstream
+ * measurement in this file already expects.
+ *
+ * ## Three refusals, and why none of them can be a warning
+ *
+ *   * a name the atlas does not carry — the attachment would resolve to no
+ *     region, `AtlasAttachmentLoader` returns null and the part silently does
+ *     not draw. Refused with the near misses, because the commonest cause is one
+ *     character;
+ *   * a page the atlas names and the disk does not have — the same silence, one
+ *     step further along;
+ *   * a rectangle that runs off its page — `region.x + width > page.width` makes
+ *     `u2 > 1`, which samples whatever the wrap mode does and is never what the
+ *     pack meant. A16-style validity, caught at the point the number is read.
+ */
+function resolveFromAtlas(
+  relPath: string,
+  region: string,
+  isBase: boolean,
+  outDir: string,
+  atlas: AtlasSource,
+): CompiledImage {
+  const found = atlas.byName.get(region);
+  if (!found) {
+    const near = nearMisses(region, atlas.byName.keys());
+    const known = [...atlas.byName.keys()].sort();
+    throw new CompileError(
+      `image "${relPath}" resolves to region "${region}", which the atlas at ${atlas.path} does not have. ` +
+        (near.length ? `Did you mean ${near.map((n) => JSON.stringify(n)).join(', ')}? ` : '') +
+        `The atlas declares ${known.length} region(s): ${known.join(', ')}`,
+    );
+  }
+  const absPath = resolve(atlas.dir, found.page.name);
+  if (!existsSync(absPath)) {
+    throw new CompileError(
+      `region "${region}" sits on page "${found.page.name}" of ${atlas.path}, which is not on disk at ${absPath}`,
+    );
+  }
+  const turned = found.region.degrees === 90 || found.region.degrees === 270;
+  const rectW = turned ? found.region.height : found.region.width;
+  const rectH = turned ? found.region.width : found.region.height;
+  if (
+    found.region.x < 0 ||
+    found.region.y < 0 ||
+    found.region.x + rectW > found.page.width ||
+    found.region.y + rectH > found.page.height
+  ) {
+    throw new CompileError(
+      `region "${region}" is at ${found.region.x},${found.region.y} sized ${rectW}x${rectH} on a ` +
+        `${found.page.width}x${found.page.height} page in ${atlas.path}; the rectangle runs off the page, so its ` +
+        'UVs would leave the texture',
+    );
+  }
+  const info = readPngInfo(absPath);
+  const page = relative(outDir, absPath).split('\\').join('/');
+  return {
+    region,
+    page,
+    absPath,
+    width: found.region.originalWidth,
+    height: found.region.originalHeight,
+    hasAlpha: info.hasAlpha,
+    isBase,
+    atlas: found.region,
+  };
+}
+
+/**
+ * A part's own pixel grid, wherever its bytes live.
+ *
+ * The only reader of pixels in the compiler is the contour generator, which
+ * traces a part's alpha — and a part imported from a pack has no file of its
+ * own, only a rectangle of somebody's page. `extractRegion` lifts the drawing
+ * back out, so the generator sees the same grid either way and its output does
+ * not depend on how the art was delivered.
+ */
+function partPlate(img: CompiledImage): Plate {
+  const page = readPlate(img.absPath);
+  return img.atlas === undefined ? page : extractRegion(page, img.atlas);
 }
 
 export function compile(opts: CompileOptions): CompileResult {
@@ -588,33 +796,18 @@ export function compile(opts: CompileOptions): CompileResult {
   const droppedStates: CompileResult['droppedStates'] = [];
   const seenRegions = new Set<string>();
 
+  /** The pre-packed atlas `--atlas-in` named, parsed once, or null. */
+  const atlasIn = opts.atlasInPath === undefined ? null : readAtlasIn(resolve(opts.atlasInPath));
+
   const addImage = (relPath: string, baseDir: string, isBase: boolean): CompiledImage => {
-    const absPath = resolve(baseDir, relPath);
     const region = basename(relPath, '.png');
     if (seenRegions.has(region)) {
       throw new CompileError(`duplicate region name "${region}" (${relPath})`);
     }
-    if (!existsSync(absPath)) {
-      // Left to `readFileSync` this arrives as a raw ENOENT with a stack, which
-      // is the tool telling an agent about its own internals instead of about
-      // the rig. The validator's messages are the UI, and so are these.
-      throw new CompileError(`image "${relPath}" is not on disk at ${absPath}`);
-    }
-    const info = readPngInfo(absPath);
-    // Page name is the PNG path *relative to the atlas file*, so the viewer
-    // resolves it the way every Spine consumer does: against the atlas URL.
-    // The PNGs are not copied: they pass through untouched, and the atlas points
-    // at wherever they already live.
-    const page = relative(outDir, absPath).split('\\').join('/');
-    const img: CompiledImage = {
-      region,
-      page,
-      absPath,
-      width: info.width,
-      height: info.height,
-      hasAlpha: info.hasAlpha,
-      isBase,
-    };
+    const img =
+      atlasIn === null
+        ? fromLoosePng(relPath, resolve(baseDir, relPath), region, isBase, outDir)
+        : resolveFromAtlas(relPath, region, isBase, outDir, atlasIn);
     seenRegions.add(region);
     images.push(img);
     return img;
@@ -708,6 +901,20 @@ export function compile(opts: CompileOptions): CompileResult {
     }
   }
 
+  /**
+   * How to name the thing whose size disagreed with the spec.
+   *
+   * ⭐ The message has to say which of the two it MEASURED, because the remedy is
+   * different: a loose PNG is re-exported, an atlas region is repacked or the
+   * spec is wrong about which region it wanted. Reading "torso.png is 40x80 but
+   * the window is 40x81" while no torso.png was ever opened is the sort of
+   * message that sends an author to the wrong file.
+   */
+  const measuredFrom = (img: CompiledImage, relPath: string): string =>
+    img.atlas === undefined
+      ? relPath
+      : `region "${img.region}" of ${opts.atlasInPath!} (declared ${img.atlas.originalWidth}x${img.atlas.originalHeight} by its offsets)`;
+
   for (const part of parts) {
     const win = partWindow(part, manifest!);
     if (part.image) {
@@ -715,7 +922,7 @@ export function compile(opts: CompileOptions): CompileResult {
       const img = addImage(part.image, manifestDir!, isBasePlate(part, manifest!));
       if (img.width !== win.w || img.height !== win.h) {
         throw new CompileError(
-          `${part.image} is ${img.width}x${img.height} but the manifest window for "${part.slot}" is ${win.w}x${win.h}`,
+          `${measuredFrom(img, part.image)} is ${img.width}x${img.height} but the manifest window for "${part.slot}" is ${win.w}x${win.h}`,
         );
       }
       slotAttachments.set(part.slot, [img.region]);
@@ -724,17 +931,33 @@ export function compile(opts: CompileOptions): CompileResult {
     const names: string[] = [];
     for (const [state, relPath] of Object.entries(part.states ?? {})) {
       if (relPath === null) continue; // base pixels show through; nothing to emit
+      // A manifest can outlive a state whose art was dropped. It still lists
+      // it, so the compiler reports the gap rather than pretending either way —
+      // and under `--atlas-in` the same question is asked of the atlas, because
+      // there the pack IS where the art either is or is not. An OPTIONAL state
+      // absent from the pack is that same documented gap; the unconditional
+      // `part.image` above is the one that refuses by name (`resolveFromAtlas`).
       const absPath = resolve(manifestDir!, relPath);
-      if (!existsSync(absPath)) {
-        // A manifest can outlive a state whose art was dropped. It still lists
-        // it, so the compiler reports the gap rather than pretending either way.
-        droppedStates.push({ slot: part.slot, state, path: relPath });
+      const present = atlasIn === null ? existsSync(absPath) : atlasIn.byName.has(basename(relPath, '.png'));
+      if (!present) {
+        droppedStates.push({
+          slot: part.slot,
+          state,
+          path: relPath,
+          // The DROP line has to name what was CONSULTED. "no PNG at
+          // parts/iris_open.png" is a lie about an `--atlas-in` build, which
+          // opened no such file, and it sends the reader to a directory instead
+          // of to the pack that is missing the region.
+          ...(atlasIn === null
+            ? {}
+            : { why: `no region "${basename(relPath, '.png')}" in ${atlasIn.path}` }),
+        });
         continue;
       }
       const img = addImage(relPath, manifestDir!, false);
       if (img.width !== win.w || img.height !== win.h) {
         throw new CompileError(
-          `${relPath} is ${img.width}x${img.height} but slot "${part.slot}" declares ${win.w}x${win.h}`,
+          `${measuredFrom(img, relPath)} is ${img.width}x${img.height} but slot "${part.slot}" declares ${win.w}x${win.h}`,
         );
       }
       names.push(img.region);
@@ -778,7 +1001,24 @@ export function compile(opts: CompileOptions): CompileResult {
   }
 
   // -- 2. atlas --------------------------------------------------------------
-  const atlasText = buildAtlasText(images);
+  //
+  // Two shapes. The default builds one page per part out of what was measured.
+  // `--atlas-in` emits the imported atlas itself, verbatim except for its page
+  // NAMES, which are paths and have to be re-anchored to `outDir`. Re-serialising
+  // it from the parse would silently drop every field this compiler has no reader
+  // for — `scale:` most expensively — so the text passes through by line and only
+  // the name lines are replaced (`rewritePageNames`).
+  //
+  // ⚠️ Regions the rig does not use stay in the emitted atlas. They are not a
+  // defect: a real pack is shared between cuts, an unused region costs a consumer
+  // nothing, and dropping them would make `--out` disagree with the pack it was
+  // built from — which is the one thing an importer must not do.
+  const atlasText =
+    atlasIn === null
+      ? buildAtlasText(images)
+      : rewritePageNames(atlasIn.parsed, (name) =>
+          relative(outDir, resolve(atlasIn.dir, name)).split('\\').join('/'),
+        );
 
   // -- 3. bones --------------------------------------------------------------
   //
@@ -1798,6 +2038,26 @@ function buildRigRegion(
   ctx: AttachmentContext,
 ): SpineRegionAttachment {
   const img = att.image === undefined ? null : ctx.images.find((im) => im.region === basename(att.image!, '.png'));
+  // ⭐ An IMPORTED region's size is not a default the spec may override. On the
+  // loose path `att.width` and the PNG's width are two legitimate numbers — "draw
+  // this drawing at this size" is a scale, and the region covers its page either
+  // way. A packed region's rectangle is already fixed in the atlas, so a spec that
+  // states a different size is stating a disagreement with the file it is being
+  // resolved against, and the two would produce a quad the pack cannot fill.
+  if (img?.atlas !== undefined) {
+    for (const [field, stated, measured] of [
+      ['width', att.width, img.width],
+      ['height', att.height, img.height],
+    ] as const) {
+      if (stated !== undefined && stated !== measured) {
+        throw new CompileError(
+          `${where}: the spec says ${field} ${stated} and region "${img.region}" of the imported atlas is ` +
+            `${measured} (bounds ${img.atlas.width}x${img.atlas.height}, offsets state a ` +
+            `${img.atlas.originalWidth}x${img.atlas.originalHeight} drawing)`,
+        );
+      }
+    }
+  }
   const width = att.width ?? img?.width;
   const height = att.height ?? img?.height;
   if (width === undefined || height === undefined) {
@@ -2062,7 +2322,7 @@ function buildContourAttachment(
   // chunk is real transparency (issue #215) and an all-255 alpha channel is
   // none — so "this part has no silhouette to trace" is a question about pixels,
   // and `buildContourMesh` refuses it by counting them.
-  const plate = readPlate(img.absPath);
+  const plate = partPlate(img);
   const alpha = new Uint8Array(plate.width * plate.height);
   for (let i = 0; i < alpha.length; i++) alpha[i] = plate.data[i * 4 + 3];
 

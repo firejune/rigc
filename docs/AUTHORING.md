@@ -133,6 +133,10 @@ What the flags mean:
 | `--motion` | the motion spec — time |
 | `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths are written relative to it |
 | `--copy-images` | `build` only: also copies every referenced page PNG into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own. Default is unchanged — page paths still point at the source art (issue #217) |
+| `--pack` | `build` only: arrange every part onto **shared** atlas page(s), written into `--out` as real PNGs, instead of one page per part. Lossless — nothing is resampled, trimmed or rotated. Default is unchanged (issue #4) — **§0.1** |
+| `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
+| `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1** |
+| `--atlas-in` | `build` only: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file; the atlas is re-emitted into `--out`, re-anchored — **§0.2** |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |
@@ -161,6 +165,128 @@ extra rules fire on perfectly correct Spine data (clipping attachments,
 unweighted meshes, packed atlases) — reach for it when you are shipping into
 *that* project, not to be thorough. A report always prints which profile ran and
 lists what that profile left out, on `PROF` lines.
+
+⚠️ *Packed atlases* in that list includes the ones rigc now writes itself, so
+`--pack --profile spine-html` is refused by name rather than compiled and then
+failed: `A06`'s full-page-coverage clause **is** the unpacked convention, and a
+legitimate pack cannot satisfy it. Build a pack under the default `spine`.
+
+### 0.1 Packing the parts onto shared pages — `--pack`
+
+By default rigc emits **one part, one page**: nine loose PNGs compile to
+`pages=9 regions=9`, which is correct, valid, and not what anybody means by an
+atlas. `--pack` is the other arrangement.
+
+```bash
+bun cli.ts build --rig … --motion … --out spine --pack
+#   ..    pack: skeleton.png 512x1024, 26 region(s), 67.9% covered, padding 2
+#   ..    validate (packed atlas, pages on disk)
+```
+
+**What it does.** Every part goes onto a shared page, written into `--out` as a
+real PNG (`skeleton.png`, then `skeleton2.png`, … — libgdx's own numbering, which
+is what the Spine packer uses). The atlas carries `bounds:`/`offsets:` per region
+instead of a page each. `--out` is therefore **self-contained**: that is what
+packing means here, so `--pack` and `--copy-images` are refused together — the
+copy flag copies the loose PNGs, which a packed atlas does not reference.
+
+**What it deliberately does NOT do**, and each of these is a promise rather than
+a gap:
+
+- **no resampling, no scaling.** A region's pixels are the loose PNG's pixels.
+  rigc writes no `scale:` line, so a pack cannot be coarser than its drawings the
+  way the shipped examples' packs are (§9.4).
+- **no trimming.** `offsets:` always states a zero inset and the drawing's full
+  size. Stripping transparent border would shrink pages, and it would also make
+  every region attachment's quad depend on the packer — measure it yourself if you
+  want it, do not assume rigc did.
+- **no rotation.** `rotate: 0` on every region, and it is a fact rather than a
+  field: the runtime transposes `u2/v2` at 90 and not at 270, and
+  `RegionAttachment.computeUVs` assigns a different corner order at 90, so a
+  rotated pack is one rigc's own `--atlas` substitution cannot read (issue #199).
+  Rotation buys page area; a page that runs out of room spills to a second page
+  instead.
+- **no re-ordering of anything the skeleton says.** `skeleton.json` from a packed
+  build is **byte-identical** to the unpacked one, because sizes are still
+  measured from the loose PNGs and packing is an output arrangement.
+
+**Sizes and gutters.** `--page-size` is a ceiling (default `2048`). Page edges are
+powers of two — `region.x / page.width` is the coordinate every texel is sampled
+through, and a power-of-two denominator makes that division exact in binary
+floating point — and the page written is the **smallest** power-of-two pair that
+holds the pack, so a two-part rig gets `1024x256` rather than a megabyte of
+transparency. A part whose padded cell will not fit the biggest allowed page is
+**refused by name**: the format cannot split one drawing across two pages, so the
+alternatives are a bigger page or no pack, and the message says both.
+
+`--padding` (default `2`) is the gutter each region reserves on **every** side, so
+two neighbours end up at least twice that apart. The gutter is not empty: it is
+filled by extending the region's own edge pixels outwards, and that is what makes
+the packed render match the unpacked one. The rasteriser samples bilinearly and
+clamps its taps at the page's edge, so on an unpacked page a sample at the outer
+edge reads that edge twice; in the middle of a shared page the clamp stops
+happening and the second tap is whatever is next door. Measured on this
+repository's fixtures: with the gutter, 0 to 480 channel samples of 7 to 21
+million differ and the worst difference is **1**; with `--padding 0` it is 22,000
+to 60,000 samples and a worst difference of **77**.
+
+⚠️ **That residual `1` is arithmetic, not resampling, and it is worth knowing
+where it comes from.** A packed region's UVs are `x / pageWidth` rather than
+`0..1`, which is one more rounding step in the sampling coordinate, so the
+interpolation weight can differ in its last bit and a `Math.round` sitting exactly
+on a `.5` boundary can then land the other way. It is bounded at one least
+significant bit of one channel and it never reads a different texel. On real art
+it usually does not appear at all: eleven of the thirteen rigs in this repository
+render **byte-identically** packed and unpacked across 1,101 frames, and the two
+that do not are the two with meshes, at 1 and 146 samples of 6 and 60 million.
+
+### 0.2 Building against a pack somebody else made — `--atlas-in`
+
+The other direction. `--atlas-in <file.atlas>` resolves every part against the
+**regions** of an existing pack instead of against loose PNGs.
+
+```bash
+bun cli.ts build --rig … --motion … --out spine --atlas-in art/hero.atlas
+#   ..    atlas-in /abs/path/art/hero.atlas
+#   ..      torso   98x180  <- ../art/hero.png @ 363,209
+```
+
+The join key is the region **name**, which rigc already equates with the PNG
+basename everywhere else — so a rig written against loose parts resolves against
+a pack of the same parts with no edit. Geometry (`bounds`/`offsets`/`rotate`)
+comes off the file, and a part's width and height are the region's
+`originalWidth`/`originalHeight`: the untrimmed drawing, which is what an
+attachment's size means.
+
+The emitted `skeleton.atlas` **is** the imported one, verbatim except for its page
+name lines, which are paths and have to be re-anchored to `--out`. Fields rigc has
+no reader for (`scale:`, `format:`, `repeat:`) survive the trip; regions the rig
+does not use stay in the file, because a real pack is shared between cuts and an
+importer that quietly dropped half of one would make `--out` disagree with the
+pack it was built from.
+
+Four things are refused rather than warned about, because each of them otherwise
+**loads clean and draws wrong**:
+
+| What | Why it cannot be a warning |
+| --- | --- |
+| a region name the atlas does not have | `AtlasAttachmentLoader` returns null and the part silently does not draw. The refusal lists the near misses — the usual cause is one character |
+| a size the spec disagrees with | the same silence `A06` exists for, one link earlier: a quad sized against a region of another size collapses |
+| a page the atlas names and the disk lacks | nothing to sample; caught on the way in, so the message names the atlas rather than the artifact rigc wrote from it |
+| a rectangle that runs off its page | `x + width` past the page width makes `u2 > 1`, which samples whatever the wrap mode does |
+
+Two limits, stated rather than discovered:
+
+- an **optional state** (a manifest `states:` entry) whose region is not in the
+  pack is a `DROP`, not a refusal — the same documented absence a missing PNG has
+  always been, and the line names the atlas rather than a file nobody opened;
+- a generator that **measures a part's pixels** — the `contour` mesh — lifts the
+  drawing back off the page, and refuses by name on a region packed `rotate: 90`.
+  Supply the loose PNG for that part instead. rigc's own packs never rotate, so
+  only a foreign pack reaches it.
+
+`--pack` and `--atlas-in` are opposite directions through the same door and are
+refused together.
 
 The other commands:
 
@@ -1604,10 +1730,13 @@ says so, because a deferral without its reason is a wall rather than a work item
 
 Two more limits that are not errors but will shape what you can attempt:
 
-- **No atlas packer and no atlas importer.** rigc emits **one part per page**: every
-  region covers its whole page, `pma: false`. To reproduce a skeleton whose art
-  ships as a packed atlas you either supply loose PNGs and let rigc build its own
-  atlas, or hand the packed atlas to `validate`/`bench` alongside the candidate.
+- **The atlas packer and importer exist and are narrow** (issue #4). `--pack`
+  arranges the parts onto shared pages and `--atlas-in` resolves them against a
+  pack somebody else made — **§0.1** and **§0.2** state what each does and, more
+  usefully, what neither does: no trimming, no rotation, no scaling, and no
+  `--profile spine-html` over a packed atlas. The default is still **one part per
+  page** with `pma: false` and every region covering its whole page, and nothing
+  about a build changes unless one of those flags is given.
 - **`sequence` timelines and `drawOrderFolder`** are walked by the validator (so
   `A05` checks their curves and `diff` counts their keys) and cannot be *written*:
   there is no motion-spec property for either. Everything a motion spec **can** key
@@ -2616,8 +2745,10 @@ that has nothing to do with your keys.
 🚨 **Part of your MAE is the texture, not the animation.** The reference frames are
 rendered through the example's **own packed atlas**, and a packed atlas may carry a
 `scale:` line — the ladder has one at `scale: 0.5`, whose 745x212 part is packed at
-373x106. rigc has no packer (**§6**), so a candidate built from the loose PNGs samples
-a texture at twice that resolution and resamples every edge differently. The pixels are
+373x106. A candidate samples the art at its own resolution and resamples every edge
+differently. That is equally true of a `--pack`ed candidate (**§0.1**): rigc's packer
+is lossless and writes no `scale:` line, so packing rearranges texels without
+resampling one and does not move this constant either way. The pixels are
 the same shape in the same place; they are filtered from a different source, and the
 difference lands on the outline of every part in every frame. It is a constant, it is
 invisible to `content`, `rms` and the `±2 px` refinement — a resampling difference is

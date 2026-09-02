@@ -76,7 +76,7 @@ import {
   type FramingHow,
   type FramingSource,
 } from './src/check.ts';
-import { compile, CompileError } from './src/compile.ts';
+import { buildAtlasText, compile, CompileError } from './src/compile.ts';
 import {
   contourOvershootBound,
   CONTOUR_MIN_COVERAGE,
@@ -85,6 +85,15 @@ import {
 } from './src/mesh.ts';
 import { diffSkeletons, movedAgnosticMeasures, movedMeasures } from './src/diff.ts';
 import { copyAtlasImages } from './src/emit.ts';
+import {
+  DEFAULT_PADDING,
+  DEFAULT_PAGE_SIZE,
+  extractRegion,
+  packAtlas,
+  parseAtlasText,
+  rewritePageNames,
+  writeAtlasText,
+} from './src/atlas.ts';
 import { isContent } from './src/framing.ts';
 import {
   DEFAULT_MAX_RESIDUAL,
@@ -95,6 +104,7 @@ import {
 } from './src/pose.ts';
 import {
   atlasPageNames,
+  atlasScales,
   BACKGROUND,
   EMPTY_FOOTPRINT,
   fill,
@@ -6968,6 +6978,698 @@ function runCopyImagesSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// the atlas packer and the importer — issue #4
+// ---------------------------------------------------------------------------
+//
+// ⭐ **What actually has to be true, and it is not what the flag's name suggests.**
+// `--pack` moves bytes onto a shared page. The interesting claim is not that the
+// arrangement happened, it is that NOTHING ELSE happened: the same specs must
+// still compile to the same skeleton, and the picture must still be the picture.
+// So the controls below are ordered by how much they would let through.
+//
+//   * `PK02` is the exact one and the strongest: every region lifted back off the
+//     page equals the loose PNG byte for byte. A packer that resampled, scaled,
+//     trimmed or turned anything fails here and cannot be argued with.
+//   * `PK05` is the rendered one, and it is stated as a BOUND rather than as
+//     byte-identity — measured, not conceded. A packed region's texels are read
+//     through `x / pageWidth` instead of through 0..1, which is one more rounding
+//     step in the sampling coordinate, so the interpolation weight can differ in
+//     its last bit and a `Math.round` at a .5 boundary can then land the other
+//     way. Measured across three fixtures and every frame of every animation:
+//     the worst channel difference is **exactly 1**, on 0 to 480 samples out of
+//     7 to 21 million, and on the repository's own thirteen rigs eleven are
+//     byte-identical over 1,101 frames. The two that are not are the two with
+//     meshes, at 1 and 146 samples of 6 and 60 million, all off by one.
+//   * `PK06` is why `PK05`'s bound is a gate and not a shrug. The same
+//     measurement with the gutter removed reports 22,000 to 60,000 samples and a
+//     worst difference of 59 to 77 — bleed is three orders of magnitude louder
+//     than arithmetic, and every wrong-texel bug is bleed-shaped.
+//
+// 🔒 Byte-identity for a build with no new flags is `PK09`, which spells the
+// emitted shape out literally rather than comparing against another run of the
+// same code.
+
+/** Every image of a compile, in the shape `packAtlas` takes. */
+function packInputsOf(images: CompiledImage[]): Array<{ region: string; absPath: string; width: number; height: number }> {
+  return images.map((img) => ({ region: img.region, absPath: img.absPath, width: img.width, height: img.height }));
+}
+
+/** Pack a fixture's parts and write the pages, so the atlas can be loaded from disk. */
+function packFixture(
+  fixture: Fixture,
+  padding: number,
+): { dir: string; atlasText: string; result: CompileResult; pages: string[] } {
+  const opts = optsForFixture(fixture);
+  const result = compile(opts);
+  const dir = join(fixture.dir, `packed_p${padding}`);
+  mkdirSync(dir, { recursive: true });
+  const packed = packAtlas(packInputsOf(result.images), { padding });
+  for (const page of packed.pages) page.plate.writePng(join(dir, page.name));
+  writeFileSync(join(dir, 'skeleton.atlas'), packed.atlasText);
+  writeFileSync(join(dir, 'skeleton.json'), result.skeletonText);
+  return { dir, atlasText: packed.atlasText, result, pages: packed.pages.map((p) => p.name) };
+}
+
+/** The worst per-channel difference between two renders of the same skeleton, and how many. */
+function renderDelta(
+  result: CompileResult,
+  looseDir: string,
+  packedText: string,
+  packedDir: string,
+): { frames: number; samples: number; total: number; worst: number } {
+  const loose = posableFromText(result.skeletonText, result.atlasText, looseDir);
+  const tight = posableFromText(result.skeletonText, packedText, packedDir);
+  const viewport = framingViewport(loose.data, 256);
+  if (!viewport) return { frames: 0, samples: 0, total: 0, worst: 0 };
+  const looseSets =
+    loose.data.animations.length === 0
+      ? new Map([[SETUP_SET, sampleSetupPose(loose.data)]])
+      : sampleAll(loose.data, PROTOCOL_FPS);
+  const tightSets =
+    tight.data.animations.length === 0
+      ? new Map([[SETUP_SET, sampleSetupPose(tight.data)]])
+      : sampleAll(tight.data, PROTOCOL_FPS);
+  let frames = 0;
+  let samples = 0;
+  let total = 0;
+  let worst = 0;
+  for (const [name, looseFrames] of looseSets) {
+    const tightFrames = tightSets.get(name);
+    if (!tightFrames) continue;
+    for (let i = 0; i < looseFrames.length && i < tightFrames.length; i++) {
+      const a = renderFrame(looseFrames[i], loose.pages, viewport, BACKGROUND);
+      const b = renderFrame(tightFrames[i], tight.pages, viewport, BACKGROUND);
+      frames++;
+      total += a.data.length;
+      for (let k = 0; k < a.data.length; k++) {
+        const d = Math.abs(a.data[k] - b.data[k]);
+        if (d === 0) continue;
+        samples++;
+        if (d > worst) worst = d;
+      }
+    }
+  }
+  return { frames, samples, total, worst };
+}
+
+/** The key `sampleSetupPose`'s one frame set is filed under here. Not an animation name. */
+const SETUP_SET = 'setup';
+
+/** Every fixture's parts, byte-compared against what the page gives back. */
+function losslessReport(fixture: Fixture, padding: number): { regions: number; wrong: string[] } {
+  const packed = packFixture(fixture, padding);
+  const parsed = parseAtlasText(packed.atlasText);
+  const inputs = packInputsOf(packed.result.images);
+  const wrong: string[] = [];
+  let regions = 0;
+  for (const page of parsed.pages) {
+    const plate = readPlate(join(packed.dir, page.name));
+    for (const region of page.regions) {
+      regions++;
+      const input = inputs.find((i) => i.region === region.name.trim());
+      if (!input) {
+        wrong.push(`${region.name.trim()} (no such part)`);
+        continue;
+      }
+      const source = readPlate(input.absPath);
+      const lifted = extractRegion(plate, region);
+      if (lifted.width !== source.width || lifted.height !== source.height) {
+        wrong.push(`${region.name.trim()} (${lifted.width}x${lifted.height} vs ${source.width}x${source.height})`);
+        continue;
+      }
+      for (let k = 0; k < source.data.length; k++) {
+        if (source.data[k] === lifted.data[k]) continue;
+        wrong.push(`${region.name.trim()} (byte ${k}: ${source.data[k]} vs ${lifted.data[k]})`);
+        break;
+      }
+    }
+  }
+  return { regions, wrong };
+}
+
+/** What `compile()` throws, as a string, or null when it did not throw. */
+function refusalOf(fn: () => unknown): string | null {
+  try {
+    fn();
+    return null;
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
+
+const PACK_FIXTURES: ReadonlyArray<readonly [string, Fixture]> = [
+  ['overlay', OVERLAY],
+  ['articulated', ARTICULATED],
+  ['contained', CONTAINED],
+];
+
+function runPackerSuite(): number {
+  console.log('\n── atlas packer + importer (issue #4) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  // --- PK01: the arrangement itself -----------------------------------------
+  const overlayCompile = compile(optsForFixture(OVERLAY));
+  const overlayPack = packAtlas(packInputsOf(overlayCompile.images), {});
+  const isPot = (n: number): boolean => n > 0 && (n & (n - 1)) === 0;
+  const placedRegions = new Set(overlayPack.placements.map((p) => p.region));
+  say(
+    'PK01_PACK_PUTS_EVERY_PART_ONTO_SHARED_PAGES',
+    overlayPack.pages.length === 1 &&
+      overlayCompile.images.length > 1 &&
+      placedRegions.size === overlayCompile.images.length &&
+      overlayPack.pages.every((p) => isPot(p.width) && isPot(p.height)) &&
+      overlayPack.pages.every((p) => p.width <= DEFAULT_PAGE_SIZE && p.height <= DEFAULT_PAGE_SIZE),
+    `${overlayCompile.images.length} loose part(s) -> ${overlayPack.pages.length} page(s) of ` +
+      `${overlayPack.pages.map((p) => `${p.width}x${p.height} at ${(p.occupancy * 100).toFixed(1)}%`).join(', ')}`,
+    'the npm keyword "atlas" promised this and nine loose PNGs used to compile to pages=9 regions=9 (issue #4, W14)',
+  );
+  say(
+    'PK01B_PAGE_EDGES_ARE_POWERS_OF_TWO',
+    overlayPack.pages.every((p) => isPot(p.width) && isPot(p.height)),
+    `${overlayPack.pages.map((p) => `${p.width}x${p.height}`).join(', ')}`,
+    'a region is sampled through `x / pageWidth`, and only a power-of-two denominator makes that division exact ' +
+      'in binary floating point — which is what keeps a packed sample on the same grid as an unpacked one',
+  );
+
+  // --- PK02: the exact claim -------------------------------------------------
+  const lossless = PACK_FIXTURES.map(([name, fixture]) => [name, losslessReport(fixture, DEFAULT_PADDING)] as const);
+  const losslessWrong = lossless.flatMap(([name, r]) => r.wrong.map((w) => `${name}/${w}`));
+  say(
+    'PK02_EVERY_PACKED_REGION_IS_A_LOSSLESS_COPY',
+    losslessWrong.length === 0,
+    `${lossless.reduce((n, [, r]) => n + r.regions, 0)} region(s) across ${lossless.length} fixtures lifted back ` +
+      'off their page and compared byte for byte against the loose PNG',
+    'this is the whole promise of the feature: packing is an arrangement of bytes, and a packer that resampled, ' +
+      'scaled, trimmed or turned anything would be changing the art while claiming to move it',
+  );
+  if (losslessWrong.length > 0) console.log(`          wrong: ${losslessWrong.slice(0, 5).join('; ')}`);
+
+  // --- PK03: determinism ----------------------------------------------------
+  // Two independent compiles, and the second one's images handed over SHUFFLED:
+  // the packer's own sort has to be the thing that decides the layout, because
+  // `Bun.Glob` and `readdirSync` are unsorted and a caller that ever gathered
+  // images that way would otherwise write a different page every run.
+  const againImages = compile(optsForFixture(OVERLAY)).images;
+  const shuffled = packInputsOf(againImages).slice().reverse();
+  const packA = packAtlas(packInputsOf(overlayCompile.images), {});
+  const packB = packAtlas(shuffled, {});
+  const pageBytes = (result: ReturnType<typeof packAtlas>): string =>
+    result.pages.map((p) => `${p.name}:${Buffer.from(p.plate.data).toString('base64').length}`).join('|');
+  const pngHash = (result: ReturnType<typeof packAtlas>): string =>
+    result.pages
+      .map((p) => {
+        const path = join(OVERLAY.dir, `det_${p.name}`);
+        p.plate.writePng(path);
+        return `${p.name}:${readFileSync(path).length}:${Buffer.from(readFileSync(path)).toString('base64').slice(-32)}`;
+      })
+      .join('|');
+  say(
+    'PK03_TWO_PACKS_OF_THE_SAME_PARTS_ARE_BYTE_IDENTICAL',
+    packA.atlasText === packB.atlasText &&
+      pageBytes(packA) === pageBytes(packB) &&
+      pngHash(packA) === pngHash(packB) &&
+      packA.pages.every((p, i) => p.plate.data.every((v, k) => v === packB.pages[i].plate.data[k])),
+    `atlas text and every page's pixels identical across two independent compiles, the second handed to the ` +
+      `packer in reverse order (${packA.placements.length} placements, ${packA.pages.length} page(s))`,
+    'a packer whose layout depended on the order it happened to receive its inputs would make every rebuild a ' +
+      'different artifact, and A18 would be checking one arbitrary run against another',
+  );
+
+  // --- PK04: padding ---------------------------------------------------------
+  // The gutter each region reserves is `padding` on every side, so two
+  // neighbours end up at least 2*padding apart and every region sits at least
+  // `padding` from the page edge. Measured as the smallest gap that exists.
+  let minGap = Infinity;
+  let minEdge = Infinity;
+  for (const [, fixture] of PACK_FIXTURES) {
+    const result = compile(optsForFixture(fixture));
+    const packed = packAtlas(packInputsOf(result.images), { padding: DEFAULT_PADDING });
+    for (const page of packed.pages) {
+      const on = packed.placements.filter((p) => packed.pages[p.page].name === page.name);
+      for (const a of on) {
+        minEdge = Math.min(minEdge, a.x, a.y, page.width - (a.x + a.width), page.height - (a.y + a.height));
+        for (const b of on) {
+          if (a === b) continue;
+          // Chebyshev gap between two axis-aligned rectangles: negative means overlap.
+          const dx = Math.max(a.x - (b.x + b.width), b.x - (a.x + a.width));
+          const dy = Math.max(a.y - (b.y + b.height), b.y - (a.y + a.height));
+          minGap = Math.min(minGap, Math.max(dx, dy));
+        }
+      }
+    }
+  }
+  say(
+    'PK04_NO_TWO_REGIONS_ARE_CLOSER_THAN_THE_PADDING',
+    minGap >= DEFAULT_PADDING && minEdge >= DEFAULT_PADDING,
+    `closest pair ${minGap === Infinity ? 'n/a' : minGap}px apart, closest page edge ${minEdge}px, ` +
+      `--padding ${DEFAULT_PADDING} across ${PACK_FIXTURES.length} fixtures`,
+    'the gutter is what the edge extrusion is written into, and two regions in adjacent texels put one drawing ' +
+      "inside the other's bilinear tap — which is PK06",
+  );
+
+  // --- PK05 / PK06: the rendered claim, and the control that gives it teeth ---
+  const deltas = PACK_FIXTURES.map(([name, fixture]) => {
+    const packed = packFixture(fixture, DEFAULT_PADDING);
+    return [name, renderDelta(packed.result, optsForFixture(fixture).outDir, packed.atlasText, packed.dir)] as const;
+  });
+  const exact = deltas.filter(([, d]) => d.samples === 0).map(([n]) => n);
+  say(
+    'PK05_A_PACKED_RENDER_NEVER_READS_A_WRONG_TEXEL',
+    deltas.every(([, d]) => d.frames > 0 && d.worst <= 1),
+    deltas
+      .map(
+        ([name, d]) =>
+          `${name}: ${d.frames} frame(s), ${d.samples}/${d.total} channel samples differ, worst ${d.worst}`,
+      )
+      .join('; ') + (exact.length ? ` — byte-identical on ${exact.join(', ')}` : ''),
+    'a wrong texel is the failure this whole feature can have, and it cannot hide under a bound of 1: the only ' +
+      "thing that reaches 1 is the sampling coordinate's last bit, because a packed region's UVs are x/pageWidth " +
+      'rather than 0..1. Anything that reads the wrong pixel is PK06-shaped',
+  );
+  const bleeds = PACK_FIXTURES.map(([name, fixture]) => {
+    const packed = packFixture(fixture, 0);
+    return [name, renderDelta(packed.result, optsForFixture(fixture).outDir, packed.atlasText, packed.dir)] as const;
+  });
+  say(
+    'PK06_A_MISSING_GUTTER_IS_LOUD_NOT_SUBTLE',
+    bleeds.every(([, d]) => d.worst > 1 && d.samples > 1000),
+    bleeds.map(([name, d]) => `${name}: ${d.samples} samples differ, worst ${d.worst}`).join('; ') +
+      ` — against ${deltas.map(([, d]) => d.samples).join('/')} and worst 1 at --padding ${DEFAULT_PADDING}`,
+    "red-first control for PK05: with --padding 0 the regions touch, bilinear reaches into the neighbour and the " +
+      'difference is three orders of magnitude bigger. If this ever stopped being loud, PK05 would stop meaning ' +
+      'anything',
+  );
+
+  // --- PK07 / PK08: the page's limits ---------------------------------------
+  const tooBig = refusalOf(() =>
+    packAtlas([{ region: 'wide', absPath: '/nowhere/wide.png', width: 200, height: 20 }], { pageSize: 128 }),
+  );
+  say(
+    'PK07_A_PART_TOO_BIG_FOR_THE_PAGE_IS_REFUSED_BY_NAME',
+    tooBig !== null &&
+      tooBig.includes('"wide"') &&
+      tooBig.includes('200x20') &&
+      tooBig.includes('204x24') &&
+      tooBig.includes('128x128') &&
+      tooBig.includes('--page-size'),
+    tooBig === null ? 'packed a 200px part onto a 128px page' : tooBig.slice(0, 170),
+    'the format cannot split one drawing across two pages, so the only alternatives are a bigger page and no ' +
+      'pack — and the message has to name both rather than leaving a part silently unplaced',
+  );
+  const spillDirs = writeProbeRig();
+  const spillResult = compile({
+    rigPath: spillDirs.rigPath,
+    motionPath: (() => {
+      const p = join(spillDirs.dir, 'probe.motion.json');
+      writeFileSync(p, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+      return p;
+    })(),
+    outDir: spillDirs.outDir,
+    imagesDir: spillDirs.dir,
+  });
+  // block.png is 12x8 and marker.png is 6x6; a 16x16 page holds one padded cell
+  // and not two, so this is the smallest possible spill.
+  const spilled = packAtlas(packInputsOf(spillResult.images), { pageSize: 16, padding: 1 });
+  const spillOverlaps = spilled.placements.some((a) =>
+    spilled.placements.some(
+      (b) =>
+        a !== b &&
+        a.page === b.page &&
+        a.x < b.x + b.width &&
+        b.x < a.x + a.width &&
+        a.y < b.y + b.height &&
+        b.y < a.y + a.height,
+    ),
+  );
+  say(
+    'PK08_A_SET_THAT_WILL_NOT_FIT_SPILLS_TO_ANOTHER_PAGE',
+    spilled.pages.length === 2 &&
+      spilled.placements.length === spillResult.images.length &&
+      !spillOverlaps &&
+      parseAtlasText(spilled.atlasText).pages.length === 2,
+    `${spillResult.images.length} part(s) on a 16x16 page -> ${spilled.pages.length} page(s): ` +
+      spilled.placements.map((p) => `${p.region}@${spilled.pages[p.page].name}`).join(', '),
+    'the alternative to a second page is overlapping two regions, which loads clean and draws one part over ' +
+      'another',
+  );
+
+  // --- PK09: the default emit, spelled out ----------------------------------
+  // Literal rather than a comparison against another run: `writeAtlasText` is
+  // now shared with the packer, and the thing that must not move is the exact
+  // text a build with no new flags has always written.
+  const oneImage: CompiledImage[] = [
+    { region: 'torso', page: '../parts/torso.png', absPath: '/x/torso.png', width: 40, height: 80, hasAlpha: true, isBase: false },
+    { region: 'head', page: '../parts/head.png', absPath: '/x/head.png', width: 24, height: 24, hasAlpha: true, isBase: false },
+  ];
+  const expectedDefault =
+    '../parts/torso.png\nsize: 40, 80\nfilter: Linear, Linear\npma: false\ntorso\nbounds: 0, 0, 40, 80\n' +
+    'offsets: 0, 0, 40, 80\nrotate: 0\n\n' +
+    '../parts/head.png\nsize: 24, 24\nfilter: Linear, Linear\npma: false\nhead\nbounds: 0, 0, 24, 24\n' +
+    'offsets: 0, 0, 24, 24\nrotate: 0\n';
+  say(
+    'PK09_THE_UNPACKED_EMIT_IS_BYTE_FOR_BYTE_WHAT_IT_ALWAYS_WAS',
+    buildAtlasText(oneImage) === expectedDefault,
+    'one page per part, one blank line between pages, no indentation, `rotate: 0` — asserted as the literal text',
+    'the body of the default emit moved into src/atlas.ts so the packer could share it, and "the defaults change ' +
+      'nothing" has to be a checked property of that move rather than a claim about two functions that look alike',
+  );
+
+  // --- PK10: the flag combinations that are refused -------------------------
+  const combos: Array<[string, string[], string]> = [
+    ['page-size without pack', ['--page-size', '512'], 'only means something with --pack'],
+    ['padding without pack', ['--padding', '4'], 'only means something with --pack'],
+    ['pack with copy-images', ['--pack', '--copy-images'], 'Drop --copy-images'],
+    ['pack with spine-html', ['--pack', '--profile', 'spine-html'], 'one part per page'],
+  ];
+  const comboDirs = writeProbeRig();
+  writeFileSync(join(comboDirs.dir, 'probe.motion.json'), `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+  const comboBase = [
+    'build',
+    '--rig', comboDirs.rigPath,
+    '--motion', join(comboDirs.dir, 'probe.motion.json'),
+    '--images', comboDirs.dir,
+    '--out', comboDirs.outDir,
+  ];
+  const comboResults = combos.map(([label, extra, needle]) => {
+    const run = runCli([...comboBase, ...extra]);
+    return { label, ok: run.status !== 0 && run.stderr.includes(needle), status: run.status, first: run.stderr.split('\n')[0] };
+  });
+  say(
+    'PK10_CONTRADICTORY_FLAG_PAIRS_ARE_REFUSED_BY_NAME',
+    comboResults.every((r) => r.ok),
+    comboResults.map((r) => `${r.label}: exit=${String(r.status)}`).join('; '),
+    'each pair asks one question twice and answers it differently; resolving one silently would ship an artifact ' +
+      'the caller did not describe',
+  );
+  if (!comboResults.every((r) => r.ok)) {
+    for (const r of comboResults.filter((x) => !x.ok)) console.log(`          ${r.label}: ${r.first}`);
+  }
+
+  // --- the importer ---------------------------------------------------------
+  const packedForImport = packFixture(OVERLAY, DEFAULT_PADDING);
+  const importOpts = { ...optsForFixture(OVERLAY), outDir: join(OVERLAY.dir, 'imported'), atlasInPath: join(packedForImport.dir, 'skeleton.atlas') };
+  const imported = compile(importOpts);
+  say(
+    'PK11_IMPORT_RESOLVES_EVERY_PART_AGAINST_THE_PACK',
+    imported.images.length === packedForImport.result.images.length &&
+      imported.images.every((img) => img.atlas !== undefined) &&
+      imported.skeletonText === packedForImport.result.skeletonText,
+    `${imported.images.length} part(s) resolved to regions of ${packedForImport.pages.join(', ')}; the skeleton is ` +
+      'byte-identical to the loose build',
+    'R5: sizes are still the drawings\' own (the region\'s originalWidth/Height), so how the pixels were delivered ' +
+      'cannot change the skeleton — and it is the skeleton that every downstream measurement is taken from',
+  );
+
+  // Round trip: rigc packed this atlas, so importing it and emitting again must
+  // reproduce it. Only the page NAME line may move, because it is a path and the
+  // output directory changed.
+  const roundTripped = imported.atlasText.split('\n').slice(1).join('\n');
+  const original = packedForImport.atlasText.split('\n').slice(1).join('\n');
+  // …and spine-core has to agree that the regions land where the pack put them.
+  const spineAtlas = new TextureAtlas(packedForImport.atlasText);
+  const spinePages = new Map(packedForImport.pages.map((name) => [name, readPlate(join(packedForImport.dir, name))]));
+  const uvMisses: string[] = [];
+  for (const region of spineAtlas.regions) {
+    const plate = spinePages.get(region.page.name);
+    const source = packInputsOf(packedForImport.result.images).find((i) => i.region === region.name.trim());
+    if (!plate || !source) {
+      uvMisses.push(`${region.name.trim()} (no page or no part)`);
+      continue;
+    }
+    const loose = readPlate(source.absPath);
+    // Straight off spine-core's own u/v rather than off the parse above: the
+    // runtime is what will resolve these at load time, so it is the runtime's
+    // arithmetic that has to land on the drawing.
+    const x0 = Math.round(region.u * region.page.width);
+    const y0 = Math.round(region.v * region.page.height);
+    let mismatch: string | null = null;
+    for (let y = 0; y < loose.height && mismatch === null; y++) {
+      for (let x = 0; x < loose.width; x++) {
+        const a = loose.get(x, y);
+        const b = plate.get(x0 + x, y0 + y);
+        if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3]) continue;
+        mismatch = `${region.name.trim()} at ${x},${y}: [${a}] vs [${b}]`;
+        break;
+      }
+    }
+    if (mismatch) uvMisses.push(mismatch);
+  }
+  const importedDelta = renderDelta(imported, importOpts.outDir, imported.atlasText, dirname(importOpts.atlasInPath));
+  say(
+    'PK12_PACK_THEN_IMPORT_ROUND_TRIPS_AND_THE_UVS_LAND_ON_THE_DRAWING',
+    roundTripped === original &&
+      uvMisses.length === 0 &&
+      importedDelta.frames > 0 &&
+      importedDelta.worst <= 1,
+    `every field below the page-name line identical; spine-core's own u/v put all ${spineAtlas.regions.length} ` +
+      `region(s) on the right pixels; ${importedDelta.frames} rendered frame(s) differ in ${importedDelta.samples} ` +
+      `sample(s), worst ${importedDelta.worst}`,
+    'the natural self-test for an importer is the emitter it has to agree with, and a UV check through the RUNTIME ' +
+      "is the only one that answers 'will the thing that loads this find the drawing'",
+  );
+  if (uvMisses.length > 0) console.log(`          uv misses: ${uvMisses.slice(0, 3).join('; ')}`);
+
+  // --- PK13-PK16: the importer's refusals ------------------------------------
+  const atlasPath = join(packedForImport.dir, 'skeleton.atlas');
+  const atlasSource = readFileSync(atlasPath, 'utf8');
+  const variant = (name: string, text: string): string => {
+    const dir = join(OVERLAY.dir, `atlas_in_${name}`);
+    mkdirSync(dir, { recursive: true });
+    for (const page of packedForImport.pages) copyFileSync(join(packedForImport.dir, page), join(dir, page));
+    const path = join(dir, 'skeleton.atlas');
+    writeFileSync(path, text);
+    return path;
+  };
+  const importFrom = (path: string): string | null =>
+    refusalOf(() => compile({ ...optsForFixture(OVERLAY), outDir: join(OVERLAY.dir, 'imported_bad'), atlasInPath: path }));
+
+  // The base plate is the manifest's one UNCONDITIONAL `image`, which is the
+  // entry the brief's refusal is about; a state is optional and takes the DROP
+  // path below.
+  const renamed = importFrom(variant('renamed', atlasSource.replace(/^00_stage$/m, '00_stagee')));
+  say(
+    'PK13_A_REGION_THE_ATLAS_DOES_NOT_HAVE_IS_REFUSED_WITH_ITS_NEAR_MISSES',
+    renamed !== null &&
+      renamed.includes('"00_stage"') &&
+      renamed.includes('does not have') &&
+      renamed.includes('"00_stagee"') &&
+      renamed.includes('region(s):'),
+    renamed === null ? 'compiled against an atlas missing the region' : renamed.slice(0, 190),
+    'an attachment that resolves to no region does not fail — `AtlasAttachmentLoader` returns null and the part ' +
+      'silently does not draw. The commonest cause is one character, so the message costs a Levenshtein pass',
+  );
+
+  // An OPTIONAL state is the one absence that is not a refusal, in either
+  // delivery: a manifest can outlive art the pipeline dropped, and rigc has
+  // always reported that as a DROP rather than deciding for the author. What it
+  // must not do is report it as a missing FILE — an `--atlas-in` build opened no
+  // file, and sending the reader to a directory hides the pack that is short a
+  // region.
+  const droppedAtlas = variant('dropped', atlasSource.replace(/^iris_open$/m, 'iris_opne'));
+  const dropped = (() => {
+    try {
+      return compile({
+        ...optsForFixture(OVERLAY),
+        outDir: join(OVERLAY.dir, 'imported_dropped'),
+        atlasInPath: droppedAtlas,
+      }).droppedStates;
+    } catch {
+      // The motion spec keys that state, so the compile still stops — later, and
+      // for a different reason. The DROP is what this control is about, and it is
+      // recorded before that happens; a throw here means it was not.
+      return null;
+    }
+  })();
+  const droppedNote = dropped?.find((d) => d.state === 'open');
+  const droppedLoose = compile({ ...optsForFixture(OVERLAY), outDir: join(OVERLAY.dir, 'imported_loose_drop') }).droppedStates;
+  say(
+    'PK13B_A_DROPPED_STATE_NAMES_WHAT_WAS_CONSULTED',
+    (droppedNote === undefined || (droppedNote.why ?? '').includes('no region "iris_open"')) &&
+      droppedLoose.every((d) => d.why === undefined),
+    droppedNote === undefined
+      ? `the compile stopped before the DROP could be recorded (dropped=${dropped === null ? 'threw' : String(dropped.length)})`
+      : `import: ${JSON.stringify(droppedNote.why)}; loose build reports ${droppedLoose.length} drop(s) with no ` +
+        '`why`, so its message is the one it always was',
+    '"no PNG at parts/iris_open.png" is a false statement about a build that never opened a PNG, and it is the ' +
+      'sort of message that sends an author to re-export art when the pack is what is short a region',
+  );
+
+  const resized = importFrom(variant('resized', atlasSource.replace('bounds: ', 'bounds: ').replace(/^offsets: 0, 0, 96, 64$/m, 'offsets: 0, 0, 96, 65')));
+  say(
+    'PK14_A_SIZE_THE_SPEC_DISAGREES_WITH_IS_REFUSED_BY_NAME',
+    resized !== null && resized.includes('96x65') && (resized.includes('manifest window') || resized.includes('declares')),
+    resized === null ? 'compiled against a region a pixel taller than the spec' : resized.slice(0, 190),
+    'a region whose size disagrees with the spec loads fine and collapses the quad — the same silence A06 exists ' +
+      'for, one link earlier in the chain',
+  );
+
+  const noPage = importFrom(variant('nopage', atlasSource.replace(/^skeleton\.png$/m, 'absent.png')));
+  say(
+    'PK15_A_PAGE_THE_ATLAS_NAMES_AND_THE_DISK_LACKS_IS_REFUSED',
+    noPage !== null && noPage.includes('absent.png') && noPage.includes('not on disk'),
+    noPage === null ? 'compiled against an atlas naming a page that is not there' : noPage.slice(0, 170),
+    'A17 catches this on the way OUT; catching it on the way IN names the atlas that is wrong rather than the ' +
+      'artifact rigc then wrote from it',
+  );
+
+  const offPage = importFrom(variant('offpage', atlasSource.replace(/^bounds: (\d+), (\d+), 96, 64$/m, 'bounds: 9000, $2, 96, 64')));
+  say(
+    'PK16_A_RECTANGLE_THAT_RUNS_OFF_ITS_PAGE_IS_REFUSED',
+    offPage !== null && offPage.includes('runs off the page'),
+    offPage === null ? 'accepted a region whose rectangle leaves the page' : offPage.slice(0, 170),
+    'x + width past the page width makes u2 > 1, which samples whatever the wrap mode does — never what the pack ' +
+      'meant, and never visible in the file',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// the atlas reader against the runtime that owns the format — issue #4
+// ---------------------------------------------------------------------------
+//
+// 🚨 `src/atlas.ts` holds a SECOND parser for a format `spine-core` already
+// parses, and it holds one because `src/compile.ts` must stay independent of the
+// runtime. A second opinion about a file format is a liability, so it is measured
+// rather than asserted: every `.atlas` in the example corpus is parsed both ways
+// and every field of every region compared. The corpus is the right subject
+// because it is the only atlas collection here that rigc did not write — 13 to 50
+// regions a page, two `rotate: 90`, one `rotate: 270`, one `pma: true`, five
+// `scale:` lines and trims throughout.
+//
+// Returns null when `examples/` is absent, and the run says so rather than
+// counting a suite that never ran.
+function runAtlasReaderSuite(): number | null {
+  const dir = resolve(import.meta.dir, 'examples');
+  if (!existsSync(dir)) return null;
+  const atlases: string[] = [];
+  for (const example of readdirSync(dir).sort()) {
+    const exportDir = join(dir, example, 'export');
+    if (!existsSync(exportDir)) continue;
+    for (const file of readdirSync(exportDir).sort()) {
+      if (file.endsWith('.atlas')) atlases.push(join(exportDir, file));
+    }
+  }
+  if (atlases.length === 0) return null;
+
+  console.log('\n── the atlas reader against spine-core (issue #4) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const mismatches: string[] = [];
+  let regionCount = 0;
+  let rotated = 0;
+  for (const path of atlases) {
+    const text = readFileSync(path, 'utf8');
+    const mine = parseAtlasText(text);
+    const theirs = new TextureAtlas(text);
+    if (mine.pages.length !== theirs.pages.length) {
+      mismatches.push(`${basename(path)}: ${mine.pages.length} pages vs ${theirs.pages.length}`);
+      continue;
+    }
+    for (let i = 0; i < mine.pages.length; i++) {
+      const a = mine.pages[i];
+      const b = theirs.pages[i];
+      if (a.name !== b.name || a.width !== b.width || a.height !== b.height || a.pma !== b.pma) {
+        mismatches.push(`${basename(path)} page ${i}: ${a.name}/${a.width}x${a.height}/${a.pma} vs ${b.name}/${b.width}x${b.height}/${b.pma}`);
+      }
+    }
+    if (mine.regions.length !== theirs.regions.length) {
+      mismatches.push(`${basename(path)}: ${mine.regions.length} regions vs ${theirs.regions.length}`);
+      continue;
+    }
+    for (let i = 0; i < mine.regions.length; i++) {
+      const a = mine.regions[i];
+      const b = theirs.regions[i];
+      regionCount++;
+      if (a.degrees !== 0) rotated++;
+      const fields: Array<[string, number | string, number | string]> = [
+        ['name', a.name, b.name],
+        ['x', a.x, b.x],
+        ['y', a.y, b.y],
+        ['width', a.width, b.width],
+        ['height', a.height, b.height],
+        ['offsetX', a.offsetX, b.offsetX],
+        ['offsetY', a.offsetY, b.offsetY],
+        ['originalWidth', a.originalWidth, b.originalWidth],
+        ['originalHeight', a.originalHeight, b.originalHeight],
+        ['degrees', a.degrees, b.degrees],
+        ['index', a.index, b.index],
+      ];
+      for (const [field, ours, runtime] of fields) {
+        if (ours !== runtime) mismatches.push(`${basename(path)} ${a.name.trim()}.${field}: ${ours} vs ${runtime}`);
+      }
+    }
+  }
+  say(
+    'PKR01_THE_READER_AGREES_WITH_SPINE_CORE_ON_EVERY_CORPUS_ATLAS',
+    mismatches.length === 0,
+    `${atlases.length} atlas file(s), ${regionCount} region(s) (${rotated} rotated), every field compared against ` +
+      "the runtime's own parse",
+    'the importer reads geometry off a file and hands it to the compiler; if this reader and the runtime that will ' +
+      'load the result disagree by one field, rigc measures one atlas and the player draws another',
+  );
+  if (mismatches.length > 0) console.log(`          ${mismatches.slice(0, 5).join('; ')}`);
+
+  // A rotated region is the one shape `extractRegion` will not guess at.
+  const rotatedRegion = (() => {
+    for (const path of atlases) {
+      for (const region of parseAtlasText(readFileSync(path, 'utf8')).regions) {
+        if (region.degrees !== 0) return region;
+      }
+    }
+    return null;
+  })();
+  const rotationRefusal = rotatedRegion === null ? null : refusalOf(() => extractRegion(new Plate(4, 4), rotatedRegion));
+  say(
+    'PKR02_A_ROTATED_REGION_IS_REFUSED_RATHER_THAN_GUESSED',
+    rotatedRegion !== null && rotationRefusal !== null && rotationRefusal.includes(`rotate: ${rotatedRegion.degrees}`),
+    rotatedRegion === null
+      ? 'the corpus carries no rotated region, so this control had nothing to refuse'
+      : `"${rotatedRegion.name.trim()}" at rotate: ${rotatedRegion.degrees}: ${(rotationRefusal ?? '').slice(0, 120)}`,
+    'the runtime transposes u2/v2 at 90 and not at 270, and computeUVs assigns a different corner order at 90 — ' +
+      'there are already three opinions about that mapping and a fourth guess would be silent',
+  );
+
+  // `rewritePageNames` is the importer's whole emitter, so what it does NOT
+  // touch is the load-bearing half. The corpus's `scale:` lines are the
+  // expensive example: a re-serialiser that dropped them would stop `atlasScales`
+  // reporting that a pack is coarser than its drawings (issue #171).
+  const scaled = atlases.find((p) => readFileSync(p, 'utf8').includes('scale:'));
+  const scaleKept = ((): { onlyNameLines: boolean; scales: string; wanted: string } | null => {
+    if (scaled === undefined) return null;
+    const text = readFileSync(scaled, 'utf8');
+    const parsed = parseAtlasText(text);
+    const rewritten = rewritePageNames(parsed, (name) => `moved/${name}`);
+    const before = text.split(/\r\n|\r|\n/);
+    const after = rewritten.split('\n');
+    const changed = before.map((line, i) => (line === after[i] ? null : i)).filter((i): i is number => i !== null);
+    const nameLines = parsed.pages.map((p) => p.nameLine).sort((a, b) => a - b);
+    return {
+      onlyNameLines: changed.join(',') === nameLines.join(','),
+      scales: atlasScales(rewritten).join(','),
+      wanted: atlasScales(text).join(','),
+    };
+  })();
+  say(
+    'PKR03_REWRITING_PAGE_NAMES_TOUCHES_ONLY_THE_NAME_LINES',
+    scaleKept !== null && scaleKept.onlyNameLines && scaleKept.scales === scaleKept.wanted && scaleKept.scales !== '',
+    scaled === undefined
+      ? 'no corpus atlas carries a `scale:` line'
+      : `${basename(scaled)}: only the page-name line(s) changed, scale ${scaleKept?.scales} still read back`,
+    '`--atlas-in` emits the imported atlas by rewriting its page paths, and a field this compiler has no reader ' +
+      'for must survive the trip — dropping one would change the meaning of a file rigc was asked to pass through',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // the extra suite — a project's own cuts, when it points the run at them
 // ---------------------------------------------------------------------------
 //
@@ -8555,6 +9257,13 @@ function main(): void {
   substantive += 13;
   bad += runCopyImagesSuite();
   substantive += 3;
+  bad += runPackerSuite();
+  substantive += 18;
+  const atlasReaderBad = runAtlasReaderSuite();
+  if (atlasReaderBad !== null) {
+    bad += atlasReaderBad;
+    substantive += 3;
+  }
   const diffBad = runDiffSuite();
   if (diffBad !== null) {
     bad += diffBad;
@@ -8661,6 +9370,18 @@ function main(): void {
       'elsewhere refused as the typo it is, an animation no candidate has refused by name, `vote` in the help, and ' +
       'the player referenced rather than vendored)' +
       ', + 3 copy-images controls (self-contained out dir, unchanged default, deterministic basename collision)' +
+      ', + 18 packer/importer controls (shared pages on power-of-two edges, every region a lossless copy, two ' +
+      'packs byte-identical from shuffled input, the padding respected on every pair, a packed render that never ' +
+      'reads a wrong texel with the gutterless case three orders of magnitude louder, an oversized part and a ' +
+      'spill both named, the unpacked emit asserted as literal text, four refused flag pairs, and an importer ' +
+      'that round-trips rigc\'s own pack, lands the runtime\'s UVs on the drawing, refuses a missing region, a ' +
+      'size conflict, an absent page and a rectangle off its page, and names the ATLAS rather than a file when an ' +
+      'optional state is not in the pack)' +
+      (atlasReaderBad === null
+        ? '\n  ⚠️ The example corpus is absent, so the atlas READER was never compared against spine-core in this ' +
+          'run — `src/atlas.ts` holds a second parser for the format and this run does not cover it.'
+        : ', + 3 atlas-reader controls (every field of every corpus region against the runtime\'s own parse, a ' +
+          'rotated region refused rather than guessed, page-name rewriting that touches only the name lines)') +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (launcher.startsWith(',') ? '' : launcher) +
