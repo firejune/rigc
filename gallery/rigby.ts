@@ -252,6 +252,161 @@ export function rigbyParts(): Part[] {
   ];
 }
 
+// --- optional parts, asked for by name -------------------------------------
+//
+// ⭐ These are NOT in {@link rigbyParts}, and that is the whole point of the
+// split: `rasterise(rigbyParts(), …)` writes every part in the list, so adding
+// a leg segment or a prop there would drop unused PNGs into every other
+// example's `parts/` the next time its art script ran. They live here rather
+// than in one example's own script because they are the *character's* — a
+// segmented leg and his ball are Rigby, and a second drawing of either is a
+// second character.
+
+/** The leg, split at the knee — hip-to-knee. See {@link legSegments}. */
+const THIGH_BODY = (fill: string): string => `
+  <path d="M32 6 C 50 6, 57 20, 57 42 L 57 62 C 57 82, 47 90, 32 90 C 17 90, 7 82, 7 62 L 7 42 C 7 20, 14 6, 32 6 Z"
+        fill="${fill}" stroke="${INK}" stroke-width="${SW}"/>
+  <path d="M16 32 A 22 26 0 0 1 34 14" fill="none" stroke="${FUR_LT}" stroke-width="10" stroke-linecap="round" opacity="0.5"/>
+`;
+
+/** The leg, split at the knee — knee-to-sole, foot pad included. */
+const SHIN_BODY = (fill: string): string => `
+  <path d="M32 6 C 48 6, 55 18, 55 38 L 55 64 C 55 86, 46 96, 32 96 C 18 96, 9 86, 9 64 L 9 38 C 9 18, 16 6, 32 6 Z"
+        fill="${fill}" stroke="${INK}" stroke-width="${SW}"/>
+  <ellipse cx="32" cy="76" rx="19" ry="13" fill="${FUR_LT}"/>
+  <path d="M23 80 l 0 11 M32 81 l 0 12 M41 80 l 0 11" stroke="${INK}" stroke-width="5" stroke-linecap="round" opacity="0.55"/>
+`;
+
+/**
+ * The leg in two plates, for a knee — `<suffix>` names the pair.
+ *
+ * 🚨 **Both plates are drawn from their own joint, and the joint's position in
+ * each is a number the rig has to know.** The hip pivot is at (32, 20) in the
+ * thigh and the knee pivot at (32, 20) in the shin; the knee is at (32, 76) in
+ * the thigh and the sole at (32, 94) in the shin. Those four points are what a
+ * two-bone IK chain's `length` and its attachment offsets are measured from —
+ * `gallery/walk/rig.json` states all four and its README shows the arithmetic.
+ *
+ * The near and far leg are one drawing in two fur tones, the way the far arm
+ * already is: that is what reads as depth on a flat figure, and it costs a
+ * parameter rather than a second drawing.
+ */
+export function legSegments(suffix: string, fill: string): Part[] {
+  return [part(`thigh_${suffix}`, 64, 96, THIGH_BODY(fill)), part(`shin_${suffix}`, 64, 102, SHIN_BODY(fill))];
+}
+
+/**
+ * Rigby's ball — the companion prop, and the part `gallery/squash` bends.
+ *
+ * A plain disc rather than anything clever, because every vertex offset in a
+ * `deform` timeline has to be readable against a shape a reader can hold in
+ * their head. A circle of known radius is that shape.
+ *
+ * 🚨 **The two radii below are not the same number and the gap between them is
+ * load-bearing.** {@link R_BALL_INK} is where the ink outline ends;
+ * {@link R_BALL_RIM} is where a mesh's eight rim vertices sit, and eight
+ * vertices form an **octagon**, whose sides pass `R · cos(22.5°)` from the
+ * centre — 8% closer in than its own vertices. Texture outside a mesh's
+ * triangles is not drawn, so a rim placed *on* the silhouette eats the outline
+ * everywhere except along the eight spokes and the ball renders as a flat teal
+ * disc with no line around it. Nothing reports that: the mesh is valid, the uvs
+ * are in range, the gate is green (issue #277). The **inradius** is what has to
+ * clear the art:
+ *
+ *     R_BALL_RIM · cos(π / 8) = 110 · 0.92388 = 101.6  >  94.5 = R_BALL_INK
+ */
+export const R_BALL_INK = 94.5;
+export const R_BALL_RIM = 110;
+/** Half the ball part's canvas. The rim must fit inside it or the uvs leave 0..1. */
+export const R_BALL_CANVAS = 120;
+
+export function ballPart(): Part {
+  const m = R_BALL_CANVAS;
+  return part(
+    'ball',
+    2 * m,
+    2 * m,
+    `
+  <ellipse cx="${m}" cy="${m}" rx="${R_BALL_INK - SW / 2}" ry="${R_BALL_INK - SW / 2}"
+           fill="${TEAL}" stroke="${INK}" stroke-width="${SW}"/>
+  <path d="M${m - 76} ${m + 20} C ${m - 43} ${m + 47}, ${m + 43} ${m + 47}, ${m + 76} ${m + 20}"
+        fill="none" stroke="${TEAL_DK}" stroke-width="11" stroke-linecap="round" opacity="0.85"/>
+  <path d="M${m - 60} ${m - 37} C ${m - 31} ${m - 56}, ${m + 31} ${m - 56}, ${m + 60} ${m - 37}"
+        fill="none" stroke="${TEAL_DK}" stroke-width="9" stroke-linecap="round" opacity="0.45"/>
+  <ellipse cx="${m - 31}" cy="${m - 31}" rx="24" ry="17" fill="${FUR_LT}" opacity="0.75"/>
+`,
+  );
+}
+
+/**
+ * A soft cast shadow, as its own part.
+ *
+ * A stage plate can bake the shadow of anything that stands still. This one is
+ * for something that does not: a slot's own bone can scale and fade it, which is
+ * how a bouncing prop keeps its contact with the ground while it is nowhere near
+ * it. `id` is in the markup, so a part list may only hold one of these.
+ */
+export function castShadowPart(name: string, rx: number, ry: number): Part {
+  const w = Math.ceil(2 * rx) + 8;
+  const h = Math.ceil(2 * ry) + 8;
+  return part(
+    name,
+    w,
+    h,
+    `
+  <defs>
+    <radialGradient id="cast" gradientUnits="userSpaceOnUse" cx="${w / 2}" cy="${h / 2}" r="${rx}"
+                    gradientTransform="translate(${w / 2} ${h / 2}) scale(1 ${(ry / rx).toFixed(6)}) translate(${-w / 2} ${-h / 2})">
+      <stop offset="0"    stop-color="#000000" stop-opacity="0.62"/>
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0.30"/>
+      <stop offset="1"    stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="${w / 2}" cy="${h / 2}" rx="${rx}" ry="${ry}" fill="url(#cast)"/>
+`,
+  );
+}
+
+/**
+ * A stage plate: flat ground, a glow behind the figure, a baked contact shadow.
+ *
+ * Every number is in **plate pixels, y down** — the frame the part bodies above
+ * are written in — so a caller converts once, out of the rig spec's y-up world.
+ * `gallery/stage.ts` is what does that conversion, and it reads the bone
+ * positions rather than repeating them: two copies of these coordinates is
+ * exactly how a contact shadow ends up under nobody's feet.
+ */
+export function stagePlatePart(
+  width: number,
+  height: number,
+  glow: { x: number; y: number; r: number },
+  shadow: { x: number; y: number; rx: number; ry: number },
+): Part {
+  return part(
+    'plate',
+    width,
+    height,
+    `
+  <defs>
+    <radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="${glow.x}" cy="${glow.y}" r="${glow.r}">
+      <stop offset="0"    stop-color="#3b4859" stop-opacity="0.85"/>
+      <stop offset="0.45" stop-color="#2a3340" stop-opacity="0.44"/>
+      <stop offset="1"    stop-color="${GROUND}" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="floor" gradientUnits="userSpaceOnUse" cx="${shadow.x}" cy="${shadow.y}" r="${shadow.rx}"
+                    gradientTransform="translate(${shadow.x} ${shadow.y}) scale(1 ${(shadow.ry / shadow.rx).toFixed(6)}) translate(${-shadow.x} ${-shadow.y})">
+      <stop offset="0"   stop-color="#000000" stop-opacity="0.58"/>
+      <stop offset="0.6" stop-color="#000000" stop-opacity="0.24"/>
+      <stop offset="1"   stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="${width}" height="${height}" fill="${GROUND}"/>
+  <rect x="0" y="0" width="${width}" height="${height}" fill="url(#glow)"/>
+  <ellipse cx="${shadow.x}" cy="${shadow.y}" rx="${shadow.rx}" ry="${shadow.ry}" fill="url(#floor)"/>
+`,
+  );
+}
+
 // --- rasterising -----------------------------------------------------------
 
 /**

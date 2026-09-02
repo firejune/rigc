@@ -1,0 +1,163 @@
+{
+  "spec": "rigc-motion/1",
+  "archetype": "squash",
+  "cut": "gallery-squash",
+
+  "easings": {
+    "gather": [0.42, 0, 0.8, 0.36],
+    "charge": [0.1, 0.72, 0.34, 1],
+    "settle": [0.28, 0, 0.36, 1]
+  },
+
+  "groups": {
+    "ears": ["ear_l", "ear_r"]
+  },
+
+  "animations": {
+    "bounce": {
+      "duration": 0.8,
+      "loop": true,
+      "note": "One bounce in 0.8 s, apex on the seam and impact at 0.4. The ball's shape is a deform timeline on its 9-vertex mesh: stretched along travel while it is fast, squashed about its contact point for the 0.12 s it is on the ground, round at the apex where it is momentarily still. Every offset in that timeline is one affine transform of the setup geometry — the two are written out in README.md. Rigby's recoil, blink and scarf are follow-through offsets from the impact, per MOTION.md 3.7.",
+
+      "tracks": [
+        {
+          "bone": "ball",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [150], "ease": "gather" },
+            { "t": 0.4, "v": [0], "ease": "charge" },
+            { "t": 0.8, "v": [150] }
+          ]
+        },
+
+        {
+          "bone": "shadow",
+          "property": "scale",
+          "keys": [
+            { "t": 0, "v": [0.55, 0.55], "ease": "gather" },
+            { "t": 0.4, "v": [1.15, 1.15], "ease": "charge" },
+            { "t": 0.8, "v": [0.55, 0.55] }
+          ]
+        },
+        {
+          "slot": "shadow",
+          "property": "rgba",
+          "keys": [
+            { "t": 0, "v": [1, 1, 1, 0.45], "ease": "gather" },
+            { "t": 0.4, "v": [1, 1, 1, 1], "ease": "charge" },
+            { "t": 0.8, "v": [1, 1, 1, 0.45] }
+          ]
+        },
+
+        {
+          "bone": "chest",
+          "property": "translate",
+          "keys": [
+            { "t": 0, "v": [0, 0], "ease": "gather" },
+            { "t": 0.44, "v": [0, -6], "ease": "charge" },
+            { "t": 0.64, "v": [0, 1.5], "ease": "settle" },
+            { "t": 0.8, "v": [0, 0] }
+          ]
+        },
+        {
+          "group": "ears",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "charge" },
+            { "t": 0.2, "v": [3], "ease": "settle" },
+            { "t": 0.6, "v": [-3], "ease": "charge" },
+            { "t": 0.8, "v": [0] }
+          ]
+        },
+        {
+          "bone": "head",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [-1.45], "ease": "settle" },
+            { "t": 0.344, "v": [1.6], "ease": "settle" },
+            { "t": 0.744, "v": [-1.6], "ease": "settle" },
+            { "t": 0.8, "v": [-1.45] }
+          ]
+        },
+        {
+          "bone": "tail",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "gather" },
+            { "t": 0.56, "v": [-6], "ease": "charge" },
+            { "t": 0.72, "v": [2], "ease": "settle" },
+            { "t": 0.8, "v": [0] }
+          ]
+        },
+        {
+          "slot": "eyes",
+          "property": "attachment",
+          "keys": [
+            { "t": 0, "v": "eyes" },
+            { "t": 0.399999, "v": "eyes_shut" },
+            { "t": 0.48, "v": "eyes" }
+          ]
+        }
+      ],
+
+      "deform": [
+        {
+          "slot": "ball",
+          "attachment": "ball",
+          "keys": [
+            { "t": 0, "ease": "gather" },
+            {
+              "t": 0.34,
+              "fromVertex": 0,
+              "vertices": [
+                -13.2, 0,
+                -9.334, 12.445,
+                0, 17.6,
+                9.334, 12.445,
+                13.2, 0,
+                9.334, -12.445,
+                0, -17.6,
+                -9.334, -12.445,
+                0, 0
+              ],
+              "ease": "gather"
+            },
+            {
+              "t": 0.4,
+              "fromVertex": 0,
+              "vertices": [
+                22, -28.6,
+                15.556, -48.823,
+                0, -57.2,
+                -15.556, -48.823,
+                -22, -28.6,
+                -15.556, -8.377,
+                0, 0,
+                15.556, -8.377,
+                0, -28.6
+              ],
+              "ease": "charge"
+            },
+            {
+              "t": 0.46,
+              "fromVertex": 0,
+              "vertices": [
+                -13.2, 0,
+                -9.334, 12.445,
+                0, 17.6,
+                9.334, 12.445,
+                13.2, 0,
+                9.334, -12.445,
+                0, -17.6,
+                -9.334, -12.445,
+                0, 0
+              ],
+              "ease": "settle"
+            },
+            { "t": 0.8 }
+          ]
+        }
+      ]
+    }
+  }
+}

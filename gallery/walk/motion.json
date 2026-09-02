@@ -1,0 +1,158 @@
+{
+  "spec": "rigc-motion/1",
+  "archetype": "walk",
+  "cut": "gallery-walk",
+
+  "easings": {
+    "gather": [0.42, 0, 0.8, 0.36],
+    "charge": [0.1, 0.72, 0.34, 1],
+    "settle": [0.28, 0, 0.36, 1],
+    "breathe": [0.45, 0, 0.55, 1]
+  },
+
+  "groups": {
+    "ears": ["ear_l", "ear_r"]
+  },
+
+  "animations": {
+    "walk": {
+      "duration": 0.9,
+      "loop": true,
+      "note": "Two steps in 0.9 s. The feet are IK targets under `ground`, so a planted foot stays on the contact line while the hip bobs; the ik timelines let each leg go at the top of its lift and take hold of it again at contact. Follow-through offsets are MOTION.md 3.7's, as fractions of the duration: chest +10%, head +20%, arm hand +15%, scarf +30%, ears +25%.",
+
+      "tracks": [
+        {
+          "bone": "foot_f",
+          "property": "translate",
+          "keys": [
+            { "t": 0, "v": [0, 0], "ease": "settle" },
+            { "t": 0.45, "v": [0, 0], "ease": "gather" },
+            { "t": 0.5625, "v": [-4, 20], "ease": "breathe" },
+            { "t": 0.675, "v": [2, 28], "ease": "breathe" },
+            { "t": 0.7875, "v": [4, 14], "ease": "charge" },
+            { "t": 0.9, "v": [0, 0] }
+          ]
+        },
+        {
+          "bone": "foot_b",
+          "property": "translate",
+          "keys": [
+            { "t": 0, "v": [0, 0], "ease": "gather" },
+            { "t": 0.1125, "v": [4, 20], "ease": "breathe" },
+            { "t": 0.225, "v": [-2, 28], "ease": "breathe" },
+            { "t": 0.3375, "v": [-4, 14], "ease": "charge" },
+            { "t": 0.45, "v": [0, 0], "ease": "settle" },
+            { "t": 0.9, "v": [0, 0] }
+          ]
+        },
+
+        {
+          "bone": "hip",
+          "property": "translate",
+          "keys": [
+            { "t": 0, "v": [0, 0], "ease": "settle" },
+            { "t": 0.225, "v": [3, 8], "ease": "settle" },
+            { "t": 0.45, "v": [0, 0], "ease": "settle" },
+            { "t": 0.675, "v": [-3, 8], "ease": "settle" },
+            { "t": 0.9, "v": [0, 0] }
+          ]
+        },
+
+        {
+          "bone": "chest",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [-1.18], "ease": "settle" },
+            { "t": 0.315, "v": [2], "ease": "settle" },
+            { "t": 0.765, "v": [-2], "ease": "settle" },
+            { "t": 0.9, "v": [-1.18] }
+          ]
+        },
+        {
+          "bone": "head",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [1.33], "ease": "settle" },
+            { "t": 0.405, "v": [-1.4], "ease": "settle" },
+            { "t": 0.855, "v": [1.4], "ease": "settle" },
+            { "t": 0.9, "v": [1.33] }
+          ]
+        },
+        {
+          "group": "ears",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [3], "ease": "charge" },
+            { "t": 0.225, "v": [-3], "ease": "charge" },
+            { "t": 0.45, "v": [3], "ease": "charge" },
+            { "t": 0.675, "v": [-3], "ease": "charge" },
+            { "t": 0.9, "v": [3] }
+          ]
+        },
+        {
+          "bone": "tail",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [-2.94], "ease": "settle" },
+            { "t": 0.135, "v": [-5], "ease": "charge" },
+            { "t": 0.585, "v": [5], "ease": "charge" },
+            { "t": 0.9, "v": [-2.94] }
+          ]
+        },
+
+        {
+          "bone": "arm_f",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [-4.12], "ease": "settle" },
+            { "t": 0.315, "v": [7], "ease": "settle" },
+            { "t": 0.765, "v": [-7], "ease": "settle" },
+            { "t": 0.9, "v": [-4.12] }
+          ]
+        },
+        {
+          "bone": "arm_b",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [4.12], "ease": "settle" },
+            { "t": 0.315, "v": [-7], "ease": "settle" },
+            { "t": 0.765, "v": [7], "ease": "settle" },
+            { "t": 0.9, "v": [4.12] }
+          ]
+        },
+        {
+          "bone": "hand_f",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [5], "ease": "settle" },
+            { "t": 0.45, "v": [-5], "ease": "settle" },
+            { "t": 0.9, "v": [5] }
+          ]
+        }
+      ],
+
+      "ik": [
+        {
+          "constraint": "leg_f_ik",
+          "keys": [
+            { "t": 0, "mix": 1, "softness": 0, "bendPositive": false, "ease": "settle" },
+            { "t": 0.225, "mix": 1, "softness": 12, "bendPositive": false, "ease": "settle" },
+            { "t": 0.45, "mix": 1, "softness": 0, "bendPositive": false, "ease": "gather" },
+            { "t": 0.675, "mix": 0.55, "softness": 0, "bendPositive": false, "ease": "charge" },
+            { "t": 0.9, "mix": 1, "softness": 0, "bendPositive": false }
+          ]
+        },
+        {
+          "constraint": "leg_b_ik",
+          "keys": [
+            { "t": 0, "mix": 1, "softness": 0, "bendPositive": true, "ease": "charge" },
+            { "t": 0.225, "mix": 0.55, "softness": 0, "bendPositive": true, "ease": "settle" },
+            { "t": 0.45, "mix": 1, "softness": 0, "bendPositive": true, "ease": "settle" },
+            { "t": 0.675, "mix": 1, "softness": 12, "bendPositive": true, "ease": "gather" },
+            { "t": 0.9, "mix": 1, "softness": 0, "bendPositive": true }
+          ]
+        }
+      ]
+    }
+  }
+}

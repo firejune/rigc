@@ -1,0 +1,116 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "squash",
+  "images": "parts",
+  "skeleton": { "x": 0, "y": 0, "width": 800, "height": 720 },
+
+  "bones": [
+    { "name": "root" },
+
+    { "name": "hip", "parent": "root", "x": 330, "y": 178 },
+    { "name": "torso", "parent": "hip", "x": 0, "y": 0 },
+    { "name": "chest", "parent": "torso", "x": 0, "y": 112 },
+    { "name": "neck", "parent": "chest", "x": 0, "y": 76 },
+    { "name": "head", "parent": "neck", "x": 0, "y": 0 },
+    { "name": "face", "parent": "head", "x": 0, "y": 112 },
+    { "name": "ear_l", "parent": "head", "x": -62, "y": 188, "rotation": 13 },
+    { "name": "ear_r", "parent": "head", "x": 62, "y": 188, "rotation": -13 },
+    { "name": "knot", "parent": "neck", "x": 0, "y": -22 },
+    { "name": "tail", "parent": "knot", "x": -56, "y": -20, "rotation": -10 },
+    { "name": "arm_b", "parent": "chest", "x": -88, "y": 48, "rotation": 7 },
+    { "name": "arm_f", "parent": "chest", "x": 88, "y": 48, "rotation": 16 },
+    { "name": "hand_f", "parent": "arm_f", "x": 0, "y": -106, "rotation": -4 },
+    { "name": "leg_l", "parent": "hip", "x": -40, "y": 4, "rotation": 3 },
+    { "name": "leg_r", "parent": "hip", "x": 40, "y": 4, "rotation": -3 },
+
+    { "name": "ball", "parent": "root", "x": 610, "y": 154 },
+    { "name": "shadow", "parent": "root", "x": 610, "y": 60 }
+  ],
+
+  "slots": [
+    { "name": "plate", "bone": "root", "attachment": "plate" },
+    { "name": "shadow", "bone": "shadow", "attachment": "shadow" },
+    { "name": "leg_l", "bone": "leg_l", "attachment": "leg_l" },
+    { "name": "arm_b", "bone": "arm_b", "attachment": "arm_b" },
+    { "name": "leg_r", "bone": "leg_r", "attachment": "leg_r" },
+    { "name": "torso", "bone": "torso", "attachment": "torso" },
+    { "name": "scarf_tail", "bone": "tail", "attachment": "scarf_tail" },
+    { "name": "ear_l", "bone": "ear_l", "attachment": "ear_l" },
+    { "name": "ear_r", "bone": "ear_r", "attachment": "ear_r" },
+    { "name": "head", "bone": "head", "attachment": "head" },
+    { "name": "arm_f", "bone": "arm_f", "attachment": "arm_f" },
+    { "name": "hand_f", "bone": "hand_f", "attachment": "hand_f" },
+    { "name": "scarf_knot", "bone": "knot", "attachment": "scarf_knot" },
+    { "name": "eyes", "bone": "face", "attachment": "eyes" },
+    { "name": "ball", "bone": "ball", "attachment": "ball" }
+  ],
+
+  "invariants": {
+    "meshSlots": 1,
+    "meshTriangles": 8
+  },
+
+  "skins": {
+    "default": {
+      "plate": { "plate": { "image": "plate.png", "x": 400, "y": 360 } },
+      "shadow": { "shadow": { "image": "shadow.png" } },
+
+      "leg_l": { "leg_l": { "image": "leg_l.png", "y": -62 } },
+      "leg_r": { "leg_r": { "image": "leg_r.png", "y": -62 } },
+      "arm_b": { "arm_b": { "image": "arm_b.png", "y": -108 } },
+      "arm_f": { "arm_f": { "image": "arm_f.png", "y": -62 } },
+      "hand_f": { "hand_f": { "image": "hand_f.png", "y": -56 } },
+
+      "torso": { "torso": { "image": "torso.png", "y": 92 } },
+      "scarf_tail": { "scarf_tail": { "image": "scarf_tail.png", "x": -100, "y": -46 } },
+      "ear_l": { "ear_l": { "image": "ear_l.png", "y": 51 } },
+      "ear_r": { "ear_r": { "image": "ear_r.png", "y": 51 } },
+      "head": { "head": { "image": "head.png", "y": 104 } },
+      "scarf_knot": { "scarf_knot": { "image": "scarf_knot.png" } },
+      "eyes": {
+        "eyes": { "image": "eyes.png" },
+        "eyes_shut": { "image": "eyes_shut.png" }
+      },
+
+      "ball": {
+        "ball": {
+          "type": "mesh",
+          "image": "ball.png",
+          "hull": 8,
+          "uvs": [
+            0.958333, 0.5,
+            0.824092, 0.175908,
+            0.5, 0.0416667,
+            0.175908, 0.175908,
+            0.0416667, 0.5,
+            0.175908, 0.824092,
+            0.5, 0.958333,
+            0.824092, 0.824092,
+            0.5, 0.5
+          ],
+          "vertices": [
+            110, 0,
+            77.782, 77.782,
+            0, 110,
+            -77.782, 77.782,
+            -110, 0,
+            -77.782, -77.782,
+            0, -110,
+            77.782, -77.782,
+            0, 0
+          ],
+          "triangles": [
+            8, 0, 1,
+            8, 1, 2,
+            8, 2, 3,
+            8, 3, 4,
+            8, 4, 5,
+            8, 5, 6,
+            8, 6, 7,
+            8, 7, 0
+          ]
+        }
+      }
+    }
+  }
+}

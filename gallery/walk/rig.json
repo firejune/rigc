@@ -1,0 +1,97 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "walk",
+  "images": "parts",
+  "skeleton": { "x": 0, "y": 0, "width": 576, "height": 736 },
+
+  "bones": [
+    { "name": "root" },
+
+    { "name": "hip", "parent": "root", "x": 352, "y": 190 },
+    { "name": "ground", "parent": "root", "x": 352, "y": 64 },
+
+    { "name": "torso", "parent": "hip", "x": 0, "y": 0 },
+    { "name": "chest", "parent": "torso", "x": 0, "y": 112 },
+    { "name": "neck", "parent": "chest", "x": 0, "y": 76 },
+    { "name": "head", "parent": "neck", "x": 0, "y": 0 },
+    { "name": "face", "parent": "head", "x": 0, "y": 112 },
+    { "name": "ear_l", "parent": "head", "x": -62, "y": 188, "rotation": 13 },
+    { "name": "ear_r", "parent": "head", "x": 62, "y": 188, "rotation": -13 },
+    { "name": "knot", "parent": "neck", "x": 0, "y": -22 },
+    { "name": "tail", "parent": "knot", "x": -56, "y": -20, "rotation": -10 },
+
+    { "name": "arm_b", "parent": "chest", "x": -88, "y": 48, "rotation": 7 },
+    { "name": "arm_f", "parent": "chest", "x": 88, "y": 48, "rotation": 16 },
+    { "name": "hand_f", "parent": "arm_f", "x": 0, "y": -106, "rotation": -4 },
+
+    { "name": "thigh_b", "parent": "hip", "x": -30, "y": 4, "rotation": -90, "length": 56 },
+    { "name": "shin_b", "parent": "thigh_b", "x": 56, "y": 0, "length": 74 },
+    { "name": "thigh_f", "parent": "hip", "x": 30, "y": 4, "rotation": -90, "length": 56 },
+    { "name": "shin_f", "parent": "thigh_f", "x": 56, "y": 0, "length": 74 },
+
+    { "name": "foot_b", "parent": "ground", "x": -30, "y": 4 },
+    { "name": "foot_f", "parent": "ground", "x": 30, "y": 4 }
+  ],
+
+  "slots": [
+    { "name": "plate", "bone": "root", "attachment": "plate" },
+    { "name": "thigh_b", "bone": "thigh_b", "attachment": "thigh_b" },
+    { "name": "shin_b", "bone": "shin_b", "attachment": "shin_b" },
+    { "name": "arm_b", "bone": "arm_b", "attachment": "arm_b" },
+    { "name": "thigh_f", "bone": "thigh_f", "attachment": "thigh_f" },
+    { "name": "shin_f", "bone": "shin_f", "attachment": "shin_f" },
+    { "name": "torso", "bone": "torso", "attachment": "torso" },
+    { "name": "scarf_tail", "bone": "tail", "attachment": "scarf_tail" },
+    { "name": "ear_l", "bone": "ear_l", "attachment": "ear_l" },
+    { "name": "ear_r", "bone": "ear_r", "attachment": "ear_r" },
+    { "name": "head", "bone": "head", "attachment": "head" },
+    { "name": "arm_f", "bone": "arm_f", "attachment": "arm_f" },
+    { "name": "hand_f", "bone": "hand_f", "attachment": "hand_f" },
+    { "name": "scarf_knot", "bone": "knot", "attachment": "scarf_knot" },
+    { "name": "eyes", "bone": "face", "attachment": "eyes" }
+  ],
+
+  "constraints": [
+    {
+      "name": "leg_b_ik",
+      "type": "ik",
+      "bones": ["thigh_b", "shin_b"],
+      "target": "foot_b",
+      "bendPositive": true,
+      "mix": 1,
+      "softness": 0
+    },
+    {
+      "name": "leg_f_ik",
+      "type": "ik",
+      "bones": ["thigh_f", "shin_f"],
+      "target": "foot_f",
+      "bendPositive": false,
+      "mix": 1,
+      "softness": 0
+    }
+  ],
+
+  "skins": {
+    "default": {
+      "plate": { "plate": { "image": "plate.png", "x": 288, "y": 368 } },
+
+      "thigh_b": { "thigh_b": { "image": "thigh_b.png", "x": 28, "rotation": 90 } },
+      "shin_b": { "shin_b": { "image": "shin_b.png", "x": 31, "rotation": 90 } },
+      "thigh_f": { "thigh_f": { "image": "thigh_f.png", "x": 28, "rotation": 90 } },
+      "shin_f": { "shin_f": { "image": "shin_f.png", "x": 31, "rotation": 90 } },
+
+      "arm_b": { "arm_b": { "image": "arm_b.png", "y": -108 } },
+      "arm_f": { "arm_f": { "image": "arm_f.png", "y": -62 } },
+      "hand_f": { "hand_f": { "image": "hand_f.png", "y": -56 } },
+
+      "torso": { "torso": { "image": "torso.png", "y": 92 } },
+      "scarf_tail": { "scarf_tail": { "image": "scarf_tail.png", "x": -100, "y": -46 } },
+      "ear_l": { "ear_l": { "image": "ear_l.png", "y": 51 } },
+      "ear_r": { "ear_r": { "image": "ear_r.png", "y": 51 } },
+      "head": { "head": { "image": "head.png", "y": 104 } },
+      "scarf_knot": { "scarf_knot": { "image": "scarf_knot.png" } },
+      "eyes": { "eyes": { "image": "eyes.png" } }
+    }
+  }
+}
