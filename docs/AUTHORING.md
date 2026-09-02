@@ -70,6 +70,12 @@ can see where Spine stops.
 ```bash
 bun install                                   # once
 
+# …but if what you were HANDED is a picture of the pose rather than numbers, read
+# the numbers out of it first. This one runs BEFORE the loop, not inside it:
+bun cli.ts pose --images path/to/parts --frame path/to/poseA.png --out poseA.json
+#   ↳ one entry per part PNG: where it sits, how confident that is, and where two
+#     answers are equally good — §11
+
 bun cli.ts build \
   --rig    path/to/my.rig.json \
   --motion path/to/my.motion.json \
@@ -127,7 +133,7 @@ What the flags mean:
 | `--motion` | the motion spec — time |
 | `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths are written relative to it |
 | `--copy-images` | `build` only: also copies every referenced page PNG into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own. Default is unchanged — page paths still point at the source art (issue #217) |
-| `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory) |
+| `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |
 | `--candidate` | `check`, `bench`, `render`, `preview` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
@@ -136,6 +142,10 @@ What the flags mean:
 | `--ballot` | `vote --record` only: the ballot the vote answers (default `ballot.html`). Its embedded manifest is what the vote is checked against, so the ballot file is the record of the question |
 | `--ledger` | `vote --record` only: the append-only JSONL the vote lands in (default `votes.jsonl`), one vote per line |
 | `--again` | `vote --record` only: record a second vote on a ballot the ledger already has. Without it a repeat is refused by name rather than doubled |
+| `--frame` | `pose` only: one pose frame — the picture to read part placements out of. One frame per call; several key poses are several calls, and correlating them is yours (§11) |
+| `--scale` | `pose` only: the scale window to search, as **frame pixels per part pixel**, `<min>,<max>` (default `0.5,2`). The report states what it searched, and a window that does not contain the truth does not reliably refuse — §11 |
+| `--rotation` | `pose` only: the rotation window to search, in screen degrees, `<min>,<max>` (default `-180,180`, a full turn). Narrow it when you know the art is upright |
+| `--max-residual` | `pose` only: above this residual a placement is **refused by name** instead of reported flat (default `0.25`). A reporting threshold, not a pass bar — the placement is still in the JSON |
 
 `render` also takes `--fps <n>` (the rate it samples at, default 12 — the same
 protocol rate the reference frames use) and `--max <px>` (the long side of a
@@ -164,6 +174,7 @@ bun cli.ts render   --candidate path/to/spine [--animation …] [--fps 12] [--ma
 bun cli.ts preview  --candidate path/to/spine [--animation …] [--out preview.html]
 bun cli.ts vote     --candidate path/to/a --candidate path/to/b [--out ballot.html]
 bun cli.ts vote     --record vote-<id>.json [--ballot ballot.html] [--ledger votes.jsonl]
+bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
 ```
 
 - **`explain`** is the one to reach for when a rig compiles but looks wrong. It
@@ -197,6 +208,14 @@ bun cli.ts vote     --record vote-<id>.json [--ballot ballot.html] [--ledger vot
   double-clicking it is also the interop proof — what plays there was played by
   Esoteric Software's runtime, not by rigc's. The player is loaded from a CDN
   rather than copied into the file, so the first open needs a network.
+- 📐 **`pose` is the only command here that reads an INPUT rather than a result.**
+  Everything else takes a spec or a build and tells you something about it; `pose`
+  takes a picture the user already has — a key pose — and reports where each loose
+  part PNG sits in it, so you can write those coordinates into a rig and a motion
+  **by construction**. Nothing about it grades anything: at that point the pose is
+  a given condition, not a target, and the residual it reports is how far to trust
+  a placement rather than how good the placement is. Reach for it the moment a
+  request arrives as *"make it go from this picture to this one"*. **§11.**
 - 🗳️ **`vote` is `preview` with more than one candidate in it and an answer
   coming back**, and it is the one step of this loop you cannot run yourself.
   Reach for it where the instruments have run out: two builds that `check` and
@@ -3053,3 +3072,114 @@ answer read off the exports:
 
 If one of those turns out to matter, it belongs in the run's `log.md` as something
 the frames had to teach you — not here.
+
+---
+
+## 11. Reading a pose you were given — `rigc pose`
+
+```bash
+bun cli.ts pose --images path/to/parts --frame path/to/poseA.png [--out pose.json]
+```
+
+Every other command in this guide takes something you wrote and tells you about
+it. This one runs the other way: it takes a **picture the user already has** and
+reports, for each loose part PNG, where that part sits in it — `x`, `y`,
+`rotationDeg`, `scale` — plus a residual saying how well the placed part explains
+the frame's pixels underneath it.
+
+Reach for it when a request arrives as *"make it go from this picture to this
+one"*. Read both frames, write the two key poses into the rig and the motion from
+the numbers it gives you, and spend your loops on the part no instrument can
+measure: the movement between them.
+
+### 11.1 It measures an input, so nothing here is a score
+
+🚨 **No number in this report has a pass bar, and none of them is a grade.** The
+distinction is not modesty, it decides how to read the output. `check` and `bench`
+compare a build against a reference, so their numbers mean *how close*. A pose
+frame is not a reference — it is a **given condition**, and once the spec states
+those coordinates there is nothing left to be close to. The residual exists so you
+know **how far to trust each placement** and **where two answers are equally
+good**.
+
+That is why the command's output is shaped as help rather than as a verdict:
+
+- a placement that matches nowhere is **refused by name** and its best guess is
+  still printed, because a refusal tells you not to trust a number rather than
+  hiding it;
+- two near-equal optima are reported as **both**, flagged `ambiguous`, never
+  silently resolved;
+- a part whose rotation genuinely does not matter is reported as having a **free
+  degree of freedom**, not as a failure.
+
+### 11.2 The coordinate contract
+
+Placements are in the **frame's own pixels: y down, origin top-left** — the same
+convention a cut manifest uses, and the `space` field of every report repeats it.
+
+- `x`, `y` — where the part image's own centre, `(width / 2, height / 2)`, lands.
+- `rotationDeg` — **screen** degrees, positive turning **clockwise** on screen.
+- `scale` — uniform, as **frame pixels per part pixel**.
+
+Reconstruct a part pixel `p` as `centre + scale · R(rotationDeg) · (p − (width/2,
+height/2))`. To get to Spine's y-up, counter-clockwise world, use the two
+conversions that already exist and open-code neither:
+`screenToSpineDegrees(rotationDeg)` and `cropToSpineY(y, frameHeight)`
+([`src/transform.ts`](../src/transform.ts)).
+
+### 11.3 The fields, and what each one is for
+
+Per part:
+
+| Field | Meaning |
+| --- | --- |
+| `part`, `path`, `width`, `height` | the PNG, by the name every message uses |
+| `placement` | the best placement found — `null` **only** for `empty-part` and `larger-than-canvas`, where nothing was searched |
+| `alternates` | other optima worth reporting, best first. Non-empty means the answer was not unique |
+| `ambiguous` | at least one alternate is inside the ambiguity margin. **Choose with something this instrument cannot see** — anatomy, the other frame, or `rigc vote` |
+| `rotationFree` | the part is self-similar under rotation, so `rotationDeg` is a placeholder and the value is yours |
+| `rotationSelfSimilarity` | the number `rotationFree` is a threshold on. A part just over the line is worth a look |
+| `refusal` | `{ reason, detail }` or `null`. Reasons: `no-match`, `larger-than-canvas`, `empty-part` |
+| `coarse` | the grid this part was actually searched on. A handful of cells means the part is small relative to the frame and the first pass had little to go on |
+| `notes` | the same facts in prose, in the order they were found |
+
+Per placement:
+
+| Field | Meaning |
+| --- | --- |
+| `residual` | alpha-weighted mean absolute colour error over the part's own footprint, `0..1`. **Lower is better explained** — that is all it means |
+| `unexplained` | the share of the part's material that disagrees with the frame at this placement. **Read this next to the residual** — see §11.4 |
+| `offCanvas` | the share of the part's material that falls outside the frame at this placement |
+| `footprint` | frame pixels of material the placement accounts for; the tie-break between two equal residuals |
+| `bbox` | the axis-aligned box the placed part occupies, in frame pixels |
+
+The report also carries `frame.background` (how the picture's empty space was
+identified — a flat colour, transparency, or `unknown`), `search` (every window
+and threshold that was applied), and `caveats`.
+
+### 11.4 What it cannot see — read this before using the numbers
+
+- ⚠️ **Residuals degrade under occlusion, and there is no depth solver here.** A
+  part drawn *behind* another has the occluder's pixels where its own should be, so
+  its residual rises **at the correct placement**. `unexplained` separates the two
+  readings: a middling residual with a high `unexplained` usually means *right
+  place, seen through something else*, not *wrong place*. The only robustness in
+  the objective is that it is measured on the part's **own alpha footprint** — a
+  part is never charged for pixels of the picture it does not claim. Weigh
+  accordingly; do not treat either number as a verdict.
+- ⚠️ **A search window that does not contain the truth does not reliably refuse.**
+  A part shrunk inside the region it came from still explains those pixels, so the
+  answer is the best placement available *inside* `--scale` / `--rotation` and its
+  residual can look reasonable. This is why the window is a reported field: if the
+  numbers surprise you, check `search` before you trust them.
+- ⚠️ **A frame whose border has no dominant colour reports `background.unknown`.**
+  Every pixel then counts as material, the silhouette signal is gone, and the
+  residual is colour agreement alone. The report says so rather than being quietly
+  weaker.
+- **An `ambiguous` part is genuinely ambiguous.** Two identical limbs, a part that
+  fits its own silhouette at more than one angle, and a shape whose interior is one
+  flat colour all look like this. The instrument has run out; that is what
+  `rigc vote` is for.
+- **One frame per call.** Several key poses are several calls, and correlating A
+  with B — which placement of a repeated part belongs to which limb, across two
+  frames — is the authoring job, not this tool's.

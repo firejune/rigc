@@ -584,6 +584,51 @@ by the next agent rather than by a reader:
 Same player, same posture as `preview`: referenced from a CDN, never vendored,
 and the file contains only your own art ([NOTICE.md](NOTICE.md)).
 
+## Reading a pose you were given — `rigc pose`
+
+```bash
+rigc pose --images parts/ --frame poseA.png [--out pose.json]
+```
+
+Every command above takes something you authored and tells you about it. This one
+runs the other way: it takes a **picture the user already has** — one key pose —
+and reports where each loose part PNG sits in it, so an agent can write those
+coordinates into a rig and a motion **by construction** and spend its effort on the
+part no instrument can measure, the movement between two poses.
+
+```
+  PLACE  torso.png    x=   44.4  y=   65.4  rot=    0.0°  scale=1.118  residual=0.0770  unexplained= 19%
+  AMBIG  arm.png      x=   27.1  y=   56.3  rot=  -35.2°  scale=1.111  residual=0.0262  unexplained=  2%
+                      alt 2: x=   61.5  y=   56.3  rot=   35.4°  scale=1.116  residual=0.0279  unexplained=  2%
+  PLACE  ball.png     x=   44.3  y=  104.6  rot=    0.0°  scale=1.144  residual=0.0203  unexplained=  3%
+                      rotation is a FREE degree of freedom — the 0° above is a placeholder
+  REFUSE foreign.png  no-match: the best placement found has residual 0.4245, above --max-residual 0.25
+```
+
+🚨 **Nothing here is a score, and no pass bar attaches to any of it.** `check` and
+`bench` measure a build against a reference, so their numbers mean *how close*. A
+pose frame is not a reference — it is a **given condition**, and once the spec
+states those coordinates there is nothing left to be close to. The residual says
+how far to trust a placement and where two answers are equally good, which is a
+different job and needs the opposite defaults:
+
+- a part that matches nowhere is **refused by name**, with its best guess still in
+  the JSON — a refusal tells you not to trust a number rather than hiding it;
+- two near-equal optima are reported as **both**, flagged `ambiguous`, never
+  silently resolved. Two identical limbs look exactly like that;
+- a part whose rotation genuinely does not matter — a ball — reports rotation as a
+  **free degree of freedom** rather than as a failure;
+- a part the canvas cannot contain at any tested scale, and a part with no material
+  in it at all, each get their own named refusal.
+
+⚠️ **Residuals degrade under occlusion and there is no depth solver here.** A part
+drawn behind another has the occluder's pixels where its own should be, so its
+residual rises at the *correct* placement; `unexplained` is the share of the part
+that disagrees, and a middling residual beside a high `unexplained` usually means
+*right place, seen through something else*. The output carries its own `caveats`
+block saying so. Fields, coordinate contract and the rest of the limits:
+**[AUTHORING.md §11](docs/AUTHORING.md)**.
+
 ## Run viewer — watching a *run* instead of reading it
 
 🔎 **This is the ladder's instrument, not the way to look at your own rig** — that
@@ -825,6 +870,7 @@ bun cli.ts render  --candidate path/to/spine                # PNG frames + a con
 bun cli.ts preview --candidate path/to/spine                # one .html that plays it
 bun cli.ts vote    --candidate path/to/a --candidate path/to/b   # one .html that asks which
 bun cli.ts vote    --record vote-<id>.json                  # check the answer into votes.jsonl
+bun cli.ts pose    --images path/to/parts --frame poseA.png # read a pose OUT of a picture
 ```
 
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
@@ -837,7 +883,9 @@ archetype policy on top.
 [Looking at a rig](#looking-at-a-rig--rigc-render-and-rigc-preview). Run either
 straight after a green `build`, on the same directory `--out` wrote. `vote` is the
 same idea with more than one candidate in the page and an answer coming back —
-see [Letting someone choose](#letting-someone-choose--rigc-vote).
+see [Letting someone choose](#letting-someone-choose--rigc-vote). `pose` is the
+one command that runs *before* a spec exists rather than after — see
+[Reading a pose you were given](#reading-a-pose-you-were-given--rigc-pose).
 
 ## Checks
 
@@ -934,7 +982,7 @@ nothing substantive executed exits 2 rather than printing green.
 
 ```
 tsconfig.json   type-check config (noEmit); eslint.config.js — the no-any gate
-cli.ts          build / validate / explain / diff / check / bench / render / preview / vote
+cli.ts          build / validate / explain / diff / check / bench / render / preview / vote / pose
 selftest.ts     the validator's own negative controls, and diff's and check's
 fixtures/       public.ts — the three synthetic cuts the selftest breaks
 src/
@@ -951,6 +999,9 @@ src/
                 stand between a saved vote and the ledger
   check.ts      a candidate against rendered frames — pixels and per-slot drift,
                 and it never opens the reference skeleton
+  pose.ts       the other direction: loose part PNGs against ONE pose frame, and
+                where each part sits in it. An entry instrument — it reads a given
+                condition into spec coordinates and grades nothing
   ladder.ts     which example is which rung, and which file in it is the reference
   timelines.ts  the 4.3 timeline catalogue and its walker (shared, pure JSON)
   mesh.ts       ring and ribbon mesh builders, weighted-vertex encoding
