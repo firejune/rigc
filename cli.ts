@@ -332,6 +332,26 @@ function runGate(result: CompileResult, opts: CompileOptions, profile: ValidateP
   return report.failures.length;
 }
 
+/**
+ * One line per mesh kind on this cut, printed above the table.
+ *
+ * A legend rather than a heading: the heading used to describe the ring tier
+ * unconditionally, so a build whose only mesh was a ribbon or a contour got a
+ * sentence about a rim ring and a seam it does not have.
+ */
+const MESH_KIND_NOTES: Record<CompileResult['meshes'][number]['kind'], string> = {
+  ring: 'ring      rim ring pinned on the window edge, seam ring pinned on the mask contour, aperture moves',
+  ribbon: 'ribbon    entry row pinned, rows share their weights so the strip lengthens without widening',
+  contour: 'contour   the art\'s own silhouette, every vertex pinned to the slot bone (geometry, not a deformation)',
+  authored: 'authored  geometry rigc did not build; it assumes nothing about the topology',
+};
+
+/** What a contour mesh measured about its own fit, or nothing for the others. */
+function meshFit(m: CompileResult['meshes'][number]): string {
+  if (m.coverage === undefined) return '';
+  return `  covers ${(m.coverage * 100).toFixed(2)}% of the art, reaching ${m.overshoot?.toFixed(2) ?? '?'}px past it`;
+}
+
 function cmdBuild(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
   const profile = readProfile(flags);
@@ -358,8 +378,8 @@ function cmdBuild(flags: Record<string, string>): void {
   }
   for (const m of result.meshes) {
     console.log(
-      `  MESH  ${m.slot.padEnd(12)} ${m.kind.padEnd(6)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
-        `(budget 80)  bones=[${m.bones.join(', ')}]  attachments=[${m.attachments.join(', ')}]`,
+      `  MESH  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
+        `(budget 80)  bones=[${m.bones.join(', ')}]  attachments=[${m.attachments.join(', ')}]${meshFit(m)}`,
     );
   }
   for (const ph of result.physics) {
@@ -1486,10 +1506,11 @@ function cmdExplain(flags: Record<string, string>): void {
   }
 
   if (result.meshes.length) {
-    console.log('\nmeshes  (ring tier: rim ring pinned on the window edge, seam ring pinned on the mask contour)');
+    console.log('\nmeshes');
+    for (const kind of new Set(result.meshes.map((m) => m.kind))) console.log(`  ${MESH_KIND_NOTES[kind]}`);
     for (const m of result.meshes) {
       console.log(
-        `  ${m.slot.padEnd(12)} ${m.kind.padEnd(6)} ${m.vertices} vertices / ${m.triangles} triangles  bones=[${m.bones.join(', ')}]`,
+        `  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  bones=[${m.bones.join(', ')}]${meshFit(m)}`,
       );
     }
   }

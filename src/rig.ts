@@ -284,12 +284,37 @@ export type RigMeshGenerator =
     }
   | {
       /**
-       * 🚧 Not implemented. An alpha-contour triangulator (ear clipping over the
-       * part's own mask) is the obvious third builder and `src/mesh.ts` does not
-       * have one; `buildRingMesh` and `buildRibbonMesh` are the only two.
+       * A mesh cut to the part's own alpha silhouette: trace the mask, simplify
+       * the outline, push it out by a margin, ear-clip it (`buildContourMesh`).
+       *
+       * ⭐ It takes no `size` and no geometry. The shape is MEASURED off the
+       * attachment's own `image` — the same rule a region attachment's
+       * `width`/`height` follow (R5) — so there is no number here that can
+       * disagree with the pixels, and no polygon to keep in step with the art.
+       *
+       * 🚨 It is geometry, not a deformation model: every vertex is pinned to
+       * the slot bone at weight 1, so an undeformed contour mesh draws exactly
+       * what the region drew and no bone can bend it. See the section header in
+       * [`src/mesh.ts`](mesh.ts) for what it buys instead, and reach for `ring`
+       * or authored `weights` when a bone has to move the art.
        */
       kind: 'contour';
-      [param: string]: unknown;
+      /**
+       * Douglas-Peucker tolerance in part-local pixels. Bigger spends fewer
+       * vertices and cuts more corners; the builder measures how much of the art
+       * the result still covers and refuses a mesh that clips it.
+       */
+      tolerance: number;
+      /**
+       * How far the outline is pushed out past the traced silhouette, in pixels.
+       * Default 1. Simplification may bite `tolerance` pixels INTO the art, so
+       * `margin >= tolerance` is the setting that survives the coverage check.
+       */
+      margin?: number;
+      /** Refuse rather than emit more outline vertices than this. Default 64. */
+      maxVertices?: number;
+      /** Alpha at or above which a pixel counts as art, 1..255. Default 1. */
+      alpha?: number;
     };
 
 /** `SkeletonJson.ts:540-559`. `type` defaults to `region` (`:539`). */
