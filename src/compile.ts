@@ -39,7 +39,6 @@ import {
   type RigMeshBinding,
   type RigPathAttachment,
   type RigRegionAttachment,
-  type RigSkinConstraintKey,
   type RigSpec,
   type RigVertexGeometry,
 } from './rig.ts';
