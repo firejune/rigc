@@ -181,7 +181,11 @@ export interface RigBone {
   shearY?: number;
   /** Default `normal`. 4.2+ name; 4.0/4.1 called it `transform` — see A02. */
   inherit?: RigBoneInherit;
-  /** Default false → `BoneData.skinRequired`. */
+  /**
+   * Default false → `BoneData.skinRequired`: this bone is **inactive** unless the
+   * applied skin names it in its `bones` list (see `RigSkinEntry`). Half a switch
+   * on its own, so rigc refuses the flag without a skin that activates it.
+   */
   skin?: boolean;
   /** `rrggbbaa`. Editor affordance; no rendering effect. */
   color?: string;
@@ -492,18 +496,64 @@ export interface RigClippingAttachment extends RigVertexGeometry {
 }
 
 /**
- * The three types the format holds and rigc's emitter does not cover. They are
+ * `type: "path"` (`SkeletonJson.ts:606-623`) — a composite cubic Bezier the
+ * skeleton carries as an attachment.
+ *
+ * **When you need one:** a path constraint has nowhere to aim without it. The
+ * polygon here is not drawn (no runtime renders a path); it is the curve
+ * `RigPathConstraint` slides bones along, and it deforms with the slot's bone
+ * like any other vertex attachment.
+ *
+ * 🚨 **`vertexCount` is knots AND handles, and it must be a multiple of 3.**
+ * The parser hands `vertexCount << 1` to `readVertices` and then walks the
+ * result in groups of six (`PathConstraint.computeWorldPositions`): the first
+ * and last points are the outer control handles of the end knots and are
+ * dropped, leaving a `3K + 1` chain — so an OPEN path of K curves has
+ * `vertexCount = 3(K + 1)` (minimum 6) and a CLOSED one has `3K` (minimum 3,
+ * because the chain wraps). A count that is not a multiple of 3 does not throw:
+ * `Utils.newArray(vertexCount / 3, 0)` accepts a fractional size, the groups of
+ * six then straddle the knots, and the constraint slides bones along a curve
+ * nobody drew.
+ *
+ * ⚠️ `lengths` is NOT authored here. It is the cumulative arc length at the end
+ * of each curve in the SETUP pose, in world units — a measurement of the
+ * geometry above, and the same relationship `image` has to `width`/`height`: a
+ * restated number can disagree with the vertices, and when it does, a
+ * `constantSpeed: false` path traverses a length that is not the length of the
+ * curve, silently. So rigc measures it and refuses an authored one by name.
+ */
+export interface RigPathAttachment extends RigVertexGeometry {
+  type: 'path';
+  /** Default false. When true the last knot joins the first. */
+  closed?: boolean;
+  /**
+   * Default **true** (`:610`) — note the direction: leaving it out asks for the
+   * expensive-and-correct traversal, in which the runtime re-measures the path
+   * every frame and `lengths` is never read. `false` makes the runtime trust the
+   * emitted `lengths` instead: cheaper, exact only while the path holds its setup
+   * shape, and the reason a deformed path wants the default.
+   */
+  constantSpeed?: boolean;
+  /**
+   * 🚫 Refused by name. rigc measures the arc lengths off `vertices`/`weights` —
+   * see the note above. The field is declared so the refusal can name it.
+   */
+  lengths?: number[];
+}
+
+/**
+ * The two types the format holds and rigc's emitter does not cover. They are
  * in the type so a spec can *say* them and get a named `NotImplementedError`;
  * the alternative is the parser's own behaviour, which is to return `null` for
  * an unknown `type` and drop the attachment without a word
  * (`SkeletonJson.ts:653`).
  *
- * 🚧 None of the three appears anywhere in the benchmark corpus
- * (SPEC_COVERAGE parts 3-1 and 4-2), so none is on the ladder's critical path —
- * which is the reason they are deferred rather than an oversight.
+ * 🚧 Neither appears anywhere in the benchmark corpus (SPEC_COVERAGE parts 3-1
+ * and 4-2), so neither is on the ladder's critical path — which is the reason
+ * they are deferred rather than an oversight.
  */
 export interface RigUnimplementedAttachment {
-  type: 'point' | 'path' | 'linkedmesh';
+  type: 'point' | 'linkedmesh';
   [field: string]: unknown;
 }
 
@@ -512,10 +562,135 @@ export type RigAttachment =
   | RigMeshAttachment
   | RigBoundingBoxAttachment
   | RigClippingAttachment
+  | RigPathAttachment
   | RigUnimplementedAttachment;
 
 /** `slotName -> placeholderName -> attachment` (`SkeletonJson.ts:431-439`). */
-export type RigSkin = Record<string, Record<string, RigAttachment>>;
+export type RigSkinAttachments = Record<string, Record<string, RigAttachment>>;
+
+/** The five per-type constraint lists a skin entry can carry (`:386-429`). */
+export const RIG_SKIN_CONSTRAINT_KEYS = ['ik', 'transform', 'path', 'physics', 'slider'] as const;
+
+export type RigSkinConstraintKey = (typeof RIG_SKIN_CONSTRAINT_KEYS)[number];
+
+/**
+ * Every key the long form of a skin entry owns.
+ *
+ * ⚠️ Which is exactly the set of names a SLOT may not have, because these are
+ * the keys that tell the two forms apart — see `splitRigSkin`. `parseRigSpec`
+ * refuses such a slot by name rather than letting one form be read as the other.
+ */
+export const RIG_SKIN_KEYS = ['attachments', 'bones', ...RIG_SKIN_CONSTRAINT_KEYS] as const;
+
+/**
+ * A skin's full 4.3 shape: attachments, plus the bones and constraints this skin
+ * **activates** (`SkeletonJson.ts:377-429`).
+ *
+ * ⭐ The lists are not a second way to declare a bone or a constraint. They are
+ * the other half of a switch whose first half already existed: a bone's
+ * `skin: true` and a constraint's `skin: true` set `skinRequired`, and
+ * `Skeleton.updateCache` starts every `skinRequired` object **inactive**, turning
+ * it on only for the skin that names it here (`Skeleton.ts:191-217`; a listed
+ * bone activates its whole ancestor chain). So either half alone is dead data,
+ * in opposite directions and both in silence — `skin: true` with no list is a
+ * bone that never poses, a list without `skin: true` is a list that changes
+ * nothing — which is why rigc refuses both halves by name and
+ * `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` checks the artifact for them.
+ */
+export interface RigSkinEntry {
+  /** `slotName -> placeholderName -> attachment`. */
+  attachments?: RigSkinAttachments;
+  /** Bone names this skin activates. Each one must declare `skin: true`. */
+  bones?: string[];
+  /** `ik` constraint names this skin activates. Each must declare `skin: true`. */
+  ik?: string[];
+  transform?: string[];
+  path?: string[];
+  physics?: string[];
+  slider?: string[];
+}
+
+/**
+ * One skin, in either of two spellings.
+ *
+ * The short one — `slotName -> placeholderName -> attachment` — is the shape
+ * every rig spec in this repository already uses and it stays exactly that. The
+ * long one carries the 4.3 lists beside the attachments and is recognised by its
+ * own keys (`RIG_SKIN_KEYS`); see `splitRigSkin` for the one ambiguity that
+ * creates and how it is refused rather than guessed.
+ */
+export type RigSkin = RigSkinAttachments | RigSkinEntry;
+
+/** The two halves of a skin entry, whichever spelling the spec used. */
+export interface RigSkinParts {
+  attachments: RigSkinAttachments;
+  bones: string[];
+  constraints: Record<RigSkinConstraintKey, string[]>;
+  /** True when the spec used the long form. Only the messages care. */
+  explicit: boolean;
+}
+
+/**
+ * Normalise one skin entry.
+ *
+ * ⚠️ The two spellings are told apart by the keys in `RIG_SKIN_KEYS`: a skin
+ * that uses any of them is the long form. That is the one thing here that could
+ * ever be ambiguous, and it is ambiguous in exactly one case — a rig with a SLOT
+ * of one of those names — so rigc does not guess: `parseRigSpec` refuses such a
+ * slot by name, because the alternative is a member list read as a slot's
+ * placeholder table or the other way round.
+ *
+ * In the long form EVERY key must be one of them. A key outside the set is
+ * almost always a slot name left behind by a half-finished conversion from the
+ * short form, so it is refused with that as the message rather than ignored — an
+ * ignored slot is an attachment that vanishes.
+ */
+export function splitRigSkin(skin: RigSkin, where: string): RigSkinParts {
+  const empty = (): Record<RigSkinConstraintKey, string[]> => ({
+    ik: [],
+    transform: [],
+    path: [],
+    physics: [],
+    slider: [],
+  });
+  if (!isObj(skin)) throw new CompileError(`${where}: a skin must be an object`);
+  const known = new Set<string>(RIG_SKIN_KEYS);
+  const keys = Object.keys(skin);
+  if (!keys.some((key) => known.has(key))) {
+    return { attachments: skin as RigSkinAttachments, bones: [], constraints: empty(), explicit: false };
+  }
+  const entry = skin as RigSkinEntry;
+  if (entry.attachments !== undefined && !isObj(entry.attachments)) {
+    throw new CompileError(`${where}: "attachments" is \`slotName -> placeholderName -> attachment\`, not ${JSON.stringify(entry.attachments)}`);
+  }
+  for (const key of keys) {
+    if (known.has(key)) continue;
+    throw new CompileError(
+      `${where}: uses the long form (it declares ${keys.filter((k) => known.has(k)).map((k) => `"${k}"`).join(', ')}) ` +
+        `and also has a key "${key}". In that form every key is one of ${RIG_SKIN_KEYS.join(', ')} — so "${key}" reads ` +
+        'as neither a member list nor a slot, and a slot left outside the block is an attachment that vanishes. ' +
+        'Move it inside "attachments".',
+    );
+  }
+  const nameList = (value: unknown, field: string): string[] => {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) throw new CompileError(`${where}: "${field}" must be an array of names, not ${JSON.stringify(value)}`);
+    return value.map((name, i) => {
+      if (typeof name !== 'string' || name.length === 0) {
+        throw new CompileError(`${where}: ${field}[${i}] is ${JSON.stringify(name)}; a skin lists bones and constraints BY NAME`);
+      }
+      return name;
+    });
+  };
+  const constraints = empty();
+  for (const key of RIG_SKIN_CONSTRAINT_KEYS) constraints[key] = nameList(entry[key], key);
+  return {
+    attachments: entry.attachments ?? {},
+    bones: nameList(entry.bones, 'bones'),
+    constraints,
+    explicit: true,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // constraints — `root.constraints[]` (SkeletonJson.ts:144-369), the 4.3 shape
@@ -532,7 +707,11 @@ export type RigSkin = Record<string, Record<string, RigAttachment>>;
  */
 export interface RigConstraintCommon {
   name: string;
-  /** Default false → `skinRequired` (`:147`). */
+  /**
+   * Default false → `skinRequired` (`:147`): the constraint does not run unless
+   * the applied skin lists it under its own type (see `RigSkinEntry`). Half a
+   * switch on its own, so rigc refuses the flag without a skin that activates it.
+   */
   skin?: boolean;
 }
 
@@ -640,20 +819,127 @@ export interface RigPhysicsConstraint extends RigConstraintCommon {
 }
 
 /**
- * 🚧 `path` (`:269-300`) and `slider` (`:340-366`) are in the type so a spec can
- * say them and be refused by name. Neither appears anywhere in the benchmark
- * corpus (SPEC_COVERAGE part 4-2), so neither is on the ladder's critical path.
+ * The three enums a path constraint chooses its model with, spelled as the
+ * runtime's own enum members (`PathConstraintData.ts:77-87`).
+ *
+ * 🚨 They are checked, and this is one of the places where checking matters most:
+ * `Utils.enumValue` is `type[name[0].toUpperCase() + name.slice(1)]`, so a name
+ * outside the set resolves to **`undefined`** and is assigned without complaint.
+ * The constraint then behaves as some *other* mode — an unknown `spacingMode`
+ * fails the `=== Length` test and spaces bones as though `Fixed` had been asked
+ * for; an unknown `rotateMode` is neither `Tangent` nor `ChainScale`, so bones
+ * follow the path and never turn along it. Both load, both animate, neither is
+ * what was written. Only the first letter's case is free, because that is exactly
+ * what `enumValue` normalises.
  */
-export interface RigUnimplementedConstraint extends RigConstraintCommon {
-  type: 'path' | 'slider';
-  [field: string]: unknown;
+export const RIG_PATH_POSITION_MODES = ['Fixed', 'Percent'] as const;
+export const RIG_PATH_SPACING_MODES = ['Length', 'Fixed', 'Percent', 'Proportional'] as const;
+export const RIG_PATH_ROTATE_MODES = ['Tangent', 'Chain', 'ChainScale'] as const;
+
+/** The six property names a slider or a transform constraint may read (`:241`, `:521`). */
+export const RIG_FROM_PROPERTIES = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'] as const;
+
+/**
+ * `type: "path"` (`:269-300`).
+ *
+ * **When you need one:** anything that travels — a cart along a track, a fish
+ * along a current, a chain of links wrapping a pulley. The constraint takes a
+ * `RigPathAttachment` off `slot` and slides `bones` along it, so one `position`
+ * key moves the whole train and the shape of the motion lives in the curve
+ * rather than in the keys.
+ *
+ * ⚠️ `slot` must be a slot that carries a path attachment. `PathConstraint.update`
+ * begins `if (!(attachment instanceof PathAttachment)) return` — so a constraint
+ * aimed at a slot showing a region does nothing at all, with no error anywhere.
+ * rigc refuses a slot that has no path attachment in any skin.
+ */
+export interface RigPathConstraint extends RigConstraintCommon {
+  type: 'path';
+  /** At least one, in the order they ride the path. Resolved by name. */
+  bones: string[];
+  /** The slot whose path attachment the bones follow. Required by the parser. */
+  slot: string;
+  /** Default `"Percent"`: `position` 0..1 along the path rather than in world units. */
+  positionMode?: (typeof RIG_PATH_POSITION_MODES)[number] | 'fixed' | 'percent';
+  /** Default `"Length"`: spacing measured in each bone's own length. */
+  spacingMode?: (typeof RIG_PATH_SPACING_MODES)[number] | 'length' | 'fixed' | 'percent' | 'proportional';
+  /** Default `"Tangent"`: each bone turns to the path's tangent where it sits. */
+  rotateMode?: (typeof RIG_PATH_ROTATE_MODES)[number] | 'tangent' | 'chain' | 'chainScale';
+  /** Default 0 → `offsetRotation`, degrees added after the path's own rotation. */
+  rotation?: number;
+  /** Default 0. Where the first bone sits: 0..1 under `Percent`, world units under `Fixed`. */
+  position?: number;
+  /** Default 0. Gap between bones, in the unit `spacingMode` chooses. */
+  spacing?: number;
+  /** Default 1. */
+  mixRotate?: number;
+  mixX?: number;
+  /** Defaults to `mixX` (`:283`). */
+  mixY?: number;
+}
+
+/**
+ * `type: "slider"` (`:340-366`) — 4.3's own constraint, and the only one that
+ * applies an **animation** rather than a transform.
+ *
+ * **When you need one:** a pose that has to be driven by a value instead of by
+ * time — a dial that opens a door, a blend shape on a face, a suspension that
+ * compresses as the wheel rises. `animation` is applied at a time the slider
+ * chooses, `mix` is its authority, and everything that animation keys is under
+ * its control while it is on.
+ *
+ * The time comes from one of two models and `bone` is the switch (`:350`):
+ *
+ * - **property-driven** — with a `bone`, the slider reads one transform
+ *   `property` off it and maps it to a time: `time = to + (value - from) * scale`.
+ *   This is the dial.
+ * - **time-driven** — with no `bone`, `time` is the slider's own setup value and
+ *   an `animations.<a>.slider.<name>.time` timeline keys it.
+ *
+ * ⚠️ `animation` is resolved in a **second pass** over the constraints array,
+ * after the animations are read (`:495-507`), and a miss **throws**
+ * `Slider animation not found`. It names an animation in the MOTION spec — the
+ * one place a rig spec points across the file boundary, and the mirror of
+ * `events`, where the rig declares a name the motion spec fires.
+ */
+export interface RigSliderConstraint extends RigConstraintCommon {
+  type: 'slider';
+  /** An animation the motion spec declares. Required: a miss throws in the parser. */
+  animation: string;
+  /** Default 1. The slider's authority over what its animation keys. */
+  mix?: number;
+  /** Default false. Add the animation to the current pose instead of overwriting it. */
+  additive?: boolean;
+  /**
+   * Default false. Repeat past the animation's duration instead of holding the
+   * last frame. ⚠️ With a `bone`, `loop` divides by the animation's duration
+   * (`Slider.ts:63-64`), so looping a zero-length animation yields a NaN time.
+   */
+  loop?: boolean;
+  /** The driving bone. Its presence switches the whole model — see above. */
+  bone?: string;
+  /** Which of the six transform properties to read. Required when `bone` is set. */
+  property?: (typeof RIG_FROM_PROPERTIES)[number];
+  /** Default 0. The property value that maps to time `to`. */
+  from?: number;
+  /** Default 0. The time `from` maps to. */
+  to?: number;
+  /** Default 1. Seconds of animation per unit of the property. */
+  scale?: number;
+  /** Default 0. Nonessential: the editor's top of the slider's range. */
+  max?: number;
+  /** Default false. Read the bone's local transform instead of its world one. */
+  local?: boolean;
+  /** The setup time, for the time-driven model. Read only when `bone` is absent. */
+  time?: number;
 }
 
 export type RigConstraint =
   | RigIkConstraint
   | RigTransformConstraint
+  | RigPathConstraint
   | RigPhysicsConstraint
-  | RigUnimplementedConstraint;
+  | RigSliderConstraint;
 
 // ---------------------------------------------------------------------------
 // events — `root.events` (SkeletonJson.ts:469-484), an OBJECT, not an array
@@ -759,7 +1045,14 @@ export interface RigSpec {
   images?: string;
   bones: RigBone[];
   slots: RigSlot[];
-  /** At least `default`, which becomes `skeletonData.defaultSkin` (`:441`). */
+  /**
+   * At least `default`, which becomes `skeletonData.defaultSkin` (`:441`).
+   *
+   * Each entry is either the short form — `slotName -> placeholderName ->
+   * attachment` — or the long one, `{ "attachments": {…}, "bones": [...],
+   * "ik": [...] }`, which also says which bones and constraints the skin
+   * activates. `splitRigSkin` normalises the two.
+   */
   skins?: Record<string, RigSkin>;
   constraints?: RigConstraint[];
   /**
@@ -869,12 +1162,122 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   }
 
   const constraintNames = new Set<string>();
+  /** name -> [type, skinRequired], for the skin lists below. */
+  const constraintFacts = new Map<string, [string, boolean]>();
   for (const constraint of spec.constraints ?? []) {
     if (!isObj(constraint) || typeof constraint.name !== 'string' || constraint.name.length === 0) {
       throw new CompileError(`${where}: every constraint needs a "name"`);
     }
     if (constraintNames.has(constraint.name)) throw new CompileError(`${where}: two constraints are called "${constraint.name}"`);
     constraintNames.add(constraint.name);
+    constraintFacts.set(constraint.name, [String(constraint.type), constraint.skin === true]);
+  }
+
+  // --- skins: the attachment table, and what the skin ACTIVATES --------------
+  //
+  // The lists resolve by name like everything else in this format, and the
+  // parser is loud about a miss (`Couldn't find bone X for skin Y`) — but in the
+  // consumer's process, so they are refused here where the message can name the
+  // rig spec. What the parser does NOT check is the pairing with `skin: true`,
+  // and that half is silent in both directions (see `RigSkinEntry`).
+  const skinBoneUse = new Map<string, string>();
+  const skinConstraintUse = new Map<string, string>();
+  if (spec.skins !== undefined) {
+    if (!isObj(spec.skins)) throw new CompileError(`${where}: "skins" is an object keyed by skin name`);
+    const collision = RIG_SKIN_KEYS.find((key) => slotNames.has(key));
+    if (collision !== undefined) {
+      // The long form is recognised by these keys, so a slot of one of those
+      // names is genuinely ambiguous in the short form. Guessing either way
+      // loses an attachment table or a member list in silence.
+      throw new CompileError(
+        `${where}: a slot is called "${collision}", which is one of the keys that tell a skin's long form ` +
+          '(`{ "attachments": {…}, "bones": [...] }`) from its short one (`slotName -> placeholder -> attachment`): ' +
+          `${RIG_SKIN_KEYS.join(', ')}. Rename the slot.`,
+      );
+    }
+    for (const [skinName, skin] of Object.entries(spec.skins)) {
+      const at = `${where}: skin "${skinName}"`;
+      const parts = splitRigSkin(skin, at);
+      for (const bone of parts.bones) {
+        if (!seen.has(bone)) {
+          throw new CompileError(`${at} activates bone "${bone}", which this rig does not declare`);
+        }
+        const previous = skinBoneUse.get(bone);
+        if (previous !== undefined && previous !== skinName) {
+          // Not a parser rule — a rig-spec one. `updateCache` activates the union
+          // of the current skin's bones, so a bone in two skins is a bone whose
+          // "which skin am I for" question has no answer, and the second list is
+          // usually a copy-paste that was meant to be a different bone.
+          throw new CompileError(
+            `${at} activates bone "${bone}", which skin "${previous}" already activates; a bone belongs to one skin`,
+          );
+        }
+        skinBoneUse.set(bone, skinName);
+        const declared = spec.bones.find((b) => b.name === bone);
+        if (declared?.skin !== true) {
+          throw new CompileError(
+            `${at} activates bone "${bone}", but that bone does not declare \`"skin": true\`. ` +
+              'Skeleton.updateCache starts a bone active unless it is skinRequired, so this list changes nothing — ' +
+              'the bone poses under every skin.',
+          );
+        }
+      }
+      for (const type of RIG_SKIN_CONSTRAINT_KEYS) {
+        for (const name of parts.constraints[type]) {
+          const facts = constraintFacts.get(name);
+          if (facts === undefined) {
+            throw new CompileError(`${at} activates ${type} constraint "${name}", which this rig does not declare`);
+          }
+          if (facts[0] !== type) {
+            // `findConstraint(name, IkConstraintData)` resolves by name AND type,
+            // and the parser throws on the miss.
+            throw new CompileError(
+              `${at} lists "${name}" under "${type}", but the rig declares it as a "${facts[0]}" constraint — ` +
+                'a skin looks its constraints up by name AND type, so this one is a miss and the loader throws',
+            );
+          }
+          const previous = skinConstraintUse.get(name);
+          if (previous !== undefined && previous !== skinName) {
+            throw new CompileError(
+              `${at} activates constraint "${name}", which skin "${previous}" already activates; a constraint belongs to one skin`,
+            );
+          }
+          skinConstraintUse.set(name, skinName);
+          if (!facts[1]) {
+            throw new CompileError(
+              `${at} activates ${type} constraint "${name}", but that constraint does not declare \`"skin": true\`. ` +
+                'A constraint is active unless it is skinRequired, so this list changes nothing.',
+            );
+          }
+        }
+      }
+    }
+  }
+  // The other direction, and the silent one that costs a pose: an object that
+  // declared `skin: true` and appears in no list is switched off under every skin
+  // there is. Outside the block above on purpose — a rig with no `skins` at all
+  // is the strongest case of it. A listed bone activates its ancestors too
+  // (`Skeleton.ts:198-205`), so a parent reachable only that way is not dead.
+  const activated = new Set(skinBoneUse.keys());
+  const parentOf = new Map(spec.bones.map((b) => [b.name, b.parent]));
+  for (const bone of [...activated]) {
+    for (let cursor = parentOf.get(bone); cursor; cursor = parentOf.get(cursor)) activated.add(cursor);
+  }
+  for (const bone of spec.bones) {
+    if (bone.skin === true && !activated.has(bone.name)) {
+      throw new CompileError(
+        `${where}: bone "${bone.name}" declares \`"skin": true\` but no skin activates it, so it is never active — ` +
+          'list it in the skin it belongs to, or drop the flag',
+      );
+    }
+  }
+  for (const [name, [type, skinRequired]] of constraintFacts) {
+    if (skinRequired && !skinConstraintUse.has(name)) {
+      throw new CompileError(
+        `${where}: ${type} constraint "${name}" declares \`"skin": true\` but no skin activates it, so it never runs — ` +
+          `list it in that skin's "${type}" array, or drop the flag`,
+      );
+    }
   }
 
   if (raw.events !== undefined) {

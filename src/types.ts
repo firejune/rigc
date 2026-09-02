@@ -230,6 +230,16 @@ export type BoneProperty =
 export type PhysicsProperty = 'mix' | 'reset';
 
 /**
+ * Path constraint timelines. `mix` is three values in one key —
+ * `[mixRotate, mixX, mixY]` — because the format writes them as one timeline
+ * with three curve channels (`SkeletonJson.ts:1025-1056`).
+ */
+export type PathProperty = 'position' | 'spacing' | 'mix';
+
+/** Slider timelines. `time` is the animation time the slider applies. */
+export type SliderProperty = 'time' | 'mix';
+
+/**
  * One physics constraint.
  *
  * Structure, so it could argue for the manifest — but every field here is a
@@ -259,6 +269,15 @@ export interface MotionPhysics {
   note?: string;
 }
 
+/**
+ * One target, one property, a list of keys.
+ *
+ * ⭐ **The target field picks the family, not the property.** Three constraint
+ * families spell a timeline `group.<constraint>.<timeline>` and all three of them
+ * have a timeline called `mix`, so `property` alone cannot say which one a track
+ * means — `physics`, `path` and `slider` each name their own constraint, and a
+ * track that names none of them is a slot or bone track as before.
+ */
 export interface MotionTrack {
   /** Target one slot... */
   slot?: string;
@@ -268,7 +287,11 @@ export interface MotionTrack {
   bone?: string;
   /** ...or one physics constraint, by name. */
   physics?: string;
-  property: 'rgba' | 'attachment' | BoneProperty | PhysicsProperty;
+  /** ...or one path constraint, by name. */
+  path?: string;
+  /** ...or one slider, by name. */
+  slider?: string;
+  property: 'rgba' | 'attachment' | BoneProperty | PhysicsProperty | PathProperty | SliderProperty;
   /** Seconds added to every key time of this track. */
   lag?: number;
   /** Extra per-member delay inside a group, in member order. */
@@ -656,11 +679,33 @@ export interface SpineClippingAttachment {
   color?: string;
 }
 
+/**
+ * A composite cubic Bezier, for a path constraint to slide bones along.
+ *
+ * `lengths` is the cumulative arc length at the end of each curve in the setup
+ * pose — one entry per curve, so `vertexCount / 3 - 1` of them on an open path
+ * and `vertexCount / 3` on a closed one. It has no parser default and the parser
+ * dereferences `map.lengths.length` unconditionally, so an absent array is one of
+ * the format's few loud failures; rigc measures the numbers off the geometry
+ * rather than letting a spec restate them.
+ */
+export interface SpinePathAttachment {
+  type: 'path';
+  closed?: boolean;
+  constantSpeed?: boolean;
+  vertexCount: number;
+  /** Unweighted x/y pairs, or the weighted run — same encoding as a mesh's. */
+  vertices: number[];
+  lengths: number[];
+  color?: string;
+}
+
 export type SpineAttachment =
   | SpineRegionAttachment
   | SpineMeshAttachment
   | SpineBoundingBoxAttachment
-  | SpineClippingAttachment;
+  | SpineClippingAttachment
+  | SpinePathAttachment;
 
 export type SpineTimelineKey = Record<string, unknown>;
 
@@ -686,7 +731,23 @@ export interface SpineSkeletonJson {
   bones: SpineBone[];
   slots: SpineSlot[];
   constraints?: SpineConstraint[];
-  skins: Array<{ name: string; attachments: Record<string, Record<string, SpineAttachment>> }>;
+  /**
+   * Field order inside a skin entry is `readSkeletonData`'s reading order —
+   * `bones`, then the five constraint lists, then `attachments` — and every one
+   * of them but `name` and `attachments` is emitted only when the rig declared
+   * it, so a spec that names no per-skin member emits exactly what it always did.
+   */
+  skins: Array<{
+    name: string;
+    /** Bone names this skin activates. Each one carries `skin: true`. */
+    bones?: string[];
+    ik?: string[];
+    transform?: string[];
+    path?: string[];
+    physics?: string[];
+    slider?: string[];
+    attachments: Record<string, Record<string, SpineAttachment>>;
+  }>;
   /**
    * Event definitions, keyed by name (`SkeletonJson.ts:451-464`). An object, not
    * an array — the one top-level collection in the format that is.
@@ -703,7 +764,11 @@ export interface SpineSkeletonJson {
        */
       ik?: Record<string, SpineTimelineKey[]>;
       transform?: Record<string, SpineTimelineKey[]>;
+      /** `path.<constraint>.<position|spacing|mix> = keys[]` — the physics shape. */
+      path?: Record<string, Record<string, SpineTimelineKey[]>>;
       physics?: Record<string, Record<string, SpineTimelineKey[]>>;
+      /** `slider.<constraint>.<time|mix> = keys[]`. */
+      slider?: Record<string, Record<string, SpineTimelineKey[]>>;
       /** `attachments.<skin>.<slot>.<attachment>.<timeline> = keys[]` — four deep. */
       attachments?: Record<string, Record<string, Record<string, Record<string, SpineTimelineKey[]>>>>;
       /** Whole-animation timeline: no target name, one array per animation. */
