@@ -419,14 +419,19 @@ standing read-down used kind 4, and the 188 blank (set, slot) pairs still read d
 ladder is complete again. Figures, the sweep table and the re-adjudication are in *The gate-v2.3
 re-inspection* and *The clause margins* under **Status** below.
 
-**Stage 3 — per-frame pose distance. Named, not built.** The structural diff
+**Stage 3 — per-frame pose distance. Built 2026-09-03 (PR #269, issue #8).** The structural diff
 compares what the file *says*; it cannot see that two structurally identical rigs
 pose differently. The measure for that is **per-frame bone world-transform
 distance**: step both skeletons through the same animation at a fixed rate and
 compare each bone's world position, rotation and scale frame by frame. It needs a
 bone correspondence (a candidate is free to use its own names, so the mapping is
-an input, not a derivation) and a distance normalised by skeleton size. **None of
-it exists.** Do not report a per-frame figure until it does.
+an input, not a derivation) and a distance normalised by skeleton size. That is
+exactly the shape it shipped in: `rigc bonedist` (and `bench --bones`) poses both
+skeletons through the renderer's own stepping recipe, takes the correspondence as
+a **supplied input** (`identity` or a mapping file, never derived), and reports
+four quantities — root-relative position over skeleton size, rotation, scale, and
+the full linear part — **never combined into a score and never gating**: the
+figures land in `sections[].reported`, beside and never inside the gated table.
 
 ### The honesty rule
 
