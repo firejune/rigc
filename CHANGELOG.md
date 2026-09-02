@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/firejune/rigc/compare/v0.8.1...v0.9.0) (2026-09-02)
+
+
+### Features
+
+* **emitter:** contour mesh generator — trace a part's own alpha and triangulate it ([#251](https://github.com/firejune/rigc/issues/251)) ([3127d13](https://github.com/firejune/rigc/commit/3127d13d9dee8857c8def405fd908eac3f76c5ee)), closes [#6](https://github.com/firejune/rigc/issues/6) [#1](https://github.com/firejune/rigc/issues/1)
+* **rig:** path and slider constraints, path attachments, and per-skin member lists ([#253](https://github.com/firejune/rigc/issues/253)) ([cb7376f](https://github.com/firejune/rigc/commit/cb7376fd9e2ac1569f2a775119d02fd4a9a22a06))
+
+
+### Bug Fixes
+
+* **check:** attribute the texture floor, substitute texture only, and stop the extent test punishing a silhouette ([#254](https://github.com/firejune/rigc/issues/254)) ([ad7aec4](https://github.com/firejune/rigc/commit/ad7aec4248b8c73412e605336ed98a0a8a8c2e86))
+
 ## [0.8.1](https://github.com/firejune/rigc/compare/v0.8.0...v0.8.1) (2026-09-02)
 
 
