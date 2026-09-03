@@ -1,0 +1,76 @@
+The leg chain's length — a hypothesis raised by arithmetic and refused by measurement
+=====================================================================================
+
+AUTHORING §8.1 asks for a reach check before a chain's first fit: "Take the chain's
+total reach from your own rig; take the longest excursion the shot's own frames show
+that chain's end travelling — and compare."
+
+WHAT THE ARITHMETIC SAID
+------------------------
+This rig's leg links come from the art's own cap centroids (tools/art.ts, opaque =
+alpha >= 128, cap = the opaque centroid of the topmost/bottommost 12% of opaque rows):
+
+  front-thigh  hip cap (16.5, 8.1) -> knee cap (20.5, 102.9)      94.9 units
+  front-shin   knee cap (52.3, 13.6) -> ankle cap (28.7, 169.7)  157.9 units
+  front-foot   ankle cap (41.0, 5.3) -> sole                     ~60 units
+                                                    hip -> sole  ~308 units
+
+Against the frames: the pelvis sits at world y = 216.8 (the torso plate's own bottom
+cap carried through `pose`'s torso placement on `idle/f0000` into the sidecar's box),
+the hip 16.6 units above it at 233.4, and the floor is world y = 0 — the sidecar puts it
+at image row 335.96 and this run reproduced that figure. So the STANDING leg spans about
+233 units from hip to sole, with whatever knee bend the stance has, against a 308-unit
+straight-leg reach.
+
+`check` says the same thing independently, and this is the cheapest way to see it.
+Pointing it at one set with a static candidate, the `in units` line reads:
+
+  in units   candidate 352.8 x 727.9   reference 460.7 x 648.7   x0.9270     (idle, 21 frames)
+
+727.9 against 648.7 — the candidate assembled straight from the caps is 79 units TALLER
+than the reference's standing figure, which is the same 75-79 units the hip-to-sole
+arithmetic predicts. ⭐ That line compares only if the shot was measured in the frames'
+own units, so it is also the confirmation that it was.
+
+THE HYPOTHESIS
+--------------
+A cap centroid sits at the plate's rounded TIP, while the joint two plates share sits
+inside the overlap the two rounded ends make. So every link should be shorter than its
+cap-to-cap distance, by roughly the cap's own radius — which on these plates is 20-40
+units per link and would account for the whole 79.
+
+THE MEASUREMENT
+---------------
+`LIMB_SHORTEN` (tools/rig.ts) pulls every link's far joint toward its own pivot by a
+fraction, keeping the direction, and leaves the hips, the shoulders and the muzzle
+alone — the first two are positions on the chest plate rather than link lengths, and the
+third is the barrel. Each factor was built into its own candidate and put through the
+IDENTICAL structural sweep on the identical 14-frame spread (tools/setupfit.ts, one
+round), so the only difference between the rows is the factor:
+
+  LIMB_SHORTEN   spread mean after the rotation pass   after the structural pass
+  ------------   ----------------------------------   -------------------------
+  0 (as read)                          6.1869                          6.2225
+  0.10                                 6.8880                          6.9092
+  0.18                        not run — see below
+  0.25                        not run — see below
+
+⇒ REFUSED. Shortening every link by 10% costs 0.70 on the spread mean, an 11% rise,
+and the direction is unambiguous. The 0.18 and 0.25 rows were abandoned once the sign
+was established, so this table reports two points and not four; the trend beyond 0.10
+is NOT measured here and is not claimed.
+
+WHAT THAT MEANS
+---------------
+The cap-derived link lengths are the better rig, and the 79 units are a real knee bend
+in the reference's own stance rather than an error in this rig. The surgery §8.1 warns
+about — "the surgery to fix it invalidates every pose already fitted with the short
+chain" — was therefore not performed, and the per-frame fitting budget was not spent
+twice.
+
+⚠️ Two honest limits on this reading. The comparison is between two SEARCHES, not two
+optima, so it says shortening makes this objective harder to minimise on this spread and
+not that the reference's links are exactly these. And the structural sweep that produced
+each row measured a basin of +-4.5 to +-9 units on every one of its 21 knobs (about +-1
+to +-2 frame pixels), so the joints are weakly identified at the scale a frame can see:
+what is refused here is a 10% change, and a 2% one would be inside the noise.

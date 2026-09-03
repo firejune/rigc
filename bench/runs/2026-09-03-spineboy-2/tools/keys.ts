@@ -341,7 +341,10 @@ const forcedKey = (set: string, channel: string): string => `${set}|${channel}`;
 function foldTerminal(animation: string, channel: string, keys: PlannedKey[], duration: number): PlannedKey[] {
   const fine = series.find((s) => s.animation === animation && s.fps === 30);
   const out = keys.filter((k) => k.t <= duration + 1e-9);
-  if (fine && fine.index.length > 0) {
+  // A one-frame set's only still is the same instant as the 12 fps f0, so there
+  // is nothing terminal to fold; taking it would overwrite f0's own fit with a
+  // second fit of the same picture.
+  if (fine && fine.index.length > 0 && fine.index[fine.index.length - 1] > 0) {
     const lastIndex = fine.index[fine.index.length - 1];
     const t = lastIndex / fine.fps;
     const v = fine.values[channel][fine.index.length - 1] ?? 0;
