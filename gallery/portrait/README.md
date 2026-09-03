@@ -8,7 +8,8 @@ cannot open.
 
 ⭐ **The one feature this example stars: `deform` used as a *projection* rather
 than as a squash.** [AUTHORING §4.11](../../docs/AUTHORING.md) is the field
-reference and [`squash`](../squash/) is the other example that stars it; the
+reference, [FACE.md](../../docs/FACE.md) is the recipe this example is the worked
+material for, and [`squash`](../squash/) is the other example that stars it; the
 difference is what the keys mean. `squash`'s two shapes are affine transforms of
 a ball. These are the **perspective projection of a yaw**, and every number in
 them — mesh offsets, bone translations, bone scales — comes off one line of

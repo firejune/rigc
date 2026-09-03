@@ -1689,6 +1689,13 @@ with the two affine transforms its keys were derived from.
 placed to sample a cosine, every offset one line of arithmetic, and a measured
 account of the angle past which the mesh folds.
 
+📘 **[FACE.md](FACE.md) is the recipe for that second case**, and it is where the
+grid questions this section leaves to its reader are answered: where to put the
+columns, why `hull: 0` is the honest declaration on a grid, the closed form for
+the angle at which any column pair folds — and the fact that a folded key passes
+`A35` and every other assertion, so the arithmetic has to be checked before the
+build.
+
 ---
 
 ### 4.12 `path` and `slider` timelines — tracks, not their own groups
