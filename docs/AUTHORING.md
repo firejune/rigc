@@ -81,6 +81,14 @@ bun install                                   # once
 bun cli.ts pose --images path/to/parts --frame path/to/poseA.png --out poseA.json
 #   ↳ one entry per part PNG: where it sits, how confident that is, and where two
 #     answers are equally good — §11
+#
+# …and once a candidate EXISTS, the half of that picture pose refuses — the parts
+# another part is drawn over — is readable through the rig's own draw order and
+# hierarchy. This one runs after a first build, not before it:
+bun cli.ts chainfit --candidate path/to/spine --images path/to/parts \
+                    --frame path/to/poseA.png --out chainfitA.json
+#   ↳ one entry per drawn slot: where it sits, over how much of it that was
+#     measured, and the `rotate` key value it implies — §12
 
 bun cli.ts build \
   --rig    path/to/my.rig.json \
@@ -143,19 +151,25 @@ What the flags mean:
 | `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
 | `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1** |
 | `--atlas-in` | `build` only: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; the atlas is re-emitted into `--out`, re-anchored — **§0.2** |
-| `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order |
+| `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order. For `chainfit` it is only where each attachment's image name **resolves**: the candidate decides what the parts are, so extra PNGs are unused and a missing name is refused by name (§12.3) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |
-| `--candidate` | `check`, `bench`, `render`, `preview` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
+| `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview`, and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote`, so is a name that only *some* candidates have |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
 | `--ballot` | `vote --record` only: the ballot the vote answers (default `ballot.html`). Its embedded manifest is what the vote is checked against, so the ballot file is the record of the question |
 | `--ledger` | `vote --record` only: the append-only JSONL the vote lands in (default `votes.jsonl`), one vote per line |
 | `--again` | `vote --record` only: record a second vote on a ballot the ledger already has. Without it a repeat is refused by name rather than doubled |
-| `--frame` | `pose` only: one pose frame — the picture to read part placements out of. One frame per call; several key poses are several calls, and correlating them is yours (§11) |
-| `--scale` | `pose` only: the scale window to search, as **frame pixels per part pixel**, `<min>,<max>` (default `0.5,2`). The report states what it searched, and a window that does not contain the truth does not reliably refuse — §11 |
-| `--rotation` | `pose` only: the rotation window to search, in screen degrees, `<min>,<max>` (default `-180,180`, a full turn). Narrow it when you know the art is upright |
-| `--max-residual` | `pose` only: above this residual a placement is **refused by name** instead of reported flat (default `0.25`). A reporting threshold, not a pass bar — the placement is still in the JSON |
+| `--frame` | `pose` and `chainfit`: one pose frame — the picture to read part placements out of. One frame per call; several key poses are several calls, and correlating them is yours (§11) |
+| `--scale` | the scale window to search, as **frame pixels per part pixel**, `<min>,<max>` (default `0.5,2`). The report states what it searched, and a window that does not contain the truth does not reliably refuse — §11. For `chainfit` it sizes the **internal anchor pass** and is refused beside `--anchor` — §12.4 |
+| `--rotation` | the rotation window to search, in screen degrees, `<min>,<max>` (default `-180,180`, a full turn). Narrow it when you know the art is upright. For `chainfit`, again the internal anchor pass — the chains' own window is `--hinge` |
+| `--max-residual` | `pose` and `chainfit`: above this residual a placement is **refused by name** instead of reported flat (default `0.25`). A reporting threshold, not a pass bar — the placement is still in the JSON |
+| `--anchor` | `chainfit` only: a `rigc pose` report for **this** frame, whose confident placements become the anchors the chains hang off. Without it that pass runs internally — §12.2 |
+| `--hinge` | `chainfit` only: the window each child bone's local rotation is searched over, in **Spine** degrees about its setup value, `<min>,<max>` (default `-180,180`) — §12.4 |
+| `--stretch` | `chainfit` only: also search a uniform bone scale, this ratio either way. Without it, stretch is free only where the candidate's own animations key a `scale` timeline — §12.4 |
+| `--min-visible` | `chainfit` only: below this share of a part surviving the parts drawn over it, the placement is refused `occluded` instead of reported flat (default `0.25`) — §12.4 |
+| `--passes` | `chainfit` only: how many times the occluder masks are rebuilt from the answers and the fit rerun (default `2`) — §12.4 |
+| `--anchor-residual` | `chainfit` only: the residual a `pose` placement must be within to anchor a chain (default `0.16`) — §12.2 |
 
 `render` also takes `--fps <n>` (the rate it samples at, default 12 — the same
 protocol rate the reference frames use) and `--max <px>` (the long side of a
@@ -366,6 +380,17 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   a given condition, not a target, and the residual it reports is how far to trust
   a placement rather than how good the placement is. Reach for it the moment a
   request arrives as *"make it go from this picture to this one"*. **§11.**
+- 🧩 **`chainfit` is that same reading of an input, through a rig you already
+  have.** `pose` is handed nothing but the parts and the picture, so on a dense
+  figure it refuses the half another part is drawn over — the residual it would
+  report there is measuring the occluder. Give the same frame a **candidate** and
+  two things become available that `pose` structurally cannot have: a draw order,
+  so the pixels a later part covers are taken OUT of the objective instead of
+  charged to it, and a hierarchy, so a child of a placed bone is searched over one
+  hinge about its own pivot rather than over four degrees of freedom. It reports the
+  `rotate` key value each answer implies, and the share of the part that answer was
+  actually measured on. Reach for it after a first build, when the frame still has
+  parts in it you cannot read. **§12.**
 - 🗳️ **`vote` is `preview` with more than one candidate in it and an answer
   coming back**, and it is the one step of this loop you cannot run yourself.
   Reach for it where the instruments have run out: two builds that `check` and
@@ -3871,3 +3896,154 @@ and threshold that was applied), and `caveats`.
 - **One frame per call.** Several key poses are several calls, and correlating A
   with B — which placement of a repeated part belongs to which limb, across two
   frames — is the authoring job, not this tool's.
+
+## 12. Reading the half of that picture `pose` refuses — `rigc chainfit`
+
+```bash
+bun cli.ts chainfit --candidate path/to/spine --images path/to/parts \
+                    --frame path/to/poseA.png [--anchor poseA.json] [--out chainfit.json]
+```
+
+§11 ends on a limitation it is honest about and cannot fix: *"a part drawn behind
+another has the occluder's pixels where its own should be, so its residual rises
+**at the correct placement**"*. On a ball that costs nothing. On a figure it costs
+half the figure — the far arm behind the torso, both thighs behind the torso and
+each other, the feet, the fists, whatever the hands hold.
+
+This is the same question with **one more input: your candidate rig**. That input
+is what makes the difference measurable rather than a caveat, and it buys exactly
+two things.
+
+- **Draw order**, so occlusion can be taken out of the arithmetic instead of
+  apologised for. The parts drawn after a part are what covers it, and the pixels
+  they cover are **excluded** from that part's objective rather than charged to it.
+  Every residual here is over the part's **visible** pixels, and every one comes
+  with the `visibleShare` it was computed on.
+- **Hierarchy and attachment geometry**, so the search collapses. A child bone
+  whose parent is already placed does not have four degrees of freedom: the rig
+  fixes its pivot, so what is left is **one hinge** about that pivot — plus a
+  stretch, and only where your own timelines say the rig leaves scale free. One
+  degree of freedom is also what removes the ambiguity §11 has to report: two
+  identical limbs stop being two equal answers once each of them hangs off a
+  different placed shoulder.
+
+### 12.1 Which one to reach for
+
+| The question | The command |
+| --- | --- |
+| *"Where does each of these loose PNGs sit in this picture?"* — you have parts and a picture and nothing else | **`pose`** (§11) |
+| *"Where does this rig's own `rear-upper-arm` sit in this picture?"* — you already have a compiled candidate | **`chainfit`** |
+| A part that is big, distinctive and **unoccluded** | either; they agree, and `pose` needs no rig |
+| A part another part is drawn over | **`chainfit`** — this is the whole reason it exists |
+| A part that appears **twice** (two arms, two shins) | **`chainfit`**, if the two hang off different bones. `pose` is right to call it ambiguous and cannot do better |
+| You have **no rig yet** | **`pose`**. There is nothing to chain from, and inventing one would be a rig you then have to un-invent |
+| Your rig's joint offsets are **guesses** | **`pose` first.** Every hinge here turns about a pivot your rig declares; a wrong joint moves every answer below it. `pivotDisagreementPx` is what says so |
+
+The normal order is **`pose` → author → `chainfit`**: read what you can with no
+rig, write a first rig from it, then read the rest of the frame through that rig.
+And `chainfit` runs `pose` for you unless you hand it one — see `--anchor`.
+
+### 12.2 The anchor, and why the walk only goes outward
+
+A chain needs a trunk. `chainfit` takes its anchors from a **`rigc pose` report
+for the same frame** — `--anchor poseA.json` — and without one it runs that pass
+internally, over exactly the parts your candidate draws. A part becomes an anchor
+when `pose` came back **unambiguous** with `residual ≤ 0.16` and
+`unexplained ≤ 0.45`; those two numbers are `--anchor-residual` and a reported
+field, and they are the 2026-09-03 measurement run's own *clean frame* criterion
+rather than a line invented here.
+
+An anchored part fixes its **whole bone** — four numbers read off the picture for
+the four a similarity has — and every descendant then follows from the rig. A bone
+**above** an anchor does not: recovering it would need to know what the link
+between them did, and that is precisely the unknown the anchor does not carry.
+
+⚠️ **So a limb with no trusted part on it or above it is refused `no-anchor`**, not
+guessed at from a cousin. If a whole side of your figure comes back that way, the
+repair is upstream: give `pose` a better frame, pin its `--scale`, or loosen
+`--anchor-residual` deliberately and read the consequences.
+
+### 12.3 What the report adds to a `pose` report
+
+The coordinate contract is **identical** to §11.2 — frame pixels, y down, origin
+top-left, `(x, y)` where the part image's own centre lands, `rotationDeg` in screen
+degrees — so the two reports are readable side by side. On top of that, per
+placement:
+
+| Field | Meaning |
+| --- | --- |
+| `residual` | the same objective as §11, over the part's **visible** pixels only: covered pixels are dropped from both sums rather than charged. **Not the same number as `pose`'s on an occluded part**, and never to be read without the next field |
+| `visibleShare` | the share of the part's own alpha weight the residual was computed on. A low residual on a `0.08` share is a confident statement about a sliver |
+| `scoredPixels` | how many part pixels that share actually is |
+| `visibleShareAtFit` | the share recomputed **where the answer landed**, rather than where the visible set was frozen. Far from `visibleShare` means the fit moved out of its own measurement; `--passes` is the repair |
+| `hingeDeg` | ⭐ the searched degree of freedom, in **Spine** degrees relative to the bone's setup rotation — **the value a `rotate` key would carry**. `null` on an anchor whose own parent is unplaced, where the quantity does not exist |
+| `localRotationDeg` | the bone's local rotation this implies, Spine degrees. The other half of the same answer |
+| `stretch` | the uniform scale on the bone; `1` where that DOF was not free |
+| `unexplained`, `offCanvas`, `footprint`, `bbox` | as §11.3, with `residual` and `unexplained` over the visible set and `offCanvas` over the whole part |
+
+And per part:
+
+| Field | Meaning |
+| --- | --- |
+| `role` | `anchor` (taken from the anchor pass, not re-fitted), `chain` (fitted through the rig), `unplaced` |
+| — | ⭐ **A refused ANCHOR is not a contradiction, and it is the most useful row in the table.** The anchor pass judged that placement over the part's *whole* footprint — all `pose` can see, and blind to what covers it — while this instrument has just measured how much of the part is visible at all. Both readings are true. A refused anchor means *the placement may well be right and the confirmation is missing*, and every part whose `anchoredTo` names that bone rests on it. Measured on the 2026-09-03 corpus, `rear-bracer` clears `pose`'s criterion on 81 of 147 frames at a median visible share of **0.1%** — suppressing the refusal there was tried and prints that as READ |
+| — | The **other** parts on an anchored bone are refused on their own numbers too, and there they mean something different again: their placement is the **rig's** prediction from that anchor, so their residual is a measurement of the rig (a goggle plate that will not sit on the head it is parented to shows up exactly here) |
+| `bone` | the bone this hangs off: its `parent`, its `setupRotationDeg`, its `depth` in links from the anchor, `anchoredTo`, the `dof` searched, the `window` taken, the other parts `sharedWith` it on that bone, and `carriedBones` |
+| `bone.dof.pivotFree` | your candidate keys a `translate` timeline on this bone, so the arc this answer sits on has a centre the rig itself moves. The placement is still read off pixels; `localRotationDeg` alone will not reproduce it |
+| `bone.carriedBones` | bones between the anchor and here that carry nothing scoreable. Their hinge could not be fitted, their setup rotation was carried through, and every number below them inherits that |
+| `bone.pivotDisagreementPx` | anchored bones only: how far the chain's own prediction of this bone's pivot is from where the anchor put it. **This is the one direct measurement of your rig against the picture** — a large value says the joint offset you declared is not the joint the frame shows |
+| `anchorVerdict` | what the anchor pass made of this same part: `residual`, `unexplained`, `ambiguous`, `eligible`. ⭐ `eligible: false` beside a `chain` placement is **a part the chain bought** |
+| `refusal` | `{ reason, detail }` or `null`. Reasons: `occluded`, `no-match`, `no-anchor`, `empty-part`, `no-part-image`, `unsupported-geometry` |
+
+`⚠️ --images is not a part list here.` For `pose` every `.png` in the directory is
+a part; for `chainfit` **the candidate decides what the parts are** and the
+directory is only where each attachment's image name resolves. Extra PNGs in it are
+simply unused; a name the directory lacks is refused `no-part-image` by name.
+
+### 12.4 The flags that steer it
+
+| Flag | What it does |
+| --- | --- |
+| `--anchor <pose.json>` | use this `rigc pose` report instead of running one. Refused together with `--scale` / `--rotation`, which size the internal pass that then does not happen |
+| `--atlas` | **refused by name.** Every other `--candidate` command takes it, so trying it here is reasonable — but the part art comes from `--images` and the skeleton is all this needs of the candidate, so a flag that silently did nothing would be worse than one that says why |
+| `--hinge <min,max>` | the window each child's local rotation is searched over, in Spine degrees about its setup value. Default `-180,180` — **a full turn, on purpose**: one degree of freedom is cheap enough to sweep exhaustively, and §11.4's warning about a window that does not contain the truth applies here too |
+| `--stretch <ratio>` | also search a uniform bone scale, this ratio either way. Without it, stretch is searched **only where your own animations key a `scale` timeline on that bone** — a rig that never scales a bone is a rig saying that bone does not stretch |
+| `--min-visible <0..1>` | below this visible share a placement is refused `occluded` instead of reported flat (default `0.25`). A reporting threshold, not a pass bar; the placement is still in the JSON |
+| `--max-residual <0..1>` | as §11, over the visible pixels (default `0.25`) |
+| `--passes <n>` | how many times the masks are rebuilt from the answers and the fit rerun (default `2`) |
+| `--anchor-residual <0..1>` | the residual a `pose` placement must be within to anchor (default `0.16`) |
+| `--scale`, `--rotation` | passed to the **internal anchor pass**, meaning exactly what they mean to `pose` |
+
+### 12.5 What it cannot see — read this before using the numbers
+
+- 🚨 **The occlusion is your candidate's, and so is the geometry.** A wrong draw
+  order masks the wrong pixels. A joint offset the rig gets wrong moves the pivot
+  every hinge below it turns about. An answer here is only as good as the structure
+  it was read through, and that is a different failure mode from anything in §11 —
+  `pose` can be wrong about a part, `chainfit` can be wrong about a *limb*, in a
+  way that looks internally consistent. `pivotDisagreementPx` and
+  `bone.carriedBones` are the two fields that expose it.
+- ⚠️ **`residual` here and `residual` in a `pose` report are not the same
+  measurement on an occluded part**, by construction: one drops the covered pixels
+  and the other charges them. Do not put them in one column. What *is* comparable
+  is each against its own `visibleShare` / `unexplained`.
+- ⚠️ **Setup draw order, on one frame.** A `drawOrder` timeline reorders your slots
+  at runtime and this cannot know the time, so a candidate that has one is masked in
+  the order its setup pose declares. The report says so in `caveats` when it finds
+  one.
+- ⚠️ **The hinge is searched; the pivot is not.** Nothing here searches a bone's
+  translation, so a bone you key `translate` on is reported `pivotFree` rather than
+  solved.
+- **A constraint moves bones after their local transforms compose.** With IK,
+  transform, path or physics constraints in the candidate, a fitted
+  `localRotationDeg` is still a placement but not necessarily a value you can key
+  and reproduce. The report lists the constraints it found.
+- **Shear, a non-uniform scale and any `inherit` but `normal`** are refused
+  `unsupported-geometry` by bone, and a non-region attachment by attachment.
+  Composing through them would put a plausible number on geometry this instrument
+  does not model — the same shape of wrongness as a search window that excludes the
+  truth.
+- **Nothing here grades anything either.** Same phase as §11, same reason: the pose
+  is a given condition and once your spec states it there is nothing left to be
+  close to. Every threshold in the report is a reporting threshold. There is no pass
+  bar and `caveats` says so in the file.

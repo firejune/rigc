@@ -22,6 +22,9 @@ toolchain and this page does not invent one.
 - What the Spine editor does when nobody tells it otherwise: **AUTHORING §10**
 - Reading a pose out of a picture — the instrument this recipe consumes:
   **AUTHORING §11**
+- The parts of that picture `pose` refuses because something is drawn over them,
+  once a first candidate exists: **AUTHORING §12** (`rigc chainfit`). It reports the
+  `rotate` key value each answer implies, which is the form this recipe wants them in
 - If what you were handed is a **compiled skeleton** rather than loose parts — reading
   it, transcribing it into specs, re-pivoting it, extending it with an animation:
   [INGEST.md](INGEST.md)

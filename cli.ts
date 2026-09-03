@@ -72,6 +72,18 @@ import {
   poseLines,
   type PoseOptions,
 } from './src/pose.ts';
+import {
+  ANCHOR_MAX_RESIDUAL,
+  ANCHOR_MAX_UNEXPLAINED,
+  chainFitLines,
+  ChainFitError,
+  DEFAULT_HINGE_MAX,
+  DEFAULT_HINGE_MIN,
+  DEFAULT_MIN_VISIBLE,
+  DEFAULT_PASSES,
+  estimateChainFit,
+  type ChainFitOptions,
+} from './src/chainfit.ts';
 import { buildPreview, PLAYER_LINE, type PreviewPage } from './src/preview.ts';
 import {
   atlasPageNames,
@@ -1061,6 +1073,100 @@ function cmdPose(flags: Record<string, string>): void {
 }
 
 // ---------------------------------------------------------------------------
+// reading the half a picture hides — chainfit
+// ---------------------------------------------------------------------------
+//
+// ⭐ `pose` above reads a picture with nothing but the loose parts, and refuses
+// the parts another part is drawn over — a residual measured through an occluder
+// rises AT the correct placement, so the honest answer is a refusal. This reads
+// those, and the whole difference is that it is also given the CANDIDATE: with a
+// draw order the covered pixels can be excluded from a part's objective instead
+// of charged to it, and with a hierarchy a child of a placed bone has one degree
+// of freedom — the hinge about its own pivot — where `pose` has four.
+//
+// 🚫 Same phase and the same framing as `pose`: it reads a given condition into
+// spec coordinates and grades nothing. Every residual is a trust signal, every
+// threshold is reported, and `visibleShare` is how much of the part the number
+// was even computed on.
+//
+//   rigc chainfit --candidate <dir> --images <dir> --frame poseA.png [--anchor pose.json]
+
+const DEFAULT_CHAINFIT_OUT = 'chainfit.json';
+
+function cmdChainFit(flags: Record<string, string>): void {
+  if (flags.candidate === undefined) {
+    throw new UsageError('chainfit needs --candidate <dir | skeleton.json> — the compiled rig to read the frame through');
+  }
+  if (flags.images === undefined) {
+    throw new UsageError("chainfit needs --images <dir> — where the candidate's attachment image names resolve to PNGs");
+  }
+  if (flags.frame === undefined) throw new UsageError('chainfit needs --frame <path> — one pose frame to read the placements out of');
+  // Refused rather than ignored. Every other --candidate command takes --atlas, so
+  // passing it here is a reasonable thing to try — and a flag that silently does
+  // nothing is worse than one that says why it cannot.
+  if (flags.atlas !== undefined) {
+    throw new UsageError(
+      'chainfit reads no atlas: the part art comes from --images, one PNG per attachment image name, and the ' +
+        'skeleton is all it needs of the candidate. Drop --atlas',
+    );
+  }
+  const options: ChainFitOptions = {
+    candidatePath: flags.candidate,
+    imagesDir: flags.images,
+    framePath: flags.frame,
+  };
+  if (flags.anchor !== undefined) options.anchorPath = flags.anchor;
+  const hinge = readRange(flags, 'hinge');
+  if (hinge) {
+    if (hinge.high - hinge.low > 360) throw new UsageError('--hinge cannot span more than a full turn');
+    options.hinge = { minDeg: hinge.low, maxDeg: hinge.high };
+  }
+  if (flags.stretch !== undefined) {
+    const value = Number(flags.stretch);
+    if (!Number.isFinite(value) || value < 1) throw new UsageError('--stretch must be a ratio of 1 or more, e.g. 1.25');
+    options.stretch = value;
+  }
+  if (flags['min-visible'] !== undefined) {
+    const value = Number(flags['min-visible']);
+    if (!Number.isFinite(value) || value < 0 || value > 1) throw new UsageError('--min-visible must be a number in [0, 1]');
+    options.minVisible = value;
+  }
+  if (flags['max-residual'] !== undefined) {
+    const value = Number(flags['max-residual']);
+    if (!Number.isFinite(value) || value <= 0 || value > 1) throw new UsageError('--max-residual must be a number in (0, 1]');
+    options.maxResidual = value;
+  }
+  if (flags.passes !== undefined) {
+    const value = Number(flags.passes);
+    if (!Number.isInteger(value) || value < 1 || value > 8) throw new UsageError('--passes must be a whole number in 1..8');
+    options.passes = value;
+  }
+  if (flags['anchor-residual'] !== undefined) {
+    const value = Number(flags['anchor-residual']);
+    if (!Number.isFinite(value) || value <= 0 || value > 1) throw new UsageError('--anchor-residual must be a number in (0, 1]');
+    options.anchorMaxResidual = value;
+  }
+  const scale = readRange(flags, 'scale');
+  if (scale) {
+    if (scale.low <= 0) throw new UsageError('--scale minimum must be greater than zero');
+    options.scale = { min: scale.low, max: scale.high };
+  }
+  const rotation = readRange(flags, 'rotation');
+  if (rotation) {
+    if (rotation.high - rotation.low > 360) throw new UsageError('--rotation cannot span more than a full turn');
+    options.rotation = { minDeg: rotation.low, maxDeg: rotation.high };
+  }
+
+  console.log('rigc chainfit');
+  const report = estimateChainFit(options);
+  for (const line of chainFitLines(report)) console.log(line);
+
+  const target = resolve(flags.out ?? DEFAULT_CHAINFIT_OUT);
+  const out = existsSync(target) && statSync(target).isDirectory() ? join(target, DEFAULT_CHAINFIT_OUT) : target;
+  writeJson(out, report);
+}
+
+// ---------------------------------------------------------------------------
 // choosing between results — vote
 // ---------------------------------------------------------------------------
 //
@@ -1870,6 +1976,27 @@ const FLAG_MEANINGS: Record<string, string> = {
   'max-residual':
     `above this residual a placement is refused by name instead of reported flat (default ${DEFAULT_MAX_RESIDUAL}); ` +
     'it is a reporting threshold, not a pass bar',
+  anchor:
+    'a `rigc pose` report for THIS frame, whose confident placements become the anchors the chains hang off ' +
+    '(default: run that pass internally over exactly the parts the candidate draws)',
+  hinge:
+    `the window each child bone's local rotation is searched over, in Spine degrees about its setup value ` +
+    `(default \`${DEFAULT_HINGE_MIN},${DEFAULT_HINGE_MAX}\`, a full turn — one degree of freedom is cheap enough not ` +
+    'to risk a window that does not contain the truth)',
+  stretch:
+    'also search a uniform scale on every bone, over this ratio either way (e.g. 1.25). Without it the stretch ' +
+    "degree of freedom is searched only where the candidate's own animations key a `scale` timeline, because a rig " +
+    'that never scales a bone is a rig saying that bone does not stretch',
+  'min-visible':
+    `below this share of a part surviving the parts drawn over it, the placement is refused by name instead of ` +
+    `reported flat (default ${DEFAULT_MIN_VISIBLE}); the best one found is still printed, and it is a reporting ` +
+    'threshold, not a pass bar',
+  passes:
+    `how many times the occluder masks are rebuilt from the answers and the fit rerun (default ${DEFAULT_PASSES}); ` +
+    "pass 1 freezes each part's visible set where the RIG predicts it, later passes where the last one landed",
+  'anchor-residual':
+    `the residual a \`pose\` placement must be within to anchor a chain (default ${ANCHOR_MAX_RESIDUAL}, with ` +
+    `unexplained ≤ ${ANCHOR_MAX_UNEXPLAINED} and unambiguous — the 2026-09-03 measurement run's own clean-frame criterion)`,
   animation: 'which animation to show; the default is every one for `render` and the first for `preview`',
   max: 'longest side of a rendered frame, in pixels (default 256)',
   record: 'a saved vote to check against its ballot and append to the ledger, instead of writing a ballot',
@@ -1908,6 +2035,12 @@ const FLAG_VALUES: Record<string, string> = {
   scale: '<min,max>',
   rotation: '<min,max>',
   'max-residual': '<0..1>',
+  anchor: '<pose.json>',
+  hinge: '<min,max>',
+  stretch: '<ratio>',
+  'min-visible': '<0..1>',
+  passes: '<n>',
+  'anchor-residual': '<0..1>',
   animation: '<name>',
   max: '<px>',
   record: '<result.json>',
@@ -2045,6 +2178,50 @@ const COMMANDS: CommandDoc[] = [
     },
   },
   {
+    name: 'chainfit',
+    usage: [
+      `rigc chainfit --candidate <dir | skeleton.json> --images <dir> --frame <path> [--anchor pose.json] [--out ${DEFAULT_CHAINFIT_OUT}]`,
+    ],
+    flags: [
+      'candidate',
+      'images',
+      'frame',
+      'anchor',
+      'hinge',
+      'stretch',
+      'min-visible',
+      'max-residual',
+      'passes',
+      'anchor-residual',
+      'scale',
+      'rotation',
+      'out',
+    ],
+    overrides: {
+      images: {
+        value: '<dir>',
+        meaning:
+          "where each attachment's image name resolves to a loose PNG. ⚠️ NOT a part list the way `pose --images` " +
+          'is one — the candidate decides what the parts are, so extra PNGs in here are simply unused and a name ' +
+          'the directory lacks is refused by name',
+      },
+      scale: {
+        meaning:
+          'the scale window the INTERNAL anchor pass searches, as frame pixels per part pixel (default ' +
+          `\`${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}\`). Refused together with --anchor, which means there is no internal pass`,
+      },
+      rotation: {
+        meaning:
+          'the rotation window the INTERNAL anchor pass searches, in screen degrees (default `-180,180`). Refused ' +
+          'together with --anchor — the chains\' own window is --hinge',
+      },
+      out: {
+        value: '<file>',
+        meaning: `the .json report to write (default \`${DEFAULT_CHAINFIT_OUT}\`); a directory means "the default name in here"`,
+      },
+    },
+  },
+  {
     name: 'vote',
     usage: [
       `rigc vote --candidate <dir | skeleton.json> --candidate <…> [--candidate …] [--animation <name>] [--out ${DEFAULT_BALLOT}]`,
@@ -2131,6 +2308,19 @@ const USAGE = [
   'canvas cannot contain and a part whose rotation is a free degree of freedom are each',
   'named as such. See `rigc pose --help`.',
   '',
+  'chainfit reads the half of that picture pose refuses. It is the same question with',
+  'one more input — the candidate rig — and that input buys two things: draw order, so',
+  'the pixels another part covers are EXCLUDED from a part\'s residual instead of',
+  'charged to it, and hierarchy, so a child of a placed bone is searched over one hinge',
+  'instead of four degrees of freedom:',
+  '  rigc chainfit --candidate build/ --images parts/ --frame poseA.png',
+  'Every residual is over the part\'s VISIBLE pixels and comes with the `visibleShare` it',
+  'was computed on, so a mostly-hidden answer carries its own uncertainty. It grades',
+  'nothing either: a part too far behind the others is refused by the visibility floor,',
+  'a limb with no trusted part on it or above it is refused `no-anchor`, and two hinge',
+  'answers that explain the picture equally well are both reported. See',
+  '`rigc chainfit --help`.',
+  '',
   'vote is the same page with two to four builds in it and an answer coming back:',
   '  rigc vote --candidate <build A> --candidate <build B>   ballot.html, panes labelled A and B',
   '  rigc vote --record vote-<id>.json --ballot ballot.html  check it, append it to votes.jsonl',
@@ -2177,6 +2367,7 @@ try {
   else if (command === 'render') cmdRender(flags);
   else if (command === 'preview') cmdPreview(flags);
   else if (command === 'pose') cmdPose(flags);
+  else if (command === 'chainfit') cmdChainFit(flags);
   else if (command === 'vote') cmdVote(flags, lists.candidate ?? []);
 } catch (err) {
   if (err instanceof UsageError) {
@@ -2206,6 +2397,13 @@ try {
   // them buries that.
   if (err instanceof PoseError) {
     console.error(`rigc pose: ${err.message}`);
+    process.exit(2);
+  }
+  // Same kind as a PoseError, and printed the same way for the same reason: the
+  // messages name a path, a bone or an attachment, and reprinting the whole
+  // usage under them buries the one line that says what to change.
+  if (err instanceof ChainFitError) {
+    console.error(`rigc chainfit: ${err.message}`);
     process.exit(2);
   }
   throw err;

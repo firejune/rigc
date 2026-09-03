@@ -39,6 +39,17 @@
  * same convention a cut manifest uses. `rotationDeg` is screen degrees — positive
  * turns clockwise on screen — so `screenToSpineDegrees` in `src/transform.ts` is
  * the one conversion to Spine's y-up CCW world, and `cropToSpineY` the other.
+ *
+ * ⭐ **This file owns the objective, and `src/chainfit.ts` borrows it rather than
+ * holding a second opinion about it.** The pixel machinery below — the background
+ * read, the material plate, the alpha-weighted halving, the sample sets and the
+ * two error functions — is exported for exactly one caller, whose whole claim is
+ * that it is *this* estimator with the occluders taken out of the denominator. Two
+ * implementations of "how well does this part explain these pixels" would make the
+ * two instruments' residuals incomparable, which is the one thing a caller reading
+ * both of them needs them not to be. What `chainfit` does NOT borrow is the search:
+ * it has the candidate rig, so it searches one degree of freedom where this file
+ * searches four.
  */
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
@@ -264,6 +275,17 @@ export interface PoseOptions {
   imagesDir: string;
   /** One pose frame. */
   framePath: string;
+  /**
+   * The parts to place, when the caller already knows which they are. Default:
+   * every `.png` in `imagesDir`, in name order — which is what the CLI does.
+   *
+   * ⭐ The one thing `src/chainfit.ts` needs from this signature. It holds a
+   * candidate rig, so it knows exactly which images are parts and which of the
+   * directory's PNGs the figure never draws, and searching the rest would spend
+   * the pass and add refusals to read past. A directory is still the CLI's
+   * contract — this narrows it, it does not replace it.
+   */
+  parts?: string[];
   scale?: { min: number; max: number };
   rotation?: { minDeg: number; maxDeg: number };
   maxResidual?: number;
@@ -274,7 +296,7 @@ export interface PoseOptions {
 // ---------------------------------------------------------------------------
 
 /** One rung of a plate pyramid, flattened for the inner loops. */
-interface Level {
+export interface Level {
   data: Uint8Array;
   width: number;
   height: number;
@@ -282,7 +304,7 @@ interface Level {
   reduction: number;
 }
 
-function levelOf(plate: Plate, reduction: number): Level {
+export function levelOf(plate: Plate, reduction: number): Level {
   return { data: plate.data, width: plate.width, height: plate.height, reduction };
 }
 
@@ -293,7 +315,7 @@ function levelOf(plate: Plate, reduction: number): Level {
  * straight would drag every edge pixel toward whatever the transparent
  * neighbour happens to store, which for a cut-out part is usually black.
  */
-function halve(src: Plate): Plate {
+export function halvePlate(src: Plate): Plate {
   const w = Math.max(1, src.width >> 1);
   const h = Math.max(1, src.height >> 1);
   const out = new Plate(w, h);
@@ -336,7 +358,7 @@ function pyramid(plate: Plate, maxLevels: number, minLongSide: number): Plate[] 
     const top = out[out.length - 1];
     if (Math.max(top.width, top.height) <= minLongSide) break;
     if (top.width < 2 || top.height < 2) break;
-    out.push(halve(top));
+    out.push(halvePlate(top));
   }
   return out;
 }
@@ -353,7 +375,7 @@ function pyramid(plate: Plate, maxLevels: number, minLongSide: number): Plate[] 
  * guessed at — the objective then reduces to plain colour matching, which is a
  * weaker instrument, and the report says so instead of quietly being weaker.
  */
-function readBackground(frame: Plate): PoseBackground {
+export function readBackground(frame: Plate): PoseBackground {
   const w = frame.width;
   const h = frame.height;
   let ringCount = 0;
@@ -409,7 +431,7 @@ function readBackground(frame: Plate): PoseBackground {
  * Keeping it in a `Plate` is what lets the pyramid, `bilinear` and the nearest
  * lookup all be the ones this repository already has.
  */
-function materialPlate(frame: Plate, background: PoseBackground): { plate: Plate; share: number } {
+export function materialPlate(frame: Plate, background: PoseBackground): { plate: Plate; share: number } {
   const out = new Plate(frame.width, frame.height);
   let material = 0;
   const bg = background.colour;
@@ -466,7 +488,7 @@ function materialBox(part: Plate): { minX: number; minY: number; maxX: number; m
  * from, so one sample set is valid at every search level: the level only decides
  * what the offsets get divided by on the way in.
  */
-interface Samples {
+export interface Samples {
   u: Float64Array;
   v: Float64Array;
   r: Float64Array;
@@ -496,7 +518,7 @@ const EMPTY_SAMPLES: Samples = {
  * shuffled would make two runs of the same command disagree in the last decimal
  * of every residual.
  */
-function buildSamples(mip: Plate, reduction: number, anchorX: number, anchorY: number, cap: number): Samples {
+export function buildSamples(mip: Plate, reduction: number, anchorX: number, anchorY: number, cap: number): Samples {
   const idx: number[] = [];
   for (let y = 0; y < mip.height; y++) {
     for (let x = 0; x < mip.width; x++) {
@@ -532,7 +554,7 @@ function buildSamples(mip: Plate, reduction: number, anchorX: number, anchorY: n
 }
 
 /** Error of one part pixel against the level, nearest neighbour. 1 outside the canvas. */
-function errNearest(level: Level, x: number, y: number, pr: number, pg: number, pb: number): number {
+export function errNearest(level: Level, x: number, y: number, pr: number, pg: number, pb: number): number {
   const ix = Math.floor(x);
   const iy = Math.floor(y);
   if (ix < 0 || iy < 0 || ix >= level.width || iy >= level.height) return 1;
@@ -544,7 +566,7 @@ function errNearest(level: Level, x: number, y: number, pr: number, pg: number, 
 }
 
 /** Same, sampled between pixel centres — what the refinement stages measure with. */
-function errBilinear(level: Level, plate: Plate, x: number, y: number, pr: number, pg: number, pb: number): number {
+export function errBilinear(level: Level, plate: Plate, x: number, y: number, pr: number, pg: number, pb: number): number {
   if (x < 0 || y < 0 || x >= level.width || y >= level.height) return 1;
   const [fr, fg, fb, fa] = bilinear(plate, x - 0.5, y - 0.5);
   const m = fa / 255;
@@ -857,14 +879,14 @@ function measure(
   };
 }
 
-function round(n: number, places: number): number {
+export function roundTo(n: number, places: number): number {
   const f = 10 ** places;
   const v = Math.round(n * f) / f;
   return v === 0 ? 0 : v;
 }
 
 /** Degrees into (-180, 180], the way an editor shows a rotation. */
-function normaliseDegrees(deg: number): number {
+export function normaliseDegrees(deg: number): number {
   let v = ((deg % 360) + 360) % 360;
   if (v > 180) v -= 360;
   return v;
@@ -877,19 +899,19 @@ function toPlacement(part: Plate, anchorX: number, anchorY: number, cand: Candid
   const ou = part.width / 2 - anchorX;
   const ov = part.height / 2 - anchorY;
   return {
-    x: round(cand.cx + ou * cos - ov * sin, 3),
-    y: round(cand.cy + ou * sin + ov * cos, 3),
-    rotationDeg: round(normaliseDegrees(cand.rotDeg), 3),
-    scale: round(cand.scale, 5),
-    residual: round(stats.residual, 5),
-    unexplained: round(stats.unexplained, 4),
-    offCanvas: round(stats.offCanvas, 4),
-    footprint: round(stats.footprint, 1),
+    x: roundTo(cand.cx + ou * cos - ov * sin, 3),
+    y: roundTo(cand.cy + ou * sin + ov * cos, 3),
+    rotationDeg: roundTo(normaliseDegrees(cand.rotDeg), 3),
+    scale: roundTo(cand.scale, 5),
+    residual: roundTo(stats.residual, 5),
+    unexplained: roundTo(stats.unexplained, 4),
+    offCanvas: roundTo(stats.offCanvas, 4),
+    footprint: roundTo(stats.footprint, 1),
     bbox: {
-      x: round(stats.bbox.x, 2),
-      y: round(stats.bbox.y, 2),
-      width: round(stats.bbox.width, 2),
-      height: round(stats.bbox.height, 2),
+      x: roundTo(stats.bbox.x, 2),
+      y: roundTo(stats.bbox.y, 2),
+      width: roundTo(stats.bbox.width, 2),
+      height: roundTo(stats.bbox.height, 2),
     },
   };
 }
@@ -980,7 +1002,11 @@ export function estimatePose(options: PoseOptions): PoseReport {
   } catch (err) {
     throw new PoseError(`cannot read the pose frame ${framePath}: ${(err as Error).message}`);
   }
-  const paths = partFiles(options.imagesDir, framePath);
+  const paths =
+    options.parts === undefined
+      ? partFiles(options.imagesDir, framePath)
+      : options.parts.map((p) => resolve(p)).filter((p) => p !== framePath);
+  if (paths.length === 0) throw new PoseError(`no parts to place — there is nothing to search for in ${framePath}`);
 
   const scaleMin = options.scale?.min ?? DEFAULT_SCALE_MIN;
   const scaleMax = options.scale?.max ?? DEFAULT_SCALE_MAX;
@@ -992,7 +1018,7 @@ export function estimatePose(options: PoseOptions): PoseReport {
 
   const background = readBackground(frame);
   const material = materialPlate(frame, background);
-  background.materialShare = round(material.share, 4);
+  background.materialShare = roundTo(material.share, 4);
   const framePyramid = pyramid(material.plate, 6, COARSE_LONG_SIDE);
   const levels = framePyramid.map((p, i) => levelOf(p, 2 ** i));
 
@@ -1108,7 +1134,7 @@ function placePart(
       reason: 'larger-than-canvas',
       detail:
         `${name}'s material is ${tw}x${th} part px; at the smallest tested scale ${scaleMin} that is ` +
-        `${round(tw * scaleMin, 1)}x${round(th * scaleMin, 1)} frame px, which does not fit a ` +
+        `${roundTo(tw * scaleMin, 1)}x${roundTo(th * scaleMin, 1)} frame px, which does not fit a ` +
         `${frame.width}x${frame.height} canvas at any rotation`,
     };
     base.notes.push(`${name} cannot be contained by this frame at any tested scale — lower --scale or check the pair.`);
@@ -1126,11 +1152,11 @@ function placePart(
   const selfSimilarity = rotationSelfSimilarity(part, anchorX, anchorY);
   const rotationFree = selfSimilarity <= ROTATION_FREE_TOLERANCE;
   base.rotationFree = rotationFree;
-  base.rotationSelfSimilarity = round(selfSimilarity, 5);
+  base.rotationSelfSimilarity = roundTo(selfSimilarity, 5);
   const searchRotations = rotationFree ? [0] : rotations;
   if (rotationFree) {
     base.notes.push(
-      `${name} is self-similar under rotation (worst self-residual ${round(selfSimilarity, 4)} over 11 probes, ` +
+      `${name} is self-similar under rotation (worst self-residual ${roundTo(selfSimilarity, 4)} over 11 probes, ` +
         `tolerance ${ROTATION_FREE_TOLERANCE}), so rotation is a free degree of freedom — the reported 0° is a ` +
         'placeholder, not a measurement.',
     );
@@ -1302,7 +1328,7 @@ function placePart(
   base.ambiguous = close.length > 0;
   if (base.ambiguous) {
     base.notes.push(
-      `${name} has ${close.length + 1} placements within ${round(margin, 4)} residual of each other — all of them ` +
+      `${name} has ${close.length + 1} placements within ${roundTo(margin, 4)} residual of each other — all of them ` +
         'are reported and none was picked. Two identical limbs look exactly like this; so does a part that fits ' +
         'its own silhouette at more than one angle.',
     );
@@ -1319,12 +1345,12 @@ function placePart(
   }
   if (best.unexplained > 0.25 && best.residual <= maxResidual) {
     base.notes.push(
-      `${round(best.unexplained * 100, 1)}% of ${name}'s material disagrees with the frame at this placement. ` +
+      `${roundTo(best.unexplained * 100, 1)}% of ${name}'s material disagrees with the frame at this placement. ` +
         'Another part drawn over it is the usual reason; the placement can be right and the residual still high.',
     );
   }
   if (best.offCanvas > 0.01) {
-    base.notes.push(`${round(best.offCanvas * 100, 1)}% of ${name}'s material falls outside the frame canvas at this placement.`);
+    base.notes.push(`${roundTo(best.offCanvas * 100, 1)}% of ${name}'s material falls outside the frame canvas at this placement.`);
   }
   return base;
 }
