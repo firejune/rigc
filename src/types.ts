@@ -15,6 +15,7 @@
  * none of them.
  */
 import type { AtlasRegion } from './atlas.ts';
+import type { DeformTransform, DeformTransformReport } from './deformgen.ts';
 import type { MeshKind } from './mesh.ts';
 
 // ---------------------------------------------------------------------------
@@ -474,6 +475,22 @@ export interface MotionDeformKey {
    * parser's own encoding for "back to the setup pose" — the key with no edit.
    */
   vertices?: number[] | null;
+  /**
+   * The run stated as a **model** instead, which the compiler evaluates over the
+   * attachment's own setup geometry (`src/deformgen.ts`, issue #294).
+   *
+   * ⭐ The same move `generator` already made for geometry: a table of numbers is
+   * the wrong way to say a deformation model. `gallery/portrait`'s held 12° yaw
+   * is 160 hand-transcribed floats of one closed form, and none of them is a
+   * judgement — so the spec states the model and the compiler states the
+   * numbers.
+   *
+   * Never together with `vertices`, for the same reason `generator` and authored
+   * geometry cannot sit on one attachment, and never with `offset` or
+   * `fromVertex`: a transform covers **every** vertex, because a model applied
+   * to part of an attachment leaves a step at the end of its run.
+   */
+  transform?: DeformTransform;
   ease?: string;
   /**
    * One channel, and it interpolates the deform FRACTION from 0 to 1 rather than
@@ -967,4 +984,23 @@ export interface CompileResult {
   rig: RigInfo;
   /** Physics constraints emitted, with the bone each one drives. */
   physics: Array<{ name: string; bone: string; components: string[]; mix: number; drivesMesh: boolean }>;
+  /**
+   * Deform keys that stated a `transform` instead of a run, one entry per key in
+   * emit order — reported by `explain` (issue #294).
+   *
+   * ⭐ The report carries the offsets it **emitted**, not a second evaluation of
+   * the same model, so the printed audit and the artifact cannot disagree. An
+   * empty array is the ordinary case: a spec whose deform keys are all authored
+   * runs generated nothing to report.
+   */
+  deformTransforms: Array<
+    DeformTransformReport & {
+      animation: string;
+      skin: string;
+      slot: string;
+      attachment: string;
+      /** The key's own time, as emitted. */
+      time: number;
+    }
+  >;
 }

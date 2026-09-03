@@ -2,9 +2,8 @@
 
 Vela breathes, blinks, shifts her gaze and turns her head a few degrees off
 axis. The turn is the point: it is the move Live2D is bought for, built here out
-of **authored `deform` keys plus per-part parallax on an ordinary Spine 4.3
-skeleton** — no second format, no runtime plugin, nothing the Spine editor
-cannot open.
+of **`deform` keys plus per-part parallax on an ordinary Spine 4.3 skeleton** —
+no second format, no runtime plugin, nothing the Spine editor cannot open.
 
 ⭐ **The one feature this example stars: `deform` used as a *projection* rather
 than as a squash.** [AUTHORING §4.11](../../docs/AUTHORING.md) is the field
@@ -14,6 +13,16 @@ difference is what the keys mean. `squash`'s two shapes are affine transforms of
 a ball. These are the **perspective projection of a yaw**, and every number in
 them — mesh offsets, bone translations, bone scales — comes off one line of
 arithmetic that this README derives.
+
+🆕 **And the mesh keys now STATE that line instead of listing its results**
+([#294](https://github.com/firejune/rigc/issues/294),
+[AUTHORING §4.11.1](../../docs/AUTHORING.md)). This example shipped with **160
+hand-transcribed floats** across its 8 deform keys; the same artifact now comes
+out of four `transform` keys, and the floats that used to be in `motion.json`
+are what `rigc explain` prints. Every table below is unchanged, because it is
+the same arithmetic — it is just no longer typed out. The bone half of the turn
+(20 tracks, 81 keys) is untouched and is
+[#295](https://github.com/firejune/rigc/issues/295).
 
 📐 It is also the measured experiment for
 [issue #285](https://github.com/firejune/rigc/issues/285). What it cost, where
@@ -161,15 +170,36 @@ value because a yaw does not move anything vertically:
 | 120 | 120.416 | **−27.658** | 92.342 |
 | 162 | 51.536 | **−14.255** | 147.745 |
 
-A `deform` key is that row of five, repeated five times, with a `0` for every
-`y`:
+The run the compiler writes is that row of five, repeated five times, with a `0`
+for every `y` — and the key that says so is the model, not the run:
 
 ```json
-{ "t": 0.62, "fromVertex": 0, "vertices": [
-    -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
-    -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
-    … three more identical rows … ], "ease": "swell" }
+{ "t": 0.62, "transform": { "kind": "yaw", "radius": 170, "degrees": 12 }, "ease": "swell" }
 ```
+
+⇒ **`radius` is the `R` of the column table above and `degrees` is the angle**,
+which is the whole input; `explain` prints the 50 numbers it produced so the
+table and the artifact can be read against each other:
+
+```
+      t=0.62    deform[0..50]  25 pair(s)                      bezier[4]
+               transform yaw  radius=170 degrees=12
+               dx = (x−about)·(cos t − 1) − z·sin t,   z = √(radius² − (x−about)²)
+                 t = 0.20944 rad
+                 cos t − 1 = -0.021852
+                 sin t = 0.207912
+                 centre shift = −radius·sin t = -35.344987
+               25 vertices, largest offset 35.344987px at vertex 2
+                 v  0 (-7.17493, 0)  v  1 (-22.413595, 0)  v  2 (-35.344987, 0)  v  3 (-27.658171, 0)
+                 v  4 (-14.255108, 0)  v  5 (-7.17493, 0)  v  6 (-22.413595, 0)  v  7 (-35.344987, 0)
+                 …four more lines, the same five values down five rows
+```
+
+📐 **The transcription it replaced agreed with it to 0.000437 px**, which is
+identical at the three decimals this README quotes — measured by compiling both
+spellings and comparing all 160 emitted numbers. The reason the digits differ at
+all is that the hand table was rounded to three places and the compiler quantises
+to six.
 
 🚨 **The columns are not evenly spaced, and that is the trick.** `−162, −120, 0,
 120, 162` puts them dense near the silhouette and sparse in the middle, which is
@@ -396,13 +426,16 @@ to end:
 | `brows` translatey | 0.34 s | +1.8, which turns a flick of the eyes into interest |
 | `lock_l` / `lock_r` / `ahoge` rotate | 0.72 / 0.76 / 0.82 s | **+21% / +24% / +28%** after the head, each with one overshoot crossing |
 
-🩹 **The head's follow is a slide, not a small yaw, and that is the cost showing
+🩹 **The head's follow is a slide, not a small yaw, and that was the cost showing
 through.** A head following a gaze really does yaw a few degrees. Three degrees
-of yaw here would be a third pair of `deform` keys — 80 more hand-written
-numbers — for a motion the viewer reads as "her head moved a little". A rigid
-translate plus a roll buys the read for two tracks. It is the right call at this
-budget and the wrong one at a scene-direction budget, which is the single
-strongest argument in [FINDINGS.md](FINDINGS.md) for an instrument.
+of yaw here was a third pair of `deform` keys — 80 more hand-written numbers —
+for a motion the viewer reads as "her head moved a little", so `gaze` slid the
+head rigidly and said so. 🆕 **That price is gone**: a third pair of keys is now
+`{ "kind": "yaw", "radius": 170, "degrees": 3 }` twice
+([#294](https://github.com/firejune/rigc/issues/294)). The slide still ships,
+because changing what `gaze` looks like is an art decision this example has not
+re-made and not a transcription it was forced into — which is exactly the
+distinction [FINDINGS.md](FINDINGS.md) argued an instrument would buy.
 
 There is no `clipping` attachment holding the iris inside the white, and there
 could not be one: Spine has them ([§3.4](../../docs/AUTHORING.md)) and they
@@ -501,5 +534,8 @@ identically. In `turn`, every part needs a *different* number by construction �
 that is what parallax means — so of 20 tracks exactly one is a group (`axis`,
 for the nose and mouth, which are both on the axis and therefore both `cos t`),
 plus the two reciprocal groups the iris fix needs. **20 tracks, 81 keys, 2 deform
-entries, 8 deform keys, 160 hand-written vertex offsets** for one held yaw.
-[FINDINGS.md](FINDINGS.md) is mostly about that number.
+entries, 8 deform keys, 0 hand-written vertex offsets** for one held yaw — that
+last figure was **160** until
+[#294](https://github.com/firejune/rigc/issues/294) shipped and the keys started
+stating their model. [FINDINGS.md](FINDINGS.md) is mostly about that number, and
+it is the record of what it cost while it was still being paid.

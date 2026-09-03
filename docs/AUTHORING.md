@@ -1618,6 +1618,7 @@ Per key:
 | Field | Meaning |
 | --- | --- |
 | `vertices` | the run: `x, y` offset pairs. **Absent** = back to the setup pose |
+| `transform` | the run stated as a **model** instead, evaluated over the attachment's own geometry — §4.11.1. Never with `vertices`, `fromVertex` or `offset` |
 | `fromVertex` | which VERTEX the run starts at — rigc translates it |
 | `offset` | the same start as a raw index into the deform array. Never with `fromVertex` |
 | `ease` / `curve` | one channel, and it eases the **blend**, not a coordinate |
@@ -1673,6 +1674,9 @@ animation half of the format:
 | `fromVertex` on a multi-bone vertex | `"fromVertex" counts VERTICES, and this attachment is weighted … vertex 2 has 2 of them` |
 | an attachment that is not there | `slot "flat" in skin "default" has no attachment "flatt" (it has: flat)` |
 | a deform on a region attachment | `a deform timeline keys the vertices of an attachment, and this one is a "region"` |
+| `transform` beside a `vertices` run | `the key carries both a "transform" and a "vertices" run, and they are two answers to one question` |
+| `transform` with `fromVertex` or `offset` | `A transform is a model of the whole attachment and is evaluated over all 25 of its vertices, so it always starts at deform index 0` |
+| a `transform` on a multi-bone or multi-space weighted attachment | `this attachment has no single space to evaluate it in — vertex 2 has 2 bone influences on it` |
 
 The overrun is the one to fear. `readAnimation` copies with
 `Utils.arrayCopy(vertices, 0, deform, offset, vertices.length)` into a
@@ -1694,13 +1698,14 @@ where the remedy is a line you own. `A35` does **not** refuse it: it is pointed 
 other people's files, and a rule stricter than the runtime tells its reader to go
 and break correct data.
 
-🖼️ **Worked examples, and they use a deform for two different things.**
+🖼️ **Worked examples, and they use a deform for three different things.**
 [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash) — a 9-vertex ball squashed about its contact point,
-with the two affine transforms its keys were derived from.
+from the two affine transforms its keys now **state**.
 [`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait) — a 2.5D head turn, where the keys are the
 **projection of a yaw** rather than a squash: two grid meshes whose columns are
-placed to sample a cosine, every offset one line of arithmetic, and a measured
-account of the angle past which the mesh folds.
+placed to sample a cosine, and a measured account of the angle past which the
+mesh folds. [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex) — a leaf whose blade bends on a
+`contour` mesh no bone can bend, and the measurement that picked the model.
 
 📘 **[FACE.md](FACE.md) is the recipe for that second case**, and it is where the
 grid questions this section leaves to its reader are answered: where to put the
@@ -1708,6 +1713,116 @@ columns, why `hull: 0` is the honest declaration on a grid, the closed form for
 the angle at which any column pair folds — and the fact that a folded key passes
 `A35` and every other assertion, so the arithmetic has to be checked before the
 build.
+
+---
+
+### 4.11.1 `transform` — a deform key that states the model instead of the table
+
+⭐ **A table of numbers is the wrong way to say a deformation model, and `generator`
+(§3.4) already says so about geometry.** This is the same move on the animation
+half: the key names a transform, the compiler evaluates it over the attachment's
+own setup geometry, and the emitted file carries the numbers.
+
+The case that filed it ([#294](https://github.com/firejune/rigc/issues/294)):
+`gallery/portrait`'s held 12° head yaw was **160 hand-written vertex offsets
+across 8 keys**, and not one of them was a judgement — every one is
+`x·(cos t − 1) − z·sin t` at a different column (FACE §1). A second angle was a
+second full table, which is why that example's own angle sweep needed a
+throwaway script that never made it into the repository. It is now four lines:
+
+```json
+"deform": [
+  { "slot": "head", "attachment": "head", "keys": [
+      { "t": 0 },
+      { "t": 0.62, "transform": { "kind": "yaw", "radius": 170, "degrees": 12 }, "ease": "swell" },
+      { "t": 1.5,  "transform": { "kind": "yaw", "radius": 170, "degrees": 12 }, "ease": "settle" },
+      { "t": 2.2 } ] }
+]
+```
+
+⚠️ **`radius` above is a real number off that example's depth table, and the rest
+of this section's parameters are invented.** A radius, an amplitude and a point a
+scale is about are all measurements of a shape the drawing only implies — the
+compiler evaluates what you state and states nothing itself.
+
+**The five kinds.** Each is one closed form, and each ships because a worked
+example needed it:
+
+| `kind` | Parameters | What it evaluates | Worked case |
+| --- | --- | --- | --- |
+| `yaw` | `radius`, `degrees`, `about` | `dx = (x−about)·(cos t − 1) − z·sin t`, `z = √(radius² − (x−about)²)` — the 2.5D turn (FACE §1) | `gallery/portrait` |
+| `pitch` | the same | the same expression with `y` for `x` — a nod rather than a turn | — |
+| `affine` | `scale`, `about` | `dx = (sx−1)·(x−ax)`, `dy = (sy−1)·(y−ay)` — a scale about a fixed point | `gallery/squash` |
+| `wave` | `amplitude`, `wavelength`, `phase`, `along`, `axis` | `d = amplitude · sin(2π·along/wavelength + phase)` | — |
+| `bend` | `amount`, `from`, `to`, `power`, `along`, `axis` | `d = amount · u^power`, `u = (along − from)/(to − from)` | `gallery/flex` |
+
+`along` names the coordinate a wave or a bend reads and `axis` the one it
+displaces; they cannot be the same coordinate, because reading and displacing one
+axis is a stretch and `affine` states that. `power: 1` is an affine shear and
+`power: 2` is a cantilever — flat at `from`, so a part held at one end bends
+instead of tilting. `about` defaults to 0 (or `[0, 0]`), `phase` to 0 and `power`
+to 2; nothing else has a default.
+
+Five things this construct is bounded by, and each one is a refusal rather than a
+convention:
+
+**It covers every vertex, always.** A transform is a model of the attachment, not
+an edit of part of it, so it starts at deform index 0 and runs to the end — which
+is why `fromVertex` and `offset` are refused beside it. A model applied to part
+of a run leaves a **step at the run's edge**, and that is one half of the defect
+[#313](https://github.com/firejune/rigc/issues/313) records. If you want a
+partial run, write it.
+
+**It is not a `rigc tween`.** MOTION §7 refuses a command that generates
+in-betweens and this is not one: the transform is evaluated **at one key**, from
+parameters that key states, and what happens between two keys is still the
+timeline's own single 0..1 blend channel. Sweeping an angle is editing one number
+per key.
+
+**It needs one coordinate space.** On an unweighted attachment the deform array
+is one `x, y` per vertex in the slot bone's space, so the model has a space to be
+evaluated in. On a weighted one it does only while every vertex has exactly one
+bone **and they all share it** — the same honesty rule `fromVertex` is bounded by
+(§4.11), refused for the same reason: a multi-bone vertex's offset is a weighted
+sum of a pair in each bone's own bind space, and rigc will not guess one.
+
+**It is gated like any other key.** `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` and
+`A39_DEFORM_KEEPS_TRIANGLE_WINDING` see the emitted numbers and know nothing
+about where they came from. A `yaw` past its fold angle folds the mesh and A39
+says so — the construct removes the transcription, not the arithmetic's
+consequences. One kind is the exception and it is an exception with a proof:
+`affine` refuses a determinant at or below zero, and above zero a positive
+determinant means no triangle **can** reverse.
+
+**It is auditable.** `explain` prints the model, the scalars the closed form
+derived from it, and every offset it produced — the emitted ones, not a second
+evaluation:
+
+```
+      t=0.62    deform[0..50]  25 pair(s)                      bezier[4]
+               transform yaw  radius=170 degrees=12
+               dx = (x−about)·(cos t − 1) − z·sin t,   z = √(radius² − (x−about)²)
+                 t = 0.20944 rad
+                 cos t − 1 = -0.021852
+                 sin t = 0.207912
+                 centre shift = −radius·sin t = -35.344987
+               25 vertices, largest offset 35.344987px at vertex 2
+                 v  0 (-7.17493, 0)  v  1 (-22.413595, 0)  v  2 (-35.344987, 0)  v  3 (-27.658171, 0)
+                 …five more lines
+```
+
+📌 **Float behaviour, stated.** The closed forms are evaluated in float64 and
+quantised to six decimals like every other emitted number, so the same spec emits
+the same bytes and `A18_DETERMINISTIC_EMIT` proves it on a second compile. The
+runtime then loads those decimals into a `Float32Array`, which is equally true of
+a hand-written table — the difference the generator makes is that the decimals
+now agree with a stated model instead of with a transcription.
+
+🔭 **Adjacent and deliberately not built here:**
+[#295](https://github.com/firejune/rigc/issues/295) is per-member values inside a
+`groups` entry, which is the same complaint about a different table;
+[#316](https://github.com/firejune/rigc/issues/316) is the per-key `DEFORM`
+report block, which will quote the offsets above rather than recompute them.
 
 ---
 
@@ -1800,6 +1915,11 @@ the frequent ones, verbatim:
 | `deform … (t=…): offset 3 is odd` | §4.11 — in **this spec** a run starts on an even index, or names its vertex with `fromVertex`. Not a validity rule; the runtime allows either (issue #262) |
 | `deform …: "fromVertex" counts VERTICES, and this attachment is weighted … vertex 2 has 2 of them` | §4.11 — key the control bone, or write bind-space pairs and start with `offset` |
 | `deform …: slot "X" in skin "default" has no attachment "Y" (it has: …)` | §4.11 — fix the placeholder name |
+| `deform … (t=…): the key carries both a "transform" and a "vertices" run` | §4.11.1 — a model and a table are two answers to one question; drop one |
+| `deform … (t=…): the key states a "transform" and a start index` | §4.11.1 — a model covers every vertex, so drop the index or write the partial run by hand |
+| `deform … (t=…): … has no single space to evaluate it in` | §4.11.1 — the attachment's vertices are in several bind spaces; key the control bone, or write the pairs with `offset` |
+| `deform … (t=…): transform yaw has radius R, and vertex v sits at x=… past it` | §4.11.1 — the cylinder has no surface there; raise the radius to where the part sits |
+| `deform … (t=…): transform affine has scale […], whose determinant is …` | §4.11.1 — at or below zero the map reverses every triangle |
 | `vertexCount is N, which is not a multiple of 3` | §3.4 — a path's vertices are knots and handles read in groups of three: `3(K + 1)` open, `3K` closed |
 | `vertexCount is N and an open path needs at least 6` | §3.4 — an open path drops its first and last point, so it needs six for one curve |
 | `"lengths" is not authored — rigc measures the setup arc length of each curve` | §3.4 — delete the array; it is a measurement of the vertices above it |

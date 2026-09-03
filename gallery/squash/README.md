@@ -7,10 +7,19 @@ is momentarily still. Rigby flinches and blinks when it lands.
 
 ⭐ **The one feature this example stars: `deform`.**
 [AUTHORING §4.11](../../docs/AUTHORING.md) — the only timeline keyed on a
-skin / slot / attachment triple, and the only one whose keys are a sparse run of
-vertex offsets rather than a value. Everything else is the ordinary recipe of
+skin / slot / attachment triple, and the only one whose keys are a run of vertex
+offsets rather than a value. Everything else is the ordinary recipe of
 [MOTION.md](../../docs/MOTION.md): the bounce arc, the contact shadow, the
 recoil, the follow-through.
+
+🆕 **And the two shapes are now IN the spec rather than beside it.** This
+README always wrote them out as two affine transforms, because that is where the
+36 offsets came from; since
+[#294](https://github.com/firejune/rigc/issues/294) the keys **state** them
+([AUTHORING §4.11.1](../../docs/AUTHORING.md)) and the compiler evaluates them.
+The emitted numbers agree with the hand-written table this example shipped to
+**0.0004 px** — identical at the three decimals below, the difference being that
+the table was rounded to three places and the compiler quantises to six.
 
 ```
 bun install                                     # once
@@ -57,12 +66,14 @@ and the second is the one that matters for a `deform` example:
 - There is nothing to weight. One bone moves this ball; a weighted mesh binding
   every vertex to that one bone at weight 1 would be the same picture with a
   bone-influence array in front of it.
-- **On an unweighted attachment, `fromVertex: v` is array index `2v`, exactly**
-  ([§4.11](../../docs/AUTHORING.md)). So `fromVertex: 0` with 18 numbers is
-  "every vertex, in vertex order", and a reader can count the pairs against the
-  diagram above. On a weighted attachment the array is indexed by bone
+- **On an unweighted attachment the deform array is one `x, y` per vertex, in
+  vertex order** ([§4.11](../../docs/AUTHORING.md)), so a reader can count the 18
+  numbers `explain` prints against the diagram above. It is also the reason a
+  `transform` key can be evaluated here at all: the array has **one coordinate
+  space**, the mesh's own. On a weighted attachment the array is indexed by bone
   *influence*, the offsets live in each bone's own bind space, and a multi-bone
-  vertex cannot hold one x/y pair at all.
+  vertex cannot hold one x/y pair at all — so a model over it is refused by name
+  ([§4.11.1](../../docs/AUTHORING.md)).
 
 `A20_MESH_WEIGHTS_COHERENT` accepts it: an unweighted mesh is valid Spine
 (spineboy ships two), and the requirement that a mesh be weighted at all is the
@@ -131,23 +142,50 @@ Vertex 6 is the rim's bottom, at local `(0, −110)`, so its squash offset is
 against the ground rather than sinking through it, and there is no key anywhere
 that has to be tuned to make that true.
 
+⭐ **And those four lines of arithmetic are the spec** — the two `scale` pairs and
+the one `about` point, with the compiler doing the multiplying:
+
 ```json
 "deform": [
   { "slot": "ball", "attachment": "ball", "keys": [
-      { "t": 0,    "ease": "gather" },                        // round: the apex
-      { "t": 0.34, "fromVertex": 0, "vertices": [ … stretch … ], "ease": "gather" },
-      { "t": 0.4,  "fromVertex": 0, "vertices": [ … squash  … ], "ease": "charge" },
-      { "t": 0.46, "fromVertex": 0, "vertices": [ … stretch … ], "ease": "settle" },
-      { "t": 0.8 } ] }                                        // round again
+      { "t": 0,    "ease": "gather" },                                                              // round: the apex
+      { "t": 0.34, "transform": { "kind": "affine", "scale": [0.88, 1.16] }, "ease": "gather" },
+      { "t": 0.4,  "transform": { "kind": "affine", "scale": [1.2, 0.74], "about": [0, -110] }, "ease": "charge" },
+      { "t": 0.46, "transform": { "kind": "affine", "scale": [0.88, 1.16] }, "ease": "settle" },
+      { "t": 0.8 } ] }                                                                              // round again
 ]
 ```
 
+⇒ **The contact point is now a field rather than a consequence.** `about: [0,
+-110]` is the line that used to be true of eighteen numbers and checkable only by
+finding the pair that came out `(0, 0)`. `rigc explain` prints what it produced:
+
+```
+      t=0.4     deform[0..18]  9 pair(s)                       bezier[4]
+               transform affine  scale=[1.2, 0.74] about=[0, -110]
+               dx = (sx − 1)·(x − ax),   dy = (sy − 1)·(y − ay)
+                 sx − 1 = 0.2
+                 sy − 1 = -0.26
+                 det = sx·sy = 0.888 > 0, so no triangle can reverse
+               9 vertices, largest offset 57.2px at vertex 2
+                 v  0 (22, -28.6)  v  1 (15.5564, -48.82332)  v  2 (0, -57.2)  v  3 (-15.5564, -48.82332)
+                 v  4 (-22, -28.6)  v  5 (-15.5564, -8.37668)  v  6 (0, 0)  v  7 (15.5564, -8.37668)
+                 v  8 (0, -28.6)
+```
+
+⭐ **`det > 0` is a proof rather than a report**, and it is the one thing this
+kind buys that a table cannot: an affine map with a positive determinant
+preserves every triangle's winding, so an `affine` key **cannot** be the fold
+`A39_DEFORM_KEEPS_TRIANGLE_WINDING` hunts. rigc refuses a determinant at or below
+zero for that reason — a mirror reverses all eight triangles at once.
+
 Four things about that block are the format rather than a choice:
 
-- **A key with no `vertices` is the setup pose.** That is the format's own
-  encoding for "undeformed", not a convention — which is why the first and last
-  keys are bare, and why rigc refuses a `fromVertex` on such a key (there would
-  be nothing for it to point at). A looping deform starts and ends exactly there.
+- **A key with no `vertices` or `transform` is the setup pose.** That is the
+  format's own encoding for "undeformed", not a convention — which is why the
+  first and last keys are bare, and why rigc refuses a `fromVertex` on such a key
+  (there would be nothing for it to point at). A looping deform starts and ends
+  exactly there.
 - **The offsets are relative to the setup geometry**, in both encodings. Zero is
   "unmoved", and on an unweighted attachment the parser adds the setup vertex back
   on load.
@@ -207,6 +245,7 @@ At `0.4` the blink would have missed frame 10, which is the impact frame.
 | `rigc build --profile spine` | green — **18 assertions ran, 7 skipped**, `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` among the 18 |
 | `rigc build --profile spine-html` | green as well — 26 ran, 11 skipped, including `A13_MESH_BUDGET` against this rig's declared `invariants.meshTriangles: 8` |
 | the deformed geometry, measured | the mesh's rim box is **220.0 × 220.0** at the apex and **264.0 × 162.8** at the impact — exactly `1.20 × 220` and `0.74 × 220`, so the affine transform in the spec is the one that reaches the screen |
+| the transform against the table it replaced | all **54** emitted deform numbers of the three keyed shapes compared against the hand-written run this example shipped: worst difference **0.0004 px**, i.e. identical at three decimals ([#294](https://github.com/firejune/rigc/issues/294)) |
 | the contact point | rim vertex 6 sits at world y **44.0** at the impact and 44.0 in the setup pose — unmoved, as its `(0, 0)` offset says |
 | mesh coverage | the emitted triangles cover **100.00%** of the ball's 28 020 art pixels (94.31% before the rim was moved out) |
 | `rigc render` | 21 frames at 25 fps, contact sheet **looked at** twice — the first pass had a squash flat enough to read as a pancake and a ball with its outline eaten by the mesh |
