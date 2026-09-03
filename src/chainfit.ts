@@ -1436,6 +1436,19 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
         for (const state of boneTargets) state.place = placeOf(state);
       };
 
+      // What to fall back to, saved before anything moves. On pass 0 this is the
+      // rig's own prediction from the anchor; on every later pass it is the
+      // previous pass's answer, and either is a better fallback than resetting the
+      // hinge to zero — which would throw away a relocation the first pass found.
+      const seedBone = placedBones.get(name);
+      const seedPlaces = boneTargets.map((st) => st.place);
+      const restoreSeed = (): void => {
+        if (seedBone !== undefined) placedBones.set(name, seedBone);
+        boneTargets.forEach((st, i) => {
+          st.place = seedPlaces[i];
+        });
+      };
+
       let frozenHere = freezeHere();
       let relocated = false;
       // 🚨 A part the RIG predicts is invisible would otherwise never be looked
@@ -1450,8 +1463,8 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       if (frozenHere.visible < minVisible * frozenHere.whole) {
         const bare = bareTargets();
         if (bare.some((t) => t.weight > 0)) {
+          const wasVisible = frozenHere.visible;
           const relocation = searchOver(bare);
-          const before = { place: boneTargets.map((st) => st.place), visible: frozenHere.visible };
           if (relocation.length > 0) {
             put(relocation[0]);
             const after = freezeHere();
@@ -1461,17 +1474,14 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
             // trade a useful fallback — "the chain put it here" — for a wandered
             // number, and the refusal below would then name a placement nobody
             // has a reason to believe.
-            if (after.visible > before.visible) {
+            if (after.visible > wasVisible) {
               frozenHere = after;
               relocated = true;
               for (const state of boneTargets) {
                 state.link = { hingeDeg: relocation[0].hingeDeg, stretch: relocation[0].stretch };
               }
             } else {
-              put({ hingeDeg: 0, stretch: 1, residual: 1 });
-              boneTargets.forEach((st, i) => {
-                st.place = before.place[i];
-              });
+              restoreSeed();
               frozenHere = freezeHere();
             }
           }
@@ -1483,12 +1493,13 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       // "the chain put it here and the pixels could not confirm it", which is what
       // the `occluded` refusal says — and the placement is printed anyway.
       if (frozenHere.targets.every((t) => t.weight <= 0) || frozenHere.visible < minVisible * frozenHere.whole) {
-        if (!relocated) put({ hingeDeg: 0, stretch: 1, residual: 1 });
         for (const state of boneTargets) {
           state.role = 'chain';
           state.alternates = [];
           state.relocated = relocated;
-          if (!relocated) state.link = { hingeDeg: 0, stretch: 1 };
+          // The seed is already what is placed — the relocation either stuck or
+          // was undone — so all this settles is how it gets described.
+          state.link = state.link ?? { hingeDeg: 0, stretch: 1 };
         }
         continue;
       }
