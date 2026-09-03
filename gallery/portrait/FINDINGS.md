@@ -267,8 +267,18 @@ fold angles without seven renders.
 > leaf reverses up to 7 of 75 — the second a real defect
 > ([#313](https://github.com/firejune/rigc/issues/313)), the first correct editor
 > output. Hence `archetype` plus an `invariants.deformMayFold` opt-out rather than
-> the unconditional rule this entry asked for. The **area and stretch extremes**
-> half of #296 is still not built.
+> the unconditional rule this entry asked for.
+>
+> 🆕 **And the other half landed the same day**
+> ([#316](https://github.com/firejune/rigc/issues/316)): `rigc explain` now
+> prints a `DEFORM` block per key — the area and stretch extremes, the vertices
+> moved and the winding, with a worst-key rollup per animation
+> ([AUTHORING §4.11.2](../../docs/AUTHORING.md)). On this example's own `turn` it
+> reads `area min x0.637174 max x1.319122`, which is §2's compression figure
+> without §2's seven renders. It is a **report** and gates nothing, and the one
+> quantity this entry asked for that it does not carry is *deformed coverage* —
+> that figure is rasterised from the uvs, which no deform moves, so it is the
+> same at every key by construction and the `MESH` line above already is it.
 
 ### Doc gaps, small
 
@@ -352,6 +362,14 @@ not in this repository. That is #296, and it is the gap that matters most,
 because the draft-plus-editor-handwork premise of rigc depends on the draft
 being *auditable* — a draft nobody can check is not a saving.
 
+> 🆕 **Closed 2026-09-03, both halves.** `A39` refuses the fold
+> ([#314](https://github.com/firejune/rigc/pull/314)) and `explain`'s `DEFORM`
+> block prints the extremes ([#316](https://github.com/firejune/rigc/issues/316)),
+> so the throwaway script's job is now two commands that ship. ⚠️ The narrower
+> claim survives: those measure what a key **did**, not whether it was the key
+> the shot wanted — [FACE §9.3](../../docs/FACE.md) keeps that limit and the
+> looking protocol it implies.
+
 ### What FACE.md should teach first, in this order
 
 1. **The one line, and that it is one line.**
@@ -394,3 +412,9 @@ being *auditable* — a draft nobody can check is not a saving.
 demonstrate: **how to check a deform without writing a script.** That is #296,
 and until it exists FACE.md has to teach the arithmetic *and* the auditing,
 which is twice the document it should be.
+
+> 🆕 **It exists as of 2026-09-03**, and [FACE §9.2](../../docs/FACE.md) is where
+> it is taught: `A39` for the fold, `explain`'s `DEFORM` block for the ratios,
+> and `check` for the picture. The arithmetic stays in FACE — a stated model
+> evaluates a wrong radius as consistently as a right one — but the auditing is
+> now three commands rather than a script the reader has to write.

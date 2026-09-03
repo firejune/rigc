@@ -773,42 +773,55 @@ beside the originals and touch nothing in the repository:
 ```bash
 # (a) INVERT ONE BAND: give the two far columns each other's shift.
 #     The far side now STRETCHES 1.363 where it should compress to 0.637 —
-#     the head reads as turning the other way at its own edge.
+#     the head reads as turning the other way at its own edge. This one has to
+#     REPLACE the transform with a table: an inverted band is not the closed
+#     form at any angle, and §1.1 refuses a `transform` beside a `vertices` run.
 bun -e '
 const m = await Bun.file("gallery/portrait/motion.json").json();
 const d = m.animations.turn.deform.find(x => x.slot === "head");
 const row = [-22.414, 0, -7.175, 0, -35.345, 0, -27.658, 0, -14.255, 0];
-for (const k of d.keys) if (k.vertices) k.vertices = [...row, ...row, ...row, ...row, ...row];
+for (const k of d.keys) if (k.transform) {
+  delete k.transform;
+  k.fromVertex = 0;
+  k.vertices = [...row, ...row, ...row, ...row, ...row];
+}
 await Bun.write("/tmp/swapped.motion.json", JSON.stringify(m, null, 2));
 '
 bun cli.ts build --rig gallery/portrait/rig.json --motion /tmp/swapped.motion.json \
                  --out /tmp/swapped --profile spine-html
 
 # (b) FOLD IT: evaluate the same closed form at 40°, past the 31.37° of §4.2,
-#     so the two far columns swap order and the mesh turns inside out.
+#     so the two far columns swap order and the mesh turns inside out. Since
+#     §1.1 the whole of it is one number.
 bun -e '
 const m = await Bun.file("gallery/portrait/motion.json").json();
 const d = m.animations.turn.deform.find(x => x.slot === "head");
-const D = Math.PI / 180, R = 170, t = 40 * D;
-const row = [-162, -120, 0, 120, 162].flatMap(x => {
-  const z = Math.sqrt(R * R - x * x);
-  return [+(x * (Math.cos(t) - 1) - z * Math.sin(t)).toFixed(3), 0];
-});
-for (const k of d.keys) if (k.vertices) k.vertices = [...row, ...row, ...row, ...row, ...row];
+for (const k of d.keys) if (k.transform) k.transform.degrees = 40;
 await Bun.write("/tmp/folded.motion.json", JSON.stringify(m, null, 2));
 '
 bun cli.ts build --rig gallery/portrait/rig.json --motion /tmp/folded.motion.json \
                  --out /tmp/folded --profile spine-html
 ```
 
+⚠️ **Both scripts were rewritten on 2026-09-03 and the old ones did nothing.**
+They keyed off `if (k.vertices)`, which was true of every key until §1.1 put the
+model on it — after that re-authoring the guard matched nothing, both scripts
+wrote an unchanged motion spec, and builds (a) and (b) were the good build. That
+is a doc command silently passing rather than silently failing, which is the
+worse of the two: build (b) reported `A39 PASS` and the table below said `FAIL`.
+Both are re-run above.
+
 **What comes back from both:**
 
 | | good | (a) one band inverted | (b) mesh folded |
 | --- | --- | --- | --- |
-| `--profile spine-html` | 26 PASS / 13 SKIP | **26 PASS / 13 SKIP** | **26 PASS / 13 SKIP** |
+| `--profile spine-html`, **before `A39`** | 26 PASS / 13 SKIP | **26 PASS / 13 SKIP** | **26 PASS / 13 SKIP** |
 | `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | PASS | **PASS** | **PASS** |
 | the `MESH` coverage line | 100.00%, 95.90px past | **byte-identical** | **byte-identical** |
 | 🆕 `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | PASS | PASS | **FAIL, both keys, 8 of 32 triangles** |
+| `--profile spine-html`, **today** | 27 PASS / 13 SKIP | 27 PASS / 13 SKIP | **26 PASS / 13 SKIP / 2 FAIL** |
+| 🆕 the `DEFORM` block, `head` key 1 `area` | x0.637174 … x1.319122 | **x0.765250 … x1.362834** | **x−0.288121 … x1.820211** |
+| 🆕 … and its `winding` | 32 of 32 kept | 32 of 32 kept | **24 of 32 kept** |
 
 🚨 **All three were green, and the coverage line is the same string in all three,
 because it reports the SETUP pose.** The `--profile spine-html` row is what
@@ -817,13 +830,15 @@ the setup geometry, and `A35` is still silent about build (b). `A35` checks that
 attachment — an honest and useful check, and orthogonal to whether the numbers in
 it mean anything.
 
-`rigc explain` is the instrument that prints every other timeline's actual values,
-and on a deform it prints the shape of the run rather than the run:
+⭐ **The two `DEFORM` rows are the ones that separate (a) from the good build**,
+and nothing else in the toolchain does that without a reference render. `A39` is
+right to pass (a) — no triangle reverses — and the block prints **x1.362834**
+where the model's own table says x1.319121, and **x0.765250** where it says
+x0.637174. That is this section's own prose, *"stretches 1.363 where it should
+compress to 0.637"*, as a figure the tool produces.
 
-```bash
-bun cli.ts explain --rig gallery/portrait/rig.json \
-                   --motion gallery/portrait/motion.json --out /tmp/explain
-```
+`rigc explain` is the instrument that prints every other timeline's actual values,
+and on a deform it used to print the shape of the run rather than the run:
 
 ```
     default/head/head.deform  4 key(s)
@@ -833,10 +848,31 @@ bun cli.ts explain --rig gallery/portrait/rig.json \
       t=2.2     back to the setup pose                         linear
 ```
 
-⇒ **`25 pair(s)` is the whole of what `explain` will tell you about a face
-turn.** Compare a scalar track two lines up in the same report, which prints
+⇒ **`25 pair(s)` was the whole of what `explain` would tell you about a face
+turn**, against a scalar track two lines up in the same report printing
 `value=-35.345`. That asymmetry is
-[#296](https://github.com/firejune/rigc/issues/296).
+[#296](https://github.com/firejune/rigc/issues/296), and both of its halves have
+now closed: §1.1's construct put the model and every offset it produced into the
+same report (AUTHORING §4.11.1), and the `DEFORM` block put the geometry there
+(AUTHORING §4.11.2) —
+
+```bash
+bun cli.ts explain --rig gallery/portrait/rig.json \
+                   --motion gallery/portrait/motion.json --out /tmp/explain
+```
+
+```
+  DEFORM  turn  default/head/head  key 1  t=0.620000  transform yaw  radius=170 degrees=12
+          moved      25 of 25 vertices, worst 35.3450px at v2
+          area       min x0.637174 tri 17   max x1.319122 tri 31   (32 triangles, 0 with no area at the cleared pose, band 0.146694px²)
+          stretch    max x1.319121 tri 22   min x0.637175 tri 8
+          winding    32 of 32 kept, 0 collapsed
+```
+
+⇒ **`0.637` is now a figure the tool prints.** It is a *report* and not a bar —
+`explain` takes no `--profile` and gates nothing, for #277's reason: a deliberate
+3× stretch is a real thing to author, and the one deformed-geometry fault with no
+legitimate counter-example is the fold, which is `A39`'s.
 
 🆕 **`A39_DEFORM_KEEPS_TRIANGLE_WINDING` now closes the half of that gap the
 fold lives in** — `--profile spine-html`, 2026-09-03. Build (b) above is refused
@@ -844,8 +880,8 @@ by name, on both its keys, with the triangles listed:
 
 ```
 FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform head/head key 1
-      (t=0.62s): 8 of 32 triangle(s) reverse winding — triangle 0 [0,5,6]
-      1890.000 -> -544.545px²; …
+      (t=0.6200000047683716s): 8 of 32 triangle(s) reverse winding — triangle 0
+      [0,5,6] 1890.000 -> -544.548px²; …
 ```
 
 and builds (a) and the good one both still PASS it, because **an inverted band is
@@ -853,15 +889,16 @@ not a fold**: its winding survives. The angle A39 first fires at agrees with
 §4.2's `tan θ = Δx/Δz` to **0.0001°**, so the formula above is now checkable by
 running the gate instead of by rendering seven variants.
 
-⚠️ **Two things it deliberately does not do.** It is an **archetype** rule, so a
+⚠️ **One thing it deliberately does not do.** It is an **archetype** rule, so a
 `--profile spine` build reads `PROF` — the premise "a fold has no legitimate
 counter-example" turned out to be false when it was measured, an official
 `spineboy-pro` export reverses one of `hoverboard-board`'s 101 triangles, and a
-`validity` rule would have told its author to change correct data. And it says
-nothing about the **area and stretch extremes** #296 also asks for: 0.637 is
-still a figure you derive from §1 rather than one the gate prints. `check`
-against a trusted render, below, therefore stays the deeper instrument and this
-is the cheap always-on layer above it.
+`validity` rule would have told its author to change correct data. ⇒ `explain`'s
+`DEFORM` block is the surface with **no profile at all**, so the winding count is
+readable on a `--profile spine` build the gate will not mention it to.
+
+`check` against a trusted render, below, stays the deeper instrument for the
+reasons §9.3 gives, and these two are the cheap always-on layer above it.
 
 ### 9.3 The audit that works today, and exactly what it cannot do
 
@@ -900,6 +937,14 @@ to call an audit:**
    **all three** runs above, unchanged, because drift is attributed per **slot**
    and a folded head mesh is entirely inside one slot.
 
+📌 **`explain`'s `DEFORM` block (§9.2, AUTHORING §4.11.2) takes half of limits 1
+and 2 away, and none of limit 3.** It is reference-free, so it says something
+about a first authoring; and it is *per key*, so the band inversion above reads
+as `x1.362834` beside a model stating x1.319121 rather than as 0.20 of 255 in an
+aggregate. What it still cannot say is whether **12° was the angle the shot
+wanted** — that needs the picture, which is why the procedure below survives the
+block as it survived `A39`.
+
 ⇒ **So the honest procedure — thinner now that `A39` exists, and still a
 procedure, because none of the three limits above is one `A39` lifts:** state the
 model on the key rather than deriving a table (§1.1), so what a reviewer reads is
@@ -910,11 +955,15 @@ evaluates a wrong radius as consistently as a right one — then render, **look 
 three scales**, and keep a render of the last build you trusted so `check` has
 something to be differential against.
 
-📌 **What §1.1 moved and what it did not.** The transcription is gone and
-`explain` prints the model beside the offsets it produced, so *what a key claims*
-is now readable. *Whether the claim is right* is unchanged: A39 catches a fold,
-[#316](https://github.com/firejune/rigc/issues/316) is the area and stretch
-extremes, and nothing measures whether 12° was the angle the shot wanted.
+📌 **What §1.1 moved, what §9.2's block moved, and what neither did.** The
+transcription is gone and `explain` prints the model beside the offsets it
+produced, so *what a key claims* is readable; the `DEFORM` block prints what the
+key **did** — the area and stretch extremes, the displacement and the winding —
+so *what the claim came to* is readable too, per key and with no reference
+([#316](https://github.com/firejune/rigc/issues/316), landed 2026-09-03; `A39`
+catches the fold inside it). *Whether the claim is right* is unchanged: **nothing
+measures whether 12° was the angle the shot wanted**, and nothing above is a
+substitute for looking at three scales.
 
 ---
 

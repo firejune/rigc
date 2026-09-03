@@ -152,8 +152,8 @@ export const DEFORM_TRANSFORM_KINDS = ['yaw', 'pitch', 'affine', 'wave', 'bend']
  * `stated` is the spec's own parameters and `derived` the scalars the closed
  * form got out of them — the two lines that let somebody re-derive a column by
  * hand. `offsets` is the emitted run, so the report and the artifact cannot
- * disagree (issue #316 is the per-key measurement block that will quote this
- * rather than recompute it).
+ * disagree (`explain`'s `DEFORM` block, issue #316, quotes this rather than
+ * re-evaluating it — see `src/deformmeasure.ts`).
  */
 export interface DeformTransformReport {
   kind: DeformTransform['kind'];

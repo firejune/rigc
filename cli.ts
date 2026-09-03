@@ -58,10 +58,17 @@ import {
 } from './src/bonedist.ts';
 import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type CheckReport } from './src/check.ts';
 import { compile, CompileError, type CompileOptions } from './src/compile.ts';
+import {
+  skeletonDataFromText,
+  surveyDeformKeys,
+  type DeformExtreme,
+  type DeformKeyMeasure,
+} from './src/deformmeasure.ts';
 import { diffLines, diffSkeletons, reportedFigures, sectionFigures, type DiffReport } from './src/diff.ts';
 import { copyAtlasImages } from './src/emit.ts';
 import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
+import { KEY_TIME_EPSILON } from './src/timelines.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
 import {
   DEFAULT_MAX_RESIDUAL,
@@ -429,6 +436,190 @@ function meshFit(m: CompileResult['meshes'][number]): string {
  */
 function meshBudget(rig: CompileResult['rig']): string {
   return rig.meshTriangleBudget === null ? '(no budget declared)' : `(budget ${rig.meshTriangleBudget})`;
+}
+
+/**
+ * One extreme, as `x0.637306 tri 0`, or an em dash when no triangle on the key
+ * could carry the quantity.
+ *
+ * A dash rather than `x1.000000`: a key over a mesh whose every triangle is a
+ * hair has no ratio and no map, and printing the identity there would report a
+ * measurement that was never taken — this repository's favourite false green.
+ */
+function deformExtreme(extreme: DeformExtreme | null): string {
+  return extreme === null ? '—'.padEnd(9) : `x${extreme.value.toFixed(6)} tri ${extreme.triangle}`;
+}
+
+/** `head/head key 1`, which is how A39's own message names a key. */
+function deformKeyName(key: DeformKeyMeasure): string {
+  return `${key.slot}/${key.attachment} key ${key.key}`;
+}
+
+/**
+ * Does this compiled `transform` report belong to this loaded key?
+ *
+ * ⚠️ The two times are not the same number and cannot be compared with `===`.
+ * The report's is the spec's own `t`; the survey's came back through
+ * `Float32Array`, because that is what `spine-core` reads a timeline's frames
+ * into — a key written `0.62` arrives as `0.6200000047683716`. So the tolerance
+ * is the compiler's own key-time grid plus one float32 ulp at this magnitude,
+ * which is narrower than any key spacing the format can hold and wide enough for
+ * both roundings.
+ */
+function sameKeyTime(specTime: number, loaded: number): boolean {
+  return Math.abs(specTime - loaded) <= KEY_TIME_EPSILON + Math.abs(loaded) * 2 ** -23;
+}
+
+/**
+ * The `DEFORM` report block — what each deform key does to the geometry, per key
+ * and then per animation (issue #316).
+ *
+ * ## Why this is a report and not an assertion
+ *
+ * Because a 3× stretch is a real thing to author, for the same reason issue #277
+ * settled mesh coverage as a printed figure on authored geometry rather than a
+ * bar. The one deformed-geometry fault that has no legitimate counter-example is
+ * the fold, and that one already IS an assertion —
+ * `A39_DEFORM_KEEPS_TRIANGLE_WINDING`. What this block adds is **the approach to
+ * that wall**: FACE §4.2's table of ratios down to the fold at 31.37° was
+ * measured by rendering seven variants of `gallery/portrait` and looking at them,
+ * and `0.637` was a number an author derived from the closed form rather than one
+ * the tool printed.
+ *
+ * ## It quotes; it does not re-derive
+ *
+ * - the reversal and collapse counts are the **survey's**, which is A39's own
+ *   survey ([`src/deformmeasure.ts`](src/deformmeasure.ts)) — one measurement,
+ *   two readers, so the block and the gate cannot disagree about a fold;
+ * - a key's model is the **compiler's** `transform` report (§4.11.1), so the
+ *   block names the same `kind` and parameters the spec stated;
+ * - the fold ANGLE is nowhere here. It is A39's, derived at run time from the
+ *   grid, and a second copy of it printed beside a ratio would be a number that
+ *   goes stale when somebody moves a column.
+ *
+ * ## And what it deliberately does not print
+ *
+ * **Deformed coverage**, which #296 asked for. The coverage figure is rasterised
+ * from the attachment's **uvs** against the part's alpha, and a deform moves
+ * positions and never uvs — so it is identical at every key by construction, and
+ * a `coverage 100.00% (setup 100.00%)` line would be a tautology wearing a
+ * measurement's clothes. The header line says so and points at `meshes`, because
+ * an author who came here asking whether their deform broke the coverage
+ * deserves the answer rather than a silence. What does move is the stretch.
+ */
+function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): string[] {
+  const survey = surveyDeformKeys(skeletonDataFromText(result.skeletonText, result.atlasText));
+  if (survey.timelines === 0) return [];
+  const out: string[] = ['', 'deform  (what each key does to the geometry — figures with names, never a bar; issue #316)'];
+  // The legend costs six lines and is worth them exactly once — on a report that
+  // has figures in it. A bounding box or a clipping polygon deformed and nothing
+  // else gets the reason it has no figures and no essay about them.
+  if (survey.keys.length) {
+    out.push(
+      '  ..    every key measured at its OWN time against the same pose with the deform CLEARED, so the',
+      '  ..    denominator is 1.000 by definition and a NEGATIVE area ratio IS a reversed triangle',
+      '  ..    stretch is the two singular values of the map from the cleared triangle to the deformed one —',
+      '  ..    the worst stretch and the worst squash the drawing takes there; their product is |area ratio|',
+      '  ..    coverage is NOT here: it is rasterised from the uvs, which no deform moves, so the figure on',
+      '  ..    the `meshes` line below is already the deformed one',
+    );
+  }
+  if (survey.notAMesh.length) {
+    out.push(`  ..    ${survey.notAMesh.join(', ')} deform an attachment with no triangles — nothing to measure`);
+  }
+  for (const key of survey.keys) {
+    const model = result.deformTransforms.find(
+      (g) =>
+        g.animation === key.animation &&
+        g.skin === key.skin &&
+        g.slot === key.slot &&
+        g.attachment === key.placeholder &&
+        sameKeyTime(g.time, key.time),
+    );
+    // A stated model is quoted rather than reduced to its results: `yaw
+    // radius=170 degrees=12` is what a reviewer checks the ratios against, and an
+    // authored table says so instead of saying nothing, because "no model here"
+    // is itself the thing a reader of a wrong ratio needs to know.
+    const states = model === undefined ? 'authored table' : `transform ${model.kind}  ${model.stated}`;
+    out.push(
+      `  DEFORM  ${key.animation}  ${key.skin}/${key.slot}/${key.placeholder}  key ${key.key}  ` +
+        `t=${key.time.toFixed(6)}  ${states}`,
+    );
+    // A key that moves nothing gets one line and no figures. `{ "t": 2.2 }` with
+    // no run is the format's own way of writing "back to the setup pose" (§4.11),
+    // and its geometry is bit-identical to the cleared pose it would be measured
+    // against — so `x1.000000` there is the definition and not a measurement, and
+    // four lines of it on every loop's opening and closing key is the noise that
+    // stops the block being read. It is still counted in the rollup below,
+    // because A39 measures it too.
+    if (key.moved === 0) {
+      out.push(
+        `          moved      0 of ${key.vertices} vertices — this key IS the setup pose, so every ` +
+          `figure is the identity (${key.triangles} triangles, all kept)`,
+      );
+      continue;
+    }
+    out.push(
+      `          moved      ${key.moved} of ${key.vertices} vertices, ` +
+        `worst ${key.maxDisplacement.toFixed(4)}px at v${key.maxDisplacementVertex}`,
+    );
+    out.push(
+      `          area       min ${deformExtreme(key.areaRatioMin)}   max ${deformExtreme(key.areaRatioMax)}   ` +
+        `(${key.triangles} triangles, ${key.degenerate} with no area at the cleared pose, band ${key.band.toFixed(6)}px²)`,
+    );
+    out.push(
+      `          stretch    max ${deformExtreme(key.stretchMax)}   min ${deformExtreme(key.stretchMin)}`,
+    );
+    // The marker has to know about the exemption, or it says the false half of
+    // the truth on the one build where it matters: a declared fold IS a fold and
+    // A39 does not refuse it — it SKIPs the slot entirely.
+    const exempted = exempt.has(key.slot);
+    const fold = key.reversed.length
+      ? exempted
+        ? '  <- a fold, and A39 does not gate it — see below'
+        : '  <- a fold: A39 refuses this key by name'
+      : '';
+    out.push(
+      `          winding    ${key.triangles - key.reversed.length} of ${key.triangles} kept, ` +
+        `${key.collapsed} collapsed${fold}`,
+    );
+    if (exempted) {
+      out.push(
+        `          ..         A39 is exempt on "${key.slot}" (invariants.deformMayFold), so nothing here is gated`,
+      );
+    }
+  }
+  // The rollup, per animation: the worst key by each quantity. A timeline's own
+  // eight keys are eight blocks above, and "which of them is the one to look at"
+  // is the question the sweep in issue #313's landing comment answered by hand.
+  for (const animation of [...new Set(survey.keys.map((k) => k.animation))]) {
+    const keys = survey.keys.filter((k) => k.animation === animation);
+    const worst = (
+      pick: (key: DeformKeyMeasure) => DeformExtreme | null,
+      better: (a: number, b: number) => boolean,
+    ): string => {
+      let best: { key: DeformKeyMeasure; extreme: DeformExtreme } | null = null;
+      for (const key of keys) {
+        const extreme = pick(key);
+        if (extreme === null) continue;
+        if (best === null || better(extreme.value, best.extreme.value)) best = { key, extreme };
+      }
+      return best === null ? '—' : `x${best.extreme.value.toFixed(6)} (${deformKeyName(best.key)} tri ${best.extreme.triangle})`;
+    };
+    const reversed = keys.reduce((n, k) => n + k.reversed.length, 0);
+    const collapsed = keys.reduce((n, k) => n + k.collapsed, 0);
+    const samples = keys.reduce((n, k) => n + k.triangles, 0);
+    out.push(
+      `  WORST   ${animation}  area ${worst((k) => k.areaRatioMin, (a, b) => a < b)}  ` +
+        `stretch ${worst((k) => k.stretchMax, (a, b) => a > b)}  ` +
+        `squash ${worst((k) => k.stretchMin, (a, b) => a < b)}`,
+    );
+    out.push(
+      `  ..      ${''.padEnd(animation.length)}  reversed ${reversed}, collapsed ${collapsed}, over ` +
+        `${keys.length} key(s) and ${samples} triangle sample(s)  <- A39 reads the same two counts`,
+    );
+  }
+  return out;
 }
 
 /**
@@ -1857,6 +2048,11 @@ function cmdExplain(flags: Record<string, string>): void {
       }
     }
   }
+
+  // The `DEFORM` block goes after the timelines and before the constraints,
+  // because it is a measurement OF the deform timelines printed above — the keys
+  // it names are the keys the reader has just read, by the same index.
+  for (const line of deformReportLines(result, new Set(result.rig.deformMayFold))) console.log(line);
 
   if (result.physics.length) {
     console.log('\nphysics constraints (4.3 top-level `constraints` array, type per entry)');

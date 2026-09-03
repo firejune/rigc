@@ -169,6 +169,7 @@ import {
 import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
 import { readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson } from './src/types.ts';
+import { skeletonDataFromText, surveyDeformKeys } from './src/deformmeasure.ts';
 import { assertionCountForProfile, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
@@ -7063,6 +7064,13 @@ function buildTurnRig(
     skins?: Record<string, unknown>;
     /** State the model on the key instead of transcribing `row` (issue #294). */
     transform?: Record<string, unknown>;
+    /**
+     * The moving key's time. `0.5` by default because it is exact in float32 and
+     * the DW/DT cases quote it; #316's cases pass `0.62` — `gallery/portrait`'s
+     * own time, and one that is NOT exact in float32, so a report matching a
+     * compiled `transform` to a loaded key has to tolerate the rounding.
+     */
+    time?: number;
   } = {},
 ): TurnBuild {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-turn-'));
@@ -7116,10 +7124,11 @@ function buildTurnRig(
   // test derives the projection from docs/FACE.md §1 and `src/deformgen.ts`
   // derives it from the same line, so agreement is the claim and a byte
   // difference is a defect in one of the two.
+  const midTime = extra.time ?? 0.5;
   const midKey =
     extra.transform === undefined
-      ? { t: 0.5, fromVertex: 0, vertices: TURN_ROWS.flatMap(() => row) }
-      : { t: 0.5, transform: extra.transform };
+      ? { t: midTime, fromVertex: 0, vertices: TURN_ROWS.flatMap(() => row) }
+      : { t: midTime, transform: extra.transform };
   writeFileSync(
     motionPath,
     `${JSON.stringify(
@@ -7574,6 +7583,356 @@ function runDeformTransformSuite(): number {
       : gateHit.map((f) => f.detail).join(' | '),
     'A35 read the raw weight run as three numbers per influence, which it is only AFTER the parser unpacks it — so ' +
       "the assertion built to catch a dropped tail measured `bound`'s array at 16 and would not have caught this one",
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// the `DEFORM` report block — issue #316, the reporting half of #296
+// ---------------------------------------------------------------------------
+//
+// ⭐ The controls that matter here are DR00 and DR01, and they matter for the
+// same reason DT00 does: a report compared against its own arithmetic proves
+// nothing. Both derive the expected figure from a CLOSED FORM this file writes
+// out — FACE §4.2's column projection for the turn, and `sx·sy` for an affine —
+// so the block's `x0.637107` has something to be right or wrong against.
+//
+// The other four are about not drifting: DR02 and DR03 say the block's counts are
+// A39's counts on the same build (they share one survey and this is what says
+// so), DR04 is the evidence for the one quantity #296 asked for that is
+// deliberately absent, and DR05 says the block reads the artifact while the model
+// line reads the spec.
+
+/** The x shift `turnRow` derives for each column, one per column. */
+function turnShifts(degrees: number): number[] {
+  return turnRow(degrees).filter((_, i) => i % 2 === 0);
+}
+
+/**
+ * How much each adjacent column pair's spacing scales, given one x shift per
+ * column.
+ *
+ * ⭐ This IS the area ratio of every triangle spanning that pair, and no
+ * approximation is involved: the grid's triangles each span one column pair and
+ * two rows, a yaw moves nothing vertically, so the triangle's height is untouched
+ * and its area scales exactly as its width does.
+ *
+ * The same relation fixes the stretch: the map from the cleared triangle to the
+ * deformed one is `diag(r, 1)`, so its singular values are `max(r, 1)` and
+ * `min(r, 1)` — which is why DR00 can check four printed figures against one
+ * table.
+ *
+ * It takes SHIFTS rather than an angle so that DR06 can hand it a wrong
+ * projection: an inverted band is not `x·cos t − z·sin t` at any angle, and the
+ * point of that case is what the block says about a table no closed form
+ * produced. Derived at run time for `foldAngleDegrees`'s reason — a literal here
+ * would be a measured number hardcoded into a mutant, and it would stop agreeing
+ * the moment somebody edited `TURN_COLUMNS`.
+ */
+function columnRatios(shifts: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i + 1 < TURN_COLUMNS.length; i++) {
+    const before = TURN_COLUMNS[i + 1] - TURN_COLUMNS[i];
+    const after = TURN_COLUMNS[i + 1] + shifts[i + 1] - (TURN_COLUMNS[i] + shifts[i]);
+    out.push(after / before);
+  }
+  return out;
+}
+
+/**
+ * The `DEFORM` block `explain` prints for one turn build, as an author reads it.
+ *
+ * Through a real `bun cli.ts explain` subprocess rather than by calling the
+ * survey: the block IS the product of this issue, and a control that measured the
+ * struct would pass on a block that printed the wrong field. DW01 reads A39's
+ * message for the same reason.
+ */
+function turnDeformBlock(build: TurnBuild): string[] {
+  const run = runCli([
+    'explain',
+    '--rig',
+    build.opts.rigPath,
+    '--motion',
+    build.opts.motionPath,
+    '--out',
+    build.opts.outDir,
+    '--images',
+    build.dir,
+  ]);
+  if (run.status !== 0) throw new Error(`explain exited ${run.status}: ${run.stderr}`);
+  const lines = run.stdout.split('\n');
+  const start = lines.findIndex((line) => line.startsWith('deform  '));
+  if (start < 0) return [];
+  const end = lines.findIndex((line, i) => i > start && line.startsWith('meshes'));
+  return lines.slice(start, end < 0 ? undefined : end).filter((line) => line.trim().length > 0);
+}
+
+/** Every `xN.NNNNNN` figure on the block lines matching `label`, in order. */
+function blockFigures(block: string[], label: string): number[] {
+  return block
+    .filter((line) => line.trim().startsWith(label))
+    .flatMap((line) => [...line.matchAll(/x(-?\d+\.\d+)/g)].map((m) => Number(m[1])));
+}
+
+function runDeformReportSuite(): number {
+  let bad = 0;
+  console.log('\n── the DEFORM report block (#316) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  // --- DR00: the control — four printed figures against one closed form -----
+  const ratios = columnRatios(turnShifts(12));
+  const expectedAreaMin = Math.min(...ratios);
+  const expectedAreaMax = Math.max(...ratios);
+  const DR_TIME = 0.62;
+  const turn12 = buildTurnRig([], { time: DR_TIME, transform: { kind: 'yaw', radius: TURN_R, degrees: 12 } });
+  const block12 = turnDeformBlock(turn12);
+  const areas = blockFigures(block12, 'area');
+  const stretches = blockFigures(block12, 'stretch');
+  // One moving key on this fixture, so one `area` line and one `stretch` line.
+  const drift = [
+    Math.abs((areas[0] ?? NaN) - expectedAreaMin),
+    Math.abs((areas[1] ?? NaN) - expectedAreaMax),
+    Math.abs((stretches[0] ?? NaN) - expectedAreaMax),
+    Math.abs((stretches[1] ?? NaN) - expectedAreaMin),
+  ];
+  const worstDrift = Math.max(...drift);
+  say(
+    'DR00_CONTROL_THE_PRINTED_RATIOS_ARE_THE_CLOSED_FORM_RATIOS',
+    areas.length === 2 && stretches.length === 2 && worstDrift < 1e-5,
+    areas.length === 2
+      ? `12° on columns [${TURN_COLUMNS.join(', ')}] at R=${TURN_R}: the block prints area min x${areas[0]} max ` +
+          `x${areas[1]} and stretch max x${stretches[0]} min x${stretches[1]}; the closed form gives ` +
+          `x${expectedAreaMin.toFixed(6)} and x${expectedAreaMax.toFixed(6)} over the column pairs ` +
+          `[${ratios.map((r) => r.toFixed(6)).join(', ')}]. Worst drift ${worstDrift.toExponential(2)}, tolerance 1e-5`
+      : `the block printed ${areas.length} area figure(s) and ${stretches.length} stretch figure(s): ${block12.join(' | ')}`,
+    'issue #296 measured FACE §4.2\'s ratio table by rendering seven variants and looking at them, and 0.637 stayed a ' +
+      'number an author derived from the closed form rather than one the tool printed',
+  );
+
+  // --- DR01: the other closed form, and the two quantities' one relation ----
+  //
+  // An `affine` is the case where every figure is exact rather than nearly so:
+  // the map is `diag(sx, sy)` at every vertex, so the area ratio is `sx·sy` on
+  // every triangle and the singular values ARE the two scale factors. It is also
+  // the control for `σ₁·σ₂ = |area ratio|`, which is the claim that lets the block
+  // print both without printing two independent measurements.
+  const [sx, sy] = [1.2, 0.74];
+  const affine = buildTurnRig([], { time: DR_TIME, transform: { kind: 'affine', scale: [sx, sy] } });
+  const affineBlock = turnDeformBlock(affine);
+  const affineAreas = blockFigures(affineBlock, 'area');
+  const affineStretch = blockFigures(affineBlock, 'stretch');
+  const productDrift = Math.abs((affineStretch[0] ?? NaN) * (affineStretch[1] ?? NaN) - (affineAreas[0] ?? NaN));
+  const affineDrift = Math.max(
+    Math.abs((affineAreas[0] ?? NaN) - sx * sy),
+    Math.abs((affineAreas[1] ?? NaN) - sx * sy),
+    Math.abs((affineStretch[0] ?? NaN) - sx),
+    Math.abs((affineStretch[1] ?? NaN) - sy),
+  );
+  say(
+    'DR01_AN_AFFINE_KEY_PRINTS_ITS_OWN_DETERMINANT_AND_ITS_OWN_SCALES',
+    affineAreas.length === 2 && affineStretch.length === 2 && affineDrift < 1e-5 && productDrift < 1e-5,
+    affineAreas.length === 2
+      ? `scale [${sx}, ${sy}]: area x${affineAreas[0]}..x${affineAreas[1]} against sx·sy = ${(sx * sy).toFixed(6)}, ` +
+          `stretch max x${affineStretch[0]} min x${affineStretch[1]} against the two scales; worst drift ` +
+          `${affineDrift.toExponential(2)}. σ₁·σ₂ − |area ratio| = ${productDrift.toExponential(2)}, tolerance 1e-5`
+      : `the block printed ${affineAreas.length} area figure(s): ${affineBlock.join(' | ')}`,
+    'the block prints an area ratio and a stretch pair as two readings of one map, and #317 made `affine` refuse a ' +
+      'determinant at or below zero — so the determinant it refuses on has to be the one the report shows',
+  );
+
+  // --- DR02: the reversal count is A39's, not a second opinion --------------
+  //
+  // 🚨 This is the case the two halves of #296 could drift on. The gate refuses
+  // the build and the report prints it, and if either re-derived the count they
+  // would disagree on exactly the key an author is looking at.
+  const folded = buildTurnRig([], { time: DR_TIME, transform: { kind: 'yaw', radius: TURN_R, degrees: 40 } });
+  const foldedDetail = gateTurn(folded).failures.find((f) => f.assertion === A39)?.detail ?? '';
+  const gateCount = Number(/(\d+) of (\d+) triangle\(s\) reverse winding/.exec(foldedDetail)?.[1] ?? NaN);
+  const foldedBlock = turnDeformBlock(folded);
+  const kept = /winding\s+(\d+) of (\d+) kept/.exec(foldedBlock.find((l) => l.includes('winding')) ?? '');
+  const blockReversed = kept ? Number(kept[2]) - Number(kept[1]) : NaN;
+  const rollupOf = (block: string[]): RegExpExecArray | null => {
+    for (const line of block) {
+      const hit = /reversed (\d+), collapsed (\d+), over (\d+) key\(s\) and (\d+) triangle sample\(s\)/.exec(line);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const rollup = Number(rollupOf(foldedBlock)?.[1] ?? NaN);
+  const namesA39 = foldedBlock.some((l) => l.includes('<- a fold: A39 refuses this key by name'));
+  // And the other direction, which is what "a report, never a bar" has to mean:
+  // the same fold DECLARED. A39 stops measuring it — SKIP, not PASS (DW04) — and
+  // the block goes on printing the figures, because an author who has declared a
+  // fold is the one person with no other way to see how far it goes. The survey
+  // takes the exemption as an argument for exactly this reason; the report hands
+  // it an empty set.
+  const declared = buildTurnRig([], {
+    time: DR_TIME,
+    transform: { kind: 'yaw', radius: TURN_R, degrees: 40 },
+    invariants: { meshSlots: 1, meshTriangles: 40, deformMayFold: [{ slot: 'head', why: 'the report-block probe' }] },
+  });
+  const declaredGate = gateTurn(declared);
+  const declaredBlock = turnDeformBlock(declared);
+  const declaredKept = /winding\s+(\d+) of (\d+) kept/.exec(declaredBlock.find((l) => l.includes('winding')) ?? '');
+  const reportsAnyway =
+    declaredKept !== null &&
+    Number(declaredKept[2]) - Number(declaredKept[1]) === gateCount &&
+    declaredBlock.some((l) => l.includes('A39 is exempt on "head"')) &&
+    declaredBlock.some((l) => l.includes('<- a fold, and A39 does not gate it'));
+  say(
+    'DR02_THE_BLOCKS_REVERSAL_COUNT_IS_THE_ONE_A39_REFUSES_ON',
+    Number.isFinite(gateCount) &&
+      blockReversed === gateCount &&
+      rollup === gateCount &&
+      namesA39 &&
+      !declaredGate.passed.includes(A39) &&
+      reportsAnyway,
+    Number.isFinite(gateCount)
+      ? `40° past a ${foldAngleDegrees(TURN_COLUMNS, TURN_R).toFixed(3)}° fold: A39 refuses ${gateCount} of 32 ` +
+          `triangles, the block prints "${(foldedBlock.find((l) => l.includes('winding')) ?? '').trim()}" and the ` +
+          `rollup ${rollup} — and the key carries the pointer at A39 by name. Under ` +
+          `invariants.deformMayFold the gate SKIPs ("${declaredGate.skipped.find((s) => s.assertion === A39)?.reason ?? ''}") ` +
+          `and the block still prints "${(declaredBlock.find((l) => l.includes('winding')) ?? '').trim()}"`
+      : `A39 did not fire on the folded build, so there is nothing to agree with: ${foldedDetail || '(no detail)'}`,
+    'the report and the assertion are the two halves of #296 and share one survey in src/deformmeasure.ts — two ' +
+      'derivations of one count drift, and the one that drifts silently is the report',
+  );
+
+  // --- DR03: and so are the three figures on A39's own stats line -----------
+  const stats = gateTurn(turn12).stats;
+  const totals = rollupOf(block12);
+  say(
+    'DR03_THE_ROLLUP_TOTALS_ARE_A39S_STATS_LINE',
+    totals !== null &&
+      Number(totals[3]) === stats.deformKeysMeasured &&
+      Number(totals[4]) === stats.deformTrianglesMeasured &&
+      Number(totals[2]) === stats.deformTrianglesCollapsed,
+    totals === null
+      ? `the block printed no rollup: ${block12.join(' | ')}`
+      : `the block rolls up ${totals[3]} key(s), ${totals[4]} triangle sample(s) and ${totals[2]} collapsed; A39's ` +
+          `stats line says deformKeysMeasured=${stats.deformKeysMeasured} ` +
+          `deformTrianglesMeasured=${stats.deformTrianglesMeasured} ` +
+          `deformTrianglesCollapsed=${stats.deformTrianglesCollapsed}`,
+    'the keys the block does NOT print figures for — a `{ "t": 2.2 }` back-to-setup key — are still keys A39 measured, ' +
+      'so a rollup that quietly dropped them would report a smaller sample than the gate ran',
+  );
+
+  // --- DR04: the quantity #296 asked for that cannot exist -----------------
+  //
+  // 🚨 #296's mock-up carried `coverage 100.00% of the art (setup 100.00%)`, and
+  // that line is a tautology: coverage is rasterised from the attachment's UVS
+  // against the part's alpha (`measureAuthoredMeshFit`), and a deform moves
+  // positions and never uvs. The differential below is the strongest form of the
+  // claim — a mesh turned INSIDE OUT reports the same coverage to six decimals,
+  // which is #296's own complaint that "the coverage line still reports the setup
+  // pose at 100.00%" stated as the reason not to print a second one.
+  const fitOf = (build: TurnBuild): string =>
+    build.result.meshes
+      .map((m) => `${m.slot} coverage=${m.coverage?.toFixed(6)} overshoot=${m.overshoot?.toFixed(6)} hole=${m.holePixels ?? 0}px`)
+      .join(' ');
+  const posedUvsHeld = ((): boolean => {
+    const data = skeletonDataFromText(folded.result.skeletonText, folded.result.atlasText);
+    const attachment = data.defaultSkin?.getAttachment(0, 'head');
+    if (!(attachment instanceof MeshAttachment)) return false;
+    const before = [...attachment.regionUVs];
+    surveyDeformKeys(data);
+    return (
+      attachment.regionUVs.length === before.length && [...attachment.regionUVs].every((u, i) => u === before[i])
+    );
+  })();
+  const sameFit = fitOf(turn12) === fitOf(folded);
+  say(
+    'DR04_A_DEFORM_CANNOT_MOVE_COVERAGE_SO_THE_BLOCK_DOES_NOT_PRINT_IT',
+    sameFit && posedUvsHeld && !block12.some((l) => /^\s+coverage/.test(l)),
+    sameFit
+      ? `the 12° build and the 40° FOLDED build report the same fit — ${fitOf(turn12)} — and posing every key left ` +
+          'the attachment\'s uvs bit-identical, so a per-key coverage figure could only ever repeat the `meshes` line'
+      : `the two builds reported different fits: [${fitOf(turn12)}] vs [${fitOf(folded)}]`,
+    '#296 asked for "coverage movement" per key; the measurement it would come from has no term a deform can move, ' +
+      'and printing 100.00% beside 100.00% is a measurement\'s clothes on a definition',
+  );
+
+  // --- DR05: the block reads the artifact, the model line reads the spec ----
+  //
+  // DT00 established that a stated `yaw` and the transcribed table emit
+  // BYTE-IDENTICAL skeletons. So the two blocks have to be identical too, except
+  // on the one line that names the model — which is the sharpest available
+  // statement that the figures come off the emitted geometry and the model line
+  // comes off the spec.
+  const transcribedBlock = turnDeformBlock(buildTurnRig(turnRow(12), { time: DR_TIME }));
+  // The fixture keys `{ t: 0 }`, the model at `DR_TIME` and `{ t: 1 }`, so the
+  // line to compare is named by its time — the first `DEFORM` line is a
+  // back-to-setup key and says `authored table` under both spellings.
+  const modelLine = (block: string[]): string =>
+    (block.find((l) => l.trim().startsWith('DEFORM') && l.includes(`t=${DR_TIME.toFixed(6)}`)) ?? '').split('  t=')[1] ??
+    '';
+  const strip = (block: string[]): string => block.map((l) => l.replace(/(authored table|transform .*)$/, '')).join('\n');
+  say(
+    'DR05_THE_SAME_GEOMETRY_STATED_AND_TRANSCRIBED_PRINTS_ONE_BLOCK',
+    strip(transcribedBlock) === strip(block12) &&
+      /authored table/.test(modelLine(transcribedBlock)) &&
+      /transform yaw {2}radius=170 degrees=12/.test(modelLine(block12)),
+    strip(transcribedBlock) === strip(block12)
+      ? `both spellings print the same figures, and the key line differs only in its model: transcribed says ` +
+          `"${modelLine(transcribedBlock).trim()}", stated says "${modelLine(block12).trim()}"`
+      : 'the two blocks differ somewhere other than the model line',
+    'the model is quoted from the compiler\'s own transform report (#317) and never re-evaluated, so a block whose ' +
+      'figures moved when the spelling changed would be measuring the spec instead of the artifact',
+  );
+
+  // --- DR06: the case the assertion is right to stay quiet about ------------
+  //
+  // ⭐ This is what the report ADDS, and the sharpest statement of it available.
+  // FACE §9.2's build (a) gives the two far columns each other's shift: the far
+  // side stretches where the model says it compresses, the head reads as turning
+  // the wrong way at its own edge, and A39 is CORRECT to pass — no triangle
+  // reverses, the winding is intact, and an assertion that fired here would be
+  // reporting something it cannot measure (DW02). §9.3's second limit is that
+  // `check` sees this only as 0.20 of 255 in an aggregate MAE, with nothing about
+  // that number saying "the projection".
+  //
+  // ⇒ The block prints x1.362825 where the model's own table says x1.319121, with
+  // no reference render anywhere. That is reference-free and per key, which is
+  // the half of §9.3's limits 1 and 2 this closes.
+  const straightShifts = turnShifts(12);
+  const invertedShifts = [...straightShifts];
+  [invertedShifts[0], invertedShifts[1]] = [invertedShifts[1], invertedShifts[0]];
+  const invertedRow = TURN_COLUMNS.flatMap((_, i) => [invertedShifts[i], 0]);
+  const invertedBuild = buildTurnRig(invertedRow, { time: DR_TIME });
+  const invertedGate = gateTurn(invertedBuild);
+  const invertedBlock = turnDeformBlock(invertedBuild);
+  const invertedAreas = blockFigures(invertedBlock, 'area');
+  const invertedRatios = columnRatios(invertedShifts);
+  const wrongMax = Math.max(...invertedRatios);
+  const wrongMin = Math.min(...invertedRatios);
+  const invertedDrift = Math.max(
+    Math.abs((invertedAreas[0] ?? NaN) - wrongMin),
+    Math.abs((invertedAreas[1] ?? NaN) - wrongMax),
+  );
+  // The separation, which is the whole claim: the printed figures have to be the
+  // WRONG projection's and not the right one's, by far more than the tolerance.
+  const separation = Math.abs(wrongMax - Math.max(...ratios));
+  say(
+    'DR06_AN_INVERTED_BAND_IS_NOT_A_FOLD_AND_THE_BLOCK_SHOWS_IT_ANYWAY',
+    invertedGate.failures.length === 0 &&
+      invertedGate.passed.includes(A39) &&
+      invertedAreas.length === 2 &&
+      invertedDrift < 1e-5 &&
+      separation > 0.04,
+    invertedGate.failures.length === 0
+      ? `the two far columns given each other's shift (${straightShifts[0]} <-> ${straightShifts[1]}): ${A39} ` +
+          `${invertedGate.passed.includes(A39) ? 'PASSES' : 'did NOT run'} because the winding is intact, and the ` +
+          `block prints area min x${invertedAreas[0]} max x${invertedAreas[1]} — the inverted table's own ratios ` +
+          `[${invertedRatios.map((r) => r.toFixed(6)).join(', ')}], not the model's ` +
+          `x${Math.min(...ratios).toFixed(6)}/x${Math.max(...ratios).toFixed(6)}. Drift ` +
+          `${invertedDrift.toExponential(2)} against the wrong table, separation ${separation.toFixed(6)} from the ` +
+          'right one'
+      : `[${invertedGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'FACE §9.3 limit 2: a wrong projection moves `check`\'s mean MAE by 0.20 of 255 and nothing about that number ' +
+      'says "the projection" — and it needs a render of a build you already trust to say even that',
   );
 
   return bad;
@@ -11824,6 +12183,8 @@ function main(): void {
   substantive += 6;
   bad += runDeformTransformSuite();
   substantive += 7;
+  bad += runDeformReportSuite();
+  substantive += 7;
   bad += runMeshSuite();
   substantive += 4;
   const meshRungBad = runMeshRungSuite();
@@ -11983,6 +12344,15 @@ function main(): void {
       "axis — and a weighted attachment with no single bind space, whose array is now measured in influences, on both " +
       'sides of the encoding: the compiler refuses a 12-number run on it and A35 fires on the same run reached ' +
       'through the artifact), ' +
+      "+ 7 deform-report controls (`explain`'s DEFORM block read as a subprocess prints the area and stretch " +
+      'extremes the closed form predicts — the column-spacing ratios of docs/FACE.md §4.2 for a yaw and `sx·sy` with ' +
+      'its two scale factors for an affine, whose product is the area ratio — while its reversal and collapse counts ' +
+      "and its per-animation sample totals are A39's own, on a folded build and again on the same fold DECLARED, " +
+      'where the gate SKIPs and the report goes on printing; the one quantity #296 asked for that cannot exist, ' +
+      'measured as a differential against a mesh turned inside out reporting the same coverage to six decimals; one ' +
+      'block for a model and its transcription, which emit identical skeletons and must differ only on the line ' +
+      'naming the model; and the band INVERTED rather than folded, which A39 is right to pass and the block prints ' +
+      'as a ratio on the wrong side of the model, with no reference render), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       ', + 5 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +

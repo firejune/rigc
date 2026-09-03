@@ -344,7 +344,11 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
 - **`explain`** is the one to reach for when a rig compiles but looks wrong. It
   prints the stage, every bone with its resolved parent and position, the slots in
   draw order with their setup attachment, and every animation's timelines key by
-  key with the curve kind. It does not write anything.
+  key with the curve kind. A rig with a `deform` timeline also gets the **`DEFORM`
+  block** — per key, what that key did to the geometry: the area and stretch
+  extremes, how far each vertex moved and whether the winding survived
+  (**§4.11.2**). It takes no `--profile`, it never gates, and it does not write
+  anything — so the figures are readable on a build the gate is refusing.
 - **`diff`** compares two skeletons and reports **a ratio per measure** in six
   sections (bones, slots, attachments, constraints, animations, events). It
   deliberately does not combine them into a score: a rig with the right skeleton
@@ -1828,9 +1832,92 @@ now agree with a stated model instead of with a transcription.
 
 🔭 **Adjacent and deliberately not built here:**
 [#295](https://github.com/firejune/rigc/issues/295) is per-member values inside a
-`groups` entry, which is the same complaint about a different table;
-[#316](https://github.com/firejune/rigc/issues/316) is the per-key `DEFORM`
-report block, which will quote the offsets above rather than recompute them.
+`groups` entry, which is the same complaint about a different table. The per-key
+`DEFORM` report block ([#316](https://github.com/firejune/rigc/issues/316)) has
+since landed and quotes the model above rather than re-evaluating it — **§4.11.2**.
+
+---
+
+### 4.11.2 The `DEFORM` block — what a key does to the geometry
+
+⭐ **`explain` prints one block per deform key, and a rollup per animation.** The
+block above says what a key *claims*; this one says what it *did* to the
+triangles. It is a report and it never gates: `explain` takes no `--profile` and
+exits 0 on a rig `build` would refuse, so the figures are readable on the build
+that is failing.
+
+```
+deform  (what each key does to the geometry — figures with names, never a bar; issue #316)
+  ..    every key measured at its OWN time against the same pose with the deform CLEARED, so the
+  ..    denominator is 1.000 by definition and a NEGATIVE area ratio IS a reversed triangle
+  ..    stretch is the two singular values of the map from the cleared triangle to the deformed one —
+  ..    the worst stretch and the worst squash the drawing takes there; their product is |area ratio|
+  ..    coverage is NOT here: it is rasterised from the uvs, which no deform moves, so the figure on
+  ..    the `meshes` line below is already the deformed one
+  DEFORM  turn  default/head/head  key 0  t=0.000000  authored table
+          moved      0 of 25 vertices — this key IS the setup pose, so every figure is the identity (32 triangles, all kept)
+  DEFORM  turn  default/head/head  key 1  t=0.620000  transform yaw  radius=170 degrees=12
+          moved      25 of 25 vertices, worst 35.3450px at v2
+          area       min x0.637174 tri 17   max x1.319122 tri 31   (32 triangles, 0 with no area at the cleared pose, band 0.146694px²)
+          stretch    max x1.319121 tri 22   min x0.637175 tri 8
+          winding    32 of 32 kept, 0 collapsed
+  WORST   turn  area x0.637174 (head/head key 1 tri 17)  stretch x1.319121 (head/head key 1 tri 22)  squash x0.637175 (head/head key 1 tri 8)
+  ..            reversed 0, collapsed 0, over 8 key(s) and 192 triangle sample(s)  <- A39 reads the same two counts
+```
+
+**The rows, and what each one is for:**
+
+| Row | What it is |
+| --- | --- |
+| the `DEFORM` line | `animation`, the `skin/slot/attachment` triple the timeline is keyed on, the key's index — **the same index `A39`'s message names** — its time, and its model: the `transform` kind and parameters the spec stated (§4.11.1), or `authored table` |
+| `moved` | how many vertices this key moves at all, and the largest **world** displacement with the vertex carrying it. Not the same number as §4.11.1's `largest offset`: that one is the offset the spec stated, this one is where the vertex ended up after the bones |
+| `area` | signed area **after ÷ before**, its smallest and largest over the triangles, each with the triangle. `x0.637` is a band compressed to 64%; **a negative ratio is a triangle turned inside out** |
+| `stretch` | the two singular values of the map from the cleared triangle to the deformed one — the worst stretch and the worst squash the **drawing** takes. `σ₁·σ₂ = \|area ratio\|`, so the two rows are two readings of one map and cannot disagree |
+| `winding` | triangles whose winding survived, and how many the key pinched onto zero area. A fold says so and points at `A39` |
+| `WORST` | per animation: the worst key by each quantity, then the reversal and collapse totals over every key |
+
+📌 **The frame is the posed one, and the denominator is 1.000 by definition.**
+Both sides of every comparison are taken at the key's own time with the animation
+applied — the deformed mesh against **the same posed bones with the deform
+cleared**. Setup bones were tried and are wrong in principle: a weighted mesh's
+offsets are authored in bone space against the pose they land in. So every ratio
+is *the deform's own contribution*, and a `(setup 1.000)` column beside it would
+be printing the definition. It is also what makes a **mirrored** slot bone a
+non-event — a negative determinant flips both sides and cancels.
+
+**A key that moves nothing gets one line.** `{ "t": 2.2 }` with no run is the
+format's own way of writing "back to the setup pose" (§4.11), and its geometry is
+bit-identical to the pose it would be measured against. It is still counted in
+the `WORST` rollup, because `A39` measures it too — which is why the sample
+counts there are the ones on `A39`'s own stats line.
+
+**It quotes; it does not re-derive.** The reversal and collapse counts are
+`A39_DEFORM_KEEPS_TRIANGLE_WINDING`'s own — one survey, two readers, so the block
+and the gate cannot disagree about a fold. A key's model is the compiler's
+`transform` report. And the **fold angle** is not here at all: it is derived at
+run time from the grid (FACE §4.2), and a second copy of it printed beside a
+ratio would go stale the moment somebody moved a column.
+
+⚠️ **An exempt slot still gets figures.** `invariants.deformMayFold` (§3.7) turns
+`A39` off for a slot, and the block then prints the same numbers with a line
+saying nothing there is gated. An author who has declared a fold is the one
+person with no other way to see how far it goes.
+
+🚫 **What it does not print, and why — `coverage`.** A deform **cannot move
+coverage.** That figure is rasterised from the attachment's **uvs** against the
+part's alpha, and a deform moves positions and never uvs, so it is identical at
+every key by construction — measured, and on a mesh turned inside out at that: a
+12° build of the turn probe and a 40° folded one report the same
+`coverage=0.902786 overshoot=0.000000` to six decimals. A `coverage 100.00% of
+the art (setup 100.00%)` line would be a tautology wearing a measurement's
+clothes. The quantity that does move — how much art each drawn pixel now carries
+— is the `stretch` row.
+
+📘 **[FACE.md](FACE.md) §9.2** is this block on real art, as three builds of
+`gallery/portrait`: the good one, one with a band inverted, and one folded. The
+inverted build is the case worth reading — `A39` passes it (correctly: nothing
+reverses), and the block is what says `x1.362834` where the model's own table
+says `x1.319121`, with no reference render anywhere.
 
 ---
 
