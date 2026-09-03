@@ -48,7 +48,10 @@ sections listed above, and where a figure exists only in the record of the run t
 found it, that run is cited — as **provenance for a reader of record**, in
 AUTHORING §0's sense, not as an input to be followed. The figures produced *here*
 are re-derived on the fixture in the [appendix](#appendix--the-figure-this-page-measures-on)
-and every command on this page was re-run from it verbatim.
+and every command on this page was re-run from it verbatim. Those citations —
+`gallery/…`, `selftest.ts`, the run records — are **repository material and not in
+the npm package**, so they are linked by absolute URL: this page ships, and a
+relative link to them would resolve to nothing inside `node_modules/spine-rigc/`.
 
 🔒 **So this page is not a ladder run's reading, and AUTHORING.md deliberately does
 not link it.** An allowed-reading surface has to be **closed under reading**, and
@@ -112,7 +115,7 @@ beside the offsets it exists to make visible:
 > *"Every limb attachment is OFFSET from its bone, and that is what makes the hinge
 > visible: art centred on its own pivot turns in place, so a search over one angle
 > would move nothing and a wrong hinge would cost nothing either."*
-> — [`selftest.ts`](../selftest.ts), the chain-fit fixture
+> — [`selftest.ts`](https://github.com/firejune/rigc/blob/main/selftest.ts), the chain-fit fixture
 
 ⇒ **A correctly placed pivot also collapses the spec.** A pendulum whose bone sits
 on its hinge needs one `rotate` track and no translate at all; the same part with
@@ -528,10 +531,10 @@ that it is *keyed for a reason the arithmetic states*, not left free for a solve
 
 | Bone | Carries | Its children then key |
 | --- | --- | --- |
-| `faceshift` ([`gallery/portrait`](../gallery/portrait/)) | `−R·sin t`, the shift every feature shares in a yaw | only their residual — FACE §3 |
+| `faceshift` ([`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait/)) | `−R·sin t`, the shift every feature shares in a yaw | only their residual — FACE §3 |
 | `comet` (rung 6, rung 8) | the whole travel of a ball and its trail | the squash, and the trail's bend |
 | `body` (rung 7, second attempt) | **translation only** — *"it holds no attachment, so keying its rotation as well would be a gauge"* | their own rotations |
-| `ground` ([`gallery/walk`](../gallery/walk/)) | the contact line | the foot targets — §9.1 |
+| `ground` ([`gallery/walk`](https://github.com/firejune/rigc/tree/main/gallery/walk/)) | the contact line | the foot targets — §9.1 |
 
 ⭐ **FACE §3's argument for it is an auditing one before it is a rigging one**: a
 residual is 1–6 units where a total is 30–40, *"nobody can eyeball an error in the
@@ -555,7 +558,7 @@ invisible in the numbers.
 > and takes a `translatey` (0 → 3.4). Parent the head chain to the bone that scales
 > and the whole face inflates 1.4% every breath — visible, and invisible in the
 > spec."*
-> — [`gallery/portrait/README.md`](../gallery/portrait/README.md)
+> — [`gallery/portrait/README.md`](https://github.com/firejune/rigc/blob/main/gallery/portrait/README.md)
 
 The same decision, on a ball and its trail:
 
@@ -572,7 +575,7 @@ that takes the chain.
 > *"the neck plate has to take a *fraction* of the head's shift, so it cannot be an
 > ancestor of the head. `neckbase` is the shared parent; `neck` carries the plate and
 > `headroll` carries the head"*
-> — [`gallery/portrait/README.md`](../gallery/portrait/README.md), the part table
+> — [`gallery/portrait/README.md`](https://github.com/firejune/rigc/blob/main/gallery/portrait/README.md), the part table
 
 ⭐ **And the pivot goes one link up, which is the same edit for a second reason.**
 The same rig keys `headroll` and never `head`: *"a head rotates about the top of the
@@ -776,10 +779,10 @@ not fail — it degenerates:
 > *"The first candidate lifted the foot 56 units on a 130-unit leg: the chain has to
 > fold to a 70-unit span, and a two-bone solve does that by throwing the knee
 > sideways. 28 units — a fifth of the leg — is the version that reads as a step."*
-> — [`gallery/walk/README.md`](../gallery/walk/README.md)
+> — [`gallery/walk/README.md`](https://github.com/firejune/rigc/blob/main/gallery/walk/README.md)
 
 The same arithmetic on the other side of the chain, from
-[`gallery/flex`](../gallery/flex/): rotating a rigid panel about a seam opens a wedge
+[`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex/): rotating a rigid panel about a seam opens a wedge
 of `halfHeight × tan(angle)` — about 22 px at 20° on that cloth — so *"the bend
 angles in `motion.json` are chosen against that overlap, not the other way round."*
 
@@ -821,7 +824,7 @@ the diff names it in one line."*
 
 ⚠️ **A bone under a rotated parent is not at the parent's position plus its own
 numbers, and a leg chain is exactly that case.** That sentence is a comment in
-[`gallery/stage.ts`](../gallery/stage.ts), which exists because a drawing script
+[`gallery/stage.ts`](https://github.com/firejune/rigc/blob/main/gallery/stage.ts), which exists because a drawing script
 needed setup-pose world positions and *"writing them a second time in the drawing
 script is the defect that produces a shadow under nobody's feet, and it is
 invisible in both files — each is internally consistent."*
@@ -1022,7 +1025,7 @@ backwards:
 `bendPositive` combinations were indistinguishable at 4× zoom on the frame where the
 difference is largest. `shin_f.worldX` separated them immediately. Look at frames
 for whether it reads; read bone positions for what it is doing."*
-([`gallery/walk/README.md`](../gallery/walk/README.md))
+([`gallery/walk/README.md`](https://github.com/firejune/rigc/blob/main/gallery/walk/README.md))
 
 ### 8.4 ⚠️ And `pose` can be confident about the wrong twin
 
@@ -1049,7 +1052,7 @@ list of structural rules and a list of refusals.
 > at the contact line; `foot_f` and `foot_b` are children of `ground`. Parent a foot
 > target to `hip` and the hip carries its own feet up with it, **the solver reports
 > success, and the figure hovers.**"*
-> — [`gallery/walk/README.md`](../gallery/walk/README.md)
+> — [`gallery/walk/README.md`](https://github.com/firejune/rigc/blob/main/gallery/walk/README.md)
 
 Measured on that build, over the stance where `foot_f` is planted: the hip travels
 **7.9 units up and 2.9 sideways** while the foot reads `382.0, 68.0` on every
@@ -1075,15 +1078,15 @@ reaches the target. So:
 ⭐ **This is where the art and the hierarchy stop being two decisions.** Both plates
 have to be **drawn from their own joint**, and the joint's coordinates *inside each
 drawing* are what every `length` and every attachment offset is measured from —
-[`gallery/rigby.ts`](../gallery/rigby.ts) names all four points for one leg, and
-[`gallery/walk/rig.json`](../gallery/walk/rig.json) states them.
+[`gallery/rigby.ts`](https://github.com/firejune/rigc/blob/main/gallery/rigby.ts) names all four points for one leg, and
+[`gallery/walk/rig.json`](https://github.com/firejune/rigc/blob/main/gallery/walk/rig.json) states them.
 
 ### 9.3 A constraint carries the whole subtree, and that is the point
 
 > *"`cart` is the constrained bone; `wheel_b`/`wheel_f` and `hip` are its children,
 > so the constraint carries the wheels and the whole figure with it and the tangent
 > rotation tilts all three."*
-> — [`gallery/ride/README.md`](../gallery/ride/README.md)
+> — [`gallery/ride/README.md`](https://github.com/firejune/rigc/blob/main/gallery/ride/README.md)
 
 📌 Two placement conveniences from the same paragraph, both of the form *put the
 bone where the numbers become trivial*: `root` is at the world origin, *"which is why
@@ -1112,7 +1115,7 @@ default failure mode**, because it drives bones rather than drawing anything.
 > `true`, so any IK timeline that did not restate it overwrote the constraint's value
 > for the whole animation, with the field still in the file and the gate green either
 > way."*
-> — [`gallery/walk/README.md`](../gallery/walk/README.md), on
+> — [`gallery/walk/README.md`](https://github.com/firejune/rigc/blob/main/gallery/walk/README.md), on
 > [#273](https://github.com/firejune/rigc/issues/273) (fixed: rigc now stamps the
 > rig's value onto every emitted ik key)
 

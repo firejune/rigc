@@ -4473,8 +4473,8 @@ two things.
   with the `visibleShare` it was computed on. ⚠️ **`visibleShare` is a per-frame
   diagnostic and not a summary statistic** — it is measured through the fitted
   placements, so a median or a mean of it is not comparable across fits. §12.3 says
-  what that costs and [the 2026-09-03 study](../bench/studies/2026-09-03-visibleshare/README.md)
-  measures it.
+  what that costs and [the 2026-09-03 study](https://github.com/firejune/rigc/blob/main/bench/studies/2026-09-03-visibleshare/README.md)
+  measures it — repository material, not shipped in the package.
 - **Hierarchy and attachment geometry**, so the search collapses. A child bone
   whose parent is already placed does not have four degrees of freedom: the rig
   fixes its pivot, so what is left is **one hinge** about that pivot — plus a
@@ -4654,7 +4654,7 @@ the answer landed and is *less* steady, not more (p99 0.6588 against 0.5592). �
 **The field is reporting a bistable fit faithfully.** What is safe: reading it beside
 its own residual, on its own frame — which is what it exists for. What is safe as a
 corpus statistic: a **maximum**, which saturates. Full method and evidence:
-[`bench/studies/2026-09-03-visibleshare`](../bench/studies/2026-09-03-visibleshare/README.md)
+[`bench/studies/2026-09-03-visibleshare`](https://github.com/firejune/rigc/blob/main/bench/studies/2026-09-03-visibleshare/README.md)
 ([#323](https://github.com/firejune/rigc/issues/323)).
 
 And per part:
@@ -4713,7 +4713,7 @@ simply unused; a name the directory lacks is refused `no-part-image` by name.
   floor. Read it per frame beside its own residual. If a corpus statistic is
   needed, a **maximum** is the one that survives (it saturates), and it should be
   quoted with its spread. §12.3 carries the figures;
-  [`bench/studies/2026-09-03-visibleshare`](../bench/studies/2026-09-03-visibleshare/README.md)
+  [`bench/studies/2026-09-03-visibleshare`](https://github.com/firejune/rigc/blob/main/bench/studies/2026-09-03-visibleshare/README.md)
   carries the method.
 - ⚠️ **Setup draw order, on one frame.** A `drawOrder` timeline reorders your slots
   at runtime and this cannot know the time, so a candidate that has one is masked in

@@ -11282,6 +11282,220 @@ function runLauncherSuite(): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// the published package's own links — issue #333
+// ---------------------------------------------------------------------------
+//
+// ⭐ The published package is an allowlist, not the repository. A shipped doc
+// that RELATIVE-links a file which does not ship resolves to nothing at all
+// inside `node_modules/spine-rigc/` — a dead pointer that is invisible here,
+// because in the repository the file is right where the link says. It is the one
+// class of doc defect that a reader of this checkout structurally cannot see.
+//
+// 🚨 It was found three times before anything checked for it: the README's six
+// dead published links (#222), RIGGING → BENCHMARK (#330) and AUTHORING →
+// BENCHMARK (#332), the last two on the same day. So it regrows, and the two
+// repairs the earlier fixes established are both still available and are what
+// the refusal names:
+//
+//   1. an absolute GitHub URL, for material that belongs to the repository and
+//      is not going to ship — `#332`'s form, which also says so in the prose;
+//   2. restating the fact inline and dropping the link — `#330`'s form, for a
+//      pointer that existed to carry one sentence.
+//
+// ⚠️ Scope, stated because both edges matter. Anchor-only links (`#section`) and
+// absolute URLs pass — neither resolves through the filesystem. Image links are
+// in scope, being the same failure mode with a broken picture instead of a
+// broken link. Fenced code blocks are skipped: a relative path inside one is
+// example text, not a link. The remaining hole is a link inside an INLINE code
+// span, which would be read as a link and refused — a false refusal, which is
+// the safe direction, and the repair is to fence the example.
+// ---------------------------------------------------------------------------
+
+/**
+ * The files `npm publish` ships on top of `files`, whatever that array says.
+ *
+ * npm adds these unconditionally, so they are part of the shipped set for the
+ * purpose of resolving a link INTO them — the README in particular, which is
+ * what several docs point back at. Recorded here rather than derived because the
+ * scan has to work in a fresh clone with no npm on PATH; verified against
+ * `npm pack --dry-run` (npm 10.9.7, 46 files) on 2026-09-03, which ships exactly
+ * these three beyond the allowlist and no CHANGELOG. Re-run that command if npm
+ * changes what it forces.
+ */
+const NPM_ALWAYS_SHIPS = ['package.json', 'README.md', 'LICENSE'];
+
+/** Every file under `dir` (repo-relative, recursive), the way an npm `files` directory entry expands. */
+function filesUnder(root: string, dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(join(root, dir))) {
+    const path = `${dir}/${entry}`;
+    if (statSync(join(root, path)).isDirectory()) out.push(...filesUnder(root, path));
+    else out.push(path);
+  }
+  return out;
+}
+
+/** One relative link found in a doc: where it was written and where it points. */
+interface DocLink {
+  doc: string;
+  line: number;
+  /** The link target exactly as written, fragment and all. */
+  target: string;
+  /** Repo-relative path the target resolves to, or null when it escapes the repository. */
+  resolved: string | null;
+}
+
+/**
+ * Every RELATIVE link target in one markdown file, with its line number.
+ *
+ * Three spellings, because supporting one silently would leave the others as a
+ * hole rather than a refusal:
+ *
+ *   - inline links and images — `[t](x)`, `![a](x)`, `[t](<x>)`, `[t](x "title")`
+ *   - reference definitions — `[label]: x`
+ *   - inline HTML attributes — `<img src="x">`, `<a href="x">`
+ *
+ * ⭐ The third is not hypothetical padding: **every image in README.md is an HTML
+ * `<img>` tag**, so a check that read only markdown syntax would cover none of
+ * them. They are absolute `raw.githubusercontent.com` URLs today and so they all
+ * pass, which is exactly the state in which the hole is invisible — the next one
+ * written relative is the one that would ship broken.
+ *
+ * Anchor-only targets, absolute URLs and protocol-relative URLs drop out here:
+ * none of them resolves through the filesystem, so none of them can be a link to
+ * a file that did not ship.
+ */
+function relativeLinks(root: string, doc: string): DocLink[] {
+  const found: DocLink[] = [];
+  const lines = readFileSync(join(root, doc), 'utf8').split('\n');
+  let fence: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const marker = /^ {0,3}(```+|~~~+)/.exec(line);
+    if (marker !== null) {
+      // Closed only by its own character, so a ``` inside a ~~~ block stays inside it.
+      if (fence === null) fence = marker[1][0];
+      else if (marker[1][0] === fence) fence = null;
+      continue;
+    }
+    if (fence !== null) continue;
+    const targets = [
+      ...[...line.matchAll(/!?\[(?:[^\]\\]|\\.)*\]\(\s*(<[^>]*>|[^()\s]*)/g)].map((m) => m[1]),
+      ...[...line.matchAll(/^ {0,3}\[(?:[^\]\\]|\\.)+\]:\s*(<[^>]*>|\S+)/g)].map((m) => m[1]),
+      ...[...line.matchAll(/\b(?:src|href)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map((m) => m[1] ?? m[2]),
+    ];
+    for (const raw of targets) {
+      const target = raw.startsWith('<') ? raw.slice(1, -1) : raw;
+      if (target === '' || target.startsWith('#') || target.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(target)) {
+        continue;
+      }
+      let path: string;
+      try {
+        path = decodeURIComponent(target.split('#')[0].split('?')[0]);
+      } catch {
+        path = target.split('#')[0].split('?')[0];
+      }
+      if (path === '') continue;
+      const rel = relative(root, resolve(root, dirname(doc), path)).replace(/\/$/, '');
+      found.push({ doc, line: i + 1, target, resolved: rel === '' || rel.startsWith('..') ? null : rel });
+    }
+  }
+  return found;
+}
+
+function runShippedDocSuite(): number {
+  console.log('\n── the published package\'s own links (issue #333) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const root = import.meta.dir;
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { files?: string[] };
+  const allowlist = pkg.files ?? [];
+
+  // The shipped set, expanded rather than guessed. An entry this expander cannot
+  // read is refused by name below: an unexpanded pattern would shrink the set it
+  // computes, and every link into the files it should have covered would be
+  // refused for the wrong reason.
+  const shipped = new Set(NPM_ALWAYS_SHIPS);
+  const unreadable: string[] = [];
+  for (const entry of allowlist) {
+    if (/[*?[\]{}!]/.test(entry)) {
+      unreadable.push(`${entry} (a pattern this expander does not read — teach it, or the shipped set is wrong)`);
+      continue;
+    }
+    if (!existsSync(join(root, entry))) {
+      unreadable.push(`${entry} (in \`files\` and not on disk)`);
+      continue;
+    }
+    if (statSync(join(root, entry)).isDirectory()) for (const file of filesUnder(root, entry)) shipped.add(file);
+    else shipped.add(entry);
+  }
+
+  /** A target ships when it IS a shipped file, or is a directory some shipped file sits under. */
+  const shipsToo = (path: string): boolean =>
+    shipped.has(path) || [...shipped].some((file) => file.startsWith(`${path}/`));
+
+  const docs = [...shipped].filter((file) => file.endsWith('.md')).sort();
+  const links = docs.flatMap((doc) => relativeLinks(root, doc));
+
+  // The scan is derived at every step — which docs, which links, which targets —
+  // so it needs a floor before it is allowed to conclude anything. Without one,
+  // a regex that matched nothing and an allowlist that read as empty would both
+  // print green, which is the shape of false pass this whole file exists against.
+  const mdInAllowlist = allowlist.filter((entry) => entry.endsWith('.md'));
+  const missedDoc = mdInAllowlist.filter((entry) => !docs.includes(entry));
+  const resolvedIntoTheSet = links.filter((link) => link.resolved !== null && shipsToo(link.resolved)).length;
+  say(
+    'PKG01_THE_SHIPPED_DOC_SCAN_READ_THE_ALLOWLIST_AND_THE_DOCS',
+    unreadable.length === 0 &&
+      missedDoc.length === 0 &&
+      docs.includes('README.md') &&
+      docs.length >= mdInAllowlist.length + 1 &&
+      links.length > 0 &&
+      resolvedIntoTheSet > 0,
+    unreadable.length > 0
+      ? `\`files\` entries this scan could not expand: ${unreadable.join('; ')}`
+      : missedDoc.length > 0
+        ? `in \`files\` and not scanned: ${missedDoc.join(', ')}`
+        : `${shipped.size} shipped file(s) from ${allowlist.length} \`files\` entr(ies) plus ` +
+          `${NPM_ALWAYS_SHIPS.join(', ')}; ${docs.length} shipped doc(s) (${docs.join(', ')}); ` +
+          `${links.length} relative link(s) read, ${resolvedIntoTheSet} of them into the shipped set`,
+    'PKG02 is a scan over a derived list, and every step of the derivation can come back empty — a `files` array ' +
+      'read as absent, a directory entry left unexpanded, a link regex that matches nothing. Each of those makes ' +
+      'PKG02 pass while checking nothing, so the numbers it stands on are asserted here first',
+  );
+
+  const dead = links.filter((link) => link.resolved === null || !shipsToo(link.resolved));
+  say(
+    'PKG02_A_SHIPPED_DOC_RELATIVE_LINKS_ONLY_WHAT_ALSO_SHIPS',
+    dead.length === 0,
+    dead.length === 0
+      ? `${links.length} relative link(s) across ${docs.length} shipped doc(s) all resolve to files that ship`
+      : `${dead.length} of ${links.length} relative link(s) point outside the published package:\n` +
+        dead
+          .map(
+            (link) =>
+              `          ${link.doc}:${link.line}  ${link.target}  ->  ` +
+              (link.resolved === null
+                ? 'outside the repository'
+                : existsSync(join(root, link.resolved))
+                  ? `${link.resolved} (in the repository, NOT in \`files\`)`
+                  : `${link.resolved} (not in the repository either)`),
+          )
+          .join('\n') +
+        '\n          Two repairs, both already in the tree: link the absolute GitHub URL and say in the prose that ' +
+        'it is repository material (issue #332), or restate the fact inline and drop the link (issue #330).',
+    'a relative link in a shipped doc resolves inside `node_modules/spine-rigc/`, where a file outside `files` is ' +
+      'not there at all — and the repository, where the file IS where the link says, is the one place the defect ' +
+      'cannot be seen. Found three times before anything checked: #222, #330 and #332',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // seeing the result — `rigc render` and `rigc preview` (issues #216, #226)
 // ---------------------------------------------------------------------------
 //
@@ -13781,6 +13995,8 @@ function main(): void {
     bad += launcherBad;
     substantive += 3;
   }
+  bad += runShippedDocSuite();
+  substantive += 2;
   bad += runSeeItSuite();
   substantive += 11;
   bad += runPoseSuite();
@@ -13872,6 +14088,14 @@ function main(): void {
         'exercised in this run.'
       : ', + 3 bin-launcher controls (`--version` and an unknown command match direct invocation, and the exact ' +
         'message printed when Bun is missing from PATH)';
+  const shippedDocs =
+    ", + 2 shipped-doc link controls (issue #333 — every relative link in every `.md` the `files` allowlist " +
+    'ships, plus the README npm forces in beside it, resolving to a path that ALSO ships: the class found three ' +
+    'times before anything checked for it, where the repository is the one place a link into `bench/`, `gallery/` ' +
+    'or `selftest.ts` still works and `node_modules/spine-rigc/` is where it does not. Markdown links, reference ' +
+    "definitions and inline HTML `src`/`href` all read — the README's images are HTML — with the shipped set " +
+    'expanded from `files` rather than guessed, and the whole derivation asserted first, because a link regex ' +
+    'that matched nothing would otherwise report a clean tree)';
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
@@ -13957,6 +14181,7 @@ function main(): void {
       'bare, and every flag printed with one still refused when it is given none, which is the refusal that keeps ' +
       'the first from being satisfied by inferring switches from the next argument)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
+      shippedDocs +
       ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +
       'to RGBA while still refusing a colour type that is not one, a preview embedding the skeleton, the atlas and ' +
