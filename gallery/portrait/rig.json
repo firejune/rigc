@@ -1,0 +1,214 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "portrait",
+  "images": "parts",
+  "skeleton": { "x": 0, "y": 0, "width": 640, "height": 880 },
+
+  "bones": [
+    { "name": "root" },
+
+    { "name": "bust", "parent": "root", "x": 320, "y": 0 },
+    { "name": "torso", "parent": "bust", "x": 0, "y": 120 },
+    { "name": "chest", "parent": "bust", "x": 0, "y": 268 },
+
+    { "name": "neckbase", "parent": "chest", "x": 0, "y": 107 },
+    { "name": "neck", "parent": "neckbase", "x": 0, "y": 0 },
+    { "name": "choker", "parent": "neck", "x": 0, "y": 5 },
+
+    { "name": "headroll", "parent": "neckbase", "x": 0, "y": 85 },
+    { "name": "head", "parent": "headroll", "x": 0, "y": 140 },
+
+    { "name": "hairmass", "parent": "head", "x": 0, "y": 0 },
+    { "name": "bang", "parent": "head", "x": 0, "y": 137 },
+    { "name": "ahoge", "parent": "head", "x": -23, "y": 146 },
+    { "name": "lock_l", "parent": "head", "x": -150, "y": 90 },
+    { "name": "lock_r", "parent": "head", "x": 150, "y": 90 },
+
+    { "name": "faceshift", "parent": "head", "x": 0, "y": 0 },
+
+    { "name": "eye_l", "parent": "faceshift", "x": -62, "y": -15 },
+    { "name": "iris_l", "parent": "eye_l", "x": 0, "y": 0 },
+    { "name": "spark_l", "parent": "eye_l", "x": -11, "y": 11 },
+    { "name": "lid_l", "parent": "eye_l", "x": 0, "y": 0 },
+
+    { "name": "eye_r", "parent": "faceshift", "x": 62, "y": -15 },
+    { "name": "iris_r", "parent": "eye_r", "x": 0, "y": 0 },
+    { "name": "spark_r", "parent": "eye_r", "x": -11, "y": 11 },
+    { "name": "lid_r", "parent": "eye_r", "x": 0, "y": 0 },
+
+    { "name": "brow_l", "parent": "faceshift", "x": -62, "y": 36 },
+    { "name": "brow_r", "parent": "faceshift", "x": 62, "y": 36 },
+    { "name": "nose", "parent": "faceshift", "x": 0, "y": -64 },
+    { "name": "mouth", "parent": "faceshift", "x": 0, "y": -106 }
+  ],
+
+  "slots": [
+    { "name": "plate", "bone": "root", "attachment": "plate" },
+    { "name": "hair_back", "bone": "hairmass", "attachment": "hair_back" },
+    { "name": "neck", "bone": "neck", "attachment": "neck" },
+    { "name": "torso", "bone": "torso", "attachment": "torso" },
+    { "name": "choker", "bone": "choker", "attachment": "choker" },
+    { "name": "head", "bone": "head", "attachment": "head" },
+    { "name": "eye_l", "bone": "eye_l", "attachment": "eye_l" },
+    { "name": "eye_r", "bone": "eye_r", "attachment": "eye_r" },
+    { "name": "iris_l", "bone": "iris_l", "attachment": "iris_l" },
+    { "name": "iris_r", "bone": "iris_r", "attachment": "iris_r" },
+    { "name": "spark_l", "bone": "spark_l", "attachment": "spark_l" },
+    { "name": "spark_r", "bone": "spark_r", "attachment": "spark_r" },
+    { "name": "lid_l", "bone": "lid_l", "attachment": "lid_l" },
+    { "name": "lid_r", "bone": "lid_r", "attachment": "lid_r" },
+    { "name": "brow_l", "bone": "brow_l", "attachment": "brow_l" },
+    { "name": "brow_r", "bone": "brow_r", "attachment": "brow_r" },
+    { "name": "nose", "bone": "nose", "attachment": "nose" },
+    { "name": "mouth", "bone": "mouth", "attachment": "mouth" },
+    { "name": "hair_bang", "bone": "bang", "attachment": "hair_bang" },
+    { "name": "hair_lock_l", "bone": "lock_l", "attachment": "hair_lock_l" },
+    { "name": "hair_lock_r", "bone": "lock_r", "attachment": "hair_lock_r" },
+    { "name": "ahoge", "bone": "ahoge", "attachment": "ahoge" }
+  ],
+
+  "invariants": {
+    "meshSlots": 2,
+    "meshTriangles": 32
+  },
+
+  "skins": {
+    "default": {
+      "plate": { "plate": { "image": "plate.png", "x": 320, "y": 440 } },
+
+      "hair_back": { "hair_back": { "image": "hair_back.png" } },
+      "neck": { "neck": { "image": "neck.png" } },
+      "torso": { "torso": { "image": "torso.png", "y": 94 } },
+      "choker": { "choker": { "image": "choker.png" } },
+
+      "head": {
+        "head": {
+          "type": "mesh",
+          "image": "head.png",
+          "width": 340,
+          "height": 380,
+          "uvs": [
+            0.0235294, 0.0263158,
+            0.1470588, 0.0263158,
+            0.5, 0.0263158,
+            0.8529412, 0.0263158,
+            0.9764706, 0.0263158,
+
+            0.0235294, 0.2631579,
+            0.1470588, 0.2631579,
+            0.5, 0.2631579,
+            0.8529412, 0.2631579,
+            0.9764706, 0.2631579,
+
+            0.0235294, 0.5,
+            0.1470588, 0.5,
+            0.5, 0.5,
+            0.8529412, 0.5,
+            0.9764706, 0.5,
+
+            0.0235294, 0.7368421,
+            0.1470588, 0.7368421,
+            0.5, 0.7368421,
+            0.8529412, 0.7368421,
+            0.9764706, 0.7368421,
+
+            0.0235294, 0.9736842,
+            0.1470588, 0.9736842,
+            0.5, 0.9736842,
+            0.8529412, 0.9736842,
+            0.9764706, 0.9736842
+          ],
+          "vertices": [
+            -162, 180,  -120, 180,  0, 180,  120, 180,  162, 180,
+            -162,  90,  -120,  90,  0,  90,  120,  90,  162,  90,
+            -162,   0,  -120,   0,  0,   0,  120,   0,  162,   0,
+            -162, -90,  -120, -90,  0, -90,  120, -90,  162, -90,
+            -162, -180, -120, -180, 0, -180, 120, -180, 162, -180
+          ],
+          "triangles": [
+            0, 5, 6,     0, 6, 1,
+            1, 6, 7,     1, 7, 2,
+            2, 7, 8,     2, 8, 3,
+            3, 8, 9,     3, 9, 4,
+
+            5, 10, 11,   5, 11, 6,
+            6, 11, 12,   6, 12, 7,
+            7, 12, 13,   7, 13, 8,
+            8, 13, 14,   8, 14, 9,
+
+            10, 15, 16,  10, 16, 11,
+            11, 16, 17,  11, 17, 12,
+            12, 17, 18,  12, 18, 13,
+            13, 18, 19,  13, 19, 14,
+
+            15, 20, 21,  15, 21, 16,
+            16, 21, 22,  16, 22, 17,
+            17, 22, 23,  17, 23, 18,
+            18, 23, 24,  18, 24, 19
+          ]
+        }
+      },
+
+      "eye_l": { "eye_l": { "image": "eye_l.png" } },
+      "eye_r": { "eye_r": { "image": "eye_r.png" } },
+      "iris_l": { "iris_l": { "image": "iris_l.png" } },
+      "iris_r": { "iris_r": { "image": "iris_r.png" } },
+      "spark_l": { "spark_l": { "image": "spark_l.png" } },
+      "spark_r": { "spark_r": { "image": "spark_r.png" } },
+      "lid_l": { "lid_l": { "image": "lid_l.png", "y": 79 } },
+      "lid_r": { "lid_r": { "image": "lid_r.png", "y": 79 } },
+      "brow_l": { "brow_l": { "image": "brow_l.png" } },
+      "brow_r": { "brow_r": { "image": "brow_r.png" } },
+      "nose": { "nose": { "image": "nose.png" } },
+      "mouth": { "mouth": { "image": "mouth.png" } },
+
+      "hair_bang": {
+        "hair_bang": {
+          "type": "mesh",
+          "image": "hair_bang.png",
+          "width": 372,
+          "height": 168,
+          "uvs": [
+            0.0430108, 0.0238095,
+            0.1774194, 0.0238095,
+            0.5, 0.0238095,
+            0.8225806, 0.0238095,
+            0.9569892, 0.0238095,
+
+            0.0430108, 0.5,
+            0.1774194, 0.5,
+            0.5, 0.5,
+            0.8225806, 0.5,
+            0.9569892, 0.5,
+
+            0.0430108, 0.9761905,
+            0.1774194, 0.9761905,
+            0.5, 0.9761905,
+            0.8225806, 0.9761905,
+            0.9569892, 0.9761905
+          ],
+          "vertices": [
+            -170,  80,  -120,  80,  0,  80,  120,  80,  170,  80,
+            -170,   0,  -120,   0,  0,   0,  120,   0,  170,   0,
+            -170, -80,  -120, -80,  0, -80,  120, -80,  170, -80
+          ],
+          "triangles": [
+            0, 5, 6,     0, 6, 1,
+            1, 6, 7,     1, 7, 2,
+            2, 7, 8,     2, 8, 3,
+            3, 8, 9,     3, 9, 4,
+
+            5, 10, 11,   5, 11, 6,
+            6, 11, 12,   6, 12, 7,
+            7, 12, 13,   7, 13, 8,
+            8, 13, 14,   8, 14, 9
+          ]
+        }
+      },
+
+      "hair_lock_l": { "hair_lock_l": { "image": "hair_lock_l.png", "y": -170 } },
+      "hair_lock_r": { "hair_lock_r": { "image": "hair_lock_r.png", "y": -170 } },
+      "ahoge": { "ahoge": { "image": "ahoge.png", "x": 15, "y": 59 } }
+    }
+  }
+}

@@ -1,0 +1,495 @@
+{
+  "spec": "rigc-motion/1",
+  "archetype": "portrait",
+  "cut": "gallery-portrait",
+
+  "easings": {
+    "rise": [0.4, 0, 0.86, 0.38],
+    "settle": [0.12, 0.7, 0.3, 1],
+    "swell": [0.42, 0, 0.58, 1]
+  },
+
+  "groups": {
+    "lids": ["lid_l", "lid_r"],
+    "brows": ["brow_l", "brow_r"],
+    "irises": ["iris_l", "iris_r"],
+    "sparks": ["spark_l", "spark_r"],
+    "axis": ["nose", "mouth"],
+    "look_l": ["iris_l", "spark_l"],
+    "look_r": ["iris_r", "spark_r"]
+  },
+
+  "animations": {
+    "idle": {
+      "duration": 3.2,
+      "loop": true,
+      "note": "One breath in 3.2 s and one blink inside it. The breath is a scale on the torso plate's own bone and a translate on a SIBLING bone that carries the head, so the chest swells without the head growing with it. The blink is a lid part sliding 65 units down its own bone — 0.07 s shut, 0.16 s open, which is the asymmetry a stepped attachment swap cannot carry. Hair and cowlick trail the breath at +22%, +25% and +30% of the cycle and overshoot once, per MOTION.md 3.7.",
+
+      "tracks": [
+        {
+          "bone": "torso",
+          "property": "scale",
+          "keys": [
+            { "t": 0, "v": [1, 1], "ease": "swell" },
+            { "t": 1.55, "v": [1.005, 1.014], "ease": "swell" },
+            { "t": 3.2, "v": [1, 1] }
+          ]
+        },
+        {
+          "bone": "chest",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swell" },
+            { "t": 1.55, "v": [3.4], "ease": "swell" },
+            { "t": 3.2, "v": [0] }
+          ]
+        },
+
+        {
+          "bone": "headroll",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swell" },
+            { "t": 1.15, "v": [0.55], "ease": "settle" },
+            { "t": 2.4, "v": [-0.4], "ease": "rise" },
+            { "t": 3.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "neck",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swell" },
+            { "t": 1.5, "v": [0.3], "ease": "settle" },
+            { "t": 2.72, "v": [-0.2], "ease": "rise" },
+            { "t": 3.2, "v": [0] }
+          ]
+        },
+
+        {
+          "group": "lids",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [0] },
+            { "t": 1.05, "v": [0], "ease": "rise" },
+            { "t": 1.12, "v": [-65], "ease": "rise" },
+            { "t": 1.16, "v": [-65], "ease": "settle" },
+            { "t": 1.32, "v": [0] },
+            { "t": 3.2, "v": [0] }
+          ]
+        },
+        {
+          "group": "brows",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [0] },
+            { "t": 1.1, "v": [0], "ease": "rise" },
+            { "t": 1.26, "v": [1.8], "ease": "settle" },
+            { "t": 1.54, "v": [0] },
+            { "t": 3.2, "v": [0] }
+          ]
+        },
+
+        {
+          "bone": "lock_l",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swell" },
+            { "t": 2.27, "v": [1.1], "ease": "settle" },
+            { "t": 2.86, "v": [-0.4], "ease": "rise" },
+            { "t": 3.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "lock_r",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swell" },
+            { "t": 2.35, "v": [-1], "ease": "settle" },
+            { "t": 2.9, "v": [0.38], "ease": "rise" },
+            { "t": 3.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "ahoge",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swell" },
+            { "t": 2.5, "v": [2.6], "ease": "settle" },
+            { "t": 2.98, "v": [-0.9], "ease": "rise" },
+            { "t": 3.2, "v": [0] }
+          ]
+        }
+      ]
+    },
+
+    "gaze": {
+      "duration": 1.5,
+      "loop": false,
+      "note": "Eyes lead, head follows, hair overlaps, and everything returns to rest. The iris flicks to its target in 0.22 s; the specular highlight travels 40% as far, because a reflection is fixed to the light and not to the eyeball. The head's follow at +12% of the duration is a rigid slide and a 1.2 deg roll rather than a small yaw — a yaw would need a second deform table, and README.md prices that. Hair and cowlick trail the head at +21%, +24% and +28% and overshoot.",
+
+      "tracks": [
+        {
+          "group": "irises",
+          "property": "translate",
+          "keys": [
+            { "t": 0, "v": [0, 0], "ease": "rise" },
+            { "t": 0.22, "v": [7, -3], "ease": "swell" },
+            { "t": 1.02, "v": [7, -3], "ease": "settle" },
+            { "t": 1.5, "v": [0, 0] }
+          ]
+        },
+        {
+          "group": "sparks",
+          "property": "translate",
+          "keys": [
+            { "t": 0, "v": [0, 0], "ease": "rise" },
+            { "t": 0.22, "v": [2.8, -1.2], "ease": "swell" },
+            { "t": 1.02, "v": [2.8, -1.2], "ease": "settle" },
+            { "t": 1.5, "v": [0, 0] }
+          ]
+        },
+
+        {
+          "bone": "headroll",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.4, "v": [3.4], "ease": "swell" },
+            { "t": 1.02, "v": [3.4], "ease": "settle" },
+            { "t": 1.5, "v": [0] }
+          ]
+        },
+        {
+          "bone": "headroll",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.4, "v": [-1.2], "ease": "swell" },
+            { "t": 1.02, "v": [-1.2], "ease": "settle" },
+            { "t": 1.5, "v": [0] }
+          ]
+        },
+        {
+          "group": "brows",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.34, "v": [1.8], "ease": "swell" },
+            { "t": 1.02, "v": [1.8], "ease": "settle" },
+            { "t": 1.5, "v": [0] }
+          ]
+        },
+
+        {
+          "bone": "lock_l",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.72, "v": [-1.5], "ease": "settle" },
+            { "t": 1.2, "v": [0.55], "ease": "rise" },
+            { "t": 1.5, "v": [0] }
+          ]
+        },
+        {
+          "bone": "lock_r",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.76, "v": [-1.9], "ease": "settle" },
+            { "t": 1.24, "v": [0.7], "ease": "rise" },
+            { "t": 1.5, "v": [0] }
+          ]
+        },
+        {
+          "bone": "ahoge",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.82, "v": [-2.4], "ease": "settle" },
+            { "t": 1.28, "v": [0.9], "ease": "rise" },
+            { "t": 1.5, "v": [0] }
+          ]
+        }
+      ]
+    },
+
+    "turn": {
+      "duration": 2.2,
+      "loop": false,
+      "note": "A 12 deg yaw, held, and released. Every number in it is one line of arithmetic on dx = x (cos t - 1) - z sin t, the projection of a yaw about the skull's axis: the two mesh deforms carry the face and fringe plates, `faceshift` carries the shift every feature shares, and each feature's own translatex carries only its parallax — its depth relative to the skull, times sin t. The anticipation lives in `headroll`'s roll and not in the yaw, because a yaw anticipation costs a whole 50-number deform key. The iris and its highlight carry the RECIPROCAL of their socket's scaleX: the socket foreshortens, the eyeball counter-rotates to keep looking at the viewer, and a pupil that goes elliptical is what stops a turn reading at 18 deg instead of 26. README.md derives all of it and measures where it stops reading.",
+
+      "tracks": [
+        {
+          "bone": "faceshift",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [-35.345], "ease": "swell" },
+            { "t": 1.5, "v": [-35.345], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+
+        {
+          "bone": "eye_l",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [5.513], "ease": "swell" },
+            { "t": 1.5, "v": [5.513], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "eye_r",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [2.803], "ease": "swell" },
+            { "t": 1.5, "v": [2.803], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "brow_l",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [3.85], "ease": "swell" },
+            { "t": 1.5, "v": [3.85], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "brow_r",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [1.14], "ease": "swell" },
+            { "t": 1.5, "v": [1.14], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "nose",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [-4.574], "ease": "swell" },
+            { "t": 1.5, "v": [-4.574], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "mouth",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [0.832], "ease": "swell" },
+            { "t": 1.5, "v": [0.832], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+
+        {
+          "bone": "eye_l",
+          "property": "scalex",
+          "keys": [
+            { "t": 0, "v": [1], "ease": "rise" },
+            { "t": 0.62, "v": [0.8922], "ease": "swell" },
+            { "t": 1.5, "v": [0.8922], "ease": "settle" },
+            { "t": 2.2, "v": [1] }
+          ]
+        },
+        {
+          "bone": "eye_r",
+          "property": "scalex",
+          "keys": [
+            { "t": 0, "v": [1], "ease": "rise" },
+            { "t": 0.62, "v": [1.0641], "ease": "swell" },
+            { "t": 1.5, "v": [1.0641], "ease": "settle" },
+            { "t": 2.2, "v": [1] }
+          ]
+        },
+        {
+          "bone": "brow_l",
+          "property": "scalex",
+          "keys": [
+            { "t": 0, "v": [1], "ease": "rise" },
+            { "t": 0.62, "v": [0.8966], "ease": "swell" },
+            { "t": 1.5, "v": [0.8966], "ease": "settle" },
+            { "t": 2.2, "v": [1] }
+          ]
+        },
+        {
+          "bone": "brow_r",
+          "property": "scalex",
+          "keys": [
+            { "t": 0, "v": [1], "ease": "rise" },
+            { "t": 0.62, "v": [1.0597], "ease": "swell" },
+            { "t": 1.5, "v": [1.0597], "ease": "settle" },
+            { "t": 2.2, "v": [1] }
+          ]
+        },
+        {
+          "group": "axis",
+          "property": "scalex",
+          "keys": [
+            { "t": 0, "v": [1], "ease": "rise" },
+            { "t": 0.62, "v": [0.9781], "ease": "swell" },
+            { "t": 1.5, "v": [0.9781], "ease": "settle" },
+            { "t": 2.2, "v": [1] }
+          ]
+        },
+
+        {
+          "group": "look_l",
+          "property": "scalex",
+          "keys": [
+            { "t": 0, "v": [1], "ease": "rise" },
+            { "t": 0.62, "v": [1.1208], "ease": "swell" },
+            { "t": 1.5, "v": [1.1208], "ease": "settle" },
+            { "t": 2.2, "v": [1] }
+          ]
+        },
+        {
+          "group": "look_r",
+          "property": "scalex",
+          "keys": [
+            { "t": 0, "v": [1], "ease": "rise" },
+            { "t": 0.62, "v": [0.9398], "ease": "swell" },
+            { "t": 1.5, "v": [0.9398], "ease": "settle" },
+            { "t": 2.2, "v": [1] }
+          ]
+        },
+
+        {
+          "bone": "hairmass",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [11.435], "ease": "swell" },
+            { "t": 1.5, "v": [11.435], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "lock_l",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [-17.513], "ease": "swell" },
+            { "t": 1.5, "v": [-17.513], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "lock_r",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [-24.069], "ease": "swell" },
+            { "t": 1.5, "v": [-24.069], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "ahoge",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [-3.656], "ease": "swell" },
+            { "t": 1.5, "v": [-3.656], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "neck",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.62, "v": [-10], "ease": "swell" },
+            { "t": 1.5, "v": [-10], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        },
+
+        {
+          "bone": "headroll",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.26, "v": [-0.9], "ease": "rise" },
+            { "t": 0.62, "v": [1.6], "ease": "swell" },
+            { "t": 1.5, "v": [1.6], "ease": "settle" },
+            { "t": 2.2, "v": [0] }
+          ]
+        }
+      ],
+
+      "deform": [
+        {
+          "slot": "head",
+          "attachment": "head",
+          "keys": [
+            { "t": 0, "ease": "rise" },
+            {
+              "t": 0.62,
+              "fromVertex": 0,
+              "vertices": [
+                -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
+                -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
+                -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
+                -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
+                -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0
+              ],
+              "ease": "swell"
+            },
+            {
+              "t": 1.5,
+              "fromVertex": 0,
+              "vertices": [
+                -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
+                -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
+                -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
+                -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
+                -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0
+              ],
+              "ease": "settle"
+            },
+            { "t": 2.2 }
+          ]
+        },
+        {
+          "slot": "hair_bang",
+          "attachment": "hair_bang",
+          "keys": [
+            { "t": 0, "ease": "rise" },
+            {
+              "t": 0.62,
+              "fromVertex": 0,
+              "vertices": [
+                -16.567, 0, -29.598, 0, -40.751, 0, -34.843, 0, -23.997, 0,
+                -16.567, 0, -29.598, 0, -40.751, 0, -34.843, 0, -23.997, 0,
+                -16.567, 0, -29.598, 0, -40.751, 0, -34.843, 0, -23.997, 0
+              ],
+              "ease": "swell"
+            },
+            {
+              "t": 1.5,
+              "fromVertex": 0,
+              "vertices": [
+                -16.567, 0, -29.598, 0, -40.751, 0, -34.843, 0, -23.997, 0,
+                -16.567, 0, -29.598, 0, -40.751, 0, -34.843, 0, -23.997, 0,
+                -16.567, 0, -29.598, 0, -40.751, 0, -34.843, 0, -23.997, 0
+              ],
+              "ease": "settle"
+            },
+            { "t": 2.2 }
+          ]
+        }
+      ]
+    }
+  }
+}

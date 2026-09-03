@@ -1681,8 +1681,13 @@ where the remedy is a line you own. `A35` does **not** refuse it: it is pointed 
 other people's files, and a rule stricter than the runtime tells its reader to go
 and break correct data.
 
-🖼️ **Worked example: [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash)** — a 9-vertex ball squashed about
-its contact point, with the two affine transforms its keys were derived from.
+🖼️ **Worked examples, and they use a deform for two different things.**
+[`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash) — a 9-vertex ball squashed about its contact point,
+with the two affine transforms its keys were derived from.
+[`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait) — a 2.5D head turn, where the keys are the
+**projection of a yaw** rather than a squash: two grid meshes whose columns are
+placed to sample a cosine, every offset one line of arithmetic, and a measured
+account of the angle past which the mesh folds.
 
 ---
 

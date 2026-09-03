@@ -2,7 +2,7 @@
  * Measure a looping animation's seam: is its last rendered frame the pose it
  * started from?
  *
- *     bun gallery/_lib/loop_seam.ts <a frame directory rigc render wrote>
+ *     bun gallery/loop_seam.ts <a frame directory rigc render wrote>
  *
  * ⭐ **Why this is here and not in rigc.** A loop seam is a defect *between two
  * frames*: every frame on its own is correct, so nothing that scores a frame can
@@ -120,7 +120,7 @@ export function seamLines(dir: string, r: SeamReading): string[] {
 if (import.meta.main) {
   const dir = process.argv[2];
   if (!dir) {
-    console.error('usage: bun gallery/_lib/loop_seam.ts <frame directory rigc render wrote>');
+    console.error('usage: bun gallery/loop_seam.ts <frame directory rigc render wrote>');
     process.exit(2);
   }
   for (const line of seamLines(dir, measureLoopSeam(dir))) console.log(line);
