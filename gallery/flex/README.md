@@ -22,7 +22,7 @@ bun cli.ts preview --candidate gallery/flex/build --out gallery/flex/preview.htm
 ```
 
 `build` gates green under both profiles — `--profile spine` (the default) and
-`--profile spine-html`. Nothing built is committed; the three output paths above
+`--profile spine-html` — the second of them with one declared exemption, below. Nothing built is committed; the three output paths above
 are in `.gitignore`.
 
 To redraw the art (needs `rsvg-convert` from librsvg — `brew install librsvg`,
@@ -223,6 +223,32 @@ when that is true. Had any vertex carried two bones it would occupy two pairs,
 written in bind space with a raw `offset`. And the offsets are **offsets**, in
 the leaf bone's own space: 15.000 px is what `motion.json` asks for, not a
 coincidence.
+
+### 🚨 And this amplitude folds the mesh — a known defect, not a lesson
+
+`A39_DEFORM_KEEPS_TRIANGLE_WINDING`
+([#296](https://github.com/firejune/rigc/issues/296)) found, on its first run
+over this gallery, that three of the leaf's eight keys sweep boundary vertices
+**past the fan's interior vertex 76**, reversing the winding of the triangle
+there:
+
+| animation | key | t | triangles reversed of 75 | worst |
+| --- | --- | --- | --- | --- |
+| `wave` | 1 | 0.600s | 2 | tri 12 `[76,12,13]` −47.739 → +91.998 px² |
+| `wave` | 3 | 1.800s | 7 | tri 61 `[76,60,62]` −4.383 → +167.671 px² |
+| `gust` | 1 | 0.260s | 4 | tri 12 `[76,12,13]` −47.739 → +200.220 px² |
+
+At the gust peak it is visible at 1:1: the upper-right edge carries two hard step
+discontinuities, the ink outline disappears across one of them and reappears
+displaced, and the vein pattern is torn into offset blocks.
+
+So `rig.json` carries the one `invariants.deformMayFold` entry in this
+repository, and its `why` says outright that this is a **defect being tracked**
+([#313](https://github.com/firejune/rigc/issues/313)) rather than art that folds
+on purpose. Removing that entry is #313's acceptance test. ⚠️ **Do not read the
+15 px above as a figure this example endorses** — it is the figure this example
+shipped with, and the instrument that can now measure it says it is too large
+for this mesh.
 
 ## The loop joins exactly, mesh vertices included
 

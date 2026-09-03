@@ -22,6 +22,7 @@ import {
   type BoneData,
   BoundingBoxAttachment,
   ClippingAttachment,
+  DeformTimeline,
   MeshAttachment,
   PathAttachment,
   PathConstraintData,
@@ -47,8 +48,8 @@ export interface Failure {
  *
  * ⭐ The distinction this draws is the difference between "wrong" and "not how we
  * do it here", and conflating the two is how a validator stops being usable on
- * anybody else's data. Fourteen of the 39 assertions are policy — seven for one
- * renderer (`spine-html`) and one project's canvas budget, seven for rigc's own
+ * anybody else's data. Fifteen of the 40 assertions are policy — seven for one
+ * renderer (`spine-html`) and one project's canvas budget, eight for rigc's own
  * formations — and every one of them fires
  * on real, correct, editor-produced Spine data — the official example projects
  * carry clipping attachments, unweighted meshes, 116-triangle meshes and packed
@@ -142,7 +143,24 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A36_PATH_CONSTRAINT_EFFECTIVE: 'validity',
   A37_SLIDER_CONSTRAINT_EFFECTIVE: 'validity',
   A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED: 'validity',
+  A39_DEFORM_KEEPS_TRIANGLE_WINDING: 'archetype',
 };
+
+/**
+ * Every assertion this validator knows, in registry order.
+ *
+ * Exported so a control can count them instead of quoting a number that goes
+ * stale the next time one is added — two selftest cases used to assert `39` and
+ * `14` as literals, which is a guardrail that has to be remembered rather than
+ * one that holds.
+ */
+export const ASSERTION_NAMES: readonly string[] = Object.keys(ASSERTION_KIND);
+
+/** How many assertions this profile applies, by the kinds it carries. */
+export function assertionCountForProfile(profile: ValidateProfile): number {
+  if (profile === 'spine-html') return ASSERTION_NAMES.length;
+  return ASSERTION_NAMES.filter((name) => ASSERTION_KIND[name] === 'validity').length;
+}
 
 export interface ValidateInput {
   skeletonText: string;
@@ -198,6 +216,73 @@ export interface ValidateReport {
 
 const FRAME = 1 / 60;
 const STEP_FRAMES = 120;
+
+/**
+ * How near zero a triangle's area has to be, as a fraction of the largest
+ * triangle in the same mesh at the same pose, before A39 declines to read a sign
+ * off it.
+ *
+ * A RELATIVE band, because an absolute one has no scale that means anything on
+ * its own — these are pixel² figures on whatever plate the rig was drawn at, and
+ * `gallery/flex`'s leaf tops out at 792.6 px² where `spineboy-pro`'s hoverboard
+ * reaches 3338.4 px². On those two it comes to 7.9e-4 and 3.3e-3 px².
+ *
+ * ⚠️ It is **not** what holds the float32 noise off; `float32AreaNoise` is, and
+ * the two are combined rather than ranked because on a big mesh the noise bound
+ * is the larger of them. This one is the shape band: it keeps a setup triangle
+ * that has no area from being read as a reversal of anything, and a triangle the
+ * key collapses onto zero from being read as turned over.
+ */
+const DEFORM_AREA_EPSILON = 1e-6;
+
+/** Half an ulp of a float32 mantissa — the relative error of one stored coordinate. */
+const FLOAT32_HALF_ULP = 2 ** -24;
+
+/**
+ * An upper bound on how much of a triangle's signed area is float32 noise.
+ *
+ * The world vertices arrive in a `Float32Array`, so each coordinate carries up
+ * to `|c|·2⁻²⁴` of error. An area is `½·(Δx₁·Δy₂ − Δx₂·Δy₁)`, and propagating
+ * that error through one product gives `Δ·|c|·2⁻²⁴` twice over; four such terms
+ * across the two products, halved, bounds the area error by `2·C²·2⁻²⁴` with `C`
+ * the largest coordinate magnitude in the mesh (which also bounds every `Δ`).
+ * Doubled once more for the subtraction, so the constant is 4.
+ *
+ * On a mesh whose vertices reach 500 units that is 6e-2 px², i.e. **larger** than
+ * the relative band above — which is the whole reason this exists. It is a bound
+ * rather than a measurement, and deliberately loose: what has to stay clear of it
+ * is a genuine reversal, and the smallest one anywhere in the corpus is
+ * `spineboy-pro`'s hoverboard triangle at 8.478 px², more than two orders of
+ * magnitude above. Nothing measured lands between the two, so nothing between
+ * them is being tuned.
+ */
+function float32AreaNoise(world: ArrayLike<number>): number {
+  let coordinate = 0;
+  for (let i = 0; i < world.length; i++) coordinate = Math.max(coordinate, Math.abs(world[i]));
+  return 4 * coordinate * coordinate * FLOAT32_HALF_ULP;
+}
+
+/**
+ * Twice-signed area, halved, of every triangle of `triangles` over the
+ * interleaved `x, y` world vertices in `world`.
+ *
+ * The SIGN is the whole point and the magnitude is the tolerance's yardstick, so
+ * this returns the signed figure rather than an absolute one. Positive and
+ * negative are not "correct" and "wrong" — a mesh may be wound either way, and
+ * what A39 reads is whether one triangle's sign CHANGED.
+ */
+function triangleAreas(world: ArrayLike<number>, triangles: ArrayLike<number>): number[] {
+  const out: number[] = [];
+  for (let t = 0; t + 2 < triangles.length; t += 3) {
+    const i0 = triangles[t] * 2;
+    const i1 = triangles[t + 1] * 2;
+    const i2 = triangles[t + 2] * 2;
+    const x0 = world[i0];
+    const y0 = world[i0 + 1];
+    out.push(0.5 * ((world[i1] - x0) * (world[i2 + 1] - y0) - (world[i2] - x0) * (world[i1 + 1] - y0)));
+  }
+  return out;
+}
 
 /**
  * One step of the **float32** grid at `t`, which is the grid a loaded key time
@@ -1430,6 +1515,178 @@ export function validate(input: ValidateInput): ValidateReport {
           }
         }
       }
+    });
+
+    // --- A39: a deform key that turns a triangle inside out ------------------
+    //
+    // 🚨 The animation half of this format had NO geometric measurement at all.
+    // `A35` measures a deform run's LENGTH and its finiteness, and is silent on
+    // whether the numbers in it mean anything: a key whose offsets are the wrong
+    // sign, the wrong magnitude, or geometrically degenerate is green. Issue
+    // #296 is that asymmetry, measured — three builds of `gallery/portrait`, one
+    // correct, one with a band inverted and one folded at 40°, gate green with
+    // the same 26 PASS / 13 SKIP and a byte-identical `MESH` coverage line,
+    // because that line reports the SETUP pose (docs/FACE.md §9.2).
+    //
+    // What this measures is the one deformed-geometry fault that has a
+    // reference-free answer: a triangle whose winding REVERSES draws its texture
+    // backwards, and a mesh with one in it has locally turned inside out.
+    //
+    // ## The frame, and why it is the posed one
+    //
+    // Both sides of the comparison are taken at the key's OWN time, with the
+    // animation applied — the deformed mesh against the same posed bones with
+    // the deform cleared. Holding the bones at SETUP instead was tried and is
+    // wrong in principle: a weighted mesh's offsets are authored in bone space
+    // against the pose they land in, so setup bones measure a pose that never
+    // occurs. (Measured, on this corpus the two frames agree to ~0.001 px² —
+    // the fold is in the deform data either way — but the principle decides it,
+    // not the agreement.) Sharing the bones between the two sides is also what
+    // makes a MIRRORED slot bone a non-event: a negative determinant flips every
+    // triangle on both sides and cancels.
+    //
+    // ## ⚠️ Why this is `archetype` and not `validity`
+    //
+    // Because the issue's premise — "it has no legitimate counter-example" — is
+    // false on this repository's own corpus, and that was found by running it:
+    //
+    //   - `spineboy-pro`, an official Spine editor export, flips 1 of the 101
+    //     triangles of `hoverboard-board` at key 1 (area −31.53 → +8.48, 2.5e-3
+    //     of that mesh's largest triangle).
+    //   - `gallery/flex` flips up to 7 of the 75 triangles of its `leaf`, and
+    //     that one IS a defect — visible tearing at the gust peak (issue #313).
+    //
+    // A `validity` rule would therefore tell an author holding correct editor
+    // output to go and change it, which is what issues #44 and #262 already
+    // cost this file twice. `archetype` says what is true: *rigc's own
+    // formations do not fold*, judged under the profile where rigc's own policy
+    // lives, and never on a skeleton rigc did not compile.
+    //
+    // A magnitude threshold was considered as the way to keep it `validity` —
+    // exempt spineboy's 2.5e-3 sliver, catch the rest — and declined: the
+    // corpus's smallest genuine defect (`flex` at 5.4e-3) and that sliver are
+    // within a factor of two, so the wall would be calibrated on two points and
+    // separate nothing. `invariants.deformMayFold` is the escape hatch instead,
+    // because *the author* knows whether the page is turning over.
+    check('A39_DEFORM_KEEPS_TRIANGLE_WINDING', () => {
+      if (!input.rig) {
+        return skip(
+          'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
+          'no rig info (validating a bare directory), so the rig cannot say which slots fold on purpose',
+        );
+      }
+      const exempt = new Set(input.rig.deformMayFold);
+      let timelinesSeen = 0;
+      let measuredKeys = 0;
+      let measuredTriangles = 0;
+      let collapsed = 0;
+      const exempted = new Set<string>();
+      const notAMesh = new Set<string>();
+      for (const anim of data.animations) {
+        for (const timeline of anim.timelines) {
+          if (!(timeline instanceof DeformTimeline)) continue;
+          timelinesSeen++;
+          const attachment = timeline.attachment;
+          const slotName = data.slots[timeline.slotIndex]?.name ?? `#${timeline.slotIndex}`;
+          // A bounding box, a clipping polygon and a path all have a vertex
+          // array and NO triangles, so they have no winding to keep. Saying
+          // nothing about them beats inventing a measurement.
+          if (!(attachment instanceof MeshAttachment)) {
+            notAMesh.add(`"${slotName}"`);
+            continue;
+          }
+          if (exempt.has(slotName)) {
+            exempted.add(`"${slotName}"`);
+            continue;
+          }
+          const count = attachment.worldVerticesLength;
+          const triangles = attachment.triangles;
+          if (!triangles || triangles.length < 3) continue; // A04 owns a mesh with no triangles
+          for (let frame = 0; frame < timeline.frames.length; frame++) {
+            const time = timeline.frames[frame];
+            // Posed per key, by the same route A10 steps an animation. A fresh
+            // state per key is what lands the sample exactly ON the key rather
+            // than one update short of it.
+            const posed = new Skeleton(data);
+            const state = new AnimationState(new AnimationStateData(data));
+            state.setAnimation(0, anim.name, false);
+            posed.setupPose();
+            posed.update(0);
+            posed.updateWorldTransform(Physics.reset);
+            state.update(time);
+            state.apply(posed);
+            posed.update(time);
+            posed.updateWorldTransform(Physics.update);
+            const slot = posed.slots[timeline.slotIndex];
+            const deformed = new Float32Array(count);
+            attachment.computeWorldVertices(posed, slot, 0, count, deformed, 0, 2);
+            // The same bones, with the deform taken away. `computeWorldVertices`
+            // reads the array off the slot, so emptying it is the whole control.
+            slot.appliedPose.deform.length = 0;
+            const plain = new Float32Array(count);
+            attachment.computeWorldVertices(posed, slot, 0, count, plain, 0, 2);
+
+            const before = triangleAreas(plain, triangles);
+            const after = triangleAreas(deformed, triangles);
+            const largest = before.reduce((m, a) => Math.max(m, Math.abs(a)), 0);
+            // Both bands, and the wider one wins. The relative one is about the
+            // SHAPE (a triangle with no area has no winding); the noise one is
+            // about the arithmetic (a sign read off float32 rounding is not a
+            // measurement). Each is the larger on a different mesh.
+            const band = Math.max(
+              largest * DEFORM_AREA_EPSILON,
+              float32AreaNoise(plain),
+              float32AreaNoise(deformed),
+            );
+            measuredKeys++;
+            measuredTriangles += before.length;
+            const flipped: number[] = [];
+            for (let t = 0; t < before.length; t++) {
+              // A triangle with no area at setup has no winding to keep, and one
+              // the key collapses ONTO zero has been pinched rather than turned
+              // over — a real idiom, counted on the stats line and never a bar.
+              if (Math.abs(before[t]) <= band) continue;
+              if (Math.abs(after[t]) <= band) {
+                collapsed++;
+                continue;
+              }
+              if (Math.sign(before[t]) !== Math.sign(after[t])) flipped.push(t);
+            }
+            if (flipped.length === 0) continue;
+            const shown = flipped.slice(0, 4).map((t) => {
+              const ids = `${triangles[t * 3]},${triangles[t * 3 + 1]},${triangles[t * 3 + 2]}`;
+              return `${t} [${ids}] ${before[t].toFixed(3)} -> ${after[t].toFixed(3)}px²`;
+            });
+            const more = flipped.length > shown.length ? `, and ${flipped.length - shown.length} more` : '';
+            fail(
+              'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
+              `animation "${anim.name}" deform ${slotName}/${attachment.name} key ${frame} (t=${time}s): ` +
+                `${flipped.length} of ${before.length} triangle(s) reverse winding — triangle ${shown.join('; triangle ')}` +
+                `${more}. The mesh has turned inside out there and draws its texture backwards. Fix the key's ` +
+                'offsets in the motion spec\'s deform timeline (a projection past its fold angle is the usual ' +
+                'cause — docs/FACE.md §4.2 has the closed form), or, if this slot folds on purpose, declare it ' +
+                `in the rig spec as invariants.deformMayFold: [{ "slot": "${slotName}", "why": … }]`,
+            );
+          }
+        }
+      }
+      if (timelinesSeen === 0) {
+        return skip('A39_DEFORM_KEEPS_TRIANGLE_WINDING', 'no animation carries a deform timeline');
+      }
+      if (measuredKeys === 0) {
+        const why = [
+          exempted.size ? `the rig declares ${[...exempted].join(', ')} as deformMayFold` : '',
+          notAMesh.size ? `${[...notAMesh].join(', ')} deform an attachment with no triangles` : '',
+        ].filter(Boolean);
+        return skip(
+          'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
+          `no deform timeline here has a winding to keep: ${why.join('; ') || 'every mesh keyed has no triangles'}`,
+        );
+      }
+      stats.deformKeysMeasured = measuredKeys;
+      stats.deformTrianglesMeasured = measuredTriangles;
+      stats.deformTrianglesCollapsed = collapsed;
+      if (exempted.size) stats.deformFoldExempt = [...exempted].join(',');
     });
 
     // --- A23: a physics constraint that does nothing, quietly ---------------

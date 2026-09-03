@@ -694,7 +694,8 @@ the wrong part.
 
 ### 9.2 🚨 What nothing measures — three builds, all green
 
-**The setup geometry is measured; the deformed geometry is not.** Here is that
+**The setup geometry is measured; the deformed geometry was not, and one half of
+it still is not.** Here is that
 claim as three builds of the same rig, each command runnable verbatim from a
 clean checkout. Start from the good one:
 
@@ -755,9 +756,12 @@ bun cli.ts build --rig gallery/portrait/rig.json --motion /tmp/folded.motion.jso
 | `--profile spine-html` | 26 PASS / 13 SKIP | **26 PASS / 13 SKIP** | **26 PASS / 13 SKIP** |
 | `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | PASS | **PASS** | **PASS** |
 | the `MESH` coverage line | 100.00%, 95.90px past | **byte-identical** | **byte-identical** |
+| 🆕 `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | PASS | PASS | **FAIL, both keys, 8 of 32 triangles** |
 
-🚨 **All three are green, and the coverage line is the same string in all three,
-because it reports the SETUP pose.** `A35` checks that a deform run *fits* its
+🚨 **All three were green, and the coverage line is the same string in all three,
+because it reports the SETUP pose.** The `--profile spine-html` row is what
+`A39` changed and the two rows above it are unchanged: both still measure only
+the setup geometry, and `A35` is still silent about build (b). `A35` checks that a deform run *fits* its
 attachment — an honest and useful check, and orthogonal to whether the numbers in
 it mean anything.
 
@@ -777,12 +781,35 @@ bun cli.ts explain --rig gallery/portrait/rig.json \
       t=2.2     back to the setup pose                         linear
 ```
 
-⇒ **`25 pair(s)` is the whole of what any instrument in this toolchain will tell
-you about a face turn.** Compare a scalar track two lines up in the same report,
-which prints `value=-35.345`. That asymmetry **is**
-[#296](https://github.com/firejune/rigc/issues/296): its proposed
-`A39_DEFORM_KEEPS_TRIANGLE_WINDING` has no legitimate counter-example and would
-have handed the worked example §4.2's fold angles without seven renders.
+⇒ **`25 pair(s)` is the whole of what `explain` will tell you about a face
+turn.** Compare a scalar track two lines up in the same report, which prints
+`value=-35.345`. That asymmetry is
+[#296](https://github.com/firejune/rigc/issues/296).
+
+🆕 **`A39_DEFORM_KEEPS_TRIANGLE_WINDING` now closes the half of that gap the
+fold lives in** — `--profile spine-html`, 2026-09-03. Build (b) above is refused
+by name, on both its keys, with the triangles listed:
+
+```
+FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform head/head key 1
+      (t=0.62s): 8 of 32 triangle(s) reverse winding — triangle 0 [0,5,6]
+      1890.000 -> -544.545px²; …
+```
+
+and builds (a) and the good one both still PASS it, because **an inverted band is
+not a fold**: its winding survives. The angle A39 first fires at agrees with
+§4.2's `tan θ = Δx/Δz` to **0.0001°**, so the formula above is now checkable by
+running the gate instead of by rendering seven variants.
+
+⚠️ **Two things it deliberately does not do.** It is an **archetype** rule, so a
+`--profile spine` build reads `PROF` — the premise "a fold has no legitimate
+counter-example" turned out to be false when it was measured, an official
+`spineboy-pro` export reverses one of `hoverboard-board`'s 101 triangles, and a
+`validity` rule would have told its author to change correct data. And it says
+nothing about the **area and stretch extremes** #296 also asks for: 0.637 is
+still a figure you derive from §1 rather than one the gate prints. `check`
+against a trusted render, below, therefore stays the deeper instrument and this
+is the cheap always-on layer above it.
 
 ### 9.3 The audit that works today, and exactly what it cannot do
 
@@ -821,7 +848,9 @@ to call an audit:**
    **all three** runs above, unchanged, because drift is attributed per **slot**
    and a folded head mesh is entirely inside one slot.
 
-⇒ **So the honest procedure until #296 exists:** derive every number from §1,
+⇒ **So the honest procedure — thinner now that `A39` exists, and still a
+procedure, because none of the three limits above is one `A39` lifts:** derive
+every number from §1,
 check the **signs** (§3's nose test) and the **fold angle** (§4.2's formula)
 arithmetically before you build, render, **look at three scales**, and keep a
 render of the last build you trusted so `check` has something to be differential

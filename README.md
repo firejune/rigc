@@ -491,7 +491,7 @@ that an agent authors a spineboy-scale rig from the brief alone in one run: the
 ladder has not demonstrated that, and each row records which of the two it is.
 
 The whole dossier — the yardstick, `diff` and `check` and what neither of them can
-see, every rung, the run viewer, the 39 assertions and the selftest behind them — is
+see, every rung, the run viewer, the 40 assertions and the selftest behind them — is
 [docs/BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md).
 Live rung status is
 [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).

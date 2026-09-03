@@ -235,8 +235,19 @@ and six different values.
 `deform` key does.** The setup geometry is measured and printed (coverage,
 overshoot, hole); the deformed geometry is not. A key that folds a mesh inside
 out is green, `A35` passes, and the coverage line still reports the setup pose at
-100%. The proposed `A39_DEFORM_KEEPS_TRIANGLE_WINDING` has no legitimate
-counter-example and would have handed me §2's fold angles without seven renders.
+100%. The proposed `A39_DEFORM_KEEPS_TRIANGLE_WINDING` would have handed me §2's
+fold angles without seven renders.
+
+> 🆕 **Landed 2026-09-03, and one sentence of the above was wrong.** `A39` ships
+> as an **archetype** rule and its angle agrees with §2's formula to 0.0001°. But
+> this entry claimed the fold "has no legitimate counter-example", and running the
+> check over the corpus falsified that in two places: the official `spineboy-pro`
+> export reverses one of `hoverboard-board`'s 101 triangles, and `gallery/flex`'s
+> leaf reverses up to 7 of 75 — the second a real defect
+> ([#313](https://github.com/firejune/rigc/issues/313)), the first correct editor
+> output. Hence `archetype` plus an `invariants.deformMayFold` opt-out rather than
+> the unconditional rule this entry asked for. The **area and stretch extremes**
+> half of #296 is still not built.
 
 ### Doc gaps, small
 

@@ -876,6 +876,13 @@ export interface RigInfo {
    * a ring the mesh was never supposed to be.
    */
   meshKinds: Record<string, MeshKind | 'authored'>;
+  /**
+   * Slots whose deform timelines may turn a triangle inside out, from
+   * `invariants.deformMayFold`. Empty is the ordinary case, and A39 gates every
+   * mesh not named here — see `RigInvariants.deformMayFold` for why the default
+   * is on.
+   */
+  deformMayFold: string[];
   /** Mesh slots this rig budgets for, or null when it declares no budget. */
   meshSlotBudget: number | null;
   /** Triangles one mesh may carry, or null when the rig declares no budget. */

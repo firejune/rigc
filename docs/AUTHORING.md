@@ -1158,7 +1158,8 @@ is not an array. Every field is optional and each is the payload a firing
 
 Optional with one exception, and only meaningful for rigc's own formations:
 `meshSlots` and `meshTriangles` (the two halves of the mesh budget `A13` measures
-against), `axisBone`, `massBone`, `detached`. Nothing in skeleton JSON records that a
+against), `axisBone`, `massBone`, `detached`, `deformMayFold`. Nothing in skeleton
+JSON records that a
 bone carries a cut's axis or that a parentage is forbidden, so the rig spec says it
 and the validator's archetype assertions read it. **An assertion whose field is
 absent reports SKIP, never a pass.** If you are reproducing a foreign skeleton,
@@ -1174,6 +1175,18 @@ Geometry rigc built is geometry rigc will not ship unmeasured; geometry the auth
 drew is exempt, because rigc did not draw it. So `A13`'s **SKIP** means *this rig
 is unmeasured*, not *this budget is inert* — those are two code paths with one
 name, and reading the SKIP as the whole story is what issue #274 was.
+
+🚨 **`deformMayFold` is the one field here that turns a check OFF**, so it is the
+one field whose own shape is refused rather than skipped. It is
+`[{ "slot": …, "why": … }]`, it exempts that slot from
+`A39_DEFORM_KEEPS_TRIANGLE_WINDING`, and three shapes are compile errors: a slot
+the rig does not declare, a slot that carries no mesh, and a missing or blank
+`why`. The first two would exempt nothing while reading exactly like the
+exemption worked; the third is how a defect ships as a decision. ⚠️ The default
+is **gated** — an author who has not thought about folding gets the check, which
+is the whole value of it. What the field is for is art that folds on purpose: a
+page turning over, a cloth creasing back on itself, where the reversed winding
+*is* the drawing.
 
 ---
 
@@ -1865,6 +1878,7 @@ The report prints one line per assertion:
 | `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying its `mix` (§3.5.1). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. **SKIP** when the skeleton declares no path constraint |
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
+| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, or when there is no rig info at all |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
