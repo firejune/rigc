@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0](https://github.com/firejune/rigc/compare/v0.14.1...v0.15.0) (2026-09-03)
+
+
+### Features
+
+* **gallery:** nod, a sixth example where each mesh is built for the model that bends it ([#353](https://github.com/firejune/rigc/issues/353)) ([fc82e5c](https://github.com/firejune/rigc/commit/fc82e5c12ccb4992205520d786b88b66cea3d93a)), closes [#343](https://github.com/firejune/rigc/issues/343)
+* **pack:** a pack gates under spine-html, spilled pages shrink, and PK05's last bit is attributed ([#354](https://github.com/firejune/rigc/issues/354)) ([1168b78](https://github.com/firejune/rigc/commit/1168b78c687128275cf0c157df4094fa9495a643)), closes [#266](https://github.com/firejune/rigc/issues/266)
+
+
+### Bug Fixes
+
+* **compile:** refuse a deform transform whose evaluation is an all-zero run ([#355](https://github.com/firejune/rigc/issues/355)) ([717888a](https://github.com/firejune/rigc/commit/717888ad5240869b3e9456a35d0b1801561eda07)), closes [#350](https://github.com/firejune/rigc/issues/350)
+* **gallery:** loop_seam refuses a reading whose last frame is not at the duration ([#346](https://github.com/firejune/rigc/issues/346)) ([928b91f](https://github.com/firejune/rigc/commit/928b91ff8f7ae0a762ce27cae1b5ec7b402ebd64)), closes [#337](https://github.com/firejune/rigc/issues/337)
+
 ## [0.14.1](https://github.com/firejune/rigc/compare/v0.14.0...v0.14.1) (2026-09-03)
 
 
