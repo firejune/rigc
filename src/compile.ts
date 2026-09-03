@@ -62,6 +62,7 @@ import {
   type ParsedAtlas,
 } from './atlas.ts';
 import { KEY_TIME_EPSILON } from './timelines.ts';
+import { evaluateDeformTransform } from './deformgen.ts';
 import {
   computeWorldTransforms,
   cropToSpineY,
@@ -1272,6 +1273,11 @@ export function compile(opts: CompileOptions): CompileResult {
   // one name is a timeline driving something nobody chose.
   const constraints: SpineConstraint[] = [];
   const physicsReport: CompileResult['physics'] = [];
+  // Deform keys that stated a model instead of a run (issue #294). Declared here
+  // rather than inside the animation loop because `explain` reports it across
+  // every animation, and appended in emit order so the report reads in the order
+  // the file does.
+  const deformTransforms: CompileResult['deformTransforms'] = [];
   const constraintNames = new Set<string>();
   // `ik` and `transform` timelines resolve their target by name AND by type —
   // `findConstraint(name, IkConstraintData)` returns null for a transform
@@ -1555,6 +1561,7 @@ export function compile(opts: CompileOptions): CompileResult {
           animName,
           anim.duration,
           deformGeometryOf(attachment, at),
+          deformTransforms,
         );
         for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
         ((deformTimelines[skinName] ??= {})[track.slot] ??= {})[track.attachment] = { deform: keys };
@@ -1673,6 +1680,7 @@ export function compile(opts: CompileOptions): CompileResult {
     meshBones: [...meshBones],
     meshes,
     physics: physicsReport,
+    deformTransforms,
     rig: buildRigInfo(rig, bones, meshes, manifest),
   };
 }
@@ -3554,6 +3562,20 @@ interface DeformGeometry {
   vertexCount: number;
   /** Bone influences per vertex, in vertex order. Null on an unweighted attachment. */
   boneCounts: number[] | null;
+  /**
+   * Setup `x, y` per vertex **in the space a deform offset lives in**, for a
+   * `transform` key to evaluate a model over (issue #294).
+   *
+   * Null when there is no single such space, and `setupWhy` then says which of
+   * the two reasons it was: a vertex with more than one bone on it, whose offset
+   * is a weighted sum of a pair in each bone's own bind space; or a run bound to
+   * several bones, where one closed form would be evaluated across several
+   * unrelated coordinate systems. Both are the `fromVertex` refusal's reasoning
+   * applied to a whole run — rigc will not guess a space.
+   */
+  setup: number[] | null;
+  /** Why `setup` is null, phrased for the refusal. Null when it is not. */
+  setupWhy: string | null;
 }
 
 /**
@@ -3589,16 +3611,31 @@ function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
   const vertices = (att as SpineMeshAttachment).vertices ?? [];
   const weighted = vertices.length !== worldVerticesLength;
   if (!weighted) {
-    return { weighted, deformLength: worldVerticesLength, vertexCount: worldVerticesLength / 2, boneCounts: null };
+    return {
+      weighted,
+      deformLength: worldVerticesLength,
+      vertexCount: worldVerticesLength / 2,
+      boneCounts: null,
+      // An unweighted attachment IS its own space: the array is one `x, y` per
+      // vertex in the slot bone's space, which is the space the offsets are in.
+      setup: vertices.slice(),
+      setupWhy: null,
+    };
   }
   // Walk the weight run for the per-vertex influence counts. The run's own shape
   // is already assured by the attachment builders and by A33/A04; this only
   // counts, and a malformed run stops rather than producing a plausible number.
   const boneCounts: number[] = [];
+  const bindSpace: number[] = [];
+  const bones = new Set<number>();
   for (let i = 0; i < vertices.length; ) {
     const n = vertices[i++];
     if (!Number.isInteger(n) || n < 1) {
       throw new CompileError(`${where}: the attachment's weighted vertex run has a bone count of ${String(n)} at index ${i - 1}`);
+    }
+    if (n === 1) {
+      bones.add(vertices[i]);
+      bindSpace.push(vertices[i + 1], vertices[i + 2]);
     }
     i += n * 4;
     if (i > vertices.length) {
@@ -3606,8 +3643,33 @@ function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
     }
     boneCounts.push(n);
   }
-  const influences = vertices.length / 3;
-  return { weighted, deformLength: influences * 2, vertexCount: boneCounts.length, boneCounts };
+  // ⚠️ The influence count is the SUM of the per-vertex counts, not a division
+  // of the JSON array's length. The emitted array is `boneCount` followed by
+  // `boneIndex, x, y, weight` per influence — five numbers for a single-bone
+  // vertex, not three — so `vertices.length / 3` overstated the deform array by
+  // two thirds on a one-bone-per-vertex mesh (`gallery/flex`'s 77-vertex leaf
+  // measured 256.667 against its true 154) and made A35's own overrun bar too
+  // wide by that much. `readVertices` stores three numbers per influence in the
+  // LOADED attachment, which is where the `/3*2` in the parser comes from.
+  let influences = 0;
+  for (const n of boneCounts) influences += n;
+  const multi = boneCounts.findIndex((n) => n !== 1);
+  const setupWhy =
+    multi !== -1
+      ? `vertex ${multi} has ${boneCounts[multi]} bone influences on it, and one x, y pair for such a vertex is not a ` +
+        'thing the deform array can hold: its world offset is the weighted sum of a pair in each bone\'s own bind space'
+      : bones.size > 1
+        ? `its ${boneCounts.length} vertices are bound to ${bones.size} different bones, so their x, y pairs are in ` +
+          'that many different bind spaces and one closed form evaluated across them would mean nothing'
+        : null;
+  return {
+    weighted,
+    deformLength: influences * 2,
+    vertexCount: boneCounts.length,
+    boneCounts,
+    setup: setupWhy === null ? bindSpace : null,
+    setupWhy,
+  };
 }
 
 /**
@@ -3649,6 +3711,7 @@ function compileDeformTrack(
   animName: string,
   duration: number,
   geometry: DeformGeometry,
+  generated: CompileResult['deformTransforms'],
 ): SpineTimelineKey[] {
   const skin = track.skin ?? 'default';
   const where = `animation "${animName}" deform ${skin}/${track.slot}/${track.attachment}`;
@@ -3664,6 +3727,53 @@ function compileDeformTrack(
       throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
     }
     checkKeyTime(where, time, key.t, duration);
+    // -- a key that states a MODEL rather than a run (issue #294) ------------
+    //
+    // Handled before everything below, because a transform key carries no
+    // `vertices` and would otherwise be read as the format's "back to the setup
+    // pose". The three refusals are the bounds the issue drew: a key states one
+    // or the other, never both; a model covers every vertex, so a start index
+    // has nothing to mean; and a model needs one coordinate space to be
+    // evaluated in, which a multi-bone or multi-space weighted attachment does
+    // not have.
+    if (key.transform !== undefined) {
+      if (key.vertices !== undefined && key.vertices !== null) {
+        throw new CompileError(
+          `${where} (t=${key.t}): the key carries both a "transform" and a "vertices" run, and they are two answers to ` +
+            'one question. Authored offsets and a stated model do not combine, for the same reason a mesh cannot carry ' +
+            'both a "generator" and authored geometry — drop one.',
+        );
+      }
+      if (key.offset !== undefined || key.fromVertex !== undefined) {
+        throw new CompileError(
+          `${where} (t=${key.t}): the key states a "transform" and a start index. A transform is a model of the whole ` +
+            `attachment and is evaluated over all ${geometry.vertexCount} of its vertices, so it always starts at deform ` +
+            'index 0. A model applied to part of a run leaves a step at the run\'s edge — write the partial run by hand ' +
+            'if that is what you mean.',
+        );
+      }
+      if (geometry.setup === null) {
+        throw new CompileError(
+          `${where} (t=${key.t}): a "transform" is evaluated over the attachment's own setup geometry, and this ` +
+            `attachment has no single space to evaluate it in — ${geometry.setupWhy}. Key the control bone instead, or ` +
+            'write the bind-space pairs yourself and start the run with "offset".',
+        );
+      }
+      const report = evaluateDeformTransform(key.transform, geometry.setup, r6, `${where} (t=${key.t})`);
+      if (report.offsets.length !== geometry.deformLength) {
+        // Unreachable while `setup` is one pair per vertex and `deformLength` is
+        // twice the vertex count, which is the whole reason both are derived
+        // from the same walk. Stated rather than assumed: a silent mismatch here
+        // is the overrun A35 exists for.
+        throw new CompileError(
+          `${where} (t=${key.t}): the transform produced ${report.offsets.length} numbers and this attachment's deform ` +
+            `array is ${geometry.deformLength} long`,
+        );
+      }
+      generated.push({ animation: animName, skin, slot: track.slot, attachment: track.attachment, time, ...report });
+      out.push(deformKeyCurve({ time, vertices: report.offsets }, key, keys, i, motion, where));
+      continue;
+    }
     if (key.offset !== undefined && key.fromVertex !== undefined) {
       throw new CompileError(
         `${where} (t=${key.t}): a key gives its start as "offset" (an index into the deform array) or as ` +

@@ -549,7 +549,7 @@ request**, so whichever wins tells you something the next candidate can use.
 | **Segmentation** | one continuous movement | two beats with a hold between them | the prompt has two verbs in it, or a comma doing the work of one |
 | **Key density** | ends plus one interior key | ends plus three or four | the intent names a shape (*"hesitates"*, *"in stages"*) that the ends cannot carry |
 | **Pivot, where it was defaulted** | the art's own joint feature | the parent's far end | §3.9 defaulted it and the two readings are several pixels apart. The ballot is then answering a question the pictures did not |
-| **Deform** (advanced) | rigid throughout | squash/stretch on the extremes via a `deform` timeline (AUTHORING §4.11) | the rigid candidates have already been chosen between. ⚠️ **The base recipe is rigid-first** — see §7 |
+| **Deform** (advanced) | rigid throughout | squash/stretch on the extremes via a `deform` timeline (AUTHORING §4.11) | the rigid candidates have already been chosen between. ⚠️ **The base recipe is rigid-first** — see §7. 🧩 A deform key can state its transform rather than a table of offsets (AUTHORING §4.11.1), so this axis is now two numbers to spread on rather than two tables to transcribe |
 
 📌 **One axis per ballot.** Two candidates differing on two axes cannot be read: the
 winner tells you the pair was better, not which half of it was. If two axes both look
@@ -988,6 +988,17 @@ table on purpose: it needs a mesh rather than a region attachment, it multiplies
 things a candidate differs by, and a movement that does not read when rigid will not be
 rescued by deforming it. ⇒ Land the rigid movement, choose between rigid candidates,
 then propose deform as its own spread.
+
+🧩 **A deform key stating a transform is not a tween, and the distinction is the
+first non-goal above rather than a nuance of it.** AUTHORING §4.11.1 lets a key name a
+model — a yaw, a scale about a point, a wave, a bend — and the compiler evaluates it
+over the attachment's own vertices. What that removes is **transcription of one key's
+arithmetic**, which was never judgement: `gallery/portrait`'s held yaw was 160 floats of
+one closed form. What it does not touch is **anything between two keys** — the times,
+the easings, the anticipation, the offset table — because a deform timeline still has
+one 0..1 blend channel and §3 still owns every value on it. ⇒ Sweeping a deform is
+editing one number **per key**, and a command that chose those numbers or the keys
+between them would be the `rigc tween` this section refuses.
 
 ⚠️ **The one case where the deform is not an axis but the movement itself is a face
 turning off axis**, because a rigid candidate of it does not exist — a yaw *is* the

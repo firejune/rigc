@@ -7057,7 +7057,13 @@ interface TurnBuild {
  */
 function buildTurnRig(
   row: number[],
-  extra: { invariants?: Record<string, unknown>; slots?: Array<Record<string, unknown>>; skins?: Record<string, unknown> } = {},
+  extra: {
+    invariants?: Record<string, unknown>;
+    slots?: Array<Record<string, unknown>>;
+    skins?: Record<string, unknown>;
+    /** State the model on the key instead of transcribing `row` (issue #294). */
+    transform?: Record<string, unknown>;
+  } = {},
 ): TurnBuild {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-turn-'));
   const width = TURN_R * 2;
@@ -7103,6 +7109,17 @@ function buildTurnRig(
     )}\n`,
   );
   const motionPath = join(dir, 'turn.motion.json');
+  // The one key is either the TRANSCRIBED table — `row` repeated down the grid,
+  // which is what `gallery/portrait` shipped before #294 — or the same model
+  // STATED, which is what it ships now. Both spellings exist here so a case can
+  // compare them, and comparing them is the generator's only real control: the
+  // test derives the projection from docs/FACE.md §1 and `src/deformgen.ts`
+  // derives it from the same line, so agreement is the claim and a byte
+  // difference is a defect in one of the two.
+  const midKey =
+    extra.transform === undefined
+      ? { t: 0.5, fromVertex: 0, vertices: TURN_ROWS.flatMap(() => row) }
+      : { t: 0.5, transform: extra.transform };
   writeFileSync(
     motionPath,
     `${JSON.stringify(
@@ -7120,11 +7137,7 @@ function buildTurnRig(
               {
                 slot: 'head',
                 attachment: 'head',
-                keys: [
-                  { t: 0 },
-                  { t: 0.5, fromVertex: 0, vertices: TURN_ROWS.flatMap(() => row) },
-                  { t: 1 },
-                ],
+                keys: [{ t: 0 }, midKey, { t: 1 }],
               },
             ],
           },
@@ -7319,6 +7332,248 @@ function runDeformWindingSuite(): number {
     `an undeclared slot: ${JSON.stringify(typo)}; a blank reason: ${JSON.stringify(noWhy)}; a slot with no mesh: ${JSON.stringify(noMesh)}`,
     'a fold exemption naming nothing exempts nothing and reads exactly like the check working — and an exemption ' +
       'with no reason is how a defect ships as a decision',
+  );
+
+  return bad;
+}
+
+
+/**
+ * The emitted deform run of one key, read off the compiled skeleton.
+ *
+ * Read from the artifact rather than from the report `explain` prints, because
+ * "the report agrees with the file" is exactly the claim under test.
+ */
+function emittedDeformRun(result: CompileResult, animation: string, slot: string, key: number): number[] {
+  const attachments = (result.skeleton.animations[animation] as { attachments?: Record<string, Record<string, Record<string, { deform: Array<{ vertices?: number[] }> }>>> })
+    .attachments!;
+  return attachments.default[slot][slot].deform[key].vertices ?? [];
+}
+
+/**
+ * A deform key stated as a MODEL, and the four rules that keep it one (#294).
+ *
+ * ⭐ The control the whole suite rests on is DT00: the fixture derives
+ * `x·(cos t − 1) − z·sin t` from docs/FACE.md §1 itself (`turnRow`), the
+ * compiler derives it in `src/deformgen.ts` from the same line, and the two have
+ * to emit **the same bytes**. That is the only check that can tell a correct
+ * generator from a plausible one — a generator compared against its own output
+ * proves nothing, and a literal table here would be the measured number this
+ * file's rules forbid.
+ *
+ * The rest are refusals, and each one is a silent wrong answer if it does not
+ * fire: a model plus a hand-written run is two answers to one question; a model
+ * on part of a run leaves a step at the run's edge (issue #313's other half); a
+ * radius smaller than the part evaluates a flat edge on a curved surface; and an
+ * affine with a non-positive determinant folds every triangle at once.
+ */
+function runDeformTransformSuite(): number {
+  const dirs = writeProbeRig(TIMELINE_RIG);
+  let bad = 0;
+  console.log('\n── deform keys from a stated transform (#294) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  // --- DT00: the control — stated and transcribed emit the same bytes -------
+  const transcribed = buildTurnRig(turnRow(12));
+  const stated = buildTurnRig([], { transform: { kind: 'yaw', radius: TURN_R, degrees: 12 } });
+  const sameBytes = transcribed.result.skeletonText === stated.result.skeletonText;
+  const statedRun = emittedDeformRun(stated.result, 'turn', 'head', 1);
+  say(
+    'DT00_CONTROL_A_STATED_YAW_EMITS_THE_TRANSCRIBED_TABLE_BYTE_FOR_BYTE',
+    sameBytes && statedRun.length === TURN_ROWS.length * TURN_COLUMNS.length * 2,
+    sameBytes
+      ? `${statedRun.length} numbers over ${TURN_ROWS.length}x${TURN_COLUMNS.length} vertices, and the two skeletons are ` +
+          `identical; the row the fixture derived is [${turnRow(12).filter((_, i) => i % 2 === 0).join(', ')}]`
+      : 'the stated model and the transcribed table emitted DIFFERENT skeletons',
+    'the generator has to reproduce the closed form docs/FACE.md §1 states, and the only honest comparison is against ' +
+      'a table this file derived independently',
+  );
+
+  // --- DT01: the model is not a way past the gate --------------------------
+  //
+  // A generated key is gated like any other, and the fold angle is a property of
+  // the GRID rather than of how the numbers were written: the same projection
+  // past the same angle has to fire A39 whichever spelling produced it.
+  const statedGreen = gateTurn(stated);
+  const statedFolded = gateTurn(buildTurnRig([], { transform: { kind: 'yaw', radius: TURN_R, degrees: 40 } }));
+  const foldHit = statedFolded.failures.filter((f) => f.assertion === A39);
+  say(
+    'DT01_A_GENERATED_KEY_IS_GATED_LIKE_ANY_OTHER',
+    statedGreen.failures.length === 0 && statedGreen.passed.includes(A39) && foldHit.length === 1,
+    `12° stated: ${statedGreen.failures.length} failures with ${A39} ${statedGreen.passed.includes(A39) ? 'PASSED' : 'ABSENT'}; ` +
+      `40° stated: ${foldHit.length} ${A39} failure(s) — ${foldHit[0]?.detail ?? '(none)'}`,
+    'a construct that let a fold through because the numbers were generated rather than typed would be worse than the ' +
+      'transcription it replaces',
+  );
+
+  // --- DT02: the other three closed forms, each derived here too ------------
+  //
+  // `flat` is the unweighted 4-vertex mesh at (0,0), (12,0), (12,8), (0,8), so
+  // every expected value below is arithmetic a reader can do in their head.
+  const runOf = (transform: Record<string, unknown>): number[] => {
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        timelineMotion({
+          duration: 1,
+          loop: false,
+          tracks: [],
+          deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, transform }] }],
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return emittedDeformRun(built, 'move', 'flat', 1);
+  };
+  const FLAT: Array<[number, number]> = [
+    [0, 0],
+    [12, 0],
+    [12, 8],
+    [0, 8],
+  ];
+  const round6 = (n: number): number => Math.round(n * 1e6) / 1e6;
+  const affineWant = FLAT.flatMap(([x, y]) => [round6((2 - 1) * x), round6((0.5 - 1) * y)]);
+  const waveWant = FLAT.flatMap(([x]) => [0, round6(3 * Math.sin((2 * Math.PI * x) / 48))]);
+  const bendWant = FLAT.flatMap(([, y]) => [round6(5 * (y / 8) ** 2), 0]);
+  const affineGot = runOf({ kind: 'affine', scale: [2, 0.5] });
+  const waveGot = runOf({ kind: 'wave', amplitude: 3, wavelength: 48, phase: 0, along: 'x', axis: 'y' });
+  const bendGot = runOf({ kind: 'bend', amount: 5, from: 0, to: 8, power: 2, along: 'y', axis: 'x' });
+  const same = (a: number[], b: number[]): boolean => a.length === b.length && a.every((n, i) => n === b[i]);
+  say(
+    'DT02_AFFINE_WAVE_AND_BEND_EVALUATE_THE_CLOSED_FORMS_THEY_STATE',
+    same(affineGot, affineWant) && same(waveGot, waveWant) && same(bendGot, bendWant),
+    `affine scale [2, 0.5] -> [${affineGot.join(', ')}]; wave 3px/48px along x -> [${waveGot.join(', ')}]; ` +
+      `bend 5px from y=0 to y=8 power 2 -> [${bendGot.join(', ')}]`,
+    'each kind ships because a worked example needed it — affine for gallery/squash, bend for gallery/flex, yaw for ' +
+      'gallery/portrait — and a kind whose arithmetic nothing checks is a table with extra steps',
+  );
+
+  // --- DT03: a model and a run are two answers to one question -------------
+  const both = refusal(dirs, timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, transform: { kind: 'affine', scale: [2, 1] }, vertices: [1, 1, 1, 1, 1, 1, 1, 1] }] }],
+  }));
+  const partial = refusal(dirs, timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, fromVertex: 1, transform: { kind: 'affine', scale: [2, 1] } }] }],
+  }));
+  say(
+    'DT03_A_TRANSFORM_WITH_A_RUN_OR_A_START_INDEX_IS_REFUSED',
+    both !== null && /both a "transform" and a "vertices" run/.test(both) && partial !== null && /always starts at deform index 0/.test(partial),
+    `with a run: ${JSON.stringify(both)}; with a start index: ${JSON.stringify(partial)}`,
+    'a model applied to part of an attachment leaves a step at the end of its run, which is one half of the defect ' +
+      'issue #313 records — the other half being that nothing measured it',
+  );
+
+  // --- DT04: the parameters that would evaluate a different model ----------
+  const smallRadius = refusalOf(() => buildTurnRig([], { transform: { kind: 'yaw', radius: 100, degrees: 12 } }));
+  const mirrored = refusal(dirs, timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, transform: { kind: 'affine', scale: [-1, 1] } }] }],
+  }));
+  const stretchNotBend = refusal(dirs, timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, transform: { kind: 'bend', amount: 5, from: 0, to: 8, along: 'y', axis: 'y' } }] }],
+  }));
+  const unknownKind = refusal(dirs, timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, transform: { kind: 'twist', degrees: 4 } }] }],
+  }));
+  const noAmount = refusal(dirs, timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, transform: { kind: 'bend', from: 0, to: 8, along: 'y', axis: 'x' } }] }],
+  }));
+  say(
+    'DT04_A_PARAMETER_THAT_WOULD_EVALUATE_A_DIFFERENT_MODEL_IS_REFUSED_BY_NAME',
+    smallRadius !== null &&
+      /past it/.test(smallRadius) &&
+      mirrored !== null &&
+      /determinant/.test(mirrored) &&
+      stretchNotBend !== null &&
+      /the same coordinate/.test(stretchNotBend) &&
+      unknownKind !== null &&
+      /this spec evaluates/.test(unknownKind) &&
+      noAmount !== null &&
+      /"amount" is undefined/.test(noAmount),
+    `radius inside the part: ${JSON.stringify(smallRadius)} | mirroring affine: ${JSON.stringify(mirrored)} | ` +
+      `a bend that reads and displaces one axis: ${JSON.stringify(stretchNotBend)} | unknown kind: ${JSON.stringify(unknownKind)} | ` +
+      `a field the spec did not state: ${JSON.stringify(noAmount)}`,
+    'a radius smaller than the part would clamp its depth to 0 and evaluate a FLAT edge on a curved surface, and a ' +
+      'non-positive determinant reverses every triangle at once — both are wrong answers rather than failures',
+  );
+
+  // --- DT05: a weighted attachment, and the space a model needs ------------
+  //
+  // `bound`'s vertex 2 carries two bones, so its offset is a weighted sum of a
+  // pair in each bone's own bind space and there is no single space to evaluate
+  // a closed form in. Refused for the same reason `fromVertex` is (T13).
+  const multiSpace = refusal(dirs, timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'bound', attachment: 'bound', keys: [{ t: 0 }, { t: 1, transform: { kind: 'affine', scale: [2, 1] } }] }],
+  }));
+  const weightedControl = timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'bound', attachment: 'bound', keys: [{ t: 0 }, { t: 1, fromVertex: 1, vertices: [3, -3] }] }],
+  });
+  // 🚨 And the length of that attachment's deform array, which was wrong: the
+  // emitted weight run is `boneCount` then `boneIndex, x, y, weight` per
+  // influence — 5 numbers for a one-bone vertex — so `vertices.length / 3`
+  // measured `bound` at 16 rather than 10 and let a 12-number run through. That
+  // is the overrun A35 exists for, arriving in silence.
+  const weightedOverrun = refusal(dirs, timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'bound', attachment: 'bound', keys: [{ t: 0 }, { t: 1, offset: 0, vertices: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1] }] }],
+  }));
+  say(
+    'DT05_A_WEIGHTED_ATTACHMENT_IS_MEASURED_AND_REFUSED_IN_INFLUENCES',
+    multiSpace !== null &&
+      /no single space to evaluate it in/.test(multiSpace) &&
+      weightedOverrun !== null &&
+      /deform array is 10 long \(5 bone influences\)/.test(weightedOverrun),
+    `a model over several bind spaces: ${JSON.stringify(multiSpace)} | a 12-number run: ${JSON.stringify(weightedOverrun)}`,
+    "`bound` has 4 vertices and 5 influences, so its array is 10 long; measuring it as vertices.length / 3 gave 16 and " +
+      'made the overrun bar 6 numbers too wide on every weighted mesh in the repository',
+  );
+
+  // And the gate's own side of the same encoding: A35 re-derives the length from
+  // the emitted file, and it had the same defect. Reached through the artifact
+  // because the compiler now refuses the run before it is written.
+  const weightedGateOverrun = gateProbeArtifacts(dirs, weightedControl, (skeleton) => {
+    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+    deformKeysOf(animations.move, 'bound')[1].vertices = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+  });
+  const gateHit = weightedGateOverrun.failures.filter((f) => f.assertion === 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT');
+  say(
+    'DT06_A35_MEASURES_A_WEIGHTED_ARRAY_IN_INFLUENCES_TOO',
+    gateHit.length === 1 && gateHit[0].detail.includes('2..14') && gateHit[0].detail.includes('10-long'),
+    gateHit.length === 0
+      ? 'A35 accepted a run covering 2..14 of a 10-long deform array'
+      : gateHit.map((f) => f.detail).join(' | '),
+    'A35 read the raw weight run as three numbers per influence, which it is only AFTER the parser unpacks it — so ' +
+      "the assertion built to catch a dropped tail measured `bound`'s array at 16 and would not have caught this one",
   );
 
   return bad;
@@ -11567,6 +11822,8 @@ function main(): void {
   substantive += 8;
   bad += runDeformWindingSuite();
   substantive += 6;
+  bad += runDeformTransformSuite();
+  substantive += 7;
   bad += runMeshSuite();
   substantive += 4;
   const meshRungBad = runMeshRungSuite();
@@ -11718,6 +11975,14 @@ function main(): void {
       'must leave it silent, because a wrong projection with intact winding is only visible to `check`; and the ' +
       'escape hatch both ways — a declared fold SKIPs rather than passes, while an exemption naming an undeclared ' +
       'slot, a slot with no mesh, or carrying no reason is refused by name), ' +
+      '+ 7 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
+      'from docs/FACE.md §1 byte for byte, the same model past the fold angle still firing A39, the other three ' +
+      'closed forms — affine, wave and bend — evaluated against arithmetic derived here, and the four refusals that ' +
+      'keep a model from becoming a second answer: a run beside it, a start index, a parameter that would evaluate ' +
+      'a DIFFERENT model — a radius inside the part, a mirroring determinant, a bend that reads and displaces one ' +
+      "axis — and a weighted attachment with no single bind space, whose array is now measured in influences, on both " +
+      'sides of the encoding: the compiler refuses a 12-number run on it and A35 fires on the same run reached ' +
+      'through the artifact), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       ', + 5 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +

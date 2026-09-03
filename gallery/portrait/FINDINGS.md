@@ -9,6 +9,12 @@ The short answer is **yes at draft quality, and the labour is entirely in one
 place.** Everything below is a number off the artifact or a named case; nothing
 here is a prediction.
 
+⏳ **This is a record of one experiment, so it stays in the tense it was
+measured in.** Where a gap it filed has since been closed the entry says so and
+keeps the figure — the cost of the thing is the finding, and a record silently
+rewritten to the present is a record of nothing. The example's own
+[README](README.md) is the current account of the shipped files.
+
 ---
 
 ## 1. What it cost
@@ -40,7 +46,13 @@ at `±162, ±120, 0` rather than evenly, sample the projection where it changes.
 | `gaze` | 1.5 s | no | 8 | 32 | 0 | 0 | 0 |
 | **`turn`** | 2.2 s | no | **20** | **81** | 2 | 8 | **160** |
 
-**One held yaw is 20 tracks and 160 floats.** The shape of that matters more
+✅ **That last cell is now 0**, and the row is kept because the 160 is the
+finding: [#294](https://github.com/firejune/rigc/issues/294) shipped, the keys
+state `{ "kind": "yaw", "radius": 170, "degrees": 12 }`, and the compiler writes
+the run (README, *The mesh*). Everything else in the table is unchanged — the
+track half is [#295](https://github.com/firejune/rigc/issues/295) and still open.
+
+**One held yaw was 20 tracks and 160 floats.** The shape of that matters more
 than the size: of those 160 offsets there are **five distinct values** (one per
 column, repeated down five rows), and 25 of the 50 numbers in a head key are
 structurally `0` — every `y` of a 25-vertex grid — because a yaw has no
@@ -54,8 +66,11 @@ So the labour is not *complexity*. It is **transcription**. Every number in
 dx = x·(cos t − 1) − z·sin t
 ```
 
-evaluated at some `(x, z)`, and the spec has no way to say so — it can only hold
-the results. That is [#294](https://github.com/firejune/rigc/issues/294).
+evaluated at some `(x, z)`, and the spec had no way to say so — it could only
+hold the results. That was
+[#294](https://github.com/firejune/rigc/issues/294), and it is fixed: a deform
+key states its transform and the compiler evaluates it
+([AUTHORING §4.11.1](../../docs/AUTHORING.md)).
 
 ### The authoring iterations
 
@@ -217,12 +232,18 @@ as a named refusal. Found by the probe that isolated #292.
 ### Instrument gaps
 
 **[#294](https://github.com/firejune/rigc/issues/294) — a `deform` key has no
-generator.** The big one. 160 floats of one closed-form expression, and two of
-this example's three animations contain a *stated approximation* whose only
-cause is how many floats the honest version would take (`turn`'s anticipation
-lives in the roll channel; `gaze`'s head-follow is a rigid slide). rigc already
-has `generator` for mesh **geometry** precisely because a table is the wrong way
-to say a deformation model; the animation half has no equivalent.
+generator.** ✅ **Fixed.** The big one. 160 floats of one closed-form expression,
+and two of this example's three animations contained a *stated approximation*
+whose only cause was how many floats the honest version would take (`turn`'s
+anticipation lives in the roll channel; `gaze`'s head-follow is a rigid slide).
+rigc already had `generator` for mesh **geometry** precisely because a table is
+the wrong way to say a deformation model; the animation half now has the
+equivalent — a `transform` on the key, five closed forms, evaluated at compile
+time and printed by `explain`
+([AUTHORING §4.11.1](../../docs/AUTHORING.md)). ⚠️ **The two approximations
+still ship.** Undoing them is an art decision about what `turn` and `gaze` look
+like, and this record's claim was only ever that the *transcription* was what
+priced them out.
 
 **[#295](https://github.com/firejune/rigc/issues/295) — a `groups` track can
 only key one shared value.** The gallery's usual lever for cutting track count

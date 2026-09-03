@@ -398,7 +398,7 @@ was verified, and what writing it cost. Repository material: a clone and
 | Example | Stars | What it is |
 | --- | --- | --- |
 | [`gallery/walk`](https://github.com/firejune/rigc/tree/main/gallery/walk) | `ik` constraints + **`ik` timelines** | Two two-bone leg chains solved to foot targets — the planted leg nailed down, the swinging one let go at the top of its lift |
-| [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash) | **`deform` timelines** | A ball squashed about its contact point and stretched along its travel, from two affine transforms written out in the README |
+| [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash) | **`deform` timelines** | A ball squashed about its contact point and stretched along its travel, from two affine transforms the keys state rather than tabulate |
 | [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex) | **`contour` meshes** | A swallow-tailed banner and a serrated leaf: four meshes traced off their own alpha, waved by bone timelines and rippled by a `deform` |
 | [`gallery/ride`](https://github.com/firejune/rigc/tree/main/gallery/ride) | `path` attachments + **path constraints** | A trolley coasting down a drawn rail and rolling back, driven by a `position` timeline, with `groups` + `stagger` keying the wheels and the ears |
 

@@ -108,10 +108,49 @@ for a hand-tuned table.** That matters more than it sounds: a hand-tuned face
 table has no property you can check, and a derived one has exactly one — it
 agrees with the line, or it does not.
 
-📌 **Author `t` in degrees in your notes and radians nowhere.** The spec holds
-neither; it holds the millimetre-level results. Write the angle in a comment
-beside the part list, because the angle is the only input a later reader can use
-to re-derive the file, and §9 is what happens when they cannot.
+### 1.1 ⭐ And now the spec holds the line, not its results
+
+**A `deform` key states this expression** (AUTHORING §4.11.1). The worked
+example's held 12° yaw used to be **160 hand-transcribed floats across 8 keys**,
+and it is now four lines of which two are the angle:
+
+```json
+{ "t": 0.62, "transform": { "kind": "yaw", "radius": 170, "degrees": 12 }, "ease": "swell" },
+{ "t": 1.5,  "transform": { "kind": "yaw", "radius": 170, "degrees": 12 }, "ease": "settle" }
+```
+
+⇒ **`radius` is `R` off the depth table (§2) and `degrees` is the angle.** The
+compiler evaluates `dx = x·(cos t − 1) − z·sin t` at every vertex with
+`z = √(R² − x²)`, writes the millimetre-level results into the artifact, and
+`explain` prints both the model and the offsets it produced. What was
+transcription is a measurement of the shape the drawing implies, and nothing
+else.
+
+Three things that changes on this page, and they are the reasons the construct
+exists rather than side effects:
+
+- **A second angle is a second number.** §8's cliff sweep — 8, 12, 16, 20, 24,
+  28 and 32 degrees — was seven tables of 160 floats, produced by a throwaway
+  script that never made it into the repository: *the measurement existed and the
+  reproduction did not*. It is now `"degrees": 20` and a rebuild.
+- **The anticipation and the head-follow §3.6 and §7 priced out** were priced out
+  by the transcription, not by the format. 80 numbers for a tenth of a second is
+  now one key with a smaller `degrees`.
+- **The audit changed shape.** A transcription can only be checked against the
+  line by hand, which is §9.3's gap; a stated model is checked by reading two
+  parameters. What is still unmeasured is the *consequence* — whether that angle
+  folds the mesh — and §4.2 and A39 are that half.
+
+⚠️ **What it does not do.** It evaluates; it never chooses. The radius, the
+angle, the depth table and whether 12° reads are all yours, and a wrong `radius`
+now produces 160 consistent wrong numbers as fast as it used to produce one — see
+§4's warning, which the construct makes cheaper to get wrong rather than harder.
+
+📌 **Author `t` in degrees, in the spec.** Radians appear nowhere: the key holds
+the angle and the compiler holds the conversion. That is the sentence this
+section replaced — the angle used to live only in a comment beside the part list,
+because the spec could not hold it, and §9 was what happened when a later reader
+could not find it.
 
 ---
 
@@ -133,9 +172,15 @@ to re-derive the file, and §9 is what happens when they cannot.
 
 ⇒ **Write the depth table down somewhere a reader will find it, because the
 toolchain will not keep it for you.** In the worked example that is a table in
-the example's own README. In a project, put it beside the rig. This is
-[#294](https://github.com/firejune/rigc/issues/294) seen from the authoring side:
-the spec can hold a projection's results but cannot state the projection.
+the example's own README. In a project, put it beside the rig.
+
+⭐ **One depth is now in the file, and it is the one a mesh key needs.** Since
+[#294](https://github.com/firejune/rigc/issues/294) a `yaw` key states its
+`radius` (§1.1), which is the `R` of the cylinder that plate is painted on — so
+the head's 170 and the fringe's 196 are in `motion.json` rather than only in a
+README. Every **other** depth on this page still is not: a bone's `z` drives a
+`translatex` track and a track carries a value, not a model. That half is the
+part this section is about, and it has not moved.
 
 **The depths in the worked example**, and what each one is doing (**derived**
 column: `dx` at 12°):
@@ -252,15 +297,17 @@ head       340 × 380 plate, R = 170        hair_bang   372 × 168 plate, R = 19
 ```
 
 Each column's offset is `dx` at its own `(x, z)`, and **every row gets the same
-value**, so a `deform` key is one row of five repeated down the grid with a `0`
-for every `y`:
+value**, so the run the compiler writes is one row of five repeated down the grid
+with a `0` for every `y`:
 
-```json
-{ "t": 0.62, "fromVertex": 0, "vertices": [
-    -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
-    -7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,
-    … three more identical rows … ], "ease": "swell" }
 ```
+-7.175, 0, -22.414, 0, -35.345, 0, -27.658, 0, -14.255, 0,   <- ×5 rows
+```
+
+⭐ **The spec states the model and the compiler writes that** (§1.1): the key is
+`{ "kind": "yaw", "radius": 170, "degrees": 12 }`, and the 50 numbers above are
+what `explain` prints and what lands in the artifact. The offsets are still worth
+reading, because the *shape* of that row is §4.1's whole argument.
 
 ⚠️ **`R` is the radius of the cylinder a part is painted on, and it is not always
 the plate's half-width.** For the head plate the two coincide (`340/2 = 170`). For
@@ -365,9 +412,9 @@ opposite of refining.
 
 ⚠️ **A grid's perimeter is 16 of its 25 vertices and they are not a prefix of any
 row-major order.** Declaring a hull would mean re-ordering the vertex list
-perimeter-first — and then **a reader could not count the deform table against
-the grid**, which is the one property that makes 160 transcribed floats
-auditable at all. `0` is the honest declaration. AUTHORING §3.4 has what a hull
+perimeter-first — and then **a reader could not count the emitted deform run
+against the grid**, which is what makes `explain`'s printed offsets (§1.1)
+checkable against the columns at all. `0` is the honest declaration. AUTHORING §3.4 has what a hull
 buys and the worked example's FINDINGS.md prices what omitting it costs in an
 editor round trip.
 
@@ -625,15 +672,20 @@ not a format problem, it is a parts-and-labour problem.
 | --- | --- | --- | --- | --- | --- | --- |
 | `idle` | 3.2 s | 9 | 37 | 0 | 0 | 0 |
 | `gaze` | 1.5 s | 8 | 32 | 0 | 0 | 0 |
-| **`turn`** | 2.2 s | **20** | **81** | 2 | 8 | **160** |
+| **`turn`** | 2.2 s | **20** | **81** | 2 | 8 | **0** |
 
-⇒ **`idle` and `gaze` cost what an ordinary MOTION.md shot costs. The entire
-difficulty is the turn, and it is transcription rather than complexity:** of those
-160 floats there are **five distinct values** (one per column, repeated down five
-rows), **25 of the 50 slots in a head key are structurally `0`** because a yaw has
-no vertical component, and **19 of the 20 tracks carry one value each**. Fix
-[#294](https://github.com/firejune/rigc/issues/294) and
-[#295](https://github.com/firejune/rigc/issues/295) and a turn is a dozen lines.
+⇒ **`idle` and `gaze` cost what an ordinary MOTION.md shot costs, and the turn's
+transcription is gone.** That last cell was **160** until
+[#294](https://github.com/firejune/rigc/issues/294) shipped, and what those 160
+floats were is worth keeping: **five distinct values** (one per column, repeated
+down five rows), with **25 of the 50 slots in a head key structurally `0`**
+because a yaw has no vertical component. They are now four `transform` keys
+(§1.1) and the compiler writes the run.
+
+⇒ **What is left is the track count**, and it is the same complaint about a
+different table: **19 of the 20 tracks carry one value each**.
+[#295](https://github.com/firejune/rigc/issues/295) is that half, and until it
+ships a turn is a dozen lines plus twenty tracks.
 
 ⚠️ **`groups` buys almost nothing on a face, and that is structural rather than
 an oversight.** The usual lever for cutting track count is a `groups` entry keying
@@ -849,12 +901,20 @@ to call an audit:**
    and a folded head mesh is entirely inside one slot.
 
 ⇒ **So the honest procedure — thinner now that `A39` exists, and still a
-procedure, because none of the three limits above is one `A39` lifts:** derive
-every number from §1,
+procedure, because none of the three limits above is one `A39` lifts:** state the
+model on the key rather than deriving a table (§1.1), so what a reviewer reads is
+a radius and an angle;
 check the **signs** (§3's nose test) and the **fold angle** (§4.2's formula)
-arithmetically before you build, render, **look at three scales**, and keep a
-render of the last build you trusted so `check` has something to be differential
-against.
+arithmetically before you build — those are still yours, and a stated model
+evaluates a wrong radius as consistently as a right one — then render, **look at
+three scales**, and keep a render of the last build you trusted so `check` has
+something to be differential against.
+
+📌 **What §1.1 moved and what it did not.** The transcription is gone and
+`explain` prints the model beside the offsets it produced, so *what a key claims*
+is now readable. *Whether the claim is right* is unchanged: A39 catches a fold,
+[#316](https://github.com/firejune/rigc/issues/316) is the area and stretch
+extremes, and nothing measures whether 12° was the angle the shot wanted.
 
 ---
 
@@ -931,13 +991,14 @@ mesh is built**, and that is worth saying to the user before you build it.
 
 ## 11. Non-goals — stated, so nobody proposes them as gaps
 
-🚫 **No command generates a turn, and none should until the spec can state a
-projection.** §1 is one line of arithmetic; a `rigc yaw --degrees 12` would be
-guessing at every depth in §2 on the user's behalf, and depth is the parameter
-the *author* is choosing. What the toolchain owes is that the file is checkable,
-that you can look, and that a person can choose. **The generator that would
-help is [#294](https://github.com/firejune/rigc/issues/294) — a way to *say* the
-model in the spec — not a command that invents one.**
+🚫 **No command generates a turn, and the construct that shipped is not one.**
+§1 is one line of arithmetic; a `rigc yaw --degrees 12` would be guessing at
+every depth in §2 on the user's behalf, and depth is the parameter the *author*
+is choosing. [#294](https://github.com/firejune/rigc/issues/294) shipped as the
+other thing — **a way to say the model in the spec** (§1.1) — so the radius, the
+angle and every depth still arrive from the author and the compiler only
+evaluates. What the toolchain owes is unchanged: that the file is checkable, that
+you can look, and that a person can choose.
 
 🚫 **No pass bar for a face, and nothing here to hang one on.** MOTION.md's
 banner applies unchanged: `build` says a file is valid, `render` and `preview`
@@ -953,10 +1014,11 @@ the entire point of that section.
 ⚠️ **Not a Live2D comparison, and not a recommendation between formats.** What
 the worked example measured is that a portrait turn is authorable on plain Spine
 4.3 at draft quality — nothing outside the format, no plugin, no runtime patch —
-and that the **split is authoring cost rather than runtime capability**. The cost
-is [#294](https://github.com/firejune/rigc/issues/294) and
-[#295](https://github.com/firejune/rigc/issues/295). Whether to pay it is a
-project's decision and this page does not make it.
+and that the **split is authoring cost rather than runtime capability**. Half of
+that cost is paid — the deform transcription, via
+[#294](https://github.com/firejune/rigc/issues/294) — and half is the track table
+of [#295](https://github.com/firejune/rigc/issues/295). Whether to pay the rest
+is a project's decision and this page does not make it.
 
 🚫 **No per-eye mesh recipe.** §8 says the eyes need their own deform meshes past
 about 26°, and nobody has built that here. The column-placement arithmetic in

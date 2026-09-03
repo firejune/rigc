@@ -351,7 +351,30 @@ function deformArrayLength(att: Json): number | null {
   }
   if (!Array.isArray(att.vertices)) return null;
   const vertices = att.vertices as unknown[];
-  return vertices.length === worldVerticesLength ? worldVerticesLength : (vertices.length / 3) * 2;
+  if (vertices.length === worldVerticesLength) return worldVerticesLength;
+  // ⚠️ Weighted, and the length is the INFLUENCE COUNT — which is the sum of the
+  // per-vertex bone counts, not a division of this array's length. The file
+  // holds `boneCount` followed by `boneIndex, x, y, weight` per influence, so a
+  // one-bone vertex is FIVE numbers; `readVertices` unpacks that into three
+  // numbers per influence, which is where the parser's own `/3*2` comes from and
+  // exactly why it cannot be applied to the raw form. Applied here it measured
+  // `gallery/flex`'s 77-vertex leaf at 256.667 against its true 154 and put
+  // A35's bar two thirds too wide on every weighted mesh — the silence A35
+  // exists to break, arriving inside A35.
+  //
+  // Derived here rather than shared with `src/compile.ts`'s own walk on purpose:
+  // the gate re-derives from the emitted file so that it is not checking the
+  // compiler's assumptions with the compiler's code. Both had this wrong, which
+  // is an argument for a control on each and not for one implementation.
+  let influences = 0;
+  for (let i = 0; i < vertices.length; ) {
+    const n = vertices[i++];
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) return null;
+    influences += n;
+    i += n * 4;
+    if (i > vertices.length) return null;
+  }
+  return influences * 2;
 }
 
 export function validate(input: ValidateInput): ValidateReport {

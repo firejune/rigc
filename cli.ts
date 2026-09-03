@@ -1813,6 +1813,30 @@ function cmdExplain(flags: Record<string, string>): void {
                 : 'back to the setup pose';
               const curve = Array.isArray(key.curve) ? `bezier[${key.curve.length}]` : key.curve === 'stepped' ? 'stepped' : 'linear';
               console.log(`      t=${String(key.time).padEnd(7)} ${span.padEnd(46)} ${curve}`);
+              // A generated key prints its MODEL and then every offset the model
+              // produced (issue #294). Both halves are the point: the model is
+              // what a reviewer checks a claim against, and the offsets are what
+              // reaches the file — printing only the first would ask a reader to
+              // trust an evaluation they cannot see, which is the gap FACE §9.3
+              // records. The numbers are the emitted ones, not a second
+              // evaluation, so this block and the artifact cannot disagree.
+              const gen = result.deformTransforms.find(
+                (g) => g.animation === animName && g.skin === skinName && g.slot === slotName && g.attachment === attName && g.time === key.time,
+              );
+              if (gen === undefined) continue;
+              console.log(`               transform ${gen.kind}  ${gen.stated}`);
+              console.log(`               ${gen.formula}`);
+              for (const line of gen.derived) console.log(`                 ${line}`);
+              console.log(
+                `               ${gen.vertexCount} vertices, largest offset ${gen.maxOffset}px at vertex ${gen.maxOffsetVertex}`,
+              );
+              for (let v = 0; v < gen.vertexCount; v += 4) {
+                const pairs: string[] = [];
+                for (let k = v; k < Math.min(v + 4, gen.vertexCount); k++) {
+                  pairs.push(`v${String(k).padStart(3)} (${gen.offsets[2 * k]}, ${gen.offsets[2 * k + 1]})`);
+                }
+                console.log(`                 ${pairs.join('  ')}`);
+              }
             }
           }
         }
