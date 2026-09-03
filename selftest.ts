@@ -7608,6 +7608,78 @@ function runDeformTransformSuite(): number {
       "the assertion built to catch a dropped tail measured `bound`'s array at 16 and would not have caught this one",
   );
 
+  // --- DT07: a model the geometry sampled to nothing (issue #350) -----------
+  //
+  // `flat` is (0,0), (12,0), (12,8), (0,8), so it has exactly TWO distinct x
+  // coordinates 12 apart — a sinusoid of wavelength 12 puts every one of them on
+  // a zero crossing, which is `gallery/nod`'s ear at `wavelength 80` on 40-unit
+  // rows with the numbers small enough to check by eye. The bend is the other
+  // route to the same run: a span the part barely enters, where `u^power` is
+  // real arithmetic that quantises to nothing.
+  const wavedToNothing = refusal(dirs, timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, transform: { kind: 'wave', amplitude: 3, wavelength: 12, phase: 0, along: 'x', axis: 'y' } }] }],
+  }));
+  const bentToNothing = refusal(dirs, timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, transform: { kind: 'bend', amount: 5, from: 0, to: 800, power: 20, along: 'y', axis: 'x' } }] }],
+  }));
+  say(
+    'DT07_A_STATED_MODEL_THAT_EVALUATES_TO_AN_ALL_ZERO_RUN_IS_REFUSED',
+    wavedToNothing !== null &&
+      /every one of this attachment's 4 vertices evaluates to an offset of 0/.test(wavedToNothing) &&
+      /are 12 apart/.test(wavedToNothing) &&
+      /at least 4x that \(48\)/.test(wavedToNothing) &&
+      bentToNothing !== null &&
+      /u=0.01 of 1/.test(bentToNothing),
+    `a 3px wave whose every sample is a zero crossing: ${JSON.stringify(wavedToNothing)} | ` +
+      `a 5px bend over a span the part barely enters: ${JSON.stringify(bentToNothing)}`,
+    'both keys state a deformation, emit a run of zeros and GATE GREEN before this refusal — A35 is right that the ' +
+      'run fits and A39 is right that no triangle moved, so the compiler is the only place it can be said (issue ' +
+      '#350, found on the sixth gallery example)',
+  );
+
+  // And the other side of it, which is the whole distinguishing condition: a key
+  // that MEANS the identity states it in its own parameters, and those still
+  // compile — emitting exactly the same all-zero run. Without this control the
+  // refusal above would be indistinguishable from "an all-zero run is refused",
+  // which would break every honest way of writing "hold the setup pose" with a
+  // model. `degrees: 360` is the one worth having: `sin t` there is −2.4e−16 in
+  // float64, so a refusal testing `degrees !== 0` rather than the ROUNDED
+  // scalars would refuse a whole revolution and be very hard to explain.
+  // Caught rather than thrown: a refusal here is the failure this case is FOR,
+  // and letting it abort the process would take every suite after this one with
+  // it — a red that hides the rest of the run is worse feedback than a FAIL line.
+  const identityRun = (label: string, transform: Record<string, unknown>): [string, number[] | string] => {
+    try {
+      return [label, runOf(transform)];
+    } catch (err) {
+      return [label, `REFUSED: ${err instanceof Error ? err.message : String(err)}`];
+    }
+  };
+  const identityRuns: Array<[string, number[] | string]> = [
+    identityRun('affine scale [1, 1]', { kind: 'affine', scale: [1, 1] }),
+    identityRun('wave amplitude 0', { kind: 'wave', amplitude: 0, wavelength: 48, phase: 0, along: 'x', axis: 'y' }),
+    identityRun('bend amount 0', { kind: 'bend', amount: 0, from: 0, to: 8, power: 2, along: 'y', axis: 'x' }),
+    identityRun('yaw degrees 0', { kind: 'yaw', radius: 170, degrees: 0 }),
+    identityRun('yaw degrees 360', { kind: 'yaw', radius: 170, degrees: 360 }),
+  ];
+  const allIdentity = identityRuns.every(
+    ([, run]) => Array.isArray(run) && run.length === 8 && run.every((n) => n === 0),
+  );
+  say(
+    'DT08_CONTROL_A_TRANSFORM_THAT_STATES_THE_IDENTITY_STILL_COMPILES',
+    allIdentity,
+    identityRuns.map(([label, run]) => `${label} -> ${Array.isArray(run) ? `[${run.join(', ')}]` : run}`).join(' | '),
+    'the refusal above is about WHERE the identity is stated, not about the run being zero: a key whose parameters ' +
+      'say `degrees: 0` or `amplitude: 0` means the setup pose and has to keep compiling, and it is what makes ' +
+      "`explain`'s \"this key IS the setup pose\" line true of every transform key that can still reach it",
+  );
+
   return bad;
 }
 
@@ -14624,14 +14696,19 @@ function main(): void {
       'must leave it silent, because a wrong projection with intact winding is only visible to `check`; and the ' +
       'escape hatch both ways — a declared fold SKIPs rather than passes, while an exemption naming an undeclared ' +
       'slot, a slot with no mesh, or carrying no reason is refused by name), ' +
-      '+ 7 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
+      '+ 9 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
       'from docs/FACE.md §1 byte for byte, the same model past the fold angle still firing A39, the other three ' +
-      'closed forms — affine, wave and bend — evaluated against arithmetic derived here, and the four refusals that ' +
+      'closed forms — affine, wave and bend — evaluated against arithmetic derived here, and the five refusals that ' +
       'keep a model from becoming a second answer: a run beside it, a start index, a parameter that would evaluate ' +
       'a DIFFERENT model — a radius inside the part, a mirroring determinant, a bend that reads and displaces one ' +
-      "axis — and a weighted attachment with no single bind space, whose array is now measured in influences, on both " +
+      "axis — a weighted attachment with no single bind space, whose array is now measured in influences, on both " +
       'sides of the encoding: the compiler refuses a 12-number run on it and A35 fires on the same run reached ' +
-      'through the artifact), ' +
+      'through the artifact; and a model the GEOMETRY sampled to nothing — a wave whose every vertex lands on a ' +
+      'zero crossing and a bend over a span the part barely enters, both of which stated a deformation, emitted a ' +
+      'run of zeros and gated green, since A35 is right that the run fits and A39 is right that no triangle moved ' +
+      '(issue #350) — held apart from the identity a key MEANS by the control beside it, where `degrees: 0`, a ' +
+      'whole revolution, `amplitude: 0`, `amount: 0` and `scale: [1, 1]` each still compile to that same all-zero ' +
+      'run), ' +
       "+ 7 deform-report controls (`explain`'s DEFORM block read as a subprocess prints the area and stretch " +
       'extremes the closed form predicts — the column-spacing ratios of docs/FACE.md §4.2 for a yaw and `sx·sy` with ' +
       'its two scale factors for an affine, whose product is the area ratio — while its reversal and collapse counts ' +
