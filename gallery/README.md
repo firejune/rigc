@@ -8,8 +8,15 @@ field table.
 Everything here is drawn for this repository and licence-clean: no traced
 reference, no example asset, nothing lifted out of the benchmark corpus. The
 character is **Rigby**, the project's mascot, and the gallery shares one drawing
-of him ([`rigby.ts`](rigby.ts)) so that four examples look like four shots of one
-character rather than four characters.
+of him ([`rigby.ts`](rigby.ts)) so that four of the examples look like four shots
+of one character rather than four characters.
+
+The fifth has a second cast member. `portrait` needed a face that sells gaze and
+a head turn, and those read off a brow, an iris and a cheek-to-jaw silhouette
+that a muzzle does not have — so **Vela** is drawn in
+[`portrait/make_parts.ts`](portrait/make_parts.ts), in Rigby's own palette and
+outline weight. That README defends the decision; the rule it bends is *one
+character*, and the rule it keeps is *one art language*.
 
 | Example | Stars | What it is |
 | --- | --- | --- |
@@ -17,6 +24,7 @@ character rather than four characters.
 | [`flex/`](flex/) | **`contour` meshes** (AUTHORING §3.4) | A swallow-tailed banner and a serrated leaf — four meshes traced off their own alpha, waved by bone timelines and rippled by a `deform` |
 | [`walk/`](walk/) | `ik` constraints + **`ik` timelines** (AUTHORING §3.5, §4.9) | Rigby walks on the spot. Two two-bone leg chains solved to foot targets under a `ground` bone, with the planted leg nailed down and the swinging one let go at the top of its lift |
 | [`squash/`](squash/) | **`deform` timelines** (AUTHORING §4.11) | Rigby's ball bounces. A 9-vertex mesh squashed about its contact point and stretched along its travel, from two affine transforms written out in the README |
+| [`portrait/`](portrait/) | **`deform` as a projection** (AUTHORING §4.11) | Vela breathes, blinks, shifts her gaze and turns her head 12° off axis. Two grid meshes and per-part parallax, every number derived from one line of yaw arithmetic. The measured experiment for [#285](https://github.com/firejune/rigc/issues/285) — see its [FINDINGS.md](portrait/FINDINGS.md) |
 
 The root [README.md](../README.md) indexes these under *The gallery*, and
 [AUTHORING.md](../docs/AUTHORING.md) points at each one from the section that
@@ -64,6 +72,9 @@ gallery/
   <name>/
     README.md            what it shows, the feature it stars, the commands, and
                          what the authoring cost
+    FINDINGS.md          (portrait only) the measurement half, where an example
+                         is also an experiment somebody booked and the numbers
+                         would swamp its README
     make_parts.ts        draws parts/ — deterministic
     parts/*.png          committed. Every PNG the rig names, and nothing else
     rig.json             the skeleton
@@ -112,7 +123,7 @@ in one place.
 
 ## Adding one
 
-The bar, and it is the bar the four examples above were held to:
+The bar, and it is the bar the five examples above were held to:
 
 - **One starred feature**, named in the first paragraph of its README. A second
   feature is a second example.
@@ -138,17 +149,26 @@ The bar, and it is the bar the four examples above were held to:
   `loop: true` reads **0 / 255** — `ride`, `wave`, `walk` and `bounce` — and the
   two one-shots beside them (`coast`, `gust`) read what a one-shot should: they
   end somewhere else. Point it only at a loop, and own the number in the README.
+  `portrait` is the case in between and worth knowing about: its `gaze` and
+  `turn` are one-shots that return to rest exactly, so they read **0 / 255** too
+  — a one-shot ending somewhere else is a choice, not a law.
 
   ⚠️ What it cannot see is a **velocity** discontinuity. A cycle whose value
   matches at the seam but whose slope does not still reads as a hitch, and every
   pixel in this measurement is identical when that happens.
 - **The README records what the authoring cost.** Every bug, every surprise,
-  every default that turned out to be wrong. Writing these four examples found
-  **four** genuine tool defects
+  every default that turned out to be wrong. Writing the first four examples
+  found **four** genuine tool defects
   ([#273](https://github.com/firejune/rigc/issues/273),
   [#274](https://github.com/firejune/rigc/issues/274),
   [#275](https://github.com/firejune/rigc/issues/275),
-  [#277](https://github.com/firejune/rigc/issues/277)) — that is what a gallery
+  [#277](https://github.com/firejune/rigc/issues/277)), and `portrait` found
+  **five** more — two defects
+  ([#292](https://github.com/firejune/rigc/issues/292),
+  [#293](https://github.com/firejune/rigc/issues/293)) and three instrument gaps
+  ([#294](https://github.com/firejune/rigc/issues/294),
+  [#295](https://github.com/firejune/rigc/issues/295),
+  [#296](https://github.com/firejune/rigc/issues/296)). That is what a gallery
   is *for*, besides being read. If a tool behaves wrongly or a doc misleads you,
   file it with the reproduction and work around it in the open.
 - **`bun run selftest` covers it automatically.** Its gallery suite compiles
