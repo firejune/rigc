@@ -1461,7 +1461,7 @@ is that a **depth** is the decision while a **residual** is not.
 | `kind` | Reads | `translatex` / `translatey` | `scalex` / `scaley` | Worked case |
 | --- | --- | --- | --- | --- |
 | `yaw` | each member's setup `x` | `d = (x−about)·(cos t − 1) − (depth − carried)·sin t` — FACE §3 | `cos(α − t)/cos α`, `α = atan2(x−about, depth)` — FACE §5 | `gallery/portrait` |
-| `pitch` | each member's setup `y` | the same expression with `y` for `x` — a nod | the same | — |
+| `pitch` | each member's setup `y` | the same expression with `y` for `x` — a nod | the same | `gallery/nod` |
 
 ⭐ **The `property` says which half of the turn a key is.** A turn does two
 things to a rigid part on a curved surface: it moves it, and it narrows it. Those
@@ -1470,7 +1470,19 @@ which one the track is — so a `derive` on a property its kind has no projectio
 onto is refused by name rather than quietly driven by the wrong half.
 
 **The parameters.** `degrees` and `depth` are required; `depth` is
-`{ "member": z, … }` on a group track and one number on a bone track. `carried`
+`{ "member": z, … }` on a group track and one number on a bone track.
+
+⚠️ **`z` runs toward the viewer (FACE §1), so a larger depth is nearer.** A nose
+in front of the skull surface takes a **bigger** number than the socket beside
+it, and a **negative** depth is behind the axis — which is what makes the back of
+a head swing the other way (FACE §2). That sign is the one parameter here no
+assertion can check, so the closed form is the arbiter: a part with
+`depth > carried` gets a **negative** residual, and FACE §3 makes exactly that
+the nose diagnostic — *if the nose's residual is not negative, the depths are
+wrong*. ([#351](https://github.com/firejune/rigc/issues/351) was this sentence
+missing here and stated backwards in the field reference.)
+
+`carried`
 (default 0) is **the depth whose shift a parent bone already applies** — FACE
 §3's shared-shift split, stated: put a bone at the plate's own origin, key
 `−carried·sin t` there, and each member then keys only its residual. That split
@@ -1949,7 +1961,9 @@ where the remedy is a line you own. `A35` does **not** refuse it: it is pointed 
 other people's files, and a rule stricter than the runtime tells its reader to go
 and break correct data.
 
-🖼️ **Worked examples, and they use a deform for three different things.**
+🖼️ **Worked examples, and they use a deform for four different things** — all
+four are repository material rather than part of the published package, so the
+links go to GitHub.
 [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash) — a 9-vertex ball squashed about its contact point,
 from the two affine transforms its keys now **state**.
 [`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait) — a 2.5D head turn, where the keys are the
@@ -1957,6 +1971,11 @@ from the two affine transforms its keys now **state**.
 placed to sample a cosine, and a measured account of the angle past which the
 mesh folds. [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex) — a leaf whose blade bends on a
 `contour` mesh no bone can bend, and the measurement that picked the model.
+[`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod) — the
+projection on the **other** axis (a `pitch`, §4.11.1), and a **travelling wave**
+whose only moving parameter is `phase`: each of its three meshes is laid out for
+the model that bends it, so the rows are the argument rather than the vertex
+count.
 
 📘 **[FACE.md](FACE.md) is the recipe for that second case**, and it is where the
 grid questions this section leaves to its reader are answered: where to put the
@@ -2002,9 +2021,9 @@ example needed it:
 | `kind` | Parameters | What it evaluates | Worked case |
 | --- | --- | --- | --- |
 | `yaw` | `radius`, `degrees`, `about` | `dx = (x−about)·(cos t − 1) − z·sin t`, `z = √(radius² − (x−about)²)` — the 2.5D turn (FACE §1) | `gallery/portrait` |
-| `pitch` | the same | the same expression with `y` for `x` — a nod rather than a turn | — |
+| `pitch` | the same | the same expression with `y` for `x` — a nod rather than a turn | `gallery/nod` |
 | `affine` | `scale`, `about` | `dx = (sx−1)·(x−ax)`, `dy = (sy−1)·(y−ay)` — a scale about a fixed point | `gallery/squash` |
-| `wave` | `amplitude`, `wavelength`, `phase`, `along`, `axis` | `d = amplitude · sin(2π·along/wavelength + phase)` | — |
+| `wave` | `amplitude`, `wavelength`, `phase`, `along`, `axis` | `d = amplitude · sin(2π·along/wavelength + phase)` | `gallery/nod` |
 | `bend` | `amount`, `from`, `to`, `power`, `along`, `axis` | `d = amount · u^power`, `u = (along − from)/(to − from)` | `gallery/flex` |
 
 `along` names the coordinate a wave or a bend reads and `axis` the one it
@@ -2175,6 +2194,15 @@ clothes. The quantity that does move — how much art each drawn pixel now carri
 inverted build is the case worth reading — `A39` passes it (correctly: nothing
 reverses), and the block is what says `x1.362834` where the model's own table
 says `x1.319121`, with no reference render anywhere.
+
+📘 **[`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod)'s
+README is a second reading of the same block** (repository material, hence the
+GitHub link), and it is the one where the figures are checked from two directions
+at once. Its `pitch` band ratios are *derived* from the mesh's own row table and
+*measured* off the posed vertices, and the two agree to six decimals. Its `wave`
+keys then report an area ratio of `1.000000 ± 1e-6` at **every** amplitude — not
+a measurement but a **proof** showing up as one, because a wave that reads `y`
+and displaces `x` over row-major quads preserves every signed area exactly.
 
 ---
 
