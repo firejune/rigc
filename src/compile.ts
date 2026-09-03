@@ -22,6 +22,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { readPngInfo } from './png.ts';
 import { CompileError, NotImplementedError } from './errors.ts';
 import { parseJsonWithPosition } from './json-position.ts';
+import { parseMotionSpec } from './motion.ts';
 import {
   parseRigSpec,
   RIG_FROM_PROPERTIES,
@@ -208,24 +209,6 @@ function channelHex(v: number): string {
 function rgbaHex(v: number[]): string {
   if (v.length !== 4) throw new CompileError(`rgba value needs 4 channels, got ${v.length}`);
   return v.map(channelHex).join('');
-}
-
-/**
- * Is this `motion.setup` entry the object shape AUTHORING §4.2 documents?
- *
- * An array is excluded on purpose: `typeof [] === 'object'` and a member read on
- * one is silently `undefined`, which is the same false green a bare string gives.
- */
-function isSetupEntry(v: unknown): boolean {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-/** What a rejected `setup` entry actually was, for the refusal to name. */
-function describeSetupEntry(v: unknown): string {
-  if (v === null) return 'null';
-  if (Array.isArray(v)) return 'an array';
-  if (typeof v === 'string') return `the string ${JSON.stringify(v)}`;
-  return `a ${typeof v}`;
 }
 
 /**
@@ -794,7 +777,9 @@ export function compile(opts: CompileOptions): CompileResult {
   const manifestDir = manifestPath === null ? null : dirname(manifestPath);
 
   const rig = parseRigSpec(readJson<unknown>(rigPath), rigPath);
-  const motion = readJson<MotionSpec>(motionPath);
+  // Parsed, not cast, since issue #307 — `src/motion.ts` states what it proves
+  // and which refusals it deliberately leaves in this file.
+  const motion = parseMotionSpec(readJson<unknown>(motionPath), motionPath);
   const manifest = manifestPath === null ? null : readJson<FaceManifest>(manifestPath);
 
   // The rig spec names its own path in every message `parseRigSpec` throws (its
@@ -817,9 +802,9 @@ export function compile(opts: CompileOptions): CompileResult {
   };
 
   withMotionSource(() => {
-    if (motion.spec !== 'rigc-motion/1') {
-      throw new CompileError(`unknown motion spec version: ${String(motion.spec)}`);
-    }
+    // The version tag is `parseMotionSpec`'s, and so is every shape under it.
+    // What is left in this block is the one question the motion file cannot
+    // answer on its own.
     // The motion spec was authored against one formation. Pairing it with another
     // rig would aim its keys at bones whose names happen to match and whose meaning
     // does not — the class of wrongness that loads, plays and lies.
@@ -1136,30 +1121,13 @@ export function compile(opts: CompileOptions): CompileResult {
     if (!names.length) continue;
 
     const setup = motion.setup?.[rigSlot.name];
-    // ⚠️ `motion` is a CAST, not a parse (`readJson<MotionSpec>`), so the type
-    // says what a correct file holds and not what this one does. A `setup` entry
-    // that is not an object gets past every `!== undefined` guard below and then
-    // reads a member off it — and the two ways to write one are both on the
-    // shortest path to the documented feature (issue #293):
-    //
-    //   "lid_l": null       the natural elision of `{ "attachment": null }`, by
-    //                       a reader who has just learned `attachment` may be
-    //                       null. Used to crash with a raw TypeError.
-    //   "lid_l": "plate"    the attachment name where its wrapper belongs. Far
-    //                       worse: `.attachment` on a string is `undefined`, so
-    //                       it compiled GREEN and hid the slot — the exact
-    //                       opposite of what was asked, stated nowhere.
-    //
-    // One guard for both, because the second is why this cannot be a `!== null`
-    // check: a silent wrong is worse than a crash, and the same line makes both.
-    if (setup !== undefined && !isSetupEntry(setup)) {
-      throw new CompileError(
-        `${motionPath}: \`setup."${rigSlot.name}"\` is ${describeSetupEntry(setup)}; a setup entry is an object ` +
-          `of \`{ attachment?: string | null, color?: [r, g, b, a] }\` — to show nothing there write ` +
-          `\`"${rigSlot.name}": { "attachment": null }\`, and to show an attachment write ` +
-          `\`"${rigSlot.name}": { "attachment": "<name>" }\``,
-      );
-    }
+    // ⚠️ The entry's SHAPE is `parseMotionSpec`'s now (issue #307), and it had to
+    // move: this loop walks the RIG's slots and `continue`s past one with no
+    // attachments a few lines above, so the #293 shapes — `"lid_l": null` and,
+    // far worse, `"lid_l": "plate"`, which reads `.attachment` off a string as
+    // `undefined` and hides the slot in silence — stayed GREEN for exactly the
+    // slots a reader is most likely to be halfway through wiring up. Everything
+    // from here down is the half that needs the rig in front of it.
     if (setup !== undefined && rigSlot.attachment !== undefined) {
       throw new CompileError(
         `slot "${rigSlot.name}" has a setup attachment in the rig spec AND in the motion spec; the setup pose has one author`,
@@ -1487,15 +1455,12 @@ export function compile(opts: CompileOptions): CompileResult {
         transform: {},
       };
       for (const group of ['ik', 'transform'] as const) {
+        // The array, the entries and their `constraint` names are shapes, so
+        // they are `parseMotionSpec`'s; what is left here needs the rig's
+        // constraint table.
         const tracks: Array<MotionIkTrack | MotionTransformTrack> = anim[group] ?? [];
-        if (!Array.isArray(tracks)) {
-          throw new CompileError(`animation "${animName}": "${group}" must be an array of { constraint, keys } entries`);
-        }
         for (const track of tracks) {
           const name = track.constraint;
-          if (typeof name !== 'string' || name.length === 0) {
-            throw new CompileError(`animation "${animName}": a ${group} timeline needs a "constraint" name`);
-          }
           const type = constraintTypes.get(name);
           if (type === undefined) {
             const known = [...constraintTypes.entries()].filter(([, t]) => t === group).map(([n]) => n);
@@ -1537,11 +1502,6 @@ export function compile(opts: CompileOptions): CompileResult {
       // carry (the other is `sequence`), which is why the level exists at all.
       const deformTimelines: Record<string, Record<string, Record<string, Record<string, SpineTimelineKey[]>>>> = {};
       const deformTracks: MotionDeformTrack[] = anim.deform ?? [];
-      if (!Array.isArray(deformTracks)) {
-        throw new CompileError(
-          `animation "${animName}": "deform" must be an array of { slot, attachment, keys } entries`,
-        );
-      }
       for (const track of deformTracks) {
         const skinName = track.skin ?? 'default';
         const at = `animation "${animName}" deform ${skinName}/${String(track.slot)}/${String(track.attachment)}`;
@@ -3330,7 +3290,6 @@ function compileEvents(
           (known.length ? `declared: ${known.join(', ')}` : 'that block is empty or absent'),
       );
     }
-    if (!Number.isFinite(key.t)) throw new CompileError(`${where}: key ${i} has a non-finite time ${String(key.t)}`);
     const time = keyTime(key.t);
     if (i > 0 && time < (out[i - 1].time as number)) {
       throw new CompileError(
@@ -3434,7 +3393,10 @@ function compileConstraintTrack(
   const article = group === 'ik' ? 'an' : 'a';
   const where = `animation "${animName}" ${group} constraint "${track.constraint}"`;
   const keys = track.keys;
-  if (!Array.isArray(keys) || keys.length === 0) throw new CompileError(`${where}: no keys`);
+  // An array by the time this runs (`parseMotionSpec`); an EMPTY one is a
+  // format rule rather than a shape — the parser reads key 0, finds nothing and
+  // skips the timeline, which is assertion A34's silent case.
+  if (keys.length === 0) throw new CompileError(`${where}: no keys`);
 
   const read = (key: MotionIkTrack['keys'][number] | MotionTransformTrack['keys'][number], field: string): unknown =>
     (key as unknown as Record<string, unknown>)[field];
@@ -3479,7 +3441,6 @@ function compileConstraintTrack(
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const next = keys[i + 1];
-    if (!Number.isFinite(key.t)) throw new CompileError(`${where}: key ${i} has a non-finite time ${String(key.t)}`);
     const time = keyTime(key.t);
     if (i > 0 && time <= (out[i - 1].time as number)) {
       throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
@@ -3730,12 +3691,14 @@ function compileDeformTrack(
   const skin = track.skin ?? 'default';
   const where = `animation "${animName}" deform ${skin}/${track.slot}/${track.attachment}`;
   const keys = track.keys;
-  if (!Array.isArray(keys) || keys.length === 0) throw new CompileError(`${where}: no keys`);
+  // An array by the time this runs (`parseMotionSpec`); an EMPTY one is a
+  // format rule rather than a shape — the parser reads key 0, finds nothing and
+  // skips the timeline, which is assertion A34's silent case.
+  if (keys.length === 0) throw new CompileError(`${where}: no keys`);
 
   const out: SpineTimelineKey[] = [];
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
-    if (!Number.isFinite(key.t)) throw new CompileError(`${where}: key ${i} has a non-finite time ${String(key.t)}`);
     const time = keyTime(key.t);
     if (i > 0 && time <= (out[i - 1].time as number)) {
       throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);

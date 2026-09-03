@@ -112,7 +112,8 @@ import {
   type FrameSet,
 } from './src/render.ts';
 import { CLI_DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
-import type { CompileResult, MotionSpec } from './src/types.ts';
+import { parseMotionSpec } from './src/motion.ts';
+import type { CompileResult } from './src/types.ts';
 
 /**
  * One entry of a cuts.json, every path relative to the cuts.json file.
@@ -1958,7 +1959,10 @@ function cmdExplain(flags: Record<string, string>): void {
   console.log(`  ..    rig    ${opts.rigPath}`);
   console.log(`  ..    motion ${opts.motionPath}`);
   const result = compile(opts);
-  const motion = readJsonFile(opts.motionPath) as MotionSpec;
+  // `compile` has already parsed this file, so the read below cannot fail — but
+  // it goes through the same parser rather than a cast, because the cast was the
+  // last one in the repository and issue #307 was about exactly that.
+  const motion = parseMotionSpec(readJsonFile(opts.motionPath), opts.motionPath);
 
   console.log(`\nstage  ${result.skeleton.skeleton.width} x ${result.skeleton.skeleton.height}  (spine ${result.skeleton.skeleton.spine})`);
 

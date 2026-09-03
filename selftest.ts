@@ -42,7 +42,7 @@
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import {
   AnimationState,
@@ -77,6 +77,7 @@ import {
   type FramingSource,
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError } from './src/compile.ts';
+import { parseMotionSpec } from './src/motion.ts';
 import {
   contourOvershootBound,
   CONTOUR_MIN_COVERAGE,
@@ -10387,6 +10388,416 @@ function runErrorAttributionSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// the motion spec's own parse — issue #307
+//
+// The rig spec has had `parseRigSpec` since it stopped being three hard-coded
+// tables. The motion spec reached `compile` as `readJson<MotionSpec>(path)`, a
+// CAST, and the compiler said so in a comment beside the one field that had
+// grown a guard of its own: `setup: { "lid_l": "plate" }` compiled GREEN and
+// hid the slot (#293/#303).
+//
+// ⭐ Every case below was run against the pre-parse compiler first, and the
+// `why` line records what that run did — `compiled green`, `crashed with a raw
+// TypeError`, or `refused, but for the wrong reason`. That third answer is the
+// one a crash-only parser leaves behind, and it is why the two controls at the
+// top of this suite are the ones the issue named: they are #293's exact shape,
+// in the two corners the emit loop never reached.
+// ---------------------------------------------------------------------------
+
+/** Every motion spec committed to this repository, for the corpus control. */
+function everyMotionSpec(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir).sort()) {
+    if (name === 'node_modules' || name === '.git' || name === 'examples') continue;
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) {
+      everyMotionSpec(path, out);
+      continue;
+    }
+    if (!name.endsWith('.json')) continue;
+    if (readFileSync(path, 'utf8').includes('"rigc-motion/1"')) out.push(path);
+  }
+  return out;
+}
+
+function runMotionParseSuite(): number {
+  console.log('\n── the motion spec\'s own parse (issue #307) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const dirs = writeProbeRig();
+  /** A rig whose `ghost` slot has no attachment in any skin — see MP01/MP02. */
+  const ghostDirs = writeProbeRig({
+    slots: [
+      { name: 'block', bone: 'block', attachment: 'block' },
+      { name: 'marker', bone: 'block', attachment: 'marker' },
+      { name: 'ghost', bone: 'block' },
+    ],
+  });
+  /** A rig that leaves both slots' setup poses to the motion spec — see MP08..MP11. */
+  const setupDirs = writeProbeRig({
+    slots: [
+      { name: 'block', bone: 'block' },
+      { name: 'marker', bone: 'block' },
+    ],
+  });
+
+  const base: Record<string, unknown> = {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {},
+  };
+  /** The base spec with one field replaced — the shape most cases below need. */
+  const withField = (field: string, value: unknown): Record<string, unknown> => ({ ...base, [field]: value });
+  /** One animation, one bone `rotate` track, whatever keys and track fields are given. */
+  const rotate = (keys: unknown[], track: Record<string, unknown> = {}): Record<string, unknown> => ({
+    ...base,
+    easings: { soft: [0.42, 0, 0.58, 1] },
+    animations: { move: { duration: 1, loop: false, tracks: [{ bone: 'block', property: 'rotate', keys, ...track }] } },
+  });
+  /** One animation whose `tracks` are empty and whose extra families are given. */
+  const beside = (extra: Record<string, unknown>): Record<string, unknown> => ({
+    ...base,
+    animations: { move: { duration: 1, loop: false, tracks: [], ...extra } },
+  });
+
+  /** Refused by a `CompileError` whose message names this file and this substring. */
+  const named = (
+    name: string,
+    probe: ProbeDirs,
+    motion: Record<string, unknown>,
+    fragment: string,
+    why: string,
+  ): void => {
+    const message = refusal(probe, motion);
+    say(
+      name,
+      message !== null && message.includes(join(probe.dir, 'probe.motion.json')) && message.includes(fragment),
+      message === null ? 'the compile went through' : `refused with: ${message}`,
+      why,
+    );
+  };
+
+  // --- the two controls the issue named -------------------------------------
+  //
+  // 🚨 #303's guard lives in the emit loop, which walks the RIG's slots and
+  // `continue`s past a slot with no attachments BEFORE it reads `setup`. So the
+  // silent wrong it was written for survived in the two places an author is
+  // most likely to hit it — the slot they have not finished wiring up, and the
+  // slot name they mistyped.
+  named(
+    'MP01_A_SETUP_ENTRY_ON_A_SLOT_WITH_NO_ATTACHMENTS_IS_STILL_REFUSED',
+    ghostDirs,
+    { ...base, setup: { ghost: 'marker' } },
+    '`setup."ghost"` is the string "marker"',
+    'issue #293\'s exact shape — the attachment name where its wrapper belongs — COMPILED GREEN on the ' +
+      'pre-parse compiler whenever the slot it named carried no attachments, because the emit loop skipped ' +
+      'that slot before ever reading the entry. A guard that only the emit path can reach is a guard with the ' +
+      'author\'s own half-finished rig as its blind spot',
+  );
+  named(
+    'MP02_A_SETUP_ENTRY_FOR_A_SLOT_THE_RIG_DOES_NOT_DECLARE_IS_REFUSED',
+    dirs,
+    { ...base, setup: { nosuch: 'marker' } },
+    '`setup."nosuch"` is the string "marker"',
+    'the same shape one typo away: the loop never visits a key the rig has no slot for, so this compiled ' +
+      'green too. Parsing the TABLE rather than the slots it happens to match has no such corner',
+  );
+
+  // --- the envelope ---------------------------------------------------------
+  named(
+    'MP03_A_MOTION_SPEC_THAT_IS_NOT_AN_OBJECT_SAYS_SO',
+    dirs,
+    [] as unknown as Record<string, unknown>,
+    'a motion spec must be a JSON object',
+    'it was refused, but as `unknown motion spec version: undefined` — a reader is sent to look for a version ' +
+      'tag in a file that has no fields at all',
+  );
+  named(
+    'MP04_AN_ABSENT_CUT_IS_REFUSED',
+    dirs,
+    { spec: 'rigc-motion/1', archetype: 'static_probe', easings: {}, animations: {} },
+    '`cut` is absent',
+    '`cut` is declared required and was read by nothing, so a spec that omitted it compiled green — the field ' +
+      'names what these keys were authored for, and a spec that cannot say is a spec nobody can pair later',
+  );
+  named(
+    'MP05_AN_ABSENT_ANIMATIONS_TABLE_IS_REFUSED_BY_NAME',
+    dirs,
+    { spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', easings: {} },
+    '`animations` is absent',
+    'crashed with a raw `TypeError: Object.entries requires that input parameter not be null or undefined`, ' +
+      'which escapes `withMotionSource` and therefore names NEITHER input file',
+  );
+  named(
+    'MP06_AN_ANIMATIONS_TABLE_THAT_IS_AN_ARRAY_IS_REFUSED',
+    dirs,
+    withField('animations', []),
+    '`animations` is an array of 0',
+    '`Object.entries([])` is empty, so an array compiled green with no animations at all — a spec that meant to ' +
+      'declare several and reached for the wrong bracket',
+  );
+
+  // --- easings --------------------------------------------------------------
+  //
+  // ⭐ The most silent field in the format. `bezierForChannel` destructures four
+  // handles with no guard, and the emitter writes the missing one as `null`.
+  {
+    const eased = (handles: unknown): Record<string, unknown> => ({
+      ...base,
+      easings: { soft: handles },
+      animations: {
+        move: {
+          duration: 1,
+          loop: false,
+          tracks: [{ bone: 'block', property: 'rotate', keys: [{ t: 0, v: [0], ease: 'soft' }, { t: 1, v: [30] }] }],
+        },
+      },
+    });
+    named(
+      'MP07_A_NAMED_EASING_WITH_THREE_HANDLES_IS_REFUSED',
+      dirs,
+      eased([0.42, 0, 0.58]),
+      '`easings."soft"` is an array of 3',
+      'compiled green and emitted `"curve": [0.42, 0, 0.58, null]` — a curve with a hole in it, which loads, ' +
+        'plays and is a different shape from the one the spec named',
+    );
+    named(
+      'MP08_A_NAMED_EASING_WITH_A_NON_NUMBER_HANDLE_IS_REFUSED',
+      dirs,
+      eased([0.42, 'x', 0.58, 1]),
+      '`easings."soft"[1]` is the string "x"',
+      'the same silence one character further in: the handle became `NaN`, and the round trip writes a `NaN` ' +
+        'as `null` too',
+    );
+    named(
+      'MP09_AN_ABSENT_EASINGS_TABLE_IS_REFUSED',
+      dirs,
+      { spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', animations: {} },
+      '`easings` is absent',
+      'the field is declared required and nothing asserted it, so a spec with no table compiled green until ' +
+        'the first key named an easing — a failure whose distance from its cause is the whole file',
+    );
+  }
+
+  // --- setup ----------------------------------------------------------------
+  named(
+    'MP10_A_SETUP_TABLE_THAT_IS_AN_ARRAY_IS_REFUSED',
+    dirs,
+    withField('setup', []),
+    '`setup` is an array of 0',
+    'compiled green: every `motion.setup?.[slotName]` lookup on an array is `undefined`, so the whole table ' +
+      'was silently absent and every slot fell through to the rig\'s own attachment',
+  );
+  named(
+    'MP11_A_SETUP_COLOUR_WITH_A_NON_NUMBER_CHANNEL_IS_REFUSED',
+    setupDirs,
+    { ...base, setup: { block: { attachment: 'block', color: [1, 'x', 0, 1] }, marker: { attachment: 'marker' } } },
+    '`setup."block".color[1]` is the string "x"',
+    'compiled green and wrote the slot colour as `ffNaN00ff`: `channelHex` clamps with `Math.min`/`Math.max`, ' +
+      'which pass `NaN` through, and `NaN.toString(16)` is the text "NaN"',
+  );
+  named(
+    'MP12_A_SETUP_ATTACHMENT_THAT_IS_NOT_A_NAME_IS_REFUSED_AS_A_TYPE',
+    setupDirs,
+    { ...base, setup: { block: { attachment: 7 }, marker: { attachment: 'marker' } } },
+    '`setup."block".attachment` is 7',
+    'it was refused, but as `setup attachment "7" for slot "block" is not one of [block]` — which reads as a ' +
+      'misspelled attachment NAME and sends the author to check the skin table. Whether a string resolves is ' +
+      'still `compile`\'s question; whether it is a string is this one',
+  );
+
+  // --- physics --------------------------------------------------------------
+  named(
+    'MP13_A_PHYSICS_TABLE_THAT_IS_AN_ARRAY_IS_REFUSED',
+    dirs,
+    withField('physics', []),
+    '`physics` is an array of 0',
+    '`Object.entries([])` is empty, so an array of constraints emitted no constraint and said nothing — the ' +
+      'tuning table is keyed by name for the same reason the rig\'s `events` block is',
+  );
+  named(
+    'MP14_A_NON_NUMERIC_PHYSICS_PARAMETER_IS_REFUSED',
+    dirs,
+    withField('physics', { wob: { bone: 'block', rotate: 1, mass: 'heavy' } }),
+    '`physics."wob".mass` is the string "heavy"',
+    'compiled green and emitted `"mass": null` into the constraint, which the runtime reads as zero mass — ' +
+      'assertion A23\'s own example of a constraint that never settles, arriving with no word from either layer',
+  );
+
+  // --- mix (the player-side table nothing had ever read) --------------------
+  named(
+    'MP15_A_NON_NUMERIC_DEFAULT_MIX_IS_REFUSED',
+    dirs,
+    withField('mix', { default: 'fast' }),
+    '`mix.default` is the string "fast"',
+    'the one table in the format that is not emitted into skeleton JSON, and therefore the one nothing had ' +
+      'ever looked at: it passed the compiler, the gate and the round trip, and became a `NaN` mix duration in ' +
+      'whatever player read the spec',
+  );
+  named(
+    'MP16_A_MALFORMED_MIX_PAIR_IS_REFUSED',
+    dirs,
+    withField('mix', { default: 0.2, pairs: [['walk', 'run']] }),
+    '`mix.pairs[0]` is an array of 2',
+    'same silence: a pair missing its duration compiled green, and a two-element pair is exactly what a hand ' +
+      'edit that deleted a number leaves behind',
+  );
+
+  // --- the animation envelope ----------------------------------------------
+  named(
+    'MP17_AN_ANIMATION_THAT_IS_NOT_AN_OBJECT_IS_REFUSED_BY_NAME',
+    dirs,
+    withField('animations', { move: 'rotate' }),
+    '`animations."move"` is the string "rotate"',
+    'crashed with a raw `TypeError: undefined is not an object (evaluating \'anim.tracks\')`, which names no ' +
+      'file, no animation and no field',
+  );
+  named(
+    'MP18_AN_ABSENT_DURATION_IS_REFUSED',
+    dirs,
+    withField('animations', { move: { loop: false, tracks: [] } }),
+    '`animations."move".duration` is absent',
+    'compiled green, and this is the arithmetic reason why: the R7 check is `Math.abs(compiled - declared) > ' +
+      'FRAME`, and a comparison against `NaN` is FALSE — so the one guard on the field passes hardest exactly ' +
+      'when the field is missing',
+  );
+  named(
+    'MP19_A_NULL_DURATION_IS_REFUSED',
+    dirs,
+    withField('animations', { move: { duration: null, loop: false, tracks: [] } }),
+    '`animations."move".duration` is null',
+    'compiled green for the same reason, and `null` is the shape a template with the field left unfilled has',
+  );
+  named(
+    'MP20_AN_ABSENT_TRACKS_ARRAY_IS_REFUSED_BY_NAME',
+    dirs,
+    withField('animations', { move: { duration: 1, loop: false } }),
+    '`animations."move".tracks` is absent',
+    'crashed with a raw `TypeError` on `anim.tracks` — an animation whose timelines are all in the families ' +
+      'BESIDE `tracks` (`deform`, `events`, `ik`) still has to write `"tracks": []`, and the refusal now says so',
+  );
+  // Positive control for MP18/MP19/MP20 and for the whole suite: `loop` is
+  // OPTIONAL, and 20 of the motion specs in this repository omit it. A parser
+  // that required it would have refused most of the benchmark corpus.
+  {
+    const message = refusal(dirs, withField('animations', { move: { duration: 0, tracks: [] } }));
+    say(
+      'MP21_AN_ANIMATION_WITH_NO_LOOP_HINT_IS_STILL_ACCEPTED',
+      message === null,
+      message === null ? 'compiled' : `refused the documented spelling: ${message}`,
+      '`loop` is a player hint that is not expressible in skeleton JSON, and `MotionAnimation` declared it ' +
+        'required while 20 of the 37 motion specs here name no `loop` at all. The type was the thing that was ' +
+        'wrong, and a required-field refusal would have been a new gate over a field the compiler never reads',
+    );
+  }
+
+  // --- tracks and keys ------------------------------------------------------
+  named(
+    'MP22_A_TRACK_KEYS_ARRAY_THAT_IS_ABSENT_IS_REFUSED_BY_NAME',
+    dirs,
+    { ...base, animations: { move: { duration: 1, loop: false, tracks: [{ bone: 'block', property: 'rotate' }] } } },
+    '`animations."move".tracks[0].keys` is absent',
+    'crashed with a raw `TypeError` on `track.keys.some` — inside the per-member resolution added by #320, so ' +
+      'the crash arrived from a function whose name has nothing to do with the missing field',
+  );
+  named(
+    'MP23_A_KEY_TIME_THAT_IS_A_STRING_IS_REFUSED',
+    dirs,
+    rotate([{ t: '0', v: [0] }, { t: 1, v: [30] }]),
+    '`animations."move".tracks[0].keys[0].t` is the string "0"',
+    'compiled green with a `NaN` time in the emitted timeline. `events`, `ik`/`transform` and `deform` each ' +
+      'grew a `non-finite time` guard as they were added and the three families that came FIRST — value ' +
+      'tracks, slot tracks, `drawOrder` — never got one. Those three guards are now deleted: one question, ' +
+      'one owner, and no two layers naming the same fault differently',
+  );
+  named(
+    'MP24_A_NON_NUMERIC_LAG_IS_REFUSED_AS_A_TYPE',
+    dirs,
+    rotate([{ t: 0, v: [0] }, { t: 1, v: [30] }], { lag: '0.1' }),
+    '`animations."move".tracks[0].lag` is the string "0.1"',
+    'it was refused, but as `key at t=1, 10.1s after lag/stagger is 9.1s past the declared duration` — the ' +
+      'string was CONCATENATED onto each key time, and the message blames the key and the duration for a fault ' +
+      'in neither. A boolean `lag` silently adds 1s and was refused the same misleading way',
+  );
+
+  // --- the families beside `tracks` ----------------------------------------
+  named(
+    'MP25_A_MALFORMED_DRAW_ORDER_OFFSETS_IS_NOT_A_RESTORE_KEY',
+    dirs,
+    beside({ drawOrder: [{ t: 0, offsets: [{ slot: 'marker', offset: 1 }] }, { t: 1, offsets: {} }] }),
+    '`animations."move".drawOrder[1].offsets` is an object',
+    'compiled green as a RESTORE key: a key with no offsets is the format\'s own way of saying "back to the ' +
+      'setup draw order", and `compile` tested for it with `!key.offsets?.length`, which is true for `{}` and ' +
+      'for a string. A complete statement of the draw order, made by accident',
+  );
+  named(
+    'MP26_AN_IK_ENTRY_THAT_IS_NULL_IS_REFUSED_BY_NAME',
+    dirs,
+    beside({ ik: [null] }),
+    '`animations."move".ik[0]` is null',
+    'crashed with a raw `TypeError: null is not an object (evaluating \'track.constraint\')`. `null` in a list ' +
+      'is what a hand edit that removed an entry\'s body leaves, and the transform and deform families crashed ' +
+      'the same way on the same shape',
+  );
+  named(
+    'MP27_A_DEFORM_ENTRY_THAT_IS_NULL_IS_REFUSED_BY_NAME',
+    dirs,
+    beside({ deform: [null] }),
+    '`animations."move".deform[0]` is null',
+    'crashed with a raw `TypeError` on `track.skin`, one property earlier than the ik one and just as anonymous',
+  );
+  named(
+    'MP28_AN_EVENTS_TIMELINE_THAT_IS_AN_OBJECT_IS_REFUSED_BY_NAME',
+    dirs,
+    beside({ events: {} }),
+    '`animations."move".events` is an object',
+    'it was refused, but as `events: no keys` — which is what an EMPTY array says, and sends the author to add ' +
+      'firings to a timeline whose fault is its brackets',
+  );
+  named(
+    'MP29_A_GROUPS_TABLE_THAT_IS_AN_ARRAY_IS_REFUSED',
+    dirs,
+    withField('groups', [['block']]),
+    '`groups` is an array of 1',
+    '`checkMotionGroups` reads `Object.entries`, so an array of member lists compiled green with no group ' +
+      'defined at all. Each group\'s member LIST is still that function\'s — an empty group and a repeated ' +
+      'member are about what a track naming it would compile, not about JSON shape',
+  );
+
+  // --- positive controls ----------------------------------------------------
+  //
+  // A parse is only worth having if it costs the format nothing, so the last two
+  // cases are the whole corpus and the docs' own examples.
+  {
+    const specs = everyMotionSpec(import.meta.dir);
+    const failures: string[] = [];
+    for (const path of specs) {
+      try {
+        parseMotionSpec(JSON.parse(readFileSync(path, 'utf8')), path);
+      } catch (err) {
+        failures.push(`${relative(import.meta.dir, path)}: ${(err as Error).message}`);
+      }
+    }
+    say(
+      'MP30_EVERY_MOTION_SPEC_IN_THIS_REPOSITORY_PARSES_CLEAN',
+      specs.length > 0 && failures.length === 0,
+      specs.length === 0
+        ? 'found no motion specs at all, which is not a pass'
+        : `${specs.length} spec(s) parsed${failures.length ? `, ${failures.length} refused: ${failures[0]}` : ''}`,
+      'a shape gate is only worth having if it costs the format nothing, and the gallery, the transcriptions ' +
+        'and every benchmark run are the format as it is actually written. This case is what caught the `loop` ' +
+        'mistake in MP21 — 20 of these files would have been refused by a parser that read the type literally',
+    );
+  }
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // cli ergonomics — issues #218 and #221, exercised as the installed command sees
 // it: a real `bun cli.ts …` subprocess, not the functions cli.ts happens to
 // export. A default is a claim about what happens when the caller says nothing,
@@ -12704,6 +13115,8 @@ function main(): void {
   substantive += 2;
   bad += runErrorAttributionSuite();
   substantive += 5;
+  bad += runMotionParseSuite();
+  substantive += 30;
   bad += runCliSuite();
   substantive += 5;
   const launcherBad = runLauncherSuite();
@@ -12871,6 +13284,13 @@ function main(): void {
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +
       'the `null` that used to crash and the bare attachment name that used to compile green and hide the slot — ' +
       'with the documented `{ "attachment": null }` still hiding it), ' +
+      '+ 30 motion-spec parse controls (issue #307 — the motion spec reached the compiler as a CAST, so 24 ' +
+      'malformed shapes compiled GREEN and 9 more crashed with a raw TypeError that named neither input file; ' +
+      "each is now refused by a message naming the file, the key path, what the value actually is and the " +
+      'spelling that works, and the two the issue named are #293\'s own — the attachment name written where ' +
+      'its wrapper belongs, on a slot with no attachments and on a slot the rig does not declare, which the ' +
+      'emit-path guard could not reach. Plus the two positive controls that keep the gate honest: an animation ' +
+      'with no `loop` hint still accepted, and every one of the 37 motion specs in this repository parsing clean), ' +
       '+ 9 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
       'builds green with no flag and is refused by every rule under `--profile spine-html`, and the MESH report line ' +
