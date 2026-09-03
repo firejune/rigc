@@ -1,0 +1,51 @@
+rigc explain bench/runs/2026-09-03-spineboy-2/spineboy-ess.rig.json
+  ..    rig    /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spineboy-ess.rig.json
+  ..    motion /tmp/sb2/probe.motion.json
+
+stage  1760 x 1680  (spine 4.3.13)
+
+bones  (spine world: y up)
+  root         parent=-          x=0 y=0
+  torso        parent=root       x=-24.05 y=216.82
+  head         parent=torso      x=0.6 y=168.4
+  rear-upper-arm parent=torso      x=-8.3 y=120.6
+  rear-bracer  parent=rear-upper-arm x=0.1 y=-70.7
+  gun          parent=rear-bracer x=12.9 y=-63.4
+  muzzle       parent=gun        x=-178.1 y=141
+  front-upper-arm parent=torso      x=2.7 y=131.6
+  front-bracer parent=front-upper-arm x=-6.5 y=-84.3
+  front-fist   parent=front-bracer x=16.2 y=-67.8
+  rear-thigh   parent=torso      x=2.7 y=21.6
+  rear-shin    parent=rear-thigh x=22.3 y=-78.1
+  rear-foot    parent=rear-shin  x=-26 y=-139.2
+  front-thigh  parent=torso      x=-8.3 y=16.6
+  front-shin   parent=front-thigh x=4 y=-92.3
+  front-foot   parent=front-shin x=-23.6 y=-156.1
+
+slots  (array order IS the draw order)
+  rear-foot    bone=rear-foot    setup=rear-foot              color=ffffffff  attachments=[rear-foot]
+  rear-shin    bone=rear-shin    setup=rear-shin              color=ffffffff  attachments=[rear-shin]
+  rear-thigh   bone=rear-thigh   setup=rear-thigh             color=ffffffff  attachments=[rear-thigh]
+  rear-upper-arm bone=rear-upper-arm setup=rear-upper-arm         color=ffffffff  attachments=[rear-upper-arm]
+  rear-bracer  bone=rear-bracer  setup=rear-bracer            color=ffffffff  attachments=[rear-bracer]
+  gun          bone=gun          setup=gun                    color=ffffffff  attachments=[gun]
+  muzzle-ring  bone=muzzle       setup=null                   color=ffffffff  attachments=[muzzle-ring]
+  muzzle       bone=muzzle       setup=null                   color=ffffffff  attachments=[muzzle01, muzzle02, muzzle03, muzzle04, muzzle05]
+  muzzle-glow  bone=muzzle       setup=null                   color=ffffffff  attachments=[muzzle-glow]
+  neck         bone=head         setup=neck                   color=ffffffff  attachments=[neck]
+  torso        bone=torso        setup=torso                  color=ffffffff  attachments=[torso]
+  front-thigh  bone=front-thigh  setup=front-thigh            color=ffffffff  attachments=[front-thigh]
+  front-shin   bone=front-shin   setup=front-shin             color=ffffffff  attachments=[front-shin]
+  front-foot   bone=front-foot   setup=front-foot             color=ffffffff  attachments=[front-foot]
+  head         bone=head         setup=head                   color=ffffffff  attachments=[head]
+  eye          bone=head         setup=eye-indifferent        color=ffffffff  attachments=[eye-indifferent, eye-surprised]
+  goggles      bone=head         setup=goggles                color=ffffffff  attachments=[goggles]
+  mouth        bone=head         setup=mouth-smile            color=ffffffff  attachments=[mouth-grind, mouth-oooo, mouth-smile]
+  front-upper-arm bone=front-upper-arm setup=front-upper-arm        color=ffffffff  attachments=[front-upper-arm]
+  front-bracer bone=front-bracer setup=front-bracer           color=ffffffff  attachments=[front-bracer]
+  front-fist   bone=front-fist   setup=front-fist-closed      color=ffffffff  attachments=[front-fist-closed, front-fist-open]
+
+animations
+
+mix table (player config, not skeleton JSON)
+  default=0 pairs=[]

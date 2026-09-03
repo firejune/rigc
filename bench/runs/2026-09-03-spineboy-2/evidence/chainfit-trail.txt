@@ -1,0 +1,64 @@
+chainfit usage trail, per part
+key tolerance 0.25 frame px at the end of what each bone swings
+
+part                    bone                  frames  read   won  agree   |mine-hinge| med / max (frame px)   refusals
+------------------------------------------------------------------------------------------------------------------------------
+head                   head                    147   126     7      2    17.24 /  65.66              -
+goggles                head                    147   126     7      2    17.24 /  65.66              no-matchx1
+mouth-smile            head                    147   126     7      2    17.24 /  65.66              -
+front-upper-arm        front-upper-arm         147   125     6      0    16.39 / 104.12              no-anchorx21 no-matchx1
+front-shin             front-shin              147    93     6      4    35.86 / 235.30              no-anchorx21 no-matchx33
+rear-shin              rear-shin               147    92     5      2    94.45 / 158.49              no-anchorx21 no-matchx28 occludedx6
+front-thigh            front-thigh             147    76     6      0   159.77 / 353.12              no-anchorx21 occludedx23 no-matchx27
+front-bracer           front-bracer            147    61     4      0    20.65 / 127.90              no-anchorx21 no-matchx65
+rear-foot              rear-foot               147    57     3      0    10.25 /  38.49              no-anchorx21 no-matchx50 occludedx19
+neck                   head                    147    56     5      2     4.55 /  59.65              no-matchx52 occludedx28
+rear-thigh             rear-thigh              147    30     3      1    91.58 / 181.01              occludedx96 no-anchorx21
+rear-upper-arm         rear-upper-arm          147    26     4      0    29.84 /  68.73              no-anchorx21 occludedx100
+front-foot             front-foot              147    26     3      0    10.50 /  42.45              no-anchorx21 no-matchx100
+rear-bracer            rear-bracer             147    16     2      0    21.79 /  73.52              occludedx100 no-anchorx21 no-matchx10
+front-fist-closed      front-fist              147     6     1      1    11.06 /  21.87              no-matchx120 no-anchorx21
+gun                    gun                     147     4     0      0    58.25 /  82.38              no-matchx120 no-anchorx21 occludedx2
+torso                  torso                   147     0     0      0      n/a /  n/a              no-anchorx21
+eye-indifferent        head                    147     0     0      0      n/a /  n/a              occludedx147
+
+the same |mine − hinge|, split by the reading's own visibleShare (median frame px / readings):
+
+part                              <10%        10-25%        25-50%        50-75%         >=75%
+----------------------------------------------------------------------------------------------
+head                               —            —    54.1/  65     5.7/  61            — 
+goggles                            —            —            —            —    17.2/ 126 
+mouth-smile                        —            —    62.2/   1            —    16.3/ 125 
+front-upper-arm                    —     4.7/  19    34.7/  16    21.2/  30    14.7/  60 
+front-shin                         —    15.7/   9    29.8/  31    47.7/  48    19.9/   5 
+rear-shin                 102.8/   7    32.1/  42   108.1/  25   112.2/  10    99.3/   8 
+front-thigh               147.6/   3   188.3/  11    84.9/   3   231.2/  24   157.5/  35 
+front-bracer               21.2/  31     6.7/  13    29.6/   1    21.7/   1    21.9/  15 
+rear-foot                   9.7/   9    11.1/  10     4.5/  23    24.5/   6    31.5/   9 
+neck                               —            —     5.3/  37     3.8/  19            — 
+rear-thigh                167.6/   2   105.2/   5     9.6/  12   103.1/  11            — 
+rear-upper-arm             16.8/   6    21.4/  10    42.8/  10            —            — 
+front-foot                         —    23.4/   1    17.0/   2    10.5/   7     9.3/  16 
+rear-bracer                23.5/   4    25.5/   5    21.3/   2    21.8/   3    60.0/   2 
+front-fist-closed                  —            —            —            —    11.1/   6 
+gun                        58.3/   3            —    12.2/   1            —            — 
+----------------------------------------------------------------------------------------------
+ALL PARTS                  24.2/  65    21.2/ 125    26.9/ 229    22.6/ 220    18.5/ 407 
+
+which START each of the 147 fitted frames' answer descended from:
+  incumbent                  85  (57.8%)
+  neighbour-1                12  (8.2%)
+  neighbour+1                12  (8.2%)
+  neighbour-2                 7  (4.8%)
+  neighbour+2                 5  (3.4%)
+  spread0                     5  (3.4%)
+  chainfit-preferred          4  (2.7%)
+  centroid+prev               3  (2.0%)
+  spread20                    3  (2.0%)
+  unknown                     3  (2.0%)
+  chainfit-on-incumbent       2  (1.4%)
+  spread30                    2  (1.4%)
+  spread50                    1  (0.7%)
+  chainfit-on-centroid        1  (0.7%)
+  spread40                    1  (0.7%)
+  spread6                     1  (0.7%)

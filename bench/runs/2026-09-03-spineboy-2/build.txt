@@ -1,0 +1,77 @@
+rigc build /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spineboy-ess.rig.json
+  ..    rig    /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spineboy-ess.rig.json
+  ..    motion /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spineboy-ess.motion.json
+  ..    29 part page(s):
+  ..      rear-foot                113x60  <- ../../../../examples/spineboy/images/rear-foot.png
+  ..      rear-shin                75x178  <- ../../../../examples/spineboy/images/rear-shin.png
+  ..      rear-thigh               55x94  <- ../../../../examples/spineboy/images/rear-thigh.png
+  ..      rear-upper-arm           40x87  <- ../../../../examples/spineboy/images/rear-upper-arm.png
+  ..      rear-bracer              56x72  <- ../../../../examples/spineboy/images/rear-bracer.png
+  ..      gun                      210x203  <- ../../../../examples/spineboy/images/gun.png
+  ..      muzzle-ring              49x209  <- ../../../../examples/spineboy/images/muzzle-ring.png
+  ..      muzzle01                 133x79  <- ../../../../examples/spineboy/images/muzzle01.png
+  ..      muzzle02                 135x84  <- ../../../../examples/spineboy/images/muzzle02.png
+  ..      muzzle03                 166x106  <- ../../../../examples/spineboy/images/muzzle03.png
+  ..      muzzle04                 149x90  <- ../../../../examples/spineboy/images/muzzle04.png
+  ..      muzzle05                 135x75  <- ../../../../examples/spineboy/images/muzzle05.png
+  ..      muzzle-glow              50x50  <- ../../../../examples/spineboy/images/muzzle-glow.png
+  ..      neck                     36x41  <- ../../../../examples/spineboy/images/neck.png
+  ..      torso                    98x180  <- ../../../../examples/spineboy/images/torso.png
+  ..      front-thigh              45x112  <- ../../../../examples/spineboy/images/front-thigh.png
+  ..      front-shin               82x184  <- ../../../../examples/spineboy/images/front-shin.png
+  ..      front-foot               126x69  <- ../../../../examples/spineboy/images/front-foot.png
+  ..      head                     271x298  <- ../../../../examples/spineboy/images/head.png
+  ..      eye-indifferent          93x89  <- ../../../../examples/spineboy/images/eye-indifferent.png
+  ..      eye-surprised            93x89  <- ../../../../examples/spineboy/images/eye-surprised.png
+  ..      goggles                  261x166  <- ../../../../examples/spineboy/images/goggles.png
+  ..      mouth-grind              93x59  <- ../../../../examples/spineboy/images/mouth-grind.png
+  ..      mouth-oooo               93x59  <- ../../../../examples/spineboy/images/mouth-oooo.png
+  ..      mouth-smile              93x59  <- ../../../../examples/spineboy/images/mouth-smile.png
+  ..      front-upper-arm          46x97  <- ../../../../examples/spineboy/images/front-upper-arm.png
+  ..      front-bracer             58x80  <- ../../../../examples/spineboy/images/front-bracer.png
+  ..      front-fist-closed        75x82  <- ../../../../examples/spineboy/images/front-fist-closed.png
+  ..      front-fist-open          86x87  <- ../../../../examples/spineboy/images/front-fist-open.png
+  ..    validate (spine-core round trip + machine assertions, profile spine)
+  ..    profile spine — 7 renderer-policy and 7 archetype assertion(s) do not apply
+  PASS  A07_ATLAS_TEXT_SHAPE
+  PASS  A00_ROUNDTRIP_PARSE
+  PASS  A16_SKELETON_VERSION_4_3
+  PASS  A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS
+  PASS  A02_NO_BONE_TRANSFORM_KEY
+  PASS  A05_CURVE_ARRAY_LENGTH
+  PASS  A03_REGION_WIDTH_HEIGHT_FINITE
+  PASS  A04_MESH_TRIANGLES_AND_ENCODING
+  PASS  A20_MESH_WEIGHTS_COHERENT
+  PASS  A22_MESH_UVS_IN_UNIT_RANGE
+  PASS  A23_PHYSICS_CONSTRAINT_EFFECTIVE
+  PASS  A08_REGION_NAMES_MATCH_ATTACHMENTS
+  PASS  A09_ANIMATION_DURATION_MATCHES_SPEC
+  PASS  A10_NO_NAN_AFTER_STEPPING
+  PASS  A17_ATLAS_PAGE_FILES_EXIST
+  PASS  A06_ATLAS_PAGE_SIZE_MATCHES_PNG
+  PASS  A18_DETERMINISTIC_EMIT
+  SKIP  A31_DRAW_ORDER_OFFSETS_RESOLVE: no animation carries a drawOrder timeline
+  SKIP  A32_EVENT_KEYS_RESOLVE: no animation carries an event timeline
+  SKIP  A34_CONSTRAINT_TIMELINE_TARGETS: no animation carries a constraint timeline
+  SKIP  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: no animation carries a deform timeline
+  SKIP  A33_VERTEX_ATTACHMENT_GEOMETRY: the skeleton carries no bounding box, clipping attachment or path
+  SKIP  A36_PATH_CONSTRAINT_EFFECTIVE: the skeleton declares no path constraint
+  SKIP  A37_SLIDER_CONSTRAINT_EFFECTIVE: the skeleton declares no slider constraint
+  SKIP  A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED: no skin activates a bone or a constraint, and nothing declares itself skinRequired
+  PROF  A12_NO_DARK_COLOR: renderer rule, not in profile "spine"
+  PROF  A11_NO_CLIPPING_ATTACHMENTS: renderer rule, not in profile "spine"
+  PROF  A13_MESH_BUDGET: renderer rule, not in profile "spine"
+  PROF  A14_NO_FULL_FRAME_MESH: renderer rule, not in profile "spine"
+  PROF  A15_IDLE_NO_MESH_BONE_KEYS: renderer rule, not in profile "spine"
+  PROF  A21_MESH_RIM_PINNED: archetype rule, not in profile "spine"
+  PROF  A19_OVERLAY_PNGS_HAVE_ALPHA: renderer rule, not in profile "spine"
+  PROF  A24_AXIS_SPACE_STROKE: archetype rule, not in profile "spine"
+  PROF  A25_DETACHED_BONE_PARENTAGE: archetype rule, not in profile "spine"
+  PROF  A26_SLOT_DRAW_ORDER: archetype rule, not in profile "spine"
+  PROF  A27_REGION_NAME_MATCHES_PAGE_FILENAME: renderer rule, not in profile "spine"
+  PROF  A28_RIBBON_ROWS_SHARE_WEIGHTS: archetype rule, not in profile "spine"
+  PROF  A29_STROKE_WITHIN_CONTACT_DEPTH: archetype rule, not in profile "spine"
+  PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
+  ..    pages=29 regions=29 bones=16 slots=21 animations=8 version=4.3.13 regionAttachments=29 meshAttachments=0 physicsConstraints=0 rig=spineboy-ess profile=spine
+rigc: wrote /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spine/skeleton.json
+rigc: wrote /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spine/skeleton.atlas

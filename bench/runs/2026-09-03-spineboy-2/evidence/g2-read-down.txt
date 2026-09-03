@@ -1,0 +1,61 @@
+G2 v2.3 read-down — the two measurements, and which is which
+
+THE CEILING (half 1, first measurement): chainfit visibleShare, MAXIMUM over all 147
+committed frames of all 16 sets. Convention: the share of the part's own alpha weight the
+residual was computed on, through THIS candidate's own draw order.
+
+slot              draws   check attributes it   visible-footprint ceiling
+--------------------------------------------------------------------------
+eye               yes     NO                     0.7%
+rear-upper-arm    yes     NO                    38.1%
+head              yes     yes                   50.3%
+rear-thigh        yes     yes                   62.4%
+neck              yes     yes                   67.0%
+torso             yes     yes                   75.8%
+front-shin        yes     yes                   79.1%
+front-thigh       yes     NO                    84.1%
+front-bracer      yes     yes                   92.2%
+front-upper-arm   yes     yes                   94.9%
+rear-bracer       yes     yes                   96.6%
+gun               yes     NO                    99.2%
+goggles           yes     yes                   99.9%
+front-fist        yes     yes                  100.0%
+front-foot        yes     yes                  100.0%
+mouth             yes     yes                  100.0%
+rear-foot         yes     yes                  100.0%
+rear-shin         yes     yes                  100.0%
+muzzle            yes     NO                     n/a
+muzzle-glow       yes     NO                     n/a
+muzzle-ring       yes     NO                     n/a
+
+THE CALIBRATION (half 1, second measurement): the smallest ceiling among the slots check
+DOES attribute somewhere in this corpus is 50.3% (`head`). That is the bar this
+run reads the ceiling against, and it is calibrated on the same corpus rather than declared.
+
+slots that draw and are attributed nowhere IN THE WHOLE CORPUS: eye, rear-upper-arm, front-thigh, gun, muzzle, muzzle-glow, muzzle-ring
+
+THE ACTUAL BURDEN — the clause fires per SET, so this is the count that matters:
+170 (set, slot) pair(s) draw and are attributable in no frame of that set, out of
+291 (set, slot) pairs that draw at all.
+
+slot              sets it is blank in                                        ceiling
+------------------------------------------------------------------------------------------------
+eye               16/16  aim aim@30fps death death@30fps hit …                  0.7%
+front-thigh       16/16  aim aim@30fps death death@30fps hit …                  84.1%
+gun               16/16  aim aim@30fps death death@30fps hit …                  99.2%
+rear-upper-arm    16/16  aim aim@30fps death death@30fps hit …                  38.1%
+front-upper-arm   15/16  aim aim@30fps death death@30fps hit …                  94.9%
+rear-bracer       15/16  aim aim@30fps death death@30fps hit …                  96.6%
+rear-thigh        15/16  aim aim@30fps death death@30fps hit …                  62.4%
+neck              13/16  aim aim@30fps death death@30fps hit …                  67.0%
+front-foot         9/16  aim aim@30fps death@30fps hit@30fps idle …             100.0%
+rear-foot          9/16  aim aim@30fps death death@30fps hit …                  100.0%
+rear-shin          7/16  aim aim@30fps death@30fps jump@30fps run@30fps …       100.0%
+front-fist         5/16  death@30fps hit hit@30fps idle@30fps shoot@30fps       100.0%
+front-shin         5/16  idle idle@30fps jump@30fps run@30fps walk@30fps        79.1%
+mouth              4/16  death death@30fps run run@30fps                        100.0%
+front-bracer       3/16  death@30fps hit hit@30fps                              92.2%
+torso              3/16  jump@30fps run run@30fps                               75.8%
+muzzle             1/16  shoot                                                  NO CEILING MEASURED
+muzzle-glow        1/16  shoot                                                  NO CEILING MEASURED
+muzzle-ring        1/16  shoot                                                  NO CEILING MEASURED

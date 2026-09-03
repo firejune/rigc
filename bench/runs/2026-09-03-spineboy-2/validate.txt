@@ -1,0 +1,43 @@
+rigc validate /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spine/skeleton.json
+  ..    atlas /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spine/skeleton.atlas
+  ..    profile spine — 7 renderer-policy and 7 archetype assertion(s) do not apply
+  PASS  A07_ATLAS_TEXT_SHAPE
+  PASS  A00_ROUNDTRIP_PARSE
+  PASS  A16_SKELETON_VERSION_4_3
+  PASS  A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS
+  PASS  A02_NO_BONE_TRANSFORM_KEY
+  PASS  A05_CURVE_ARRAY_LENGTH
+  PASS  A03_REGION_WIDTH_HEIGHT_FINITE
+  PASS  A04_MESH_TRIANGLES_AND_ENCODING
+  PASS  A20_MESH_WEIGHTS_COHERENT
+  PASS  A22_MESH_UVS_IN_UNIT_RANGE
+  PASS  A23_PHYSICS_CONSTRAINT_EFFECTIVE
+  PASS  A08_REGION_NAMES_MATCH_ATTACHMENTS
+  PASS  A10_NO_NAN_AFTER_STEPPING
+  PASS  A17_ATLAS_PAGE_FILES_EXIST
+  PASS  A06_ATLAS_PAGE_SIZE_MATCHES_PNG
+  SKIP  A31_DRAW_ORDER_OFFSETS_RESOLVE: no animation carries a drawOrder timeline
+  SKIP  A32_EVENT_KEYS_RESOLVE: no animation carries an event timeline
+  SKIP  A34_CONSTRAINT_TIMELINE_TARGETS: no animation carries a constraint timeline
+  SKIP  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: no animation carries a deform timeline
+  SKIP  A33_VERTEX_ATTACHMENT_GEOMETRY: the skeleton carries no bounding box, clipping attachment or path
+  SKIP  A36_PATH_CONSTRAINT_EFFECTIVE: the skeleton declares no path constraint
+  SKIP  A37_SLIDER_CONSTRAINT_EFFECTIVE: the skeleton declares no slider constraint
+  SKIP  A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED: no skin activates a bone or a constraint, and nothing declares itself skinRequired
+  SKIP  A09_ANIMATION_DURATION_MATCHES_SPEC: no motion spec supplied, so no declared duration to compare against
+  SKIP  A18_DETERMINISTIC_EMIT: no second compile to compare against (re-gating artifacts on disk)
+  PROF  A12_NO_DARK_COLOR: renderer rule, not in profile "spine"
+  PROF  A11_NO_CLIPPING_ATTACHMENTS: renderer rule, not in profile "spine"
+  PROF  A13_MESH_BUDGET: renderer rule, not in profile "spine"
+  PROF  A14_NO_FULL_FRAME_MESH: renderer rule, not in profile "spine"
+  PROF  A15_IDLE_NO_MESH_BONE_KEYS: renderer rule, not in profile "spine"
+  PROF  A21_MESH_RIM_PINNED: archetype rule, not in profile "spine"
+  PROF  A19_OVERLAY_PNGS_HAVE_ALPHA: renderer rule, not in profile "spine"
+  PROF  A24_AXIS_SPACE_STROKE: archetype rule, not in profile "spine"
+  PROF  A25_DETACHED_BONE_PARENTAGE: archetype rule, not in profile "spine"
+  PROF  A26_SLOT_DRAW_ORDER: archetype rule, not in profile "spine"
+  PROF  A27_REGION_NAME_MATCHES_PAGE_FILENAME: renderer rule, not in profile "spine"
+  PROF  A28_RIBBON_ROWS_SHARE_WEIGHTS: archetype rule, not in profile "spine"
+  PROF  A29_STROKE_WITHIN_CONTACT_DEPTH: archetype rule, not in profile "spine"
+  PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
+rigc: green

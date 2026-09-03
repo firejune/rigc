@@ -1,0 +1,9 @@
+the slot-frames where chainfit's hinge was adopted, before -> after:
+  death        f0   front-shin     15.27 ->   15.27   worse
+  death        f0   rear-shin      15.11 ->     NaN   no reading on one side
+  death        f7   front-shin      7.05 ->     NaN   no reading on one side
+  death@30fps  f0   front-shin     15.27 ->   15.27   worse
+  death@30fps  f0   rear-shin      15.11 ->     NaN   no reading on one side
+  idle         f19  rear-thigh      6.10 ->    6.44   worse
+
+  whole corpus: worst 18.98 -> 18.98;  readings over 6 px 19/507 -> 16/500

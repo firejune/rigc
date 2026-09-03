@@ -1,0 +1,61 @@
+flare census (the brief's own pink predicate, over every committed frame):
+  aim            none
+  aim@30fps      none
+  death          none
+  death@30fps    none
+  hit            none
+  hit@30fps      none
+  idle           none
+  idle@30fps     none
+  jump           none
+  jump@30fps     none
+  run            none
+  run@30fps      none
+  shoot          f2=166px  f3=1659px  f4=717px
+  shoot@30fps    none
+  walk           none
+  walk@30fps     none
+
+flare window off the 30 fps sheets (tools/sheet.ts, the brief's stated tile layout):
+  aim@30fps      ENOENT: no such file or directory, open 'bench/reference/spineboy/ess/aim@30fps/contact.png'
+  death@30fps    none  [layout control: 1033x2338 reconstructed exactly]
+  hit@30fps      none  [layout control: 1033x247 reconstructed exactly]
+  idle@30fps     none  [layout control: 1033x862 reconstructed exactly]
+  jump@30fps     none  [layout control: 1033x739 reconstructed exactly]
+  run@30fps      none  [layout control: 1033x370 reconstructed exactly]
+  shoot@30fps    tiles 5..11, brightest 9 (383 px)  t5=20 t6=16 t7=191 t8=190 t9=383 t10=72 t11=81
+                 ⇒ show at 0.166667 s, hide at 0.400000 s  [layout control: 1033x247 reconstructed exactly]
+  walk@30fps     none  [layout control: 1033x493 reconstructed exactly]
+
+muzzle plate sweep (the fitted arm re-solved under each option; lower is better):
+  shoot/f2 (166 px of flare)  winner muzzle04+glow+ring       5.8721
+            best per plate: muzzle04=5.8721  muzzle05=5.8730  muzzle02=5.9924  muzzle01=6.0079  muzzle03=6.0137   spread 0.1416
+  shoot/f3 (1659 px of flare)  winner muzzle04+glow+ring       7.9392
+            best per plate: muzzle04=7.9392  muzzle01=7.9519  muzzle05=7.9542  muzzle02=7.9707  muzzle03=8.0074   spread 0.0682
+  shoot/f4 (717 px of flare)  winner muzzle05                 8.4535
+            best per plate: muzzle05=8.4535  muzzle04=8.4664  muzzle01=8.5494  muzzle02=8.5766  muzzle03=8.5802   spread 0.1267
+
+front-fist window (maximum-subarray of score(open) − score(closed), one window per shot):
+  aim            best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  aim@30fps      best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  death          best window f30..f53 buys 1.6395  => AUTHORED open there
+  death@30fps    best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  hit            best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  hit@30fps      best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  idle           best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  idle@30fps     best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  jump           best window f0..f0 buys 0.0022  below the 0.25 threshold => the sweep decides nothing
+  jump@30fps     best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  run            best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  run@30fps      best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  shoot          best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  shoot@30fps    best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  walk           best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  walk@30fps     best window none buys 0.0000  below the 0.25 threshold => the sweep decides nothing
+  flare plate for shoot: muzzle04 — read on f3, the brightest flare frame (1659 px), the plate spread there being under 0.03 on this run's objective
+
+stepped attachment timelines authored:
+  shoot/muzzle         0.1667s=muzzle04  0.4000s=null
+  shoot/muzzle-glow    0.1667s=muzzle-glow  0.4000s=null
+  shoot/muzzle-ring    0.1667s=muzzle-ring  0.4000s=null
+  death/front-fist     2.5000s=front-fist-open  4.5000s=front-fist-closed
