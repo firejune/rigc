@@ -480,11 +480,16 @@ cannot express.**
    of the shut eye. In `userSpaceOnUse` with `y2="30"` the height becomes a free
    variable and the coverage becomes a stated one: `106 − 30 = 76` opaque pixels
    above the lash, against a 70-unit eye.
-2. **Run its sides flush to the window edge.** That is a workaround for
-   [#292](https://github.com/firejune/rigc/issues/292) — `rigc render`'s bilinear
-   filter samples straight alpha, so **every atlas-region edge draws a
-   one-pixel dark rim** over what is behind it. §9.1 says why a portrait is the
-   first rig that sees it.
+2. ~~**Run its sides flush to the window edge.**~~ ✅ **No longer needed.** This
+   was a workaround for [#292](https://github.com/firejune/rigc/issues/292):
+   `rigc render`'s bilinear filter sampled straight alpha, so **every
+   atlas-region edge drew a one-pixel dark rim** over what was behind it, and
+   running the art flush to its window gave the sampler nothing dark to reach
+   into. The sampler now interpolates premultiplied and a transparent texel gets
+   no vote in the colour, so **a lid plate may have whatever margin its drawing
+   wants.** §9.1 keeps the record of how the rim was found, because the lesson
+   there — that scene work exercises a renderer where game-part work does not —
+   outlives this particular defect.
 
 📌 **Blink both lids on one `groups` track.** An L/R offset of one frame was
 tried in the worked example and rejected: at 25 fps it does not read as a soft
