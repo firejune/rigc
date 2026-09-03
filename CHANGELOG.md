@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.1](https://github.com/firejune/rigc/compare/v0.14.0...v0.14.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **ci:** fetch-examples absorbs connection blips with a bounded retry ([#341](https://github.com/firejune/rigc/issues/341)) ([5ebb47e](https://github.com/firejune/rigc/commit/5ebb47e7528eab1d24180f59397c39e9e3fec7c9)), closes [#335](https://github.com/firejune/rigc/issues/335)
+* **cli:** register --all-bones as the boolean flag it is documented as ([#338](https://github.com/firejune/rigc/issues/338)) ([6cde010](https://github.com/firejune/rigc/commit/6cde010d0536af50454143a4113d77de628759c5)), closes [#328](https://github.com/firejune/rigc/issues/328)
+
+
+### Instrument
+
+* **chainfit:** the inward step — two anchored descendants determine the bone between them ([#331](https://github.com/firejune/rigc/issues/331)) ([e0f61a0](https://github.com/firejune/rigc/commit/e0f61a091fd09d340d53db7b96fe1cc4930f4851)), closes [#326](https://github.com/firejune/rigc/issues/326)
+
 ## [0.14.0](https://github.com/firejune/rigc/compare/v0.13.0...v0.14.0) (2026-09-03)
 
 
