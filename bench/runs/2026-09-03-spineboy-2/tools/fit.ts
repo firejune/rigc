@@ -22,6 +22,7 @@ import { declaredViewport, framePath, inkStats, loadFrame, sidecarOf } from './g
 import {
   applyPose,
   fitFrame,
+  keyOf,
   levelsFor,
   loadCandidate,
   objectiveFor,
@@ -41,6 +42,14 @@ const PASSES = Number(process.env.PASSES ?? 2);
 const CHANGE_BOOST = Number(process.env.CHANGE_BOOST ?? 4);
 const SEED = process.env.SEED ?? '';
 const CHAINSEED = process.env.CHAINSEED ?? '';
+/**
+ * `ACTIVE=a.rotate,b.rotate` fits only those channels and freezes the rest —
+ * AUTHORING §8.1's "Spend each iteration on the worst chain, and stop re-fitting
+ * the ones already at the floor ... chains share parents, so a search free to
+ * move a converged limb's ancestors will walk it back off the floor to buy a
+ * fraction of a point somewhere else."
+ */
+const ACTIVE = process.env.ACTIVE ? new Set(process.env.ACTIVE.split(',')) : null;
 
 const out = process.argv[2] ?? 'bench/runs/2026-09-03-spineboy-2/fit/poses.json';
 const only = process.argv.slice(3);
@@ -174,7 +183,15 @@ for (const shot of shots) {
 
       const fit = fitFrame(
         obj,
-        { knobs: KNOBS, pairs: PAIRS, levels, samples: SAMPLES, pairSamples: PAIR_SAMPLES, sweeps: 2 },
+        {
+          knobs: KNOBS,
+          pairs: PAIRS,
+          levels,
+          samples: SAMPLES,
+          pairSamples: PAIR_SAMPLES,
+          sweeps: 2,
+          ...(ACTIVE ? { frozen: new Set(KNOBS.map(keyOf).filter((k) => !ACTIVE.has(k))) } : {}),
+        },
         starts,
         2,
       );
