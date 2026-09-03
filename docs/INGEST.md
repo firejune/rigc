@@ -1069,6 +1069,13 @@ rigc pose --images examples/3-timing-and-spacing/images \
 PNG where you expected several is the tell, and the `..    parts` line prints the
 count. AUTHORING §11.4 is the rest of what that command cannot see.
 
+⭐ **And on ingest work you usually have the thing `pose` is missing.** A skeleton you
+are transcribing IS a compiled candidate, so the parts `pose` refuses because
+something is drawn over them are readable through its own draw order and hierarchy —
+`rigc chainfit --candidate <that skeleton> --images <dir> --frame <png>`, AUTHORING
+§12. It is the natural second pass here: `pose` reads the trunk of a foreign figure,
+`chainfit` reads the limbs it hides, and both report placements rather than grades.
+
 📎 To be exact about what is missing: rigc *can* lift a region's drawing back off a
 page — `extractRegion` does it, and the contour mesh generator uses it under
 `--atlas-in` — so what is absent is a **command**, not the capability. It refuses by

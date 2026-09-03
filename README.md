@@ -36,6 +36,7 @@ parser and a list of named assertions all come back green.
 | a compiled rig | `rigc preview` | one self-contained `.html` that plays it in Spine's own web player |
 | two to four compiled rigs | `rigc vote` | one ballot page a human picks from, and the answer checked into a ledger |
 | a picture of a key pose | `rigc pose` | where each loose part PNG sits in it, in spec coordinates — the movement between two poses is then yours to key ([docs/MOTION.md](docs/MOTION.md)) |
+| the same picture, and a rig | `rigc chainfit` | the parts `pose` refuses because something is drawn over them — read through the candidate's own draw order and hierarchy, with the share of each part the answer was measured on |
 
 Everything in that table needs Bun and this package: no clone, no reference art, no
 art pipeline, no server.
@@ -371,7 +372,9 @@ it, so those coordinates go into the rig and the motion **by construction** and 
 effort goes into the part no instrument can measure: the movement between two poses.
 A part that matches nowhere is refused by name, two near-equal placements are reported
 as both, and nothing it prints is a score. Fields, the coordinate contract and the
-limits: [AUTHORING.md §11](docs/AUTHORING.md).
+limits: [AUTHORING.md §11](docs/AUTHORING.md). The parts it refuses because
+something is drawn over them are `rigc chainfit`'s, once a candidate exists —
+[§12](docs/AUTHORING.md).
 
 ## The gallery — four complete rigs over art that ships with them
 
@@ -406,6 +409,7 @@ commands take it and what its default is.
 | `preview --candidate <dir>` | one self-contained `.html` that plays it |
 | `vote --candidate a --candidate b` | one `.html` that asks a human which; `vote --record <file>` checks the answer into `votes.jsonl` |
 | `pose --images <dir> --frame <png>` | reads part placements **out of** a picture |
+| `chainfit --candidate <dir> --images <dir> --frame <png>` | reads the parts `pose` refuses, through the candidate's own draw order and hierarchy: masked residuals over **visible** pixels, one hinge per child instead of four degrees of freedom, and the `rotate` key value each answer implies |
 | `diff <candidate.json> <reference.json>` | structural comparison of two skeletons, one ratio per measure and deliberately no combined score |
 | `check --candidate <dir> --frames <dir>` | the candidate against reference pictures — the only instrument here that can see a *wrong animation* |
 | `bench <rung> --candidate <dir>` | one rung of the benchmark ladder |

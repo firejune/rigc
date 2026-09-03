@@ -1101,6 +1101,15 @@ function cmdChainFit(flags: Record<string, string>): void {
     throw new UsageError("chainfit needs --images <dir> — where the candidate's attachment image names resolve to PNGs");
   }
   if (flags.frame === undefined) throw new UsageError('chainfit needs --frame <path> — one pose frame to read the placements out of');
+  // Refused rather than ignored. Every other --candidate command takes --atlas, so
+  // passing it here is a reasonable thing to try — and a flag that silently does
+  // nothing is worse than one that says why it cannot.
+  if (flags.atlas !== undefined) {
+    throw new UsageError(
+      'chainfit reads no atlas: the part art comes from --images, one PNG per attachment image name, and the ' +
+        'skeleton is all it needs of the candidate. Drop --atlas',
+    );
+  }
   const options: ChainFitOptions = {
     candidatePath: flags.candidate,
     imagesDir: flags.images,
@@ -2175,7 +2184,6 @@ const COMMANDS: CommandDoc[] = [
     ],
     flags: [
       'candidate',
-      'atlas',
       'images',
       'frame',
       'anchor',
@@ -2190,11 +2198,6 @@ const COMMANDS: CommandDoc[] = [
       'out',
     ],
     overrides: {
-      atlas: {
-        meaning:
-          'accepted for symmetry with the other --candidate commands and not read: the part art comes from ' +
-          '--images, so a chain fit needs the skeleton and no atlas at all',
-      },
       images: {
         value: '<dir>',
         meaning:
