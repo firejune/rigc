@@ -4353,7 +4353,9 @@ themselves**, downward and by small amounts, most on the parts whose edges are i
 the frame. ⇒ A residual measured before that date and one measured after are not
 the same measurement; re-read a frame rather than comparing across it. The worked
 figures live in [MOTION.md](MOTION.md) §6 and
-[BENCHMARK.md](BENCHMARK.md), each with its own re-baseline note.
+[BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md) —
+repository material, not shipped in the package — each with its own re-baseline
+note.
 
 ### 11.1 It measures an input, so nothing here is a score
 

@@ -344,6 +344,13 @@ frames is not answer-bearing, so it is not swept out.
     protect the answer; it produced four run launches that reached for the sealed section
     or pasted a number out of it.
 
+The list above is complete, so a document it does not name is not an input — and
+for the other skill docs that is **deliberate, not an omission**: `MOTION.md`,
+`INGEST.md`, `FACE.md` and `RIGGING.md` are usage-phase documents, and the latter
+two cite run records this table seals (the grounds sit in `docs/AUTHORING.md`'s
+header, beside each). Admitting one is a protocol amendment with its own
+closed-under-reading scrub, not a prompt-side choice.
+
 **🚫 Forbidden — and each of these has a reason beside it.**
 
 | Not this | Why |
