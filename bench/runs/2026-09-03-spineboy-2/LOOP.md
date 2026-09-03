@@ -186,25 +186,52 @@ picture" — reads **median 2.00 px, max 5.17** on the head bone across 126 fram
 is the same order as the sweep's own basin there and is the only joint in this rig the
 field can speak about (see §3.7).
 
-### 3.6 — the objective, and a control that caught it
+### 3.6 — the objective, two defects, and the run's own worst process failure
 
-Two defects in this run's own fitter, both found by controls rather than by reading
-the output:
+🚨🚨 **Both defects below are traps AUTHORING §9.1 names explicitly, and this run hit
+both of them because it read §9 in pieces and skipped the piece they are in.** The
+protocol says the guide is read *in full*; this run read §0, §1, §2, §3, §4, §8, §8.1,
+§9's flag reference, §9.2, §9.3, §10, §11 and §12 — and lines 2600–2735, the second
+half of §9.1, only *after* paying for both. §8.1 even points at it by name: *"Read
+§9.1's warning about where a bone's local transform lives before you write the first
+sweep."* That sentence was read and not followed.
 
-🚨 **`bone.data.x` is `undefined` on spine-core 4.3.13's `BoneData`.** Setting
-`bone.pose.x = bone.data.x + delta` produced `NaN` poses that rendered **zero pixels**,
-which the objective scored as an ordinary number. `tools/probe.ts` is the control:
-`{'torso.rotate': 90}` and `{'torso.tx': 300}` both returned `0 px`. The setup values
-live on `bone.pose` right after `Skeleton.setupPose()`, so the deltas are added there.
+⇒ **This is a finding about the reader, not about the guide**, and it is recorded here
+rather than in the README's *what the guide should have said*, where it does not belong.
+What the run would put to a maintainer is narrower and is in the README.
 
-🚨 **A colour mean over the whole frame is minimised by drawing nothing.** The figure is
-about 5,000 of 141,000 pixels, so a candidate parked outside the viewport pays the
-reference's ink once and a candidate whose limbs are in the wrong place pays it about
-twice. Measured on `aim/f0000`: the first coarse pass walked `torso.tx`/`ty` to the far
-corner of their windows and reported **4.919**, a better number than any on-screen pose.
-⇒ The two coarse levels score the **symmetric difference of the two inked sets over the
-reference's own ink count**, which reads 1.0 for an empty frame by construction; the two
-fine levels score colour. `Level.metric` in `tools/fitlib.ts` carries the reasoning.
+🚨 **Defect 1 — `bone.data.x` is `undefined` on spine-core 4.3.13's `BoneData`.**
+Setting `bone.pose.x = bone.data.x + delta` produced `NaN` poses that rendered **zero
+pixels**, which the objective scored as an ordinary number. `tools/probe.ts` is the
+control: `{'torso.rotate': 90}` and `{'torso.tx': 300}` both returned `0 px`. The setup
+values live on `bone.pose` right after `Skeleton.setupPose()`, so the deltas are added
+there. §9.1's second 🚨 is this exact trap, down to the `bone.data.setupPose` name and
+the `NaN`-serialises-to-`null` signature.
+
+🚨 **Defect 2 — a colour mean over the whole frame is minimised by drawing nothing.**
+The figure is about 5,000 of 141,000 pixels, so a candidate parked outside the viewport
+pays the reference's ink once and a candidate whose limbs are in the wrong place pays it
+about twice. Measured on `aim/f0000`: the first coarse pass walked `torso.tx`/`ty` to the
+far corner of their windows and reported **4.919**, a better number than any on-screen
+pose. §9.1 calls this *the cliff*, gives its arithmetic ("absence pays the reference's
+ink exactly once, so on any objective normalised by that ink, *draw nothing* sits at 1.0
+by construction") and lists **four** defences.
+
+⚠️ **The repair this run reached for is a fifth one the guide does not list, and it is
+weaker than the guide's first.** The two coarse levels now score the **symmetric
+difference of the two inked sets over the reference's own ink count**, which puts an
+empty frame at exactly 1.0 — its worst value — by the same arithmetic §9.1 gives. That
+closes the cliff on those levels. It does **not** close it on the two colour levels
+below them, where the guide's *bound the search to the frame* and *assert the part is
+drawn* would have. Those levels are only reached from a start the silhouette stages
+already placed on screen, so the cliff is out of reach in practice rather than in
+principle — and that distinction is the honest statement of it.
+
+⭐ **A third of §9.1's traps this run avoided by accident and should say so**: the
+*sacrificial cover* case, where the composite drags one part off its place to cover
+another's bare ink. The guide's own first defence for it — "read a per-part residual
+beside the composite, never only the composite" — is what `chainfit` is, and this run
+had it in hand for a different reason. What it reads is in the README.
 
 Everything else §8.1 asks for is in `tools/fitlib.ts` and named there: a four-stage
 pyramid at 96×92, 96×92, 192×184 and 384×367; the coarsest stage moving the body and

@@ -1,0 +1,65 @@
+The muzzle flare's window, off the 30 fps contact sheets
+========================================================
+
+WHY THE SHEET AND NOT THE FRAMES
+--------------------------------
+An attachment timeline is stepped, and AUTHORING §4.5's 🚨 says a stepped key is
+either on the sample that was meant to see it or a whole frame out. The 12 fps set
+brackets this flare's end between 0.3333 s and 0.4167 s — a whole twelfth of
+uncertainty on a three-frame event. §9.3's ⭐ names the sheet as the only place that
+closes it: "on a set rendered at a higher rate than the frames on disk, every sampled
+frame is compared, so the samples between two committed ones are measured there and
+nowhere else."
+
+THE LAYOUT, AND ITS CONTROL
+---------------------------
+The tile geometry is the one the BRIEF states — "128 px long side, 1 px rules, 8
+columns, row major" — so `bench/render_reference.ts`, which is on the forbidden list,
+was not opened. The control is arithmetic and it is enforced rather than described:
+`tools/sheet.ts` reconstructs each sheet's own pixel size from that geometry and the
+set's frame count, and REFUSES to read a sheet whose size does not match.
+
+  set            tiles   tile size   columns x rows   reconstructed   file
+  ------------   -----   ---------   --------------   -------------   ----
+  death@30fps      149   128 x 122        8 x 19       1033 x 2338    exact
+  hit@30fps         11   128 x 122        8 x  2       1033 x  247    exact
+  idle@30fps        51   128 x 122        8 x  7       1033 x  862    exact
+  jump@30fps        41   128 x 122        8 x  6       1033 x  739    exact
+  run@30fps         21   128 x 122        8 x  3       1033 x  370    exact
+  shoot@30fps       13   128 x 122        8 x  2       1033 x  247    exact
+  walk@30fps        31   128 x 122        8 x  4       1033 x  493    exact
+
+`aim@30fps` ships one frame and therefore no sheet, which is one of the three reasons
+G7 reads SKIP.
+
+THE FLARE, PER TILE
+-------------------
+The predicate is the brief's own, recomputed here rather than taken: a drawn pixel with
+r > 200, b > 140 and g < min(r, b) − 30, over the mask at 8/255.
+
+  shoot@30fps   t5=20  t6=16  t7=191  t8=190  t9=383  t10=72  t11=81
+  every other set: zero on every tile
+
+⇒ tiles 5..11, brightest at tile 9. That reproduces the brief's claim exactly ("on the
+30 fps sheet it is on tiles 5 through 11, brightest at tile 9"), and it is the fifth
+independent reading of it.
+
+WHAT WAS AUTHORED FROM IT
+-------------------------
+  show at  5/30 = 0.166667 s   (minus one 1e-6 grid step, §4.5)
+  hide at 12/30 = 0.400000 s   (minus one 1e-6 grid step)
+
+The hide key at 0.4 rather than at the 12 fps f5 time of 0.4167 is the whole point: at
+0.4167 the 30 fps samples 12 (0.4000) would still see the flare, and tile 12 is measured
+CLEAR. The brief's sentence "the flare is gone by 0.400 s" is the same fact.
+
+⚠️ WHAT THIS DOES NOT DECIDE
+----------------------------
+Which of the five numbered plates is on which tile. The brief says the frames "cannot
+tell you how they are divided between parts or which flare is on which frame", and the
+sheet does not change that: a tile is the frame at 1/3 scale, so a 133 x 79 plate is
+44 x 26 tile pixels and the five plates are not separable there. This run authors ONE
+plate for the whole window, chosen on the full-resolution 12 fps frames by
+`tools/skins.ts`'s sweep, and the sweep's own margin is recorded beside it. A
+five-key sequence swapping plate per frame is a shape the frames do not support and was
+not authored.
