@@ -450,6 +450,80 @@ function deformExtreme(extreme: DeformExtreme | null): string {
   return extreme === null ? '—'.padEnd(9) : `x${extreme.value.toFixed(6)} tri ${extreme.triangle}`;
 }
 
+/**
+ * The `MEMBER` report block — a group track's per-member values, side by side
+ * (issue #295).
+ *
+ * ## Why side by side is the whole point
+ *
+ * The complaint that filed #295 was not the line count. `gallery/portrait`'s
+ * held yaw put six sibling bones' `translatex` in six separate tracks, and the
+ * reason that is bad is that **nobody can see a wrong sign in a column that is
+ * eighty lines from its neighbours.** FACE §3 makes the same argument from the
+ * other side: a residual is 1–6 units where a total is 30–40, and the split is
+ * *an auditing decision before it is a rigging one*. So the report's job is to
+ * put the numbers in the arrangement the audit needs — one row per member, one
+ * block per key — which is exactly the arrangement the emitted format cannot
+ * have, because Spine keys one bone per timeline.
+ *
+ * ## It quotes; it does not re-derive
+ *
+ * The same rule as the `DEFORM` block. Every value here is the one the compiler
+ * **emitted**, carried on `result.trackDerivations`, so the block and the
+ * artifact cannot disagree. `derived` and `formula` are the model's own strings
+ * from `src/trackgen.ts`, so the block names the closed form the spec stated
+ * rather than a second reading of it.
+ *
+ * ## What it deliberately does not print
+ *
+ * **Tracks whose members all share one value** — the ordinary `groups` entry.
+ * There is one number there and the timelines above already show it on every
+ * member; a table of six identical rows would be a tautology, and the block
+ * exists to make a *difference* visible. `look_l`/`look_r` in the worked example
+ * are exactly that case and they are right to be absent from here.
+ *
+ * **`stagger`.** A per-member time offset is printed as it always was — on each
+ * member's own timeline, where the shifted key times are. Repeating it here
+ * would put one lag in two places.
+ */
+function memberReportLines(result: CompileResult): string[] {
+  if (result.trackDerivations.length === 0) return [];
+  const out: string[] = [
+    '',
+    'group members  (the per-member values of one track, side by side — issue #295)',
+    '  ..    a row per member and a block per key, because a wrong sign is visible in a column of six and',
+    '  ..    invisible in six tracks. Values are the EMITTED ones, so this and the artifact cannot disagree',
+    '  ..    a group whose members all share one value is not here: there is one number and the timelines',
+    '  ..    above already carry it. `stagger` is not here either — the shifted key times are on those timelines',
+  ];
+  for (const entry of result.trackDerivations) {
+    const states =
+      entry.model === null
+        ? 'stated per member'
+        : `derive ${entry.model.kind}  ${entry.model.stated}  -> ${entry.model.projection === 'shift' ? 'the displacement' : 'the narrowing'}`;
+    out.push(
+      `  MEMBER  ${entry.animation}  ${entry.targetKind} "${entry.target}".${entry.property}  ` +
+        `t=${entry.time.toFixed(6)}  ${entry.members.length} member(s)  ${states}`,
+    );
+    if (entry.model !== null) {
+      out.push(`          ${entry.model.formula}`);
+      for (const line of entry.model.derived) out.push(`            ${line}`);
+    }
+    const width = Math.max(6, ...entry.members.map((m) => m.member.length));
+    for (let i = 0; i < entry.members.length; i++) {
+      const m = entry.members[i];
+      const value = Array.isArray(m.value) ? m.value.join(', ') : JSON.stringify(m.value);
+      // The model's own row carries the two inputs that produced the value — the
+      // coordinate it read off the rig and the depth the spec stated — because
+      // "5.513" alone is a number a reader can only take on trust, and `−62` and
+      // `150` beside it are a claim they can check.
+      const from = entry.model === null ? '' : `  <- ${entry.model.members[i].at >= 0 ? ' ' : ''}${entry.model.members[i].at} at depth ${entry.model.members[i].depth}`;
+      out.push(`            ${m.member.padEnd(width)}  ${value.padStart(12)}${from}`);
+    }
+  }
+  return out;
+}
+
 /** `head/head key 1`, which is how A39's own message names a key. */
 function deformKeyName(key: DeformKeyMeasure): string {
   return `${key.slot}/${key.attachment} key ${key.key}`;
@@ -2048,6 +2122,11 @@ function cmdExplain(flags: Record<string, string>): void {
       }
     }
   }
+
+  // The `MEMBER` block sits beside the `DEFORM` one and for the same reason:
+  // both re-print timelines the reader has just read, in the arrangement the
+  // question needs rather than the one the format has.
+  for (const line of memberReportLines(result)) console.log(line);
 
   // The `DEFORM` block goes after the timelines and before the constraints,
   // because it is a measurement OF the deform timelines printed above — the keys

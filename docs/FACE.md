@@ -157,30 +157,48 @@ could not find it.
 ## 2. Depth is the parameter you are actually authoring
 
 🚨 **A part list for a face is not a list of drawings. It is a list of
-`(x, z)`.** And here is the sharp edge:
+`(x, z)`.** And here is the sharp edge this section was written about:
 
-> **`x` is in the file. `z` is not.** Neither spec has a depth field, and on the
-> worked example
+> **`x` was in the file and `z` was not.** Neither spec had a depth field at all,
+> and on the worked example as it first shipped
 >
 > ```bash
 > grep -c '"z"' gallery/portrait/rig.json gallery/portrait/motion.json   # 0 and 0
 > ```
 >
-> The bones carry `x` (`eye_l` at `−62`, `nose` at `0`), the rig carries the mesh
-> columns' `x`, and every `z` that produced every number lives **only in the
+> The bones carried `x` (`eye_l` at `−62`, `nose` at `0`), the rig carried the mesh
+> columns' `x`, and every `z` that produced every number lived **only in the
 > README beside them**.
 
-⇒ **Write the depth table down somewhere a reader will find it, because the
-toolchain will not keep it for you.** In the worked example that is a table in
-the example's own README. In a project, put it beside the rig.
+⚠️ **Read that as the reason the constructs below exist, not as the state of the
+tool.** The `z` above never had a home because a track carries a value and not a
+model — so a depth was consumed, arithmetic was done by hand, and the input
+vanished. Both halves have since been given one (next paragraph), and `"z"` is
+still `0` in both files because the field is spelled `radius` on a mesh key and
+`depth` on a bone track.
 
-⭐ **One depth is now in the file, and it is the one a mesh key needs.** Since
-[#294](https://github.com/firejune/rigc/issues/294) a `yaw` key states its
-`radius` (§1.1), which is the `R` of the cylinder that plate is painted on — so
-the head's 170 and the fringe's 196 are in `motion.json` rather than only in a
-README. Every **other** depth on this page still is not: a bone's `z` drives a
-`translatex` track and a track carries a value, not a model. That half is the
-part this section is about, and it has not moved.
+⇒ **The instruction survives anyway: write the depth table down somewhere a
+reader will find it.** The specs now hold the depths the turn *uses*; a project's
+own reasoning about them — why the fringe stands off 26 and not 15 — still belongs
+beside the rig, and in the worked example that is a table in its README.
+
+⭐ **Every depth is now in the file, and both halves of that arrived as their own
+construct.** Since [#294](https://github.com/firejune/rigc/issues/294) a `yaw`
+deform key states its `radius` (§1.1), which is the `R` of the cylinder that plate
+is painted on — so the head's 170 and the fringe's 196 are in `motion.json`. Since
+[#295](https://github.com/firejune/rigc/issues/295) a **bone** track's key can
+state a `derive` model over a group, whose `depth` is one number **per member** —
+so the feature depths, the hair depths and the sign flip below are in the file too
+(§3, AUTHORING §4.5.1).
+
+⚠️ **What has not changed is that a depth is a decision.** The table below is
+still the thing to argue about before authoring anything; all that moved is where
+it is written, and the point of moving it is that a reader of the numbers can now
+see the table that produced them:
+
+```bash
+grep -c '"depth"' gallery/portrait/motion.json    # 8, one per derive key
+```
 
 **The depths in the worked example**, and what each one is doing (**derived**
 column: `dx` at 12°):
@@ -255,6 +273,47 @@ the second, and everybody can eyeball one in the first — a residual with the
 wrong sign, or one an order of magnitude off its neighbours, is obvious in a
 column of six. ⇒ **The shared-shift split is an auditing decision before it is a
 rigging one**, and given §9 that is the whole argument for it.
+
+### 3.1 ⭐ And now the spec holds this split, not its results
+
+Since [#295](https://github.com/firejune/rigc/issues/295) the pattern above is a
+named construct rather than a page of advice: **one group track whose key states
+the model, with a depth per member** (AUTHORING §4.5.1). The worked example's six
+residuals and six scale factors are two tracks:
+
+```json
+{ "group": "features", "property": "translatex", "keys": [
+    { "t": 0,    "v": [0], "ease": "rise" },
+    { "t": 0.62, "derive": { "kind": "yaw", "degrees": 12, "carried": 170,
+                             "depth": { "eye_l": 150, "eye_r": 150, "brow_l": 158,
+                                        "brow_r": 158, "nose": 192, "mouth": 166 } },
+      "ease": "swell" },
+    { "t": 2.2,  "v": [0] } ] }
+```
+
+`carried` **is** the shared shift, stated: it is the depth whose `−R·sin t` the
+`faceshift` bone already applies, so what each member keys is exactly the residual
+this section derives. Drop it — write `carried: 0` or leave it out — and the same
+kind emits the **full** `dx` instead, which is what the parts hanging off `head`
+rather than off `faceshift` need. ⇒ **The split the toolchain used to know nothing
+about is now the one parameter, and the seam falls where the parent chain already
+put it** (AUTHORING §4.5.1 refuses a model over members under different parents,
+for exactly that reason).
+
+⭐ **`explain` then prints the column of six, which is what the argument above
+asked for.** The `MEMBER` block (AUTHORING §4.5.2) is a row per member — the
+emitted value, the `x` it read off the rig, and the depth the spec stated — so the
+nose diagnostic below is now a line you read rather than arithmetic you redo:
+
+```
+  MEMBER  turn  group "features".translatex  t=0.620000  6 member(s)  derive yaw  degrees=12 carried=170  -> the displacement
+            eye_l       5.513083  <- -62 at depth 150
+            eye_r       2.803385  <-  62 at depth 150
+            brow_l      3.849789  <- -62 at depth 158
+            brow_r      1.140092  <-  62 at depth 158
+            nose       -4.574057  <-  0 at depth 192
+            mouth       0.831647  <-  0 at depth 166
+```
 
 ⭐ **The nose is the diagnostic.** It is the only **negative** residual on the
 face, because it is the only feature in front of the surface: it protrudes 22, and
@@ -443,9 +502,16 @@ scaleX = cos(α − t) / cos α          where α = atan2(x, z)
 ```
 
 The far eye narrows to 89%, the near eye widens to 106% (**derived**: 0.8922 and
-1.0641). Parts on the axis get `cos t = 0.9781` and can therefore **share one
-track** — the nose and mouth do, through a `groups` entry, and it is the only
-place in the worked example's turn where two parts can (§7).
+1.0641). Parts on the axis get `cos t = 0.9781` and could therefore share one
+track — the nose and mouth did, through a `groups` entry, and it was the only
+place in the worked example's turn where two parts could (§7).
+
+📌 **That entry is gone, and the reason is worth a line.** `scalex` is the
+foreshortening projection of the same `derive` kind §3.1 uses (AUTHORING §4.5.1),
+so all six features are one track and the on-axis pair's shared value **falls out
+of the arithmetic** — `α = atan2(0, z)` is 0, so `cos(α − t)/cos α` is `cos t`.
+A coincidence between two members has stopped being something an author has to
+notice and spend a group on.
 
 ### 🚨 The iris does not foreshorten, and this is the finding
 
@@ -465,6 +531,16 @@ The fix is one reciprocal per side, on two groups (**derived**):
 look_l: [iris_l, spark_l]     scalex = 1 / 0.8922 = 1.1208
 look_r: [iris_r, spark_r]     scalex = 1 / 1.0641 = 0.9398
 ```
+
+⭐ **These two stay a shared value on a group, and they are the case where the
+per-member construct is the wrong tool** — stated here because "we have a model
+now" is exactly the reasoning that would spoil them. A counter-scale belongs to
+the **socket**, not to the part: `spark_l` sits at local `x = −11` and takes the
+same `1.1208` as `iris_l` at `0`, because what is being cancelled is the socket's
+foreshortening and not the highlight's own. ⇒ **The value is precisely NOT a
+function of the member's position**, so a `groups` entry with one number is the
+true statement and a `derive` over `iris_l`/`spark_l` would be a fiction that
+happened to use the new field.
 
 ⭐ **Their positions still ride the socket, and that is the part that makes it
 correct rather than a hack.** A bone's scale moves its children's local
@@ -668,33 +744,44 @@ not a format problem, it is a parts-and-labour problem.
 📊 **What one held yaw actually costs**, from the shipped `motion.json`
 (**derived** by counting it):
 
-| Animation | Duration | Tracks | Track keys | Deform entries | Deform keys | Hand-written floats |
+| Animation | Duration | Tracks | Track keys | Deform entries | Deform keys | Hand-written deform floats |
 | --- | --- | --- | --- | --- | --- | --- |
 | `idle` | 3.2 s | 9 | 37 | 0 | 0 | 0 |
 | `gaze` | 1.5 s | 8 | 32 | 0 | 0 | 0 |
-| **`turn`** | 2.2 s | **20** | **81** | 2 | 8 | **0** |
+| **`turn`** | 2.2 s | **8** | **33** | 2 | 8 | **0** |
 
 ⇒ **`idle` and `gaze` cost what an ordinary MOTION.md shot costs, and the turn's
-transcription is gone.** That last cell was **160** until
+transcription is gone — both halves of it.** That last cell was **160** until
 [#294](https://github.com/firejune/rigc/issues/294) shipped, and what those 160
 floats were is worth keeping: **five distinct values** (one per column, repeated
 down five rows), with **25 of the 50 slots in a head key structurally `0`**
 because a yaw has no vertical component. They are now four `transform` keys
 (§1.1) and the compiler writes the run.
 
-⇒ **What is left is the track count**, and it is the same complaint about a
-different table: **19 of the 20 tracks carry one value each**.
-[#295](https://github.com/firejune/rigc/issues/295) is that half, and until it
-ships a turn is a dozen lines plus twenty tracks.
+⇒ The **tracks** column was **20** until
+[#295](https://github.com/firejune/rigc/issues/295) shipped, with 19 of the 20
+carrying one value each. It is 8, because the sixteen sibling tracks became two
+group tracks whose keys state a model (§3, AUTHORING §4.5.1) and the four hair
+tracks became one.
 
-⚠️ **`groups` buys almost nothing on a face, and that is structural rather than
-an oversight.** The usual lever for cutting track count is a `groups` entry keying
-several bones identically — but **every part needing a different number is what
-parallax means.** Of the worked example's 20 turn tracks exactly one is a group
-for that reason (`axis`, the nose and mouth, both on the axis and therefore both
-`cos t`), plus the two reciprocal groups §5 needs. Sixteen of the rest are two
-properties on six sibling bones with identical times, identical easings and six
-different values: [#295](https://github.com/firejune/rigc/issues/295).
+🚨 **And here is the number that matters more than either count: the hand-written
+figures barely moved. What they ARE changed completely.** The 20-track turn stated
+**32 residuals and scale factors** across its held keys; the 8-track one states
+**34 depths** — of which **11 are distinct**, the rest being the same table
+repeated on the second held key and on the `scalex` track. ⇒ The saving is not
+arithmetic, it is **auditability**: a residual of `1.14` is a number a reader can
+only take on trust, and `brow_r at depth 158` is a claim they can argue with. §3
+is why that is the whole point, and §2 is why the depths had nowhere else to live.
+
+⚠️ **A plain `groups` entry still buys almost nothing on a face, and that is
+structural rather than an oversight.** Keying several bones **identically** is
+right for a wheel pair, and **every part needing a different number is what
+parallax means.** Of the 20 turn tracks exactly one was a group for that reason
+(`axis`, the nose and mouth, both on the axis and therefore both `cos t`), plus
+the two reciprocal groups §5 needs. ⭐ **That coincidence has stopped being an
+authoring concept**: the on-axis pair's shared `cos t` now falls out of the same
+closed form as everybody else's value, so `axis` is gone from the spec while
+`look_l`/`look_r` stay — because those two really are one shared number (§5).
 
 ---
 
@@ -945,15 +1032,25 @@ aggregate. What it still cannot say is whether **12° was the angle the shot
 wanted** — that needs the picture, which is why the procedure below survives the
 block as it survived `A39`.
 
-⇒ **So the honest procedure — thinner now that `A39` exists, and still a
-procedure, because none of the three limits above is one `A39` lifts:** state the
-model on the key rather than deriving a table (§1.1), so what a reviewer reads is
-a radius and an angle;
-check the **signs** (§3's nose test) and the **fold angle** (§4.2's formula)
-arithmetically before you build — those are still yours, and a stated model
-evaluates a wrong radius as consistently as a right one — then render, **look at
-three scales**, and keep a render of the last build you trusted so `check` has
-something to be differential against.
+📌 **`explain`'s `MEMBER` block (§3.1, AUTHORING §4.5.2) does the same for the
+bone half, and it takes the **nose test** off the procedure below.** §3 makes the
+nose the diagnostic — *if the nose's residual is not negative, the depths are
+wrong* — and that used to be arithmetic a reader had to redo from a README's
+depth table. The block prints the six residuals in a column with the depth that
+produced each one, so the check is reading one sign. ⚠️ It still cannot say
+whether the **depth** was right: `nose at depth 192` evaluates as consistently
+wrong as it does right, and no reference frame separates a plausible depth table
+from the intended one.
+
+⇒ **So the honest procedure — thinner now that `A39` and the two report blocks
+exist, and still a procedure, because none of the three limits above is one they
+lift:** state the model on the key rather than deriving a table (§1.1 for the
+mesh, §3.1 for the bones), so what a reviewer reads is a radius, an angle and a
+depth per part; read the **nose's sign** off the `MEMBER` block and check the
+**fold angle** (§4.2's formula) arithmetically before you build — the second is
+still yours, and a stated model evaluates a wrong radius as consistently as a
+right one — then render, **look at three scales**, and keep a render of the last
+build you trusted so `check` has something to be differential against.
 
 📌 **What §1.1 moved, what §9.2's block moved, and what neither did.** The
 transcription is gone and `explain` prints the model beside the offsets it
@@ -1040,14 +1137,17 @@ mesh is built**, and that is worth saying to the user before you build it.
 
 ## 11. Non-goals — stated, so nobody proposes them as gaps
 
-🚫 **No command generates a turn, and the construct that shipped is not one.**
+🚫 **No command generates a turn, and neither construct that shipped is one.**
 §1 is one line of arithmetic; a `rigc yaw --degrees 12` would be guessing at
 every depth in §2 on the user's behalf, and depth is the parameter the *author*
-is choosing. [#294](https://github.com/firejune/rigc/issues/294) shipped as the
-other thing — **a way to say the model in the spec** (§1.1) — so the radius, the
-angle and every depth still arrive from the author and the compiler only
-evaluates. What the toolchain owes is unchanged: that the file is checkable, that
-you can look, and that a person can choose.
+is choosing. [#294](https://github.com/firejune/rigc/issues/294) and
+[#295](https://github.com/firejune/rigc/issues/295) both shipped as the other
+thing — **a way to say the model in the spec** (§1.1 for the mesh, §3.1 for the
+bones) — so the radius, the angle and **every depth** still arrive from the
+author and the compiler only evaluates. Neither one generates an in-between
+either: a model is evaluated at one key, and sweeping an angle is editing one
+number per key. What the toolchain owes is unchanged: that the file is checkable,
+that you can look, and that a person can choose.
 
 🚫 **No pass bar for a face, and nothing here to hang one on.** MOTION.md's
 banner applies unchanged: `build` says a file is valid, `render` and `preview`
@@ -1063,11 +1163,13 @@ the entire point of that section.
 ⚠️ **Not a Live2D comparison, and not a recommendation between formats.** What
 the worked example measured is that a portrait turn is authorable on plain Spine
 4.3 at draft quality — nothing outside the format, no plugin, no runtime patch —
-and that the **split is authoring cost rather than runtime capability**. Half of
-that cost is paid — the deform transcription, via
-[#294](https://github.com/firejune/rigc/issues/294) — and half is the track table
-of [#295](https://github.com/firejune/rigc/issues/295). Whether to pay the rest
-is a project's decision and this page does not make it.
+and that the **split is authoring cost rather than runtime capability**. Both
+halves of the transcription cost are now paid — the deform table via
+[#294](https://github.com/firejune/rigc/issues/294) and the track table via
+[#295](https://github.com/firejune/rigc/issues/295) — which moves the remaining
+cost off the keyboard and onto the **parts**: per-eye meshes, a meshed neck, a
+second art layer for the far cheek (§8). Whether to pay *that* is a project's
+decision and this page does not make it.
 
 🚫 **No per-eye mesh recipe.** §8 says the eyes need their own deform meshes past
 about 26°, and nobody has built that here. The column-placement arithmetic in

@@ -412,6 +412,41 @@ value are exactly what the editor's own Clean Up deletes —
 [Keys](http://esotericsoftware.com/spine-keys) — and a track that holds one value for a
 whole animation is a reader's false lead about what the movement is about.
 
+### 3.7.1 🧩 The value analogue of the offset table — one track, a number per part
+
+The table above is a per-part **timing** offset, and in rigc it has a field:
+`groups` names the parts, `stagger` adds the delay in member order, and `gallery/ride`
+keys four wheels and two ears that way (AUTHORING §4.3).
+
+🧩 **The other half of "each part gets its own number" is the value, and until
+[#295](https://github.com/firejune/rigc/issues/295) it had no field at all.** `groups`
+keys its members **identically**, which is right for a wheel pair and wrong for a face:
+there, the whole content of the movement is that every part moves a *different* amount.
+`gallery/portrait`'s held 12° yaw was 20 tracks, sixteen of them the same two properties
+on six sibling bones — same times, same easings, six different numbers — and exactly one
+of the twenty was a `groups` entry, the pair that happened to share a value.
+
+🧩 **Two spellings now, and the choice is whether the numbers are decisions or
+arithmetic** (AUTHORING §4.5.1 is the field reference):
+
+- a key's `v` may be a **map keyed by member name**, which is the right form when each
+  number is a judgement — six hanging locks given six swings. The emitted file is byte
+  for byte the one the six tracks produced, so this is a pure relocation;
+- a key may state a **`derive` model** instead — `yaw` or `pitch`, an angle, and a
+  **depth per member** — and the compiler evaluates each member's value from it. That
+  is the right form when the numbers were never judgements: `x·(cos t − 1) − z·sin t` at
+  six different columns is arithmetic, and the depths are the only decisions in it.
+
+⭐ **The reason to prefer the model where it fits is not the line count. It is that the
+depths get written down.** FACE §2's sharp edge is that a part's `x` is in the file and
+its `z` is not — and a `z` nobody wrote down is a number nobody can check, on a page
+where a wrong depth reads as a slide rather than a turn and **nothing complains**.
+
+⚠️ **The two axes stay separate, deliberately.** `derive` takes no phase, index or
+delay: `stagger` already does timing and two mechanisms for one lag would mean two
+places to look for it. A track can carry both, and on a face usually should — the
+features' parallax is per-member value, and their settle can still trail per §3.7.
+
 ### 3.8 📗 Exaggeration, and 🧩 overshoot as its keyed form
 
 Exaggeration is catalogued as pushing a movement past its literal reading so the
@@ -544,6 +579,7 @@ request**, so whichever wins tells you something the next candidate can use.
 | --- | --- | --- | --- |
 | **Path** | the move rides the hinge (`rotate`) | the move is a line (`translate`, or `rotate` with interior keys on the line) | a part travels further than its own length, so the path is visible at all |
 | **Part timing** | every part reaches its extreme together | the chain staggers, per §3.7's table | the figure is more than one bone deep. This is the highest-yield axis on the page |
+| **Part amount** | every part moves the same distance | each part moves by its own depth, per §3.7.1 | the movement is a turn or a lean rather than a slide, so parallax is what says which. 🧩 One `derive` key per spread, not a table per part |
 | **Anticipation** | none — the movement starts at the first pose | a counter-move at 10–15 % | the intent leaves it open whether the figure *does* this or *has it done to it* |
 | **Termination** | arrives and stops | overshoots and settles, per §3.8 | the movement ends fast |
 | **Segmentation** | one continuous movement | two beats with a hold between them | the prompt has two verbs in it, or a comma doing the work of one |
@@ -988,6 +1024,14 @@ table on purpose: it needs a mesh rather than a region attachment, it multiplies
 things a candidate differs by, and a movement that does not read when rigid will not be
 rescued by deforming it. ⇒ Land the rigid movement, choose between rigid candidates,
 then propose deform as its own spread.
+
+🚫 **No per-member easings and no per-member key times, and §3.7.1's construct is
+bounded by exactly that.** A group's shared times and shared curves are what make it a
+group; a per-member `v` map or a `derive` model varies the **value** and nothing else.
+A member that needs its own timing has `stagger` (one number, in member order) or its
+own track — and a third mechanism would mean the answer to *"when does this bone move"*
+lived in three places. 🚫 Nor is `derive` an expression language: the kinds are named,
+and a kind the compiler does not know is refused by name rather than evaluated.
 
 🧩 **A deform key stating a transform is not a tween, and the distinction is the
 first non-goal above rather than a nuance of it.** AUTHORING §4.11.1 lets a key name a

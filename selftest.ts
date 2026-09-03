@@ -7938,6 +7938,507 @@ function runDeformReportSuite(): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// A group track's per-member values (#295) — one track, a value per member,
+// either stated as a map or derived from a model.
+// ---------------------------------------------------------------------------
+
+/**
+ * The face-shaped probe: six sibling bones under one parent, plus one part
+ * hanging off the grandparent and one bone under a different parent.
+ *
+ * ⭐ Every coordinate here is chosen so that **this file can derive every
+ * expected value from docs/FACE.md's own closed forms**, which is the only
+ * honest control on a generator: a fixture with the compiler's numbers baked in
+ * would prove that the compiler agrees with itself. `far`/`near` are the eye
+ * pair (∓62, the worked example's own), `axis_a`/`axis_b` sit ON the axis so
+ * their values must come out equal from the arithmetic rather than from a group
+ * entry, and `stray` is under `root` so the different-parent refusal has
+ * something to fire on.
+ */
+const MEMBER_R = 170;
+const MEMBER_BONES: Array<{ name: string; x: number; y: number; depth: number }> = [
+  { name: 'far', x: -62, y: -15, depth: 150 },
+  { name: 'near', x: 62, y: -15, depth: 150 },
+  { name: 'high', x: -62, y: 36, depth: 158 },
+  { name: 'axis_a', x: 0, y: -64, depth: 192 },
+  { name: 'axis_b', x: 0, y: -106, depth: 166 },
+];
+const MEMBER_GROUP = MEMBER_BONES.map((b) => b.name);
+
+const MEMBER_RIG = {
+  bones: [
+    { name: 'root' },
+    { name: 'head', parent: 'root', x: 0, y: 140 },
+    { name: 'shift', parent: 'head', x: 0, y: 0 },
+    ...MEMBER_BONES.map((b) => ({ name: b.name, parent: 'shift', x: b.x, y: b.y })),
+    // Under `root` rather than `shift`: a member whose coordinate is measured
+    // from a different origin, which is the case a model may not average over.
+    { name: 'stray', parent: 'root', x: 40, y: 0 },
+  ],
+  slots: [{ name: 'block', bone: 'head', attachment: 'block' }],
+  skins: { default: { block: { block: { image: 'block.png' } } } },
+};
+
+/** docs/FACE.md §3: the displacement, with whatever depth the parent carries. */
+function memberShift(x: number, depth: number, degrees: number, carried: number): number {
+  const t = (degrees * Math.PI) / 180;
+  return x * (Math.cos(t) - 1) - (depth - carried) * Math.sin(t);
+}
+
+/** docs/FACE.md §5: the foreshortening of a rigid part on a turning surface. */
+function memberForeshorten(x: number, depth: number, degrees: number): number {
+  const t = (degrees * Math.PI) / 180;
+  const alpha = Math.atan2(x, depth);
+  return Math.cos(alpha - t) / Math.cos(alpha);
+}
+
+/** A motion spec over `MEMBER_RIG`, with whatever tracks are handed in. */
+function memberMotion(
+  tracks: Array<Record<string, unknown>>,
+  groups?: Record<string, string[]>,
+  duration = 1,
+): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: { swell: [0.42, 0, 0.58, 1] },
+    groups: groups ?? { features: MEMBER_GROUP },
+    animations: { turn: { duration, loop: false, tracks } },
+  };
+}
+
+/** The emitted value of one bone timeline's key, off the compiled skeleton. */
+function emittedBoneKeys(result: CompileResult, animation: string, bone: string, timeline: string): Array<Record<string, unknown>> {
+  const bones = (result.skeleton.animations[animation] as { bones?: Record<string, Record<string, Array<Record<string, unknown>>>> }).bones;
+  return bones?.[bone]?.[timeline] ?? [];
+}
+
+/** Every member's emitted value at one key index, in member order. */
+function emittedMemberValues(result: CompileResult, timeline: string, key: number, members: string[] = MEMBER_GROUP): number[] {
+  return members.map((name) => Number(emittedBoneKeys(result, 'turn', name, timeline)[key]?.value));
+}
+
+/**
+ * A group track's per-member values, and the six rules that keep the construct
+ * honest (#295).
+ *
+ * ⭐ The control the suite rests on is GM00, and it is a **three-way** one:
+ * six separate bone tracks, one group track carrying a `v` map, and one group
+ * track carrying a `derive` model all have to emit the **same skeleton bytes**.
+ * The first two spellings are a pure relocation of numbers this file derived
+ * from docs/FACE.md §3 and §5, so byte agreement with the third is the claim
+ * that the compiler's closed form is the document's closed form — a generator
+ * compared against its own output proves nothing.
+ *
+ * The rest are refusals, and each one is a silent wrong answer if it does not
+ * fire: a member the group names twice is two delays and two values for one
+ * bone; a member the map omits would be keyed with a different motion in
+ * silence; a model over members under different parents averages coordinates
+ * measured from different origins; and a foreshortening behind the axis is a
+ * different model wearing the same name.
+ */
+function runGroupMemberSuite(): number {
+  const dirs = writeProbeRig(MEMBER_RIG);
+  let bad = 0;
+  console.log('\n── a group track\'s per-member values (#295) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const DEG = 12;
+  const build = (motion: Record<string, unknown>): CompileResult => {
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+    return compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+  };
+  const round6 = (n: number): number => {
+    const v = Math.round(n * 1e6) / 1e6;
+    return v === 0 ? 0 : v;
+  };
+
+  // --- GM00: the control — three spellings, one skeleton -------------------
+  const wantShift = MEMBER_BONES.map((b) => round6(memberShift(b.x, b.depth, DEG, MEMBER_R)));
+  const separate = build(
+    memberMotion(
+      MEMBER_BONES.map((b) => ({
+        bone: b.name,
+        property: 'translatex',
+        keys: [
+          { t: 0, v: [0], ease: 'swell' },
+          { t: 0.5, v: [round6(memberShift(b.x, b.depth, DEG, MEMBER_R))], ease: 'swell' },
+          { t: 1, v: [0] },
+        ],
+      })),
+    ),
+  );
+  const mapped = build(
+    memberMotion([
+      {
+        group: 'features',
+        property: 'translatex',
+        keys: [
+          { t: 0, v: [0], ease: 'swell' },
+          {
+            t: 0.5,
+            v: Object.fromEntries(MEMBER_BONES.map((b) => [b.name, [round6(memberShift(b.x, b.depth, DEG, MEMBER_R))]])),
+            ease: 'swell',
+          },
+          { t: 1, v: [0] },
+        ],
+      },
+    ]),
+  );
+  const derived = build(
+    memberMotion([
+      {
+        group: 'features',
+        property: 'translatex',
+        keys: [
+          { t: 0, v: [0], ease: 'swell' },
+          {
+            t: 0.5,
+            derive: {
+              kind: 'yaw',
+              degrees: DEG,
+              carried: MEMBER_R,
+              depth: Object.fromEntries(MEMBER_BONES.map((b) => [b.name, b.depth])),
+            },
+            ease: 'swell',
+          },
+          { t: 1, v: [0] },
+        ],
+      },
+    ]),
+  );
+  const gotShift = emittedMemberValues(derived, 'translatex', 1);
+  const sameAsSeparate = separate.skeletonText === derived.skeletonText;
+  const sameAsMapped = mapped.skeletonText === derived.skeletonText;
+  say(
+    'GM00_CONTROL_SEPARATE_TRACKS_A_STATED_MAP_AND_A_DERIVED_MODEL_EMIT_ONE_SKELETON',
+    sameAsSeparate && sameAsMapped && gotShift.every((v, i) => v === wantShift[i]),
+    sameAsSeparate && sameAsMapped
+      ? `${MEMBER_GROUP.length} members at ${DEG}° with the parent carrying ${MEMBER_R}: ` +
+          `[${gotShift.join(', ')}], and this file's own FACE §3 arithmetic gives [${wantShift.join(', ')}] — ` +
+          'five separate tracks, one `v` map and one `derive` all emit identical skeletons'
+      : `separate vs derived ${sameAsSeparate ? 'match' : 'DIFFER'}; stated map vs derived ${sameAsMapped ? 'match' : 'DIFFER'}`,
+    'issue #295 asked for the map and the map alone would have moved 16 transcriptions into 2 tracks; the model is the ' +
+      'claim that they were never judgements, and byte agreement with an independently derived table is the only way ' +
+      'to check it',
+  );
+
+  // --- GM01: the other projection, and the coincidence that stops mattering -
+  //
+  // `axis_a` and `axis_b` both sit at x=0, so `cos(α − t)/cos α` is `cos t` for
+  // both and they come out EQUAL. In the worked example that coincidence was the
+  // reason a `groups` entry existed at all (`axis`: [nose, mouth]); here it falls
+  // out of one line of arithmetic, which is the difference between an authoring
+  // concept and a property of the geometry.
+  const wantScale = MEMBER_BONES.map((b) => round6(memberForeshorten(b.x, b.depth, DEG)));
+  const scaled = build(
+    memberMotion([
+      {
+        group: 'features',
+        property: 'scalex',
+        keys: [
+          { t: 0, v: [1], ease: 'swell' },
+          { t: 0.5, derive: { kind: 'yaw', degrees: DEG, depth: Object.fromEntries(MEMBER_BONES.map((b) => [b.name, b.depth])) }, ease: 'swell' },
+          { t: 1, v: [1] },
+        ],
+      },
+    ]),
+  );
+  const gotScale = emittedMemberValues(scaled, 'scalex', 1);
+  const onAxisShare = gotScale[3] === gotScale[4] && gotScale[3] === round6(Math.cos((DEG * Math.PI) / 180));
+  say(
+    'GM01_THE_FORESHORTENING_IS_THE_SAME_CLOSED_FORM_AND_A_SHARED_VALUE_FALLS_OUT_OF_IT',
+    gotScale.every((v, i) => v === wantScale[i]) && onAxisShare,
+    `scaleX = cos(α − t)/cos α at ${DEG}°: [${gotScale.join(', ')}] against this file's [${wantScale.join(', ')}]; ` +
+      `the two members at x=0 both come out ${gotScale[3]}, which is cos ${DEG}° = ${round6(Math.cos((DEG * Math.PI) / 180))}`,
+    'the worked example spent a `groups` entry on the one pair that shared a value, and a construct that still needed ' +
+      'that entry would have bought nothing',
+  );
+
+  // --- GM02: `stagger` is the other axis, and it stays the other axis -------
+  //
+  // MOTION §3.7 is a table of per-member TIMING and `stagger` implements it. The
+  // construct is per-member VALUE. If they were entangled — if a member's value
+  // were read at its shifted time, or its shift computed from its value — then a
+  // model would silently be doing timing too, and there would be two places to
+  // look for one lag. So: the same derive with `stagger` must move every key
+  // time in member order and leave every value exactly where it was.
+  const staggered = build(
+    memberMotion(
+      [
+        {
+          group: 'features',
+          property: 'translatex',
+          stagger: 0.02,
+          keys: [
+            { t: 0, v: [0], ease: 'swell' },
+            { t: 0.5, derive: { kind: 'yaw', degrees: DEG, carried: MEMBER_R, depth: Object.fromEntries(MEMBER_BONES.map((b) => [b.name, b.depth])) }, ease: 'swell' },
+            { t: 1, v: [0] },
+          ],
+        },
+      ],
+      undefined,
+      // 1.08 rather than 1: the last member's keys land 0.02 s x 4 later, and R7
+      // checks the declared duration against the LAST EMITTED key. That the
+      // duration has to move at all is itself the evidence `stagger` does timing.
+      1.08,
+    ),
+  );
+  const staggeredValues = emittedMemberValues(staggered, 'translatex', 1);
+  const staggeredTimes = MEMBER_GROUP.map((name) => Number(emittedBoneKeys(staggered, 'turn', name, 'translatex')[1]?.time));
+  const wantTimes = MEMBER_GROUP.map((_, i) => round6(0.5 + 0.02 * i));
+  say(
+    'GM02_STAGGER_MOVES_THE_TIMES_AND_NOT_THE_VALUES',
+    staggeredValues.every((v, i) => v === gotShift[i]) && staggeredTimes.every((t, i) => Math.abs(t - wantTimes[i]) < 1e-9),
+    `stagger 0.02 s over ${MEMBER_GROUP.length} members: times [${staggeredTimes.join(', ')}] against ` +
+      `[${wantTimes.join(', ')}], values [${staggeredValues.join(', ')}] — identical to the unstaggered build`,
+    'a second phase mechanism inside the model would mean two places to look for one lag, so the construct takes no ' +
+      'phase, index or delay and this is what says so',
+  );
+
+  // --- GM03: `pitch`, the same model on the other coordinate ---------------
+  const wantPitch = MEMBER_BONES.map((b) => round6(memberShift(b.y, b.depth, DEG, 0)));
+  const pitched = build(
+    memberMotion([
+      {
+        group: 'features',
+        property: 'translatey',
+        keys: [
+          { t: 0, v: [0], ease: 'swell' },
+          { t: 0.5, derive: { kind: 'pitch', degrees: DEG, depth: Object.fromEntries(MEMBER_BONES.map((b) => [b.name, b.depth])) }, ease: 'swell' },
+          { t: 1, v: [0] },
+        ],
+      },
+    ]),
+  );
+  const gotPitch = emittedMemberValues(pitched, 'translatey', 1);
+  say(
+    'GM03_PITCH_READS_THE_OTHER_SETUP_COORDINATE',
+    gotPitch.every((v, i) => v === wantPitch[i]) && gotPitch.some((v, i) => v !== gotShift[i]),
+    `a nod of ${DEG}° reads each member's setup y [${MEMBER_BONES.map((b) => b.y).join(', ')}] and gives ` +
+      `[${gotPitch.join(', ')}] against this file's [${wantPitch.join(', ')}]`,
+    'a kind that read the same coordinate under both names would pass every check that only ever turned a face ' +
+      'sideways, which is every check the worked example has',
+  );
+
+  // --- GM04: the membership refusals --------------------------------------
+  const twice = refusal(
+    dirs,
+    memberMotion(
+      [{ group: 'twins', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: { far: [1], near: [2] } }] }],
+      { twins: ['far', 'near', 'far'] },
+    ),
+  );
+  const stranger = refusal(
+    dirs,
+    memberMotion([
+      { group: 'features', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: { ...Object.fromEntries(MEMBER_GROUP.map((n) => [n, [1]])), stray: [1] } }] },
+    ]),
+  );
+  const omitted = refusal(
+    dirs,
+    memberMotion([
+      { group: 'features', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: Object.fromEntries(MEMBER_GROUP.slice(0, 4).map((n) => [n, [1]])) } ] },
+    ]),
+  );
+  const depthOmitted = refusal(
+    dirs,
+    memberMotion([
+      {
+        group: 'features',
+        property: 'translatex',
+        keys: [{ t: 0, v: [0] }, { t: 0.5, derive: { kind: 'yaw', degrees: DEG, depth: Object.fromEntries(MEMBER_BONES.slice(0, 4).map((b) => [b.name, b.depth])) } }],
+      },
+    ]),
+  );
+  const depthStranger = refusal(
+    dirs,
+    memberMotion([
+      {
+        group: 'features',
+        property: 'translatex',
+        keys: [{ t: 0, v: [0] }, { t: 0.5, derive: { kind: 'yaw', degrees: DEG, depth: { ...Object.fromEntries(MEMBER_BONES.map((b) => [b.name, b.depth])), stray: 10 } } }],
+      },
+    ]),
+  );
+  const empty = refusal(dirs, memberMotion([{ bone: 'far', property: 'translatex', keys: [{ t: 0, v: [0] }] }], { nobody: [] }));
+  say(
+    'GM04_A_MEMBER_NAMED_TWICE_A_STRANGER_AND_AN_OMISSION_ARE_EACH_REFUSED_BY_NAME',
+    twice !== null &&
+      /names member "far" twice/.test(twice) &&
+      stranger !== null &&
+      /names "stray", which group "features" does not declare/.test(stranger) &&
+      omitted !== null &&
+      /states no value for member "axis_b"/.test(omitted) &&
+      depthOmitted !== null &&
+      /states no depth for member "axis_b"/.test(depthOmitted) &&
+      depthStranger !== null &&
+      /states a depth for "stray", which this track does not key/.test(depthStranger) &&
+      empty !== null &&
+      /declares no members/.test(empty),
+    `twice in the group: ${JSON.stringify(twice)} | a stranger in the map: ${JSON.stringify(stranger)} | ` +
+      `a member the map omits: ${JSON.stringify(omitted)} | a member the depth table omits: ${JSON.stringify(depthOmitted)} | ` +
+      `a depth for a stranger: ${JSON.stringify(depthStranger)} | an empty group: ${JSON.stringify(empty)}`,
+    'a repeat is two delays and two values for one bone, and a default for an absent member would key that one bone ' +
+      'with a different motion in silence — which is exactly the error a column of six exists to make visible',
+  );
+
+  // --- GM05: the shape refusals — two answers, and the wrong arity ---------
+  const both = refusal(
+    dirs,
+    memberMotion([
+      {
+        group: 'features',
+        property: 'translatex',
+        keys: [
+          { t: 0, v: [0] },
+          { t: 0.5, v: Object.fromEntries(MEMBER_GROUP.map((n) => [n, [1]])), derive: { kind: 'yaw', degrees: DEG, depth: Object.fromEntries(MEMBER_BONES.map((b) => [b.name, b.depth])) } },
+        ],
+      },
+    ]),
+  );
+  const mapOnBone = refusal(dirs, memberMotion([{ bone: 'far', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, v: { far: [1] } }] }]));
+  const oneDepthManyMembers = refusal(
+    dirs,
+    memberMotion([{ group: 'features', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, derive: { kind: 'yaw', degrees: DEG, depth: 150 } }] }]),
+  );
+  const unknownKind = refusal(
+    dirs,
+    memberMotion([{ group: 'features', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, derive: { kind: 'roll', degrees: DEG, depth: 150 } }] }]),
+  );
+  const noDegrees = refusal(
+    dirs,
+    memberMotion([{ group: 'features', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, derive: { kind: 'yaw', depth: Object.fromEntries(MEMBER_BONES.map((b) => [b.name, b.depth])) } }] }]),
+  );
+  say(
+    'GM05_A_MODEL_AND_A_MAP_ARE_TWO_ANSWERS_TO_ONE_QUESTION',
+    both !== null &&
+      /both a "derive" model and a per-member "v" map/.test(both) &&
+      mapOnBone !== null &&
+      /a bone track has one target rather than members/.test(mapOnBone) &&
+      oneDepthManyMembers !== null &&
+      /One number for every member is the shared value/.test(oneDepthManyMembers) &&
+      unknownKind !== null &&
+      /this spec evaluates/.test(unknownKind) &&
+      noDegrees !== null &&
+      /"degrees" is undefined/.test(noDegrees),
+    `both on one key: ${JSON.stringify(both)} | a map on a bone track: ${JSON.stringify(mapOnBone)} | ` +
+      `one depth for five members: ${JSON.stringify(oneDepthManyMembers)} | an unknown kind: ${JSON.stringify(unknownKind)} | ` +
+      `a field the spec did not state: ${JSON.stringify(noDegrees)}`,
+    'the same refusal a `deform` key\'s `transform` has against a `vertices` run (DT03) — with two spellings of one ' +
+      'key on the page nobody can say which one the artifact came from',
+  );
+
+  // --- GM06: the geometry refusals ----------------------------------------
+  //
+  // Each of these is a WRONG ANSWER rather than a failure: a projection onto a
+  // property the kind does not drive, coordinates measured from two origins, a
+  // foreshortening of a part with no front surface, a `carried` the closed form
+  // never reads, and a turn past the member's own edge.
+  const wrongProperty = refusal(
+    dirs,
+    memberMotion([{ group: 'features', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.5, derive: { kind: 'yaw', degrees: DEG, depth: Object.fromEntries(MEMBER_BONES.map((b) => [b.name, b.depth])) } }] }]),
+  );
+  const twoParents = refusal(
+    dirs,
+    memberMotion(
+      [{ group: 'mixed', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 0.5, derive: { kind: 'yaw', degrees: DEG, depth: { far: 150, stray: 150 } } }] }],
+      { mixed: ['far', 'stray'] },
+    ),
+  );
+  const behindTheAxis = refusal(
+    dirs,
+    memberMotion(
+      [{ group: 'behind', property: 'scalex', keys: [{ t: 0, v: [1] }, { t: 0.5, derive: { kind: 'yaw', degrees: DEG, depth: { far: 150, near: -55 } } }] }],
+      { behind: ['far', 'near'] },
+    ),
+  );
+  const carriedOnScale = refusal(
+    dirs,
+    memberMotion([{ group: 'features', property: 'scalex', keys: [{ t: 0, v: [1] }, { t: 0.5, derive: { kind: 'yaw', degrees: DEG, carried: MEMBER_R, depth: Object.fromEntries(MEMBER_BONES.map((b) => [b.name, b.depth])) } }] }]),
+  );
+  // `far` is at x = −62 with depth 8, so α = atan2(−62, 8) = −82.6°; a 12° turn
+  // takes it past −90° and `cos(α − t)` goes negative. Edge-on, and the scale
+  // would mirror the drawing rather than narrow it.
+  const pastTheEdge = refusal(
+    dirs,
+    memberMotion(
+      [{ group: 'thin', property: 'scalex', keys: [{ t: 0, v: [1] }, { t: 0.5, derive: { kind: 'yaw', degrees: DEG, depth: { far: 8 } } }] }],
+      { thin: ['far'] },
+    ),
+  );
+  say(
+    'GM06_A_PARAMETER_THAT_WOULD_EVALUATE_A_DIFFERENT_MODEL_IS_REFUSED_BY_NAME',
+    wrongProperty !== null &&
+      /has no projection onto "rotate"/.test(wrongProperty) &&
+      twoParents !== null &&
+      /measured from different origins/.test(twoParents) &&
+      behindTheAxis !== null &&
+      /no front surface to narrow/.test(behindTheAxis) &&
+      carriedOnScale !== null &&
+      /the foreshortening reads no depth difference/.test(carriedOnScale) &&
+      pastTheEdge !== null &&
+      /past its own edge/.test(pastTheEdge),
+    `a projection the kind has not got: ${JSON.stringify(wrongProperty)} | two parents: ${JSON.stringify(twoParents)} | ` +
+      `a depth behind the axis on a scale track: ${JSON.stringify(behindTheAxis)} | a "carried" nothing reads: ` +
+      `${JSON.stringify(carriedOnScale)} | a member turned edge-on: ${JSON.stringify(pastTheEdge)}`,
+    'FACE §2 says the depths are the thing nothing complains about, so every way of stating one that the closed form ' +
+      'would read as a DIFFERENT model has to complain here',
+  );
+
+  // --- GM07: the report, read as an author reads it ------------------------
+  //
+  // Through a real `bun cli.ts explain` subprocess, for DR00's reason: the block
+  // IS the deliverable, and a control that read `result.trackDerivations` would
+  // pass on a block that printed the wrong field. The claim under test is that
+  // the printed numbers are the EMITTED ones, so they are compared against the
+  // skeleton and not against a second evaluation.
+  const reportMotion = memberMotion([
+    {
+      group: 'features',
+      property: 'translatex',
+      keys: [
+        { t: 0, v: [0], ease: 'swell' },
+        { t: 0.5, derive: { kind: 'yaw', degrees: DEG, carried: MEMBER_R, depth: Object.fromEntries(MEMBER_BONES.map((b) => [b.name, b.depth])) }, ease: 'swell' },
+        { t: 1, v: [0] },
+      ],
+    },
+  ]);
+  const reportPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(reportPath, `${JSON.stringify(reportMotion, null, 2)}\n`);
+  const run = runCli(['explain', '--rig', dirs.rigPath, '--motion', reportPath, '--out', dirs.outDir, '--images', dirs.dir]);
+  const lines = run.stdout.split('\n');
+  const start = lines.findIndex((line) => line.startsWith('group members'));
+  const after = lines.findIndex((line, i) => i > start && /^\S/.test(line));
+  const block = start < 0 ? [] : lines.slice(start, after < 0 ? undefined : after).filter((line) => line.trim().length > 0);
+  const memberLine = (name: string): string | undefined => block.find((line) => new RegExp(`^\\s+${name}\\s`).test(line));
+  const printed = MEMBER_BONES.map((b) => {
+    const line = memberLine(b.name);
+    const m = line?.match(/(-?\d+(?:\.\d+)?)\s+<-\s+(-?\d+(?:\.\d+)?) at depth (-?\d+(?:\.\d+)?)/);
+    return m ? { value: Number(m[1]), at: Number(m[2]), depth: Number(m[3]) } : null;
+  });
+  const quotesTheArtifact = printed.every((p, i) => p !== null && p.value === gotShift[i] && p.at === MEMBER_BONES[i].x && p.depth === MEMBER_BONES[i].depth);
+  const namesTheModel = block.some((line) => line.includes('derive yaw') && line.includes(`degrees=${DEG}`) && line.includes(`carried=${MEMBER_R}`));
+  const namesTheFormula = block.some((line) => line.includes('(cos t − 1)') && line.includes('(depth − carried)'));
+  say(
+    'GM07_EXPLAIN_PRINTS_THE_MEMBERS_SIDE_BY_SIDE_AND_QUOTES_THE_ARTIFACT',
+    run.status === 0 && quotesTheArtifact && namesTheModel && namesTheFormula,
+    run.status === 0
+      ? `${block.length} line(s): the block names the model and its formula, and its ${printed.length} member rows read ` +
+          `[${printed.map((p, i) => (p === null ? `${MEMBER_BONES[i].name} MISSING` : `${MEMBER_BONES[i].name} ${p.value} <- ${p.at} at depth ${p.depth}`)).join(', ')}] ` +
+          `against the emitted [${gotShift.join(', ')}]`
+      : `explain exited ${run.status}: ${run.stderr}`,
+    'FACE §3: a residual is 1–6 units where a total is 30–40, so the audit is the column of six — and a report that ' +
+      're-evaluated the model instead of quoting the file could agree with itself while the artifact said otherwise',
+  );
+
+  return bad;
+}
+
 /**
  * The slot the articulated fixture's manifest promotes to a ring mesh.
  *
@@ -12185,6 +12686,8 @@ function main(): void {
   substantive += 7;
   bad += runDeformReportSuite();
   substantive += 7;
+  bad += runGroupMemberSuite();
+  substantive += 8;
   bad += runMeshSuite();
   substantive += 4;
   const meshRungBad = runMeshRungSuite();
@@ -12353,6 +12856,16 @@ function main(): void {
       'block for a model and its transcription, which emit identical skeletons and must differ only on the line ' +
       'naming the model; and the band INVERTED rather than folded, which A39 is right to pass and the block prints ' +
       'as a ratio on the wrong side of the model, with no reference render), ' +
+      "+ 8 per-member group-value controls (five separate bone tracks, one group track carrying a `v` map and one " +
+      'carrying a `derive` model all emitting ONE skeleton — the transcribed spellings holding a table this file ' +
+      "derived from docs/FACE.md §3 and §5 — the foreshortening's on-axis pair coming out equal from the arithmetic " +
+      'rather than from a group entry, `pitch` reading the other setup coordinate, `stagger` moving every key time ' +
+      'and no value, and the refusals that keep a per-member value from being a silent wrong answer: a member the ' +
+      'group names twice, a stranger and an omission in both the value map and the depth table, an empty group, a ' +
+      'model and a map on one key, a map on a bone track, one depth for five members, a projection the kind has not ' +
+      'got, members under two parents, a foreshortening behind the axis, a `carried` the closed form never reads, ' +
+      "and a member turned edge-on — plus `explain`'s MEMBER block read as a subprocess, whose rows quote the " +
+      'emitted values and the depths that produced them), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       ', + 5 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +

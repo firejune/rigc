@@ -17,6 +17,7 @@
 import type { AtlasRegion } from './atlas.ts';
 import type { DeformTransform, DeformTransformReport } from './deformgen.ts';
 import type { MeshKind } from './mesh.ts';
+import type { TrackDerive, TrackDeriveReport } from './trackgen.ts';
 
 // ---------------------------------------------------------------------------
 // Cut manifest (face class)
@@ -174,6 +175,16 @@ export interface FaceManifest {
 /** Graph-view style normalised handles [hx1, hy1, hx2, hy2]. */
 export type EasingHandles = [number, number, number, number];
 
+/**
+ * One value per group member, keyed by member name — the map form of `MotionKey.v`.
+ *
+ * Each entry is exactly what `v` would be for that one member: `[x, y]` on a
+ * paired property, `[value]` on a single-axis one, `[r, g, b, a]` on `rgba`, an
+ * attachment name on `attachment`. The times, the easings and the key count stay
+ * shared, because those being shared is what makes a group a group.
+ */
+export type MotionMemberValues = Record<string, number[] | string | null>;
+
 export interface MotionKey {
   /** Time in seconds. */
   t: number;
@@ -186,8 +197,27 @@ export interface MotionKey {
    *   rotate     -> [degrees]
    *   mix        -> [0..1] physics authority
    *   reset      -> null; the key is the event
+   *
+   * ⭐ On a track that names a `group`, this may instead be a **map keyed by
+   * member name** (`MotionMemberValues`) — the six numbers of a head turn side
+   * by side rather than six tracks apart, which is the only arrangement in which
+   * a reader notices that one of them has the wrong sign (issue #295). A
+   * non-map `v` keeps meaning exactly what it means today: every member gets it.
+   *
+   * ⚠️ Absent only when the key states a `derive` instead. Every other timeline
+   * still refuses a key with no value, by name.
    */
-  v: number[] | string | null;
+  v?: number[] | string | null | MotionMemberValues;
+  /**
+   * The model form of `v`: a named kind whose per-member values the compiler
+   * evaluates from stated parameters (`src/trackgen.ts`, AUTHORING §4.5.1).
+   *
+   * ⭐ A `v` map states six numbers; this states the one line of arithmetic that
+   * produced them plus the six **depths** that are the actual decisions. A key
+   * carries one or the other and never both — two answers to one question, the
+   * same refusal a `deform` key's `transform` has against a `vertices` run.
+   */
+  derive?: TrackDerive;
   /** Named easing from `easings`, or "stepped". Absent = linear. */
   ease?: string;
   /**
@@ -299,6 +329,24 @@ export interface MotionTrack {
   /** Extra per-member delay inside a group, in member order. */
   stagger?: number;
   keys: MotionKey[];
+}
+
+/**
+ * A track after its per-member values have been resolved **for one target**.
+ *
+ * ⭐ The type exists to make the resolution order an invariant rather than a
+ * convention: a `v` that is a map and a `v` that is a value mean different
+ * things, so nothing downstream of `resolveMemberTrack` is allowed to see the
+ * first. By the time a key reaches `compileValueTrack`, `v` means one thing —
+ * which is the same guarantee `evaluateDeformTransform`'s `setup` array carries,
+ * stated in the type system instead of in a comment.
+ */
+export interface MotionValueKey extends Omit<MotionKey, 'v' | 'derive'> {
+  v?: number[] | string | null;
+}
+
+export interface MotionValueTrack extends Omit<MotionTrack, 'keys'> {
+  keys: MotionValueKey[];
 }
 
 /**
@@ -1003,4 +1051,31 @@ export interface CompileResult {
       time: number;
     }
   >;
+  /**
+   * Group-track keys whose per-member values were **stated as a map** or
+   * **derived from a model**, one entry per key in emit order — reported by
+   * `explain` (issue #295).
+   *
+   * ⭐ Both spellings are here, and that is the point of the report rather than
+   * an accident of it: what an author needs to see is the members' values *side
+   * by side*, and whether they were transcribed or derived is one column of that
+   * table. The values carried are the **emitted** ones, so the printed audit and
+   * the artifact cannot disagree.
+   */
+  trackDerivations: Array<{
+    animation: string;
+    /** The group the track named, or the bone if a bone track stated a model. */
+    target: string;
+    /** `group` or `bone` — which field carried the target. */
+    targetKind: 'group' | 'bone';
+    property: string;
+    /** The key's own time, as emitted for the FIRST member (before any `stagger`). */
+    time: number;
+    /** The authored key time, which is what the spec names. */
+    authoredTime: number;
+    /** Absent when the key stated a `v` map rather than a model. */
+    model: TrackDeriveReport | null;
+    /** Every member's emitted value, in member order. */
+    members: Array<{ member: string; value: number[] | string | null }>;
+  }>;
 }
