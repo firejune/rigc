@@ -106,7 +106,9 @@ import {
 import { isContent } from './src/framing.ts';
 import {
   DEFAULT_MAX_RESIDUAL,
+  errBilinear,
   estimatePose,
+  levelOf,
   POSE_SPEC,
   ROTATION_FREE_TOLERANCE,
   type PosePlacement,
@@ -9439,8 +9441,8 @@ function runSamplingSuite(): number {
     straight[0] === 121 && RIM_COLOUR[0] - straight[0] === 121,
     `the same tap, channels averaged independently: ${straight[0]},${straight[1]},${straight[2]} at alpha ` +
       `${straight[3]} — ${RIM_COLOUR[0] - straight[0]}/255 darker in R`,
-    'red-first control for SM01. This is the arithmetic `bilinear` used until #292, kept reachable because ' +
-      '`bilinearChannels` still has a caller — if it ever stopped darkening, SM01 would stop meaning anything',
+    'red-first control for SM01. This is the arithmetic `bilinear` used until #292, and since #306 this suite ' +
+      'is its only importer — if it ever stopped darkening, SM01 and SM07 would both stop meaning anything',
   );
 
   // --- SM03: alpha did not move ---------------------------------------------
@@ -9527,6 +9529,80 @@ function runSamplingSuite(): number {
     `${again.length} frame(s) re-rendered from a fresh compile: ${identical ? 'byte-identical' : 'DIFFERENT'}`,
     'the fix introduces a division, and a renderer whose output depends on anything but its inputs cannot be ' +
       'the yardstick `check` measures a candidate against',
+  );
+
+  // --- SM07: the same defect in the instrument that prices placements -------
+  // `src/pose.ts`'s objective read its frame with the straight tap until #306,
+  // on the argument that `materialPlate`'s fourth channel is a material mask
+  // rather than opacity. The mask is exactly the weight the COLOUR wanted: a
+  // texel with no material carries the ground's colour, not the part's, so
+  // averaging it in charges a part for a disagreement with the background it is
+  // not standing on. Two texels of a material plate — material beside ground —
+  // tapped halfway, against the material's own colour:
+  //
+  //   • premultiplied, the only colour in the tap is the material's, so the
+  //     error is the coverage charge `1 − m` and NOTHING else. Exactly, not
+  //     nearly: every quotient here is representable;
+  //   • channel by channel, the ground's colour is averaged in and the same
+  //     placement is charged for it — which is what moved every figure this
+  //     PR re-baselines.
+  const MATERIAL: RGBA = [242, 212, 156, 255];
+  const GROUND: RGBA = [20, 20, 20, 0];
+  const strip = new Plate(2, 1);
+  strip.set(0, 0, MATERIAL);
+  strip.set(1, 0, GROUND);
+  // x + 0.5 is what `errBilinear` subtracts back off, so 1.0 is the tap halfway
+  // between texel 0 and texel 1.
+  const straddle = errBilinear(levelOf(strip, 1), strip, 1, 0, MATERIAL[0], MATERIAL[1], MATERIAL[2]);
+  const straddleTap = bilinearChannels(strip, 0.5, 0);
+  const straddleOld =
+    (straddleTap[3] / 255) *
+      ((Math.abs(straddleTap[0] - MATERIAL[0]) +
+        Math.abs(straddleTap[1] - MATERIAL[1]) +
+        Math.abs(straddleTap[2] - MATERIAL[2])) /
+        765) +
+    (1 - straddleTap[3] / 255);
+  say(
+    'SM07_A_TAP_ACROSS_A_SILHOUETTE_CHARGES_THE_POSE_OBJECTIVE_FOR_COVERAGE_ONLY',
+    straddle === 0.5 && straddleOld > straddle,
+    `material ${MATERIAL.slice(0, 3).join(',')} beside ground ${GROUND.slice(0, 3).join(',')}, tapped halfway: ` +
+      `errBilinear ${straddle.toFixed(6)} against the coverage charge 0.5, where the channel-independent tap ` +
+      `reads ${straddleTap[0]},${straddleTap[1]},${straddleTap[2]} and charges ${straddleOld.toFixed(6)}`,
+    'the residual is what prices every placement `pose` and `chainfit` report, so a colour charge for the ' +
+      'ground a part is silhouetted against is a systematic penalty on exactly the parts whose edges are in ' +
+      'the frame — the same defect class as #292, in the instrument rather than the renderer (#306). The ' +
+      'second figure is the red-first control: it is what this assertion measured before the fix',
+  );
+
+  // --- SM08: and the straight tap has no production caller left --------------
+  // SM07 is only a statement about `src/pose.ts` while `src/pose.ts` is the only
+  // place that could reach the old arithmetic. A docstring saying "nothing in
+  // `src/` should call this" is a comment; this is the check.
+  const productionSources = [
+    join(import.meta.dir, 'cli.ts'),
+    ...readdirSync(join(import.meta.dir, 'src'))
+      .filter((f) => f.endsWith('.ts'))
+      .map((f) => join(import.meta.dir, 'src', f)),
+  ];
+  const straightCallers: string[] = [];
+  const premultipliedCallers: string[] = [];
+  for (const path of productionSources) {
+    // Declarations struck out first: `export function bilinear(` is the sampler,
+    // not a use of it, and counting it would make the positive control below
+    // pass on render.ts alone forever.
+    const text = readFileSync(path, 'utf8').replace(/export function bilinear(Channels)?\(/g, 'declared(');
+    if (/\bbilinearChannels\(/.test(text)) straightCallers.push(basename(path));
+    if (/\bbilinear\(/.test(text)) premultipliedCallers.push(basename(path));
+  }
+  say(
+    'SM08_NO_PRODUCTION_MODULE_READS_THE_STRAIGHT_TAP',
+    straightCallers.length === 0 && premultipliedCallers.length > 0,
+    `${productionSources.length} module(s) scanned: ${straightCallers.length} call bilinearChannels` +
+      `${straightCallers.length === 0 ? '' : ` (${straightCallers.join(', ')})`}, ` +
+      `${premultipliedCallers.length} call bilinear (${premultipliedCallers.join(', ')})`,
+    'the straight tap survives as SM01/SM02/SM07’s control and for no other reason, and a control that ' +
+      'quietly regains a caller is a defect wearing a test’s name. The bilinear count is the positive ' +
+      'control: a scan that found nothing would pass this while measuring nothing',
   );
 
   return bad;
@@ -11396,10 +11472,16 @@ function runSeeItSuite(): number {
 // coverage, so the pixels the estimator matches are not the part's pixels; and the
 // objective charges for every part pixel that lands off the figure while charging
 // nothing for figure left uncovered, which puts the optimum a fraction inside the
-// true silhouette. Measured on this fixture: translation within 0.12 px, rotation
-// within 0.4°, scale 2–4% LOW on every one of five parts — a consistent sign,
-// which is what a systematic half-pixel of silhouette looks like over a part 26 px
-// across. The bars below sit a few times clear of each.
+// true silhouette. Measured on this fixture, re-baselined 2026-09-03 under the
+// premultiplied objective (issue #306): translation within 0.16 px, rotation
+// within 0.27°, scale 0.8–3.1% LOW on every one of five parts — a consistent
+// sign, which is what a systematic half-pixel of silhouette looks like over a
+// part 30 px across. The bars below sit a few times clear of each. ⚠️ The scale
+// band was 2–4% and the translation 0.12 px when first stated; two of the three
+// intervening moves are not #306's — this fixture's arm plate grew from 10x26 to
+// 10x30 with `chainfit`, and the frame it is read out of is rendered by
+// `bilinear`, which #301 moved. #306's own contribution is the narrowing: the two
+// arms come in 2.8% and 3.1% low where they were 3.4% and 3.6%.
 const POSE_TOLERANCE = { translate: 1, rotateDeg: 2, scaleRatio: 0.08 };
 
 /** A checkerboard, for parts whose interior has to be identifiable. */
@@ -11872,6 +11954,26 @@ function runPoseSuite(): number {
         `--help exit=${String(help.status)}; missing dir exit=${String(missing.status)} ` +
         `${JSON.stringify(missing.stderr.split('\n')[0])}`,
       'the JSON is the whole product — an agent reads it and never sees the table — and a mistyped directory must not read as an empty pose',
+    );
+  }
+
+  // --- the same picture, read twice -----------------------------------------
+  // The objective divides now (issue #306: the tap is premultiplied, so each
+  // colour is weighted by its own material and the sum divided back out), and a
+  // division is where a search picks up an order-of-summation dependence. The
+  // report is what an agent writes a rig from, so "the same picture twice" has to
+  // mean the same numbers and not the same numbers to a tolerance.
+  {
+    const twice = estimatePose({ imagesDir: fixture.parts, framePath: fixture.framePath });
+    const first = JSON.stringify(report.parts);
+    const second = JSON.stringify(twice.parts);
+    say(
+      'PS11_THE_SAME_PICTURE_READ_TWICE_REPORTS_THE_SAME_NUMBERS',
+      first === second,
+      `${report.parts.length} part(s) re-read from the same frame: ` +
+        `${first === second ? 'byte-identical' : `DIFFERENT (${first.length} vs ${second.length} chars)`}`,
+      'a placement an agent cannot reproduce is not a measurement, and `src/` is specified to hold no clock and ' +
+        'no randomness — this is the assertion that says the arithmetic obeys that too',
     );
   }
 
@@ -13127,7 +13229,7 @@ function main(): void {
   bad += runSeeItSuite();
   substantive += 11;
   bad += runPoseSuite();
-  substantive += 10;
+  substantive += 11;
   bad += runChainFitSuite();
   substantive += 10;
   bad += runBallotSuite();
@@ -13135,7 +13237,7 @@ function main(): void {
   bad += runCopyImagesSuite();
   substantive += 3;
   bad += runSamplingSuite();
-  substantive += 6;
+  substantive += 8;
   bad += runPackerSuite();
   substantive += 18;
   const atlasReaderBad = runAtlasReaderSuite();
@@ -13302,13 +13404,14 @@ function main(): void {
       'to RGBA while still refusing a colour type that is not one, a preview embedding the skeleton, the atlas and ' +
       'one data URI per page under the names the player asks for, the player referenced rather than vendored, both ' +
       'commands in the help, and a misspelled --animation refused by name)' +
-      ', + 10 pose controls (a rig rendered at a chosen scale and its placements read back out of the picture ' +
+      ', + 11 pose controls (a rig rendered at a chosen scale and its placements read back out of the picture ' +
       'within a pixel, a degree and 8% — one PNG posed twice reported as TWO placements rather than picked ' +
       "between, a round part's rotation reported as free where nothing else is, a foreign part / a part the " +
       'canvas cannot hold / an all-transparent part each refused by their own reason, an occluded part whose ' +
       'residual rises while its placement does not move, a knocked-out ground read the same as a flat one, the ' +
-      'declared scale window honoured in both directions, and the command writing its JSON while a mistyped ' +
-      'directory is refused by name)' +
+      'declared scale window honoured in both directions, the command writing its JSON while a mistyped ' +
+      'directory is refused by name, and the same picture read twice reporting the same numbers rather than ' +
+      'nearly the same ones — the objective divides since #306)' +
       ', + 10 chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
@@ -13328,6 +13431,12 @@ function main(): void {
       'elsewhere refused as the typo it is, an animation no candidate has refused by name, `vote` in the help, and ' +
       'the player referenced rather than vendored)' +
       ', + 3 copy-images controls (self-contained out dir, unchanged default, deterministic basename collision)' +
+      ', + 8 bilinear-sampling controls (a transparent texel getting no vote in the colour with the straight ' +
+      'average beside it as the red-first control, the alpha channel bit-identical over 4900 ragged taps and an ' +
+      'opaque tap unchanged to the last bit, the #292 overlap rendered and re-rendered byte for byte, the same ' +
+      'tap across a SILHOUETTE charging `pose`’s objective for coverage and no colour — #306, where the straight ' +
+      'arithmetic charges 0.68 for a placement that disagrees with nothing — and the scan that keeps the straight ' +
+      'tap a control by having no caller in `src/` at all)' +
       ', + 19 packer/importer controls (shared pages on power-of-two edges, every region a lossless copy, two ' +
       'packs byte-identical from shuffled input, the padding respected on every pair, a packed render that never ' +
       'reads a wrong texel with the gutterless case three orders of magnitude louder, an oversized part and a ' +

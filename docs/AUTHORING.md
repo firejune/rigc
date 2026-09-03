@@ -4333,6 +4333,20 @@ placements become a rig and a motion, what goes between two key poses when nothi
 was given for the in-betweens, and how to spread candidates so a `vote` ballot
 informs.
 
+📏 **Instrument re-baseline, 2026-09-03 — [#306](https://github.com/firejune/rigc/issues/306),
+and it applies to §12 as well.** The objective behind every `residual` in both
+commands now interpolates the frame in **premultiplied** space: a tap that
+straddles a silhouette weights each texel's colour by how much material is there,
+so a part is no longer charged for disagreeing with the ground it is drawn
+against. Nothing about the fields, the coordinate contract or the refusals
+changed, and no threshold moved — `--max-residual`, `--min-visible` and
+`--anchor-residual` are the numbers they were. ⚠️ **What did move is the residuals
+themselves**, downward and by small amounts, most on the parts whose edges are in
+the frame. ⇒ A residual measured before that date and one measured after are not
+the same measurement; re-read a frame rather than comparing across it. The worked
+figures live in [MOTION.md](MOTION.md) §6 and
+[BENCHMARK.md](BENCHMARK.md), each with its own re-baseline note.
+
 ### 11.1 It measures an input, so nothing here is a score
 
 🚨 **No number in this report has a pass bar, and none of them is a grade.** The
@@ -4514,7 +4528,7 @@ And per part:
 | Field | Meaning |
 | --- | --- |
 | `role` | `anchor` (taken from the anchor pass, not re-fitted), `chain` (fitted through the rig), `unplaced` |
-| — | ⭐ **A refused ANCHOR is not a contradiction, and it is the most useful row in the table.** The anchor pass judged that placement over the part's *whole* footprint — all `pose` can see, and blind to what covers it — while this instrument has just measured how much of the part is visible at all. Both readings are true. A refused anchor means *the placement may well be right and the confirmation is missing*, and every part whose `anchoredTo` names that bone rests on it. Measured on the 2026-09-03 corpus, `rear-bracer` clears `pose`'s criterion on 81 of 147 frames at a median visible share of **0.1%** — suppressing the refusal there was tried and prints that as READ |
+| — | ⭐ **A refused ANCHOR is not a contradiction, and it is the most useful row in the table.** The anchor pass judged that placement over the part's *whole* footprint — all `pose` can see, and blind to what covers it — while this instrument has just measured how much of the part is visible at all. Both readings are true. A refused anchor means *the placement may well be right and the confirmation is missing*, and every part whose `anchoredTo` names that bone rests on it. Measured on the 2026-09-03 corpus, `rear-bracer` clears `pose`'s criterion on 81 of 147 frames at a median visible share of **0.1%** — suppressing the refusal there was tried and prints that as READ. ⚠️ **That pair of numbers is on the pre-[#306](https://github.com/firejune/rigc/issues/306) objective** and has not been re-derived: the study is the 2026-09-03 run's own, over its own candidate, and re-running it is a run-scale job rather than a docs edit. A four-frame spot check under #306 (`--min-visible 0`, committed `ess` frames `idle/f0000`, `run/f0002`, `walk/f0004`, `aim/f0000`) moved `rear-bracer`'s anchor residual *down* on all four — 0.1564→0.1555, 0.1519→0.1513, 0.1493→0.1488, 0.1537→0.1534 — and flipped its eligibility on none, while `visibleShare` moved materially on one of the four (0.36→0.89). ⇒ Read the **shape** of the row, not those two digits |
 | — | The **other** parts on an anchored bone are refused on their own numbers too, and there they mean something different again: their placement is the **rig's** prediction from that anchor, so their residual is a measurement of the rig (a goggle plate that will not sit on the head it is parented to shows up exactly here) |
 | `bone` | the bone this hangs off: its `parent`, its `setupRotationDeg`, its `depth` in links from the anchor, `anchoredTo`, the `dof` searched, the `window` taken, the other parts `sharedWith` it on that bone, and `carriedBones` |
 | `bone.dof.pivotFree` | your candidate keys a `translate` timeline on this bone, so the arc this answer sits on has a centre the rig itself moves. The placement is still read off pixels; `localRotationDeg` alone will not reproduce it |

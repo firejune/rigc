@@ -1360,17 +1360,23 @@ export function bilinear(page: Plate, x: number, y: number): [number, number, nu
 }
 
 /**
- * The same tap, each channel interpolated independently.
+ * The same tap, each channel interpolated independently — the arithmetic
+ * `bilinear` used until #292, kept as the CONTROL that fix is measured against.
  *
- * ⚠️ For a plate whose fourth channel is **not opacity**. `src/pose.ts`'s
- * `materialPlate` keeps the frame's own RGB and rewrites alpha to mean "how much
- * material is here", so its colour and its fourth channel are decoupled by
- * construction — premultiplying by it would be a colour-space correction applied
- * to something that is not in that colour space. `errBilinear` reads its two
- * answers separately and combines them itself.
+ * 🚫 **Nothing in `src/` calls this, and nothing in `src/` should.** It had one
+ * production caller until #306: `src/pose.ts`'s `errBilinear`, on the argument
+ * that `materialPlate`'s fourth channel is a material mask rather than opacity.
+ * That argument was wrong in the direction that mattered — the mask is exactly
+ * the weight the colour wanted, because a texel with no material carries the
+ * background's colour and not the part's — so `errBilinear` now takes
+ * `bilinear` too, and the only importer left is `selftest.ts`.
  *
- * Nothing that samples an ATLAS should call this. The rasteriser's source is
- * straight alpha and wants `bilinear`.
+ * ⭐ It lives here rather than in the suite so the control shares `taps` — the
+ * edge clamp above — with the sampler it is a control for. A hand copy in the
+ * test file would drift from it silently, and then `SM01` would be comparing the
+ * fix against something that is not what the renderer used to do.
+ * `SM08_NO_PRODUCTION_MODULE_READS_THE_STRAIGHT_TAP` is what keeps the first
+ * paragraph true rather than merely written down.
  */
 export function bilinearChannels(page: Plate, x: number, y: number): [number, number, number, number] {
   const { c00, c10, c01, c11, fx, fy } = taps(page, x, y);
