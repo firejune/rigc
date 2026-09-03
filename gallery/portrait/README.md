@@ -14,15 +14,24 @@ a ball. These are the **perspective projection of a yaw**, and every number in
 them — mesh offsets, bone translations, bone scales — comes off one line of
 arithmetic that this README derives.
 
-🆕 **And the mesh keys now STATE that line instead of listing its results**
+🆕 **And both halves of the turn now STATE that line instead of listing its
+results.** The **mesh** keys did first
 ([#294](https://github.com/firejune/rigc/issues/294),
-[AUTHORING §4.11.1](../../docs/AUTHORING.md)). This example shipped with **160
-hand-transcribed floats** across its 8 deform keys; the same artifact now comes
-out of four `transform` keys, and the floats that used to be in `motion.json`
-are what `rigc explain` prints. Every table below is unchanged, because it is
-the same arithmetic — it is just no longer typed out. The bone half of the turn
-(20 tracks, 81 keys) is untouched and is
-[#295](https://github.com/firejune/rigc/issues/295).
+[AUTHORING §4.11.1](../../docs/AUTHORING.md)): this example shipped with **160
+hand-transcribed floats** across its 8 deform keys, and the same artifact now
+comes out of four `transform` keys. The **bone** tracks followed
+([#295](https://github.com/firejune/rigc/issues/295),
+[AUTHORING §4.5.1](../../docs/AUTHORING.md)): `turn` was **20 tracks and 81
+keys**, sixteen of them the same two properties on six sibling bones, and it is
+now **8 tracks and 33 keys** — two group tracks whose keys state a `yaw` and a
+**depth per member**.
+
+⭐ **Every table below is unchanged, because it is the same arithmetic.** What
+changed is where the arithmetic's *inputs* live: the depth column of the tables
+below used to exist only in this README, and it is now in `motion.json` where
+the turn uses it. `rigc explain` prints the results — the offsets per vertex
+([§4.11.2](../../docs/AUTHORING.md)) and the values per member
+([§4.5.2](../../docs/AUTHORING.md)) — beside the model that produced them.
 
 📐 It is also the measured experiment for
 [issue #285](https://github.com/firejune/rigc/issues/285). What it cost, where
@@ -299,6 +308,27 @@ front of the skull surface — it protrudes 22 units, and 22·sin 12° = 4.57 is
 exactly how much further left it goes than the cheek it sits on. That is the
 single most turn-diagnostic number in the file.
 
+🆕 **And the `z` column of that table is now in `motion.json`, which is the point
+of [#295](https://github.com/firejune/rigc/issues/295) rather than a side effect
+of it.** One group track states the model and a depth per member; `carried` is
+the shared shift above, stated:
+
+```json
+{ "group": "features", "property": "translatex", "keys": [
+    { "t": 0,    "v": [0], "ease": "rise" },
+    { "t": 0.62, "derive": { "kind": "yaw", "degrees": 12, "carried": 170,
+                             "depth": { "eye_l": 150, "eye_r": 150, "brow_l": 158,
+                                        "brow_r": 158, "nose": 192, "mouth": 166 } },
+      "ease": "swell" },
+    { "t": 1.5,  "derive": { "…the same model…" }, "ease": "settle" },
+    { "t": 2.2,  "v": [0] } ] }
+```
+
+⇒ **The residual column is what `rigc explain` prints** — a row per member with
+the `x` it read off the rig and the depth the spec stated
+([AUTHORING §4.5.2](../../docs/AUTHORING.md)), so the nose test above is reading
+one sign rather than redoing the arithmetic against this README.
+
 `scalex` is the foreshortening of the patch of surface a feature sits on:
 
 ```
@@ -306,8 +336,12 @@ scaleX = cos(α − t) / cos α        where α = atan2(x, z)
 ```
 
 The far eye narrows to 89%, the near eye widens to 106%. `nose` and `mouth` sit
-on the axis, so both are `cos t = 0.9781` and they share one track through the
-`axis` group — the only place in `turn` where two parts can.
+on the axis, so both are `cos t = 0.9781` — which used to mean they shared one
+track through an `axis` group, the only place in `turn` where two parts could.
+📌 **That group is gone**: `scalex` is the foreshortening projection of the same
+`derive` kind (AUTHORING §4.5.1), so all six features are one track and the pair's
+shared value falls out of `α = atan2(0, z) = 0`. A coincidence between two members
+is no longer something an author has to spot and spend an entry on.
 
 ### 🚨 The iris does **not** foreshorten, and this is the finding
 
@@ -327,6 +361,14 @@ The fix is one reciprocal per side, on two groups:
 "look_l": ["iris_l", "spark_l"],   scalex 1 / 0.8922 = 1.1208
 "look_r": ["iris_r", "spark_r"],   scalex 1 / 1.0641 = 0.9398
 ```
+
+⭐ **These two stay a plain shared value, and they are the case where a per-member
+model is the wrong tool** — worth saying, because #295 landing is exactly the
+reasoning that would spoil them. A counter-scale belongs to the **socket**, not to
+the part: `spark_l` sits at local `x = −11` and takes the same `1.1208` as
+`iris_l` at `0`, because what is cancelled is the socket's foreshortening and not
+the highlight's own. The value is precisely *not* a function of the member's
+position, so one number on a group is the true statement of it.
 
 Their *positions* still ride the socket — a bone's scale moves its children's
 local translation, so the highlight at `(−11, +11)` slides inward with the
@@ -482,6 +524,8 @@ of the two profiles the gallery bar asks for.
 | `rigc preview` | boots in the official Spine Web Player 4.3 and draws all 3 animations — headless chromium over CDP, **0 console errors, 0 page exceptions, 0 log-level errors** |
 | `bun run selftest` | includes `GALLERY_EXAMPLE_IS_GREEN[portrait]` (18 assertions, 3 animations), green with the example corpus fetched |
 | part determinism | `make_parts.ts` twice ⇒ identical bytes for all 22 PNGs |
+| **the re-authoring onto #295, against the artifact it replaced** | the 20-track spelling and this one are **structurally identical** — same timelines, same key counts, same curve shapes — and 102 emitted numbers moved, all of them the transcription's own rounding: worst **0.000385** on `eye_r.translatex` (`2.803` written by hand, `2.803385` derived). Posed and compared bone by bone at 60 fps over all three animations, `rigc bonedist --bones identity` reports a worst world-position drift of **6.90e-7 skeleton sizes = 0.00058 px** (`spark_r`, frame 38) and a worst world-scale drift of **4.80e-5** (`nose`, frame 38). ⚠️ Byte identity was **not** available and could not be: the hand-written values were rounded to 3–4 decimals and the model emits 6 |
+| the same re-authoring, spelled as a `v` map | **byte-identical** to the pre-#295 artifact — 16 tracks collapsed to 2 with the numbers relocated and not recomputed, which is what makes the map form a pure relocation |
 | `bun run typecheck` / `lint` | green |
 
 ---
@@ -548,14 +592,23 @@ vertices sampling the part of the projection that actually moves. It is one
 decision made once, in the setup geometry, and every deform key after it is
 better for free.
 
-**`groups` bought almost nothing, and that is structural.** The gallery's usual
-lever for cutting track count is a `groups` entry keying several bones
-identically. In `turn`, every part needs a *different* number by construction —
-that is what parallax means — so of 20 tracks exactly one is a group (`axis`,
-for the nose and mouth, which are both on the axis and therefore both `cos t`),
-plus the two reciprocal groups the iris fix needs. **20 tracks, 81 keys, 2 deform
-entries, 8 deform keys, 0 hand-written vertex offsets** for one held yaw — that
-last figure was **160** until
-[#294](https://github.com/firejune/rigc/issues/294) shipped and the keys started
-stating their model. [FINDINGS.md](FINDINGS.md) is mostly about that number, and
-it is the record of what it cost while it was still being paid.
+**A plain `groups` entry bought almost nothing, and that is structural.** The
+gallery's usual lever for cutting track count is a `groups` entry keying several
+bones **identically**. In `turn` every part needs a *different* number by
+construction — that is what parallax means — so of the original 20 tracks exactly
+one was a group (`axis`, for the nose and mouth, both on the axis and therefore
+both `cos t`), plus the two reciprocal groups the iris fix needs.
+
+⇒ **What cut the track count was a group entry that stops keying identically**
+([#295](https://github.com/firejune/rigc/issues/295)): **8 tracks, 33 keys, 2
+deform entries, 8 deform keys, 0 hand-written vertex offsets** for one held yaw,
+against 20 and 81 before it.
+
+🚨 **And the figure that matters more than either count: the hand-written numbers
+barely moved.** The 20-track spelling stated **32** residuals and scale factors
+across its held keys; this one states **34** depths, of which **11 are distinct**.
+The saving is not arithmetic — it is that `brow_r at depth 158` is a claim a
+reader can argue with and `1.14` is one they can only take on trust.
+[FINDINGS.md](FINDINGS.md) is mostly about the 160 floats that came before both
+constructs, and it is the record of what they cost while they were still being
+paid.

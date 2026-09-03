@@ -14,7 +14,8 @@
     "brows": ["brow_l", "brow_r"],
     "irises": ["iris_l", "iris_r"],
     "sparks": ["spark_l", "spark_r"],
-    "axis": ["nose", "mouth"],
+    "features": ["eye_l", "eye_r", "brow_l", "brow_r", "nose", "mouth"],
+    "hair": ["hairmass", "lock_l", "lock_r", "ahoge"],
     "look_l": ["iris_l", "spark_l"],
     "look_r": ["iris_r", "spark_r"]
   },
@@ -217,7 +218,7 @@
     "turn": {
       "duration": 2.2,
       "loop": false,
-      "note": "A 12 deg yaw, held, and released. Every number in it is one line of arithmetic on dx = x (cos t - 1) - z sin t, the projection of a yaw about the skull's axis: the two mesh deforms carry the face and fringe plates, `faceshift` carries the shift every feature shares, and each feature's own translatex carries only its parallax — its depth relative to the skull, times sin t. The anticipation lives in `headroll`'s roll and not in the yaw, because a yaw anticipation costs a whole 50-number deform key. The iris and its highlight carry the RECIPROCAL of their socket's scaleX: the socket foreshortens, the eyeball counter-rotates to keep looking at the viewer, and a pupil that goes elliptical is what stops a turn reading at 18 deg instead of 26. README.md derives all of it and measures where it stops reading.",
+      "note": "A 12 deg yaw, held, and released. Every number in it is one line of arithmetic on dx = x (cos t - 1) - z sin t, the projection of a yaw about the skull's axis — so the spec states that line and the depths it reads, and the compiler states the numbers (AUTHORING 4.5.1). The two mesh deforms carry the face and fringe plates; `faceshift` carries the shift every feature shares; the `features` group carries each feature's parallax, which is its depth BELOW the skull surface times sin t; the `hair` group carries the parts that hang off the head instead, where `hairmass` at depth -55 is behind the axis and therefore swings the OTHER way. The anticipation lives in `headroll`'s roll and not in the yaw, because a yaw anticipation costs a whole 50-number deform key. The iris and its highlight keep the RECIPROCAL of their socket's scaleX and that one is NOT derived: a counter-scale belongs to the socket rather than to the part, which is why `spark_l` at local x -11 takes the same number as `iris_l` at 0 — a shared value on a group is the correct statement of it. README.md derives all of it and measures where it stops reading.",
 
       "tracks": [
         {
@@ -225,120 +226,63 @@
           "property": "translatex",
           "keys": [
             { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [-35.345], "ease": "swell" },
-            { "t": 1.5, "v": [-35.345], "ease": "settle" },
+            { "t": 0.62, "derive": { "kind": "yaw", "degrees": 12, "depth": 170 }, "ease": "swell" },
+            { "t": 1.5, "derive": { "kind": "yaw", "degrees": 12, "depth": 170 }, "ease": "settle" },
             { "t": 2.2, "v": [0] }
           ]
         },
 
         {
-          "bone": "eye_l",
+          "group": "features",
           "property": "translatex",
           "keys": [
             { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [5.513], "ease": "swell" },
-            { "t": 1.5, "v": [5.513], "ease": "settle" },
+            {
+              "t": 0.62,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 12,
+                "carried": 170,
+                "depth": { "eye_l": 150, "eye_r": 150, "brow_l": 158, "brow_r": 158, "nose": 192, "mouth": 166 }
+              },
+              "ease": "swell"
+            },
+            {
+              "t": 1.5,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 12,
+                "carried": 170,
+                "depth": { "eye_l": 150, "eye_r": 150, "brow_l": 158, "brow_r": 158, "nose": 192, "mouth": 166 }
+              },
+              "ease": "settle"
+            },
             { "t": 2.2, "v": [0] }
           ]
         },
         {
-          "bone": "eye_r",
-          "property": "translatex",
-          "keys": [
-            { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [2.803], "ease": "swell" },
-            { "t": 1.5, "v": [2.803], "ease": "settle" },
-            { "t": 2.2, "v": [0] }
-          ]
-        },
-        {
-          "bone": "brow_l",
-          "property": "translatex",
-          "keys": [
-            { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [3.85], "ease": "swell" },
-            { "t": 1.5, "v": [3.85], "ease": "settle" },
-            { "t": 2.2, "v": [0] }
-          ]
-        },
-        {
-          "bone": "brow_r",
-          "property": "translatex",
-          "keys": [
-            { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [1.14], "ease": "swell" },
-            { "t": 1.5, "v": [1.14], "ease": "settle" },
-            { "t": 2.2, "v": [0] }
-          ]
-        },
-        {
-          "bone": "nose",
-          "property": "translatex",
-          "keys": [
-            { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [-4.574], "ease": "swell" },
-            { "t": 1.5, "v": [-4.574], "ease": "settle" },
-            { "t": 2.2, "v": [0] }
-          ]
-        },
-        {
-          "bone": "mouth",
-          "property": "translatex",
-          "keys": [
-            { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [0.832], "ease": "swell" },
-            { "t": 1.5, "v": [0.832], "ease": "settle" },
-            { "t": 2.2, "v": [0] }
-          ]
-        },
-
-        {
-          "bone": "eye_l",
+          "group": "features",
           "property": "scalex",
           "keys": [
             { "t": 0, "v": [1], "ease": "rise" },
-            { "t": 0.62, "v": [0.8922], "ease": "swell" },
-            { "t": 1.5, "v": [0.8922], "ease": "settle" },
-            { "t": 2.2, "v": [1] }
-          ]
-        },
-        {
-          "bone": "eye_r",
-          "property": "scalex",
-          "keys": [
-            { "t": 0, "v": [1], "ease": "rise" },
-            { "t": 0.62, "v": [1.0641], "ease": "swell" },
-            { "t": 1.5, "v": [1.0641], "ease": "settle" },
-            { "t": 2.2, "v": [1] }
-          ]
-        },
-        {
-          "bone": "brow_l",
-          "property": "scalex",
-          "keys": [
-            { "t": 0, "v": [1], "ease": "rise" },
-            { "t": 0.62, "v": [0.8966], "ease": "swell" },
-            { "t": 1.5, "v": [0.8966], "ease": "settle" },
-            { "t": 2.2, "v": [1] }
-          ]
-        },
-        {
-          "bone": "brow_r",
-          "property": "scalex",
-          "keys": [
-            { "t": 0, "v": [1], "ease": "rise" },
-            { "t": 0.62, "v": [1.0597], "ease": "swell" },
-            { "t": 1.5, "v": [1.0597], "ease": "settle" },
-            { "t": 2.2, "v": [1] }
-          ]
-        },
-        {
-          "group": "axis",
-          "property": "scalex",
-          "keys": [
-            { "t": 0, "v": [1], "ease": "rise" },
-            { "t": 0.62, "v": [0.9781], "ease": "swell" },
-            { "t": 1.5, "v": [0.9781], "ease": "settle" },
+            {
+              "t": 0.62,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 12,
+                "depth": { "eye_l": 150, "eye_r": 150, "brow_l": 158, "brow_r": 158, "nose": 192, "mouth": 166 }
+              },
+              "ease": "swell"
+            },
+            {
+              "t": 1.5,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 12,
+                "depth": { "eye_l": 150, "eye_r": 150, "brow_l": 158, "brow_r": 158, "nose": 192, "mouth": 166 }
+              },
+              "ease": "settle"
+            },
             { "t": 2.2, "v": [1] }
           ]
         },
@@ -365,42 +309,28 @@
         },
 
         {
-          "bone": "hairmass",
+          "group": "hair",
           "property": "translatex",
           "keys": [
             { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [11.435], "ease": "swell" },
-            { "t": 1.5, "v": [11.435], "ease": "settle" },
-            { "t": 2.2, "v": [0] }
-          ]
-        },
-        {
-          "bone": "lock_l",
-          "property": "translatex",
-          "keys": [
-            { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [-17.513], "ease": "swell" },
-            { "t": 1.5, "v": [-17.513], "ease": "settle" },
-            { "t": 2.2, "v": [0] }
-          ]
-        },
-        {
-          "bone": "lock_r",
-          "property": "translatex",
-          "keys": [
-            { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [-24.069], "ease": "swell" },
-            { "t": 1.5, "v": [-24.069], "ease": "settle" },
-            { "t": 2.2, "v": [0] }
-          ]
-        },
-        {
-          "bone": "ahoge",
-          "property": "translatex",
-          "keys": [
-            { "t": 0, "v": [0], "ease": "rise" },
-            { "t": 0.62, "v": [-3.656], "ease": "swell" },
-            { "t": 1.5, "v": [-3.656], "ease": "settle" },
+            {
+              "t": 0.62,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 12,
+                "depth": { "hairmass": -55, "lock_l": 100, "lock_r": 100, "ahoge": 20 }
+              },
+              "ease": "swell"
+            },
+            {
+              "t": 1.5,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 12,
+                "depth": { "hairmass": -55, "lock_l": 100, "lock_r": 100, "ahoge": 20 }
+              },
+              "ease": "settle"
+            },
             { "t": 2.2, "v": [0] }
           ]
         },

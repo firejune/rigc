@@ -1238,7 +1238,13 @@ time puts it here.
 
 `groups` (`name → [member, …]`) lets one track target several bones or slots at
 once; `lag` shifts every key of a track, and `stagger` adds a per-member delay in
-member order.
+member order. **Member order is load-bearing** — it is what `stagger` counts and
+what a per-member value map is read against — so a group that names a member
+twice is a compile error, and so is one that names none.
+
+A group track's keys need not give every member the same value: `v` may be a map
+keyed by member name, or a `derive` model the compiler evaluates per member.
+§4.5.1 is that construct.
 
 ### 4.4 `tracks` — one target, one property
 
@@ -1273,6 +1279,10 @@ a deform). Folding them in would make `v` mean four different things depending o
 
 Translate values are **relative to the bone's setup position**; scale values are
 multipliers where `1` is setup; rotation is in degrees.
+
+On a track that names a `group`, one key's `v` may instead be a **map keyed by
+member name**, whose entries are each exactly the `v` above — or a `derive`
+model the compiler evaluates per member. §4.5.1.
 
 **Single-axis timelines are not sugar.** Spine keys `translatex` and `translatey` as
 separate timelines, so an animation that moves along one axis only is *not*
@@ -1350,6 +1360,184 @@ stepped.
 - A key may carry `ease` **or** `curve`, never both (R6).
 - The **last** key of a track can carry neither: there is nothing to ease to, and
   saying otherwise is a compile error.
+
+### 4.5.1 A group track's per-member values — a map, or a model
+
+⭐ **`groups` keys several bones identically, and on a face the whole content of
+the motion is that each part gets a *different* number.** That is the complaint
+[#295](https://github.com/firejune/rigc/issues/295) filed. `gallery/portrait`'s
+held 12° yaw was **20 tracks**, sixteen of them the same two properties on six
+sibling bones — identical times, identical easings, identical key counts, six
+different values — and exactly **one** of the twenty was a `groups` entry, the
+pair that happened to share `cos t`.
+
+Two spellings land, and **which one is right depends on whether the numbers are
+decisions or arithmetic.**
+
+**1. `v` may be a map keyed by member name.** Each entry is exactly what `v`
+would be for that one member, so nothing about the value shapes in §4.4 changes:
+
+```json
+{ "group": "features", "property": "translatex", "keys": [
+    { "t": 0,    "v": [0], "ease": "rise" },
+    { "t": 0.62, "v": { "eye_l": [5.513], "eye_r": [2.803], "brow_l": [3.85],
+                        "brow_r": [1.14], "nose": [-4.574], "mouth": [0.832] }, "ease": "swell" },
+    { "t": 2.2,  "v": [0] } ] }
+```
+
+A non-map `v` keeps meaning what it always meant — every member gets it — so no
+existing spec changes, and the emitted file is **byte for byte** the one the six
+separate tracks produced. Reach for this when the six numbers are six
+**judgements**: hand-picked swings on a row of hanging locks, a decided offset
+per part.
+
+**2. `derive` states the model instead, and the compiler states the numbers.**
+Same move as §4.11.1 on the bone half of the same turn:
+
+```json
+{ "group": "features", "property": "translatex", "keys": [
+    { "t": 0,    "v": [0], "ease": "rise" },
+    { "t": 0.62, "derive": { "kind": "yaw", "degrees": 12, "carried": 170,
+                             "depth": { "eye_l": 150, "eye_r": 150, "brow_l": 158,
+                                        "brow_r": 158, "nose": 192, "mouth": 166 } },
+      "ease": "swell" },
+    { "t": 2.2,  "v": [0] } ] }
+```
+
+⭐ **The depth table is the reason this is worth more than the map, and it is not
+the line count.** FACE §2's sharp edge is that **`x` is in the file and `z` is
+not** — `grep -c '"z"'` over the worked example's two specs returned `0` and `0`,
+and every depth that produced every number lived only in a README beside them. A
+`derive` key puts them in the file that uses them, and FACE §3's whole argument
+is that a **depth** is the decision while a **residual** is not.
+
+**The two kinds, and the property picks the projection:**
+
+| `kind` | Reads | `translatex` / `translatey` | `scalex` / `scaley` | Worked case |
+| --- | --- | --- | --- | --- |
+| `yaw` | each member's setup `x` | `d = (x−about)·(cos t − 1) − (depth − carried)·sin t` — FACE §3 | `cos(α − t)/cos α`, `α = atan2(x−about, depth)` — FACE §5 | `gallery/portrait` |
+| `pitch` | each member's setup `y` | the same expression with `y` for `x` — a nod | the same | — |
+
+⭐ **The `property` says which half of the turn a key is.** A turn does two
+things to a rigid part on a curved surface: it moves it, and it narrows it. Those
+are two Spine timelines rather than two models, and the author has already said
+which one the track is — so a `derive` on a property its kind has no projection
+onto is refused by name rather than quietly driven by the wrong half.
+
+**The parameters.** `degrees` and `depth` are required; `depth` is
+`{ "member": z, … }` on a group track and one number on a bone track. `carried`
+(default 0) is **the depth whose shift a parent bone already applies** — FACE
+§3's shared-shift split, stated: put a bone at the plate's own origin, key
+`−carried·sin t` there, and each member then keys only its residual. That split
+is an **auditing** decision before it is a rigging one: a residual is 1–6 units
+where a total is 30–40, and nobody can eyeball a wrong sign in the second.
+`about` (default 0) is where the axis crosses the driving coordinate, in the
+members' shared parent's space.
+
+Six things the construct is bounded by, and each one is a refusal:
+
+**It does no timing.** `stagger` already adds a per-member delay in member order
+(§4.3), and MOTION §3.7 is the table it implements. So nothing here takes a
+phase, an index or a delay — two mechanisms for one lag would mean two places to
+look for it. The two are orthogonal and stay that way: `stagger` moves the times,
+`derive` sets the values, and a track can carry both.
+
+**A member the group names twice is refused, at the group.** JSON collapses a
+repeated object key in silence, so a repeat inside a `v` map or a `depth` map
+never survives `JSON.parse` — the group declaration is the one place it does, and
+it is also what decides `stagger`'s member order. A repeat there is two delays
+and two values for one bone. An **empty** group is refused for a vacuous
+assertion's reason: a track naming one compiles no timeline and gates green.
+
+**A member the map or the depth table omits is refused, never defaulted.** An
+absent value is exactly the thing a column of six is written to make visible, and
+defaulting it to the identity would key that one bone with a different motion in
+silence. A member the group does **not** declare is refused too, naming both.
+
+**A model and a map on one key are two answers to one question** — the same
+refusal §4.11.1 has against a `transform` beside a `vertices` run.
+
+**It needs one coordinate space.** Every member's coordinate is read from its
+parent's origin and `about` says where the axis crosses it, so members under
+different parents have coordinates measured from different origins and the model
+would average them. Refused by name, naming the parents. In the worked example
+that is what splits `features` (under `faceshift`) from `hair` (under `head`) —
+and that split is the shared-shift split itself, so the refusal falls exactly
+where the geometry already wanted a seam.
+
+**It is not a way past the arithmetic's consequences.** A foreshortening needs a
+positive depth — at or behind the axis there is no front surface to narrow — and
+a member turned edge-on, where `cos(α − t) ≤ 0`, would get a scale that *mirrors*
+the drawing. Both are refused naming the member. A `carried` on a foreshortening
+track is refused too: the closed form never reads it, and a parameter that
+changes nothing is a reader's false lead about which model produced the numbers.
+
+📌 **Not everything per-member is a model, and the worked example says so.** Its
+iris counter-scale is `1/scaleX` of the socket, and it stays two ordinary
+`groups` entries with one shared value each — because a counter-scale belongs to
+the **socket**, not to the part: `spark_l` at local `x = −11` takes the same
+number as `iris_l` at `0`. A shared value on a group is the correct statement of
+that, and forcing it into a per-member model would have been a worse spec that
+happened to use the new field.
+
+🔭 **Deliberately not built:** a per-member `v` on a track that names no group (a
+value map needs members to name); per-member **easings** or key **times** (the
+shared ones are what make a group a group — a member that needs its own timing is
+`stagger`, or its own track); and any kind whose parameters are an expression
+rather than a name.
+
+### 4.5.2 The `MEMBER` block — the members' values side by side
+
+⭐ **`explain` prints one block per key, a row per member.** The spec states the
+rule and the report prints the evaluated numbers — the same division §4.11.2's
+`DEFORM` block holds to, and for the same reason: the arrangement the audit needs
+is not the arrangement the format has. Spine keys one bone per timeline, so the
+six numbers of a head turn are eighty lines apart in the artifact and nobody can
+see a wrong sign in them.
+
+```
+group members  (the per-member values of one track, side by side — issue #295)
+  ..    a row per member and a block per key, because a wrong sign is visible in a column of six and
+  ..    invisible in six tracks. Values are the EMITTED ones, so this and the artifact cannot disagree
+  ..    a group whose members all share one value is not here: there is one number and the timelines
+  ..    above already carry it. `stagger` is not here either — the shifted key times are on those timelines
+  MEMBER  turn  group "features".translatex  t=0.620000  6 member(s)  derive yaw  degrees=12 carried=170  -> the displacement
+          dx = (x−about)·(cos t − 1) − (depth − carried)·sin t
+            t = 0.20944 rad
+            cos t − 1 = -0.021852
+            sin t = 0.207912
+            shift the parent carries = −carried·sin t = -35.344987
+            eye_l       5.513083  <- -62 at depth 150
+            eye_r       2.803385  <-  62 at depth 150
+            brow_l      3.849789  <- -62 at depth 158
+            brow_r      1.140092  <-  62 at depth 158
+            nose       -4.574057  <-  0 at depth 192
+            mouth       0.831647  <-  0 at depth 166
+```
+
+| Row | What it is |
+| --- | --- |
+| the `MEMBER` line | `animation`, the target (`group` or `bone`) and property, the key's emitted time, the member count, and either `derive <kind>` with the parameters the spec stated and which projection it is, or `stated per member` |
+| the formula, then the scalars | the closed form written out, then what the stated parameters got out of it — the two lines that let somebody re-derive a row by hand |
+| a row per member | the **emitted** value, then the setup coordinate read off the rig and the depth the spec stated. `5.513` alone is a number a reader takes on trust; `−62` and `150` beside it are a claim they can check |
+
+⭐ **The nose is the row to read first.** It is the only **negative** residual on
+that face, because it is the only feature in front of the skull surface — and
+FACE §3 makes it the diagnostic: *if the nose's residual is not negative, the
+depths are wrong.* That check is arithmetic rather than a render, and this block
+is where it is now legible.
+
+**It quotes; it does not re-derive.** Every value is the one the compiler
+emitted, so the block and the artifact cannot disagree — a report that evaluated
+the model a second time could agree with itself while the file said otherwise.
+
+**What it deliberately does not print.** A group whose members all **share** one
+value: there is one number there and the timelines above already show it on every
+member, so a table of six identical rows would be a tautology wearing a
+measurement's clothes — the worked example's two iris counter-scale groups are
+exactly that case and are right to be absent. And `stagger`, whose per-member
+offset is visible where it belongs: on each member's own timeline, in the shifted
+key times. One lag, one place.
 
 ### 4.6 `physics` — the tuning table
 
@@ -1830,11 +2018,13 @@ runtime then loads those decimals into a `Float32Array`, which is equally true o
 a hand-written table — the difference the generator makes is that the decimals
 now agree with a stated model instead of with a transcription.
 
-🔭 **Adjacent and deliberately not built here:**
-[#295](https://github.com/firejune/rigc/issues/295) is per-member values inside a
-`groups` entry, which is the same complaint about a different table. The per-key
-`DEFORM` report block ([#316](https://github.com/firejune/rigc/issues/316)) has
-since landed and quotes the model above rather than re-evaluating it — **§4.11.2**.
+🔭 **Both adjacent asks have since landed.**
+[#295](https://github.com/firejune/rigc/issues/295) was the same complaint about
+a different table — the **bone** tracks of the same turn, where the missing
+number is a depth rather than a vertex — and **§4.5.1** is that construct: a
+`derive` kind on a group track, under the same rules as this one. The per-key
+`DEFORM` report block ([#316](https://github.com/firejune/rigc/issues/316))
+quotes the model above rather than re-evaluating it — **§4.11.2**.
 
 ---
 
@@ -1992,6 +2182,18 @@ the frequent ones, verbatim:
 | `last key carries an easing but has nothing to ease to` | drop `ease`/`curve` from the final key |
 | `key times must strictly increase (at t=…)` | including after `lag` and `stagger` |
 | `animation "A" has two tracks on X.property; merge them into one track` | one timeline per target property |
+| `group "G" names member "M" twice (at index i and j)` | §4.5.1 — member order is what `stagger` counts and what a value map is read against, so a repeat is two delays and two values for one bone |
+| `group "G" declares no members` | §4.5.1 — a track naming it would compile no timeline and gate green |
+| `animation "A" group "G" P (t=…): the value map names "M", which group "G" does not declare` | §4.5.1 — fix the name, or add the member to the group |
+| `animation "A" group "G" P (t=…): the value map states no value for member "M"` | §4.5.1 — a member is refused rather than defaulted; state every one |
+| `animation "A" group "G" P (t=…): derive <kind> states no depth for member "M"` | §4.5.1 — same rule for the depth table: a member silently at depth 0 would be keyed with a different model from the ones beside it |
+| `animation "A" group "G" P (t=…): this key carries both a "derive" model and a per-member "v" map` | §4.5.1 — two answers to one question; drop one |
+| `animation "A" bone "B" P: a per-member "v" map names members, and a bone track has one target` | §4.5.1 — write the value directly, or move the track onto a group |
+| `animation "A" group "G" P (t=…): derive <kind> has no projection onto "P"` | §4.5.1 — the kind drives one displacement axis and one scale axis; state the axis, or write a `v` map |
+| `animation "A" group "G" P (t=…): derive … These members sit under N different parents` | §4.5.1 — coordinates measured from different origins; split the track by parent |
+| `animation "A" group "G" P (t=…): derive <kind> projects onto "scaleX" and member "M" states depth −z` | §4.5.1 — a foreshortening needs the part in front of the axis; a part behind it takes the displacement projection |
+| `animation "A" group "G" P (t=…): derive <kind> states carried=… on a "scalex" track` | §4.5.1 — the foreshortening reads no depth difference, so `carried` belongs on the displacement track |
+| `animation "A" group "G" P (t=…): derive <kind> turns member "M" … past its own edge` | §4.5.1 — `cos(α − t) ≤ 0` would mirror the drawing; the turn is past what this construction carries (FACE §8) |
 | `no stage size: give the rig spec a \`skeleton.width\`/\`skeleton.height\`` | §3.1 |
 | `N mesh slot(s) emitted but the rig "X" allows 0 — a mesh rigc GENERATED counts against \`invariants.meshSlots\`…` | §3.4 / §3.7 — a rig that invokes a mesh generator declares the budget; undeclared is zero. Add `"invariants": { "meshSlots": N, "meshTriangles": M }` |
 | `drawOrder at t=…: slot "X" is not one this rig emits` / `is offset twice in one key` / `puts it at N, outside the … emitted slots` | §4.7 |

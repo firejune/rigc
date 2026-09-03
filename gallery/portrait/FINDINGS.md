@@ -46,11 +46,23 @@ at `±162, ±120, 0` rather than evenly, sample the projection where it changes.
 | `gaze` | 1.5 s | no | 8 | 32 | 0 | 0 | 0 |
 | **`turn`** | 2.2 s | no | **20** | **81** | 2 | 8 | **160** |
 
-✅ **That last cell is now 0**, and the row is kept because the 160 is the
-finding: [#294](https://github.com/firejune/rigc/issues/294) shipped, the keys
-state `{ "kind": "yaw", "radius": 170, "degrees": 12 }`, and the compiler writes
-the run (README, *The mesh*). Everything else in the table is unchanged — the
-track half is [#295](https://github.com/firejune/rigc/issues/295) and still open.
+✅ **Two cells of that row are now different, and the row is kept because the old
+numbers are the finding.** The 160 went to **0**:
+[#294](https://github.com/firejune/rigc/issues/294) shipped, the keys state
+`{ "kind": "yaw", "radius": 170, "degrees": 12 }`, and the compiler writes the run
+(README, *The mesh*). The **20 tracks and 81 keys** went to **8 and 33**:
+[#295](https://github.com/firejune/rigc/issues/295) shipped, and the sixteen
+sibling tracks are two group tracks whose keys state a `yaw` and a depth per
+member (README, *The features*).
+
+🚨 **What did NOT drop is the count of hand-written figures, and that is the
+honest headline.** The 20-track spelling stated **32** residuals and scale factors
+across its held keys; the 8-track one states **34** depths, 11 of them distinct.
+⇒ **The construct did not save arithmetic. It changed what the arithmetic's
+inputs are** — from a residual nobody can check to a depth somebody can argue
+with — which is exactly the claim the *One shared shift* section below rests on,
+and the reason this record calls the transcription a **legibility** cost rather
+than a typing one.
 
 **One held yaw was 20 tracks and 160 floats.** The shape of that matters more
 than the size: of those 160 offsets there are **five distinct values** (one per
@@ -246,11 +258,29 @@ like, and this record's claim was only ever that the *transcription* was what
 priced them out.
 
 **[#295](https://github.com/firejune/rigc/issues/295) — a `groups` track can
-only key one shared value.** The gallery's usual lever for cutting track count
-buys nothing on a face, because *every part needing a different number is what
-parallax means*. Of `turn`'s 20 tracks exactly one is a group. Sixteen of them
-are two properties on six sibling bones with identical times, identical easings
-and six different values.
+only key one shared value.** ✅ **Fixed.** The gallery's usual lever for cutting
+track count bought nothing on a face, because *every part needing a different
+number is what parallax means*. Of `turn`'s 20 tracks exactly one was a group;
+sixteen were two properties on six sibling bones with identical times, identical
+easings and six different values.
+
+> 🆕 **Landed 2026-09-03, and the ask this record filed was the smaller half of
+> what shipped.** The issue asked for a **per-member `v` map** — the six numbers
+> side by side — and that landed, byte-identical to the artifact it replaces,
+> because relocating a transcription cannot change it. But re-authoring `turn`
+> onto it would have produced 2 tracks holding **24 transcribed residuals**, and
+> the residuals were never the decisions. So a `derive` kind landed beside it
+> ([AUTHORING §4.5.1](../../docs/AUTHORING.md)): a key states `yaw`/`pitch`, an
+> angle, and a **depth per member**, and the compiler evaluates each member's
+> value. `turn` is re-authored onto the second one; the reproduction figures are
+> in the README's *What was verified*.
+>
+> ⚠️ **And one thing this record was wrong about.** It treated per-member values
+> as a uniform want. They are not: the iris counter-scale
+> (`look_l`/`look_r`) is per-**socket**, not per-part — `spark_l` at local
+> `x = −11` takes the same number as `iris_l` at `0` — so those two stay ordinary
+> `groups` entries with one shared value, and forcing them onto the new field
+> would have been a worse spec that used it.
 
 **[#296](https://github.com/firejune/rigc/issues/296) — nothing measures what a
 `deform` key does.** The setup geometry is measured and printed (coverage,
@@ -355,6 +385,13 @@ between Spine and Live2D is authoring cost, not runtime capability.**
 difficulty is `turn`, and within `turn` it is one thing: **the spec can hold the
 results of a projection but cannot state the projection.** Fix #294 and #295 and
 `turn` is a dozen lines. That is a good place for a difficulty to be.
+
+> 🆕 **Both are fixed as of 2026-09-03, and the prediction held with one
+> correction.** `turn` is 8 tracks, 33 keys, 8 deform keys and no transcribed
+> vertex offset — a dozen lines, as claimed. The correction: what the fixes bought
+> is **legibility**, not brevity. The count of hand-written figures went 32 → 34
+> (the depths), and the reason to prefer that is that a depth is a decision a
+> reader can dispute where a residual is one they can only trust.
 
 **What is *not* yet true** is that an author can tell a correct deform from a
 plausible one. Everything I checked, I checked with a throwaway script that is

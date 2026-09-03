@@ -24,7 +24,7 @@ character*, and the rule it keeps is *one art language*.
 | [`flex/`](flex/) | **`contour` meshes** (AUTHORING §3.4) | A swallow-tailed banner and a serrated leaf — four meshes traced off their own alpha, waved by bone timelines and rippled by a `deform` |
 | [`walk/`](walk/) | `ik` constraints + **`ik` timelines** (AUTHORING §3.5, §4.9) | Rigby walks on the spot. Two two-bone leg chains solved to foot targets under a `ground` bone, with the planted leg nailed down and the swinging one let go at the top of its lift |
 | [`squash/`](squash/) | **`deform` timelines** (AUTHORING §4.11) | Rigby's ball bounces. A 9-vertex mesh squashed about its contact point and stretched along its travel, from two affine transforms written out in the README |
-| [`portrait/`](portrait/) | **`deform` as a projection** (AUTHORING §4.11) | Vela breathes, blinks, shifts her gaze and turns her head 12° off axis. Two grid meshes and per-part parallax, every number derived from one line of yaw arithmetic. The measured experiment for [#285](https://github.com/firejune/rigc/issues/285) — see its [FINDINGS.md](portrait/FINDINGS.md) |
+| [`portrait/`](portrait/) | **`deform` as a projection** (AUTHORING §4.11) + **per-member group values** (§4.5.1) | Vela breathes, blinks, shifts her gaze and turns her head 12° off axis. Two grid meshes and per-part parallax, and both halves of it **state their model** — the mesh keys a `yaw` transform, the feature bones a `yaw` with a depth per member. The measured experiment for [#285](https://github.com/firejune/rigc/issues/285) — see its [FINDINGS.md](portrait/FINDINGS.md) |
 
 The root [README.md](../README.md) indexes these under *The gallery*, and
 [AUTHORING.md](../docs/AUTHORING.md) points at each one from the section that

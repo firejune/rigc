@@ -63,6 +63,7 @@ import {
 } from './atlas.ts';
 import { KEY_TIME_EPSILON } from './timelines.ts';
 import { evaluateDeformTransform } from './deformgen.ts';
+import { evaluateTrackDerive, TRACK_DERIVE_PROJECTIONS, type TrackDeriveMember } from './trackgen.ts';
 import {
   computeWorldTransforms,
   cropToSpineY,
@@ -83,9 +84,12 @@ import type {
   MotionDrawOrderKey,
   MotionEventKey,
   MotionIkTrack,
+  MotionMemberValues,
   MotionSpec,
   MotionTrack,
   MotionTransformTrack,
+  MotionValueKey,
+  MotionValueTrack,
   RigInfo,
   SpineAttachment,
   SpineBone,
@@ -1278,6 +1282,8 @@ export function compile(opts: CompileOptions): CompileResult {
   // every animation, and appended in emit order so the report reads in the order
   // the file does.
   const deformTransforms: CompileResult['deformTransforms'] = [];
+  /** Group-track keys whose per-member values were stated or derived (issue #295). */
+  const trackDerivations: CompileResult['trackDerivations'] = [];
   const constraintNames = new Set<string>();
   // `ik` and `transform` timelines resolve their target by name AND by type —
   // `findConstraint(name, IkConstraintData)` returns null for a transform
@@ -1386,6 +1392,7 @@ export function compile(opts: CompileOptions): CompileResult {
   const slotNames = new Set(slots.map((s) => s.name));
 
   withMotionSource(() => {
+    checkMotionGroups(motion);
     for (const [animName, anim] of Object.entries(motion.animations)) {
       declaredDurations[animName] = anim.duration;
       const slotTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
@@ -1403,7 +1410,13 @@ export function compile(opts: CompileOptions): CompileResult {
         const family = constraintFamilyOf(track);
         const isBoneTrack = family === null && track.property in BONE_TRACKS;
         const targets = resolveTargets(track, motion, animName);
+        // Per-member values are one statement about every member, so they are
+        // resolved for the whole track before any target is compiled — and the
+        // resolved keys are what everything below sees, which is why `v` means
+        // one thing from here down (`MotionValueTrack`).
+        const perMember = resolveMemberTrack(track, animName, targets, bones, trackDerivations);
         targets.forEach((target, index) => {
+          const resolved = perMember.get(target)!;
           if (family !== null) {
             const label = CONSTRAINT_TRACK_FAMILIES[family].label;
             if (!constraintNames.has(target)) {
@@ -1443,7 +1456,7 @@ export function compile(opts: CompileOptions): CompileResult {
           const keys =
             family !== null
               ? compileValueTrack(
-                  track,
+                  resolved,
                   motion,
                   animName,
                   anim.duration,
@@ -1453,8 +1466,8 @@ export function compile(opts: CompileOptions): CompileResult {
                   CONSTRAINT_TRACK_FAMILIES[family].label,
                 )
               : isBoneTrack
-                ? compileValueTrack(track, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
-                : compileTrack(track, motion, animName, anim.duration, target, shift, tableFor('default'));
+                ? compileValueTrack(resolved, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
+                : compileTrack(resolved, motion, animName, anim.duration, target, shift, tableFor('default'));
           for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
           if (family !== null) (familyTimelines[family][target] ??= {})[track.property] = keys;
           else if (isBoneTrack) (boneTimelines[target] ??= {})[track.property] = keys;
@@ -1681,6 +1694,7 @@ export function compile(opts: CompileOptions): CompileResult {
     meshes,
     physics: physicsReport,
     deformTransforms,
+    trackDerivations,
     rig: buildRigInfo(rig, bones, meshes, manifest),
   };
 }
@@ -3112,7 +3126,7 @@ function rawCurve(curve: number[] | 'stepped', channels: number, where: string, 
  * thing only by accident.
  */
 function compileValueTrack(
-  track: MotionTrack,
+  track: MotionValueTrack,
   motion: MotionSpec,
   animName: string,
   duration: number,
@@ -3983,8 +3997,211 @@ function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string
   throw new CompileError(`animation "${animName}": a track targets neither slot nor group`);
 }
 
-function compileTrack(
+/**
+ * The `groups` table itself, checked once before any animation reads it.
+ *
+ * ⭐ **A member named twice is refused here and nowhere else.** JSON collapses a
+ * repeated object key silently, so a repeat inside a `v` map or a `depth` map is
+ * unreachable by the time `JSON.parse` is done with it — the group declaration
+ * is the one place a repeated member survives into the data, and it is also the
+ * place that decides `stagger`'s member order. A duplicate there used to reach
+ * the per-target loop and come back as *"animation X has two tracks on
+ * eye_l.translatex; merge them"* — true of nothing the author wrote, and it
+ * names the wrong file.
+ *
+ * An **empty** group is refused for the reason a vacuous assertion is: a track
+ * naming one compiles no timeline at all, reports nothing, and gates green.
+ */
+function checkMotionGroups(motion: MotionSpec): void {
+  for (const [name, members] of Object.entries(motion.groups ?? {})) {
+    if (!Array.isArray(members)) {
+      throw new CompileError(`group "${name}" is ${JSON.stringify(members)}; it is an array of member names`);
+    }
+    if (members.length === 0) {
+      throw new CompileError(
+        `group "${name}" declares no members, so every track naming it would compile no timeline and gate green`,
+      );
+    }
+    const seen = new Set<string>();
+    members.forEach((member, i) => {
+      if (typeof member !== 'string' || member.length === 0) {
+        throw new CompileError(`group "${name}" member ${i} is ${JSON.stringify(member)}; it is a bone or slot name`);
+      }
+      if (seen.has(member)) {
+        throw new CompileError(
+          `group "${name}" names member "${member}" twice (at index ${members.indexOf(member)} and ${i}). ` +
+            'Member order is what `stagger` counts and what a per-member value map is read against, so a repeat is ' +
+            'two different delays and two different values for one bone.',
+        );
+      }
+      seen.add(member);
+    });
+  }
+}
+
+/** Is this `v` the per-member map rather than one value? */
+function isMemberValues(v: unknown): v is MotionMemberValues {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Resolve a track's values **per target**: a plain `v` unchanged, a stated `v`
+ * map split up, or a `derive` model evaluated — plus the report `explain` prints
+ * (issue #295).
+ *
+ * Every track goes through here, and a track with no per-member value in it
+ * comes out holding exactly the keys it went in with. That is deliberate: it
+ * makes "`v` means one thing below this line" a property of the type
+ * (`MotionValueTrack`) rather than of a branch somebody has to remember.
+ *
+ * ## Why the whole track is resolved at once
+ *
+ * Because a model is **one statement about all the members**, and the report has
+ * to be able to print them side by side. Evaluating per target would run the
+ * closed form once per member, produce N reports of one row each, and lose the
+ * only arrangement in which a wrong sign is visible.
+ */
+function resolveMemberTrack(
   track: MotionTrack,
+  animName: string,
+  targets: readonly string[],
+  bones: readonly SpineBone[],
+  derivations: CompileResult['trackDerivations'],
+): Map<string, MotionValueTrack> {
+  const carriesMap = track.keys.some((key) => isMemberValues(key.v));
+  const carriesModel = track.keys.some((key) => key.derive !== undefined);
+
+  const targetKind: 'group' | 'bone' = track.group === undefined ? 'bone' : 'group';
+  const target = track.group ?? track.bone ?? String(targets[0]);
+  const at = `animation "${animName}" ${targetKind} "${target}" ${track.property}`;
+  if ((carriesMap || carriesModel) && track.group === undefined && track.bone === undefined) {
+    throw new CompileError(
+      `${at}: per-member values need a target whose members are named — put them on a track that names a "group", or ` +
+        'a "bone" for the one-member case',
+    );
+  }
+  if (carriesMap && targetKind === 'bone') {
+    throw new CompileError(
+      `${at}: a per-member "v" map names members, and a bone track has one target rather than members. Write the ` +
+        'value directly, or move the track onto a group.',
+    );
+  }
+
+  // The setup coordinate a `derive` kind reads, and the parent it is measured in.
+  // Resolved here rather than in `src/trackgen.ts` because the rig is the
+  // compiler's to read: the model gets numbers that already mean one thing.
+  const boneOf = new Map(bones.map((b) => [b.name, b]));
+  const perTarget = new Map<string, MotionValueKey[]>();
+  for (const name of targets) perTarget.set(name, []);
+
+  for (const key of track.keys) {
+    const where = `${at} (t=${key.t})`;
+    if (key.derive !== undefined && isMemberValues(key.v)) {
+      throw new CompileError(
+        `${where}: this key carries both a "derive" model and a per-member "v" map — two answers to one question. ` +
+          'The model states the arithmetic and the depths that produced the numbers; the map states the numbers. ' +
+          'Pick one.',
+      );
+    }
+    if (key.derive === undefined) {
+      // Either a plain value (every member gets it, as today) or a stated map.
+      if (!isMemberValues(key.v)) {
+        for (const name of targets) perTarget.get(name)!.push({ ...key, v: key.v as number[] | string | null });
+        continue;
+      }
+      const table = key.v;
+      const known = new Set(targets);
+      for (const named of Object.keys(table)) {
+        if (!known.has(named)) {
+          throw new CompileError(
+            `${where}: the value map names "${named}", which group "${target}" does not declare ` +
+              `(its members are: ${targets.join(', ')})`,
+          );
+        }
+      }
+      const row: Array<{ member: string; value: number[] | string | null }> = [];
+      for (const name of targets) {
+        if (!(name in table)) {
+          throw new CompileError(
+            `${where}: the value map states no value for member "${name}" ` +
+              `(it states: ${Object.keys(table).join(', ') || 'nothing'}). ` +
+              'A member is refused rather than defaulted: an absent value is exactly the thing a map of six is ' +
+              'written to make visible, and defaulting it to the identity would key that one bone with a different ' +
+              'motion in silence.',
+          );
+        }
+        const value = table[name];
+        perTarget.get(name)!.push({ ...key, v: value });
+        row.push({ member: name, value });
+      }
+      derivations.push({
+        animation: animName,
+        target,
+        targetKind,
+        property: track.property,
+        time: keyTime(key.t + (track.lag ?? 0)),
+        authoredTime: key.t,
+        model: null,
+        members: row,
+      });
+      continue;
+    }
+
+    // A stated model. The members' setup coordinates come off the rig, and the
+    // one thing that makes them comparable is that they are measured in the SAME
+    // space — see the refusal below.
+    const kind = (key.derive as { kind?: unknown }).kind;
+    const coordinate =
+      typeof kind === 'string' && kind in TRACK_DERIVE_PROJECTIONS
+        ? TRACK_DERIVE_PROJECTIONS[kind as keyof typeof TRACK_DERIVE_PROJECTIONS].coordinate
+        : 'x';
+    const members: TrackDeriveMember[] = [];
+    const parents = new Set<string>();
+    for (const name of targets) {
+      const bone = boneOf.get(name);
+      if (!bone) {
+        throw new CompileError(
+          `${where}: derive reads member "${name}"'s setup position, and this rig declares no such bone. ` +
+            'A model over a group of slots or constraints has no coordinate to be evaluated at — state the values ' +
+            'as a "v" map.',
+        );
+      }
+      parents.add(bone.parent ?? '(root)');
+      members.push({ name, at: coordinate === 'x' ? (bone.x ?? 0) : (bone.y ?? 0) });
+    }
+    if (parents.size > 1) {
+      throw new CompileError(
+        `${where}: derive measures every member's "${coordinate}" from its parent's origin and "about" says where the ` +
+          `axis crosses it, so one space is what makes the members comparable. These members sit under ` +
+          `${parents.size} different parents (${[...parents].join(', ')}), and their coordinates are therefore ` +
+          'measured from different origins. Split the track by parent, or state the values as a "v" map.',
+      );
+    }
+    const report = evaluateTrackDerive(key.derive, track.property, members, r6, where);
+    const row: Array<{ member: string; value: number[] | string | null }> = [];
+    report.members.forEach((m, i) => {
+      perTarget.get(members[i].name)!.push({ ...key, v: [m.value] });
+      row.push({ member: m.member, value: [m.value] });
+    });
+    derivations.push({
+      animation: animName,
+      target,
+      targetKind,
+      property: track.property,
+      time: keyTime(key.t + (track.lag ?? 0)),
+      authoredTime: key.t,
+      model: report,
+      members: row,
+    });
+  }
+
+  const out = new Map<string, MotionValueTrack>();
+  for (const name of targets) out.set(name, { ...track, keys: perTarget.get(name)! });
+  return out;
+}
+
+function compileTrack(
+  track: MotionValueTrack,
   motion: MotionSpec,
   animName: string,
   duration: number,
