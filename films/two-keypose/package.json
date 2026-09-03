@@ -1,0 +1,15 @@
+{
+  "name": "gif-demo2",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "spine-rigc": "0.9.0"
+  }
+}
