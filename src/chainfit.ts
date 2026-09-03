@@ -50,8 +50,31 @@
  * for the four a similarity has — and every descendant then follows from the rig.
  * A bone ABOVE an anchor does not: recovering it would need to know what the link
  * between them did, which is precisely the unknown the anchor does not carry. So a
- * limb with no trusted part on it or above it is refused `no-anchor` rather than
- * guessed at from a cousin.
+ * limb with no trusted part on it or above it is refused rather than guessed at
+ * from a cousin.
+ *
+ * ⬆️ **The one exception is the INWARD step, and it is exactly one shape: a bone
+ * with two or more anchored descendants.** One anchored descendant carries no
+ * information about the link above it, which is the sentence above. TWO of them on
+ * different sub-chains carry something else entirely — not the links, but the
+ * bone's own placement. A bone's world transform has four numbers; a descendant's
+ * PIVOT depends on that bone and on the rig's own offsets and NOT on the
+ * descendant's own hinge, so each anchored descendant contributes two equations.
+ * Two of them make four, and four equations fix four numbers. That is the whole
+ * geometry, and `solveFromDescendants` is the whole solver.
+ *
+ * ⚠️ Which means the inward step reaches exactly one kind of bone: **one that
+ * branches.** A bone with a single child sub-chain can never be determined however
+ * good the anchor below it is — that is `no-bracket`, refused by name. Measured on
+ * the 2026-09-03 spineboy candidate, `torso` is the only bone in the rig that
+ * branches, and it is the bone the run recorded 30 `no-anchor` frames for.
+ *
+ * 🚫 And a determination is NOT a measurement of the bone it places. Its evidence
+ * lives on the anchors, so the numbers that price it are `disagreementPx`,
+ * `redundancy` and `leverPx` — not the bone's own `residual`. The visibility floor
+ * still refuses an inward placement nothing in the frame can confirm, for the same
+ * reason it refuses an anchor: the floor is about what the picture can check, not
+ * about how the number was arrived at.
  *
  * Coordinates are the frame's own — **frame pixels, y down, origin top-left** —
  * exactly as in a `pose` report, so the two are readable side by side. The one
@@ -86,8 +109,17 @@ import type { SpineBone, SpineRegionAttachment, SpineSkeletonJson } from './type
 
 export class ChainFitError extends Error {}
 
-/** The `spec` field every report carries, so a consumer can refuse a future shape. */
-export const CHAINFIT_SPEC = 'rigc-chainfit/1';
+/**
+ * The `spec` field every report carries, so a consumer can refuse a future shape.
+ *
+ * ⚠️ Bumped from `rigc-chainfit/1` by the inward step, and the bump is the point:
+ * a consumer that switched exhaustively on `role` or on `refusal.reason` now has
+ * two values it has never seen — `inward` and `no-bracket` — and a bone whose
+ * refusal used to read `no-anchor` can now read `no-bracket` instead. Everything
+ * `/1` carried is still there and still means the same thing; what changed is the
+ * range of two enums, which is exactly what a version exists to announce.
+ */
+export const CHAINFIT_SPEC = 'rigc-chainfit/2';
 
 // ---------------------------------------------------------------------------
 // the constants the search is made of — every one of them is reported
@@ -172,6 +204,29 @@ export const ANCHOR_MAX_UNEXPLAINED = 0.45;
 /** Two hinge answers this close are one answer under two names. */
 export const AMBIGUITY_HINGE_DEG = 5;
 
+/**
+ * How far apart, in frame pixels, two anchored descendants have to sit before the
+ * rotation they determine is worth printing.
+ *
+ * ⭐ Derived rather than picked. An inward determination reads the bone's rotation
+ * off the DIRECTION between two anchored pivots, so a pivot error of ε px across a
+ * lever of L px is an angle error of about ε / L radians. The anchor pass's own
+ * placements are good to roughly half a pixel at best, and the chain-fit suite's
+ * hinge tolerance is 3° = 0.052 rad, so a lever that keeps a half-pixel error
+ * inside that tolerance has to be at least 0.5 / 0.052 ≈ 9.5 px. Eight is that
+ * arithmetic rounded down to a number a reader can hold, and it is a **reported,
+ * movable field** (`--inward-lever`) like every other threshold in this file.
+ *
+ * ⚠️ It is not a pass bar. Below it the bone is refused `no-bracket` naming the
+ * measured lever beside this number, and — unlike `occluded` — nothing is printed,
+ * because an angle read across two coincident points is not a placement that got
+ * worse, it is not a placement.
+ */
+export const DEFAULT_MIN_LEVER_PX = 8;
+
+/** Anchored descendants an inward determination needs. Four unknowns, two each. */
+export const INWARD_MIN_DETERMINANTS = 2;
+
 /** Sample budget per part per evaluation. The reported numbers use every pixel regardless. */
 const SEARCH_SAMPLES = 512;
 
@@ -250,6 +305,18 @@ export interface ChainFitPlacement {
 
 export type ChainFitRefusalReason =
   | 'no-anchor'
+  /**
+   * The bone has anchored descendants but they do not bracket it: one where two
+   * are needed, or two that sit on top of each other, or every path to them
+   * crossing a bone whose own hinge or scale is unknown.
+   *
+   * ⚠️ Distinct from `no-anchor` on purpose. `no-anchor` says *nothing on this
+   * limb or below it was trusted*, and the repair is upstream at the anchor pass.
+   * `no-bracket` says *something below it was trusted and it was not enough*, and
+   * the repair is the rig's own topology or one more anchor on a different
+   * sub-chain — a different sentence to a caller who has to act on it.
+   */
+  | 'no-bracket'
   | 'occluded'
   | 'no-match'
   | 'empty-part'
@@ -261,18 +328,105 @@ export interface ChainFitRefusal {
   detail: string;
 }
 
+/** One anchored descendant an inward determination was read from. */
+export interface ChainFitInwardDeterminant {
+  /** The anchored bone whose pivot supplied two of the four equations. */
+  bone: string;
+  /** The part its anchor was read from — how the anchor pass names it. */
+  part: string;
+  /** Frame pixels from the determined bone's own pivot to this one's. */
+  leverPx: number;
+  /**
+   * Frame pixels between where the adopted answer predicts this pivot and where
+   * this anchor actually put it.
+   *
+   * ⭐ Zero by construction at `redundancy` 0 — two determinants and four unknowns
+   * leave nothing to disagree — and a real measurement above it. Same philosophy
+   * as `pivotDisagreementPx`: the number is not an error to be minimised, it is
+   * the rig and the picture disagreeing by that much, in the one place the
+   * disagreement is visible.
+   */
+  offsetPx: number;
+  /**
+   * Bones strictly between the determined bone and this one. They carry no art, so
+   * their hinge could not be fitted and their SETUP rotation was composed through —
+   * every number in this determination inherits that assumption.
+   */
+  carried: string[];
+}
+
+/** How an `inward` bone was determined, and what prices the determination. */
+export interface ChainFitInwardView {
+  /**
+   * Only one form exists, and naming it is how a future one stays readable beside
+   * it: `descendants` = two or more anchored descendants fixed all four numbers.
+   */
+  form: 'descendants';
+  determinants: ChainFitInwardDeterminant[];
+  /** Anchored descendants that could NOT be used, named with the reason rather than dropped. */
+  rejected: { bone: string; why: string }[];
+  /**
+   * Equations the solve had beyond the four a similarity needs — `2 × determinants − 4`.
+   *
+   * 🚨 Read `disagreementPx` next to this and never without it. At `redundancy` 0
+   * the disagreement is `null`, because a determination with nothing left over
+   * cannot be checked against itself: it fits its own two points exactly whether
+   * or not the rig is right. Redundancy is where the diagnostic value lives.
+   */
+  redundancy: number;
+  /** The widest frame-pixel span between two determinant pivots — what the rotation was read across. */
+  leverPx: number;
+  /** The floor `leverPx` had to clear, so an answer at its edge is visible as one. */
+  minLeverPx: number;
+  /**
+   * The worst `offsetPx` over the determinants: the over-determination residual,
+   * in frame pixels. `null` at `redundancy` 0.
+   *
+   * 🚨 **It says the determination disagrees with itself. It does NOT say which
+   * determinant is wrong.** The solve is least squares, so a displacement on one
+   * anchor is spread across every determinant near it — measured on the chain-fit
+   * fixture, a deliberate 4 px error on `buried` came back as 1.95 px on `arm`
+   * and 1.74 px on `buried`, because those two sit 5 bone units apart while the
+   * third is 24 away and nothing in the arithmetic can tell a tight pair apart.
+   * Read the per-determinant `offsetPx` list as a pattern, and attribute with a
+   * second frame or with `pivotDisagreementPx` on the anchors themselves.
+   */
+  disagreementPx: number | null;
+}
+
 /** What the rig says about the bone this part hangs off, and what was searched on it. */
 export interface ChainFitBoneView {
   name: string;
   parent: string | null;
   /** The bone's own setup rotation, Spine degrees — what `hingeDeg` is measured from. */
   setupRotationDeg: number;
-  /** Chain links from the anchor. `0` means this part's own bone was anchored, `-1` unplaced. */
+  /**
+   * Chain links from the trunk. `0` means this part's own bone IS the trunk — it
+   * was anchored, or it was determined inward — and `-1` means unplaced.
+   */
   depth: number;
-  /** The anchored bone this part's placement is ultimately hung from, or `null`. */
+  /** The bone this part's placement is ultimately hung from, or `null`. */
   anchoredTo: string | null;
+  /**
+   * What that trunk bone is: an `anchor` read off the picture, or an `inward`
+   * determination read off two anchors below it.
+   *
+   * ⚠️ The field to check before quoting anything hung off it. An `inward` trunk
+   * was never seen by the anchor pass, so every placement below it inherits the
+   * determination's own uncertainty — `bone.inward.disagreementPx` on that trunk
+   * bone is where that uncertainty is priced.
+   */
+  anchoredToRole: 'anchor' | 'inward' | null;
+  /**
+   * Non-`null` only on a bone this run determined INWARD, and then it is the whole
+   * account of that determination. See `ChainFitInwardView`.
+   */
+  inward: ChainFitInwardView | null;
   dof: {
-    /** Always searched on a chain bone: the hinge is the premise of the instrument. */
+    /**
+     * Always searched on a chain bone: the hinge is the premise of the instrument.
+     * `false` on an anchor and on an inward bone — neither had anything searched.
+     */
     rotation: boolean;
     /** Searched only where the candidate leaves scale free — see `DEFAULT_STRETCH_RATIO`. */
     stretch: boolean;
@@ -320,16 +474,21 @@ export interface ChainFitPart {
   attachment: string;
   width: number;
   height: number;
-  /** `anchor` = taken from the anchor pass; `chain` = fitted through the rig; `unplaced` = neither. */
-  role: 'anchor' | 'chain' | 'unplaced';
+  /**
+   * `anchor` = taken from the anchor pass; `chain` = fitted through the rig;
+   * `inward` = DETERMINED from two or more anchored descendants, with nothing
+   * searched; `unplaced` = none of the three.
+   */
+  role: 'anchor' | 'chain' | 'inward' | 'unplaced';
   bone: ChainFitBoneView;
   /**
    * Why this answer should not be taken at face value, or `null`.
    *
    * ⚠️ `placement` is still filled in under `occluded` and `no-match`, on purpose:
    * a refusal names why not to trust a number, it does not hide it. The reasons
-   * that leave it `null` — `no-anchor`, `empty-part`, `no-part-image`,
-   * `unsupported-geometry` — are the ones where nothing was searched.
+   * that leave it `null` — `no-anchor`, `no-bracket`, `empty-part`,
+   * `no-part-image`, `unsupported-geometry` — are the ones where nothing was
+   * placed at all.
    */
   refusal: ChainFitRefusal | null;
   placement: ChainFitPlacement | null;
@@ -372,6 +531,15 @@ export interface ChainFitReport {
     /** The parts whose answer was trusted, and whose bones the walk started from. */
     anchored: string[];
   };
+  /**
+   * The inward step's own account, beside `anchor` because it is the other way a
+   * trunk gets into this report.
+   */
+  inward: {
+    /** Bones this run determined from two or more anchored descendants, in bone order. */
+    determined: string[];
+    criterion: { minDeterminants: number; minLeverPx: number; determinantsMustBeAnchored: boolean };
+  };
   search: {
     hinge: { minDeg: number; maxDeg: number; stepDeg: number; steps: number };
     stretch: { ratio: number; steps: number; freeFrom: string };
@@ -401,6 +569,8 @@ export interface ChainFitOptions {
   minVisible?: number;
   maxResidual?: number;
   passes?: number;
+  /** The inward step's lever floor, in frame pixels — see `DEFAULT_MIN_LEVER_PX`. */
+  minLeverPx?: number;
   /** Sizes the internal anchor pass only; refused together with `anchorPath`. */
   scale?: { min: number; max: number };
   rotation?: { minDeg: number; maxDeg: number };
@@ -512,6 +682,170 @@ function linkOf(parent: BonePlace, child: BonePlace, bone: SpineBone): { hingeDe
   return {
     hingeDeg: normaliseDegrees(parent.rotDeg - child.rotDeg - (bone.rotation ?? 0)),
     stretch: child.unit / Math.max(1e-9, parent.unit * (bone.scaleX ?? 1)),
+  };
+}
+
+/**
+ * A point in a bone's own local space, y already negated — the `(a, b)` of the
+ * inward solve, and the coordinates `applyBoneLocal(place, a, -b)` maps to frame
+ * pixels.
+ *
+ * ⭐ Why the negation is carried in the type rather than done at each call. In
+ * these coordinates a bone's placement acts LINEARLY:
+ *
+ *     X = x + p·a − q·b        p = unit · cos(rotDeg)
+ *     Y = y + q·a + p·b        q = unit · sin(rotDeg)
+ *
+ * Four unknowns — `x`, `y`, `p`, `q` — appearing linearly, which is the whole
+ * reason the inward step has a closed form instead of a search. `unit` and
+ * `rotDeg` come back out as `hypot(p, q)` and `atan2(q, p)`.
+ */
+interface BoneLocal {
+  a: number;
+  b: number;
+}
+
+/**
+ * A descendant's pivot expressed in an ancestor's own local space, or the reason
+ * that cannot be done.
+ *
+ * 🚨 The refusal is the load-bearing half. A descendant's pivot is a function of
+ * the ancestor's placement and of the SETUP offsets in between — and of the
+ * in-between bones' own hinges and scales, which is where it can stop being
+ * known. So a path is walked and every bone strictly between the two is
+ * interrogated: art on it means its hinge is a searched unknown, a free scale
+ * means the DISTANCE across it is unknown, and unsupported geometry means the
+ * composition is not a similarity at all. Any of the three and the descendant is
+ * not usable — named, not silently dropped, because "I had an anchor down there
+ * and could not use it" is the sentence a caller needs.
+ */
+type RigidPath = { local: BoneLocal; carried: string[] } | { blocked: string };
+
+/**
+ * Compose from `from`'s local space down to `to`'s pivot, refusing by name.
+ *
+ * `hasArt` and `stretchFree` are passed in rather than recomputed so this stays a
+ * pure function of the rig plus two predicates the caller already owns.
+ */
+function rigidPathTo(
+  bones: Map<string, SpineBone>,
+  unsupported: Map<string, string>,
+  hasArt: (bone: string) => boolean,
+  stretchFree: (bone: string) => boolean,
+  from: string,
+  to: string,
+): RigidPath {
+  // Up from `to` to `from`, so the path comes out parent-first when reversed. A
+  // guard on the walk length rather than a visited set: a cycle in a skeleton's
+  // parent links would otherwise spin here, and Spine data can be forged.
+  const up: string[] = [];
+  let cursor: string | undefined = to;
+  for (let guard = 0; guard <= bones.size; guard++) {
+    if (cursor === undefined) return { blocked: `"${to}" is not a descendant of "${from}"` };
+    if (cursor === from) break;
+    up.push(cursor);
+    cursor = bones.get(cursor)?.parent;
+  }
+  if (cursor !== from) return { blocked: `"${to}" is not a descendant of "${from}"` };
+  const path = up.reverse();
+  if (path.length === 0) return { blocked: `"${to}" is "${from}" itself` };
+
+  const carried: string[] = [];
+  // Everything strictly between the two — `path` without its last entry, which is
+  // `to` and whose OWN hinge and scale are irrelevant: a bone's pivot sits above
+  // its own local transform.
+  for (const mid of path.slice(0, -1)) {
+    const bad = unsupported.get(mid);
+    if (bad !== undefined) return { blocked: `bone "${mid}" lies between them and ${bad}` };
+    if (hasArt(mid)) {
+      return {
+        blocked:
+          `bone "${mid}" lies between them and carries art, so its hinge is one of the quantities this ` +
+          'instrument searches rather than one it knows — the distance and direction across it are not fixed',
+      };
+    }
+    if (stretchFree(mid)) {
+      return {
+        blocked:
+          `bone "${mid}" lies between them and the candidate leaves its scale free, so the DISTANCE across it ` +
+          'is unknown and the bone above it stays underdetermined',
+      };
+    }
+    carried.push(mid);
+  }
+
+  // Identity in `from`'s local space, then one `childPlace` per link with the
+  // hinge and the stretch at their setup values — which is exactly what `carried`
+  // above has just certified is the only thing they can be.
+  let acc: BonePlace = { x: 0, y: 0, rotDeg: 0, unit: 1 };
+  for (const name of path) {
+    const bone = bones.get(name);
+    if (bone === undefined) return { blocked: `the skeleton does not declare "${name}"` };
+    acc = childPlace(acc, bone, 0, 1);
+  }
+  // `applyBoneLocal` negated each local y on the way through, so `acc` is already
+  // in (a, b) and no second negation belongs here.
+  return { local: { a: acc.x, b: acc.y }, carried };
+}
+
+/** One equation pair for the inward solve: a local point and where it landed. */
+interface InwardPoint {
+  local: BoneLocal;
+  X: number;
+  Y: number;
+}
+
+/**
+ * The four numbers a bone's placement is, from two or more anchored descendants.
+ *
+ * ⭐ Least squares in closed form, because the model is linear in the unknowns
+ * (see `BoneLocal`) — so there is no window to search, no basin to miss and no
+ * tolerance to state. With exactly two points it fits them EXACTLY; with more it
+ * is the similarity that minimises the summed squared pivot error, and what it
+ * leaves over is `disagreementPx`.
+ *
+ * `null` where the points cannot fix a similarity at all: every local point at the
+ * same place, so no direction exists to read a rotation from.
+ */
+function solveFromDescendants(points: InwardPoint[]): BonePlace | null {
+  const n = points.length;
+  if (n < INWARD_MIN_DETERMINANTS) return null;
+  let ma = 0;
+  let mb = 0;
+  let mX = 0;
+  let mY = 0;
+  for (const pt of points) {
+    ma += pt.local.a;
+    mb += pt.local.b;
+    mX += pt.X;
+    mY += pt.Y;
+  }
+  ma /= n;
+  mb /= n;
+  mX /= n;
+  mY /= n;
+  let spread = 0;
+  let dotp = 0;
+  let dotq = 0;
+  for (const pt of points) {
+    const a = pt.local.a - ma;
+    const b = pt.local.b - mb;
+    const X = pt.X - mX;
+    const Y = pt.Y - mY;
+    spread += a * a + b * b;
+    dotp += a * X + b * Y;
+    dotq += a * Y - b * X;
+  }
+  if (!(spread > 1e-12)) return null;
+  const p = dotp / spread;
+  const q = dotq / spread;
+  const unit = Math.hypot(p, q);
+  if (!(unit > 1e-9)) return null;
+  return {
+    x: mX - p * ma + q * mb,
+    y: mY - q * ma - p * mb,
+    rotDeg: Math.atan2(q, p) / DEG,
+    unit,
   };
 }
 
@@ -1072,7 +1406,7 @@ interface PartState {
    */
   isAnchorSource: boolean;
   alternates: { place: PartPlace; link: { hingeDeg: number; stretch: number } }[];
-  role: 'anchor' | 'chain' | 'unplaced';
+  role: 'anchor' | 'chain' | 'inward' | 'unplaced';
 }
 
 export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
@@ -1111,6 +1445,7 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
   const minVisible = options.minVisible ?? DEFAULT_MIN_VISIBLE;
   const maxResidual = options.maxResidual ?? DEFAULT_MAX_RESIDUAL;
   const passes = Math.max(1, Math.round(options.passes ?? DEFAULT_PASSES));
+  const minLeverPx = options.minLeverPx ?? DEFAULT_MIN_LEVER_PX;
   const criterion = {
     maxResidual: options.anchorMaxResidual ?? ANCHOR_MAX_RESIDUAL,
     maxUnexplained: options.anchorMaxUnexplained ?? ANCHOR_MAX_UNEXPLAINED,
@@ -1235,6 +1570,12 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
     list.push(state);
     targetsOfBone.set(state.drawn.bone, list);
   }
+  /** Bones the inward step determined, and the account of each determination. */
+  const inwardBones = new Map<string, ChainFitInwardView>();
+  /** Why a bone the inward step LOOKED at could not be determined, for its refusal. */
+  const inwardAttempt = new Map<string, string>();
+  const hasArt = (bone: string): boolean => (targetsOfBone.get(bone) ?? []).length > 0;
+  const boneStretchFree = (bone: string): boolean => stretchEverywhere || (keyed.get(bone)?.has('scale') ?? false);
 
   /** Where the rig currently puts a part, given the placed bones. */
   const placeOf = (state: PartState): PartPlace | null => {
@@ -1243,7 +1584,20 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
     return partPlaceOf(bp, state.drawn.geometry, state.plate.width);
   };
 
-  /** Seed every bone: anchored bones from their anchor, the rest from the rig itself. */
+  /**
+   * Seed every bone: trunk bones from their own answer, the rest from the rig.
+   *
+   * ⭐ Two kinds of trunk now, and they are seeded identically on purpose. An
+   * ANCHORED bone's four numbers were read off the picture; an INWARD bone's were
+   * determined from two anchored descendants. Either way the bone is fixed, its
+   * `depth` is 0 and everything under it follows from the rig — so the only thing
+   * that distinguishes them downstream is `anchoredToRole`, which is exactly the
+   * field a caller reads to decide how much to trust a subtree.
+   *
+   * Idempotent, and run more than once: the inward step needs the anchored bones
+   * placed before it can determine anything, and its determinations then need
+   * propagating to everything below them.
+   */
   const seedBones = (): void => {
     for (const name of boneOrder) {
       const bone = bones.get(name);
@@ -1262,6 +1616,15 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
         }
         continue;
       }
+      if (inwardBones.has(name)) {
+        // Already in `placedBones` — put there by `inwardStep`, which is the only
+        // writer of it. Its own bookkeeping is set here so the two trunk kinds go
+        // through one code path.
+        depthOf.set(name, 0);
+        anchoredTo.set(name, name);
+        carried.set(name, []);
+        continue;
+      }
       if (chainPlace === null || bone.parent === undefined) continue;
       placedBones.set(name, chainPlace);
       depthOf.set(name, (depthOf.get(bone.parent) ?? 0) + 1);
@@ -1270,6 +1633,127 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       const inherited = carried.get(bone.parent) ?? [];
       const fittable = (targetsOfBone.get(name) ?? []).length > 0;
       carried.set(name, fittable ? inherited : [...inherited, name]);
+    }
+  };
+
+  /**
+   * The inward step: bones with two or more ANCHORED descendants, determined.
+   *
+   * ⬆️ Run after `seedBones` and before anything is fitted, so what it sees is
+   * exactly the anchored bones and the rig's own prediction below them. A bone it
+   * reaches is a bone the outward walk left unplaced, which — because seeding
+   * propagates through every placed parent — means a bone with **no placed
+   * ancestor at all**. So there is no parent side to bracket against, and the
+   * whole determination comes from below.
+   *
+   * 🚨 The determinants are ANCHORED bones and nothing else. A bone the outward
+   * walk placed is sitting at whatever hinge the rig's setup happens to declare
+   * until it is fitted, and a bone this step determined is itself derived —
+   * reading either as evidence would compound a guess into a placement and there
+   * would be no field that said so. `criterion.determinantsMustBeAnchored` states
+   * it in the report.
+   */
+  const inwardStep = (): void => {
+    for (const name of boneOrder) {
+      if (placedBones.has(name) || unsupported.has(name)) continue;
+      const bone = bones.get(name);
+      if (bone === undefined) continue;
+
+      const usable: { bone: string; part: string; local: BoneLocal; carried: string[]; place: BonePlace }[] = [];
+      const rejected: { bone: string; why: string }[] = [];
+      for (const [anchoredBone, held] of anchorForBone) {
+        const place = placedBones.get(anchoredBone);
+        if (place === undefined) continue;
+        const path = rigidPathTo(bones, unsupported, hasArt, boneStretchFree, name, anchoredBone);
+        if ('blocked' in path) {
+          // Only worth reporting for an anchor that IS below this bone: "not a
+          // descendant" is true of most of the skeleton and says nothing.
+          if (!path.blocked.includes('is not a descendant of')) rejected.push({ bone: anchoredBone, why: path.blocked });
+          continue;
+        }
+        usable.push({
+          bone: anchoredBone,
+          part: basename(held.state.path),
+          local: path.local,
+          carried: path.carried,
+          place,
+        });
+      }
+
+      const listed = (): string =>
+        rejected.length === 0
+          ? ''
+          : `; ${rejected.length} anchored descendant(s) could not be used — ${rejected
+              .map((r) => `"${r.bone}" (${r.why})`)
+              .join('; ')}`;
+
+      if (usable.length + rejected.length === 0) continue; // nothing below it: `no-anchor`, unchanged
+      if (usable.length < INWARD_MIN_DETERMINANTS) {
+        inwardAttempt.set(
+          name,
+          `bone "${name}" has ${usable.length} usable anchored descendant(s) ` +
+            `(${usable.length === 0 ? 'none' : usable.map((u) => `"${u.bone}"`).join(', ')}) and an inward ` +
+            `determination needs ${INWARD_MIN_DETERMINANTS}: four numbers fix a placement and each anchored ` +
+            'descendant supplies two. One anchor below a bone says nothing about the link above it' +
+            listed(),
+        );
+        continue;
+      }
+
+      const solved = solveFromDescendants(usable.map((u) => ({ local: u.local, X: u.place.x, Y: u.place.y })));
+      let lever = 0;
+      for (let i = 0; i < usable.length; i++) {
+        for (let j = i + 1; j < usable.length; j++) {
+          lever = Math.max(lever, Math.hypot(usable[i].place.x - usable[j].place.x, usable[i].place.y - usable[j].place.y));
+        }
+      }
+      if (solved === null) {
+        inwardAttempt.set(
+          name,
+          `bone "${name}" has ${usable.length} usable anchored descendant(s) (${usable
+            .map((u) => `"${u.bone}"`)
+            .join(', ')}) and they do not fix a rotation: the rig places their pivots at the same point in ` +
+            `"${name}"'s own local space, so there is no direction to read one from` + listed(),
+        );
+        continue;
+      }
+      if (lever < minLeverPx) {
+        inwardAttempt.set(
+          name,
+          `bone "${name}"'s anchored descendants (${usable.map((u) => `"${u.bone}"`).join(', ')}) sit ` +
+            `${roundTo(lever, 3)} px apart in the frame, below the lever floor ${minLeverPx}: a rotation read ` +
+            'across that span turns a half-pixel anchor error into several degrees, so nothing is printed rather ' +
+            'than printed and disowned' +
+            listed(),
+        );
+        continue;
+      }
+
+      // What the adopted answer PREDICTS for each determinant's own pivot, against
+      // where that anchor actually put it. At two determinants this is zero by
+      // construction; above two it is the diagnostic.
+      const determinants: ChainFitInwardDeterminant[] = usable.map((u) => {
+        const [px, py] = applyBoneLocal(solved, u.local.a, -u.local.b);
+        return {
+          bone: u.bone,
+          part: u.part,
+          leverPx: roundTo(Math.hypot(u.place.x - solved.x, u.place.y - solved.y), 3),
+          offsetPx: roundTo(Math.hypot(px - u.place.x, py - u.place.y), 4),
+          carried: u.carried,
+        };
+      });
+      const redundancy = 2 * usable.length - 4;
+      placedBones.set(name, solved);
+      inwardBones.set(name, {
+        form: 'descendants',
+        determinants,
+        rejected,
+        redundancy,
+        leverPx: roundTo(lever, 3),
+        minLeverPx,
+        disagreementPx: redundancy > 0 ? roundTo(Math.max(...determinants.map((d) => d.offsetPx)), 4) : null,
+      });
+      inwardAttempt.delete(name);
     }
   };
 
@@ -1328,15 +1812,34 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
   for (let pass = 0; pass < passes; pass++) {
     if (pass === 0) {
       seedBones();
+      // ⬆️ Then inward, then seed again to carry each determination down its own
+      // subtree — and around, because determining one bone can put a NEW anchored
+      // descendant within a rigid path of the next one up. The loop settles in one
+      // extra round on every rig measured so far; the guard is there because a
+      // forged skeleton is allowed to be strange, not because this is expected to
+      // iterate.
+      for (let round = 0; round < 4; round++) {
+        const before = inwardBones.size;
+        inwardStep();
+        if (inwardBones.size === before) break;
+        seedBones();
+      }
+      // An attempt recorded for a bone that a LATER round then placed — through a
+      // determination above it — would refuse a part that is in the report with a
+      // placement. The refusal is only for what is still unplaced.
+      for (const name of [...inwardAttempt.keys()]) if (placedBones.has(name)) inwardAttempt.delete(name);
       for (const state of states) state.place = placeOf(state);
     }
     // Pass 0 seeds every chain bone on the rig's own prediction from the anchors;
     // every later pass seeds on the previous pass's answers, which is what makes
     // the frozen visible set and the answer converge on the same place.
+    //
+    // The inward step is NOT repeated: its determinants are the anchored bones,
+    // which no pass moves, so the second pass would compute the same four numbers.
 
     for (const name of boneOrder) {
       const bone = bones.get(name);
-      if (bone === undefined || unsupported.has(name) || anchorForBone.has(name)) continue;
+      if (bone === undefined || unsupported.has(name) || anchorForBone.has(name) || inwardBones.has(name)) continue;
       const parentPlace = bone.parent === undefined ? undefined : placedBones.get(bone.parent);
       if (parentPlace === undefined) continue;
       const boneTargets = targetsOfBone.get(name) ?? [];
@@ -1538,15 +2041,23 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
     // The LINK is still derived where the parent is placed, because "what local
     // rotation does this anchor imply" is a number the caller wants and the chain
     // above it can answer.
+    //
+    // ⬆️ An INWARD part goes through the same block for the same reason: nothing
+    // fitted it either, its placement is wherever the determination put its bone,
+    // and its `hingeDeg` exists only if the bone above it happens to be placed —
+    // which, for a bone the inward step reached, it is not. So the link comes back
+    // `null` and the report says the quantity does not exist rather than printing
+    // a zero.
     for (const state of states) {
       if (state.plate === null) continue;
       const anchor = anchorForBone.get(state.drawn.bone);
-      if (anchor === undefined) continue;
+      const determined = inwardBones.has(state.drawn.bone);
+      if (anchor === undefined && !determined) continue;
       const bonePlace = placedBones.get(state.drawn.bone);
       const bone = bones.get(state.drawn.bone);
-      state.role = 'anchor';
-      state.isAnchorSource = anchor.state === state;
-      state.place = state.isAnchorSource ? anchor.entry.place : placeOf(state);
+      state.role = anchor === undefined ? 'inward' : 'anchor';
+      state.isAnchorSource = anchor !== undefined && anchor.state === state;
+      state.place = state.isAnchorSource && anchor !== undefined ? anchor.entry.place : placeOf(state);
       const parentPlace =
         bone === undefined || bone.parent === undefined ? undefined : placedBones.get(bone.parent);
       state.link =
@@ -1600,6 +2111,14 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       criterion: { ...criterion, requireUnambiguous: true },
       anchored: [...anchorForBone.values()].map((a) => basename(a.state.path)).sort(),
     },
+    inward: {
+      determined: boneOrder.filter((name) => inwardBones.has(name)),
+      criterion: {
+        minDeterminants: INWARD_MIN_DETERMINANTS,
+        minLeverPx,
+        determinantsMustBeAnchored: true,
+      },
+    },
     search: {
       hinge: { minDeg: hingeMin, maxDeg: hingeMax, stepDeg: HINGE_STEP, steps: hinges.length },
       stretch: {
@@ -1633,9 +2152,19 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       'The hinge is searched; the pivot is NOT. A bone the candidate keys a `translate` timeline on carries ' +
         '`dof.pivotFree`, which means the arc this answer sits on has a centre the rig itself moves — the ' +
         'placement is still read off pixels, but `localRotationDeg` alone will not reproduce it.',
-      'The walk goes OUTWARD from an anchor, so a limb with no trusted part on it or above it is refused ' +
-        '`no-anchor` rather than guessed at. An anchor fixes its own bone completely; it says nothing about what ' +
-        'the link above it did, so nothing above an anchor is recoverable from it.',
+      'The walk goes OUTWARD from a trunk, so a limb with no trusted part on it or above it is refused rather ' +
+        'than guessed at. An anchor fixes its own bone completely; it says nothing about what the link above it ' +
+        'did, so nothing above a SINGLE anchor is recoverable from it — that is `no-anchor` and `no-bracket`.',
+      'The INWARD step is the one exception and it is one shape: a bone with two or more ANCHORED descendants on ' +
+        "different sub-chains. A descendant's pivot depends on this bone and on the rig's own offsets and NOT on " +
+        'the descendant\'s own hinge, so each one supplies two of the four numbers a placement is. Which means it ' +
+        'reaches exactly the bones that BRANCH: a bone with one child sub-chain is `no-bracket` however good the ' +
+        'anchor below it is. `inward.determined` names what it reached.',
+      'An `inward` placement is NOT a measurement of the bone it places. Its evidence is the anchors below it, so ' +
+        'what prices it is `bone.inward.disagreementPx` read next to `bone.inward.redundancy` — and at redundancy ' +
+        '0 the disagreement is `null`, because two determinants and four unknowns fit each other exactly whether ' +
+        'or not the rig is right. The bone\'s own `residual` and `visibleShare` say how much of the answer the ' +
+        'frame can independently confirm, which on a bone drawn behind its own limbs can be very little.',
       'An `ambiguous` part has two or more hinge answers this instrument cannot separate — a limb that explains ' +
         'the picture forwards and again backwards. All of them are reported and none was picked.',
       'A part refused `occluded` is refused because too little of it survives the parts in front of it, and the ' +
@@ -1681,6 +2210,15 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
     );
   }
 
+  if (report.inward.determined.length > 0) {
+    report.caveats.push(
+      `${report.inward.determined.length} bone(s) were determined INWARD rather than read or fitted ` +
+        `(${report.inward.determined.join(', ')}), and every placement whose \`anchoredToRole\` is "inward" hangs ` +
+        'off one of them. The determinants are anchor-pass-eligible bones, so the caveat about a refused anchor ' +
+        'applies to them too — a determinant this instrument can barely see is still a determinant.',
+    );
+  }
+
   const ctx: FinishContext = {
     bones,
     keyed,
@@ -1692,6 +2230,8 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
     targetsOfBone,
     anchorForBone,
     anchors,
+    inwardBones,
+    inwardAttempt,
     shareAtFit,
     level,
     material: material.plate,
@@ -1716,6 +2256,8 @@ interface FinishContext {
   targetsOfBone: Map<string, PartState[]>;
   anchorForBone: Map<string, { state: PartState; entry: AnchorEntry }>;
   anchors: Map<string, AnchorEntry>;
+  inwardBones: Map<string, ChainFitInwardView>;
+  inwardAttempt: Map<string, string>;
   shareAtFit: Map<string, number>;
   level: Level;
   material: Plate;
@@ -1730,16 +2272,23 @@ function finishPart(state: PartState, ctx: FinishContext): ChainFitPart {
   const name = basename(state.path);
   const bone = ctx.bones.get(state.drawn.bone);
   const anchored = ctx.anchorForBone.has(state.drawn.bone);
+  const determined = ctx.inwardBones.get(state.drawn.bone) ?? null;
   const stretchFree = ctx.stretchEverywhere || (ctx.keyed.get(state.drawn.bone)?.has('scale') ?? false);
+  const trunk = ctx.anchoredTo.get(state.drawn.bone) ?? null;
   const view: ChainFitBoneView = {
     name: state.drawn.bone,
     parent: bone?.parent ?? null,
     setupRotationDeg: num(bone?.rotation, 0),
     depth: ctx.depthOf.get(state.drawn.bone) ?? -1,
-    anchoredTo: ctx.anchoredTo.get(state.drawn.bone) ?? null,
+    anchoredTo: trunk,
+    anchoredToRole: trunk === null ? null : ctx.inwardBones.has(trunk) ? 'inward' : 'anchor',
+    inward: determined,
     dof: {
-      rotation: !anchored,
-      stretch: stretchFree && !anchored,
+      // Neither an anchor nor a determination searched anything, so neither
+      // reports a searched degree of freedom. `dof` is what was SEARCHED, not
+      // what the rig leaves free.
+      rotation: !anchored && determined === null,
+      stretch: stretchFree && !anchored && determined === null,
       pivotFree: ctx.keyed.get(state.drawn.bone)?.has('translate') ?? false,
     },
     window: {
@@ -1782,16 +2331,34 @@ function finishPart(state: PartState, ctx: FinishContext): ChainFitPart {
   const frozen = state.frozen;
   if (state.place === null || frozen === null || !ctx.placedBones.has(state.drawn.bone)) {
     out.role = 'unplaced';
+    // ⭐ Two refusals, and which one it is says where the repair lives. The inward
+    // step recorded an attempt exactly when it found something anchored below this
+    // bone and could not use it — so an attempt present means "there WAS evidence
+    // down there", and a caller reads a different sentence and takes a different
+    // action than the one who has nothing anywhere on the limb.
+    const attempt = ctx.inwardAttempt.get(state.drawn.bone);
+    if (attempt !== undefined) {
+      out.refusal = { reason: 'no-bracket', detail: `${name}: ${attempt}` };
+      out.notes.push(
+        `${name} was not placed, and not for want of an anchor: something below it WAS trusted. Two anchored ` +
+          'descendants on different sub-chains would determine this bone outright — so the repair is either one ' +
+          'more anchor on a sub-chain that has none, or a rig whose topology branches here at all. A single ' +
+          'anchored descendant, however good, carries nothing about the link above it.',
+      );
+      return out;
+    }
     out.refusal = {
       reason: 'no-anchor',
       detail:
-        `${name} hangs off bone "${state.drawn.bone}", which has no placed ancestor: no part on it or above it ` +
-        'came back from the anchor pass inside the anchor criterion, so there was nothing to walk a chain from',
+        `${name} hangs off bone "${state.drawn.bone}", which has no placed ancestor and no anchored descendant: ` +
+        'no part on it, above it or below it came back from the anchor pass inside the anchor criterion, so there ' +
+        'was nothing to walk a chain from and nothing to determine it inward from either',
     };
     out.notes.push(
       `${name} was not placed. A chain needs a trunk — supply --anchor with a report that reads at least one part ` +
-        'of this limb or above it, or loosen --anchor-residual. Nothing above an anchor is recoverable from it, so ' +
-        'a trusted part further out does not help this one.',
+        'of this limb or above it, or loosen --anchor-residual. Nothing above a single anchor is recoverable from ' +
+        'it, so one trusted part further out does not help this one; TWO of them on different sub-chains below ' +
+        'this bone would, and that is the inward step.',
     );
     return out;
   }
@@ -1829,12 +2396,60 @@ function finishPart(state: PartState, ctx: FinishContext): ChainFitPart {
           "it — the candidate's own joint offset and the picture disagree by that much.",
       );
     }
+  } else if (out.role === 'inward' && view.inward !== null) {
+    const inward = view.inward;
+    out.notes.push(
+      `${name} is on a bone this run determined INWARD: nothing searched it and the anchor pass never saw it. ` +
+        `Its four numbers come from ${inward.determinants.length} anchored descendant(s) — ` +
+        `${inward.determinants.map((d) => `${d.bone} (${d.part})`).join(', ')} — read across a ` +
+        `${inward.leverPx} px lever, with ${inward.redundancy} surplus equation(s).`,
+    );
+    out.notes.push(
+      inward.disagreementPx === null
+        ? `redundancy 0, so \`disagreementPx\` is null rather than zero: ${inward.determinants.length} determinants ` +
+          'supply exactly the four numbers a placement is, and a solve with nothing left over fits its own points ' +
+          'exactly whether or not the rig is right. One more anchored descendant on a third sub-chain is what ' +
+          'would make this checkable.'
+        : `the determination disagrees with itself by ${inward.disagreementPx} px at worst ` +
+          `(${inward.determinants.map((d) => `${d.bone} ${d.offsetPx}`).join(', ')} px): over ` +
+          `${inward.redundancy} surplus equation(s), that is the rig's own joint offsets and the anchors below ` +
+          'this bone disagreeing by that much. It is a rig diagnostic in the same sense as ' +
+          '`pivotDisagreementPx`, not an error bar on the placement.',
+    );
+    for (const d of inward.determinants) {
+      if (d.carried.length === 0) continue;
+      out.notes.push(
+        `the path to determinant "${d.bone}" runs through ${d.carried.join(', ')}, which carry nothing scoreable — ` +
+          'their setup rotation was composed through, and this determination inherits that assumption.',
+      );
+    }
+    for (const r of inward.rejected) {
+      out.notes.push(`anchored descendant "${r.bone}" was not usable as a determinant: ${r.why}.`);
+    }
+    if (placement.hingeDeg === null) {
+      out.notes.push(
+        `"${view.name}" has no placed parent — that is why the inward step had to determine it — so \`hingeDeg\` ` +
+          'and `localRotationDeg` are null: there is no link above it to measure a local rotation against. The ' +
+          'placement is a world one, and `src/transform.ts` converts it.',
+      );
+    }
   } else {
     const dof = view.dof.stretch ? 'a hinge and a stretch' : 'one hinge';
     out.notes.push(
       `${name} was read by walking ${view.depth} link(s) out from ${view.anchoredTo ?? 'an anchor'} and searching ` +
         `${dof} over ${ctx.hinge.minDeg}°…${ctx.hinge.maxDeg}° in ${HINGE_STEP}° steps — not the four degrees of ` +
         'freedom `pose` has to search.',
+    );
+  }
+  if (view.anchoredToRole === 'inward' && out.role !== 'inward') {
+    const trunk = view.anchoredTo === null ? null : ctx.inwardBones.get(view.anchoredTo);
+    out.notes.push(
+      `⚠️ the trunk this hangs off — "${view.anchoredTo}" — was DETERMINED inward from ` +
+        `${trunk?.determinants.length ?? 0} anchored descendant(s), not read off the picture` +
+        (trunk?.disagreementPx === null
+          ? ' with no surplus equation to check it against'
+          : ` (worst self-disagreement ${trunk?.disagreementPx} px)`) +
+        '. Every number here rests on that determination.',
     );
   }
   if (state.relocated) {
@@ -1878,15 +2493,33 @@ function finishPart(state: PartState, ctx: FinishContext): ChainFitPart {
             `${(out.anchorVerdict?.residual ?? 0).toFixed(4)}, unexplained ` +
             `${((out.anchorVerdict?.unexplained ?? 0) * 100).toFixed(0)}% over the part's WHOLE footprint, which ` +
             'cannot know what covers it), so every placement hung off it inherits this doubt'
-          : ''),
+          : out.role === 'inward'
+            ? ` — and it is an INWARD determination, so the residual is not what the placement rests on ` +
+              `(that is ${view.inward?.determinants.length ?? 0} anchored descendant(s) across a ` +
+              `${view.inward?.leverPx ?? 0} px lever). What this floor refuses is the CONFIRMATION: the frame ` +
+              'cannot check the answer either way'
+            : ''),
     };
     out.notes.push(
       state.isAnchorSource
         ? `${name} anchors this chain and this instrument can barely see it. The placement is the anchor pass's ` +
           'and may well be right; what is refused is the confirmation, and everything with ' +
           `\`anchoredTo\` = "${view.name}" rests on it.`
-        : `${name} is too far behind other parts to measure on this frame. The best placement found is still in ` +
-          '`placement`.',
+        : out.role === 'inward'
+          ? // ⚠️ The floor is kept here deliberately, and this is the second time
+            // that call has been made in this file: exempting a placement nothing
+            // searched was tried for anchors in `2ff80af` and reverted in
+            // `0ff25ea` because it prints a part nobody can see as READ. An inward
+            // determination has a better provenance than an anchor's sliver and
+            // the floor still applies, because the floor is about what the PICTURE
+            // can confirm, not about how the number was obtained — and a count of
+            // "readable" that includes bones the frame cannot check is exactly the
+            // figure this floor exists to keep out of a table.
+            `${name} sits on a bone that was determined inward, and this frame cannot confirm it: the geometry ` +
+            'says where it goes and the pixels are not there to agree or disagree. The determination is in ' +
+            '`bone.inward` and the placement is still in `placement`; what is refused is the confirmation.'
+          : `${name} is too far behind other parts to measure on this frame. The best placement found is still in ` +
+            '`placement`.',
     );
   } else if (placement.residual > ctx.maxResidual) {
     out.refusal = {
@@ -1896,8 +2529,16 @@ function finishPart(state: PartState, ctx: FinishContext): ChainFitPart {
         `above --max-residual ${ctx.maxResidual}`,
     };
     out.notes.push(
-      `${name}'s visible pixels do not agree with the frame at any hinge in the window. Check the window, the ` +
-        "candidate's joint offset for this limb, and its draw order.",
+      out.role === 'inward'
+        ? // No window was searched here, so the usual advice about it would be
+          // wrong: this is the determination and the picture disagreeing, and the
+          // determination is the thing to look at.
+          `${name} was DETERMINED inward and its visible pixels do not agree with the frame where the ` +
+          'determination put it. That is a real disagreement between the anchors below this bone and the ' +
+          "candidate's own joint offsets — read `bone.inward.disagreementPx` and the determinants' own " +
+          '`anchorVerdict`s before believing either side.'
+        : `${name}'s visible pixels do not agree with the frame at any hinge in the window. Check the window, the ` +
+          "candidate's joint offset for this limb, and its draw order.",
     );
   }
   if (Math.abs(placement.visibleShareAtFit - placement.visibleShare) > VISIBILITY_DRIFT_TOLERANCE) {
@@ -1978,6 +2619,13 @@ export function chainFitLines(report: ChainFitReport): string[] {
     `  ..    anchor    ${report.anchor.source === 'pose' ? 'an internal `rigc pose` pass' : (report.anchor.path ?? '')} · ` +
       `${report.anchor.anchored.length} trusted (residual ≤ ${report.anchor.criterion.maxResidual}, ` +
       `unexplained ≤ ${report.anchor.criterion.maxUnexplained}, unambiguous)`,
+    `  ..    inward    ${
+      report.inward.determined.length === 0
+        ? `nothing determined (needs ${report.inward.criterion.minDeterminants} anchored descendants on ` +
+          `different sub-chains, ≥ ${report.inward.criterion.minLeverPx} px apart)`
+        : `${report.inward.determined.length} bone(s) determined from anchored descendants: ` +
+          report.inward.determined.join(', ')
+    }`,
     `  ..    search    hinge ${report.search.hinge.minDeg}°–${report.search.hinge.maxDeg}° step ` +
       `${report.search.hinge.stepDeg}° (${report.search.hinge.steps} rungs) · stretch free from ` +
       `${report.search.stretch.freeFrom} · refuse below visible ${report.search.minVisible} or above residual ` +
@@ -1992,8 +2640,28 @@ export function chainFitLines(report: ChainFitReport): string[] {
       continue;
     }
     const tag =
-      part.refusal !== null ? 'REFUSE' : part.ambiguous ? 'AMBIG ' : part.role === 'anchor' ? 'ANCHOR' : 'CHAIN ';
+      part.refusal !== null
+        ? 'REFUSE'
+        : part.ambiguous
+          ? 'AMBIG '
+          : part.role === 'anchor'
+            ? 'ANCHOR'
+            : part.role === 'inward'
+              ? 'INWARD'
+              : 'CHAIN ';
     lines.push(`  ${tag} ${label}  ${placementLine(part.placement)}`);
+    if (part.bone.inward !== null) {
+      const inward = part.bone.inward;
+      lines.push(
+        `         ${pad}  bone ${part.bone.name} · DETERMINED from ${inward.determinants
+          .map((d) => `${d.bone}@${d.leverPx}px`)
+          .join(' + ')} · lever ${inward.leverPx} px · redundancy ${inward.redundancy} · disagreement ` +
+          `${inward.disagreementPx === null ? 'n/a at redundancy 0' : `${inward.disagreementPx} px`}`,
+      );
+      for (const r of inward.rejected) lines.push(`         ${pad}  unusable determinant ${r.bone}: ${r.why}`);
+    } else if (part.bone.anchoredToRole === 'inward') {
+      lines.push(`         ${pad}  hangs off "${part.bone.anchoredTo}", which was determined inward`);
+    }
     if (part.role === 'chain') {
       const hinge = part.placement.hingeDeg === null ? '—' : `${part.placement.hingeDeg.toFixed(2)}°`;
       const local = part.placement.localRotationDeg === null ? '—' : `${part.placement.localRotationDeg.toFixed(2)}°`;
@@ -2017,9 +2685,13 @@ export function chainFitLines(report: ChainFitReport): string[] {
   const bought = report.parts.filter(
     (p) => p.refusal === null && p.role === 'chain' && p.anchorVerdict?.eligible === false,
   ).length;
+  const onInward = report.parts.filter(
+    (p) => p.refusal === null && (p.role === 'inward' || p.bone.anchoredToRole === 'inward'),
+  ).length;
   lines.push('');
   lines.push(
-    `  ..    ${read} of ${report.parts.length} part(s) read; ${bought} of them the anchor pass refused and the chain bought.`,
+    `  ..    ${read} of ${report.parts.length} part(s) read; ${bought} of them the anchor pass refused and the chain bought` +
+      (report.inward.determined.length === 0 ? '.' : `; ${onInward} of them rest on an inward determination.`),
   );
   lines.push('  ..    residuals are over VISIBLE pixels and are a trust signal, not a score — nothing here has a');
   lines.push('  ..    pass bar. Read every one next to its `visible` share, and remember the occlusion is the');

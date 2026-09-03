@@ -419,7 +419,7 @@ commands take it and what its default is.
 | `preview --candidate <dir>` | one self-contained `.html` that plays it |
 | `vote --candidate a --candidate b` | one `.html` that asks a human which; `vote --record <file>` checks the answer into `votes.jsonl` |
 | `pose --images <dir> --frame <png>` | reads part placements **out of** a picture |
-| `chainfit --candidate <dir> --images <dir> --frame <png>` | reads the parts `pose` refuses, through the candidate's own draw order and hierarchy: masked residuals over **visible** pixels, one hinge per child instead of four degrees of freedom, and the `rotate` key value each answer implies |
+| `chainfit --candidate <dir> --images <dir> --frame <png>` | reads the parts `pose` refuses, through the candidate's own draw order and hierarchy: masked residuals over **visible** pixels, one hinge per child instead of four degrees of freedom, and the `rotate` key value each answer implies. A bone with two or more anchored descendants is **determined** rather than searched, and the residual that over-determination leaves is reported |
 | `diff <candidate.json> <reference.json>` | structural comparison of two skeletons, one ratio per measure and deliberately no combined score |
 | `check --candidate <dir> --frames <dir>` | the candidate against reference pictures — the only instrument here that can see a *wrong animation* |
 | `bench <rung> --candidate <dir>` | one rung of the benchmark ladder |

@@ -114,9 +114,12 @@ import {
   type PosePlacement,
 } from './src/pose.ts';
 import {
+  chainFitLines,
   CHAINFIT_SPEC,
+  DEFAULT_MIN_LEVER_PX,
   DEFAULT_MIN_VISIBLE,
   estimateChainFit,
+  INWARD_MIN_DETERMINANTS,
   type ChainFitPart,
   type ChainFitPlacement,
   type ChainFitReport,
@@ -12007,6 +12010,15 @@ interface ChainFitFixture {
   /** A frame of the POSED rig — the picture a chain fit is asked to read. */
   posedPath: string;
   posedTruth: Map<string, PosePlacementTruth>;
+  /**
+   * The posed rig with the whole figure TURNED on `trunk`, in its own viewport.
+   *
+   * ⭐ The frame the inward step is measured on. `trunk` is the one bone in this
+   * rig that branches, so it is the one an inward determination can reach — and
+   * at world rotation 0 it cannot tell a correct rotation from a sign-flipped one.
+   */
+  tiltedPath: string;
+  tiltedTruth: Map<string, PosePlacementTruth>;
   /** A frame with nothing in it at all. */
   blankPath: string;
   /** Truth hinge per bone, in Spine degrees: the posed rotation minus the candidate's. */
@@ -12072,7 +12084,13 @@ function buildChainFitFixture(): ChainFitFixture {
         skeleton: { width: 240, height: 240 },
         bones: [
           { name: 'root' },
-          { name: 'trunk', parent: 'root', x: 0, y: 0 },
+          // ⚠️ `rot.trunk` is undefined for the two rigs above, and `JSON.stringify`
+          // drops an undefined value — so those two rig files are byte-identical to
+          // what they were before the TILTED build below existed. The tilted build is
+          // the only one that sets it, and it sets it because a bone at world
+          // rotation zero cannot see a rotation-sign error in anything that places
+          // it (measured: negating `q` in the inward solve moved nothing at all).
+          { name: 'trunk', parent: 'root', x: 0, y: 0, rotation: rot.trunk },
           { name: 'head', parent: 'trunk', x: 0, y: 36 },
           // The arm's pivot sits at the trunk's own right edge and its plate is
           // 30 long, so the posed angle straddles that edge: roughly two thirds
@@ -12174,6 +12192,43 @@ function buildChainFitFixture(): ChainFitFixture {
   const setup = render(setupFrames, candidate.posable, 'setup.png');
   const posedFrame = render(posedFrames, posed.posable, 'posed.png');
 
+  // ⭐ A THIRD frame, for the inward step: the posed rig with the whole figure
+  // turned on `trunk`. The bone the inward step has to determine is `trunk` — the
+  // only one in this rig that branches — and at world rotation 0 a determination
+  // that got its rotation's SIGN wrong lands on the truth anyway. Measured: with
+  // `q` negated in the solve, the determination of an unturned trunk moved 0.00 px.
+  // Turning it is what makes the control able to fail.
+  //
+  // 🚨 In its OWN viewport, deliberately. Adding it to the union above would move
+  // every pixel of `setup.png` and `posed.png` and re-baseline all ten controls
+  // that read them, which is a cost the inward step has no business imposing. The
+  // figure is rotated rigidly, so every occlusion relationship the controls above
+  // depend on is preserved inside this frame too.
+  const tilted = build('tilted', { ...posedRot, trunk: 25 });
+  const tiltedFrames = sampleSetupPose(tilted.posable.data);
+  const tiltedBounds = unionBounds([tiltedFrames]);
+  const tiltedW = tiltedBounds.maxX - tiltedBounds.minX + pad * 2;
+  const tiltedH = tiltedBounds.maxY - tiltedBounds.minY + pad * 2;
+  const tiltedViewport = viewportOfSize(
+    tiltedBounds.minX - pad,
+    tiltedBounds.minY - pad,
+    tiltedW,
+    tiltedH,
+    scale,
+    Math.round(tiltedW * scale),
+    Math.round(tiltedH * scale),
+  );
+  const tiltedProject = projector(tiltedViewport);
+  const tiltedPlate = renderFrame(tiltedFrames[0], tilted.posable.pages, tiltedViewport, BACKGROUND);
+  const tiltedPath = join(dir, 'tilted.png');
+  tiltedPlate.writePng(tiltedPath);
+  const tiltedTruth = new Map<string, PosePlacementTruth>();
+  for (const piece of tiltedFrames[0].pieces) {
+    const page = tilted.posable.pages.get(piece.page);
+    if (piece.kind !== 'region' || !page) continue;
+    tiltedTruth.set(piece.slot, poseTruthOf(piece, page, tiltedProject));
+  }
+
   const blank = new Plate(viewport.width, viewport.height);
   fill(blank, BACKGROUND);
   const blankPath = join(dir, 'blank.png');
@@ -12193,6 +12248,8 @@ function buildChainFitFixture(): ChainFitFixture {
     setupTruth: setup.truth,
     posedPath: posedFrame.path,
     posedTruth: posedFrame.truth,
+    tiltedPath,
+    tiltedTruth,
     blankPath,
     truthHinge,
     fileOfSlot: new Map([
@@ -12650,6 +12707,409 @@ function runChainFitSuite(): number {
         `--help exit=${String(help.status)}; missing candidate exit=${String(missing.status)}; ` +
         `--anchor with --scale exit=${String(clash.status)} ${JSON.stringify(clash.stderr.split('\n')[0])}`,
       'the JSON is the whole product, and a flag pair that cannot both mean anything has to say so instead of quietly ignoring one of them',
+    );
+  }
+
+  // =========================================================================
+  // the inward step (issue #326) — two anchors bracket the bone between them
+  // =========================================================================
+  //
+  // ⭐ The fixture needs nothing new, and that is the point: `trunk` hangs off
+  // `root`, which carries no art and can therefore never anchor, so `trunk` is
+  // unreachable to the outward walk exactly as `torso` is in the 2026-09-03
+  // spineboy candidate. What changes per control is only WHICH slots the anchor
+  // report trusts — and every trusted placement is the renderer's own truth, so
+  // the bone the inward step has to determine has a known answer by construction
+  // rather than a measured one.
+  //
+  // 🚨 `trunk` is also drawn AFTER the arm, the hand, the wings and `buried`, so
+  // its own visible share is high and the determination can be checked against the
+  // picture. That is not true of the corpus case it was built for — spineboy's
+  // `neck` is behind everything — and the acceptance study says so rather than
+  // hiding it here.
+
+  /**
+   * A `pose` report that trusts exactly the named slots, at exactly the renderer's
+   * own truth for them, with an optional deliberate displacement per slot.
+   *
+   * Everything else in it is made ineligible rather than removed, so the run still
+   * carries an `anchorVerdict` for those parts and the report is the same shape a
+   * real `pose` pass produces.
+   */
+  const wantTilted = (slot: string): PosePlacementTruth => {
+    const t = fixture.tiltedTruth.get(slot);
+    if (!t) throw new Error(`internal: the fixture posed no slot "${slot}" tilted`);
+    return t;
+  };
+  const forgeAnchor = (
+    file: string,
+    trust: Map<string, { dx: number; dy: number }>,
+    over: string[],
+  ): string => {
+    const path = join(fixture.dir, file);
+    const base = estimatePose({
+      imagesDir: fixture.parts,
+      framePath: fixture.tiltedPath,
+      parts: over.map((slot) => join(fixture.parts, fixture.fileOfSlot.get(slot) ?? '')),
+    });
+    const byFile = new Map<string, { slot: string; shift: { dx: number; dy: number } }>();
+    for (const [slot, shift] of trust) byFile.set(fixture.fileOfSlot.get(slot) ?? '', { slot, shift });
+    for (const part of base.parts) {
+      if (part.placement === null) continue;
+      const hit = byFile.get(part.part);
+      if (hit === undefined) {
+        // Ineligible by both halves of the criterion, so no wording change in
+        // `anchorEntries` can accidentally admit it.
+        part.placement = { ...part.placement, residual: 0.9, unexplained: 0.9 };
+        part.ambiguous = true;
+        continue;
+      }
+      const truth = wantTilted(hit.slot);
+      part.placement = {
+        ...part.placement,
+        x: truth.x + hit.shift.dx,
+        y: truth.y + hit.shift.dy,
+        rotationDeg: truth.rotationDeg,
+        scale: truth.scale,
+        residual: 0,
+        unexplained: 0,
+      };
+      part.refusal = null;
+      part.ambiguous = false;
+    }
+    writeFileSync(path, `${JSON.stringify(base, null, 1)}\n`);
+    return path;
+  };
+  const NO_SHIFT = { dx: 0, dy: 0 };
+  /** The four parts every forged report carries: the trunk plus its three usable children. */
+  const BRACKET_SLOTS = ['trunk', 'head', 'arm', 'buried'];
+
+  // --- the determination, against the renderer's own truth -------------------
+  //
+  // ⭐ The CF01 of this half. `head` and `arm` are pinned to the renderer's posed
+  // quads and `trunk` is withheld, so nothing above `trunk` is placed and nothing
+  // searches it: what is left is the determination — two anchored pivots, the
+  // rig's own offsets, the y flip — against the renderer's own answer for a bone
+  // it was never given. A sign error in the solve shows up here as tens of pixels
+  // and nowhere else at all.
+  //
+  // And the second half of the claim: once the trunk exists, the OUTWARD walk
+  // resumes from it, so the parts that were `no-anchor` a moment ago are fitted.
+  {
+    const two = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.tiltedPath,
+      anchorPath: forgeAnchor('anchor-bracket-2.json', new Map([['head', NO_SHIFT], ['arm', NO_SHIFT]]), BRACKET_SLOTS),
+    });
+    const trunk = partOf(two, 'trunk');
+    const delta = trunk.placement === null ? null : chainFitDelta(trunk.placement, wantTilted('trunk'));
+    const inward = trunk.bone.inward;
+    // The parts that had no reachable trunk a moment ago. ⚠️ `hand` is in the list
+    // and its trunk is NOT the determined bone: `arm` is anchored here, so `hand`
+    // hangs off `arm` and its `anchoredToRole` is "anchor". Only the wings, which
+    // are children of `trunk` itself, rest on the determination — and the field
+    // has to say which is which or it is not worth having.
+    const below = ['hand', 'wing_l', 'wing_r'].map((slot) => {
+      const part = partOf(two, slot);
+      const d = part.placement === null ? null : chainFitDelta(part.placement, wantTilted(slot));
+      return {
+        slot,
+        role: part.role,
+        refusal: part.refusal?.reason ?? null,
+        delta: d,
+        trunk: part.bone.anchoredTo,
+        trunkRole: part.bone.anchoredToRole,
+      };
+    });
+    const onDetermination = below.filter((b) => b.slot !== 'hand');
+    const ok =
+      trunk.role === 'inward' &&
+      delta !== null &&
+      delta.translate <= 0.05 &&
+      delta.rotateDeg <= 0.05 &&
+      inward !== null &&
+      inward.form === 'descendants' &&
+      inward.determinants.length === 2 &&
+      inward.determinants.every((d) => d.carried.length === 0) &&
+      inward.redundancy === 0 &&
+      inward.disagreementPx === null &&
+      inward.leverPx > DEFAULT_MIN_LEVER_PX &&
+      two.inward.determined.includes('trunk') &&
+      // the outward walk resumed: all three read
+      below.every((b) => b.role === 'chain' && b.refusal === null && b.delta !== null && chainFitWithin(b.delta)) &&
+      // and each says truthfully which trunk it rests on
+      onDetermination.every((b) => b.trunk === 'trunk' && b.trunkRole === 'inward') &&
+      below.every((b) => b.slot !== 'hand' || (b.trunk === 'arm' && b.trunkRole === 'anchor')) &&
+      // and the console names it
+      chainFitLines(two).some((l) => l.includes('INWARD') && l.includes('trunk'));
+    say(
+      'CF11_TWO_ANCHORED_CHILDREN_DETERMINE_THE_BONE_BETWEEN_THEM',
+      ok,
+      `trunk (no placed ancestor, withheld from the anchor pass) came back role=${trunk.role} ` +
+        `${delta ? chainFitSay(delta) : 'no placement'} from ` +
+        `${inward?.determinants.map((d) => `${d.bone}@${d.leverPx}px`).join(' + ') ?? 'nothing'}, lever ` +
+        `${inward?.leverPx ?? 0} px, redundancy ${inward?.redundancy ?? -1}, disagreement ` +
+        `${inward?.disagreementPx === null ? 'null (nothing left over)' : String(inward?.disagreementPx)}; the ` +
+        `walk then resumed through it — ${below
+          .map(
+            (b) =>
+              `${b.slot} ${b.role}${b.refusal ? `/${b.refusal}` : ''} ${b.delta ? chainFitSay(b.delta) : 'none'} ` +
+              `on ${b.trunk ?? '?'} (${String(b.trunkRole)})`,
+          )
+          .join(' · ')}`,
+      "a determination is arithmetic on the rig's own offsets, so it is either exact or it has a sign error — and everything the walk then reaches through that bone inherits whichever it is",
+    );
+  }
+
+  // --- over-determination, with a known inconsistency ------------------------
+  //
+  // 🚨 Two-sided, and it has to be: `disagreementPx` on three honest determinants
+  // is the number that says "the rig and the picture agree", and the same field on
+  // three where one is 4 px out has to be the number that says they do not. A
+  // field that reads zero either way is not a diagnostic, and a field that reads
+  // large either way is noise.
+  {
+    const shift = { dx: 4, dy: 0 };
+    const clean = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.tiltedPath,
+      anchorPath: forgeAnchor(
+        'anchor-bracket-3.json',
+        new Map([['head', NO_SHIFT], ['arm', NO_SHIFT], ['buried', NO_SHIFT]]),
+        BRACKET_SLOTS,
+      ),
+    });
+    const broken = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.tiltedPath,
+      anchorPath: forgeAnchor(
+        'anchor-bracket-3-broken.json',
+        new Map([['head', NO_SHIFT], ['arm', NO_SHIFT], ['buried', shift]]),
+        BRACKET_SLOTS,
+      ),
+    });
+    const cleanIn = partOf(clean, 'trunk').bone.inward;
+    const brokeIn = partOf(broken, 'trunk').bone.inward;
+    const worst = brokeIn === null ? null : brokeIn.determinants.reduce((a, d) => (d.offsetPx > a.offsetPx ? d : a));
+    const moved = brokeIn?.determinants.find((d) => d.bone === 'buried');
+    const cleanDelta = partOf(clean, 'trunk').placement === null
+      ? null
+      : chainFitDelta(partOf(clean, 'trunk').placement as ChainFitPlacement, wantTilted('trunk'));
+    const brokeDelta = partOf(broken, 'trunk').placement === null
+      ? null
+      : chainFitDelta(partOf(broken, 'trunk').placement as ChainFitPlacement, wantTilted('trunk'));
+    const ok =
+      cleanIn !== null &&
+      brokeIn !== null &&
+      cleanIn.determinants.length === 3 &&
+      brokeIn.determinants.length === 3 &&
+      cleanIn.redundancy === 2 &&
+      brokeIn.redundancy === 2 &&
+      cleanIn.disagreementPx !== null &&
+      brokeIn.disagreementPx !== null &&
+      // three honest anchors agree with the rig to well under a pixel, and the
+      // extra evidence does not spoil the answer either
+      cleanIn.disagreementPx <= 0.05 &&
+      cleanDelta !== null &&
+      chainFitWithin(cleanDelta) &&
+      // ⚠️ The claim that matters: a 4 px displacement on one determinant DOES
+      // move the placement off the truth, and the diagnostic is not blind to it.
+      // A silently-absorbed error with a clean-looking residual is the one
+      // outcome this control exists to forbid.
+      brokeDelta !== null &&
+      brokeDelta.translate > 1 &&
+      brokeIn.disagreementPx >= 1 &&
+      (moved?.offsetPx ?? 0) >= 1;
+    say(
+      'CF12_AN_OVER_DETERMINED_BRACKET_REPORTS_ITS_OWN_DISAGREEMENT',
+      ok,
+      `three anchored children, redundancy ${cleanIn?.redundancy ?? -1}: honest ` +
+        `disagreement ${cleanIn?.disagreementPx ?? 'null'} px ` +
+        `(${cleanIn?.determinants.map((d) => `${d.bone} ${d.offsetPx}`).join(', ') ?? ''}) at ` +
+        `${cleanDelta ? chainFitSay(cleanDelta) : 'none'} of truth · with buried displaced ${shift.dx} px: ` +
+        `${brokeIn?.disagreementPx ?? 'null'} px ` +
+        `(${brokeIn?.determinants.map((d) => `${d.bone} ${d.offsetPx}`).join(', ') ?? ''}) at ` +
+        `${brokeDelta ? chainFitSay(brokeDelta) : 'none'} of truth. ⚠️ the worst offset is on ` +
+        `"${worst?.bone ?? 'none'}" and NOT on the determinant that was moved: least squares cannot attribute ` +
+        'between two determinants that sit close together (arm and buried are 5 bone units apart, head is 24 ' +
+        'away), so this field says the determination disagrees and not which anchor is wrong',
+      'over-determination is the only thing that can check a determination against itself, so an error big enough to move the answer has to show up in the residual instead of being absorbed by it',
+    );
+  }
+
+  // --- one anchor below is not a bracket ------------------------------------
+  //
+  // The break for CF11's premise, and the place the two refusals stand side by
+  // side in one report: `trunk` has something trusted below it and cannot use it
+  // (`no-bracket`); `arm` and `buried` have nothing anywhere (`no-anchor`). The
+  // distinction is what a caller acts on — one more anchor, or a different rig.
+  {
+    const one = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.tiltedPath,
+      anchorPath: forgeAnchor('anchor-bracket-1.json', new Map([['head', NO_SHIFT]]), BRACKET_SLOTS),
+    });
+    const trunk = partOf(one, 'trunk');
+    const arm = partOf(one, 'arm');
+    const ok =
+      trunk.role === 'unplaced' &&
+      trunk.placement === null &&
+      trunk.refusal?.reason === 'no-bracket' &&
+      trunk.refusal.detail.includes('trunk') &&
+      trunk.refusal.detail.includes('"head"') &&
+      trunk.refusal.detail.includes(String(INWARD_MIN_DETERMINANTS)) &&
+      trunk.bone.inward === null &&
+      // nothing trusted anywhere below the arm, which is a different sentence
+      arm.role === 'unplaced' &&
+      arm.refusal?.reason === 'no-anchor' &&
+      one.inward.determined.length === 0;
+    say(
+      'CF13_ONE_ANCHOR_BELOW_A_BONE_IS_NOT_A_BRACKET',
+      ok,
+      `head alone trusted: trunk role=${trunk.role} refusal=${trunk.refusal?.reason ?? 'none'} ` +
+        `${JSON.stringify(trunk.refusal?.detail ?? '')}; arm role=${arm.role} ` +
+        `refusal=${arm.refusal?.reason ?? 'none'}; determined ${JSON.stringify(one.inward.determined)}`,
+      'four numbers need four equations, so one anchored descendant has to refuse — and it has to refuse differently from a limb with nothing on it at all, because the repair is different',
+    );
+  }
+
+  // --- a bone in the middle of the path, and what makes it uncrossable -------
+  //
+  // 🚨 Two-sided again. An art-less bone between the two is composable, and the
+  // determination has to say it went through it (`carried`), because its setup
+  // rotation was assumed. The same bone with its SCALE left free is not
+  // composable — the distance across it is unknown — and then the determinant has
+  // to be rejected by name rather than composed through at 1.0.
+  //
+  // Forged rather than authored: the `mid` bone carries no art and rigc has no
+  // reason to emit one. Its offsets split `head`'s own (0, 36) into two halves, so
+  // the composed geometry — and therefore the truth — is unchanged.
+  {
+    const midDir = join(fixture.dir, 'mid');
+    mkdirSync(midDir, { recursive: true });
+    copyFileSync(join(fixture.candidate, 'skeleton.atlas'), join(midDir, 'skeleton.atlas'));
+    const skel = JSON.parse(readFileSync(join(fixture.candidate, 'skeleton.json'), 'utf8')) as SpineSkeletonJson;
+    const trunkAt = skel.bones.findIndex((b) => b.name === 'trunk');
+    skel.bones.splice(trunkAt + 1, 0, { name: 'mid', parent: 'trunk', x: 0, y: 18 });
+    for (const bone of skel.bones) {
+      if (bone.name !== 'head') continue;
+      bone.parent = 'mid';
+      bone.x = 0;
+      bone.y = 18;
+    }
+    writeFileSync(join(midDir, 'skeleton.json'), `${JSON.stringify(skel, null, 1)}\n`);
+
+    const anchorPath = forgeAnchor('anchor-mid.json', new Map([['head', NO_SHIFT], ['arm', NO_SHIFT]]), BRACKET_SLOTS);
+    const rigid = estimateChainFit({
+      candidatePath: midDir,
+      imagesDir: fixture.parts,
+      framePath: fixture.tiltedPath,
+      anchorPath,
+    });
+    const stretched = estimateChainFit({
+      candidatePath: midDir,
+      imagesDir: fixture.parts,
+      framePath: fixture.tiltedPath,
+      anchorPath,
+      stretch: 1.25,
+    });
+    const rigidTrunk = partOf(rigid, 'trunk');
+    const rigidDelta = rigidTrunk.placement === null ? null : chainFitDelta(rigidTrunk.placement, wantTilted('trunk'));
+    const throughMid = rigidTrunk.bone.inward?.determinants.find((d) => d.bone === 'head');
+    const stretchedTrunk = partOf(stretched, 'trunk');
+    const rejected = stretchedTrunk.refusal?.detail ?? '';
+    const ok =
+      rigidTrunk.role === 'inward' &&
+      rigidDelta !== null &&
+      rigidDelta.translate <= 0.05 &&
+      rigidDelta.rotateDeg <= 0.05 &&
+      throughMid?.carried.join(',') === 'mid' &&
+      // and with the scale of that same bone left free, the determinant is gone
+      stretchedTrunk.role === 'unplaced' &&
+      stretchedTrunk.refusal?.reason === 'no-bracket' &&
+      rejected.includes('"mid"') &&
+      rejected.includes('scale free') &&
+      stretched.inward.determined.length === 0;
+    say(
+      'CF14_AN_ARTLESS_BONE_IS_COMPOSED_THROUGH_AND_NAMED_BUT_A_FREE_SCALE_ON_IT_IS_NOT',
+      ok,
+      `mid inserted between trunk and head (offsets split 0,18 + 0,18 so the geometry is unchanged): rigid run ` +
+        `trunk role=${rigidTrunk.role} ${rigidDelta ? chainFitSay(rigidDelta) : 'none'} with carried=` +
+        `${JSON.stringify(throughMid?.carried ?? [])}; --stretch 1.25 run trunk role=${stretchedTrunk.role} ` +
+        `refusal=${stretchedTrunk.refusal?.reason ?? 'none'} ${JSON.stringify(rejected)}`,
+      'composing through a bone whose length the rig leaves free would put a confident number on a distance nobody knows, which is the same shape of wrongness as a search window that excludes the truth',
+    );
+  }
+
+  // --- the lever floor is what admits the answer ----------------------------
+  //
+  // The break for CF11's other premise. An angle read between two nearly
+  // coincident pivots is arbitrary, so the floor has to be what lets CF11 print
+  // at all — and, unlike `occluded`, it prints NOTHING when it refuses, because a
+  // rotation with no baseline is not a worse placement, it is not a placement.
+  {
+    const pinched = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.tiltedPath,
+      anchorPath: forgeAnchor('anchor-bracket-lever.json', new Map([['head', NO_SHIFT], ['arm', NO_SHIFT]]), BRACKET_SLOTS),
+      minLeverPx: 1000,
+    });
+    const trunk = partOf(pinched, 'trunk');
+    const ok =
+      trunk.role === 'unplaced' &&
+      trunk.placement === null &&
+      trunk.refusal?.reason === 'no-bracket' &&
+      trunk.refusal.detail.includes('1000') &&
+      trunk.refusal.detail.includes('lever floor') &&
+      pinched.inward.criterion.minLeverPx === 1000 &&
+      pinched.inward.determined.length === 0;
+    say(
+      'CF15_THE_LEVER_FLOOR_IS_WHAT_ADMITS_A_DETERMINATION_AND_IT_IS_A_REPORTED_FIELD',
+      ok,
+      `the same two anchors with --inward-lever 1000: trunk role=${trunk.role} ` +
+        `refusal=${trunk.refusal?.reason ?? 'none'}, criterion reported as ` +
+        `${pinched.inward.criterion.minLeverPx} px (default ${DEFAULT_MIN_LEVER_PX}) ` +
+        `${JSON.stringify(trunk.refusal?.detail ?? '')}`,
+      'a floor nobody has seen refuse is not a floor, and the number an angle was read across is the whole conditioning of that angle',
+    );
+  }
+
+  // --- inert where the outward walk already answers -------------------------
+  //
+  // ⚠️ The blast-radius control. The inward step is only allowed to reach bones
+  // the outward walk left UNPLACED — it does not re-determine an anchor, it does
+  // not replace a fitted hinge with a geometric one, and on a frame where the
+  // trunk anchors normally it must do nothing at all. `posed` is the default run
+  // from the top of this suite, so this is the same report every control above
+  // read.
+  {
+    const roles = new Map<string, number>();
+    for (const part of posed.parts) roles.set(part.role, (roles.get(part.role) ?? 0) + 1);
+    const trunk = partOf(posed, 'trunk');
+    const ok =
+      posed.inward.determined.length === 0 &&
+      posed.parts.every((p) => p.bone.inward === null) &&
+      posed.parts.every((p) => p.role !== 'inward') &&
+      posed.parts.every((p) => p.refusal?.reason !== 'no-bracket') &&
+      posed.parts.every((p) => p.bone.anchoredToRole !== 'inward') &&
+      trunk.role === 'anchor' &&
+      trunk.bone.anchoredToRole === 'anchor' &&
+      posed.inward.criterion.minDeterminants === INWARD_MIN_DETERMINANTS &&
+      posed.inward.criterion.determinantsMustBeAnchored;
+    say(
+      'CF16_THE_INWARD_STEP_IS_INERT_WHERE_THE_OUTWARD_WALK_ALREADY_ANSWERS',
+      ok,
+      `the default posed run: determined ${JSON.stringify(posed.inward.determined)}, roles ` +
+        `${JSON.stringify(Object.fromEntries(roles))}, trunk role=${trunk.role} ` +
+        `anchoredToRole=${String(trunk.bone.anchoredToRole)}, criterion ` +
+        `${posed.inward.criterion.minDeterminants} determinants which must be anchored = ` +
+        `${posed.inward.criterion.determinantsMustBeAnchored}`,
+      'a step that fired where it was not needed would change every placement the ten controls above measure, and it would be reported as a determination rather than as the fit it replaced',
     );
   }
 
@@ -13412,7 +13872,7 @@ function main(): void {
       'declared scale window honoured in both directions, the command writing its JSON while a mistyped ' +
       'directory is refused by name, and the same picture read twice reporting the same numbers rather than ' +
       'nearly the same ones — the objective divides since #306)' +
-      ', + 10 chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
+      ', + 16 chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
       'and 3° with a fourth arriving two links out under a trunk-only anchor, every one of their residuals lower ' +
@@ -13421,7 +13881,19 @@ function main(): void {
       'chain answer to 12° and every scale to the anchor\'s — which no four-degree search could be — the same ' +
       'floor lifted by `--min-visible 0`, a frame with nothing in it refusing every part `no-anchor` by bone, a ' +
       'sheared bone / a mesh attachment / an unresolvable image each refused by their own reason and object, and ' +
-      'the command writing its JSON while --anchor with --scale is refused as the contradiction it is)' +
+      'the command writing its JSON while --anchor with --scale is refused as the contradiction it is; then the ' +
+      'INWARD step on a THIRD frame of the same rig with the whole figure turned on `trunk` — because a bone at ' +
+      'world rotation 0 cannot see a rotation-sign error in what places it — where two anchored children of a ' +
+      'bone with no placed ancestor determine it to 0.00 px of the renderer\'s own answer and the outward walk ' +
+      'then resumes through it, each part below saying truthfully whether its trunk was read or determined; a ' +
+      'THIRD anchored child agreeing to 0 px and the same three with one displaced 4 px reporting 1.95 px of ' +
+      'self-disagreement over a placement that moved 3.20 px, which is the field refusing to absorb an error big ' +
+      'enough to move the answer; one anchor below a bone refused `no-bracket` while a limb with nothing anywhere ' +
+      'keeps `no-anchor` in the same report, because the repair is different; an art-less bone between the two ' +
+      'composed through and NAMED as carried, and the same bone with its scale left free rejecting that ' +
+      'determinant by name instead; the lever floor refusing the same two anchors at `--inward-lever 1000` with ' +
+      'the measured 27.3 px span in the message; and the whole step inert on the untilted frame, where the ' +
+      'outward walk already answers)' +
       ', + 13 ballot controls (two candidates embedded whole in one page, neutral A/B panes with both source paths ' +
       'in the manifest and nowhere else, a ballot id that derives from the candidate digests and changes when the ' +
       'panes swap, a winner and a tie each landing as a ledger line carrying the winning DIGEST and its coverage, ' +

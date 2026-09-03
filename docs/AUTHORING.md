@@ -4512,10 +4512,95 @@ the four a similarity has — and every descendant then follows from the rig. A 
 **above** an anchor does not: recovering it would need to know what the link
 between them did, and that is precisely the unknown the anchor does not carry.
 
-⚠️ **So a limb with no trusted part on it or above it is refused `no-anchor`**, not
-guessed at from a cousin. If a whole side of your figure comes back that way, the
-repair is upstream: give `pose` a better frame, pin its `--scale`, or loosen
+⚠️ **So a limb with no trusted part on it or above it is refused**, not guessed at
+from a cousin. If a whole side of your figure comes back that way, the repair is
+upstream: give `pose` a better frame, pin its `--scale`, or loosen
 `--anchor-residual` deliberately and read the consequences.
+
+### 12.2b The inward step — two anchors bracket the bone between them
+
+⬆️ There is **one exception** to the paragraph above, and it is one shape.
+
+One anchored descendant says nothing about the link above it — that is the
+sentence you just read, and it is still true. **Two** of them say something else
+entirely. A bone's world placement is four numbers, and a descendant's **pivot**
+depends on that bone and on your rig's own offsets and **not** on the
+descendant's own hinge. So each anchored descendant contributes two equations,
+two of them make four, and four equations fix four numbers. That is the whole
+geometry; there is no search and no window.
+
+Such a bone comes back with **`role: "inward"`** and a `bone.inward` block, and
+the outward walk then **resumes from it** — so a subtree that was refused a moment
+ago is fitted normally, one hinge per link, with `bone.anchoredToRole` on every
+one of those placements reading `"inward"` to say what it rests on.
+
+⚠️ **Which means the inward step reaches exactly the bones that BRANCH.** A bone
+whose children form a single sub-chain can never be determined, however good the
+anchor below it is: two equations, four unknowns. That is `no-bracket`, and it is
+a fact about your rig's topology rather than about the frame. On the 2026-09-03
+spineboy candidate `torso` is the only bone in the whole rig that branches — and
+it is the bone that recorded 30 `no-anchor` frames, which is why this exists.
+
+| Field on `bone.inward` | Meaning |
+| --- | --- |
+| `form` | `descendants` — the only form there is. Named so a future one is readable beside it |
+| `determinants[]` | the anchored bones the four numbers were read from: each one's `bone`, the `part` its anchor came from, its `leverPx` from the determined bone, its `offsetPx`, and the art-less bones `carried` through to reach it |
+| `redundancy` | equations beyond the four a similarity needs, `2 × determinants − 4`. **Read `disagreementPx` next to this and never without it** |
+| `leverPx` | the widest frame-pixel span between two determinant pivots — what the rotation was read *across*. A short lever turns a half-pixel anchor error into several degrees |
+| `minLeverPx` | the floor that span had to clear (`--inward-lever`, default `8`) |
+| `disagreementPx` | the worst `offsetPx`: **the over-determination residual**, in frame pixels. `null` at `redundancy 0` |
+| `rejected[]` | anchored descendants that could **not** be used, each with the reason — named rather than silently dropped |
+
+🚨 **At `redundancy 0`, `disagreementPx` is `null` rather than `0`, and the
+difference is the whole point.** Two determinants supply exactly four numbers, so
+the solve fits its own two points exactly *whether or not your rig is right*. A
+zero there would be a measurement of nothing. One more anchored descendant on a
+third sub-chain is what makes a determination checkable at all — and that is the
+same philosophy as `pivotDisagreementPx`: the residual is not an error bar, it is
+your rig's joint offsets and the frame disagreeing by that much.
+
+🚨 **And `disagreementPx` says the determination disagrees with itself. It does
+NOT say which determinant is wrong.** The solve is least squares, so a
+displacement on one anchor spreads across every determinant near it. Measured on
+the chain-fit fixture, a deliberate 4 px error on one child came back as **1.95 px
+on a different child** and 1.74 px on the one that was moved, because those two
+sit 5 bone units apart while the third is 24 away — nothing in the arithmetic can
+tell a tight pair apart. Read the per-determinant `offsetPx` list as a *pattern*,
+and attribute with a second frame or with `pivotDisagreementPx` on the anchors
+themselves.
+
+**What the step cannot see, stated as refusals it makes by name.**
+
+- **`no-bracket`, one determinant.** Four numbers need four equations. The detail
+  names the one it found.
+- **`no-bracket`, an unusable path.** A bone strictly between the two carries art
+  (its hinge is a searched unknown), or your rig leaves its **scale** free (the
+  *distance* across it is unknown), or its geometry is not a similarity at all.
+  Each is named with the bone. ⚠️ `--stretch` frees every bone's scale, so it can
+  turn a working bracket into a refused one — that is the flag telling the truth
+  about what it made unknown.
+- **`no-bracket`, below the lever floor.** Two coincident pivots fix no direction.
+  Nothing is printed here, unlike `occluded`: a rotation with no baseline is not a
+  worse placement, it is not a placement.
+- **`no-anchor` still means what it meant** — nothing trusted on this limb, above
+  it *or below it*. The split matters because the repair does: `no-bracket` wants
+  one more anchor on a different sub-chain, `no-anchor` wants a better anchor pass.
+- **Determinants are ANCHORED bones and nothing else** (`inward.criterion.determinantsMustBeAnchored`).
+  A bone the outward walk placed is sitting at whatever hinge your setup declares
+  until it is fitted, and reading that as evidence would compound a guess into a
+  placement.
+- **An anchored bone is never determined inward**, and a fitted hinge is never
+  replaced by a geometric one. The step only reaches bones the outward walk left
+  unplaced.
+
+🚫 **An `inward` placement is not a measurement of the bone it places.** Its
+evidence lives on the anchors below it. The bone's own `residual` and
+`visibleShare` say how much of the answer *the frame can independently confirm* —
+and **the visibility floor still refuses it** when the answer is one nothing in
+the picture can check. That is deliberate, and it is the second time this call has
+been made in `chainfit`: exempting a placement nothing searched was tried for
+anchors and reverted, because it prints a part nobody can see as READ. The floor
+is about what the picture can confirm, not about how the number was arrived at.
 
 ### 12.3 What the report adds to a `pose` report
 
@@ -4574,7 +4659,7 @@ And per part:
 
 | Field | Meaning |
 | --- | --- |
-| `role` | `anchor` (taken from the anchor pass, not re-fitted), `chain` (fitted through the rig), `unplaced` |
+| `role` | `anchor` (taken from the anchor pass, not re-fitted), `chain` (fitted through the rig), `inward` (**determined** from two or more anchored descendants, with nothing searched — §12.2b), `unplaced` |
 | — | ⭐ **A refused ANCHOR is not a contradiction, and it is the most useful row in the table.** The anchor pass judged that placement over the part's *whole* footprint — all `pose` can see, and blind to what covers it — while this instrument has just measured how much of the part is visible at all. Both readings are true. A refused anchor means *the placement may well be right and the confirmation is missing*, and every part whose `anchoredTo` names that bone rests on it. Measured on the 2026-09-03 corpus, `rear-bracer` clears `pose`'s criterion on 81 of 147 frames at a median visible share of **0.1%** — suppressing the refusal there was tried and prints that as READ. ⚠️ **That pair of numbers is on the pre-[#306](https://github.com/firejune/rigc/issues/306) objective** and has not been re-derived: the study is the 2026-09-03 run's own, over its own candidate, and re-running it is a run-scale job rather than a docs edit. A four-frame spot check under #306 (`--min-visible 0`, committed `ess` frames `idle/f0000`, `run/f0002`, `walk/f0004`, `aim/f0000`) moved `rear-bracer`'s anchor residual *down* on all four — 0.1564→0.1555, 0.1519→0.1513, 0.1493→0.1488, 0.1537→0.1534 — and flipped its eligibility on none, while `visibleShare` moved materially on one of the four (0.36→0.89). ⇒ Read the **shape** of the row, not those two digits. 🚨 **And that median in particular is one of the ones the 2026-09-03 study found unsafe**: `rear-bracer`'s share swings by **0.87** on `idle/f0001` inside `pose`'s own convergence band when the chain anchors on `pose`'s criterion — the basis this figure was taken on. The count and the shape are the reading; the 0.1 % is not a number |
 | — | The **other** parts on an anchored bone are refused on their own numbers too, and there they mean something different again: their placement is the **rig's** prediction from that anchor, so their residual is a measurement of the rig (a goggle plate that will not sit on the head it is parented to shows up exactly here) |
 | `bone` | the bone this hangs off: its `parent`, its `setupRotationDeg`, its `depth` in links from the anchor, `anchoredTo`, the `dof` searched, the `window` taken, the other parts `sharedWith` it on that bone, and `carriedBones` |
@@ -4582,7 +4667,9 @@ And per part:
 | `bone.carriedBones` | bones between the anchor and here that carry nothing scoreable. Their hinge could not be fitted, their setup rotation was carried through, and every number below them inherits that |
 | `bone.pivotDisagreementPx` | anchored bones only: how far the chain's own prediction of this bone's pivot is from where the anchor put it. **This is the one direct measurement of your rig against the picture** — a large value says the joint offset you declared is not the joint the frame shows |
 | `anchorVerdict` | what the anchor pass made of this same part: `residual`, `unexplained`, `ambiguous`, `eligible`. ⭐ `eligible: false` beside a `chain` placement is **a part the chain bought** |
-| `refusal` | `{ reason, detail }` or `null`. Reasons: `occluded`, `no-match`, `no-anchor`, `empty-part`, `no-part-image`, `unsupported-geometry` |
+| `bone.anchoredToRole` | whether the trunk this hangs off was `anchor` (read off the picture) or `inward` (determined from two anchors below it). ⭐ **The field to check before quoting anything hung off an inward trunk** — that subtree inherits the determination's own uncertainty, and `bone.inward.disagreementPx` on the trunk bone is where it is priced |
+| `bone.inward` | non-`null` only on a bone determined inward, and then it is the whole account of that determination — see §12.2b |
+| `refusal` | `{ reason, detail }` or `null`. Reasons: `occluded`, `no-match`, `no-anchor`, `no-bracket` (§12.2b), `empty-part`, `no-part-image`, `unsupported-geometry` |
 
 `⚠️ --images is not a part list here.` For `pose` every `.png` in the directory is
 a part; for `chainfit` **the candidate decides what the parts are** and the
@@ -4601,6 +4688,7 @@ simply unused; a name the directory lacks is refused `no-part-image` by name.
 | `--max-residual <0..1>` | as §11, over the visible pixels (default `0.25`) |
 | `--passes <n>` | how many times the masks are rebuilt from the answers and the fit rerun (default `2`). ⚠️ **It buys convergence of the mask onto the answer, and it costs determinacy.** Each pass re-seeds the hinge search on the previous pass's answer, so two nearby inputs that fell into different basins on pass 1 are *further* apart after pass 2. Measured over the 147 committed `ess` frames, the share of readings whose `visibleShare` moves by more than 0.10 under a perturbation inside `pose`'s convergence band runs **0.78 % → 5.45 % → 15.17 %** at `--passes` 1 → 2 → 4. Raise it to settle a `visibleShareAtFit` drift on one frame; do not raise it expecting steadier numbers across runs |
 | `--anchor-residual <0..1>` | the residual a `pose` placement must be within to anchor (default `0.16`) |
+| `--inward-lever <px>` | how far apart two anchored descendants must sit before the rotation they determine is printed (default `8`). Derived, not picked: a pivot error of ε px across a lever of L px is an angle error of about ε/L radians, so half a pixel inside 3° needs 9.5 px. Below it, `no-bracket` names the measured lever |
 | `--scale`, `--rotation` | passed to the **internal anchor pass**, meaning exactly what they mean to `pose` |
 
 ### 12.5 What it cannot see — read this before using the numbers
@@ -4632,6 +4720,9 @@ simply unused; a name the directory lacks is refused `no-part-image` by name.
 - ⚠️ **The hinge is searched; the pivot is not.** Nothing here searches a bone's
   translation, so a bone you key `translate` on is reported `pivotFree` rather than
   solved.
+- ⬆️ **The inward step determines a bone; it does not measure one.** §12.2b is the
+  whole account. The two things it structurally cannot do: attribute a
+  disagreement to one determinant, and reach a bone that does not branch.
 - **A constraint moves bones after their local transforms compose.** With IK,
   transform, path or physics constraints in the candidate, a fitted
   `localRotationDeg` is still a placement but not necessarily a value you can key
