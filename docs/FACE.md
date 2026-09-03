@@ -33,6 +33,13 @@ hold its results.
   [`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait),
   and its measurement half,
   [`FINDINGS.md`](https://github.com/firejune/rigc/tree/main/gallery/portrait/FINDINGS.md)
+- **The same closed forms on the other axis**, since 2026-09-03:
+  [`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod) is a
+  worked `pitch`, and this page stays written for a **yaw**. It re-derives §4.2's
+  fold angle on uneven *rows* and brackets it against `A39` at 33°/34°, and it
+  measures §5's foreshortening at **0.863–1.176** against the yaw's 0.892–1.064
+  below — a wider span at the same 12°, because a face is taller than it is deep.
+  Read it after this page, not instead of it
 
 🚨 **Nothing in this toolchain measures what a `deform` key does, and that is the
 one gap you have to author around.** The setup geometry is measured and printed —
@@ -471,6 +478,14 @@ above the 16° §8 calls the instrument's ceiling. ⇒ **Then let the last band 
 single wide one** — that is the direction that buys safety, and it is the
 opposite of refining.
 
+📘 **The identity above, used forwards on a `pitch`.**
+[`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod)
+(repository material) picks its ceiling first and solves the *rows* out of it —
+`|y|outer = R·cos θmax` with θmax chosen at 21° giving 140.037 — and then
+brackets the fold this section predicts against `A39` itself: **33° gates green
+and 34° does not**, with the refusal naming the row pair the closed form names.
+That is this table checked from the other end, on the other axis.
+
 ### 4.3 `hull` is `0`, and the vertex order is why
 
 ⚠️ **A grid's perimeter is 16 of its 25 vertices and they are not a prefix of any
@@ -509,6 +524,15 @@ The far eye narrows to 89%, the near eye widens to 106% (**derived**: 0.8922 and
 1.0641). Parts on the axis get `cos t = 0.9781` and could therefore share one
 track — the nose and mouth did, through a `groups` entry, and it was the only
 place in the worked example's turn where two parts could (§7).
+
+📘 **How much this is worth depends on the axis, and there is a worked case for
+the other one.** The same closed form on the `pitch` of
+[`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod)
+(repository material) spans **0.863 … 1.176** across its five features, against
+the **0.892 … 1.064** above — a wider span at the *identical* angle, because
+`α = atan2(coordinate, depth)` grows with the coordinate and a face is taller
+than it is deep. ⇒ **The foreshortening buys more on a nod than on a turn**, and
+that is arithmetic rather than a judgement about the art.
 
 📌 **That entry is gone, and the reason is worth a line.** `scalex` is the
 foreshortening projection of the same `derive` kind §3.1 uses (AUTHORING §4.5.1),
@@ -1077,6 +1101,13 @@ listing it. Its
 [`FINDINGS.md`](https://github.com/firejune/rigc/tree/main/gallery/portrait/FINDINGS.md)
 is the measurement half: what it cost, the seven-angle sweep, the five tool gaps
 it filed.
+
+📘 **The `pitch` has its own worked case**, and this page deliberately stays a
+yaw: [`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod) is
+the same two closed forms on the other axis, plus a travelling `wave` (AUTHORING
+§4.11.1). §4.2 and §5 above point at the two places its figures are worth
+reading beside these — the fold angle bracketed against `A39`, and a
+foreshortening span that is wider at the same angle.
 
 ```bash
 bun install                                     # once

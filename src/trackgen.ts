@@ -79,9 +79,18 @@ export interface TrackDeriveTurn {
   degrees: number;
   /**
    * Each member's depth: `{ member: z }` on a group track, one number on a bone
-   * track. Deeper is further from the viewer, and a **negative** depth is behind
-   * the axis — which is what makes the back of a head swing the other way
-   * (FACE §2).
+   * track. `z` runs **toward the viewer** (FACE §1), so a **larger** depth is
+   * **nearer** — a nose in front of the skull surface takes a bigger number than
+   * the socket beside it — and a **negative** depth is behind the axis, which is
+   * what makes the back of a head swing the other way (FACE §2).
+   *
+   * ⚠️ That sign is the one thing here no assertion can check, and this comment
+   * had it backwards until issue #350's neighbour
+   * ([#351](https://github.com/firejune/rigc/issues/351)). The closed form is
+   * the arbiter: `d = (x−about)·(cos t − 1) − (depth − carried)·sin t` gives a
+   * part with `depth > carried` a **negative** residual, and FACE §3 makes
+   * exactly that the nose diagnostic — *if the nose's residual is not negative,
+   * the depths are wrong*. That only holds if a larger depth means nearer.
    */
   depth: number | Record<string, number>;
   /**
