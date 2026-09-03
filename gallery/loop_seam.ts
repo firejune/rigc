@@ -30,6 +30,35 @@
  * **refused** rather than reported when the last frame is not at it. Without the
  * flag the numbers still print, and the verdict says they are unverified.
  *
+ * 📏 **Every figure it prints is scale-relative, and the scale is `--max`**
+ * (issue [#336](https://github.com/firejune/rigc/issues/336)). A curve sampled
+ * into segments need not return its endpoint key to the last bit, and a residual
+ * below the art's own quantisation is *invisible* at one frame size and lands on
+ * a pixel boundary at another. Measured on `portrait`'s `idle`, one build, one
+ * rate, first frame against last:
+ *
+ * | `--max` | frame | pixels differing | worst channel |
+ * | --- | --- | --- | --- |
+ * | 320 | 239x320 | 5 | 1/255 |
+ * | **640** | 478x640 | **0** | 0/255 |
+ * | 1024 | 765x1024 | 1 | 1/255 |
+ * | 1440 | 1076x1440 | 46 | 1/255 |
+ * | **1782** | 1332x1782 | **1974** | **57/255** |
+ *
+ * ⇒ **a zero reading at one scale is not a zero reading at every scale**, and a
+ * seam figure quoted without its `--max` is not a figure. So the report names the
+ * size it measured and says so outright. What the column is *not* is a growing
+ * pose error: 1782 is `scale = 1.875` exactly, the one sampled scale where the
+ * plate's integer art coordinates land on whole pixel boundaries, so it is an
+ * amplification at a boundary-aligned scale. The residual behind it has a
+ * measured bound: give the same track a **constant** final segment — one
+ * redundant key, nothing else changed — and every frame of that segment is
+ * **byte-identical** to `t = 0` at the amplifying scale, against 78 403 down to
+ * 353 differing pixels for the moving version. So the rasteriser is exact for a
+ * pose it has already drawn, and what the table shows is a sub-quantisation
+ * curve residual crossing a pixel boundary. (#336 also bisects the pose itself
+ * against static renders and bounds it under 0.002 units.)
+ *
  * ⚠️ **What a nonzero reading does and does not mean.** It is the size of the
  * jump a player makes when it wraps, and nothing else. It does not say the loop
  * is wrong: an animation may legitimately end somewhere else (this is not a
@@ -84,6 +113,21 @@ export interface SamplingRecord {
   sampled: number;
   /** The last sampled frame's time in seconds — the sidecar's own `duration`. */
   lastTime: number;
+  /** Frame pixels per world unit — the sidecar's `viewport.scale`. */
+  scale: number;
+}
+
+/**
+ * The `--max` a render was given, read back off the frames it wrote.
+ *
+ * `viewportFor` sets `scale = maxSide / longWorldSide` and then rounds that side
+ * to `round(longWorldSide × scale)`, which is `maxSide` exactly — so the long
+ * pixel side of any frame set **is** the `--max` it was rendered at. Derived
+ * from the frames rather than recorded, because no flag record exists to read
+ * and a derivation cannot go stale against the pixels it is derived from.
+ */
+export function maxSideOf(width: number, height: number): number {
+  return Math.max(width, height);
 }
 
 /** A decimal literal as an exact fraction in lowest terms. */
@@ -176,7 +220,8 @@ export function readSampling(dir: string): SamplingRecord | null {
     if (!set) continue;
     const { fps, sampled, duration } = set as { fps?: unknown; sampled?: unknown; duration?: unknown };
     if (typeof fps !== 'number' || typeof sampled !== 'number' || typeof duration !== 'number') continue;
-    return { sidecar: path, fps, sampled, lastTime: duration };
+    const scale = (parsed as { viewport?: { scale?: unknown } }).viewport?.scale;
+    return { sidecar: path, fps, sampled, lastTime: duration, scale: typeof scale === 'number' ? scale : NaN };
   }
   return null;
 }
@@ -300,6 +345,12 @@ export function seamLines(dir: string, r: SeamReading, record?: SamplingRecord |
   return [
     `loop seam  ${basename(dir)}`,
     `  ${r.first} vs ${r.last}   ${r.frames} frames at ${r.width}x${r.height}`,
+    `  drawn at                 --max ${maxSideOf(r.width, r.height)}` +
+      (record && Number.isFinite(record.scale) ? `, ${record.scale.toFixed(6)} px/unit` : '') +
+      '  ⚠️ every figure below is a reading AT THIS SIZE (issue #336):',
+    '                           a residual under the art\'s own quantisation is invisible at one scale and',
+    '                           lands on a pixel boundary at another, so 0 here is not 0 everywhere. Quote',
+    '                           the --max beside the number, and re-measure before carrying it to another.',
     ...sampling,
     `  max channel difference   ${r.maxChannel} / 255`,
     `  mean channel difference  ${r.meanChannel.toFixed(4)}`,
