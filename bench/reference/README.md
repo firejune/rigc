@@ -24,7 +24,12 @@ bun bench/render_reference.ts --rung 3 [--fps 12] [--max 256] [--tile 128] [--st
 `--tile` sets the contact sheet's tile size and `--stride` writes only every Nth
 frame — the sheet still shows all of them. The exact command each rung here was
 rendered with is in the table below, and re-running it reproduces the directory
-byte for byte.
+byte for byte — **on the checkout these frames were rendered by**. That qualifier is
+load-bearing and the next section says why: the render is deterministic, but the
+rasteriser it runs is code that changes. Measured 2026-09-03 both ways: the eight
+committed examples reproduce **1,293 of 1,293 PNGs and 11 of 11 `frames.json`** byte for
+byte under the sampler they were rendered with, and **1,293 of 1,293 PNGs differ** under
+the other one.
 
 [`bench/render_reference.ts`](../render_reference.ts) loads the example's own
 `export/` — the skeleton JSON, its atlas and its atlas page — poses it with
@@ -37,10 +42,40 @@ whose world vertices come from `MeshAttachment.computeWorldVertices` — the
 runtime's own routine, so weighted vertices resolve through their bones and a
 `deform` timeline's offsets are applied — filled with barycentric UV
 interpolation and a top-left fill rule so two triangles sharing an edge draw it
-exactly once. Sampling is bilinear on both paths; the reference and the candidate
-go through the same code, so the filter cancels out of every number `check`
-reports. Until #27 a mesh was refused by name and the frame-fidelity lane stopped
+exactly once. Until #27 a mesh was refused by name and the frame-fidelity lane stopped
 at rung 5.
+
+## What cancels out of `check`'s numbers, and what does not
+
+Sampling is bilinear on both paths and the rasteriser is the same file for both — the
+reference here and the candidate `check` draws beside it both go through
+[`src/render.ts`](../../src/render.ts). ⭐ **So the sampler's own filter cancels — on one
+condition, and the condition is not automatic: the frames on disk have to have been
+rendered by the same checkout as the `check` that reads them.** Two things follow.
+
+- 🚫 **A frame set outlives the renderer that made it.** These PNGs are a committed
+  fixture and `src/render.ts` is code; a sampler repair changes the second and not the
+  first, and from then on every number `check` prints carries the difference between two
+  renderers on top of the difference between two rigs. That is not hypothetical:
+  [#301](https://github.com/firejune/rigc/pull/301) made `bilinear` interpolate in
+  premultiplied space so a region edge draws no dark rim, and for two days this directory
+  held frames from before it. **The frames here are on the post-#301 sampler**, adopted as
+  the standing basis by **gate v2.4** on 2026-09-03; the ladder's own record of what that
+  cost is [docs/LADDER.md](../../docs/LADDER.md), *The gate-v2.4 re-inspection*.
+  ⇒ **A sampler change means re-rendering this directory in the same pass, or knowing
+  exactly which figures you have stopped being able to compare.**
+- ⚠️ **What never cancelled, and still does not: the texture.** The reference is drawn
+  from the example's own **packed atlas**, which for several rungs ships at `scale: 0.5`,
+  while a candidate compiles from the loose full-size PNGs. Same geometry, softer ramp.
+  That is a real floor under every MAE here, it is *not* a rig error, and `check
+  --texture-from <the example's atlas>` is what measures how much of a figure it explains
+  — never `--atlas`, which re-seats region geometry on the foreign packing as well.
+  [`src/framing.ts`](../../src/framing.ts) carries the measurement that made the content
+  box stop using the background tolerance for exactly this reason.
+
+⇒ 📌 **The honest short version**: the filter cancels, the atlas scale does not, and the
+first of those is a property of *this directory being in step with the code* rather than a
+property of the code alone.
 
 Per rung: `<example>/<animation>/f0000.png…` at a fixed frame rate, plus a
 `contact.png` contact sheet of every frame in that animation, row major, each tile

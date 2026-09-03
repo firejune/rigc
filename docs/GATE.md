@@ -4,7 +4,7 @@
 clause: the measure it reads, the comparator, the number, and what it does when there is
 nothing to read.
 
-Current version: **gate v2.3**, released 2026-09-02.
+Current version: **gate v2.4**, released 2026-09-03.
 
 ✅ **A run may read this file.** It is on the allowed list in
 [`bench/runs/README.md`](../bench/runs/README.md), *What a run may read*, and the prompt
@@ -92,12 +92,31 @@ for every read-down whatever ground it rests on.
   the frames and the rig all unchanged.
 - **A slot the frames cannot make attributable reads down by name, on two halves that both have
   to hold.** Where a slot draws and is attributable in no frame of any measured set:
-  1. **a measured ceiling on its attributability, below the bar attribution requires.** The
-     ceiling is an instrument-side geometric fact about the slot's **visible footprint** — the
-     share of a covering placement of it that the frames put on screen at all — measured on
-     **every frame of every set** rather than argued from one, and computed from stated
-     conventions. The bar is **calibrated on the slots of the same corpus that the instrument
-     does attribute**. ⇒ **Both measurements are quoted, and the verdict says which is which.**
+  1. **a measured ceiling on its attributability, below the bar attribution requires.** 🆕
+     **Two quantities are admissible — gate v2.4 — and a verdict names the one it read together
+     with the form of the bar that belongs to it.** Whichever is quoted, the ceiling is measured
+     on **every frame of every set** rather than argued from one, computed from stated
+     conventions, and it bounds **what the instrument could read of that slot** rather than
+     reporting what it happened to read of this candidate's placement.
+     - **Visibility share.** The share of a **covering placement** of the slot that the frames
+       put on screen at all — an instrument-side **geometric** fact about its visible footprint.
+       Its bar is **calibrated on the corpus**: the lowest agreement at which **anything in the
+       same corpus** is attributed, measured over the slots the instrument does attribute.
+     - **Contrast against required confidence.** The pair of figures `check`'s own `ambiguity`
+       string already prints for a refused match — the confidence the slot's correlation field
+       **achieves**, against the confidence the matcher **requires at the reach the match was
+       found at**. Its bar is **declared by the instrument** and not calibrated on the corpus:
+       it is a stated function of that reach ([`src/slots.ts`](../src/slots.ts)). ⇒ **A verdict
+       says which of the two forms its bar has**, because a reader checks a declared bar
+       differently from one calibrated against other slots.
+       ⚠️ **In this quantity a blank slot is below its bar by construction** on the frames it was
+       read in — being below it is what *made* the slot blank. So it is a **ceiling** only where
+       the verdict quotes the **best** confidence the slot reaches **anywhere in the corpus**
+       against the **lowest** bar it is asked for anywhere, and both still fail. **A slot that
+       clears its bar somewhere has no ceiling in this quantity** and reads down another way or
+       not at all.
+     ⇒ **Both measurements are quoted — the ceiling and its bar — and the verdict says which is
+     which and which quantity they are in.**
   2. **everything observable about that slot verified strict, and verified without the
      attribution that is missing.** Its placement is pinned by a sweep that does not use the
      matcher and that carries a **known-answer control on a slot the clause does attribute**,
@@ -107,7 +126,22 @@ for every read-down whatever ground it rests on.
 unobservable and never what was merely not measured: an unobservable is reported and never
 blocks a pass, while everything observable about the same slot stays strict. ⇒ **A verdict
 reaching this ground names it**, the way every other ground is named, and a slot whose
-observable half is unverified fails the clause exactly as an unexplained blank does.
+observable half is unverified fails the clause exactly as an unexplained blank does. ⚠️ **Both
+halves are mandatory in either quantity** — widening what half 1 may measure does not make half
+2 optional, and a slot with a ceiling and no observable verification fails.
+
+🆕 **A declared per-chain rollup — gate v2.4. A reporting form, and not a bar.** The limb
+itemises, and on a dense figure it itemises in the hundreds. So a verdict may **declare a
+rollup once per bone chain** — the chain, the slots on it the instrument attributes, their
+figures and sample counts, and the two columns every read-down quotes — and the itemised blanks
+on that chain may then **cite it** instead of restating the chain's facts one blank at a time.
+**Kind 2's bounding is the model**: what a rollup carries is exactly what a kind-2 read-down
+would otherwise have to state, said once.
+
+🚫 **Nothing about the read-down itself changes.** Every blank is still named, still names its
+kind, and still names its evidence; a citation names **the rollup and the kind**, and a rollup
+that does not carry a chain's figures cannot be cited. The read-down semantics are untouched —
+this shortens the prose, not the requirement.
 
 ## G3: per-frame motion
 
@@ -118,6 +152,31 @@ In **every** set: `check`'s `changeDisagreements` = **0**, and **no** set carryi
 change disagrees with the reference's. The overdraw half is a hole plugged rather than a
 leniency: the union denominator means drawing more buys a better mean, so `check` marks a
 set whose `drawnRatio` exceeds `OVERDRAW_RATIO` ([`src/check.ts`](../src/check.ts)).
+
+🆕 **The categorical limb needs a quantisation margin — gate v2.4.** The change comparison has
+two regimes, and only one of them has a floor. Against a **moving** side, `CHANGE_RATIO` and
+`CHANGE_EXCESS` apply. Against a **still** side, moving at all is the finding and there is no
+floor at all — deliberately, because a held pose is held *exactly* and a one-frame reveal is as
+small as the thing it reveals. But that floorless regime reads *"still"* off a **changed-pixel
+count taken at `CHANGE_TOLERANCE`** — 8 levels of 255 on any channel
+([`src/check.ts`](../src/check.ts)) — and **a threshold cannot separate two values that lie
+within one quantisation step of it**. ⇒ **The floorless regime applies only where both of its
+edges clear the tolerance by more than one step:**
+
+- the **still** side is still with a step to spare — **pixel-identical**, and not merely still
+  *within* the tolerance; **and**
+- the **moving** side's largest per-channel move is **more than one step past** the tolerance.
+
+Where either edge sits inside one step, the pair is read in the **ratio** regime instead, whose
+floor is derived by measurement rather than chosen.
+
+🚫 **This is not a floor on stillness, and it moves no threshold.** A pose that is held exactly
+is still read categorically, and a candidate that slopes through such a hold is caught exactly
+as before — both edges hold in that case. What the guard refuses is a **categorical** verdict
+decided at the instrument's own last bit, which is the state a corpus reaches when the
+reference frames and the candidate are drawn by **different samplers**. ⇒ **A verdict reaching
+this guard names it and quotes both edges**: whether the still side moved at all, and the
+moving side's largest per-channel step.
 
 **Scope — a single-pose set is out of it.** A set of one frame is not a shot sampled too
 coarsely; there is no shot in it, and G3 reads adjacent pairs. Such a set is excluded
@@ -227,4 +286,5 @@ ladder's *Operating rules* and *Status*.
 | v2 | 2026-08-25 | G4's length limb reformulated as a tolerance; **G7** added on the contact-sheet observable |
 | v2.1 | 2026-08-26 | G3's scope on a single-pose set, and the SKIP that follows from it |
 | v2.2 | 2026-08-29 | **G2's per-slot limb** — a slot that draws but is attributable in no frame of a set is read down explicitly, or the clause fails for that set |
-| **v2.3** | **2026-09-02** | **G2's read-down, stated in full** — it names the framing of every figure it cites and prefers a framing-independent quantity to a per-pixel one; a control instance must be attributable at the framing the verdict is read in; and a slot with a **measured** attributability ceiling below the calibrated bar reads down, provided everything observable about it is independently verified strict |
+| v2.3 | 2026-09-02 | **G2's read-down, stated in full** — it names the framing of every figure it cites and prefers a framing-independent quantity to a per-pixel one; a control instance must be attributable at the framing the verdict is read in; and a slot with a **measured** attributability ceiling below the calibrated bar reads down, provided everything observable about it is independently verified strict |
+| **v2.4** | **2026-09-03** | **the re-rendered references adopted as the standing basis**; **G3's categorical limb gains a quantisation guard** — the floorless regime applies only where the still side is pixel-identical and the moving side clears `CHANGE_TOLERANCE` by more than one step, and otherwise the pair is read in the ratio regime; **kind 5's ceiling admits a second quantity** — `check`'s own contrast-against-required-confidence beside the visibility share — with the **form of the bar stated per quantity**; and G2's per-slot limb gains a **declared per-chain rollup** an itemised blank may cite |
