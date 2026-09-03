@@ -83,6 +83,87 @@ known_files() { # known_files <example> <export|images>
 auth=()
 if [ -n "${GITHUB_TOKEN:-}" ]; then auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}"); fi
 
+# ---------------------------------------------------------------------------
+# Retry — issue #335. Bounded, with backoff, and loud when it is spent.
+# ---------------------------------------------------------------------------
+#
+# PR #331's first CI run failed this step with `curl: (35) Recv failure:
+# Connection reset by peer` on several files, ending in `✗ no skeleton JSON was
+# fetched for: 7-anticipation`. Typecheck, lint and selftest never ran; a plain
+# re-run went green. One upstream blip cost a human a re-run.
+#
+# 🚨 The retry lives HERE rather than around the step in ci.yml, and the reason
+# is not style:
+#
+#   1. Retrying the step re-issues every contents-API listing. There are 18 of
+#      them and the unauthenticated budget is 60/hour, so three attempts of the
+#      whole step can spend 54 of it — a retry meant to absorb a blip would
+#      itself become a plausible cause of the rate-limit fallback below. Only
+#      this script knows which transfers already succeeded, because only it
+#      keeps them (`[ -s "$2" ]`).
+#   2. The exit status of this step is decided at the bottom of this file, from
+#      what is on disk. A step-level retry throws that report away and starts
+#      over, so an exhausted retry would say "the step failed three times" where
+#      this one says which file, from which URL, after how many attempts.
+#
+# ⚠️ It absorbs blips and must not hide a dead upstream, so the two are told
+# apart by WHAT CAME BACK — the HTTP status, not curl's exit code. An upstream
+# that is gone or refusing ANSWERS, and its answers already have a designed path
+# here: 404 is the MISS that means an example changed shape upstream, and the
+# contents API's 403 is the rate limit whose fallback is the recorded file list.
+# Retrying either would spend the backoff to reach the same conclusion three
+# times slower.
+#
+# 🚨 Do NOT re-key this on curl's exit code. That is what this was written as
+# first, on the reasonable-sounding rule "exit 22 is an HTTP status, anything
+# else is the socket" — and it was wrong: over HTTP/2 this curl reports a 404
+# under `-f` as **exit 56** ("failure receiving network data"), which the rule
+# read as a blip and retried. Measured, not reasoned about:
+#
+#     $ curl -fsSL -w '%{http_code}' <a 404 on raw.githubusercontent.com> -o /tmp/x
+#     curl: (56) The requested URL returned error: 404
+#     404 <- exit=56
+#
+# The status is what every server actually agrees on, so the status decides.
+RETRIES="${RIGC_FETCH_RETRIES:-3}"
+RETRY_DELAY="${RIGC_FETCH_RETRY_DELAY:-2}"
+
+retried=0 # retry attempts spent across the whole run, reported at the end
+attempts=0 # attempts the last curl_get spent, for the MISS line
+
+# Is this failed transfer worth another attempt? Argument is `%{http_code}`.
+#
+#   000 / empty  no answer at all — a reset, a timeout, a refused connection
+#   2xx          the server answered fine and the transfer broke: truncated
+#   408 429 5xx  an answer that means "not now"
+#   other 4xx    an answer that means "not here", and will say so again
+worth_retrying() { # worth_retrying <http-code>
+  case "$1" in
+    '' | 000 | 2??| 408 | 429 | 5??) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# One transfer, retried while the failure is worth another attempt. Backoff
+# doubles from RETRY_DELAY. Progress goes to stderr so a caller reading this
+# function's stdout in a command substitution cannot capture it as data.
+curl_get() { # curl_get <url> <path> [extra curl args…]
+  local url="$1" path="$2" delay="$RETRY_DELAY" code status
+  shift 2
+  attempts=0
+  while :; do
+    attempts=$((attempts + 1))
+    status=0
+    code="$(curl -fsSL "$@" -w '%{http_code}' "$url" -o "$path")" || status=$?
+    if [ "$status" -eq 0 ]; then return 0; fi
+    if [ "$attempts" -ge "$RETRIES" ] || ! worth_retrying "$code"; then return "$status"; fi
+    echo "    ..   attempt $attempts/$RETRIES failed (curl $status, HTTP ${code:-none}) — retrying in ${delay}s" >&2
+    sleep "$delay"
+    retried=$((retried + 1))
+    delay=$((delay * 2))
+  done
+}
+
 # Idempotent: an already-downloaded, non-empty file is kept, so this is safe to
 # re-run and safe as a pre-task hook (a fresh clone has no examples — they are
 # gitignored). Returns non-zero when the file could not be obtained, so a caller
@@ -93,21 +174,22 @@ fetch() { # fetch <url> <path>
     return 0
   fi
   mkdir -p "$(dirname "$2")"
-  if curl -fsSL "$1" -o "$2"; then
+  if curl_get "$1" "$2"; then
     echo "    get  $(basename "$2")"
     return 0
   fi
   rm -f "$2"
-  echo "    MISS $(basename "$2")  <- $1"
+  echo "    MISS $(basename "$2")  <- $1  ($attempts attempt(s))"
   return 1
 }
 
-# Every `download_url` in one contents-API listing. `null` (directories) does not
-# match the quoted pattern, so it drops out on its own. `pipefail` is on, so a
-# 403 from curl and a grep that matched nothing both come back non-zero — and
-# both mean the same thing to the caller: this listing yielded no files.
-list_urls() { # list_urls <api-url>
-  curl -fsSL ${auth[@]+"${auth[@]}"} "$1" | grep -o '"download_url": *"[^"]*"' | sed 's/.*"\(https[^"]*\)"$/\1/'
+# Every `download_url` in one contents-API listing already on disk. `null`
+# (directories) does not match the quoted pattern, so it drops out on its own.
+# `pipefail` is on, so a grep that matched nothing comes back non-zero — which
+# means to the caller exactly what a refused listing does: this listing yielded
+# no files.
+listing_urls() { # listing_urls <listing-file>
+  grep -o '"download_url": *"[^"]*"' "$1" | sed 's/.*"\(https[^"]*\)"$/\1/'
 }
 
 missing_license=()
@@ -116,10 +198,21 @@ misses=0
 
 # One directory of one example, by API listing if that works and by the static
 # list if it does not.
+#
+# ⭐ The listing is downloaded HERE rather than inside a `urls="$(list_urls …)"`
+# command substitution, because a substitution runs in a subshell and `curl_get`
+# keeps two counters — every retry it spent on a listing would be lost, and the
+# run would under-report how much blip it absorbed.
 fetch_dir() { # fetch_dir <example> <export|images>
-  local name="$1" dir="$2" urls file url
+  local name="$1" dir="$2" urls file url listing status
   local out="$DEST/$name/$dir"
-  if urls="$(list_urls "$API/$name/$dir?ref=$REF")" && [ -n "$urls" ]; then
+  listing="$(mktemp "${TMPDIR:-/tmp}/rigc-listing.XXXXXX")"
+  status=0
+  curl_get "$API/$name/$dir?ref=$REF" "$listing" ${auth[@]+"${auth[@]}"} || status=$?
+  urls=''
+  if [ "$status" -eq 0 ]; then urls="$(listing_urls "$listing" || true)"; fi
+  rm -f "$listing"
+  if [ -n "$urls" ]; then
     for url in $urls; do
       file="$(basename "$url")"
       case "$file" in
@@ -186,7 +279,8 @@ done
 if [ ${#empty[@]} -gt 0 ]; then
   echo
   echo "✗ no skeleton JSON was fetched for: ${empty[*]}"
-  echo "  Both the GitHub contents API and the recorded file list failed for these."
+  echo "  Both the GitHub contents API and the recorded file list failed for these,"
+  echo "  after $RETRIES attempt(s) per transfer."
   echo "  The usual cause is the unauthenticated 60/hour rate limit — export a"
   echo "  GITHUB_TOKEN and re-run:  GITHUB_TOKEN=<token> bun run fetch-examples"
   exit 1
@@ -202,9 +296,19 @@ if [ ${#api_fallbacks[@]} -gt 0 ]; then
 fi
 if [ "$misses" -gt 0 ]; then
   echo
-  echo "⚠️  $misses file(s) could not be downloaded (listed as MISS above)."
-  echo "    Every example still has a skeleton, so this is not fatal, but the"
-  echo "    corpus is incomplete — re-run before relying on a measurement."
+  echo "⚠️  $misses file(s) could not be downloaded (listed as MISS above), each"
+  echo "    after $RETRIES attempt(s). Every example still has a skeleton, so this is"
+  echo "    not fatal, but the corpus is incomplete — re-run before relying on a"
+  echo "    measurement."
+fi
+# Reported even on a green run: an absorbed blip that leaves no trace is
+# indistinguishable from an upstream that never blipped, and the difference is
+# the one worth watching. A rising count is an upstream getting worse.
+if [ "$retried" -gt 0 ]; then
+  echo
+  echo "ℹ️  $retried retry attempt(s) were spent on network failures and the run still"
+  echo "    completed. That is the blip this retry exists to absorb (issue #335) —"
+  echo "    but a count that climbs is upstream degrading, not luck."
 fi
 if [ ${#missing_license[@]} -gt 0 ]; then
   echo
