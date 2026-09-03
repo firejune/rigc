@@ -354,6 +354,16 @@ self-contained `.html` that plays it in Spine's own web player; **`vote`** puts 
 four candidates in one page and takes a human's answer back. Reach for them the moment
 a rig compiles green, because green says nothing at all about the picture.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/rigc-keypose.gif" alt="Two key poses read back by rigc pose, two candidate in-between motions compiled from them, and a rigc vote ballot picking one" width="600" />
+</p>
+
+<p align="center"><em>The whole loop on one character: two key poses are the given
+conditions, <code>rigc pose</code> reads where every part sits in each picture, two
+candidate in-betweenings are compiled from the same pair — and a real
+<code>rigc vote</code> ballot picks the winner, because the movement between the poses
+is the one thing no instrument here will grade.</em></p>
+
 Three properties of `vote` are worth stating, because they are what make its ledger
 usable by the next agent rather than by a reader: **a tie is a recorded outcome, not a
 missing one** — `both-unacceptable` is the tie that means *propose again*, and it is
