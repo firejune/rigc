@@ -1,0 +1,21 @@
+compiled animation vs the fitted pose store, per set (pixels differing at 8/255 over the declared box):
+  aim              1 frame(s)  identical   1  mean     0.0 px  worst     0 px
+  aim@30fps        1 frame(s)  identical   1  mean     0.0 px  worst     0 px
+  death           60 frame(s)  identical  22  mean   672.1 px  worst  4575 px
+  death@30fps      2 frame(s)  identical   1  mean   864.5 px  worst  1729 px
+  hit              5 frame(s)  identical   2  mean  1166.4 px  worst  5677 px
+  hit@30fps        2 frame(s)  identical   1  mean  1935.5 px  worst  3871 px
+  idle            21 frame(s)  identical   4  mean  1070.3 px  worst  3361 px
+  idle@30fps       2 frame(s)  identical   1  mean  1747.5 px  worst  3495 px
+  jump            17 frame(s)  identical   3  mean  1030.3 px  worst  4143 px
+  jump@30fps       2 frame(s)  identical   1  mean  2050.5 px  worst  4101 px
+  run              9 frame(s)  identical   2  mean   949.8 px  worst  3975 px
+  run@30fps        2 frame(s)  identical   1  mean  2038.5 px  worst  4077 px
+  shoot            6 frame(s)  identical   3  mean   734.3 px  worst  3462 px
+  shoot@30fps      2 frame(s)  identical   1  mean  1693.5 px  worst  3387 px
+  walk            13 frame(s)  identical   4  mean   868.1 px  worst  3446 px
+  walk@30fps       2 frame(s)  identical   1  mean  1717.0 px  worst  3434 px
+
+worst overall: hit/f4 at 5677 px
+A frame the key plan kept exactly should read 0; a frame it spanned reads the reduction error
+and nothing else. A whole SET reading thousands of pixels is a convention error, not a reduction.

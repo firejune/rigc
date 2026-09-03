@@ -1,0 +1,246 @@
+rigc bench rung spineboy — spineboy
+  gates      IK, events, bounding box, clipping, unweighted meshes — and scale: ess 18 bones/20 slots/8 animations, pro 67 bones/52 slots/11 animations
+  candidate  /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spine/skeleton.json
+  atlas      /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spine/skeleton.atlas
+
+  ── validate (profile spine) ──
+    ..    profile spine — 7 renderer-policy and 7 archetype assertion(s) do not apply
+    PASS  A07_ATLAS_TEXT_SHAPE
+    PASS  A00_ROUNDTRIP_PARSE
+    PASS  A16_SKELETON_VERSION_4_3
+    PASS  A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS
+    PASS  A02_NO_BONE_TRANSFORM_KEY
+    PASS  A05_CURVE_ARRAY_LENGTH
+    PASS  A03_REGION_WIDTH_HEIGHT_FINITE
+    PASS  A04_MESH_TRIANGLES_AND_ENCODING
+    PASS  A20_MESH_WEIGHTS_COHERENT
+    PASS  A22_MESH_UVS_IN_UNIT_RANGE
+    PASS  A23_PHYSICS_CONSTRAINT_EFFECTIVE
+    PASS  A08_REGION_NAMES_MATCH_ATTACHMENTS
+    PASS  A10_NO_NAN_AFTER_STEPPING
+    PASS  A17_ATLAS_PAGE_FILES_EXIST
+    PASS  A06_ATLAS_PAGE_SIZE_MATCHES_PNG
+    SKIP  A31_DRAW_ORDER_OFFSETS_RESOLVE: no animation carries a drawOrder timeline
+    SKIP  A32_EVENT_KEYS_RESOLVE: no animation carries an event timeline
+    SKIP  A34_CONSTRAINT_TIMELINE_TARGETS: no animation carries a constraint timeline
+    SKIP  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: no animation carries a deform timeline
+    SKIP  A33_VERTEX_ATTACHMENT_GEOMETRY: the skeleton carries no bounding box, clipping attachment or path
+    SKIP  A36_PATH_CONSTRAINT_EFFECTIVE: the skeleton declares no path constraint
+    SKIP  A37_SLIDER_CONSTRAINT_EFFECTIVE: the skeleton declares no slider constraint
+    SKIP  A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED: no skin activates a bone or a constraint, and nothing declares itself skinRequired
+    SKIP  A09_ANIMATION_DURATION_MATCHES_SPEC: no motion spec supplied, so no declared duration to compare against
+    SKIP  A18_DETERMINISTIC_EMIT: no second compile to compare against (re-gating artifacts on disk)
+    PROF  A12_NO_DARK_COLOR: renderer rule, not in profile "spine"
+    PROF  A11_NO_CLIPPING_ATTACHMENTS: renderer rule, not in profile "spine"
+    PROF  A13_MESH_BUDGET: renderer rule, not in profile "spine"
+    PROF  A14_NO_FULL_FRAME_MESH: renderer rule, not in profile "spine"
+    PROF  A15_IDLE_NO_MESH_BONE_KEYS: renderer rule, not in profile "spine"
+    PROF  A21_MESH_RIM_PINNED: archetype rule, not in profile "spine"
+    PROF  A19_OVERLAY_PNGS_HAVE_ALPHA: renderer rule, not in profile "spine"
+    PROF  A24_AXIS_SPACE_STROKE: archetype rule, not in profile "spine"
+    PROF  A25_DETACHED_BONE_PARENTAGE: archetype rule, not in profile "spine"
+    PROF  A26_SLOT_DRAW_ORDER: archetype rule, not in profile "spine"
+    PROF  A27_REGION_NAME_MATCHES_PAGE_FILENAME: renderer rule, not in profile "spine"
+    PROF  A28_RIBBON_ROWS_SHARE_WEIGHTS: archetype rule, not in profile "spine"
+    PROF  A29_STROKE_WITHIN_CONTACT_DEPTH: archetype rule, not in profile "spine"
+    PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
+
+  ── diff vs spineboy/ess ──
+    candidate  /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spine/skeleton.json
+    reference  /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/examples/spineboy/export/spineboy-ess.json
+    ..         bones=16/18  slots=21/20  skins=1/1  attachments=29/27  constraints=0/0  animations=8/8  events=0/1   (candidate/reference)
+  
+    bones                 mean 0.717  over 8 measures
+        0.889  count                        16/18       how many bones
+        0.789  names                        15/19       the bone names themselves
+        0.611  parent_by_name               11/18       each bone hangs off the same parent
+        0.444  order                        8/18        the bones are declared in the same order
+        0.556  length_present               10/18       a setup `length` is present or absent alike
+        0.833  inherit_present              15/18       a setup `inherit` is present or absent alike
+        0.778  depth_histogram              14/18       NAME-AGNOSTIC: as many bones at each depth
+        0.833  degree_sequence              15/18       NAME-AGNOSTIC: as many bones with each child count
+  
+    bones (name-agnostic) mean 0.767  over 5 measures  — the same two skeletons compared with names thrown away
+        0.889  count                        16/18       how many bones
+        0.778  depth_histogram              14/18       as many bones at each depth
+        0.833  degree_sequence              15/18       as many bones with each child count
+        0.667  shape_histogram              12/18       as many bones of each depth-and-child-count shape (`d1c3` = one hop down, three children)
+        0.667  order_shape                  12/18       the bones are declared in the same order of shapes
+  
+    slots                 mean 0.824  over 7 measures
+        0.952  count                        20/21       how many slots
+        0.864  names                        19/22       the slot names themselves
+        0.476  order                        10/21       the slots array IS the draw order, so its order is data
+        0.810  bone                         17/21       each slot is bound to the same bone
+        0.905  attachment                   19/21       each slot shows the same setup attachment
+        0.857  blend                        18/21       each slot uses the same blend mode
+        0.905  color_present                19/21       a tint is present or absent alike
+  
+    slots (name-agnostic) mean 0.643  over 4 measures  — the same two skeletons compared with names thrown away
+        0.952  count                        20/21       how many slots
+        0.714  attachment_types_by_position 15/21       the same kind of attachment sits at each position in the draw order
+        0.524  bone_binding_shape           11/21       as many slots hang off a bone of each shape (`?` = no such bone is declared)
+        0.381  order_shape                  8/21        the draw order is the same order of `<attachment type>@<bone shape>`
+  
+    attachments           mean 0.955  over 9 measures
+        1.000  skins                        1/1         the skin names
+        0.931  count                        27/29       how many attachments
+        0.867  names                        26/30       skin/slot/attachment keys
+        0.897  type_counts                  26/29       as many of each attachment type
+        1.000  mesh_vertices                0/0         each mesh has the same vertex count  — neither side has any
+        1.000  mesh_triangles               0/0         each mesh has the same triangle count  — neither side has any
+        1.000  mesh_weighted                0/0         each mesh is weighted, or is not, alike  — neither side has any
+        1.000  mesh_hull                    0/0         each mesh declares the same hull length  — neither side has any
+        0.897  region_size                  26/29       NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)
+  
+    attachments (reported) (no mean)   over 1 measure  — unobservable from the frames, so reported and folded into nothing
+        1.000  mesh_edges                   0/0         each mesh declares an edge list, or declares none, alike  — neither side has any
+  
+    constraints           mean 1.000  over 5 measures
+        1.000  count                        0/0         how many constraints  — neither side has any
+        1.000  names                        0/0         the constraint names  — neither side has any
+        1.000  type_counts                  0/0         as many of each constraint type  — neither side has any
+        1.000  type_by_name                 0/0         each constraint is the same type  — neither side has any
+        1.000  refs                         0/0         each constraint names the same bones and slots  — neither side has any
+  
+    animations            mean 0.703  over 9 measures
+        1.000  count                        8/8         how many animations
+        1.000  names                        8/8         the animation names
+        1.000  duration                     8/8         each animation runs as long (last key time, within one frame)
+        0.660  timeline_kinds               101/153     the same timelines exist
+        0.397  key_counts                   649/1633    those timelines carry as many keys
+        0.399  curve_kinds                  651/1633    as many linear / stepped / bezier keys
+        0.000  event_keys                   0/5         as many event firings
+        0.875  draw_order                   7/8         a draw-order timeline is present or absent alike
+        1.000  deform                       8/8         a deform timeline is present or absent alike
+  
+    animations (reported) (no mean)   over 2 measures  — unobservable from the frames, so reported and folded into nothing
+        0.456  key_density                  72/158.032  how hard the shot is keyed, as keys per second  — candidate 158.032 vs reference 72 keys/s; candidate carries 2.19x — OVER-keyed. Convention: every key of every timeline (1633 vs 744) over the summed last-key time of every animation (10.333s vs 10.333s), compared as min/max at 3 decimal places.
+        0.366  keys_per_timeline            4.863/13.276 how hard each timeline is keyed, as keys per timeline  — candidate 13.276 vs reference 4.863 keys/timeline; candidate carries 2.73x — OVER-keyed. Convention: every key of every timeline (1633 vs 744) over the number of timelines that exist (123 vs 153), compared as min/max at 3 decimal places. Read beside `key_density`: this one alone moving means the same keying spread over a different number of timelines.
+  
+    events                mean 0.000  over 2 measures
+        0.000  names                        0/1         the event names
+        0.000  payloads                     0/1         each event carries the same typed payload
+  
+    There is no overall score, on purpose: a section mean is an average of the
+    measures printed under it, and averaging those together would hide which
+    half of a rig is wrong. Read the measures.
+  
+    `bones` and `slots` carry two figures because most of their measures are
+    keyed on names, and a candidate is entitled to its own. They are two
+    comparisons, not two halves of one: name-agnostic 1.000 beside a low
+    name-matched figure means the shape is right and the vocabulary differs.
+  
+    A `(reported)` block has no mean because its measures have unlike units, and
+    it stays out of the section mean above it for the same reason no clause may
+    read it: no reading of the reference frames could have decided these. They are
+    findings against the reference export all the same — each states its own
+    convention, and a rate states which side is the bigger one.
+
+  ── diff vs spineboy/pro (stretch — reported, does not count) ──
+    candidate  /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/spine/skeleton.json
+    reference  /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/examples/spineboy/export/spineboy-pro.json
+    ..         bones=16/67  slots=21/52  skins=1/1  attachments=29/80  constraints=0/14  animations=8/11  events=0/1   (candidate/reference)
+  
+    bones                 mean 0.198  over 8 measures
+        0.239  count                        16/67       how many bones
+        0.239  names                        16/67       the bone names themselves
+        0.134  parent_by_name               9/67        each bone hangs off the same parent
+        0.119  order                        8/67        the bones are declared in the same order
+        0.164  length_present               11/67       a setup `length` is present or absent alike
+        0.239  inherit_present              16/67       a setup `inherit` is present or absent alike
+        0.224  depth_histogram              15/67       NAME-AGNOSTIC: as many bones at each depth
+        0.224  degree_sequence              15/67       NAME-AGNOSTIC: as many bones with each child count
+  
+    bones (name-agnostic) mean 0.197  over 5 measures  — the same two skeletons compared with names thrown away
+        0.239  count                        16/67       how many bones
+        0.224  depth_histogram              15/67       as many bones at each depth
+        0.224  degree_sequence              15/67       as many bones with each child count
+        0.149  shape_histogram              10/67       as many bones of each depth-and-child-count shape (`d1c3` = one hop down, three children)
+        0.149  order_shape                  10/67       the bones are declared in the same order of shapes
+  
+    slots                 mean 0.354  over 7 measures
+        0.404  count                        21/52       how many slots
+        0.404  names                        21/52       the slot names themselves
+        0.192  order                        10/52       the slots array IS the draw order, so its order is data
+        0.346  bone                         18/52       each slot is bound to the same bone
+        0.404  attachment                   21/52       each slot shows the same setup attachment
+        0.365  blend                        19/52       each slot uses the same blend mode
+        0.365  color_present                19/52       a tint is present or absent alike
+  
+    slots (name-agnostic) mean 0.197  over 4 measures  — the same two skeletons compared with names thrown away
+        0.404  count                        21/52       how many slots
+        0.096  attachment_types_by_position 5/52        the same kind of attachment sits at each position in the draw order
+        0.231  bone_binding_shape           12/52       as many slots hang off a bone of each shape (`?` = no such bone is declared)
+        0.058  order_shape                  3/52        the draw order is the same order of `<attachment type>@<bone shape>`
+  
+    attachments           mean 0.262  over 9 measures
+        1.000  skins                        1/1         the skin names
+        0.362  count                        29/80       how many attachments
+        0.362  names                        29/80       skin/slot/attachment keys
+        0.362  type_counts                  29/80       as many of each attachment type
+        0.000  mesh_vertices                0/12        each mesh has the same vertex count
+        0.000  mesh_triangles               0/12        each mesh has the same triangle count
+        0.000  mesh_weighted                0/12        each mesh is weighted, or is not, alike
+        0.000  mesh_hull                    0/12        each mesh declares the same hull length
+        0.273  region_size                  18/66       NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)
+  
+    attachments (reported) (no mean)   over 1 measure  — unobservable from the frames, so reported and folded into nothing
+        0.000  mesh_edges                   0/12        each mesh declares an edge list, or declares none, alike
+  
+    constraints           mean 0.000  over 5 measures
+        0.000  count                        0/14        how many constraints
+        0.000  names                        0/14        the constraint names
+        0.000  type_counts                  0/14        as many of each constraint type
+        0.000  type_by_name                 0/14        each constraint is the same type
+        0.000  refs                         0/14        each constraint names the same bones and slots
+  
+    animations            mean 0.474  over 9 measures
+        0.727  count                        8/11        how many animations
+        0.583  names                        7/12        the animation names
+        0.545  duration                     6/11        each animation runs as long (last key time, within one frame)
+        0.204  timeline_kinds               86/421      the same timelines exist
+        0.460  key_counts                   824/1791    those timelines carry as many keys
+        0.474  curve_kinds                  849/1791    as many linear / stepped / bezier keys
+        0.000  event_keys                   0/5         as many event firings
+        0.636  draw_order                   7/11        a draw-order timeline is present or absent alike
+        0.636  deform                       7/11        a deform timeline is present or absent alike
+  
+    animations (reported) (no mean)   over 2 measures  — unobservable from the frames, so reported and folded into nothing
+        0.759  key_density                  119.933/158.032 how hard the shot is keyed, as keys per second  — candidate 158.032 vs reference 119.933 keys/s; candidate carries 1.32x — OVER-keyed. Convention: every key of every timeline (1633 vs 1791) over the summed last-key time of every animation (10.333s vs 14.933s), compared as min/max at 3 decimal places.
+        0.320  keys_per_timeline            4.254/13.276 how hard each timeline is keyed, as keys per timeline  — candidate 13.276 vs reference 4.254 keys/timeline; candidate carries 3.12x — OVER-keyed. Convention: every key of every timeline (1633 vs 1791) over the number of timelines that exist (123 vs 421), compared as min/max at 3 decimal places. Read beside `key_density`: this one alone moving means the same keying spread over a different number of timelines.
+  
+    events                mean 0.000  over 2 measures
+        0.000  names                        0/1         the event names
+        0.000  payloads                     0/1         each event carries the same typed payload
+  
+    There is no overall score, on purpose: a section mean is an average of the
+    measures printed under it, and averaging those together would hide which
+    half of a rig is wrong. Read the measures.
+  
+    `bones` and `slots` carry two figures because most of their measures are
+    keyed on names, and a candidate is entitled to its own. They are two
+    comparisons, not two halves of one: name-agnostic 1.000 beside a low
+    name-matched figure means the shape is right and the vocabulary differs.
+  
+    A `(reported)` block has no mean because its measures have unlike units, and
+    it stays out of the section mean above it for the same reason no clause may
+    read it: no reading of the reference frames could have decided these. They are
+    findings against the reference export all the same — each states its own
+    convention, and a rate states which side is the bigger one.
+
+  ── summary ──
+  validate   green  (profile spine)
+  ess        bones=0.717  slots=0.824  attachments=0.955  constraints=1.000  animations=0.703  events=0.000
+             bones 0.717 (name-matched) · 0.767 (name-agnostic)   slots 0.824 (name-matched) · 0.643 (name-agnostic)
+             reported: mesh_edges 1.000 · key_density 0.456 · keys_per_timeline 0.366
+  pro        bones=0.198  slots=0.354  attachments=0.262  constraints=0.000  animations=0.474  events=0.000   [stretch]
+             bones 0.198 (name-matched) · 0.197 (name-agnostic)   slots 0.354 (name-matched) · 0.197 (name-agnostic)
+             reported: mesh_edges 0.000 · key_density 0.759 · keys_per_timeline 0.320
+  check      not run — pass --frames <dir> to compare against the rendered reference frames.
+             Without it this report says nothing about whether the ANIMATION is right.
+  bonedist   not run — pass --bones <correspondence.json | identity> for the stage-3 per-frame
+             bone world-transform distance. It reports and gates nothing.
+  Section figures are means of their own measures. There is no rung score:
+  a rung is cleared by a person reading the measures, and docs/LADDER.md records it.
+rigc: wrote /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-blosharper/33fa9512-be30-40a5-9543-b1aff354f66e/scratchpad/wt-spineboy2/bench/runs/2026-09-03-spineboy-2/bench.json

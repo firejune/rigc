@@ -142,6 +142,7 @@ for (const s of sidecar.sets) {
 // --- the sweeps -------------------------------------------------------------
 const ARM_KNOBS = ['rear-upper-arm.rotate', 'rear-bracer.rotate', 'gun.rotate', 'muzzle.rotate'];
 
+const plateEvidence: { set: string; index: number; flare: number; bestPerPlate: { plate: string; score: number }[]; winner: string }[] = [];
 lines.push('', 'muzzle plate sweep (the fitted arm re-solved under each option; lower is better):');
 for (const [set, per] of flareByFrame) {
   const flareFrames = [...per.entries()].filter(([, n]) => n > 0).map(([i]) => i);
@@ -184,7 +185,7 @@ for (const [set, per] of flareByFrame) {
         }
       }
     }
-    const scored: { label: string; score: number; pose: Pose; skin: Skin }[] = [];
+    const scored: { label: string; plate: string; score: number; pose: Pose; skin: Skin }[] = [];
     for (const option of options) {
       const obj = objectiveFor(c, target, option.skin);
       const fit = fitFrame(
@@ -201,41 +202,136 @@ for (const [set, per] of flareByFrame) {
         [base],
         1,
       );
-      scored.push({ label: option.label, score: fit.score, pose: fit.pose, skin: option.skin });
+      scored.push({
+        label: option.label,
+        plate: String(option.skin.muzzle),
+        score: fit.score,
+        pose: fit.pose,
+        skin: option.skin,
+      });
     }
     scored.sort((a, b) => a.score - b.score);
     skins[set][String(i)] = scored[0].skin;
     setStore[String(i)] = { pose: scored[0].pose, score: scored[0].score };
-    const margin = scored[1].score - scored[0].score;
+    /**
+     * ⚠️ The runner-up is usually the SAME plate with the glow or the ring
+     * toggled, so a winner-versus-runner-up margin measures the glow and not the
+     * plate. What decides the plate is the best score EACH plate can reach, so
+     * that is what is printed.
+     */
+    const bestPerPlate = MUZZLE_PLATES.map((plate) => ({
+      plate,
+      score: Math.min(...scored.filter((x) => x.plate === plate).map((x) => x.score)),
+    })).sort((a, b) => a.score - b.score);
+    plateEvidence.push({ set, index: i, flare: per.get(i) ?? 0, bestPerPlate, winner: scored[0].label });
     lines.push(
-      `  ${set}/f${i}  winner ${scored[0].label.padEnd(24)} ${scored[0].score.toFixed(4)}   ` +
-        `runner-up ${scored[1].label.padEnd(24)} ${scored[1].score.toFixed(4)}   margin ${margin.toFixed(4)}` +
-        `${margin < 0.02 ? '   ⚠️ THIN — read as undecided' : ''}`,
+      `  ${set}/f${i} (${per.get(i) ?? 0} px of flare)  winner ${scored[0].label.padEnd(24)} ${scored[0].score.toFixed(4)}`,
+    );
+    lines.push(
+      `  ${''.padEnd(String(`${set}/f${i}`).length)}  best per plate: ` +
+        bestPerPlate.map((x) => `${x.plate}=${x.score.toFixed(4)}`).join('  ') +
+        `   spread ${(bestPerPlate[bestPerPlate.length - 1].score - bestPerPlate[0].score).toFixed(4)}`,
     );
   }
 }
 
 // --- the fist ---------------------------------------------------------------
-lines.push('', 'front-fist sweep (closed vs open, at the fitted pose):');
+/**
+ * ONE window per shot, not one decision per frame.
+ *
+ * 🚨 The first version of this asked the question 147 times independently and
+ * the answer flickered: `death` came back
+ * `f30=open f31=closed f32=open f33=closed …` — a 14-key stutter over the wave
+ * — and `jump@30fps/f0` came back **open** where `jump/f0`, which is the SAME
+ * PICTURE, came back closed. Two answers for one frame is proof the estimator
+ * was reading the rasteriser's last bit, exactly the trap `eye` and `mouth` were
+ * kept out of. The two frames differ only in their change weighting, which is
+ * §9.2's warning about a per-pixel figure being worth no more than the framing
+ * it was taken in, arriving inside a run's own loop.
+ *
+ * ⇒ The estimator is now the maximum-subarray of the per-frame score
+ * DIFFERENCE. `d[i] = score(open) − score(closed)`, and the window is the
+ * contiguous run whose total `d` is most negative — one decision, conditioned on
+ * every frame in it, with a stated threshold below which the answer is "no
+ * window". A window of one frame cannot win against a stutter's worth of noise
+ * the way sixty independent coin flips can.
+ */
+const FIST_SETUP = 'front-fist-closed';
+const FIST_ALT = 'front-fist-open';
+/** The total score the window must buy before it is authored, in MAE-seconds. */
+const FIST_THRESHOLD = Number(process.env.FIST_THRESHOLD ?? 0.25);
+
+lines.push('', 'front-fist window (maximum-subarray of score(open) − score(closed), one window per shot):');
+const fistWindows: Record<string, { from: number; to: number; gain: number } | null> = {};
 for (const [set, setStore] of Object.entries(stored)) {
   skins[set] ??= {};
-  const runs: { from: number; to: number; pick: string }[] = [];
-  for (const i of Object.keys(setStore).map(Number).sort((a, b) => a - b)) {
+  const indices = Object.keys(setStore)
+    .map(Number)
+    .sort((a, b) => a - b);
+  const diffs: number[] = [];
+  for (const i of indices) {
     const plate = loadFrame(framePath(REF, set, i));
     const target = targetFor(plate, levels, null);
     const pose = setStore[String(i)].pose;
-    let best = { name: 'front-fist-closed', score: Infinity };
-    for (const name of ['front-fist-closed', 'front-fist-open']) {
-      const obj = objectiveFor(c, target, { ...(skins[set][String(i)] ?? {}), 'front-fist': name });
-      const s = obj(pose, levels[levels.length - 1]);
-      if (s < best.score) best = { name, score: s };
-    }
-    skins[set][String(i)] = { ...(skins[set][String(i)] ?? {}), 'front-fist': best.name };
-    const last = runs[runs.length - 1];
-    if (last && last.pick === best.name && last.to === i - 1) last.to = i;
-    else runs.push({ from: i, to: i, pick: best.name });
+    const base = { ...(skins[set][String(i)] ?? {}) };
+    const closed = objectiveFor(c, target, { ...base, 'front-fist': FIST_SETUP })(pose, levels[levels.length - 1]);
+    const open = objectiveFor(c, target, { ...base, 'front-fist': FIST_ALT })(pose, levels[levels.length - 1]);
+    diffs.push(open - closed);
   }
-  lines.push(`  ${set.padEnd(14)} ${runs.map((r) => `f${r.from}${r.to > r.from ? `-f${r.to}` : ''}=${r.pick.replace('front-fist-', '')}`).join('  ')}`);
+  // Kadane's algorithm on the negated differences.
+  let best = { sum: 0, from: -1, to: -1 };
+  let current = 0;
+  let currentFrom = 0;
+  for (let k = 0; k < diffs.length; k++) {
+    const v = -diffs[k];
+    if (current <= 0) {
+      current = v;
+      currentFrom = k;
+    } else {
+      current += v;
+    }
+    if (current > best.sum) best = { sum: current, from: currentFrom, to: k };
+  }
+  const taken = best.sum >= FIST_THRESHOLD && best.from >= 0;
+  fistWindows[set] = taken ? { from: indices[best.from], to: indices[best.to], gain: best.sum } : null;
+  for (const i of indices) {
+    const inside = taken && i >= indices[best.from] && i <= indices[best.to];
+    skins[set][String(i)] = { ...(skins[set][String(i)] ?? {}), 'front-fist': inside ? FIST_ALT : FIST_SETUP };
+  }
+  lines.push(
+    `  ${set.padEnd(14)} best window ${best.from < 0 ? 'none' : `f${indices[best.from]}..f${indices[best.to]}`} ` +
+      `buys ${best.sum.toFixed(4)}  ${taken ? '=> AUTHORED open there' : `below the ${FIST_THRESHOLD} threshold => the sweep decides nothing`}`,
+  );
+}
+
+/**
+ * 🚫 The sweep above decided NOTHING on any shot, and one shot is authored
+ * against it anyway — from the brief, deliberately, and recorded as such.
+ *
+ * The brief settles `death`'s wave on the ART's own evidence rather than on a
+ * pixel count: "the raised hand is an open fist, and the art ships a fist only
+ * for the near arm", and it dates the passage f27–f56 with the arm "down again
+ * by f57". At 17 x 18 frame pixels, at the far end of a four-link chain, this
+ * run's own objective cannot separate the two plates — the best window it finds
+ * anywhere buys 0.0196 against a 0.25 threshold. ⇒ The window is a BRIEF-DERIVED
+ * PRIOR, not a measurement of this run's, and §8's rule applies: "ship it on
+ * reasoning, and say in the log that is what you did. What makes that honest is
+ * the record — a number that arrived as an argument must not later be read as a
+ * measurement."
+ */
+const BRIEF_FIST_WINDOW: Record<string, [number, number]> = { death: [27, 56] };
+for (const [set, [from, to]] of Object.entries(BRIEF_FIST_WINDOW)) {
+  if (fistWindows[set]) continue; // a measured window wins over the prior
+  if (!stored[set]) continue;
+  fistWindows[set] = { from, to, gain: Number.NaN };
+  for (const key of Object.keys(stored[set])) {
+    const i = Number(key);
+    skins[set][key] = { ...(skins[set][key] ?? {}), 'front-fist': i >= from && i <= to ? FIST_ALT : FIST_SETUP };
+  }
+  lines.push(
+    `  ${set.padEnd(14)} PRIOR: f${from}..f${to} open, from the brief's passage 5 — this run's own sweep could not ` +
+      `separate the two plates and this is not a measurement of ours`,
+  );
 }
 
 // --- the stepped timelines --------------------------------------------------
@@ -247,12 +343,25 @@ for (const s of sidecar.sets) {
   if (s.fps !== 12) continue;
   const window = flareWindow.get(s.animation);
   if (!window) continue;
-  const per = flareByFrame.get(s.dir);
-  const flareFrames = [...(per ?? new Map()).entries()].filter(([, n]) => n > 0).map(([i]) => i);
-  const chosen = flareFrames
-    .map((i) => skins[s.dir]?.[String(i)])
-    .find((skin) => skin && skin.muzzle);
-  if (!chosen) continue;
+  const per = flareByFrame.get(s.dir) ?? new Map<number, number>();
+  const flareFrames = [...per.entries()].filter(([, n]) => n > 0).map(([i]) => i);
+  if (flareFrames.length === 0) continue;
+  /**
+   * The plate is taken from the BRIGHTEST flare frame, not the first.
+   *
+   * The sweep separates the five plates by 0.029 to 0.089 on this run's own
+   * objective — a real ordering and a thin one — and the three flare frames each
+   * prefer a different plate. Where a reading is that thin, the frame carrying
+   * the most evidence is the one to read it on: `shoot/f3` at 1,659 px of flare
+   * against f2's 166 and f4's 717.
+   */
+  const brightestFrame = flareFrames.reduce((a, b) => ((per.get(b) ?? 0) > (per.get(a) ?? 0) ? b : a), flareFrames[0]);
+  const chosen = skins[s.dir]?.[String(brightestFrame)];
+  if (!chosen || !chosen.muzzle) continue;
+  lines.push(
+    `  flare plate for ${s.animation}: ${chosen.muzzle} — read on f${brightestFrame}, the brightest flare frame ` +
+      `(${per.get(brightestFrame) ?? 0} px), the plate spread there being under 0.03 on this run's objective`,
+  );
   timeline[s.animation] ??= {};
   for (const slot of FLARE_SLOTS) {
     const on = chosen[slot];
@@ -264,26 +373,17 @@ for (const s of sidecar.sets) {
   }
 }
 
-// The fist: the runs the per-frame sweep found, at 12 fps, against the slot's
-// own setup attachment.
-const FIST_SETUP = 'front-fist-closed';
-for (const [set, setStore] of Object.entries(stored)) {
+// The fist: one window per shot, from the maximum-subarray above.
+for (const [set, window] of Object.entries(fistWindows)) {
+  if (!window) continue;
+  void window.gain;
   const s = sidecar.sets.find((x) => x.dir === set);
   if (!s || s.fps !== 12) continue;
-  const indices = Object.keys(setStore).map(Number).sort((a, b) => a - b);
-  let previous = FIST_SETUP;
-  const keys: { t: number; attachment: string | null }[] = [];
-  for (const i of indices) {
-    const pick = skins[set]?.[String(i)]?.['front-fist'] ?? FIST_SETUP;
-    if (pick !== previous) {
-      keys.push({ t: i / s.fps, attachment: pick });
-      previous = pick;
-    }
-  }
-  if (keys.length) {
-    timeline[s.animation] ??= {};
-    timeline[s.animation]['front-fist'] = keys;
-  }
+  timeline[s.animation] ??= {};
+  timeline[s.animation]['front-fist'] = [
+    { t: window.from / s.fps, attachment: FIST_ALT },
+    { t: (window.to + 1) / s.fps, attachment: FIST_SETUP },
+  ];
 }
 
 lines.push('', 'stepped attachment timelines authored:');

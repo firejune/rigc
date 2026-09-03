@@ -87,7 +87,33 @@ interface Row {
   agree: number;
   deltas: number[];
   refused: Map<string, number>;
+  /** |mine − hinge| in frame px, bucketed by the reading's own visible share. */
+  bands: Map<string, number[]>;
 }
+
+/**
+ * The bands the agreement is read in.
+ *
+ * ⭐ This is the measurement the run exists for. `chainfit` reports a
+ * `visibleShare` with every residual precisely because "a low residual on a
+ * 0.08 share is a confident statement about a sliver" (§12.3) — so the question
+ * *does a reading buy anything* has to be asked per band, not per part. A part
+ * whose median share is 20 % and whose readings disagree with the composite by
+ * 150 degrees is not the same finding as one whose 80 %-share readings agree to
+ * a pixel.
+ */
+const BANDS: [string, number, number][] = [
+  ['<10%', 0, 0.1],
+  ['10-25%', 0.1, 0.25],
+  ['25-50%', 0.25, 0.5],
+  ['50-75%', 0.5, 0.75],
+  ['>=75%', 0.75, 1.01],
+];
+const bandOf = (share: number | null): string => {
+  if (share === null) return 'unknown';
+  for (const [name, lo, hi] of BANDS) if (share >= lo && share < hi) return name;
+  return 'unknown';
+};
 const rows = new Map<string, Row>();
 
 for (const frame of chain.frames) {
@@ -100,7 +126,17 @@ for (const frame of chain.frames) {
     if (arm === undefined) continue; // a bone this rig never rotates
     const row: Row =
       rows.get(p.part) ??
-      { part: p.part, bone: p.bone, frames: 0, read: 0, won: 0, agree: 0, deltas: [] as number[], refused: new Map<string, number>() };
+      {
+        part: p.part,
+        bone: p.bone,
+        frames: 0,
+        read: 0,
+        won: 0,
+        agree: 0,
+        deltas: [] as number[],
+        refused: new Map<string, number>(),
+        bands: new Map<string, number[]>(),
+      };
     row.frames++;
     if (p.refusal) row.refused.set(p.refusal, (row.refused.get(p.refusal) ?? 0) + 1);
     if (p.hingeDeg !== null && p.refusal === null) {
@@ -109,6 +145,10 @@ for (const frame of chain.frames) {
       const mine = shipped.pose[`${p.bone}.rotate`] ?? 0;
       const deltaPx = Math.abs(mine - p.hingeDeg) * arm;
       row.deltas.push(deltaPx);
+      const band = bandOf(p.visibleShare);
+      const at = row.bands.get(band) ?? [];
+      at.push(deltaPx);
+      row.bands.set(band, at);
       if (deltaPx <= TOLERANCE_PX) row.agree++;
     }
     rows.set(p.part, row);
@@ -137,6 +177,38 @@ for (const row of [...rows.values()].sort((a, b) => b.read - a.read)) {
       `${[...row.refused.entries()].map(([r, n]) => `${r}x${n}`).join(' ') || '-'}`,
   );
 }
+
+// The band table — the same disagreement, split by how much of the part the
+// instrument could actually see when it read it.
+lines.push(
+  '',
+  'the same |mine − hinge|, split by the reading\'s own visibleShare (median frame px / readings):',
+  '',
+  `part                    ${BANDS.map(([n]) => n.padStart(14)).join('')}`,
+  '-'.repeat(24 + 14 * BANDS.length),
+);
+const bandTotals = new Map<string, number[]>();
+for (const row of [...rows.values()].sort((a, b) => b.read - a.read)) {
+  if (row.read === 0) continue;
+  lines.push(
+    `${row.part.padEnd(22)}  ` +
+      BANDS.map(([name]) => {
+        const list = row.bands.get(name) ?? [];
+        const all = bandTotals.get(name) ?? [];
+        all.push(...list);
+        bandTotals.set(name, all);
+        return list.length === 0 ? '           — ' : `${median(list).toFixed(1).padStart(7)}/${String(list.length).padStart(4)} `;
+      }).join(''),
+  );
+}
+lines.push(
+  '-'.repeat(24 + 14 * BANDS.length),
+  `${'ALL PARTS'.padEnd(22)}  ` +
+    BANDS.map(([name]) => {
+      const list = bandTotals.get(name) ?? [];
+      return list.length === 0 ? '           — ' : `${median(list).toFixed(1).padStart(7)}/${String(list.length).padStart(4)} `;
+    }).join(''),
+);
 
 // Whole-run start census, so `won` above is readable against its denominator.
 const startCensus = new Map<string, number>();

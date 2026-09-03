@@ -1,0 +1,123 @@
+declared tolerance      0.25 frame px at the end of what each bone swings
+basin cap               0.4 frame px
+easings                 7 (clustered from 386 fitted span(s))
+keys                    1633
+
+lever arms (frame px per degree, measured at the setup pose):
+  torso.tx                 arm 0.2230 px/unit  declared 1.121  basin 0.000  cap 1.794  -> effective 1.121
+  torso.ty                 arm 0.2230 px/unit  declared 1.121  basin 2.625  cap 1.794  -> effective 1.794
+  torso.rotate             arm 1.1321 px/unit  declared 0.221  basin 0.000  cap 0.353  -> effective 0.221
+  head.rotate              arm 0.4938 px/unit  declared 0.506  basin 2.750  cap 0.810  -> effective 0.810
+  rear-upper-arm.rotate    arm 0.7047 px/unit  declared 0.355  basin 3.600  cap 0.568  -> effective 0.568
+  rear-bracer.rotate       arm 0.7077 px/unit  declared 0.353  basin 5.400  cap 0.565  -> effective 0.565
+  gun.rotate               arm 0.8813 px/unit  declared 0.284  basin 4.500  cap 0.454  -> effective 0.454
+  muzzle.rotate            arm 0.3164 px/unit  declared 0.790  basin 8.000  cap 1.264  -> effective 1.264
+  front-upper-arm.rotate   arm 0.7346 px/unit  declared 0.340  basin 5.400  cap 0.545  -> effective 0.545
+  front-bracer.rotate      arm 0.4203 px/unit  declared 0.595  basin 6.300  cap 0.952  -> effective 0.952
+  front-fist.rotate        arm 0.1520 px/unit  declared 1.645  basin 22.000  cap 2.632  -> effective 2.632
+  rear-thigh.rotate        arm 0.9486 px/unit  declared 0.264  basin 1.800  cap 0.422  -> effective 0.422
+  rear-shin.rotate         arm 0.6406 px/unit  declared 0.390  basin 2.700  cap 0.624  -> effective 0.624
+  rear-foot.rotate         arm 0.1428 px/unit  declared 1.750  basin 16.800  cap 2.800  -> effective 2.800
+  front-thigh.rotate       arm 1.0803 px/unit  declared 0.231  basin 2.700  cap 0.370  -> effective 0.370
+  front-shin.rotate        arm 0.7211 px/unit  declared 0.347  basin 1.800  cap 0.555  -> effective 0.555
+  front-foot.rotate        arm 0.1423 px/unit  declared 1.757  basin 22.800  cap 2.811  -> effective 2.811
+
+contractions REFUSED (the guard above):
+  death f16->f17  one end is inside a reference-held run; contracting it would break the exact equality the hold rests on
+  death f22->f23  one end is inside a reference-held run; contracting it would break the exact equality the hold rests on
+
+contractions taken (§10.3's trade, applied to the planned curves):
+  death f13->f14  lambda 0.4  worst channel moved 28.025 frame px at the end of what its bone swings
+  death f14->f15  lambda 0.4  worst channel moved 22.929 frame px at the end of what its bone swings
+  death f56->f57  lambda 0.4  worst channel moved 38.215 frame px at the end of what its bone swings
+  death f58->f59  lambda 0.4  worst channel moved 46.185 frame px at the end of what its bone swings
+  death f13->f14  lambda 0.65  worst channel moved 28.980 frame px at the end of what its bone swings
+  death f14->f15  lambda 0.65  worst channel moved 22.356 frame px at the end of what its bone swings
+  death f15->f16  lambda 0.65  worst channel moved 11.420 frame px at the end of what its bone swings
+  death f56->f57  lambda 0.65  worst channel moved 37.260 frame px at the end of what its bone swings
+  death f57->f58  lambda 0.65  worst channel moved 15.010 frame px at the end of what its bone swings
+  death f58->f59  lambda 0.65  worst channel moved 45.030 frame px at the end of what its bone swings
+  death f14->f15  lambda 0.8  worst channel moved 23.141 frame px at the end of what its bone swings
+  death f15->f16  lambda 0.8  worst channel moved 4.919 frame px at the end of what its bone swings
+  death f56->f57  lambda 0.8  worst channel moved 29.004 frame px at the end of what its bone swings
+  death f57->f58  lambda 0.8  worst channel moved 30.482 frame px at the end of what its bone swings
+  death f14->f15  lambda 0.9  worst channel moved 17.833 frame px at the end of what its bone swings
+  death f56->f57  lambda 0.9  worst channel moved 17.770 frame px at the end of what its bone swings
+  death f57->f58  lambda 0.9  worst channel moved 6.858 frame px at the end of what its bone swings
+  death f58->f59  lambda 0.9  worst channel moved 35.539 frame px at the end of what its bone swings
+  death f15->f16  lambda 0.95  worst channel moved 9.639 frame px at the end of what its bone swings
+  death f56->f57  lambda 0.95  worst channel moved 13.574 frame px at the end of what its bone swings
+  death f57->f58  lambda 0.95  worst channel moved 20.863 frame px at the end of what its bone swings
+  death f14->f15  lambda 0.98  worst channel moved 6.665 frame px at the end of what its bone swings
+  death f56->f57  lambda 0.98  worst channel moved 17.574 frame px at the end of what its bone swings
+
+reference-identical runs collapsed to one pose (see the 🚨 in tools/keys.ts):
+  death/f17..f22  6 frame(s) -> the pose of f18  cost -0.0219 mean on this run's own objective
+  death/f23..f26  4 frame(s) -> the pose of f25  cost -0.2922 mean on this run's own objective
+  shoot/f0..f1  2 frame(s) -> the pose of f0  cost -0.6125 mean on this run's own objective
+
+close round 0: 10 pair(s) out of band
+  death f13->f14  mine 3860 vs ref 676  (over)
+  death f14->f15  mine 3753 vs ref 245  (over)
+  death f16->f17  mine 1177 vs ref 70  (over)
+  death f22->f23  mine 705 vs ref 1  (over)
+  death f51->f52  mine 190 vs ref 1381  (under)
+  death f56->f57  mine 3941 vs ref 565  (over)
+  death f58->f59  mine 4242 vs ref 814  (over)
+  idle f4->f5  mine 335 vs ref 2768  (under)
+  idle f5->f6  mine 536 vs ref 2632  (under)
+  shoot f3->f4  mine 1308 vs ref 5436  (under)
+close round 1: 12 pair(s) out of band
+  death f13->f14  mine 3230 vs ref 676  (over)
+  death f14->f15  mine 3149 vs ref 245  (over)
+  death f15->f16  mine 2123 vs ref 211  (over)
+  death f16->f17  mine 1172 vs ref 70  (over)
+  death f22->f23  mine 705 vs ref 1  (over)
+  death f51->f52  mine 190 vs ref 1381  (under)
+  death f56->f57  mine 3596 vs ref 565  (over)
+  death f57->f58  mine 3931 vs ref 624  (over)
+  death f58->f59  mine 4841 vs ref 814  (over)
+  idle f4->f5  mine 335 vs ref 2768  (under)
+  idle f5->f6  mine 536 vs ref 2632  (under)
+  shoot f3->f4  mine 1308 vs ref 5436  (under)
+close round 2: 10 pair(s) out of band
+  death f14->f15  mine 2931 vs ref 245  (over)
+  death f15->f16  mine 1409 vs ref 211  (over)
+  death f16->f17  mine 1993 vs ref 70  (over)
+  death f22->f23  mine 705 vs ref 1  (over)
+  death f51->f52  mine 190 vs ref 1381  (under)
+  death f56->f57  mine 3870 vs ref 565  (over)
+  death f57->f58  mine 3979 vs ref 624  (over)
+  idle f4->f5  mine 335 vs ref 2768  (under)
+  idle f5->f6  mine 536 vs ref 2632  (under)
+  shoot f3->f4  mine 1308 vs ref 5436  (under)
+close round 3: 10 pair(s) out of band
+  death f14->f15  mine 2543 vs ref 245  (over)
+  death f16->f17  mine 2120 vs ref 70  (over)
+  death f22->f23  mine 705 vs ref 1  (over)
+  death f51->f52  mine 190 vs ref 1381  (under)
+  death f56->f57  mine 4071 vs ref 565  (over)
+  death f57->f58  mine 3150 vs ref 624  (over)
+  death f58->f59  mine 3987 vs ref 814  (over)
+  idle f4->f5  mine 335 vs ref 2768  (under)
+  idle f5->f6  mine 536 vs ref 2632  (under)
+  shoot f3->f4  mine 1308 vs ref 5436  (under)
+close round 4: 9 pair(s) out of band
+  death f15->f16  mine 1917 vs ref 211  (over)
+  death f16->f17  mine 2120 vs ref 70  (over)
+  death f22->f23  mine 705 vs ref 1  (over)
+  death f51->f52  mine 190 vs ref 1381  (under)
+  death f56->f57  mine 4047 vs ref 565  (over)
+  death f57->f58  mine 3655 vs ref 624  (over)
+  idle f4->f5  mine 335 vs ref 2768  (under)
+  idle f5->f6  mine 536 vs ref 2632  (under)
+  shoot f3->f4  mine 1308 vs ref 5436  (under)
+close round 5: 8 pair(s) out of band
+  death f14->f15  mine 1685 vs ref 245  (over)
+  death f16->f17  mine 2377 vs ref 70  (over)
+  death f22->f23  mine 705 vs ref 1  (over)
+  death f51->f52  mine 190 vs ref 1381  (under)
+  death f56->f57  mine 3711 vs ref 565  (over)
+  idle f4->f5  mine 335 vs ref 2768  (under)
+  idle f5->f6  mine 536 vs ref 2632  (under)
+  shoot f3->f4  mine 1308 vs ref 5436  (under)

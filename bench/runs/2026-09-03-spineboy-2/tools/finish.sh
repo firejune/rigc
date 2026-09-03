@@ -20,12 +20,14 @@ bun cli.ts build \
   --images examples/spineboy/images \
   --out "$cand" \
   --profile spine > "$run/build.txt" 2>&1
-grep -cE '^  FAIL' "$run/build.txt" | sed 's/^/  FAIL count: /'
-grep -E '^  \.\.    pages=' "$run/build.txt"
+# `grep -c` exits 1 on zero matches, which under `set -e` is exactly the green
+# case killing the script. Every count below is guarded.
+echo "  FAIL count: $(grep -cE '^  FAIL' "$run/build.txt" || true)"
+grep -E '^  \.\.    pages=' "$run/build.txt" || true
 
 echo "== validate (G1) =="
 bun cli.ts validate "$cand" --profile spine > "$run/validate.txt" 2>&1
-grep -cE '^  FAIL' "$run/validate.txt" | sed 's/^/  FAIL count: /'
+echo "  FAIL count: $(grep -cE '^  FAIL' "$run/validate.txt" || true)"
 
 echo "== the compiled animation against the fitted pose series =="
 # AUTHORING §9.1's last 🚨: "a pipeline with a fit at one end and a file at the
@@ -42,7 +44,7 @@ echo "== check --texture-from — a NAMED DIAGNOSTIC, never the record =="
 # Allowed-list item 4: the example's own .atlas is a supplied input. §9.2: not
 # --atlas, which re-seats region geometry and sends the figure the wrong way.
 bun cli.ts check --candidate "$cand" --frames "$frames" \
-  --texture-from examples/spineboy/spineboy.atlas \
+  --texture-from examples/spineboy/export/spineboy.atlas \
   --json "$run/check-texture-from.json" > "$run/check-texture-from.txt" 2>&1 || true
 
 echo "== the summary tables =="

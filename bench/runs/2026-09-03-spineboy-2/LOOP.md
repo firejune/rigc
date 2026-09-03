@@ -3,18 +3,23 @@
 - date:      2026-09-03
 - agent:     Claude Opus 5 (1M context), Claude Code / Agent SDK, fresh session
 - inputs:    [`bench/briefs/spineboy.md`](../../briefs/spineboy.md) rev 4;
-             [`docs/AUTHORING.md`](../../../docs/AUTHORING.md) in full, §8, §8.1, §9, §10, §11 and §12 included;
+             [`docs/AUTHORING.md`](../../../docs/AUTHORING.md) — ⚠️ **NOT in full**, and §3.6
+             records what that cost: §0-§4, §8, §8.1, §9's flag reference, §9.2, §9.3, §10, §11
+             and §12 were read; lines 2600-2735, the second half of §9.1, were not, until after
+             this run had paid for two of the traps they name;
              [`docs/MOTION.md`](../../../docs/MOTION.md);
              [`docs/GATE.md`](../../../docs/GATE.md) (clause statements — allowed list item 11);
              [`README.md`](../../../README.md) and this repository's own `src/`;
              `bench/reference/spineboy/ess/` and its `frames.json`;
              `examples/spineboy/images/` (fetched, 40 PNGs);
-             `examples/spineboy/spineboy.atlas` — **not opened**, see §1
+             `examples/spineboy/export/spineboy.atlas` — **not opened as an authoring input**,
+             see §2
 - reference: **not read.** `examples/spineboy/export/*.json`, `bench/transcriptions/`,
              `docs/LADDER.md`, `docs/SPEC_COVERAGE.md`, `src/ladder.ts` and
              `bench/render_reference.ts` were not opened at any point. `git log` was
-             not read. One collision with the launch prompt is recorded in §1
-- guide:     AUTHORING.md §10 in hand
+             not read. Two disclosures: a collision with the launch prompt (§1) and `bench`'s
+             own console `gates` line at the finish line (*Result*)
+- guide:     AUTHORING.md §10 in hand; GATE.md's clause statements in hand
 - inherited: **nothing.** This is a from-zero attempt: no prior attempt's rig spec,
              motion spec, harness or intermediate store was opened, and the
              *Inheriting the prior attempt's candidate* section does not apply
@@ -57,7 +62,7 @@ sealed file.
 Allowed-list item 4 offers this example's `.atlas` and says "A run that does not need
 it — rigc emits its own atlas from the PNGs — should say so and skip it". This run does
 not need it: the brief states the art is 40 loose PNGs, `--images` resolves them, and
-rigc emitted a 29-page one-part-per-page atlas. **`spineboy.atlas` was never opened.**
+rigc emitted a 29-page one-part-per-page atlas. **`examples/spineboy/export/spineboy.atlas` was never opened as an authoring input.**
 
 One consequence for the record: `check --texture-from` is the diagnostic that attributes
 how much of the MAE is texture resampling rather than rig, and it takes *the example's
@@ -363,10 +368,70 @@ bone's own origin does not move when the leaf rotates — so both feet, both fis
 the muzzle got a zero lever arm and therefore an unbounded tolerance. The arm is
 measured on the **drawn quad's centre** instead.
 
+### 3.11 — the turns after the first `check`, in order
+
+**Turn A — the first full candidate.** 1,564 keys. `check`: worst attributable drift
+**29.46 px** (`front-shin`, `jump` f2), `changeDisagreements` 7, no overdraw — and
+`frames.json`'s own box **TAKEN on all 16 sets**, which is what the coordinate work in §3.2
+and §3.5 bought.
+
+**Turn B — the legs, refit alone.** `ACTIVE=` the six leg channels, everything else frozen,
+seeded from turn A — §8.1's "spend each iteration on the worst chain, and stop re-fitting the
+ones already at the floor". ⚠️ **It found almost nothing**: the incumbent won 41 of `death`'s
+60 frames, 17 of 17 in `jump`, 13 of 13 in `walk` and 9 of 9 in `run`. That is the reading
+§8.1 asks for — the legs are at this fitter's floor, and the drift left on them is not a
+search failure the same search can reach.
+
+**Turn C — the arms and the head, refit alone.** Same shape, and it moved a little more:
+`death`'s mean 4.671 → 4.583, `idle`'s 5.607 → 5.572.
+
+**Turn D — the two stores merged**, per frame by the lower score
+([`tools/merge.ts`](tools/merge.ts)): 294 of the 147 frames' answers were available twice and
+the merge kept 74 from the legs pass and 96 from the arms pass.
+
+**Turn E — `chainfit` preferred where `check`'s own matcher disagreed**
+([`tools/prefer.ts`](tools/prefer.ts)), at a declared accept threshold. Worst drift
+**29.46 → 18.98 px**. What it actually bought is in the README's *The chainfit price tag*, and
+it is not what this number suggests.
+
+**Turn F — the reduction cap, chosen by measurement over three values.** `check` over all 16
+sets with the poses and skins held: cap 1.2 / tolerance 0.35 → 1,564 keys, 16 of 500
+slot-frames over 6 px, MAE(ref) 55.99; cap 0.7 / 0.25 → 1,590, 14 of 494, 56.04; cap 0.4 /
+0.25 → **1,633, 13 of 499, 55.62**. The worst attributable drift is 18.98 px in all three,
+which is the reading that says it is a pose error and not a reduction one. Cap 0.4 was taken.
+
+**Turn G — the finish line** ([`tools/finish.sh`](tools/finish.sh)): build, `validate`, the
+compiled-versus-fit control, `check`, `check --texture-from`, the summaries, the chainfit
+census and trail, then `bench` **once**.
+
+⚠️ **Three things in that list went wrong the first time and are recorded rather than
+smoothed over.** `finish.sh` died on `grep -c` returning 1 on a zero count under `set -e` —
+the green case killing the script. Its `--texture-from` path was wrong (`examples/spineboy/`
+rather than `examples/spineboy/export/`) and `check` answered by printing its own help, which
+is a failure that looks like a usage note. And `tools/summary.ts` then read a file that did not
+exist. All three were repaired and the script re-run; the candidate did not change between
+those runs.
+
+### 3.12 — the compiled animation against the fitted pose series
+
+§9.1's last 🚨, run before the measures rather than after them:
+[`evidence/compiled-vs-fit.txt`](evidence/compiled-vs-fit.txt). `aim` reads **0 px on both its
+frames** — the one animation the plan keeps exactly — which is the control that says the
+translate and rotate conventions are right. Every other set reads its reduction error: means
+of 700–2,100 px and worsts of 3,400–5,700 over ~5,000 px of figure. §9.1's own reading of that
+shape applies: "a whole SET reading thousands of pixels is a convention error, not a
+reduction", and no set reads thousands on its *mean* while the one exactly-kept animation reads
+zero. ⇒ It is the reduction, at the 0.4 px cap turn F chose, and it is the price of 1,633 keys
+rather than 3,000.
+
 ## Result
 
-See [README.md](README.md) for the measures. `bench` was run **once, at the end**.
+See [README.md](README.md) for the measures. `bench` was run **once, at the end** — and its
+console printed a `gates` line carrying the reference's own bone, slot and animation counts,
+which is a forbidden fact issue #137 removed from `bench.json` and left on the console. It
+arrived after the last edit. Recorded in the README's *The disclosures*, item 2.
 
 ## Notes for the guide
 
-Collected in the README's *What the guide should have said*.
+Collected in the README's *What the guide should have said*. The two traps this run hit that
+the guide already names are in §3.6 above, where they belong.

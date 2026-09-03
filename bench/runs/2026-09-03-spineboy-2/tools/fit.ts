@@ -60,7 +60,21 @@ const levels: Level[] = levelsFor(view, LEVEL_PLAN);
 const c = loadCandidate(CAND);
 const skins: Record<string, Record<string, Skin>> =
   SKINS && existsSync(SKINS) ? (JSON.parse(readFileSync(SKINS, 'utf8')).perFrame ?? {}) : {};
-const seed: Record<string, Record<string, Pose>> = SEED && existsSync(SEED) ? JSON.parse(readFileSync(SEED, 'utf8')) : {};
+/**
+ * A SEED store may be either a bare pose map or this run's own pose store
+ * (`{ pose, score, start }` per frame) — the latter is what `fit.ts` writes, so
+ * a refit pass reads its own previous output without a conversion step.
+ */
+const seed: Record<string, Record<string, Pose>> = {};
+if (SEED && existsSync(SEED)) {
+  const raw = JSON.parse(readFileSync(SEED, 'utf8')) as Record<string, Record<string, Pose | { pose: Pose }>>;
+  for (const [set, frames] of Object.entries(raw)) {
+    seed[set] = {};
+    for (const [index, entry] of Object.entries(frames)) {
+      seed[set][index] = (entry as { pose?: Pose }).pose ?? (entry as Pose);
+    }
+  }
+}
 
 /**
  * `rigc chainfit`'s own reading of every frame, as a search START.

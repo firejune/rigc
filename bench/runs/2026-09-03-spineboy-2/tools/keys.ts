@@ -37,10 +37,26 @@ const POSES = process.env.POSES ?? 'bench/runs/2026-09-03-spineboy-2/fit/poses.j
 const SKINS = process.env.SKINS ?? '';
 const EASINGS = Number(process.env.EASINGS ?? 8);
 /** The declared tolerance, in FRAME PIXELS at the end of what the bone swings. */
-export const TOLERANCE_PX = Number(process.env.TOLERANCE_PX ?? 0.35);
+export const TOLERANCE_PX = Number(process.env.TOLERANCE_PX ?? 0.25);
 /** The cap on the per-channel basin floor, in frame pixels (§10.3's ⚖️). */
-export const BASIN_CAP_PX = Number(process.env.BASIN_CAP_PX ?? 1.2);
-const ROUNDS = Number(process.env.CLOSE_ROUNDS ?? 3);
+/**
+ * The cap on the per-channel basin floor, in frame pixels (§10.3's ⚖️).
+ *
+ * 0.4 rather than a pixel or two, chosen by measurement over three values with
+ * everything else held — the whole point of §10.3's "record all three numbers".
+ * `check` over all 16 sets, same poses, same skins:
+ *
+ *   cap 1.2 / tol 0.35  1564 keys  drift > 6 px on 16 of 500 slot-frames  MAE(ref) 55.99
+ *   cap 0.7 / tol 0.25  1590 keys                        14 of 494        MAE(ref) 56.04
+ *   cap 0.4 / tol 0.25  1633 keys                        13 of 499        MAE(ref) 55.62
+ *
+ * The worst attributable drift is 18.98 px in all three, which is the reading
+ * that says it is a POSE error and not a reduction one.
+ */
+export const BASIN_CAP_PX = Number(process.env.BASIN_CAP_PX ?? 0.4);
+const ROUNDS = Number(process.env.CLOSE_ROUNDS ?? 6);
+/** How far each round draws an offending pair's two samples together. */
+const LAMBDA = [0.4, 0.65, 0.8, 0.9, 0.95, 0.98];
 const out = process.argv[2] ?? 'bench/runs/2026-09-03-spineboy-2/spineboy-ess.motion.json';
 const report = process.argv[3] ?? 'bench/runs/2026-09-03-spineboy-2/evidence/key-plan.txt';
 
@@ -79,8 +95,30 @@ function leverArms(): Record<string, number> {
    * leaf — both feet, both fists, the muzzle — a zero lever arm and therefore
    * an unbounded tolerance. The art is what the frames see.
    */
+  /**
+   * ⚠️ Every slot is SHOWN for this measurement, including the three whose setup
+   * attachment is `null`. With the flare hidden, `muzzle` moves no drawn quad
+   * and its arm reads 0.0000 px/deg — which made its effective tolerance
+   * 350,000 degrees and took the channel out of the plan entirely. A lever arm
+   * is a property of the rig, not of the setup skin.
+   */
+  const showEverything = (): void => {
+    for (const slot of c.skeleton.slots) {
+      if (slot.pose.attachment) continue;
+      const names = Object.keys((c.data.defaultSkin as unknown as { attachments?: Record<string, unknown> })?.attachments ?? {});
+      void names;
+      for (const candidate of ['muzzle01', 'muzzle-glow', 'muzzle-ring']) {
+        const found = c.skeleton.getAttachment(slot.data.name, candidate);
+        if (found) {
+          slot.pose.setAttachment(found);
+          break;
+        }
+      }
+    }
+  };
   const centres = (pose: Pose): Map<string, [number, number]> => {
     applyPose(c.skeleton, pose);
+    showEverything();
     const out = new Map<string, [number, number]>();
     for (const piece of piecesOf(c.skeleton)) {
       const world = piece.kind === 'region' ? piece.world : piece.world;
@@ -190,6 +228,72 @@ interface Series {
 }
 
 const CHANNELS = KNOBS.map((k) => `${k.bone}.${k.kind}`);
+
+/**
+ * 🚨 Where the REFERENCE holds a run of frames pixel-identical, the pose series
+ * has to hold too — and a per-frame fit will not do that on its own.
+ *
+ * On `death` f18–f26 the reference is identical across eight consecutive pairs
+ * at 8/255 (`tools/frames.ts`'s census, and the brief's own reading). The figure
+ * is lying down there with most of it invisible, so this run's objective has a
+ * wide flat basin and the fit wandered inside it: nine different poses for one
+ * picture, which the per-frame column then read as 300 to 2,617 px of motion
+ * against the reference's 0.
+ *
+ * ⚠️ Forcing keys does not fix this and the closing loop proved it — round 0 to
+ * round 2 moved the count from 16 to 15 and stopped. §10.3 says why: "a
+ * tolerance is not a hold", and forcing both ends of a pair whose two POSES
+ * disagree pins the disagreement instead of removing it.
+ *
+ * ⇒ Collapse each run to the best-scoring pose in it, BEFORE the planner runs.
+ * This is not a contraction and not a trade: two identical pictures have one
+ * answer, and any two different poses for them cannot both be it. The cost is
+ * recorded — the mean score rise over the collapsed frames — because the frames
+ * that were not the best one do get slightly worse.
+ */
+const HOLD_TOLERANCE = 8;
+/** Indices inside a reference-held run — see the 🚨 by `overrides`. */
+const heldIndices = new Map<string, Set<number>>();
+const collapses: { set: string; from: number; to: number; frames: number; kept: number; cost: number }[] = [];
+for (const s of sidecar.sets) {
+  const got = stored[s.dir];
+  if (!got || s.fps !== 12) continue;
+  const indices = Object.keys(got)
+    .map(Number)
+    .sort((a, b) => a - b);
+  let runStart = 0;
+  const flush = (endExclusive: number): void => {
+    const run = indices.slice(runStart, endExclusive);
+    if (run.length < 2) return;
+    const best = run.reduce((a, b) => (got[String(b)].score < got[String(a)].score ? b : a));
+    const before = run.reduce((acc, i) => acc + got[String(i)].score, 0) / run.length;
+    for (const i of run) got[String(i)] = { ...got[String(best)] };
+    const held = heldIndices.get(s.dir) ?? new Set<number>();
+    for (const i of run) held.add(i);
+    heldIndices.set(s.dir, held);
+    collapses.push({
+      set: s.dir,
+      from: run[0],
+      to: run[run.length - 1],
+      frames: run.length,
+      kept: best,
+      cost: got[String(best)].score - before,
+    });
+  };
+  for (let k = 1; k <= indices.length; k++) {
+    const same =
+      k < indices.length &&
+      indices[k] === indices[k - 1] + 1 &&
+      changedPixels(
+        loadFrame(framePath(REF, s.dir, indices[k - 1])),
+        loadFrame(framePath(REF, s.dir, indices[k])),
+        HOLD_TOLERANCE,
+      ) === 0;
+    if (same) continue;
+    flush(k);
+    runStart = k;
+  }
+}
 
 const series: Series[] = [];
 for (const s of sidecar.sets) {
@@ -331,6 +435,41 @@ const extraForced = new Map<string, Set<number>>();
 const forcedKey = (set: string, channel: string): string => `${set}|${channel}`;
 
 /**
+ * §10.3's CONTRACTION, and it is recorded as a trade rather than as a fit.
+ *
+ * "Where the reference barely moves, contract your neighbouring poses toward
+ * each other until your own frame-to-frame change is inside the band —
+ * accepting a small, *bounded* loss of fidelity on those frames in exchange for
+ * the one measure that can see a hold. ⚠️ That is a trade and it is recorded as
+ * a trade: name the frames, name the cost per frame, and say in the log that you
+ * took it."
+ *
+ * 🚨 And it is applied WHERE THE MEASUREMENT IS TAKEN, which §10.3 says in the
+ * sentence it calls worth two builds: the override is on the SAMPLED PLANNED
+ * CURVE at that index, and the index is then forced as a key carrying the
+ * contracted value — not on the pose series, which nothing downstream reads.
+ */
+const overrides = new Map<string, Map<number, number>>();
+const contractions: { set: string; frames: [number, number]; lambda: number; costPx: number }[] = [];
+const refusedContractions: { set: string; frames: [number, number]; why: string }[] = [];
+
+/**
+ * 🚨 A contraction may NOT touch an index inside a reference-held run, and this
+ * guard is worth its own paragraph because the first version did and it cost a
+ * round.
+ *
+ * The hold survives the reduction because the collapsed poses are EXACTLY equal
+ * and `forcedIndices` keys both ends of every run of exact equality. An override
+ * at one index inside such a run breaks that equality, the run detection stops
+ * firing, and the planner ramps a curve straight through the hold. Measured
+ * here: the closing loop went 9 -> 12 -> 13 pairs out of band, and five pairs
+ * that the collapse had already read at 0 came back at 1,510-1,876 px. That is
+ * §10.3's own warning arriving from an unexpected side — "if you reach for the
+ * same fix you will pin the excess in place instead of removing it" — with a
+ * contraction undoing a collapse rather than a forcing undoing a contraction.
+ */
+
+/**
  * Fold the 30 fps set's own terminal still into the plan, and drop any key past
  * the declared duration.
  *
@@ -373,7 +512,9 @@ function planAll(table: Handles[] | null): { plans: Map<string, PlannedKey[]>; d
     const times = s.index.map((i) => i / s.fps);
     for (const ch of CHANNELS) {
       const extra = extraForced.get(forcedKey(s.set, ch)) ?? new Set<number>();
-      const planned = planChannel(s.values[ch], times, channelTolerance(ch), table, extra);
+      const override = overrides.get(forcedKey(s.set, ch));
+      const values = override ? s.values[ch].map((v, at) => override.get(s.index[at]) ?? v) : s.values[ch];
+      const planned = planChannel(values, times, channelTolerance(ch), table, extra);
       plans.set(`${s.animation}|${ch}`, foldTerminal(s.animation, ch, planned.keys, durations[s.animation] ?? 0));
       discovered.push(...planned.discovered);
     }
@@ -465,17 +606,46 @@ for (let round = 0; round < ROUNDS; round++) {
   }
   process.stderr.write(`${log[log.length - Math.min(log.length, bad.slice(0, 12).length + 1)]}\n`);
   if (bad.length === 0) break;
-  // Force both frames of every offending pair, on every channel of that set.
+  const lambda = LAMBDA[Math.min(LAMBDA.length - 1, round)];
   for (const d of bad) {
     const s = series.find((x) => x.set === d.set);
     if (!s) continue;
+    const [i, j] = d.pair;
+    const held = heldIndices.get(d.set);
+    if (held && (held.has(i) || held.has(j))) {
+      refusedContractions.push({
+        set: d.set,
+        frames: [i, j],
+        why: 'one end is inside a reference-held run; contracting it would break the exact equality the hold rests on',
+      });
+      continue;
+    }
+    let costPx = 0;
     for (const ch of CHANNELS) {
       const key = forcedKey(d.set, ch);
       const at = extraForced.get(key) ?? new Set<number>();
-      at.add(s.index.indexOf(d.pair[0]));
-      at.add(s.index.indexOf(d.pair[1]));
+      at.add(s.index.indexOf(i));
+      at.add(s.index.indexOf(j));
       extraForced.set(key, at);
+      const keys = plans.get(`${s.animation}|${ch}`);
+      if (!keys) continue;
+      const vi = sampleChannel(keys, i / s.fps);
+      const vj = sampleChannel(keys, j / s.fps);
+      // 'held' and 'over' both want the pair drawn together; 'under' wants the
+      // opposite and is NOT contracted — §10.3's third direction says under-change
+      // "is not fixed by keys" and a contraction there would pin the deficit.
+      if (d.kind === 'under') continue;
+      const mean = (vi + vj) / 2;
+      const store = overrides.get(key) ?? new Map<number, number>();
+      const ni = d.kind === 'held' ? mean : mean + (vi - mean) * (1 - lambda);
+      const nj = d.kind === 'held' ? mean : mean + (vj - mean) * (1 - lambda);
+      store.set(i, ni);
+      store.set(j, nj);
+      overrides.set(key, store);
+      const arm = ARMS[ch] ?? view.scale;
+      costPx = Math.max(costPx, Math.abs(ni - vi) * arm, Math.abs(nj - vj) * arm);
     }
+    if (d.kind !== 'under') contractions.push({ set: d.set, frames: [i, j], lambda, costPx });
   }
   plans = planAll(table).plans;
 }
@@ -626,6 +796,31 @@ const lines = [
       `-> effective ${channelTolerance(key).toFixed(3)}`
     );
   }),
+  '',
+  'contractions REFUSED (the guard above):',
+  ...(refusedContractions.length === 0
+    ? ['  none']
+    : [...new Map(refusedContractions.map((x) => [`${x.set}|${x.frames[0]}`, x])).values()].map(
+        (x) => `  ${x.set} f${x.frames[0]}->f${x.frames[1]}  ${x.why}`,
+      )),
+  '',
+  'contractions taken (§10.3\'s trade, applied to the planned curves):',
+  ...(contractions.length === 0
+    ? ['  none']
+    : contractions.map(
+        (x) =>
+          `  ${x.set} f${x.frames[0]}->f${x.frames[1]}  lambda ${x.lambda}  ` +
+          `worst channel moved ${x.costPx.toFixed(3)} frame px at the end of what its bone swings`,
+      )),
+  '',
+  'reference-identical runs collapsed to one pose (see the 🚨 in tools/keys.ts):',
+  ...(collapses.length === 0
+    ? ['  none']
+    : collapses.map(
+        (x) =>
+          `  ${x.set}/f${x.from}..f${x.to}  ${x.frames} frame(s) -> the pose of f${x.kept}  ` +
+          `cost ${x.cost >= 0 ? '+' : ''}${x.cost.toFixed(4)} mean on this run's own objective`,
+      )),
   '',
   ...log,
 ];

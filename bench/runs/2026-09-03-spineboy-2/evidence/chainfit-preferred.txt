@@ -1,0 +1,26 @@
+preferring chainfit's hinge over the composite where check's own matcher reports > 6 px of drift
+declared accept threshold: 2.1 in this run's objective units
+
+set          frame  slot            bone              check drift   mine ->  chainfit    cost   verdict
+------------------------------------------------------------------------------------------------------------------------
+death            0  front-shin      front-shin              15.27    -30.5 ->    -29.0  +0.038   adopted; visible share 74.2%
+death            0  rear-shin       rear-shin               15.11     27.8 ->   -111.4  +1.751   adopted; visible share 11.7%
+death            7  front-shin      front-shin               7.05     81.0 ->     13.4  +2.025   adopted; visible share 57.1%
+death            7  rear-shin       rear-shin               18.98     16.4 ->   -155.0  +2.834   REFUSED: costs 2.834 against the declared 2.1 threshold
+death            9  front-shin      front-shin               7.63     22.5 ->    n/a    n/a   chainfit produced no unrefused hinge for this bone on this frame
+death           10  front-foot      front-foot              10.76    -63.5 ->    n/a    n/a   chainfit produced no unrefused hinge for this bone on this frame
+death           10  front-shin      front-shin              11.88     33.8 ->    n/a    n/a   chainfit produced no unrefused hinge for this bone on this frame
+death@30fps      0  front-shin      front-shin              15.27    -36.0 ->    -29.0  +0.097   adopted; visible share 74.2%
+death@30fps      0  rear-shin       rear-shin               15.11     30.0 ->   -111.4  +0.701   adopted; visible share 11.7%
+idle             2  rear-shin       rear-shin                6.43    -57.8 ->    n/a    n/a   chainfit produced no unrefused hinge for this bone on this frame
+idle            13  torso           torso                    6.12      0.0 ->    n/a    n/a   chainfit produced no unrefused hinge for this bone on this frame
+idle            14  torso           torso                    6.09      0.0 ->    n/a    n/a   chainfit produced no unrefused hinge for this bone on this frame
+idle            15  torso           torso                    6.24      0.0 ->    n/a    n/a   chainfit produced no unrefused hinge for this bone on this frame
+idle            17  torso           torso                    6.53      0.0 ->    n/a    n/a   chainfit produced no unrefused hinge for this bone on this frame
+idle            19  rear-thigh      rear-thigh               6.10     36.0 ->     35.0  +0.036   adopted; visible share 36.4%
+idle            19  torso           torso                    6.43      0.0 ->    n/a    n/a   chainfit produced no unrefused hinge for this bone on this frame
+jump            11  goggles         head                    10.00     16.4 ->     32.9  +3.328   REFUSED: costs 3.328 against the declared 2.1 threshold
+jump            11  head            head                    10.01     16.4 ->     32.9  +3.328   REFUSED: costs 3.328 against the declared 2.1 threshold
+jump            11  mouth           head                     9.97     16.4 ->     32.9  +3.328   REFUSED: costs 3.328 against the declared 2.1 threshold
+
+6 of 19 adopted
