@@ -727,9 +727,10 @@ function cmdBuild(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
   const profile = readProfile(flags);
   const packing = flags.pack !== undefined;
-  // Three combinations are refused rather than silently resolved, because in each
+  // Two combinations are refused rather than silently resolved, because in each
   // one the two flags disagree about a single question and there is no answer
-  // that is not a guess about which the caller meant.
+  // that is not a guess about which the caller meant. (There were three until
+  // issue #266 — see the note below the second.)
   if (packing && opts.atlasInPath !== undefined) {
     throw new UsageError(
       '--pack and --atlas-in are opposite directions through the same door: --pack MAKES an atlas out of the ' +
@@ -742,13 +743,12 @@ function cmdBuild(flags: Record<string, string>): void {
         'the loose part PNGs, which a packed atlas does not reference. Drop --copy-images',
     );
   }
-  if (packing && profile === 'spine-html') {
-    throw new UsageError(
-      "--profile spine-html asserts one part per page (A06's full-page coverage clause), which is rigc's unpacked " +
-        'convention and exactly what --pack stops being true. A packed atlas is valid Spine — build it under the ' +
-        'default --profile spine',
-    );
-  }
+  // `--pack --profile spine-html` used to be the third refusal here, because
+  // A06's coverage clause was "one part per page" flat and a legitimate pack
+  // arrived at the gate reading as a defect. Since issue #266's second follow-up
+  // that clause is "one part per page OR a tiling page", so the combination is
+  // now a build like any other — and it is the only one that puts the renderer's
+  // own rulebook over shared-page sampling.
   if (!packing) {
     for (const name of ['page-size', 'padding'] as const) {
       if (flags[name] !== undefined) throw new UsageError(`--${name} only means something with --pack`);

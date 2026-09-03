@@ -32,19 +32,46 @@
  * the field this deliberately does not use.
  *
  * ⚠️ **The rendered pictures are equal to within one least significant bit, not
- * bit-for-bit, and the difference is arithmetic rather than texels.** A packed
- * region's UVs are `x / pageWidth` rather than `0..1`, so the sampling coordinate
- * carries one more rounding step (`fl(regionX + fl(s * width))` cannot be exact
- * once `regionX > 0`); the interpolation weight can then differ in its last bit
- * and a `Math.round` sitting exactly on a `.5` boundary lands the other way.
- * Measured: 0 to 480 channel samples of 7 to 21 million on the three public
- * fixtures, worst difference **1**, against 22,000 to 60,000 samples and a worst
- * difference of **77** when the gutter is removed — and byte-identical on eleven
- * of the repository's thirteen rigs across 1,101 frames. Making it exact would mean
- * sampling in region-local coordinates and adding the integer page offset to the
- * tap indices, which is a change to `src/render.ts` that would move every
- * committed reference frame by the same one bit; that is a decision for whoever
- * owns those records, not a side effect of adding a packer.
+ * bit-for-bit, and the difference is arithmetic rather than texels.** Measured: 0
+ * to 480 channel samples of 7 to 21 million on the three public fixtures, worst
+ * difference **1**, against 22,000 to 60,000 samples and a worst difference of
+ * **77** when the gutter is removed — and byte-identical on eleven of the
+ * repository's thirteen rigs across 1,101 frames. The two that are not are the
+ * two with meshes.
+ *
+ * 🔬 **Where that last bit is lost, measured (issue #266, follow-up 1).** This
+ * paragraph used to say the cause was rigc's own sampling coordinate — `fl(regionX
+ * + fl(s · width))` failing to be exact once `regionX > 0` — and that the repair
+ * was to sample in region-local coordinates and add the integer page origin to the
+ * tap indices. **Both halves are wrong, and the second is unreachable.** Poses of
+ * the loose and the packed build of one skeleton, compared coordinate by
+ * coordinate as `u · pageWidth − regionX` against the loose `u · pageWidth`:
+ *
+ *   * on every **region** attachment the difference is **exactly 0**. `regionX`,
+ *     `regionWidth` and `pageWidth` are integers and the page is a power of two,
+ *     so `u · pageWidth` recovers `regionX + localTexel` with nothing lost —
+ *     which is why the eleven region-only rigs are already byte-identical, and
+ *     why `PK18` can assert exactness rather than a bound;
+ *   * on a **mesh** it is **not** 0 — 88 of 88 coordinates on `gallery/squash`'s
+ *     ball, worst 3.15e-5 texels — because `spine-core` stores mesh page UVs in a
+ *     **`Float32Array`**. `MeshAttachment.updateRegion` computes `u +
+ *     regionUVs[i] · width` and rounds the whole thing to float32, so the low bits
+ *     of the scaled coordinate are gone **before rigc reads the array**. The
+ *     counterfactual settles which term does it: the same region at page origin
+ *     `x = 0` still lands 9.5e-7 texels off the loose value, so it is the `f32(u ·
+ *     regionWidth / pageWidth)` scaling and not the origin addition.
+ *
+ * ⇒ **No change to [`src/render.ts`](render.ts) can recover it**, because it reads
+ * `piece.uvs` and the information is not in there. The only routes are for rigc to
+ * re-derive mesh page UVs from `MeshAttachment.regionUVs` in double precision —
+ * a second opinion about the runtime's own trim and rotation mapping, which
+ * `src/render.ts` refuses by name (see `artUvsOf`) — or one part per page, which
+ * is the unpacked convention. And the first would be worse than the residual: the
+ * renderer is the yardstick `check` measures a candidate against *because* it
+ * draws what a runtime draws, and a runtime playing this atlas gets the float32
+ * numbers. Making two rigc renders agree by disagreeing with the runtime is the
+ * wrong trade. So the bound stays a bound, `PK18` attributes it, and the follow-up
+ * is closed as measured rather than done.
  *
  * ## Why a second parser for a format `spine-core` already parses
  *
@@ -499,6 +526,38 @@ function floorPowerOfTwo(n: number): number {
 }
 
 /**
+ * The smallest power-of-two page that holds these cells, and where they land on
+ * it — or `null` when they do not fit `maxEdge x maxEdge` at all.
+ *
+ * Every power-of-two pair up to the maximum is tried in order of increasing
+ * area, then increasing width, so the answer is a total order and two packs of
+ * the same set choose the same page. Powers of two are not decoration:
+ * `region.x / page.width` is the coordinate every texel is read through, and a
+ * power-of-two denominator makes that division exact in binary floating point.
+ *
+ * ⭐ One search, two callers, and that is the point. It picks the single page a
+ * set that fits gets, and it picks each SPILLED page's own size — so "the page
+ * written is the smallest that holds what is on it" is one rule with one
+ * implementation rather than a rule and an exception.
+ */
+function smallestPageFor(
+  cells: Array<{ w: number; h: number }>,
+  maxEdge: number,
+): { width: number; height: number; rects: Rect[] } | null {
+  const edges: number[] = [];
+  for (let e = 1; e <= maxEdge; e *= 2) edges.push(e);
+  const candidates: Array<{ w: number; h: number }> = [];
+  for (const w of edges) for (const h of edges) candidates.push({ w, h });
+  candidates.sort((a, b) => a.w * a.h - b.w * b.h || a.w - b.w);
+  for (const candidate of candidates) {
+    const attempt = packOnePage(cells, candidate.w, candidate.h);
+    if (attempt.some((r) => r === null)) continue;
+    return { width: candidate.w, height: candidate.h, rects: attempt as Rect[] };
+  }
+  return null;
+}
+
+/**
  * MaxRects with Best Short Side Fit, no rotation.
  *
  * The free list starts as the whole page and every placement splits every free
@@ -664,10 +723,16 @@ function extrudeCell(page: Plate, source: Plate, cellX: number, cellY: number, p
  * the one-bit residual described in this file's header would be two roundings
  * deep instead of one.
  *
- * Only when the whole set will not fit one page at the maximum does it spill,
- * and then every page is `pageSize x pageSize`. A single part whose cell is
- * bigger than that is refused by name — silently splitting one drawing across
- * two pages is not a thing the format can express.
+ * Only when the whole set will not fit one page at the maximum does it spill.
+ * **Which parts share a page is then decided at the maximum size** — that is what
+ * makes the boundary deterministic — **and each page is written at the smallest
+ * power-of-two pair that holds the cells assigned to it** (issue #266). So the
+ * rule is the same one either way: the page written is the smallest that holds
+ * what is on it. A spill used to write `pageSize x pageSize` for every page,
+ * which charged a set that overflowed by one small part a second full page of
+ * transparency — 4 MiB of decoded RAM at the 2048 default. A single part whose
+ * cell is bigger than the maximum is refused by name — silently splitting one
+ * drawing across two pages is not a thing the format can express.
  */
 export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResult {
   const pageSize = opts.pageSize ?? DEFAULT_PAGE_SIZE;
@@ -696,36 +761,22 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
     );
   }
 
-  // The smallest power-of-two page that holds the whole set, by area then width.
-  const edges: number[] = [];
-  for (let e = 1; e <= maxEdge; e *= 2) edges.push(e);
-  const candidates: Array<{ w: number; h: number }> = [];
-  for (const w of edges) for (const h of edges) candidates.push({ w, h });
-  candidates.sort((a, b) => a.w * a.h - b.w * b.h || a.w - b.w);
-
-  let pageW = maxEdge;
-  let pageH = maxEdge;
-  let single: Array<Rect | null> | null = null;
-  for (const candidate of candidates) {
-    const attempt = packOnePage(cells, candidate.w, candidate.h);
-    if (attempt.some((r) => r === null)) continue;
-    pageW = candidate.w;
-    pageH = candidate.h;
-    single = attempt;
-    break;
-  }
+  const single = smallestPageFor(cells, maxEdge);
 
   /** page index -> the placements on it, in packing order. */
   const perPage: Placement[][] = [];
+  /** page index -> the size that page is written at. */
+  const pageSizes: Array<{ width: number; height: number }> = [];
   const placements: Placement[] = [];
   if (single !== null) {
     perPage.push([]);
-    single.forEach((rect, i) => {
+    pageSizes.push({ width: single.width, height: single.height });
+    single.rects.forEach((rect, i) => {
       const place: Placement = {
         region: sorted[i].region,
         page: 0,
-        x: rect!.x + padding,
-        y: rect!.y + padding,
+        x: rect.x + padding,
+        y: rect.y + padding,
         width: sorted[i].width,
         height: sorted[i].height,
       };
@@ -733,42 +784,63 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
       placements.push(place);
     });
   } else {
-    // Spill. Every page is the maximum size; parts are taken in packing order
-    // and whatever will not fit the current page opens the next one.
+    // Spill. Which parts share a page is decided at the MAXIMUM size — that is
+    // what makes the boundary deterministic and independent of the shrink below
+    // — and parts are taken in packing order, whatever will not fit the current
+    // page opening the next one.
     let remaining = sorted.map((input, i) => ({ input, cell: cells[i] }));
     while (remaining.length > 0) {
       const pageIndex = perPage.length;
       const attempt = packOnePage(
         remaining.map((r) => r.cell),
-        pageW,
-        pageH,
+        maxEdge,
+        maxEdge,
       );
-      const onThisPage: Placement[] = [];
+      const onPage: Array<{ input: PackInput; cell: { w: number; h: number } }> = [];
       const leftOver: typeof remaining = [];
       attempt.forEach((rect, i) => {
-        if (rect === null) {
-          leftOver.push(remaining[i]);
-          return;
-        }
+        if (rect === null) leftOver.push(remaining[i]);
+        else onPage.push(remaining[i]);
+      });
+      if (onPage.length === 0) {
+        // Unreachable: every cell was proven to fit an empty page above. Kept as
+        // a named stop rather than an infinite loop if that ever stops holding.
+        throw new CompileError(
+          `packing stalled with ${remaining.length} region(s) left and an empty ${maxEdge}x${maxEdge} page`,
+        );
+      }
+      // ⭐ Then the page is written at the smallest power-of-two pair that holds
+      // the cells assigned to it, not at the maximum (issue #266, follow-up 3).
+      // A spill used to write `pageSize x pageSize` for every page, so a set that
+      // overflowed by one small part paid for a second full page of transparency
+      // — 4 MiB of decoded RAM at the 2048 default for a part that might be
+      // 64x64. Re-packing through the same search the single-page case uses is
+      // what keeps "the page written is the smallest that holds what is on it"
+      // one rule; a page whose own cells need the maximum simply gets it back.
+      const shrunk = smallestPageFor(
+        onPage.map((r) => r.cell),
+        maxEdge,
+      );
+      if (shrunk === null) {
+        // Unreachable for the same reason as the stall above: these cells were
+        // just placed on a maxEdge page.
+        throw new CompileError(`page ${pageIndex + 1} of the spill holds ${onPage.length} region(s) that no page fits`);
+      }
+      const onThisPage: Placement[] = [];
+      shrunk.rects.forEach((rect, i) => {
         const place: Placement = {
-          region: remaining[i].input.region,
+          region: onPage[i].input.region,
           page: pageIndex,
           x: rect.x + padding,
           y: rect.y + padding,
-          width: remaining[i].input.width,
-          height: remaining[i].input.height,
+          width: onPage[i].input.width,
+          height: onPage[i].input.height,
         };
         onThisPage.push(place);
         placements.push(place);
       });
-      if (onThisPage.length === 0) {
-        // Unreachable: every cell was proven to fit an empty page above. Kept as
-        // a named stop rather than an infinite loop if that ever stops holding.
-        throw new CompileError(
-          `packing stalled with ${remaining.length} region(s) left and an empty ${pageW}x${pageH} page`,
-        );
-      }
       perPage.push(onThisPage);
+      pageSizes.push({ width: shrunk.width, height: shrunk.height });
       remaining = leftOver;
     }
   }
@@ -779,6 +851,7 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
   const pages: PackedPage[] = [];
   const emitPages: EmitPage[] = [];
   perPage.forEach((onPage, index) => {
+    const { width: pageW, height: pageH } = pageSizes[index];
     const plate = new Plate(pageW, pageH);
     let covered = 0;
     for (const place of onPage) {
