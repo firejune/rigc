@@ -30,6 +30,14 @@ that can see that, and a run that skips it has verified nothing about the motion
   unlinked** for the same reason as the line above: it cites `SPEC_COVERAGE.md` and
   the stored transcriptions, both of which are on the ladder run's forbidden list. Its
   reader was handed a compiled skeleton rather than art and a brief
+- Deciding the **hierarchy** itself — how many bones, where each pivot goes, what
+  hangs off what, what a chain can reach, and which of those the frames can check:
+  `docs/RIGGING.md`. 🚫 **Not an authoring input, and deliberately unlinked** for
+  the same reason as the two lines below: it is a mining of the recorded runs, so it
+  cites their `LOOP.md` files, and following a citation out of an allowed surface is
+  a leak by another route. Its rules are the ones **§8.1**, **§10.3** and
+  **MOTION §3.9** already state, which are allowed reading; what that page adds is
+  provenance and worked demonstrations, for a maintainer
 - Reproducing a shot you were given as pictures: **§8**, and read it *before* you
   start measuring rather than after; **§8.1** if the figure has more joints than you
   can measure one at a time; then **§9** for the loop that closes it
