@@ -111,6 +111,14 @@ import {
   type PosePlacement,
 } from './src/pose.ts';
 import {
+  CHAINFIT_SPEC,
+  DEFAULT_MIN_VISIBLE,
+  estimateChainFit,
+  type ChainFitPart,
+  type ChainFitPlacement,
+  type ChainFitReport,
+} from './src/chainfit.ts';
+import {
   atlasPageNames,
   atlasScales,
   BACKGROUND,
@@ -158,7 +166,7 @@ import {
 } from './src/ballot.ts';
 import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
 import { readPngInfo } from './src/png.ts';
-import type { CompiledImage, CompileResult } from './src/types.ts';
+import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson } from './src/types.ts';
 import { validate, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
@@ -9307,7 +9315,7 @@ function buildPoseFixture(): {
   torso.rect(0, 0, 24, 4, [220, 60, 60, 255]);
   torso.writePng(join(parts, 'torso.png'));
 
-  const arm = poseChecker(10, 26, [200, 160, 60, 255], [150, 110, 30, 255], 5);
+  const arm = poseChecker(10, 30, [200, 160, 60, 255], [150, 110, 30, 255], 5);
   arm.rect(0, 0, 10, 3, [40, 40, 40, 255]);
   arm.writePng(join(parts, 'arm.png'));
 
@@ -9649,6 +9657,682 @@ function runPoseSuite(): number {
         `--help exit=${String(help.status)}; missing dir exit=${String(missing.status)} ` +
         `${JSON.stringify(missing.stderr.split('\n')[0])}`,
       'the JSON is the whole product — an agent reads it and never sees the table — and a mistyped directory must not read as an empty pose',
+    );
+  }
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// reading through the rig: chainfit (issue #284)
+// ---------------------------------------------------------------------------
+
+/**
+ * How close a recovered chain placement has to be to the truth.
+ *
+ * Tighter than `POSE_TOLERANCE` on purpose, and it can be: a chain fit is not
+ * searching for the part, it is searching one angle about a pivot the rig already
+ * fixes, so a correct hinge lands the whole placement rather than approximately
+ * landing it. The hinge tolerance is stated separately because it is the quantity
+ * an author keys.
+ */
+const CHAINFIT_TOLERANCE = { translate: 1.5, rotateDeg: 3, hingeDeg: 3 };
+
+/** The chain-fit fixture: one rig at two setups, rendered into one viewport. */
+interface ChainFitFixture {
+  dir: string;
+  parts: string;
+  /** The candidate — the neutral setup, which is NOT the pose in the frame. */
+  candidate: string;
+  /** A frame of the candidate's own setup pose, for the geometry control. */
+  setupPath: string;
+  setupTruth: Map<string, PosePlacementTruth>;
+  /** A frame of the POSED rig — the picture a chain fit is asked to read. */
+  posedPath: string;
+  posedTruth: Map<string, PosePlacementTruth>;
+  /** A frame with nothing in it at all. */
+  blankPath: string;
+  /** Truth hinge per bone, in Spine degrees: the posed rotation minus the candidate's. */
+  truthHinge: Map<string, number>;
+  /** Slot -> the part PNG file name chainfit will report it under. */
+  fileOfSlot: Map<string, string>;
+}
+
+/**
+ * Two rigs over one set of plates: a candidate at a neutral setup, and the same
+ * skeleton with its limb rotations moved — which is the picture.
+ *
+ * ⭐ Why two rigs rather than one rig and an animation. The situation this
+ * instrument is for is exactly "the candidate's setup is not the pose in the
+ * frame", so the fixture states that directly: every hinge the fit has to find is
+ * the difference between two numbers in two spec files, which makes the known
+ * answer a subtraction rather than a sampled timeline.
+ *
+ * The draw order is the load-bearing part. `trunk` is drawn AFTER the arm, the
+ * hand, the wings and `buried`, so a 24x48 plate sits in front of all of them and
+ * the parts behind it are occluded by construction rather than by luck — and
+ * `buried` sits almost entirely inside its footprint, which is the heavy-occlusion
+ * control. The two wings carry the SAME plate at mirrored angles: that is the
+ * duplication `pose` has to report as ambiguous and a chain fit does not, because
+ * the two hang off two different pivots.
+ */
+function buildChainFitFixture(): ChainFitFixture {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-chainfit-'));
+  const parts = join(dir, 'parts');
+  mkdirSync(parts, { recursive: true });
+
+  const trunk = poseChecker(24, 48, [60, 90, 160, 255], [110, 140, 200, 255], 6);
+  trunk.rect(0, 0, 24, 4, [220, 60, 60, 255]);
+  trunk.writePng(join(parts, 'trunk.png'));
+
+  const arm = poseChecker(10, 26, [200, 160, 60, 255], [150, 110, 30, 255], 5);
+  arm.rect(0, 0, 10, 3, [40, 40, 40, 255]);
+  arm.writePng(join(parts, 'arm.png'));
+
+  const hand = poseChecker(12, 12, [230, 120, 90, 255], [180, 70, 50, 255], 4);
+  hand.rect(0, 0, 4, 4, [20, 20, 20, 255]);
+  hand.writePng(join(parts, 'hand.png'));
+
+  const wing = poseChecker(10, 22, [90, 190, 120, 255], [40, 130, 70, 255], 5);
+  wing.rect(0, 0, 10, 3, [250, 250, 60, 255]);
+  wing.writePng(join(parts, 'wing.png'));
+
+  const buried = poseChecker(14, 18, [200, 60, 200, 255], [120, 20, 120, 255], 4);
+  buried.rect(0, 0, 14, 3, [255, 240, 40, 255]);
+  buried.writePng(join(parts, 'buried.png'));
+
+  const head = poseChecker(22, 22, [230, 200, 170, 255], [200, 160, 130, 255], 11);
+  head.rect(2, 4, 5, 4, [30, 30, 30, 255]);
+  head.rect(15, 4, 5, 4, [30, 30, 30, 255]);
+  head.writePng(join(parts, 'head.png'));
+
+  /** The rig, at whatever limb rotations it is asked for. */
+  const rigText = (name: string, rot: Record<string, number>): string =>
+    `${JSON.stringify(
+      {
+        spec: 'rigc-rig/1',
+        name,
+        skeleton: { width: 240, height: 240 },
+        bones: [
+          { name: 'root' },
+          { name: 'trunk', parent: 'root', x: 0, y: 0 },
+          { name: 'head', parent: 'trunk', x: 0, y: 36 },
+          // The arm's pivot sits at the trunk's own right edge and its plate is
+          // 30 long, so the posed angle straddles that edge: roughly two thirds
+          // of it shows and the trunk, drawn after it, holds the rest.
+          { name: 'arm', parent: 'trunk', x: 9, y: 14, rotation: rot.arm },
+          { name: 'hand', parent: 'arm', x: 0, y: -30, rotation: rot.hand },
+          // Inside the trunk's own plate, so the trunk covers all but a sliver —
+          // and it is given a real hinge to find, so a skipped search does NOT
+          // land on the truth by accident. The measured share is in the report.
+          { name: 'buried', parent: 'trunk', x: 6, y: 10, rotation: rot.buried },
+          { name: 'wing_l', parent: 'trunk', x: -10, y: 20, rotation: rot.wing_l },
+          { name: 'wing_r', parent: 'trunk', x: 10, y: 20, rotation: rot.wing_r },
+        ],
+        // Draw order, back to front. Everything the trunk hides comes first.
+        slots: [
+          { name: 'buried', bone: 'buried', attachment: 'buried' },
+          { name: 'hand', bone: 'hand', attachment: 'hand' },
+          { name: 'arm', bone: 'arm', attachment: 'arm' },
+          { name: 'wing_l', bone: 'wing_l', attachment: 'wing_l' },
+          { name: 'wing_r', bone: 'wing_r', attachment: 'wing_r' },
+          { name: 'trunk', bone: 'trunk', attachment: 'trunk' },
+          { name: 'head', bone: 'head', attachment: 'head' },
+        ],
+        skins: {
+          default: {
+            // ⚠️ Every limb attachment is OFFSET from its bone, and that is what
+            // makes the hinge visible: art centred on its own pivot turns in
+            // place, so a search over one angle would move nothing and a wrong
+            // hinge would cost nothing either.
+            buried: { buried: { image: 'buried.png', y: -4 } },
+            hand: { hand: { image: 'hand.png', y: -6 } },
+            arm: { arm: { image: 'arm.png', y: -15 } },
+            wing_l: { wing_l: { image: 'wing.png', y: -13 } },
+            wing_r: { wing_r: { image: 'wing.png', y: -13 } },
+            trunk: { trunk: { image: 'trunk.png' } },
+            head: { head: { image: 'head.png', y: 8 } },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`;
+
+  // ⚠️ The candidate's setup is NOT the pose, and the two differ by a lot on
+  // purpose: a fit that ignored the picture and reported the rig would pass a
+  // fixture whose two setups were close. Every hinge below is a subtraction.
+  const setupRot = { arm: 70, hand: -40, buried: 0, wing_l: -60, wing_r: 60 };
+  const posedRot = { arm: 20, hand: 30, buried: 35, wing_l: -28, wing_r: 28 };
+  const build = (name: string, rot: Record<string, number>): { outDir: string; posable: Posable } => {
+    const rigPath = join(dir, `${name}.rig.json`);
+    writeFileSync(rigPath, rigText(name, rot));
+    const motionPath = join(dir, `${name}.motion.json`);
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify({ spec: 'rigc-motion/1', archetype: name, cut: name, easings: {}, animations: {} }, null, 2)}\n`,
+    );
+    const outDir = join(dir, name);
+    const built = compile({ rigPath, motionPath, outDir, imagesDir: parts });
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(join(outDir, 'skeleton.json'), built.skeletonText);
+    writeFileSync(join(outDir, 'skeleton.atlas'), built.atlasText);
+    return { outDir, posable: loadPosable(join(outDir, 'skeleton.json'), join(outDir, 'skeleton.atlas'), outDir) };
+  };
+  const candidate = build('candidate', setupRot);
+  const posed = build('posed', posedRot);
+
+  // One viewport for both frames, fitted to the union of the two so neither is
+  // clipped — a placement that fell off the canvas would be measuring the framing.
+  const setupFrames = sampleSetupPose(candidate.posable.data);
+  const posedFrames = sampleSetupPose(posed.posable.data);
+  const bounds = unionBounds([setupFrames, posedFrames]);
+  const scale = 1.15;
+  const pad = 14;
+  const worldW = bounds.maxX - bounds.minX + pad * 2;
+  const worldH = bounds.maxY - bounds.minY + pad * 2;
+  const viewport = viewportOfSize(
+    bounds.minX - pad,
+    bounds.minY - pad,
+    worldW,
+    worldH,
+    scale,
+    Math.round(worldW * scale),
+    Math.round(worldH * scale),
+  );
+  const project = projector(viewport);
+
+  const render = (frames: Frame[], posable: Posable, file: string): { path: string; truth: Map<string, PosePlacementTruth> } => {
+    const plate = renderFrame(frames[0], posable.pages, viewport, BACKGROUND);
+    const path = join(dir, file);
+    plate.writePng(path);
+    const truth = new Map<string, PosePlacementTruth>();
+    for (const piece of frames[0].pieces) {
+      const page = posable.pages.get(piece.page);
+      if (piece.kind !== 'region' || !page) continue;
+      truth.set(piece.slot, poseTruthOf(piece, page, project));
+    }
+    return { path, truth };
+  };
+  const setup = render(setupFrames, candidate.posable, 'setup.png');
+  const posedFrame = render(posedFrames, posed.posable, 'posed.png');
+
+  const blank = new Plate(viewport.width, viewport.height);
+  fill(blank, BACKGROUND);
+  const blankPath = join(dir, 'blank.png');
+  blank.writePng(blankPath);
+
+  const truthHinge = new Map<string, number>();
+  for (const bone of Object.keys(posedRot)) {
+    truthHinge.set(bone, posedRot[bone as keyof typeof posedRot] - setupRot[bone as keyof typeof setupRot]);
+  }
+  truthHinge.set('head', 0);
+
+  return {
+    dir,
+    parts,
+    candidate: candidate.outDir,
+    setupPath: setup.path,
+    setupTruth: setup.truth,
+    posedPath: posedFrame.path,
+    posedTruth: posedFrame.truth,
+    blankPath,
+    truthHinge,
+    fileOfSlot: new Map([
+      ['buried', 'buried.png'],
+      ['hand', 'hand.png'],
+      ['arm', 'arm.png'],
+      ['wing_l', 'wing.png'],
+      ['wing_r', 'wing.png'],
+      ['trunk', 'trunk.png'],
+      ['head', 'head.png'],
+    ]),
+  };
+}
+
+function chainFitDelta(
+  got: ChainFitPlacement,
+  want: PosePlacementTruth,
+): { translate: number; rotateDeg: number } {
+  let turn = (((got.rotationDeg - want.rotationDeg) % 360) + 360) % 360;
+  if (turn > 180) turn -= 360;
+  return { translate: Math.hypot(got.x - want.x, got.y - want.y), rotateDeg: Math.abs(turn) };
+}
+
+function chainFitSay(d: { translate: number; rotateDeg: number }): string {
+  return `Δpos ${d.translate.toFixed(2)}px Δrot ${d.rotateDeg.toFixed(2)}°`;
+}
+
+function chainFitWithin(d: { translate: number; rotateDeg: number }): boolean {
+  return d.translate <= CHAINFIT_TOLERANCE.translate && d.rotateDeg <= CHAINFIT_TOLERANCE.rotateDeg;
+}
+
+/**
+ * The chain-fit suite, one control per behaviour the instrument claims.
+ *
+ * Where a control could pass for the wrong reason it carries its own deliberate
+ * break beside it — the visibility floor is checked with the floor turned off, the
+ * one-degree-of-freedom claim is checked by pinning the hinge window shut, and the
+ * masking claim is checked against `pose` on the same frame, which is the same
+ * objective with the occluders left in.
+ */
+function runChainFitSuite(): number {
+  console.log('\n── reading a pose through the rig: chainfit (issue #284) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const fixture = buildChainFitFixture();
+  const partOf = (report: ChainFitReport, slot: string): ChainFitPart => {
+    const hit = report.parts.find((p) => p.slot === slot);
+    if (!hit) throw new Error(`internal: the chainfit report has no slot "${slot}"`);
+    return hit;
+  };
+  const wantSetup = (slot: string): PosePlacementTruth => {
+    const t = fixture.setupTruth.get(slot);
+    if (!t) throw new Error(`internal: the fixture posed no slot "${slot}" at setup`);
+    return t;
+  };
+  const wantPosed = (slot: string): PosePlacementTruth => {
+    const t = fixture.posedTruth.get(slot);
+    if (!t) throw new Error(`internal: the fixture posed no slot "${slot}"`);
+    return t;
+  };
+  /**
+   * The parts `pose` cannot answer on this frame, and therefore the ones the chain
+   * has to buy: the arm straddles the trunk's edge, and the two wings are one
+   * plate in two places, which `pose` is right to call ambiguous.
+   */
+  const BOUGHT = ['arm', 'wing_l', 'wing_r'];
+
+  // --- the geometry, on its own ---------------------------------------------
+  //
+  // ⭐ The control the whole file rests on. One anchor is pinned to the trunk's
+  // OWN truth and the hinge window is shut, so nothing is searched and nothing is
+  // masked out of a search: what is left is the composition — bone offsets,
+  // attachment offsets, the y flip and the units-per-pixel the anchor implies —
+  // against the renderer's own posed quads. A sign error anywhere in it shows up
+  // here as tens of pixels and nowhere else as anything at all.
+  {
+    const anchorPath = join(fixture.dir, 'anchor-setup.json');
+    const base = estimatePose({
+      imagesDir: fixture.parts,
+      framePath: fixture.setupPath,
+      parts: [join(fixture.parts, 'trunk.png')],
+    });
+    const truth = wantSetup('trunk');
+    for (const part of base.parts) {
+      if (part.part !== 'trunk.png' || part.placement === null) continue;
+      part.placement = { ...part.placement, x: truth.x, y: truth.y, rotationDeg: truth.rotationDeg, scale: truth.scale, residual: 0, unexplained: 0 };
+      part.refusal = null;
+      part.ambiguous = false;
+    }
+    writeFileSync(anchorPath, `${JSON.stringify(base, null, 1)}\n`);
+
+    const report = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.setupPath,
+      anchorPath,
+      hinge: { minDeg: 0, maxDeg: 0 },
+    });
+    const rows = [...fixture.fileOfSlot.keys()].map((slot) => {
+      const got = partOf(report, slot).placement;
+      return { slot, delta: got === null ? null : chainFitDelta(got, wantSetup(slot)) };
+    });
+    const worst = rows.reduce((a, r) => Math.max(a, r.delta?.translate ?? Infinity), 0);
+    const worstRot = rows.reduce((a, r) => Math.max(a, r.delta?.rotateDeg ?? Infinity), 0);
+    say(
+      'CF01_THE_CHAIN_COMPOSITION_REPRODUCES_THE_RENDERER',
+      worst <= 0.02 && worstRot <= 0.02,
+      `one anchor on trunk, hinge window shut: worst Δpos ${worst.toFixed(4)}px, worst Δrot ${worstRot.toFixed(4)}° over ` +
+        `${rows.length} slots (${rows.map((r) => `${r.slot} ${r.delta ? chainFitSay(r.delta) : 'no placement'}`).join(' · ')})`,
+      'every hinge below is measured through this composition, so a sign or a y-flip error here would be reported as a confident wrong pose everywhere else',
+    );
+  }
+
+  // --- the instrument, on the posed frame -----------------------------------
+  const posed = estimateChainFit({
+    candidatePath: fixture.candidate,
+    imagesDir: fixture.parts,
+    framePath: fixture.posedPath,
+  });
+  const poseOnly = estimatePose({ imagesDir: fixture.parts, framePath: fixture.posedPath });
+
+  {
+    const readRow = (report: ChainFitReport, slot: string): {
+      slot: string;
+      role: string;
+      depth: number;
+      refusal: string | null;
+      eligible: boolean | null;
+      delta: { translate: number; rotateDeg: number } | null;
+      hingeErr: number;
+      visible: number;
+      residual: number;
+    } => {
+      const part = partOf(report, slot);
+      const hinge = part.placement?.hingeDeg ?? null;
+      const truth = fixture.truthHinge.get(part.bone.name) ?? 0;
+      return {
+        slot,
+        role: part.role,
+        depth: part.bone.depth,
+        refusal: part.refusal?.reason ?? null,
+        eligible: part.anchorVerdict?.eligible ?? null,
+        delta: part.placement === null ? null : chainFitDelta(part.placement, wantPosed(slot)),
+        hingeErr: hinge === null ? Infinity : Math.abs(((hinge - truth + 540) % 360) - 180),
+        visible: part.placement?.visibleShare ?? 0,
+        residual: part.placement?.residual ?? 1,
+      };
+    };
+    const good = (r: ReturnType<typeof readRow>): boolean =>
+      r.role === 'chain' && r.refusal === null && r.delta !== null && chainFitWithin(r.delta) && r.hingeErr <= CHAINFIT_TOLERANCE.hingeDeg;
+    const rows = BOUGHT.map((slot) => readRow(posed, slot));
+    // Every one of these has to be a part the anchor pass declined, or the control
+    // is measuring `pose` and reporting it as a chain fit.
+    const declined = rows.every((r) => r.eligible === false);
+
+    // ⭐ And one run anchored on the trunk ALONE, so nothing distal can anchor and
+    // `hand` has to arrive two links out — the depth the walk exists for.
+    const anchorPath = join(fixture.dir, 'anchor-posed.json');
+    writeFileSync(
+      anchorPath,
+      `${JSON.stringify(
+        estimatePose({ imagesDir: fixture.parts, framePath: fixture.posedPath, parts: [join(fixture.parts, 'trunk.png')] }),
+        null,
+        1,
+      )}\n`,
+    );
+    const trunkOnly = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.posedPath,
+      anchorPath,
+    });
+    const deep = readRow(trunkOnly, 'hand');
+    say(
+      'CF02_A_PARTIALLY_OCCLUDED_CHILD_IS_RECOVERED_FROM_ITS_PARENT',
+      rows.every(good) && declined && good(deep) && deep.depth === 2,
+      rows
+        .map(
+          (r) =>
+            `${r.slot} depth ${r.depth} ${r.delta ? chainFitSay(r.delta) : 'no placement'} Δhinge ` +
+            `${r.hingeErr.toFixed(2)}° visible ${(r.visible * 100).toFixed(0)}% residual ${r.residual.toFixed(4)} ` +
+            `(pose eligible=${String(r.eligible)})${r.refusal ? ` REFUSED ${r.refusal}` : ''}`,
+        )
+        .join('  ·  ') +
+        `  ·  anchored on the trunk alone: hand depth ${deep.depth} ${deep.delta ? chainFitSay(deep.delta) : 'no placement'} ` +
+        `Δhinge ${deep.hingeErr.toFixed(2)}° visible ${(deep.visible * 100).toFixed(0)}%`,
+      'this is the whole claim — the parts pose refuses become readable by hanging them off a parent it does not refuse, however many links out they are',
+    );
+  }
+
+  // --- the mask, measured against the instrument that does not have one ------
+  //
+  // 🚨 `pose` IS the negative control here, and a shipped one rather than a
+  // switch added for the test: same objective, same frame, same art, occluders
+  // left in the denominator. If masking bought nothing, the two would agree.
+  {
+    const rows = BOUGHT.map((slot) => {
+      const mine = partOf(posed, slot).placement;
+      const file = fixture.fileOfSlot.get(slot) ?? '';
+      const theirs = poseOnly.parts.find((p) => p.part === file);
+      return {
+        slot,
+        mine: mine?.residual ?? 1,
+        visible: mine?.visibleShare ?? 0,
+        theirs: theirs?.placement?.residual ?? 1,
+        theirsUnexplained: theirs?.placement?.unexplained ?? 1,
+        theirsRefused: theirs?.refusal !== null && theirs?.refusal !== undefined,
+        theirsAmbiguous: theirs?.ambiguous ?? false,
+      };
+    });
+    // The claim is directional and per part: with the occluder taken out of the
+    // denominator every one of these reads better than it does with it left in.
+    const better = rows.every((r) => r.mine < r.theirs);
+    const partial = rows.every((r) => r.visible < 1);
+    say(
+      'CF03_THE_MASK_IS_LOAD_BEARING_AND_POSE_IS_THE_CONTROL',
+      better && partial,
+      rows
+        .map(
+          (r) =>
+            `${r.slot} chainfit ${r.mine.toFixed(4)} on ${(r.visible * 100).toFixed(0)}% visible vs pose ` +
+            `${r.theirs.toFixed(4)} (unexplained ${(r.theirsUnexplained * 100).toFixed(0)}%` +
+            `${r.theirsRefused ? ', refused' : ''}${r.theirsAmbiguous ? ', ambiguous' : ''})`,
+        )
+        .join('  ·  '),
+      'a residual that did not improve when the occluders left the denominator would mean the mask is not being applied',
+    );
+  }
+
+  // --- the heavy-occlusion control ------------------------------------------
+  //
+  // ⚠️ Two outcomes are correct and the third is not. `buried` sits inside the
+  // trunk's own footprint, so either the sliver that shows is enough to rank the
+  // truth first, or it is not and the instrument says so by name and by number.
+  // Reporting a confident wrong hinge is the failure this control exists for.
+  {
+    const part = partOf(posed, 'buried');
+    const placement = part.placement;
+    const delta = placement === null ? null : chainFitDelta(placement, wantPosed('buried'));
+    const share = placement?.visibleShare ?? 0;
+    const recovered = delta !== null && chainFitWithin(delta);
+    const refusedByName =
+      part.refusal?.reason === 'occluded' &&
+      part.refusal.detail.includes(String(posed.search.minVisible)) &&
+      part.refusal.detail.includes(`${(share * 100).toFixed(1)}%`) &&
+      placement !== null;
+    say(
+      'CF04_A_HEAVY_OCCLUDER_RANKS_THE_TRUTH_FIRST_OR_REFUSES_BY_NAME',
+      recovered || refusedByName,
+      `buried is ${(share * 100).toFixed(1)}% visible (${placement?.scoredPixels ?? 0} px scored): ` +
+        `${delta ? chainFitSay(delta) : 'no placement'}, refusal ${part.refusal?.reason ?? 'none'}; ` +
+        `recovered=${recovered} refused-by-name=${refusedByName}. ${part.refusal?.detail ?? ''}`,
+      'a sliver of a part is not a measurement of that part, and the one answer that must never come back is a confident wrong one',
+    );
+  }
+
+  // --- one degree of freedom, proved by pinning it --------------------------
+  //
+  // 🚨 The deliberate break for the DOF claim. A four-degree-of-freedom search
+  // cannot be pinned by one flag: if `--hinge 12,12` still moves a part's centre
+  // or its scale, then something other than the hinge is being searched.
+  {
+    const pinned = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.posedPath,
+      hinge: { minDeg: 12, maxDeg: 12 },
+    });
+    const chain = pinned.parts.filter((p) => p.role === 'chain' && p.placement !== null);
+    const allPinned = chain.every((p) => Math.abs((p.placement?.hingeDeg ?? 0) - 12) <= 1e-6 || p.placement?.hingeDeg === 0);
+    const searched = chain.filter((p) => Math.abs((p.placement?.hingeDeg ?? 0) - 12) <= 1e-6);
+    const anchorScale = partOf(pinned, 'trunk').placement?.scale ?? 0;
+    const sameScale = chain.every((p) => Math.abs((p.placement?.scale ?? 0) / anchorScale - 1) <= 1e-6);
+    const stated =
+      pinned.search.hinge.minDeg === 12 &&
+      pinned.search.hinge.maxDeg === 12 &&
+      chain.every((p) => p.bone.window.hingeMinDeg === 12 && p.bone.window.hingeMaxDeg === 12);
+    say(
+      'CF05_ONLY_THE_HINGE_IS_SEARCHED_AND_THE_WINDOW_IS_A_PROMISE',
+      allPinned && searched.length > 0 && sameScale && stated,
+      `--hinge 12,12: ${searched.length} of ${chain.length} chain part(s) report hinge 12° exactly (the rest were ` +
+        `below the visibility floor and kept the rig's own 0°), every scale equal to the anchor's ${anchorScale.toFixed(5)} ` +
+        `= ${sameScale}, window restated per part = ${stated}`,
+      'the DOF reduction is the reason this instrument is affordable at all; a polish free to leave the window would report an answer nobody searched',
+    );
+  }
+
+  // --- duplication, which the structure resolves ----------------------------
+  {
+    const wingFile = 'wing.png';
+    const theirs = poseOnly.parts.find((p) => p.part === wingFile);
+    const left = partOf(posed, 'wing_l');
+    const right = partOf(posed, 'wing_r');
+    const leftDelta = left.placement === null ? null : chainFitDelta(left.placement, wantPosed('wing_l'));
+    const rightDelta = right.placement === null ? null : chainFitDelta(right.placement, wantPosed('wing_r'));
+    const ok =
+      (theirs?.ambiguous ?? false) &&
+      !left.ambiguous &&
+      !right.ambiguous &&
+      leftDelta !== null &&
+      rightDelta !== null &&
+      chainFitWithin(leftDelta) &&
+      chainFitWithin(rightDelta);
+    say(
+      'CF06_TWO_IDENTICAL_LIMBS_STOP_BEING_AMBIGUOUS_ONCE_THEY_HAVE_PIVOTS',
+      ok,
+      `pose on ${wingFile}: ambiguous=${theirs?.ambiguous ?? false} with ${theirs?.alternates.length ?? 0} alternate(s); ` +
+        `chainfit wing_l ${leftDelta ? chainFitSay(leftDelta) : 'none'} ambiguous=${left.ambiguous}, ` +
+        `wing_r ${rightDelta ? chainFitSay(rightDelta) : 'none'} ambiguous=${right.ambiguous}`,
+      'one plate in two places is the ambiguity pose is right to report, and the thing a rig removes: two pivots, two arcs, one answer each',
+    );
+  }
+
+  // --- the visibility floor, with the floor turned off ----------------------
+  //
+  // The break for CF04's refusal: with `--min-visible 0` the same sliver is
+  // searched and answered, so the floor is what stops a number from being printed
+  // rather than a coincidence of this fixture.
+  {
+    const open = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.posedPath,
+      minVisible: 0,
+    });
+    const closed = partOf(posed, 'buried');
+    const opened = partOf(open, 'buried');
+    const floorHeld = closed.refusal?.reason === 'occluded' || (closed.placement !== null && closed.placement.visibleShare >= posed.search.minVisible);
+    const floorLifted = opened.refusal?.reason !== 'occluded';
+    const stated = open.search.minVisible === 0 && posed.search.minVisible === DEFAULT_MIN_VISIBLE;
+    say(
+      'CF07_THE_VISIBILITY_FLOOR_IS_WHAT_REFUSES_AND_IT_IS_A_REPORTED_FIELD',
+      floorHeld && floorLifted && stated,
+      `default floor ${posed.search.minVisible}: buried refusal ${closed.refusal?.reason ?? 'none'} at ` +
+        `${((closed.placement?.visibleShare ?? 0) * 100).toFixed(1)}% visible; --min-visible 0: refusal ` +
+        `${opened.refusal?.reason ?? 'none'}`,
+      'a floor nobody has seen lift is not a floor, and a caller who wants the sliver has to be able to ask for it',
+    );
+  }
+
+  // --- no anchor, no answer -------------------------------------------------
+  {
+    const blank = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.blankPath,
+    });
+    const every = blank.parts.every(
+      (p) => p.refusal?.reason === 'no-anchor' && p.placement === null && p.role === 'unplaced' && p.refusal.detail.includes(p.bone.name),
+    );
+    const anchored = blank.anchor.anchored.length === 0;
+    say(
+      'CF08_WITH_NOTHING_TO_ANCHOR_ON_EVERY_PART_IS_REFUSED_BY_NAME',
+      every && anchored,
+      `a frame with nothing in it: ${blank.parts.length} part(s), all no-anchor = ${every}, anchors found ` +
+        `${blank.anchor.anchored.length}; first detail ${JSON.stringify(blank.parts[0]?.refusal?.detail ?? '')}`,
+      'a chain fit is only as good as its trunk, so "I had nothing to hang this on" has to be a named refusal and not a placement',
+    );
+  }
+
+  // --- geometry this instrument does not model ------------------------------
+  //
+  // Forged rather than authored: rigc will not emit a sheared bone or a
+  // non-uniform region, and those are exactly the shapes a foreign editor export
+  // arrives with. Each has to be refused by name and by object.
+  {
+    const forgedDir = join(fixture.dir, 'forged');
+    mkdirSync(forgedDir, { recursive: true });
+    copyFileSync(join(fixture.candidate, 'skeleton.atlas'), join(forgedDir, 'skeleton.atlas'));
+    const skel = JSON.parse(readFileSync(join(fixture.candidate, 'skeleton.json'), 'utf8')) as SpineSkeletonJson;
+    for (const bone of skel.bones) if (bone.name === 'wing_r') bone.shearX = 12;
+    const attachments = skel.skins[0].attachments;
+    attachments.hand = { hand: { type: 'mesh', uvs: [0, 0, 1, 0, 1, 1], triangles: [0, 1, 2], vertices: [0, 0, 1, 0, 1, 1], hull: 3, width: 12, height: 12 } };
+    const wingL = attachments.wing_l.wing_l as SpineRegionAttachment;
+    wingL.path = 'not-a-file-in-the-parts-directory';
+    writeFileSync(join(forgedDir, 'skeleton.json'), `${JSON.stringify(skel, null, 1)}\n`);
+
+    const forged = estimateChainFit({
+      candidatePath: forgedDir,
+      imagesDir: fixture.parts,
+      framePath: fixture.posedPath,
+    });
+    const sheared = forged.parts.find((p) => p.slot === 'wing_r');
+    const missing = forged.parts.find((p) => p.slot === 'wing_l');
+    const mesh = forged.caveats.some((c) => c.includes('"hand"') && c.includes('mesh'));
+    const ok =
+      sheared?.refusal?.reason === 'unsupported-geometry' &&
+      sheared.refusal.detail.includes('shear') &&
+      sheared.refusal.detail.includes('wing_r') &&
+      sheared.placement === null &&
+      missing?.refusal?.reason === 'no-part-image' &&
+      missing.refusal.detail.includes('not-a-file-in-the-parts-directory') &&
+      mesh;
+    say(
+      'CF09_GEOMETRY_THIS_CANNOT_COMPOSE_IS_REFUSED_BY_NAME_AND_BY_OBJECT',
+      ok,
+      `sheared bone: ${sheared?.refusal?.reason ?? 'none'} ${JSON.stringify(sheared?.refusal?.detail ?? '')}; ` +
+        `missing image: ${missing?.refusal?.reason ?? 'none'}; mesh attachment named in caveats = ${mesh}`,
+      'shear and a non-uniform scale are not similarities, so composing through them would put a plausible number on geometry this file does not model',
+    );
+  }
+
+  // --- the command ----------------------------------------------------------
+  {
+    const out = join(fixture.dir, 'chainfit.json');
+    const run = runCli([
+      'chainfit',
+      '--candidate',
+      fixture.candidate,
+      '--images',
+      fixture.parts,
+      '--frame',
+      fixture.posedPath,
+      '--out',
+      out,
+    ]);
+    let written: { spec?: string; parts?: unknown[] } | null = null;
+    if (existsSync(out)) written = JSON.parse(readFileSync(out, 'utf8')) as { spec?: string; parts?: unknown[] };
+    const help = runCli(['chainfit', '--help']);
+    const missing = runCli(['chainfit', '--candidate', join(fixture.dir, 'nope'), '--images', fixture.parts, '--frame', fixture.posedPath]);
+    const clash = runCli([
+      'chainfit',
+      '--candidate',
+      fixture.candidate,
+      '--images',
+      fixture.parts,
+      '--frame',
+      fixture.posedPath,
+      '--anchor',
+      join(fixture.dir, 'anchor-setup.json'),
+      '--scale',
+      '1,1',
+    ]);
+    const ok =
+      run.status === 0 &&
+      written?.spec === CHAINFIT_SPEC &&
+      (written.parts?.length ?? 0) === 7 &&
+      run.stdout.includes('ANCHOR') &&
+      run.stdout.includes('CHAIN ') &&
+      help.status === 0 &&
+      help.stdout.includes('--hinge') &&
+      help.stdout.includes('--min-visible') &&
+      help.stdout.includes('--anchor') &&
+      missing.status === 2 &&
+      missing.stderr.includes('nothing at') &&
+      clash.status === 2 &&
+      clash.stderr.includes('--scale and --rotation size the internal anchor pass');
+    say(
+      'CF10_THE_COMMAND_WRITES_ITS_REPORT_AND_REFUSES_A_CONTRADICTION',
+      ok,
+      `chainfit exit=${String(run.status)} spec=${written?.spec ?? 'none'} parts=${written?.parts?.length ?? 0}; ` +
+        `--help exit=${String(help.status)}; missing candidate exit=${String(missing.status)}; ` +
+        `--anchor with --scale exit=${String(clash.status)} ${JSON.stringify(clash.stderr.split('\n')[0])}`,
+      'the JSON is the whole product, and a flag pair that cannot both mean anything has to say so instead of quietly ignoring one of them',
     );
   }
 
@@ -10208,6 +10892,8 @@ function main(): void {
   substantive += 11;
   bad += runPoseSuite();
   substantive += 10;
+  bad += runChainFitSuite();
+  substantive += 10;
   bad += runBallotSuite();
   substantive += 13;
   bad += runCopyImagesSuite();
@@ -10341,6 +11027,16 @@ function main(): void {
       'residual rises while its placement does not move, a knocked-out ground read the same as a flat one, the ' +
       'declared scale window honoured in both directions, and the command writing its JSON while a mistyped ' +
       'directory is refused by name)' +
+      ', + 10 chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
+      'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
+      '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
+      'and 3° with a fourth arriving two links out under a trunk-only anchor, every one of their residuals lower ' +
+      'over the visible pixels than `pose`\'s over all of them, a part the trunk covers ranking the truth first or ' +
+      'refusing by the visibility floor with the measured share in the message, `--hinge 12,12` pinning every ' +
+      'chain answer to 12° and every scale to the anchor\'s — which no four-degree search could be — the same ' +
+      'floor lifted by `--min-visible 0`, a frame with nothing in it refusing every part `no-anchor` by bone, a ' +
+      'sheared bone / a mesh attachment / an unresolvable image each refused by their own reason and object, and ' +
+      'the command writing its JSON while --anchor with --scale is refused as the contradiction it is)' +
       ', + 13 ballot controls (two candidates embedded whole in one page, neutral A/B panes with both source paths ' +
       'in the manifest and nowhere else, a ballot id that derives from the candidate digests and changes when the ' +
       'panes swap, a winner and a tie each landing as a ledger line carrying the winning DIGEST and its coverage, ' +
