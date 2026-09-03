@@ -808,9 +808,10 @@ to call an audit:**
    build**, so it catches a *regression* and cannot validate a *first authoring*.
    There is no reference for a face nobody has drawn yet.
 2. **A wrong projection is a whisper in the aggregate.** Inverting a whole band —
-   0.637 where it should be 1.319, the head's edge turning the wrong way — moves
-   the mean MAE by **0.20 of 255**. Nothing about that number says *"the
-   winding"*; you have to already suspect it.
+   the far edge stretching to **1.363** where it should compress to **0.637**, so
+   the head's own edge turns the wrong way — moves the mean MAE by **0.20 of
+   255**. Nothing about that number says *"the winding"*; you have to already
+   suspect it.
 3. **The `slot drift` column cannot see it at all.** It was `1.2 px "lid_r"` in
    **all three** runs above, unchanged, because drift is attributed per **slot**
    and a folded head mesh is entirely inside one slot.
@@ -860,8 +861,8 @@ are, and those commands regenerate the rest. **The frames to look at:**
 | `render/idle@25fps/f0028.png` | the blink, shut |
 | `render/gaze@25fps/f0015.png` | the gaze, held |
 
-**What those commands print, on a clean checkout at `gallery/portrait`'s merge
-commit** (re-run verbatim for this page):
+**What those commands print** — re-run verbatim for this page, from a checkout
+with no `build/`, `render/` or `preview.html` in that directory:
 
 | Command | What came back |
 | --- | --- |
