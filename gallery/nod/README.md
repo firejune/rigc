@@ -421,7 +421,8 @@ outline.
 ### 🚨 The failure this mesh *does* have: a wavelength its rows cannot sample
 
 The rows are 40 apart, so the mesh can only carry a sinusoid the rows actually
-sample. Reproduce:
+sample. Reproduce — `80` now exits 1 on the `build`, so its `explain` has no
+artifact to read and the refusal below is the whole output:
 
 ```sh
 for wl in 80 160; do
@@ -435,20 +436,35 @@ done
 | --- | --- | --- | --- |
 | 320 (shipped) | 8 | a sinusoid | green |
 | 160 | 4 | `0, −A, 0, +A, 0, …` — a zigzag, not a curve | green |
-| **80** | **2** | at phase 0, **nothing at all** | **green** |
+| **80** | **2** | at phase 0, **nothing at all** | **refused** |
 
-```
-  DEFORM  idle  default/ear_l/ear_l  key 0  t=0.000000  transform wave  amplitude=10 wavelength=80 phase=0 along=y axis=x
-          moved      0 of 22 vertices — this key IS the setup pose, so every figure is the identity (20 triangles, all kept)
-```
-
-🚨 **A key that states a 10-unit ripple, emits an all-zero run, and gates green
+🚨 **A key that stated a 10-unit ripple, emitted an all-zero run, and gated green
 under both profiles.** Every row lands on a zero crossing, so the model is
-sampled to nothing. `A35` is satisfied (the run fits), `A39` is satisfied (no
-triangle moved), and the **only** thing in the toolchain that says so is
-`explain`'s `moved 0 of 22 vertices` line. That is filed —
-[#350](https://github.com/firejune/rigc/issues/350) — and until it is a refusal,
-the rule to author by is arithmetic:
+sampled to nothing. `A35` was satisfied (the run fits), `A39` was satisfied (no
+triangle moved), and the only thing in the toolchain that said so was `explain`'s
+`moved 0 of 22 vertices` line — which is the sentence AUTHORING §4.11 uses for a
+`{ "t": … }` key with no run at all, a deliberate construct. A key that stated a
+model and lost it is not the same event.
+
+⭐ **It is a refusal now** ([#350](https://github.com/firejune/rigc/issues/350)),
+and the row above is what the compiler says instead:
+
+```
+rigc compile error: animation "idle" deform default/ear_l/ear_l (t=0): transform wave states
+amplitude=10 wavelength=80 phase=0 along=y axis=x, and every one of this attachment's 22
+vertices evaluates to an offset of 0 — the largest value the closed form reached at any of
+them is 1.225e-14, which quantises to 0 at the six decimals every emitted number carries.
+So the key states a deformation and emits the identity, and nothing downstream can tell it
+apart from a key that meant the setup pose. The closest two distinct y coordinates in this
+attachment are 40 apart, and a sinusoid has to be sampled to exist: a wavelength of at least
+4x that (160) to read as a wave at all and 8x (320) to read as a curve, where this key
+states 2x. …
+```
+
+📌 **The 160 row is still green and that is deliberate.** A zigzag is a *bad*
+wave rather than an absent one, so it belongs to authoring judgement and not to a
+refusal — which is why the arithmetic below is still the rule to author by rather
+than something the compiler now enforces for you:
 
 ⭐ **`wavelength ≥ 4 × row spacing` to get a wave at all, `≥ 8 ×` to get a
 curve.** This mesh's 40-unit rows against a 320 wavelength give 8, and the strip
@@ -610,7 +626,7 @@ rebuild.
 
 | | |
 | --- | --- |
-| [#350](https://github.com/firejune/rigc/issues/350) | a `deform` `transform` that evaluates to an **all-zero run** is not refused — a stated 10-unit `wave` at `wavelength 80` on 40-unit rows emits nothing and gates green under both profiles |
+| [#350](https://github.com/firejune/rigc/issues/350) | ✅ **fixed** — a `deform` `transform` that evaluated to an **all-zero run** was not refused: a stated 10-unit `wave` at `wavelength 80` on 40-unit rows emitted nothing and gated green under both profiles. It is a `CompileError` now, and a key that *means* the identity states it in its own parameters |
 | [#351](https://github.com/firejune/rigc/issues/351) | `src/trackgen.ts`'s `depth` doc comment says *"Deeper is further from the viewer"*, which is the **wrong sign**: FACE §1 has `z` toward the viewer, and `portrait`'s own nose at `depth 192` against a surface at `170` is in front |
 | [#352](https://github.com/firejune/rigc/issues/352) | AUTHORING §4.11.1's and §4.5.1's *Worked case* columns still read `—` for `pitch` and `wave`, and the worked-example lists in §4.11, §4.11.2 and FACE.md do not mention this example |
 

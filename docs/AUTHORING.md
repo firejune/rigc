@@ -2014,7 +2014,7 @@ axis is a stretch and `affine` states that. `power: 1` is an affine shear and
 instead of tilting. `about` defaults to 0 (or `[0, 0]`), `phase` to 0 and `power`
 to 2; nothing else has a default.
 
-Five things this construct is bounded by, and each one is a refusal rather than a
+Six things this construct is bounded by, and each one is a refusal rather than a
 convention:
 
 **It covers every vertex, always.** A transform is a model of the attachment, not
@@ -2044,6 +2044,22 @@ says so — the construct removes the transcription, not the arithmetic's
 consequences. One kind is the exception and it is an exception with a proof:
 `affine` refuses a determinant at or below zero, and above zero a positive
 determinant means no triangle **can** reverse.
+
+**A model that evaluates to nothing is refused too**
+([#350](https://github.com/firejune/rigc/issues/350)). Every parameter can be
+individually legal and the model still come out as a **run of zeros** — a `wave`
+whose wavelength puts every vertex on a zero crossing, a `bend` over a span the
+part barely enters. The key then claims a deformation, emits the identity and
+gates green: `A35` is right that the run fits and `A39` is right that no triangle
+moved, so the compiler is the only place it can be said. ⭐ **What distinguishes
+it is where the identity is stated.** A key that *means* the setup pose says so
+in its own parameters — `degrees: 0` (or any whole revolution), `amplitude: 0`,
+`amount: 0`, `scale: [1, 1]` — or carries no run at all, and those compile. The
+refused pair is parameters that state a deformation beside an evaluation that is
+the identity. The message names the vertex count, the largest value the closed
+form reached before quantising, and the measured fact behind the usual cause: for
+a wave, the closest two distinct coordinates it read and the ratio the wavelength
+makes against them.
 
 **It is auditable.** `explain` prints the model, the scalars the closed form
 derived from it, and every offset it produced — the emitted ones, not a second
@@ -2316,6 +2332,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `deform … (t=…): … has no single space to evaluate it in` | §4.11.1 — the attachment's vertices are in several bind spaces; key the control bone, or write the pairs with `offset` |
 | `deform … (t=…): transform yaw has radius R, and vertex v sits at x=… past it` | §4.11.1 — the cylinder has no surface there; raise the radius to where the part sits |
 | `deform … (t=…): transform affine has scale […], whose determinant is …` | §4.11.1 — at or below zero the map reverses every triangle |
+| `deform … (t=…): transform <kind> states …, and every one of this attachment's N vertices evaluates to an offset of 0` | §4.11.1 — the parameters state a deformation and the geometry sampled it to nothing; the message names the measured cause. A key that means the setup pose states the identity in its parameters, or carries no run |
 | `vertexCount is N, which is not a multiple of 3` | §3.4 — a path's vertices are knots and handles read in groups of three: `3(K + 1)` open, `3K` closed |
 | `vertexCount is N and an open path needs at least 6` | §3.4 — an open path drops its first and last point, so it needs six for one curve |
 | `"lengths" is not authored — rigc measures the setup arc length of each curve` | §3.4 — delete the array; it is a measurement of the vertices above it |

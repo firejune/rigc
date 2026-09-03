@@ -20,7 +20,7 @@
  * author can sweep a parameter, and a reviewer can check a claim instead of a
  * transcription.
  *
- * ## What this is NOT, and the two rules that keep it that way
+ * ## What this is NOT, and the three rules that keep it that way
  *
  * 1. **It never authors.** Every parameter arrives from the spec — the angle,
  *    the radius, the amplitude, the point a scale is about. Nothing here has a
@@ -31,6 +31,14 @@
  *    that key states, and the blend between two keys is still the deform
  *    timeline's own single 0..1 channel. Sweeping an angle is editing one number
  *    per key, never asking the compiler to interpolate a model.
+ * 3. **A parameter that cannot mean what it says is refused by name**, on the
+ *    principle that a parameter changing nothing is a reader's false lead about
+ *    which model produced the numbers: `wavelength: 0`, a determinant at or
+ *    below 0, a radius that falls inside the part. Since issue #350 that extends
+ *    one step later, to a model whose parameters are each legal and whose
+ *    *evaluation* is an all-zero run — the refusal at the bottom of
+ *    `evaluateDeformTransform`, whose whole difficulty is telling that apart
+ *    from a key that means the identity and says so.
  *
  * ## Determinism
  *
@@ -100,12 +108,24 @@ export interface DeformAffine {
   about?: [number, number];
 }
 
-/** A sinusoid of one coordinate, displacing along another. */
+/**
+ * A sinusoid of one coordinate, displacing along another.
+ *
+ * ⚠️ **A wavelength is only as real as the geometry that samples it.** The mesh
+ * carries the wave at the coordinates it happens to have, so a period short
+ * against the spacing of those coordinates does not make a smaller ripple — it
+ * makes a different model. Against a spacing of `s`: `wavelength ≥ 4s` to read
+ * as a wave at all and `≥ 8s` to read as a curve; at `2s` every sample lands on
+ * the same pair of phases, which is a zigzag, and at that pair's zero crossings
+ * it is nothing at all. The last of those is refused (issue #350) because it
+ * emits an all-zero run while claiming an amplitude; the zigzag is not, because
+ * it is a bad wave rather than an absent one and that is authoring judgement.
+ */
 export interface DeformWave {
   kind: 'wave';
   /** Peak displacement, in the attachment's own units. */
   amplitude: number;
-  /** One period, in the same units as the coordinate `along` reads. */
+  /** One period, in the same units as the coordinate `along` reads. Sampled by the geometry — see the note above. */
   wavelength: number;
   /** Phase at `along = 0`, in degrees. Default 0. */
   phase?: number;
@@ -212,6 +232,25 @@ export function evaluateDeformTransform(
   let derived: string[];
   let stated: string;
   let formula: string;
+  // -- the three values the all-zero refusal at the bottom reads (issue #350) -
+  //
+  // `identity` is whether the transform's own scalars state the identity, and it
+  // is judged on the ROUNDED scalars rather than in float64 — a `degrees: 360`
+  // turn leaves `sin t` at −2.4e−16, which is 0 in every number this compiler
+  // writes, so a spec that states a whole revolution states the identity as
+  // surely as `degrees: 0` does. `band` is the largest magnitude the closed form
+  // reached *before* quantising, which is what separates a model that is
+  // arithmetically zero (a band of float noise, ~1e−15) from one that is real
+  // and smaller than six decimals. `sampledTo` is the per-kind diagnosis.
+  let identity: boolean;
+  let identitySpelling: string;
+  let band = 0;
+  let sampledTo = '';
+  const widen = (d: number): number => {
+    const m = Math.abs(d);
+    if (m > band) band = m;
+    return d;
+  };
 
   switch (kind) {
     case 'yaw':
@@ -247,9 +286,14 @@ export function evaluateDeformTransform(
         }
         const z = Math.sqrt(radius * radius - u * u);
         const d = u * cosMinus1 - z * sin;
-        offsets[2 * v + along] = round(d);
+        offsets[2 * v + along] = round(widen(d));
         offsets[2 * v + (1 - along)] = 0;
       }
+      identity = round(cosMinus1) === 0 && round(sin) === 0;
+      identitySpelling = 'degrees 0';
+      sampledTo =
+        `The turn is ${degrees}°, and a projection of it can only vanish where every vertex shares one ` +
+        `${kind === 'yaw' ? 'x' : 'y'} — check that this attachment's setup geometry is the shape the radius says it is`;
       const c = kind === 'yaw' ? 'x' : 'y';
       stated = `radius=${radius} degrees=${degrees}${t.about === undefined ? '' : ` about=${about}`}`;
       formula = `d${c} = (${c}−about)·(cos t − 1) − z·sin t,   z = √(radius² − (${c}−about)²)`;
@@ -275,9 +319,15 @@ export function evaluateDeformTransform(
         );
       }
       for (let v = 0; v < count; v++) {
-        offsets[2 * v] = round((scale[0] - 1) * (setup[2 * v] - about[0]));
-        offsets[2 * v + 1] = round((scale[1] - 1) * (setup[2 * v + 1] - about[1]));
+        offsets[2 * v] = round(widen((scale[0] - 1) * (setup[2 * v] - about[0])));
+        offsets[2 * v + 1] = round(widen((scale[1] - 1) * (setup[2 * v + 1] - about[1])));
       }
+      identity = round(scale[0] - 1) === 0 && round(scale[1] - 1) === 0;
+      identitySpelling = 'scale [1, 1]';
+      sampledTo =
+        `A scale about a fixed point moves nothing that SITS on it, so every vertex this attachment has lies at ` +
+        `about=[${about[0]}, ${about[1]}] on the axis the scale changes — the geometry has collapsed onto the point ` +
+        'the key holds still';
       stated = `scale=[${scale[0]}, ${scale[1]}]${a.about === undefined ? '' : ` about=[${about[0]}, ${about[1]}]`}`;
       formula = 'dx = (sx − 1)·(x − ax),   dy = (sy − 1)·(y − ay)';
       derived = [`sx − 1 = ${round(scale[0] - 1)}`, `sy − 1 = ${round(scale[1] - 1)}`, `det = sx·sy = ${round(det)} > 0, so no triangle can reverse`];
@@ -296,10 +346,30 @@ export function evaluateDeformTransform(
       const k = (2 * Math.PI) / wavelength;
       for (let v = 0; v < count; v++) {
         const d = amplitude * Math.sin(k * setup[2 * v + along] + phaseRad);
-        offsets[2 * v + axis] = round(d);
+        offsets[2 * v + axis] = round(widen(d));
         offsets[2 * v + (1 - axis)] = 0;
       }
       const an = along === 0 ? 'x' : 'y';
+      identity = round(amplitude) === 0;
+      identitySpelling = 'amplitude 0';
+      // The sampling fact, measured off the array this call was handed rather
+      // than inferred from a topology the compiler does not have: it knows which
+      // coordinates it read, not where anybody's rows are. The smallest gap
+      // between two distinct ones is the finest detail the geometry can carry,
+      // and the ratio to it is the rule `gallery/nod`'s README states.
+      const distinct = [...new Set(Array.from({ length: count }, (_, v) => setup[2 * v + along]))].sort((p, q) => p - q);
+      let gap = Infinity;
+      for (let i = 1; i < distinct.length; i++) gap = Math.min(gap, distinct[i] - distinct[i - 1]);
+      sampledTo =
+        distinct.length < 2
+          ? `Every vertex sits at ${an}=${distinct[0]}, so one value of the sinusoid covers the whole attachment and ` +
+            'this phase is where that one value crosses zero. A wave needs the coordinate it reads to VARY across the ' +
+            'geometry; a part that displaces as a whole is a bone, not a deform'
+          : `The closest two distinct ${an} coordinates in this attachment are ${round(gap)} apart, and a sinusoid has ` +
+            `to be sampled to exist: a wavelength of at least 4x that (${round(4 * gap)}) to read as a wave at all and ` +
+            `8x (${round(8 * gap)}) to read as a curve, where this key states ${round(wavelength / gap)}x. At 2x every ` +
+            'sample lands on the same pair of phases, and at the zero crossings that pair is (0, 0). `gallery/nod`\'s ' +
+            'README carries that rule and the measured table behind it';
       stated = `amplitude=${amplitude} wavelength=${wavelength} phase=${phase} along=${an} axis=${axis === 0 ? 'x' : 'y'}`;
       formula = `d${axis === 0 ? 'x' : 'y'} = amplitude · sin(2π·${an}/wavelength + phase)`;
       derived = [`2π/wavelength = ${round(k)} rad per unit`, `phase = ${round(phaseRad)} rad`];
@@ -323,12 +393,26 @@ export function evaluateDeformTransform(
       }
       const [along, axis] = axes(b.along, b.axis, 'bend', where);
       const span = to - from;
+      let reach = 0;
       for (let v = 0; v < count; v++) {
         const u = (setup[2 * v + along] - from) / span;
-        offsets[2 * v + axis] = round(amount * u ** power);
+        if (Math.abs(u) > reach) reach = Math.abs(u);
+        offsets[2 * v + axis] = round(widen(amount * u ** power));
         offsets[2 * v + (1 - axis)] = 0;
       }
       const an = along === 0 ? 'x' : 'y';
+      identity = round(amount) === 0;
+      identitySpelling = 'amount 0';
+      // `u` is 0 at `from` and 1 at `to`, so the two ways a stated bend vanishes
+      // are both statements about where the geometry sits in that span — and
+      // both are measured here rather than guessed.
+      sampledTo =
+        reach === 0
+          ? `Every vertex sits at ${an}=${from}, which is "from" — the end the bend is anchored at, where the ` +
+            'displacement is 0 by construction. The span the key names does not cross the part it is keyed on'
+          : `The furthest any vertex reaches into the span is u=${round(reach)} of 1, and u^${power} of that is ` +
+            `${(reach ** power).toExponential(3)} — so the part occupies only the flat end of the curve. Move "to" to ` +
+            'where the geometry actually ends, or lower the power';
       stated = `amount=${amount} from=${from} to=${to} power=${power} along=${an} axis=${axis === 0 ? 'x' : 'y'}`;
       formula = `d${axis === 0 ? 'x' : 'y'} = amount · u^${power},   u = (${an} − from) / (to − from)`;
       derived = [
@@ -339,6 +423,38 @@ export function evaluateDeformTransform(
       ];
       break;
     }
+  }
+
+  // -- a model the geometry sampled to nothing (issue #350) ------------------
+  //
+  // The three refusals above catch a parameter that cannot mean what it says —
+  // `wavelength: 0`, a determinant at or below 0, a radius inside the part. This
+  // is the same principle one step later: every parameter is individually legal,
+  // and the model still evaluates to a run of zeros. The key then claims a
+  // deformation, emits nothing, and *gates green* — `A35` is right that the run
+  // fits and `A39` is right that no triangle moved, so neither can see it and
+  // this is the only place it can be said.
+  //
+  // ⭐ **The distinguishing condition is where the identity is stated.** A key
+  // that MEANS the setup pose says so in its own parameters — `degrees: 0` (or
+  // any whole revolution), `amplitude: 0`, `amount: 0`, `scale: [1, 1]` — or
+  // carries no run at all, which is the format's own `{ "t": … }`. Those pass.
+  // What is refused is the pair that cannot both be true: parameters that state
+  // a deformation, and an evaluation that is the identity. The two are not the
+  // same event, and before this they printed the same line.
+  //
+  // `count > 0` is not defensive noise: `every` on an empty array is `true`, so
+  // an attachment with no vertices would otherwise be refused with a message
+  // about arithmetic that never ran.
+  if (count > 0 && !identity && offsets.every((d) => d === 0)) {
+    throw new CompileError(
+      `${where}: transform ${kind} states ${stated}, and every one of this attachment's ${count} vertices evaluates ` +
+        `to an offset of 0 — the largest value the closed form reached at any of them is ${band.toExponential(3)}, ` +
+        'which quantises to 0 at the six decimals every emitted number carries. So the key states a deformation and ' +
+        `emits the identity, and nothing downstream can tell it apart from a key that meant the setup pose. ` +
+        `${sampledTo}. A key that MEANS the identity states it in its own parameters (${identitySpelling}) or carries ` +
+        'no run at all.',
+    );
   }
 
   let maxOffset = 0;
