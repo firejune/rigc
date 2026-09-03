@@ -167,6 +167,18 @@ The bar, and it is the bar the five examples above were held to:
   and it is measured at **15 fps**; `portrait`'s `gaze` is 1.5 s, so 25 fps gives
   37.5 and it is measured at **20 fps**.
 
+  📏 **A seam figure is a reading at one `--max`, and the README says which**
+  ([#336](https://github.com/firejune/rigc/issues/336)). A curve sampled into
+  segments need not return its endpoint key to the last bit, and a residual below
+  the art's own quantisation is invisible at one frame size and lands on a pixel
+  boundary at another: `portrait`'s `idle` reads **0 px** at the `--max 640` its
+  example renders and **1 974 px at 57/255** at `--max 1782`, with three
+  intermediate scales at 1/255 in between. So `loop_seam.ts` prints the `--max` it
+  measured and the scale in px/unit, and says outright that the figures are
+  readings at that size. The residual is bounded rather than open: with a
+  **constant** final segment the frames at the end of a cycle are byte-identical
+  to `t = 0` even at the amplifying scale.
+
   ⚠️ What it cannot see is a **velocity** discontinuity. A cycle whose value
   matches at the seam but whose slope does not still reads as a hitch, and every
   pixel in this measurement is identical when that happens.

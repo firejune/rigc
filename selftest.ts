@@ -178,7 +178,7 @@ import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeleton
 import { skeletonDataFromText, surveyDeformKeys } from './src/deformmeasure.ts';
 import { assertionCountForProfile, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
-import { exactDecimal, landingRates, samplingOf } from './gallery/loop_seam.ts';
+import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
@@ -13858,6 +13858,40 @@ function runLoopSeamSuite(): number {
       'names here are the ones the gallery now measures `wave` and `gaze` at, and samplingOf confirms both land',
   );
 
+  // --- LS04: the scale the report names is derivable from the frames ---------
+  // `loop_seam.ts` says which `--max` a set was rendered at so a reading is
+  // never quoted without its scale (issue #336), and it derives that from the
+  // frames rather than from a flag record — there is none to read. What makes
+  // the derivation exact is `viewportFor`'s own convention: the scale is chosen
+  // so the LONG world side maps to `maxSide`, and rounding that side returns
+  // `maxSide` itself. A framing that fitted the box INSIDE the square instead
+  // would leave both sides short and this line would start lying quietly.
+  const boxes: Array<[number, number, number, number]> = [
+    [-35.2, -35.2, 675.2, 915.2], // gallery/portrait's own box, wider than tall in y
+    [0, 0, 1000, 10], // extreme landscape
+    [0, 0, 10, 1000], // extreme portrait
+    [-7.5, 3.25, 7.5, 18.25], // square, and off the origin
+  ];
+  const sides = [16, 288, 640, 1782];
+  const offBy: string[] = [];
+  for (const [minX, minY, maxX, maxY] of boxes) {
+    for (const side of sides) {
+      const v = viewportFor(minX, minY, maxX, maxY, side);
+      if (maxSideOf(v.width, v.height) !== side) {
+        offBy.push(`${maxX - minX}x${maxY - minY} at --max ${side} drew ${v.width}x${v.height}`);
+      }
+    }
+  }
+  say(
+    'LS04_THE_LONG_PIXEL_SIDE_OF_A_FRAME_SET_IS_THE_MAX_IT_WAS_RENDERED_AT',
+    offBy.length === 0,
+    `${boxes.length} world box(es) x ${sides.length} scale(s): ${offBy.length} whose long pixel side is not the ` +
+      `--max asked for` + (offBy.length === 0 ? '' : ` (${offBy.join('; ')})`),
+    'a seam reading is scale-relative and the report has to name the scale, so it reads the --max back off the ' +
+      'frames. That is only honest while the framing convention holds — the extreme landscape and portrait boxes ' +
+      'are where a fit-inside convention would differ from a long-side one',
+  );
+
   // --- LS03: every invocation the gallery ships is one the tool will take ----
   // The case that would have caught #337. A README's own pixel figures are its
   // to own; whether the command it hands a stranger is a measurement at all is
@@ -14225,10 +14259,12 @@ function main(): void {
             'matrix but not the scale, and a renamed bone that is named as unmatched under `identity` and returns to ' +
             'exactly zero under a supplied correspondence)');
   const loopSeam =
-    ', + 3 loop-seam sampling controls (issue #337 — the four rows of the issue’s own table, two of which land on ' +
+    ', + 4 loop-seam controls (issue #337 — the four rows of that issue’s own table, two of which land on ' +
     'the duration and two of which do not; the landing rates named as the multiples of the duration’s reduced ' +
-    'denominator rather than searched for; and every loop-seam invocation the gallery READMEs ship being a ' +
-    'measurement the tool will actually take, which is the case that would have caught the defect)';
+    'denominator rather than searched for; every loop-seam invocation the gallery READMEs ship being a ' +
+    'measurement the tool will actually take, which is the case that would have caught the defect; and — ' +
+    'issue #336 — the long pixel side of a frame set being the `--max` it was rendered at, which is what lets ' +
+    'the report name the scale a reading is relative to instead of leaving it out)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'

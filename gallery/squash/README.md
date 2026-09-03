@@ -251,7 +251,7 @@ At `0.4` the blink would have missed frame 10, which is the impact frame.
 | the contact point | rim vertex 6 sits at world y **44.0** at the impact and 44.0 in the setup pose — unmoved, as its `(0, 0)` offset says |
 | mesh coverage | the emitted triangles cover **100.00%** of the ball's 28 020 art pixels (94.31% before the rim was moved out) |
 | `rigc render` | 21 frames at 25 fps, contact sheet **looked at** twice — the first pass had a squash flat enough to read as a pancake and a ball with its outline eaten by the mesh |
-| loop seam | **0 / 255** max channel difference, 0 pixels differing of 75 168, at 25 fps (21 frames, 288×261). The last frame is the first frame to the byte |
+| loop seam | **at `--max 288`**, which is 288×261 here: **0 / 255** max channel difference, 0 pixels differing of 75 168, at 25 fps (21 frames) — `0.8 × 25 = 20` is whole, so the last frame is at the duration and this is a seam reading ([#337](https://github.com/firejune/rigc/issues/337)). The last frame is the first frame to the byte. 📏 The `--max` is part of the figure: a seam reading is scale-relative and a zero at one size is not a zero at every size ([#336](https://github.com/firejune/rigc/issues/336)) |
 | `rigc preview` | boots in the official Spine Web Player 4.3 and draws (headless chromium, no console or page errors) |
 | `bun run selftest` | includes `GALLERY_EXAMPLE_IS_GREEN[squash]` |
 | part determinism | `make_parts.ts` twice ⇒ identical bytes for all 16 PNGs |
