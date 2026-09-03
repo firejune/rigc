@@ -18,6 +18,8 @@ that can see that, and a run that skips it has verified nothing about the motion
 - Formats and CLI reference: [README.md](../README.md)
 - The rig spec's own source-level documentation: [`src/rig.ts`](../src/rig.ts)
 - The motion spec and emitted shapes: [`src/types.ts`](../src/types.ts)
+- What the motion spec's own parser proves, and which refusals it deliberately
+  leaves to compile time: [`src/motion.ts`](../src/motion.ts)
 - What the format holds and rigc covers: `docs/SPEC_COVERAGE.md` — 🚫 **not an
   authoring input, and deliberately unlinked**: it inventories the benchmark corpus
   skeleton by skeleton, so it is on the ladder run's forbidden list. Named here for a
@@ -1207,6 +1209,21 @@ measuring the ceiling the art could actually take.
 `spec` must be `"rigc-motion/1"`; `archetype` must equal the rig's `name`; `cut` is
 a label for the shot. Always include an `easings` object — an empty one is fine.
 
+⭐ **The file is PARSED, not cast** ([`src/motion.ts`](../src/motion.ts), issue
+#307), so a field of the wrong type is refused before any of it is compiled. Every
+one of those refusals names the file, the key path, what the value actually is and
+the spelling that works — `path/to/motion.json: \`easings."soft"\` is an array of
+3; a named easing is FOUR finite numbers …`. The split with the compile-time
+refusals in §5.1 is **shape versus meaning**: whether a value is a number, a
+string, an array or an object is answerable from this file alone and lives in the
+parser; whether a name resolves against the rig, whether a bone is in that group,
+whether a key's value has the right number of channels for its property needs
+something this file does not contain, and stays where it can say so.
+
+⚠️ **An unknown key is still ignored**, exactly as it is in a rig spec — a
+misspelled `"easing"` for `"ease"` plays linear and says nothing. The two formats
+are deliberately consistent here rather than each surprising in its own way.
+
 ### 4.1 `easings` — named handles
 
 `name → [hx1, hy1, hx2, hy2]`, the **normalised graph-view handles** an editor
@@ -1214,10 +1231,24 @@ shows. rigc converts them per key into the absolute `(time, value)` control poin
 the JSON actually holds. Writing normalised handles into a raw `curve` instead loads
 without error and plays a different curve.
 
+**Four finite numbers, refused by name if they are not** (#307). `bezierForChannel`
+destructures four handles with no guard of its own, so `[0.42, 0, 0.58]` used to
+emit `"curve": [0.42, 0, 0.58, null]` — a curve with a hole in it, which loads,
+plays, and is not the shape the spec named. A non-numeric handle was the same
+silence one character further in.
+
 ### 4.2 `setup` — the setup pose, per slot
 
 `slotName → { attachment?: string | null, color?: [r, g, b, a] }`, with the colour
-channels in 0..1. Declaring a slot's setup pose here **and** on the rig slot is a
+channels in 0..1. Both halves are refused by name: an entry that is not that object
+— `"lid_l": null`, or `"lid_l": "plate"` with the attachment name where its wrapper
+belongs — and a colour channel that is not a finite number in 0..1. The second
+spelling is the one worth knowing about, because `.attachment` on a string is
+`undefined`: it used to compile GREEN and **hide the slot**, which is the opposite
+of what was asked (#293). The guard is in the parser rather than the emit path, so
+it also covers a slot the rig declares without attachments and a slot name that
+matches nothing at all — the two corners where the emit-path version stayed silent
+(#307). Declaring a slot's setup pose here **and** on the rig slot is a
 compile error (R3). Use whichever file owns the decision: a rig that is purely
 structure puts it on the slot; a cut whose overlay mechanism is a decision about
 time puts it here.
@@ -1227,7 +1258,7 @@ time puts it here.
 | Field | Meaning |
 | --- | --- |
 | `duration` | seconds, declared and checked (R7) |
-| `loop` | a **player hint only** — skeleton JSON has no loop field, so this is not emitted and no assertion or diff measure reads it |
+| `loop` | a **player hint only** — skeleton JSON has no loop field, so this is not emitted and no assertion or diff measure reads it. **Optional**, and 20 of the motion specs in this repository omit it |
 | `note` | free text |
 | `tracks` | the timelines |
 | `drawOrder` | the draw-order timeline — §4.7. Not a track: it names no target |
@@ -1544,10 +1575,16 @@ key times. One lag, one place.
 `name → { bone, x?, y?, rotate?, scaleX?, shearX?, inertia?, strength?, damping?,
 mass?, wind?, gravity?, mix?, fps?, limit? }`. These are emitted into the 4.3
 `constraints` array. `mass: 0` becomes an infinite inverse mass and `damping ≥ 1`
-never settles — both are `A23`.
+never settles — both are `A23`. Every field but `bone` and `note` must be a finite
+number: a non-number is rounded to `NaN` and emitted as `null`, which the runtime
+reads as **zero**, so `"mass": "heavy"` used to ship a constraint that never
+settles with no word from anybody (#307).
 
 `mix` is a player-side `AnimationStateData` config and is **not** emitted into
-skeleton JSON.
+skeleton JSON — which is why nothing looked at it until the parser did: it is
+`{ "default": <seconds>, "pairs"?: [["<from>", "<to>", <seconds>], …] }`, and a
+`default` that is not a number passed the compiler, the gate and the round trip
+before becoming a `NaN` mix duration in the player.
 
 ### 4.7 `drawOrder` — reordering the slots over time
 
@@ -2161,8 +2198,56 @@ Failures arrive in two layers, and they read differently.
 
 ### 5.1 Compile errors — before the gate
 
-A `CompileError` names the object and the field, and nothing is written. These are
-the frequent ones, verbatim:
+A `CompileError` names the object and the field, and nothing is written.
+
+They arrive in two waves, and the wave tells you what kind of mistake it is. The
+first is a **shape** refusal from a spec parser — `parseRigSpec`
+([`src/rig.ts`](../src/rig.ts)) and `parseMotionSpec`
+([`src/motion.ts`](../src/motion.ts)) — which run at load, before anything is
+compiled, and ask only what the one file in front of them can answer. Every
+`parseMotionSpec` refusal reads `<file>: \`<key path>\` is <what it actually is>;
+<the spelling that works>`, so its whole wave is **one row per FIELD** rather than
+one per message. (The rig spec's parser predates the convention and its messages
+are prose, so they sit in the second table with everything else.)
+
+| Key | Refused when it is not | Why the shape matters |
+| --- | --- | --- |
+| the file itself | a JSON object | the version row below would otherwise report a missing `spec` tag in a file that has no fields at all |
+| `spec` | `"rigc-motion/1"` | §4 |
+| `archetype`, `cut` | a non-empty string | `cut` was read by nothing, so a spec that omitted it compiled green and could not say what it was authored for |
+| `note` (at any level) | a string | — |
+| `easings` | an object | it is declared required and nothing asserted it, so an absent table failed at the first key that named an easing instead of at the table |
+| `easings."<name>"` | **four finite numbers** | `bezierForChannel` destructures four handles with no guard: `[0.42, 0, 0.58]` emitted `"curve": [0.42, 0, 0.58, null]` (§4.1) |
+| `groups` | an object keyed by group name | an array compiled green with no group defined. Each group's member LIST stays a compile-time refusal — see the rows further down |
+| `setup` | an object keyed by slot name | every `setup?.[slot]` lookup on an array is `undefined`, so the whole table was silently absent |
+| `setup."<slot>"` | an object of `{ attachment?, color? }` | §4.2 — `"<slot>": "plate"` reads `.attachment` off a string as `undefined` and **hides the slot** (#293) |
+| `setup."<slot>".attachment` | a string or `null` | whether a string RESOLVES is still the compile-time row below; whether it is a string is this one |
+| `setup."<slot>".color[i]` | a finite number in 0..1 | `channelHex` clamps with `Math.min`/`Math.max`, which pass `NaN` through, and `NaN.toString(16)` is the text `"NaN"` |
+| `physics` | an object keyed by constraint name | as `setup` |
+| `physics."<name>".bone` | a non-empty string | — |
+| `physics."<name>".<tuning field>` | a finite number | rounded to `NaN` and emitted as `null`, which the runtime reads as zero (§4.6) |
+| `mix`, `mix.default`, `mix.pairs[i]` | an object / a number / a `["<from>", "<to>", <seconds>]` triple | not emitted into skeleton JSON, so nothing else ever looks at it (§4.6) |
+| `animations` | an object keyed by animation name | an absent one crashed with a raw `TypeError` that named neither input file; an array compiled green with no animations |
+| `animations."<a>"` | an object | crashed with a raw `TypeError` on `anim.tracks` |
+| `animations."<a>".duration` | a finite number ≥ 0 | R7's check is `Math.abs(compiled − declared) > FRAME`, and a comparison against `NaN` is **false** — so the one guard on the field passed hardest exactly when the field was missing |
+| `animations."<a>".loop` | `true` or `false` | optional; absent means the player decides (§4.3) |
+| `animations."<a>".tracks` | an array | an animation whose timelines are all in the families beside `tracks` still writes `"tracks": []` |
+| `…tracks[i]` | an object | — |
+| `…tracks[i].property` | a non-empty string | which properties exist is the compile-time row below (§4.4) |
+| `…tracks[i].slot`/`.group`/`.bone`/`.physics`/`.path`/`.slider` | a string | whether exactly one is named, and what it resolves to, are compile-time rows below |
+| `…tracks[i].lag`, `.stagger` | a finite number | a string is CONCATENATED onto each key time and a boolean adds 1s, and the resulting refusal blamed the key and the duration for a fault in neither |
+| `…keys[j]` | an object | — |
+| `…keys[j].t` | a finite number | **every** key family, including the three that never had this guard: value tracks, slot tracks and `drawOrder` |
+| `…keys[j].ease` | a string | — |
+| `…drawOrder`, `…events`, `…ik`, `…transform`, `…deform` | an array | an object was refused as `no keys`, which is what an EMPTY array says |
+| `…drawOrder[i].offsets` | an array | a key with no offsets is the format's own "back to the setup draw order", and the test for it was true for `{}` — a complete statement of the draw order, made by accident |
+| `…drawOrder[i].offsets[j]` | `{ slot: string, offset: number }` | whether the slot is emitted, and whether the offset is whole and lands inside the array, are compile-time rows below |
+| `…ik[i]`, `…transform[i]`, `…deform[i]` | an object | `null` in one of these lists crashed with a raw `TypeError` on `track.constraint` / `track.skin` |
+| `…ik[i].constraint`, `…transform[i].constraint` | a non-empty string | 4.3 writes the group as `ik.<constraint>`, so the name is the only target there is |
+| `…deform[i].slot`, `.attachment`, `.skin` | a string (`skin` optional) | — |
+
+The second wave is everything that needed the **other** file, the property table
+or the key's position in its own track. These are the frequent ones, verbatim:
 
 | Message | What to change |
 | --- | --- |

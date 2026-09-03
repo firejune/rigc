@@ -561,8 +561,16 @@ export interface MotionDeformTrack {
 export interface MotionAnimation {
   /** Declared, then verified against the compiled result (rule 4). */
   duration: number;
-  /** Player hint only; not expressible in skeleton JSON. */
-  loop: boolean;
+  /**
+   * Player hint only; not expressible in skeleton JSON, and therefore optional.
+   *
+   * ⚠️ It was declared required until issue #307 put a parser in front of this
+   * type and the corpus disagreed: 20 of the 37 motion specs in the repository
+   * name no `loop` at all. Nothing in the emitted artifact depends on it, so a
+   * required-field refusal here would have refused most of the benchmark corpus
+   * over a field the compiler never reads.
+   */
+  loop?: boolean;
   note?: string;
   tracks: MotionTrack[];
   /**
