@@ -45,6 +45,12 @@ jobs:
       # Deliberately not cached: the script keeps any file already on disk, so a
       # restored cache would freeze the corpus and hide an example that changed
       # shape upstream. A yardstick that is never re-measured is not a yardstick.
+      #
+      # Deliberately not retried HERE either — the retry is per transfer, inside
+      # the script (issue #335). Retrying this step would re-issue all 18
+      # contents-API listings against a 60/hour budget, and would discard the
+      # script's own report of which file failed from which URL. See the retry
+      # block in scripts/fetch-examples.sh for the full argument.
       - name: Fetch the Spine example corpus
         run: bun run fetch-examples
         env:
