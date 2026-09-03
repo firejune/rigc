@@ -8842,6 +8842,85 @@ function runErrorAttributionSuite(): number {
     );
   }
 
+  // E03 / E04 / E05: a `setup` entry that is not an object (issue #293).
+  //
+  // ⭐ These slots declare no `attachment` in the RIG on purpose. That is the
+  // only arrangement in which a `setup` entry is read at all: with an attachment
+  // in both specs the "setup pose has one author" refusal fires first, and the
+  // faulty entry is never reached. The issue was found the same way — by a probe
+  // that needed to hide one slot at a time.
+  {
+    const setupDirs = writeProbeRig({
+      slots: [
+        { name: 'block', bone: 'block' },
+        { name: 'marker', bone: 'block' },
+      ],
+    });
+    const setupMotionPath = join(setupDirs.dir, 'probe.motion.json');
+    const withBlockSetup = (entry: unknown): Record<string, unknown> => ({
+      spec: 'rigc-motion/1',
+      archetype: 'static_probe',
+      cut: 'static_probe',
+      easings: {},
+      setup: { block: entry, marker: { attachment: 'marker' } },
+      animations: {},
+    });
+
+    const nullEntry = refusal(setupDirs, withBlockSetup(null));
+    say(
+      'E03_A_NULL_SETUP_ENTRY_IS_REFUSED_BY_NAME',
+      nullEntry !== null &&
+        nullEntry.includes(setupMotionPath) &&
+        nullEntry.includes('`setup."block"` is null') &&
+        nullEntry.includes('{ "attachment": null }'),
+      nullEntry === null ? 'the null entry compiled' : `refused with: ${nullEntry}`,
+      '`{ "attachment": null }` is how AUTHORING §4.2 says to hide a slot, and `"slot": null` is the natural ' +
+        'elision of a one-key object by a reader who has just read that `attachment` may be null. It used to ' +
+        'reach `setup.attachment` and arrive as a raw TypeError with a stack trace (#293)',
+    );
+
+    const stringEntry = refusal(setupDirs, withBlockSetup('block'));
+    say(
+      'E04_A_SETUP_ENTRY_THAT_IS_AN_ATTACHMENT_NAME_IS_REFUSED_TOO',
+      stringEntry !== null &&
+        stringEntry.includes('`setup."block"` is the string "block"') &&
+        stringEntry.includes('{ "attachment": "<name>" }'),
+      stringEntry === null
+        ? 'the bare attachment name compiled — and emitted a slot with no attachment at all'
+        : `refused with: ${stringEntry}`,
+      'the other way to elide the wrapper, and the reason the guard is "is an object" rather than "is not ' +
+        'null": `.attachment` on a string is `undefined`, so this one compiled GREEN and silently HID the slot ' +
+        '— the exact opposite of what was asked. A silent wrong is worse than a crash',
+    );
+
+    // Positive control. A guard on the entry's shape must not cost the shape the
+    // documentation actually prescribes, and `attachment: null` has to keep
+    // meaning "show nothing" rather than becoming an error by association.
+    let hidden: string | null = null;
+    let control: string | null = null;
+    try {
+      writeFileSync(setupMotionPath, `${JSON.stringify(withBlockSetup({ attachment: null }), null, 2)}\n`);
+      const built = compile({
+        rigPath: setupDirs.rigPath,
+        motionPath: setupMotionPath,
+        outDir: setupDirs.outDir,
+        imagesDir: setupDirs.dir,
+      });
+      const slots = (JSON.parse(built.skeletonText) as SpineSkeletonJson).slots ?? [];
+      const block = slots.find((s) => s.name === 'block');
+      hidden = block === undefined ? 'no slot "block" was emitted' : JSON.stringify(block);
+    } catch (err) {
+      control = err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+    say(
+      'E05_THE_DOCUMENTED_SPELLING_STILL_HIDES_THE_SLOT',
+      control === null && hidden !== null && !hidden.includes('"attachment"'),
+      control !== null ? `refused the documented spelling: ${control}` : `slot "block" emitted as ${hidden}`,
+      'the two refusals above both point at `{ "attachment": null }`, so a run in which that had itself stopped ' +
+        'working would be sending every reader somewhere no better than where they started',
+    );
+  }
+
   return bad;
 }
 
@@ -11136,7 +11215,7 @@ function main(): void {
   bad += runSlotSuite();
   substantive += 2;
   bad += runErrorAttributionSuite();
-  substantive += 2;
+  substantive += 5;
   bad += runCliSuite();
   substantive += 5;
   const launcherBad = runLauncherSuite();
@@ -11266,8 +11345,11 @@ function main(): void {
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
-      ', + 2 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
-      'reports a line number), + 9 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
+      ', + 5 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
+      'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +
+      'the `null` that used to crash and the bare attachment name that used to compile green and hide the slot — ' +
+      'with the documented `{ "attachment": null }` still hiding it), ' +
+      '+ 9 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
       'builds green with no flag and is refused by every rule under `--profile spine-html`, and the MESH report line ' +
       "quoting the rig's own triangle budget with the hole its outline encloses, or saying no budget is declared " +

@@ -206,6 +206,24 @@ function rgbaHex(v: number[]): string {
 }
 
 /**
+ * Is this `motion.setup` entry the object shape AUTHORING §4.2 documents?
+ *
+ * An array is excluded on purpose: `typeof [] === 'object'` and a member read on
+ * one is silently `undefined`, which is the same false green a bare string gives.
+ */
+function isSetupEntry(v: unknown): boolean {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** What a rejected `setup` entry actually was, for the refusal to name. */
+function describeSetupEntry(v: unknown): string {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'an array';
+  if (typeof v === 'string') return `the string ${JSON.stringify(v)}`;
+  return `a ${typeof v}`;
+}
+
+/**
  * Bone timeline shapes: which JSON fields a key carries, and their defaults.
  *
  * The defaults matter more than they look: Spine omits a field that equals the
@@ -1113,6 +1131,30 @@ export function compile(opts: CompileOptions): CompileResult {
     if (!names.length) continue;
 
     const setup = motion.setup?.[rigSlot.name];
+    // ⚠️ `motion` is a CAST, not a parse (`readJson<MotionSpec>`), so the type
+    // says what a correct file holds and not what this one does. A `setup` entry
+    // that is not an object gets past every `!== undefined` guard below and then
+    // reads a member off it — and the two ways to write one are both on the
+    // shortest path to the documented feature (issue #293):
+    //
+    //   "lid_l": null       the natural elision of `{ "attachment": null }`, by
+    //                       a reader who has just learned `attachment` may be
+    //                       null. Used to crash with a raw TypeError.
+    //   "lid_l": "plate"    the attachment name where its wrapper belongs. Far
+    //                       worse: `.attachment` on a string is `undefined`, so
+    //                       it compiled GREEN and hid the slot — the exact
+    //                       opposite of what was asked, stated nowhere.
+    //
+    // One guard for both, because the second is why this cannot be a `!== null`
+    // check: a silent wrong is worse than a crash, and the same line makes both.
+    if (setup !== undefined && !isSetupEntry(setup)) {
+      throw new CompileError(
+        `${motionPath}: \`setup."${rigSlot.name}"\` is ${describeSetupEntry(setup)}; a setup entry is an object ` +
+          `of \`{ attachment?: string | null, color?: [r, g, b, a] }\` — to show nothing there write ` +
+          `\`"${rigSlot.name}": { "attachment": null }\`, and to show an attachment write ` +
+          `\`"${rigSlot.name}": { "attachment": "<name>" }\``,
+      );
+    }
     if (setup !== undefined && rigSlot.attachment !== undefined) {
       throw new CompileError(
         `slot "${rigSlot.name}" has a setup attachment in the rig spec AND in the motion spec; the setup pose has one author`,
