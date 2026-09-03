@@ -221,6 +221,26 @@ The far side compresses to 64%, the near side stretches to 132%, and the ink
 outline inside each band compresses and stretches with it. That gradient is what
 makes it read as a turn instead of a slide.
 
+📌 **The two ends of that table are `explain`'s own output now** — the `DEFORM`
+block ([AUTHORING §4.11.2](../../docs/AUTHORING.md), issue
+[#316](https://github.com/firejune/rigc/issues/316)) measures the posed
+triangles at each key, so the ratios above are re-derivable by running the tool
+rather than by hand:
+
+```
+  DEFORM  turn  default/head/head  key 1  t=0.620000  transform yaw  radius=170 degrees=12
+          moved      25 of 25 vertices, worst 35.3450px at v2
+          area       min x0.637174 tri 17   max x1.319122 tri 31   (32 triangles, 0 with no area at the cleared pose, band 0.146694px²)
+          stretch    max x1.319121 tri 22   min x0.637175 tri 8
+          winding    32 of 32 kept, 0 collapsed
+```
+
+`hair_bang`'s own key, at `radius: 196`, comes to `x0.739378 … x1.216918` on the
+same 12° — a shallower gradient, because the fringe rides a **larger** sphere
+(the skull's 170 plus its own depth in front of it) and its columns therefore sit
+relatively nearer the centre of it. That is the depth argument below, as a
+printed figure.
+
 ⚠️ **`hull` is absent, so it is `0`.** A grid's perimeter is 16 of its 25
 vertices and they are not a prefix of any row-major order, so declaring a hull
 would mean re-ordering the vertex list perimeter-first — and then a reader could
