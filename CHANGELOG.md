@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.14.0](https://github.com/firejune/rigc/compare/v0.13.0...v0.14.0) (2026-09-03)
+
+
+### Features
+
+* **motion:** a deform key can state its transform instead of its table ([#317](https://github.com/firejune/rigc/issues/317)) ([3c13d7e](https://github.com/firejune/rigc/commit/3c13d7eef8ba4909f631453d61a363e6b1b3dd01)), closes [#294](https://github.com/firejune/rigc/issues/294)
+* **motion:** a group track can key a value per member, stated or derived ([#320](https://github.com/firejune/rigc/issues/320)) ([1313b20](https://github.com/firejune/rigc/commit/1313b20189ed06f62ff4a8c9b6441e227afbc466)), closes [#295](https://github.com/firejune/rigc/issues/295)
+
+
+### Bug Fixes
+
+* **compile:** the motion spec is parsed rather than cast ([#321](https://github.com/firejune/rigc/issues/321)) ([3e7238a](https://github.com/firejune/rigc/commit/3e7238a30886633f1a7e328c84d3e3109c6384d2)), closes [#307](https://github.com/firejune/rigc/issues/307)
+* **gallery:** flex's leaf no longer folds, and its exemption is gone ([#318](https://github.com/firejune/rigc/issues/318)) ([fed3ba5](https://github.com/firejune/rigc/commit/fed3ba5bb79380a9b392cf07dc8c809b9bed6f71)), closes [#313](https://github.com/firejune/rigc/issues/313)
+* **pose:** the objective interpolates premultiplied, with a stated re-baseline ([#322](https://github.com/firejune/rigc/issues/322)) ([6c00c51](https://github.com/firejune/rigc/commit/6c00c51d720ace9707a67685c2767ce79c50af5f)), closes [#306](https://github.com/firejune/rigc/issues/306)
+
+
+### Instrument
+
+* **explain:** a per-key DEFORM block, so a deform key's ratios are printed rather than derived ([#319](https://github.com/firejune/rigc/issues/319)) ([aa31aae](https://github.com/firejune/rigc/commit/aa31aae60547d1b6fedb4e83bf37587b634e2f23))
+* **validate:** A39_DEFORM_KEEPS_TRIANGLE_WINDING — a deform key may not turn a triangle inside out ([#314](https://github.com/firejune/rigc/issues/314)) ([eec1e60](https://github.com/firejune/rigc/commit/eec1e602056e6e6ae82048ab4304018a35d2fa5f)), closes [#296](https://github.com/firejune/rigc/issues/296)
+
 ## [0.13.0](https://github.com/firejune/rigc/compare/v0.12.0...v0.13.0) (2026-09-03)
 
 
