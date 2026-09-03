@@ -25,6 +25,10 @@ toolchain and this page does not invent one.
 - The parts of that picture `pose` refuses because something is drawn over them,
   once a first candidate exists: **AUTHORING §12** (`rigc chainfit`). It reports the
   `rotate` key value each answer implies, which is the form this recipe wants them in
+- If the movement is a **face** — a blink, a gaze, or a head turning off axis —
+  everything on this page still applies, and [FACE.md](FACE.md) is the geometry it
+  does not have: a turn is a projection rather than a pose, so its values are
+  evaluated rather than chosen
 - If what you were handed is a **compiled skeleton** rather than loose parts — reading
   it, transcribing it into specs, re-pivoting it, extending it with an animation:
   [INGEST.md](INGEST.md)
@@ -984,6 +988,12 @@ table on purpose: it needs a mesh rather than a region attachment, it multiplies
 things a candidate differs by, and a movement that does not read when rigid will not be
 rescued by deforming it. ⇒ Land the rigid movement, choose between rigid candidates,
 then propose deform as its own spread.
+
+⚠️ **The one case where the deform is not an axis but the movement itself is a face
+turning off axis**, because a rigid candidate of it does not exist — a yaw *is* the
+redistribution. [FACE.md](FACE.md) is that case, and it also states what nothing here
+measures: a `deform` key that folds a mesh inside out gates green on every assertion,
+so a face's arithmetic has to be checked before the build rather than after the render.
 
 🚫 **No frame rate anywhere in either spec file.** `render --fps` is a sampling rate for
 looking; times in a motion spec are seconds (§3.3).
