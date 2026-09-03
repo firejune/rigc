@@ -40,6 +40,8 @@ import {
 } from './fitlib';
 import { KNOBS, LEVEL_PLAN, PAIR_SAMPLES, PAIRS, SAMPLES } from './plan';
 import { fitFrame } from './fitlib';
+import { cut, flarePerTile } from './sheet';
+import { join } from 'node:path';
 
 const REF = process.env.REF ?? 'bench/reference/spineboy/ess';
 const CAND = process.env.CAND ?? '/tmp/sb2/probe';
@@ -74,6 +76,8 @@ const MUZZLE_PLATES = ['muzzle01', 'muzzle02', 'muzzle03', 'muzzle04', 'muzzle05
 const FLARE_SLOTS = ['muzzle', 'muzzle-glow', 'muzzle-ring'] as const;
 
 const skins: Record<string, Record<string, Skin>> = {};
+/** animation -> slot -> stepped keys, in seconds. What `keys.ts` emits. */
+const timeline: Record<string, Record<string, { t: number; attachment: string | null }[]>> = {};
 const lines: string[] = [];
 
 // --- the flare window, from the frames --------------------------------------
@@ -90,10 +94,49 @@ for (const s of sidecar.sets) {
   }
   flareByFrame.set(s.dir, per);
 }
-lines.push('flare census (the brief\'s own pink predicate, over every committed frame):');
+lines.push("flare census (the brief's own pink predicate, over every committed frame):");
 for (const [set, per] of flareByFrame) {
   const hits = [...per.entries()].filter(([, n]) => n > 0);
   lines.push(`  ${set.padEnd(14)} ${hits.length === 0 ? 'none' : hits.map(([i, n]) => `f${i}=${n}px`).join('  ')}`);
+}
+
+/**
+ * The flare's WINDOW comes off the 30 fps sheet, not off the 12 fps frames.
+ *
+ * An attachment timeline is stepped, and §4.5's 🚨 says a stepped key is either
+ * on the sample that was meant to see it or a whole frame out. The 12 fps set
+ * brackets the flare's end between 0.3333 s and 0.4167 s — a whole twelfth of
+ * uncertainty on a three-frame event — while the sheet puts it inside a
+ * thirtieth. `tools/sheet.ts` cuts the tiles with the geometry the BRIEF states
+ * and refuses a sheet whose size that geometry does not reconstruct.
+ */
+lines.push('', 'flare window off the 30 fps sheets (tools/sheet.ts, the brief\'s stated tile layout):');
+const flareWindow = new Map<string, { first: number; last: number; brightest: number }>();
+for (const s of sidecar.sets) {
+  if (!s.dir.endsWith('@30fps')) continue;
+  let tiles;
+  try {
+    tiles = cut(join(REF, s.dir), s.sampled, sidecar.viewport.pixelWidth, sidecar.viewport.pixelHeight);
+  } catch (e) {
+    lines.push(`  ${s.dir.padEnd(14)} ${(e as Error).message}`);
+    continue;
+  }
+  const per = flarePerTile(tiles);
+  const hits = per.map((n, i) => [i, n] as const).filter(([, n]) => n > 0);
+  if (hits.length === 0) {
+    lines.push(`  ${s.dir.padEnd(14)} none  [layout control: ${tiles.sheet.width}x${tiles.sheet.height} reconstructed exactly]`);
+    continue;
+  }
+  const brightest = hits.reduce((a, b) => (b[1] > a[1] ? b : a));
+  flareWindow.set(s.animation, { first: hits[0][0], last: hits[hits.length - 1][0], brightest: brightest[0] });
+  lines.push(
+    `  ${s.dir.padEnd(14)} tiles ${hits[0][0]}..${hits[hits.length - 1][0]}, brightest ${brightest[0]} (${brightest[1]} px)  ` +
+      `${hits.map(([i, n]) => `t${i}=${n}`).join(' ')}`,
+  );
+  lines.push(
+    `  ${''.padEnd(14)} ⇒ show at ${(hits[0][0] / 30).toFixed(6)} s, hide at ${((hits[hits.length - 1][0] + 1) / 30).toFixed(6)} s  ` +
+      `[layout control: ${tiles.sheet.width}x${tiles.sheet.height} reconstructed exactly]`,
+  );
 }
 
 // --- the sweeps -------------------------------------------------------------
@@ -195,8 +238,63 @@ for (const [set, setStore] of Object.entries(stored)) {
   lines.push(`  ${set.padEnd(14)} ${runs.map((r) => `f${r.from}${r.to > r.from ? `-f${r.to}` : ''}=${r.pick.replace('front-fist-', '')}`).join('  ')}`);
 }
 
+// --- the stepped timelines --------------------------------------------------
+// The flare: one show key and one hide key per shot, at the sheet's own tiles,
+// with the PLATE chosen by the sweep above on the frame the sheet says is
+// brightest — the shot swaps between five alternatives and this run authors the
+// swap it can measure rather than a five-key sequence it cannot.
+for (const s of sidecar.sets) {
+  if (s.fps !== 12) continue;
+  const window = flareWindow.get(s.animation);
+  if (!window) continue;
+  const per = flareByFrame.get(s.dir);
+  const flareFrames = [...(per ?? new Map()).entries()].filter(([, n]) => n > 0).map(([i]) => i);
+  const chosen = flareFrames
+    .map((i) => skins[s.dir]?.[String(i)])
+    .find((skin) => skin && skin.muzzle);
+  if (!chosen) continue;
+  timeline[s.animation] ??= {};
+  for (const slot of FLARE_SLOTS) {
+    const on = chosen[slot];
+    if (on === undefined || on === null) continue;
+    timeline[s.animation][slot] = [
+      { t: window.first / 30, attachment: on },
+      { t: (window.last + 1) / 30, attachment: null },
+    ];
+  }
+}
+
+// The fist: the runs the per-frame sweep found, at 12 fps, against the slot's
+// own setup attachment.
+const FIST_SETUP = 'front-fist-closed';
+for (const [set, setStore] of Object.entries(stored)) {
+  const s = sidecar.sets.find((x) => x.dir === set);
+  if (!s || s.fps !== 12) continue;
+  const indices = Object.keys(setStore).map(Number).sort((a, b) => a - b);
+  let previous = FIST_SETUP;
+  const keys: { t: number; attachment: string | null }[] = [];
+  for (const i of indices) {
+    const pick = skins[set]?.[String(i)]?.['front-fist'] ?? FIST_SETUP;
+    if (pick !== previous) {
+      keys.push({ t: i / s.fps, attachment: pick });
+      previous = pick;
+    }
+  }
+  if (keys.length) {
+    timeline[s.animation] ??= {};
+    timeline[s.animation]['front-fist'] = keys;
+  }
+}
+
+lines.push('', 'stepped attachment timelines authored:');
+for (const [animation, slots] of Object.entries(timeline)) {
+  for (const [slot, keys] of Object.entries(slots)) {
+    lines.push(`  ${animation}/${slot.padEnd(14)} ${keys.map((k) => `${k.t.toFixed(4)}s=${k.attachment ?? 'null'}`).join('  ')}`);
+  }
+}
+
 mkdirSync(dirname(out), { recursive: true });
-writeFileSync(out, `${JSON.stringify(skins)}\n`);
+writeFileSync(out, `${JSON.stringify({ perFrame: skins, timeline })}\n`);
 mkdirSync(dirname(report), { recursive: true });
 writeFileSync(report, `${lines.join('\n')}\n`);
 // The flare sweep re-solved the arm, so the pose store is written back too.

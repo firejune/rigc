@@ -49,7 +49,8 @@ const sidecar = sidecarOf(REF);
 const view = declaredViewport(sidecar);
 const levels: Level[] = levelsFor(view, LEVEL_PLAN);
 const c = loadCandidate(CAND);
-const skins: Record<string, Record<string, Skin>> = SKINS && existsSync(SKINS) ? JSON.parse(readFileSync(SKINS, 'utf8')) : {};
+const skins: Record<string, Record<string, Skin>> =
+  SKINS && existsSync(SKINS) ? (JSON.parse(readFileSync(SKINS, 'utf8')).perFrame ?? {}) : {};
 const seed: Record<string, Record<string, Pose>> = SEED && existsSync(SEED) ? JSON.parse(readFileSync(SEED, 'utf8')) : {};
 
 /**

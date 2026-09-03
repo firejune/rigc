@@ -49,7 +49,12 @@ const view = declaredViewport(sidecar);
 const c = loadCandidate(CAND);
 const levels = levelsFor(view, LEVEL_PLAN);
 const stored: Record<string, Record<string, { pose: Pose; score: number }>> = JSON.parse(readFileSync(POSES, 'utf8'));
-const skins: Record<string, Record<string, Record<string, string | null>>> = SKINS ? JSON.parse(readFileSync(SKINS, 'utf8')) : {};
+const skinStore: {
+  perFrame?: Record<string, Record<string, Record<string, string | null>>>;
+  timeline?: Record<string, Record<string, { t: number; attachment: string | null }[]>>;
+} = SKINS ? JSON.parse(readFileSync(SKINS, 'utf8')) : {};
+const skins = skinStore.perFrame ?? {};
+const attachmentTimeline = skinStore.timeline ?? {};
 
 // ---------------------------------------------------------------------------
 // lever arms — one tolerance in pixels becomes one tolerance per channel
@@ -494,10 +499,20 @@ const nameOf = (h: Handles): string => {
 };
 
 interface Track {
-  bone: string;
+  bone?: string;
+  slot?: string;
   property: string;
-  keys: { t: number; v: number[]; ease?: string }[];
+  keys: ({ t: number; v: number[]; ease?: string } | { t: number; v: string | null })[];
 }
+
+/**
+ * `loop` is a PLAYER HINT ONLY — §4.3: "skeleton JSON has no loop field, so this
+ * is not emitted and no assertion or diff measure reads it". It is written
+ * because it is true of the shot, from the brief's own returns column: the four
+ * `ess` shots whose first and last 12 fps frames differ by 0 to 104 px at 2/255
+ * against 2,595 and up for everything else, a factor of 8.6 across the break.
+ */
+const LOOPS = new Set(['idle', 'walk', 'run', 'shoot']);
 
 const animations: Record<string, { duration: number; loop: boolean; tracks: Track[]; note?: string }> = {};
 let keyCount = 0;
@@ -554,7 +569,34 @@ for (const [animation] of byAnimation) {
     });
     keyCount += times.length;
   }
-  animations[animation] = { duration: Number(durations[animation].toFixed(6)), loop: false, tracks };
+  /**
+   * The stepped attachment timelines, from `tools/skins.ts`.
+   *
+   * §4.5's 🚨, applied: "For a stepped timeline, write T − 1e-6 rather than T.
+   * One grid step early cannot reach the previous sample — 83,333 µs away at
+   * 12 fps — and is always seen by the sample it was written for; one ULP late
+   * loses the frame." A key at t = 0 stays at 0: there is no earlier sample for
+   * it to fall into.
+   *
+   * §4.4: "An `attachment` key carries no easing — attachment timelines are
+   * inherently stepped", which is why no `ease` is written here.
+   */
+  const STEP_EARLY = 1e-6;
+  for (const [slot, keys] of Object.entries(attachmentTimeline[animation] ?? {})) {
+    const emitted = keys
+      .map((k) => ({ t: k.t <= 0 ? 0 : Math.max(0, k.t - STEP_EARLY), attachment: k.attachment }))
+      .filter((k) => k.t <= durations[animation] + 1e-9);
+    if (emitted.length === 0) continue;
+    tracks.push({
+      slot,
+      property: 'attachment',
+      // The key value for a `slot`/`attachment` track is `v`, a STRING or null
+      // — §4.4's table — not an array and not a field of its own.
+      keys: emitted.map((k) => ({ t: Number(k.t.toFixed(6)), v: k.attachment })),
+    } as unknown as Track);
+    keyCount += emitted.length;
+  }
+  animations[animation] = { duration: Number(durations[animation].toFixed(6)), loop: LOOPS.has(animation), tracks };
 }
 
 const motion = {

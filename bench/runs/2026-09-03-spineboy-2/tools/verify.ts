@@ -33,7 +33,7 @@ const c = loadCandidate(built);
 const stored = JSON.parse(readFileSync(POSES, 'utf8')) as Record<string, Record<string, { pose: Pose }>>;
 let skins: Record<string, Record<string, Skin>> = {};
 try {
-  skins = JSON.parse(readFileSync(SKINS, 'utf8'));
+  skins = JSON.parse(readFileSync(SKINS, 'utf8')).perFrame ?? {};
 } catch {
   skins = {};
 }
