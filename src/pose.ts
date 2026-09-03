@@ -54,10 +54,18 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { Plate, readPlate } from '../tools/plate.ts';
-// `bilinear` rather than a second sampler written here: how a pixel is read
-// between two pixel centres is exactly the kind of thing two implementations
-// drift on, and `check` already measures with this one.
-import { bilinear } from './render.ts';
+// The rasteriser's sampler rather than a second one written here: how a pixel is
+// read between two pixel centres is exactly the kind of thing two
+// implementations drift on.
+//
+// ⚠️ `bilinearChannels`, NOT `bilinear`. `bilinear` interpolates in
+// premultiplied space, which is correct for an atlas and wrong for what this
+// file samples: `materialPlate` hands it the frame's own RGB with alpha rewritten
+// to mean "how much material is here", so the two are decoupled by construction
+// and `errBilinear` combines them itself. Issue #292 moved `bilinear` to the
+// premultiplied form and left this call on the channel-independent one — the
+// objective's own semantics, and unchanged fitting numbers with it.
+import { bilinearChannels } from './render.ts';
 
 export class PoseError extends Error {}
 
@@ -428,7 +436,7 @@ export function readBackground(frame: Plate): PoseBackground {
  * The frame as the objective reads it: the frame's own RGB, with alpha rewritten
  * to mean **how much material is here** rather than how opaque the file is.
  *
- * Keeping it in a `Plate` is what lets the pyramid, `bilinear` and the nearest
+ * Keeping it in a `Plate` is what lets the pyramid, `bilinearChannels` and the nearest
  * lookup all be the ones this repository already has.
  */
 export function materialPlate(frame: Plate, background: PoseBackground): { plate: Plate; share: number } {
@@ -568,7 +576,7 @@ export function errNearest(level: Level, x: number, y: number, pr: number, pg: n
 /** Same, sampled between pixel centres — what the refinement stages measure with. */
 export function errBilinear(level: Level, plate: Plate, x: number, y: number, pr: number, pg: number, pb: number): number {
   if (x < 0 || y < 0 || x >= level.width || y >= level.height) return 1;
-  const [fr, fg, fb, fa] = bilinear(plate, x - 0.5, y - 0.5);
+  const [fr, fg, fb, fa] = bilinearChannels(plate, x - 0.5, y - 0.5);
   const m = fa / 255;
   if (m <= 0) return 1;
   const d = (Math.abs(fr - pr) + Math.abs(fg - pg) + Math.abs(fb - pb)) / 765;

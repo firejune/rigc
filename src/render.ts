@@ -23,13 +23,20 @@
  *   real runtime would. Each triangle is then filled with barycentric UV
  *   interpolation.
  *
- * ⭐ **Sampling is bilinear on both paths, and the source is straight alpha.**
- * One filter rather than two is not a detail: `check` measures a candidate
- * against reference frames, and a mesh triangle sampled nearest against a
- * reference sampled bilinear would put a filter difference into the residual
- * where only a rig difference belongs. Bilinear rather than nearest because the
- * region path was already bilinear and the five committed rungs are rendered
- * with it — see `bilinear`.
+ * ⭐ **Sampling is bilinear on both paths, and the source is straight alpha —
+ * so the interpolation is premultiplied.** One filter rather than two is not a
+ * detail: `check` measures a candidate against reference frames, and a mesh
+ * triangle sampled nearest against a reference sampled bilinear would put a
+ * filter difference into the residual where only a rig difference belongs.
+ * Bilinear rather than nearest because the region path was already bilinear and
+ * the five committed rungs are rendered with it.
+ *
+ * Straight alpha is a property of the SOURCE, not a licence to average it
+ * channel by channel: a transparent texel's `(0, 0, 0, 0)` is the absence of a
+ * colour, and giving it a vote drew a dark rim along every region edge — over
+ * the top of whatever was behind the part, and into `check`'s residual on the
+ * candidate side. `bilinear` weights each colour by its own alpha and divides
+ * back out; see it for what that does and does not move (issue #292).
  *
  * ⚠️ **Region rasterising is untouched by the mesh path**, deliberately. A region
  * could be drawn as two triangles and very nearly the same pixels would come out;
@@ -1260,26 +1267,115 @@ export function blitPiece(
   rasterisePiece(page, piece, project, dst, (px, py, r, g, b, a) => dst.blend(px, py, [r, g, b, a]));
 }
 
-export function bilinear(page: Plate, x: number, y: number): [number, number, number, number] {
+/** The four texels one bilinear tap reads, and the fractions between them. */
+interface Taps {
+  c00: RGBA;
+  c10: RGBA;
+  c01: RGBA;
+  c11: RGBA;
+  fx: number;
+  fy: number;
+}
+
+/**
+ * The four texels around `(x, y)`, CLAMPED at the page edge.
+ *
+ * ⚠️ The clamp is load-bearing beyond this function: `src/atlas.ts` sizes the
+ * gutter between packed regions against the fact that one tap reaches exactly one
+ * texel, and `gallery/portrait`'s lid runs its art flush to its own window
+ * because a clamped tap has no transparent neighbour to reach into. Widening the
+ * tap is not a local change.
+ */
+function taps(page: Plate, x: number, y: number): Taps {
   const x0 = Math.floor(x);
   const y0 = Math.floor(y);
-  const fx = x - x0;
-  const fy = y - y0;
   const at = (ix: number, iy: number): RGBA => {
     const cx = Math.max(0, Math.min(page.width - 1, ix));
     const cy = Math.max(0, Math.min(page.height - 1, iy));
     return page.get(cx, cy);
   };
-  const c00 = at(x0, y0);
-  const c10 = at(x0 + 1, y0);
-  const c01 = at(x0, y0 + 1);
-  const c11 = at(x0 + 1, y0 + 1);
-  const out: [number, number, number, number] = [0, 0, 0, 0];
-  for (let c = 0; c < 4; c++) {
-    const top = c00[c] + (c10[c] - c00[c]) * fx;
-    const bottom = c01[c] + (c11[c] - c01[c]) * fx;
-    out[c] = top + (bottom - top) * fy;
+  return { c00: at(x0, y0), c10: at(x0 + 1, y0), c01: at(x0, y0 + 1), c11: at(x0 + 1, y0 + 1), fx: x - x0, fy: y - y0 };
+}
+
+/** One channel of a bilinear tap: lerp along x on both rows, then between them. */
+function lerpTap(v00: number, v10: number, v01: number, v11: number, fx: number, fy: number): number {
+  const top = v00 + (v10 - v00) * fx;
+  const bottom = v01 + (v11 - v01) * fx;
+  return top + (bottom - top) * fy;
+}
+
+/**
+ * Sample a straight-alpha page bilinearly — interpolating in PREMULTIPLIED space.
+ *
+ * ⭐ **Why the premultiply.** The source is straight alpha, so a transparent
+ * texel beside the art is `(0, 0, 0, 0)`: its colour is not a colour, it is the
+ * absence of one. Averaging R, G and B against it pulls the sample toward black
+ * while alpha only drops part of the way, and the difference between those two
+ * rates IS a dark rim, one pixel wide, drawn over whatever is behind the part.
+ * Weighting each colour by its own alpha and dividing the sum back out gives the
+ * transparent texel no vote in the colour, which is the whole of the fix: two
+ * parts of one colour, overlapping, come out that colour. Measured before the
+ * fix at −60/255 between two parts sharing one flat field, and −31/255 down
+ * `gallery/portrait`'s forehead — issue #292.
+ *
+ * ⭐ **Why alpha is computed the old way, and why equal alpha short-circuits.**
+ * `rasteriseQuad` and `rasteriseMesh` gate coverage on `alpha > 0.5`, so the
+ * alpha arithmetic decides WHICH pixels are drawn — and through `frameGeometry`,
+ * the framing box every reference frame was rendered inside. `lerpTap` on the
+ * alpha channel is therefore the original expression, unchanged, not an
+ * algebraically equal rearrangement: equal-but-rearranged is a last-bit
+ * difference, and a last bit either side of 0.5 is a pixel.
+ *
+ * For the same reason the equal-alpha case returns early. When all four taps
+ * carry one alpha, premultiplying by it and dividing it back out is the identity
+ * — so the straight path is not an approximation there, it is the same number,
+ * and taking it reproduces the five committed rungs BIT for bit rather than
+ * merely closely. What moves is exactly the mixed-alpha tap: the edges, where the
+ * rim was.
+ */
+export function bilinear(page: Plate, x: number, y: number): [number, number, number, number] {
+  const { c00, c10, c01, c11, fx, fy } = taps(page, x, y);
+  const a = lerpTap(c00[3], c10[3], c01[3], c11[3], fx, fy);
+  if (c00[3] === c10[3] && c00[3] === c01[3] && c00[3] === c11[3]) {
+    return [
+      lerpTap(c00[0], c10[0], c01[0], c11[0], fx, fy),
+      lerpTap(c00[1], c10[1], c01[1], c11[1], fx, fy),
+      lerpTap(c00[2], c10[2], c01[2], c11[2], fx, fy),
+      a,
+    ];
   }
+  // Every tap is transparent in some proportion that sums to nothing: there is no
+  // colour to recover and no pixel to draw (both callers gate on alpha anyway).
+  if (a <= 0) return [0, 0, 0, 0];
+  const out: [number, number, number, number] = [0, 0, 0, a];
+  for (let c = 0; c < 3; c++) {
+    const pm = lerpTap(c00[c] * c00[3], c10[c] * c10[3], c01[c] * c01[3], c11[c] * c11[3], fx, fy);
+    // Bounded by 255 in exact arithmetic — the weighted mean of the taps' colours
+    // cannot exceed their maximum — so the clamp absorbs float error only. It is
+    // here rather than trusted because `Plate`'s store is a `Uint8Array`, which
+    // WRAPS: 256 would land as a black pixel in the brightest part of the art.
+    out[c] = Math.min(255, pm / a);
+  }
+  return out;
+}
+
+/**
+ * The same tap, each channel interpolated independently.
+ *
+ * ⚠️ For a plate whose fourth channel is **not opacity**. `src/pose.ts`'s
+ * `materialPlate` keeps the frame's own RGB and rewrites alpha to mean "how much
+ * material is here", so its colour and its fourth channel are decoupled by
+ * construction — premultiplying by it would be a colour-space correction applied
+ * to something that is not in that colour space. `errBilinear` reads its two
+ * answers separately and combines them itself.
+ *
+ * Nothing that samples an ATLAS should call this. The rasteriser's source is
+ * straight alpha and wants `bilinear`.
+ */
+export function bilinearChannels(page: Plate, x: number, y: number): [number, number, number, number] {
+  const { c00, c10, c01, c11, fx, fy } = taps(page, x, y);
+  const out: [number, number, number, number] = [0, 0, 0, 0];
+  for (let c = 0; c < 4; c++) out[c] = lerpTap(c00[c], c10[c], c01[c], c11[c], fx, fy);
   return out;
 }
 

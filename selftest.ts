@@ -122,6 +122,8 @@ import {
   atlasPageNames,
   atlasScales,
   BACKGROUND,
+  bilinear,
+  bilinearChannels,
   EMPTY_FOOTPRINT,
   fill,
   FRAMES_SIDECAR,
@@ -7813,6 +7815,260 @@ const PACK_FIXTURES: ReadonlyArray<readonly [string, Fixture]> = [
   ['contained', CONTAINED],
 ];
 
+// ---------------------------------------------------------------------------
+// sampling: what a bilinear tap does where art meets transparency (issue #292)
+// ---------------------------------------------------------------------------
+
+/** The flat field both parts of the rim probe are painted in. */
+const RIM_COLOUR: RGBA = [242, 212, 156, 255];
+
+/**
+ * The minimal case from issue #292, as a rig: two parts of the IDENTICAL colour,
+ * the smaller centred over the larger in a margin of transparent texels.
+ *
+ * Nothing should be visible. The patch's edge is an interior edge — transparent
+ * texels on one side, the same flat field on both — so every pixel of the result
+ * is `RIM_COLOUR` unless the sampler has given `(0, 0, 0, 0)` a vote in the
+ * colour, and then the patch's outline is drawn in a darker shade of it.
+ */
+function writeRimProbe(): { rigPath: string; motionPath: string; outDir: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-rim-'));
+  const parts = join(dir, 'parts');
+  mkdirSync(parts, { recursive: true });
+  writeProbePng(join(parts, 'bg.png'), 120, 120, RIM_COLOUR);
+  // 32px of colour inside a 4px transparent margin: the margin is the thing
+  // under test, and it has to be wider than the one texel a tap can reach.
+  const patch = new Plate(40, 40);
+  for (let y = 4; y < 36; y++) for (let x = 4; x < 36; x++) patch.set(x, y, RIM_COLOUR);
+  patch.writePng(join(parts, 'patch.png'));
+  const rigPath = join(dir, 'rim.rig.json');
+  writeFileSync(
+    rigPath,
+    JSON.stringify({
+      spec: 'rigc-rig/1',
+      name: 'rim',
+      images: 'parts',
+      skeleton: { x: 0, y: 0, width: 120, height: 120 },
+      bones: [{ name: 'root' }, { name: 'patch', parent: 'root', x: 60, y: 60 }],
+      slots: [
+        { name: 'bg', bone: 'root', attachment: 'bg' },
+        { name: 'patch', bone: 'patch', attachment: 'patch' },
+      ],
+      skins: {
+        default: {
+          bg: { bg: { image: 'bg.png', x: 60, y: 60 } },
+          patch: { patch: { image: 'patch.png' } },
+        },
+      },
+    }),
+  );
+  const motionPath = join(dir, 'rim.motion.json');
+  writeFileSync(
+    motionPath,
+    JSON.stringify({
+      spec: 'rigc-motion/1',
+      archetype: 'rim',
+      cut: 'rim',
+      easings: {},
+      animations: {
+        hold: {
+          duration: 1,
+          loop: true,
+          tracks: [
+            {
+              bone: 'patch',
+              property: 'translatex',
+              keys: [
+                { t: 0, v: [0] },
+                { t: 1, v: [0] },
+              ],
+            },
+          ],
+        },
+      },
+    }),
+  );
+  return { rigPath, motionPath, outDir: join(dir, 'build') };
+}
+
+/**
+ * The worst deviation from `RIM_COLOUR` anywhere in a rendered frame, and where.
+ *
+ * Every pixel of the probe's frame must be that colour exactly — see
+ * `renderRimProbe` for why the frame has no other colour in it to allow for — so
+ * this needs no tolerance and no excluded region. Both directions count: a rim
+ * darkens, but a sampler wrong the other way would be just as wrong.
+ */
+function worstRimDeviation(plate: Plate): { worst: number; at: string } {
+  let worst = 0;
+  let at = 'nowhere';
+  for (let y = 0; y < plate.height; y++) {
+    for (let x = 0; x < plate.width; x++) {
+      const c = plate.get(x, y);
+      const d = Math.max(
+        Math.abs(RIM_COLOUR[0] - c[0]),
+        Math.abs(RIM_COLOUR[1] - c[1]),
+        Math.abs(RIM_COLOUR[2] - c[2]),
+        Math.abs(RIM_COLOUR[3] - c[3]),
+      );
+      if (d > worst) {
+        worst = d;
+        at = `(${x}, ${y}) = ${c[0]},${c[1]},${c[2]},${c[3]}`;
+      }
+    }
+  }
+  return { worst, at };
+}
+
+/**
+ * Every frame of the rim probe's one animation, rendered in process.
+ *
+ * ⭐ The frame is cleared to `RIM_COLOUR` rather than to `BACKGROUND`, which is
+ * what makes the assertion an equality over the WHOLE frame instead of a bound
+ * over some interior. The framing box carries `PAD` beyond the art and the stage
+ * does not fill its frame exactly, so a frame cleared to the usual grey has
+ * legitimate grey in it, and the bg part's own outer silhouette legitimately
+ * blends into that grey — a part really does only half-cover the pixel its edge
+ * falls in. Clear to the field the parts are painted in and every one of those
+ * legitimate blends is field-over-field, i.e. the field. What is left that could
+ * possibly differ is the patch's interior edge, which is #292 and nothing else.
+ */
+function renderRimProbe(): Plate[] {
+  const probe = writeRimProbe();
+  const result = compile({ rigPath: probe.rigPath, motionPath: probe.motionPath, outDir: probe.outDir });
+  const posable = posableFromText(result.skeletonText, result.atlasText, probe.outDir);
+  const viewport = framingViewport(posable.data, 121);
+  if (!viewport) throw new Error('the rim probe framed to nothing');
+  const out: Plate[] = [];
+  for (const [, frames] of sampleAll(posable.data, PROTOCOL_FPS)) {
+    for (const frame of frames) out.push(renderFrame(frame, posable.pages, viewport, RIM_COLOUR));
+  }
+  if (out.length === 0) throw new Error('the rim probe rendered no frames');
+  return out;
+}
+
+function runSamplingSuite(): number {
+  let bad = 0;
+  console.log('\n── bilinear sampling at an art/transparency edge (self-contained) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  // --- SM01 / SM02: the two-texel case, and the arithmetic that got it wrong --
+  // One opaque texel of the flat field beside one transparent texel, sampled
+  // exactly between them. Straight alpha means the transparent texel's colour is
+  // `(0, 0, 0)`, so the two samplers disagree by the whole of the bug.
+  const pair = new Plate(2, 1);
+  pair.set(0, 0, RIM_COLOUR);
+  pair.set(1, 0, [0, 0, 0, 0]);
+  const premul = bilinear(pair, 0.5, 0);
+  const straight = bilinearChannels(pair, 0.5, 0);
+  say(
+    'SM01_A_TRANSPARENT_TEXEL_GETS_NO_VOTE_IN_THE_COLOUR',
+    premul[0] === RIM_COLOUR[0] && premul[1] === RIM_COLOUR[1] && premul[2] === RIM_COLOUR[2],
+    `half way onto a transparent texel: ${premul[0]},${premul[1]},${premul[2]} at alpha ${premul[3]} ` +
+      `— the field is ${RIM_COLOUR[0]},${RIM_COLOUR[1]},${RIM_COLOUR[2]}`,
+    'the colour of a texel with no alpha is not a colour, and averaging it in is what drew the rim (#292). ' +
+      'Premultiplied, the only colour in the tap is the art’s own, and only the alpha falls off',
+  );
+  say(
+    'SM02_THE_STRAIGHT_AVERAGE_IS_STILL_LOUD',
+    straight[0] === 121 && RIM_COLOUR[0] - straight[0] === 121,
+    `the same tap, channels averaged independently: ${straight[0]},${straight[1]},${straight[2]} at alpha ` +
+      `${straight[3]} — ${RIM_COLOUR[0] - straight[0]}/255 darker in R`,
+    'red-first control for SM01. This is the arithmetic `bilinear` used until #292, kept reachable because ' +
+      '`bilinearChannels` still has a caller — if it ever stopped darkening, SM01 would stop meaning anything',
+  );
+
+  // --- SM03: alpha did not move ---------------------------------------------
+  // `rasteriseQuad` and `rasteriseMesh` gate coverage on `alpha > 0.5`, and
+  // `frameGeometry` measures the framing box through the same gate. So the fix
+  // is only free of the committed rungs if it left the alpha channel ALONE.
+  let alphaDrift = 0;
+  let mixedTaps = 0;
+  const mixed = new Plate(8, 8);
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      // A deliberately ragged alpha field: opaque, transparent and every part
+      // way between, so most taps read four different alphas.
+      mixed.set(x, y, [17 + x * 29, 200 - y * 13, (x * y * 7) % 256, ((x * 5 + y * 37) % 9) * 32]);
+    }
+  }
+  for (let sy = 0; sy < 70; sy++) {
+    for (let sx = 0; sx < 70; sx++) {
+      const x = sx / 10;
+      const y = sy / 10;
+      const a = bilinear(mixed, x, y);
+      const b = bilinearChannels(mixed, x, y);
+      if (a[3] !== b[3]) alphaDrift++;
+      if (a[0] !== b[0] || a[1] !== b[1] || a[2] !== b[2]) mixedTaps++;
+    }
+  }
+  say(
+    'SM03_THE_FIX_LEAVES_THE_ALPHA_CHANNEL_BIT_IDENTICAL',
+    alphaDrift === 0 && mixedTaps > 0,
+    `4900 taps over a ragged alpha field: ${alphaDrift} with a different alpha, ${mixedTaps} with a different ` +
+      'colour',
+    'coverage and the framing box are decided by alpha alone, so a fix that moved it would move which pixels ' +
+      'every committed reference frame contains. The colour count is the positive control: if it were 0 the ' +
+      'alpha comparison would be passing over a fix that does nothing',
+  );
+
+  // --- SM04: an opaque tap is not merely close, it is the same number --------
+  // Where all four texels share one alpha, premultiplying by it and dividing it
+  // back out is the identity, so `bilinear` short-circuits to the straight path
+  // rather than to an algebraically equal rearrangement of it. That is what
+  // makes "the five committed rungs do not move" exact rather than approximate:
+  // a rearrangement differs in the last bit, and a last bit either side of a
+  // rounding boundary is a whole byte of a PNG.
+  let opaqueDrift = 0;
+  const opaque = new Plate(8, 8);
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) opaque.set(x, y, [(x * 31 + 3) % 256, (y * 47 + 11) % 256, (x * y * 13) % 256, 255]);
+  }
+  for (let sy = 0; sy < 70; sy++) {
+    for (let sx = 0; sx < 70; sx++) {
+      const a = bilinear(opaque, sx / 10, sy / 10);
+      const b = bilinearChannels(opaque, sx / 10, sy / 10);
+      for (let c = 0; c < 4; c++) if (a[c] !== b[c]) opaqueDrift++;
+    }
+  }
+  say(
+    'SM04_AN_OPAQUE_TAP_IS_UNCHANGED_TO_THE_LAST_BIT',
+    opaqueDrift === 0,
+    `4900 taps over a fully opaque plate: ${opaqueDrift} channel samples differ from the old arithmetic`,
+    'the interior of any part is an equal-alpha tap, so this is most of every frame the ladder has recorded. ' +
+      'Exactly equal rather than nearly equal is the difference between a rung that still reproduces and one ' +
+      'that reproduces to within a rounding error nobody bounded',
+  );
+
+  // --- SM05 / SM06: the rendered claim, and that it stays deterministic ------
+  const frames = renderRimProbe();
+  const loudest = frames.map((f) => worstRimDeviation(f)).reduce((a, b) => (b.worst > a.worst ? b : a));
+  say(
+    'SM05_TWO_PARTS_OF_ONE_COLOUR_OVERLAP_INVISIBLY',
+    loudest.worst === 0,
+    `${frames.length} frame(s) of the #292 probe, flat field ${RIM_COLOUR.join(',')}: worst deviation anywhere ` +
+      `in the frame is ${loudest.worst}/255` + (loudest.worst === 0 ? '' : ` at ${loudest.at}`),
+    'the whole of #292 end to end: a patch of the same colour as what it covers, at the same place, drew its own ' +
+      'outline 60/255 darker than the field on both sides of it. A portrait’s eyelid and jaw plate are that ' +
+      'overlap, which is where it was found',
+  );
+  const again = renderRimProbe();
+  const identical =
+    again.length === frames.length &&
+    again.every((f, i) => f.data.length === frames[i].data.length && f.data.every((v, k) => v === frames[i].data[k]));
+  say(
+    'SM06_THE_SAME_RIG_RENDERS_THE_SAME_BYTES_TWICE',
+    identical,
+    `${again.length} frame(s) re-rendered from a fresh compile: ${identical ? 'byte-identical' : 'DIFFERENT'}`,
+    'the fix introduces a division, and a renderer whose output depends on anything but its inputs cannot be ' +
+      'the yardstick `check` measures a candidate against',
+  );
+
+  return bad;
+}
+
 function runPackerSuite(): number {
   console.log('\n── atlas packer + importer (issue #4) ──');
   let bad = 0;
@@ -10898,6 +11154,8 @@ function main(): void {
   substantive += 13;
   bad += runCopyImagesSuite();
   substantive += 3;
+  bad += runSamplingSuite();
+  substantive += 6;
   bad += runPackerSuite();
   substantive += 18;
   const atlasReaderBad = runAtlasReaderSuite();
