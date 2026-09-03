@@ -1020,6 +1020,25 @@ export interface RigInvariants {
   massBone?: string;
   /** Parentage that must never happen, with the reason it is tempting (`A25`). */
   detached?: Array<{ bone: string; notUnder: string; why?: string }>;
+  /**
+   * Mesh slots whose `deform` timelines are allowed to turn a triangle inside
+   * out, exempting them from `A39_DEFORM_KEEPS_TRIANGLE_WINDING`.
+   *
+   * 🚨 **This is an opt-OUT, and the default is gated.** A39's whole value is
+   * that a fold is caught without anybody suspecting one, so an author who has
+   * not thought about folding gets the check. What the field exists for is the
+   * art that folds on purpose — a page turning over, a cloth creasing back on
+   * itself — where the reversed winding IS the drawing and refusing it would be
+   * refusing correct work.
+   *
+   * ⚠️ `why` is **required**, and empty is refused by name. An exemption with no
+   * reason is the failure mode this field would otherwise introduce: somebody
+   * declares a slot to get a green build, and the next reader cannot tell a
+   * deliberate page turn from a defect that was waved through. The one exemption
+   * in this repository (`gallery/flex`'s leaf) says outright that it is the
+   * second kind, and names the issue.
+   */
+  deformMayFold?: Array<{ slot: string; why: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,6 +1177,43 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     }
     if (slot.blend !== undefined && !RIG_SLOT_BLEND.some((v) => v.toLowerCase() === String(slot.blend).toLowerCase())) {
       throw new CompileError(`${where}: slot "${slot.name}" has blend ${JSON.stringify(slot.blend)}; known: ${RIG_SLOT_BLEND.join(', ')}`);
+    }
+  }
+
+  // `invariants.deformMayFold` — the one field in this file that TURNS A CHECK
+  // OFF, so its own shape is checked harder than the fields that turn one on. A
+  // typo in a slot name here would silently exempt nothing and gate everything,
+  // which reads exactly like the check working; and an exemption with no reason
+  // is unreviewable six months later. Both are refused by name.
+  const mayFold = spec.invariants?.deformMayFold;
+  if (mayFold !== undefined) {
+    if (!Array.isArray(mayFold)) {
+      throw new CompileError(
+        `${where}: invariants.deformMayFold is ${JSON.stringify(mayFold)}, expected an array of { "slot": …, "why": … }`,
+      );
+    }
+    const declared = new Set<string>();
+    for (const entry of mayFold) {
+      if (!isObj(entry) || typeof entry.slot !== 'string' || entry.slot.length === 0) {
+        throw new CompileError(`${where}: every invariants.deformMayFold entry needs a "slot"`);
+      }
+      if (!slotNames.has(entry.slot)) {
+        throw new CompileError(
+          `${where}: invariants.deformMayFold exempts slot "${entry.slot}", which this rig does not declare — ` +
+            'a name that resolves to nothing exempts nothing, and reads like the exemption worked',
+        );
+      }
+      if (declared.has(entry.slot)) {
+        throw new CompileError(`${where}: invariants.deformMayFold names slot "${entry.slot}" twice`);
+      }
+      declared.add(entry.slot);
+      if (typeof entry.why !== 'string' || entry.why.trim().length === 0) {
+        throw new CompileError(
+          `${where}: invariants.deformMayFold entry for slot "${entry.slot}" needs a "why" — this field switches ` +
+            'A39_DEFORM_KEEPS_TRIANGLE_WINDING off for that slot, and an exemption nobody can date or justify is ' +
+            'how a defect ships as a decision',
+        );
+      }
     }
   }
 

@@ -169,7 +169,7 @@ import {
 import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
 import { readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson } from './src/types.ts';
-import { validate, type ValidateProfile } from './src/validate.ts';
+import { assertionCountForProfile, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
 
@@ -6977,6 +6977,353 @@ function worstOverdraw(piece: Piece, pages: Map<string, Plate>, viewport: Viewpo
   return worst;
 }
 
+// ---------------------------------------------------------------------------
+// A39_DEFORM_KEEPS_TRIANGLE_WINDING — the fold, and the three things that are
+// not one (issue #296)
+// ---------------------------------------------------------------------------
+
+/**
+ * The half-width of the turn probe's plate, which IS the sphere radius the
+ * projection is derived on: a column at `x` sits at depth `z = √(R² − x²)`.
+ * docs/FACE.md §1 derives that and §4.2 the fold it implies.
+ */
+const TURN_R = 170;
+/** Column positions, and the shipped `gallery/portrait` grid's own five. */
+const TURN_COLUMNS = [-162, -120, 0, 120, 162];
+/** Row positions. Five rows over a 380-tall plate, as the portrait grid has. */
+const TURN_ROWS = [180, 90, 0, -90, -180];
+
+/**
+ * The angle at which THIS column table folds, from the closed form rather than
+ * from a search: `tan θ = Δx/Δz` over adjacent columns, minimised over the pairs
+ * (docs/FACE.md §4.2). Turning one way, only one side's pairs can cross, which
+ * is what the positive filter is.
+ *
+ * ⚠️ Derived at run time on purpose. A literal `31.372` here would be a measured
+ * number hardcoded into a mutant — the thing `CLAUDE.md`'s selftest rules forbid
+ * — and it would stop agreeing the moment somebody edited `TURN_COLUMNS`.
+ */
+function foldAngleDegrees(columns: number[], radius: number): number {
+  const z = (x: number): number => Math.sqrt(radius * radius - x * x);
+  let best = Infinity;
+  for (let i = 0; i + 1 < columns.length; i++) {
+    const dx = columns[i] - columns[i + 1];
+    const dz = z(columns[i]) - z(columns[i + 1]);
+    const angle = (Math.atan(dx / dz) * 180) / Math.PI;
+    if (angle > 0) best = Math.min(best, angle);
+  }
+  return best;
+}
+
+/**
+ * One row of the deform run: the x shift each column takes when the sphere turns
+ * by `degrees`, from the same closed form.
+ *
+ * `x·(cos t − 1) − z·sin t` is the projected displacement, and the `y` of every
+ * pair is 0 — a yaw moves nothing vertically.
+ */
+/**
+ * Six decimals, which is the grid the compiler writes every emitted number on.
+ * Local rather than imported because `r6` is private to three modules in `src/`
+ * and this file is not the place to widen any of their surfaces.
+ */
+function round6(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
+}
+
+function turnRow(degrees: number): number[] {
+  const t = (degrees * Math.PI) / 180;
+  return TURN_COLUMNS.flatMap((x) => {
+    const z = Math.sqrt(TURN_R * TURN_R - x * x);
+    return [round6(x * (Math.cos(t) - 1) - z * Math.sin(t)), 0];
+  });
+}
+
+interface TurnBuild {
+  dir: string;
+  opts: Options;
+  result: CompileResult;
+}
+
+/**
+ * A 5×5 grid mesh over its own plate, with one deform key generated from the
+ * projection above — the smallest rig that can carry the failure #296 is about.
+ *
+ * The mesh is AUTHORED and unweighted, which is what `gallery/portrait`'s head
+ * is: an authored grid takes its pose from the slot bone, and the deform array
+ * is then one `x, y` pair per vertex in that bone's own space. That is also the
+ * shape in which the projection above is the whole of the geometry, so a reader
+ * can check the numbers against the columns.
+ */
+function buildTurnRig(
+  row: number[],
+  extra: { invariants?: Record<string, unknown>; slots?: Array<Record<string, unknown>>; skins?: Record<string, unknown> } = {},
+): TurnBuild {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-turn-'));
+  const width = TURN_R * 2;
+  const height = 380;
+  writeProbePng(join(dir, 'head.png'), width, height, [200, 170, 150, 255]);
+  const uvs: number[] = [];
+  const vertices: number[] = [];
+  for (const y of TURN_ROWS) {
+    for (const x of TURN_COLUMNS) {
+      uvs.push(round6(x / width + 0.5), round6(0.5 - y / height));
+      vertices.push(x, y);
+    }
+  }
+  // Row-major quads, each split into the two triangles `gallery/portrait`
+  // declares, so a flipped triangle's index means the same thing in both.
+  const triangles: number[] = [];
+  for (let r = 0; r + 1 < TURN_ROWS.length; r++) {
+    for (let c = 0; c + 1 < TURN_COLUMNS.length; c++) {
+      const tl = r * TURN_COLUMNS.length + c;
+      const tr = tl + 1;
+      const bl = tl + TURN_COLUMNS.length;
+      const br = bl + 1;
+      triangles.push(tl, bl, br, tl, br, tr);
+    }
+  }
+  const rigPath = join(dir, 'turn.rig.json');
+  writeFileSync(
+    rigPath,
+    `${JSON.stringify(
+      {
+        spec: 'rigc-rig/1',
+        name: 'turn_probe',
+        skeleton: { width: 800, height: 800 },
+        invariants: extra.invariants ?? { meshSlots: 1, meshTriangles: 40 },
+        bones: [{ name: 'root' }, { name: 'head', parent: 'root', x: 400, y: 400 }],
+        slots: extra.slots ?? [{ name: 'head', bone: 'head', attachment: 'head' }],
+        skins: extra.skins ?? {
+          default: { head: { head: { type: 'mesh', image: 'head.png', width, height, uvs, triangles, vertices } } },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const motionPath = join(dir, 'turn.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify(
+      {
+        spec: 'rigc-motion/1',
+        archetype: 'turn_probe',
+        cut: 'turn_probe',
+        easings: {},
+        animations: {
+          turn: {
+            duration: 1,
+            loop: false,
+            tracks: [],
+            deform: [
+              {
+                slot: 'head',
+                attachment: 'head',
+                keys: [
+                  { t: 0 },
+                  { t: 0.5, fromVertex: 0, vertices: TURN_ROWS.flatMap(() => row) },
+                  { t: 1 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const opts: Options = { rigPath, motionPath, outDir: join(dir, 'spine'), imagesDir: dir };
+  return { dir, opts, result: compile(opts) };
+}
+
+/** Gate one turn build under the profile A39 lives in. */
+function gateTurn(build: TurnBuild): ReturnType<typeof validate> {
+  return validate({
+    skeletonText: build.result.skeletonText,
+    atlasText: build.result.atlasText,
+    atlasDir: build.opts.outDir,
+    declaredDurations: build.result.declaredDurations,
+    rig: build.result.rig,
+    profile: 'spine-html',
+  });
+}
+
+const A39 = 'A39_DEFORM_KEEPS_TRIANGLE_WINDING';
+
+/** Does A39 fire on a turn of this many degrees? Used by the bisection below. */
+function foldsAt(degrees: number): boolean {
+  return gateTurn(buildTurnRig(turnRow(degrees))).failures.some((f) => f.assertion === A39);
+}
+
+/** The compile message a turn rig spec was refused with, or null if it compiled. */
+function turnRefusal(extra: Parameters<typeof buildTurnRig>[1]): string | null {
+  try {
+    buildTurnRig(turnRow(12), extra);
+    return null;
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
+
+function runDeformWindingSuite(): number {
+  let bad = 0;
+  console.log('\n── deform winding, A39 (fixture: a 5x5 grid turned by its own closed form) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const fold = foldAngleDegrees(TURN_COLUMNS, TURN_R);
+
+  // --- the positive control ------------------------------------------------
+  const safe = gateTurn(buildTurnRig(turnRow(12)));
+  say(
+    'DW00_CONTROL_A_TURN_INSIDE_THE_FOLD_ANGLE_GATES_GREEN',
+    safe.failures.length === 0 && safe.passed.includes(A39),
+    safe.failures.length === 0
+      ? `12° is inside this grid's own ${fold.toFixed(3)}° fold angle; ${safe.passed.length} assertions ran under ` +
+          `the renderer profile and ${A39} ${safe.passed.includes(A39) ? 'PASSED' : 'did NOT run'}`
+      : `[${safe.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'every case below is vacuous if the shape of a correct turn does not gate green first',
+  );
+
+  // --- the break: the same closed form, past the fold ----------------------
+  //
+  // 🚨 This is docs/FACE.md §9.2's build (b), which gated green before A39
+  // existed: 26 PASS / 13 SKIP, `A35` passing, and a byte-identical MESH
+  // coverage line, because that line reports the setup pose.
+  const folded = gateTurn(buildTurnRig(turnRow(40)));
+  const hits = folded.failures.filter((f) => f.assertion === A39);
+  const detail = hits[0]?.detail ?? '';
+  // Every flipped triangle must span the pair the closed form NAMES — columns 0
+  // and 1, the outermost gap — and no other. Read off the message because the
+  // message is the product: it is what an agent holding a folded rig reads.
+  const spans = [...detail.matchAll(/triangle \d+ \[(\d+),(\d+),(\d+)\]/g)].map((m) =>
+    [m[1], m[2], m[3]].map((v) => Number(v) % TURN_COLUMNS.length),
+  );
+  const onlyTheOuterPair = spans.length > 0 && spans.every((cols) => cols.every((c) => c === 0 || c === 1));
+  say(
+    'DW01_A_TURN_PAST_THE_FOLD_ANGLE_IS_REFUSED_BY_NAME',
+    // One failure, because the probe keys the projection ONCE — the two keys
+    // either side of it are `{ t }` with no vertices, which is the format's own
+    // way of saying "the setup pose" and cannot fold anything.
+    hits.length === 1 &&
+      /8 of 32 triangle\(s\) reverse winding/.test(detail) &&
+      /animation "turn" deform head\/head key 1/.test(detail) &&
+      onlyTheOuterPair,
+    hits.length > 0
+      ? `40° past a ${fold.toFixed(3)}° fold: ${hits.length} key(s) refused, and the triangles named span only ` +
+          `columns ${[...new Set(spans.flat())].sort().join(' and ')} — the pair the closed form names. ${detail}`
+      : `${A39} did NOT fire on a mesh folded at 40°; the report was [${folded.passed.join(', ')}]`,
+    'issue #296: nothing measured what a deform key did to the geometry, so a mesh that folded inside out was ' +
+      'green and silent — A35 measures the run\'s LENGTH and stops there',
+  );
+
+  // --- the false positive that matters: inverted is not folded -------------
+  //
+  // docs/FACE.md §9.2's build (a). The two far columns are given each other's
+  // shift, so the far side STRETCHES 1.363 where it should compress to 0.637 and
+  // the head reads as turning the other way at its own edge. That is a wrong
+  // projection and A39 must stay quiet about it: no triangle reverses, and an
+  // assertion that fired here would be reporting something it cannot see.
+  const straight = turnRow(12);
+  const inverted = [...straight];
+  [inverted[0], inverted[2]] = [inverted[2], inverted[0]];
+  [inverted[6], inverted[8]] = [inverted[8], inverted[6]];
+  const bandInverted = gateTurn(buildTurnRig(inverted));
+  say(
+    'DW02_AN_INVERTED_BAND_IS_NOT_A_FOLD_AND_A39_STAYS_QUIET',
+    bandInverted.failures.length === 0 && bandInverted.passed.includes(A39),
+    bandInverted.failures.length === 0
+      ? `the two far columns swapped shifts (${straight[0]} <-> ${straight[2]} and ${straight[6]} <-> ${straight[8]}) ` +
+          `and ${A39} still PASSED — the winding is intact, the projection is wrong, and only \`rigc check\` ` +
+          'against a trusted render can see the difference (docs/FACE.md §9.3)'
+      : `[${bandInverted.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'the assertion has to separate the fold from every other wrong deform, or its failures cannot be acted on',
+  );
+
+  // --- the instrument against the closed form ------------------------------
+  //
+  // The strongest statement available: bisect the angle at which A39 turns from
+  // PASS to FAIL, and compare it with `atan(Δx/Δz)` over the adjacent columns.
+  // The two are independent — one is a signed area off posed float32 world
+  // vertices, the other is arithmetic on the column table — so agreement is
+  // evidence about both.
+  let lo = 1;
+  let hi = 89;
+  for (let i = 0; i < 22; i++) {
+    const mid = (lo + hi) / 2;
+    if (foldsAt(mid)) hi = mid;
+    else lo = mid;
+  }
+  const measured = hi;
+  const drift = Math.abs(measured - fold);
+  say(
+    'DW03_THE_ANGLE_A39_FIRES_AT_IS_THE_CLOSED_FORM_FOLD_ANGLE',
+    drift < 0.05,
+    `A39 first fires at ${measured.toFixed(4)}° (22-step bisection over 1°..89°); the closed form gives ` +
+      `${fold.toFixed(4)}° for columns [${TURN_COLUMNS.join(', ')}] at R=${TURN_R}. Drift ${drift.toFixed(4)}°, ` +
+      'tolerance 0.05°',
+    'docs/FACE.md §4.2 says an author cannot eyeball this angle and that refining the mesh LOWERS it; an ' +
+      'instrument that agrees with the formula is what makes the formula usable without seven renders',
+  );
+
+  // --- the escape hatch ----------------------------------------------------
+  const exempt = gateTurn(
+    buildTurnRig(turnRow(40), {
+      invariants: {
+        meshSlots: 1,
+        meshTriangles: 40,
+        deformMayFold: [{ slot: 'head', why: 'the probe for the escape hatch itself' }],
+      },
+    }),
+  );
+  const skipReason = exempt.skipped.find((s) => s.assertion === A39)?.reason ?? '';
+  say(
+    'DW04_A_DECLARED_FOLD_IS_EXEMPT_AND_SKIPS_RATHER_THAN_PASSES',
+    exempt.failures.length === 0 && !exempt.passed.includes(A39) && /deformMayFold/.test(skipReason),
+    exempt.failures.length === 0
+      ? `the same 40° fold under \`invariants.deformMayFold\` gates green, and ${A39} reports SKIP — "${skipReason}"`
+      : `[${exempt.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'legitimate art DOES flip a triangle — a page turning over, a cloth creasing back — and the author is the ' +
+      'only one who knows; SKIP rather than PASS because an exempted rule has not checked anything',
+  );
+
+  // --- and the three ways the escape hatch is refused ---------------------
+  //
+  // This is the one field in the rig spec that turns a check OFF, so its own
+  // failure modes are the dangerous ones: each of these would leave a build
+  // green while looking like the exemption had worked.
+  const typo = turnRefusal({
+    invariants: { meshSlots: 1, meshTriangles: 40, deformMayFold: [{ slot: 'haed', why: 'a typo' }] },
+  });
+  const noWhy = turnRefusal({
+    invariants: { meshSlots: 1, meshTriangles: 40, deformMayFold: [{ slot: 'head', why: '   ' }] },
+  });
+  const noMesh = turnRefusal({
+    invariants: { meshSlots: 1, meshTriangles: 40, deformMayFold: [{ slot: 'plate', why: 'a slot with no mesh' }] },
+    slots: [
+      { name: 'plate', bone: 'head', attachment: 'plate' },
+      { name: 'head', bone: 'head', attachment: 'head' },
+    ],
+  });
+  say(
+    'DW05_A_FOLD_EXEMPTION_THAT_EXEMPTS_NOTHING_IS_REFUSED_BY_NAME',
+    typo !== null &&
+      /does not declare/.test(typo) &&
+      noWhy !== null &&
+      /needs a "why"/.test(noWhy) &&
+      noMesh !== null &&
+      /carries no mesh/.test(noMesh),
+    `an undeclared slot: ${JSON.stringify(typo)}; a blank reason: ${JSON.stringify(noWhy)}; a slot with no mesh: ${JSON.stringify(noMesh)}`,
+    'a fold exemption naming nothing exempts nothing and reads exactly like the check working — and an exemption ' +
+      'with no reason is how a defect ships as a decision',
+  );
+
+  return bad;
+}
+
 /**
  * The slot the articulated fixture's manifest promotes to a ring mesh.
  *
@@ -9032,6 +9379,13 @@ function runCliSuite(): number {
     const assertions = (out: string): Set<string> =>
       new Set([...out.matchAll(/^ {2}(?:PASS|FAIL|SKIP|PROF) {2}(A\d\d_[A-Z0-9_]+)/gm)].map((m) => m[1]));
 
+    // ⚠️ Both counts below are DERIVED from the validator's own registry rather
+    // than written here. They used to be the literals `14` and `39`, and a
+    // literal is a guardrail that has to be remembered: adding one assertion
+    // failed two cases whose names said nothing about counting.
+    const everyAssertion = assertionCountForProfile('spine-html');
+    const policyAssertions = everyAssertion - assertionCountForProfile('spine');
+
     const bare = runCli(args([]));
     const bareProf = [...bare.stdout.matchAll(/^ {2}PROF {2}(A\d\d_[A-Z0-9_]+)/gm)].map((m) => m[1]);
     say(
@@ -9040,10 +9394,10 @@ function runCliSuite(): number {
         /profile spine\b/.test(bare.stdout) &&
         !/profile spine-html/.test(bare.stdout) &&
         bareProf.includes(A19) &&
-        bareProf.length === 14,
+        bareProf.length === policyAssertions,
       bare.status === 0
-        ? `green, profile=${/rig=\S+ profile=(\S+)/.exec(bare.stdout)?.[1] ?? '?'}, ${bareProf.length} PROF including ` +
-            `${bareProf.includes(A19) ? A19 : `NOT ${A19}`}`
+        ? `green, profile=${/rig=\S+ profile=(\S+)/.exec(bare.stdout)?.[1] ?? '?'}, ${bareProf.length} PROF of ` +
+            `${policyAssertions} policy rules, including ${bareProf.includes(A19) ? A19 : `NOT ${A19}`}`
         : `exit=${String(bare.status)} — the default refused art only renderer policy objects to: ${bare.stderr.trim()}`,
       "the npm pitch is that the output imports into the Spine editor, and a stranger's first build was being " +
         "judged against a third-party renderer's policy instead (#221)",
@@ -9053,13 +9407,13 @@ function runCliSuite(): number {
     const optedAll = assertions(opted.stdout);
     const optedProf = [...opted.stdout.matchAll(/^ {2}PROF {2}A\d\d_/gm)].length;
     say(
-      'CLI07_PROFILE_SPINE_HTML_STILL_RUNS_ALL_39',
+      'CLI07_PROFILE_SPINE_HTML_STILL_RUNS_EVERY_ASSERTION',
       opted.status !== 0 &&
         opted.status !== null &&
-        optedAll.size === 39 &&
+        optedAll.size === everyAssertion &&
         optedProf === 0 &&
         new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout),
-      `exit=${String(opted.status)}, ${optedAll.size}/39 assertions reported, ${optedProf} PROF, ` +
+      `exit=${String(opted.status)}, ${optedAll.size}/${everyAssertion} assertions reported, ${optedProf} PROF, ` +
         `A19 ${new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout) ? 'FAILED as it must' : 'did not fire'}`,
       'flipping a default is only safe if the old one is still reachable and still complete — the opt-in has to be ' +
         'every rule it always was, not a weakened copy',
@@ -11071,27 +11425,38 @@ function runGallerySuite(): { failures: number; examples: number } {
     const opts = { rigPath: join(dir, 'rig.json'), motionPath: join(dir, 'motion.json'), outDir };
     try {
       const result = compile(opts);
-      const report = validate({
-        skeletonText: result.skeletonText,
-        atlasText: result.atlasText,
-        atlasDir: outDir,
-        declaredDurations: result.declaredDurations,
-        rig: result.rig,
-        // Twice, so A18's determinism claim means something over real art: the
-        // fixtures' numbers are all round and an example's are not.
-        reEmit: { skeletonText: compile(opts).skeletonText, atlasText: compile(opts).atlasText },
-        profile: 'spine',
-      });
-      if (report.failures.length === 0) {
-        const skips = report.skipped.length ? `, ${report.skipped.length} skipped` : '';
-        console.log(
-          `  PASS  GALLERY_EXAMPLE_IS_GREEN[${name}]  (${report.passed.length} assertions ran${skips}; ` +
-            `${Object.keys(result.declaredDurations).length} animation(s))`,
-        );
-      } else {
-        bad++;
-        console.log(`  FAIL  GALLERY_EXAMPLE_IS_GREEN[${name}]`);
-        for (const f of report.failures) console.log(`          ${f.assertion}: ${f.detail}`);
+      // Twice more, so A18's determinism claim means something over real art:
+      // the fixtures' numbers are all round and an example's are not. Compiled
+      // once and read by both profiles below — the texts do not depend on which
+      // rulebook judges them.
+      const reEmit = { skeletonText: compile(opts).skeletonText, atlasText: compile(opts).atlasText };
+      // 🚨 Both profiles, since 2026-09-03. Under `spine` every archetype rule
+      // reads PROF, so a gallery gated only there exercises none of them — and
+      // the gallery is the only place in this repository with a deform timeline
+      // over real geometry, which is exactly what `A39` reads. Each README that
+      // claims its example gates green under both is also now checked rather
+      // than believed.
+      for (const profile of VALIDATE_PROFILES) {
+        const report = validate({
+          skeletonText: result.skeletonText,
+          atlasText: result.atlasText,
+          atlasDir: outDir,
+          declaredDurations: result.declaredDurations,
+          rig: result.rig,
+          reEmit,
+          profile,
+        });
+        if (report.failures.length === 0) {
+          const skips = report.skipped.length ? `, ${report.skipped.length} skipped` : '';
+          console.log(
+            `  PASS  GALLERY_EXAMPLE_IS_GREEN[${name}/${profile}]  (${report.passed.length} assertions ran${skips}; ` +
+              `${Object.keys(result.declaredDurations).length} animation(s))`,
+          );
+        } else {
+          bad++;
+          console.log(`  FAIL  GALLERY_EXAMPLE_IS_GREEN[${name}/${profile}]`);
+          for (const f of report.failures) console.log(`          ${f.assertion}: ${f.detail}`);
+        }
       }
     } catch (err) {
       bad++;
@@ -11200,6 +11565,8 @@ function main(): void {
   substantive += 6;
   bad += runContourMeshSuite();
   substantive += 8;
+  bad += runDeformWindingSuite();
+  substantive += 6;
   bad += runMeshSuite();
   substantive += 4;
   const meshRungBad = runMeshRungSuite();
@@ -11344,6 +11711,13 @@ function main(): void {
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
+      '+ 6 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
+      'angle it gates green, past that angle A39 names the animation, the key, the time and every reversed triangle ' +
+      'with both its areas, and the eight it names span only the outermost column pair the formula picks out; the ' +
+      'angle A39 first fires at, bisected, agrees with that formula to 0.0001°; a band INVERTED rather than folded ' +
+      'must leave it silent, because a wrong projection with intact winding is only visible to `check`; and the ' +
+      'escape hatch both ways — a declared fold SKIPs rather than passes, while an exemption naming an undeclared ' +
+      'slot, a slot with no mesh, or carrying no reason is refused by name), ' +
       `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
       ', + 5 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +
@@ -11405,7 +11779,7 @@ function main(): void {
       (meshRung.startsWith(',') ? '' : meshRung) +
       (launcher.startsWith(',') ? '' : launcher) +
       (gallery.examples > 0
-        ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled twice and gated green under \`spine\``
+        ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled three times and gated green under BOTH profiles`
         : '\n  ⚠️ No gallery/ directory, so no complete rig over real art was compiled in this run.') +
       (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : ''),
   );

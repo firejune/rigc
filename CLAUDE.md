@@ -6,7 +6,7 @@ Guidance for AI-assisted sessions working on this repository.
 
 rigc compiles a **rig spec** plus a motion spec — and, for a cut with measured art
 behind it, a cut manifest — into Spine 4.3 skeleton data and a one-part-per-page
-atlas, then round-trips the result through `@esotericsoftware/spine-core` and 39
+atlas, then round-trips the result through `@esotericsoftware/spine-core` and 40
 named assertions before anything is written. Read [README.md](README.md) for the
 formats, the CLI and the assertion list; [`src/rig.ts`](src/rig.ts) is the rig
 spec's own documentation.
@@ -172,8 +172,9 @@ what follows is what keeps it closed.
   anatomy, plan documents, per-project budgets. If a comment, a default or an
   assertion can only be understood by someone who has seen one particular set of
   art, it is in the wrong repository.
-- **An archetype assertion reads the rig, never a name.** A24–A30 take everything
-  they know from the rig spec's `invariants` block, and `A13_MESH_BUDGET` takes
+- **An archetype assertion reads the rig, never a name.** A24–A30 and A39 take
+  everything they know from the rig spec's `invariants` block, and
+  `A13_MESH_BUDGET` takes
   its two numbers from `invariants.meshSlots` / `invariants.meshTriangles`. A
   budget baked in here would be one consumer's frame time failing correct foreign
   data — the editor's own example projects ship meshes many times denser.

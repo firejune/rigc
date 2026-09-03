@@ -2864,6 +2864,19 @@ function buildRigInfo(
   }
   const meshKinds: RigInfo['meshKinds'] = {};
   for (const mesh of meshes) meshKinds[mesh.slot] = mesh.kind;
+  // A fold exemption on a slot that carries no mesh cannot exempt anything —
+  // A39 reads triangles, and only a mesh has them. `parseRigSpec` already
+  // refused a name that is not a SLOT; this is the second half, and it needs
+  // the compiled meshes so it lives here rather than there.
+  const deformMayFold = (rig.invariants?.deformMayFold ?? []).map((e) => e.slot);
+  for (const slot of deformMayFold) {
+    if (meshKinds[slot] === undefined) {
+      throw new CompileError(
+        `rig "${rig.name}" exempts slot "${slot}" from A39_DEFORM_KEEPS_TRIANGLE_WINDING, but that slot carries no ` +
+          'mesh — winding is a property of triangles, so there is nothing there to exempt',
+      );
+    }
+  }
   // Inward, in Spine world. Off-axis keys (the mass bone usually hangs outside
   // the axis subtree) have to be projected onto it before they can be compared
   // with travel along the axis.
@@ -2887,6 +2900,7 @@ function buildRigInfo(
     detached: (rig.invariants?.detached ?? []).map((d) => [d.bone, d.notUnder] as [string, string]),
     slotOrder: rig.slots.length ? rig.slots.map((s) => s.name) : null,
     meshKinds,
+    deformMayFold,
     meshSlotBudget: rig.invariants?.meshSlots ?? null,
     meshTriangleBudget: rig.invariants?.meshTriangles ?? null,
     contactDepth,
