@@ -86,6 +86,7 @@ import {
   ChainFitError,
   DEFAULT_HINGE_MAX,
   DEFAULT_HINGE_MIN,
+  DEFAULT_MIN_LEVER_PX,
   DEFAULT_MIN_VISIBLE,
   DEFAULT_PASSES,
   estimateChainFit,
@@ -1407,6 +1408,11 @@ function cmdChainFit(flags: Record<string, string>): void {
     if (!Number.isInteger(value) || value < 1 || value > 8) throw new UsageError('--passes must be a whole number in 1..8');
     options.passes = value;
   }
+  if (flags['inward-lever'] !== undefined) {
+    const value = Number(flags['inward-lever']);
+    if (!Number.isFinite(value) || value < 0) throw new UsageError('--inward-lever must be a number of frame pixels, 0 or more');
+    options.minLeverPx = value;
+  }
   if (flags['anchor-residual'] !== undefined) {
     const value = Number(flags['anchor-residual']);
     if (!Number.isFinite(value) || value <= 0 || value > 1) throw new UsageError('--anchor-residual must be a number in (0, 1]');
@@ -2300,6 +2306,10 @@ const FLAG_MEANINGS: Record<string, string> = {
   'anchor-residual':
     `the residual a \`pose\` placement must be within to anchor a chain (default ${ANCHOR_MAX_RESIDUAL}, with ` +
     `unexplained ≤ ${ANCHOR_MAX_UNEXPLAINED} and unambiguous — the 2026-09-03 measurement run's own clean-frame criterion)`,
+  'inward-lever':
+    `how far apart, in frame pixels, two anchored descendants have to sit before the rotation they determine is ` +
+    `printed (default ${DEFAULT_MIN_LEVER_PX}); below it the bone is refused \`no-bracket\` naming the measured ` +
+    'lever, because an angle read across a short lever turns a half-pixel anchor error into several degrees',
   animation: 'which animation to show; the default is every one for `render` and the first for `preview`',
   max: 'longest side of a rendered frame, in pixels (default 256)',
   record: 'a saved vote to check against its ballot and append to the ledger, instead of writing a ballot',
@@ -2344,6 +2354,7 @@ const FLAG_VALUES: Record<string, string> = {
   'min-visible': '<0..1>',
   passes: '<n>',
   'anchor-residual': '<0..1>',
+  'inward-lever': '<px>',
   animation: '<name>',
   max: '<px>',
   record: '<result.json>',
@@ -2496,6 +2507,7 @@ const COMMANDS: CommandDoc[] = [
       'max-residual',
       'passes',
       'anchor-residual',
+      'inward-lever',
       'scale',
       'rotation',
       'out',
