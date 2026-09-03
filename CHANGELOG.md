@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0](https://github.com/firejune/rigc/compare/v0.12.0...v0.13.0) (2026-09-03)
+
+
+### Features
+
+* **gallery:** portrait — a 2.5D head turn built from authored deform keys ([#297](https://github.com/firejune/rigc/issues/297)) ([6697308](https://github.com/firejune/rigc/commit/669730845fe623bdb1ccb60b052f982be15f8ec2))
+
+
+### Bug Fixes
+
+* **compile:** refuse a `setup` entry that is not an object, by name ([#303](https://github.com/firejune/rigc/issues/303)) ([cc53b55](https://github.com/firejune/rigc/commit/cc53b55a37df714cd3774cceb37280190c294199)), closes [#293](https://github.com/firejune/rigc/issues/293)
+* **pkg:** ship docs/FACE.md in the npm package ([#302](https://github.com/firejune/rigc/issues/302)) ([fc9f13f](https://github.com/firejune/rigc/commit/fc9f13fa25287e7d3740f143416c3e4fcdcb700a))
+* **render:** interpolate premultiplied so a region edge draws no dark rim ([#301](https://github.com/firejune/rigc/issues/301)) ([c7dfe81](https://github.com/firejune/rigc/commit/c7dfe8196c8214e86c05242ac22a7953b4b1b41b)), closes [#292](https://github.com/firejune/rigc/issues/292)
+
 ## [0.12.0](https://github.com/firejune/rigc/compare/v0.11.0...v0.12.0) (2026-09-03)
 
 
