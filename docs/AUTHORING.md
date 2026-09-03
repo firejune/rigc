@@ -3986,6 +3986,7 @@ And per part:
 | Field | Meaning |
 | --- | --- |
 | `role` | `anchor` (taken from the anchor pass, not re-fitted), `chain` (fitted through the rig), `unplaced` |
+| — | ⭐ **Three kinds of placement live in one list, and the refusals tell them apart.** The part an anchor was *read from* is never refused here: no search happened, so `occluded` would be second-guessing `pose` rather than reporting anything, and `anchorVerdict` is the trust signal that was actually used — the masked figures are still printed, with a note. The **other** parts on that same bone *are* refused, because their placement is the rig's own prediction from that anchor and is therefore a real measurement of it (a goggle plate that will not sit on the head it is parented to shows up exactly here). Chain placements are refused because they were searched |
 | `bone` | the bone this hangs off: its `parent`, its `setupRotationDeg`, its `depth` in links from the anchor, `anchoredTo`, the `dof` searched, the `window` taken, the other parts `sharedWith` it on that bone, and `carriedBones` |
 | `bone.dof.pivotFree` | your candidate keys a `translate` timeline on this bone, so the arc this answer sits on has a centre the rig itself moves. The placement is still read off pixels; `localRotationDeg` alone will not reproduce it |
 | `bone.carriedBones` | bones between the anchor and here that carry nothing scoreable. Their hinge could not be fitted, their setup rotation was carried through, and every number below them inherits that |

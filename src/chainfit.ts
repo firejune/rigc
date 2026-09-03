@@ -1059,6 +1059,18 @@ interface PartState {
   link: { hingeDeg: number; stretch: number } | null;
   /** Its bone's visible set had to be relocated by an unmasked look before it froze. */
   relocated: boolean;
+  /**
+   * This part IS the one its bone's anchor was read from.
+   *
+   * ⭐ The distinction the refusals turn on. Three kinds of placement live in one
+   * report: the anchor's own, which came from the anchor pass and was not searched
+   * here; the other parts on an anchored bone, whose placement is the RIG's and is
+   * therefore a real measurement of it; and the chain's, which was searched. This
+   * instrument refuses the last two and does not second-guess the first — an
+   * `occluded` refusal says "a search over a sliver is not a measurement", and no
+   * search happened. Its trust signal is `anchorVerdict`, which is the pass's own.
+   */
+  isAnchorSource: boolean;
   alternates: { place: PartPlace; link: { hingeDeg: number; stretch: number } }[];
   role: 'anchor' | 'chain' | 'unplaced';
 }
@@ -1151,6 +1163,7 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       frozen: null,
       link: null,
       relocated: false,
+      isAnchorSource: false,
       alternates: [],
       role: 'unplaced',
     };
@@ -1521,7 +1534,8 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       const bonePlace = placedBones.get(state.drawn.bone);
       const bone = bones.get(state.drawn.bone);
       state.role = 'anchor';
-      state.place = anchor.state === state ? anchor.entry.place : placeOf(state);
+      state.isAnchorSource = anchor.state === state;
+      state.place = state.isAnchorSource ? anchor.entry.place : placeOf(state);
       const parentPlace =
         bone === undefined || bone.parent === undefined ? undefined : placedBones.get(bone.parent);
       state.link =
@@ -1616,6 +1630,11 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       'A part refused `occluded` is refused because too little of it survives the parts in front of it, and the ' +
         'best placement found is still in `placement`: the chain put it there and the pixels did not confirm it. ' +
         'A refusal names why not to trust a number; it does not hide it.',
+      'Three kinds of placement live in this one list and the refusals distinguish them. The part an ANCHOR was ' +
+        'read from is never refused here — no search happened, so `occluded` would be second-guessing the anchor ' +
+        "pass rather than reporting anything, and `anchorVerdict` is the trust signal that was used. The OTHER " +
+        "parts on an anchored bone are refused, because their placement is the RIG's prediction from that anchor " +
+        'and is a real measurement of it. Chain placements are refused because they were searched.',
     ],
     parts: [],
   };
@@ -1827,7 +1846,18 @@ function finishPart(state: PartState, ctx: FinishContext): ChainFitPart {
     );
   }
 
-  if (placement.visibleShare < ctx.minVisible) {
+  if (state.isAnchorSource) {
+    // Reported rather than refused — see `PartState.isAnchorSource`.
+    if (placement.visibleShare < ctx.minVisible || placement.residual > ctx.maxResidual) {
+      out.notes.push(
+        `this instrument saw ${(placement.visibleShare * 100).toFixed(1)}% of ${name} — ` +
+          `residual ${placement.residual.toFixed(4)} over ${placement.scoredPixels} part pixel(s) — which is ` +
+          `outside its own floor ${ctx.minVisible} / ceiling ${ctx.maxResidual}. It is NOT refused on that: the ` +
+          'placement was not searched here, and the trust signal that was actually used to accept it is ' +
+          '`anchorVerdict`. Read that, and read this share as how much of the part was left to check it against.',
+      );
+    }
+  } else if (placement.visibleShare < ctx.minVisible) {
     out.refusal = {
       reason: 'occluded',
       detail:
