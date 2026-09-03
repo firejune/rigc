@@ -1,0 +1,36 @@
+rigc chainfit over 147 committed frame(s) of `ess`
+candidate /tmp/sb2/probe · --min-visible 0.05
+
+part                    frames  hinge  bought  ambig   visibleShare min/med/max    residual med   refusals
+----------------------------------------------------------------------------------------------------------------------
+eye-indifferent           147      0       0      0     0.0%   0.1%   0.7%   0.3139        occludedx147
+front-bracer              147     61      61    120     5.1%  74.0%  92.2%   0.2518        no-anchorx21 no-matchx65
+front-fist-closed         147      6       6    123   100.0% 100.0% 100.0%   0.2757        no-matchx120 no-anchorx21
+front-foot                147     26      26     57    11.5% 100.0% 100.0%   0.2858        no-anchorx21 no-matchx100
+front-shin                147     93      93     87    10.9%  56.7%  79.1%   0.2288        no-anchorx21 no-matchx33
+front-thigh               147     76      76     82     0.0%  20.9%  84.1%   0.1514        no-anchorx21 occludedx23 no-matchx27
+front-upper-arm           147    125     125    120    12.3%  73.3%  94.9%   0.2075        no-anchorx21 no-matchx1
+goggles                   147    126      10      0    98.8%  99.8%  99.9%   0.1528        no-matchx1
+gun                       147      4       4     90     1.2%  67.9%  99.2%   0.3501        no-matchx120 no-anchorx21 occludedx2
+head                      147    126       1      0    45.1%  49.9%  50.3%   0.0577        -
+mouth-smile               147    126      57      0    42.6% 100.0% 100.0%   0.0916        -
+neck                      147     56      67      0     0.0%  46.9%  67.0%   0.2491        no-matchx52 occludedx28
+rear-bracer               147     16      16     26     0.0%   1.6%  96.6%   0.4451        occludedx100 no-anchorx21 no-matchx10
+rear-foot                 147     57      57     74     0.0%  28.1% 100.0%   0.2709        no-anchorx21 no-matchx50 occludedx19
+rear-shin                 147     92      92     63     0.9%  27.8% 100.0%   0.2152        no-anchorx21 no-matchx28 occludedx6
+rear-thigh                147     30      30     12     0.0%   0.0%  62.4%   1.0000        occludedx96 no-anchorx21
+rear-upper-arm            147     26      26      3     0.0%   0.0%  38.1%   0.5721        no-anchorx21 occludedx100
+torso                     147      0       0      0    11.8%  45.7%  75.8%   0.1141        no-anchorx21
+
+pivotDisagreementPx — §12.3's "one direct measurement of your rig against the picture":
+  eye-indifferent        126 frame(s)  min 0.44  median 2.00  max 5.17 px
+  goggles                126 frame(s)  min 0.44  median 2.00  max 5.17 px
+  head                   126 frame(s)  min 0.44  median 2.00  max 5.17 px
+  mouth-smile            126 frame(s)  min 0.44  median 2.00  max 5.17 px
+  neck                   126 frame(s)  min 0.44  median 2.00  max 5.17 px
+
+carriedBones (bones between an anchor and a read part that carry nothing scoreable): none
+
+Slots whose measured visible share never reaches 2% on any committed frame — the G2
+read-down candidates, with the ceiling measured on every frame of every set:
+  eye-indifferent        max   0.7% over 147 frame(s)

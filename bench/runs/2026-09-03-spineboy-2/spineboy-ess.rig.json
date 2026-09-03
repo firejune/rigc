@@ -1,0 +1,419 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "spineboy-ess",
+  "images": "images",
+  "skeleton": {
+    "x": -820,
+    "y": -160,
+    "width": 1760,
+    "height": 1680
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "torso",
+      "parent": "root",
+      "x": -24.05,
+      "y": 216.82
+    },
+    {
+      "name": "head",
+      "parent": "torso",
+      "x": 0.6,
+      "y": 168.4
+    },
+    {
+      "name": "rear-upper-arm",
+      "parent": "torso",
+      "x": -8.3,
+      "y": 120.6,
+      "length": 70.7
+    },
+    {
+      "name": "rear-bracer",
+      "parent": "rear-upper-arm",
+      "x": 0.1,
+      "y": -70.7,
+      "length": 64.7
+    },
+    {
+      "name": "gun",
+      "parent": "rear-bracer",
+      "x": 12.9,
+      "y": -63.4,
+      "length": 227.16
+    },
+    {
+      "name": "muzzle",
+      "parent": "gun",
+      "x": -178.1,
+      "y": 141
+    },
+    {
+      "name": "front-upper-arm",
+      "parent": "torso",
+      "x": 2.7,
+      "y": 131.6,
+      "length": 84.55
+    },
+    {
+      "name": "front-bracer",
+      "parent": "front-upper-arm",
+      "x": -6.5,
+      "y": -84.3,
+      "length": 69.71
+    },
+    {
+      "name": "front-fist",
+      "parent": "front-bracer",
+      "x": 16.2,
+      "y": -67.8
+    },
+    {
+      "name": "rear-thigh",
+      "parent": "torso",
+      "x": 2.7,
+      "y": 21.6,
+      "length": 81.22
+    },
+    {
+      "name": "rear-shin",
+      "parent": "rear-thigh",
+      "x": 22.3,
+      "y": -78.1,
+      "length": 141.61
+    },
+    {
+      "name": "rear-foot",
+      "parent": "rear-shin",
+      "x": -26,
+      "y": -139.2
+    },
+    {
+      "name": "front-thigh",
+      "parent": "torso",
+      "x": -8.3,
+      "y": 16.6,
+      "length": 92.39
+    },
+    {
+      "name": "front-shin",
+      "parent": "front-thigh",
+      "x": 4,
+      "y": -92.3,
+      "length": 157.87
+    },
+    {
+      "name": "front-foot",
+      "parent": "front-shin",
+      "x": -23.6,
+      "y": -156.1
+    }
+  ],
+  "slots": [
+    {
+      "name": "rear-foot",
+      "bone": "rear-foot",
+      "attachment": "rear-foot"
+    },
+    {
+      "name": "rear-shin",
+      "bone": "rear-shin",
+      "attachment": "rear-shin"
+    },
+    {
+      "name": "rear-thigh",
+      "bone": "rear-thigh",
+      "attachment": "rear-thigh"
+    },
+    {
+      "name": "rear-upper-arm",
+      "bone": "rear-upper-arm",
+      "attachment": "rear-upper-arm"
+    },
+    {
+      "name": "rear-bracer",
+      "bone": "rear-bracer",
+      "attachment": "rear-bracer"
+    },
+    {
+      "name": "gun",
+      "bone": "gun",
+      "attachment": "gun"
+    },
+    {
+      "name": "muzzle-ring",
+      "bone": "muzzle",
+      "attachment": null
+    },
+    {
+      "name": "muzzle",
+      "bone": "muzzle",
+      "attachment": null
+    },
+    {
+      "name": "muzzle-glow",
+      "bone": "muzzle",
+      "attachment": null
+    },
+    {
+      "name": "neck",
+      "bone": "head",
+      "attachment": "neck"
+    },
+    {
+      "name": "torso",
+      "bone": "torso",
+      "attachment": "torso"
+    },
+    {
+      "name": "front-thigh",
+      "bone": "front-thigh",
+      "attachment": "front-thigh"
+    },
+    {
+      "name": "front-shin",
+      "bone": "front-shin",
+      "attachment": "front-shin"
+    },
+    {
+      "name": "front-foot",
+      "bone": "front-foot",
+      "attachment": "front-foot"
+    },
+    {
+      "name": "head",
+      "bone": "head",
+      "attachment": "head"
+    },
+    {
+      "name": "eye",
+      "bone": "head",
+      "attachment": "eye-indifferent"
+    },
+    {
+      "name": "goggles",
+      "bone": "head",
+      "attachment": "goggles"
+    },
+    {
+      "name": "mouth",
+      "bone": "head",
+      "attachment": "mouth-smile"
+    },
+    {
+      "name": "front-upper-arm",
+      "bone": "front-upper-arm",
+      "attachment": "front-upper-arm"
+    },
+    {
+      "name": "front-bracer",
+      "bone": "front-bracer",
+      "attachment": "front-bracer"
+    },
+    {
+      "name": "front-fist",
+      "bone": "front-fist",
+      "attachment": "front-fist-closed"
+    }
+  ],
+  "skins": {
+    "default": {
+      "rear-foot": {
+        "rear-foot": {
+          "image": "rear-foot.png",
+          "x": 26.5,
+          "y": -25.4
+        }
+      },
+      "rear-shin": {
+        "rear-shin": {
+          "image": "rear-shin.png",
+          "x": -14.5,
+          "y": -73.7
+        }
+      },
+      "rear-thigh": {
+        "rear-thigh": {
+          "image": "rear-thigh.png",
+          "x": 13.3,
+          "y": -40.8
+        }
+      },
+      "rear-upper-arm": {
+        "rear-upper-arm": {
+          "image": "rear-upper-arm.png",
+          "x": 1.2,
+          "y": -37.1
+        }
+      },
+      "rear-bracer": {
+        "rear-bracer": {
+          "image": "rear-bracer.png",
+          "x": 17.4,
+          "y": -30.6
+        }
+      },
+      "gun": {
+        "gun": {
+          "image": "gun.png",
+          "x": -79.1,
+          "y": 85.5
+        }
+      },
+      "muzzle-ring": {
+        "muzzle-ring": {
+          "image": "muzzle-ring.png",
+          "x": 0,
+          "y": -81.3
+        }
+      },
+      "muzzle": {
+        "muzzle01": {
+          "image": "muzzle01.png",
+          "x": 43.2,
+          "y": -0.7
+        },
+        "muzzle02": {
+          "image": "muzzle02.png",
+          "x": 44,
+          "y": -1
+        },
+        "muzzle03": {
+          "image": "muzzle03.png",
+          "x": 53,
+          "y": -1
+        },
+        "muzzle04": {
+          "image": "muzzle04.png",
+          "x": 48.5,
+          "y": -1
+        },
+        "muzzle05": {
+          "image": "muzzle05.png",
+          "x": 44.5,
+          "y": -0.5
+        }
+      },
+      "muzzle-glow": {
+        "muzzle-glow": {
+          "image": "muzzle-glow.png",
+          "x": 0.5,
+          "y": -0.5
+        }
+      },
+      "neck": {
+        "neck": {
+          "image": "neck.png",
+          "x": -3.1,
+          "y": -18
+        }
+      },
+      "torso": {
+        "torso": {
+          "image": "torso.png",
+          "x": -4.3,
+          "y": 76.6
+        }
+      },
+      "front-thigh": {
+        "front-thigh": {
+          "image": "front-thigh.png",
+          "x": 6,
+          "y": -47.9
+        }
+      },
+      "front-shin": {
+        "front-shin": {
+          "image": "front-shin.png",
+          "x": -11.3,
+          "y": -78.4
+        }
+      },
+      "front-foot": {
+        "front-foot": {
+          "image": "front-foot.png",
+          "x": 22,
+          "y": -29.2
+        }
+      },
+      "head": {
+        "head": {
+          "image": "head.png",
+          "x": 43.8,
+          "y": 119.1
+        }
+      },
+      "eye": {
+        "eye-indifferent": {
+          "image": "eye-indifferent.png",
+          "x": 27.56,
+          "y": 90.75,
+          "rotation": 0.47
+        },
+        "eye-surprised": {
+          "image": "eye-surprised.png",
+          "x": 27.56,
+          "y": 90.75,
+          "rotation": 0.47
+        }
+      },
+      "goggles": {
+        "goggles": {
+          "image": "goggles.png",
+          "x": 27.56,
+          "y": 90.75,
+          "rotation": 0.47
+        }
+      },
+      "mouth": {
+        "mouth-grind": {
+          "image": "mouth-grind.png",
+          "x": 37.92,
+          "y": 7.31,
+          "rotation": -4.8
+        },
+        "mouth-oooo": {
+          "image": "mouth-oooo.png",
+          "x": 37.1,
+          "y": 7.78,
+          "rotation": -4.92
+        },
+        "mouth-smile": {
+          "image": "mouth-smile.png",
+          "x": 37.98,
+          "y": 8.57,
+          "rotation": -2.93
+        }
+      },
+      "front-upper-arm": {
+        "front-upper-arm": {
+          "image": "front-upper-arm.png",
+          "x": -1.1,
+          "y": -41
+        }
+      },
+      "front-bracer": {
+        "front-bracer": {
+          "image": "front-bracer.png",
+          "x": 13.9,
+          "y": -34.4
+        }
+      },
+      "front-fist": {
+        "front-fist-closed": {
+          "image": "front-fist-closed.png",
+          "x": 18.1,
+          "y": -34.6
+        },
+        "front-fist-open": {
+          "image": "front-fist-open.png",
+          "x": 19.8,
+          "y": -37.2
+        }
+      }
+    }
+  }
+}
