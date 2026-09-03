@@ -161,7 +161,8 @@ open-code neither: `screenToSpineDegrees(rotationDeg)` and
 `cropToSpineY(y, frameHeight)`, both in
 [`src/transform.ts`](../src/transform.ts). The `space` field of every report repeats
 the contract in the file, so a consumer never has to remember which way the flip
-goes.
+goes. (Canonical: AUTHORING §11.2, which states the same contract as a field
+reference; it is restated here because §2 is where you convert one.)
 
 ⚠️ A **bone offset** in a spec is expressed in its parent's local axes, so the y flip
 applies there too and it applies **once**. Converting a world point and then also

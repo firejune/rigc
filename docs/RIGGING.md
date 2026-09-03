@@ -581,7 +581,10 @@ that takes the chain.
 The same rig keys `headroll` and never `head`: *"a head rotates about the top of the
 neck, not about the middle of its own face."* A renderer policy assertion
 (`A15_IDLE_NO_MESH_BONE_KEYS`, AUTHORING §5) forced that answer independently — two
-arguments, one bone.
+arguments, one bone. ⚠️ **It is a renderer rule, so like §10.3's `A25` it only fires
+under `--profile spine-html`**; under `--profile spine` it reports `PROF` and the
+structural argument is the only one you get. [FACE.md](FACE.md) §3 is the same bone
+from the mesh's side.
 
 📌 **What the extra link buys, for free:** *"a rotation about the neck pivot carries
 its descendants on a circle for free."* A yaw expressed as `translatex` draws a

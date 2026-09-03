@@ -2773,6 +2773,14 @@ measurement, while segment lengths taken off a folded pose are an estimate — s
 disagree, suspect the estimate. And do this **per chain, before its first fit**, because
 the surgery to fix it invalidates every pose already fitted with the short chain.
 
+⚠️ **The paragraph above is written for a chain that is too *short*, and the check bites
+in both directions.** A chain that is too *long* fails differently — the fits converge,
+every residual is ordinary, and the figure splays to absorb the excess — which is why
+reading only this direction has twice sent a run looking for the wrong defect.
+[RIGGING.md](RIGGING.md) §6.2 carries the too-long case with its record and its cheap
+detector, and §6.3 carries the refusal that goes with it: an excess names a
+disagreement between a chain and a shot, and it does not say which of the two is wrong.
+
 **Re-fit the setup pose against frames drawn from every shot, not against one.** Every
 animation is measured from the setup pose, so an error in it is an error in all of
 them — and it is exactly the error one frame cannot show you. Fit an attachment's
