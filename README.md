@@ -386,7 +386,7 @@ limits: [AUTHORING.md §11](docs/AUTHORING.md). The parts it refuses because
 something is drawn over them are `rigc chainfit`'s, once a candidate exists —
 [§12](docs/AUTHORING.md).
 
-## The gallery — four complete rigs over art that ships with them
+## The gallery — five complete rigs over art that ships with them
 
 Each directory in [`gallery/`](https://github.com/firejune/rigc/tree/main/gallery) is
 one rig spec, one motion spec and the PNGs they name, small enough to read in one
@@ -401,6 +401,17 @@ was verified, and what writing it cost. Repository material: a clone and
 | [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash) | **`deform` timelines** | A ball squashed about its contact point and stretched along its travel, from two affine transforms the keys state rather than tabulate |
 | [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex) | **`contour` meshes** | A swallow-tailed banner and a serrated leaf: four meshes traced off their own alpha, waved by bone timelines and rippled by a `deform` |
 | [`gallery/ride`](https://github.com/firejune/rigc/tree/main/gallery/ride) | `path` attachments + **path constraints** | A trolley coasting down a drawn rail and rolling back, driven by a `position` timeline, with `groups` + `stagger` keying the wheels and the ears |
+| [`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait) | **deform `transform`** + `derive` group tracks | A 2.5D head turn: two meshes and six feature bones all keyed from one stated expression, `dx = x(cos t − 1) − z·sin t`, with the depths in the spec rather than a README |
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/rigc-scene.gif" alt="A portrait rig breathing, glancing aside, then turning its head in 2.5D — hair and features sliding at different depths" width="600" />
+</p>
+
+<p align="center"><em>The portrait rig playing its three animations in one take — the turn is
+the shot: both silhouette edges move apart, which a flat slide cannot do, because every
+feature carries its own depth. Scene direction of this kind was Live2D's territory; the
+split was authoring cost, and the cost is now one stated expression per key. Compiled and
+rendered entirely by the published package.</em></p>
 
 ## Commands
 
