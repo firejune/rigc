@@ -762,6 +762,20 @@ attributability is **measured** to be capped below the bar, provided everything 
 it is independently verified strict. The dated block is at the end of this rule; the
 re-inspection it owes is under *Status*, in *The gate-v2.3 re-inspection*.
 
+🆕 **v2.4 supersedes v2.3 as of 2026-09-03** (the rulings on
+[#309](https://github.com/firejune/rigc/issues/309), the deliberation the
+[PR #308](https://github.com/firejune/rigc/pull/308) re-inspection opened and the run-2 adjudication
+extended). **No threshold moves, no clause is renumbered, and no measure's definition or recorded
+figure changes** — every row of the table below is still v2's. ⭐ **What moves is the corpus.** The
+committed reference frames are **re-rendered under the post-#301 sampler and adopted as the standing
+basis**, so the reference and the candidate come out of one instrument again; **G3's categorical limb
+gains a quantisation guard**, because that limb reads *"still"* off a threshold and two pairs of the
+corpus sit within one quantisation step of it; **kind 5's ceiling admits a second quantity** —
+`check`'s own contrast against required confidence — with the **form of the bar stated per quantity**;
+and G2's per-slot limb gains a **declared per-chain rollup** an itemised blank may cite. The dated
+block is at the end of this rule; the re-inspection it owes is under *Status*, in *The gate-v2.4
+re-inspection*.
+
 📌 **The clause column is a link, not a copy.** Each row names the measure so that its
 derivation reads, and the comparator, the number and the SKIP semantics live once — on the
 card. A derivation necessarily narrates the figure it produced, which is why each is dated:
@@ -1267,6 +1281,252 @@ milestone. That is the correct reading, and it is also the ledger entry the v2.2
 a milestone that fires repeatedly is worth noticing before bumping-when-the-queue-looks-full
 becomes the habit.
 
+#### Gate v2.4 — the sampler basis adopted, and G3's one-pixel edge (2026-09-03)
+
+🆕 **The rulings of 2026-09-03**, on the deliberation [#309](https://github.com/firejune/rigc/issues/309)
+opened by the [PR #308](https://github.com/firejune/rigc/pull/308) re-inspection and extended by the
+run-2 adjudication ([PR #311](https://github.com/firejune/rigc/pull/311)). **Six inputs, and they are
+one deliberation rather than six, because the first decides the ground the rest are read on.** Four of
+the rulings are clause or fixture text, one is a sequencing confirmation, and the sixth is the
+re-inspection they owe. **No threshold moves, no clause is renumbered, and no measure's definition or
+recorded figure changes.** The statements are on the card, [GATE.md](GATE.md); what follows is their
+derivation.
+
+⭐ **What v2.4 changes that no previous version did: it changes what *"the reference"* is.** v2.1, v2.2
+and v2.3 each wrote down a reading the gate already needed. This one replaces a **fixture**, and the
+gate's own rule 3 is the reason that had to come here rather than to an adjudicator: *"a re-inspection
+is a re-read of stored candidates"*, and re-rendering the references is not a re-read of stored
+anything.
+
+**(a) The re-rendered references are adopted as the standing basis.** ⭐ **`bench/reference/` is
+re-rendered under the post-#301 sampler and committed, so the reference and the candidate come out of
+one instrument again.** Three grounds, and the third is why *"leave it alone"* was not available.
+
+- ⭐ **The post-#301 sampler is the more faithful instrument, and an honest instrument is allowed to
+  cost standing records.** That is the [PR #255](https://github.com/firejune/rigc/pull/255) precedent
+  in its own words: an instrument that decides a verdict at its own noise floor is reported in full
+  and the verdict is not quietly moved underneath it. #301 fixed a real defect — a region edge drew a
+  dark rim because `bilinear` interpolated in straight-alpha space — and the corpus the ladder scores
+  against was rendered before it.
+- 📌 **The mixed basis is not a state anybody chose; it is what the repository drifted into.** `check`
+  is post-#301 and the committed PNGs are pre-#301, so *every* figure the tool prints today carries a
+  rim the renderer no longer draws. #308 measured the cost as a **reported** figure and no verdict —
+  rung 3's reference-denominator MAE goes **6.134 → 6.393** — but *"it only moves the figures that do
+  not gate"* is an argument for repairing it cheaply, not for keeping it.
+- ⚠️ **A permanent mixed basis is the one option every reading of #309 agrees is worst.** It leaves
+  the ladder asserting a comparison between two renderers on top of the comparison between two rigs,
+  which is the exact thing `bench/render_reference.ts`'s own header says it exists to avoid: *"a
+  candidate has to be drawn by the same code that drew the reference or every number `check` reports
+  carries the difference between two renderers on top of the difference between two rigs."*
+
+🧾 **What adoption costs, measured before it was decided.** The sweep under *Status* carries it in
+full. In summary: **G1, G4 and G5 cannot move** — no sampler reaches a validity rule or a count read
+off two skeletons' JSON; **G2, G3's overdraw half and G7 move in the third and fourth decimal**; and
+**G3's categorical limb fires twice**, which is (b). 🚫 **And what adoption does *not* license:** the
+frames' **sidecars are unchanged** — re-rendering rewrites **1,293 of 1,293 PNGs and 0 of 11
+`frames.json` files**, because #301 moved no pixel's alpha, so the framing box, the scale and every
+frame count are the ones the standing verdicts were read at.
+
+📌 **Scope, stated so a later reader does not over-read the adoption.** **Rung 7 stays local-only** —
+`7-anticipation` ships no upstream `license.txt`, so its frames are rendered per run into the
+gitignored `bench/reference-local/` and are *not* a committed fixture; on the adopted basis a rung-7
+reading is new/new by construction, because whoever renders those frames renders them with the
+checkout that then reads them. **And the upstream examples stay fetched and never committed** — the
+adoption replaces rendered PNGs of the examples, not the examples.
+
+**(b) G3's categorical limb gains a quantisation guard, and the branch that fired is B —
+[#309](https://github.com/firejune/rigc/issues/309) input 2.** The deliberation was instructed to find
+the **derivation** of the tolerance before touching anything, and to repair the clause only on the
+ground that derivation supports. ⇒ **The search came back empty, which is itself the finding.**
+
+🧾 **Where the 8/255 tolerance is derived, searched in the three places a derivation could live.**
+
+| Where a derivation would be | What is actually there |
+| --- | --- |
+| **The clause card**, [GATE.md](GATE.md) *G3* | the tolerance is **not on the card at all**. The card states `changeDisagreements` = 0 and the overdraw half; the counting threshold behind the count is never named |
+| **Rule 2's G3 row and its 🧾**, above | derives the **count at zero** (*"nothing on this ladder has ever argued for slack there"*), derives `OVERDRAW_RATIO` **1.5** against a corpus spanning 0.852–1.069, and — in [`src/check.ts`](../src/check.ts) beside it — derives `CHANGE_RATIO` **4** and `CHANGE_EXCESS` **24** (*"measured rather than picked"*: the largest excess clearing the ratio on the two mechanically faithful transcriptions is **12 px**, doubled). ⇒ **Four of G3's five constants have a derivation. The tolerance is the fifth, and it has none** |
+| **The git history of the clause** | `CHANGE_TOLERANCE` is not a number: it is `export const CHANGE_TOLERANCE = BACKGROUND_TOLERANCE`, introduced with the change measure itself in `8ecb1c7` (#65). `BACKGROUND_TOLERANCE = 8` dates from the **first `check` commit**, `be6f925`, under a one-line comment that says only what it does — *"how far a channel must move for a pixel to count as 'not background'"* — and `87ce9bf` (#39) moved it verbatim into [`src/framing.ts`](../src/framing.ts). **No commit in the history derives the 8** |
+
+⇒ **Branch B: an underived chosen constant.** ⚠️ **And the alias carries a stated *rationale* that is
+not a derivation, which is the trap worth naming.** `CHANGE_TOLERANCE`'s comment reads *"below it the
+difference is the rasteriser's own last bit"* — a noise **source**, with no model that yields 8. The
+rasteriser's last bit is **1/255**. A reader skimming for a derivation finds a sentence that sounds
+like one.
+
+⭐ **And the repository has already once measured 8 against a requirement and rejected it.**
+`EDGE_FRACTION`'s block in the same file says outright that `BACKGROUND_TOLERANCE` *"answers 'is there
+anything here at all', at about 3 % of a channel"* and is **the wrong question for an edge** — then
+derives a different level by measurement, because at tolerance 8 the two sides' left edges disagreed
+by **0.36 px** where the true answer was *identical*, and the half-maximum level takes the same
+disagreement to **0.01 px**. ⇒ **The precedent for what to do with this constant when a clause needs
+precision from it is to derive the level the clause actually needs, and that is what (b) does — for a
+boundary rather than for an edge.**
+
+⭐ **The guard, and the one sentence it rests on.** The change comparison has two regimes and only one
+of them has a floor. `disagrees`'s own comment states the premise of the floorless one: *"Stillness is
+categorical and gets no floor… A held pose is held **exactly** — rung 6's reference is pixel-identical
+across f64-f67 — and a one-frame event is as small as the thing it reveals."* ⇒ **The premise is
+identity, and the implementation reads it off a count taken at 8/255.** Those are the same thing only
+where reference and candidate come out of one sampler, which is the corpus the premise was measured
+on and is not the corpus a mixed basis produces. **A threshold cannot separate two values lying within
+one quantisation step of it**, so:
+
+> **The floorless regime applies only where both of its edges clear the tolerance by more than one
+> step — the still side pixel-identical, and the moving side's largest per-channel move more than one
+> step past `CHANGE_TOLERANCE`. Where either edge is inside one step, the pair is read in the ratio
+> regime instead.**
+
+🧾 **Why that is a repair and not a softening, in three parts.**
+
+1. ⭐ **It introduces no number.** The guard's own quantity is the **quantisation step**, which is
+   1/255 by construction and not a choice, and the regime it falls back to is guarded by
+   `CHANGE_RATIO` and `CHANGE_EXCESS` — **both derived by measurement**, in the 🧾 quoted above. ⇒ The
+   guard does not invent a floor; it **declines to use the floorless rule where the instrument cannot
+   tell still from moving, and falls back to the floor the gate already measured.**
+2. ⭐ **It preserves the defect the categorical rule exists for, and that is measured rather than
+   asserted.** Rung 6's held plateau is the case the rule was built on. On **both** bases its
+   reference is **pixel-identical across f0064→f0067** — 0 pixels differ at all, on all three pairs —
+   so the still-side edge **holds**, and the neighbouring real motion on that shot reads a largest
+   per-channel step of **186–232**, far past one step. ⇒ A candidate sloping a line through that
+   plateau is caught exactly as it was in #65.
+3. 🚫 **It is not *"the verdicts would flip"*.** That was refused as a ground before the search
+   started, and it is not the ground here: what the measurement shows is that the two pairs at issue
+   sit **on the tolerance itself**, one on each side of it, and the derivation for the boundary they
+   sit on **does not exist**.
+
+🧾 **The two pairs, measured on the frames rather than read off the report — and they fire on
+*different* edges of the guard, which is why both edges are needed.** Both figures are on the adopted
+**new / new** basis; the counts reproduce #308's prediction to the digit.
+
+| Pair | The still side | The moving side | Which edge fires |
+| --- | --- | --- | --- |
+| **rung 3 `heavy` f0060→f0061** | the **reference**, which `check` reads as still at 0 px over the tolerance — but which **moves on 347 pixels**, its largest step **exactly 8**, the tolerance itself, and its total excursion **490 levels** | the candidate: **19 px** over the tolerance, **507 pixels** moving at all, largest step **20**, total **954 levels** | the **still-side** edge. The reference is not pixel-identical; it is still *within* the tolerance, while carrying half the candidate's total motion |
+| **rung 5 `ball` f0075→f0076** | the **candidate**, and genuinely: **0 pixels differ at all** | the reference: **1 px** over the tolerance, at **9/255** — largest step **9**, which is `CHANGE_TOLERANCE + 1` exactly; **12 pixels** move at all, total **34 levels** | the **moving-side** edge. The whole excursion is one pixel one step past the tolerance |
+
+⇒ ⭐ **Two flips, two different edges, one defect: the categorical boundary *is* the tolerance, and
+both pairs sit within one quantisation step of it.** Neither candidate changed and neither candidate's
+own frame-to-frame change moved by a single pixel between the bases — #308 established that, and this
+pass reproduces it.
+
+⚖️ **What the guard costs on the recorded corpus, and the number is the honest surprise.** Over all
+**1,061** adjacent pairs of the eleven standing candidates, the pairs the shipped rule would read in
+the **categorical** branch at all number **0 on `old / old`**, **0 on `new / old`** and **2 on
+`new / new`** — the two above. ⇒ **The floorless regime has never once decided anything on this
+corpus on any basis a standing verdict was read on**, so the guard removes nothing the corpus has
+exercised, and — because it can only move a pair from the floorless branch to a floored one — it
+**cannot create a disagreement anywhere**. 🚫 That last property is why (b) is *opportunity* and not
+integrity in rule 5's sense, and it is also the leak detector's whole answer: a change that can only
+ever make a pair agree cannot flip a standing PASS.
+
+⚠️ **And the honest cost of that same property, said rather than left implicit:** the guard makes G3
+strictly more permissive, and on a future corpus it will let through a pair whose still side is still
+only within the tolerance and whose moving side clears it by 20 px — such a pair now has to clear
+`CHANGE_EXCESS`'s 24 px instead. The gate accepts that, because the alternative is a **categorical**
+clause whose verdict a resample can flip in either direction.
+
+**(c) Kind 5's ceiling admits a second quantity, and the form of the bar is now stated per quantity —
+[#309](https://github.com/firejune/rigc/issues/309) input 5.** ⭐ **A measured ceiling may be stated in
+**visibility share** (as v2.3 wrote it) or in **`check`'s own contrast against required confidence**,
+whichever the evidence actually measures. **Both halves of kind 5 stay mandatory.**
+
+🧾 **Why, and the case is the one the run-2 adjudication filed.** That record's `gun` is fully
+visible — **99.2 %** by the visibility-share quantity, its own scope and figure — and the instrument
+still refuses to attribute it, for a reason `check` prints in the same table: it *"failed a 0.23
+confidence bar by 0.16"*. ⇒ **v2.3's ceiling reads a quantity that is not always the one capping
+attribution.** Occlusion caps `cape-back`; **featurelessness** caps a part whose correlation field has
+no distinguishable optimum, and the visibility share is blind to it. The matcher's own refusal names
+both figures — the confidence achieved and the confidence required at that reach
+([`src/slots.ts`](../src/slots.ts): `MIN_CONFIDENCE + reach × CONFIDENCE_SLOPE`) — so the quantity was
+already measured and printed; what was missing was permission to quote it.
+
+⭐ **This closes v2.3's own unstated note, and the two bars turn out to have different *forms*, which
+is what the note was about.**
+
+| Quantity | The ceiling | The **form** of its bar |
+| --- | --- | --- |
+| **Visibility share** | the share of a **covering placement** of the slot the frames put on screen at all — geometric, instrument-side | **calibrated on the corpus**: the lowest agreement at which anything in the same corpus is attributed, over the slots the instrument does attribute. Rung 7's is the worked case — ceiling **5–19 %** against a **66 %** bar read off `cape-front` 66–90 % and `sack` 86–91 % |
+| **Contrast against required confidence** | the confidence the slot's own correlation field achieves | **declared by the instrument** — a stated function of the reach the match was found at, printed in the `ambiguity` string beside the achieved figure. It is **not** calibrated against other slots, and a verdict says so |
+
+⚠️ **The trap this quantity carries, and the sentence that closes it.** A blank slot is below its
+confidence bar **by construction** — being below it is what made the slot blank — so read naively the
+new quantity would let **every** blank claim a ceiling, which is the loophole (b) of the v2.3 block
+refuses in the other direction. ⇒ **The card requires the ceiling to be quoted as the *best*
+confidence the slot reaches anywhere in the corpus against the *lowest* bar it is asked for anywhere,
+with both still failing.** That test discriminates, and the measurement says so: over the four
+candidates carrying blanks, it is met by **rung 2's `water` (0.07 against 0.23), `billiard` (0.03/0.26),
+`billiard-gloss` (0.30/0.40) and `bowling-gloss` (0.23/0.60)**, **rung 7's `cape-back` (0.07/0.15)**
+and **spineboy's `eye` (0.07/0.20), `gun` (0.14/0.15), `muzzle` (0.12/0.28) and `rear-upper-arm`
+(0.18/0.20)** — and **refused** for `front-bracer` (0.52 against 0.18), `neck` (0.30/0.21),
+`rear-thigh` (0.22/0.20), `front-upper-arm` (0.23/0.20), rung 7's `sack` (0.19/0.15) and all seven of
+rung 5's, each of which clears a bar somewhere and therefore has **no** ceiling in this quantity.
+⇒ **Nine of the 28 slots that go blank anywhere on this corpus, not 28 of 28** — the test
+discriminates, which is the whole of why it is written into the card.
+
+⭐ **And the slot kind 5 was calibrated on satisfies the ceiling in *both* quantities**, which is the
+corroboration the widening most needed: `cape-back` reads **5–19 % against 66 %** geometrically and
+**0.07 against 0.15** in the instrument's own quantity, on the adopted basis. ⇒ Rung 7's ground is not
+changed by (c); it is doubled.
+
+⚠️ **One instability recorded rather than smoothed over.** A confidence ceiling is **not** stable
+across the basis change the way a geometric one is: spineboy's `rear-thigh` has one on `new / old`
+(0.22 against a lowest bar of 0.24) and **not** on `new / new` (0.22 against 0.20), because the bar
+moves with the reach the matcher's best offset lands at. ⇒ **A verdict quoting this quantity states
+its basis**, exactly as v2.3's ruling (c) makes it state its framing, and for the same reason.
+
+**(d) G2's per-slot limb gains a declared per-chain rollup — [#309](https://github.com/firejune/rigc/issues/309)
+input 6. A reporting form, and not a bar.** ⭐ **A verdict may declare a rollup once per bone chain and
+let the itemised blanks on that chain cite it, instead of restating chain-level facts one blank at a
+time.** **Kind 2's bounding is the model** — what a rollup carries is exactly what a kind-2 read-down
+would have to state anyway.
+
+🧾 **Why a form, and why now.** The limb was designed to itemise and it does: **187** blank
+(set, slot) pairs on the adopted basis, **160** of them on one candidate. v2.2's own ⚖️ already
+conceded that *"a verdict discharges the bulk of it in a table rather than a paragraph each"*, and the
+run-2 adjudication is what made the gap concrete — it read 170 blanks down one by one and **had to
+restate chain-level facts in prose** to do it. 🚫 **No read-down semantics change**: every blank is
+still named, still names its kind and still names its evidence, and a rollup that does not carry a
+chain's figures cannot be cited. ⇒ The change is that the same evidence is stated **once per chain**
+instead of once per blank.
+
+📌 **What (d) is not.** It is not a new ground — a citation is not evidence, it is a pointer to
+evidence stated elsewhere in the same verdict. And it does not shorten what half 2 of kind 5 asks
+for: an independent sweep, a known-answer control and a draw order settled by the frames are per-slot
+facts and no rollup carries them.
+
+**(e) `errBilinear` ([#306](https://github.com/firejune/rigc/issues/306)) lands after this release, and
+v2.4 does not include it — [#309](https://github.com/firejune/rigc/issues/309) input 3.** Its own
+sequencing constraint — *not before the from-zero run 2 and its adjudication conclude* — is now met,
+and its direction was already decided: premultiply it, **with the re-baseline of every figure quoting
+a pose or chainfit residual in the same PR**. ⇒ **It lands on the basis (a) adopts**, which is the one
+thing #309 had to settle for it, and it changes no ladder clause: no gated measure reads a pose
+residual, and this sweep leaves pose and chainfit untouched.
+
+**(f) The reference README's cancellation claim is repaired alongside adoption —
+[#309](https://github.com/firejune/rigc/issues/309) input 4.**
+[`bench/reference/README.md`](../bench/reference/README.md) told a reader that *"the reference and the
+candidate go through the same code, so the filter cancels out of every number `check` reports"* — true
+when written, false from #301 until (a). ⇒ It is rewritten to say **what cancels, what does not, and
+what the reader has to check** — the sentence now carries its own condition, which is that the frames
+on disk were rendered by the checkout that reads them. 📌 #308 left it standing deliberately, on the
+ground that it sat on a surface that pass did not own; (a) is the surface, so this is where it lands.
+
+**(g) Every standing candidate is swept on the adopted basis, and the sweep carries a leak detector.**
+⭐ **The expected outcome was stated before the sweep ran: rung 3's and rung 5's G3 resolve under (b),
+and nothing else moves.** The detector: **any other verdict moving, any pair becoming a disagreement
+anywhere, or any blank reaching kind 5 on the widened quantity without half-2 evidence, is a leak in
+the clause text and stops the release.** The sweep, its reproduction control and the detector's
+reading are under *Status*, in *The gate-v2.4 re-inspection*.
+
+📌 **Cadence: point 1 batching six inputs, and point 2's integrity half is what releases it.** (a) is
+**integrity** — it can flip a standing pass, and it did, twice, before (b) caught them — so the
+re-inspection is taken in the same pass rather than waiting for a bump. (b) is **opportunity** by the
+⚖️ above; (c) is opportunity; (d) and (f) are neither, being a reporting form and a repaired sentence.
+⇒ **Six inputs filed over two days cost one version and one re-inspection**, which is what point 1 is
+for. ⚠️ **And the ledger keeps the note the v2.2 and v2.3 blocks both made**: point 3's milestone
+anchor is *not* what released this one either. What released it is a **fixture that had stopped
+describing the instrument**, which is point 2's trigger in a form the rule does not name — the
+previous four bumps were clause text, and this one is the corpus.
+
 ### 3. Close on pass; a gate change re-inspects everything
 
 A rung that meets the gate **closes its ladder issue**. The verdict, the figures and
@@ -1490,6 +1750,20 @@ itself had to answer, and the card's read-down requirements were **stated on the
 so a candidate could satisfy the card's sentence in good faith and fail the enumeration behind
 it, which is exactly what attempt 3 did.
 
+⇒ **v2.4 is point 2's first half fired by a *fixture* rather than by clause text, which is a form
+point 3 does not name.** Six inputs filed over two days — a basis question, a clause edge, a ceiling
+quantity, a reporting form, a stale sentence and a sequencing confirmation — **batched into one version
+and cost one re-inspection**, which is point 1 working. What made it integrity is (a): replacing the
+reference frames can flip a standing pass, and on the raw clause text it flipped **two**. ⚠️ **The
+ledger's note this time is about the trigger, not the wait.** The previous four bumps were all clause
+**text**; this one is the **corpus**, and rule 3's *"any instrument-panel change makes every previously
+passed rung subject to re-inspection"* names the panel as *"`check`'s or `bench`'s scoring semantics, a
+measure's definition, a threshold in rule 2, and the pass definition in rule 1"* — **the reference
+fixture is on none of those lists** and is nevertheless the thing every figure is read against. ⇒ The
+list is short by one item, and #309's whole existence is the evidence: a sampler repair landed in
+`src/render.ts`, no clause moved, and the ladder still spent two passes deciding what its own
+references were.
+
 ---
 
 ## Status
@@ -1501,11 +1775,11 @@ it, which is exactly what attempt 3 did.
 | — | **B1** | — | — | skeleton-as-data input model | ✅ |
 | — | **B2** | — | — | A16 accepts pre-release labels | ✅ |
 | — | **B3** | — | — | packed-atlas handling (validator half done) | 🟨 |
-| 1 | **3** | `3-timing-and-spacing` | `ess` | nothing — smallest skeleton in the corpus | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung3-1` |
+| 1 | **3** | `3-timing-and-spacing` | `ess` | nothing — smallest skeleton in the corpus | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung3-1`. ⚠️ **Re-inspected under gate v2.4 on the adopted reference basis, 2026-09-03, and the pass holds on the clause**: its `heavy` f0060→f0061 pair is one of the two the re-rendered references flip on **G3**, and v2.4 (b)'s quantisation guard is what holds it — the reference there is still only *within* the tolerance, moving on **347 px** at a largest step of **exactly 8**. It also holds **G3's tightest margin on the ladder**, 19 px against 0 at an excess of 19 of 24 (*The clause margins*) |
 | 2 | **1** | `1-weight-and-mass` | `balls`, `drop` | `translatex`/`translatey`/`shear`; bone setup `length`; a skeleton with **zero** animations (`drop`) | ✅ *gate v2.1, 2026-08-26* — on `2026-08-26-rung1-1`; the clause gap closed, `drop`'s G3 **SKIP** |
 | 3 | **2** | `2-the-12-principles` | `ess` | slot `blend` (4 additive + 4 multiply); bone `inherit` ≠ Normal | ✅ *gate v2, 2026-08-25* — G4's fix and the sheet |
 | 4 | **4** | `4-wave-principle` | `ess` | nothing structural — a volume test (9 bones, 9 slots, 3 animations, 470 bezier keys) | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung4-1`; G7 now 1.43–1.91× |
-| 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung5-1` |
+| 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung5-1`. ⚠️ **Re-inspected under gate v2.4 on the adopted reference basis, 2026-09-03, and the pass holds on the clause**: its `ball` f0075→f0076 pair is the other **G3** flip, the mirror of rung 3's — the candidate there is exactly still and the re-rendered reference moves **one pixel by 9/255**, one quantisation step past the tolerance, which is the other edge of v2.4 (b)'s guard |
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ✅ *gate v2, 2026-08-25* — re-inspected, holds |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ✅ *gate v2, 2026-08-25* — both skeletons, re-inspected |
 | 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ✅ *gate v2.3, 2026-09-02* — on **attempt 3** (`2026-09-02-rung7-3`), G2 **3.94 px** at 1.53×, `cape-back`'s blank read down under v2.3's **fifth kind** (measured ceiling **5–19 %** against a **66 %** bar; placement pinned **≤ 2–3 px** with a known-answer control; draw order **×8.44–15.30**). ⚠️ Its `fall-in@30fps` sheet is G7's **closest standing figure** — **3.226×** as read that day, **3.228×** at a **1.0842×** margin under the post-#301 sampler (*The PR #301 instrument re-inspection*, 2026-09-03); *The clause margins* carries the current one. 🗓️ Dated history: passed *gate v2.1/v2.2* on `2026-08-28-rung7-2` (G2 7.33 → 2.76 px), **withdrawn 2026-09-02** under the [#254](https://github.com/firejune/rigc/pull/254) instrument, and attempt 3 **FAILed gate v2.2** the same day on the read-down enumeration — each verdict stays true of the gate it was read against. Frames **local-only** |
@@ -2679,6 +2953,181 @@ deliberation inherits them rather than rediscovering them.
    arithmetic**, deliberately, and #301 flagged its own scoping as unsettled. Nothing in this sweep
    touches it: pose and chainfit residuals are unchanged and no ladder clause reads them.
 
+➡️ **All three were taken on 2026-09-03 and the answers are in *Operating rules* rule 2, under
+*Gate v2.4*.** Item 1: **the re-rendered references are adopted** — the basis is `new / new` from that
+release. Item 2: **G3's categorical limb gains a quantisation guard** rather than a floor, on the
+finding that the 8/255 tolerance **has no derivation** anywhere in the card, the rule or the git
+history; and the margins row **stays a bar at zero** with the ratio-regime figure in a note beside the
+table. Item 3: **`errBilinear` lands after that release, on the adopted basis**, with the re-baseline
+[#306](https://github.com/firejune/rigc/issues/306) already requires of it. ⇒ Verdicts and the sweep
+are under *The gate-v2.4 re-inspection*, and 🚫 **nothing in this section is edited** — every figure
+above stays true of the basis it was read on, which is the point of naming the basis.
+
+### The gate-v2.4 re-inspection — the adopted basis — 2026-09-03
+
+⭐ **The re-inspection gate v2.4 owes, taken in the same pass that releases it**, under rule 5 point 2's
+integrity half: ruling (a) replaces the reference fixture, which can flip a standing pass — and on the
+raw clause text it flips two. Deliberation and mandate: [#309](https://github.com/firejune/rigc/issues/309).
+🚫 **Zero builds and zero authoring, no run directory touched and no `bench.json` rewritten** — every
+figure below is `check` and `validate` re-reading **stored** candidates, which is what rule 3 defines a
+re-inspection to be. What is *not* a re-read is the fixture itself, and that is why it took a ruling.
+
+⭐ **Every figure names its basis, and the three are the ones #308 defined.** `old / old` = pre-#301
+sampler against `bench/reference/` as committed; `new / old` = post-#301 sampler against the same
+committed frames, which was **the standing basis until this release**; `new / new` = post-#301 sampler
+against the frames **this release commits**, which is **the standing basis from this release**.
+
+#### The reproduction control — the harness, proved on the basis it is leaving
+
+⭐ **Before moving anything, this pass reproduced #308's own control and then #308's own figures.** Two
+steps, and the second is the one that makes the comparison legitimate.
+
+1. **The committed references are byte-identical to old-sampler output.** Re-rendering **all eight
+   committed examples** with the **pre-#301** sampler (worktree at `a616677`) at the exact flags
+   [`bench/reference/README.md`](../bench/reference/README.md) records rewrites **1,293 of 1,293 PNGs**
+   and **11 of 11 `frames.json`** files and leaves `git status` on that directory **empty**. ⇒ **`old /
+   old` is reachable, and it is the basis the standing verdicts were read in.**
+2. **Every gated figure #308 recorded reproduces, on the basis it recorded it in.** `check` re-read the
+   **eleven standing candidates** over all **56 committed sets** — **1,142** compared frames, **1,061**
+   adjacent pairs, **25** compared sheets, from the repository root with no `--atlas` and no
+   `--viewport` on any of them.
+
+| What was re-read | On `old / old` | On `new / old` |
+| --- | --- | --- |
+| all eleven G2 figures | **1.5054 · 1.0616 · 0.3321 · 0.6535 · 3.6256 · 5.1159 · 2.4751 · 3.9352 · 3.3378 · 4.1914 · 5.5491 px** — every one to four decimals | **1.5054 · 1.0616 · 0.2931 · 0.6535 · 3.6245 · 5.1159 · 2.4412 · 3.7339 · 3.3268 · 4.1954 · 5.5544 px** — every one |
+| G3, the pool and the disagreements | **0** of **1,061** over **56** sets | **0** of **1,061** |
+| the blank surface | **188** (set, slot) pairs over 15 + 4 + 7 + 2 slots on four candidates | **187**, with `front-thigh` attributable in no set |
+| G7's closest standing figure | `fall-in@30fps` **3.2260×** | **66.626474 over 20.638543 = 3.228255×**, the margins table's own numerator and denominator |
+| G3's ratio-regime margin | rung 3 `heavy` f0061, **19 px against 1 px, excess 18 of 24** | the same, **1.3333×**; second is spineboy `death` f0023 at **10 px against 1 px, excess 9 of 24** |
+| G1 | **0 FAIL**, all eleven | **0 FAIL**, all eleven |
+
+⇒ ⭐ **The harness reproduces both bases the record names, so a figure that moves below is the basis
+moving and not the instrument being read differently.** 📌 One scope this control does not cover:
+**rung 7's frames are local-only**, so its `old / old` and `new / old` columns were produced by
+re-rendering `7-anticipation` with the matching sampler at the brief's own flags rather than from a
+committed fixture — the same procedure, without the byte-identity check a committed directory allows.
+
+#### What adoption writes, and what it leaves alone
+
+Re-rendering the eight committed examples with the **post-#301** sampler at the same flags:
+
+| | Count |
+| --- | ---: |
+| PNG frames rewritten | **1,293 of 1,293** |
+| `frames.json` sidecars changed | **0 of 11** |
+| `license.txt` files changed | **0** |
+
+⭐ **The zero in the middle row is the load-bearing one.** #301 moved no pixel's alpha anywhere in the
+corpus, so the framing box, the pixels-per-unit scale, the background colour and every frame count are
+**the ones the standing verdicts were read at**. Adoption changes the colour of interior pixels and
+nothing that a clause's geometry depends on.
+
+#### The clause reading on the adopted basis — 🟢 **eleven candidates, eleven verdicts hold**
+
+Read on **`new / new`**. **G1** re-run; **G2**, **G3** and **G7** re-measured; **G4** and **G5** are read
+off the two skeletons' JSON by `bench`, which no sampler reaches, so they are quoted from the verdicts
+that measured them and `bench` was not re-run — exactly as the v2.3 and #301 passes quoted them.
+
+| Rung | Skeleton | Candidate | G1 | G2 ≤ 6.0 px — new/old → **new/new** | G2 per slot | G3 = 0 | G3 overdraw | G4 | G5 | G7 ≤ 3.5× — new/old → **new/new** | verdict |
+| --- | --- | --- | :---: | --- | --- | --- | --- | --- | --- | --- | :---: |
+| **1** | `balls` | rung1-1 | 0 FAIL | 1.5054 → **1.5054** px `cast-shadow-red` @ `animation` f0039 — **unmoved to the last digit** ✅ | ✅ no blank, both sets | ✅ **0** of 117 | ✅ 1.1010 → **1.1036** | ✅ | 1.000 · 1.000 | SKIP — both sets commit every frame | **PASS** |
+| **1** | `drop` | rung1-1 | 0 FAIL | 1.0616 `sword` → **1.0138 px `stick`** — the slot changes ✅ | ✅ no blank | SKIP — v2.1 (a) and (b) | ✅ 0.9988 → **1.0007** | ✅ | 1.000 ✅ | SKIP — a single pose | **PASS** |
+| **2** | `ess` | rung2-2 | 0 FAIL | 0.2931 `bowling` → **0.2920 px `bowling-shade`** ✅ | ⚠️ **7 blanks, 4 slots** — unchanged, kinds 3 and 2 | ⚠️ 0 pairs, hole discharged by G7 | ✅ 0.9846 → **0.9967** | ✅ | 0.882 ✅ | ✅ 1.0866–1.1070 → **1.0852–1.1046**, four sheets | **PASS** |
+| **3** | `ess` | rung3-1 | 0 FAIL | 0.6535 → **0.5315 px `pendulum`** @ `heavy` f0017 — improves ✅ | ✅ no blank, both sets | 🔴 **1** of 84 as the clause stood → ✅ **0** under v2.4 (b) | ✅ 0.9922 → **0.9965** | ✅ | 1.000 ✅ | SKIP — both sets commit every frame | **PASS** — **the verdict v2.4 (b) holds**, below |
+| **4** | `ess` | rung4-1 | 0 FAIL | 3.6245 → **3.6252** px `chain-1` @ `ball-catch` f0103 ✅ | ✅ no blank, all six sets | ✅ **0** of 152 | ✅ 0.9953 → **0.9969** | ✅ | 0.889 ✅ | ✅ 1.4288–1.9068 → **1.4288–1.9203** | **PASS** |
+| **5** | `ess` | rung5-1 | 0 FAIL | 5.1159 → **5.1159** px `hood-end1` @ `speedy` f0023 — **unmoved** ✅ | ⚠️ **7 blanks, 7 slots, one set** — unchanged, kind 1 | 🔴 **1** of 156 as the clause stood → ✅ **0** under v2.4 (b) | ✅ 0.9907 → **0.9982** | ✅ | 1.000 ✅ | ✅ 1.0808–1.1808 → **1.0798–1.1817** | **PASS** — **the verdict v2.4 (b) holds**, below |
+| **6** | `pro` | rung6-1 | 0 FAIL | 2.4412 → **2.4495** px `ball` @ `arcs` f0010 ✅ | ✅ no blank, both sets | ✅ **0** over 68 | ✅ 1.0051 → **1.0058** | ✅ | 1.000 ✅ | ✅ `arcs@24fps` 2.8911 → **2.9006** | **PASS** |
+| **7** | `sack` | rung7-3 | 0 FAIL | 3.7339 → **3.7330** px `cape-front` @ `hello` f0003 ✅ **1.608×** | ⚠️ **13 blanks, 2 slots** — `cape-back` still **0 of 118** frames, so kind 5's premise is intact, and 🆕 it now holds in **both** admissible quantities | ✅ **0** of 98 | ✅ 0.9933 → **0.9944** | ✅ | 1.000 ✅ | ✅ 1.2505–3.2283 → **1.2538–3.2311**, eight sheets | **PASS** |
+| **8** | `pendulum` | rung8-1 | 0 FAIL | 3.3268 @ `follow-through` → **3.6624 px `chain-4` @ `follow-through@24fps`** f0057 — the largest worsening on the ladder, **+0.3356 px**, and the worst set changes ✅ **1.638×** | ✅ no blank, both sets | ✅ **0** over 131 | ✅ 0.9818 → **0.9832** | ✅ | 1.000 ✅ | SKIP — every frame committed at both rates | **PASS** |
+| **8** | `ball` | rung8-2 | 0 FAIL | 4.1954 → **4.1274** px `ball` @ `follow-through@24fps` f0077 — improves ✅ | ✅ no blank, both sets | ✅ **0** over 131 | ✅ 1.0143 → **1.0202** | ✅ | 1.000 ✅ | SKIP — every frame committed at both rates | **PASS** |
+| **spineboy** | `ess` | spineboy-2 | 0 FAIL | 5.5544 → **5.5550** px `rear-shin` @ `run` f0006 ✅ **1.0801×** — the ladder's closest G2 figure, and it moved the wrong way again | ⚠️ **160 blanks, 15 slots** — the count holds; `front-thigh` **migrates back** to kind 1 and `mouth` migrates instead, below | ✅ **0** of 124 | ✅ 1.0780 → **1.0784** | ✅ | 0.952 · 0.931 ✅ | ✅ 1.1086–1.6573 → **1.1124–1.6563**, seven sheets | **PASS** |
+
+⇒ 🟢 **Every clause reads PASS or SKIP, and no set becomes a 🕳️ HOLE on the adopted basis** —
+`framesWithoutDrift` equals a set's frame count nowhere in the 56. **G1 reads 0 FAIL on all eleven**,
+re-run rather than quoted.
+
+⚠️ **A scope the G2 column needs, and it is #308's warning with a larger number.** A candidate's G2
+figure is the worst over its sets, and a **set's** worst drift moves by up to **2.3794 px** on this
+basis change — the largest movers are all rung 7 (`fall-in@24fps` **−2.3794**, `fall-in@30fps`
+**−2.3789**, `fall-in` **−0.4266**). That is attribution **membership** moving, not placement: the
+matcher attributes a different set of frames and slots. ⇒ **Nothing there approaches the bar** — rung
+7's worst set reads **2.9211 px** against 6.0 — but a per-set drift on that rung is not a figure to
+quote as stable across a basis change.
+
+#### 🟢 The two G3 flips, and the guard that answers them
+
+⚠️ **On the raw clause text the adopted basis costs two standing passes**, exactly as #308 predicted
+and to the digit: rung 3 `heavy` f0060→f0061 reads `moves` (**1** of 84) and rung 5 `ball`
+f0075→f0076 reads `holds` (**1** of 156). **Neither candidate changed**, and neither candidate's own
+frame-to-frame change count moved by a single pixel between the bases.
+
+⭐ **Under v2.4 (b) both pairs leave the floorless regime and both agree, and the two fire on different
+edges of the guard.** Measured on the frames:
+
+| Pair | still side | its motion **below** the tolerance | moving side | its largest step | guard edge | shipped → guarded |
+| --- | --- | ---: | --- | ---: | --- | --- |
+| rung 3 `heavy` f0060→f0061 | reference, 0 px over the tolerance | **347 px move, max exactly 8, total 490 levels** | candidate, **19 px** over the tolerance (507 px move at all, total 954 levels) | **20** | **still side is not pixel-identical** | `moves` → **`agrees`** |
+| rung 5 `ball` f0075→f0076 | candidate, **0 px move at all** — genuinely identical | **0** | reference, **1 px** over the tolerance (12 px move at all, total 34 levels) | **9** = `CHANGE_TOLERANCE` + 1 | **moving side inside one step** | `holds` → **`agrees`** |
+
+⇒ **In the ratio regime both are comfortable**: rung 3 reads **19 px against 0, excess 19 of the 24
+required**, and rung 5 reads **1 px against 0, excess 1 of 24**. ⭐ **G3 reads 0 of 1,061 again on the
+adopted basis, and rungs 3 and 5 hold their passes on the clause rather than on the fixture.**
+
+#### 🔎 The leak detector — what it looked for, and what it found
+
+⭐ **Stated before the sweep ran**: rung 3's and rung 5's G3 resolve under (b) and nothing else moves;
+**any other verdict moving, any pair becoming a disagreement anywhere, or any blank reaching kind 5 on
+the widened quantity without half-2 evidence, is a leak and stops the release.**
+
+| The detector | Reading |
+| --- | --- |
+| **verdicts the guard changes, over all 1,061 pairs on all three bases** | **2**, both on `new / new`, both `→ agrees`. **0** on `old / old` and **0** on `new / old` |
+| **pairs the shipped rule reads in the floorless branch at all** | **0** on `old / old`, **0** on `new / old`, **2** on `new / new`. ⇒ the floorless regime has **never** decided anything on this corpus on a basis a standing verdict was read on |
+| **can the guard create a disagreement?** | **No, by construction** — it only ever moves a pair from an unfloored branch to a floored one. Measured: **0** new disagreements on any basis |
+| **does the guard silence the defect it was derived from?** | **No, measured.** Rung 6's held plateau `f0064→f0067` is **pixel-identical on the reference on both bases** — 0 pixels differ at all, all three pairs — so the still-side edge holds, and the neighbouring real motion on that shot steps **186–232**. A candidate sloping through that plateau is caught exactly as in #65 |
+| **blanks made eligible by kind 5's second quantity** | **9 of the 28** slots that go blank anywhere: rung 2's `water` **0.07/0.23**, `billiard` **0.03/0.26**, `billiard-gloss` **0.30/0.40**, `bowling-gloss` **0.23/0.60**; rung 7's `cape-back` **0.07/0.15**; spineboy's `eye` **0.07/0.20**, `gun` **0.14/0.15**, `muzzle` **0.12/0.28**, `rear-upper-arm` **0.18/0.20** |
+| **blanks that reach kind 5** | **one — rung 7's `cape-back`, as before.** ⭐ **None of the other eight needs it or has it**: each already reads down under kind 1, 2 or 3, and **none carries half 2** — no independent placement sweep, no known-answer control, no frames-settled draw order. ⇒ **Widening the quantity moved no verdict**, which is the outcome the detector was armed for |
+| **G4 · G5** | unreachable by a sampler and unmoved: rung 2's **0.033334 s** gap and **0.882** are the same figures |
+
+⇒ 🟢 **No leak.** The two intended verdicts hold on the clause; nothing else in eleven candidates,
+56 sets, 1,142 frames, 1,061 pairs and 25 sheets moves a verdict.
+
+#### 📌 The read-down migrations, re-stated rather than inherited
+
+⚠️ **This is the fourth instrument change under which a read-down's class has migrated, and the third
+time a rule made it visible.** The blank surface is **187** (set, slot) pairs over the same 56 sets on
+both `new / old` and `new / new`, and three slots move inside that total:
+
+| Slot | Candidate | sets blank, new/old → **new/new** | What it means |
+| --- | --- | --- | --- |
+| `front-thigh` | spineboy | 16 → **15** | 🔴 **migrates back**: attributable in **1** of 16 sets at **2.1322 px**, where the `new / old` basis had none. **Kind 2 → kind 1** — the reverse of the migration #308 recorded |
+| `mouth` | spineboy | 14 → **15** | attributed in **1** set at **0.9269 px**, down from **2** sets at worst **2.4306 px**. **Kind 1 holds and weakens** |
+| `cape-back` | rung 7 | 12 → **12** | **unmoved** — 0 attributed of 118 frames. Kind 5's premise is intact, and with it rung 7's PASS |
+| `sack` | rung 7 | 1 → **1** | attributable in **11** of 12 sets, at worst **2.9211 px**. Kind 1 holds |
+
+⇒ 📌 **The membership is not stable across bases in either direction, and that remains the finding
+rather than a defect.** #308's `front-thigh` migration was kind 1 → kind 2 on `new / old`; the adopted
+basis migrates it back. Ruling (c) of v2.3 is what makes that visible at the point the figure is
+quoted, and v2.4 (c) extends the same discipline to a confidence ceiling — spineboy's `rear-thigh` has
+one on `new / old` (**0.22** against a lowest bar of **0.24**) and **not** on `new / new` (**0.22**
+against **0.20**), because that bar moves with the reach the matcher's best offset lands at.
+
+#### 📌 G3's margin on the adopted basis — the row still cannot hold it, and here it is
+
+⭐ **G3's real margin is a ratio-regime excess, and it tightens on the adopted basis.** Over all
+**1,061** pairs, read with the guard in place:
+
+- **one pair** clears `CHANGE_RATIO`'s 4× against a moving reference — spineboy `death` f0022→f0023,
+  **10 px against 1 px, excess 9 of the 24 required, a 2.6667× margin**;
+- **the closest pair to a disagreement is rung 3 `heavy` f0060→f0061**, now read in the ratio regime
+  by the guard: **19 px against 0 px, excess 19 of 24 — a 1.2632× margin**, tighter than the
+  **1.3333×** it held on the standing basis, because the reference went still;
+- rung 5's flipped pair reads **1 px against 0 px, excess 1 of 24 — a 24× margin**.
+
+⇒ **G3's guarded margin on this corpus is 1.2632×, held by rung 3.** 🚫 **No threshold is touched**:
+the number is recorded because a margin is a fact about the corpus, and *The clause margins* now
+carries it as a note beneath the table for the same reason #207 moved the others there.
+
 ### The clause margins — the corpus against the bar
 
 ⭐ **This table is the live ranking, and it replaces the *"a tightening of X finds Y first"*
@@ -2693,60 +3142,75 @@ in *Operating rules* rule 2, under *Gate v2.2* (c).
 [`bench/runs/README.md`](../bench/runs/README.md), so it is current by construction rather than
 by anybody remembering to repair a sentence.
 
-**Read 2026-09-03 on the PR #301 instrument re-inspection**, over the **eleven standing
-candidates** — rungs 1 through 8, rung 7 included, and spineboy `ess` — as re-measured in that
-section above. ⭐ **Every figure here is on the `new / old` basis**, which is the standing one: the
-post-#301 sampler read against `bench/reference/` as committed. The references were **not**
-re-rendered, for the reasons that section records.
+**Read 2026-09-03 on the gate-v2.4 re-inspection**, over the **eleven standing candidates** —
+rungs 1 through 8, rung 7 included, and spineboy `ess` — as re-measured in that section above.
+⭐ **Every figure here is on the `new / new` basis, which is the standing one as of gate v2.4**: the
+post-#301 sampler read against the reference frames **this release commits**. Ruling (a) of the v2.4
+block is what made that the standing basis, and the section above records what adopting it cost.
 
-🗓️ **The reading this supersedes is 2026-09-02's**, on the gate-v2.3 re-inspection, over the same
-eleven candidates on the **`old / old`** basis. It stays true of the instrument it was read
-against, and this pass reproduces every one of its figures on that basis before moving them —
-which is what makes the two comparable. Behind it stand two more, both 2026-09-02: the **#254
-re-inspection** over **ten** candidates with rung 7 out of the standing set, and the **attempt-3
-adjudication** that re-read it unchanged.
+🗓️ **The reading this supersedes is also 2026-09-03's**, on the PR #301 instrument re-inspection, over
+the same eleven candidates on the **`new / old`** basis — the post-#301 sampler against the frames as
+they were committed before this release. It stays true of the basis it was read against, and this pass
+**reproduces every one of its figures on that basis, and every `old / old` figure behind it**, before
+moving them — which is what makes the three comparable. Behind those stand three more: the
+**gate-v2.3 re-inspection** on `old / old`, and — both 2026-09-02 — the **#254 re-inspection** over
+**ten** candidates with rung 7 out of the standing set and the **attempt-3 adjudication** that re-read
+it unchanged.
 
-| Clause | The bar | Closest standing pass | Its figure | Margin | Was 2026-09-02 |
+| Clause | The bar | Closest standing pass | Its figure | Margin | Was 2026-09-03, `new / old` |
 | --- | --- | --- | ---: | ---: | ---: |
 | **G1** validity | 0 FAIL | every standing candidate | **0 FAIL** | *no ratio — a bar at zero* | unmoved |
-| **G2** worst attributable slot drift | ≤ 6.0 px | **spineboy** `ess` — `rear-shin` at `run` f0006 | **5.5544 px** | **1.0802×** | 5.5491 px, 1.0813× |
-| **G3** per-frame disagreements | = 0 | every standing candidate | **0** of 1,061 pairs | *no ratio — a bar at zero* | unmoved |
-| **G3** overdraw | no `⚠️ overdraw` | **rung 1** `balls` — `animation@24fps` | `drawnRatio` **1.1010** | **1.362×** | unmoved to the digit |
+| **G2** worst attributable slot drift | ≤ 6.0 px | **spineboy** `ess` — `rear-shin` at `run` f0006 | **5.5550 px** | **1.0801×** | 5.5544 px, 1.0802× |
+| **G3** per-frame disagreements | = 0 | every standing candidate | **0** of 1,061 pairs | *no ratio — a bar at zero* | unmoved — **but read under v2.4's guard**, and the note below carries the excess figure |
+| **G3** overdraw | no `⚠️ overdraw` | **rung 1** `balls` — `animation@24fps` | `drawnRatio` **1.1036** | **1.3592×** | 1.1010, 1.3624× |
 | **G4** shot length | ≤ one interval of the coarsest committed rate | **rung 2** `ess` — 25.833333 s against 25.866667 s | gap **0.033334 s** against 1/12 s | **2.50×** | unmoved — no sampler reaches it |
 | **G5** drawn inventory | ≥ 0.85, after the itemised deduction | **rung 2** `ess` — `slots.count` and `attachments.count` alike | **0.882** | **1.038×** | unmoved — no sampler reaches it |
-| **G7** sheet flatness | ≤ 3.5 × that sheet's own mean | **rung 7** `sack` — `fall-in@30fps`, 66.626474 over 20.638543 | **3.2283×** | **1.0842×** | 3.2260×, 1.0849× |
+| **G7** sheet flatness | ≤ 3.5 × that sheet's own mean | **rung 7** `sack` — `fall-in@30fps`, 66.604194 over 20.613232 | **3.2311×** | **1.0832×** | 3.2283×, 1.0842× |
 
-⚠️ **The thinnest-margin ordering is G5 1.038× → G2 1.0802× → G7 1.0842×**, unchanged in order and
-tighter in both of the rows that moved. G2 and G7 still both round to **1.08×** and the third
-decimal is still what separates them — they are now **0.00395** apart, having been **0.00368**, so
-the sampler pushed them very slightly further apart rather than closer. **Two rows moved and both
-moved against the corpus**: G2's closest figure goes 5.549074 → **5.554388 px**, and G7's sheet
-ratio 3.225979 → **3.228255×**. 📌 **G7's moved entirely through its denominator** — the worst tile
-reads **66.626474** on both bases, to six decimals, while the sheet's own mean falls 20.653101 →
-**20.638543**. The sheet became *flatter on average* and the ratio therefore rose, which is the one
-direction a ratio-inside-a-sheet clause can be tightened by an improvement. G1, G3, G4, G5 and
-G3's overdraw row are unchanged, three of them because **nothing a sampler does can reach them**.
+⚠️ **The thinnest-margin ordering is G5 1.0376× → G2 1.0801× → G7 1.0832×**, unchanged in order for
+the fourth reading running. **Three rows moved and all three moved against the corpus**: G2's closest
+figure goes 5.554388 → **5.554952 px**, G7's sheet ratio 3.228255 → **3.231138×**, and G3's overdraw
+1.100970 → **1.103606**. G2 and G7 still both round to **1.08×** and the third decimal is still what
+separates them — they are now **0.00309** apart, having been **0.00395**, so this basis change pulled
+them **together** where the previous one pushed them apart. 📌 **G7's moved through both halves this
+time**, unlike last: the worst tile falls 66.626474 → **66.604194** and the sheet's own mean falls
+further, 20.638543 → **20.613232**, so the ratio rose again. G1, G4 and G5 are unchanged because
+**nothing a sampler does can reach them**, and G3's disagreement count is unchanged at zero — though
+what holds it there on this basis is v2.4's guard, which is why the note below is no longer optional.
 By rule 5 point 2 a tightening of any of the three thin ones is an **integrity** change: it flips a
 published pass and re-inspects immediately rather than waiting for a bump.
 
-🔴 **And one clause's real margin is not in this table, because its row cannot hold one.** G3 reads
-*"a bar at zero"* on the **count** of disagreements, which says nothing about how close a single
-pair sits to becoming one. Measured over all 1,061 pairs on this basis: **two** clear
-`CHANGE_RATIO`'s 4× at all, **neither** clears `CHANGE_EXCESS`, and the closest — **rung 3
-`heavy` f0061, candidate 19 px against reference 1 px, excess 18 of the 24 required** — is a
-**1.33× margin** held by a **single pixel of reference motion**. The #301 section measures it and
-hands the question of whether this row can carry it to a gate deliberation.
+⚠️ **And a trajectory worth naming rather than leaving in three tables.** G2's thinnest margin has now
+tightened on **three consecutive** instrument or basis changes — 1.0813× on `old / old`, 1.0802× on
+`new / old`, **1.0801×** here — never by more than the fourth decimal, and always on the same slot of
+the same candidate. That is not a candidate getting worse; it is the ladder's closest figure being
+close enough that any change to how it is read moves it.
+
+🔴 **And one clause's real margin is not in the table above, because its row cannot hold one — so it
+sits here.** G3 reads *"a bar at zero"* on the **count** of disagreements, which says nothing about how
+close a single pair sits to becoming one. Measured over all 1,061 pairs on the **`new / new`** basis,
+read with v2.4's guard in place: **one** pair clears `CHANGE_RATIO`'s 4× against a moving reference —
+spineboy `death` f0023, **10 px against 1 px, excess 9 of 24, a 2.6667× margin** — and **the closest
+pair to a disagreement is rung 3 `heavy` f0061 at 19 px against 0 px, excess 19 of the 24 required, a
+1.2632× margin.** ⇒ **G3's guarded margin on this corpus is 1.2632×, held by rung 3** — tighter than
+the **1.3333×** it held on `new / old`, because the reference on that pair went still. 📌 **The
+question #308 handed to a deliberation is answered**: the row stays a bar at zero, and the ratio-regime
+figure lives in this note beside it rather than inside the table, on the same reasoning
+[#207](https://github.com/firejune/rigc/issues/207) used to move the others out of rule 2 — it is a
+fact about the corpus, recomputed, and not a sentence inside a clause.
 
 📌 **The corpus fact a tightening would meet first, stated here and nowhere else.** A tightening
-of **G7** finds **rung 7** first, at 3.2283×, with rung 6's 2.8911× behind it; a tightening of
-**G2** finds **spineboy** at 5.5544 px; a tightening of **G5** finds **rung 2** at 0.882; and a
-tightening of **G3**'s excess floor would find **rung 3** at 18 of 24. ⇒ This is the claim
+of **G7** finds **rung 7** first, at 3.2311×, with rung 6's 2.9006× behind it; a tightening of
+**G2** finds **spineboy** at 5.5550 px; a tightening of **G5** finds **rung 2** at 0.882; and a
+tightening of **G3**'s excess floor would find **rung 3** at **19 of 24**. ⇒ This is the claim
 [#207](https://github.com/firejune/rigc/issues/207) deleted from rule 2 and moved here, and its
 third reversal in five days is the argument for the move: *rung 6 first* was true, then false when
-rung 7 attempt 2 landed, then true again when rung 7 was withdrawn, and is false again today. A
-sentence inside a rule cannot track that; a recomputed table can. ⭐ **This reading is the first
-that moved a row without any candidate landing or leaving** — the corpus is identical to
-2026-09-02's and the *instrument* moved underneath it, which is the case rule 3 exists for.
+rung 7 attempt 2 landed, then true again when rung 7 was withdrawn, and went false again on
+2026-09-03. A sentence inside a rule cannot track that; a recomputed table can. ⭐ **Two readings in
+a row have now moved rows without any candidate landing or leaving** — the corpus of *candidates* is
+identical to 2026-09-02's, and what moved underneath it was first the sampler and then the reference
+frames themselves, which is the case rule 3 exists for and the case v2.4's cadence note says rule 3's
+panel list does not name.
 
 📌 **G5's 1.038× is still the thinnest margin on the ladder and still the least discussed.**
 Rung 2's `ess` draws 15 of the reference's 17 slots and attachments and takes no deduction, so
