@@ -1375,7 +1375,7 @@ export function bilinear(page: Plate, x: number, y: number): [number, number, nu
  * edge clamp above — with the sampler it is a control for. A hand copy in the
  * test file would drift from it silently, and then `SM01` would be comparing the
  * fix against something that is not what the renderer used to do.
- * `SM07_NO_PRODUCTION_MODULE_READS_THE_STRAIGHT_TAP` is what keeps the first
+ * `SM08_NO_PRODUCTION_MODULE_READS_THE_STRAIGHT_TAP` is what keeps the first
  * paragraph true rather than merely written down.
  */
 export function bilinearChannels(page: Plate, x: number, y: number): [number, number, number, number] {
