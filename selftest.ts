@@ -11093,6 +11093,101 @@ function runCliSuite(): number {
     );
   }
 
+  // --- issue #328: the help and the parser are one statement about a flag ----
+  //
+  // ⭐ Both cases below DERIVE their flag lists from what `rigc <command> --help`
+  // prints, and neither names a flag. That is the whole point of them: the defect
+  // was a hand-kept list that had drifted out from under three documents. In
+  // `cli.ts`, `--all-bones` was in `bonedist`'s usage line, in the shared flag
+  // table with no `<value>` column, and — worse — in the hint `src/bonedist.ts`
+  // prints under a truncated bone table (`--all-bones for every row`). It was not
+  // in `BOOLEAN_FLAGS`, so the parser took the value branch and the caller who
+  // followed rigc's own hint got `rigc: --all-bones needs a value`, an error
+  // whose text points nowhere near the cause. A control spelling `--all-bones`
+  // would have had to be REMEMBERED when the next switch was added; these two
+  // read the same column the reader does, so the next one is covered on arrival.
+  //
+  // 🚨 They are a pair and neither is sufficient. CLI10 alone is satisfied by
+  // deleting the value branch — by inferring "a switch is a flag whose next
+  // argument starts with --", which is exactly what the comment over
+  // `BOOLEAN_FLAGS` refuses because it turns the real typo `--out --json r.json`
+  // into a silent switch plus a stray positional. CLI11 is that refusal's
+  // positive control: a flag the help spells WITH a value must still be refused
+  // when it is given none.
+  {
+    /** Command names as the tool itself lists them, from the `usage:` block of a bare invocation. */
+    const commands = [...new Set([...runCli([]).stderr.matchAll(/^ {2}rigc ([a-z][a-z-]*) /gm)].map((m) => m[1]))];
+
+    /**
+     * One command's flag table, split into the switches and the value-takers.
+     *
+     * The table is `  --flag <value>` then two-or-more spaces then the meaning,
+     * so a row whose first column is a lone `--flag` is the tool stating, to the
+     * reader, that this flag takes nothing.
+     */
+    const flagTable = (command: string): { bare: string[]; valued: string[] } => {
+      const { stdout } = runCli([command, '--help']);
+      const bare: string[] = [];
+      const valued: string[] = [];
+      for (const line of stdout.split('\n')) {
+        const row = /^ {2}(--[a-z][a-z-]*)( \S+)? {2,}\S/.exec(line);
+        if (row === null) continue;
+        (row[2] === undefined ? bare : valued).push(row[1].slice(2));
+      }
+      return { bare, valued };
+    };
+
+    const tables = new Map(commands.map((command) => [command, flagTable(command)] as const));
+
+    // The parse of the help output is itself derived, so it needs a floor: every
+    // command documents `--help` and every command documents at least one
+    // value-taker. A regex that matched nothing would otherwise make both cases
+    // below vacuously green — which is the failure mode this whole file exists
+    // to refuse.
+    const emptyTables = commands.filter(
+      (command) => !tables.get(command)!.bare.includes('help') || tables.get(command)!.valued.length === 0,
+    );
+
+    /** Every switch any command documents, and the first command that documents each. */
+    const switches = new Map<string, string>();
+    for (const [command, { bare }] of tables) for (const flag of bare) if (!switches.has(flag)) switches.set(flag, command);
+
+    const refusedBare = [...switches]
+      .filter(([flag, command]) => runCli([command, `--${flag}`]).stderr.includes(`--${flag} needs a value`))
+      .map(([flag, command]) => `rigc ${command} --${flag}`);
+    say(
+      'CLI10_A_FLAG_THE_HELP_SPELLS_BARE_IS_ACCEPTED_BARE',
+      commands.length > 0 && emptyTables.length === 0 && switches.size > 0 && refusedBare.length === 0,
+      emptyTables.length > 0
+        ? `the flag table of ${emptyTables.join(', ')} did not parse — this case cannot conclude anything`
+        : `${switches.size} switch(es) documented across ${commands.length} commands ` +
+            `(${[...switches.keys()].join(', ')}); ${refusedBare.length} refused bare` +
+            (refusedBare.length > 0 ? `: ${refusedBare.join('; ')}` : ''),
+      'issue #328: `--all-bones` was printed bare by two commands, by the shared flag table and by bonedist\'s own ' +
+        'report hint, and refused bare by the parser — the working spelling, `--all-bones=1`, was documented nowhere',
+    );
+
+    // The other direction, over one value-taker per command rather than all of
+    // them: the flags are shared, the parser is not per-command, and a value
+    // branch that survives for `--rig` survives for every one of them.
+    const swallowed = commands
+      .map((command) => [command, tables.get(command)!.valued[0]] as const)
+      .filter(([, flag]) => flag !== undefined)
+      .filter(([command, flag]) => !runCli([command, `--${flag}`]).stderr.includes(`--${flag} needs a value`))
+      .map(([command, flag]) => `rigc ${command} --${flag}`);
+    say(
+      'CLI11_A_FLAG_THE_HELP_SPELLS_WITH_A_VALUE_IS_STILL_REFUSED_WITHOUT_ONE',
+      commands.length > 0 && emptyTables.length === 0 && swallowed.length === 0,
+      emptyTables.length > 0
+        ? `the flag table of ${emptyTables.join(', ')} did not parse — this case cannot conclude anything`
+        : `${commands.length - swallowed.length} of ${commands.length} commands refused their first value-taker ` +
+            `with no value` + (swallowed.length > 0 ? `; swallowed: ${swallowed.join('; ')}` : ''),
+      'the positive control for CLI10: the cheap way to pass that one is to infer switches from "the next argument ' +
+        'starts with --", which turns the real typo `--out --json report.json` into a silent switch and a stray ' +
+        'positional — a report about a file the caller did not name',
+    );
+  }
+
   return bad;
 }
 
@@ -13680,7 +13775,7 @@ function main(): void {
   bad += runMotionParseSuite();
   substantive += 30;
   bad += runCliSuite();
-  substantive += 5;
+  substantive += 7;
   const launcherBad = runLauncherSuite();
   if (launcherBad !== null) {
     bad += launcherBad;
@@ -13853,11 +13948,14 @@ function main(): void {
       'its wrapper belongs, on a slot with no attachments and on a slot the rig does not declare, which the ' +
       'emit-path guard could not reach. Plus the two positive controls that keep the gate honest: an animation ' +
       'with no `loop` hint still accepted, and every one of the 37 motion specs in this repository parsing clean), ' +
-      '+ 9 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
+      '+ 11 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
       'builds green with no flag and is refused by every rule under `--profile spine-html`, and the MESH report line ' +
       "quoting the rig's own triangle budget with the hole its outline encloses, or saying no budget is declared " +
-      'while still reporting an authored coverage)' +
+      'while still reporting an authored coverage; plus the two halves of what the help says about a flag, held ' +
+      'together by reading it rather than by naming one — every switch printed with no `<value>` column accepted ' +
+      'bare, and every flag printed with one still refused when it is given none, which is the refusal that keeps ' +
+      'the first from being satisfied by inferring switches from the next argument)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
       ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +

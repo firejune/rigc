@@ -852,7 +852,7 @@ cat > vs-home.json <<'EOF'
   "animations": { "together": "home", "leaves": "home" } }
 EOF
 
-rigc bonedist --candidate out --reference out --bones vs-home.json --fps 30 --all-bones=1
+rigc bonedist --candidate out --reference out --bones vs-home.json --fps 30 --all-bones
 ```
 
 ```

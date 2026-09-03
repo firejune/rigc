@@ -181,8 +181,19 @@ function repositoryUrl(): string {
  * Listed by name rather than inferred from "the next argument looks like a
  * flag": inferring it would turn `--out --json report.json` — a real typo, a
  * missing value — into a silently accepted switch plus a stray positional.
+ *
+ * ⚠️ This set and `FLAG_VALUES` are two halves of one statement, and they are
+ * the halves a reader and the parser read separately: a flag absent from
+ * `FLAG_VALUES` is printed bare in every usage line and flag table, and a flag
+ * present here is the only kind the parser will accept bare. `all-bones` was in
+ * one half and not the other for two releases — documented bare in `bonedist`'s
+ * usage line, in the shared flag table, and in the hint `src/bonedist.ts` prints
+ * under a truncated bone table, while the parser fell through to the value
+ * branch and answered the caller who followed that hint with `rigc: --all-bones
+ * needs a value` (issue #328). `CLI10`/`CLI11` in `selftest.ts` now hold the two
+ * halves together by reading `--help` rather than by naming a flag.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'help', 'copy-images', 'again', 'pack']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack']);
 
 /**
  * The flags a command is allowed to spell more than once.
