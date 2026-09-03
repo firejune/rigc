@@ -668,18 +668,19 @@ be weighted at all is policy.
 
 ⚠️ **`--profile spine-html` on foreign data produces a wall of failures that mean
 nothing about the file.** Same `spineboy-pro.json`, same atlas, one flag changed — the
-run ends `rigc: 53 assertion(s) failed`, and this is the tally with one real message
-per rule:
+run ends `rigc: 13 assertion(s) failed`, and this is the tally with one real message
+per rule (re-measured 2026-09-04; it used to read 53, with 40 `A06` rows, until A06
+learned that a page is one part covering it exactly *or a tiling of regions* — #266
+follow-up 2 — so a packed atlas now passes both profiles and the wall is policy only):
 
 | Count | Rule | One of its messages |
 | --- | --- | --- |
-| **40** | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | `region "crosshair" has UVs (0.181640625,0.06640625)-(0.2255859375,0.2421875); one part per page must cover the page exactly` |
 | **10** | `A15_IDLE_NO_MESH_BONE_KEYS` | `idle keys bone "front-shoulder", which drives a mesh — meshes never idle-skip` |
-| **2** | `A20_MESH_WEIGHTS_COHERENT` | `mesh "hoverboard-board" is unweighted; the ring tier drives meshes by bones` |
+| **2** | `A20_MESH_WEIGHTS_COHERENT` | `mesh "front-shin" is unweighted; the ring tier drives meshes by bones` |
 | **1** | `A11_NO_CLIPPING_ATTACHMENTS` | `1 clipping attachment(s); the renderer skips them silently` |
 
-Every one of those is a correct statement about a correct file: the atlas *is* packed,
-a bone *does* key a mesh, a mesh *is* unweighted, a clipping attachment *is* present.
+Every one of those is a correct statement about a correct file: a bone *does* key a
+mesh, a mesh *is* unweighted, a clipping attachment *is* present.
 (The tally was 55 before §3.2's A35 was fixed, and that is the one entry that was *not*
 a correct statement — which is why it belonged in a different section from these.)
 And it is not a big-skeleton problem — `3-timing-and-spacing`, with two regions on one
