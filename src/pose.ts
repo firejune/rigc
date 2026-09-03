@@ -58,14 +58,29 @@ import { Plate, readPlate } from '../tools/plate.ts';
 // read between two pixel centres is exactly the kind of thing two
 // implementations drift on.
 //
-// ⚠️ `bilinearChannels`, NOT `bilinear`. `bilinear` interpolates in
-// premultiplied space, which is correct for an atlas and wrong for what this
-// file samples: `materialPlate` hands it the frame's own RGB with alpha rewritten
-// to mean "how much material is here", so the two are decoupled by construction
-// and `errBilinear` combines them itself. Issue #292 moved `bilinear` to the
-// premultiplied form and left this call on the channel-independent one — the
-// objective's own semantics, and unchanged fitting numbers with it.
-import { bilinearChannels } from './render.ts';
+// ⭐ `bilinear` — the PREMULTIPLIED tap — and the fourth channel is what makes
+// that read oddly at first. `materialPlate` hands this file the frame's own RGB
+// with alpha rewritten to mean "how much material is here", so the weighting is
+// not a colour-space correction here: a texel with no material has no material
+// COLOUR either — it carries the background's — so it must get a vote in the
+// coverage and none in the colour. That is exactly what premultiplying by the
+// fourth channel does, and interpolating the colours channel by channel is what
+// mixed the ground into the material along every silhouette (issue #306, the
+// same defect class as #292 in the instrument that prices placements).
+//
+// Both tap paths in this file are colour-against-colour, and neither reads a
+// mask as if it were a colour:
+//   • the search and `measure` sample the MATERIAL PLATE — mask fourth channel,
+//     the frame's own RGB;
+//   • `rotationSelfSimilarity` samples the PART plate itself, whose fourth
+//     channel is the art's own straight alpha — the #292 case verbatim.
+// `bilinear` computes its fourth channel with the unchanged `lerpTap`, so the
+// coverage term `errBilinear` gates on is bit-identical to what the
+// channel-independent tap returned; only the colour moves, and only where a tap
+// straddles an edge. #301 deliberately left this call on the old arithmetic to
+// hold the fitting numbers still while the from-zero run 2 was in flight; #306
+// moved it, with the re-baseline of every figure that quoted a residual.
+import { bilinear } from './render.ts';
 
 export class PoseError extends Error {}
 
@@ -436,7 +451,7 @@ export function readBackground(frame: Plate): PoseBackground {
  * The frame as the objective reads it: the frame's own RGB, with alpha rewritten
  * to mean **how much material is here** rather than how opaque the file is.
  *
- * Keeping it in a `Plate` is what lets the pyramid, `bilinearChannels` and the nearest
+ * Keeping it in a `Plate` is what lets the pyramid, `bilinear` and the nearest
  * lookup all be the ones this repository already has.
  */
 export function materialPlate(frame: Plate, background: PoseBackground): { plate: Plate; share: number } {
@@ -573,10 +588,19 @@ export function errNearest(level: Level, x: number, y: number, pr: number, pg: n
   return m * d + (1 - m);
 }
 
-/** Same, sampled between pixel centres — what the refinement stages measure with. */
+/**
+ * Same, sampled between pixel centres — what the refinement stages measure with.
+ *
+ * ⭐ The two halves of the tap are read differently on purpose, and `bilinear`
+ * is what supplies both: the colour is the material-weighted mean (a texel with
+ * no material contributes no colour), while `fa` — the coverage this charges
+ * `1 − m` for — is the plain interpolation of the fourth channel, unchanged.
+ * Weighting a mask as if it were a colour is the mistake the import comment
+ * warns about; weighting the colour BY the mask is the objective.
+ */
 export function errBilinear(level: Level, plate: Plate, x: number, y: number, pr: number, pg: number, pb: number): number {
   if (x < 0 || y < 0 || x >= level.width || y >= level.height) return 1;
-  const [fr, fg, fb, fa] = bilinearChannels(plate, x - 0.5, y - 0.5);
+  const [fr, fg, fb, fa] = bilinear(plate, x - 0.5, y - 0.5);
   const m = fa / 255;
   if (m <= 0) return 1;
   const d = (Math.abs(fr - pr) + Math.abs(fg - pg) + Math.abs(fb - pb)) / 765;
@@ -942,8 +966,15 @@ function rotationSelfSimilarity(part: Plate, anchorX: number, anchorY: number): 
   // scores above zero when laid over itself unrotated — every partly transparent
   // pixel pays the `1 − material` term against its own partial alpha — so an
   // absolute reading calls a perfectly round anti-aliased ball asymmetric. On the
-  // fixture's 32px ball that baseline is most of a 0.034 absolute reading, which
+  // fixture's 32px ball that baseline is most of a 0.033 absolute reading, which
   // sits the wrong side of a tolerance the shape plainly deserves to pass.
+  //
+  // 📏 Re-baselined for #306: the absolute reading was 0.034 under the
+  // channel-independent tap and the BASELINE did not move at all (0.0198 both
+  // ways). It could not: at zero rotation every sample lands on a texel centre,
+  // where premultiplying and dividing back out is the identity. What premultiplying
+  // took off is the rotated readings — worst relative 0.0143 -> 0.0129 — which is
+  // the ball's own soft rim no longer being compared against black.
   const baseline = at(0);
   let worst = 0;
   for (let deg = 30; deg < 360; deg += 30) {

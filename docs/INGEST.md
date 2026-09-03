@@ -1043,11 +1043,23 @@ rigc pose
   ..    ground  rgb(232, 232, 232) over 100% of the border ring
   ..    parts   …/packed-only  (1 png)
   ..    search  scale 0.5–2 in 7 step(s) · rotation -180°–180° step 15° · refuse above residual 0.25
-  PLACE  3-timing-and-spacing.png  x=  324.1  y=  188.0  rot=  -91.4°  scale=0.632  residual=0.2078  unexplained= 29%
+  PLACE  3-timing-and-spacing.png  x=  324.3  y=  188.2  rot=  -91.4°  scale=0.629  residual=0.2083  unexplained= 30%
                                    found on a 7x3 anchor grid, step 4 at 32x reduction
 ```
 
-⚠️ **`residual=0.2078` is *under* the default 0.25 refusal bar**, so nothing refused
+📏 **Instrument re-baseline, 2026-09-03 — [#306](https://github.com/firejune/rigc/issues/306).**
+Both blocks in this section were re-run and their residuals moved: the packed page
+reads **0.2083** where this page used to print 0.2078, `pendulum.png` **0.0425**
+where it printed 0.0410, and `square.png` **0.0331** where it printed 0.0330.
+`pose`'s objective now interpolates the frame premultiplied, so a tap across a
+silhouette no longer charges a part for the ground's colour — and the frames these
+commands read are rendered by `rigc render`, so #306's arithmetic and
+[#301](https://github.com/firejune/rigc/pull/301)'s renderer fix both moved them.
+⚠️ A residual from before that date and one from after are not the same
+measurement. The reading below does not depend on the digits: the point is that a
+packed page is placed *without* being refused, and it still is.
+
+⚠️ **`residual=0.2083` is *under* the default 0.25 refusal bar**, so nothing refused
 it, and `PLACE` rather than `AMBIG` means nothing flagged it either. With the same frame
 and the two real loose parts, the answer is what it should be:
 
@@ -1059,9 +1071,9 @@ rigc pose --images examples/3-timing-and-spacing/images \
 ```
   ..    parts   …/examples/3-timing-and-spacing/images  (2 png)
   ..    search  scale 0.3–0.6 in 4 step(s) · rotation -180°–180° step 15° · refuse above residual 0.25
-  PLACE  pendulum.png  x=  319.3  y=  214.5  rot=  -88.9°  scale=0.412  residual=0.0410  unexplained=  7%
+  PLACE  pendulum.png  x=  319.3  y=  214.5  rot=  -88.9°  scale=0.412  residual=0.0425  unexplained=  7%
                        found on a 12x5 anchor grid, step 5 at 16x reduction
-  PLACE  square.png    x=  437.2  y=  343.1  rot=   -0.1°  scale=0.410  residual=0.0330  unexplained=  4%
+  PLACE  square.png    x=  437.2  y=  343.1  rot=   -0.1°  scale=0.410  residual=0.0331  unexplained=  4%
                        found on a 57x26 anchor grid, step 4 at 4x reduction
 ```
 

@@ -643,6 +643,16 @@ Nothing here is an answer to anything.
 What *is* real: every command line below was run, and every figure printed in an
 output block is what the command actually printed.
 
+📏 **Instrument re-baseline, 2026-09-03 — [#306](https://github.com/firejune/rigc/issues/306).**
+`pose`'s objective now interpolates its frame in premultiplied space, so a tap
+straddling a silhouette no longer mixes the ground's colour into a part's. Every
+block below was re-run on that arithmetic; **two figures moved**, both in step 2's
+narrowed pose-A block — `arm.png` reads `scale=0.968` (was 0.967) and
+`unexplained= 4%` (was 5%). Nothing in step 3's arithmetic depends on either, and
+the pose-B block is unchanged to the last digit. ⚠️ A residual from before that
+date and one from after are not the same measurement; do not put them in one
+column.
+
 🖼️ **For the same recipe on art that ships, the four
 [`gallery/`](https://github.com/firejune/rigc/tree/main/gallery) examples are worked
 in-betweening material** — `walk` is §3.5's arcs and §3.7's phase offsets on two leg
@@ -727,7 +737,7 @@ rigc pose --images parts --frame poseB.png --scale 0.85,1.2 --out poseB.json
 
 ```
   ..    search  scale 0.85–1.2 in 2 step(s) · rotation -180°–180° step 15° · refuse above residual 0.25
-  PLACE  arm.png   x=   91.9  y=  122.8  rot=   61.9°  scale=0.967  residual=0.0320  unexplained=  5%
+  PLACE  arm.png   x=   91.9  y=  122.8  rot=   61.9°  scale=0.968  residual=0.0320  unexplained=  4%
   PLACE  flag.png  x=  104.7  y=  156.1  rot=   84.3°  scale=0.955  residual=0.0135  unexplained=  0%
   PLACE  post.png  x=   79.9  y=  148.6  rot=   -0.1°  scale=0.975  residual=0.0589  unexplained= 16%
 ```

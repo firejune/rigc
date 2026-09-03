@@ -634,13 +634,36 @@ coordinates into a rig and a motion **by construction** and spend its effort on 
 part no instrument can measure, the movement between two poses.
 
 ```
-  PLACE  torso.png    x=   44.4  y=   65.4  rot=    0.0°  scale=1.118  residual=0.0770  unexplained= 19%
-  AMBIG  arm.png      x=   27.1  y=   56.3  rot=  -35.2°  scale=1.111  residual=0.0262  unexplained=  2%
-                      alt 2: x=   61.5  y=   56.3  rot=   35.4°  scale=1.116  residual=0.0279  unexplained=  2%
-  PLACE  ball.png     x=   44.3  y=  104.6  rot=    0.0°  scale=1.144  residual=0.0203  unexplained=  3%
+  AMBIG  arm.png      x=   62.9  y=   56.2  rot=   35.3°  scale=1.114  residual=0.0227  unexplained=  1%
+                      alt 2: x=   28.4  y=   56.2  rot=  -35.0°  scale=1.118  residual=0.0227  unexplained=  1%
+  PLACE  ball.png     x=   45.7  y=  104.6  rot=    0.0°  scale=1.141  residual=0.0226  unexplained=  4%
                       rotation is a FREE degree of freedom — the 0° above is a placeholder
-  REFUSE foreign.png  no-match: the best placement found has residual 0.4245, above --max-residual 0.25
+  REFUSE foreign.png  no-match: the best placement found has residual 0.4254, above --max-residual 0.25
+  AMBIG  torso.png    x=   45.6  y=   65.5  rot=    0.0°  scale=1.121  residual=0.0930  unexplained= 24%
+                      alt 2: x=   44.2  y=   55.8  rot=  -17.0°  scale=0.500  residual=0.0937  unexplained= 32%
 ```
+
+📎 **Where those figures come from, so the next reader can re-run them rather than
+trust them**: the selftest's own pose fixture (`buildPoseFixture` in
+[`selftest.ts`](../selftest.ts)) — five plates posed by a rig and rendered into one
+91×137 frame — read back with `pose --images parts --frame poseA.png`. The rows
+above are a trim: the `head`, `blank` and `toobig` parts, the anchor-grid lines and
+the trailing alternates are cut for width, and the two refusals those two parts
+carry are the last bullet below.
+
+📏 **Instrument re-baseline, 2026-09-03 — [#306](https://github.com/firejune/rigc/issues/306).**
+`pose`'s objective now interpolates its frame premultiplied, so a tap across a
+silhouette no longer charges a part for the ground's colour. Three separate
+changes have moved this block since it was first printed and only the last is
+#306's, which is exactly why it is dated: the fixture's arm plate grew from 10×26
+to 10×30 with `chainfit` ([#286](https://github.com/firejune/rigc/pull/286)) and
+that re-framed the whole picture, `bilinear` moved to premultiplied for the
+*renderer* ([#301](https://github.com/firejune/rigc/pull/301)) and re-rendered it,
+and #306 moved the objective that reads it. ⚠️ **A residual from either side of
+those dates is not the same measurement.** #306's own contribution here is small
+and one-directional: `arm.png` 0.0240 → 0.0227 — it is the part that crosses the
+torso's edge — while `ball`, `head`, `torso` and `foreign` do not move at four
+decimals at all.
 
 🚨 **Nothing here is a score, and no pass bar attaches to any of it.** `check` and
 `bench` measure a build against a reference, so their numbers mean *how close*. A
