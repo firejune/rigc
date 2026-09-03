@@ -169,24 +169,27 @@ const SPARK = `
 /**
  * The upper lid — skin, a lash edge, a crease.
  *
- * 🚨 **Its top 30px fade to transparent and its sides run flush to the window
- * edge, and both of those are load-bearing.**
+ * 🚨 **Its top 30px fade to transparent, and that fade is load-bearing.** The
+ * plate is flat skin over a head plate that is not flat there, so a hard top
+ * edge would draw a rectangle across the brow every frame.
  *
- * The fade is the ordinary reason: the plate is flat skin over a head plate that
- * is not flat there, so a hard top edge would draw a rectangle across the brow
- * every frame.
+ * ✅ **Its sides run flush to the window edge, and that is no longer
+ * load-bearing.** It was: `rigc render` used to sample an atlas bilinearly in
+ * **straight**-alpha space, so wherever opaque art met the transparent
+ * `(0,0,0,0)` texels beside it the interpolated colour was pulled toward black
+ * while the alpha stayed partial — a one-pixel dark rim over the top of whatever
+ * was behind. Invisible on a part with an ink outline; a visible line down the
+ * forehead on a skin-coloured plate meant to overlap invisibly, which is what
+ * the first version of this plate drew (measured at −31/255 here, −60/255 in the
+ * minimal case). Running the fill to `x = 0` and `x = 104` avoided it, because
+ * the sampler CLAMPS at a page edge and so had nothing dark to interpolate into.
  *
- * The flush sides are the un-ordinary one. `rigc render` samples an atlas
- * bilinearly in **straight**-alpha space, so at any edge where opaque art meets
- * the transparent `(0,0,0,0)` texels beside it the interpolated colour is pulled
- * toward black while the alpha stays partial — a one-pixel dark rim, over the
- * top of whatever is behind. On a part with an ink outline nobody can see it; on
- * a skin-coloured plate that is supposed to overlap invisibly it is a visible
- * line down the forehead, which is what the first version drew (measured at
- * −31/255, and −60/255 in the minimal case). Running the fill to `x = 0` and
- * `x = 104` removes it, because the sampler CLAMPS at a page edge and therefore
- * has nothing dark to interpolate into. That is a workaround for
- * [issue #292](https://github.com/firejune/rigc/issues/292), not a fix.
+ * [Issue #292](https://github.com/firejune/rigc/issues/292) fixed the sampler —
+ * it interpolates premultiplied now, and a transparent texel gets no vote in the
+ * colour — so the flush sides are kept as they are rather than because they have
+ * to be. ⚠️ **Do not read them as a pattern to copy.** A plate whose art wants a
+ * margin should have one; contorting art around a defect that no longer exists is
+ * how a workaround outlives the thing it worked around.
  *
  * 🚨 **And the fade is 30 PIXELS, not a fraction of the plate.** The lash curve
  * bottoms out at y = 106 of 112, so the plate carries 106 − 30 = **76px of fully
