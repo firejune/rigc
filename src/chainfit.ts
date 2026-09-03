@@ -1630,11 +1630,11 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       'A part refused `occluded` is refused because too little of it survives the parts in front of it, and the ' +
         'best placement found is still in `placement`: the chain put it there and the pixels did not confirm it. ' +
         'A refusal names why not to trust a number; it does not hide it.',
-      'Three kinds of placement live in this one list and the refusals distinguish them. The part an ANCHOR was ' +
-        'read from is never refused here — no search happened, so `occluded` would be second-guessing the anchor ' +
-        "pass rather than reporting anything, and `anchorVerdict` is the trust signal that was used. The OTHER " +
-        "parts on an anchored bone are refused, because their placement is the RIG's prediction from that anchor " +
-        'and is a real measurement of it. Chain placements are refused because they were searched.',
+      'An ANCHOR can be refused too, and it is not a contradiction: the anchor pass judged the placement over ' +
+        "the part's WHOLE footprint — all `pose` can see, and blind to what covers it — while this instrument has " +
+        'measured how much of the part is visible at all. A refused anchor means the placement may well be right ' +
+        'and the CONFIRMATION is missing, and every part whose `anchoredTo` names that bone rests on it. ' +
+        '`anchorVerdict` carries the pass\'s own numbers so the two readings can be compared rather than merged.',
     ],
     parts: [],
   };
@@ -1846,28 +1846,36 @@ function finishPart(state: PartState, ctx: FinishContext): ChainFitPart {
     );
   }
 
-  if (state.isAnchorSource) {
-    // Reported rather than refused — see `PartState.isAnchorSource`.
-    if (placement.visibleShare < ctx.minVisible || placement.residual > ctx.maxResidual) {
-      out.notes.push(
-        `this instrument saw ${(placement.visibleShare * 100).toFixed(1)}% of ${name} — ` +
-          `residual ${placement.residual.toFixed(4)} over ${placement.scoredPixels} part pixel(s) — which is ` +
-          `outside its own floor ${ctx.minVisible} / ceiling ${ctx.maxResidual}. It is NOT refused on that: the ` +
-          'placement was not searched here, and the trust signal that was actually used to accept it is ' +
-          '`anchorVerdict`. Read that, and read this share as how much of the part was left to check it against.',
-      );
-    }
-  } else if (placement.visibleShare < ctx.minVisible) {
+  if (placement.visibleShare < ctx.minVisible) {
+    // ⚠️ An ANCHOR gets this refusal too, and the wording carries why rather than
+    // leaving a reader to reconcile two rows. The two criteria disagree on
+    // purpose: the anchor pass judged this placement over the part's WHOLE
+    // footprint, which is all `pose` can see and which does not know what covers
+    // it, and this instrument has just measured that almost nothing of the part is
+    // visible. Both are true. Suppressing the refusal because "no search happened
+    // here" was tried and is worse — measured on the 2026-09-03 corpus it printed
+    // `rear-bracer` as READ on 82 of 147 frames at a median visible share of 0.1%,
+    // which is the number this floor exists to stop anybody quoting.
     out.refusal = {
       reason: 'occluded',
       detail:
         `${name}: only ${(placement.visibleShare * 100).toFixed(1)}% of it survives the parts drawn over it, ` +
         `below the visibility floor ${ctx.minVisible}; the residual ${placement.residual.toFixed(4)} is a ` +
-        `statement about ${placement.scoredPixels} part pixel(s)`,
+        `statement about ${placement.scoredPixels} part pixel(s)` +
+        (state.isAnchorSource
+          ? ` — and it is an ANCHOR, accepted by the anchor pass on its own criterion (residual ` +
+            `${(out.anchorVerdict?.residual ?? 0).toFixed(4)}, unexplained ` +
+            `${((out.anchorVerdict?.unexplained ?? 0) * 100).toFixed(0)}% over the part's WHOLE footprint, which ` +
+            'cannot know what covers it), so every placement hung off it inherits this doubt'
+          : ''),
     };
     out.notes.push(
-      `${name} is too far behind other parts to measure on this frame. The best placement found is still in ` +
-        '`placement`.',
+      state.isAnchorSource
+        ? `${name} anchors this chain and this instrument can barely see it. The placement is the anchor pass's ` +
+          'and may well be right; what is refused is the confirmation, and everything with ' +
+          `\`anchoredTo\` = "${view.name}" rests on it.`
+        : `${name} is too far behind other parts to measure on this frame. The best placement found is still in ` +
+          '`placement`.',
     );
   } else if (placement.residual > ctx.maxResidual) {
     out.refusal = {
