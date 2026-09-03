@@ -42,8 +42,9 @@ at `±162, ±120, 0` rather than evenly, sample the projection where it changes.
 
 **One held yaw is 20 tracks and 160 floats.** The shape of that matters more
 than the size: of those 160 offsets there are **five distinct values** (one per
-column, repeated down five rows), and 20 of the 50 slots in a head key are
-structurally `0` because a yaw has no vertical component. Of the 20 tracks,
+column, repeated down five rows), and 25 of the 50 numbers in a head key are
+structurally `0` — every `y` of a 25-vertex grid — because a yaw has no
+vertical component. Of the 20 tracks,
 **19 are one value each**, all derived from the same expression.
 
 So the labour is not *complexity*. It is **transcription**. Every number in
