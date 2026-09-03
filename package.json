@@ -44,6 +44,7 @@
     "docs/PROMPTING.md",
     "docs/MOTION.md",
     "docs/INGEST.md",
+    "docs/FACE.md",
     "NOTICE.md"
   ],
   "publishConfig": {
