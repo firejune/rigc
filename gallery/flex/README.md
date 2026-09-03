@@ -1,13 +1,16 @@
 # `flex` — the mesh is the art's own silhouette
 
-A swallow-tailed banner waves on a mast and a serrated leaf ripples on its
-stalk, while Rigby watches. Four attachments here are `contour` meshes: rigc
-traced each one off its own PNG's alpha, so there is no number in the geometry
-that can disagree with the pixels.
+A swallow-tailed banner waves on a mast and a serrated leaf bends on its stalk,
+while Rigby watches. Four attachments here are `contour` meshes: rigc traced
+each one off its own PNG's alpha, so there is no number in the geometry that can
+disagree with the pixels.
 
 **Stars:** the `contour` mesh generator (what its parameters really do, what it
 refuses, and what a hole costs), a `deform` timeline pushing real silhouette
-vertices, and the rigging pattern a pinned mesh forces on you.
+vertices — from a stated model rather than a table — and the rigging pattern a
+pinned mesh forces on you. Also **what a fan triangulation does to a deform**:
+this example's leaf folded, and the measurement that fixed it is the one figure
+here nobody would guess.
 
 ## Run it
 
@@ -22,7 +25,10 @@ bun cli.ts preview --candidate gallery/flex/build --out gallery/flex/preview.htm
 ```
 
 `build` gates green under both profiles — `--profile spine` (the default) and
-`--profile spine-html` — the second of them with one declared exemption, below. Nothing built is committed; the three output paths above
+`--profile spine-html` — with **no declared exemption**: this example carried the
+repository's only `invariants.deformMayFold` until
+[#313](https://github.com/firejune/rigc/issues/313), and *The deform* below is
+what removing it took. Nothing built is committed; the three output paths above
 are in `.gitignore`.
 
 To redraw the art (needs `rsvg-convert` from librsvg — `brew install librsvg`,
@@ -36,8 +42,8 @@ bun gallery/flex/make_parts.ts
 
 | Animation | Duration | Loops | What it is for |
 | --- | --- | --- | --- |
-| `wave` | 2.4 s | yes | A travelling wave down the banner, each hinge a quarter-cycle behind the last, plus the leaf's ripple |
-| `gust` | 1.1 s | no | One hard snap, so the panels and the leaf are seen at a deflection the loop never reaches |
+| `wave` | 2.4 s | yes | A travelling wave down the banner, each hinge a quarter-cycle behind the last, plus the leaf swaying either side of rest |
+| `gust` | 1.1 s | no | One hard snap, so the panels and the leaf are seen at a deflection the loop never reaches — and the leaf's blade curves rather than leaning |
 
 ## What the generator measured
 
@@ -201,36 +207,66 @@ attachment's vertex array directly, which is the documented alternative to
 bone-driven motion on a contour, and the whole reason to have real vertices
 where the silhouette actually is.
 
-Its numbers came out of the geometry, because there is no way to guess them: the
-build was dumped, the 77 vertices read, the two edge runs identified, and the
-offsets generated as a 1.5-period wave along each edge. `wave` keys 20 vertices
-of the upper-right edge at t = 0.6 and 20 of the upper-left at t = 1.8, with
-`{ "t": 0 }` and `{ "t": 2.4 }` — keys with no `vertices`, which is the format's
-own way of saying "the setup pose" — at the ends.
+⭐ **Both keys state a model rather than a table**
+([AUTHORING §4.11.1](../../docs/AUTHORING.md),
+[#294](https://github.com/firejune/rigc/issues/294)) — a `bend`, which
+displaces one coordinate as a power of how far along the leaf a vertex is:
+
+```json
+{ "t": 0.6, "transform": { "kind": "bend", "along": "y", "axis": "x",
+                           "amount": 8, "from": -81, "to": 77, "power": 1 }, "ease": "swing" }
+```
+
+`from: -81` is the stalk end of the mesh and `to: 77` is just past the tip, both
+in the attachment's own units, so `u` runs 0 at the stalk to 0.996 at the
+tip and `amount` is the displacement there. The stalk barely moves — 0.4 px at
+`gust`'s amplitude — which is what holds the leaf onto the sprig.
+
+⇒ **`wave` sways and `gust` snaps, and they use different powers on purpose.**
+That is the finding this example now carries, and the next section is why:
+
+| | `power` | `amount` | What the shape is |
+| --- | --- | --- | --- |
+| `wave` t = 0.6 / 1.8 | **1** | +8 / −8 | an affine shear: the blade leans, the stalk stays. `det = 1`, so **no triangle can reverse at any amplitude** |
+| `gust` t = 0.26 | **2** | +15 | a cantilever: flat at the stalk, curving toward the tip. Not affine — no bone transform can make this shape |
 
 Read back off the posed skeleton, the timeline arrives:
 
 | | deform array | non-zero | largest offset |
 | --- | --- | --- | --- |
 | `wave` t = 0 | 154 numbers (77 pairs) | 0 | 0.000 px |
-| `wave` t = 0.6 s | 154 | 38 | **7.973 px** at vertex 4 |
-| `gust` t = 0.26 s | 154 | 40 | **15.000 px** at vertex 16 |
+| `wave` t = 0.6 s | 154 | 77 | **7.968 px** at vertex 0 |
+| `gust` t = 0.26 s | 154 | 77 | **14.882 px** at vertex 0 |
 
 Two notes on that array. It is **154** numbers for 77 vertices — one pair each —
-because a contour pins every vertex to one bone, and `fromVertex` works exactly
-when that is true. Had any vertex carried two bones it would occupy two pairs,
-`fromVertex` would be refused for it by name, and the run would have to be
-written in bind space with a raw `offset`. And the offsets are **offsets**, in
-the leaf bone's own space: 15.000 px is what `motion.json` asks for, not a
-coincidence.
+because a contour pins every vertex to one bone, and that is also what lets a
+`transform` be evaluated over it at all: one bone means **one coordinate space**.
+Had any vertex carried two bones it would occupy two pairs, the model would be
+refused by name, and the run would have to be written in bind space with a raw
+`offset`. And every pair is non-zero because a stated model covers the whole
+attachment — a model applied to part of a run leaves a step at the run's edge,
+which is exactly how the defect below got in.
 
-### 🚨 And this amplitude folds the mesh — a known defect, not a lesson
+`explain` prints the model and every offset it produced, so the table above and
+the artifact are the same numbers:
+
+```
+      t=0.26    deform[0..154]  77 pair(s)                     bezier[4]
+               transform bend  amount=15 from=-81 to=77 power=2 along=y axis=x
+               dx = amount · u^2,   u = (y − from) / (to − from)
+                 span = to − from = 158
+                 power 2 is not affine — the gradient at u is 2·amount·u^1/span, so it is 0 at "from"
+               77 vertices, largest offset 14.881872px at vertex 0
+                 v  0 (14.881872, 0)  v  1 (12.795097, 0)  v  2 (11.586316, 0)  v  3 (10.778408, 0)
+                 …nineteen more lines
+```
+
+### 🚨 This mesh folded, and the amplitude was never the reason
 
 `A39_DEFORM_KEEPS_TRIANGLE_WINDING`
 ([#296](https://github.com/firejune/rigc/issues/296)) found, on its first run
-over this gallery, that three of the leaf's eight keys sweep boundary vertices
-**past the fan's interior vertex 76**, reversing the winding of the triangle
-there:
+over this gallery, that three of the leaf's eight keys swept boundary vertices
+**past the fan's apex vertex 76**, reversing the winding of the triangle there:
 
 | animation | key | t | triangles reversed of 75 | worst |
 | --- | --- | --- | --- | --- |
@@ -238,22 +274,67 @@ there:
 | `wave` | 3 | 1.800s | 7 | tri 61 `[76,60,62]` −4.383 → +167.671 px² |
 | `gust` | 1 | 0.260s | 4 | tri 12 `[76,12,13]` −47.739 → +200.220 px² |
 
-At the gust peak it is visible at 1:1: the upper-right edge carries two hard step
-discontinuities, the ink outline disappears across one of them and reappears
-displaced, and the vein pattern is torn into offset blocks.
-
-So `rig.json` carries the one `invariants.deformMayFold` entry in this
-repository, and its `why` says outright that this is a **defect being tracked**
+At the gust peak it was visible at 1:1: two hard step discontinuities on the
+upper-right edge, the ink outline vanishing across one of them and reappearing
+displaced, and the vein pattern torn into offset blocks. The rig carried this
+repository's only `invariants.deformMayFold` entry, whose `why` said outright
+that it was a defect being tracked
 ([#313](https://github.com/firejune/rigc/issues/313)) rather than art that folds
-on purpose. Removing that entry is #313's acceptance test. ⚠️ **Do not read the
-15 px above as a figure this example endorses** — it is the figure this example
-shipped with, and the instrument that can now measure it says it is too large
-for this mesh.
+on purpose. **That entry is gone**, A39 gates this example green, and the
+measurement that got there is the part worth keeping:
+
+⭐ **The mesh's problem is its triangulation, not the 15 px.** Ear clipping fans
+77 boundary vertices from one apex at the **tip**, so a fan triangle spans the
+whole length of the blade and some of them are hairs: five have a setup area
+under 5 px² against a largest of 792, and the thinnest three are **0.368,
+0.878 and 2.385 px²**. Adjacent boundary vertices sit within **0.27 px** of the
+same ray from the apex, so what flips such a triangle is not how far the
+silhouette moves but how differently two neighbours move.
+
+**Measured, by sweeping the amplitude until A39 fires** (`amount` on the `gust`
+key, and A39's own verdict at each step, not a model of it):
+
+| the deformation | fold-free up to | first amount A39 refuses |
+| --- | --- | --- |
+| the shipped 1.5-period ripple along the edge | **0.5 px** | 1 px |
+| `bend` `power: 2`, toward +x | **42 px** | 43 px |
+| `bend` `power: 2`, toward −x | **1.5 px** | 2 px |
+| `bend` `power: 1` (the affine shear) | **no bound found at 400 px** | — |
+
+Four things fall out of that table, and they are the reason this repair is a
+change of *model* rather than of amplitude:
+
+- **The ripple was never viable.** 0.5 px is below anything that reads, so
+  "lower the amplitude" was not a fix available at any number. The 15 px the
+  exemption blamed is fine — `gust` still ships it.
+- **A fan is not symmetric.** 42 px one way and 1.5 px the other, on the same
+  mesh with the same model, because the tight slivers are on one edge. So
+  `wave`'s symmetric ±8 sway **cannot** be a quadratic bend.
+- **Affine is the one family with a proof rather than a margin.** A positive
+  determinant preserves every triangle's winding, hair-thin ones included, so
+  the sway is safe by construction and 400 px of shear still gates green. That
+  is why `wave` is `power: 1` and why rigc refuses an `affine` determinant at or
+  below zero.
+- ⚠️ **`wave`'s key is therefore bone-reproducible** — a `shear` plus a
+  `translate` on the leaf bone would make the same shape. `gust`'s is not: a
+  quadratic bend curves the blade, and no bone transform curves a rigid plate.
+  This section's title is earned by the second key, and the first one is here
+  because a loop that runs forever wants a proof.
+
+🔭 **What would raise the ceiling** is the triangulation: interior vertices, or a
+flip pass over the ear-clipped fan, would remove the hairs without changing the
+outline, the coverage or the vertex count. That is a change to the `contour`
+generator and every mesh it builds, so it is not this repair; the sweep above is
+what it would be measured against. Coarsening the trace does **not** help — at
+tolerance 1.2 (46 vertices) and 2.0 (41) the ripple's ceiling falls to 0.25 px,
+because coarser vertices are further apart and a wave gives them *more*
+different offsets, not less.
 
 ## The loop joins exactly, mesh vertices included
 
 `wave` returns every track *and* every deform to its setup value at the
-duration. Stepping to t = 0 and t = 2.4 s and comparing gives a worst case of
+duration. Applying the animation at t = 0 and at its own stored duration and
+comparing gives a worst case of
 
 ```
 0.000000 px over all 24 bones
@@ -262,6 +343,13 @@ duration. Stepping to t = 0 and t = 2.4 s and comparing gives a worst case of
 
 The mesh half of that is the half worth measuring: a deform that almost returns
 is a loop that almost joins, and a bone comparison cannot see it.
+
+📌 **"Its own stored duration" is load-bearing, and it is 2.4000000953674316.**
+Key times are `float32` in the file, so stepping to the authored `2.4` lands a
+hair *before* the last key and leaves 6.1e-5 px of the previous one on every
+vertex. That is a property of the arithmetic rather than of this timeline —
+the same figure comes back on the build this example shipped before the leaf was
+repaired — but a loop-join claim has to say which of the two it measured.
 
 ## What is drawn, and how
 

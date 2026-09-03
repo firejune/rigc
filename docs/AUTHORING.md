@@ -1188,6 +1188,14 @@ is the whole value of it. What the field is for is art that folds on purpose: a
 page turning over, a cloth creasing back on itself, where the reversed winding
 *is* the drawing.
 
+📌 **Nothing in this repository uses it.** `gallery/flex` did, for one leaf whose
+`why` named the issue tracking the defect rather than claiming intent; that
+tracked defect is repaired ([#313](https://github.com/firejune/rigc/issues/313))
+and the entry is gone. ⇒ An exemption whose `why` reads *"known defect, see
+#N"* is a legitimate use of the field and an honest one, but it is a loan
+against a fix, not a fix — and the thing that made it repayable was A39
+measuring the ceiling the art could actually take.
+
 ---
 
 ## 4. The motion spec, field by field
