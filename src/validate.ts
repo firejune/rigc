@@ -32,7 +32,13 @@ import {
   SkeletonJson,
   SliderData,
   TextureAtlas,
+  type TextureAtlasRegion,
 } from '@esotericsoftware/spine-core';
+// ⚠️ `src/` reaches outside itself for exactly two modules and this is one of
+// them, so it is already on `package.json`'s `files` allowlist — see CLAUDE.md.
+// A19 needs the DECODED page, not its header, to measure one region's own
+// rectangle on a shared page.
+import { readPlate } from '../tools/plate.ts';
 import { surveyDeformKeys } from './deformmeasure.ts';
 import { colourTypeName, readPngInfo } from './png.ts';
 import { CHANNELS_BY_KIND, KEY_TIME_EPSILON, walkTimelines } from './timelines.ts';
@@ -1992,31 +1998,83 @@ export function validate(input: ValidateInput): ValidateReport {
           `page "${page.name}" declares ${page.width}x${page.height} but the PNG is ${info.width}x${info.height}`,
         );
       }
-      // 📐 PROFILE, from here down. `pma: false`, one region per page and no
-      // rotation are rigc's atlas CONVENTION, not the atlas format's rules — a
-      // packed page with `rotate: 90` is what the Spine packer produces and
-      // every official example ships one. The convention is what makes the
-      // attachment -> region -> file chain checkable exactly (A27), so it stays
-      // on for spine-html; under `spine` an atlas is judged only on whether its
-      // declared size matches the file it names.
-      //
-      // ⚠️ Since issue #4 rigc can produce a multi-region page itself
-      // (`build --pack`), so this clause is no longer "nobody can have made
-      // this". It is still the convention `spine-html` asks for, and the CLI
-      // therefore refuses `--pack --profile spine-html` by name rather than
-      // letting a legitimate pack arrive here and read as a defect.
+      // 📐 PROFILE, from here down. `pma: false` and no rotation are rigc's atlas
+      // CONVENTION, not the atlas format's rules — a packed page with
+      // `rotate: 90` is what the Spine packer produces and every official example
+      // ships one. Under `spine` an atlas is judged only on whether its declared
+      // size matches the file it names.
       if (policy && page.pma) {
         fail('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', `page "${page.name}" claims premultiplied alpha; parts are straight alpha`);
       }
     }
     if (!policy) return;
+    // ⭐ **One part per page OR a tiling page** (issue #266, follow-up 2). This
+    // clause used to be the first alternative alone — every region's UVs
+    // `(0,0)-(1,1)` — which is rigc's *unpacked* convention and exactly what
+    // `build --pack` stops being true, so `--pack --profile spine-html` had to be
+    // a named CLI refusal. A pack is not a defect, and refusing it under this
+    // profile meant the one shape that exercises the renderer's shared-page
+    // sampling could never be gated by the renderer's own rulebook.
+    //
+    // What the first alternative bought was the attachment -> region -> file
+    // chain being checkable exactly, and `A27` already owns that half and already
+    // stands down on a multi-region page. What is left to check on a *tiling*
+    // page is what makes shared-page sampling well defined at all: every region
+    // wholly inside the page it names, and no two regions on one page
+    // overlapping. Both are conditions a foreign pack can fail while loading
+    // clean — an off-page rectangle samples texels that are not there, and two
+    // overlapping rectangles put one drawing inside another's.
+    //
+    // ⚠️ Rotation stays refused either way, and that is not the same clause: it
+    // is about rigc's own packer never turning a region, and `extractRegion`
+    // refusing to read one back.
+    const regionsPerPage = new Map<string, TextureAtlasRegion[]>();
     for (const region of atlas.regions) {
-      if (region.u !== 0 || region.v !== 0 || region.u2 !== 1 || region.v2 !== 1) {
-        fail(
-          'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
-          `region "${region.name}" has UVs (${region.u},${region.v})-(${region.u2},${region.v2}); one part per page must cover the page exactly`,
-        );
+      const on = regionsPerPage.get(region.page.name);
+      if (on) on.push(region);
+      else regionsPerPage.set(region.page.name, [region]);
+    }
+    for (const [pageName, on] of regionsPerPage) {
+      const onePartPerPage =
+        on.length === 1 && on[0].u === 0 && on[0].v === 0 && on[0].u2 === 1 && on[0].v2 === 1;
+      if (onePartPerPage) continue;
+      const rects = on.map((region) => ({
+        name: region.name,
+        x: region.x,
+        y: region.y,
+        // spine-core transposes a region's extent at 90 and not at 270 when it
+        // derives the UVs, so the rectangle ON THE PAGE follows the same rule.
+        width: region.degrees === 90 ? region.height : region.width,
+        height: region.degrees === 90 ? region.width : region.height,
+        page: region.page,
+      }));
+      for (const rect of rects) {
+        if (rect.x < 0 || rect.y < 0 || rect.x + rect.width > rect.page.width || rect.y + rect.height > rect.page.height) {
+          fail(
+            'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+            `region "${rect.name}" occupies ${rect.x},${rect.y} ${rect.width}x${rect.height} of page ` +
+              `"${pageName}", which is ${rect.page.width}x${rect.page.height} — a region that runs off its page ` +
+              'samples texels that are not there',
+          );
+        }
       }
+      for (let i = 0; i < rects.length; i++) {
+        for (let j = i + 1; j < rects.length; j++) {
+          const a = rects[i];
+          const b = rects[j];
+          if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
+            fail(
+              'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+              `regions "${a.name}" (${a.x},${a.y} ${a.width}x${a.height}) and "${b.name}" (${b.x},${b.y} ` +
+                `${b.width}x${b.height}) overlap on page "${pageName}"; a page is one part covering it exactly or ` +
+                'a tiling of regions that do not, and two rectangles over the same texels put one drawing inside ' +
+                "the other's",
+            );
+          }
+        }
+      }
+    }
+    for (const region of atlas.regions) {
       if (region.degrees !== 0) {
         fail(
           'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
@@ -2050,10 +2108,14 @@ export function validate(input: ValidateInput): ValidateReport {
     const stageW = skeletonData?.width ?? 0;
     const stageH = skeletonData?.height ?? 0;
     const basePages = new Set<string>();
+    const baseRegions = new Set<string>();
     for (const att of regionAttachments) {
       if (stageW && stageH && att.width >= stageW && att.height >= stageH) {
         const region = atlas.findRegion(att.path || att.name);
-        if (region) basePages.add(region.page.name);
+        if (region) {
+          basePages.add(region.page.name);
+          baseRegions.add(region.name);
+        }
       }
     }
     // The escape hatch is only worth naming when it is reachable: with no stage
@@ -2064,9 +2126,56 @@ export function validate(input: ValidateInput): ValidateReport {
         ? `Only the one image big enough to cover the whole stage (${stageW}x${stageH}) may be opaque.`
         : 'The one image that covers the whole stage may be opaque, but this skeleton declares no stage size, so ' +
           'nothing here qualifies.';
+    // 🚨 Counted per page for the unpacked convention and per REGION on a shared
+    // page, and the split is not a convenience (issue #266, follow-up 2). A
+    // packed page's own file all but always declares transparency — the gutter
+    // and whatever is left over of the page are transparent — so the file-level
+    // question is answered "yes" by the packing itself, whatever the parts on it
+    // look like. Asking it that way once packs became gateable under this profile
+    // would have turned this assertion into a pass that measures nothing, which
+    // is the failure mode this file exists to prevent. So a shared page is opened
+    // and each region's own rectangle is measured instead.
+    const sharedPages = new Map<string, TextureAtlasRegion[]>();
+    for (const region of atlas.regions) {
+      const on = sharedPages.get(region.page.name);
+      if (on) on.push(region);
+      else sharedPages.set(region.page.name, [region]);
+    }
     for (const page of atlas.pages) {
       const abs = resolve(input.atlasDir, page.name);
       if (!existsSync(abs)) continue;
+      const on = sharedPages.get(page.name) ?? [];
+      if (on.length > 1) {
+        // A rotated region is refused by A06 under this profile, so the
+        // rectangle read here is the region's own extent either way; the
+        // transpose is applied so the reading is right even while A06 is
+        // reporting the rotation.
+        const plate = readPlate(abs);
+        for (const region of on) {
+          if (baseRegions.has(region.name)) continue;
+          const width = region.degrees === 90 ? region.height : region.width;
+          const height = region.degrees === 90 ? region.width : region.height;
+          let transparent = false;
+          for (let y = region.y; y < region.y + height && !transparent; y++) {
+            for (let x = region.x; x < region.x + width; x++) {
+              if (x < 0 || y < 0 || x >= plate.width || y >= plate.height) continue;
+              if (plate.get(x, y)[3] < 255) {
+                transparent = true;
+                break;
+              }
+            }
+          }
+          if (transparent) continue;
+          fail(
+            'A19_OVERLAY_PNGS_HAVE_ALPHA',
+            `part "${region.name}" is opaque in every one of its ${width}x${height} texels on shared page ` +
+              `"${page.name}", so it would paint a solid rectangle over whatever is drawn behind it. Re-export ` +
+              `the part with transparency and pack again. ${exemption} This is renderer policy, and it belongs ` +
+              'to --profile spine-html: the default --profile spine does not run this check.',
+          );
+        }
+        continue;
+      }
       const info = readPngInfo(abs);
       if (info.hasTransparency) continue;
       if (basePages.has(page.name)) continue; // full-stage base plate: opaque is correct

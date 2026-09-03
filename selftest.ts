@@ -102,6 +102,7 @@ import {
   parseAtlasText,
   rewritePageNames,
   writeAtlasText,
+  type PackInput,
 } from './src/atlas.ts';
 import { isContent } from './src/framing.ts';
 import {
@@ -669,10 +670,25 @@ const MUTANTS: Mutant[] = [
     }),
   },
   {
-    name: 'M14_region_does_not_cover_its_page',
-    origin: 'one part per page means u2=v2=1, always',
+    // Re-aimed by issue #266. It used to shift AND shrink the region — `bounds:
+    // 4, 4, 12, 12` — on the argument that "one part per page means u2=v2=1,
+    // always". Since A06's profile clause became "one part per page OR a tiling
+    // page", a region that merely fails to cover its page is what a pack looks
+    // like and is no longer a defect; a region outside the page it names still
+    // is, under either alternative, because it samples texels that are not
+    // there. So the break keeps the region's own SIZE — which the unpacked emit
+    // set to the page's — and only moves it, which puts its far edge 4 texels
+    // past the page. Derived from the atlas text rather than written down, so
+    // the mutant carries no measured number (see CLAUDE.md).
+    name: 'M14_region_runs_off_its_page',
+    origin:
+      'a rectangle outside the page loads clean and samples texels that are not there; under the unpacked ' +
+      'convention the region IS the page, so any offset at all runs off it',
     expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
-    mutate: (a) => ({ ...a, atlasText: a.atlasText.replace(/^bounds: .*$/m, 'bounds: 4, 4, 12, 12') }),
+    mutate: (a) => ({
+      ...a,
+      atlasText: a.atlasText.replace(/^bounds: \d+, \d+, (\d+), (\d+)$/m, (_line, w, h) => `bounds: 4, 4, ${w}, ${h}`),
+    }),
   },
   {
     name: 'M16_rim_vertex_pinned_to_the_control_bone',
@@ -9152,11 +9168,15 @@ function runCopyImagesSuite(): number {
 //     page equals the loose PNG byte for byte. A packer that resampled, scaled,
 //     trimmed or turned anything fails here and cannot be argued with.
 //   * `PK05` is the rendered one, and it is stated as a BOUND rather than as
-//     byte-identity — measured, not conceded. A packed region's texels are read
-//     through `x / pageWidth` instead of through 0..1, which is one more rounding
-//     step in the sampling coordinate, so the interpolation weight can differ in
-//     its last bit and a `Math.round` at a .5 boundary can then land the other
-//     way. Measured across three fixtures and every frame of every animation:
+//     byte-identity — measured, not conceded. `PK18` says which half of a pose
+//     that bound is about, and it is not the half issue #266 assumed: a packed
+//     **region**'s sampling coordinate comes back EXACTLY (the origin, the region
+//     extent and the page edge are all integers and the page is a power of two),
+//     while a **mesh**'s cannot, because `spine-core` holds mesh page UVs in a
+//     `Float32Array` and `f32(u + regionUVs[i] x width)` has dropped the low bits
+//     before rigc reads the array. That is why the two rigs that are not
+//     byte-identical are the two with meshes. Measured across three fixtures and
+//     every frame of every animation:
 //     the worst channel difference is **exactly 1**, on 0 to 480 samples out of
 //     7 to 21 million, and on the repository's own thirteen rigs eleven are
 //     byte-identical over 1,101 frames. The two that are not are the two with
@@ -9235,6 +9255,76 @@ function renderDelta(
 
 /** The key `sampleSetupPose`'s one frame set is filed under here. Not an animation name. */
 const SETUP_SET = 'setup';
+
+/** One kind of piece's sampling-coordinate agreement between a loose and a packed pose. */
+interface CoordinateAgreement {
+  /** Coordinates compared. */
+  coords: number;
+  /** How many were not exactly equal. */
+  differing: number;
+  /** Worst absolute difference, in page texels. */
+  worst: number;
+}
+
+/**
+ * The packed pose's sampling coordinates against the loose pose's, in texels.
+ *
+ * ⭐ This is the measurement that closed issue #266's first follow-up, and the
+ * reason it is a gate rather than a note. `src/render.ts` samples a page at
+ * `u · pageWidth − 0.5`, so a packed piece's coordinate is `regionX + localTexel`
+ * where a loose one's is `localTexel` — the comparison is therefore
+ * `u · pageWidth − regionX` against the loose `u · pageWidth`, which is exactly
+ * what "sample in region-local coordinates" could ever recover. Split by piece
+ * kind, because the two answers are different and the difference is the finding:
+ * a region attachment's coordinate is recovered exactly, a mesh's is not, and a
+ * mesh's cannot be — `spine-core` holds mesh page UVs in a `Float32Array` and the
+ * low bits are gone before rigc reads them. See `src/atlas.ts`'s header.
+ *
+ * The loose build has one region per page, so a piece's page filename IS its
+ * region name (`PK09` asserts that emit literally), which is what joins the two
+ * poses without a second index.
+ */
+function samplingCoordinates(fixture: Fixture): { region: CoordinateAgreement; mesh: CoordinateAgreement } {
+  const opts = optsForFixture(fixture);
+  const result = compile(opts);
+  const packed = packFixture(fixture, DEFAULT_PADDING);
+  const loose = posableFromText(result.skeletonText, result.atlasText, opts.outDir);
+  const tight = posableFromText(result.skeletonText, packed.atlasText, packed.dir);
+  const rects = new Map<string, { x: number; y: number }>();
+  for (const page of parseAtlasText(packed.atlasText).pages) {
+    for (const region of page.regions) rects.set(region.name.trim(), { x: region.x, y: region.y });
+  }
+  const looseSets = loose.data.animations.length === 0 ? new Map([[SETUP_SET, sampleSetupPose(loose.data)]]) : sampleAll(loose.data, PROTOCOL_FPS);
+  const tightSets = tight.data.animations.length === 0 ? new Map([[SETUP_SET, sampleSetupPose(tight.data)]]) : sampleAll(tight.data, PROTOCOL_FPS);
+  const out = {
+    region: { coords: 0, differing: 0, worst: 0 },
+    mesh: { coords: 0, differing: 0, worst: 0 },
+  };
+  for (const [name, looseFrames] of looseSets) {
+    const tightFrames = tightSets.get(name);
+    if (!tightFrames) continue;
+    for (let f = 0; f < looseFrames.length && f < tightFrames.length; f++) {
+      const a = looseFrames[f].pieces;
+      const b = tightFrames[f].pieces;
+      for (let i = 0; i < a.length && i < b.length; i++) {
+        const loosePage = loose.pages.get(a[i].page);
+        const tightPage = tight.pages.get(b[i].page);
+        const rect = rects.get(a[i].page.replace(/^.*\//, '').replace(/\.png$/i, ''));
+        if (!loosePage || !tightPage || !rect) continue;
+        const bucket = a[i].kind === 'mesh' ? out.mesh : out.region;
+        for (let k = 0; k + 1 < a[i].uvs.length && k + 1 < b[i].uvs.length; k += 2) {
+          const dx = Math.abs(b[i].uvs[k] * tightPage.width - rect.x - a[i].uvs[k] * loosePage.width);
+          const dy = Math.abs(b[i].uvs[k + 1] * tightPage.height - rect.y - a[i].uvs[k + 1] * loosePage.height);
+          bucket.coords += 2;
+          if (dx !== 0) bucket.differing++;
+          if (dy !== 0) bucket.differing++;
+          bucket.worst = Math.max(bucket.worst, dx, dy);
+        }
+      }
+    }
+  }
+  return out;
+}
 
 /** Every fixture's parts, byte-compared against what the page gives back. */
 function losslessReport(fixture: Fixture, padding: number): { regions: number; wrong: string[] } {
@@ -9805,6 +9895,50 @@ function runPackerSuite(): number {
       'another',
   );
 
+  // --- PK08B: and each spilled page is only as big as it needs to be ---------
+  // ⭐ The oracle is the packer's OWN single-page path, which PK01 already holds
+  // to picking the smallest power-of-two page a set fits: hand it one spilled
+  // page's regions on their own and it must choose exactly the size that page
+  // was written at. So this is a cross-check between the two paths rather than a
+  // second opinion about what "smallest" means — and it is the whole of issue
+  // #266's third follow-up, which is that a spill used to write `pageSize x
+  // pageSize` for every page and charge a set that overflowed by one small part
+  // a second full page of transparency.
+  const spillInputs = new Map(packInputsOf(spillResult.images).map((input) => [input.region, input]));
+  const pageSizeFaults: string[] = [];
+  spilled.pages.forEach((page, index) => {
+    const own = spilled.placements.filter((p) => p.page === index).map((p) => spillInputs.get(p.region));
+    if (own.some((input) => input === undefined)) {
+      pageSizeFaults.push(`${page.name}: a placement names a region no input has`);
+      return;
+    }
+    const alone = packAtlas(own.filter((input): input is PackInput => input !== undefined), {
+      pageSize: 16,
+      padding: 1,
+    });
+    if (alone.pages.length !== 1) {
+      pageSizeFaults.push(`${page.name}: its own ${own.length} region(s) re-pack to ${alone.pages.length} page(s)`);
+      return;
+    }
+    if (alone.pages[0].width !== page.width || alone.pages[0].height !== page.height) {
+      pageSizeFaults.push(
+        `${page.name} is ${page.width}x${page.height} but its own regions fit ` +
+          `${alone.pages[0].width}x${alone.pages[0].height}`,
+      );
+    }
+  });
+  say(
+    'PK08B_A_SPILLED_PAGE_IS_ONLY_AS_BIG_AS_WHAT_IS_ON_IT',
+    pageSizeFaults.length === 0 && spilled.pages.length > 1,
+    `${spilled.pages.length} spilled page(s): ` +
+      spilled.pages.map((p) => `${p.name} ${p.width}x${p.height} at ${(p.occupancy * 100).toFixed(1)}%`).join(', ') +
+      (pageSizeFaults.length === 0 ? '' : ` — ${pageSizeFaults.join('; ')}`),
+    'red-first: with every spilled page written at the maximum, this fixture\'s second page is 16x16 holding one ' +
+      '6x6 part, and the same shape on gallery/portrait at --page-size 1024 is a second 1024x1024 page at 40.4% ' +
+      'occupancy — 8.000 MiB of decoded RAM against 6.000 once the page is 1024x512. The page count is the ' +
+      'positive control: with no spill there is nothing here to be too big',
+  );
+
   // --- PK09: the default emit, spelled out ----------------------------------
   // Literal rather than a comparison against another run: `writeAtlasText` is
   // now shared with the packer, and the thing that must not move is the exact
@@ -9831,7 +9965,9 @@ function runPackerSuite(): number {
     ['page-size without pack', ['--page-size', '512'], 'only means something with --pack'],
     ['padding without pack', ['--padding', '4'], 'only means something with --pack'],
     ['pack with copy-images', ['--pack', '--copy-images'], 'Drop --copy-images'],
-    ['pack with spine-html', ['--pack', '--profile', 'spine-html'], 'one part per page'],
+    // `pack with spine-html` was the fourth pair until issue #266's second
+    // follow-up. It is now an ordinary build — PK19 gates one — and the pair that
+    // survives here is the two that really do ask one question twice.
   ];
   const comboDirs = writeProbeRig();
   writeFileSync(join(comboDirs.dir, 'probe.motion.json'), `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
@@ -10068,6 +10204,172 @@ function runPackerSuite(): number {
     "the line is an instruction to whoever imports the pack and `--atlas-in` is the importer; a size read out of a " +
       'coarser page is in the page\'s texels, and nothing downstream of rigc undoes it — `SkeletonJson` reads an ' +
       'attachment\'s width straight out of the JSON with the atlas nowhere in the expression',
+  );
+
+  // --- PK18: where PK05's last bit is, and where it is not ------------------
+  // ⭐ PK05 states a BOUND on the rendered difference. This says which half of a
+  // packed pose that bound is about, which is the whole content of issue #266's
+  // first follow-up: it proposed making the render exact by sampling in
+  // region-local coordinates and adding the integer page origin to the tap
+  // indices, on the diagnosis that `fl(regionX + fl(s x width))` was where the
+  // bit went. The measurement below IS that proposal's best case — the packed
+  // coordinate with the origin taken back off — and it splits in two.
+  //
+  //   * A REGION attachment's coordinate comes back EXACTLY. `regionX`,
+  //     `regionWidth` and `pageWidth` are integers and the page is a power of
+  //     two, so nothing was lost to begin with. That is why eleven of thirteen
+  //     rigs are already byte-identical, and it is asserted as 0 rather than as
+  //     a bound because a bound here would hide the finding.
+  //   * A MESH's does not, and cannot: `spine-core` stores mesh page UVs in a
+  //     Float32Array, so `f32(u + regionUVs[i] x width)` has already discarded
+  //     the low bits when rigc reads the array. No change to src/render.ts can
+  //     recover them, and re-deriving them from `regionUVs` would give the
+  //     renderer a second opinion about the runtime's own trim mapping — which
+  //     is what `artUvsOf` exists to avoid.
+  //
+  // So the follow-up is closed as MEASURED, and this is the case that stops it
+  // being re-proposed on the old diagnosis.
+  const agreement = PACK_FIXTURES.map(([name, fixture]) => [name, samplingCoordinates(fixture)] as const);
+  const regionTotal = agreement.reduce((n, [, a]) => n + a.region.coords, 0);
+  const regionOff = agreement.reduce((n, [, a]) => n + a.region.differing, 0);
+  const meshTotal = agreement.reduce((n, [, a]) => n + a.mesh.coords, 0);
+  const meshOff = agreement.reduce((n, [, a]) => n + a.mesh.differing, 0);
+  const meshWorst = agreement.reduce((n, [, a]) => Math.max(n, a.mesh.worst), 0);
+  say(
+    'PK18_A_PACKED_REGIONS_SAMPLING_COORDINATE_IS_EXACT_AND_A_MESHS_IS_THE_RUNTIMES',
+    regionTotal > 0 && regionOff === 0 && meshTotal > 0 && meshOff > 0 && meshWorst < 1e-3,
+    `${regionTotal} region coordinate(s): ${regionOff} differ from the loose pose. ` +
+      `${meshTotal} mesh coordinate(s): ${meshOff} differ, worst ${meshWorst.toExponential(3)} texels. Per fixture ` +
+      agreement
+        .map(([n, a]) => `${n} ${a.region.differing}/${a.region.coords} region, ${a.mesh.differing}/${a.mesh.coords} mesh`)
+        .join('; '),
+    'the region count being exactly 0 is the positive half — it is what "sample in region-local coordinates" would ' +
+      'have bought, and it is already there. The mesh count being NONZERO is the negative half, and it is asserted ' +
+      'rather than tolerated: if it ever became 0, spine-core would have stopped storing mesh UVs in float32 and ' +
+      'this file would owe the reader a different explanation of PK05. Both counts are also the positive control ' +
+      'for each other, since a join that matched nothing would report 0 differing over 0 coordinates',
+  );
+
+  // --- PK19..PK22: a pack under the RENDERER's rulebook ---------------------
+  // ⭐ Issue #266's second follow-up. `--pack --profile spine-html` was a named
+  // CLI refusal because A06's coverage clause was "one part per page" flat, so
+  // the one artifact shape that exercises shared-page sampling could never be
+  // gated by the rules that own the renderer. The clause is now "one part per
+  // page OR a tiling page" and these four cases are what that is worth: one
+  // positive control, two ways a foreign tiling is refused, and the one that
+  // keeps the relaxation from quietly hollowing out a neighbouring assertion.
+  const gatePacked = (dir: string, atlasText: string, result: CompileResult): ReturnType<typeof validate> =>
+    validate({
+      skeletonText: result.skeletonText,
+      atlasText,
+      atlasDir: dir,
+      declaredDurations: result.declaredDurations,
+      rig: result.rig,
+      profile: 'spine-html',
+    });
+  /** Rewrite one region's `bounds:` line, structurally — no measured literal. */
+  const withBounds = (atlasText: string, region: string, x: number, y: number, w: number, h: number): string => {
+    const lines = atlasText.split('\n');
+    const at = lines.findIndex((line) => line.trim() === region);
+    const bounds = lines.findIndex((line, i) => i > at && line.trim().startsWith('bounds:'));
+    lines[bounds] = `bounds: ${x}, ${y}, ${w}, ${h}`;
+    return lines.join('\n');
+  };
+  const htmlPack = packFixture(ARTICULATED, DEFAULT_PADDING);
+  const htmlReport = gatePacked(htmlPack.dir, htmlPack.atlasText, htmlPack.result);
+  const packedRegions = parseAtlasText(htmlPack.atlasText).pages[0].regions;
+  say(
+    'PK19_A_PACKED_ATLAS_GATES_GREEN_UNDER_THE_RENDERER_PROFILE',
+    htmlReport.failures.length === 0 && packedRegions.length > 1 && htmlPack.pages.length >= 1,
+    `${packedRegions.length} region(s) on ${htmlPack.pages.length} shared page(s): ${htmlReport.passed.length} ` +
+      `assertion(s) ran, ${htmlReport.skipped.length} skipped, ${htmlReport.failures.length} failed` +
+      (htmlReport.failures.length ? ` — ${htmlReport.failures.map((f) => f.assertion).join(', ')}` : ''),
+    'the positive control for the relaxation, and the region count is what makes it one: a page with a single ' +
+      'full-page region would pass under the OLD clause too and prove nothing about a pack',
+  );
+  const overlapped = withBounds(
+    htmlPack.atlasText,
+    packedRegions[1].name.trim(),
+    packedRegions[0].x,
+    packedRegions[0].y,
+    packedRegions[1].width,
+    packedRegions[1].height,
+  );
+  const overlapReport = gatePacked(htmlPack.dir, overlapped, htmlPack.result);
+  say(
+    'PK20_TWO_REGIONS_OVER_THE_SAME_TEXELS_ARE_REFUSED_BY_NAME',
+    overlapReport.failures.some(
+      (f) =>
+        f.assertion === 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG' &&
+        f.detail.includes('overlap') &&
+        f.detail.includes(packedRegions[0].name.trim()) &&
+        f.detail.includes(packedRegions[1].name.trim()),
+    ),
+    `"${packedRegions[1].name.trim()}" moved onto "${packedRegions[0].name.trim()}"'s corner: ` +
+      (overlapReport.failures.find((f) => f.assertion === 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG')?.detail.slice(0, 150) ??
+        'A06 did not fire'),
+    'a tiling page is the alternative the clause now accepts, so what "tiling" excludes has to be a named ' +
+      'failure — two rectangles over the same texels load clean and draw one drawing inside another. Both names ' +
+      'are required in the message because the repair needs the pair',
+  );
+  const runsOff = withBounds(
+    htmlPack.atlasText,
+    packedRegions[0].name.trim(),
+    parseAtlasText(htmlPack.atlasText).pages[0].width - packedRegions[0].width + 1,
+    packedRegions[0].y,
+    packedRegions[0].width,
+    packedRegions[0].height,
+  );
+  const offReport = gatePacked(htmlPack.dir, runsOff, htmlPack.result);
+  say(
+    'PK21_A_REGION_THAT_RUNS_OFF_ITS_SHARED_PAGE_IS_REFUSED_BY_NAME',
+    offReport.failures.some(
+      (f) =>
+        f.assertion === 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG' &&
+        f.detail.includes('runs off its page') &&
+        f.detail.includes(packedRegions[0].name.trim()),
+    ),
+    `"${packedRegions[0].name.trim()}" pushed one texel past the page's right edge: ` +
+      (offReport.failures.find((f) => f.assertion === 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG')?.detail.slice(0, 150) ??
+        'A06 did not fire'),
+    'the other half of what the full-page clause used to guarantee for free. One texel past the edge is the ' +
+      'smallest possible break, and it is derived from the page width rather than written down',
+  );
+
+  // PK22 is the case that keeps the relaxation honest, and it is not about A06.
+  // A packed page's own FILE all but always declares transparency, because the
+  // gutter is transparent — so A19's page-level question is answered by the
+  // packing itself and would have become a pass that measures nothing the moment
+  // packs became gateable here. The probe rig's two parts are written fully
+  // OPAQUE, so on a shared page A19 has to name each of them.
+  const opaqueDirs = writeProbeRig();
+  writeFileSync(join(opaqueDirs.dir, 'probe.motion.json'), `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+  const opaqueResult = compile({
+    rigPath: opaqueDirs.rigPath,
+    motionPath: join(opaqueDirs.dir, 'probe.motion.json'),
+    outDir: opaqueDirs.outDir,
+    imagesDir: opaqueDirs.dir,
+  });
+  const opaquePack = packAtlas(packInputsOf(opaqueResult.images), {});
+  const opaqueDir = join(opaqueDirs.dir, 'packed');
+  mkdirSync(opaqueDir, { recursive: true });
+  for (const page of opaquePack.pages) page.plate.writePng(join(opaqueDir, page.name));
+  const opaqueReport = gatePacked(opaqueDir, opaquePack.atlasText, opaqueResult);
+  const pageDeclaresAlpha = readPngInfo(join(opaqueDir, opaquePack.pages[0].name)).hasTransparency;
+  const named = opaqueResult.images.map((img) => img.region);
+  const alphaFailures = opaqueReport.failures.filter((f) => f.assertion === 'A19_OVERLAY_PNGS_HAVE_ALPHA');
+  say(
+    'PK22_AN_OPAQUE_PART_ON_A_SHARED_PAGE_IS_STILL_NAMED',
+    pageDeclaresAlpha &&
+      alphaFailures.length === named.length &&
+      named.every((region) => alphaFailures.some((f) => f.detail.includes(`"${region}"`))),
+    `the packed page itself ${pageDeclaresAlpha ? 'DOES' : 'does not'} declare transparency (the gutter), and A19 ` +
+      `named ${alphaFailures.length} of ${named.length} opaque part(s)` +
+      (alphaFailures.length ? `: ${alphaFailures.map((f) => f.detail.slice(0, 60)).join(' | ')}` : ''),
+    'the vacuity control for the relaxation. The first clause is the red-first half stated as a fact rather than ' +
+      'a mutant: the page-level question A19 used to ask is answered "yes" by the packing, so had it kept asking ' +
+      'it, this case would report a green gate over two solid rectangles. Counting the failures against the part ' +
+      'count is what stops one name standing in for both',
   );
 
   return bad;
@@ -14421,10 +14723,15 @@ function main(): void {
       'tap across a SILHOUETTE charging `pose`’s objective for coverage and no colour — #306, where the straight ' +
       'arithmetic charges 0.68 for a placement that disagrees with nothing — and the scan that keeps the straight ' +
       'tap a control by having no caller in `src/` at all)' +
-      ', + 19 packer/importer controls (shared pages on power-of-two edges, every region a lossless copy, two ' +
+      ', + 25 packer/importer controls (shared pages on power-of-two edges, every region a lossless copy, two ' +
       'packs byte-identical from shuffled input, the padding respected on every pair, a packed render that never ' +
       'reads a wrong texel with the gutterless case three orders of magnitude louder, an oversized part and a ' +
-      'spill both named, the unpacked emit asserted as literal text, four refused flag pairs, and an importer ' +
+      'spill both named — each spilled page only as big as what is on it, cross-checked against the single-page ' +
+      'path — where PK05\'s last bit is and is not (a packed REGION\'s sampling coordinate recovers exactly and ' +
+      'a MESH\'s cannot, because spine-core stores mesh page UVs in float32), a packed atlas gating green under ' +
+      'the RENDERER profile with the two ways a foreign tiling is refused by name and the opaque part on a ' +
+      'shared page that A19 still has to name, ' +
+      'the unpacked emit asserted as literal text, three refused flag pairs, and an importer ' +
       'that round-trips rigc\'s own pack, lands the runtime\'s UVs on the drawing, refuses a missing region, a ' +
       'size conflict, an absent page and a rectangle off its page, names the ATLAS rather than a file when an ' +
       "optional state is not in the pack, and divides an imported size by the page's `scale:` while leaving a pack " +
