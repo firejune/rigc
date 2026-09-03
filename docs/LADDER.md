@@ -7031,6 +7031,602 @@ verdict above this section keeps its date and its reading.
    took the comment on trust and read every screen angle ~90° out, *"which produced confident,
    plausible, wholly wrong placements."* That one is checkable in a line and costs a run days.
 
+### spineboy — the 2026-09-03 from-zero measurement run 2, `chainfit` priced: 🔴 **FAIL on G2 and G3**, and no rung moves
+
+🧪 **Read the label first: this is a TOOLING-PROGRESS MEASUREMENT, not a graduation
+challenge.** Run [`bench/runs/2026-09-03-spineboy-2/`](../bench/runs/2026-09-03-spineboy-2/)
+(PR [#310](https://github.com/firejune/rigc/pull/310), merged as `e89848f`) — **16 builds**,
+`--profile spine` green, **3 h 20 min** wall clock. Authored by Claude Opus 5 (1M context) on
+Claude Code / Agent SDK, a **fresh session**, from brief **revision 4** and gate **v2.3**, with
+**exactly one change in the toolbox against run 1**: `rigc chainfit` now exists (#286/#287).
+**`ess` alone**; `pro` was not built and does not gate the rung
+([#16](https://github.com/firejune/rigc/issues/16)). The reference export was never opened, and
+no prior attempt at this rung was opened for any purpose.
+
+⚠️ **So it is a from-zero attempt and it is not a re-climb.** ⇒ **Nothing below reopens
+anything.** The graduation PASS of 2026-08-28 on `2026-08-28-spineboy-2` stands untouched,
+spineboy's status cell stays 🎓 ✅, and *The clause margins* is unedited — the reasons are in the
+last two subsections.
+
+⭐ **The basis, first, because it is what makes this run comparable to anything.** The run's
+worktree forked from `origin/main` at **`5d00e4f`** — *before* [#301](https://github.com/firejune/rigc/pull/301)
+(the premultiplied sampler) merged at `c7dfe81`. This pass verified that from the history: the
+only two `src/` commits between the fork and the record are #301 and #303 (a compile guard that
+cannot reach `check`). ⇒ **Every figure in this record is on the `old / old` basis**, and so is
+run 1's — `2026-09-03-spineboy-1` landed at `6c1e801`, also an ancestor of `c7dfe81`. **The
+run-1-versus-run-2 comparison therefore crosses no instrument boundary**, which is the single
+thing that makes this run's central claim checkable. It is also why every figure below differs
+from what `check` prints on `main` today, and why this pass re-read the run on its own
+instrument rather than on the current one.
+
+**16 bones**, `root → torso → {head, both arms, both thighs}`, and **no separate `neck` bone** —
+the neck plate rides `head`, on the reading that at 8 × 9 frame px the frames cannot separate two
+rotations. **21 slots · 29 attachments**, region attachments throughout, no meshes, no
+constraints. **8 animations** carrying **1,633 keys over 123 timelines** and 7 named easings. **No
+`events`** and **no `drawOrder` timeline**, both deliberate and both argued. No bounding box.
+`root` is never keyed and the trunk carries the figure's position.
+
+```
+ess        bones=0.717  slots=0.824  attachments=0.955  constraints=1.000  animations=0.703  events=0.000
+           bones 0.717 (name-matched) · 0.767 (name-agnostic)   slots 0.824 (name-matched) · 0.643 (name-agnostic)
+           reported: mesh_edges 1.000 · key_density 0.456 · keys_per_timeline 0.366
+```
+
+⚠️ **The `pro` line `bench` also prints is stretch noise for an `ess` candidate** and is quoted
+nowhere, per the two-skeleton rule in [`bench/runs/README.md`](../bench/runs/README.md).
+
+#### Gate v2.3 verdict, 2026-09-03 — 🔴 **FAIL on G2 and G3**, and no rung moves
+
+🚫 **Zero builds into the run directory and zero authoring; nothing in it was touched.** The pass
+carries its own controls, and they are stronger than run 1's because they cross an instrument
+repair.
+
+- **The candidate recompiles bit-identically from its committed specs.** `bun cli.ts build` on
+  `spineboy-ess.rig.json` + `spineboy-ess.motion.json` against `examples/spineboy/images` emits a
+  `skeleton.json` whose `sha256` is **`0721c2cb…`** and, built at the run directory's own depth, a
+  `skeleton.atlas` whose `sha256` is **`0418a7b9…`** — byte-for-byte the two files under
+  `spine/`. ⭐ **And that was done with the post-#301 toolchain**: the sampler repair does not
+  reach `build`, so the specs compile to the same bytes on both sides of it.
+- **At any other depth only the atlas's 29 page-path lines differ** — verified: the whole diff is
+  58 lines and every one is a page path, the condition the 2026-08-26 amendment precedent exists
+  for.
+- **`check`, re-read on the run's own pre-#301 instrument, over all 16 committed sets from the
+  repository root with no `--atlas` and no `--viewport`, reproduces `check.txt` byte for byte
+  except the four path lines** (`candidate`, `atlas`, `frames`, and the `wrote` line). **Zero
+  figure differences.** `check --texture-from` reproduces on the same terms, and so does
+  `bench` — re-run here, unlike run 1's pass, and identical but for one atlas path line.
+- 📌 **On the current instrument it does not reproduce, and that is the expected result, not a
+  finding**: 530 diff lines, e.g. `walk`'s MAE 45.09 → 45.12. Recorded so no later reader mistakes
+  the sampler for drift.
+
+| Clause | Reading over all 16 sets | |
+| --- | --- | :---: |
+| **G1** validity | 0 FAIL under `--profile spine` — **15 PASS, 0 FAIL, 10 SKIP, 14 PROF**, re-run on the stored skeleton and identical to `validate.txt` but for two path lines | ✅ |
+| **G2** worst attributable slot drift ≤ 6.0 px | ❌ **18.9753 px** `rear-shin` at `death` **f7** — over the bar by 12.98 px, **3.163×**. **Four sets of sixteen are over it**: `death` **18.9753** (`rear-shin` f7) · `death@30fps` **15.2724** (`front-shin` f0, 2.545×) · `jump` **6.8918** (`torso` f11, 1.149×) · `idle` **6.4360** (`torso` f15, 1.073×). Twelve are inside, **1.7816–5.6450**. 🕳️ **the no-drift HOLE does not fire** — `framesWithoutDrift` never equals a set's frame count, the largest being **19 of 60** on `death`. ⚠️ **The per-slot limb fires on 170 blanks and is NOT discharged** — the subsection below | ❌ |
+| **G3** per-frame motion = 0 | ❌ **7 disagreements of 124** adjacent pairs — **5 in `death`** (59 pairs) and **2 in `idle`** (20). Read **directly** on all seven shots that have adjacent pairs (59 `death` + 20 `idle` + 16 `jump` + 12 `walk` + 8 `run` + 5 `shoot` + 4 `hit`), so the **Discharge does not arise**; `aim` and `aim@30fps` are single poses and are **excluded under v2.1 (a)**, and (b) does not fire. ✅ **The overdraw half is met** — no set carries `⚠️ overdraw`, the string appears nowhere in the output, and the worst `drawnRatio` is **1.0241** against `OVERDRAW_RATIO` 1.5 | ❌ |
+| **G4** shot inventory | ✅ `count` **8/8** · `names` **8/8**; the two lengths the limb asks for, derived here from both exports' own last-key times rather than quoted — `aim` **0.000000** v 0.000000 · `death` **4.933333** v 4.933333 · `hit` **0.333333** v 0.333333 · `idle` **1.666667** v 1.666667 · `jump` **1.333333** v 1.333333 · `run` **0.666667** v 0.666667 · `shoot` **0.400000** v 0.400000 · `walk` **1.000000** v 1.000000. Worst gap **0.000000 s** against the 1/12 s the coarsest committed rate allows | ✅ |
+| **G5** drawn inventory ≥ 0.85 | ✅ name-agnostic `slots.count` **20/21 = 0.952** · `attachments.count` **27/29 = 0.931**. **No deduction claimed and none needed**, and the shortfall is in the candidate's favour on both — it draws *more* than the reference (21 slots to 20, 29 attachments to 27). ⚠️ **One reference component goes unreached**, at `shoot` **f0004** — the unauthored muzzle flare, and the only `unmatchedComponents` in the run. It is the same frame run 1 was flagged on, and the brief names it as the one `ess` frame that is not a single blob. **No clause reads components**; G5 reads counts and passes | ✅ |
+| **G7** every sheet ≤ 3.5× own mean | ✅ **seven sheets, all seven compared tile-for-tile, all seven inside** — `walk@30fps` **1.4611** (74.98 over 51.32, 31/31 tiles) · `jump@30fps` 1.4575 (89.05 over 61.10, 41/41) · `death@30fps` 1.4194 (97.92 over 68.99, 149/149) · `run@30fps` 1.2816 (81.25 over 63.40, 21/21) · `hit@30fps` 1.2429 (86.83 over 69.86, 11/11) · `idle@30fps` 1.1712 (59.14 over 50.50, 51/51) · `shoot@30fps` 1.1434 (51.82 over 45.32, 13/13). **`aim` and `aim@30fps` are single poses → SKIP**; the other seven 12 fps sets commit every sampled frame (60/60, 21/21, 17/17, 13/13, 9/9, 6/6, 5/5) → **SKIP**. Seven sheets + two single poses + seven fully-committed shots = 16. **No sheet was refused by name → no HOLE** | ✅ |
+| **G6** the rung | ❌ the only skeleton this run built meets neither G2 nor G3 | ❌ |
+
+⇒ **Four clauses clear, G2 fails on two independent routes, G3 fails on its count half, and G6
+follows.** The verdict is the one the author's own reading reached. 📌 **Nothing about any rung's
+status moves.** This candidate holds no pass, so it names no margin row and joins no standing
+pool.
+
+#### The shape of the drift — the one worst figure hides a distribution, and the distribution reproduces
+
+- **499 slot-frame drift readings**, of which **13 (2.6 %) exceed 6.0 px**, **5** exceed 10 px and
+  **3** exceed 15 px — every count exact.
+- ⭐ **All 499 came from the `tmpl` fallback and not one from the `component` matcher**, which
+  fired **zero** times over the whole corpus. **2,156 slot-frames read `none`.** The 13 over the
+  bar carry confidences **0.26–0.56** over search radii of **15–32 px**, so §9.2's caveat that the
+  figure there is a *confidence* and not a component centroid applies to every one of them.
+- 📌 **The concentration is two shots, not one.** Of the 13, `death` and `death@30fps` hold **6**
+  (`rear-shin` f7 18.98 · `front-shin` f0 15.27 twice · `front-shin` f10 11.88 · `front-foot` f10
+  10.76 · `front-shin` f9 7.29), **`idle` holds 6** (`torso` f15/f19/f17/f16 at 6.44/6.42/6.37/6.25
+  · `rear-shin` f2 6.43 · `rear-thigh` f19 6.40) and `jump` holds 1 (`torso` f11 6.89). The shin
+  twins hold 6 of the 13. The record's sentence *"they concentrate on two parts and one shot"*
+  describes the worst end and not the thirteen; the `idle` trunk cluster is named separately two
+  sections later, so nothing is hidden by it.
+- ⚠️ **`death`'s attribution floor is 0, not 1.** The record reads *"1 to 4 of 18 slots
+  attributable"*; the distribution over its 60 frames is **19 frames at 0**, 33 at 1, 3 at 2, 3 at
+  3 and 2 at 4. The claim understates its own difficulty, and those same 19 frames are what keeps
+  the 🕳️ from firing, since 19 ≠ 60.
+
+#### G2's per-slot limb — 170 blanks, and the ceiling ground reaches two of them rather than one
+
+**170 of the 291 (set, slot) pairs that draw are attributable in no frame of their set.** Counted
+here independently from `check.json`'s per-frame `slots` arrays, and **every row of the run's
+`evidence/g2-read-down.txt` census reproduces exactly**: `eye`, `front-thigh`, `gun` and
+`rear-upper-arm` blank in **16 of 16** sets; `front-upper-arm`, `rear-bracer` and `rear-thigh` in
+15; `neck` in 13; `front-foot` and `rear-foot` in 9; `rear-shin` in 7; `front-fist` and
+`front-shin` in 5; `mouth` in 4; `front-bracer` and `torso` in 3; `muzzle`, `muzzle-glow` and
+`muzzle-ring` in 1 each (`shoot` alone). Only `goggles` and `head` are attributed in all 16.
+**Seven slots are attributed nowhere in the corpus**: `eye`, `front-thigh`, `gun`,
+`rear-upper-arm` and the three muzzle plates.
+
+🚫 **The limb is unmet, and the run says so itself: it tendered half 1 and not half 2.** This pass
+verified the absence rather than taking it on trust. **The only occurrence of the phrase
+*known-answer control* anywhere in the directory is the `README.md` sentence conceding it is
+absent** — no instrument in `tools/` or `evidence/` pins a blank slot's placement by a sweep that
+avoids the matcher, and this candidate authors no `drawOrder` timeline. ⇒ **v2.3's *"A ceiling
+without half 2 is not a read-down"* fires**, and *"a slot whose observable half is unverified
+fails the clause exactly as an unexplained blank does."*
+
+🔬 **And the ceiling ground reaches two slots, not the one the record claims.** The run defines the
+calibration bar as **the smallest ceiling among the slots `check` does attribute**, which measures
+**50.3 %** (`head`; the next is `rear-thigh` at 62.4 %) — a definition v2.3 does not state but
+which is a fair reading of *"calibrated on the slots of the same corpus that the instrument does
+attribute."* Of the seven slots blank corpus-wide, **two** sit below that bar:
+
+| slot | ceiling | below the 50.3 % bar? | blank in |
+| --- | ---: | :---: | ---: |
+| `eye` | **0.7 %** | ✅ | 16/16 |
+| `rear-upper-arm` | **38.1 %** | ✅ | 16/16 |
+| `front-thigh` | 84.1 % | ❌ | 16/16 |
+| `gun` | 99.2 % | ❌ | 16/16 |
+| `muzzle`, `muzzle-glow`, `muzzle-ring` | *never measured* | ❌ | 1/16 each |
+
+⇒ **The record's *"only `eye`'s blank is explained by its ceiling"* and the landing comment's
+*"separates exactly one of those 170"* understate the ground by one slot and by sixteen pairs** —
+it separates **32** of the 170, not 16. 🚫 **It changes nothing**, because half 2 is absent for
+both. ⭐ **And the pair is worth recording for a different reason: run 1's adjudication found the
+same two slots — `eye` and `rear-upper-arm` — as the only ones reaching kind 5's door, on a
+different candidate.** Two independent from-zero candidates producing the same two unreadable
+slots is a fact about the **corpus**, and it is the one durable result this limb has produced at
+this rung.
+
+#### 🚨 The clause question the run raises — answered: not a #258 gap, and the ceiling is measuring the wrong quantity
+
+The run asks whether G2's per-slot limb *"is readable at all on a single-component figure"*, and
+offers three measured facts: **143 of the 147 reference frames hold exactly one 8-connected
+component** and the maximum anywhere is two (reproduced exactly — the four two-component frames
+are `idle` f0009, `idle` f0019, `shoot` f0004 and `walk` f0002); the `component` matcher therefore
+fired **zero** times; and the ceiling ground separates almost none of the blanks.
+
+✅ **The first two facts reproduce and the inference from them does not.** The strong matcher's
+third condition — the component holds nothing else you drew — **is** unsatisfiable by construction
+where one blob carries all 18 drawn slots, so the run is right that `component` was unavailable to
+it. But attribution did not therefore become unreachable: **the fallback read through that same
+one blob 499 times and made 121 of the 291 pairs attributable**, including `rear-shin`,
+`rear-foot`, `mouth`, `front-fist` and `front-foot` at 100 % ceilings and `head`/`goggles` in all
+16 sets.
+
+⭐ **Two proofs inside this one record settle it.**
+
+1. **The same slot at the same ceiling is attributed in some sets and blank in others.**
+   `rear-shin` (ceiling 100 %) is attributed in 9 sets and blank in 7; `front-shin` (79.1 %)
+   attributed in 11 and blank in 5; `torso` (75.8 %) attributed in 13 and blank in 3. A quantity
+   that is constant across a slot's sets cannot explain an outcome that varies across them.
+2. **Two candidates, one corpus, different blank counts.** Run 1 blanked **140** pairs on these
+   identical 147 frames; this run blanks **170**. The corpus's connectivity is a constant across
+   both readings; the blank count moved by 30.
+
+⇒ **170 blanks is a property of this candidate's placement accuracy, not of the corpus's
+connectivity, and the clause is handling it exactly as designed** — a blank drift row is the
+loudest signal `check` prints, and here it is signalling correctly. 🚫 **This is not a gap in the
+[#258](https://github.com/firejune/rigc/issues/258) sense.** #258's shape was that the same FAIL
+followed from evidence of *any* quality, because `cape-back` was **measured unobservable** — no
+placement, scale, pivot or region choice could attribute it, and the run held a matcher-free
+placement bound *with* a known-answer control that the enumeration had nowhere to put. Here
+neither half holds: the parts are not shown unobservable, and no matcher-free bound with a control
+was tendered.
+
+🧾 **But the run has found something real, and it is sharper than the question it asked.** Two
+items for the owner, and they are different in kind.
+
+- ⚖️ **The ceiling ground is measuring the wrong quantity on a character, and `check` already
+  prints the right one.** v2.3's half 1 was written for `cape-back`, where visibility genuinely
+  was the binding constraint. On a dense figure it is not: here a **99.2 %**-visible slot (`gun`)
+  and an **84.1 %** one (`front-thigh`) are blank in all 16 sets while a **50.3 %** one (`head`) is
+  attributed in all 16. What actually decides attribution is **contrast against the neighbours the
+  reference merged the part with**, and `check`'s own `ambiguity` string reports it per slot per
+  frame, with a per-slot required confidence rather than a constant: `gun` at `aim` f0 reads
+  *"best residual 71.4 against its own 148.5 of contrast; confidence 0.07 where **0.23** is
+  needed"*; `front-thigh` *"confidence 0.06 where 0.56 is needed"*; `rear-upper-arm` *"0.22 where
+  0.38 is needed"*; `eye` *"0.01 where 0.60 is needed"*. 📌 **`gun` is the instructive row: it
+  failed a 0.23 bar by 0.16, which is a placement it nearly had rather than an observable it never
+  had.** A ceiling ground stated on this quantity would separate the genuinely unobservable blanks
+  from the merely misplaced ones, which is what half 1 is for. ⇒ **Recorded as the successor to
+  run 1's *"kind 5's calibrated bar has no stated form"* item, now with a candidate quantity
+  named.**
+- 📏 **The clause is silent on the burden, and 170 is where that becomes a drafting problem.** The
+  limb asks a verdict to *"name the slot, and name the evidence"* per slot per set. At 170 pairs
+  that is not performable in a verdict of readable length, and v2.2's design intent — a
+  **disclosure** requirement — degrades into a formality nobody can audit. 🚫 **This is not a
+  request for a new ground**: all 170 fail together for one reason, and what the clause lacks is a
+  **rollup form** — permission to discharge or fail a family of blanks that share one cause in one
+  statement, with the per-slot census cited rather than transcribed. That is a drafting question
+  and it is deliberately kept apart from the ground question above.
+
+#### The chainfit price tag — the run's central finding is negative, and it holds
+
+⭐ **This is what the run was launched for, and the claim is the one the figures support.** Every
+load-bearing figure reproduces from the run's own stored evidence.
+
+**Availability.** All fourteen quoted counts reproduce from
+[`evidence/chainfit-census.txt`](../bench/runs/2026-09-03-spineboy-2/evidence/chainfit-census.txt):
+of 147 frames, `front-upper-arm` **125**, `front-shin` 93, `rear-shin` 92, `front-thigh` 76,
+`front-bracer` 61, `rear-foot` 57, `rear-thigh` 30, `front-foot` 26, `rear-upper-arm` 26,
+`rear-bracer` 16, `front-fist` 6, `gun` 4, `torso` **0** (this rig's anchor), `eye` **0**
+(`occluded`×147). **`no-anchor`×21 appears on exactly thirteen parts** — verified by enumeration —
+so on 21 frames `pose` cannot place the trunk to §12.2's criterion and the instrument produces
+nothing for any limb. 📌 The record's availability table omits the four face parts the census also
+carries (`head` 126, `goggles` 126, `mouth` 126, `neck` 56); they are the anchored set and nothing
+turns on it.
+
+**Agreement — `visibleShare` does not predict it.** The band medians reproduce to the digit from
+[`evidence/chainfit-trail.txt`](../bench/runs/2026-09-03-spineboy-2/evidence/chainfit-trail.txt):
+
+| visible share | < 10 % | 10–25 % | 25–50 % | 50–75 % | ≥ 75 % |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| median \|mine − hinge\| | **24.2 px** | **21.2 px** | **26.9 px** | **22.6 px** | **18.5 px** |
+| readings | **65** | **125** | **229** | **220** | **407** |
+
+✅ **The denominators check out internally**: 65 + 125 + 229 + 220 + 407 = **1,046**, which is
+exactly the sum of the per-part reading counts in the same file. The medians are flat and
+**non-monotonic**, so the instrument's own uncertainty signal does not separate a reading the
+composite will accept from one it will not. ⚠️ **The direction of the claim is stated correctly by
+the run and this pass endorses that statement**: disagreement with a composite is not evidence
+`chainfit` is wrong, and §12.5 names why it can be systematic — `front-thigh`'s median
+disagreement of **159.8 px ≈ 148°** on a part at 20.9 % median visible share is a near-antipodal
+answer, which is that failure mode and not noise.
+
+🚫 **What it bought at the frontier: nothing — verified, including the arithmetic the run warns
+about.** From
+[`evidence/chainfit-adopted-effect.txt`](../bench/runs/2026-09-03-spineboy-2/evidence/chainfit-adopted-effect.txt)
+and [`evidence/chainfit-preferred.txt`](../bench/runs/2026-09-03-spineboy-2/evidence/chainfit-preferred.txt):
+
+- Of the six adopted slot-frames, **three became unattributable** (`death` f0 `rear-shin` 15.11,
+  `death` f7 `front-shin` 7.05, `death@30fps` f0 `rear-shin` 15.11 — all three previously **over**
+  the bar) and **three read worse or unchanged** (15.27 → 15.27, 15.27 → 15.27, 6.10 → 6.44).
+  **None improved.** Corpus worst **18.98 → 18.98**.
+- ⭐ **The vanishing-readings arithmetic is exact and the warning is correct.** Readings over 6 px
+  fall **19 → 16** while the total falls **507 → 500**. The decomposition: the three adopted rows
+  that went unattributable were **all three** over 6 px, so the over-6 count falls by exactly 3
+  and **not one reading crossed the bar downward**. The remaining **four** of the seven vanished
+  readings are collateral — adopting a hinge moves every slot on that chain, not only the drifting
+  one. ⇒ **The apparent improvement is entirely disappearance**, the run's *"a drift count is not
+  comparable across two candidates whose attribution counts differ"* is right, and this record
+  states both denominators wherever it states a count.
+- 📌 **The shipped candidate is a third store and its own figures reproduce exactly**: cap 0.4 →
+  **499 readings / 13 over 6.0 / MAE(ref) 55.62 / worst 18.9753 / 7 disagreements**, all five
+  independently re-derived here.
+
+❌ **One figure in that passage does not reproduce, and it is the split.** The record reads *"6
+adopted / **7** refused / **6** got nothing"*; `evidence/chainfit-preferred.txt` reads **6 adopted
+/ 4 REFUSED / 9 no-unrefused-hinge**. The three sum to 19 either way, which is why the author's own
+arithmetic check passed it. The tool prints only its own tally line, *"6 of 19 adopted"* — the
+4/9 split is retyped. Everything else in the passage is exact: the adopted cost range **+0.036 to
++2.025**, the worst refusal **+3.328** on `jump` f11's head bone (three rows, `goggles`/`head`/
+`mouth`), and *"all five `idle` frames where the drifting slot was `torso`"* (f13, f14, f15, f17,
+f19).
+
+✅ **Where it earned its place, all three verified.** `pivotDisagreementPx` reads **median 2.00 px,
+max 5.17, min 0.44 over 126 frames** — reported on five slots, all five on the `head` bone, so the
+record's *"the head bone and no other"* is right. **7 of 147 frames (4.8 %)** shipped an answer
+descended from a `chainfit`-seeded start — **4** from the `prefer` pass plus **2**
+`chainfit-on-incumbent` and **1** `chainfit-on-centroid` — against **85 (57.8 %)** from the
+incumbent and **36** from a neighbour. And the ceiling was measured on **16 of the 19 drawn slots**
+on every frame of every set, which is the negative result the previous subsection turns on: it took
+one flag, and nothing else in the toolbox measures it.
+
+⚠️ **One presentational hazard, flagged by the run itself.** `LOOP.md` §3.11 Turn E reads *"`chainfit`
+preferred … Worst drift **29.46 → 18.98 px**"*, which reads as the prefer pass's own effect; turns
+B, C and D sit between the 29.46 and it, and the adopted-effect file measures the prefer pass at
+18.98 → 18.98. The run appends *"it is not what this number suggests"* and points at the price-tag
+section, so the record is not misleading — but the intermediate candidates are not stored, so
+**nothing in the directory can attribute the 29.46 → 18.98 move to any turn.**
+
+#### The step-4 spot-check — the gated columns are exact, and five narrative figures are not
+
+*After a run* step 4 makes the author write the prose and the **adjudicator spot-check it**, and
+records a non-reproducing narrative figure in the verdict *"the way an honesty caveat is."* This is
+that record. 🚫 **None of the five changes the verdict**, and the first is consequential.
+
+1. ❌ **The declared box: *"`frames.json`'s own box TAKEN on all 16 sets."*** The run's **three**
+   stored `check` outputs all print, in plain prose, *"the framing was decided per frame set: **3
+   of 16** set(s) were measured in `frames.json`'s own box"* (`check.txt` line 10,
+   `check-all-frames.txt` line 10, `check-texture-from.txt` line 12), and `check.json`'s per-set
+   `declaredBox.taken` reads **true on 3** — `death`, `jump`, `run` — and **false on 13**, every one
+   refused on clause `coordinates` at fits of 8.14–46.65 px against tolerances of 6.75–10.54 px.
+   ⚠️ **The consequent is what makes it consequential**: the record's decision 5 argues *"⇒ `check`
+   took `frames.json`'s own box on all 16 sets, **so no set pays the fitted framing's floor**,
+   which §9 measures at 15–25 MAE on a character this size."* **Thirteen of sixteen sets do pay
+   it.** The claim also appears in `LOOP.md` §3.11 Turn A, asserted of an earlier candidate that is
+   not stored and so cannot be checked either way.
+   - 🔬 **The error is diagnosable and the diagnosis is worth more than the correction.** Three
+     adjacent facts in the same report all say *"frames.json"* and only one is the box decision:
+     the per-set `framed to` line says *"(frames.json's own box — the candidate measured into it)"*
+     on **all 16** sets, `check.json`'s per-set `framing` field reads `frames-viewport` on **all
+     16**, and the corpus-level `declaredBox.taken` is **true** over 147 frames. The first two name
+     the **viewport**, which did come from `frames.json` everywhere; the box **fit** is the
+     `declared` line and the per-set `taken` flag. The run's own `tools/summary.ts` propagates the
+     `framing` field into its table's `framing` column, so its summary reads `frames-viewport` ×16
+     and never carried the decision at all.
+   - ⭐ **And it is gate-relevant, not merely narrative.** v2.3 requires that a read-down resting on
+     another instance of a part have that instance *"attributable at the framing the verdict is
+     read in — the frames' own declared box wherever a set can be measured in it."* On this
+     candidate only `death`, `jump` and `run` are measured there, so any kind-1 or kind-2 read-down
+     drawn from the other thirteen would have had to say so. Nothing turns on it here because no
+     read-down is reachable at all, but a candidate that tenders both halves on this corpus will
+     meet the requirement squarely.
+2. ❌ **The prefer-pass split, *"7 refused / 6 got nothing"*** — 4 and 9. The previous subsection.
+3. ⚠️ **The ceiling ground's reach, *"exactly one of those 170"*** — two slots and 32 pairs. The
+   per-slot-limb subsection.
+4. 📌 **The chain rollup's *"MAE in it"* column is on a convention `check` does not use.** Every
+   other column of that table reproduces to the digit — the worst drift, its slot, its set, its
+   frame and the *"sets with any attribution"* count on all six chains — and this column reproduces
+   exactly from the run's own [`tools/summary.ts`](../bench/runs/2026-09-03-spineboy-2/tools/summary.ts),
+   which computes `error / refPixels / **3**` at line 142. `check`'s own identically-named column
+   computes `error / row.pixels` ([`src/check.ts`](../src/check.ts) line 3408). ⇒ **The record's
+   11.15–25.50 are one third of the figures `check` prints for the same quantity** (33.45–76.50
+   pooled), and they are **not comparable** to the per-set MAEs of 41.21–69.73 the record quotes two
+   sections earlier. 🚫 **The ordering is identical on both conventions**, so the argument built on
+   it — that `rear-upper-arm`'s chain carries the worst error per pixel in the rig — is untouched.
+5. 📌 **Three small ones.** `death`'s attribution floor is **0 to 4**, not 1 to 4 (above);
+   `front-thigh`'s dominant refusal is **`no-match`×27**, not `occluded`×23 (the census prints
+   `no-anchor`×21 `occluded`×23 `no-match`×27); and the 100 %-ceiling group's blank range is
+   **4/16 to 9/16**, not 5/16 to 9/16, because `mouth` blanks in 4.
+
+**Reproduced, to the digit** — the worst attributable drift and its slot and frame; all sixteen
+per-set worsts, the four over the bar and the twelve inside; the 499 / 13 / 5 / 3 drift
+distribution with its confidences and radii; the 2,156 `none` readings and the zero `component`
+matches; 143 of 147 one-component frames and the four exceptions **by name**; 170 of 291 blank
+pairs and every row of the per-slot census; the seven slots blank corpus-wide; 124 pairs / 7
+disagreements / 5 `death` / 2 `idle`; the absence of `overdraw` and the 1.0241 worst `drawnRatio`;
+G4's 8/8, 8/8 and all eight length pairs at 0.000000 s; G5's 0.952 and 0.931; all seven sheet means,
+worst tiles and ratios; the texture floor's **41.21–69.73** MAE, **5.48–7.01** floor, **2.4–6.0 %**
+explained and **8.4–16.9 %** ceiling, on the union basis its own tool uses; the fourteen chainfit
+availability counts and `no-anchor`×21 on thirteen parts; the five band medians and their five
+denominators; `pivotDisagreementPx` 2.00 / 5.17 / 126; the seven chainfit-seeded starts and the
+85/36 split; the six adoptions with their costs and the 507 → 500 / 19 → 16 ledger; and the shipped
+candidate's own 499 / 13 / 55.62 / 18.98 / 7.
+
+⇒ ⭐ **The pattern is the same one run 1's pass found, and this is now a two-run result: every
+figure a tool printed is exact, and every figure a summary sentence retypes from a committed file
+drifts.** All five here are retypings — the `declared` line, the prefer tally, the ceiling
+comparison, an MAE convention, three census cells. 📌 **But the shape has shifted in one way worth
+recording.** Run 1's seven were stale transcriptions of numbers it had read correctly earlier. Of
+these five, **three are misreadings of *which field answers the question*** — box-taken versus
+viewport, `summary.ts`'s `/3` versus `check`'s column, dominant-refusal — rather than stale
+copies. ⇒ The cheap repair run 1's pass proposed (cite the file, quote the two rows) would not have
+caught those three: they would have cited the wrong field accurately. What catches them is the one
+thing this pass did and the run could also have done — **read the tool's own prose warning line**,
+which said *"3 of 16"* in `check.txt` line 10 the whole time.
+
+#### The comparison this run was launched to make, with its scope
+
+**As the run states it**: 16 builds; a worst attributable drift of **18.98 px**; and the claim
+shape *"where a fresh attempt lands with `chainfit` in the toolbox"* rather than a controlled
+subtraction, against *"from-zero worsts 19.57 → 9.33; the graduation series ended 5.55."* ✅ **The
+labels are right this time** — run 1's pass corrected an off-by-one attempt in exactly these
+figures, and #291's body carried the corrected version into this run's mandate. ⭐ **And the
+disclaimer is not boilerplate: it is the finding.**
+
+| | figure | basis | from zero? |
+| --- | ---: | --- | :---: |
+| attempt 1 (`2026-08-23-spineboy-1`) | **18.2 px** `hit` | pre-#254 | ✅ |
+| attempt 2 (`2026-08-23-spineboy-2`) | **18.8 px** `death` | pre-#254 | ✅ |
+| attempt 3 (`2026-08-24-spineboy-3`) | **14.6 px** as first read, **19.57 px** post-#159 | pre-#254 | ✅ |
+| attempt 4 (`2026-08-28-spineboy-1`) | **7.86 px** `torso` `hit` f0 | pre-#254 | ✅ |
+| attempt 5 (`2026-08-28-spineboy-2`) | **5.5491 px** `rear-shin` `run` f0006 → **5.5544** on `new / old` | re-read twice | 🚫 **inherited** |
+| run 1 (`2026-09-03-spineboy-1`) | **9.3289 px** `torso` `death` f0005 | `old / old` | ✅ |
+| **run 2** (`2026-09-03-spineboy-2`) | **18.9753 px** `rear-shin` `death` f7 | `old / old` | ✅ |
+
+🚨 **The series statement, and it is the honest one: one pair of from-zero runs does not measure an
+instrument's sign.** Six from-zero attempts at this rung have landed at **18.2, 18.8, 19.57, 7.86,
+9.33 and 18.98 px** — a spread of **7.86 to 19.57**, with **no monotone trend and 11.7 px of range**,
+across four toolchains and three instrument panels. ⇒ **18.98 px is where a fresh attempt landed
+with `chainfit` in the toolbox, and it sits at the top of that spread beside attempts 1, 2 and 3.**
+🚫 **It is not evidence that `chainfit` cost 9.65 px**, and 9.33 → 18.98 is not a subtraction: the
+two runs differ in the rig, the fitter, the trunk topology, the anchor policy, the key-reduction
+cap and every authoring decision downstream of those. **What the run measured is the per-part
+trail, and that is a measurement**; what the headline pair measures is attempt-to-attempt variance,
+which this series has always had.
+
+✅ **The one thing this comparison gets that no earlier one did: it crosses no instrument
+boundary.** Run 1 and run 2 are both `old / old`, verified from the history above, so **9.33
+against 18.98 is arithmetic on one panel** — the first clean pair in the from-zero series. ⚠️ **The
+comparison to everything else is still cross-instrument, and now two boundaries deep**: attempts
+1–4 hold pre-#254 figures, attempt 5 has been re-read twice, and *The clause margins* is on
+`new / old` while this run is on `old / old`. This rung's own history is the worked example —
+attempt 3's `death` moved **14.6 → 19.57 px** on nothing but an instrument change, which is 4.97 px,
+or **half** the gap the headline pair would otherwise invite reading as an instrument's effect.
+
+🎯 **What `chainfit` bought and where it ran out, as this run measures it.** Bought: a **measured**
+G2 attributability ceiling on 16 of 19 drawn slots over every frame of every set, for one flag —
+and the most useful thing it produced with it is a **negative** result the toolbox had no other way
+to reach; a second opinion on the one joint it can speak about (**2.00 px** median, 5.17 max, 126
+frames); and 7 of 147 shipped starts. Ran out: **0.18 s a frame is free and the ~7 s `pose` call
+feeding it is not**; the default anchor set is wrong on a biped and had to be **declared by hand**
+before any limb produced a hinge at all; **21 frames** produce nothing for any limb and
+`--anchor-residual` cannot reach them; and at the frontier the adoptions moved the worst figure
+**not at all**. ⇒ **`chainfit` is an instrument this ladder should keep and a lever this attempt
+could not pull.** That is the run's headline and it is the one the figures support.
+
+#### The two disclosures — neither taints the record, and one leaves a hazard
+
+🚨 **Carried as *After a run* step 3 requires: the author writes the honesty line in `LOOP.md` §1
+and the adjudicator carries whatever it says into the verdict.**
+
+1. ✅ **The unopened run-1 directory — no taint, and the run was right to refuse.** The launch
+   prompt named `bench/runs/2026-09-03-spineboy-1/` *"for the record SHAPE only"*. Item 9 admits
+   earlier runs' `README.md` and `LOOP.md` *"for process only … and **not** another attempt at the
+   rung being authored"*, and that directory is the previous attempt at **this** rung. **The run
+   declined it** and took its record shape from `2026-09-02-rung7-3` and `2026-08-26-rung3-1`,
+   which item 9 does allow. What it discloses instead is **one `find` listing of the directory's
+   file names**, taken before the reading list was in hand — file names and layout, carrying no
+   measure, and reported rather than hidden. ⇒ **Not a breach and not a caveat on any figure.**
+   - 📌 **It is the fifth instance of the collision the protocol's own table catalogues, and the
+     run's reading of *why it is new* is correct**: the four recorded ones named a surface that is
+     **forbidden outright**, and this one named a surface that is **conditionally** forbidden —
+     allowed for every other rung and sealed for this one — which is the variant a prompt author is
+     least likely to notice. 🚫 **The fault is the prompt's, not the run's**, exactly as *What a run
+     may read* says: *"an agent cannot avoid a document it was never told to avoid."* The standing
+     requirement is already written — quote both lists, name no surface they do not name — and this
+     instance says the second half needs the conditional case spelled out. (One small correction:
+     the protocol's table records that **three** of the four named a forbidden surface as the pass
+     bar; the fourth pasted the threshold into the mandate.)
+   - ✅ **And the two run-1 figures that did reach this run reached it legitimately** — #291's body
+     quotes the from-zero worsts and the graduation 5.55 as the comparison the record must make.
+     Those are **candidate-side** measures, which the answer-derivability test does not seal, and
+     they arrived in the mandate rather than out of a sealed file.
+2. ✅ **The `gates` console line — a caveat, not a breach, and this pass can say why on evidence.**
+   `bench`'s console banner prints `src/ladder.ts`'s gate string, which names per-skeleton bone,
+   slot and animation counts — a field the forbidden table seals to an authoring run. Verified in
+   the stored `bench.txt` at **line 2**: *"ess 18 bones/20 slots/8 animations."* Three independent
+   reasons it cannot have informed the candidate: `finish.sh` runs `bench` **last**, after `build`,
+   `validate` and `check`; **the stored specs recompile bit-identically to the stored `spine/`**, so
+   the candidate is the one that predates the command; and **the counts the string names are not the
+   counts this candidate authored** — it has **16** bones and **21** slots against the leaked 18 and
+   20, so `bones.count` reads 16/18 and `slots.count` 21/20, sitting *away* from the leaked field on
+   both and in opposite directions. The animation count matches at 8/8 and is handed to the author
+   by the brief outright. 📌 It is the **third** run to meet this field at the same place, and the
+   structural cause is [#137](https://github.com/firejune/rigc/issues/137): `bench.json` does not
+   carry the banner but the console does.
+   - ⚠️ **One hazard this run leaves that its two predecessors did not, and it is a divergence worth
+     recording.** `2026-08-24-spineboy-3` and run 1 both **redacted** the string in their committed
+     `bench.txt` *"so a later run reading this directory for process notes does not meet it."* This
+     run instead **quotes it** — in `bench.txt` line 2 **and in `README.md`'s *The disclosures***.
+     `bench.txt` is on no allowed list, but `README.md` **is** item 9's own surface for every rung
+     but this one, so a rung-7 or rung-3 run reading this directory for record shape now meets
+     spineboy's reference counts. 🚫 **The exposure is narrow** — item 9 already seals this directory
+     to any future spineboy attempt, which is the only run the numbers could help — and 🚫 **the
+     repair is not available to this pass**: the amendment clause admits only *"a mechanical
+     portability repair that changes no measured figure,"* and redacting a disclosed leak is neither
+     mechanical nor portability. ⇒ **Recorded as a finding for the owner and not acted on**, with
+     the observation that the disclosure rule currently says *record it* and does not say *where*,
+     and that two of the three runs to meet this field chose redaction unprompted.
+
+#### The four remaining items the run left for the adjudicator
+
+🧾 **Answered here on the record; the two that are questions about the gate are handed on as such.**
+
+1. ✅ **The superseded pose store, not shipped — the right call, and correctly reasoned.** Verified:
+   **no clause reads differently** across the three stores. The worst attributable drift is
+   **18.98 px** and `changeDisagreements` is **7** in all of them, so G2's bar figure and G3 are
+   untouched, and the columns that do move (507/19/55.54 against 500/16/55.99, and the shipped
+   499/13/55.62) are **counts over different denominators**, which the run itself says are not
+   comparable. ⇒ **Reverting on post-`bench` evidence to move no clause would have converted a
+   clean run into a bench-assisted one for nothing**, and the protocol's `bench`-once rule is not a
+   formality — it is what makes the finish-line figures mean anything. 📌 **The right behaviour for
+   a run that discovers this is exactly what happened**: ship the store it fitted, state all three
+   rows with all three denominators, and hand the choice to whoever holds the records. ⚠️ **Not
+   checked here and not load-bearing**: whether the higher-attribution store would also have
+   blanked fewer than 170 pairs. It plausibly would, since attribution can only help the per-slot
+   limb — but reproducing it needs the fit pipeline re-run at `MAX_COST=1.0`, which is hours of
+   compute to move a clause that fails either way.
+2. ✅ **Declining to author `events` is defensible, and it is more than defensible — it is the split
+   the gate itself draws.** All three affected measures sit on rule 1's **unobservable by
+   construction — reported, never gating** table: `animations.event_keys`, `events.names` and
+   `events.payloads`, on the stated ground that *"a firing is not a pixel, and the briefs decline to
+   spell the names."* The brief's *"the spelling is in the export and it is out of bounds"* is that
+   same ground stated from the brief's side. ⭐ **And the run did author the observable half**: the
+   moments went into the poses and the attachment timeline, so the flash a frame can actually see is
+   in the candidate and only the unobservable spelling is missing. ⇒ **The clause set is indifferent
+   and the picture is not.** 📌 One consequence worth naming: this run pays `events` **0.000** where
+   the earlier spineboy attempts paid **0.500** for the same refusal, because they authored firings
+   under invented names and this one authored none. **Neither figure gates**, and a reader comparing
+   the `bench` lines across attempts would otherwise read a regression into a measure the ladder has
+   ruled unwinnable twice.
+3. ✅ **The 21 `no-anchor` frames — the run was right to decline, and the reason is stronger than
+   the one it gives.** Feeding a **fitted** trunk placement back in through `--anchor` would make
+   `chainfit` a function of the composite it is being priced against. 🚨 **That is not merely a
+   weaker comparison, it is a biased one, and biased toward the run's own headline**: the reported
+   quantity is `|mine − hinge|`, so on any frame where `chainfit` inherited the composite's trunk
+   the disagreement would be structurally smaller — and the finding that the band medians are
+   **flat at 18.5–26.9 frame px** would then be partly an artifact of self-anchoring rather than a
+   fact about the instrument. ⇒ **Declining preserved the only measurement the run was launched to
+   make.** ✅ **And the underlying issue is a tool finding, not a run defect**: the failing half of
+   §12.2's criterion is `unexplained ≤ 0.45`, which is a **reported field and not a flag**, so
+   `--anchor-residual` cannot reach it — and the repair that does work, **declaring the anchor
+   set**, is not among §12.2's three offered repairs. That item, and the two other guide items in
+   the run's *What the guide should have said*, are step 2's and belong to
+   [AUTHORING.md](AUTHORING.md).
+4. ⚖️ **`rear-upper-arm` — confirmed as the chain a third attempt should take, and the limb should
+   stay per slot.** Verified: the chain is attributable in **1 of 16** sets (`jump` alone,
+   `rear-bracer` at 5.2106 px on f1), it drew 3 of its 6 slots, and it carries the **worst error per
+   pixel of the six chains on either MAE convention** — 25.50 on the run's `/3` basis, **76.50** on
+   `check`'s own. The slot `rear-upper-arm` is attributed **nowhere** at a **38.1 %** ceiling, below
+   the corpus's own 50.3 % bar, which makes it the second slot at kind 5's door and **the same slot
+   run 1's pass named there**. ⇒ 🚫 **On the gate question the run raises — whether the per-slot limb
+   should reach a chain rather than a slot — this pass's reading is no.** The limb is per slot
+   because that is the granularity at which `check` reports placement, and a chain-level limb would
+   let one attributed slot discharge its blank siblings, which is the exact hole v2.2 opened the
+   limb to close. ⭐ **The diagnostic the run actually wants is already there and does not need to be
+   a clause**: the chain rollup names the chain to attack, and it named this one. 📌 What the case
+   argues for instead is the **ceiling-quantity** change in the clause-question subsection above,
+   which is where `rear-upper-arm` and `gun` both belong.
+
+#### The clause margins — nothing moves, and the reason is the table's own rule
+
+*After a run* step 1 makes every adjudication re-read *The clause margins*. This one changes **no
+row**, and the reason is definitional rather than incidental: the table names the **closest
+standing pass** per clause, and 🚫 **a FAIL is not a standing pass.** A candidate that does not hold
+a verdict names no margin and joins no pool, whatever its figures.
+
+| Clause | Closest standing pass — unchanged | Its figure | Would this candidate have moved it? |
+| --- | --- | ---: | --- |
+| **G2** | **spineboy** `ess` (`2026-08-28-spineboy-2`) | **5.5544 px**, 1.0802× | no — and 18.9753 px is 3.16× outside the bar in any case |
+| **G3** disagreements | every standing candidate | **0** of **1,061** pairs | no — this run posts **7** and would have left the pool rather than joined it |
+| **G3** overdraw | **rung 1** `balls` | `drawnRatio` **1.1010**, 1.362× | no — this run's worst is 1.0241, further from the bar |
+| **G4** shot length | **rung 2** `ess` | gap 0.033334 s, 2.50× | no — this run's worst gap is 0.000000 s |
+| **G5** drawn inventory | **rung 2** `ess` | **0.882**, 1.038× | no — 0.931 and 0.952 are further from the floor |
+| **G7** sheet flatness | **rung 7** `sack`, `fall-in@30fps` | **3.2283×**, 1.0842× | no — this run's worst sheet is 1.4611× |
+
+⇒ **The thinnest-margin ordering is unchanged: G5 1.038× → G2 1.0802× → G7 1.0842×**, read
+2026-09-03 on the PR #301 instrument re-inspection over the eleven standing candidates. 📌 Worth
+noting for the record that even had this candidate held a pass it would have moved **nothing**:
+every one of its figures sits further from its bar than the standing closest, on all six rows —
+which was also true of run 1. ⚠️ **And the table's basis is `new / old` while this run is
+`old / old`**, so the comparison in the right-hand column is cross-instrument; it is safe only
+because no row is close. The table is left byte-for-byte as the #301 re-inspection wrote it.
+
+#### What this run adds, and what it explicitly does not
+
+🎓 **The graduation PASS of 2026-08-28 is unaffected, and it is a settled record.**
+`2026-08-28-spineboy-2` met gate v2.1 on 2026-08-28, was re-read under **v2.2** on 2026-08-29,
+under **v2.3** on 2026-09-02 at **5.5491 px**, and again on the **post-#301** sampler on 2026-09-03
+at **5.5544 px** — and **nothing in this pass touched that candidate, its run directory or any of
+those readings.** Rule 3's *a pass is versioned* says what versions a pass: **the gate**, in a
+re-inspection of the stored candidate. A **later attempt's** verdict is not one of those
+instruments, and a from-zero measurement run is not a re-climb. ⇒ **This entry adds one data point
+to the from-zero series and reopens nothing** — not this rung, not
+[#16](https://github.com/firejune/rigc/issues/16), and no other rung. spineboy's status cell stays
+**🎓 ✅**, the ladder stays complete under gate v2.3, and every verdict above this section keeps its
+date and its reading.
+
+🧾 **What this pass records for the owner rather than resolving.**
+
+1. ⚖️ **v2.3's ceiling ground has now failed to discharge a blank on two successive corpora, and
+   this run names the quantity that would.** Run 1's pass recorded that *"kind 5's calibrated bar has
+   no stated form, and this corpus is the first that would need one."* Run 2 supplies a form — the
+   smallest ceiling among attributed slots, 50.3 % here — and under it the ground still separates
+   only 2 of 7 corpus-wide blanks, because **on a dense figure visibility is not what decides
+   attribution**. The candidate replacement is in the clause-question subsection: `check`'s own
+   `ambiguity` string already reports, per slot per frame, the correlation residual against the
+   part's own contrast, the achieved confidence and the **per-slot required** confidence. ⇒ **The
+   next gate deliberation on kind 5 has a measured quantity to consider and no longer has to invent
+   one.**
+2. 📏 **The per-slot limb has no rollup form, and 170 blanks is where its disclosure intent
+   breaks.** Kept deliberately separate from item 1: this is a drafting question about how a family
+   of blanks sharing one cause is reported, not a request for a new ground.
+3. 📌 **Step 4's second harvest changes the diagnosis of the first.** Run 1's pass concluded the
+   repair was *"not more diligence but less retyping"* — cite the file, quote the two rows. Three of
+   this run's five would have survived that repair, because they are **misreadings of which field
+   answers the question** rather than stale copies of a right answer: the box-taken claim cites a
+   real field (`framing`) accurately and the wrong one; the MAE column cites the run's own tool
+   accurately and on a convention `check` does not share. ⇒ **The cheaper guard is the one this pass
+   used: read the tool's prose warning lines.** `check` printed *"3 of 16 set(s) were measured in
+   frames.json's own box"* into three committed files, and the run's summary table replaced that
+   sentence with a column that could not carry it. Worth one line in *After a run* beside run 1's;
+   this pass proposes no protocol change and files nothing.
+4. 📌 **The disclosure rule says *record it* and does not say *where*.** Two of the three runs to
+   meet the `gates` console line redacted it in the committed output; this one quoted it into an
+   item-9 surface. #137 remains the structural fix.
+
 ---
 
 ## B1's proof — rung 3 transcribed, not authored
