@@ -1,0 +1,43 @@
+visibleShare study — the controls, and what regenerates the store
+
+frames                     147
+declared scale (pinned)    0.22297348561444258
+candidate                  bench/runs/2026-09-03-spineboy-2/spine
+bases                      declared, pose-criterion
+declared anchor set        goggles, head, mouth-grind, mouth-oooo, mouth-smile, torso
+--min-visible              0
+replicates per rung        8
+rungs                      polish-floor, polish-floor-2x, pr322-scale, readback-floor, control-1px
+chainfit runs in the store 12054
+seed                       20260903
+
+## where each rungs bounds come from
+
+  polish-floor      0.05 px /  0.1 deg / 0.10%  — src/pose.ts's level-0 polish floor — the step at which the pattern search stops halving and returns
+  polish-floor-2x    0.1 px /  0.2 deg / 0.20%  — twice the polish floor — a pattern search that terminated at step d sits within about one step of its optimum
+  pr322-scale        0.2 px /  0.4 deg / 0.40%  — sized from the band sweep so the induced anchor-residual change brackets #322's own 0.0008 — outside the convergence band, and there so the comparison against the observed 0.36 → 0.89 is direct rather than extrapolated
+  readback-floor    0.16 px / 0.27 deg / 3.10%  — PS01/PS02's worst known-answer readback error, re-baselined in #306 (0.16 px / 0.27° / 3.1% scale)
+  control-1px          1 px /    1 deg / 1.00%  — outside every band, on purpose — the positive control that the quantity moves at all under this knob
+
+## the objective hand copy, verified rather than trusted
+
+vsprobe.ts re-measures a moved placement with a hand copy of `src/pose.ts`'s own `measure`, which is
+not exported. The copy is checked on every placed part of every frame by re-measuring the UNPERTURBED
+reported placement and comparing against the residual the report itself carries:
+
+  worst |mine - reported|  1.702e-5  on death@30fps/f0148 front-fist-open.png
+
+A report rounds x and y to 3 dp and residual to 5 dp, so a disagreement of this order is the rounding
+and not a second implementation. The perturbed residual is written back as the DELTA the move induced
+rather than as the copy's absolute, so the copy's own offset cannot reach an eligibility test.
+
+## regenerate
+
+  bash scripts/fetch-examples.sh
+  bun bench/studies/2026-09-03-visibleshare/tools/vsprobe.ts <work> --pose-only
+  bun bench/studies/2026-09-03-visibleshare/tools/vsprobe.ts <work> --reps 8 --seed 20260903
+  bun bench/studies/2026-09-03-visibleshare/tools/vsprobe.ts <work> --band
+  bun bench/studies/2026-09-03-visibleshare/tools/vsprobe.ts <work> --passes-sweep --reps 6 --seed 20260903
+  bun bench/studies/2026-09-03-visibleshare/tools/vsprobe.ts <work> --ceiling --reps 8 --seed 20260903
+  bun bench/studies/2026-09-03-visibleshare/tools/vsreport.ts <work> bench/studies/2026-09-03-visibleshare/evidence
+

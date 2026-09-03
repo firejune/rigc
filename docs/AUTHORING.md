@@ -4460,7 +4460,11 @@ two things.
   apologised for. The parts drawn after a part are what covers it, and the pixels
   they cover are **excluded** from that part's objective rather than charged to it.
   Every residual here is over the part's **visible** pixels, and every one comes
-  with the `visibleShare` it was computed on.
+  with the `visibleShare` it was computed on. ⚠️ **`visibleShare` is a per-frame
+  diagnostic and not a summary statistic** — it is measured through the fitted
+  placements, so a median or a mean of it is not comparable across fits. §12.3 says
+  what that costs and [the 2026-09-03 study](../bench/studies/2026-09-03-visibleshare/README.md)
+  measures it.
 - **Hierarchy and attachment geometry**, so the search collapses. A child bone
   whose parent is already placed does not have four degrees of freedom: the rig
   fixes its pivot, so what is left is **one hinge** about that pivot — plus a
@@ -4515,20 +4519,55 @@ placement:
 | Field | Meaning |
 | --- | --- |
 | `residual` | the same objective as §11, over the part's **visible** pixels only: covered pixels are dropped from both sums rather than charged. **Not the same number as `pose`'s on an occluded part**, and never to be read without the next field |
-| `visibleShare` | the share of the part's own alpha weight the residual was computed on. A low residual on a `0.08` share is a confident statement about a sliver |
+| `visibleShare` | the share of the part's own alpha weight the residual was computed on. A low residual on a `0.08` share is a confident statement about a sliver. ⚠️ **Per frame, not per corpus** — see the caution below the table |
 | `scoredPixels` | how many part pixels that share actually is |
-| `visibleShareAtFit` | the share recomputed **where the answer landed**, rather than where the visible set was frozen. Far from `visibleShare` means the fit moved out of its own measurement; `--passes` is the repair |
+| `visibleShareAtFit` | the share recomputed **where the answer landed**, rather than where the visible set was frozen. Far from `visibleShare` means the fit moved out of its own measurement; `--passes` is the repair. ⚠️ Not the steadier of the two — measured, below |
 | `hingeDeg` | ⭐ the searched degree of freedom, in **Spine** degrees relative to the bone's setup rotation — **the value a `rotate` key would carry**. `null` on an anchor whose own parent is unplaced, where the quantity does not exist |
 | `localRotationDeg` | the bone's local rotation this implies, Spine degrees. The other half of the same answer |
 | `stretch` | the uniform scale on the bone; `1` where that DOF was not free |
 | `unexplained`, `offCanvas`, `footprint`, `bbox` | as §11.3, with `residual` and `unexplained` over the visible set and `offCanvas` over the whole part |
+
+🚨 **`visibleShare` is a per-frame diagnostic. Do not take a median or a mean of it
+across frames without naming the fit.** Both halves of the fraction are downstream
+of the fit — the numerator because the occluders are stamped from wherever the
+later-drawn parts *currently sit* — so the quantity is fit-relative by
+construction, and measurably so. Measured over all 147 committed `ess` frames of
+`bench/reference/spineboy`, perturbing the anchor placements **inside `pose`'s own
+convergence band** (`src/pose.ts`'s level-0 polish `floor`: 0.05 px, 0.1°, 0.1 %
+scale — below which the fitter stops looking, so it cannot tell the two fits apart):
+
+| | |
+| --- | ---: |
+| median \|Δ`visibleShare`\| | 0.0005 |
+| **p99** | **0.5592** |
+| max | 0.9401 |
+| readings that move by more than 0.10 | **5.71 %** |
+| the **corpus median** of one part's share, worst case | **0.3055 ↔ 0.5228** (`rear-foot`) |
+
+⚠️ **The distribution is bimodal, so the median of the swing is not a summary of
+it.** A reading is either exact to four decimals or somewhere else entirely, and
+which of the two a part is in **cannot be told by looking at the row**:
+`front-bracer` sits at a comfortable 0.73 and its corpus median moves 17 points,
+while `rear-bracer` sits at a 0.015 sliver and moves 0.0005.
+
+📌 **It is not a definitional edge, and `visibleShareAtFit` is not a way out.** Of the
+cells that swing by more than 0.10, **63 %** are the part's own placement having
+travelled more than a pixel or turned more than `AMBIGUITY_HINGE_DEG`, **32 %** are
+an occluder having relocated (median 42.6 px), and **0.5 %** are the mask changing
+while everything on the frame stood still. `visibleShareAtFit` is measured where
+the answer landed and is *less* steady, not more (p99 0.6588 against 0.5592). ⇒
+**The field is reporting a bistable fit faithfully.** What is safe: reading it beside
+its own residual, on its own frame — which is what it exists for. What is safe as a
+corpus statistic: a **maximum**, which saturates. Full method and evidence:
+[`bench/studies/2026-09-03-visibleshare`](../bench/studies/2026-09-03-visibleshare/README.md)
+([#323](https://github.com/firejune/rigc/issues/323)).
 
 And per part:
 
 | Field | Meaning |
 | --- | --- |
 | `role` | `anchor` (taken from the anchor pass, not re-fitted), `chain` (fitted through the rig), `unplaced` |
-| — | ⭐ **A refused ANCHOR is not a contradiction, and it is the most useful row in the table.** The anchor pass judged that placement over the part's *whole* footprint — all `pose` can see, and blind to what covers it — while this instrument has just measured how much of the part is visible at all. Both readings are true. A refused anchor means *the placement may well be right and the confirmation is missing*, and every part whose `anchoredTo` names that bone rests on it. Measured on the 2026-09-03 corpus, `rear-bracer` clears `pose`'s criterion on 81 of 147 frames at a median visible share of **0.1%** — suppressing the refusal there was tried and prints that as READ. ⚠️ **That pair of numbers is on the pre-[#306](https://github.com/firejune/rigc/issues/306) objective** and has not been re-derived: the study is the 2026-09-03 run's own, over its own candidate, and re-running it is a run-scale job rather than a docs edit. A four-frame spot check under #306 (`--min-visible 0`, committed `ess` frames `idle/f0000`, `run/f0002`, `walk/f0004`, `aim/f0000`) moved `rear-bracer`'s anchor residual *down* on all four — 0.1564→0.1555, 0.1519→0.1513, 0.1493→0.1488, 0.1537→0.1534 — and flipped its eligibility on none, while `visibleShare` moved materially on one of the four (0.36→0.89). ⇒ Read the **shape** of the row, not those two digits |
+| — | ⭐ **A refused ANCHOR is not a contradiction, and it is the most useful row in the table.** The anchor pass judged that placement over the part's *whole* footprint — all `pose` can see, and blind to what covers it — while this instrument has just measured how much of the part is visible at all. Both readings are true. A refused anchor means *the placement may well be right and the confirmation is missing*, and every part whose `anchoredTo` names that bone rests on it. Measured on the 2026-09-03 corpus, `rear-bracer` clears `pose`'s criterion on 81 of 147 frames at a median visible share of **0.1%** — suppressing the refusal there was tried and prints that as READ. ⚠️ **That pair of numbers is on the pre-[#306](https://github.com/firejune/rigc/issues/306) objective** and has not been re-derived: the study is the 2026-09-03 run's own, over its own candidate, and re-running it is a run-scale job rather than a docs edit. A four-frame spot check under #306 (`--min-visible 0`, committed `ess` frames `idle/f0000`, `run/f0002`, `walk/f0004`, `aim/f0000`) moved `rear-bracer`'s anchor residual *down* on all four — 0.1564→0.1555, 0.1519→0.1513, 0.1493→0.1488, 0.1537→0.1534 — and flipped its eligibility on none, while `visibleShare` moved materially on one of the four (0.36→0.89). ⇒ Read the **shape** of the row, not those two digits. 🚨 **And that median in particular is one of the ones the 2026-09-03 study found unsafe**: `rear-bracer`'s share swings by **0.87** on `idle/f0001` inside `pose`'s own convergence band when the chain anchors on `pose`'s criterion — the basis this figure was taken on. The count and the shape are the reading; the 0.1 % is not a number |
 | — | The **other** parts on an anchored bone are refused on their own numbers too, and there they mean something different again: their placement is the **rig's** prediction from that anchor, so their residual is a measurement of the rig (a goggle plate that will not sit on the head it is parented to shows up exactly here) |
 | `bone` | the bone this hangs off: its `parent`, its `setupRotationDeg`, its `depth` in links from the anchor, `anchoredTo`, the `dof` searched, the `window` taken, the other parts `sharedWith` it on that bone, and `carriedBones` |
 | `bone.dof.pivotFree` | your candidate keys a `translate` timeline on this bone, so the arc this answer sits on has a centre the rig itself moves. The placement is still read off pixels; `localRotationDeg` alone will not reproduce it |
@@ -4550,9 +4589,9 @@ simply unused; a name the directory lacks is refused `no-part-image` by name.
 | `--atlas` | **refused by name.** Every other `--candidate` command takes it, so trying it here is reasonable — but the part art comes from `--images` and the skeleton is all this needs of the candidate, so a flag that silently did nothing would be worse than one that says why |
 | `--hinge <min,max>` | the window each child's local rotation is searched over, in Spine degrees about its setup value. Default `-180,180` — **a full turn, on purpose**: one degree of freedom is cheap enough to sweep exhaustively, and §11.4's warning about a window that does not contain the truth applies here too |
 | `--stretch <ratio>` | also search a uniform bone scale, this ratio either way. Without it, stretch is searched **only where your own animations key a `scale` timeline on that bone** — a rig that never scales a bone is a rig saying that bone does not stretch |
-| `--min-visible <0..1>` | below this visible share a placement is refused `occluded` instead of reported flat (default `0.25`). A reporting threshold, not a pass bar; the placement is still in the JSON |
+| `--min-visible <0..1>` | below this visible share a placement is refused `occluded` instead of reported flat (default `0.25`). A reporting threshold, not a pass bar; the placement is still in the JSON. ⚠️ **It is not inert, though**: a bone whose frozen share is under this floor gets one *unmasked* look before its visible set is fixed, so the flag also changes **where parts land** and not only which rows are refused. Two runs at different `--min-visible` are two fits, and their shares are not one column |
 | `--max-residual <0..1>` | as §11, over the visible pixels (default `0.25`) |
-| `--passes <n>` | how many times the masks are rebuilt from the answers and the fit rerun (default `2`) |
+| `--passes <n>` | how many times the masks are rebuilt from the answers and the fit rerun (default `2`). ⚠️ **It buys convergence of the mask onto the answer, and it costs determinacy.** Each pass re-seeds the hinge search on the previous pass's answer, so two nearby inputs that fell into different basins on pass 1 are *further* apart after pass 2. Measured over the 147 committed `ess` frames, the share of readings whose `visibleShare` moves by more than 0.10 under a perturbation inside `pose`'s convergence band runs **0.78 % → 5.45 % → 15.17 %** at `--passes` 1 → 2 → 4. Raise it to settle a `visibleShareAtFit` drift on one frame; do not raise it expecting steadier numbers across runs |
 | `--anchor-residual <0..1>` | the residual a `pose` placement must be within to anchor (default `0.16`) |
 | `--scale`, `--rotation` | passed to the **internal anchor pass**, meaning exactly what they mean to `pose` |
 
@@ -4569,6 +4608,15 @@ simply unused; a name the directory lacks is refused `no-part-image` by name.
   measurement on an occluded part**, by construction: one drops the covered pixels
   and the other charges them. Do not put them in one column. What *is* comparable
   is each against its own `visibleShare` / `unexplained`.
+- 🚨 **`visibleShare` cannot be averaged across frames or across fits.** It is
+  measured through the fitted placements of the parts drawn over this one, so two
+  fits `pose` itself cannot tell apart give it different values — measured: p99
+  0.56 and a worst corpus-median move of 22 points inside `pose`'s own polish
+  floor. Read it per frame beside its own residual. If a corpus statistic is
+  needed, a **maximum** is the one that survives (it saturates), and it should be
+  quoted with its spread. §12.3 carries the figures;
+  [`bench/studies/2026-09-03-visibleshare`](../bench/studies/2026-09-03-visibleshare/README.md)
+  carries the method.
 - ⚠️ **Setup draw order, on one frame.** A `drawOrder` timeline reorders your slots
   at runtime and this cannot know the time, so a candidate that has one is masked in
   the order its setup pose declares. The report says so in `caveats` when it finds

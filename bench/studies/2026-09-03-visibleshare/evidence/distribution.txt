@@ -1,0 +1,84 @@
+visibleShare study — the distribution on basis `declared` at rung `polish-floor`
+
+Per (frame, part): `swing` is max-min of visibleShare over the replicates of this rung, so it is the
+width of the answer the same fit could have given inside the band. A cell is dropped where either the
+base or fewer than two replicates produced a placement.
+
+## per part — the width of the answer, over the frames it has one on
+
+part                 role  depth  frames  median base share  median swing  p90 swing  max swing
+-----------------  ------  -----  ------  -----------------  ------------  ---------  ---------
+rear-foot           chain      3     117             0.3599        0.0805     0.5983     0.9404
+torso              anchor      0     117             0.4455        0.0689     0.3764     0.5777
+rear-shin           chain      2     117             0.2476        0.0463     0.4343     0.8392
+front-thigh         chain      1     117             0.4338        0.0287     0.4910     0.8357
+neck               anchor      0     147             0.4586        0.0260     0.3384     0.6278
+front-upper-arm     chain      1     117             0.7447        0.0163     0.1597     0.7409
+front-shin          chain      2     117             0.5692        0.0114     0.3943     0.6722
+front-bracer        chain      2     117             0.7274        0.0103     0.1003     0.7227
+rear-bracer         chain      2     117             0.0148        0.0064     0.0187     0.0889
+gun                 chain      3     117             0.6791        0.0056     0.4510     0.8688
+head               anchor      0     147             0.4991        0.0022     0.0139     0.0411
+goggles            anchor      0     147             0.9981        0.0004     0.0011     0.1150
+eye-indifferent    anchor      0     147             0.0006        0.0004     0.0027     0.0060
+rear-thigh          chain      1     117             0.0000        0.0000     0.2130     0.6260
+rear-upper-arm      chain      1     117             0.0000        0.0000     0.0000     0.0000
+front-foot          chain      3     117             1.0000        0.0000     0.0169     0.6685
+mouth-smile        anchor      0     147             1.0000        0.0000     0.0492     0.6564
+front-fist-closed   chain      3     117             1.0000        0.0000     0.0000     0.0000
+
+## by where the base share sits — a sliver and a mostly-visible part are not the same case
+
+base share band  cells  median swing  p90 swing  max swing
+---------------  -----  ------------  ---------  ---------
+<10%               629        0.0010     0.0813     0.9404
+10-25%             159        0.0401     0.3823     0.8392
+25-50%             377        0.0157     0.3422     0.7409
+50-75%             338        0.0135     0.3951     0.7540
+>=75%              753        0.0002     0.0541     0.8938
+
+## band migration — how often a reading changes the band LADDER's agreement table would file it under
+
+Bands as that table draws them. A reading that migrates was counted in one column of it and could
+equally have been counted in another, at a fit the instrument cannot tell from the one it used.
+
+basis                      rung  paired  any band change  from <10%  from 10-25%  from 25-50%  from 50-75%  from >=75%
+--------------  ---------------  ------  ---------------  ---------  -----------  -----------  -----------  ----------
+declared           polish-floor   18048            8.98%       5.1%        25.6%        18.3%        11.6%        2.9%
+declared        polish-floor-2x   18048           11.97%       6.7%        33.1%        22.7%        16.9%        4.3%
+declared            pr322-scale   18048           14.66%       6.8%        39.3%        28.1%        23.7%        5.2%
+declared         readback-floor   17557           20.05%       9.0%        53.5%        36.2%        32.9%        8.4%
+declared            control-1px   15326           22.67%      13.1%        55.5%        41.5%        36.4%        8.7%
+pose-criterion     polish-floor   19800            4.17%       1.8%        10.2%        13.1%         7.0%        0.7%
+pose-criterion  polish-floor-2x   19798            6.10%       3.6%        14.9%        16.1%        11.0%        1.3%
+pose-criterion      pr322-scale   19730            9.21%       5.9%        22.6%        20.8%        16.7%        3.1%
+pose-criterion   readback-floor   19481           12.60%       8.6%        32.3%        27.3%        22.9%        4.3%
+pose-criterion      control-1px   17351           22.72%      15.8%        45.9%        39.3%        38.0%       13.4%
+
+## is a median of it a number? — the corpus median per part, recomputed on each replicate
+
+Each replicate index gives one whole-corpus reading of the instrument at a fit inside the band. The
+median over frames is what issue #284's landing table and LADDER quote; this is how far that median
+itself moves when the fit moves inside the band.
+
+part               frames  base median  min over replicates     max  spread
+-----------------  ------  -----------  -------------------  ------  ------
+rear-foot             117       0.3599               0.3055  0.5228  0.2173
+front-thigh           117       0.4338               0.2957  0.4876  0.1919
+front-bracer          117       0.7274               0.5561  0.7282  0.1721
+torso                 117       0.4455               0.3728  0.4517  0.0789
+rear-shin             117       0.2476               0.2605  0.2984  0.0379
+neck                  147       0.4586               0.4450  0.4656  0.0206
+front-upper-arm       117       0.7447               0.7328  0.7468  0.0140
+front-shin            117       0.5692               0.5703  0.5737  0.0034
+gun                   117       0.6791               0.6786  0.6795  0.0009
+rear-bracer           117       0.0148               0.0149  0.0153  0.0005
+head                  147       0.4991               0.4990  0.4993  0.0003
+eye-indifferent       147       0.0006               0.0005  0.0007  0.0002
+goggles               147       0.9981               0.9981  0.9982  0.0001
+rear-thigh            117       0.0000               0.0000  0.0000  0.0000
+rear-upper-arm        117       0.0000               0.0000  0.0000  0.0000
+front-foot            117       1.0000               1.0000  1.0000  0.0000
+mouth-smile           147       1.0000               1.0000  1.0000  0.0000
+front-fist-closed     117       1.0000               1.0000  1.0000  0.0000
+

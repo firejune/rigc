@@ -1,0 +1,1157 @@
+{
+ "corpus": {
+  "root": "bench/reference/spineboy/ess",
+  "frames": 147,
+  "declaredScale": 0.22297348561444258
+ },
+ "candidate": "bench/runs/2026-09-03-spineboy-2/spine",
+ "seed": 20260903,
+ "reps": 8,
+ "rungs": [
+  {
+   "name": "polish-floor",
+   "px": 0.05,
+   "deg": 0.1,
+   "scale": 0.001,
+   "basis": "src/pose.ts's level-0 polish floor — the step at which the pattern search stops halving and returns"
+  },
+  {
+   "name": "polish-floor-2x",
+   "px": 0.1,
+   "deg": 0.2,
+   "scale": 0.002,
+   "basis": "twice the polish floor — a pattern search that terminated at step d sits within about one step of its optimum"
+  },
+  {
+   "name": "pr322-scale",
+   "px": 0.2,
+   "deg": 0.4,
+   "scale": 0.004,
+   "basis": "sized from the band sweep so the induced anchor-residual change brackets #322's own 0.0008 — outside the convergence band, and there so the comparison against the observed 0.36 → 0.89 is direct rather than extrapolated"
+  },
+  {
+   "name": "readback-floor",
+   "px": 0.16,
+   "deg": 0.27,
+   "scale": 0.031,
+   "basis": "PS01/PS02's worst known-answer readback error, re-baselined in #306 (0.16 px / 0.27° / 3.1% scale)"
+  },
+  {
+   "name": "control-1px",
+   "px": 1,
+   "deg": 1,
+   "scale": 0.01,
+   "basis": "outside every band, on purpose — the positive control that the quantity moves at all under this knob"
+  }
+ ],
+ "headline": {
+  "basis": "declared",
+  "rung": "polish-floor"
+ },
+ "census": {
+  "declared": {
+   "polish-floor": {
+    "rear-foot.png": {
+     "cells": 117,
+     "medianSwing": 0.0805,
+     "p90Swing": 0.59832,
+     "maxSwing": 0.9404
+    },
+    "rear-shin.png": {
+     "cells": 117,
+     "medianSwing": 0.0463,
+     "p90Swing": 0.43432,
+     "maxSwing": 0.8392
+    },
+    "rear-thigh.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0.213,
+     "maxSwing": 0.626
+    },
+    "rear-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    },
+    "rear-bracer.png": {
+     "cells": 117,
+     "medianSwing": 0.0064,
+     "p90Swing": 0.01874,
+     "maxSwing": 0.0889
+    },
+    "gun.png": {
+     "cells": 117,
+     "medianSwing": 0.0056,
+     "p90Swing": 0.45102,
+     "maxSwing": 0.8688
+    },
+    "neck.png": {
+     "cells": 147,
+     "medianSwing": 0.026,
+     "p90Swing": 0.3384,
+     "maxSwing": 0.6278
+    },
+    "torso.png": {
+     "cells": 117,
+     "medianSwing": 0.0689,
+     "p90Swing": 0.37636,
+     "maxSwing": 0.5777
+    },
+    "front-thigh.png": {
+     "cells": 117,
+     "medianSwing": 0.0287,
+     "p90Swing": 0.49102,
+     "maxSwing": 0.8357
+    },
+    "front-shin.png": {
+     "cells": 117,
+     "medianSwing": 0.0114,
+     "p90Swing": 0.39428,
+     "maxSwing": 0.6722
+    },
+    "front-foot.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0.01686,
+     "maxSwing": 0.6685
+    },
+    "head.png": {
+     "cells": 147,
+     "medianSwing": 0.0022,
+     "p90Swing": 0.01394,
+     "maxSwing": 0.0411
+    },
+    "eye-indifferent.png": {
+     "cells": 147,
+     "medianSwing": 0.0004,
+     "p90Swing": 0.00274,
+     "maxSwing": 0.006
+    },
+    "goggles.png": {
+     "cells": 147,
+     "medianSwing": 0.0004,
+     "p90Swing": 0.0011,
+     "maxSwing": 0.115
+    },
+    "mouth-smile.png": {
+     "cells": 147,
+     "medianSwing": 0,
+     "p90Swing": 0.04924,
+     "maxSwing": 0.6564
+    },
+    "front-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0.0163,
+     "p90Swing": 0.15974,
+     "maxSwing": 0.7409
+    },
+    "front-bracer.png": {
+     "cells": 117,
+     "medianSwing": 0.0103,
+     "p90Swing": 0.10034,
+     "maxSwing": 0.7227
+    },
+    "front-fist-closed.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    }
+   },
+   "polish-floor-2x": {
+    "rear-foot.png": {
+     "cells": 117,
+     "medianSwing": 0.1703,
+     "p90Swing": 0.7949,
+     "maxSwing": 0.9398
+    },
+    "rear-shin.png": {
+     "cells": 117,
+     "medianSwing": 0.1186,
+     "p90Swing": 0.6309,
+     "maxSwing": 0.9613
+    },
+    "rear-thigh.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0.43674,
+     "maxSwing": 0.6263
+    },
+    "rear-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    },
+    "rear-bracer.png": {
+     "cells": 117,
+     "medianSwing": 0.0078,
+     "p90Swing": 0.02224,
+     "maxSwing": 0.0475
+    },
+    "gun.png": {
+     "cells": 117,
+     "medianSwing": 0.0093,
+     "p90Swing": 0.59306,
+     "maxSwing": 0.8669
+    },
+    "neck.png": {
+     "cells": 147,
+     "medianSwing": 0.0417,
+     "p90Swing": 0.37944,
+     "maxSwing": 0.6235
+    },
+    "torso.png": {
+     "cells": 117,
+     "medianSwing": 0.1279,
+     "p90Swing": 0.3799,
+     "maxSwing": 0.6821
+    },
+    "front-thigh.png": {
+     "cells": 117,
+     "medianSwing": 0.0392,
+     "p90Swing": 0.6616,
+     "maxSwing": 0.8386
+    },
+    "front-shin.png": {
+     "cells": 117,
+     "medianSwing": 0.0182,
+     "p90Swing": 0.40554,
+     "maxSwing": 0.6695
+    },
+    "front-foot.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0.34812,
+     "maxSwing": 0.8784
+    },
+    "head.png": {
+     "cells": 147,
+     "medianSwing": 0.003,
+     "p90Swing": 0.00832,
+     "maxSwing": 0.0385
+    },
+    "eye-indifferent.png": {
+     "cells": 147,
+     "medianSwing": 0.001,
+     "p90Swing": 0.0039,
+     "maxSwing": 0.0054
+    },
+    "goggles.png": {
+     "cells": 147,
+     "medianSwing": 0.0008,
+     "p90Swing": 0.00144,
+     "maxSwing": 0.1157
+    },
+    "mouth-smile.png": {
+     "cells": 147,
+     "medianSwing": 0,
+     "p90Swing": 0.01412,
+     "maxSwing": 0.5085
+    },
+    "front-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0.0284,
+     "p90Swing": 0.30504,
+     "maxSwing": 0.7397
+    },
+    "front-bracer.png": {
+     "cells": 117,
+     "medianSwing": 0.0178,
+     "p90Swing": 0.37848,
+     "maxSwing": 0.7182
+    },
+    "front-fist-closed.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    }
+   },
+   "pr322-scale": {
+    "rear-foot.png": {
+     "cells": 117,
+     "medianSwing": 0.3628,
+     "p90Swing": 0.89892,
+     "maxSwing": 1
+    },
+    "rear-shin.png": {
+     "cells": 117,
+     "medianSwing": 0.2372,
+     "p90Swing": 0.64598,
+     "maxSwing": 0.9689
+    },
+    "rear-thigh.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0.55372,
+     "maxSwing": 0.634
+    },
+    "rear-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    },
+    "rear-bracer.png": {
+     "cells": 117,
+     "medianSwing": 0.0107,
+     "p90Swing": 0.02936,
+     "maxSwing": 0.0439
+    },
+    "gun.png": {
+     "cells": 117,
+     "medianSwing": 0.0188,
+     "p90Swing": 0.60752,
+     "maxSwing": 0.7146
+    },
+    "neck.png": {
+     "cells": 147,
+     "medianSwing": 0.0702,
+     "p90Swing": 0.45626,
+     "maxSwing": 0.621
+    },
+    "torso.png": {
+     "cells": 117,
+     "medianSwing": 0.2533,
+     "p90Swing": 0.42186,
+     "maxSwing": 0.6729
+    },
+    "front-thigh.png": {
+     "cells": 117,
+     "medianSwing": 0.049,
+     "p90Swing": 0.71768,
+     "maxSwing": 0.8388
+    },
+    "front-shin.png": {
+     "cells": 117,
+     "medianSwing": 0.0768,
+     "p90Swing": 0.44384,
+     "maxSwing": 0.6718
+    },
+    "front-foot.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0.62254,
+     "maxSwing": 0.9884
+    },
+    "head.png": {
+     "cells": 147,
+     "medianSwing": 0.0041,
+     "p90Swing": 0.01968,
+     "maxSwing": 0.0413
+    },
+    "eye-indifferent.png": {
+     "cells": 147,
+     "medianSwing": 0.0021,
+     "p90Swing": 0.0049,
+     "maxSwing": 0.007
+    },
+    "goggles.png": {
+     "cells": 147,
+     "medianSwing": 0.0011,
+     "p90Swing": 0.00184,
+     "maxSwing": 0.1159
+    },
+    "mouth-smile.png": {
+     "cells": 147,
+     "medianSwing": 0,
+     "p90Swing": 0.18144,
+     "maxSwing": 0.5594
+    },
+    "front-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0.0686,
+     "p90Swing": 0.60394,
+     "maxSwing": 0.783
+    },
+    "front-bracer.png": {
+     "cells": 117,
+     "medianSwing": 0.0406,
+     "p90Swing": 0.56628,
+     "maxSwing": 0.8068
+    },
+    "front-fist-closed.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    }
+   },
+   "readback-floor": {
+    "rear-foot.png": {
+     "cells": 117,
+     "medianSwing": 0.5799,
+     "p90Swing": 0.9585,
+     "maxSwing": 1
+    },
+    "rear-shin.png": {
+     "cells": 117,
+     "medianSwing": 0.3457,
+     "p90Swing": 0.90826,
+     "maxSwing": 0.9882
+    },
+    "rear-thigh.png": {
+     "cells": 117,
+     "medianSwing": 0.0003,
+     "p90Swing": 0.61264,
+     "maxSwing": 0.6323
+    },
+    "rear-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    },
+    "rear-bracer.png": {
+     "cells": 117,
+     "medianSwing": 0.0117,
+     "p90Swing": 0.0346,
+     "maxSwing": 0.0645
+    },
+    "gun.png": {
+     "cells": 117,
+     "medianSwing": 0.1622,
+     "p90Swing": 0.70904,
+     "maxSwing": 0.9422
+    },
+    "neck.png": {
+     "cells": 147,
+     "medianSwing": 0.1904,
+     "p90Swing": 0.61052,
+     "maxSwing": 0.6708
+    },
+    "torso.png": {
+     "cells": 117,
+     "medianSwing": 0.3091,
+     "p90Swing": 0.52074,
+     "maxSwing": 0.6006
+    },
+    "front-thigh.png": {
+     "cells": 117,
+     "medianSwing": 0.2405,
+     "p90Swing": 0.82592,
+     "maxSwing": 0.8379
+    },
+    "front-shin.png": {
+     "cells": 117,
+     "medianSwing": 0.1505,
+     "p90Swing": 0.5143,
+     "maxSwing": 0.6702
+    },
+    "front-foot.png": {
+     "cells": 117,
+     "medianSwing": 0.0369,
+     "p90Swing": 0.75464,
+     "maxSwing": 0.9997
+    },
+    "head.png": {
+     "cells": 147,
+     "medianSwing": 0.0044,
+     "p90Swing": 0.02006,
+     "maxSwing": 0.0419
+    },
+    "eye-indifferent.png": {
+     "cells": 147,
+     "medianSwing": 0.0021,
+     "p90Swing": 0.00468,
+     "maxSwing": 0.0067
+    },
+    "goggles.png": {
+     "cells": 147,
+     "medianSwing": 0.0011,
+     "p90Swing": 0.0019,
+     "maxSwing": 0.1576
+    },
+    "mouth-smile.png": {
+     "cells": 147,
+     "medianSwing": 0,
+     "p90Swing": 0.28628,
+     "maxSwing": 0.6383
+    },
+    "front-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0.0706,
+     "p90Swing": 0.61156,
+     "maxSwing": 0.7769
+    },
+    "front-bracer.png": {
+     "cells": 117,
+     "medianSwing": 0.0525,
+     "p90Swing": 0.613,
+     "maxSwing": 0.8603
+    },
+    "front-fist-closed.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    }
+   },
+   "control-1px": {
+    "neck.png": {
+     "cells": 147,
+     "medianSwing": 0.3567,
+     "p90Swing": 0.65684,
+     "maxSwing": 0.673
+    },
+    "head.png": {
+     "cells": 147,
+     "medianSwing": 0.0045,
+     "p90Swing": 0.02008,
+     "maxSwing": 0.0606
+    },
+    "eye-indifferent.png": {
+     "cells": 147,
+     "medianSwing": 0.0025,
+     "p90Swing": 0.0053,
+     "maxSwing": 0.0072
+    },
+    "goggles.png": {
+     "cells": 147,
+     "medianSwing": 0.0015,
+     "p90Swing": 0.002,
+     "maxSwing": 0.1658
+    },
+    "mouth-smile.png": {
+     "cells": 147,
+     "medianSwing": 0,
+     "p90Swing": 0.11996,
+     "maxSwing": 0.605
+    },
+    "rear-foot.png": {
+     "cells": 108,
+     "medianSwing": 0.6583,
+     "p90Swing": 0.98839,
+     "maxSwing": 1
+    },
+    "rear-shin.png": {
+     "cells": 108,
+     "medianSwing": 0.4905,
+     "p90Swing": 0.93379,
+     "maxSwing": 0.9939
+    },
+    "rear-thigh.png": {
+     "cells": 108,
+     "medianSwing": 0.0121,
+     "p90Swing": 0.62548,
+     "maxSwing": 0.6349
+    },
+    "rear-upper-arm.png": {
+     "cells": 108,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    },
+    "rear-bracer.png": {
+     "cells": 108,
+     "medianSwing": 0.014,
+     "p90Swing": 0.03286,
+     "maxSwing": 0.1544
+    },
+    "gun.png": {
+     "cells": 108,
+     "medianSwing": 0.1629,
+     "p90Swing": 0.72163,
+     "maxSwing": 0.9287
+    },
+    "torso.png": {
+     "cells": 108,
+     "medianSwing": 0.3317,
+     "p90Swing": 0.59503,
+     "maxSwing": 0.6311
+    },
+    "front-thigh.png": {
+     "cells": 108,
+     "medianSwing": 0.28465,
+     "p90Swing": 0.83392,
+     "maxSwing": 0.8449
+    },
+    "front-shin.png": {
+     "cells": 108,
+     "medianSwing": 0.15505,
+     "p90Swing": 0.54378,
+     "maxSwing": 0.6802
+    },
+    "front-foot.png": {
+     "cells": 108,
+     "medianSwing": 0,
+     "p90Swing": 0.67607,
+     "maxSwing": 0.9287
+    },
+    "front-upper-arm.png": {
+     "cells": 108,
+     "medianSwing": 0.30025,
+     "p90Swing": 0.68801,
+     "maxSwing": 0.8272
+    },
+    "front-bracer.png": {
+     "cells": 108,
+     "medianSwing": 0.13425,
+     "p90Swing": 0.72495,
+     "maxSwing": 0.874
+    },
+    "front-fist-closed.png": {
+     "cells": 108,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    }
+   }
+  },
+  "pose-criterion": {
+   "polish-floor": {
+    "rear-foot.png": {
+     "cells": 147,
+     "medianSwing": 0.0078,
+     "p90Swing": 0.13776,
+     "maxSwing": 0.6037
+    },
+    "rear-shin.png": {
+     "cells": 146,
+     "medianSwing": 0.0063,
+     "p90Swing": 0.1882,
+     "maxSwing": 0.4081
+    },
+    "rear-thigh.png": {
+     "cells": 128,
+     "medianSwing": 0.00395,
+     "p90Swing": 0.03847,
+     "maxSwing": 1
+    },
+    "rear-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    },
+    "rear-bracer.png": {
+     "cells": 136,
+     "medianSwing": 0.00595,
+     "p90Swing": 0.04445,
+     "maxSwing": 0.8686
+    },
+    "gun.png": {
+     "cells": 137,
+     "medianSwing": 0.0056,
+     "p90Swing": 0.08708,
+     "maxSwing": 0.3523
+    },
+    "neck.png": {
+     "cells": 147,
+     "medianSwing": 0.0243,
+     "p90Swing": 0.06044,
+     "maxSwing": 0.6278
+    },
+    "torso.png": {
+     "cells": 117,
+     "medianSwing": 0.0083,
+     "p90Swing": 0.1179,
+     "maxSwing": 0.4615
+    },
+    "front-thigh.png": {
+     "cells": 133,
+     "medianSwing": 0.0081,
+     "p90Swing": 0.17704,
+     "maxSwing": 0.7708
+    },
+    "front-shin.png": {
+     "cells": 140,
+     "medianSwing": 0.0033,
+     "p90Swing": 0.00942,
+     "maxSwing": 0.4763
+    },
+    "front-foot.png": {
+     "cells": 143,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0.5042
+    },
+    "head.png": {
+     "cells": 147,
+     "medianSwing": 0.002,
+     "p90Swing": 0.0032,
+     "maxSwing": 0.0411
+    },
+    "eye-indifferent.png": {
+     "cells": 147,
+     "medianSwing": 0.0004,
+     "p90Swing": 0.00274,
+     "maxSwing": 0.006
+    },
+    "goggles.png": {
+     "cells": 147,
+     "medianSwing": 0.0004,
+     "p90Swing": 0.0011,
+     "maxSwing": 0.115
+    },
+    "mouth-smile.png": {
+     "cells": 147,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0.2403
+    },
+    "front-upper-arm.png": {
+     "cells": 119,
+     "medianSwing": 0.0078,
+     "p90Swing": 0.09888,
+     "maxSwing": 0.7409
+    },
+    "front-bracer.png": {
+     "cells": 137,
+     "medianSwing": 0.006,
+     "p90Swing": 0.0302,
+     "maxSwing": 0.8307
+    },
+    "front-fist-closed.png": {
+     "cells": 140,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    }
+   },
+   "polish-floor-2x": {
+    "rear-foot.png": {
+     "cells": 147,
+     "medianSwing": 0.0159,
+     "p90Swing": 0.1781,
+     "maxSwing": 0.7451
+    },
+    "rear-shin.png": {
+     "cells": 146,
+     "medianSwing": 0.00975,
+     "p90Swing": 0.24125,
+     "maxSwing": 0.5249
+    },
+    "rear-thigh.png": {
+     "cells": 128,
+     "medianSwing": 0.0074,
+     "p90Swing": 0.13845,
+     "maxSwing": 1
+    },
+    "rear-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    },
+    "rear-bracer.png": {
+     "cells": 136,
+     "medianSwing": 0.0111,
+     "p90Swing": 0.1079,
+     "maxSwing": 0.9108
+    },
+    "gun.png": {
+     "cells": 137,
+     "medianSwing": 0.0104,
+     "p90Swing": 0.20432,
+     "maxSwing": 0.7082
+    },
+    "neck.png": {
+     "cells": 147,
+     "medianSwing": 0.0394,
+     "p90Swing": 0.08598,
+     "maxSwing": 0.6229
+    },
+    "torso.png": {
+     "cells": 117,
+     "medianSwing": 0.0231,
+     "p90Swing": 0.20556,
+     "maxSwing": 0.4614
+    },
+    "front-thigh.png": {
+     "cells": 133,
+     "medianSwing": 0.0113,
+     "p90Swing": 0.35416,
+     "maxSwing": 0.7784
+    },
+    "front-shin.png": {
+     "cells": 140,
+     "medianSwing": 0.00535,
+     "p90Swing": 0.01363,
+     "maxSwing": 0.4711
+    },
+    "front-foot.png": {
+     "cells": 143,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0.5465
+    },
+    "head.png": {
+     "cells": 147,
+     "medianSwing": 0.0029,
+     "p90Swing": 0.0047,
+     "maxSwing": 0.0385
+    },
+    "eye-indifferent.png": {
+     "cells": 147,
+     "medianSwing": 0.001,
+     "p90Swing": 0.0039,
+     "maxSwing": 0.0054
+    },
+    "goggles.png": {
+     "cells": 147,
+     "medianSwing": 0.0008,
+     "p90Swing": 0.00144,
+     "maxSwing": 0.1146
+    },
+    "mouth-smile.png": {
+     "cells": 147,
+     "medianSwing": 0,
+     "p90Swing": 0.00086,
+     "maxSwing": 0.3554
+    },
+    "front-upper-arm.png": {
+     "cells": 119,
+     "medianSwing": 0.0173,
+     "p90Swing": 0.2347,
+     "maxSwing": 0.853
+    },
+    "front-bracer.png": {
+     "cells": 137,
+     "medianSwing": 0.0109,
+     "p90Swing": 0.44944,
+     "maxSwing": 0.8461
+    },
+    "front-fist-closed.png": {
+     "cells": 140,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    }
+   },
+   "pr322-scale": {
+    "rear-foot.png": {
+     "cells": 147,
+     "medianSwing": 0.0273,
+     "p90Swing": 0.39876,
+     "maxSwing": 1
+    },
+    "rear-shin.png": {
+     "cells": 146,
+     "medianSwing": 0.01735,
+     "p90Swing": 0.25515,
+     "maxSwing": 0.7564
+    },
+    "rear-thigh.png": {
+     "cells": 128,
+     "medianSwing": 0.01505,
+     "p90Swing": 0.22575,
+     "maxSwing": 0.9973
+    },
+    "rear-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    },
+    "rear-bracer.png": {
+     "cells": 136,
+     "medianSwing": 0.0277,
+     "p90Swing": 0.40045,
+     "maxSwing": 0.9814
+    },
+    "gun.png": {
+     "cells": 137,
+     "medianSwing": 0.0345,
+     "p90Swing": 0.35838,
+     "maxSwing": 0.7149
+    },
+    "neck.png": {
+     "cells": 147,
+     "medianSwing": 0.0602,
+     "p90Swing": 0.15406,
+     "maxSwing": 0.621
+    },
+    "torso.png": {
+     "cells": 117,
+     "medianSwing": 0.0717,
+     "p90Swing": 0.37944,
+     "maxSwing": 0.4613
+    },
+    "front-thigh.png": {
+     "cells": 133,
+     "medianSwing": 0.021,
+     "p90Swing": 0.58592,
+     "maxSwing": 0.7862
+    },
+    "front-shin.png": {
+     "cells": 140,
+     "medianSwing": 0.00955,
+     "p90Swing": 0.36462,
+     "maxSwing": 0.5487
+    },
+    "front-foot.png": {
+     "cells": 143,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0.6168
+    },
+    "head.png": {
+     "cells": 147,
+     "medianSwing": 0.0037,
+     "p90Swing": 0.00872,
+     "maxSwing": 0.0413
+    },
+    "eye-indifferent.png": {
+     "cells": 147,
+     "medianSwing": 0.0021,
+     "p90Swing": 0.0049,
+     "maxSwing": 0.007
+    },
+    "goggles.png": {
+     "cells": 147,
+     "medianSwing": 0.0011,
+     "p90Swing": 0.00184,
+     "maxSwing": 0.1159
+    },
+    "mouth-smile.png": {
+     "cells": 147,
+     "medianSwing": 0,
+     "p90Swing": 0.0125,
+     "maxSwing": 0.4857
+    },
+    "front-upper-arm.png": {
+     "cells": 119,
+     "medianSwing": 0.0599,
+     "p90Swing": 0.5816,
+     "maxSwing": 0.8796
+    },
+    "front-bracer.png": {
+     "cells": 137,
+     "medianSwing": 0.0238,
+     "p90Swing": 0.7063,
+     "maxSwing": 0.8592
+    },
+    "front-fist-closed.png": {
+     "cells": 140,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    }
+   },
+   "readback-floor": {
+    "rear-foot.png": {
+     "cells": 147,
+     "medianSwing": 0.1525,
+     "p90Swing": 0.71702,
+     "maxSwing": 0.9978
+    },
+    "rear-shin.png": {
+     "cells": 146,
+     "medianSwing": 0.0432,
+     "p90Swing": 0.26815,
+     "maxSwing": 0.6818
+    },
+    "rear-thigh.png": {
+     "cells": 128,
+     "medianSwing": 0.0134,
+     "p90Swing": 0.22547,
+     "maxSwing": 0.998
+    },
+    "rear-upper-arm.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    },
+    "rear-bracer.png": {
+     "cells": 136,
+     "medianSwing": 0.0423,
+     "p90Swing": 0.42385,
+     "maxSwing": 0.9895
+    },
+    "gun.png": {
+     "cells": 137,
+     "medianSwing": 0.1517,
+     "p90Swing": 0.55476,
+     "maxSwing": 0.7729
+    },
+    "neck.png": {
+     "cells": 147,
+     "medianSwing": 0.1377,
+     "p90Swing": 0.61052,
+     "maxSwing": 0.6662
+    },
+    "torso.png": {
+     "cells": 117,
+     "medianSwing": 0.1002,
+     "p90Swing": 0.38508,
+     "maxSwing": 0.5553
+    },
+    "front-thigh.png": {
+     "cells": 133,
+     "medianSwing": 0.0314,
+     "p90Swing": 0.5947,
+     "maxSwing": 0.8379
+    },
+    "front-shin.png": {
+     "cells": 140,
+     "medianSwing": 0.0345,
+     "p90Swing": 0.37766,
+     "maxSwing": 0.632
+    },
+    "front-foot.png": {
+     "cells": 143,
+     "medianSwing": 0,
+     "p90Swing": 0.1208,
+     "maxSwing": 0.8775
+    },
+    "head.png": {
+     "cells": 147,
+     "medianSwing": 0.004,
+     "p90Swing": 0.0109,
+     "maxSwing": 0.0397
+    },
+    "eye-indifferent.png": {
+     "cells": 147,
+     "medianSwing": 0.0021,
+     "p90Swing": 0.00468,
+     "maxSwing": 0.0067
+    },
+    "goggles.png": {
+     "cells": 147,
+     "medianSwing": 0.0012,
+     "p90Swing": 0.0019,
+     "maxSwing": 0.1297
+    },
+    "mouth-smile.png": {
+     "cells": 147,
+     "medianSwing": 0,
+     "p90Swing": 0.02014,
+     "maxSwing": 0.9803
+    },
+    "front-upper-arm.png": {
+     "cells": 119,
+     "medianSwing": 0.1091,
+     "p90Swing": 0.58348,
+     "maxSwing": 0.8791
+    },
+    "front-bracer.png": {
+     "cells": 137,
+     "medianSwing": 0.0478,
+     "p90Swing": 0.72442,
+     "maxSwing": 0.8592
+    },
+    "front-fist-closed.png": {
+     "cells": 140,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    }
+   },
+   "control-1px": {
+    "rear-foot.png": {
+     "cells": 142,
+     "medianSwing": 0.63175,
+     "p90Swing": 0.78234,
+     "maxSwing": 0.9992
+    },
+    "rear-shin.png": {
+     "cells": 141,
+     "medianSwing": 0.1151,
+     "p90Swing": 0.6048,
+     "maxSwing": 0.9998
+    },
+    "rear-thigh.png": {
+     "cells": 122,
+     "medianSwing": 0.1018,
+     "p90Swing": 0.50834,
+     "maxSwing": 1
+    },
+    "neck.png": {
+     "cells": 147,
+     "medianSwing": 0.2965,
+     "p90Swing": 0.6423,
+     "maxSwing": 0.673
+    },
+    "front-thigh.png": {
+     "cells": 127,
+     "medianSwing": 0.0675,
+     "p90Swing": 0.72524,
+     "maxSwing": 0.9979
+    },
+    "front-shin.png": {
+     "cells": 139,
+     "medianSwing": 0.229,
+     "p90Swing": 0.37462,
+     "maxSwing": 0.6415
+    },
+    "front-foot.png": {
+     "cells": 143,
+     "medianSwing": 0,
+     "p90Swing": 0.20684,
+     "maxSwing": 0.8692
+    },
+    "head.png": {
+     "cells": 147,
+     "medianSwing": 0.0047,
+     "p90Swing": 0.02024,
+     "maxSwing": 0.0606
+    },
+    "eye-indifferent.png": {
+     "cells": 147,
+     "medianSwing": 0.0025,
+     "p90Swing": 0.0053,
+     "maxSwing": 0.0072
+    },
+    "goggles.png": {
+     "cells": 147,
+     "medianSwing": 0.0015,
+     "p90Swing": 0.002,
+     "maxSwing": 0.1658
+    },
+    "mouth-smile.png": {
+     "cells": 147,
+     "medianSwing": 0,
+     "p90Swing": 0.11996,
+     "maxSwing": 0.605
+    },
+    "rear-bracer.png": {
+     "cells": 111,
+     "medianSwing": 0.0206,
+     "p90Swing": 0.2815,
+     "maxSwing": 0.9725
+    },
+    "gun.png": {
+     "cells": 113,
+     "medianSwing": 0.187,
+     "p90Swing": 0.75456,
+     "maxSwing": 0.8459
+    },
+    "rear-upper-arm.png": {
+     "cells": 108,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    },
+    "torso.png": {
+     "cells": 108,
+     "medianSwing": 0.2178,
+     "p90Swing": 0.44948,
+     "maxSwing": 0.5364
+    },
+    "front-upper-arm.png": {
+     "cells": 110,
+     "medianSwing": 0.3181,
+     "p90Swing": 0.73029,
+     "maxSwing": 0.9078
+    },
+    "front-bracer.png": {
+     "cells": 112,
+     "medianSwing": 0.2438,
+     "p90Swing": 0.85174,
+     "maxSwing": 0.9493
+    },
+    "front-fist-closed.png": {
+     "cells": 117,
+     "medianSwing": 0,
+     "p90Swing": 0,
+     "maxSwing": 0
+    }
+   }
+  }
+ }
+}
