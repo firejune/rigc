@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0](https://github.com/firejune/rigc/compare/v0.11.0...v0.12.0) (2026-09-03)
+
+
+### Features
+
+* **cli:** rigc chainfit — occlusion-aware chain fitting ([#290](https://github.com/firejune/rigc/issues/290)) ([d488154](https://github.com/firejune/rigc/commit/d4881548affd969669a65a106bcb13938cdb7712))
+
+
+### Bug Fixes
+
+* **chainfit:** the relocation fallback keeps the seed instead of resetting the hinge ([#287](https://github.com/firejune/rigc/issues/287)) ([5d00e4f](https://github.com/firejune/rigc/commit/5d00e4f3f9e5268ce5e24cf27721ac877a132939))
+
 ## [0.11.0](https://github.com/firejune/rigc/compare/v0.10.0...v0.11.0) (2026-09-02)
 
 
