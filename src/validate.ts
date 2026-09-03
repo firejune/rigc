@@ -1576,8 +1576,10 @@ export function validate(input: ValidateInput): ValidateReport {
     //   - `spineboy-pro`, an official Spine editor export, flips 1 of the 101
     //     triangles of `hoverboard-board` at key 1 (area −31.53 → +8.48, 2.5e-3
     //     of that mesh's largest triangle).
-    //   - `gallery/flex` flips up to 7 of the 75 triangles of its `leaf`, and
-    //     that one IS a defect — visible tearing at the gust peak (issue #313).
+    //   - `gallery/flex` flipped up to 7 of the 75 triangles of its `leaf`, and
+    //     that one WAS a defect — visible tearing at the gust peak. Repaired in
+    //     issue #313: its exemption is gone and it gates green here now, which
+    //     leaves the editor export as the only standing counter-example.
     //
     // A `validity` rule would therefore tell an author holding correct editor
     // output to go and change it, which is what issues #44 and #262 already
@@ -1587,10 +1589,13 @@ export function validate(input: ValidateInput): ValidateReport {
     //
     // A magnitude threshold was considered as the way to keep it `validity` —
     // exempt spineboy's 2.5e-3 sliver, catch the rest — and declined: the
-    // corpus's smallest genuine defect (`flex` at 5.4e-3) and that sliver are
-    // within a factor of two, so the wall would be calibrated on two points and
-    // separate nothing. `invariants.deformMayFold` is the escape hatch instead,
-    // because *the author* knows whether the page is turning over.
+    // smallest genuine defect the corpus then held (`flex` at 5.4e-3) and that
+    // sliver were within a factor of two, so the wall would have been calibrated
+    // on two points and separated nothing. Repairing `flex` does not revive the
+    // idea: it removes the only point that was on the other side of the wall.
+    // `invariants.deformMayFold` is the escape hatch instead, because *the
+    // author* knows whether the page is turning over — and as of #313 nothing in
+    // this repository uses it.
     check('A39_DEFORM_KEEPS_TRIANGLE_WINDING', () => {
       if (!input.rig) {
         return skip(

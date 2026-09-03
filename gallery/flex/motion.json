@@ -17,7 +17,7 @@
     "wave": {
       "duration": 2.4,
       "loop": true,
-      "note": "A travelling wave down the banner: each hinge lags the one before it by a quarter of the cycle, which is what makes the bend move outward instead of the whole strip rocking. Amplitude grows toward the free end. The leaf's own ripple is a deform timeline on its contour vertices, so the mesh's silhouette moves where the silhouette actually is.",
+      "note": "A travelling wave down the banner: each hinge lags the one before it by a quarter of the cycle, which is what makes the bend move outward instead of the whole strip rocking. Amplitude grows toward the free end. The leaf sways either side of rest on a deform timeline over its contour vertices, so the mesh's silhouette moves where the silhouette actually is — an affine shear, which cannot fold the fan its triangulation makes.",
       "tracks": [
         {
           "bone": "hinge_a",
@@ -113,27 +113,9 @@
           "attachment": "leaf",
           "keys": [
             { "t": 0, "ease": "swing" },
-            {
-              "t": 0.6,
-              "fromVertex": 1,
-              "vertices": [
-                0.0, 2.72, 3.81, 2.39, 6.7, 1.49, 7.97, 0.22, 7.33, -1.09, 4.91, -2.15, 1.32, -2.68, -2.6, -2.57,
-                -5.89, -1.84, -7.76, -0.67, -7.76, 0.67, -5.89, 1.84, -2.6, 2.57, 1.32, 2.68, 4.91, 2.15, 7.33, 1.09,
-                7.97, -0.22, 6.7, -1.49, 3.81, -2.39, 0.0, -2.72
-              ],
-              "ease": "swing"
-            },
+            { "t": 0.6, "transform": { "kind": "bend", "along": "y", "axis": "x", "amount": 8, "from": -81, "to": 77, "power": 1 }, "ease": "swing" },
             { "t": 1.2, "ease": "swing" },
-            {
-              "t": 1.8,
-              "fromVertex": 57,
-              "vertices": [
-                -6.27, 1.69, -7.88, 0.47, -7.59, -0.86, -5.47, -1.98, -2.04, -2.63, 1.89, -2.64, 5.36, -2.02, 7.54,
-                -0.91, 7.9, 0.42, 6.36, 1.65, 3.28, 2.48, -0.59, 2.71, -4.31, 2.29, -7.0, 1.32, -8.0, 0.03, -7.07,
-                -1.27, -4.44, -2.26, -0.74, -2.71, 3.14, -2.5, 6.27, -1.69
-              ],
-              "ease": "swing"
-            },
+            { "t": 1.8, "transform": { "kind": "bend", "along": "y", "axis": "x", "amount": -8, "from": -81, "to": 77, "power": 1 }, "ease": "swing" },
             { "t": 2.4 }
           ]
         }
@@ -143,7 +125,7 @@
     "gust": {
       "duration": 1.1,
       "loop": false,
-      "note": "One hard gust, so the panels are seen at a deflection a gentle loop never reaches: fast out, slow in, each hinge later than its parent, and one big deform on the leaf at the peak. Nothing loops.",
+      "note": "One hard gust, so the panels are seen at a deflection a gentle loop never reaches: fast out, slow in, each hinge later than its parent, and one big deform on the leaf at the peak: a quadratic bend, so the blade curves toward the tip instead of leaning. Nothing loops.",
       "tracks": [
         {
           "bone": "hinge_a",
@@ -231,16 +213,7 @@
           "attachment": "leaf",
           "keys": [
             { "t": 0, "ease": "snap" },
-            {
-              "t": 0.26,
-              "fromVertex": 1,
-              "vertices": [
-                5.84, 4.7, 11.71, 3.19, 14.76, 0.91, 14.25, -1.59, 10.31, -3.71, 3.88, -4.93, -3.49, -4.96, -10.01,
-                -3.8, -14.12, -1.72, -14.83, 0.77, -11.96, 3.08, -6.21, 4.64, 1.04, 5.09, 8.04, 4.31, 13.1, 2.49, 15.0,
-                0.07, 13.29, -2.37, 8.37, -4.23, 1.44, -5.08, -5.84, -4.7
-              ],
-              "ease": "settle"
-            },
+            { "t": 0.26, "transform": { "kind": "bend", "along": "y", "axis": "x", "amount": 15, "from": -81, "to": 77 }, "ease": "settle" },
             { "t": 1.1 }
           ]
         }
