@@ -1,0 +1,307 @@
+{
+  "spec": "rigc-motion/1",
+  "archetype": "nod",
+  "cut": "gallery-nod",
+
+  "easings": {
+    "rise": [0.4, 0, 0.86, 0.38],
+    "settle": [0.12, 0.7, 0.3, 1],
+    "swell": [0.42, 0, 0.58, 1]
+  },
+
+  "groups": {
+    "features": ["crown", "eye_l", "eye_r", "snout", "mouth"],
+    "ears": ["earbase_l", "earbase_r"]
+  },
+
+  "animations": {
+    "idle": {
+      "duration": 2,
+      "loop": true,
+      "note": "One breath, one 5 deg nod inside it, and a ripple that never stops travelling down the ears. The nod is the same projection `bow` holds at 12: dy = y (cos t - 1) - z sin t about a horizontal axis through the skull, so the head plate keys a `pitch` transform and the features key a `pitch` derive with a depth each. The ripple is a `wave` whose PHASE is the only thing that moves - 45 deg per key, nine keys, so 360 deg lands exactly on the duration and the cycle closes on its own opening geometry. The ripple keys carry no easing on purpose: a travelling wave moves at constant speed, and an eased cross-fade between two sinusoids stutters twice per period. The two ears differ in amplitude and start a quarter-period apart, which is what stops them reading as one animation played twice.",
+
+      "tracks": [
+        {
+          "bone": "torso",
+          "property": "scale",
+          "keys": [
+            { "t": 0, "v": [1, 1], "ease": "swell" },
+            { "t": 0.95, "v": [1.006, 1.012], "ease": "swell" },
+            { "t": 2, "v": [1, 1] }
+          ]
+        },
+        {
+          "bone": "chest",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swell" },
+            { "t": 0.95, "v": [3], "ease": "swell" },
+            { "t": 2, "v": [0] }
+          ]
+        },
+
+        {
+          "bone": "facebob",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.9, "derive": { "kind": "pitch", "degrees": 5, "depth": 150 }, "ease": "settle" },
+            { "t": 2, "v": [0] }
+          ]
+        },
+        {
+          "group": "features",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            {
+              "t": 0.9,
+              "derive": {
+                "kind": "pitch",
+                "degrees": 5,
+                "carried": 150,
+                "depth": { "crown": 126, "eye_l": 132, "eye_r": 132, "snout": 176, "mouth": 144 }
+              },
+              "ease": "settle"
+            },
+            { "t": 2, "v": [0] }
+          ]
+        },
+        {
+          "group": "features",
+          "property": "scaley",
+          "keys": [
+            { "t": 0, "v": [1], "ease": "rise" },
+            {
+              "t": 0.9,
+              "derive": {
+                "kind": "pitch",
+                "degrees": 5,
+                "depth": { "crown": 126, "eye_l": 132, "eye_r": 132, "snout": 176, "mouth": 144 }
+              },
+              "ease": "settle"
+            },
+            { "t": 2, "v": [1] }
+          ]
+        },
+
+        {
+          "group": "ears",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swell" },
+            { "t": 1.15, "v": { "earbase_l": [-3.2], "earbase_r": [2.6] }, "ease": "settle" },
+            { "t": 1.62, "v": { "earbase_l": [1.1], "earbase_r": [-0.9] }, "ease": "rise" },
+            { "t": 2, "v": [0] }
+          ]
+        }
+      ],
+
+      "deform": [
+        {
+          "slot": "head",
+          "attachment": "head",
+          "keys": [
+            { "t": 0, "ease": "rise" },
+            { "t": 0.9, "transform": { "kind": "pitch", "radius": 150, "degrees": 5 }, "ease": "settle" },
+            { "t": 2 }
+          ]
+        },
+        {
+          "slot": "ear_l",
+          "attachment": "ear_l",
+          "keys": [
+            { "t": 0, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 0, "along": "y", "axis": "x" } },
+            { "t": 0.25, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 45, "along": "y", "axis": "x" } },
+            { "t": 0.5, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 90, "along": "y", "axis": "x" } },
+            { "t": 0.75, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 135, "along": "y", "axis": "x" } },
+            { "t": 1, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 180, "along": "y", "axis": "x" } },
+            { "t": 1.25, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 225, "along": "y", "axis": "x" } },
+            { "t": 1.5, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 270, "along": "y", "axis": "x" } },
+            { "t": 1.75, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 315, "along": "y", "axis": "x" } },
+            { "t": 2, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 360, "along": "y", "axis": "x" } }
+          ]
+        },
+        {
+          "slot": "ear_r",
+          "attachment": "ear_r",
+          "keys": [
+            { "t": 0, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 90, "along": "y", "axis": "x" } },
+            { "t": 0.25, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 135, "along": "y", "axis": "x" } },
+            { "t": 0.5, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 180, "along": "y", "axis": "x" } },
+            { "t": 0.75, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 225, "along": "y", "axis": "x" } },
+            { "t": 1, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 270, "along": "y", "axis": "x" } },
+            { "t": 1.25, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 315, "along": "y", "axis": "x" } },
+            { "t": 1.5, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 360, "along": "y", "axis": "x" } },
+            { "t": 1.75, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 405, "along": "y", "axis": "x" } },
+            { "t": 2, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 450, "along": "y", "axis": "x" } }
+          ]
+        }
+      ]
+    },
+
+    "bow": {
+      "duration": 1.8,
+      "loop": false,
+      "note": "A 12 deg nod, anticipated, held and released - the angle README.md's fold-angle table is about. Every number in it is one line of arithmetic on dy = y (cos t - 1) - z sin t, so the spec states that line and the depths it reads and the compiler states the numbers (AUTHORING 4.11.1 and 4.5.1). The anticipation is the part worth reading: it is the SAME model at -4 deg, one key on each of the four tracks, and FACE 1.1 says outright that a hand-transcribed table priced this out. `facebob` carries the shift every feature shares (-R sin t); the `features` group carries each feature's own depth below the skull surface times sin t, which is why the snout - the only part in FRONT of the surface - is the only negative residual. The ears hang off `head` rather than off `facebob`, so they take no derive at all: their swing is a judgement per member and it is spelled as a `v` map, which is the other half of AUTHORING 4.5.1 and the right half for a mirrored pair. The ripple's amplitude rides the swing and its phase keeps advancing, landing on 360 deg past where it started so `bow` ends on the geometry `idle` opens with.",
+
+      "tracks": [
+        {
+          "bone": "facebob",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.18, "derive": { "kind": "pitch", "degrees": -4, "depth": 150 }, "ease": "rise" },
+            { "t": 0.6, "derive": { "kind": "pitch", "degrees": 12, "depth": 150 }, "ease": "swell" },
+            { "t": 1.25, "derive": { "kind": "pitch", "degrees": 12, "depth": 150 }, "ease": "settle" },
+            { "t": 1.8, "v": [0] }
+          ]
+        },
+        {
+          "group": "features",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            {
+              "t": 0.18,
+              "derive": {
+                "kind": "pitch",
+                "degrees": -4,
+                "carried": 150,
+                "depth": { "crown": 126, "eye_l": 132, "eye_r": 132, "snout": 176, "mouth": 144 }
+              },
+              "ease": "rise"
+            },
+            {
+              "t": 0.6,
+              "derive": {
+                "kind": "pitch",
+                "degrees": 12,
+                "carried": 150,
+                "depth": { "crown": 126, "eye_l": 132, "eye_r": 132, "snout": 176, "mouth": 144 }
+              },
+              "ease": "swell"
+            },
+            {
+              "t": 1.25,
+              "derive": {
+                "kind": "pitch",
+                "degrees": 12,
+                "carried": 150,
+                "depth": { "crown": 126, "eye_l": 132, "eye_r": 132, "snout": 176, "mouth": 144 }
+              },
+              "ease": "settle"
+            },
+            { "t": 1.8, "v": [0] }
+          ]
+        },
+        {
+          "group": "features",
+          "property": "scaley",
+          "keys": [
+            { "t": 0, "v": [1], "ease": "rise" },
+            {
+              "t": 0.18,
+              "derive": {
+                "kind": "pitch",
+                "degrees": -4,
+                "depth": { "crown": 126, "eye_l": 132, "eye_r": 132, "snout": 176, "mouth": 144 }
+              },
+              "ease": "rise"
+            },
+            {
+              "t": 0.6,
+              "derive": {
+                "kind": "pitch",
+                "degrees": 12,
+                "depth": { "crown": 126, "eye_l": 132, "eye_r": 132, "snout": 176, "mouth": 144 }
+              },
+              "ease": "swell"
+            },
+            {
+              "t": 1.25,
+              "derive": {
+                "kind": "pitch",
+                "degrees": 12,
+                "depth": { "crown": 126, "eye_l": 132, "eye_r": 132, "snout": 176, "mouth": 144 }
+              },
+              "ease": "settle"
+            },
+            { "t": 1.8, "v": [1] }
+          ]
+        },
+
+        {
+          "bone": "headtip",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.18, "v": [-0.7], "ease": "rise" },
+            { "t": 0.6, "v": [0.9], "ease": "swell" },
+            { "t": 1.25, "v": [0.9], "ease": "settle" },
+            { "t": 1.8, "v": [0] }
+          ]
+        },
+        {
+          "bone": "neck",
+          "property": "translatey",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.6, "v": [-6], "ease": "swell" },
+            { "t": 1.25, "v": [-6], "ease": "settle" },
+            { "t": 1.8, "v": [0] }
+          ]
+        },
+
+        {
+          "group": "ears",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "rise" },
+            { "t": 0.24, "v": { "earbase_l": [2.2], "earbase_r": [-1.8] }, "ease": "rise" },
+            { "t": 0.78, "v": { "earbase_l": [-7.5], "earbase_r": [6.5] }, "ease": "settle" },
+            { "t": 1.16, "v": { "earbase_l": [-4.2], "earbase_r": [3.4] }, "ease": "swell" },
+            { "t": 1.48, "v": { "earbase_l": [1.8], "earbase_r": [-1.5] }, "ease": "settle" },
+            { "t": 1.8, "v": [0] }
+          ]
+        }
+      ],
+
+      "deform": [
+        {
+          "slot": "head",
+          "attachment": "head",
+          "keys": [
+            { "t": 0, "ease": "rise" },
+            { "t": 0.18, "transform": { "kind": "pitch", "radius": 150, "degrees": -4 }, "ease": "rise" },
+            { "t": 0.6, "transform": { "kind": "pitch", "radius": 150, "degrees": 12 }, "ease": "swell" },
+            { "t": 1.25, "transform": { "kind": "pitch", "radius": 150, "degrees": 12 }, "ease": "settle" },
+            { "t": 1.8 }
+          ]
+        },
+        {
+          "slot": "ear_l",
+          "attachment": "ear_l",
+          "keys": [
+            { "t": 0, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 0, "along": "y", "axis": "x" }, "ease": "rise" },
+            { "t": 0.32, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 90, "along": "y", "axis": "x" } },
+            { "t": 0.72, "transform": { "kind": "wave", "amplitude": 16, "wavelength": 320, "phase": 200, "along": "y", "axis": "x" } },
+            { "t": 1.2, "transform": { "kind": "wave", "amplitude": 13, "wavelength": 320, "phase": 290, "along": "y", "axis": "x" } },
+            { "t": 1.8, "transform": { "kind": "wave", "amplitude": 10, "wavelength": 320, "phase": 360, "along": "y", "axis": "x" } }
+          ]
+        },
+        {
+          "slot": "ear_r",
+          "attachment": "ear_r",
+          "keys": [
+            { "t": 0, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 90, "along": "y", "axis": "x" }, "ease": "rise" },
+            { "t": 0.32, "transform": { "kind": "wave", "amplitude": 7, "wavelength": 320, "phase": 180, "along": "y", "axis": "x" } },
+            { "t": 0.72, "transform": { "kind": "wave", "amplitude": 14, "wavelength": 320, "phase": 290, "along": "y", "axis": "x" } },
+            { "t": 1.2, "transform": { "kind": "wave", "amplitude": 11, "wavelength": 320, "phase": 380, "along": "y", "axis": "x" } },
+            { "t": 1.8, "transform": { "kind": "wave", "amplitude": 8, "wavelength": 320, "phase": 450, "along": "y", "axis": "x" } }
+          ]
+        }
+      ]
+    }
+  }
+}

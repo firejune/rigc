@@ -11,12 +11,16 @@ character is **Rigby**, the project's mascot, and the gallery shares one drawing
 of him ([`rigby.ts`](rigby.ts)) so that four of the examples look like four shots
 of one character rather than four characters.
 
-The fifth has a second cast member. `portrait` needed a face that sells gaze and
-a head turn, and those read off a brow, an iris and a cheek-to-jaw silhouette
-that a muzzle does not have — so **Vela** is drawn in
-[`portrait/make_parts.ts`](portrait/make_parts.ts), in Rigby's own palette and
-outline weight. That README defends the decision; the rule it bends is *one
-character*, and the rule it keeps is *one art language*.
+The other two bring their own cast, and each one's `make_parts.ts` defends the
+decision in its header. `portrait` needed a face that sells gaze and a head turn,
+and those read off a brow, an iris and a cheek-to-jaw silhouette that a muzzle
+does not have — so **Vela** is drawn in
+[`portrait/make_parts.ts`](portrait/make_parts.ts). `nod` needed features stacked
+up a face at different **depths** and a long soft appendage a regular strip mesh
+fits, and neither Rigby nor Vela has either — so **Lepus** is drawn in
+[`nod/make_parts.ts`](nod/make_parts.ts). Both are in Rigby's own palette and
+outline weight: the rule they bend is *one character*, and the rule they keep is
+*one art language*.
 
 | Example | Stars | What it is |
 | --- | --- | --- |
@@ -25,6 +29,7 @@ character*, and the rule it keeps is *one art language*.
 | [`walk/`](walk/) | `ik` constraints + **`ik` timelines** (AUTHORING §3.5, §4.9) | Rigby walks on the spot. Two two-bone leg chains solved to foot targets under a `ground` bone, with the planted leg nailed down and the swinging one let go at the top of its lift |
 | [`squash/`](squash/) | **`deform` timelines** (AUTHORING §4.11) | Rigby's ball bounces. A 9-vertex mesh squashed about its contact point and stretched along its travel, from two affine transforms written out in the README |
 | [`portrait/`](portrait/) | **`deform` as a projection** (AUTHORING §4.11) + **per-member group values** (§4.5.1) | Vela breathes, blinks, shifts her gaze and turns her head 12° off axis. Two grid meshes and per-part parallax, and both halves of it **state their model** — the mesh keys a `yaw` transform, the feature bones a `yaw` with a depth per member. The measured experiment for [#285](https://github.com/firejune/rigc/issues/285) — see its [FINDINGS.md](portrait/FINDINGS.md) |
+| [`nod/`](nod/) | the **`pitch`** and **`wave`** transform kinds (AUTHORING §4.11.1, §4.5.1) | Lepus bows her head and her lop ears ripple. Three meshes, each laid out for the one closed form that moves it — and the two halves of *a deform model is only as good as the triangulation under it*: a fold angle the row table solves for, and a shear no amplitude can fold |
 
 The root [README.md](../README.md) indexes these under *The gallery*, and
 [AUTHORING.md](../docs/AUTHORING.md) points at each one from the section that
@@ -117,15 +122,15 @@ from GitHub.
 **The character's art scale is per-example and stated.** `rigby.ts` draws at a
 nominal size that its outline weight was chosen for, and `rasterise`'s `scale`
 re-renders rather than resampling. `ride` and `flex` ask for half of nominal
-against their wider stages; `walk` and `squash` ask for all of it, and their bone
-tables are stated in the same unit. Each `make_parts.ts` names its `ART_SCALE`
+against their wider stages; `walk`, `squash`, `portrait` and `nod` ask for all of
+it, and their bone tables are stated in the same unit. Each `make_parts.ts` names its `ART_SCALE`
 in one place.
 
 ---
 
 ## Adding one
 
-The bar, and it is the bar the five examples above were held to:
+The bar, and it is the bar the six examples above were held to:
 
 - **One starred feature**, named in the first paragraph of its README. A second
   feature is a second example.
@@ -148,12 +153,13 @@ The bar, and it is the bar the five examples above were held to:
   It compares a render's first and last frame, which needs no reference at all:
   `rigc render` samples `i = 0..round(d × fps)` inclusive, so a cycle that closes
   has the same pixels at both ends. Every animation in the gallery that declares
-  `loop: true` reads **0 / 255** — `ride`, `wave`, `walk` and `bounce` — and the
-  two one-shots beside them (`coast`, `gust`) read what a one-shot should: they
-  end somewhere else. Point it only at a loop, and own the number in the README.
-  `portrait` is the case in between and worth knowing about: its `gaze` and
-  `turn` are one-shots that return to rest exactly, so they read **0 / 255** too
-  — a one-shot ending somewhere else is a choice, not a law.
+  `loop: true` reads **0 / 255** — `ride`, `wave`, `walk`, `bounce` and `idle` —
+  and the two one-shots beside them (`coast`, `gust`) read what a one-shot
+  should: they end somewhere else. Point it only at a loop, and own the number in
+  the README. `portrait` is the case in between and worth knowing about: its
+  `gaze` and `turn` are one-shots that return to rest exactly, so they read
+  **0 / 255** too — a one-shot ending somewhere else is a choice, not a law, and
+  `nod`'s `bow` is the same case.
 
   🚨 **`--duration` is the animation's own length, and it is not optional in
   practice** ([#337](https://github.com/firejune/rigc/issues/337)). `round(d ×
@@ -165,7 +171,8 @@ The bar, and it is the bar the five examples above were held to:
   an `⚠️ UNVERIFIED` verdict. Two of the readings above needed a rate other than
   their example's own to be taken at all: `wave` is 2.4 s, so 12 fps gives 28.8
   and it is measured at **15 fps**; `portrait`'s `gaze` is 1.5 s, so 25 fps gives
-  37.5 and it is measured at **20 fps**.
+  37.5 and it is measured at **20 fps**; and `nod`'s `bow` is 1.8 s, so 12 fps
+  gives 21.6 and it is measured at **15 fps**.
 
   📏 **A seam figure is a reading at one `--max`, and the README says which**
   ([#336](https://github.com/firejune/rigc/issues/336)). A curve sampled into
@@ -194,7 +201,12 @@ The bar, and it is the bar the five examples above were held to:
   [#293](https://github.com/firejune/rigc/issues/293)) and three instrument gaps
   ([#294](https://github.com/firejune/rigc/issues/294),
   [#295](https://github.com/firejune/rigc/issues/295),
-  [#296](https://github.com/firejune/rigc/issues/296)). That is what a gallery
+  [#296](https://github.com/firejune/rigc/issues/296)); `nod` found **three**
+  more — one unrefused degenerate model
+  ([#350](https://github.com/firejune/rigc/issues/350)) and two docs stating
+  something that is no longer, or never was, true
+  ([#351](https://github.com/firejune/rigc/issues/351),
+  [#352](https://github.com/firejune/rigc/issues/352)). That is what a gallery
   is *for*, besides being read. If a tool behaves wrongly or a doc misleads you,
   file it with the reproduction and work around it in the open.
 - **`bun run selftest` covers it automatically.** Its gallery suite compiles

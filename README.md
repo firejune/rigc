@@ -386,7 +386,7 @@ limits: [AUTHORING.md §11](docs/AUTHORING.md). The parts it refuses because
 something is drawn over them are `rigc chainfit`'s, once a candidate exists —
 [§12](docs/AUTHORING.md).
 
-## The gallery — five complete rigs over art that ships with them
+## The gallery — six complete rigs over art that ships with them
 
 Each directory in [`gallery/`](https://github.com/firejune/rigc/tree/main/gallery) is
 one rig spec, one motion spec and the PNGs they name, small enough to read in one
@@ -402,6 +402,7 @@ was verified, and what writing it cost. Repository material: a clone and
 | [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex) | **`contour` meshes** | A swallow-tailed banner and a serrated leaf: four meshes traced off their own alpha, waved by bone timelines and rippled by a `deform` |
 | [`gallery/ride`](https://github.com/firejune/rigc/tree/main/gallery/ride) | `path` attachments + **path constraints** | A trolley coasting down a drawn rail and rolling back, driven by a `position` timeline, with `groups` + `stagger` keying the wheels and the ears |
 | [`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait) | **deform `transform`** + `derive` group tracks | A 2.5D head turn: two meshes and six feature bones all keyed from one stated expression, `dx = x(cos t − 1) − z·sin t`, with the depths in the spec rather than a README |
+| [`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod) | the **`pitch`** and **`wave`** transform kinds | A head bowing and two lop ears rippling, on three meshes each laid out for the closed form that moves it — a fold angle solved for before authoring, and a shear whose winding no amplitude can reverse |
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/rigc-scene.gif" alt="A portrait rig breathing, glancing aside, then turning its head in 2.5D — hair and features sliding at different depths" width="600" />
