@@ -25,6 +25,10 @@ hold its results.
   replaces a person's eye
 - A skeleton somebody else authored, and moving a pivot inside it:
   [INGEST.md](INGEST.md)
+- The hierarchy underneath a face, as a general rule rather than this closed form:
+  [RIGGING.md](RIGGING.md) — §5 is why §3's `faceshift` is a bone at all and why a
+  breath's `chest` is a **sibling** of the plate it must not scale, and §4.4 is the
+  artless-parent pattern the shared-shift split is one instance of
 - The worked example every number below comes from:
   [`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait),
   and its measurement half,

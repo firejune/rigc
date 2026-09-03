@@ -35,6 +35,9 @@ invent one.
 - The coordinate contract, in one place: **AUTHORING §11.2** and
   [`src/transform.ts`](../src/transform.ts)
 - What the editor does when nobody tells it otherwise: **AUTHORING §10**
+- Why the re-pivot in **§4.1** is shaped the way it is, and the child-bone row it
+  warns about worked on a bone that actually has one: [RIGGING.md](RIGGING.md) §3.
+  Its §2 is how to tell whether the pivot you are moving *to* is identified at all
 - What the format holds and what rigc covers, skeleton by skeleton:
   [SPEC_COVERAGE.md](SPEC_COVERAGE.md)
 - If you are the *person operating* an agent rather than the agent:

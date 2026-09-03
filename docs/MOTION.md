@@ -25,6 +25,11 @@ toolchain and this page does not invent one.
 - The parts of that picture `pose` refuses because something is drawn over them,
   once a first candidate exists: **AUTHORING §12** (`rigc chainfit`). It reports the
   `rotate` key value each answer implies, which is the form this recipe wants them in
+- If the **skeleton** is what you have to decide rather than the movement — how many
+  bones, where each pivot goes, what hangs off what, and which of those the frames
+  can check: [RIGGING.md](RIGGING.md). §3.9's pivot solve is the one piece of that
+  page this one already carries, and RIGGING §2 is what a wrong answer to it looks
+  like from inside a fit
 - If the movement is a **face** — a blink, a gaze, or a head turning off axis —
   everything on this page still applies, and [FACE.md](FACE.md) is the geometry it
   does not have: a turn is a projection rather than a pose, so its values are
