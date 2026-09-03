@@ -67,7 +67,9 @@ gallery/
   rigby.ts               the mascot: one part table, one closed palette, one
                          rasteriser. Not an example — no rig.json, so the
                          selftest's gallery suite skips it
-  loop_seam.ts           measures whether a cycle closes on its opening pose
+  loop_seam.ts           measures whether a cycle closes on its opening pose, and
+                         refuses the reading on a set whose last frame is not at
+                         the duration it was given
   stage.ts               reads a rig spec and answers where its bones are
   <name>/
     README.md            what it shows, the feature it stars, the commands, and
@@ -139,19 +141,31 @@ The bar, and it is the bar the five examples above were held to:
   a **measured** seam:
 
   ```bash
-  bun gallery/loop_seam.ts gallery/<name>/render/<animation>          # rendered at the default 12 fps
-  bun gallery/loop_seam.ts gallery/<name>/render/<animation>@25fps    # rendered at any other rate
+  bun gallery/loop_seam.ts gallery/<name>/render/<animation> --duration <seconds>        # the default 12 fps
+  bun gallery/loop_seam.ts gallery/<name>/render/<animation>@25fps --duration <seconds>  # any other rate
   ```
 
   It compares a render's first and last frame, which needs no reference at all:
-  `rigc render` samples `t = 0..duration` inclusive, so a cycle that closes has
-  the same pixels at both ends. Every animation in the gallery that declares
+  `rigc render` samples `i = 0..round(d × fps)` inclusive, so a cycle that closes
+  has the same pixels at both ends. Every animation in the gallery that declares
   `loop: true` reads **0 / 255** — `ride`, `wave`, `walk` and `bounce` — and the
   two one-shots beside them (`coast`, `gust`) read what a one-shot should: they
   end somewhere else. Point it only at a loop, and own the number in the README.
   `portrait` is the case in between and worth knowing about: its `gaze` and
   `turn` are one-shots that return to rest exactly, so they read **0 / 255** too
   — a one-shot ending somewhere else is a choice, not a law.
+
+  🚨 **`--duration` is the animation's own length, and it is not optional in
+  practice** ([#337](https://github.com/firejune/rigc/issues/337)). `round(d ×
+  fps)` puts the last frame *at* `d` only when `d × fps` is a whole number, and
+  up to half a sampling interval either side of it when it is not — so on such a
+  set the comparison is between `t = 0` and a time that is not the wrap point,
+  and it is not a seam reading at all. Given the duration the tool **refuses**
+  that set and names a rate that lands; without it, it prints the numbers under
+  an `⚠️ UNVERIFIED` verdict. Two of the readings above needed a rate other than
+  their example's own to be taken at all: `wave` is 2.4 s, so 12 fps gives 28.8
+  and it is measured at **15 fps**; `portrait`'s `gaze` is 1.5 s, so 25 fps gives
+  37.5 and it is measured at **20 fps**.
 
   ⚠️ What it cannot see is a **velocity** discontinuity. A cycle whose value
   matches at the seam but whose slope does not still reads as a hitch, and every

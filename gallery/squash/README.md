@@ -31,8 +31,10 @@ bun cli.ts render  --candidate gallery/squash/build --fps 25 --max 288 \
                    --out gallery/squash/render
 bun cli.ts preview --candidate gallery/squash/build --out gallery/squash/preview.html
 
-# does the cycle close on the pose it opened with?
-bun gallery/loop_seam.ts gallery/squash/render/bounce@25fps
+# does the cycle close on the pose it opened with? `--duration` is the animation's own
+# length out of motion.json; the tool refuses the reading when the set's last frame is
+# not at it, which is every rate `0.8 x fps` is not a whole number at (issue #337).
+bun gallery/loop_seam.ts gallery/squash/render/bounce@25fps --duration 0.8
 
 # re-draw the 16 part PNGs. Needs rsvg-convert; the PNGs are committed, so this
 # is for changing the art or checking that the committed bytes are the ones the

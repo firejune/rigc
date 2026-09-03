@@ -49,10 +49,20 @@ bun cli.ts render  --candidate gallery/portrait/build --fps 25 --max 640 \
 bun cli.ts preview --candidate gallery/portrait/build \
                    --out gallery/portrait/preview.html
 
-# do the cycles close on the poses they opened with?
-bun gallery/loop_seam.ts gallery/portrait/render/idle@25fps
-bun gallery/loop_seam.ts gallery/portrait/render/gaze@25fps
-bun gallery/loop_seam.ts gallery/portrait/render/turn@25fps
+# do the cycles close on the poses they opened with? `--duration` is the animation's
+# own length out of motion.json, and the tool REFUSES the reading when the set's last
+# frame is not at it — `render` samples `i = 0..round(d x fps)`, which lands on `d`
+# only when `d x fps` is a whole number (issue #337).
+bun gallery/loop_seam.ts gallery/portrait/render/idle@25fps --duration 3.2
+bun gallery/loop_seam.ts gallery/portrait/render/turn@25fps --duration 2.2
+
+# `gaze` is 1.5s and `1.5 x 25 = 37.5`, so its 25 fps set's last frame sits at 1.52s —
+# past the end, not the wrap point — and the tool says so instead of reporting a
+# number. 1.5s lands on every even rate, so measure that one at 20 fps. Into `render/`
+# (git-ignored, repository root) so the 25 fps sidecar above is left alone.
+bun cli.ts render --candidate gallery/portrait/build --animation gaze --fps 20 --max 640 \
+                  --out render
+bun gallery/loop_seam.ts render/gaze@20fps --duration 1.5
 
 # re-draw the 22 part PNGs. Needs rsvg-convert; the PNGs are committed, so this
 # is for changing the art or checking that the committed bytes are the ones the
@@ -520,7 +530,7 @@ of the two profiles the gallery bar asks for.
 | the band ratios | **0.637 / 0.892 / 1.064 / 1.319**, measured on the posed mesh, matching the table above |
 | the blink, as pixels | at the shut hold (`f0028`, `f0029`), hiding `eye_l`, `eye_r`, `iris_l`, `iris_r`, `spark_l`, `spark_r` entirely changes **0 pixels of 305 920** (worst channel difference 2) — the lid occludes the whole assembly. Positive control: at `f0000` the same substitution moves **8 183** pixels |
 | `rigc render` | 81 + 39 + 56 frames at 25 fps, 478×640. Contact sheets **looked at** for all three, plus 1:1 crops of the turn extreme, the blink and the gaze — which is where four of the five art defects in the notes below were caught |
-| loop seams | **0 / 255**, 0 pixels differing, for **all three**: `idle` because it loops, and `gaze` and `turn` because a one-shot that returns to rest lands back on its opening pose exactly |
+| loop seams | **0 / 255**, 0 pixels differing, for **all three**: `idle` because it loops, and `gaze` and `turn` because a one-shot that returns to rest lands back on its opening pose exactly. ⚠️ Two of the three are read off the 25 fps sets above and the third is not, and the reason is arithmetic rather than art: `render` samples `i = 0..round(d × fps)`, so a set's last frame is at the duration only when `d × fps` is whole. `idle` (3.2 × 25 = 80) and `turn` (2.2 × 25 = 55) are; `gaze` (1.5 × 25 = **37.5**) is not, and its 25 fps last frame sits 0.02 s *past* 1.5 s — so `loop_seam.ts` refuses that pair rather than reporting it ([#337](https://github.com/firejune/rigc/issues/337)). Re-rendered at **20 fps**, where all three products are whole, `gaze` reads **0 / 255, 0 pixels differing** too — and so do the other two (65 / 31 / 45 frames) |
 | `rigc preview` | boots in the official Spine Web Player 4.3 and draws all 3 animations — headless chromium over CDP, **0 console errors, 0 page exceptions, 0 log-level errors** |
 | `bun run selftest` | includes `GALLERY_EXAMPLE_IS_GREEN[portrait]` (18 assertions, 3 animations), green with the example corpus fetched |
 | part determinism | `make_parts.ts` twice ⇒ identical bytes for all 22 PNGs |

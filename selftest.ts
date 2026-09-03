@@ -178,6 +178,7 @@ import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeleton
 import { skeletonDataFromText, surveyDeformKeys } from './src/deformmeasure.ts';
 import { assertionCountForProfile, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
+import { exactDecimal, landingRates, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
@@ -13782,6 +13783,152 @@ function runBallotSuite(): number {
 }
 
 /**
+ * The loop-seam tool's sampling clause, and every invocation the gallery ships.
+ *
+ * ⭐ **Why this is a gate and not a README claim.** `gallery/loop_seam.ts`
+ * compares a set's first frame against its last and calls the difference the
+ * seam, which is only a seam if the last frame is at the animation's *duration*.
+ * `render` samples `i = 0..round(d · fps)`, so it is — exactly when `d · fps` is
+ * a whole number. Where it is not, the tool was comparing `t = 0` against a time
+ * that is not the wrap point and reporting the result as a seam
+ * ([#337](https://github.com/firejune/rigc/issues/337)): on `portrait`'s `idle`,
+ * a cycle that does close, the default `--fps 12` read **14 276 pixels at
+ * 206/255**.
+ *
+ * The pixel readings themselves stay in the examples' READMEs — the gallery
+ * suite below says why. What is here is the half a README cannot check about
+ * itself: the arithmetic that decides whether a reading is a reading, and
+ * whether the commands the examples tell a stranger to run are on the right side
+ * of it. LS03 is the case that would have caught the defect — two shipped
+ * invocations were at rates that do not land, and both read 0 by luck.
+ */
+function runLoopSeamSuite(): number {
+  let bad = 0;
+  console.log('\n── the loop-seam tool: sampling clause (issue #337) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  // --- LS01: the four rows of #337's own table ------------------------------
+  // Two land and two do not, which is what makes this a control rather than a
+  // restatement: a `samplingOf` that returned `lands: true` unconditionally —
+  // the assumption the tool shipped with — fails on rows 2 and 4.
+  const rows: { animation: string; duration: number; fps: number; lastTime: number; lands: boolean }[] = [
+    { animation: 'portrait/idle', duration: 3.2, fps: 25, lastTime: 3.2, lands: true },
+    { animation: 'portrait/idle', duration: 3.2, fps: 12, lastTime: 38 / 12, lands: false },
+    { animation: 'portrait/turn', duration: 2.2, fps: 25, lastTime: 2.2, lands: true },
+    { animation: 'portrait/gaze', duration: 1.5, fps: 25, lastTime: 1.52, lands: false },
+  ];
+  const wrong = rows.filter((row) => {
+    const got = samplingOf(row.duration, row.fps);
+    return got.lands !== row.lands || Math.abs(got.lastTime - row.lastTime) > 1e-9;
+  });
+  say(
+    'LS01_THE_LAST_SAMPLE_IS_AT_THE_DURATION_ONLY_WHEN_THE_PRODUCT_IS_WHOLE',
+    wrong.length === 0 && rows.filter((r) => r.lands).length === 2,
+    `${rows.length} row(s) of issue #337's table: ${wrong.length} disagree with samplingOf` +
+      (wrong.length === 0 ? '' : ` (${wrong.map((r) => `${r.animation}@${r.fps}`).join(', ')})`),
+    'the tool asserted this unconditionally in its own header, and the assertion is conditional. Two rows land ' +
+      'and two do not, so an unconditional answer of either kind fails half the table',
+  );
+
+  // --- LS02: the refusal names rates, and names them exactly ----------------
+  // Through the decimal's own digits rather than the double: `3.2` is not
+  // representable, so `3.2 * 15 === 48` is a fact about IEEE rounding. In lowest
+  // terms `d = n / q` makes the landing rates structural — the multiples of `q`.
+  const reduced = exactDecimal('3.2');
+  const wave = landingRates('2.4', 12);
+  const gaze = landingRates('1.5', 25);
+  const whole = landingRates('4', 12);
+  say(
+    'LS02_THE_RATES_THAT_LAND_ARE_THE_MULTIPLES_OF_THE_REDUCED_DENOMINATOR',
+    reduced?.numerator === 16 &&
+      reduced?.denominator === 5 &&
+      wave?.every === 5 &&
+      wave?.nextAtOrAbove === 15 &&
+      gaze?.every === 2 &&
+      gaze?.nextAtOrAbove === 26 &&
+      whole?.every === 1 &&
+      samplingOf(2.4, 15).lands &&
+      samplingOf(1.5, 26).lands,
+    `3.2 reduces to ${reduced?.numerator}/${reduced?.denominator}; 2.4 lands on multiples of ${wave?.every} ` +
+      `(first at or above 12 fps: ${wave?.nextAtOrAbove}), 1.5 on multiples of ${gaze?.every} ` +
+      `(first at or above 25 fps: ${gaze?.nextAtOrAbove}), 4 on every integer rate (${whole?.every})`,
+    'a refusal that only said "this rate does not work" would leave the reader searching. The two rates it ' +
+      'names here are the ones the gallery now measures `wave` and `gaze` at, and samplingOf confirms both land',
+  );
+
+  // --- LS03: every invocation the gallery ships is one the tool will take ----
+  // The case that would have caught #337. A README's own pixel figures are its
+  // to own; whether the command it hands a stranger is a measurement at all is
+  // not, because the answer is arithmetic that lives here.
+  const galleryRoot = resolve(import.meta.dir, 'gallery');
+  if (!existsSync(galleryRoot)) {
+    console.log('  INFO  no gallery/ directory, so no shipped invocation was checked in this run.');
+    return bad;
+  }
+  const examples = readdirSync(galleryRoot)
+    .filter((name) => existsSync(join(galleryRoot, name, 'README.md')) && existsSync(join(galleryRoot, name, 'motion.json')))
+    .sort();
+  const invocations: { where: string; set: string; fps: number; stated: string | undefined; declared: number | null }[] =
+    [];
+  for (const example of examples) {
+    const readme = join(galleryRoot, example, 'README.md');
+    const motion: unknown = JSON.parse(readFileSync(join(galleryRoot, example, 'motion.json'), 'utf8'));
+    const declaredOf = (name: string): number | null => {
+      const table = (motion as { animations?: Record<string, { duration?: unknown }> }).animations;
+      const duration = table?.[name]?.duration;
+      return typeof duration === 'number' ? duration : null;
+    };
+    const text = readFileSync(readme, 'utf8');
+    // `--duration` may be spelled either way, and a placeholder line in the
+    // index (`<animation>`) is documentation rather than an invocation.
+    const pattern = /bun gallery\/loop_seam\.ts\s+(\S+)(?:\s+--duration[= ]+(\S+))?/g;
+    for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
+      if (m[1].includes('<')) continue;
+      const set = basename(m[1]);
+      const at = set.indexOf('@');
+      const animation = at === -1 ? set : set.slice(0, at);
+      const rate = at === -1 ? PROTOCOL_FPS : Number(set.slice(at + 1).replace(/fps$/, ''));
+      invocations.push({
+        where: `${example}/README.md`,
+        set,
+        fps: rate,
+        stated: m[2],
+        declared: declaredOf(animation),
+      });
+    }
+  }
+  const faults = invocations.flatMap((inv) => {
+    if (inv.declared === null) return [`${inv.where}: ${inv.set} names no animation this example's motion.json declares`];
+    if (inv.stated === undefined) return [`${inv.where}: ${inv.set} passes no --duration, so its reading is unverified`];
+    if (Math.abs(Number(inv.stated) - inv.declared) > 1e-9) {
+      return [`${inv.where}: ${inv.set} states --duration ${inv.stated}, but motion.json declares ${inv.declared}`];
+    }
+    if (!samplingOf(inv.declared, inv.fps).lands) {
+      const rates = landingRates(inv.stated, inv.fps);
+      return [
+        `${inv.where}: ${inv.set} is ${inv.declared}s at ${inv.fps} fps, and ${inv.declared} x ${inv.fps} = ` +
+          `${inv.declared * inv.fps} is not whole, so its last frame is not the wrap point — render it at ` +
+          `${rates ? rates.nextAtOrAbove : 'a rate that lands'} fps instead`,
+      ];
+    }
+    return [];
+  });
+  say(
+    'LS03_EVERY_SHIPPED_LOOP_SEAM_INVOCATION_IS_A_MEASUREMENT_THE_TOOL_WILL_TAKE',
+    faults.length === 0 && invocations.length > 0,
+    `${invocations.length} invocation(s) across ${examples.length} example README(s): ${faults.length} the tool ` +
+      `would refuse or take unverified` + (faults.length === 0 ? '' : `\n          ${faults.join('\n          ')}`),
+    'red-first: on the READMEs as they shipped this counted 5 invocations and faulted all 5 — none passed a ' +
+      'duration at all — and one of them (portrait/gaze@25fps, 1.5s at 25 fps) was at a rate that does not ' +
+      'land, so its published 0 / 255 was luck. The invocation count is the positive control: a scan that ' +
+      'matched nothing would pass this while checking nothing',
+  );
+  return bad;
+}
+
+/**
  * Every example in `gallery/` compiles and gates green.
  *
  * ⭐ One check, and it is not a duplicate of the suites above. Those are
@@ -14031,6 +14178,7 @@ function main(): void {
     bad += checkBad;
     substantive += 3;
   }
+  bad += runLoopSeamSuite();
   const gallery = runGallerySuite();
   bad += gallery.failures;
   substantive += gallery.examples;
@@ -14076,6 +14224,11 @@ function main(): void {
             'leaf bone that moves position and nothing else, the same bone turned 30° that reads 30° and moves the ' +
             'matrix but not the scale, and a renamed bone that is named as unmatched under `identity` and returns to ' +
             'exactly zero under a supplied correspondence)');
+  const loopSeam =
+    ', + 3 loop-seam sampling controls (issue #337 — the four rows of the issue’s own table, two of which land on ' +
+    'the duration and two of which do not; the landing rates named as the multiples of the duration’s reduced ' +
+    'denominator rather than searched for; and every loop-seam invocation the gallery READMEs ship being a ' +
+    'measurement the tool will actually take, which is the case that would have caught the defect)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
@@ -14247,6 +14400,7 @@ function main(): void {
           'rotated region refused rather than guessed, page-name rewriting that touches only the name lines, the ' +
           'two readers of `scale:` held to one answer, and every descaled corpus region measured against the ' +
           'loose drawing beside it)') +
+      loopSeam +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (launcher.startsWith(',') ? '' : launcher) +
