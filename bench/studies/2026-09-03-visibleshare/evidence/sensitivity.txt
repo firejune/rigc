@@ -1,0 +1,101 @@
+visibleShare study — sensitivity to a fit perturbation, by basis and rung
+
+corpus 147 frames (bench/reference/spineboy/ess) · candidate bench/runs/2026-09-03-spineboy-2/spine
+--min-visible 0 · 8 replicates/rung · seed 20260903
+bases: declared = goggles,head,mouth-grind,mouth-oooo,mouth-smile,torso (the basis the quoted medians are on) · pose-criterion = pose's own §12.2 test (the basis #322's observation is on)
+
+`dRes` is the largest |Dresidual| the jitter induced on any part THIS basis anchors on, re-measured
+with pose's own objective. `|Dshare|` is per (frame, part, replicate) against the unperturbed fit.
+The slope column is a ratio of medians, not a median of ratios: dividing each replicate by its own
+denominator — a residual difference of order 1e-4 — turns a rounding difference into an unbounded
+number.
+
+basis                      rung         jitter bound  median dRes  paired  med |dShare|     p90     p99     max  med dShare/0.001res  p99 dShare/0.001res  vanished  appeared
+--------------  ---------------  -------------------  -----------  ------  ------------  ------  ------  ------  -------------------  -------------------  --------  --------
+declared           polish-floor   0.05px/0.1deg/0.1%     0.000288   18048        0.0005  0.0297  0.5592  0.9401               0.0017               1.9398         0        52
+declared        polish-floor-2x    0.1px/0.2deg/0.2%     0.000689   18048        0.0009  0.0585  0.6219  0.9579               0.0013               0.9030         0        91
+declared            pr322-scale    0.2px/0.4deg/0.4%     0.001950   18048        0.0015  0.1114  0.6603  1.0000               0.0008               0.3386         0        52
+declared         readback-floor  0.16px/0.27deg/3.1%     0.010262   17557        0.0024  0.2120  0.7336  1.0000               0.0002               0.0715       491        78
+declared            control-1px        1px/1deg/1.0%     0.026901   15326        0.0027  0.2965  0.7568  1.0000               0.0001               0.0281      2722         0
+pose-criterion     polish-floor   0.05px/0.1deg/0.1%     0.000536   19800        0.0004  0.0065  0.1865  1.0000               0.0007               0.3482         0        19
+pose-criterion  polish-floor-2x    0.1px/0.2deg/0.2%     0.001281   19798        0.0007  0.0135  0.3382  1.0000               0.0005               0.2640         2        36
+pose-criterion      pr322-scale    0.2px/0.4deg/0.4%     0.003598   19730        0.0012  0.0315  0.5109  1.0000               0.0003               0.1420        70        20
+pose-criterion   readback-floor  0.16px/0.27deg/3.1%     0.012573   19481        0.0017  0.0694  0.6256  0.9980               0.0001               0.0498       319        28
+pose-criterion      control-1px        1px/1deg/1.0%     0.048418   17351        0.0039  0.2855  0.8245  1.0000               0.0001               0.0170      2449         0
+
+## how often the swing is large — share of paired readings over a threshold
+
+basis                      rung  paired   >0.01   >0.05   >0.10   >0.25  >0.50
+--------------  ---------------  ------  ------  ------  ------  ------  -----
+declared           polish-floor   18048  15.08%   7.88%   5.71%   3.34%  1.29%
+declared        polish-floor-2x   18048  19.99%  10.63%   8.00%   4.93%  1.86%
+declared            pr322-scale   18048  26.56%  13.77%  10.43%   6.24%  2.54%
+declared         readback-floor   17557  34.69%  19.96%  15.50%   8.99%  3.95%
+declared            control-1px   15326  37.87%  23.70%  18.67%  11.09%  5.79%
+pose-criterion     polish-floor   19800   7.26%   2.52%   1.75%   0.74%  0.17%
+pose-criterion  polish-floor-2x   19798  12.28%   4.27%   2.90%   1.38%  0.43%
+pose-criterion      pr322-scale   19730  20.22%   8.15%   5.57%   2.83%  1.05%
+pose-criterion   readback-floor   19481  28.29%  11.80%   8.16%   4.36%  1.69%
+pose-criterion      control-1px   17351  42.44%  26.89%  19.80%  11.43%  5.58%
+
+## the discrete channels — what a sub-band move can flip outright
+
+basis                      rung  replicates  anchor set changed  anchor eligibility flipped  refusal reason moved
+--------------  ---------------  ----------  ------------------  --------------------------  --------------------
+declared           polish-floor        1176            4 (0.3%)                    4 (0.3%)    1061/21168 (5.01%)
+declared        polish-floor-2x        1176            7 (0.6%)                    7 (0.6%)    1396/21168 (6.59%)
+declared            pr322-scale        1176            4 (0.3%)                    5 (0.4%)    1715/21168 (8.10%)
+declared         readback-floor        1176           63 (5.4%)                 257 (21.9%)   2682/21168 (12.67%)
+declared            control-1px        1176         219 (18.6%)                 842 (71.6%)   4946/21168 (23.37%)
+pose-criterion     polish-floor        1176           20 (1.7%)                   20 (1.7%)     411/21168 (1.94%)
+pose-criterion  polish-floor-2x        1176           43 (3.7%)                   43 (3.7%)     671/21168 (3.17%)
+pose-criterion      pr322-scale        1176         196 (16.7%)                 197 (16.8%)    1187/21168 (5.61%)
+pose-criterion   readback-floor        1176         257 (21.9%)                 424 (36.1%)    1705/21168 (8.05%)
+pose-criterion      control-1px        1176         982 (83.5%)                1105 (94.0%)   4865/21168 (22.98%)
+
+## the two share fields, side by side
+
+`visibleShare` is measured on the set frozen at each bone's SEED placement; `visibleShareAtFit` is the
+same share recomputed where the answer landed, in one reverse-draw-order sweep over the final
+placements. If the frozen field is the unstable one, the instrument already carries a steadier
+quantity and the repair is which field gets quoted. `base drift` is |atFit - share| on the
+unperturbed fit: the instrument's own flag that the two disagree.
+
+basis                      rung  share med  share p99  share max  atFit med  atFit p99  atFit max  base drift med  base drift p99
+--------------  ---------------  ---------  ---------  ---------  ---------  ---------  ---------  --------------  --------------
+declared           polish-floor     0.0005     0.5592     0.9401     0.0007     0.6588     0.9749          0.0000          0.9148
+declared        polish-floor-2x     0.0009     0.6219     0.9579     0.0013     0.7296     0.9924          0.0000          0.9148
+declared            pr322-scale     0.0015     0.6603     1.0000     0.0024     0.7948     1.0000          0.0000          0.9148
+declared         readback-floor     0.0024     0.7336     1.0000     0.0041     0.8072     0.9997          0.0000          0.9172
+declared            control-1px     0.0027     0.7568     1.0000     0.0046     0.8189     1.0000          0.0000          0.9203
+pose-criterion     polish-floor     0.0004     0.1865     1.0000     0.0004     0.4462     1.0000          0.0000          0.6792
+pose-criterion  polish-floor-2x     0.0007     0.3382     1.0000     0.0007     0.5138     1.0000          0.0000          0.6792
+pose-criterion      pr322-scale     0.0012     0.5109     1.0000     0.0013     0.6120     0.9973          0.0000          0.6792
+pose-criterion   readback-floor     0.0017     0.6256     0.9980     0.0018     0.6543     0.9980          0.0000          0.6792
+pose-criterion      control-1px     0.0039     0.8245     1.0000     0.0042     0.8055     1.0000          0.0000          0.6934
+
+## attribution — of the cells that swing by more than 0.1, what moved
+
+`fit moved`   the part's own placement travelled >1 px or turned >5 deg (chainfit's own
+              AMBIGUITY_HINGE_DEG): the share is faithfully reporting a limb that landed elsewhere.
+`mask only`   the part stayed within 0.25 px and 1 deg of where it was, so the share moved
+              without the part moving. Split by whether anything ELSE on the frame relocated.
+`between`     neither test — reported rather than assigned.
+
+The class that would make this a DEFINITIONAL problem is `mask only, nothing else moved`: a share
+that changes while every placement on the frame stands still is a statement about the mask and not
+about the fit.
+
+basis                      rung  cells >0.1     fit moved    mask only    of which nothing else moved  between  median max other move px
+--------------  ---------------  ----------  ------------  -----------  -----------------------------  -------  ------------------------
+declared           polish-floor        1030   649 (63.0%)  331 (32.1%)                       5 (0.5%)       50                     42.59
+declared        polish-floor-2x        1443   900 (62.4%)  451 (31.3%)                       9 (0.6%)       92                     43.10
+declared            pr322-scale        1883  1134 (60.2%)  544 (28.9%)                       5 (0.3%)      205                     50.11
+declared         readback-floor        2722  1662 (61.1%)  655 (24.1%)                      22 (0.8%)      405                     55.45
+declared            control-1px        2862  1893 (66.1%)    44 (1.5%)                      10 (0.3%)      925                     52.16
+pose-criterion     polish-floor         347   221 (63.7%)  105 (30.3%)                       7 (2.0%)       21                     22.56
+pose-criterion  polish-floor-2x         574   388 (67.6%)  164 (28.6%)                       6 (1.0%)       22                     22.52
+pose-criterion      pr322-scale        1099   687 (62.5%)  310 (28.2%)                       6 (0.5%)      102                     23.79
+pose-criterion   readback-floor        1589   888 (55.9%)  468 (29.5%)                      10 (0.6%)      233                     24.27
+pose-criterion      control-1px        3435  2210 (64.3%)    77 (2.2%)                       5 (0.1%)     1148                     18.19
+

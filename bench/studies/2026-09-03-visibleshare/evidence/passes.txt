@@ -1,0 +1,18 @@
+visibleShare study — the same perturbation at --passes 1, 2, 4
+
+rung polish-floor · 147 frames · 6 replicates · seed 20260903
+
+`visibleShare` is measured on the set frozen at each bone's seed, and pass n+1 seeds on pass n's own
+answer. So if the swing is an artifact of measuring the set somewhere the answer is not, more passes
+converge the two and it shrinks. A swing that is FLAT in `--passes` is the fit moving, and no mask
+definition reaches it.
+
+basis           passes  paired  med |dShare|     p90     p99     max   >0.10  atFit p99  base drift med  vanished
+--------------  ------  ------  ------------  ------  ------  ------  ------  ---------  --------------  --------
+declared             1   13536        0.0004  0.0053  0.0715  0.6525   0.78%     0.4428          0.0000         0
+declared             2   13536        0.0005  0.0271  0.5495  0.9401   5.45%     0.6585          0.0000         0
+declared             4   13536        0.0008  0.2104  0.8138  1.0000  15.17%     0.7887          0.0000         0
+pose-criterion       1   14850        0.0004  0.0047  0.0349  0.8287   0.51%     0.1496          0.0000         0
+pose-criterion       2   14850        0.0004  0.0065  0.1923  1.0000   1.73%     0.4558          0.0000         0
+pose-criterion       4   14850        0.0004  0.0154  0.4686  0.8908   4.13%     0.5176          0.0000         0
+

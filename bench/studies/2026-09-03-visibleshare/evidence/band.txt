@@ -1,0 +1,49 @@
+visibleShare study — the perturbation band, priced in residual
+
+One axis at a time off each declared anchor's own reported placement, both signs, the objective
+re-measured with pose's own arithmetic. `delta` is the mean |Δresidual| over the two signs.
+
+The two bands this study perturbs inside of, and where they came from:
+  polish floor   0.05 px / 0.1° / 0.1% scale  — src/pose.ts level-0 polish `floor`, the step at which
+                                                the pattern search stops halving and returns
+  readback floor 0.16 px / 0.27° / 3.1% scale — PS01/PS02 worst known-answer readback, #306 re-baseline
+
+For scale: PR #322's accidental objective change moved rear-bracer's anchor residual by 0.0008.
+
+## displacement on x (px)
+
+magnitude  probes  median dRes  p90 dRes  max dRes                 
+---------  ------  -----------  --------  --------  ---------------
+0.0005        882     0.000001  0.000003  0.000007                 
+0.005         882     0.000008  0.000028  0.000069                 
+0.05          882     0.000087  0.000274  0.000686  <- polish floor
+0.1           882     0.000264  0.000559  0.001323                 
+0.2           882     0.000925  0.001793  0.002471                 
+0.5           882     0.004588  0.009971  0.013086                 
+1             882     0.015456  0.030936  0.039326                 
+2             882     0.043380  0.073507  0.105648                 
+
+## displacement on rot (deg)
+
+magnitude  probes  median dRes  p90 dRes  max dRes                   
+---------  ------  -----------  --------  --------  -----------------
+0.01          882     0.000003  0.000007  0.000020                   
+0.1           882     0.000031  0.000071  0.000199    <- polish floor
+0.2           882     0.000084  0.000139  0.000396                   
+0.27          882     0.000122  0.000206  0.000532  <- readback floor
+0.4           882     0.000209  0.000432  0.000785                   
+1             882     0.000613  0.002518  0.002779                   
+2             882     0.001647  0.008633  0.009321                   
+
+## displacement on scale (scale ratio)
+
+magnitude  probes  median dRes  p90 dRes  max dRes                   
+---------  ------  -----------  --------  --------  -----------------
+0.01%         882     0.000010  0.000034  0.000071                   
+0.10%         882     0.000103  0.000342  0.000710    <- polish floor
+0.20%         882     0.000205  0.000683  0.001421                   
+0.40%         882     0.000406  0.001370  0.002839                   
+1.00%         882     0.001133  0.003408  0.007031                   
+3.10%         882     0.003673  0.019109  0.020680  <- readback floor
+10.00%        882     0.013763  0.084039  0.087471                   
+

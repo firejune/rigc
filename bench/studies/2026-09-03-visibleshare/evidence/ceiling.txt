@@ -1,0 +1,56 @@
+visibleShare study — the kind-5 ceiling and its bar, recomputed on each replicate
+
+rung polish-floor · 147 frames · 8 replicates · seed 20260903 · --min-visible 0.05
+
+Gate v2.4's kind-5 visibility ceiling has exactly one implementation: the 2026-09-03 run 2's
+`tools/readdown.ts`, which states its convention as *chainfit's visibleShare, taken as the MAXIMUM
+over all 147 committed frames*, mapped part -> slot through the skins. Its BAR is *the smallest
+ceiling among the slots check DOES attribute* — a minimum over slots of a maximum over frames.
+
+Both are extreme-order statistics of the quantity this study measures. This table recomputes them
+per replicate. The attribution half is TAKEN from that run's frozen evidence/g2-read-down.txt and not
+re-derived: the slots blank everywhere in that corpus are
+  eye, rear-upper-arm, front-thigh, gun, muzzle, muzzle-glow, muzzle-ring
+so exactly one of the clause's two inputs moves here and the other is held at the record's value.
+
+⚠️ The ABSOLUTE numbers are not a re-derivation of that record. It read a probe candidate through its
+own pipeline; this reads the committed spine/skeleton.json under this study's declared anchor basis.
+What transfers is the SPREAD.
+
+## the ceiling per slot — max visibleShare over the corpus, per replicate
+
+slot             clause side  base ceiling %  min over reps %  max %  spread pts
+---------------  -----------  --------------  ---------------  -----  ----------
+eye                    blank             0.6              0.5    0.6         0.1
+front-bracer      attributed            92.2             92.0   92.3         0.3
+front-fist        attributed           100.0            100.0  100.0         0.0
+front-foot        attributed           100.0            100.0  100.0         0.0
+front-shin        attributed           100.0             78.8  100.0        21.2
+front-thigh            blank            84.1             84.2   84.6         0.5
+front-upper-arm   attributed            95.0             94.6   95.0         0.4
+goggles           attributed            99.9             99.9   99.9         0.0
+gun                    blank            98.8             98.8   99.5         0.7
+head              attributed            50.2             50.2   50.3         0.1
+mouth             attributed           100.0            100.0  100.0         0.0
+neck              attributed            66.9             66.9   67.6         0.7
+rear-bracer       attributed            97.0             96.7   97.0         0.3
+rear-foot         attributed           100.0            100.0  100.0         0.0
+rear-shin         attributed           100.0            100.0  100.0         0.0
+rear-thigh        attributed            63.3             63.0   63.3         0.3
+rear-upper-arm         blank            37.9             37.8   38.1         0.3
+torso             attributed            75.6             74.4   76.3         1.9
+
+## the bar, and which blank slots clear it
+
+fit    bar %  bar set by  blank slots below the bar               which
+-----  -----  ----------  -------------------------  ------------------
+base    50.2        head                          2  eye,rear-upper-arm
+rep 0   50.3        head                          2  eye,rear-upper-arm
+rep 1   50.2        head                          2  eye,rear-upper-arm
+rep 2   50.3        head                          2  eye,rear-upper-arm
+rep 3   50.3        head                          2  eye,rear-upper-arm
+rep 4   50.2        head                          2  eye,rear-upper-arm
+rep 5   50.2        head                          2  eye,rear-upper-arm
+rep 6   50.3        head                          2  eye,rear-upper-arm
+rep 7   50.3        head                          2  eye,rear-upper-arm
+
