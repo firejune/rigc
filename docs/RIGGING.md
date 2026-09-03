@@ -866,9 +866,11 @@ rigc bonedist --candidate out --reference out --bones vs-home.json --fps 30 --al
         trunk                    0.192422/0.542679
 ```
 
-⚠️ `position` is in **skeleton sizes** (AUTHORING's sibling doc
-[BENCHMARK.md](BENCHMARK.md) states the conventions, and the report prints them);
-the header names the size, so multiply back:
+⚠️ `position` is in **skeleton sizes** — each bone's world origin relative to its
+own skeleton's root, divided by the greatest root-to-bone distance in that
+skeleton's setup pose. The report prints that convention and the other three
+verbatim above the figures, and its header names the size it used, so multiply
+back:
 
 | bone | its own key | the sum along its chain | `worst × 132.880` |
 | --- | ---: | ---: | ---: |
