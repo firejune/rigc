@@ -413,6 +413,12 @@ feature carries its own depth. Scene direction of this kind was Live2D's territo
 split was authoring cost, and the cost is now one stated expression per key. Compiled and
 rendered entirely by the published package.</em></p>
 
+🎞️ **How the three films on this page were made** is kept with them, one directory per
+film in [`films/`](https://github.com/firejune/rigc/tree/main/films) — a `run.sh` that
+names every step, the assembler that cuts the shots and draws the type, and a README
+saying what the film claims and which tool printed each figure on screen. Repository
+material, like the gallery: a clone runs them.
+
 ## Commands
 
 Every command takes its paths explicitly. `rigc <command> --help` prints its flags, and
