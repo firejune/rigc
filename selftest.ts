@@ -5489,6 +5489,279 @@ function deformKeysOf(animation: Record<string, unknown>, slot: string): Array<R
 }
 
 // ---------------------------------------------------------------------------
+// a named easing on a hold is emitted stepped — issue #369
+// ---------------------------------------------------------------------------
+//
+// The editor's export rewrites a bezier whose segment holds the same value on
+// every channel as `"curve": "stepped"`, and the two encodings draw the same
+// frames — a curve from a value to the same value is a flat line. rigc emits what
+// the editor writes, and the controls below pin the EDGES of that rule rather
+// than its centre: it fires on a hold and not on the moving segment beside it; a
+// multi-channel key holds only when every channel does; "the same value" is the
+// EMITTED one (`r6` for a number, the hex for an rgba key, the expanded run for a
+// deform key, so two spellings of one run are one geometry); a raw curve is left
+// exactly as written, because the reference corpus has the editor itself shipping
+// beziers over holds and the escape hatch has to be able to say one; and the
+// rewrite is invisible to spine-core — the hold poses the same whether it is
+// spelled as a named easing, as `stepped`, or as linear.
+
+function runHoldCurveSuite(): number {
+  console.log('\n── a named easing on a hold is emitted stepped (issue #369) ──');
+  let bad = 0;
+  const dirs = writeProbeRig(TIMELINE_RIG);
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const anim = (body: Record<string, unknown>): Record<string, unknown> => ({ duration: 1, loop: false, tracks: [], ...body });
+  const build = (body: Record<string, unknown>): CompileResult => {
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(timelineMotion(anim(body)), null, 2)}\n`);
+    return compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+  };
+  const kindOf = (key: Record<string, unknown> | undefined): string => {
+    const curve = key?.curve;
+    if (curve === undefined) return 'linear';
+    if (curve === 'stepped') return 'stepped';
+    return Array.isArray(curve) ? `bezier[${curve.length}]` : 'other';
+  };
+  const kinds = (keys: Array<Record<string, unknown>>): string => keys.map(kindOf).join(' ');
+  const move = (result: CompileResult): (typeof result.skeleton.animations)[string] => result.skeleton.animations.move;
+
+  // --- HC01: the hold, and the moving segment right beside it ----------------
+  const held = {
+    tracks: [
+      {
+        bone: 'thigh',
+        property: 'rotate',
+        keys: [
+          { t: 0, v: [10], ease: 'lateBloom' },
+          { t: 0.5, v: [10], ease: 'lateBloom' },
+          { t: 1, v: [40] },
+        ],
+      },
+    ],
+  };
+  const rotate = build(held);
+  const rotateKeys = emittedBoneKeys(rotate, 'move', 'thigh', 'rotate');
+  say(
+    'HC01_A_NAMED_EASING_ON_A_HOLD_EMITS_STEPPED_AND_ON_A_MOVE_STILL_A_BEZIER',
+    kinds(rotateKeys) === 'stepped bezier[4] linear',
+    `rotate 10 -> 10 -> 40 with the same easing on both segments emits [${kinds(rotateKeys)}]`,
+    'the editor writes a bezier over a flat segment as stepped on export (14 keys on the nod example alone), and a ' +
+      "build that says bezier there reads as a timing difference on diff's curve_kinds where the animation has none",
+  );
+
+  // --- HC02 / HC03: a multi-channel key holds only when EVERY channel does ----
+  const partial = build({
+    tracks: [
+      {
+        bone: 'thigh',
+        property: 'translate',
+        keys: [
+          { t: 0, v: [0, 5], ease: 'lateBloom' },
+          { t: 1, v: [8, 5] },
+        ],
+      },
+    ],
+  });
+  const partialKey = emittedBoneKeys(partial, 'move', 'thigh', 'translate')[0];
+  say(
+    'HC02_A_KEY_HOLDING_ON_ONE_CHANNEL_ONLY_IS_NOT_A_HOLD',
+    kindOf(partialKey) === 'bezier[8]',
+    `translate (0, 5) -> (8, 5), y held and x moving: ${kindOf(partialKey)}`,
+    'a stepped curve applies to the whole key, so a rewrite here would freeze x for the segment and snap it at the ' +
+      'end — a wrong picture behind a green gate',
+  );
+  const whole = build({
+    tracks: [
+      {
+        bone: 'thigh',
+        property: 'translate',
+        keys: [
+          { t: 0, v: [8, 5], ease: 'lateBloom' },
+          { t: 0.5, v: [8, 5], ease: 'lateBloom' },
+          { t: 1, v: [0, 0] },
+        ],
+      },
+    ],
+  });
+  const wholeKeys = emittedBoneKeys(whole, 'move', 'thigh', 'translate');
+  say(
+    'HC03_A_KEY_HOLDING_ON_EVERY_CHANNEL_IS_A_HOLD',
+    kinds(wholeKeys) === 'stepped bezier[8] linear',
+    `translate (8, 5) -> (8, 5) -> (0, 0) emits [${kinds(wholeKeys)}]`,
+    'the two-channel case is where a per-channel test and a per-key test disagree, and the file has one curve per key',
+  );
+
+  // --- HC04: "the same value" is the EMITTED value ---------------------------
+  const rounded = build({
+    tracks: [
+      {
+        bone: 'thigh',
+        property: 'rotate',
+        keys: [
+          { t: 0, v: [10], ease: 'lateBloom' },
+          { t: 0.5, v: [10.0000004], ease: 'lateBloom' },
+          { t: 1, v: [40] },
+        ],
+      },
+    ],
+  });
+  const roundedKeys = emittedBoneKeys(rounded, 'move', 'thigh', 'rotate');
+  say(
+    'HC04_THE_HOLD_TEST_READS_THE_EMITTED_SIX_DECIMALS',
+    kindOf(roundedKeys[0]) === 'stepped' && roundedKeys[1].value === 10,
+    `10 -> 10.0000004 emits value ${String(roundedKeys[1].value)} and ${kindOf(roundedKeys[0])}`,
+    'the file holds six decimals, so two authored values that round to one figure are one value to the runtime and ' +
+      'to the editor — a test on the authored floats would emit a bezier between two identical numbers',
+  );
+
+  // --- HC05: a raw curve is the file's own numbers and stays as written -------
+  const raw = build({
+    tracks: [
+      {
+        bone: 'thigh',
+        property: 'rotate',
+        keys: [
+          { t: 0, v: [10], curve: [0.1, 10, 0.4, 10] },
+          { t: 0.5, v: [10] },
+          { t: 1, v: [40] },
+        ],
+      },
+    ],
+  });
+  const rawKey = emittedBoneKeys(raw, 'move', 'thigh', 'rotate')[0];
+  say(
+    'HC05_A_RAW_CURVE_OVER_A_HOLD_IS_LEFT_VERBATIM',
+    JSON.stringify(rawKey.curve) === '[0.1,10,0.4,10]',
+    `raw curve over 10 -> 10 emits ${JSON.stringify(rawKey.curve)}`,
+    'the reference corpus has the editor itself shipping 18 beziers over holds (spineboy-pro, sack-pro, ' +
+      'squash-and-stretch), so a transcription has to be able to write one back; the escape hatch that could not ' +
+      'would make rigc unable to state what the format holds',
+  );
+
+  // --- HC06: an rgba hold is read off the emitted hex --------------------------
+  const rgba = build({
+    tracks: [
+      {
+        slot: 'flat',
+        property: 'rgba',
+        keys: [
+          { t: 0, v: [1, 1, 1, 1], ease: 'lateBloom' },
+          { t: 0.5, v: [1, 1, 1, 0.999], ease: 'lateBloom' },
+          { t: 1, v: [1, 1, 1, 0.5] },
+        ],
+      },
+    ],
+  });
+  const rgbaKeys = move(rgba).slots?.flat?.rgba ?? [];
+  say(
+    'HC06_AN_RGBA_HOLD_IS_READ_OFF_THE_EMITTED_HEX',
+    kinds(rgbaKeys) === 'stepped bezier[16] linear' && rgbaKeys[0].color === rgbaKeys[1].color,
+    `alpha 1 -> 0.999 -> 0.5 emits colours ${String(rgbaKeys[0]?.color)}, ${String(rgbaKeys[1]?.color)} and [${kinds(rgbaKeys)}]`,
+    'a colour channel is a byte in the file, so 1 and 0.999 are one colour to the runtime; the hold test has to read ' +
+      'what was emitted, not what was authored',
+  );
+
+  // --- HC07: an ik hold on the effective channels -------------------------------
+  const ik = build({
+    ik: [
+      {
+        constraint: 'leg-ik',
+        keys: [
+          { t: 0, mix: 0, softness: 0, ease: 'lateBloom' },
+          { t: 0.5, mix: 0, softness: 0, ease: 'lateBloom' },
+          { t: 1, mix: 1, softness: 0 },
+        ],
+      },
+    ],
+  });
+  const ikKeys = move(ik).ik?.['leg-ik'] ?? [];
+  say(
+    'HC07_AN_IK_HOLD_EMITS_STEPPED',
+    kinds(ikKeys) === 'stepped bezier[8] linear',
+    `mix 0 -> 0 -> 1 on leg-ik emits [${kinds(ikKeys)}]`,
+    'the constraint tracks build their curve between the EFFECTIVE values, and the hold test reads the same pair',
+  );
+
+  // --- HC08: a deform hold, with two spellings of one run -----------------------
+  const deform = build({
+    deform: [
+      {
+        slot: 'flat',
+        attachment: 'flat',
+        keys: [
+          { t: 0, fromVertex: 1, vertices: [0, 6], ease: 'lateBloom' },
+          { t: 0.5, vertices: [0, 0, 0, 6], ease: 'lateBloom' },
+          { t: 1 },
+        ],
+      },
+    ],
+  });
+  const deformKeys = deformKeysOf(move(deform) as unknown as Record<string, unknown>, 'flat');
+  say(
+    'HC08_A_DEFORM_HOLD_IS_READ_OFF_THE_EXPANDED_RUN',
+    kinds(deformKeys) === 'stepped bezier[4] linear' && deformKeys[0].offset === 2 && deformKeys[1].offset === undefined,
+    `a run [0, 6] from vertex 1 (offset ${String(deformKeys[0]?.offset)}) -> the run [0, 0, 0, 6] from the start -> ` +
+      `setup emits [${kinds(deformKeys)}]`,
+    'the parser reads everything outside a run, and a key with no run, as zero offset — so a shorter run at an offset ' +
+      'and a longer run from the start are one geometry, and only the expanded arrays can see that',
+  );
+
+  // --- HC09 / HC10: one meaning, one file — and invisible to the runtime ----------
+  const explicit = build({
+    tracks: [
+      {
+        bone: 'thigh',
+        property: 'rotate',
+        keys: [
+          { t: 0, v: [10], ease: 'stepped' },
+          { t: 0.5, v: [10], ease: 'lateBloom' },
+          { t: 1, v: [40] },
+        ],
+      },
+    ],
+  });
+  say(
+    'HC09_THE_NAMED_EASING_ON_A_HOLD_AND_AN_EXPLICIT_STEPPED_EMIT_ONE_FILE',
+    rotate.skeletonText === explicit.skeletonText,
+    `${rotate.skeletonText.length} bytes, byte-identical`,
+    'two spellings of one animation must not emit two different files — the rule an authored `offset: 0` and an ' +
+      'absent one already follow',
+  );
+  const linear = build({
+    tracks: [
+      {
+        bone: 'thigh',
+        property: 'rotate',
+        keys: [
+          { t: 0, v: [10] },
+          { t: 0.5, v: [10], ease: 'lateBloom' },
+          { t: 1, v: [40] },
+        ],
+      },
+    ],
+  });
+  const rotationsAt = (result: CompileResult): number[] => {
+    const data = posableFromText(result.skeletonText, result.atlasText, dirs.outDir).data;
+    return [0, 1, 2, 3, 4].map((sample) => poseAtSample(data, 'move', 4, sample).findBone('thigh')!.pose.rotation);
+  };
+  const stepped = rotationsAt(rotate);
+  const straight = rotationsAt(linear);
+  const worst = Math.max(...stepped.map((r, i) => Math.abs(r - straight[i])));
+  say(
+    'HC10_THE_HOLD_POSES_IDENTICALLY_WHETHER_STEPPED_OR_LINEAR',
+    worst <= 1e-6 && stepped[0] === 10 && stepped[2] === 10 && stepped[4] === 40,
+    `thigh rotation at 4 fps: stepped [${stepped.map((r) => r.toFixed(4)).join(', ')}] vs linear ` +
+      `[${straight.map((r) => r.toFixed(4)).join(', ')}], worst difference ${worst.toExponential(2)}`,
+    'the claim behind the rewrite is that a curve over a flat segment draws nothing; spine-core is the one that has ' +
+      'to agree, not the compiler',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // path constraints, sliders, and per-skin member lists
 // ---------------------------------------------------------------------------
 //
@@ -16739,6 +17012,8 @@ function main(): void {
   substantive += 8;
   bad += runConstraintAndDeformSuite();
   substantive += 21;
+  bad += runHoldCurveSuite();
+  substantive += 10;
   bad += runPathAndSliderSuite();
   substantive += 25;
   bad += runPolygonSuite();
@@ -16928,6 +17203,12 @@ function main(): void {
       'starts and ends mid-pair accepted, the same run one float longer still refused, and 2 of them the knee an ik ' +
       "timeline reverted: the rig's own `bendPositive` reaching a timeline that states none, and a timeline that " +
       'states one still overriding it), ' +
+      '+ 10 hold-curve controls (a named easing on a hold emitted stepped with the same easing on the moving segment ' +
+      'beside it still a bezier, a two-channel key holding on one channel only kept as a bezier and one holding on ' +
+      'both rewritten, the hold read off the emitted six decimals, an rgba hold read off the emitted hex, an ik hold ' +
+      'on the effective channels, a deform hold read off the expanded run so two spellings of one run are one ' +
+      'geometry, a raw curve over a hold left verbatim, the named easing and an explicit stepped emitting one file, ' +
+      'and the hold posed through spine-core identically whether stepped or linear), ' +
       '+ 25 path / slider / per-skin controls (8 of them a spine-core round trip that reads the world position a ' +
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'and which bones a skin switches on), ' +

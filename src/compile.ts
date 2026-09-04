@@ -437,6 +437,58 @@ export function bezierForChannel(
   ];
 }
 
+/**
+ * True when a key's value channels, AS EMITTED, equal the next key's — a hold.
+ *
+ * The comparison is on the six-decimal values the file will hold (`r6`), not on
+ * the authored numbers: two values that round to the same figure are one value
+ * in the file, and the file is what the runtime interpolates and what the editor
+ * compares. A multi-channel key holds only when EVERY channel does — a `translate`
+ * whose x moves and whose y does not is a moving key.
+ */
+function isHold(from: number[], to: number[]): boolean {
+  return from.length === to.length && from.every((v, c) => r6(v) === r6(to[c]));
+}
+
+/**
+ * The curve a NAMED easing emits between a key and the next: the bezier its
+ * handles describe, or `stepped` when the segment is a hold.
+ *
+ * A curve over a flat segment draws nothing — the cubic runs from a value to the
+ * same value — so the two encodings are one animation, and the editor writes the
+ * second: its export rewrites a bezier on a hold as `"curve": "stepped"` (issue
+ * #369; 14 keys on the nod example alone, every rendered frame byte-identical
+ * either way). Emitting what the editor writes keeps `diff`'s
+ * `animations.curve_kinds` from reporting a difference where the animation has
+ * none — the same "one meaning, one file" rule under which an authored
+ * `offset: 0` on a deform key and an absent one emit the same bytes.
+ *
+ * ⚠️ Only a NAMED easing takes this path; `rawCurve` does not. A raw `curve` is
+ * the escape hatch that states the file's own numbers verbatim, and the editor's
+ * own exports DO carry beziers over holds (18 keys across the reference corpus —
+ * spineboy-pro, sack-pro, squash-and-stretch), so a transcription has to be able
+ * to write one back. Rewriting those would make rigc unable to state what the
+ * format holds, which is the blocker `rawCurve` exists to remove. An easing names
+ * a SHAPE, and on a hold the editor's encoding of that shape is `stepped`.
+ *
+ * `hold` is a parameter because "as emitted" is not always `r6` of a number: an
+ * rgba key emits a hex string and a deform key emits a run, and each site says
+ * what its file value is.
+ */
+function easingCurve(
+  handles: EasingHandles,
+  t1: number,
+  t2: number,
+  from: number[],
+  to: number[],
+  hold: boolean = isHold(from, to),
+): number[] | 'stepped' {
+  if (hold) return 'stepped';
+  const curve: number[] = [];
+  for (let c = 0; c < from.length; c++) curve.push(...bezierForChannel(handles, t1, t2, from[c], to[c]));
+  return curve;
+}
+
 // ---------------------------------------------------------------------------
 // inputs
 // ---------------------------------------------------------------------------
@@ -3220,11 +3272,7 @@ function compileValueTrack(
         if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
         if (!Array.isArray(next.v)) throw new CompileError(`${where}: next key value must be an array`);
         const t2 = keyTime(next.t + shift);
-        const curve: number[] = [];
-        for (let c = 0; c < shape.fields.length; c++) {
-          curve.push(...bezierForChannel(handles, time, t2, (key.v as number[])[c], (next.v as number[])[c]));
-        }
-        entry.curve = curve;
+        entry.curve = easingCurve(handles, time, t2, key.v as number[], next.v as number[]);
       }
     } else if (key.ease && !next) {
       throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
@@ -3574,11 +3622,13 @@ function compileConstraintTrack(
         const handles = motion.easings?.[key.ease];
         if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
         const t2 = keyTime(next.t);
-        const curve: number[] = [];
-        for (const channel of shape.channels) {
-          curve.push(...bezierForChannel(handles, time, t2, effective(key, channel), effective(next, channel)));
-        }
-        entry.curve = curve;
+        entry.curve = easingCurve(
+          handles,
+          time,
+          t2,
+          shape.channels.map((channel) => effective(key, channel)),
+          shape.channels.map((channel) => effective(next, channel)),
+        );
       }
     } else if (key.ease !== undefined && !next) {
       throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
@@ -3828,7 +3878,7 @@ function compileDeformTrack(
         );
       }
       generated.push({ animation: animName, skin, slot: track.slot, attachment: track.attachment, time, ...report });
-      out.push(deformKeyCurve({ time, vertices: report.offsets }, key, keys, i, motion, where));
+      out.push({ time, vertices: report.offsets });
       continue;
     }
     if (key.offset !== undefined && key.fromVertex !== undefined) {
@@ -3848,7 +3898,7 @@ function compileDeformTrack(
             'setup pose" — so there is nothing for a start index to point at. Drop the offset, or give it a run.',
         );
       }
-      out.push(deformKeyCurve({ time }, key, keys, i, motion, where));
+      out.push({ time });
       continue;
     }
     if (!Array.isArray(run) || run.length === 0) {
@@ -3882,8 +3932,12 @@ function compileDeformTrack(
     // same bytes — one meaning, one file.
     if (start !== 0) entry.offset = start;
     entry.vertices = run.map(r6);
-    out.push(deformKeyCurve(entry, key, keys, i, motion, where));
+    out.push(entry);
   }
+  // Curves go on in a second pass because a key's curve depends on the NEXT key's
+  // emitted geometry — a named easing over a hold is `stepped` — and that
+  // geometry is only known once the next key has been through the checks above.
+  for (let i = 0; i < out.length; i++) deformKeyCurve(out[i], keys[i], keys, i, motion, where, out[i + 1]);
   return out;
 }
 
@@ -3961,26 +4015,52 @@ function deformKeyCurve(
   index: number,
   motion: MotionSpec,
   where: string,
+  /** The next key AS EMITTED, or undefined on the last key. */
+  next: SpineTimelineKey | undefined,
 ): SpineTimelineKey {
-  const hasNext = index + 1 < keys.length;
   if (key.ease !== undefined && key.curve !== undefined) {
     throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
   }
   if (key.curve !== undefined) {
-    if (!hasNext) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
+    if (next === undefined) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
     entry.curve = rawCurve(key.curve, 1, where, String(key.t));
     return entry;
   }
   if (key.ease === undefined) return entry;
-  if (!hasNext) throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
+  if (next === undefined) throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
   if (key.ease === 'stepped') {
     entry.curve = 'stepped';
     return entry;
   }
   const handles = motion.easings?.[key.ease];
   if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
-  entry.curve = bezierForChannel(handles, entry.time as number, keyTime(keys[index + 1].t), 0, 1);
+  // The one channel runs 0 -> 1; the VALUE being held is the geometry, so the
+  // hold test compares the two keys' runs rather than those two constants.
+  entry.curve = easingCurve(handles, entry.time as number, keyTime(keys[index + 1].t), [0], [1], sameDeform(entry, next));
   return entry;
+}
+
+/**
+ * True when two deform keys, AS EMITTED, describe one geometry.
+ *
+ * A deform key's value is its run — `vertices` starting at `offset` — and the
+ * parser reads everything outside the run, and a key with no `vertices` at all,
+ * as zero offset from the setup pose. So a run of zeros, a shorter run and no run
+ * are three spellings of one geometry, and the comparison expands both keys onto
+ * the same index range before reading them. The runs are already `r6`'d.
+ */
+function sameDeform(a: SpineTimelineKey, b: SpineTimelineKey): boolean {
+  const runOf = (k: SpineTimelineKey): { start: number; run: number[] } => ({
+    start: typeof k.offset === 'number' ? k.offset : 0,
+    run: Array.isArray(k.vertices) ? (k.vertices as number[]) : [],
+  });
+  const at = (r: { start: number; run: number[] }, i: number): number =>
+    i >= r.start && i < r.start + r.run.length ? r.run[i - r.start] : 0;
+  const ra = runOf(a);
+  const rb = runOf(b);
+  const end = Math.max(ra.start + ra.run.length, rb.start + rb.run.length);
+  for (let i = 0; i < end; i++) if (at(ra, i) !== at(rb, i)) return false;
+  return true;
 }
 
 function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string): string[] {
@@ -4301,12 +4381,10 @@ function compileTrack(
         }
         const t2 = keyTime(next.t + shift);
         // 4 numbers per channel, r g b a — 16 in total. Short arrays become NaN
-        // curves with no error.
-        const curve: number[] = [];
-        for (let c = 0; c < 4; c++) {
-          curve.push(...bezierForChannel(handles, time, t2, key.v[c], next.v[c]));
-        }
-        entry.curve = curve;
+        // curves with no error. The hold test reads the emitted hex rather than
+        // the authored floats: two colours that quantise to one byte are one
+        // colour in the file.
+        entry.curve = easingCurve(handles, time, t2, key.v, next.v, rgbaHex(key.v) === rgbaHex(next.v));
       }
     } else if (key.ease && !next) {
       throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
