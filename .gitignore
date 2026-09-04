@@ -85,8 +85,15 @@ examples/
 /films/three-scene/preview.html
 
 # Local-only preservation area — session artifacts, contact drafts, production sources.
-# Never committed; see scratch/README.md inside it (also ignored).
-/scratch/
+# Never committed; see the README inside it (also ignored).
+#
+# ⚠️ No trailing slash, and that is the whole point. This path is a SYMLINK on
+# every machine that shares the area through its own private store, and git
+# treats a symlink as a file — so the directory-only form `/scratch/` left the
+# link showing as untracked in this PUBLIC repository, one `git add -A` away
+# from committing a pointer to a tree of unpublished drafts. Without the slash
+# the pattern covers a directory, a symlink and a file alike.
+/scratch
 
 # Agent worktrees the Claude Code harness creates inside the checkout while a squad works.
 # Never committed; a squad's branch is what carries its work.
