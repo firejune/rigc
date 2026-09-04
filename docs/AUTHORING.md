@@ -2186,13 +2186,14 @@ of this section's parameters are invented.** A radius, an amplitude and a point 
 scale is about are all measurements of a shape the drawing only implies — the
 compiler evaluates what you state and states nothing itself.
 
-**The five kinds.** Each is one closed form, and each ships because a worked
+**The six kinds.** Each is one closed form, and each ships because a worked
 example needed it:
 
 | `kind` | Parameters | What it evaluates | Worked case |
 | --- | --- | --- | --- |
 | `yaw` | `radius` **or** `depth`, `degrees`, `about` | `dx = (x−about)·(cos t − 1) − z·sin t`, with `z = √(radius² − (x−about)²)` from a cylinder or `z` read per vertex off a depth map — the 2.5D turn (FACE §1) | `gallery/portrait` |
 | `pitch` | the same | the same expression with `y` for `x` — a nod rather than a turn | `gallery/nod` |
+| `parallax` | `offset` | `dx = z·offset.x`, `dy = z·offset.y` — the turn's small-angle limit, driven by two numbers instead of an angle. **Requires a `depth` map**; without per-vertex `z` it is a translation, which is a bone move | — |
 | `affine` | `scale`, `about` | `dx = (sx−1)·(x−ax)`, `dy = (sy−1)·(y−ay)` — a scale about a fixed point | `gallery/squash` |
 | `wave` | `amplitude`, `wavelength`, `phase`, `along`, `axis` | `d = amplitude · sin(2π·along/wavelength + phase)` | `gallery/nod` |
 | `bend` | `amount`, `from`, `to`, `power`, `along`, `axis` | `d = amount · u^power`, `u = (along − from)/(to − from)` | `gallery/flex` |
@@ -2213,6 +2214,19 @@ is why `fromVertex` and `offset` are refused beside it. A model applied to part
 of a run leaves a **step at the run's edge**, and that is one half of the defect
 [#313](https://github.com/firejune/rigc/issues/313) records. If you want a
 partial run, write it.
+
+**`parallax` is `yaw` with the in-plane term dropped, and exactly so.** A turn
+is `dx = u·(cos t − 1) − z·sin t`; a parallax is the second term alone. Subtract
+them and the whole remainder is `u·(cos t − 1)` — **independent of the depth** —
+so as the angle halves the gap quarters. Measured, at 9 vertices with uneven
+depths: `2.32 → 0.58 → 0.15 → 0.037 → 0.0091` px at 16° → 1°, ratios 3.98–4.00
+(`DP05`/`DP06`). Reach for it when a pointer or a camera drives the slide
+directly and there is no angle in the input; reach for `yaw` when there is.
+
+⚠️ It is **refused without a depth map**, and that is a rule rather than a gap:
+with one `z` for every vertex the whole attachment moves by the same amount,
+which is a translate keyed on the bone at two numbers instead of a deform run at
+two per vertex.
 
 **A turn projects off one surface, stated one way.** `"depth": true` reads each
 vertex's `z` off the map its attachment's generator names (§3.4) instead of

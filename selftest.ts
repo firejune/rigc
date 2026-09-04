@@ -91,6 +91,7 @@ import {
 import { buildAtlasText, compile, CompileError } from './src/compile.ts';
 import { parseMotionSpec } from './src/motion.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, type FieldAgreement } from './src/depth.ts';
+import { evaluateDeformTransform } from './src/deformgen.ts';
 import {
   buildGridMesh,
   contourOvershootBound,
@@ -7366,6 +7367,78 @@ function runContourMeshSuite(): number {
           .join(' | '),
     'every one of these compiles to a plausible number with correct arithmetic behind it — the coverage case is the loudest, since a sheet cut to the art gives the whole rim the background depth and folds the silhouette away from the turn',
   );
+
+  // --- parallax IS yaw's small-angle limit, and exactly so (issue #382) -----
+  //
+  // The form a per-pixel depth shader evaluates is `d = z · offset` — no angle,
+  // no radius, no trigonometry. The claim that it is the same model as `yaw`
+  // seen at a small angle is not a hand-wave: subtract them and the whole
+  // remainder is `u · (cos t − 1)`, the in-plane term, INDEPENDENT of the
+  // depth. So it can be asserted as an identity rather than as a tolerance.
+  {
+    // The emitter's own rounder, so both sides are quantised exactly as the
+    // file they would be written into.
+    const r6 = (n: number): number => {
+      const v = Math.round(n * 1e6) / 1e6;
+      return v === 0 ? 0 : v;
+    };
+    const setup: number[] = [];
+    const zs: number[] = [];
+    for (let i = 0; i < 9; i++) {
+      // An uneven depth on purpose: an identity that only holds for one z is
+      // not the identity being claimed.
+      setup.push(-60 + 15 * i, 10 * Math.sin(i));
+      zs.push(5 + 4 * i);
+    }
+    const count = setup.length / 2;
+    const angles = [16, 8, 4, 2, 1];
+    const gaps: number[] = [];
+    let worstResidual = 0;
+    for (const deg of angles) {
+      const rad = (deg * Math.PI) / 180;
+      const yaw = evaluateDeformTransform({ kind: 'yaw', depth: true, degrees: deg }, setup, r6, 'yaw', zs);
+      const par = evaluateDeformTransform({ kind: 'parallax', offset: [-Math.sin(rad), 0] }, setup, r6, 'parallax', zs);
+      let gap = 0;
+      for (let v = 0; v < count; v++) {
+        const difference = yaw.offsets[2 * v] - par.offsets[2 * v];
+        worstResidual = Math.max(worstResidual, Math.abs(difference - setup[2 * v] * (Math.cos(rad) - 1)));
+        gap = Math.max(gap, Math.abs(difference));
+      }
+      gaps.push(gap);
+    }
+    // 1e-5 rather than 0: both sides are rounded to the six decimals the
+    // emitter writes, so the identity can only hold to that.
+    say(
+      'DP05_PARALLAX_IS_YAW_MINUS_ITS_IN_PLANE_TERM_EXACTLY',
+      worstResidual < 1e-5,
+      `over ${count} vertices at ${angles.join('°, ')}°: worst |yaw − parallax − u·(cos t − 1)| is ` +
+        `${worstResidual.toExponential(2)}, which is the six decimals both sides are rounded to`,
+      'the depths here are uneven on purpose — a remainder that came out independent of z only for one z would not be the identity being claimed',
+    );
+    // Halving the angle has to quarter the gap: the remainder is O(t²).
+    const ratios = gaps.slice(1).map((g, i) => gaps[i] / g);
+    say(
+      'DP06_AND_THEY_CONVERGE_AT_SECOND_ORDER_AS_THE_ANGLE_SHRINKS',
+      ratios.every((r) => r > 3.8 && r < 4.2),
+      `gap ${gaps.map((g) => g.toFixed(5)).join(' -> ')} px as the angle halves, ratios ` +
+        `${ratios.map((r) => r.toFixed(2)).join(', ')} against the 4.00 that u·(cos t − 1) predicts`,
+      'a form that merely resembled the turn at small angles would converge at SOME rate; this says which, and the rate is the whole content of "small-angle limit"',
+    );
+    const noMap = ((): string => {
+      try {
+        evaluateDeformTransform({ kind: 'parallax', offset: [0.25, 0] }, setup, r6, 'parallax', null);
+        return 'a clean evaluation';
+      } catch (err) {
+        return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+      }
+    })();
+    say(
+      'DP07_PARALLAX_WITHOUT_A_DEPTH_MAP_IS_REFUSED_AS_THE_BONE_MOVE_IT_WOULD_BE',
+      noMap.includes('translation of the whole attachment'),
+      noMap,
+      'with no per-vertex z every vertex moves by the same amount, and a deform run that says what a translate says is a hundred numbers standing in for two',
+    );
+  }
 
   // --- the lattice, generated instead of hand-numbered (issue #382) --------
   //
@@ -17831,7 +17904,7 @@ function main(): void {
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'and which bones a skin switches on), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
-      '+ 21 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      '+ 24 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
       'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
       'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
@@ -17852,7 +17925,12 @@ function main(): void {
       + 'depth, over a dome at 18 degrees, converging 6.4141 -> 0.0926 px as the lattice goes 3x3 -> 33x33, while the '
       + 'SAME lattices reading a cylinder instead settle at 3.4 px and never move — and the reading that forces that '
       + 'framing, where at 3x3 the WRONG surface scores better than the right one, so no single density can tell them '
-      + 'apart, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
+      + 'apart; and the PARALLAX form the same map buys — asserted as an identity rather than a tolerance, since yaw minus '
+      + 'parallax is exactly the in-plane term u·(cos t − 1) and independent of the depth (worst residual 1e-6, the six '
+      + 'decimals both sides round to), converging at second order as the angle halves (2.32 -> 0.0091 px over 16° -> 1°, '
+      + 'ratios 3.98-4.00 against the 4.00 the remainder predicts, where a form that merely RESEMBLED the turn would '
+      + 'converge at some other rate — a mutant ignoring z converges at 2.0), and refused outright without a depth map, '
+      + 'because one z for every vertex is a translate keyed on the bone, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
