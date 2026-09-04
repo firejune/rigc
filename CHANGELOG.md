@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.16.0](https://github.com/firejune/rigc/compare/v0.15.0...v0.16.0) (2026-09-04)
+
+
+### Features
+
+* **compile:** a curve on a hold segment is emitted stepped, as the editor writes it ([#376](https://github.com/firejune/rigc/issues/376)) ([04d6f27](https://github.com/firejune/rigc/commit/04d6f27e0341cae6fc14da86739b251280e63e37))
+* **compile:** derive a mesh's hull and edges from its triangles and its size from the PNG ([#375](https://github.com/firejune/rigc/issues/375)) ([c62a432](https://github.com/firejune/rigc/commit/c62a432ac6ba9bd11ec28c79a6e9b43e6635db90))
+* **emit:** write skeleton.images so the editor finds the parts on import ([#378](https://github.com/firejune/rigc/issues/378)) ([dc16bf1](https://github.com/firejune/rigc/commit/dc16bf12c65bd38434ee03bd332310c6512b77cc))
+* **skills:** package the authoring guides as an installable agent plugin ([#371](https://github.com/firejune/rigc/issues/371)) ([9030d5d](https://github.com/firejune/rigc/commit/9030d5d30c93b90cf6502d8aef0d012d9b453412))
+
 ## [0.15.0](https://github.com/firejune/rigc/compare/v0.14.1...v0.15.0) (2026-09-03)
 
 
