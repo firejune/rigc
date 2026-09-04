@@ -40,7 +40,18 @@
  * it was skipped and the run still passes on the public suite alone.
  */
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -10864,12 +10875,26 @@ function runErrorAttributionSuite(): number {
 // in the two corners the emit loop never reached.
 // ---------------------------------------------------------------------------
 
-/** Every motion spec committed to this repository, for the corpus control. */
+/**
+ * Every motion spec committed to this repository, for the corpus control.
+ *
+ * "Committed" is read off the disk, so what the walk skips is part of the claim:
+ * `node_modules` and the fetched `examples/` corpus are not this repository's
+ * specs; `scratch/` is the gitignored local-only preservation area (its README
+ * says so) and may hold anything; a dot-directory is somebody's tooling. And the
+ * walk reads entries with `lstat`, not `stat`: a tree preserved under `scratch/`
+ * carried a symlink whose target had not travelled with it, `statSync` threw
+ * ENOENT on the link, and the whole suite exited 1 on a file no assertion was
+ * reading (2026-09-04). A link is not a committed file either way, so it is
+ * skipped rather than followed.
+ */
 function everyMotionSpec(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir).sort()) {
-    if (name === 'node_modules' || name === '.git' || name === 'examples') continue;
+    if (name === 'node_modules' || name === 'examples' || name === 'scratch' || name.startsWith('.')) continue;
     const path = join(dir, name);
-    if (statSync(path).isDirectory()) {
+    const entry = lstatSync(path);
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) {
       everyMotionSpec(path, out);
       continue;
     }
@@ -10879,10 +10904,19 @@ function everyMotionSpec(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-function runMotionParseSuite(): number {
+/**
+ * Returns what the summary line quotes: the failure count, how many cases ran,
+ * and how many motion specs the corpus control parsed — counted here rather than
+ * written into the summary by hand, which is how the summary came to say 37 while
+ * the walk found 38 (2026-09-04).
+ */
+function runMotionParseSuite(): { failures: number; cases: number; specs: number } {
   console.log('\n── the motion spec\'s own parse (issue #307) ──');
   let bad = 0;
+  let cases = 0;
+  let corpus = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    cases += 1;
     bad += reportCase(name, ok, detail, why);
   };
 
@@ -11150,7 +11184,8 @@ function runMotionParseSuite(): number {
       message === null,
       message === null ? 'compiled' : `refused the documented spelling: ${message}`,
       '`loop` is a player hint that is not expressible in skeleton JSON, and `MotionAnimation` declared it ' +
-        'required while 20 of the 37 motion specs here name no `loop` at all. The type was the thing that was ' +
+        'required while, when the parse landed (2026-09-03), 20 of the 37 motion specs here named no `loop` at all. ' +
+        'The type was the thing that was ' +
         'wrong, and a required-field refusal would have been a new gate over a field the compiler never reads',
     );
   }
@@ -11228,12 +11263,48 @@ function runMotionParseSuite(): number {
       'member are about what a track naming it would compile, not about JSON shape',
   );
 
+  // --- the walk itself -------------------------------------------------------
+  //
+  // MP30 reads whatever is on disk under the repository root, so what the walk
+  // skips is part of what MP30 measures — and a walk that throws takes every
+  // later case down with it, which is the shape that hit on 2026-09-04.
+  {
+    const root = mkdtempSync(join(tmpdir(), 'rigc-motion-walk-'));
+    const spec = JSON.stringify({ format: 'rigc-motion/1' });
+    mkdirSync(join(root, 'kept'));
+    writeFileSync(join(root, 'kept', 'a.motion.json'), spec);
+    mkdirSync(join(root, 'scratch'));
+    writeFileSync(join(root, 'scratch', 'b.motion.json'), spec);
+    mkdirSync(join(root, '.tooling'));
+    writeFileSync(join(root, '.tooling', 'c.motion.json'), spec);
+    symlinkSync(join(root, 'nowhere.json'), join(root, 'dangling.json'));
+    let found: string[] | null = null;
+    let threw = '';
+    try {
+      found = everyMotionSpec(root);
+    } catch (err) {
+      threw = (err as Error).message;
+    }
+    say(
+      'MP31_THE_CORPUS_WALK_SKIPS_LOCAL_ONLY_TREES_AND_DANGLING_LINKS',
+      found !== null && found.length === 1 && found[0] === join(root, 'kept', 'a.motion.json'),
+      threw
+        ? `the walk threw: ${threw}`
+        : `found ${found?.length ?? 0} spec(s): ${(found ?? []).map((p) => relative(root, p)).join(', ') || 'none'}`,
+      '`scratch/` is the gitignored preservation area and a dot-directory is somebody\'s tooling — neither is ' +
+        '"committed to this repository", which is what MP30 claims to read. And a preserved tree can carry a ' +
+        'symlink whose target did not travel with it: `statSync` threw ENOENT on exactly such a link under ' +
+        'scratch/films-src, and the whole suite exited 1 on a file no assertion was reading (2026-09-04)',
+    );
+  }
+
   // --- positive controls ----------------------------------------------------
   //
   // A parse is only worth having if it costs the format nothing, so the last two
   // cases are the whole corpus and the docs' own examples.
   {
     const specs = everyMotionSpec(import.meta.dir);
+    corpus = specs.length;
     const failures: string[] = [];
     for (const path of specs) {
       try {
@@ -11254,7 +11325,7 @@ function runMotionParseSuite(): number {
     );
   }
 
-  return bad;
+  return { failures: bad, cases, specs: corpus };
 }
 
 // ---------------------------------------------------------------------------
@@ -15823,8 +15894,9 @@ function main(): void {
   substantive += 2;
   bad += runErrorAttributionSuite();
   substantive += 5;
-  bad += runMotionParseSuite();
-  substantive += 30;
+  const motion = runMotionParseSuite();
+  bad += motion.failures;
+  substantive += motion.cases;
   bad += runCliSuite();
   substantive += 7;
   const launcherBad = runLauncherSuite();
@@ -16028,13 +16100,15 @@ function main(): void {
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +
       'the `null` that used to crash and the bare attachment name that used to compile green and hide the slot — ' +
       'with the documented `{ "attachment": null }` still hiding it), ' +
-      '+ 30 motion-spec parse controls (issue #307 — the motion spec reached the compiler as a CAST, so 24 ' +
+      `+ ${motion.cases} motion-spec parse controls (issue #307 — the motion spec reached the compiler as a CAST, so 24 ` +
       'malformed shapes compiled GREEN and 9 more crashed with a raw TypeError that named neither input file; ' +
       "each is now refused by a message naming the file, the key path, what the value actually is and the " +
       'spelling that works, and the two the issue named are #293\'s own — the attachment name written where ' +
       'its wrapper belongs, on a slot with no attachments and on a slot the rig does not declare, which the ' +
-      'emit-path guard could not reach. Plus the two positive controls that keep the gate honest: an animation ' +
-      'with no `loop` hint still accepted, and every one of the 37 motion specs in this repository parsing clean), ' +
+      'emit-path guard could not reach. Plus the three controls that keep the gate honest: an animation ' +
+      `with no \`loop\` hint still accepted, every one of the ${motion.specs} motion specs in this repository parsing ` +
+      'clean, and the walk that finds them skipping the local-only `scratch/` area, dot-directories and a dangling ' +
+      'symlink rather than dying on one), ' +
       '+ 11 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
       'builds green with no flag and is refused by every rule under `--profile spine-html`, and the MESH report line ' +
