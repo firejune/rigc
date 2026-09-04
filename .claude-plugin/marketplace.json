@@ -1,0 +1,19 @@
+{
+  "name": "rigc",
+  "owner": {
+    "name": "firejune",
+    "url": "https://github.com/firejune"
+  },
+  "description": "rigc, the rig compiler for Spine, packaged as agent skills over the guides the npm package ships.",
+  "plugins": [
+    {
+      "name": "rigc",
+      "source": "./",
+      "description": "Author Spine 4.3 rigs with rigc: an entry skill with the install line and the build, validate, render, check and vote loop, plus routers for rigging, motion, faces and foreign skeletons, each linking the shipped guide that owns its rules.",
+      "homepage": "https://github.com/firejune/rigc#readme",
+      "repository": "https://github.com/firejune/rigc",
+      "license": "MIT",
+      "keywords": ["spine", "spine2d", "skeletal-animation", "rig", "compiler", "ai-agents"]
+    }
+  ]
+}

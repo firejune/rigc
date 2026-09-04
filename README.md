@@ -139,6 +139,26 @@ The reasoning is in
 and the terms in [NOTICE.md](NOTICE.md). Both commands need a clone and `bun run
 fetch-examples`, and say so by name when the corpus is absent.
 
+### Install it into your agent
+
+The guides under [Documentation](#documentation) also ship as
+[Agent Skills](https://agentskills.io) — `skills/<name>/SKILL.md`, in this
+repository and in the npm package — so an agent finds rigc the way it finds its
+other tools. Each skill is a router and nothing more: when to load it, the
+non-negotiables in a line apiece, and a link to the guide that owns every rule, so
+a rule keeps living in exactly one place. The repository is also a Claude Code
+plugin marketplace:
+
+```shell
+/plugin marketplace add firejune/rigc
+/plugin install rigc@rigc
+```
+
+With the package already installed, `claude --plugin-dir node_modules/spine-rigc`
+loads the same skills without a marketplace. The plugin carries no version of its
+own — `/plugin update` follows `main` commit by commit, and the only version on
+disk stays the one in `package.json`.
+
 ## First rig in ten minutes
 
 A whole rig, end to end, in a scratch directory: three tiny plates, two JSON
