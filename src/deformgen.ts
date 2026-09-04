@@ -98,6 +98,39 @@ export interface DeformTurn {
 }
 
 /**
+ * A **parallax slide**: every vertex moves by its own depth times a stated
+ * offset. The small-angle limit of `yaw`/`pitch`, and the form a per-pixel
+ * depth shader actually evaluates.
+ *
+ * `d = z · offset`, per axis, with `z` read off the attachment's depth map. It
+ * is `yaw` with the in-plane term dropped: a turn is
+ * `dx = u·(cos t − 1) − z·sin t`, and for small `t` the first term is `O(t²)`
+ * while the second is `O(t)`. `DP05` measures that difference and finds it to
+ * be exactly `u·(cos t − 1)` — independent of the depth, which is why the two
+ * forms converge on each other and not merely near each other.
+ *
+ * ⭐ Two parameters and no angle, which is the point of having it: a pointer or
+ * a camera drives `offset` directly, and there is no radius, no `about` and no
+ * trigonometry between the input and the geometry.
+ *
+ * 🚨 It REQUIRES a depth map, and that is a rule rather than a limitation.
+ * Without per-vertex `z` every vertex moves by the same amount, which is a
+ * translation of the whole attachment — a bone move, keyed on the bone, at no
+ * cost in deform data. A deform run that says what a translate says is a
+ * hundred numbers standing in for two.
+ */
+export interface DeformParallax {
+  kind: 'parallax';
+  /**
+   * Screen displacement per unit of depth, `[x, y]`.
+   *
+   * Depth carries the units (`zScale`), so this is a pure direction-and-scale:
+   * a vertex 40 units forward under `offset: [0.25, 0]` moves 10 to the right.
+   */
+  offset: [number, number];
+}
+
+/**
  * A **scale about a point** — `gallery/squash`'s two shapes, which its README
  * already writes out as `sx`/`sy` about a point.
  *
@@ -173,10 +206,10 @@ export interface DeformBend {
   axis: DeformAxis;
 }
 
-export type DeformTransform = DeformTurn | DeformAffine | DeformWave | DeformBend;
+export type DeformTransform = DeformTurn | DeformParallax | DeformAffine | DeformWave | DeformBend;
 
 /** The kinds this module evaluates, in the order the docs list them. */
-export const DEFORM_TRANSFORM_KINDS = ['yaw', 'pitch', 'affine', 'wave', 'bend'] as const;
+export const DEFORM_TRANSFORM_KINDS = ['yaw', 'pitch', 'parallax', 'affine', 'wave', 'bend'] as const;
 
 /**
  * What one evaluation did, for `explain` to print and a reviewer to check.
@@ -376,6 +409,42 @@ export function evaluateDeformTransform(
       } else {
         derived.push(`centre shift = −radius·sin t = ${round(-radius * sin)}`);
       }
+      break;
+    }
+    case 'parallax': {
+      const t = transform as DeformParallax;
+      const offset = pair(t.offset, 'offset', where);
+      if (depth === null) {
+        throw new CompileError(
+          `${where}: transform parallax moves each vertex by its own depth, and this attachment has no depth map. ` +
+            'Name one on its generator as `"depth": { "image": …, "near": …, "zScale": … }`. Without per-vertex z ' +
+            'every vertex would move by the same amount, which is a translation of the whole attachment — key the ' +
+            'slot bone instead, at two numbers rather than one per vertex.',
+        );
+      }
+      if (depth.length !== count) {
+        throw new CompileError(`${where}: transform parallax has ${depth.length} sampled depths for ${count} vertices`);
+      }
+      let zlo = Infinity;
+      let zhi = -Infinity;
+      for (let v = 0; v < count; v++) {
+        const z = depth[v];
+        if (z < zlo) zlo = z;
+        if (z > zhi) zhi = z;
+        offsets[2 * v] = round(widen(z * offset[0]));
+        offsets[2 * v + 1] = round(widen(z * offset[1]));
+      }
+      identity = round(offset[0]) === 0 && round(offset[1]) === 0;
+      identitySpelling = 'offset [0, 0]';
+      sampledTo =
+        'The offset is not zero, so the depths are: a run of zeros here means every vertex sampled the same depth ' +
+        `and that depth is 0 — check the map's range in the mesh report (this one sampled [${round(zlo)}, ${round(zhi)}])`;
+      stated = `offset=[${offset[0]}, ${offset[1]}]`;
+      formula = 'dx = z·offset.x,   dy = z·offset.y,   z = the vertex\'s sampled depth';
+      derived = [
+        `z ∈ [${round(zlo)}, ${round(zhi)}] over ${count} vertices`,
+        `deepest slide = z_max·offset = (${round(zhi * offset[0])}, ${round(zhi * offset[1])})`,
+      ];
       break;
     }
     case 'affine': {
