@@ -159,7 +159,8 @@ reconciled before publication: the parser's full `case` label set is identical i
 
 ### On third-party tools writing these formats
 
-Esoteric does not publish a prohibition; the docs invite it, in three places:
+Esoteric's own documentation **invites** third-party tools to write these formats, in
+three places:
 
 - JSON format page (S7): *"Also, Spine can import data in this format, allowing interoperability with
   other tools."* — https://esotericsoftware.com/spine-json-format
@@ -179,10 +180,14 @@ line 1678: *"Parsing skeleton .JSON and .skel files will report an error if the 
 not match the runtime version"*), so a wrong `skeleton.spine` string is portable-fragile even though
 spine-ts tolerates it. rigc's A16 already pins it to `4.3.x`.
 
-Separately, the licence chain matters for the ladder and is already recorded in rigc's `NOTICE.md`:
-rigc links spine-core, spine-core is under the Spine Runtimes License Agreement, and that agreement
-requires each user of a product built on it to hold a Spine Editor licence. Reproducing the example
-projects does not change that; see the per-example licence findings in Part 3.
+Separately, the licence chain matters for the ladder, and rigc's `NOTICE.md` states it as a
+four-point chain rather than leaving it to be inferred: rigc's output **is** Spine skeleton data,
+playing that data in a product needs **a Spine Runtime**, the Spine Runtimes License Agreement
+requires **each user of such a product to hold a Spine Editor licence**, and rigc **links
+spine-core** itself — so the same obligation covers running rigc at all. rigc therefore carries that
+obligation forward rather than routing around it, and the interoperability the pages above invite is
+taken on those terms. Reproducing the example projects does not change any of it; see the
+per-example licence findings in Part 3.
 
 ---
 

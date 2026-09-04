@@ -1,7 +1,7 @@
 # The benchmark ladder
 
 **Live status document.** The rung order, what each rung gates on, how a rung is
-scored, what a pass is (*Operating rules*, gate **v2.3** — the clauses themselves are
+scored, what a pass is (*Operating rules*, gate **v2.4** — the clauses themselves are
 stated in [GATE.md](GATE.md), which this section derives), and where each one stands
 today. The survey behind it is
 [SPEC_COVERAGE.md](SPEC_COVERAGE.md) — that document is a dated research note and
@@ -64,8 +64,8 @@ timing from a rig with the right timing and the wrong skeleton, and those call
 for opposite fixes. **A rung is marked cleared by a person reading the measures,
 and this file is where that judgement is written down.**
 
-What that person reads the measures *against* is the current gate — **gate v2.3** since
-2026-09-02 — whose clauses are stated in **[GATE.md](GATE.md)**: which measures decide a
+What that person reads the measures *against* is the current gate — **gate v2.4** since
+2026-09-03 — whose clauses are stated in **[GATE.md](GATE.md)**: which measures decide a
 rung, which are reported without deciding anything, and the number each of the deciding
 ones has to clear. ✅ **That card is allowed reading for an authoring run**, and it is the
 canonical statement of every clause. 🚫 What is not is *Operating rules* below, which

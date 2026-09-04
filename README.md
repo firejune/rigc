@@ -18,7 +18,7 @@ their own work.
   <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/rigc-demo.gif" alt="Loose part PNGs assembling themselves into a character that breathes, blinks and waves" width="600" />
 </p>
 
-<p align="center"><em>Fourteen hand-drawn part PNGs, one rig spec, one motion spec — the assembly,
+<p align="center"><em>Fourteen part PNGs drawn from scratch for this repo, one rig spec, one motion spec — the assembly,
 the breathing and the wave are all rigc-compiled Spine animations, rendered with
 <code>rigc render</code>.</em></p>
 
@@ -73,6 +73,22 @@ the following is a restatement of Esoteric Software's terms, not a term of ours:
 
 See [NOTICE.md](NOTICE.md) for the full notice.
 
+📐 **What of Esoteric Software's is in this repository, and under what grant.** No
+example asset is committed: `bun run fetch-examples` downloads the example projects
+into a gitignored `examples/`. What *is* committed is `bench/reference/` — 1,293 PNG
+frames **this project renders** from those examples' own exports, so a frame carries
+those images' pixels and committing one **is** redistribution. Each example's own
+`license.txt` permits exactly that, *"as long as they are accompanied by this license
+file"*, and a verbatim copy of it sits at each example root here — all eight, written
+there by the render script rather than left to memory. The same file's
+**non-commercial** condition rides along with those images, and
+[LICENSE](LICENSE) says so: rigc's MIT grant covers rigc's own code, documentation
+and art, not this material. `7-anticipation` publishes no `license.txt` upstream, so
+no such grant exists for it and its frames are never committed — they render only
+into a gitignored directory, enforced by `git check-ignore`. Full reasoning:
+[`bench/reference/README.md`](https://github.com/firejune/rigc/blob/main/bench/reference/README.md)
+(repository material, not in the npm package).
+
 The problem rigc is aimed at is narrow. An agent asked to author a rig has no way
 to tell whether it succeeded: Spine's JSON parser accepts a great deal of nonsense
 without a murmur — a constraint in the 4.2 shape simply vanishes, a `size:` that
@@ -114,10 +130,14 @@ the CLI in place); the two are interchangeable — `rigc build …` is
 `bun cli.ts build …`.
 
 Two commands are repository workflows rather than package ones: `bench` and
-`check` measure against Spine's official example projects and the reference
-frames rendered from them, which are fetched rather than redistributed (see
-[NOTICE.md](NOTICE.md)). They need a clone and `bun run fetch-examples`, and say
-so by name when the corpus is absent.
+`check` measure against Spine's official example projects — fetched, never
+committed — and against reference frames this project renders from them, which
+**are** committed, each example's own `license.txt` beside them under the
+redistribution grant those files carry; the images stay **non-commercial only**.
+The reasoning is in
+[`bench/reference/README.md`](https://github.com/firejune/rigc/blob/main/bench/reference/README.md)
+and the terms in [NOTICE.md](NOTICE.md). Both commands need a clone and `bun run
+fetch-examples`, and say so by name when the corpus is absent.
 
 ## First rig in ten minutes
 
@@ -410,8 +430,9 @@ was verified, and what writing it cost. Repository material: a clone and
 
 <p align="center"><em>The portrait rig playing its three animations in one take — the turn is
 the shot: both silhouette edges move apart, which a flat slide cannot do, because every
-feature carries its own depth. Scene direction of this kind was Live2D's territory; the
-split was authoring cost, and the cost is now one stated expression per key. Compiled and
+feature carries its own depth. Scene direction of this kind is authorable on plain Spine
+4.3 — no plugin, no runtime patch — and the split was authoring cost rather than runtime
+capability; the cost is now one stated expression per key. Compiled and
 rendered entirely by the published package.</em></p>
 
 🎞️ **How the three films on this page were made** is kept with them, one directory per
@@ -449,7 +470,7 @@ and `bun run fetch-examples`. The reasoning behind all three is in
 
 `build` and `validate` both default to `--profile spine` — the 25 validity rules, which
 ask *is this valid Spine 4.3 that any runtime plays correctly?* `--profile spine-html`
-adds all 39: the other 14 are one renderer's policy and one canvas budget's, and they
+adds all 40: the other 15 are one renderer's policy and one canvas budget's, and they
 fire on perfectly correct editor-produced Spine data, so reach for that profile when
 you are shipping into *that* project rather than to be thorough. A report always names
 the profile it ran and lists what that profile left out.
@@ -471,7 +492,7 @@ the art. Its shape is under
 | 📥 **[docs/INGEST.md](docs/INGEST.md)** | **working with a skeleton you did not author.** What every command can and cannot do with a foreign `skeleton.json`, reading it with the toolchain, transcription as the route that makes it yours, what each validator complaint means on an export, and the re-pivot/rename/extend recipes. Ships in the package too |
 | 🤖 **[docs/PROMPTING.md](docs/PROMPTING.md)** | **handing the authoring to an AI agent** — the prompt clauses a measured pilot run paid for, and what you can leave unsaid. Ships in the package too |
 | 🔬 **[docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md)** | Spine 4.3's full export surface against what rigc emits and what the official examples measurably use, with the ordered gap list |
-| 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 36 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
+| 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 40 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
 | 📋 [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) · [GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md) · [PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) | the live rung ledger, the clause statements a candidate is graded against, and how to run an agent through the ladder and score what comes back |
 
 ## Why you can trust the output
@@ -481,11 +502,12 @@ rigc is measured against **Spine's own official example projects** — the
 as the graduation exam.
 
 🎓 **The ladder is complete, 2026-08-28.** All eight numbered rungs and the
-spineboy graduation exam are cleared and hold under the current gate, **v2.3**, every clause PASS or SKIP:
-worst attributable slot drift **5.55 px** against a 6.0 px bar, and **0 of 124**
-frame-change disagreements. Recompiling the same spec in a different session
-reproduced every field of the measurement record **to the digit**. The rungs stay
-in place as regression gates.
+spineboy graduation exam are cleared and hold under the current gate, **v2.4**, every clause PASS or SKIP:
+worst attributable slot drift **5.5550 px** against a 6.0 px bar — a **1.0801×**
+margin, the thinnest of the ladder's **G2** figures, and **G5**'s 1.0376× is thinner
+still — and **0 of 124** frame-change disagreements. Recompiling the same spec in a
+different session reproduced every field of the measurement record **to the digit**.
+The rungs stay in place as regression gates.
 
 🗓️ **One rung's pass was withdrawn and restored on 2026-09-02, and both are dated
 facts.** `check`'s extent tolerance ([PR #254](https://github.com/firejune/rigc/pull/254))
@@ -496,11 +518,15 @@ clause questions that exposed, as **v2.3**: a read-down names the framing of its
 evidence, and a slot whose attributability is **measured** to be capped below the bar
 reads down when everything observable about it is independently verified strict. That
 rung's third attempt clears on those grounds, on the candidate it already had.
-**Rungs 1–6 and 8 and the graduation exam were unaffected throughout**: each reproduces
-its gated figures to the digit, and the 5.55 px and 0-of-124 figures above are among
-them. Both verdicts, and the sweep of every candidate under the new gate, are in
+**Rungs 1–6 and 8 and the graduation exam were unaffected throughout**: each keeps its
+pass on the clause, and recompiling a stored candidate reproduces its record **to the
+digit within one gate**. Across an instrument change the digits do move, and the
+record says where — the graduation **G2** figure went 5.5491 → 5.5544 → **5.5550 px**
+over the #301 sampler repair and v2.4's adoption of the re-rendered reference basis,
+while **0 of 124** held throughout. Both verdicts, and the sweep of every candidate under the gate of the day, are in
 [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md)'s *PR #254 instrument re-inspection* and *gate-v2.3
-re-inspection*.
+re-inspection*; the standing figures quoted above are from its *gate-v2.4
+re-inspection*, which is the current sweep.
 
 ⚠️ **What that certifies, stated exactly.** That **the tool, the guide and the
 protocol reach the bar across a bounded series of honest attempts, each residual
@@ -508,6 +534,17 @@ diagnosed and fixed** — spineboy took five, and the last inherited its
 predecessor's specs under the run protocol's inheritance clause. It is **not**
 that an agent authors a spineboy-scale rig from the brief alone in one run: the
 ladder has not demonstrated that, and each row records which of the two it is.
+
+🧪 **A separate series measures that harder question, and it has not been kind.**
+From-zero attempts at spineboy — no inherited specs — have landed at **18.2, 18.8,
+19.57, 7.86, 9.33 and 18.98 px** worst drift against the 6.0 px bar, a spread with no
+monotone trend, and the two most recent — both **2026-09-03**, after the ladder's
+2026-08-28 completion — are recorded 🔴 **FAIL**. They move no rung and reopen nothing —
+a from-zero run is a tooling-progress measurement rather than a re-climb, which is
+why the certification above is scoped to tool + guide + protocol. One of those
+attempts states the residual in its own words: *"in motion it is not at editor
+quality."* All six, with their verdicts, are in
+[docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).
 
 The whole dossier — the yardstick, `diff` and `check` and what neither of them can
 see, every rung, the run viewer, the 40 assertions and the selftest behind them — is

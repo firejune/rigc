@@ -723,10 +723,12 @@ means `bun run fetch-examples` has not run) rather than dropped, because the
 ladder's history is part of what the viewer is for.
 
 🚫 **There is no build, and that is deliberate.** The viewer reads the working
-tree: the runs, the reference frames, and `examples/` — which is Esoteric
-Software's art, fetched rather than redistributed and non-commercial even then
-(see [NOTICE.md](../NOTICE.md)). A bundle would copy those pixels into a
-distributable artifact. So there is one mode, `vite dev` on localhost, the dev
+tree: the runs, the reference frames, and `examples/`. Both of the last two carry
+Esoteric Software's image data — `examples/` fetched and never committed, the
+reference frames committed under each example's own redistribution grant with its
+`license.txt` beside them — and **non-commercial either way** (see
+[NOTICE.md](../NOTICE.md)). A bundle would copy those pixels into a distributable
+artifact, away from the licence files that condition them. So there is one mode, `vite dev` on localhost, the dev
 server serves nothing outside `bench/` and `examples/`, and `vite build` fails
 on purpose. `viewer/` is not in `package.json`'s `files`, so it never ships
 either; it is also outside the root `tsconfig.json` (it needs the DOM lib, which
@@ -806,7 +808,7 @@ count — an assertion with nothing to check has not checked anything.
 
 #### Profiles — "wrong" versus "not how we do it here"
 
-Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this
+Not all 40 rules are about Spine. Some are about **spine-html**, the renderer this
 compiler was built to feed, and about one project's frame budget; they fire on real,
 correct, editor-produced Spine data, because the official example projects carry
 clipping attachments, unweighted meshes, 116-triangle meshes and packed atlases —
@@ -820,11 +822,16 @@ So `validate` and `build` take a `--profile`:
 | Profile | Runs | For |
 | --- | --- | --- |
 | `spine` | the 25 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
-| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |
+| `spine-html` | all 40 — those 25 plus 7 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
+
+Those are the two numbers `src/validate.ts` exports rather than states in prose:
+`ASSERTION_NAMES.length` is 40 and `assertionCountForProfile('spine')` is 25, so a
+control can count them instead of quoting a figure that goes stale the next time one
+is added.
 
 `spine` is the default because it is the question this package's output answers:
 the artifact imports into the Spine editor and plays in any 4.3 runtime, and
-that is what the 25 validity rules are about. The other 14 are somebody's policy
+that is what the 25 validity rules are about. The other 15 are somebody's policy
 — one renderer's, one canvas budget's, one compiler's own formations' — and a
 rig arriving from anywhere else has no stake in them. Ask for them with
 `--profile spine-html` when you want them.

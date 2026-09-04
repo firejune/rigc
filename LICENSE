@@ -19,3 +19,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+THIRD-PARTY MATERIAL
+
+The licence above covers rigc's own code, documentation and art. It does not cover
+third-party material distributed alongside them - in particular the rendered
+reference frames under bench/reference/, which carry Esoteric Software's example
+image data and are governed by each example's own license.txt beside them:
+redistribution only with that file, and no commercial use. See NOTICE.md.
