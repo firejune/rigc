@@ -13900,6 +13900,189 @@ function buildChainFitFixture(): ChainFitFixture {
   };
 }
 
+/**
+ * The relocation fixture: a rig that hides a part, and an unmasked look that
+ * cannot improve on its own answer a second time (issue #361).
+ */
+interface ChainFitRelocationFixture {
+  dir: string;
+  parts: string;
+  /** The candidate — `tuck` hanging straight down, which is not the pose. */
+  candidate: string;
+  /** The posed frame: `tuck` swung a quarter turn out, still mostly behind the slab. */
+  posedPath: string;
+  posedTruth: Map<string, PosePlacementTruth>;
+  /** Truth hinge per bone, in Spine degrees: the posed rotation minus the candidate's. */
+  truthHinge: Map<string, number>;
+}
+
+/**
+ * A rig built for one branch: the relocation the fallback has to KEEP.
+ *
+ * ⭐ **Why this needs its own fixture, and why the one above cannot do it.**
+ * `estimateChainFit` gives a bone whose frozen visible share is under the floor
+ * one unmasked look, and keeps that relocation only if it left more of the part
+ * scoreable. Both decisions are taken per pass, and the REJECTED side of the
+ * second one is what [#287](https://github.com/firejune/rigc/pull/287) repaired:
+ * it used to reset the bone to hinge 0 rather than to the seed it started from,
+ * which on pass 0 is the same thing and on every later pass throws away the
+ * relocation the first pass found. Worse, it reset the BONE while restoring its
+ * PARTS to the seed's placements, so a bone and its own parts disagreed about
+ * where they were and everything below inherited the bone's version through
+ * `placedBones`.
+ *
+ * Reaching that branch needs three things at once and the fixture above has none
+ * of them together — `buried` sits so deep inside `trunk` that its visible share
+ * is **0 at every hinge**, so its unmasked look can never improve on anything and
+ * the relocation is never kept in the first place. #287's own note said as much:
+ * none of the ten controls of the day reached the rejected branch after pass 0.
+ *
+ * The three conditions, and the geometry states each one:
+ *
+ *  1. **Under the floor at the rig's own prediction.** `tuck` hangs straight down
+ *     from the middle of a 60x74 slab drawn in front of it, so at the candidate's
+ *     setup its 12x34 plate is inside the slab's footprint but for the rows past
+ *     its bottom edge. Measured by the control beside this one: **0.0 %**.
+ *  2. **An unmasked look that IMPROVES on that.** In the frame `tuck` is swung a
+ *     quarter turn out, where the slab's own width leaves about a fifth of the
+ *     plate showing — measured **18.9 %**. So pass 0's relocation is kept and
+ *     `tuck` ends pass 0 at a hinge no masked search was ever run for.
+ *  3. **And cannot improve on it a second time, by construction rather than by
+ *     luck.** `searchOver(bareTargets())` reads no mask and the same parent
+ *     placement — `slab` is the anchor and nothing moves it — and its targets are
+ *     sampled at the part's own scale, which cannot move because no bone here
+ *     carries a `scale` timeline and `--stretch` is deliberately not given. So on
+ *     pass 1 it returns the answer pass 0 already took, `after.visible >
+ *     wasVisible` is false, and the fallback runs with a seed that is **not**
+ *     hinge 0. That is the exact state the defect turned into a reset.
+ *
+ * 🎯 **The gap is the fixture's to choose**, which is the argument the ceiling
+ * mutants in `fixtures/public.ts` make about their own numbers. 18.9 % sits under
+ * `DEFAULT_MIN_VISIBLE` (0.25) with room to spare, so condition 3's re-entry is
+ * not a coin toss on an antialiased edge — and the control needs no unusual flag
+ * at all, which is what says this branch is reachable in ordinary use.
+ *
+ * `tip` is the descendant, and it is what the bone-versus-parts disagreement is
+ * visible through. It hangs 34 units out along `tuck` and is drawn in front of
+ * everything, so it is fitted normally — and a `tuck` at hinge 0 instead of a
+ * quarter turn moves its pivot about 48 units before its own search begins. A
+ * hinge cannot translate a pivot back.
+ */
+function buildChainFitRelocationFixture(): ChainFitRelocationFixture {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-chainfit-reloc-'));
+  const parts = join(dir, 'parts');
+  mkdirSync(parts, { recursive: true });
+
+  // The occluder. Wide enough that a quarter-turned `tuck` still has most of
+  // itself behind it, which is condition 2's other half.
+  const slab = poseChecker(60, 74, [58, 66, 96, 255], [104, 118, 168, 255], 7);
+  slab.rect(0, 0, 60, 5, [222, 64, 64, 255]);
+  slab.rect(0, 69, 14, 5, [64, 222, 140, 255]);
+  slab.writePng(join(parts, 'slab.png'));
+
+  const tuck = poseChecker(12, 34, [206, 158, 54, 255], [148, 104, 26, 255], 5);
+  tuck.rect(0, 0, 12, 4, [32, 32, 32, 255]);
+  tuck.writePng(join(parts, 'tuck.png'));
+
+  const tip = poseChecker(16, 16, [226, 108, 172, 255], [150, 44, 108, 255], 4);
+  tip.rect(0, 0, 5, 5, [250, 244, 60, 255]);
+  tip.rect(11, 11, 5, 5, [24, 24, 24, 255]);
+  tip.writePng(join(parts, 'tip.png'));
+
+  const rigText = (name: string, rot: Record<string, number>): string =>
+    `${JSON.stringify(
+      {
+        spec: 'rigc-rig/1',
+        name,
+        skeleton: { width: 220, height: 220 },
+        bones: [
+          { name: 'root' },
+          { name: 'slab', parent: 'root', x: 0, y: 0 },
+          // The pivot is the slab's own centre, so the plate hanging off it at
+          // rotation 0 is inside the slab and at a quarter turn is beside it.
+          { name: 'tuck', parent: 'slab', x: 0, y: 0, rotation: rot.tuck },
+          // 34 units out along `tuck`, which is the lever a wrong `tuck` swings.
+          { name: 'tip', parent: 'tuck', x: 0, y: -34, rotation: rot.tip },
+        ],
+        // Back to front: `tuck` is behind the slab and `tip` is in front of it, so
+        // the one part this fallback is about is the only occluded one.
+        slots: [
+          { name: 'tuck', bone: 'tuck', attachment: 'tuck' },
+          { name: 'slab', bone: 'slab', attachment: 'slab' },
+          { name: 'tip', bone: 'tip', attachment: 'tip' },
+        ],
+        skins: {
+          default: {
+            // Offset from the pivot, for the reason the fixture above states: art
+            // centred on its own pivot turns in place, so a wrong hinge would cost
+            // nothing and a search over one angle would move nothing.
+            tuck: { tuck: { image: 'tuck.png', y: -20 } },
+            slab: { slab: { image: 'slab.png' } },
+            tip: { tip: { image: 'tip.png', y: -11 } },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`;
+
+  const setupRot = { tuck: 0, tip: 0 };
+  const posedRot = { tuck: -90, tip: 24 };
+  const build = (name: string, rot: Record<string, number>): { outDir: string; posable: Posable } => {
+    const rigPath = join(dir, `${name}.rig.json`);
+    writeFileSync(rigPath, rigText(name, rot));
+    const motionPath = join(dir, `${name}.motion.json`);
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify({ spec: 'rigc-motion/1', archetype: name, cut: name, easings: {}, animations: {} }, null, 2)}\n`,
+    );
+    const outDir = join(dir, name);
+    const built = compile({ rigPath, motionPath, outDir, imagesDir: parts });
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(join(outDir, 'skeleton.json'), built.skeletonText);
+    writeFileSync(join(outDir, 'skeleton.atlas'), built.atlasText);
+    return { outDir, posable: loadPosable(join(outDir, 'skeleton.json'), join(outDir, 'skeleton.atlas'), outDir) };
+  };
+  const candidate = build('candidate', setupRot);
+  const posed = build('posed', posedRot);
+
+  // One viewport over the union of both setups, so the candidate's own prediction
+  // lands on the canvas rather than off the edge of it.
+  const setupFrames = sampleSetupPose(candidate.posable.data);
+  const posedFrames = sampleSetupPose(posed.posable.data);
+  const bounds = unionBounds([setupFrames, posedFrames]);
+  const scale = 1.15;
+  const pad = 14;
+  const worldW = bounds.maxX - bounds.minX + pad * 2;
+  const worldH = bounds.maxY - bounds.minY + pad * 2;
+  const viewport = viewportOfSize(
+    bounds.minX - pad,
+    bounds.minY - pad,
+    worldW,
+    worldH,
+    scale,
+    Math.round(worldW * scale),
+    Math.round(worldH * scale),
+  );
+  const project = projector(viewport);
+  const plate = renderFrame(posedFrames[0], posed.posable.pages, viewport, BACKGROUND);
+  const posedPath = join(dir, 'posed.png');
+  plate.writePng(posedPath);
+  const posedTruth = new Map<string, PosePlacementTruth>();
+  for (const piece of posedFrames[0].pieces) {
+    const page = posed.posable.pages.get(piece.page);
+    if (piece.kind !== 'region' || !page) continue;
+    posedTruth.set(piece.slot, poseTruthOf(piece, page, project));
+  }
+
+  const truthHinge = new Map<string, number>();
+  for (const bone of Object.keys(posedRot)) {
+    truthHinge.set(bone, posedRot[bone as keyof typeof posedRot] - setupRot[bone as keyof typeof setupRot]);
+  }
+
+  return { dir, parts, candidate: candidate.outDir, posedPath, posedTruth, truthHinge };
+}
+
 function chainFitDelta(
   got: ChainFitPlacement,
   want: PosePlacementTruth,
@@ -14749,6 +14932,153 @@ function runChainFitSuite(): number {
     );
   }
 
+  // --- the relocation fallback, on its own fixture (issue #361) --------------
+  //
+  // ⭐ **What is under test is an INVARIANCE, not a number.** A later pass may
+  // move an answer — that is what passes are for — but it must never move it back
+  // to the rig's own prediction, because the seed it starts from is the previous
+  // pass's answer and not hinge 0. So the bar is that `--passes 1`, `2` and `3`
+  // report the same placement for a bone whose relocation the second pass cannot
+  // improve on, and that the placement they agree on is the truth's. Neither half
+  // is sufficient: agreeing on a wrong answer would satisfy the first, and one
+  // pass landing right would satisfy the second.
+  //
+  // 🚨 The premise is asserted rather than assumed, because a fixture that never
+  // reached the branch would satisfy the invariance trivially — which is exactly
+  // how ten controls sat green over this defect. The report itself says whether
+  // the branch was entered: the relocation note appears only where an unmasked
+  // look was taken and KEPT, and `visibleShareAtFit` under `DEFAULT_MIN_VISIBLE`
+  // is what makes the next pass go back through it.
+  {
+    const reloc = buildChainFitRelocationFixture();
+    const anchorPath = join(reloc.dir, 'anchor.json');
+    writeFileSync(
+      anchorPath,
+      `${JSON.stringify(
+        estimatePose({ imagesDir: reloc.parts, framePath: reloc.posedPath, parts: [join(reloc.parts, 'slab.png')] }),
+        null,
+        1,
+      )}\n`,
+    );
+    const run = (passes: number, minVisible?: number): ChainFitReport =>
+      estimateChainFit({
+        candidatePath: reloc.candidate,
+        imagesDir: reloc.parts,
+        framePath: reloc.posedPath,
+        anchorPath,
+        passes,
+        ...(minVisible === undefined ? {} : { minVisible }),
+      });
+    const relocRow = (
+      report: ChainFitReport,
+      slot: string,
+    ): {
+      slot: string;
+      hinge: number | null;
+      x: number | null;
+      y: number | null;
+      hingeErr: number;
+      delta: { translate: number; rotateDeg: number } | null;
+      share: number;
+      refusal: string | null;
+      relocated: boolean;
+    } => {
+      const part = partOf(report, slot);
+      const hinge = part.placement?.hingeDeg ?? null;
+      const truth = reloc.truthHinge.get(part.bone.name) ?? 0;
+      const want = reloc.posedTruth.get(slot);
+      return {
+        slot,
+        hinge,
+        x: part.placement?.x ?? null,
+        y: part.placement?.y ?? null,
+        hingeErr: hinge === null ? Infinity : Math.abs(((hinge - truth + 540) % 360) - 180),
+        delta: part.placement === null || want === undefined ? null : chainFitDelta(part.placement, want),
+        share: part.placement?.visibleShareAtFit ?? 0,
+        refusal: part.refusal?.reason ?? null,
+        // The note is how the report says an unmasked look was taken and kept —
+        // the internal flag is not a reported field, and reading it here would be
+        // reading the implementation rather than the answer.
+        relocated: part.notes.some((note) => note.includes('UNMASKED')),
+      };
+    };
+    const relocSay = (r: ReturnType<typeof relocRow>): string =>
+      `${r.slot} h=${r.hinge === null ? 'none' : r.hinge.toFixed(2)}° ` +
+      `${r.delta ? chainFitSay(r.delta) : 'no placement'} Δhinge ${r.hingeErr.toFixed(2)}° ` +
+      `share ${(r.share * 100).toFixed(1)}%${r.refusal ? ` REFUSED ${r.refusal}` : ''}` +
+      `${r.relocated ? ' RELOCATED' : ''}`;
+
+    const one = run(1);
+    const two = run(2);
+    const three = run(3);
+    const rows = [one, two, three].map((report) => ['tuck', 'tip'].map((slot) => relocRow(report, slot)));
+    const [first] = rows;
+    /** The same placement, to the digits the report prints — a restored seed is the same object. */
+    const same = (a: ReturnType<typeof relocRow>, b: ReturnType<typeof relocRow>): boolean =>
+      a.hinge === b.hinge && a.x === b.x && a.y === b.y;
+    const moved = rows
+      .slice(1)
+      .flatMap((later, i) =>
+        later
+          .filter((row, j) => !same(row, first[j]))
+          .map((row) => `at --passes ${i + 2}, ${relocSay(row)} — one pass reported ${relocSay(first[first.findIndex((f) => f.slot === row.slot)])}`),
+      );
+    const tuckOne = first[0];
+    const tipOne = first[1];
+    const premise =
+      tuckOne.relocated && tuckOne.refusal === 'occluded' && tuckOne.share < DEFAULT_MIN_VISIBLE && tuckOne.share > 0;
+    const truthful =
+      tuckOne.delta !== null &&
+      chainFitWithin(tuckOne.delta) &&
+      tuckOne.hingeErr <= CHAINFIT_TOLERANCE.hingeDeg &&
+      tipOne.delta !== null &&
+      chainFitWithin(tipOne.delta) &&
+      tipOne.hingeErr <= CHAINFIT_TOLERANCE.hingeDeg;
+    say(
+      'CF17_A_RELOCATION_A_LATER_PASS_CANNOT_IMPROVE_ON_IS_KEPT_RATHER_THAN_RESET',
+      premise && truthful && moved.length === 0,
+      (!premise
+        ? `the fixture did not reach the branch: ${relocSay(tuckOne)} — it has to be RELOCATED, refused ` +
+          `\`occluded\`, and left a share strictly between 0 and the ${DEFAULT_MIN_VISIBLE} floor, or a later ` +
+          'pass never goes back through the fallback at all'
+        : moved.length > 0
+          ? `a later pass discarded what the first one found:\n          ${moved.join('\n          ')}`
+          : `\`tuck\` relocated to a hinge no masked search ran for and kept it across 3 pass counts: ` +
+            `${first.map(relocSay).join('  ·  ')}`) +
+        `  ·  --passes 1 / 2 / 3 agree to the digit on both parts`,
+      'the defect #287 repaired: the fallback reset the bone to hinge 0 instead of to the seed it started from, ' +
+        'which on pass 0 is the same thing and on every later pass throws away the relocation pass 0 found — and ' +
+        'it reset the bone while restoring its parts, so `tip` inherited a placement its own parent disagreed ' +
+        'with. Found by reading the pull request back, and none of the sixteen controls above reaches this branch',
+    );
+
+    // The break beside it, and it is the same argument CF03 and CF07 make: with
+    // the floor at 0 the unmasked look never happens, so the masked search runs
+    // over a part with nothing scoreable and the answer is the rig's prediction.
+    // If that were within tolerance too, CF17 would be measuring the composition
+    // rather than the relocation.
+    const floorOff = ['tuck', 'tip'].map((slot) => relocRow(run(2, 0), slot));
+    const inert =
+      floorOff[0].refusal === 'no-match' &&
+      floorOff[0].share === 0 &&
+      !floorOff[0].relocated &&
+      floorOff[0].delta !== null &&
+      !chainFitWithin(floorOff[0].delta) &&
+      floorOff[1].delta !== null &&
+      !chainFitWithin(floorOff[1].delta);
+    say(
+      'CF18_THE_RELOCATION_IS_WHAT_BUYS_THAT_ANSWER_AND_THE_FLOOR_IS_WHAT_ASKS_FOR_IT',
+      inert,
+      `--min-visible 0 on the same frame: ${floorOff.map(relocSay).join('  ·  ')} — the rig predicts \`tuck\` ` +
+        `entirely covered (share 0.0%), so with no floor to trip nothing is relocated, the masked search has ` +
+        'nothing to score, and both parts land where the candidate\'s own setup put them',
+      'this is what makes CF17 a measurement of the fallback rather than of the chain composition: the relocation ' +
+        'is worth 32 px on the occluded part and 55 px on its child, and the floor is the only thing that asks ' +
+        'for it. It is also the fixture stating condition 1 — the share at the rig\'s own prediction — as a ' +
+        'measurement rather than as a claim in a comment',
+    );
+  }
+
   return bad;
 }
 
@@ -15511,7 +15841,7 @@ function main(): void {
   bad += runPoseSuite();
   substantive += 11;
   bad += runChainFitSuite();
-  substantive += 10;
+  substantive += 12;
   bad += runBallotSuite();
   substantive += 13;
   bad += runCopyImagesSuite();
@@ -15729,7 +16059,7 @@ function main(): void {
       'declared scale window honoured in both directions, the command writing its JSON while a mistyped ' +
       'directory is refused by name, and the same picture read twice reporting the same numbers rather than ' +
       'nearly the same ones — the objective divides since #306)' +
-      ', + 16 chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
+      ', + 18 chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
       'and 3° with a fourth arriving two links out under a trunk-only anchor, every one of their residuals lower ' +
