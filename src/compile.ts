@@ -26,7 +26,8 @@ import {
   checkTone,
   checkZScale,
   depthDigest,
-  sampleDepth,
+  sampleLevel,
+  toneLevel,
   type DepthMap,
   type DepthNear,
   type DepthTone,
@@ -53,6 +54,7 @@ import {
   type RigRegionAttachment,
   type RigSpec,
   type RigVertexGeometry,
+  type RigDepthMap,
 } from './rig.ts';
 import {
   buildContourMesh,
@@ -69,6 +71,7 @@ import {
   type MeshBoneRef,
   type MeshFitReport,
   type MeshGeometry,
+  type MeshVertexWeight,
 } from './mesh.ts';
 import { Plate, readPlate } from '../tools/plate.ts';
 import {
@@ -2716,7 +2719,12 @@ function sampleMeshDepth(
   partHeight: number,
   where: string,
   ctx: AttachmentContext,
-): { z: number[]; summary: NonNullable<CompileResult['meshes'][number]['depth']> } {
+): {
+  z: number[];
+  /** The tone-curved 0..1 nearness per vertex, which `bind` thresholds. */
+  nearness: number[];
+  summary: NonNullable<CompileResult['meshes'][number]['depth']>;
+} {
   if (typeof spec.image !== 'string' || spec.image.length === 0) {
     throw new CompileError(`${where}: the depth block has no "image"; it is the sheet to sample, relative to the rig's images directory`);
   }
@@ -2812,16 +2820,20 @@ function sampleMeshDepth(
   }
 
   const z: number[] = [];
+  const nearness: number[] = [];
   let lo = Infinity;
   let hi = -Infinity;
   for (const [x, y] of points) {
-    const d = sampleDepth(map, x, y, spec.near as DepthNear, tone, spec.zScale);
+    const n = toneLevel(sampleLevel(map, x, y), spec.near as DepthNear, tone);
+    const d = n * spec.zScale;
+    nearness.push(n);
     z.push(d);
     if (d < lo) lo = d;
     if (d > hi) hi = d;
   }
   return {
     z,
+    nearness,
     summary: {
       image: spec.image,
       digest: depthDigest(map),
@@ -2831,6 +2843,91 @@ function sampleMeshDepth(
       range: [r6(lo), r6(hi)],
     },
   };
+}
+
+/** One bone of the rig as `encodeWeightedVertices` wants it. */
+function meshBoneRef(name: string, where: string, ctx: AttachmentContext): MeshBoneRef {
+  const transform = ctx.transforms.get(name);
+  if (!transform) throw new CompileError(`${where}: bone "${name}" has no setup transform`);
+  const index = ctx.bones.findIndex((b) => b.name === name);
+  if (index < 0) throw new CompileError(`${where}: bone "${name}" is not in the rig's bone list`);
+  return { index, toBind: (wx, wy) => toBoneLocal(transform, wx, wy) };
+}
+
+/**
+ * Turn a depth map's nearness into mesh weights on a second bone.
+ *
+ * ⭐ The jiggle with no mask painted and no weights assigned. The same pass
+ * that gave every vertex its `z` says which vertices are near enough to be
+ * carried, and by how much; a physics constraint on that bone then moves
+ * exactly that region. What a person would otherwise do with a weight brush,
+ * derived from a number the manifest already had.
+ *
+ * The remainder always stays on the slot bone, so every vertex sums to 1 by
+ * construction rather than by A20 catching it later.
+ */
+function bindDepthWeights(
+  bind: NonNullable<RigDepthMap['bind']>,
+  nearness: readonly number[],
+  where: string,
+  ctx: AttachmentContext,
+): { weights: MeshVertexWeight[][]; bone: string; carried: number; ramped: number } {
+  const { bone } = bind;
+  if (typeof bone !== 'string' || bone.length === 0) {
+    throw new CompileError(`${where}: the depth "bind" block has no "bone"; it is the bone the near region is carried by`);
+  }
+  if (!ctx.bones.some((b) => b.name === bone)) {
+    throw new CompileError(
+      `${where}: the depth "bind" names bone "${bone}", which this rig does not declare. rigc binds a region to a ` +
+        'bone that already exists rather than creating one — a bone a physics constraint has to target is part of ' +
+        'the skeleton, not a side effect of a mesh.',
+    );
+  }
+  if (bone === ctx.anchorBone) {
+    throw new CompileError(
+      `${where}: the depth "bind" names "${bone}", which is this slot's own bone. Binding the near region to the ` +
+        'bone the rest of the mesh is already pinned to moves nothing — the region needs a bone that can move ' +
+        'independently, which is what a physics constraint is put on.',
+    );
+  }
+  const above = bind.above;
+  if (typeof above !== 'number' || !Number.isFinite(above) || above < 0 || above > 1) {
+    throw new CompileError(
+      `${where}: the depth "bind" has "above": ${JSON.stringify(above)}; it is a nearness, so a number in 0..1`,
+    );
+  }
+  const feather = bind.feather ?? 0;
+  if (typeof feather !== 'number' || !Number.isFinite(feather) || feather < 0) {
+    throw new CompileError(`${where}: the depth "bind" has "feather": ${JSON.stringify(feather)}; it is 0 or more`);
+  }
+  let carried = 0;
+  let ramped = 0;
+  const weights = nearness.map((n) => {
+    // Smoothstep rather than a straight ramp: a linear weight has a kink at
+    // both ends of the band, and a kink in the weights is a crease in the art.
+    let w: number;
+    if (feather === 0) w = n >= above ? 1 : 0;
+    else {
+      const t = Math.min(1, Math.max(0, (n - above) / feather));
+      w = t * t * (3 - 2 * t);
+    }
+    if (w >= 1) carried++;
+    else if (w > 0) ramped++;
+    if (w <= 0) return [{ bone: 'anchor', weight: 1 }] as MeshVertexWeight[];
+    if (w >= 1) return [{ bone: 'control', control: 0, weight: 1 }] as MeshVertexWeight[];
+    return [
+      { bone: 'anchor', weight: 1 - w },
+      { bone: 'control', control: 0, weight: w },
+    ] as MeshVertexWeight[];
+  });
+  if (carried === 0 && ramped === 0) {
+    throw new CompileError(
+      `${where}: the depth "bind" carries no vertex — "above" is ${above} and the nearest vertex of this mesh ` +
+        `reaches ${Math.max(...nearness).toFixed(4)}. A region that moves nothing is a physics constraint with ` +
+        'nothing on the end of it; lower "above", or check the map\'s "near" convention.',
+    );
+  }
+  return { weights, bone, carried, ramped };
 }
 
 /**
@@ -2920,16 +3017,27 @@ function buildGridAttachment(
   if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
   const index = ctx.bones.findIndex((b) => b.name === ctx.anchorBone);
   if (index < 0) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
-  const vertices = encodeWeightedVertices(
-    geometry,
-    (px, py) => [r6(anchor.worldX + px * toArt - w / 2), r6(anchor.worldY + h / 2 - py * toArt)],
-    { anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) }, controls: [] },
-  );
-  ctx.meshBones.add(ctx.anchorBone);
+  // Sampled BEFORE the encode, because `bind` rewrites the weights the encode
+  // then writes out.
   const depth =
     generator.depth === undefined
       ? undefined
       : sampleMeshDepth(generator.depth, 'grid', geometry.points, plate.width, plate.height, where, ctx);
+  const bound =
+    generator.depth?.bind === undefined || depth === undefined
+      ? undefined
+      : bindDepthWeights(generator.depth.bind, depth.nearness, where, ctx);
+  if (bound) geometry = { ...geometry, weights: bound.weights };
+  const vertices = encodeWeightedVertices(
+    geometry,
+    (px, py) => [r6(anchor.worldX + px * toArt - w / 2), r6(anchor.worldY + h / 2 - py * toArt)],
+    {
+      anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) },
+      controls: bound ? [meshBoneRef(bound.bone, where, ctx)] : [],
+    },
+  );
+  ctx.meshBones.add(ctx.anchorBone);
+  if (bound) ctx.meshBones.add(bound.bone);
   if (depth !== undefined) ctx.depths.set(`${ctx.skinName}/${ctx.slotName}/${placeholder}`, depth.z);
   ctx.meshes.push({
     slot: ctx.slotName,
@@ -2937,8 +3045,13 @@ function buildGridAttachment(
     attachments: [placeholder],
     vertices: geometry.uvs.length / 2,
     triangles: geometry.triangles.length / 3,
-    bones: [ctx.anchorBone],
-    depth: depth?.summary,
+    bones: bound ? [ctx.anchorBone, bound.bone] : [ctx.anchorBone],
+    depth:
+      depth === undefined
+        ? undefined
+        : bound === undefined
+          ? depth.summary
+          : { ...depth.summary, bind: bound.bone, carried: bound.carried, ramped: bound.ramped },
   });
   const out: SpineMeshAttachment = {
     type: 'mesh',
@@ -3380,6 +3493,8 @@ function buildRigInfo(
   }
   const meshKinds: RigInfo['meshKinds'] = {};
   for (const mesh of meshes) meshKinds[mesh.slot] = mesh.kind;
+  const meshDepthBinds: RigInfo['meshDepthBinds'] = {};
+  for (const mesh of meshes) if (mesh.depth?.bind !== undefined) meshDepthBinds[mesh.slot] = mesh.depth.bind;
   // A fold exemption on a slot that carries no mesh cannot exempt anything —
   // A39 reads triangles, and only a mesh has them. `parseRigSpec` already
   // refused a name that is not a SLOT; this is the second half, and it needs
@@ -3416,6 +3531,7 @@ function buildRigInfo(
     detached: (rig.invariants?.detached ?? []).map((d) => [d.bone, d.notUnder] as [string, string]),
     slotOrder: rig.slots.length ? rig.slots.map((s) => s.name) : null,
     meshKinds,
+    meshDepthBinds,
     deformMayFold,
     meshSlotBudget: rig.invariants?.meshSlots ?? null,
     meshTriangleBudget: rig.invariants?.meshTriangles ?? null,

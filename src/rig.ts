@@ -309,6 +309,36 @@ export interface RigDepthMap {
   gamma?: number;
   contrast?: number;
   bias?: number;
+  /**
+   * Bind the near part of the map to a second bone, so a physics constraint on
+   * that bone makes exactly that region wobble.
+   *
+   * ⭐ This is the jiggle with no mask painted and no weights assigned: the same
+   * depth pass that gave every vertex its `z` says which vertices are near
+   * enough to move, and how much. What a person would otherwise do with a
+   * weight brush.
+   *
+   * The weight is a smoothstep from `above` to `above + feather` over the
+   * NEARNESS (the tone-curved 0..1 value, before `zScale`), and the remainder
+   * stays on the slot bone — so a vertex is always fully accounted for and the
+   * mesh cannot drift off its plate.
+   */
+  bind?: {
+    /** The bone the near region binds to. It must already exist in the rig. */
+    bone: string;
+    /** Nearness at which the region starts. Below this a vertex does not move. */
+    above: number;
+    /**
+     * Nearness over which the weight ramps 0 -> 1. Default 0, a hard edge.
+     *
+     * ⚠️ A hard edge is authorable and usually wrong: neighbouring vertices go
+     * from fully carried to fully still, and the triangle between them takes
+     * the whole difference as stretch. rigc does not pick a value — a feather
+     * is a decision about the art — but the report prints how many vertices
+     * landed in the ramp, which is 0 when the edge is hard.
+     */
+    feather?: number;
+  };
 }
 
 export type RigMeshGenerator =

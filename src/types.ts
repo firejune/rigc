@@ -960,6 +960,17 @@ export interface RigInfo {
    */
   meshKinds: Record<string, MeshKind | 'authored'>;
   /**
+   * Slots whose mesh binds a region to a second bone by depth, and which bone
+   * — from a generator's `depth.bind` block.
+   *
+   * ⭐ A21 reads it. A rim vertex the depth map CARRIED is supposed to move —
+   * that is what a jiggle is — so the rule splits by declaration rather than
+   * being relaxed, exactly as it already splits for a ribbon's entry row: on
+   * such a mesh the invariant is that a rim vertex is either pinned to the slot
+   * bone or shared between it and the declared bone, and never anything else.
+   */
+  meshDepthBinds: Record<string, string>;
+  /**
    * Slots whose deform timelines may turn a triangle inside out, from
    * `invariants.deformMayFold`. Empty is the ordinary case, and A39 gates every
    * mesh not named here — see `RigInvariants.deformMayFold` for why the default
@@ -1065,6 +1076,11 @@ export interface CompileResult {
       tone: { gamma: number; contrast: number; bias: number };
       /** Least and greatest `z` over the mesh's vertices, in attachment units. */
       range: [number, number];
+      /** The bone a `bind` block carried the near region to, when one was named. */
+      bind?: string;
+      /** Vertices carried outright, and vertices in the feather ramp. */
+      carried?: number;
+      ramped?: number;
     };
   }>;
   /** Structural expectations handed to the validator. */

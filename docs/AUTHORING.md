@@ -1019,6 +1019,53 @@ A sheet with **no alpha channel** covers its whole grid by construction and the
 coverage check has nothing to test; what its background level means is then your
 statement, and the reported range is where it shows up.
 
+##### `bind` — the jiggle, from the same pass
+
+A depth map can also say **which vertices wobble**. `bind` carries the near part
+of the map to a second bone; a `physics` constraint (§3.5) on that bone then
+moves exactly that region.
+
+```json
+"depth": { "image": "face_depth.png", "near": "white", "zScale": 40,
+           "bind": { "bone": "hair_wobble", "above": 0.55, "feather": 0.2 } }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `bone` | **required.** The bone the near region is carried by. It has to already exist — a bone a physics constraint targets is part of the skeleton, not a side effect of a mesh |
+| `above` | **required.** The nearness (`0..1`, after the tone curve) at which the region starts |
+| `feather` | nearness over which the weight ramps 0 → 1, by smoothstep. Default `0` |
+
+The remainder always stays on the slot bone, so every vertex closes at 1 by
+construction rather than by `A20` catching it later. `build` and `explain` report
+how many vertices were carried outright and how many landed in the ramp.
+
+⚠️ **`feather: 0` is authorable and usually wrong.** Neighbouring vertices go
+from fully carried to fully still and the triangle between them takes the whole
+difference as stretch. rigc does not pick a value — a feather is a decision about
+the art — but `ramped: 0` in the report is what a hard edge looks like.
+
+**`A21_MESH_RIM_PINNED` splits on this rather than being relaxed.** A jiggling
+silhouette is *supposed* to move; the invariant is that nothing else does. On a
+depth-bound mesh every vertex must be pinned to the slot bone or shared between
+it and the one declared bone, must close at 1, and at least one must actually be
+carried — a bind that moves nothing is refused.
+
+| The input | What you get |
+| --- | --- |
+| a bone the rig does not declare | `names bone "x", which this rig does not declare … a bone a physics constraint has to target is part of the skeleton` |
+| the slot's own bone | `moves nothing — the region needs a bone that can move independently` |
+| an `above` no vertex reaches | `carries no vertex — "above" is 1 and the nearest vertex of this mesh reaches 0.6000` |
+| an `above` outside `0..1` | `it is a nearness, so a number in 0..1` |
+| a negative `feather` | `it is 0 or more` |
+
+🚨 **What it cannot do yet.** A carried mesh has two bones on some vertices, and
+a `transform` key (§4.12) needs one coordinate space to be evaluated in — so a
+`parallax` and a jiggle cannot ride the *same* attachment today. The refusal is
+correct as the compiler stands and names the reason; `JG03` in the selftest holds
+it, so the day it changes something fails and says so. Until then, put the two on
+separate slots, or key the slide on the bone.
+
 🖼️ **Worked example: [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex)** — four contours over real art, with
 the `tolerance`/`margin` sweep that picked their settings and what each one measured.
 
