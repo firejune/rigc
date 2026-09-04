@@ -142,7 +142,7 @@ rigc validate examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json
 ```
 rigc validate …/examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json
   ..    atlas …/examples/3-timing-and-spacing/export/3-timing-and-spacing.atlas
-  ..    profile spine — 7 renderer-policy and 7 archetype assertion(s) do not apply
+  ..    profile spine — 7 renderer-policy and 8 archetype assertion(s) do not apply
   PASS  A07_ATLAS_TEXT_SHAPE
   PASS  A00_ROUNDTRIP_PARSE
   PASS  A16_SKELETON_VERSION_4_3
@@ -645,19 +645,19 @@ has three possible meanings and the message alone does not separate them:
 runtime is content and the burden is on the rule. Reporting that is a better answer
 than a quietly edited export.
 
-### 3.3 Profile choice, and the fourteen rules that will not fire
+### 3.3 Profile choice, and the fifteen rules that will not fire
 
 `--profile spine` is the default and answers *"is this valid Spine 4.3 that any
 runtime plays correctly?"* — and it is the right profile for foreign data, because the
 other one is this project's own renderer and archetype policy.
 
-**Fourteen assertions do not run under `spine`, and they come back `PROF`, not
+**Fifteen assertions do not run under `spine`, and they come back `PROF`, not
 `SKIP`:**
 
 | Excluded as | Rules |
 | --- | --- |
 | **renderer policy** (7) | `A11_NO_CLIPPING_ATTACHMENTS`, `A12_NO_DARK_COLOR`, `A13_MESH_BUDGET`, `A14_NO_FULL_FRAME_MESH`, `A15_IDLE_NO_MESH_BONE_KEYS`, `A19_OVERLAY_PNGS_HAVE_ALPHA`, `A27_REGION_NAME_MATCHES_PAGE_FILENAME` |
-| **archetype policy** (7) | `A21_MESH_RIM_PINNED`, `A24_AXIS_SPACE_STROKE`, `A25_DETACHED_BONE_PARENTAGE`, `A26_SLOT_DRAW_ORDER`, `A28_RIBBON_ROWS_SHARE_WEIGHTS`, `A29_STROKE_WITHIN_CONTACT_DEPTH`, `A30_STROKE_WITHIN_CAP_CONTAINMENT` |
+| **archetype policy** (8) | `A21_MESH_RIM_PINNED`, `A24_AXIS_SPACE_STROKE`, `A25_DETACHED_BONE_PARENTAGE`, `A26_SLOT_DRAW_ORDER`, `A28_RIBBON_ROWS_SHARE_WEIGHTS`, `A29_STROKE_WITHIN_CONTACT_DEPTH`, `A30_STROKE_WITHIN_CAP_CONTAINMENT`, `A39_DEFORM_KEEPS_TRIANGLE_WINDING` |
 
 Three further rules — **`A06`**, **`A08`** and **`A20`** — are *mixed*: their validity
 clauses run in both profiles and their policy clauses only under `spine-html`. `A06`'s

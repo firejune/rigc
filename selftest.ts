@@ -177,7 +177,13 @@ import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
 import { readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson } from './src/types.ts';
 import { skeletonDataFromText, surveyDeformKeys } from './src/deformmeasure.ts';
-import { assertionCountForProfile, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
+import {
+  ASSERTION_NAMES,
+  assertionCountForProfile,
+  validate,
+  VALIDATE_PROFILES,
+  type ValidateProfile,
+} from './src/validate.ts';
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
@@ -11778,21 +11784,17 @@ function relativeLinks(root: string, doc: string): DocLink[] {
   return found;
 }
 
-function runShippedDocSuite(): number {
-  console.log('\n── the published package\'s own links (issue #333) ──');
-  let bad = 0;
-  const say = (name: string, ok: boolean, detail: string, why: string): void => {
-    bad += reportCase(name, ok, detail, why);
-  };
-
-  const root = import.meta.dir;
-  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { files?: string[] };
-  const allowlist = pkg.files ?? [];
-
-  // The shipped set, expanded rather than guessed. An entry this expander cannot
-  // read is refused by name below: an unexpanded pattern would shrink the set it
-  // computes, and every link into the files it should have covered would be
-  // refused for the wrong reason.
+/**
+ * The published package's file set, expanded rather than guessed.
+ *
+ * An entry this expander cannot read comes back in `unreadable` so the caller can
+ * refuse it by name: an unexpanded pattern would silently SHRINK the set, and
+ * every question asked of the files it should have covered would then be answered
+ * for the wrong reason. Two suites derive from this — PKG02 (links out of a
+ * shipped doc) and the currency gate below (claims made inside one) — and both
+ * need the same set, so it is computed in one place.
+ */
+function expandShippedSet(root: string, allowlist: string[]): { shipped: Set<string>; unreadable: string[] } {
   const shipped = new Set(NPM_ALWAYS_SHIPS);
   const unreadable: string[] = [];
   for (const entry of allowlist) {
@@ -11807,6 +11809,20 @@ function runShippedDocSuite(): number {
     if (statSync(join(root, entry)).isDirectory()) for (const file of filesUnder(root, entry)) shipped.add(file);
     else shipped.add(entry);
   }
+  return { shipped, unreadable };
+}
+
+function runShippedDocSuite(): number {
+  console.log('\n── the published package\'s own links (issue #333) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const root = import.meta.dir;
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { files?: string[] };
+  const allowlist = pkg.files ?? [];
+  const { shipped, unreadable } = expandShippedSet(root, allowlist);
 
   /** A target ships when it IS a shipped file, or is a directory some shipped file sits under. */
   const shipsToo = (path: string): boolean =>
@@ -11865,6 +11881,942 @@ function runShippedDocSuite(): number {
     'a relative link in a shipped doc resolves inside `node_modules/spine-rigc/`, where a file outside `files` is ' +
       'not there at all — and the repository, where the file IS where the link says, is the one place the defect ' +
       'cannot be seen. Found three times before anything checked: #222, #330 and #332',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// the currency gate — a doc's claims ABOUT THE TOOL derive from the tool
+// (issue #360)
+// ---------------------------------------------------------------------------
+//
+// ⭐ **Why this suite exists.** Docs/record drift is the one defect class in this
+// repository that keeps recurring and is found only when somebody deliberately
+// audits: assertion tallies stated as 36 / 39 / 40 while the registry held 40, a
+// superseded gate version in three places at once, `Worked case:` cells left at
+// `—` for weeks after the case shipped. Every instance had the same shape — a
+// number the tool knows, copied by hand into prose, and then not copied again.
+//
+// The mechanism follows the four working precedents in this file rather than
+// inventing one: PKG02 derives the shipped set from `files`, CLI10/11 derive the
+// flag contract from `--help`, LS03 derives a sampling verdict from the gallery's
+// own motion specs, GM00 derives its table from the closed forms. **Derive, never
+// enumerate.** So the values here come from `src/validate.ts`, from a live
+// `validate()` report, from `docs/GATE.md`'s own header, from the gallery's
+// motion specs and from the filesystem — and the docs are SCANNED for what they
+// state, rather than a list of known claims being kept up to date beside them.
+//
+// 🚨 **The hard half was false positives, and it was settled by measurement
+// rather than by taste.** A first pass matched a number near any of the
+// registry's nouns; over these sixteen documents it produced 90-odd sites, most
+// of them noise ("*one* rule", "the h*onesty* rule", `§4.2 Assertions`,
+// `rigc: 13 assertion(s) failed`, "all 86 compared sets"). Three structural rules
+// cut that to the claims, and each is a rule about MARKUP rather than about
+// English:
+//
+//   1. **Fenced code and inline code spans are not prose.** A number inside them
+//      is quoted tool output or a path, not a claim — the same skip `PKG02`'s
+//      link reader already makes. The ONE limb that deliberately reads inside a
+//      fence is the report-summary limb, and it is safe there precisely because
+//      it matches `reportLines`'s own format string, which nothing else writes.
+//   2. **A digit run preceded by `#`, `§`, `.` or a word character is a
+//      reference, not a tally** — issue numbers, section numbers, `A20`.
+//   3. **The two loose forms ("the other N") are gated on the line naming the
+//      profile split.** Without the gate, "the other 309", "the other 7 reach it"
+//      and "all 86 compared sets" all read as tallies. `all N` was tried under
+//      the same gate and DROPPED: `--profile` appears on lines about sweeps too,
+//      and it faulted twice on LADDER. What that costs is naming — a stale `all
+//      39` is still refused by the registry limb one clause over — and what it
+//      buys is a gate with no false positive in the tree.
+//
+// 📌 **The escape hatch is one marker and it is deliberately blunt.** A document
+// whose statements are a dated snapshot rather than current state declares it in
+// its own header with `<!-- currency: dated-record -->`, and the whole file drops
+// out of the scan. Exactly one document needs it — `docs/SPEC_COVERAGE.md`, which
+// already says the same thing in three sentences of prose that nothing could read
+// — and CUR01 refuses a marker that does not sit beside an ISO date, refuses one
+// on `README.md`, and reports the marked set so it cannot grow quietly. A
+// line-level escape was designed and then **not shipped**: no line in the tree
+// needed one, and an untested way to silence the gate is worse than no way.
+//
+// ⚠️ **What this gate does NOT read, stated so the next reader does not assume
+// it does.** Recorded figures (`5.5550 px`, `1.0801×`, `0 of 124`) — their source
+// is a bench run over a stored candidate, which is out of a self-contained
+// selftest's reach, and LADDER's per-attempt records are dated by construction.
+// Prose claims with no token in them (a provenance sentence, "not in the npm
+// package"). Per-run report tallies (`26 PASS / 13 SKIP`) — those are per
+// skeleton, so no registry number is the right answer for them. And phrasings
+// outside the forms below: the per-form floor in CUR01 is what makes a form that
+// has stopped matching loud instead of silent.
+
+/** One doc on the reader's path, with its prose separated from its markup. */
+interface CurrencyDoc {
+  path: string;
+  /** How it reaches a reader: inside the npm package, or one hop off the landing page. */
+  tier: 'shipped' | 'landing';
+  /** Every line, verbatim. Transcripts and code live here and only here. */
+  raw: string[];
+  /**
+   * The same lines with fenced blocks replaced by `null` and inline code spans
+   * blanked to spaces of equal length — so column offsets still line up with
+   * `raw`, and a claim is only ever read out of running text.
+   */
+  prose: (string | null)[];
+  /** Declared a dated snapshot by `<!-- currency: dated-record -->` in its header. */
+  dated: boolean;
+  /** The ISO date its header carries, if any — a `dated` marker without one is refused. */
+  headerDate: string | null;
+}
+
+/** How far into a file the dated-record marker and its date have to be to count as a header declaration. */
+const CURRENCY_HEADER_LINES = 40;
+
+function readCurrencyDoc(path: string, tier: CurrencyDoc['tier'], text: string): CurrencyDoc {
+  const raw = text.split('\n');
+  const prose: (string | null)[] = [];
+  let fence: string | null = null;
+  for (const line of raw) {
+    const marker = /^ {0,3}(```+|~~~+)/.exec(line);
+    if (marker !== null) {
+      // Closed only by its own character, so a ``` inside a ~~~ block stays inside it.
+      if (fence === null) fence = marker[1][0];
+      else if (marker[1][0] === fence) fence = null;
+      prose.push(null);
+      continue;
+    }
+    if (fence !== null) {
+      prose.push(null);
+      continue;
+    }
+    prose.push(line.replace(/(`+)(?:(?!\1)[\s\S])*?\1/g, (span) => ' '.repeat(span.length)));
+  }
+  const header = raw.slice(0, CURRENCY_HEADER_LINES);
+  const date = /\b(\d{4}-\d{2}-\d{2})\b/.exec(header.join('\n'));
+  return {
+    path,
+    tier,
+    raw,
+    prose,
+    dated: header.some((line) => /<!--\s*currency:\s*dated-record\s*-->/.test(line)),
+    headerDate: date === null ? null : date[1],
+  };
+}
+
+/**
+ * The documents a reader actually reads, derived in two tiers.
+ *
+ * **shipped** is what npm installs — the `files` allowlist expanded, plus the
+ * three files npm ships whatever the allowlist says. **landing** is what the
+ * README sends a reader to in one hop, which is how `docs/BENCHMARK.md`,
+ * `docs/LADDER.md` and `docs/GATE.md` are read even though none of them is in the
+ * package. Both halves are derived: the second reads README's own links, absolute
+ * `github.com/firejune/rigc/blob/main/…` ones included, because #332 established
+ * that a link OUT of the package to repository material is spelled absolute — so
+ * a scan that read only relative links would find none of the landing set.
+ */
+function currencyDocs(root: string, shipped: Set<string>): CurrencyDoc[] {
+  const found = new Map<string, CurrencyDoc['tier']>();
+  for (const file of shipped) if (file.endsWith('.md')) found.set(file, 'shipped');
+  const readme = readFileSync(join(root, 'README.md'), 'utf8');
+  const targets = [
+    ...[...readme.matchAll(/https:\/\/github\.com\/firejune\/rigc\/(?:blob|tree)\/main\/([A-Za-z\d_./-]+)/g)].map(
+      (m) => m[1],
+    ),
+    ...relativeLinks(root, 'README.md')
+      .map((link) => link.resolved)
+      .filter((path): path is string => path !== null),
+  ];
+  for (const target of targets) {
+    if (!target.endsWith('.md') || found.has(target) || !existsSync(join(root, target))) continue;
+    found.set(target, 'landing');
+  }
+  return [...found]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([path, tier]) => readCurrencyDoc(path, tier, readFileSync(join(root, path), 'utf8')));
+}
+
+/** Everything the tool itself answers, so no number below is written by hand. */
+interface CurrencyTruth {
+  /** `ASSERTION_NAMES.length` — the registry. */
+  total: number;
+  /** `assertionCountForProfile('spine')` — the validity rules. */
+  spine: number;
+  /** The rest: what `--profile spine` leaves out. */
+  excluded: number;
+  /** The `renderer` half of that, read off a live report rather than off a table. */
+  rendererNames: string[];
+  /** The `archetype` half. `A39` joined it after `docs/INGEST.md` wrote its roster down. */
+  archetypeNames: string[];
+  /** How many assertions the live report actually reached — the floor for the two above. */
+  reached: number;
+  /** `docs/GATE.md`'s own header, e.g. `v2.4`. */
+  gateVersion: string | null;
+  /** kind → the gallery examples whose motion spec declares it. */
+  galleryKinds: Map<string, string[]>;
+}
+
+/**
+ * Read the tool for every number this suite compares against.
+ *
+ * ⭐ The per-kind counts come from a **live `validate()` report** rather than from
+ * an exported table, for two reasons. It needs no new export — and more to the
+ * point, `reportLines` derives the summary a doc quotes from exactly this array,
+ * so the check and the claim are reading the same thing. `reached` is the floor:
+ * profile exclusion is decided by kind before an assertion's body runs, so the
+ * split is the registry's split *provided every assertion was reached at all*.
+ */
+function currencyTruth(root: string): CurrencyTruth {
+  const fixture = overlayFixture();
+  const built = compile(optsForFixture(fixture));
+  const report = validate({
+    skeletonText: built.skeletonText,
+    atlasText: built.atlasText,
+    atlasDir: fixture.outDir,
+    declaredDurations: built.declaredDurations,
+    rig: built.rig,
+    reEmit: { skeletonText: built.skeletonText, atlasText: built.atlasText },
+    profile: 'spine',
+  });
+  const reached = new Set([
+    ...report.passed,
+    ...report.skipped.map((s) => s.assertion),
+    ...report.failures.map((f) => f.assertion),
+    ...report.profileSkipped.map((p) => p.assertion),
+  ]);
+  const gate = /^Current version: \*\*gate (v\d+(?:\.\d+)*)\*\*/m.exec(
+    existsSync(join(root, 'docs/GATE.md')) ? readFileSync(join(root, 'docs/GATE.md'), 'utf8') : '',
+  );
+  const galleryKinds = new Map<string, string[]>();
+  const galleryRoot = join(root, 'gallery');
+  if (existsSync(galleryRoot)) {
+    for (const name of readdirSync(galleryRoot).sort()) {
+      const motion = join(galleryRoot, name, 'motion.json');
+      if (!existsSync(motion)) continue;
+      const kinds = new Set<string>();
+      // Both namespaces at once: a track's `derive` and a deform key's
+      // `transform` name their models out of one vocabulary, and the two
+      // AUTHORING tables that carry a Worked case column are one of each. The
+      // union is deliberately permissive on WHICH of the two an example uses —
+      // what it is exact about is whether any example works that kind at all,
+      // which is the question a `—` cell answers wrongly.
+      const walk = (node: unknown): void => {
+        if (Array.isArray(node)) {
+          for (const item of node) walk(item);
+          return;
+        }
+        if (node === null || typeof node !== 'object') return;
+        for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+          if ((key === 'derive' || key === 'transform') && value !== null && typeof value === 'object') {
+            const kind = (value as { kind?: unknown }).kind;
+            if (typeof kind === 'string') kinds.add(kind);
+          }
+          walk(value);
+        }
+      };
+      walk(JSON.parse(readFileSync(motion, 'utf8')) as unknown);
+      for (const kind of kinds) {
+        galleryKinds.set(kind, [...(galleryKinds.get(kind) ?? []), `gallery/${name}`].sort());
+      }
+    }
+  }
+  return {
+    total: ASSERTION_NAMES.length,
+    spine: assertionCountForProfile('spine'),
+    excluded: ASSERTION_NAMES.length - assertionCountForProfile('spine'),
+    rendererNames: report.profileSkipped.filter((p) => p.kind === 'renderer').map((p) => p.assertion).sort(),
+    archetypeNames: report.profileSkipped.filter((p) => p.kind === 'archetype').map((p) => p.assertion).sort(),
+    reached: reached.size,
+    gateVersion: gate === null ? null : gate[1],
+    galleryKinds,
+  };
+}
+
+/**
+ * Number words the docs actually spell out, and nothing beyond them.
+ *
+ * Only the profile-exclusion sentence is written in words in this repository
+ * ("**Fourteen** assertions do not run under `spine`"), and it was written in
+ * words when it went stale — so the form has to read them. The list stops well
+ * above the registry rather than trying to be a numeral parser.
+ */
+const CURRENCY_NUMERALS: Record<string, number> = {
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  'twenty-two': 22,
+  'twenty-five': 25,
+  thirty: 30,
+  'thirty-one': 31,
+  'thirty-five': 35,
+  'thirty-six': 36,
+  'thirty-nine': 39,
+  forty: 40,
+  'forty-one': 41,
+};
+
+/** A digit run that is a tally and not a reference: no `#`, `§`, `.` or word character in front of it. */
+const CURRENCY_DIGITS = '(?<![\\d.§#\\w])(\\d+)';
+/** The same, plus the spelled-out numerals above. */
+const CURRENCY_NUMBER = `(?<![\\d.§#\\w])(\\d+|${Object.keys(CURRENCY_NUMERALS)
+  .sort((a, b) => b.length - a.length)
+  .join('|')})`;
+/**
+ * The profile split's own vocabulary, read off the RAW line.
+ *
+ * It gates the two loose forms. Raw rather than prose because `--profile` and
+ * `spine-html` are nearly always written as inline code, which the prose pass
+ * blanks — the subject is context, and only the NUMBER has to come from prose.
+ */
+const CURRENCY_SUBJECT = /spine-html|--profile\b|validity rules?|renderer(?:'s|s')? policy|archetype policy|renderer-policy/i;
+
+/** One quantity the tool knows, and the shapes a doc states it in. */
+interface CurrencyTally {
+  quantity: string;
+  truth: number;
+  forms: Array<{
+    /** Built per use: a `g` regex carries lastIndex, and these are shared across documents. */
+    re: () => RegExp;
+    /** Only read on a line whose raw text names the profile split. */
+    gated?: boolean;
+  }>;
+}
+
+function currencyTallies(truth: CurrencyTruth): CurrencyTally[] {
+  return [
+    {
+      quantity: 'the assertion registry',
+      truth: truth.total,
+      // Digits only. "two assertions" in `docs/INGEST.md` is a count of what one
+      // foreign file failed, not a count of the registry, and no doc here spells
+      // the registry out in words.
+      //
+      // `all N` is admitted only with the registry's own noun behind it. Bare
+      // `all N` was tried and dropped — "all 86 compared sets", "all 8 slots",
+      // "all 1,244 tiles" — while `all N rules` has exactly one site in the
+      // tree, and it is one #359 had to repair.
+      forms: [
+        { re: () => new RegExp(`${CURRENCY_DIGITS}\\s+(?:named\\s+)?assertions?\\b`, 'gi') },
+        { re: () => new RegExp(`\\ball\\s+\\*{0,2}${CURRENCY_DIGITS}\\*{0,2}\\s+(?:rules?|assertions?)\\b`, 'gi') },
+      ],
+    },
+    {
+      quantity: 'the `spine` profile',
+      truth: truth.spine,
+      forms: [{ re: () => new RegExp(`${CURRENCY_NUMBER}\\s+validity\\s+(?:rules?|assertions?)`, 'gi') }],
+    },
+    {
+      quantity: 'renderer policy',
+      truth: truth.rendererNames.length,
+      forms: [
+        {
+          re: () =>
+            new RegExp(
+              `${CURRENCY_NUMBER}\\s+renderer(?:-policy)?\\s+(?:rules?|assertions?)` +
+                `|renderer policy\\*{0,2}\\s*\\((\\d+)\\)` +
+                `|${CURRENCY_NUMBER}\\s+renderer\\s+and\\s+\\d+\\s+archetype`,
+              'gi',
+            ),
+        },
+      ],
+    },
+    {
+      quantity: 'archetype policy',
+      truth: truth.archetypeNames.length,
+      forms: [
+        {
+          re: () =>
+            new RegExp(
+              `${CURRENCY_NUMBER}\\s+archetype\\s+(?:rules?|assertions?)` +
+                `|archetype policy\\*{0,2}\\s*\\((\\d+)\\)` +
+                `|\\d+\\s+renderer\\s+and\\s+${CURRENCY_NUMBER}\\s+archetype`,
+              'gi',
+            ),
+        },
+      ],
+    },
+    {
+      quantity: 'what `--profile spine` leaves out',
+      truth: truth.excluded,
+      forms: [
+        { re: () => new RegExp(`\\bthe\\s+other\\s+\\*{0,2}${CURRENCY_NUMBER}\\b`, 'gi'), gated: true },
+        {
+          re: () =>
+            new RegExp(
+              `${CURRENCY_NUMBER}\\s+(?:assertions?|rules?)\\s+` +
+                `(?:do\\s+not\\s+run|do\\s+not\\s+apply|that\\s+will\\s+not\\s+fire)`,
+              'gi',
+            ),
+        },
+      ],
+    },
+  ];
+}
+
+/** What one document's currency scan found: the faults, and how many sites each limb read. */
+interface CurrencyScan {
+  faults: string[];
+  sites: Map<string, number>;
+}
+
+function emptyScan(): CurrencyScan {
+  return { faults: [], sites: new Map() };
+}
+
+function mergeScan(into: CurrencyScan, from: CurrencyScan): void {
+  into.faults.push(...from.faults);
+  for (const [limb, n] of from.sites) into.sites.set(limb, (into.sites.get(limb) ?? 0) + n);
+}
+
+/**
+ * Limb 1–3 of the assertion-tally class: the stated tallies, the stated rosters,
+ * and the report summaries a transcript quotes.
+ */
+function scanAssertionTallies(doc: CurrencyDoc, truth: CurrencyTruth): CurrencyScan {
+  const scan = emptyScan();
+  const count = (limb: string): void => {
+    scan.sites.set(limb, (scan.sites.get(limb) ?? 0) + 1);
+  };
+
+  // --- limb 1: a tally stated in prose --------------------------------------
+  if (!doc.dated) {
+    const tallies = currencyTallies(truth);
+    doc.prose.forEach((line, i) => {
+      if (line === null) return;
+      const gateOpen = CURRENCY_SUBJECT.test(doc.raw[i]);
+      for (const tally of tallies) {
+        for (const form of tally.forms) {
+          if (form.gated === true && !gateOpen) continue;
+          for (const found of line.matchAll(form.re())) {
+            const token = found.slice(1).find((group) => group !== undefined) as string;
+            const stated = /^\d+$/.test(token) ? Number(token) : CURRENCY_NUMERALS[token.toLowerCase()];
+            count(`tally:${tally.quantity}`);
+            if (stated !== tally.truth) {
+              scan.faults.push(
+                `${doc.path}:${i + 1}  "${found[0].trim()}" states ${stated}, and ${tally.quantity} holds ` +
+                  `${tally.truth}`,
+              );
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // --- limb 2: the profile table's own row ----------------------------------
+  // ⭐ The one place `all N` is read without the registry's noun behind it, and
+  // what makes it safe is a cell rather than a phrase: a table row one of whose
+  // cells IS a profile name — from `VALIDATE_PROFILES`, so the tool decides
+  // which names those are — is the profile table, and an `all N` in it is that
+  // profile's own count. `docs/BENCHMARK.md`'s row read `| \`spine-html\` | all
+  // 36 |`, which no line-shaped form reaches.
+  if (!doc.dated) {
+    const profiles = new Set<string>(VALIDATE_PROFILES);
+    doc.raw.forEach((line, i) => {
+      if (!line.trimStart().startsWith('|')) return;
+      const cells = line
+        .trim()
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map((cell) => cell.replace(/[`*]/g, '').trim());
+      const named = cells.find((cell) => profiles.has(cell));
+      if (named === undefined) return;
+      for (const cell of cells) {
+        const found = /\ball\s+(\d+)\b/.exec(cell);
+        if (found === null) continue;
+        count('profile row');
+        if (Number(found[1]) !== truth.total) {
+          scan.faults.push(
+            `${doc.path}:${i + 1}  the \`${named}\` row says "all ${found[1]}", and the assertion registry ` +
+              `holds ${truth.total}`,
+          );
+        }
+      }
+    });
+  }
+
+  // --- limb 3: a roster, by count AND by name -------------------------------
+  // The count alone would have missed how `docs/INGEST.md` actually went stale:
+  // its archetype row said (7) and listed seven rules, internally consistent and
+  // one rule short of the registry. So the names are compared too, and the
+  // missing one is named in the message.
+  if (!doc.dated) {
+    doc.raw.forEach((line, i) => {
+      const row = /(renderer|archetype) policy\*{0,2}\s*\((\d+)\)/i.exec(line);
+      if (row === null) return;
+      const listed = [...line.matchAll(/\bA\d{2}_[A-Z\d_]+/g)].map((m) => m[0]).sort();
+      if (listed.length === 0) return; // a mention of the phrase, not a roster
+      const want = row[1].toLowerCase() === 'renderer' ? truth.rendererNames : truth.archetypeNames;
+      count(`roster:${row[1].toLowerCase()}`);
+      const missing = want.filter((name) => !listed.includes(name));
+      const extra = listed.filter((name) => !want.includes(name));
+      if (Number(row[2]) !== want.length || missing.length > 0 || extra.length > 0) {
+        scan.faults.push(
+          `${doc.path}:${i + 1}  the ${row[1].toLowerCase()}-policy roster says (${row[2]}) and lists ` +
+            `${listed.length}; the validator excludes ${want.length}` +
+            (missing.length > 0 ? `, missing ${missing.join(', ')}` : '') +
+            (extra.length > 0 ? `, and names ${extra.join(', ')} which it does not exclude` : ''),
+        );
+      }
+    });
+  }
+
+  // --- limb 4: a quoted report summary --------------------------------------
+  // 🚨 The one limb that reads INSIDE a fence, and it is safe there for a reason
+  // that does not generalise: the line it matches is `reportLines`'s own format
+  // string, so nothing but a transcript of this tool can produce it. Load-bearing
+  // rather than thorough — `docs/INGEST.md` §3.3's transcript is where the stale
+  // roster was quoted back at the reader as if the tool had just printed it.
+  // Dated documents included: this is the tool's output, not the doc's prose.
+  doc.raw.forEach((line, i) => {
+    const summary = /profile (\S+) — (\d+) renderer-policy and (\d+) archetype assertion\(s\) do not apply/.exec(line);
+    if (summary === null) return;
+    count('report summary');
+    if (Number(summary[2]) !== truth.rendererNames.length || Number(summary[3]) !== truth.archetypeNames.length) {
+      scan.faults.push(
+        `${doc.path}:${i + 1}  a quoted report says ${summary[2]} renderer-policy and ${summary[3]} archetype ` +
+          `do not apply under \`${summary[1]}\`; the validator's own report says ${truth.rendererNames.length} ` +
+          `and ${truth.archetypeNames.length}`,
+      );
+    }
+  });
+
+  return scan;
+}
+
+/**
+ * The gate-version class: a sentence that says "current" has to name the version
+ * `docs/GATE.md` declares.
+ *
+ * ⭐ **Why the trigger is the word and not the token.** `docs/LADDER.md` carries
+ * sixty-odd gate-version tokens and all but one of them are history — a bump's
+ * own entry, a supersession date, a re-inspection's proper name. Judging every
+ * token would fault every one of them; judging none would miss the defect. What
+ * separates them is not tense, which no reader of this file should be parsing,
+ * but a phrase whose whole job is to assert currency: *the current gate*, *current
+ * version*. Every version token on such a line is a claim about now.
+ */
+function scanGateVersion(doc: CurrencyDoc, truth: CurrencyTruth): CurrencyScan {
+  const scan = emptyScan();
+  if (doc.dated || truth.gateVersion === null) return scan;
+  doc.prose.forEach((line, i) => {
+    if (line === null || !/current gate|current version/i.test(line)) return;
+    for (const found of line.matchAll(/\bv(\d+(?:\.\d+)*)\b/g)) {
+      scan.sites.set('gate version', (scan.sites.get('gate version') ?? 0) + 1);
+      if (`v${found[1]}` !== truth.gateVersion) {
+        scan.faults.push(
+          `${doc.path}:${i + 1}  names v${found[1]} as the current gate; docs/GATE.md's header declares ` +
+            `${truth.gateVersion}`,
+        );
+      }
+    }
+  });
+  return scan;
+}
+
+/**
+ * The `Worked case` class: a cell either names an example that works that kind,
+ * or is refused.
+ *
+ * Two failures, and the second is the one that recurred. A named directory that
+ * does not exist — or exists and does not declare that kind — is a broken
+ * pointer. A `—` for a kind the gallery *does* work is the defect that sat in
+ * `docs/AUTHORING.md` for the whole gap between `gallery/nod` landing and the two
+ * tables being told about it: the cell says "nobody has done this" and somebody
+ * had. Both are answered by the gallery's own motion specs, so neither needs a
+ * list kept by hand.
+ */
+function scanWorkedCases(doc: CurrencyDoc, truth: CurrencyTruth, root: string): CurrencyScan {
+  const scan = emptyScan();
+  if (doc.dated || truth.galleryKinds.size === 0) return scan;
+  let column = -1;
+  doc.prose.forEach((blanked, i) => {
+    // Read the row from `raw`: a table cell's content is markup, and every cell
+    // in these tables is backticked, which the prose pass blanks. The fence skip
+    // still applies — `blanked === null` means this line is inside one.
+    if (blanked === null) {
+      column = -1;
+      return;
+    }
+    const line = doc.raw[i];
+    if (!line.trimStart().startsWith('|')) {
+      column = -1;
+      return;
+    }
+    const cells = line
+      .trim()
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((cell) => cell.trim());
+    if (column === -1) {
+      const at = cells.findIndex((cell) => /^\*{0,2}worked case\*{0,2}$/i.test(cell));
+      if (at !== -1) column = at;
+      return;
+    }
+    if (cells.every((cell) => /^:?-{2,}:?$/.test(cell))) return; // the alignment row
+    if (cells.length <= column) return;
+    const kind = cells[0].replace(/[`*]/g, '').trim();
+    const cell = cells[column];
+    const named = /gallery\/([a-z\d_-]+)/i.exec(cell);
+    const works = truth.galleryKinds.get(kind) ?? [];
+    scan.sites.set('worked case', (scan.sites.get('worked case') ?? 0) + 1);
+    if (named !== null) {
+      const path = `gallery/${named[1]}`;
+      if (!existsSync(join(root, path))) {
+        scan.faults.push(`${doc.path}:${i + 1}  \`${kind}\`'s worked case names ${path}, which is not in the tree`);
+      } else if (!works.includes(path)) {
+        scan.faults.push(
+          `${doc.path}:${i + 1}  \`${kind}\`'s worked case names ${path}, whose motion spec declares no ` +
+            `\`${kind}\`` +
+            (works.length > 0 ? ` — ${works.join(', ')} does` : ''),
+        );
+      }
+      return;
+    }
+    if (/^[—–-]$/.test(cell.replace(/[`*]/g, '').trim())) {
+      if (works.length > 0) {
+        scan.faults.push(
+          `${doc.path}:${i + 1}  \`${kind}\`'s worked case is \`—\`, and ${works.join(', ')} works that kind`,
+        );
+      }
+      return;
+    }
+    scan.faults.push(
+      `${doc.path}:${i + 1}  \`${kind}\`'s worked case reads "${cell}", which is neither \`—\` nor a ` +
+        `gallery/<example> path — the cell has to be one or the other for this check to mean anything`,
+    );
+  });
+  return scan;
+}
+
+/**
+ * Two closing classes, both exhaustive and neither needing prose at all.
+ *
+ * An `A??_NAME` a doc prints has to be a name the registry has: a rename or a
+ * removal otherwise leaves a doc telling a reader to look for a rule that is not
+ * there. And a `node_modules/spine-rigc/<path>` a doc prints has to be a path the
+ * package ships — the same fact PKG02 checks about LINKS, asked about the paths
+ * that are written as plain text and so are invisible to it. Both read `raw`,
+ * fences included: a name in a transcript is still a name, and an installed path
+ * in a shell example is exactly where a reader will type it.
+ */
+function scanNamedThings(doc: CurrencyDoc, shipsToo: (path: string) => boolean): CurrencyScan {
+  const scan = emptyScan();
+  const known = new Set(ASSERTION_NAMES);
+  doc.raw.forEach((line, i) => {
+    for (const found of line.matchAll(/\bA\d{2}_[A-Z\d_]+/g)) {
+      scan.sites.set('assertion name', (scan.sites.get('assertion name') ?? 0) + 1);
+      if (!known.has(found[0])) {
+        scan.faults.push(`${doc.path}:${i + 1}  names ${found[0]}, which the registry does not have`);
+      }
+    }
+    for (const found of line.matchAll(/node_modules\/spine-rigc\/([A-Za-z\d_./-]*)/g)) {
+      const path = found[1].replace(/[.,)`]+$/, '').replace(/\/$/, '');
+      scan.sites.set('installed path', (scan.sites.get('installed path') ?? 0) + 1);
+      if (path !== '' && !shipsToo(path)) {
+        scan.faults.push(
+          `${doc.path}:${i + 1}  points an installed reader at ${found[0]}, and ${path} is not in \`files\``,
+        );
+      }
+    }
+  });
+  return scan;
+}
+
+/**
+ * The rows this gate was built from, transcribed as text and fed to the same
+ * scanner (issue #360's red-first bar).
+ *
+ * ⭐ **Why the evidence lives here and not only in a pull request.** The scan is a
+ * vocabulary of forms, and a form that stops matching goes silent rather than
+ * red. CUR01's floors catch a form that stops matching *the tree*; this catches a
+ * form that stops matching *the defect*. Every string below is a hunk from
+ * [#359](https://github.com/firejune/rigc/pull/359) or
+ * [#357](https://github.com/firejune/rigc/pull/357) as it stood before the repair,
+ * paired with the repaired text, and the requirement is two-sided: the stale
+ * spelling must fault and the current one must not. Delete a form and a row here
+ * stops faulting; loosen one and a clean row starts.
+ */
+const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> = [
+  {
+    row: 'README: the profile paragraph (#359)',
+    stale:
+      'adds all 39: the other 14 are one renderer\'s policy and one canvas budget\'s, and they\n' +
+      'fire on perfectly correct editor-produced Spine data.\n',
+    clean:
+      'adds all 40: the other 15 are one renderer\'s policy and one canvas budget\'s, and they\n' +
+      'fire on perfectly correct editor-produced Spine data.\n',
+  },
+  {
+    row: 'README: the benchmark-dossier row (#359)',
+    stale: 'the run viewer, the 36 named assertions with their profiles, and the selftest\n',
+    clean: 'the run viewer, the 40 named assertions with their profiles, and the selftest\n',
+  },
+  {
+    row: 'AUTHORING: the `--profile` row (#359)',
+    stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
+    clean: '| `--profile` | `spine` = the 25 validity rules (**the default**) · `spine-html` = all 40, opt-in |\n',
+  },
+  {
+    row: 'BENCHMARK: the profiles paragraph (#359)',
+    stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+    clean: 'Not all 40 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+  },
+  {
+    row: 'BENCHMARK: the profile table\'s own row (#359)',
+    stale:
+      '| Profile | Runs | For |\n| --- | --- | --- |\n' +
+      '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
+    clean:
+      '| Profile | Runs | For |\n| --- | --- | --- |\n' +
+      '| `spine-html` | all 40 — those 25 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
+  },
+  {
+    row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
+    stale:
+      '**Fourteen assertions do not run under `spine`, and they come back `PROF`, not\n' +
+      '`SKIP`:**\n' +
+      '\n' +
+      '| Excluded as | Rules |\n' +
+      '| --- | --- |\n' +
+      '| **archetype policy** (7) | `A21_MESH_RIM_PINNED`, `A24_AXIS_SPACE_STROKE`, `A25_DETACHED_BONE_PARENTAGE`,' +
+      ' `A26_SLOT_DRAW_ORDER`, `A28_RIBBON_ROWS_SHARE_WEIGHTS`, `A29_STROKE_WITHIN_CONTACT_DEPTH`,' +
+      ' `A30_STROKE_WITHIN_CAP_CONTAINMENT` |\n',
+    clean:
+      '**Fifteen assertions do not run under `spine`, and they come back `PROF`, not\n' +
+      '`SKIP`:**\n' +
+      '\n' +
+      '| Excluded as | Rules |\n' +
+      '| --- | --- |\n' +
+      '| **archetype policy** (8) | `A21_MESH_RIM_PINNED`, `A24_AXIS_SPACE_STROKE`, `A25_DETACHED_BONE_PARENTAGE`,' +
+      ' `A26_SLOT_DRAW_ORDER`, `A28_RIBBON_ROWS_SHARE_WEIGHTS`, `A29_STROKE_WITHIN_CONTACT_DEPTH`,' +
+      ' `A30_STROKE_WITHIN_CAP_CONTAINMENT`, `A39_DEFORM_KEEPS_TRIANGLE_WINDING` |\n',
+  },
+  {
+    row: 'INGEST §3.3: the quoted report summary inside a fence (#360, found on the current tree)',
+    stale: '```\n  ..    profile spine — 7 renderer-policy and 7 archetype assertion(s) do not apply\n```\n',
+    clean: '```\n  ..    profile spine — 7 renderer-policy and 8 archetype assertion(s) do not apply\n```\n',
+  },
+  {
+    row: 'README + LADDER: the certification line\'s gate version (#359)',
+    stale: 'graduation exam are cleared and hold under the current gate, **v2.3**, every clause PASS or SKIP:\n',
+    clean: 'graduation exam are cleared and hold under the current gate, **v2.4**, every clause PASS or SKIP:\n',
+  },
+  {
+    row: 'BENCHMARK: the live-ledger pointer\'s gate version (#360, found on the current tree)',
+    stale: 'the numbered thresholds of the current gate (**gate v2.3**, stated in [docs/GATE.md](x)) that decide one\n',
+    clean: 'the numbered thresholds of the current gate (**gate v2.4**, stated in [docs/GATE.md](x)) that decide one\n',
+  },
+  {
+    row: 'AUTHORING §4.11.1: the `pitch` worked case (#357)',
+    stale: '| `kind` | Reads | Worked case |\n| --- | --- | --- |\n| `pitch` | each member\'s setup `y` | — |\n',
+    clean:
+      '| `kind` | Reads | Worked case |\n| --- | --- | --- |\n' +
+      '| `pitch` | each member\'s setup `y` | `gallery/nod` |\n',
+  },
+  {
+    row: 'AUTHORING §4.5.1: the `pitch` and `wave` worked cases (#357)',
+    stale:
+      '| `kind` | Parameters | Worked case |\n| --- | --- | --- |\n' +
+      '| `pitch` | the same | — |\n| `wave` | `amplitude`, `wavelength`, `phase` | — |\n',
+    clean:
+      '| `kind` | Parameters | Worked case |\n| --- | --- | --- |\n' +
+      '| `pitch` | the same | `gallery/nod` |\n| `wave` | `amplitude`, `wavelength`, `phase` | `gallery/nod` |\n',
+  },
+];
+
+function runCurrencySuite(): number {
+  console.log('\n── what a shipped or landing doc STATES about the tool (issue #360) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const root = import.meta.dir;
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { files?: string[] };
+  const allowlist = pkg.files ?? [];
+  const { shipped, unreadable } = expandShippedSet(root, allowlist);
+  const shipsToo = (path: string): boolean =>
+    shipped.has(path) || [...shipped].some((file) => file.startsWith(`${path}/`));
+  const docs = currencyDocs(root, shipped);
+  const truth = currencyTruth(root);
+
+  const scan = emptyScan();
+  for (const doc of docs) {
+    mergeScan(scan, scanAssertionTallies(doc, truth));
+    mergeScan(scan, scanGateVersion(doc, truth));
+    mergeScan(scan, scanWorkedCases(doc, truth, root));
+    mergeScan(scan, scanNamedThings(doc, shipsToo));
+  }
+  const sitesOf = (limb: string): number => scan.sites.get(limb) ?? 0;
+  const tallySites = [...scan.sites].filter(([limb]) => limb.startsWith('tally:'));
+
+  // --- CUR01: the derivation floor ------------------------------------------
+  // PKG01's argument, one class over. Every step here can come back empty — a
+  // `files` array read as absent, a landing scan that resolves nothing, a form
+  // that no longer matches its own phrasing, a gallery with no motion specs, a
+  // GATE.md header that moved — and each of those makes a case below pass while
+  // reading nothing.
+  const markedWithoutDate = docs.filter((doc) => doc.dated && doc.headerDate === null);
+  const markedReadme = docs.filter((doc) => doc.dated && doc.path === 'README.md');
+  const thinForms = tallySites.filter(([, n]) => n === 0);
+  const marked = docs.filter((doc) => doc.dated);
+  say(
+    'CUR01_THE_CURRENCY_SCAN_READ_THE_DOCS_THE_TOOL_AND_THE_GALLERY',
+    unreadable.length === 0 &&
+      docs.some((doc) => doc.path === 'README.md') &&
+      docs.filter((doc) => doc.tier === 'shipped').length >= allowlist.filter((e) => e.endsWith('.md')).length &&
+      docs.filter((doc) => doc.tier === 'landing').length > 0 &&
+      markedWithoutDate.length === 0 &&
+      markedReadme.length === 0 &&
+      truth.reached === truth.total &&
+      truth.total > 0 &&
+      truth.spine > 0 &&
+      truth.excluded === truth.rendererNames.length + truth.archetypeNames.length &&
+      truth.gateVersion !== null &&
+      truth.galleryKinds.size > 0 &&
+      thinForms.length === 0 &&
+      tallySites.length >= 5 &&
+      sitesOf('profile row') > 0 &&
+      sitesOf('roster:renderer') > 0 &&
+      sitesOf('roster:archetype') > 0 &&
+      sitesOf('report summary') > 0 &&
+      sitesOf('gate version') >= 2 &&
+      sitesOf('worked case') >= 5 &&
+      sitesOf('assertion name') >= 100 &&
+      sitesOf('installed path') >= 3,
+    unreadable.length > 0
+      ? `\`files\` entries this scan could not expand: ${unreadable.join('; ')}`
+      : markedWithoutDate.length > 0
+        ? `dated-record marker with no ISO date in its first ${CURRENCY_HEADER_LINES} lines: ` +
+          `${markedWithoutDate.map((doc) => doc.path).join(', ')} — a marker is an as-of annotation, so it has to ` +
+          'say as of when'
+        : markedReadme.length > 0
+          ? 'README.md carries the dated-record marker, which would take the landing page itself out of the scan'
+          : truth.reached !== truth.total
+            ? `the live report reached ${truth.reached} of ${truth.total} assertions, so its profile split is not ` +
+              'the registry\'s split and no tally below can be trusted'
+            : thinForms.length > 0
+              ? `these tally forms matched nothing at all: ${thinForms.map(([limb]) => limb).join(', ')}`
+              : `${docs.length} doc(s) read — ${docs.filter((d) => d.tier === 'shipped').length} shipped, ` +
+                `${docs.filter((d) => d.tier === 'landing').length} one hop off README; ` +
+                `${marked.length} declared a dated record (${marked.map((d) => `${d.path} @ ${d.headerDate}`).join(', ') || 'none'}). ` +
+                `The tool answers: registry ${truth.total}, \`spine\` ${truth.spine}, excluded ${truth.excluded} ` +
+                `(${truth.rendererNames.length} renderer + ${truth.archetypeNames.length} archetype, off a live ` +
+                `report that reached all ${truth.reached}), gate ${truth.gateVersion} from docs/GATE.md, ` +
+                `${truth.galleryKinds.size} gallery-worked kind(s) ` +
+                `(${[...truth.galleryKinds].map(([k, v]) => `${k}→${v.join('+')}`).join(', ')}). Sites read: ` +
+                `${[...scan.sites].map(([limb, n]) => `${limb} ${n}`).join(', ')}`,
+    'every value this suite compares against is derived and every site is found by a scan, so both ends can come ' +
+      'back empty. A form that stops matching its own phrasing is the quiet one: the case it feeds goes on ' +
+      'printing PASS over zero sites. The floors are what make that loud',
+  );
+
+  // --- CUR02: the assertion tallies -----------------------------------------
+  const tallyFaults = scan.faults.filter((f) => /holds \d+$|roster says|a quoted report says/.test(f));
+  say(
+    'CUR02_A_STATED_ASSERTION_TALLY_IS_THE_ONE_THE_VALIDATOR_HOLDS',
+    tallyFaults.length === 0,
+    tallyFaults.length === 0
+      ? `${tallySites.reduce((n, [, v]) => n + v, 0)} stated tall(ies), ${sitesOf('profile row')} profile-table row(s), ` +
+        `${sitesOf('roster:renderer') + sitesOf('roster:archetype')} roster row(s) and ` +
+        `${sitesOf('report summary')} quoted report summar(ies) all agree with the validator ` +
+        `(registry ${truth.total}, \`spine\` ${truth.spine}, ${truth.rendererNames.length} renderer + ` +
+        `${truth.archetypeNames.length} archetype excluded)`
+      : `${tallyFaults.length} stale tall(ies):\n          ${tallyFaults.join('\n          ')}`,
+    'the class that recurred most: 36 / 39 / 40 for one registry, 22 / 25 for one profile, 14 / 15 for what it ' +
+      'leaves out, in six documents at once. `src/validate.ts` exports the first two precisely so nobody has to ' +
+      'quote them, and the per-kind split comes off a live report — the same array `reportLines` builds the ' +
+      'summary a transcript quotes from',
+  );
+
+  // --- CUR03: the gate version ----------------------------------------------
+  const versionFaults = scan.faults.filter((f) => f.includes('as the current gate'));
+  say(
+    'CUR03_A_CURRENT_GATE_CLAIM_NAMES_THE_VERSION_GATE_MD_DECLARES',
+    versionFaults.length === 0,
+    versionFaults.length === 0
+      ? `${sitesOf('gate version')} version token(s) on a line asserting currency, all ${truth.gateVersion} — the ` +
+        'version docs/GATE.md\'s own header declares'
+      : `${versionFaults.length} superseded gate version(s) asserted as current:\n          ` +
+        versionFaults.join('\n          '),
+    'the bump lands in GATE.md and the sentences that quote it are elsewhere, so a bump repairs them one at a ' +
+      'time and forgets one. #359 found three at once and left a fourth; this reads GATE.md\'s header instead. ' +
+      'Dated references to a superseded version stay — the trigger is a phrase claiming currency, not the token',
+  );
+
+  // --- CUR04: the worked cases ----------------------------------------------
+  const workedFaults = scan.faults.filter((f) => f.includes("'s worked case"));
+  say(
+    'CUR04_A_WORKED_CASE_CELL_NAMES_A_GALLERY_EXAMPLE_THAT_WORKS_THAT_KIND',
+    workedFaults.length === 0,
+    workedFaults.length === 0
+      ? `${sitesOf('worked case')} Worked case cell(s) checked against the gallery's own motion specs; every named ` +
+        'example exists and declares the kind of the row it sits in, and no cell is `—` for a kind the gallery works'
+      : `${workedFaults.length} Worked case cell(s) out of date:\n          ${workedFaults.join('\n          ')}`,
+    'a `—` means "nobody has done this yet", so it goes false the day an example does it — and it did, for the ' +
+      'whole gap between gallery/nod landing and #357 telling the two tables about it. The answer is in the ' +
+      'gallery\'s motion specs, which is what LS03 reads too',
+  );
+
+  // --- CUR05/06: the names and the installed paths ---------------------------
+  const namedFaults = scan.faults.filter(
+    (f) => f.includes('which the registry does not have') || f.includes('is not in `files`'),
+  );
+  say(
+    'CUR05_AN_ASSERTION_AND_AN_INSTALLED_PATH_A_DOC_NAMES_BOTH_EXIST',
+    namedFaults.length === 0,
+    namedFaults.length === 0
+      ? `${sitesOf('assertion name')} A??_NAME mention(s) all in the registry of ${truth.total}, and ` +
+        `${sitesOf('installed path')} node_modules/spine-rigc/ path(s) all in \`files\``
+      : `${namedFaults.length} name(s) that resolve to nothing:\n          ${namedFaults.join('\n          ')}`,
+    'the cheap half of the same rule, and exhaustive rather than sampled: a renamed assertion leaves every doc ' +
+      'that named it pointing at a rule the reader cannot find, and an installed path is the one place PKG02 ' +
+      'cannot look, because it is written as plain text rather than as a link',
+  );
+
+  // --- CUR06: the scanner against the rows it was built from ----------------
+  const probeFaults: string[] = [];
+  for (const probe of CURRENCY_RED_FIRST) {
+    const stale = emptyScan();
+    const staleDoc = readCurrencyDoc('probe.md', 'shipped', probe.stale);
+    mergeScan(stale, scanAssertionTallies(staleDoc, truth));
+    mergeScan(stale, scanGateVersion(staleDoc, truth));
+    mergeScan(stale, scanWorkedCases(staleDoc, truth, root));
+    if (stale.faults.length === 0) probeFaults.push(`${probe.row}: the stale spelling was NOT faulted`);
+    const clean = emptyScan();
+    const cleanDoc = readCurrencyDoc('probe.md', 'shipped', probe.clean);
+    mergeScan(clean, scanAssertionTallies(cleanDoc, truth));
+    mergeScan(clean, scanGateVersion(cleanDoc, truth));
+    mergeScan(clean, scanWorkedCases(cleanDoc, truth, root));
+    if (clean.faults.length > 0) {
+      probeFaults.push(`${probe.row}: the REPAIRED spelling faulted — ${clean.faults.join('; ')}`);
+    }
+  }
+  say(
+    'CUR06_THE_SCANNER_STILL_FAULTS_THE_ROWS_THIS_GATE_WAS_BUILT_FROM',
+    probeFaults.length === 0 && CURRENCY_RED_FIRST.length >= 11,
+    probeFaults.length === 0
+      ? `${CURRENCY_RED_FIRST.length} row(s) from #357, #359 and this tree, each faulted in its stale spelling and ` +
+        'clean in its repaired one'
+      : `${probeFaults.length} of ${CURRENCY_RED_FIRST.length} row(s) no longer behave:\n          ` +
+        probeFaults.join('\n          '),
+    'a scan is a vocabulary of forms and a form that stops matching goes silent, not red. CUR01\'s floors catch a ' +
+      'form that stops matching the TREE; this catches one that stops matching the DEFECT. Both directions are ' +
+      'required, because a form loose enough to fault the repair is not a gate either',
   );
 
   return bad;
@@ -14552,6 +15504,8 @@ function main(): void {
   }
   bad += runShippedDocSuite();
   substantive += 2;
+  bad += runCurrencySuite();
+  substantive += 6;
   bad += runSeeItSuite();
   substantive += 11;
   bad += runPoseSuite();
@@ -14659,6 +15613,17 @@ function main(): void {
     "definitions and inline HTML `src`/`href` all read — the README's images are HTML — with the shipped set " +
     'expanded from `files` rather than guessed, and the whole derivation asserted first, because a link regex ' +
     'that matched nothing would otherwise report a clean tree)';
+  const currency =
+    ', + 6 currency controls (issue #360 — every tally, gate version, `Worked case` cell, assertion name and ' +
+    'installed path a SHIPPED or LANDING doc states about the tool, derived from the tool rather than listed ' +
+    'beside it: the registry and profile counts off `src/validate.ts`, the renderer / archetype split and the ' +
+    'roster BY NAME off a live `validate()` report whose own floor is that it reached every assertion, the ' +
+    'current gate off `docs/GATE.md`\'s header, a worked case off the gallery\'s motion specs, and the installed ' +
+    'paths off `files`. Fenced and inline code are not prose — with one named exception, the summary line ' +
+    '`reportLines` itself formats, which is where a stale roster was quoted back at the reader — a document ' +
+    'whose statements are a dated snapshot declares it in its header and drops out, and the scanner is held ' +
+    'against the eleven rows this gate was built from, each required to fault in its stale spelling and to come ' +
+    'back clean in its repaired one)';
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
@@ -14750,6 +15715,7 @@ function main(): void {
       'the first from being satisfied by inferring switches from the next argument)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
       shippedDocs +
+      currency +
       ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +
       'to RGBA while still refusing a colour type that is not one, a preview embedding the skeleton, the atlas and ' +

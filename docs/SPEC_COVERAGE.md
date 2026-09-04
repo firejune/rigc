@@ -1,5 +1,14 @@
 # Spine 4.3 export-format surface vs. rigc coverage vs. the example ladder
 
+<!--
+  The marker below is the machine half of the 🔼 note further down: this file's
+  statements are a dated snapshot, not current state, so the selftest's currency
+  gate (CUR01–CUR06, issue #360) leaves its numbers alone. Do NOT copy it into a
+  document that describes how rigc behaves today — that is the whole class the
+  gate exists to catch.
+-->
+<!-- currency: dated-record -->
+
 Research note, 2026-08-22. A survey, not a plan: it establishes what the 4.3 export format can hold,
 what rigc emits today, and what the official example projects actually use — so the gap list is
 ordered by what the benchmark ladder needs rather than by the spec's alphabet.
