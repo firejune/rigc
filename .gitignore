@@ -87,3 +87,7 @@ examples/
 # Local-only preservation area — session artifacts, contact drafts, production sources.
 # Never committed; see scratch/README.md inside it (also ignored).
 /scratch/
+
+# Agent worktrees the Claude Code harness creates inside the checkout while a squad works.
+# Never committed; a squad's branch is what carries its work.
+/.claude/worktrees/
