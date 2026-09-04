@@ -1,0 +1,6 @@
+| deform keys | skeleton bytes | added by the last key |
+| --- | --- | --- |
+| 1 | 14714490 | — |
+| 2 | 16483534 | 1769044 per key |
+| 4 | 20010598 | 1763532 per key |
+| 8 | 27056120 | 1761381 per key |

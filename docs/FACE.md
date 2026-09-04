@@ -306,6 +306,65 @@ say nothing about world units — so `zScale` is authored exactly as the fringe'
 is free, get it wrong and nothing complains. What the map removes is the
 *resolution* limit, not the judgement.
 
+### 2.2 The angle belongs to the map, not to the mesh
+
+§2.1 leaves an open question and it has now been measured. §4.2 finds that
+refining the lattice makes the fold **worse**, and read that as the cylinder's
+error surfacing — so per-vertex depth ought to have bought the angle back. ⛔ **It
+does not, and it never could have.**
+
+Two neighbouring vertices swap places when the turn tips one past the other,
+which is `tan t ≥ Δu/Δz` — so the largest turn a part supports is
+
+    tan t_max = 1 / max |dz/du|
+
+**the reciprocal of the steepest slope anywhere in its depth map**, and there is
+no mesh in that formula at all. Refining the lattice does not change the angle;
+it changes which slopes the lattice is close enough to *find*. A map with a
+vertical edge has an infinite slope there, so a fine enough mesh folds at any
+angle you name.
+
+⭐ **Which is exactly what a dome is.** `z = Z√(1 − r²)` is vertical at its rim,
+and an even lattice over it folds at `tan t = √h·√(R/2)/Z` for spacing
+`h = W/(side−1)` — a **√h** that goes to zero. Measured against that closed form
+over a 1,300× range of vertex counts, agreeing to ≤ 1.2°:
+
+| lattice | 5×5 | 17×17 | 33×33 | 65×65 | 129×129 | 181×181 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **dome**, largest turn admitted | 62° | 41° | 31° | 23° | 17° | **14°** |
+| the closed form above | 59.0° | 39.8° | 30.5° | 22.6° | 16.4° | **14.0°** |
+| **raised cosine**, slope bounded | 73° | 65° | 64° | 64° | 64° | **63°** |
+| its closed form, `atan(2R/Zπ)` | 64.8° | 64.8° | 64.8° | 64.8° | 64.8° | **64.8°** |
+
+⇒ **Author the map so its slope is bounded, and the angle stops depending on the
+mesh.** A raised cosine — flat at the centre, flat again at the rim — holds
+63–64° from 289 vertices to 32,761. The dome loses three quarters of its angle
+over the same refinement. Both are "correct" depth; only one of them is a
+*surface a turn can be built on*, and the difference is entirely in the input.
+
+🚨 **So a map traced straight off a rendered normal or a photogrammetry pass is
+the dome case, not the cosine case.** Where the part curves away to its
+silhouette is where every such map goes vertical. Flattening it there — letting
+z reach its floor *before* the outline rather than at it — is the edit that buys
+the angle, and it is an edit to the sheet. rigc will not do it for you: the
+compiler never invents a value that is not in the spec, and a depth map is a
+measurement.
+
+⚠️ **This does not touch §2.1's convergence.** A finer lattice still evaluates
+the map's own surface more faithfully; it also finds steeper slopes in it. Those
+are two different quantities and both are true — §2.1 measures the first, `A39`
+refuses the second. What is new here is that the second is a fact about the
+sheet, and can be fixed there.
+
+📐 Method, harness and the full ladders live in the repository rather than in
+this package, as
+[`bench/studies/2026-09-05-density`](https://github.com/firejune/rigc/tree/main/bench/studies/2026-09-05-density) —
+the same study also measures why `contour` is the wrong generator for a turn: it
+saturates at 868 vertices however fine the tolerance, its vertices all sit on the
+silhouette so it samples **2 %** of the depth range, and its ear-clipped interior
+holds triangles three orders of magnitude apart in area, the smallest of which
+reverse under a fraction of a pixel.
+
 ---
 
 ## 3. One shared shift, then residuals
