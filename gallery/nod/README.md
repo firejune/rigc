@@ -98,8 +98,10 @@ transposed onto the other axis.
 leaves the rows along for the ride; the same sentence about a pitch says the
 *columns* are, so two is all a quad grid needs. `portrait`'s 5 × 5 head spends 15
 vertices on rows a yaw never reads; this grid is the transpose with that spend
-removed, and `explain` prints the consequence — every pair in a row takes the
-**same** offset:
+removed, and `explain` prints the consequence — the two vertices of a row take
+the **same** offset. The list walks the outline (down the right side, back up the
+left), so the top row is `v 0`/`v 1` and every row below it pairs `v r` with
+`v 11−r`:
 
 ```
       t=0.6     deform[0..20]  10 pair(s)                      bezier[4]
@@ -109,10 +111,10 @@ removed, and `explain` prints the consequence — every pair in a row takes the
                  cos t − 1 = -0.021852
                  sin t = 0.207912
                  centre shift = −radius·sin t = -31.186754
-               10 vertices, largest offset 31.186754px at vertex 4
-                 v  0 (0, -14.255723)  v  1 (0, -14.255723)  v  2 (0, -24.566299)  v  3 (0, -24.566299)
-                 v  4 (0, -31.186754)  v  5 (0, -31.186754)  v  6 (0, -19.977295)  v  7 (0, -19.977295)
-                 v  8 (0, -8.137051)  v  9 (0, -8.137051)
+               10 vertices, largest offset 31.186754px at vertex 3
+                 v  0 (0, -14.255723)  v  1 (0, -14.255723)  v  2 (0, -24.566299)  v  3 (0, -31.186754)
+                 v  4 (0, -19.977295)  v  5 (0, -8.137051)  v  6 (0, -8.137051)  v  7 (0, -19.977295)
+                 v  8 (0, -31.186754)  v  9 (0, -24.566299)
 ```
 
 **Uneven rows, dense at the crown and the chin.** `−140, −105, 0, 105, 140` puts
@@ -353,9 +355,12 @@ is". A plate centred on its own bone would have made that coordinate an offset
 from the ear's middle, and every `phase` in `motion.json` would have been
 measured from a place nothing happens.
 
-**Row-major quads, no fan apex — and that is a proof, not a margin.** Every
-triangle in this grid is `(2r, 2r+2, 2r+3)` or `(2r, 2r+3, 2r+1)`, so **every
-triangle has two vertices in the same row**. A wave that reads `y` and displaces
+**Quads split along the rows, no fan apex — and that is a proof, not a margin.**
+Every triangle in this grid joins two vertices of one row to one vertex of the
+next — the list walks the outline (down one side, back up the other, so that
+Spine's `hull` can be read off it; [AUTHORING §3.4](../../docs/AUTHORING.md)) and
+the triangles carry the row structure — so **every triangle has two vertices in
+the same row**. A wave that reads `y` and displaces
 `x` maps `x → x + f(y)` with `y` untouched, and for a triangle whose vertices
 `1` and `2` share a row the signed-area change is
 
@@ -366,7 +371,9 @@ triangle has two vertices in the same row**. A wave that reads `y` and displaces
 
 and the same cancellation holds whichever pair shares the row. ⇒ **No amplitude
 folds this mesh.** `explain` shows the mechanism in the offsets — the two
-vertices of each row take the same number, so each row slides rigidly:
+vertices of each row take the same number, so each row slides rigidly (the list
+walks the outline, so the entry row is `v 0`/`v 1` and every row below it pairs
+`v r` with `v 23−r`):
 
 ```
       t=0       deform[0..44]  22 pair(s)                      linear
@@ -374,13 +381,13 @@ vertices of each row take the same number, so each row slides rigidly:
                dx = amplitude · sin(2π·y/wavelength + phase)
                  2π/wavelength = 0.019635 rad per unit
                  phase = 0 rad
-               22 vertices, largest offset 10px at vertex 4
-                 v  0 (0, 0)  v  1 (0, 0)  v  2 (-7.071068, 0)  v  3 (-7.071068, 0)
-                 v  4 (-10, 0)  v  5 (-10, 0)  v  6 (-7.071068, 0)  v  7 (-7.071068, 0)
-                 v  8 (0, 0)  v  9 (0, 0)  v 10 (7.071068, 0)  v 11 (7.071068, 0)
-                 v 12 (10, 0)  v 13 (10, 0)  v 14 (7.071068, 0)  v 15 (7.071068, 0)
-                 v 16 (0, 0)  v 17 (0, 0)  v 18 (-7.071068, 0)  v 19 (-7.071068, 0)
-                 v 20 (-10, 0)  v 21 (-10, 0)
+               22 vertices, largest offset 10px at vertex 3
+                 v  0 (0, 0)  v  1 (0, 0)  v  2 (-7.071068, 0)  v  3 (-10, 0)
+                 v  4 (-7.071068, 0)  v  5 (0, 0)  v  6 (7.071068, 0)  v  7 (10, 0)
+                 v  8 (7.071068, 0)  v  9 (0, 0)  v 10 (-7.071068, 0)  v 11 (-10, 0)
+                 v 12 (-10, 0)  v 13 (-7.071068, 0)  v 14 (0, 0)  v 15 (7.071068, 0)
+                 v 16 (10, 0)  v 17 (7.071068, 0)  v 18 (0, 0)  v 19 (-7.071068, 0)
+                 v 20 (-10, 0)  v 21 (-7.071068, 0)
 ```
 
 ### Measured: the amplitude sweep that never finds a bound

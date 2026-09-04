@@ -717,13 +717,23 @@ export interface SpineMeshAttachment {
   triangles: number[];
   /** Weighted encoding: boneCount, (boneIndex, bindX, bindY, weight)*n, repeated. */
   vertices: number[];
-  /** Hull vertex count. The loader stores this doubled. */
+  /**
+   * Hull vertex count — the outline polygon is the first `hull` vertices, in
+   * order. The loader stores this doubled, and the binary reader derives the
+   * triangle count from it, so it is always the count the triangles state
+   * (`traceOutline` in mesh.ts) and never 0.
+   */
   hull: number;
   /** Nonessential, but they make the mesh budget assertions readable. */
   width: number;
   height: number;
-  /** Nonessential index pairs the editor draws; carried through when authored. */
-  edges?: number[];
+  /**
+   * Nonessential edge list the editor draws: vertex index pairs, each index
+   * TIMES TWO (`meshEdges` in mesh.ts). Always written — authored edges are
+   * carried through, every other mesh gets its triangle edges — because a mesh
+   * without one imports with its interior edges reported lost.
+   */
+  edges: number[];
   color?: string;
 }
 

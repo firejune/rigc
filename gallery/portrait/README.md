@@ -169,7 +169,8 @@ The yaw is **12°**, held, and released — `t = 0.209` rad, `cos t − 1 =
 
 ### The two meshes
 
-Both are **row-major grids**, and both share one column table:
+Both are grids on one column table, and both list their vertices **perimeter
+first** — the order Spine's `hull` needs (see *`hull` is 16* below):
 
 ```
 head       340 × 380 plate, R = 170        hair_bang   372 × 168 plate, R = 196
@@ -218,8 +219,10 @@ table and the artifact can be read against each other:
                  centre shift = −radius·sin t = -35.344987
                25 vertices, largest offset 35.344987px at vertex 2
                  v  0 (-7.17493, 0)  v  1 (-22.413595, 0)  v  2 (-35.344987, 0)  v  3 (-27.658171, 0)
-                 v  4 (-14.255108, 0)  v  5 (-7.17493, 0)  v  6 (-22.413595, 0)  v  7 (-35.344987, 0)
-                 …four more lines, the same five values down five rows
+                 v  4 (-14.255108, 0)  v  5 (-14.255108, 0)  v  6 (-14.255108, 0)  v  7 (-14.255108, 0)
+                 …five more lines: the run is in list order, so `v 0`–`v 4` are the top row's five
+                 values, `v 4`–`v 8` the right column's five copies of one value, and so on around
+                 the perimeter before the nine interior vertices close the list
 ```
 
 📐 **The transcription it replaced agreed with it to 0.000437 px**, which is
@@ -268,11 +271,16 @@ same 12° — a shallower gradient, because the fringe rides a **larger** sphere
 relatively nearer the centre of it. That is the depth argument below, as a
 printed figure.
 
-⚠️ **`hull` is absent, so it is `0`.** A grid's perimeter is 16 of its 25
-vertices and they are not a prefix of any row-major order, so declaring a hull
-would mean re-ordering the vertex list perimeter-first — and then a reader could
-not count the deform table against the grid. `0` is the honest declaration, and
-the cost is stated in [FINDINGS.md](FINDINGS.md) under the editor round trip.
+⚠️ **`hull` is 16, derived from the triangles, and the vertex order is what lets
+it be.** A grid's perimeter is 16 of its 25 vertices, and Spine's `hull` is the
+first `hull` vertices of the list in order — so the list walks the perimeter
+first (top row, right column, bottom row, left column) and puts the 9 interior
+vertices after it. rigc reads the number off the triangles and refuses a
+row-major list with that walk printed as the fix
+([AUTHORING §3.4](../../docs/AUTHORING.md), [FACE §4.3](../../docs/FACE.md)). It
+used to write `hull: 0` here, which the editor's import repaired by making every
+vertex a hull vertex — [#368](https://github.com/firejune/rigc/issues/368)
+records that round trip; the frames are byte-identical either way.
 
 ⚠️ **The `MESH` line reports a large overshoot and it is not a defect.** A
 rectangular grid over an oval face has transparent corners:

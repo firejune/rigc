@@ -486,15 +486,29 @@ brackets the fold this section predicts against `A39` itself: **33° gates green
 and 34° does not**, with the refusal naming the row pair the closed form names.
 That is this table checked from the other end, on the other axis.
 
-### 4.3 `hull` is `0`, and the vertex order is why
+### 4.3 The perimeter comes first, and `hull` is read off the triangles
 
-⚠️ **A grid's perimeter is 16 of its 25 vertices and they are not a prefix of any
-row-major order.** Declaring a hull would mean re-ordering the vertex list
-perimeter-first — and then **a reader could not count the emitted deform run
-against the grid**, which is what makes `explain`'s printed offsets (§1.1)
-checkable against the columns at all. `0` is the honest declaration. AUTHORING §3.4 has what a hull
-buys and the worked example's FINDINGS.md prices what omitting it costs in an
-editor round trip.
+⚠️ **A grid's perimeter is 16 of its 25 vertices, and in row-major order they are
+interleaved with the interior.** Spine's `hull` is the first `hull` vertices of
+the list, in order — the editor draws the outline by joining them in sequence — so
+a row-major grid cannot declare one. And an undeclared hull is not neutral: rigc
+used to write `hull: 0` there, and the editor's import repairs that by making
+**every** vertex a hull vertex in list order, which is a self-intersecting outline
+on the mesh the person refining the draft sees
+([#368](https://github.com/firejune/rigc/issues/368) records the round trip that
+found it). So the list is written the way the editor writes one: **the perimeter
+first, walked around — top row, right column, bottom row, left column — then the
+interior, row-major.** rigc derives `hull` from the triangles (AUTHORING §3.4) and
+refuses any other order with the walk to renumber along, so getting this wrong
+costs one loop rather than a silent file.
+
+**What it costs the reader.** `explain` prints one offset per vertex in list
+order, so the run no longer reads as one row of five values repeated down the
+grid: entries 0–15 walk the perimeter and 16–24 are the interior. The column
+table is still what to check it against — a vertex's offset depends on its column
+alone — and the right column's five entries (4–8) carrying one value is the
+quickest check that the walk and the table agree. `gallery/portrait`'s README
+shows the listing beside the order.
 
 ⚠️ **A large `MESH` overshoot on a face is not a defect.** A rectangular grid
 over an oval face has transparent corners, and the line says so:
