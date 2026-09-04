@@ -63,7 +63,29 @@ export type DeformAxis = 'x' | 'y';
  * `about`, and the key is that rotation projected back onto the screen.
  *
  * `yaw` stands the cylinder vertically and moves vertices horizontally; `pitch`
- * is the same expression with the axes swapped. docs/FACE.md §1 is the whole
+ * is the same expression with the axes swapped.
+ *
+ * ## Why there is no separate `parallax` kind
+ *
+ * A pure depth slide — `d = z · offset`, no angle — was written and then taken
+ * out again (2026-09-05), for two reasons and the second is the one that
+ * settles it.
+ *
+ * ⭐ **It is this form with a term dropped.** Subtract them and the whole
+ * remainder is `u · (cos t − 1)`, independent of the depth, so the slide is
+ * `yaw` at a small angle and nothing else: at 16° the gap is 2.32px, at 1°
+ * 0.0091px, quartering with each halving. A second kind for the same model
+ * evaluated less accurately is a second answer to one question.
+ *
+ * 🚨 **And what it was for is not rigc's to state.** A depth slide is a CAMERA
+ * move — the viewer shifts and the near parts lag — driven by a pointer, not by
+ * a clock. This spec is a timeline. Baking a pointer-driven parameter into time
+ * keys is a category error, and it bakes what a runtime should be evaluating.
+ *
+ * ⇒ What rigc states about a raised surface is the ANGLE it may turn through
+ * (here) and, for a soft one, how it answers an impact (a physics constraint on
+ * a bone the mesh is bound to). The camera belongs to whatever draws the
+ * result. docs/FACE.md §1 is the whole
  * derivation, and §4.2 is the angle past which any given column pair folds —
  * this evaluates the projection and says nothing about whether the angle is
  * sane. `A39_DEFORM_KEEPS_TRIANGLE_WINDING` is what catches a fold.
@@ -95,39 +117,6 @@ export interface DeformTurn {
   degrees: number;
   /** Where the axis crosses the driving coordinate. Default 0. */
   about?: number;
-}
-
-/**
- * A **parallax slide**: every vertex moves by its own depth times a stated
- * offset. The small-angle limit of `yaw`/`pitch`, and the form a per-pixel
- * depth shader actually evaluates.
- *
- * `d = z · offset`, per axis, with `z` read off the attachment's depth map. It
- * is `yaw` with the in-plane term dropped: a turn is
- * `dx = u·(cos t − 1) − z·sin t`, and for small `t` the first term is `O(t²)`
- * while the second is `O(t)`. `DP05` measures that difference and finds it to
- * be exactly `u·(cos t − 1)` — independent of the depth, which is why the two
- * forms converge on each other and not merely near each other.
- *
- * ⭐ Two parameters and no angle, which is the point of having it: a pointer or
- * a camera drives `offset` directly, and there is no radius, no `about` and no
- * trigonometry between the input and the geometry.
- *
- * 🚨 It REQUIRES a depth map, and that is a rule rather than a limitation.
- * Without per-vertex `z` every vertex moves by the same amount, which is a
- * translation of the whole attachment — a bone move, keyed on the bone, at no
- * cost in deform data. A deform run that says what a translate says is a
- * hundred numbers standing in for two.
- */
-export interface DeformParallax {
-  kind: 'parallax';
-  /**
-   * Screen displacement per unit of depth, `[x, y]`.
-   *
-   * Depth carries the units (`zScale`), so this is a pure direction-and-scale:
-   * a vertex 40 units forward under `offset: [0.25, 0]` moves 10 to the right.
-   */
-  offset: [number, number];
 }
 
 /**
@@ -206,10 +195,10 @@ export interface DeformBend {
   axis: DeformAxis;
 }
 
-export type DeformTransform = DeformTurn | DeformParallax | DeformAffine | DeformWave | DeformBend;
+export type DeformTransform = DeformTurn | DeformAffine | DeformWave | DeformBend;
 
 /** The kinds this module evaluates, in the order the docs list them. */
-export const DEFORM_TRANSFORM_KINDS = ['yaw', 'pitch', 'parallax', 'affine', 'wave', 'bend'] as const;
+export const DEFORM_TRANSFORM_KINDS = ['yaw', 'pitch', 'affine', 'wave', 'bend'] as const;
 
 /**
  * What one evaluation did, for `explain` to print and a reviewer to check.
@@ -409,42 +398,6 @@ export function evaluateDeformTransform(
       } else {
         derived.push(`centre shift = −radius·sin t = ${round(-radius * sin)}`);
       }
-      break;
-    }
-    case 'parallax': {
-      const t = transform as DeformParallax;
-      const offset = pair(t.offset, 'offset', where);
-      if (depth === null) {
-        throw new CompileError(
-          `${where}: transform parallax moves each vertex by its own depth, and this attachment has no depth map. ` +
-            'Name one on its generator as `"depth": { "image": …, "near": …, "zScale": … }`. Without per-vertex z ' +
-            'every vertex would move by the same amount, which is a translation of the whole attachment — key the ' +
-            'slot bone instead, at two numbers rather than one per vertex.',
-        );
-      }
-      if (depth.length !== count) {
-        throw new CompileError(`${where}: transform parallax has ${depth.length} sampled depths for ${count} vertices`);
-      }
-      let zlo = Infinity;
-      let zhi = -Infinity;
-      for (let v = 0; v < count; v++) {
-        const z = depth[v];
-        if (z < zlo) zlo = z;
-        if (z > zhi) zhi = z;
-        offsets[2 * v] = round(widen(z * offset[0]));
-        offsets[2 * v + 1] = round(widen(z * offset[1]));
-      }
-      identity = round(offset[0]) === 0 && round(offset[1]) === 0;
-      identitySpelling = 'offset [0, 0]';
-      sampledTo =
-        'The offset is not zero, so the depths are: a run of zeros here means every vertex sampled the same depth ' +
-        `and that depth is 0 — check the map's range in the mesh report (this one sampled [${round(zlo)}, ${round(zhi)}])`;
-      stated = `offset=[${offset[0]}, ${offset[1]}]`;
-      formula = 'dx = z·offset.x,   dy = z·offset.y,   z = the vertex\'s sampled depth';
-      derived = [
-        `z ∈ [${round(zlo)}, ${round(zhi)}] over ${count} vertices`,
-        `deepest slide = z_max·offset = (${round(zhi * offset[0])}, ${round(zhi * offset[1])})`,
-      ];
       break;
     }
     case 'affine': {
