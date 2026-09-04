@@ -90,6 +90,7 @@ import {
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError } from './src/compile.ts';
 import { parseMotionSpec } from './src/motion.ts';
+import { compareTurnFields, DEPTH_TONE_IDENTITY, type FieldAgreement } from './src/depth.ts';
 import {
   buildGridMesh,
   contourOvershootBound,
@@ -7502,6 +7503,101 @@ function runContourMeshSuite(): number {
           .join(' | '),
     'the last of these is the one a shared message would get wrong: a grid runs out of sheet at the window corners and a contour at the silhouette, and an author sent to the wrong fix is worse off than one sent nowhere',
   );
+
+  // --- the mesh evaluates the same model the pixels do (issue #382 step 3) --
+  //
+  // The cross-check the issue asks for, as arithmetic rather than as a picture.
+  // A consumer that renders a depth sheet in a shader displaces every PIXEL by
+  // its own depth; rigc displaces VERTICES and interpolates across triangles.
+  // Two evaluations of one model, and the question is whether the second is
+  // approaching the first.
+  //
+  // ⚠️ Both sides read the same sheet through the same sampler, deliberately —
+  // DP01–DP03 are what hold the sampler honest, and a comparison whose two
+  // sides disagreed about the depth would measure the wrong thing. What differs
+  // is the interpolation, which is the whole approximation a mesh IS.
+  //
+  // ⭐ So the claim is CONVERGENCE, not agreement. It has to be: at a coarse
+  // lattice the wrong model reads BETTER than the right one (measured below),
+  // so no single reading can tell them apart.
+  {
+    const D = 128;
+    const R = D / 2 - 2;
+    // A dome, because a ramp would be reproduced exactly by any lattice and
+    // prove nothing: piecewise-linear interpolation is exact on a linear field.
+    // A hemisphere is the shape FACE §1's cylinder is a one-dimensional guess at.
+    const level = new Uint8Array(D * D);
+    const alpha = new Uint8Array(D * D);
+    for (let y = 0; y < D; y++) {
+      for (let x = 0; x < D; x++) {
+        const dx = (x + 0.5 - D / 2) / R;
+        const dy = (y + 0.5 - D / 2) / R;
+        const r2 = dx * dx + dy * dy;
+        if (r2 > 1) continue;
+        level[y * D + x] = Math.round(Math.sqrt(1 - r2) * 255);
+        alpha[y * D + x] = 255;
+      }
+    }
+    const map = { width: D, height: D, level };
+    const zScale = 60;
+    const degrees = 18;
+    const sizes = [3, 5, 9, 17, 33];
+    const good: FieldAgreement[] = [];
+    const bad: FieldAgreement[] = [];
+    for (const n of sizes) {
+      const ticks = Array.from({ length: n }, (_, i) => i / (n - 1));
+      const g = buildGridMesh({ size: [D, D], us: ticks, vs: ticks });
+      const base = {
+        map,
+        near: 'white' as const,
+        tone: DEPTH_TONE_IDENTITY,
+        zScale,
+        alpha,
+        threshold: 1,
+        points: g.points,
+        triangles: g.triangles,
+        degrees,
+        about: D / 2,
+      };
+      good.push(compareTurnFields(base));
+      // The negative control: the SAME lattice at the SAME angle, with z taken
+      // from a cylinder of radius R instead of from the sheet. This is the
+      // model `yaw` had before #382, evaluated against the surface the art
+      // actually has.
+      const cylinder = g.points.map(([x]) => {
+        const u = x - D / 2;
+        const q = R * R - u * u;
+        return q > 0 ? Math.sqrt(q) * (zScale / R) : 0;
+      });
+      bad.push(compareTurnFields({ ...base, vertexDepths: cylinder }));
+    }
+    const fell = good.every((a, i) => i === 0 || a.mean < good[i - 1].mean);
+    const meanDrop = good[0].mean / good[good.length - 1].mean;
+    const worstDrop = good[0].worst / good[good.length - 1].worst;
+    say(
+      'CS01_REFINING_THE_LATTICE_CONVERGES_ON_THE_PER_PIXEL_MODEL',
+      fell && meanDrop > 20 && worstDrop > 3 && good[0].skipped === 0,
+      `${sizes.map((n, i) => `${n}x${n} mean ${good[i].mean.toFixed(4)}`).join(', ')} — mean falls ${meanDrop.toFixed(1)}x, ` +
+        `worst ${good[0].worst.toFixed(2)} -> ${good[good.length - 1].worst.toFixed(2)} (${worstDrop.toFixed(1)}x)`,
+      'the worst case converges more slowly than the mean and is expected to: the dome\'s rim has an unbounded depth gradient, so the largest error stays pinned there whatever the lattice does. The mean is the figure that says the mesh is approaching the model',
+    );
+    const badLast = bad[bad.length - 1];
+    const badFirst = bad[0];
+    say(
+      'CS02_A_MESH_EVALUATING_A_DIFFERENT_MODEL_DOES_NOT_CONVERGE',
+      badLast.mean > badFirst.mean / 2 && badLast.mean > good[good.length - 1].mean * 10,
+      `cylinder z on the same lattices: ${sizes.map((n, i) => `${n}x${n} ${bad[i].mean.toFixed(4)}`).join(', ')} — ` +
+        `settles at ${badLast.mean.toFixed(3)}px while the depth-read mesh reaches ${good[good.length - 1].mean.toFixed(4)}px`,
+      'without this, CS01 says only that a fine mesh has small errors — which a fine mesh of the WRONG surface also has, up to a point it never passes',
+    );
+    say(
+      'CS03_AT_A_COARSE_LATTICE_THE_WRONG_MODEL_READS_BETTER_THAN_THE_RIGHT_ONE',
+      bad[0].mean < good[0].mean,
+      `3x3: cylinder ${bad[0].mean.toFixed(3)}px vs depth ${good[0].mean.toFixed(3)}px — the wrong surface wins by ` +
+        `${(good[0].mean - bad[0].mean).toFixed(3)}px, and only refinement separates them`,
+      'this is why the claim above is convergence and not agreement: one reading at one density cannot tell the two models apart, and would have picked the wrong one here',
+    );
+  }
 
   // --- determinism ---------------------------------------------------------
   // A18 says this about a re-emit of the same compile; this says it about the
@@ -17735,7 +17831,7 @@ function main(): void {
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'and which bones a skin switches on), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
-      '+ 18 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      '+ 21 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
       'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
       'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
@@ -17751,7 +17847,12 @@ function main(): void {
       + 'hand — required to reproduce the shipped 5x5 portrait head EXACTLY (25 vertex pairs, 32 triangles, hull 16) from '
       + 'its five column positions alone, to load with its perimeter as the hull and its faces the right way out (an '
       + 'absolute winding check, because a uniformly inverted lattice is self-consistent and passed the well-formedness '
-      + 'one), and eight ways to ask for a lattice that cannot exist refused by name, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
+      + 'one), and eight ways to ask for a lattice that cannot exist refused by name; then the cross-check the depth map '
+      + 'was built for — a mesh displacing VERTICES and interpolating against a model displacing every PIXEL by its own '
+      + 'depth, over a dome at 18 degrees, converging 6.4141 -> 0.0926 px as the lattice goes 3x3 -> 33x33, while the '
+      + 'SAME lattices reading a cylinder instead settle at 3.4 px and never move — and the reading that forces that '
+      + 'framing, where at 3x3 the WRONG surface scores better than the right one, so no single density can tell them '
+      + 'apart, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
