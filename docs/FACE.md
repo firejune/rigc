@@ -259,7 +259,15 @@ not better — the columns are sampling a cylinder that was never the shape of a
 face. A cylinder is one number pretending to be a surface, and past a certain
 density the pretence is what fails.
 
-⭐ **A depth map is that number becoming a surface.** A greyscale sheet in the
+⭐ **Two things had to arrive together, and both are now generated rather than
+written.** The lattice itself was hand-numbered — this example's 25 vertex pairs,
+32 triangles and hull walk were a person's arithmetic — and
+[AUTHORING §3.4](AUTHORING.md#grid--a-lattice-over-the-part-window)'s `grid`
+generator now builds it from the column positions alone, reproducing this one
+exactly. That is the prerequisite: a turn needs interior vertices to move, and
+§4.3's contour has none.
+
+⭐ **And a depth map is the number above becoming a surface.** A greyscale sheet in the
 part's own pixel grid gives every mesh vertex its own `z`, sampled where the
 vertex actually is, and `yaw`/`pitch` project off it with the same closed form as
 §1 — only the source of `z` changes. What it buys is stated where it is authored:

@@ -267,6 +267,50 @@ export interface RigSlot {
  * and measured art lives in the manifest. `generator` is for a skeleton with no
  * manifest behind it.
  */
+/**
+ * A greyscale sheet, in a part's own pixel grid, giving each vertex a depth —
+ * what `yaw` and `pitch` otherwise derive from one cylinder radius.
+ * [`src/depth.ts`](depth.ts) is the model and the order of operations;
+ * `docs/FACE.md` §2.1 is when to reach for it.
+ *
+ * ⚠️ Naming it changes no emitted byte on its own. It puts a `z` on every
+ * vertex, which a `yaw` or `pitch` key then reads by saying `"depth": true`
+ * instead of a `radius`. A map that nothing reads is reported and otherwise
+ * inert — deliberately, so that adding the input and adopting it are two
+ * reviewable steps rather than one.
+ */
+export interface RigDepthMap {
+  /**
+   * The sheet, relative to the rig's `images` directory, and the same pixel
+   * size as this attachment's own `image`.
+   *
+   * It is NOT packed into the atlas: it is a measurement rigc reads at compile
+   * time, not art anything draws. A sheet that reached the atlas would be a
+   * page the runtime loads and never samples.
+   */
+  image: string;
+  /**
+   * Which end of the range is closest to the viewer. Stated rather than
+   * defaulted, because both conventions are in use and a sheet that means the
+   * opposite of what the spec assumes produces a part that turns inside out —
+   * with every gate still green, since the arithmetic is correct and only the
+   * input was backwards.
+   */
+  near: 'white' | 'black';
+  /**
+   * How many world units the map's full 0..1 range spans, in the attachment's
+   * own units — the number `radius` used to carry.
+   *
+   * Authored, never measured: 8 bits of level say nothing about scale, so a
+   * compiler that picked one would be inventing the depth of the art.
+   */
+  zScale: number;
+  /** Tone curve applied to the nearness. Defaults 1 / 1 / 0, a straight line. */
+  gamma?: number;
+  contrast?: number;
+  bias?: number;
+}
+
 export type RigMeshGenerator =
   | {
       kind: 'ring';
@@ -325,49 +369,41 @@ export type RigMeshGenerator =
       maxVertices?: number;
       /** Alpha at or above which a pixel counts as art, 1..255. Default 1. */
       alpha?: number;
+      /** A depth map for this part — see `RigDepthMap`. */
+      depth?: RigDepthMap;
+    }
+  | {
       /**
-       * A greyscale sheet, in this part's own pixel grid, giving each vertex a
-       * depth — what `yaw` and `pitch` otherwise derive from one cylinder
-       * radius. [`src/depth.ts`](depth.ts) is the model and the order of
-       * operations; `docs/FACE.md` §5 is when to reach for it.
+       * A lattice over the part window — the topology `docs/FACE.md` §4 turns a
+       * plate into so a turn has columns to move.
        *
-       * ⚠️ Naming it here changes no emitted byte on its own. It puts a `z` on
-       * every vertex, which a `yaw` or `pitch` key then reads by saying
-       * `"depth": true` instead of a `radius`. A map that nothing reads is
-       * reported and otherwise inert — deliberately, so that adding the input
-       * and adopting it are two reviewable steps rather than one.
+       * ⭐ It takes no `size`: like a `contour`, the window is the attachment's
+       * own `image`, so there is no number here that can disagree with the
+       * pixels. Every vertex is pinned to the slot bone at weight 1, which
+       * makes the lattice geometry to DEFORM rather than an authority split —
+       * reach for `ring` when bones have to move it.
        */
-      depth?: {
-        /**
-         * The sheet, relative to the rig's `images` directory, and the same
-         * pixel size as this attachment's own `image`.
-         *
-         * It is NOT packed into the atlas: it is a measurement rigc reads at
-         * compile time, not art anything draws. A sheet that reached the atlas
-         * would be a page the runtime loads and never samples.
-         */
-        image: string;
-        /**
-         * Which end of the range is closest to the viewer. Stated rather than
-         * defaulted, because both conventions are in use and a sheet that means
-         * the opposite of what the spec assumes produces a part that turns
-         * inside out — with every gate still green, since the arithmetic is
-         * correct and only the input was backwards.
-         */
-        near: 'white' | 'black';
-        /**
-         * How many world units the map's full 0..1 range spans, in the
-         * attachment's own units — the number `radius` used to carry.
-         *
-         * Authored, never measured: 8 bits of level say nothing about scale, so
-         * a compiler that picked one would be inventing the depth of the art.
-         */
-        zScale: number;
-        /** Tone curve applied to the nearness. Defaults 1 / 1 / 0, a straight line. */
-        gamma?: number;
-        contrast?: number;
-        bias?: number;
-      };
+      kind: 'grid';
+      /**
+       * Column positions across the window, 0..1, ascending. At least 2.
+       *
+       * ⚠️ Positions, not a count, and that is deliberate: FACE §4.1 places
+       * columns where the drawing needs them, and the worked example's are
+       * dense at the silhouette and sparse across the middle. They need not
+       * reach the window edge — that example's run 0.0235 to 0.9765.
+       */
+      us?: number[];
+      /** Row positions down the window, 0..1, ascending. At least 2. */
+      vs?: number[];
+      /**
+       * Even division instead: `cols` columns and `rows` rows spanning the
+       * whole window. A convenience for a plate with no shape to follow, and
+       * refused beside `us`/`vs`, which say the same thing more precisely.
+       */
+      cols?: number;
+      rows?: number;
+      /** A depth map for this part — see `RigDepthMap`. */
+      depth?: RigDepthMap;
     };
 
 /** `SkeletonJson.ts:540-559`. `type` defaults to `region` (`:539`). */

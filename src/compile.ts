@@ -56,6 +56,7 @@ import {
 } from './rig.ts';
 import {
   buildContourMesh,
+  buildGridMesh,
   buildRibbonMesh,
   buildRingMesh,
   checkHullOrder,
@@ -2619,6 +2620,7 @@ function buildGeneratedMesh(
   ctx: AttachmentContext,
 ): SpineMeshAttachment {
   if (generator.kind === 'contour') return buildContourAttachment(att, generator, placeholder, where, ctx);
+  if (generator.kind === 'grid') return buildGridAttachment(att, generator, placeholder, where, ctx);
   const controls = generator.kind === 'ring' ? generator.controls : generator.chain;
   const refFor = (name: string): MeshBoneRef => {
     const index = ctx.bones.findIndex((b) => b.name === name);
@@ -2706,8 +2708,9 @@ function buildGeneratedMesh(
  * third check has nothing to test; what the background level means is then the
  * author's statement, and `range` in the report is where it shows up.
  */
-function sampleContourDepth(
+function sampleMeshDepth(
   spec: NonNullable<Extract<NonNullable<RigMeshAttachment['generator']>, { kind: 'contour' }>['depth']>,
+  kind: 'contour' | 'grid',
   points: ReadonlyArray<readonly [number, number]>,
   partWidth: number,
   partHeight: number,
@@ -2792,12 +2795,19 @@ function sampleContourDepth(
   }
   if (uncovered.length > 0) {
     const first = uncovered[0];
+    // The two topologies run out of sheet for different reasons, and a message
+    // that explains the wrong one sends the author to the wrong fix.
+    const why =
+      kind === 'contour'
+        ? 'A contour mesh puts every vertex ON the silhouette and pushes it out by the margin, so a sheet cut to ' +
+          'the art stops short of every one of them. Dilate the sheet past the mesh margin, or lower the margin.'
+        : 'A grid spans the whole part window, corners included, while a sheet is usually cut to the art — so the ' +
+          'lattice reaches past it wherever the art does not fill the window. Dilate the sheet to the window, or ' +
+          'state "us"/"vs" that keep the lattice inside the art.';
     throw new CompileError(
       `${where}: the depth map "${spec.image}" does not cover ${uncovered.length} of the mesh's ${points.length} ` +
-        `vertices — the first is vertex ${first} at (${points[first][0]}, ${points[first][1]}). A contour mesh puts ` +
-        'every vertex ON the silhouette and pushes it out by the margin, so a sheet cut to the art stops short of ' +
-        'them; sampling anyway would give the whole rim the background depth and fold it away from the turn. ' +
-        'Dilate the sheet past the mesh margin, or lower the margin.',
+        `vertices — the first is vertex ${first} at (${points[first][0]}, ${points[first][1]}). ${why} ` +
+        'Sampling anyway would give those vertices the sheet\'s background depth and fold them away from the turn.',
     );
   }
 
@@ -2821,6 +2831,128 @@ function sampleContourDepth(
       range: [r6(lo), r6(hi)],
     },
   };
+}
+
+/**
+ * Build a `grid` mesh: a lattice over the part window, at stated positions.
+ *
+ * It shares `contour`'s placement and weighting exactly — the window is the
+ * PNG's own size, the mesh is centred on its slot bone, and every vertex is
+ * pinned to that bone at weight 1 — and differs only in where the vertices go.
+ * The two are kept as separate functions rather than one with a branch because
+ * what they measure is different: a contour asks the art where its edge is and
+ * reports how well it covered it, and a grid asks nothing of the art at all.
+ *
+ * ⭐ Why this exists at all: the lattice was being written BY HAND. The worked
+ * portrait shipped 25 vertex pairs, 32 triangles and a perimeter numbered in
+ * the one order the loader accepts — all of it a person's arithmetic, on the
+ * one topology whose correctness is least visible. A hand-numbered hull that
+ * lists an interior vertex first loads, draws and deforms wrong.
+ */
+function buildGridAttachment(
+  att: RigMeshAttachment,
+  generator: Extract<NonNullable<RigMeshAttachment['generator']>, { kind: 'grid' }>,
+  placeholder: string,
+  where: string,
+  ctx: AttachmentContext,
+): SpineMeshAttachment {
+  if (att.image === undefined) {
+    throw new CompileError(
+      `${where}: a "grid" generator lays its lattice over the part's own window, so the attachment needs an ` +
+        '"image" — there is nothing else here that says how big that window is',
+    );
+  }
+  const stated = generator.us !== undefined || generator.vs !== undefined;
+  const even = generator.cols !== undefined || generator.rows !== undefined;
+  if (stated && even) {
+    throw new CompileError(
+      `${where}: the "grid" generator states both positions ("us"/"vs") and a count ("cols"/"rows"). They are two ` +
+        'answers to where the columns go, and a spec carrying both leaves a reader unable to say which one built ' +
+        'the mesh. Drop one — positions are the more precise of the two.',
+    );
+  }
+  if (!stated && !even) {
+    throw new CompileError(
+      `${where}: the "grid" generator says neither where its columns go ("us"/"vs", fractions of the window) nor ` +
+        'how many there are ("cols"/"rows"). A lattice is not a default.',
+    );
+  }
+  const spread = (n: unknown, name: string): number[] => {
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 2) {
+      throw new CompileError(`${where}: "${name}" is ${JSON.stringify(n)}; it is a whole number of at least 2`);
+    }
+    // An even division spans the whole window. A lattice that should sit inside
+    // it states its own positions — which is what `us`/`vs` are for.
+    return Array.from({ length: n }, (_, i) => i / (n - 1));
+  };
+  const us = stated ? generator.us : spread(generator.cols, 'cols');
+  const vs = stated ? generator.vs : spread(generator.rows, 'rows');
+  if (us === undefined || vs === undefined) {
+    throw new CompileError(
+      `${where}: the "grid" generator states ${us === undefined ? '"vs"' : '"us"'} and not ` +
+        `${us === undefined ? '"us"' : '"vs"'}; a lattice needs both axes`,
+    );
+  }
+
+  const region = basename(att.image, '.png');
+  const img = ctx.images.find((im) => im.region === region);
+  if (!img) throw new CompileError(`${where}: no compiled image for "${att.image}"`);
+  const plate = partPlate(img);
+
+  let geometry;
+  try {
+    geometry = buildGridMesh({ size: [plate.width, plate.height], us, vs });
+  } catch (err) {
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
+    throw err;
+  }
+
+  const w = img.width;
+  const h = img.height;
+  const toArt = w / plate.width;
+  if (att.width !== undefined && att.width !== w) {
+    throw new CompileError(`${where}: the spec says width ${att.width} and "${att.image}" measures ${w}`);
+  }
+  if (att.height !== undefined && att.height !== h) {
+    throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`);
+  }
+  const anchor = ctx.transforms.get(ctx.anchorBone);
+  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  const index = ctx.bones.findIndex((b) => b.name === ctx.anchorBone);
+  if (index < 0) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
+  const vertices = encodeWeightedVertices(
+    geometry,
+    (px, py) => [r6(anchor.worldX + px * toArt - w / 2), r6(anchor.worldY + h / 2 - py * toArt)],
+    { anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) }, controls: [] },
+  );
+  ctx.meshBones.add(ctx.anchorBone);
+  const depth =
+    generator.depth === undefined
+      ? undefined
+      : sampleMeshDepth(generator.depth, 'grid', geometry.points, plate.width, plate.height, where, ctx);
+  if (depth !== undefined) ctx.depths.set(`${ctx.skinName}/${ctx.slotName}/${placeholder}`, depth.z);
+  ctx.meshes.push({
+    slot: ctx.slotName,
+    kind: 'grid',
+    attachments: [placeholder],
+    vertices: geometry.uvs.length / 2,
+    triangles: geometry.triangles.length / 3,
+    bones: [ctx.anchorBone],
+    depth: depth?.summary,
+  });
+  const out: SpineMeshAttachment = {
+    type: 'mesh',
+    uvs: geometry.uvs,
+    triangles: geometry.triangles,
+    vertices,
+    ...generatedHullAndEdges(geometry, where),
+    width: r6(w),
+    height: r6(h),
+  };
+  if (att.path !== undefined) out.path = att.path;
+  else if (region !== placeholder) out.path = region;
+  if (att.color !== undefined) out.color = att.color;
+  return out;
 }
 
 /** Defaults for the `contour` generator's optional parameters, stated once. */
@@ -2922,7 +3054,7 @@ function buildContourAttachment(
   const depth =
     generator.depth === undefined
       ? undefined
-      : sampleContourDepth(generator.depth, geometry.points, plate.width, plate.height, where, ctx);
+      : sampleMeshDepth(generator.depth, 'contour', geometry.points, plate.width, plate.height, where, ctx);
   if (depth !== undefined) ctx.depths.set(`${ctx.skinName}/${ctx.slotName}/${placeholder}`, depth.z);
   ctx.meshes.push({
     slot: ctx.slotName,

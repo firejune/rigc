@@ -788,9 +788,11 @@ silhouette, and an octagon's sides pass `R · cos(π/8)` from its centre, so 5.7
 the drawing — its whole ink outline, between the spokes — was not going to be
 drawn, and every assertion passed (issue #277).
 
-The generators are `ring`, `ribbon` and `contour` (see
+The generators are `ring`, `ribbon`, `contour` and `grid` (see
 [`src/mesh.ts`](../src/mesh.ts)); the first two encode a deformation model rather
-than a table of numbers, which is why they are code invoked by data. A generator
+than a table of numbers, which is why they are code invoked by data. The last two
+are geometry: they pin every vertex to the slot bone and exist to give a
+`deform` timeline (§4.12) somewhere to push. A generator
 is for a skeleton with **no** manifest; a cut that has one invokes the same
 builders through the manifest's `mesh` block.
 
@@ -910,7 +912,57 @@ Self-intersection is refused; **holes are not cut out**; and nothing here does
 interior/Steiner points, so a contour mesh bends only where its outline has
 vertices.
 
-##### `depth` — give every vertex its own z, instead of one cylinder radius
+#### `grid` — a lattice over the part window
+
+**When you need one:** the part is a plate whose *surface* moves — a face that
+turns, a cloth that ripples — and a `deform` model (§4.12) needs interior
+vertices to push. A `contour` gives you the silhouette and nothing inside it;
+this gives you columns and rows.
+
+It takes **no geometry and no size**: like a `contour`, the window is the
+attachment's own `image`, and every vertex is pinned to the slot bone at weight
+1, so an undeformed grid draws exactly what the region drew.
+
+```json
+"generator": { "kind": "grid", "us": [0.0235, 0.1471, 0.5, 0.8529, 0.9765],
+                               "vs": [0.0263, 0.2632, 0.5, 0.7368, 0.9737] }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `us` / `vs` | column and row positions across the window, `0..1`, ascending, at least two each. **Positions, not a count** |
+| `cols` / `rows` | an even division of the whole window instead. Refused beside `us`/`vs` |
+| `depth` | a depth map, below — this is the generator it was built for |
+
+⭐ **Positions, because [FACE §4.1](FACE.md) places columns where the drawing
+needs them.** The five above are `gallery/portrait`'s own — dense at the
+silhouette, sparse across the middle, and not reaching the window edge. A
+generator that could only divide evenly would be a step backwards from the table
+it replaces, and it does replace it: the selftest builds that exact mesh from
+those five numbers and requires it to come out identical to the 25 vertex pairs
+and 32 triangles the example shipped by hand.
+
+🚨 **The reason to generate this at all is the hull.** Spine's `hull` is a
+**count** — the first `hull` entries of the vertex list are the outline — so the
+perimeter must be listed first and in walk order (top row, right column, bottom
+row, left column), interior after. A hand-numbered grid written a row at a time
+puts interior vertices in the hull, and the mesh loads, draws and deforms wrong
+with nothing anywhere to say so. The generator satisfies that by construction
+rather than being checked afterwards.
+
+| The input | What you get |
+| --- | --- |
+| positions **and** a count | `states both positions ("us"/"vs") and a count ("cols"/"rows") … Drop one` |
+| neither | `A lattice is not a default` |
+| one axis only | `a lattice needs both axes` |
+| positions that do not ascend | `"us" is not ascending: [1]=0.6 and [2]=0.6` — equal neighbours put two vertices in one place and collapse a row of triangles to zero area |
+| a position outside `0..1` | `positions are fractions of the part window, 0..1` |
+| `cols` or `rows` under 2 | `it is a whole number of at least 2` |
+
+#### `depth` — give every vertex its own z, instead of one cylinder radius
+
+**On a `contour` or a `grid`.** A grid is the one it was built for: a turn
+needs interior vertices to move, and a contour has none of its own.
 
 A `yaw` or `pitch` key (§4.12) turns a part by treating it as painted on a
 cylinder: a vertex `u` off the axis gets `z = √(radius² − u²)`. That is the right
@@ -945,16 +997,18 @@ on its own — a `yaw` or `pitch` key has to ask for it with `"depth": true`.
 of the same map reads the same) and the `z` range actually sampled, which is the
 number that says whether the map covers the part or a corner of it.
 
-🚨 **The one that will catch you: a sheet cut to the art covers none of a contour
-mesh's vertices.** Every vertex of a contour mesh is *on* the silhouette and
-pushed `margin` pixels outside it, while a depth sheet is usually cut to the
-art's own alpha — so a naive sample gives the whole rim the background depth and
-folds the silhouette away from the turn, with correct arithmetic and plausible
-numbers all the way down. rigc refuses it instead:
+🚨 **The one that will catch you: the sheet has to cover the mesh, and usually
+it does not.** A contour mesh puts every vertex *on* the silhouette and pushes it
+`margin` pixels outside; a grid spans the whole window, corners included. A depth
+sheet is usually cut to the art's own alpha, so both reach past it — and a naive
+sample gives those vertices the background depth and folds them away from the
+turn, with correct arithmetic and plausible numbers all the way down. rigc
+refuses it instead:
 
 | The input | What you get |
 | --- | --- |
-| a sheet cut to the art's alpha | `the depth map "face_depth.png" does not cover 12 of the mesh's 12 vertices — the first is vertex 0 at (26.696071, 5.946444) … Dilate the sheet past the mesh margin, or lower the margin.` |
+| a sheet cut to the art's alpha, on a **contour** | `does not cover 12 of the mesh's 12 vertices … A contour mesh puts every vertex ON the silhouette and pushes it out by the margin … Dilate the sheet past the mesh margin, or lower the margin.` |
+| a sheet cut to the art's alpha, on a **grid** | `does not cover 36 of the mesh's 81 vertices … A grid spans the whole part window, corners included … Dilate the sheet to the window, or state "us"/"vs" that keep the lattice inside the art.` — the two topologies run out of sheet for different reasons, and the message says which |
 | a sheet that is not the part's size | `the depth map … is 32x32 and the part is 64x64. A depth map is sampled in the part's own pixel grid` |
 | a colour sheet | `the depth map … is not greyscale — pixel (0, 0) is rgb(10, 200, 10)` |
 | `zScale` at or below 0 | `it is how many units the map's full range spans, so a positive number. To put the near end at the back, say "near": "black"` |

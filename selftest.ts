@@ -91,9 +91,11 @@ import {
 import { buildAtlasText, compile, CompileError } from './src/compile.ts';
 import { parseMotionSpec } from './src/motion.ts';
 import {
+  buildGridMesh,
   contourOvershootBound,
   CONTOUR_MIN_COVERAGE,
   measureContourFit,
+  signedArea,
   traceAlphaOutline,
 } from './src/mesh.ts';
 import {
@@ -7362,6 +7364,143 @@ function runContourMeshSuite(): number {
           .map(([label, got, want]) => `${label}: expected "${want}", got ${got === null ? 'a clean compile' : got}`)
           .join(' | '),
     'every one of these compiles to a plausible number with correct arithmetic behind it — the coverage case is the loudest, since a sheet cut to the art gives the whole rim the background depth and folds the silhouette away from the turn',
+  );
+
+  // --- the lattice, generated instead of hand-numbered (issue #382) --------
+  //
+  // The `grid` generator exists because this topology was being written by
+  // hand, and its correctness is the least visible in the format: Spine's
+  // `hull` is a COUNT, so a perimeter that is not listed first and in walk
+  // order makes the loader read interior vertices as the outline. GR01 is the
+  // control that matters — the generator has to reproduce the shipped
+  // hand-written grid EXACTLY, or it is not a replacement for it.
+  {
+    const shipped = join(import.meta.dir, 'gallery/portrait/rig.json');
+    if (!existsSync(shipped)) {
+      say('GR01_THE_GENERATOR_REPRODUCES_THE_SHIPPED_HAND_WRITTEN_GRID', false, `${shipped} is missing`, 'the shipped grid is the reference this generator replaces');
+    } else {
+      interface AuthoredMesh { uvs: number[]; triangles: number[]; width: number; height: number }
+      const head = (
+        JSON.parse(readFileSync(shipped, 'utf8')) as {
+          skins: { default: { head: { head: AuthoredMesh } } };
+        }
+      ).skins.default.head.head;
+      const axis = (offset: number): number[] =>
+        [...new Set(Array.from({ length: head.uvs.length / 2 }, (_, i) => head.uvs[i * 2 + offset]))].sort((a, b) => a - b);
+      const built = buildGridMesh({ size: [head.width, head.height], us: axis(0), vs: axis(1) });
+      // uvs to the six decimals the emitter writes; triangles exactly, because
+      // an index list that differs at all is a different mesh.
+      const uvGap = built.uvs.reduce((m, u, i) => Math.max(m, Math.abs(u - head.uvs[i])), 0);
+      const sameTris = built.triangles.length === head.triangles.length && built.triangles.every((t, i) => t === head.triangles[i]);
+      const ok = built.uvs.length === head.uvs.length && sameTris && uvGap < 2e-4;
+      say(
+        'GR01_THE_GENERATOR_REPRODUCES_THE_SHIPPED_HAND_WRITTEN_GRID',
+        ok,
+        ok
+          ? `${built.uvs.length / 2} vertices and ${built.triangles.length / 3} triangles identical to gallery/portrait's ` +
+            `authored head mesh (worst uv gap ${uvGap.toExponential(1)}), hull ${built.hullVertices}, from its own five ` +
+            `column positions [${axis(0).map((u) => u.toFixed(4)).join(', ')}]`
+          : `vertices ${built.uvs.length / 2} vs ${head.uvs.length / 2}, triangles equal: ${sameTris}, worst uv gap ${uvGap}`,
+        'the shipped grid was a person\'s arithmetic on the one topology whose correctness is least visible; a generator that does not reproduce it is not a replacement for it',
+      );
+    }
+  }
+
+  const gridBuild = buildContourRig({
+    type: 'mesh',
+    image: 'blob.png',
+    generator: { kind: 'grid', cols: 5, rows: 4 },
+  });
+  {
+    const { mesh } = loadedContourMesh(gridBuild);
+    // Read back through spine-core: the hull the loader sees, and the fact that
+    // every vertex of it is pinned to the slot bone at weight 1 — which is what
+    // A21 measures and what makes the lattice geometry rather than an authority
+    // split. `hullLength` is in floats, hence the halving.
+    const hull = mesh.hullLength / 2;
+    const perimeter = 2 * (5 + 4) - 4;
+    const pts = contourPointsOf(mesh);
+    const faults = triangleFaults(pts, mesh.triangles);
+    // ⚠️ Absolute winding, asserted here and not left to `triangleFaults`.
+    // That helper checks the triangles agree with EACH OTHER, and a lattice
+    // built inside out agrees with itself perfectly — flipping every triangle
+    // left it silent (measured: the mutant passed this case until this line
+    // existed). uvs are y-DOWN, Spine world is y-up, so the winding the format
+    // wants comes out as a NEGATIVE shoelace area in uv space.
+    let wrongWay = 0;
+    for (let t = 0; t < mesh.triangles.length; t += 3) {
+      const [a, b, c] = [mesh.triangles[t], mesh.triangles[t + 1], mesh.triangles[t + 2]];
+      const area = signedArea([pts[a], pts[b], pts[c]]);
+      if (area >= 0) wrongWay++;
+    }
+    say(
+      'GR02_AN_EVEN_LATTICE_LOADS_WITH_ITS_PERIMETER_AS_THE_HULL_AND_ITS_FACES_THE_RIGHT_WAY_OUT',
+      hull === perimeter && faults.length === 0 && wrongWay === 0 && mesh.triangles.length / 3 === 2 * 4 * 3,
+      `5x4 lattice: hull ${hull} (perimeter is ${perimeter}), ${mesh.triangles.length / 3} triangles, ` +
+        `${wrongWay} wound the wrong way, ${faults.length === 0 ? 'well formed' : faults.join('; ')}`,
+      'Spine reads `hull` as a COUNT of leading vertices, so a perimeter listed anywhere but first turns interior vertices into the outline with no error — and a uniformly inverted winding is self-consistent, so it needs an absolute check rather than a comparison',
+    );
+  }
+
+  const gridRefusals: Array<[string, string | null, string]> = [
+    [
+      'positions and a count, which are two answers to one question',
+      contourRefusal({ type: 'mesh', image: 'blob.png', generator: { kind: 'grid', us: [0, 1], vs: [0, 1], cols: 3 } }),
+      'two answers to where the columns go',
+    ],
+    [
+      'neither positions nor a count',
+      contourRefusal({ type: 'mesh', image: 'blob.png', generator: { kind: 'grid' } }),
+      'A lattice is not a default',
+    ],
+    [
+      'one axis stated and not the other',
+      contourRefusal({ type: 'mesh', image: 'blob.png', generator: { kind: 'grid', us: [0, 0.5, 1] } }),
+      'a lattice needs both axes',
+    ],
+    [
+      'positions that do not ascend',
+      contourRefusal({ type: 'mesh', image: 'blob.png', generator: { kind: 'grid', us: [0, 0.6, 0.6, 1], vs: [0, 1] } }),
+      'is not ascending',
+    ],
+    [
+      'a position outside the window',
+      contourRefusal({ type: 'mesh', image: 'blob.png', generator: { kind: 'grid', us: [0, 1.4], vs: [0, 1] } }),
+      'fractions of the part window',
+    ],
+    [
+      'a single column, which is a line and not a lattice',
+      contourRefusal({ type: 'mesh', image: 'blob.png', generator: { kind: 'grid', cols: 1, rows: 4 } }),
+      'a whole number of at least 2',
+    ],
+    [
+      'no image, so no window to lay the lattice over',
+      contourRefusal({ type: 'mesh', generator: { kind: 'grid', cols: 3, rows: 3 } }),
+      'needs an "image"',
+    ],
+    [
+      'a depth sheet the lattice reaches past — named as a GRID, not as a contour',
+      contourRefusal(
+        {
+          type: 'mesh',
+          image: 'blob.png',
+          generator: { kind: 'grid', cols: 5, rows: 5, depth: { image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE } },
+        },
+        { depth: { kind: 'tight' } },
+      ),
+      'A grid spans the whole part window',
+    ],
+  ];
+  const gridMissed = gridRefusals.filter(([, got, want]) => got === null || !got.includes(want));
+  say(
+    'GR03_THE_EIGHT_WAYS_TO_ASK_FOR_A_LATTICE_THAT_CANNOT_EXIST_ARE_REFUSED_BY_NAME',
+    gridMissed.length === 0,
+    gridMissed.length === 0
+      ? gridRefusals.map(([label]) => label).join('; ')
+      : gridMissed
+          .map(([label, got, want]) => `${label}: expected "${want}", got ${got === null ? 'a clean compile' : got}`)
+          .join(' | '),
+    'the last of these is the one a shared message would get wrong: a grid runs out of sheet at the window corners and a contour at the silhouette, and an author sent to the wrong fix is worse off than one sent nowhere',
   );
 
   // --- determinism ---------------------------------------------------------
@@ -17596,7 +17735,7 @@ function main(): void {
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'and which bones a skin switches on), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
-      '+ 15 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      '+ 18 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
       'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
       'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
@@ -17608,7 +17747,11 @@ function main(): void {
       + 'reading that same sheet as zScale minus the white reading, and eight ways a map can be silently wrong refused '
       + 'by name (the loudest being a sheet cut to the art, which covers NONE of a contour mesh vertices because they '
       + 'all sit on the silhouette and outside it) — every one of those readings RECOVERED from the emitted skeleton '
-      + 'by inverting the turn rather than read off the report, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
+      + 'by inverting the turn rather than read off the report, a GRID generator for the lattice that was being written by '
+      + 'hand — required to reproduce the shipped 5x5 portrait head EXACTLY (25 vertex pairs, 32 triangles, hull 16) from '
+      + 'its five column positions alone, to load with its perimeter as the hull and its faces the right way out (an '
+      + 'absolute winding check, because a uniformly inverted lattice is self-consistent and passed the well-formedness '
+      + 'one), and eight ways to ask for a lattice that cannot exist refused by name, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
