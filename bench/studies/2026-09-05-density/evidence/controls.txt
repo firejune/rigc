@@ -1,0 +1,57 @@
+# How every figure in this study was produced
+
+One command. The harness writes its own art, its own three depth sheets and its
+own rig and motion specs into the work directory, so nothing here depends on a
+corpus, on private art, or on anything outside this repository.
+
+    bun bench/studies/2026-09-05-density/tools/densprobe.ts <workdir>
+
+    # optional: the cost table at another angle. The fold ladder ignores it,
+    # since the fold ladder's whole job is to find the angle.
+    bun bench/studies/2026-09-05-density/tools/densprobe.ts <workdir> --degrees=20
+
+Its four tables are `cost.txt`, `keycost.txt`, `depth.txt` and `fold.txt` in
+this directory, in that order and unedited.
+
+## What is fixed, and what is swept
+
+  part window        400 x 400 px, an ellipse of radius 0.46 x window,
+                     checkerboarded so a reversed triangle is visible in a render
+  zScale             60 world units, stated in the rig spec like a radius
+  depth sheets       dome    z = Z sqrt(1 - r^2)          — vertical at the rim
+                     cosine  z = Z (1 + cos(pi r)) / 2    — bounded slope everywhere
+                     flat    one level, 128               — the no-gradient control
+  yaw                one `transform` key, kind `yaw`, `depth: true`, at t = 1s
+  cost table angle   12 degrees, which every rung admits
+  triangle budget    invariants.meshTriangles = 1,000,000, so the budget is never
+                     the thing being measured
+  profile            `spine`, the CLI default
+  swept              grid cols = rows in {5, 9, 17, 33, 65, 97, 129, 181}
+                     contour tolerance in {8, 4, 2, 1, 0.5, 0.25}, maxVertices 100000
+
+## Which numbers are measurements and which are predictions
+
+Measured: every figure in `cost.txt`, `keycost.txt` and `depth.txt`, and the
+three "last admitted" columns of `fold.txt`. The z values are recovered from the emitted
+`skeleton.json` — bind x out of the weighted run, offset out of the deform key —
+rather than read back off the report, and the triangle areas likewise.
+
+Predicted: the two "predicted" columns of `fold.txt`, from the closed forms in
+`predictedFoldDegrees` and `predictedCosineFoldDegrees`. They take no measured
+input; they are the absolute reference the ladder is read against.
+
+## Timings
+
+Wall-clock on one machine (Apple silicon, bun 1.3.11), single run, no repeats
+and no warm-up discarded. ⚠️ They are quoted for their SHAPE — the ratio between
+rungs — and not as a benchmark.
+
+⭐ The reading that says so out loud is in the table itself: `contour-8`, at
+SIXTEEN vertices, compiles in 178.85 ms — 3.4x the 32,761-vertex lattice — and
+it does that because it is the first compile the process runs and pays for
+loading everything under it. So a rung's absolute millisecond is not a figure;
+the slope across the eight lattice rungs is. No conclusion here rests on a
+difference under a factor of two.
+
+The byte counts and the fold ladder carry no such caveat. Both reproduce
+exactly across runs, which is what `A18_DETERMINISTIC_EMIT` exists to make true.
