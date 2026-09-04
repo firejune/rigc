@@ -663,8 +663,10 @@ the default `type`:
 | `scaleX`, `scaleY`, `color` | as Spine |
 
 **Mesh attachment** ([Spine: meshes](http://esotericsoftware.com/spine-meshes)) —
-either authored geometry (`uvs` + `triangles` + geometry, plus `hull`, `edges`,
-`width`, `height`) **or** a `generator`, never both.
+either authored geometry (`uvs` + `triangles` + geometry) **or** a `generator`,
+never both. `hull`, `edges`, `width` and `height` may be stated; whichever is
+omitted, rigc derives — `hull` and `edges` from the triangles, the size from the
+PNG — and the rules are a few paragraphs down.
 
 Geometry comes in one of two fields:
 
@@ -704,6 +706,52 @@ the silence.
 above is load-bearing: if `vertices.length` equals `uvs.length` the parser reads
 unweighted x/y pairs, otherwise it reads the weighted run. A coincidental length
 match reads weight data as coordinates, silently — that is `A04`.
+
+⭐ **`hull` is derived from the triangles, and the vertex order has to let it be.**
+Spine's `hull` is the number of vertices that make up the outline polygon, and the
+format's one rule about it is that *the hull vertices are always first in the
+vertices list* — first, and **in order**: the editor draws the outline by joining
+hull vertex `i` to `i + 1` and constrains its triangulation to those segments, and
+the binary format does not even store a triangle count — it reads
+`2·vertices − hull − 2` triangles, Euler's count for a hole-free triangulation. The
+triangles already fix the outline (an edge used by exactly one triangle is on it),
+so an omitted `hull` is read off them and a stated one is checked against the same
+derivation. What cannot be described that way is refused by name, and every one of
+these messages prints the outline walk, because the walk is the fix:
+
+| Refused | Message |
+| --- | --- |
+| a stated `hull` that disagrees | `hull 25 disagrees with the triangles, whose outline has 16 vertices (0 → 1 → 2 → …). Delete "hull" and rigc derives it, or state 16` |
+| outline vertices that are not the first `hull` of the list | `hull vertices must come first; vertex 19 is on the boundary and vertex 6 is not. The triangles' outline runs 0 → 1 → 2 → 3 → 4 → 9 → 14 → 19 → 24 → 23 → 22 → 21 → 20 → 15 → 10 → 5: list those 16 vertices first, in that order, then the 9 interior vertices` |
+| outline vertices that are first but zigzag | `hull vertices must trace the outline in order; the triangles' outline runs 0 → 1 → 3 → 5 → … → 4 → 2, so vertex 3 has to follow vertex 1 in the list, and vertex 2 does. Renumber the vertices along that walk` |
+| triangles with no single outline | `the triangles do not tile the outline: 25 vertices with a 16-vertex outline tile as 32 triangles and there are 33` — an unused vertex or a doubled interior triangle; or `the triangles' outline is not one closed loop: vertex 4 has 4 boundary edges` — a pinch, a hole, or a doubled triangle on the perimeter |
+
+🚨 **A row-major grid is the case this catches**, and until
+[#368](https://github.com/firejune/rigc/issues/368) it was `gallery/portrait`'s: a
+5×5 grid's perimeter is 16 of its 25 vertices, interleaved with the interior, so
+no `hull` can describe that list — and `hull: 0`, which rigc used to write there,
+is what the editor repairs on import by making **every** vertex a hull vertex in
+list order and saying so in a WARNING. A two-column strip is the same trap with
+every vertex on the outline: the list zigzags across, the outline runs down one
+side and up the other, and the hull it would declare self-intersects. The fix is
+the order the editor itself writes: the perimeter first, walked around, then the
+interior — [FACE.md §4.3](FACE.md) has the recipe, and both gallery grids ship
+that way. Nothing about a render depends on it; what depends on it is the mesh
+as the editor shows it to the person refining the draft.
+
+`edges` is **always written**, in the encoding the editor's own exports use:
+vertex index pairs with each index **times two** — `[0, 2, 2, 4, …]`, the offset
+into the flat `x, y` array, the same doubling the loader applies to `hull`. rigc
+writes the outline loop first and then every interior triangle edge, so the
+editor's constrained triangulation reproduces these exact triangles instead of
+reporting *mesh internal edges lost*. A stated `edges` — a transcription of an
+export carries the edges somebody drew — passes through verbatim.
+
+`width`/`height` are the size of the image the mesh is drawn on. Stated wins;
+omitted, they are the named PNG's measured size (R5), the same number a region
+reads. With neither a size nor an `image`: `a mesh needs width and height — give
+them, or give an "image" and rigc will measure the PNG`. They were written as 0
+before #368 — a size no spec stated.
 
 ⚠️ **Authored geometry is not a rigc generator, and the gate says so.** rigc built
 neither its rim nor its rows, so it gets to assume nothing about its topology:
@@ -1979,7 +2027,8 @@ count.
 
 📘 **[FACE.md](FACE.md) is the recipe for that second case**, and it is where the
 grid questions this section leaves to its reader are answered: where to put the
-columns, why `hull: 0` is the honest declaration on a grid, the closed form for
+columns, why the perimeter has to come first in the vertex list (`hull` is read
+off the triangles, §3.4), the closed form for
 the angle at which any column pair folds — and the fact that a folded key passes
 `A35` and every other assertion, so the arithmetic has to be checked before the
 build.
@@ -2314,6 +2363,11 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `slot "X" names bone "Y", which this rig does not declare` | add the bone, or fix the slot's `bone` |
 | `no setup pose for slot "X": give the motion spec a \`setup\` entry or the rig slot an \`attachment\`` | R3 — pick one file and declare it there |
 | `a region needs width and height — give them, or give an "image" and rigc will measure the PNG` | add `image`, or both sizes |
+| `a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG` | §3.4 — the same rule for a mesh |
+| `hull N disagrees with the triangles, whose outline has K vertices (0 → …)` | §3.4 — delete `hull`, or state K |
+| `hull vertices must come first; vertex i is on the boundary and vertex j is not. The triangles' outline runs …: list those K vertices first, in that order, then the M interior vertices` | §3.4 — renumber the vertices: the printed walk first, then the interior |
+| `hull vertices must trace the outline in order; the triangles' outline runs …, so vertex a has to follow vertex b in the list, and vertex c does` | §3.4 — renumber along the printed walk |
+| `the triangles do not tile the outline: …` / `the triangles' outline is not one closed loop: …` | §3.4 — a doubled triangle, an unused vertex, a pinch or a hole in `triangles` |
 | `image "X.png" is not on disk at …` | fix the name, or point `--images` at the right directory |
 | `duplicate region name "X"` | two PNGs share a basename; one part, one page, one name |
 | `motion spec names archetype "A" but the rig spec at … is called "B"` | make `archetype` equal the rig's `name` |
@@ -4348,8 +4402,11 @@ of key does not have a transition, such as slot attachment or event keys"* —
 nonessential: the skeleton's `fps`, `images` and `audio`; a mesh's and a linked
 mesh's `width` and `height`; a mesh's `edges`; and the editor colours of bounding
 box, path, point and clipping attachments. ⇒ a mesh in an export made without that
-box carries **no** `width`/`height`. rigc's `image` supplies them from the PNG (R5),
-so you never write them by hand.
+box carries **no** `width`/`height` and no `edges`. rigc's `image` supplies the
+sizes from the PNG (R5) and the triangles supply `edges` and `hull` (§3.4), so you
+never write any of them by hand — and rigc's own output always carries all
+three, because the editor's *import* treats their absence as an export made
+without the box and rebuilds the hull on its own.
 
 ⚠️ **A region's `width`/`height` are not on that list.** They are documented with no
 *"assume … if omitted"* default — the same fact R5 states from the parser's side:
