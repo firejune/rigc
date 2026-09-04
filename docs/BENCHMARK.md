@@ -475,11 +475,12 @@ exit code either command could produce.
 ### Benchmark ladder — the rungs, and where they stand
 
 🎓 **The ladder is complete, 2026-08-28.** All eight numbered rungs and the
-spineboy graduation exam are cleared and hold under the current gate, **v2.3**, every clause PASS or SKIP:
-worst attributable slot drift **5.55 px** against a 6.0 px bar, and **0 of 124**
-frame-change disagreements. Recompiling the same spec in a different session
-reproduced every field of the measurement record **to the digit**. The rungs stay
-in place as regression gates.
+spineboy graduation exam are cleared and hold under the current gate, **v2.4**, every clause PASS or SKIP:
+worst attributable slot drift **5.5550 px** against a 6.0 px bar — a **1.0801×**
+margin, the thinnest of the ladder's **G2** figures, and **G5**'s 1.0376× is thinner
+still — and **0 of 124** frame-change disagreements. Recompiling the same spec in a
+different session reproduced every field of the measurement record **to the digit**.
+The rungs stay in place as regression gates.
 
 🗓️ **One rung's pass was withdrawn and restored on 2026-09-02, and both are dated
 facts.** `check`'s extent tolerance ([PR #254](https://github.com/firejune/rigc/pull/254))
@@ -492,11 +493,16 @@ whose attributability has a **measured** ceiling below a calibrated bar reads do
 provided everything observable about it is independently verified strict. Rung 7's
 third attempt clears on those grounds, on the candidate it already had, and the
 sweep of every standing candidate under the new gate moved **no other verdict**.
-**Rungs 1–6 and 8 and the graduation exam were unaffected throughout**: each
-reproduces its gated figures to the digit, and the 5.55 px and 0-of-124 figures
-above are among them. Both verdicts and the sweep are in
-[LADDER.md](LADDER.md)'s *PR #254 instrument re-inspection* and *gate-v2.3
-re-inspection*.
+**Rungs 1–6 and 8 and the graduation exam were unaffected throughout**: each keeps
+its pass on the clause, and recompiling a stored candidate reproduces its record
+**to the digit within one gate**. Across an instrument change the digits do move,
+and the record says where — the graduation **G2** figure went 5.5491 → 5.5544 →
+**5.5550 px** over the #301 sampler repair and v2.4's adoption of the re-rendered
+reference basis, while **0 of 124** held throughout. Both verdicts, and the sweep
+of every candidate under the gate of the day, are in [LADDER.md](LADDER.md)'s
+*PR #254 instrument re-inspection* and *gate-v2.3 re-inspection*; the standing
+figures quoted above are from its *gate-v2.4 re-inspection*, which is the current
+sweep.
 
 ⚠️ **What that certifies, stated exactly.** That **the tool, the guide and the
 protocol reach the bar across a bounded series of honest attempts, each residual
@@ -509,7 +515,7 @@ ladder has not demonstrated that, and each row records which of the two it is.
 (blockers → rung 3 first → 1 · 2 · 4 · 5 → 6 → 8 → 7 → spineboy), what each
 rung gates on, how a rung is scored, the honesty rule that keeps the reference
 export away from the authoring agent, the operating rules — what a pass is, and
-the numbered thresholds of the current gate (**gate v2.3**, stated in [docs/GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md)) that decide one — and a status table. Run
+the numbered thresholds of the current gate (**gate v2.4**, stated in [docs/GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md)) that decide one — and a status table. Run
 one with:
 
 ```bash
