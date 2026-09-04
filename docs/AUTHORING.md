@@ -910,6 +910,61 @@ Self-intersection is refused; **holes are not cut out**; and nothing here does
 interior/Steiner points, so a contour mesh bends only where its outline has
 vertices.
 
+##### `depth` — give every vertex its own z, instead of one cylinder radius
+
+A `yaw` or `pitch` key (§4.12) turns a part by treating it as painted on a
+cylinder: a vertex `u` off the axis gets `z = √(radius² − u²)`. That is the right
+model for a fringe or a plate that really does bend like a barrel, and the wrong
+one for a face — a nose is not on the skull's cylinder and an ear is behind it,
+and no single radius puts both where they are.
+
+Name a **depth map** on the generator and every vertex gets its own `z`, sampled
+off a greyscale sheet in the part's own pixel grid:
+
+```json
+"generator": {
+  "kind": "contour", "tolerance": 1.5, "margin": 2,
+  "depth": { "image": "face_depth.png", "near": "white", "zScale": 40 }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `image` | **required.** The sheet, relative to the rig's `images` directory, and the **same pixel size as this attachment's `image`**. It is not packed into the atlas — it is a measurement rigc reads at compile time, not art anything draws |
+| `near` | **required.** `"white"` or `"black"` — which end of the range is closest to the viewer. Stated rather than defaulted: both conventions are in use, and a sheet read with the wrong one turns the part inside out with every gate still green |
+| `zScale` | **required.** How many world units the map's full range spans, in the attachment's own units — the number `radius` used to carry. 8 bits of level say nothing about scale, so this is authored, never measured |
+| `gamma`, `contrast`, `bias` | the tone curve applied to the nearness, defaults `1` / `1` / `0`. State them when a consumer's own renderer curves the same sheet, so the mesh and that renderer describe one surface |
+
+The order is fixed and it matters, because every step is a place two
+implementations can silently disagree: **bilinear sample of the raw level** (at
+pixel centres, which is what a GPU's linear filter does), then `near`, then the
+curve clamped back into 0..1, then `zScale`. Naming a map changes no emitted byte
+on its own — a `yaw` or `pitch` key has to ask for it with `"depth": true`.
+
+`build` and `explain` report the sheet's digest (over the levels, so a re-encode
+of the same map reads the same) and the `z` range actually sampled, which is the
+number that says whether the map covers the part or a corner of it.
+
+🚨 **The one that will catch you: a sheet cut to the art covers none of a contour
+mesh's vertices.** Every vertex of a contour mesh is *on* the silhouette and
+pushed `margin` pixels outside it, while a depth sheet is usually cut to the
+art's own alpha — so a naive sample gives the whole rim the background depth and
+folds the silhouette away from the turn, with correct arithmetic and plausible
+numbers all the way down. rigc refuses it instead:
+
+| The input | What you get |
+| --- | --- |
+| a sheet cut to the art's alpha | `the depth map "face_depth.png" does not cover 12 of the mesh's 12 vertices — the first is vertex 0 at (26.696071, 5.946444) … Dilate the sheet past the mesh margin, or lower the margin.` |
+| a sheet that is not the part's size | `the depth map … is 32x32 and the part is 64x64. A depth map is sampled in the part's own pixel grid` |
+| a colour sheet | `the depth map … is not greyscale — pixel (0, 0) is rgb(10, 200, 10)` |
+| `zScale` at or below 0 | `it is how many units the map's full range spans, so a positive number. To put the near end at the back, say "near": "black"` |
+| `gamma` or `contrast` at or below 0 | `collapses the range onto the midpoint … so the map would describe a flat part` |
+| a `near` that is neither | `it is "white" or "black"` |
+
+A sheet with **no alpha channel** covers its whole grid by construction and the
+coverage check has nothing to test; what its background level means is then your
+statement, and the reported range is where it shows up.
+
 🖼️ **Worked example: [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex)** — four contours over real art, with
 the `tolerance`/`margin` sweep that picked their settings and what each one measured.
 
@@ -2082,7 +2137,7 @@ example needed it:
 
 | `kind` | Parameters | What it evaluates | Worked case |
 | --- | --- | --- | --- |
-| `yaw` | `radius`, `degrees`, `about` | `dx = (x−about)·(cos t − 1) − z·sin t`, `z = √(radius² − (x−about)²)` — the 2.5D turn (FACE §1) | `gallery/portrait` |
+| `yaw` | `radius` **or** `depth`, `degrees`, `about` | `dx = (x−about)·(cos t − 1) − z·sin t`, with `z = √(radius² − (x−about)²)` from a cylinder or `z` read per vertex off a depth map — the 2.5D turn (FACE §1) | `gallery/portrait` |
 | `pitch` | the same | the same expression with `y` for `x` — a nod rather than a turn | `gallery/nod` |
 | `affine` | `scale`, `about` | `dx = (sx−1)·(x−ax)`, `dy = (sy−1)·(y−ay)` — a scale about a fixed point | `gallery/squash` |
 | `wave` | `amplitude`, `wavelength`, `phase`, `along`, `axis` | `d = amplitude · sin(2π·along/wavelength + phase)` | `gallery/nod` |
@@ -2104,6 +2159,14 @@ is why `fromVertex` and `offset` are refused beside it. A model applied to part
 of a run leaves a **step at the run's edge**, and that is one half of the defect
 [#313](https://github.com/firejune/rigc/issues/313) records. If you want a
 partial run, write it.
+
+**A turn projects off one surface, stated one way.** `"depth": true` reads each
+vertex's `z` off the map its attachment's generator names (§3.4) instead of
+deriving it from a `radius`; the closed form does not change, only where `z`
+comes from. Saying both is refused — they are two answers to how far forward a
+vertex sits, and a key carrying both leaves a reader unable to say which one the
+output came from. So is `"depth": true` on an attachment that named no map,
+rather than a silent fall back to a cylinder.
 
 **It is not a `rigc tween`.** MOTION §7 refuses a command that generates
 in-betweens and this is not one: the transform is evaluated **at one key**, from
