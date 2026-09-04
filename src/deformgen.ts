@@ -78,7 +78,19 @@ export interface DeformTurn {
    * `radius` 196, because 196 is where the fringe *sits*, 26 in front of the
    * skull. Read it off the depth table, never off the PNG (FACE §4).
    */
-  radius: number;
+  radius?: number;
+  /**
+   * Read `z` per vertex from the attachment's depth map instead of deriving it
+   * from a cylinder — the same closed form with a measured surface under it.
+   *
+   * ⭐ It replaces `radius`, and stating both is refused: they are two answers
+   * to "how far forward is this vertex", and a spec that carries both leaves a
+   * reader unable to tell which one the output came from. The map itself is
+   * named on the attachment's `generator` ([`src/rig.ts`](rig.ts)), because it
+   * is a property of the art rather than of this key — every key that turns
+   * this part reads the same surface.
+   */
+  depth?: boolean;
   /** The turn, in degrees. Positive yaws toward −x, which is FACE §1's sign. */
   degrees: number;
   /** Where the axis crosses the driving coordinate. Default 0. */
@@ -216,6 +228,12 @@ export function evaluateDeformTransform(
   setup: readonly number[],
   round: Rounder,
   where: string,
+  /**
+   * Per-vertex `z` for this attachment, when its generator named a depth map.
+   * Null when it named none — which is what makes `"depth": true` refusable by
+   * name rather than silently falling back to a cylinder.
+   */
+  depth: readonly number[] | null = null,
 ): DeformTransformReport {
   if (transform === null || typeof transform !== 'object' || Array.isArray(transform)) {
     throw new CompileError(`${where}: "transform" is ${JSON.stringify(transform)}; it is an object with a "kind"`);
@@ -256,10 +274,39 @@ export function evaluateDeformTransform(
     case 'yaw':
     case 'pitch': {
       const t = transform as DeformTurn;
-      const radius = num(t.radius, 'radius', where);
       const degrees = num(t.degrees, 'degrees', where);
       const about = t.about === undefined ? 0 : num(t.about, 'about', where);
-      if (radius <= 0) {
+      // -- which surface the turn is projected off (issue #382) --------------
+      //
+      // Two models, one closed form. A cylinder derives `z` from how far off
+      // the axis a vertex sits; a depth map states it per vertex. Everything
+      // below is shared, and the only difference is where `z` comes from — the
+      // reason this is a branch on the input and not a second transform kind.
+      const fromDepth = t.depth === true;
+      if (fromDepth && t.radius !== undefined) {
+        throw new CompileError(
+          `${where}: transform ${kind} states both "depth": true and a radius ${JSON.stringify(t.radius)}. They are ` +
+            'two answers to how far forward each vertex sits — a cylinder derives it, a map states it — and a key ' +
+            'carrying both leaves a reader unable to say which one the output came from. Drop one.',
+        );
+      }
+      if (fromDepth && depth === null) {
+        throw new CompileError(
+          `${where}: transform ${kind} says "depth": true and this attachment has no depth map. The map is named on ` +
+            'the attachment\'s generator, as `"depth": { "image": …, "near": …, "zScale": … }`, because it describes ' +
+            'the art rather than this key. Name it there, or give this key a radius.',
+        );
+      }
+      if (fromDepth && depth !== null && depth.length !== count) {
+        // Unreachable while the sampler walks the same vertex list the mesh
+        // emitted; stated because a silent mismatch here would turn into a turn
+        // evaluated against another vertex's depth.
+        throw new CompileError(
+          `${where}: transform ${kind} has ${depth.length} sampled depths for ${count} vertices`,
+        );
+      }
+      const radius = fromDepth ? 0 : num(t.radius, 'radius', where);
+      if (!fromDepth && radius <= 0) {
         throw new CompileError(`${where}: transform ${kind} has radius ${radius}; it is the radius of the cylinder the part is painted on, so a positive number`);
       }
       const rad = (degrees * Math.PI) / 180;
@@ -276,7 +323,7 @@ export function evaluateDeformTransform(
         // clamping its depth to 0 would silently evaluate a DIFFERENT model
         // there — a flat edge on a curved part. Refused by name instead: this is
         // FACE §4's "read R off the depth table, never off the PNG" as a check.
-        if (Math.abs(u) > radius) {
+        if (!fromDepth && Math.abs(u) > radius) {
           throw new CompileError(
             `${where}: transform ${kind} has radius ${radius}, and vertex ${v} sits at ${kind === 'yaw' ? 'x' : 'y'}=` +
               `${setup[2 * v + along]}, which is ${round(Math.abs(u) - radius)} past it (about=${about}). The cylinder has no ` +
@@ -284,25 +331,51 @@ export function evaluateDeformTransform(
               'Raise the radius to where the part actually sits, or move the vertex.',
           );
         }
-        const z = Math.sqrt(radius * radius - u * u);
+        // A depth map needs no such check: it states a surface everywhere it
+        // covers, and a vertex it does NOT cover was already refused when the
+        // mesh was built (`sampleContourDepth`) rather than here, where the
+        // sheet is long out of reach.
+        const z = fromDepth ? (depth as readonly number[])[v] : Math.sqrt(radius * radius - u * u);
         const d = u * cosMinus1 - z * sin;
         offsets[2 * v + along] = round(widen(d));
         offsets[2 * v + (1 - along)] = 0;
       }
       identity = round(cosMinus1) === 0 && round(sin) === 0;
       identitySpelling = 'degrees 0';
-      sampledTo =
-        `The turn is ${degrees}°, and a projection of it can only vanish where every vertex shares one ` +
-        `${kind === 'yaw' ? 'x' : 'y'} — check that this attachment's setup geometry is the shape the radius says it is`;
+      sampledTo = fromDepth
+        ? `The turn is ${degrees}°, and a projection of it can only vanish where every vertex shares one ` +
+          `${kind === 'yaw' ? 'x' : 'y'} AND one depth — check the depth map's sampled range in the mesh report, ` +
+          'which is 0 wide when the sheet is flat where this part sits'
+        : `The turn is ${degrees}°, and a projection of it can only vanish where every vertex shares one ` +
+          `${kind === 'yaw' ? 'x' : 'y'} — check that this attachment's setup geometry is the shape the radius says it is`;
       const c = kind === 'yaw' ? 'x' : 'y';
-      stated = `radius=${radius} degrees=${degrees}${t.about === undefined ? '' : ` about=${about}`}`;
-      formula = `d${c} = (${c}−about)·(cos t − 1) − z·sin t,   z = √(radius² − (${c}−about)²)`;
+      stated = fromDepth
+        ? `depth=true degrees=${degrees}${t.about === undefined ? '' : ` about=${about}`}`
+        : `radius=${radius} degrees=${degrees}${t.about === undefined ? '' : ` about=${about}`}`;
+      formula = fromDepth
+        ? `d${c} = (${c}−about)·(cos t − 1) − z·sin t,   z = the vertex's sampled depth`
+        : `d${c} = (${c}−about)·(cos t − 1) − z·sin t,   z = √(radius² − (${c}−about)²)`;
       derived = [
         `t = ${round(rad)} rad`,
         `cos t − 1 = ${round(cosMinus1)}`,
         `sin t = ${round(sin)}`,
-        `centre shift = −radius·sin t = ${round(-radius * sin)}`,
       ];
+      if (fromDepth) {
+        const zs = depth as readonly number[];
+        let zlo = Infinity;
+        let zhi = -Infinity;
+        for (const z of zs) {
+          if (z < zlo) zlo = z;
+          if (z > zhi) zhi = z;
+        }
+        // The depth range is what a reader checks the amplitude against: the
+        // deepest vertex moves `−zhi·sin t`, and that number is the one that
+        // either matches the art or does not.
+        derived.push(`z ∈ [${round(zlo)}, ${round(zhi)}] over ${zs.length} vertices`);
+        derived.push(`deepest shift = −z_max·sin t = ${round(-zhi * sin)}`);
+      } else {
+        derived.push(`centre shift = −radius·sin t = ${round(-radius * sin)}`);
+      }
       break;
     }
     case 'affine': {

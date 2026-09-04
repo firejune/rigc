@@ -325,6 +325,49 @@ export type RigMeshGenerator =
       maxVertices?: number;
       /** Alpha at or above which a pixel counts as art, 1..255. Default 1. */
       alpha?: number;
+      /**
+       * A greyscale sheet, in this part's own pixel grid, giving each vertex a
+       * depth — what `yaw` and `pitch` otherwise derive from one cylinder
+       * radius. [`src/depth.ts`](depth.ts) is the model and the order of
+       * operations; `docs/FACE.md` §5 is when to reach for it.
+       *
+       * ⚠️ Naming it here changes no emitted byte on its own. It puts a `z` on
+       * every vertex, which a `yaw` or `pitch` key then reads by saying
+       * `"depth": true` instead of a `radius`. A map that nothing reads is
+       * reported and otherwise inert — deliberately, so that adding the input
+       * and adopting it are two reviewable steps rather than one.
+       */
+      depth?: {
+        /**
+         * The sheet, relative to the rig's `images` directory, and the same
+         * pixel size as this attachment's own `image`.
+         *
+         * It is NOT packed into the atlas: it is a measurement rigc reads at
+         * compile time, not art anything draws. A sheet that reached the atlas
+         * would be a page the runtime loads and never samples.
+         */
+        image: string;
+        /**
+         * Which end of the range is closest to the viewer. Stated rather than
+         * defaulted, because both conventions are in use and a sheet that means
+         * the opposite of what the spec assumes produces a part that turns
+         * inside out — with every gate still green, since the arithmetic is
+         * correct and only the input was backwards.
+         */
+        near: 'white' | 'black';
+        /**
+         * How many world units the map's full 0..1 range spans, in the
+         * attachment's own units — the number `radius` used to carry.
+         *
+         * Authored, never measured: 8 bits of level say nothing about scale, so
+         * a compiler that picked one would be inventing the depth of the art.
+         */
+        zScale: number;
+        /** Tone curve applied to the nearness. Defaults 1 / 1 / 0, a straight line. */
+        gamma?: number;
+        contrast?: number;
+        bias?: number;
+      };
     };
 
 /** `SkeletonJson.ts:540-559`. `type` defaults to `region` (`:539`). */
