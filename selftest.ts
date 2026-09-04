@@ -7368,6 +7368,132 @@ function runContourMeshSuite(): number {
     'every one of these compiles to a plausible number with correct arithmetic behind it — the coverage case is the loudest, since a sheet cut to the art gives the whole rim the background depth and folds the silhouette away from the turn',
   );
 
+  // --- the jiggle, from the same depth pass (issue #382) -------------------
+  //
+  // The last thing the map buys: a physics constraint that moves exactly the
+  // near region, with no mask painted and no weights assigned. The threshold
+  // does what a weight brush would.
+  const jiggleRig = (bind: Record<string, unknown> | undefined, extra?: Record<string, unknown>) => ({
+    type: 'mesh',
+    image: 'blob.png',
+    generator: {
+      kind: 'grid',
+      cols: 7,
+      rows: 7,
+      depth: { image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE, ...(bind ? { bind } : {}), ...extra },
+    },
+  });
+  const JIGGLE_BONES = [{ name: 'wobble', parent: 'blob', x: 0, y: 0 }];
+  {
+    const build = buildContourRig(jiggleRig({ bone: 'wobble', above: 0.5, feather: 0.2 }), {
+      depth: { kind: 'ramp' },
+      bones: JIGGLE_BONES,
+    });
+    const report = build.result.meshes[0].depth;
+    // Read the weights off the ARTIFACT rather than through a helper: every
+    // vertex has to close at 1 across at most the two declared bones, some
+    // vertex has to be fully carried, and some has to be untouched — a
+    // threshold that carried everything or nothing is not a region.
+    interface EmittedRig {
+      bones: Array<{ name: string }>;
+      skins: Array<{ attachments: { blob: { blob: { vertices: number[] } } } }>;
+    }
+    const emitted = JSON.parse(build.result.skeletonText) as EmittedRig;
+    const run = emitted.skins[0].attachments.blob.blob.vertices;
+    const perVertex: Array<Array<{ bone: number; weight: number }>> = [];
+    for (let i = 0; i < run.length; ) {
+      const n = run[i++];
+      const influences: Array<{ bone: number; weight: number }> = [];
+      for (let k = 0; k < n; k++) {
+        influences.push({ bone: run[i], weight: run[i + 3] });
+        i += 4;
+      }
+      perVertex.push(influences);
+    }
+    const boneName = (i: number): string => emitted.bones[i].name;
+    let closed = 0;
+    let carried = 0;
+    let still = 0;
+    let stranger = 0;
+    for (const vertex of perVertex) {
+      let sum = 0;
+      let onWobble = 0;
+      for (const { bone, weight } of vertex) {
+        const name = boneName(bone);
+        if (name !== 'blob' && name !== 'wobble') stranger++;
+        if (name === 'wobble') onWobble += weight;
+        sum += weight;
+      }
+      if (Math.abs(sum - 1) < 1e-4) closed++;
+      if (onWobble >= 1 - 1e-6) carried++;
+      else if (onWobble <= 1e-6) still++;
+    }
+    say(
+      'JG01_A_DEPTH_THRESHOLD_CARRIES_A_REGION_AND_LEAVES_THE_REST_PINNED',
+      closed === perVertex.length && stranger === 0 && carried > 0 && still > 0 && report?.bind === 'wobble',
+      `${perVertex.length} vertices: ${carried} carried by "wobble", ${still} still on the slot bone, ` +
+        `${perVertex.length - carried - still} in the feather; all ${closed} close at 1, ${stranger} stranger bones; ` +
+        `the report says bind=${report?.bind} carried=${report?.carried} ramped=${report?.ramped}`,
+      'a threshold that carried everything, or nothing, would still produce a mesh that loads and gates — so both ends have to be measured, not just the total',
+    );
+  }
+  {
+    const jiggleRefusals: Array<[string, string | null, string]> = [
+      [
+        'a bone the rig does not declare',
+        contourRefusal(jiggleRig({ bone: 'nowhere', above: 0.5 }), { depth: { kind: 'ramp' }, bones: JIGGLE_BONES }),
+        'which this rig does not declare',
+      ],
+      [
+        "the slot's own bone, which moves nothing",
+        contourRefusal(jiggleRig({ bone: 'blob', above: 0.5 }), { depth: { kind: 'ramp' }, bones: JIGGLE_BONES }),
+        'moves nothing',
+      ],
+      [
+        'a threshold no vertex reaches',
+        contourRefusal(jiggleRig({ bone: 'wobble', above: 1 }), { depth: { kind: 'flat' }, bones: JIGGLE_BONES }),
+        'carries no vertex',
+      ],
+      [
+        'a nearness outside 0..1',
+        contourRefusal(jiggleRig({ bone: 'wobble', above: 1.5 }), { depth: { kind: 'ramp' }, bones: JIGGLE_BONES }),
+        'a number in 0..1',
+      ],
+      [
+        'a negative feather',
+        contourRefusal(jiggleRig({ bone: 'wobble', above: 0.5, feather: -0.2 }), { depth: { kind: 'ramp' }, bones: JIGGLE_BONES }),
+        'it is 0 or more',
+      ],
+    ];
+    const missed = jiggleRefusals.filter(([, got, want]) => got === null || !got.includes(want));
+    say(
+      'JG02_THE_FIVE_WAYS_A_DEPTH_BIND_CAN_MOVE_NOTHING_ARE_REFUSED_BY_NAME',
+      missed.length === 0,
+      missed.length === 0
+        ? jiggleRefusals.map(([label]) => label).join('; ')
+        : missed.map(([label, got, want]) => `${label}: expected "${want}", got ${got === null ? 'a clean compile' : got}`).join(' | '),
+      'each of these compiles to a mesh that loads, draws and gates — and wobbles nothing, which is the silence a physics constraint is least likely to be checked for',
+    );
+  }
+  {
+    // ⚠️ The limitation, asserted rather than described. A depth-bound mesh has
+    // two bones on some vertices, and a `transform` key needs one space to be
+    // evaluated in — so the two halves of the motion family the map buys cannot
+    // today ride the same attachment. Recording it as a control means the day
+    // it changes, this fails and says so.
+    const both = contourRefusal(jiggleRig({ bone: 'wobble', above: 0.5, feather: 0.2 }), {
+      depth: { kind: 'ramp' },
+      bones: JIGGLE_BONES,
+      motion: depthMotion(DEPTH_DEGREES),
+    });
+    say(
+      'JG03_A_CARRIED_MESH_CANNOT_ALSO_TAKE_A_TRANSFORM_KEY_TODAY',
+      both !== null && both.includes('no single space to evaluate it in'),
+      both ?? 'a clean compile — the limitation is gone and this control should become the case that proves it',
+      'the parallax and the jiggle both come out of one depth pass and cannot yet ride one attachment; the refusal is correct as the compiler stands, and this control is what will notice when it stops being',
+    );
+  }
+
   // --- parallax IS yaw's small-angle limit, and exactly so (issue #382) -----
   //
   // The form a per-pixel depth shader evaluates is `d = z · offset` — no angle,
@@ -17904,7 +18030,7 @@ function main(): void {
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'and which bones a skin switches on), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
-      '+ 24 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      '+ 27 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
       'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
       'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
@@ -17930,7 +18056,13 @@ function main(): void {
       + 'decimals both sides round to), converging at second order as the angle halves (2.32 -> 0.0091 px over 16° -> 1°, '
       + 'ratios 3.98-4.00 against the 4.00 the remainder predicts, where a form that merely RESEMBLED the turn would '
       + 'converge at some other rate — a mutant ignoring z converges at 2.0), and refused outright without a depth map, '
-      + 'because one z for every vertex is a translate keyed on the bone, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
+      + 'because one z for every vertex is a translate keyed on the bone; and the JIGGLE the same pass buys, where a '
+      + 'nearness threshold carries a region to a second bone with no mask painted — the weights read back off the '
+      + 'ARTIFACT, every vertex closing at 1 across at most the two declared bones with both ends measured (a threshold '
+      + 'that carried everything, or nothing, would still load and gate), five ways a bind can move nothing refused by '
+      + 'name, and the limitation recorded as a control rather than as a comment: a carried mesh cannot also take a '
+      + 'transform key, so the parallax and the jiggle cannot yet ride one attachment, and JG03 is what will notice when '
+      + 'that stops being true, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +

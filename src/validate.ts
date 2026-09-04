@@ -1397,6 +1397,53 @@ export function validate(input: ValidateInput): ValidateReport {
           }
           continue;
         }
+        // A rim the depth map deliberately CARRIED (issue #382). The rule splits
+        // by declaration rather than being relaxed — the same move the ribbon
+        // branch above makes, and for the same reason: a jiggling silhouette is
+        // supposed to move, and the invariant is that nothing ELSE does. So on
+        // such a mesh a rim vertex is either pinned to the slot bone at 1 or
+        // shared between it and the ONE bone the rig declared, and a third bone,
+        // a wrong bone or a weight that does not close is still a failure.
+        const boundBone = (() => {
+          const slot = slotOfAttachment(mesh);
+          return slot ? (input.rig?.meshDepthBinds[slot] ?? null) : null;
+        })();
+        if (boundBone !== null) {
+          const allowed = new Set([slotBoneOf?.name, boundBone]);
+          let carried = 0;
+          for (let v = 0; v < perVertexAll.length; v++) {
+            const vertex = perVertexAll[v];
+            let sum = 0;
+            for (const { bone, weight } of vertex) {
+              const name = data.bones[bone]?.name;
+              if (!allowed.has(name)) {
+                fail(
+                  'A21_MESH_RIM_PINNED',
+                  `mesh "${mesh.name}" vertex ${v} is carried by "${name}", and this mesh declares only ` +
+                    `"${slotBoneOf?.name}" and the depth-bound "${boundBone}"`,
+                );
+              }
+              if (name === boundBone && weight > 0) carried = carried + (weight >= 1 ? 1 : 0);
+              sum += weight;
+            }
+            if (Math.abs(sum - 1) > 1e-4) {
+              fail(
+                'A21_MESH_RIM_PINNED',
+                `mesh "${mesh.name}" vertex ${v} weights sum to ${sum.toFixed(4)}; a depth-bound mesh splits each ` +
+                  'vertex between the slot bone and the bound bone, so it closes at 1',
+              );
+            }
+          }
+          // A bind that carried nothing reached here as a mesh pinned exactly as
+          // before, which is not the thing that was declared.
+          if (carried === 0) {
+            fail(
+              'A21_MESH_RIM_PINNED',
+              `mesh "${mesh.name}" declares a depth bind to "${boundBone}" and no vertex is fully carried by it`,
+            );
+          }
+          continue;
+        }
         const hullVertices = mesh.hullLength / 2;
         if (!Number.isInteger(hullVertices) || hullVertices < 3) {
           fail('A21_MESH_RIM_PINNED', `mesh "${mesh.name}" declares hull ${mesh.hullLength / 2}; the rim must be a real ring`);
