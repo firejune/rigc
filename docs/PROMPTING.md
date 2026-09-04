@@ -5,8 +5,11 @@ author a rig with rigc. It is not authoring guidance; that is
 [AUTHORING.md](AUTHORING.md), and the agent should read that file, not this one.
 This page tells you what to put in the prompt, and it earns its claims from a
 measured case: in August 2026 a deliberately small model — Gemini 3.7 Flash on
-the Antigravity harness — authored a benchmark rung unattended for three hours,
-and every stumble below is one it actually made, priced by the instruments in
+the Antigravity harness — authored a benchmark rung over a **3 h 01 m** session,
+observed by the operator; the harness kept no tool transcript, so the run is
+recorded **Unverified** on honesty, with two of its four tiers *unevidenced*
+([the verdict](https://github.com/firejune/rigc/blob/main/docs/pilot/verdicts/2026-08-24-rung3-1.md)
+states all of that). Every stumble below is one it actually made, priced by the instruments in
 [PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md)'s protocol. A large model makes fewer of these mistakes
 unprompted; the clauses cost you three lines and make the small model's run
 land and the large model's run land cleaner.

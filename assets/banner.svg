@@ -128,9 +128,13 @@
       <rect x="152" y="0" width="144" height="26" rx="6" fill="#151926" stroke="#1e293b" stroke-width="1" />
       <text x="224" y="17" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#30D158" text-anchor="middle">⚡ DECLARATIVE SPECS</text>
 
-      <!-- Badge 3: Spine-Core Verified -->
-      <rect x="304" y="0" width="160" height="26" rx="6" fill="#151926" stroke="#1e293b" stroke-width="1" />
-      <text x="384" y="17" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#0A84FF" text-anchor="middle">🛡️ SPINE-CORE VERIFIED</text>
+      <!-- Badge 3: the verification mechanism - a spine-core round-trip, which is
+           what the tagline says. Deliberately not "SPINE-CORE VERIFIED": a shield
+           plus caps plus "VERIFIED" is the visual grammar of a third-party
+           certification mark, and nobody certifies rigc - it round-trips THROUGH
+           spine-core. Same claim, stated as the mechanism it is. -->
+      <rect x="304" y="0" width="172" height="26" rx="6" fill="#151926" stroke="#1e293b" stroke-width="1" />
+      <text x="390" y="17" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#0A84FF" text-anchor="middle">🛡️ SPINE-CORE ROUND-TRIP</text>
     </g>
   </g>
 </svg>
