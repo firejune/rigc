@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "rigc",
+  "description": "Author Spine 4.3 rigs with rigc, the rig compiler that verifies its own output through a spine-core round-trip. Skills that route an agent to the shipped guide for the need at hand: the hierarchy, a motion, a face, or a skeleton somebody else authored.",
+  "author": {
+    "name": "firejune",
+    "url": "https://github.com/firejune"
+  },
+  "homepage": "https://github.com/firejune/rigc#readme",
+  "repository": "https://github.com/firejune/rigc",
+  "license": "MIT",
+  "keywords": ["spine", "spine2d", "skeletal-animation", "rig", "compiler", "ai-agents"]
+}

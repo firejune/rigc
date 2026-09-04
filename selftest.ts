@@ -11958,6 +11958,544 @@ function runShippedDocSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// the agent-skill surface — `skills/*/SKILL.md` and `.claude-plugin/*.json`
+// (issue #366)
+// ---------------------------------------------------------------------------
+//
+// ⭐ The skills are routers, not guides. Each says when to load it, states the
+// non-negotiables in a line apiece, and links the guide that OWNS every rule by
+// relative path — #345's one-owner rule applied to a new reader, so that no rule
+// gains a second copy here. That leaves the surface two ways to be wrong that
+// nothing else in this file reads, and neither prints anything in a checkout:
+//
+//   1. a link that resolves to nothing — the router points at a guide that is not
+//      where it says. In the plugin cache that is a dead pointer; in the
+//      repository it is invisible, which is PKG02's class one directory over.
+//   2. frontmatter a loader refuses or misreads — a `name` that is not the
+//      directory's, a `description` missing or over its bound, an opening `---`
+//      that is not on line 1. Claude Code answers the last by loading the body
+//      with EMPTY metadata: the skill still exists and never triggers.
+//
+// The frontmatter contract is the Agent Skills specification's
+// (https://agentskills.io/specification): `name` required, 1–64 characters,
+// lowercase `a-z` and `0-9` joined by single hyphens with none at either edge,
+// equal to the parent directory's name; `description` required, 1–1024 characters.
+// Claude Code reads the same two fields and loads the spec's six without change
+// (https://code.claude.com/docs/en/skills). The manifests are Claude Code's own
+// (https://code.claude.com/docs/en/plugins-reference and /plugin-marketplaces):
+// `.claude-plugin/plugin.json` with `name` required in kebab-case and every
+// component path relative to the plugin root; `.claude-plugin/marketplace.json`
+// with `name`, `owner.name` and `plugins[]` of `name` + `source`, a relative
+// `source` resolving against the marketplace root. `claude plugin validate .`
+// reads the same two files; this suite exists because CI has no `claude`.
+//
+// ⚠️ Scope, both edges. This suite asks whether a link resolves IN THE REPOSITORY.
+// Whether it also ships is PKG02's question — `skills/` is in `files`, so PKG02
+// asks it — and the two stay separate on purpose: a skill may link repository
+// material by absolute URL, as the guides do, and this suite has no opinion on
+// that. `version` is read only when present: the plugin carries none by design
+// (commit-SHA versioning, so `package.json` stays the one version on disk), and a
+// `version` that DOES appear must equal `package.json`'s, so the duplicate this
+// avoids cannot come back quietly. Nothing here reads a skill's BODY for what it
+// claims — that is the currency gate's job, and it reads `skills/` because the
+// directory ships.
+// ---------------------------------------------------------------------------
+
+/** The specification's `name`: lowercase alphanumerics joined by single hyphens, none at either edge. */
+const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const SKILL_NAME_MAX = 64;
+const SKILL_DESCRIPTION_MAX = 1024;
+
+/** The `plugin.json` fields whose string (or string[]) values are paths relative to the plugin root. */
+const PLUGIN_PATH_FIELDS = ['skills', 'commands', 'agents', 'workflows', 'hooks', 'mcpServers', 'outputStyles', 'lspServers'];
+
+type SkillFaultKind =
+  | 'no-skills'
+  | 'skill-without-file'
+  | 'entry-skill-absent'
+  | 'frontmatter-absent'
+  | 'frontmatter-unclosed'
+  | 'name-absent'
+  | 'name-invalid'
+  | 'name-mismatch'
+  | 'description-absent'
+  | 'description-too-long'
+  | 'dead-link'
+  | 'manifest-absent'
+  | 'manifest-unreadable'
+  | 'manifest-name'
+  | 'manifest-path'
+  | 'manifest-version'
+  | 'marketplace-owner'
+  | 'marketplace-plugins'
+  | 'marketplace-entry'
+  | 'marketplace-root-entry';
+
+/** Every kind above, so the planted surfaces in SKL05 can be held to producing each one. */
+const SKILL_FAULT_KINDS: SkillFaultKind[] = [
+  'no-skills',
+  'skill-without-file',
+  'entry-skill-absent',
+  'frontmatter-absent',
+  'frontmatter-unclosed',
+  'name-absent',
+  'name-invalid',
+  'name-mismatch',
+  'description-absent',
+  'description-too-long',
+  'dead-link',
+  'manifest-absent',
+  'manifest-unreadable',
+  'manifest-name',
+  'manifest-path',
+  'manifest-version',
+  'marketplace-owner',
+  'marketplace-plugins',
+  'marketplace-entry',
+  'marketplace-root-entry',
+];
+
+/** One thing wrong with the surface, named the way the refusal prints it. */
+interface SkillFault {
+  kind: SkillFaultKind;
+  /** The file, or file:line, it was found in. */
+  where: string;
+  what: string;
+}
+
+interface SkillSurface {
+  /** Every `skills/<dir>/SKILL.md`, repo-relative, in directory order. */
+  skills: string[];
+  /** Every relative link in those files. */
+  links: DocLink[];
+  /** The manifests that were there and parsed. */
+  manifests: string[];
+  /** `plugin.json`'s `name`, when it had a valid one. */
+  pluginName: string | null;
+  faults: SkillFault[];
+}
+
+/** What a loader reads off one SKILL.md before the body: the fence, and the scalars between its two `---`. */
+interface SkillFrontmatter {
+  /** `---` is the file's first line. */
+  opened: boolean;
+  /** A second `---` closes it. */
+  closed: boolean;
+  fields: Map<string, string>;
+}
+
+/**
+ * The frontmatter of one SKILL.md, read the way the specification's own examples
+ * are written: top-level `key: value` scalars, quoted or bare, plus the two block
+ * spellings (`>` folds, `|` keeps lines) so a description written over several
+ * lines reads as its text and not as a `>`. A nested map — `metadata:` — reads as
+ * present with an empty value, which is all this suite asks of one.
+ */
+function readSkillFrontmatter(text: string): SkillFrontmatter {
+  const lines = text.split('\n');
+  const fields = new Map<string, string>();
+  if (lines.length === 0 || lines[0].trim() !== '---') return { opened: false, closed: false, fields };
+  let closed = false;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      closed = true;
+      break;
+    }
+    const kv = /^([A-Za-z][\w-]*):(?:\s+(.*))?$/.exec(lines[i]);
+    if (kv === null) continue;
+    let value = (kv[2] ?? '').trim();
+    if (/^[>|][-+]?$/.test(value)) {
+      const fold = value.startsWith('>');
+      const parts: string[] = [];
+      while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) parts.push(lines[++i].trim());
+      value = parts.join(fold ? ' ' : '\n');
+    } else if (/^(["']).*\1$/.test(value)) {
+      value = value.slice(1, -1);
+    }
+    fields.set(kv[1], value);
+  }
+  return { opened: true, closed, fields };
+}
+
+/**
+ * Everything the suite reads, over one root — the repository, or a planted
+ * directory — so the negative control runs the same code the positive one does.
+ */
+function auditSkillSurface(root: string): SkillSurface {
+  const faults: SkillFault[] = [];
+  const fault = (kind: SkillFaultKind, where: string, what: string): void => {
+    faults.push({ kind, where, what });
+  };
+  const readJson = (path: string): Record<string, unknown> | null => {
+    if (!existsSync(join(root, path))) {
+      fault('manifest-absent', path, 'is not there');
+      return null;
+    }
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(join(root, path), 'utf8'));
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        fault('manifest-unreadable', path, 'is not a JSON object');
+        return null;
+      }
+      return parsed as Record<string, unknown>;
+    } catch (e) {
+      fault('manifest-unreadable', path, `does not parse: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
+  };
+  const kebab = (value: unknown): value is string => typeof value === 'string' && SKILL_NAME.test(value);
+  const pkgPath = join(root, 'package.json');
+  const pkgVersion: unknown = existsSync(pkgPath)
+    ? (JSON.parse(readFileSync(pkgPath, 'utf8')) as { version?: unknown }).version
+    : undefined;
+  /** A `version` is optional everywhere; one that is written has to be the package's. */
+  const versionAgrees = (where: string, version: unknown): void => {
+    if (version === undefined || version === pkgVersion) return;
+    fault(
+      'manifest-version',
+      where,
+      `declares version ${JSON.stringify(version)}, and package.json holds ${JSON.stringify(pkgVersion ?? null)} — ` +
+        'one version on disk, or none here',
+    );
+  };
+  /** A plugin-root-relative path: `./x` (or `.`), no `..`, and there. */
+  const pathThere = (where: string, value: unknown): void => {
+    if (typeof value !== 'string') {
+      fault('manifest-path', where, `is ${JSON.stringify(value ?? null)}, not a path`);
+      return;
+    }
+    if (value !== '.' && !value.startsWith('./')) {
+      fault('manifest-path', where, `"${value}" does not start with ./ (paths are relative to the plugin root)`);
+      return;
+    }
+    if (value.split('/').includes('..')) {
+      fault('manifest-path', where, `"${value}" climbs out of the plugin root`);
+      return;
+    }
+    if (!existsSync(resolve(root, value))) fault('manifest-path', where, `"${value}" resolves to nothing`);
+  };
+
+  const manifests: string[] = [];
+
+  // --- plugin.json ------------------------------------------------------------
+  const pluginPath = '.claude-plugin/plugin.json';
+  const plugin = readJson(pluginPath);
+  let pluginName: string | null = null;
+  if (plugin !== null) {
+    manifests.push(pluginPath);
+    if (kebab(plugin.name)) pluginName = plugin.name;
+    else fault('manifest-name', pluginPath, `name is ${JSON.stringify(plugin.name ?? null)}; a kebab-case name is required`);
+    versionAgrees(pluginPath, plugin.version);
+    for (const field of PLUGIN_PATH_FIELDS) {
+      const value = plugin[field];
+      if (value === undefined) continue;
+      if (Array.isArray(value)) {
+        const entries: unknown[] = value;
+        entries.forEach((entry, i) => pathThere(`${pluginPath} ${field}[${i}]`, entry));
+      } else if (typeof value === 'string') {
+        pathThere(`${pluginPath} ${field}`, value);
+      }
+      // An object here is inline configuration (hooks, mcpServers), not a path.
+    }
+  }
+
+  // --- marketplace.json -------------------------------------------------------
+  const marketPath = '.claude-plugin/marketplace.json';
+  const market = readJson(marketPath);
+  if (market !== null) {
+    manifests.push(marketPath);
+    if (!kebab(market.name)) {
+      fault('manifest-name', marketPath, `name is ${JSON.stringify(market.name ?? null)}; a kebab-case name is required`);
+    }
+    const owner = market.owner;
+    if (typeof owner !== 'object' || owner === null || typeof (owner as { name?: unknown }).name !== 'string') {
+      fault('marketplace-owner', marketPath, 'owner.name is required and absent');
+    }
+    const plugins = market.plugins;
+    if (!Array.isArray(plugins) || plugins.length === 0) {
+      fault('marketplace-plugins', marketPath, 'plugins must be a non-empty array');
+    } else {
+      const entries: unknown[] = plugins;
+      let rootEntry = false;
+      entries.forEach((entry, i) => {
+        const where = `${marketPath} plugins[${i}]`;
+        if (typeof entry !== 'object' || entry === null) {
+          fault('marketplace-entry', where, 'is not an object');
+          return;
+        }
+        const { name, source, version } = entry as { name?: unknown; source?: unknown; version?: unknown };
+        if (!kebab(name)) fault('marketplace-entry', where, `name is ${JSON.stringify(name ?? null)}; a kebab-case name is required`);
+        versionAgrees(where, version);
+        if (typeof source === 'string') {
+          pathThere(`${where} source`, source);
+          if (existsSync(resolve(root, source)) && resolve(root, source) === resolve(root)) {
+            rootEntry = true;
+            if (pluginName !== null && name !== pluginName) {
+              fault(
+                'marketplace-root-entry',
+                where,
+                `sources the plugin at the marketplace root as ${JSON.stringify(name ?? null)}, and its plugin.json ` +
+                  `names it "${pluginName}" — the two are what \`/plugin install\` and the skill namespace read`,
+              );
+            }
+          }
+        } else if (typeof source !== 'object' || source === null) {
+          fault(
+            'marketplace-entry',
+            where,
+            `source is ${JSON.stringify(source ?? null)}; a relative path or a source object is required`,
+          );
+        }
+      });
+      if (!rootEntry) {
+        fault(
+          'marketplace-root-entry',
+          marketPath,
+          'no entry sources "./", so the plugin at this root is not installable from its own marketplace',
+        );
+      }
+    }
+  }
+
+  // --- skills/ ----------------------------------------------------------------
+  const skills: string[] = [];
+  const links: DocLink[] = [];
+  const skillsDir = join(root, 'skills');
+  if (!existsSync(skillsDir) || !statSync(skillsDir).isDirectory()) {
+    fault('no-skills', 'skills/', 'is not there');
+  } else {
+    for (const entry of readdirSync(skillsDir).sort()) {
+      if (!statSync(join(skillsDir, entry)).isDirectory()) continue;
+      const doc = `skills/${entry}/SKILL.md`;
+      if (!existsSync(join(root, doc))) {
+        fault('skill-without-file', `skills/${entry}/`, 'has no SKILL.md, so it is a directory and not a skill');
+        continue;
+      }
+      skills.push(doc);
+      const front = readSkillFrontmatter(readFileSync(join(root, doc), 'utf8'));
+      if (!front.opened) {
+        fault(
+          'frontmatter-absent',
+          doc,
+          'does not open with `---` on line 1, so a loader reads the whole file as body and the skill has no ' +
+            'description to match against',
+        );
+      } else if (!front.closed) {
+        fault('frontmatter-unclosed', doc, 'opens a frontmatter block and never closes it');
+      } else {
+        const name = front.fields.get('name');
+        if (name === undefined) {
+          fault('name-absent', doc, 'has no `name`; the specification requires one, equal to the directory name');
+        } else if (!SKILL_NAME.test(name) || name.length > SKILL_NAME_MAX) {
+          fault(
+            'name-invalid',
+            doc,
+            `name "${name}" is not 1–${SKILL_NAME_MAX} lowercase alphanumerics joined by single hyphens`,
+          );
+        } else if (name !== entry) {
+          fault('name-mismatch', doc, `name "${name}" is not the directory name "${entry}"`);
+        }
+        const description = front.fields.get('description');
+        if (description === undefined || description.trim() === '') {
+          fault(
+            'description-absent',
+            doc,
+            'has no `description`, which is the one thing an agent reads before deciding to load it',
+          );
+        } else if (description.length > SKILL_DESCRIPTION_MAX) {
+          fault(
+            'description-too-long',
+            doc,
+            `description is ${description.length} characters; the specification allows ${SKILL_DESCRIPTION_MAX}`,
+          );
+        }
+      }
+      for (const link of relativeLinks(root, doc)) {
+        links.push(link);
+        if (link.resolved === null) {
+          fault('dead-link', `${doc}:${link.line}`, `${link.target} resolves outside the repository`);
+        } else if (!existsSync(join(root, link.resolved))) {
+          fault('dead-link', `${doc}:${link.line}`, `${link.target} -> ${link.resolved}, which is not in the repository`);
+        }
+      }
+    }
+    if (skills.length === 0) fault('no-skills', 'skills/', 'holds no <name>/SKILL.md');
+  }
+  if (pluginName !== null && !skills.includes(`skills/${pluginName}/SKILL.md`)) {
+    fault(
+      'entry-skill-absent',
+      `skills/${pluginName}/SKILL.md`,
+      `is not there — the plugin is named "${pluginName}", and the skill an agent reaches first is the one that ` +
+        'carries that name',
+    );
+  }
+
+  return { skills, links, manifests, pluginName, faults };
+}
+
+function runSkillSurfaceSuite(): number {
+  console.log('\n── the agent-skill surface: skills/ and .claude-plugin/ (issue #366) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const root = import.meta.dir;
+  const surface = auditSkillSurface(root);
+  const of = (...kinds: SkillFaultKind[]): SkillFault[] => surface.faults.filter((f) => kinds.includes(f.kind));
+  const listed = (faults: SkillFault[]): string => faults.map((f) => `\n          ${f.where}  ${f.what}`).join('');
+
+  // --- SKL01: the derivation floor -------------------------------------------
+  // PKG01's argument once more. Which skills, which links, which manifests are all
+  // derived, and each can come back empty — a `skills/` that was renamed, a
+  // manifest that failed to parse, a link regex that matched nothing — and each of
+  // those makes SKL02–SKL04 pass while reading nothing.
+  const structural = of('no-skills', 'manifest-absent', 'manifest-unreadable', 'entry-skill-absent');
+  const intoDocs = surface.links.filter((l) => l.resolved !== null && l.resolved.startsWith('docs/')).length;
+  say(
+    'SKL01_THE_SKILL_SCAN_READ_BOTH_MANIFESTS_EVERY_SKILL_AND_THEIR_LINKS',
+    structural.length === 0 &&
+      surface.skills.length > 0 &&
+      surface.manifests.length === 2 &&
+      surface.links.length > 0 &&
+      intoDocs > 0,
+    structural.length > 0
+      ? `the surface is not whole:${listed(structural)}`
+      : `${surface.skills.length} skill(s) — ${surface.skills.map((s) => basename(dirname(s))).join(', ')} — under ` +
+        `plugin "${surface.pluginName}"; both manifests read; ${surface.links.length} relative link(s), ${intoDocs} ` +
+        'of them into docs/',
+    'SKL02–SKL04 are scans over a derived list, and every step of the derivation can come back empty; a manifest ' +
+      'that did not parse or a skills directory that moved would otherwise report a clean surface',
+  );
+
+  // --- SKL02: the frontmatter -------------------------------------------------
+  const front = of(
+    'skill-without-file',
+    'frontmatter-absent',
+    'frontmatter-unclosed',
+    'name-absent',
+    'name-invalid',
+    'name-mismatch',
+    'description-absent',
+    'description-too-long',
+  );
+  say(
+    'SKL02_EVERY_SKILL_CARRIES_THE_FRONTMATTER_THE_SPECIFICATION_REQUIRES',
+    front.length === 0,
+    front.length === 0
+      ? `${surface.skills.length} skill(s) open with \`---\` on line 1, close it, name themselves after their ` +
+        `directory in the specification's alphabet, and describe themselves inside ${SKILL_DESCRIPTION_MAX} characters`
+      : `${front.length} skill(s) a loader would refuse or misread:${listed(front)}`,
+    'a skill with unparseable or absent frontmatter loads with empty metadata — it exists and never triggers — and a ' +
+      '`name` that is not the directory name is refused by the specification and re-keyed by Claude Code, so the ' +
+      'two fields the whole surface turns on are asserted, not assumed',
+  );
+
+  // --- SKL03: the links -------------------------------------------------------
+  const dead = of('dead-link', 'manifest-path');
+  say(
+    'SKL03_EVERY_RELATIVE_LINK_IN_THE_SKILL_SURFACE_RESOLVES_IN_THE_REPOSITORY',
+    dead.length === 0,
+    dead.length === 0
+      ? `${surface.links.length} relative link(s) across ${surface.skills.length} skill(s), and every path the ` +
+        'manifests name, resolve to a file or directory in the repository'
+      : `${dead.length} pointer(s) resolve to nothing:${listed(dead)}`,
+    'a router is nothing but its pointers: a skill that links a guide which is not where it says has told the ' +
+      'agent to open a file that does not exist, and the repository is the one place that reads as fine',
+  );
+
+  // --- SKL04: the manifests agree ---------------------------------------------
+  const manifest = of(
+    'manifest-name',
+    'manifest-version',
+    'marketplace-owner',
+    'marketplace-plugins',
+    'marketplace-entry',
+    'marketplace-root-entry',
+  );
+  say(
+    'SKL04_THE_MANIFESTS_NAME_ONE_PLUGIN_AND_AGREE_WITH_PACKAGE_JSON',
+    manifest.length === 0,
+    manifest.length === 0
+      ? `plugin "${surface.pluginName}" is the entry the marketplace sources at "./", the marketplace names an ` +
+        'owner, and no manifest carries a version that package.json does not'
+      : `${manifest.length} disagreement(s):${listed(manifest)}`,
+    '`/plugin install` reads the marketplace entry and the skill namespace reads plugin.json, so the two names are ' +
+      'one fact stated twice; and a `version` written here would be a hand-maintained copy of package.json, which ' +
+      'is the class of drift the currency gate exists against',
+  );
+
+  // --- SKL05: the planted surfaces --------------------------------------------
+  // The reader above, aimed at directories built to be wrong in every way it
+  // knows, and at one built to be right. Two-sided like CUR06: a check that
+  // stops matching goes silent rather than red, and a check that starts matching
+  // good input is the false refusal this file exists against.
+  const plant = (label: string, files: Record<string, string>): string => {
+    const dir = mkdtempSync(join(tmpdir(), `rigc-skills-${label}-`));
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(join(dir, dirname(path)), { recursive: true });
+      writeFileSync(join(dir, path), text);
+    }
+    return dir;
+  };
+  const broken = plant('broken', {
+    'package.json': '{ "name": "probe", "version": "9.9.9" }\n',
+    '.claude-plugin/plugin.json': '{ "name": "probe", "version": "1.0.0", "skills": ["./skills/", "./nowhere/"] }\n',
+    '.claude-plugin/marketplace.json':
+      '{ "name": "Probe Market", "plugins": [ { "name": "other", "source": "./" }, ' +
+      '{ "name": "gone", "source": "./missing" }, { "name": "Bad Name", "source": 42 } ] }\n',
+    'skills/probe/SKILL.md': '---\nname: not-probe\n---\n\nSee [the guide](../../docs/NOWHERE.md).\n',
+    'skills/hollow/.keep': '',
+    'skills/late/SKILL.md': '\n---\nname: late\ndescription: opens on line 2\n---\n',
+    'skills/open/SKILL.md': '---\nname: open\ndescription: never closes\n',
+    'skills/Bad_Name/SKILL.md': '---\nname: Bad_Name\ndescription: uppercase and an underscore\n---\n',
+    'skills/long/SKILL.md': `---\nname: long\ndescription: ${'x'.repeat(SKILL_DESCRIPTION_MAX + 1)}\n---\n`,
+    'skills/nameless/SKILL.md': '---\ndescription: has no name\n---\n',
+  });
+  const empty = plant('empty', {
+    '.claude-plugin/plugin.json': '{ "name": "probe" }\n',
+    '.claude-plugin/marketplace.json': 'not json\n',
+  });
+  const bare = plant('bare', {
+    '.claude-plugin/marketplace.json': '{ "name": "bare", "owner": { "name": "somebody" }, "plugins": [] }\n',
+  });
+  const clean = plant('clean', {
+    'package.json': '{ "name": "probe", "version": "9.9.9" }\n',
+    'README.md': '# probe\n',
+    '.claude-plugin/plugin.json': '{ "name": "probe" }\n',
+    '.claude-plugin/marketplace.json':
+      '{ "name": "probe", "owner": { "name": "somebody" }, "plugins": [ { "name": "probe", "source": "./" } ] }\n',
+    'skills/probe/SKILL.md':
+      '---\nname: probe\ndescription: >\n  A folded description,\n  over two lines.\nlicense: MIT\n---\n\n' +
+      'See [the readme](../../README.md).\n',
+  });
+  const planted = [broken, empty, bare].flatMap((dir) => auditSkillSurface(dir).faults);
+  const seen = new Set(planted.map((f) => f.kind));
+  const missed = SKILL_FAULT_KINDS.filter((kind) => !seen.has(kind));
+  const cleanFaults = auditSkillSurface(clean).faults;
+  const folded = readSkillFrontmatter(readFileSync(join(clean, 'skills/probe/SKILL.md'), 'utf8')).fields.get(
+    'description',
+  );
+  const foldedRight = folded === 'A folded description, over two lines.';
+  say(
+    'SKL05_A_PLANTED_SURFACE_FAULTS_IN_EVERY_WAY_THIS_GATE_READS_AND_A_CLEAN_ONE_IN_NONE',
+    missed.length === 0 && cleanFaults.length === 0 && foldedRight,
+    missed.length > 0
+      ? `planted defects the reader did NOT fault: ${missed.join(', ')}`
+      : cleanFaults.length > 0
+        ? `a correct surface was refused:${listed(cleanFaults)}`
+        : !foldedRight
+          ? `a folded description read as ${JSON.stringify(folded ?? null)}`
+          : `${planted.length} fault(s) across three planted surfaces cover all ${SKILL_FAULT_KINDS.length} kinds this ` +
+            'reader knows, a correct surface produces none, and a description folded over two lines reads as its text',
+    'a gate nobody has seen fail is not a gate: every refusal above is exercised on input built to trigger it, and ' +
+      'the clean surface is the positive control that keeps the reader from refusing what the specification allows',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // the currency gate — a doc's claims ABOUT THE TOOL derive from the tool
 // (issue #360)
 // ---------------------------------------------------------------------------
@@ -15906,6 +16444,8 @@ function main(): void {
   }
   bad += runShippedDocSuite();
   substantive += 2;
+  bad += runSkillSurfaceSuite();
+  substantive += 5;
   bad += runCurrencySuite();
   substantive += 6;
   bad += runSeeItSuite();
@@ -16026,6 +16566,14 @@ function main(): void {
     'whose statements are a dated snapshot declares it in its header and drops out, and the scanner is held ' +
     'against the eleven rows this gate was built from, each required to fault in its stale spelling and to come ' +
     'back clean in its repaired one)';
+  const skillSurface =
+    ', + 5 agent-skill controls (issue #366 — the surface an agent discovers rigc through: every `skills/*/SKILL.md` ' +
+    'carrying the frontmatter the Agent Skills specification requires (a `name` equal to its directory, a ' +
+    '`description` inside its bound, the block opened on line 1 and closed), every relative link in a skill and every ' +
+    'path in `.claude-plugin/plugin.json` and `marketplace.json` resolving to something in the repository, and the two ' +
+    "manifests naming one plugin whose entry skill exists and whose `version`, if one is ever written, is `package.json`'s; " +
+    'the derivation asserted first, and the same reader held against three planted surfaces that have to fault in ' +
+    'every way it knows and one clean surface that has to fault in none)';
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
@@ -16119,6 +16667,7 @@ function main(): void {
       'the first from being satisfied by inferring switches from the next argument)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
       shippedDocs +
+      skillSurface +
       currency +
       ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +

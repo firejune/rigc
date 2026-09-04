@@ -46,7 +46,9 @@
     "docs/MOTION.md",
     "docs/INGEST.md",
     "docs/FACE.md",
-    "NOTICE.md"
+    "NOTICE.md",
+    ".claude-plugin",
+    "skills"
   ],
   "publishConfig": {
     "access": "public"
