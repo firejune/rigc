@@ -1421,3 +1421,192 @@ export function encodeWeightedVertices(
   });
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// the outline a triangulation already states — `hull` and `edges` (issue #368)
+// ---------------------------------------------------------------------------
+//
+// Spine's `hull` is not a free field: it is the number of vertices, FIRST in the
+// vertex list and IN ORDER, that make up the mesh's outline polygon. Everything
+// that reads it assumes exactly that — the editor draws the outline by joining
+// hull vertex i to i+1 and constrains its triangulation to those segments, the
+// runtime's debug renderer does the same, and `SkeletonBinary` does not even
+// store a triangle count: it reads `(vertices.length - hullLength - 2) * 3`
+// shorts, Euler's count for a hole-free triangulation whose boundary has `hull`
+// vertices. So a hull that disagrees with the triangles is not cosmetic, it is a
+// mesh that cannot be read back from a `.skel`, and a hull of 0 hands the editor
+// a mesh it has to guess an outline for — which it does by declaring EVERY
+// vertex a hull vertex, in list order, and saying so in a WARNING on import.
+//
+// The triangles already fix the outline: an edge used by exactly one triangle
+// is on it, an edge shared by two is interior. `traceOutline` reads that off,
+// `checkHullOrder` asks whether the vertex list is arranged the way `hull` needs
+// it to be, and `meshEdges` writes the edge list the editor otherwise reports
+// lost. None of this invents a value — every number comes out of `triangles`,
+// and a list the rule cannot be applied to is refused with the fix spelled out.
+
+/** What the triangles say the outline is. */
+export interface MeshOutline {
+  /** Boundary vertex count — the `hull` a consistent list declares. */
+  hull: number;
+  /**
+   * The outline as one closed walk, starting at its lowest-numbered vertex and
+   * heading for the smaller of that vertex's two neighbours. Deterministic, so a
+   * refusal can print it as the order to renumber along.
+   */
+  walk: number[];
+}
+
+/** `0 → 5 → 10 → …`, the shape every outline message prints. */
+export function formatWalk(walk: readonly number[]): string {
+  return walk.join(' → ');
+}
+
+/**
+ * Read the outline off a triangulation, or refuse a triangulation that has none.
+ *
+ * Refused here, each by name: an index outside the vertex list, a triangle that
+ * repeats a vertex, a boundary that is not one closed loop (a pinched vertex, a
+ * hole, two islands), and a triangle count that is not Euler's for that outline
+ * — which is what an unused vertex or a doubled triangle looks like, and what
+ * the binary reader would choke on.
+ */
+export function traceOutline(vertexCount: number, triangles: readonly number[]): MeshOutline {
+  if (triangles.length % 3 !== 0) throw new MeshError(`triangle count ${triangles.length} is not a multiple of 3`);
+  const key = (a: number, b: number): number => (a < b ? a * vertexCount + b : b * vertexCount + a);
+  const uses = new Map<number, number>();
+  for (let i = 0; i < triangles.length; i += 3) {
+    const tri = [triangles[i], triangles[i + 1], triangles[i + 2]];
+    for (const idx of tri) {
+      if (!Number.isInteger(idx) || idx < 0 || idx >= vertexCount) {
+        throw new MeshError(`triangle ${i / 3} names vertex ${idx}, and the mesh has vertices 0..${vertexCount - 1}`);
+      }
+    }
+    if (tri[0] === tri[1] || tri[1] === tri[2] || tri[2] === tri[0]) {
+      throw new MeshError(`triangle ${i / 3} (${tri.join(', ')}) repeats a vertex, so it has no area`);
+    }
+    for (const [a, b] of [[tri[0], tri[1]], [tri[1], tri[2]], [tri[2], tri[0]]]) {
+      const k = key(a, b);
+      uses.set(k, (uses.get(k) ?? 0) + 1);
+    }
+  }
+  // Boundary edges, as adjacency. A vertex on a closed outline has exactly two.
+  const next = new Map<number, number[]>();
+  for (const [k, count] of uses) {
+    if (count !== 1) continue;
+    const a = Math.floor(k / vertexCount);
+    const b = k % vertexCount;
+    next.set(a, [...(next.get(a) ?? []), b]);
+    next.set(b, [...(next.get(b) ?? []), a]);
+  }
+  if (next.size === 0) throw new MeshError('the triangles have no outline: every edge is shared by two triangles');
+  for (const [v, ns] of [...next.entries()].sort((p, q) => p[0] - q[0])) {
+    if (ns.length !== 2) {
+      throw new MeshError(`the triangles' outline is not one closed loop: vertex ${v} has ${ns.length} boundary edges`);
+    }
+  }
+  const start = Math.min(...next.keys());
+  const walk = [start];
+  let prev = -1;
+  let at = start;
+  for (;;) {
+    const [n0, n1] = next.get(at)!;
+    const to = prev === -1 ? Math.min(n0, n1) : n0 === prev ? n1 : n0;
+    if (to === start) break;
+    walk.push(to);
+    prev = at;
+    at = to;
+  }
+  if (walk.length !== next.size) {
+    throw new MeshError(
+      `the triangles' outline is not one closed loop: the walk from vertex ${start} closes after ` +
+        `${walk.length} of ${next.size} boundary vertices`,
+    );
+  }
+  const hull = walk.length;
+  const euler = 2 * vertexCount - hull - 2;
+  if (triangles.length / 3 !== euler) {
+    throw new MeshError(
+      `the triangles do not tile the outline: ${vertexCount} vertices with a ${hull}-vertex outline tile as ` +
+        `${euler} triangles and there are ${triangles.length / 3} — Spine's binary reader derives the triangle ` +
+        'count from exactly that, so a mesh that breaks it cannot be read back from a .skel',
+    );
+  }
+  return { hull, walk };
+}
+
+/**
+ * Is the vertex list arranged the way `hull` needs it — outline first, in order?
+ *
+ * Two refusals, both with the walk printed, because the walk IS the fix: the
+ * outline vertices are not the first `hull` of the list (a row-major grid: its
+ * perimeter is 16 of 25 and interleaved with the interior), or they are but out
+ * of order (a two-column strip: every vertex is on the outline, and the outline
+ * runs down one side and up the other while the list zigzags across). Either
+ * direction around the loop is accepted — it is the same polygon.
+ */
+export function checkHullOrder(outline: MeshOutline, vertexCount: number): void {
+  const { hull, walk } = outline;
+  const onOutline = new Set(walk);
+  const outside = walk.filter((v) => v >= hull).sort((a, b) => a - b)[0];
+  if (outside !== undefined) {
+    const inside = [...Array(hull).keys()].find((v) => !onOutline.has(v))!;
+    throw new MeshError(
+      `hull vertices must come first; vertex ${outside} is on the boundary and vertex ${inside} is not. ` +
+        `The triangles' outline runs ${formatWalk(walk)}: list those ${hull} vertices first, in that order, ` +
+        `then the ${vertexCount - hull} interior vertices`,
+    );
+  }
+  const forward = walk.every((v, i) => v === i);
+  const backward = walk.every((v, i) => v === (i === 0 ? 0 : hull - i));
+  if (forward || backward) return;
+  // Report along whichever direction keeps vertex 1 next to vertex 0 when it
+  // can, so the printed order changes as little of the author's list as possible.
+  const oriented = walk[1] <= walk[hull - 1] ? walk : [walk[0], ...walk.slice(1).reverse()];
+  const at = oriented.findIndex((v, i) => v !== i);
+  throw new MeshError(
+    `hull vertices must trace the outline in order; the triangles' outline runs ${formatWalk(oriented)}, ` +
+      `so vertex ${oriented[at]} has to follow vertex ${oriented[at - 1]} in the list, and vertex ${at} does. ` +
+      'Renumber the vertices along that walk',
+  );
+}
+
+/**
+ * The mesh's edge list, in the encoding the editor writes.
+ *
+ * ⚠️ Each entry is a vertex index TIMES TWO — an offset into the flat x,y array,
+ * the same convention the loader applies to `hull` when it stores it doubled.
+ * Read off the editor's own exports rather than assumed: a 22-vertex mesh's list
+ * tops out at 42, every pair is an edge of some triangle, the outline loop is
+ * always present, and the spineboy example's meshes carry their interior edges
+ * the same way. The format page says "vertex index pairs" and leaves the factor
+ * to the reader.
+ *
+ * Every triangle edge is written — the outline loop first, `(0,1) … (hull-1,0)`,
+ * then the interior edges sorted — so the editor's constrained triangulation has
+ * every segment it needs to reproduce these exact triangles instead of reporting
+ * the interior ones lost. The order is fixed so A18's byte comparison holds.
+ */
+export function meshEdges(vertexCount: number, triangles: readonly number[], hull: number): number[] {
+  const key = (a: number, b: number): number => (a < b ? a * vertexCount + b : b * vertexCount + a);
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (let i = 0; i < hull; i++) {
+    const j = (i + 1) % hull;
+    seen.add(key(i, j));
+    out.push(2 * i, 2 * j);
+  }
+  const interior: Array<[number, number]> = [];
+  for (let i = 0; i < triangles.length; i += 3) {
+    const tri = [triangles[i], triangles[i + 1], triangles[i + 2]];
+    for (const [a, b] of [[tri[0], tri[1]], [tri[1], tri[2]], [tri[2], tri[0]]]) {
+      const k = key(a, b);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      interior.push(a < b ? [a, b] : [b, a]);
+    }
+  }
+  interior.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  for (const [a, b] of interior) out.push(2 * a, 2 * b);
+  return out;
+}

@@ -47,11 +47,16 @@ import {
   buildContourMesh,
   buildRibbonMesh,
   buildRingMesh,
+  checkHullOrder,
   encodeWeightedVertices,
+  formatWalk,
   measureAuthoredMeshFit,
+  meshEdges,
   MeshError,
+  traceOutline,
   type MeshBoneRef,
   type MeshFitReport,
+  type MeshGeometry,
 } from './mesh.ts';
 import { Plate, readPlate } from '../tools/plate.ts';
 import {
@@ -2265,6 +2270,65 @@ function measureAuthoredFit(att: RigMeshAttachment, ctx: AttachmentContext): Mes
   return fit.artPixels === 0 ? null : fit;
 }
 
+/**
+ * The `hull` and `edges` an authored mesh's triangles state (issue #368).
+ *
+ * `hull` is derived, never defaulted: the outline is the set of edges used by
+ * exactly one triangle, and Spine needs its vertices first in the list and in
+ * order, so a list that is not arranged that way is refused with the walk to
+ * renumber along — writing 0 instead would hand the editor a mesh it rebuilds
+ * the outline of on import (every vertex, in list order, with a WARNING). A
+ * stated `hull` is checked against the same derivation, because the binary
+ * reader turns a wrong one into a wrong triangle count. Stated `edges` are the
+ * author's (an export carries only the edges somebody drew) and pass through;
+ * absent ones are every triangle edge, which is what "internal edges lost" is
+ * about.
+ */
+function authoredHullAndEdges(
+  att: Pick<RigMeshAttachment, 'hull' | 'edges'>,
+  vertexCount: number,
+  triangles: number[],
+  where: string,
+): { hull: number; edges: number[] } {
+  try {
+    const outline = traceOutline(vertexCount, triangles);
+    if (att.hull !== undefined && att.hull !== outline.hull) {
+      throw new MeshError(
+        `hull ${att.hull} disagrees with the triangles, whose outline has ${outline.hull} vertices ` +
+          `(${formatWalk(outline.walk)}). Delete "hull" and rigc derives it, or state ${outline.hull}`,
+      );
+    }
+    checkHullOrder(outline, vertexCount);
+    return { hull: outline.hull, edges: att.edges ?? meshEdges(vertexCount, triangles, outline.hull) };
+  } catch (err) {
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
+    throw err;
+  }
+}
+
+/**
+ * The same two fields for geometry rigc built. The generators already put the
+ * outline first and in order — a contour is all outline, a ring's outer ring
+ * comes first, a ribbon runs in perimeter order — so this is a self-check on
+ * that promise rather than a rule the author can break, and the message says so.
+ */
+function generatedHullAndEdges(geometry: MeshGeometry, where: string): { hull: number; edges: number[] } {
+  const vertexCount = geometry.uvs.length / 2;
+  try {
+    const outline = traceOutline(vertexCount, geometry.triangles);
+    if (outline.hull !== geometry.hullVertices) {
+      throw new MeshError(`it declares hull ${geometry.hullVertices} and its triangles outline ${outline.hull} vertices`);
+    }
+    checkHullOrder(outline, vertexCount);
+  } catch (err) {
+    if (err instanceof MeshError) {
+      throw new CompileError(`${where}: internal: the ${geometry.kind} generator built an inconsistent mesh — ${err.message}`);
+    }
+    throw err;
+  }
+  return { hull: geometry.hullVertices, edges: meshEdges(vertexCount, geometry.triangles, geometry.hullVertices) };
+}
+
 function buildRigMesh(
   att: RigMeshAttachment,
   placeholder: string,
@@ -2325,17 +2389,33 @@ function buildRigMesh(
       boundBones = [...names];
     }
   }
+  const { hull, edges } = authoredHullAndEdges(att, uvCount / 2, att.triangles, where);
+  // `width`/`height` are the size of the image the mesh is drawn on. Stated
+  // wins; otherwise the PNG the attachment names, already measured for the
+  // atlas — the same `CompiledImage.width` a region reads, so a page with a
+  // `scale:` yields the drawing's size and not its texels. With neither stated
+  // nor measurable it is a refusal, as it is for a region: 0 is not a size the
+  // spec stated, and the editor shows whatever is written here as the image's
+  // dimensions (it showed 32x32, its missing-image placeholder, for a 0x0 mesh).
+  const img = att.image === undefined ? undefined : ctx.images.find((im) => im.region === basename(att.image!, '.png'));
+  const width = att.width ?? img?.width;
+  const height = att.height ?? img?.height;
+  if (width === undefined || height === undefined) {
+    throw new CompileError(
+      `${where}: a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`,
+    );
+  }
   const out: SpineMeshAttachment = {
     type: 'mesh',
     uvs: att.uvs.map(r6),
     triangles: att.triangles,
     vertices,
-    hull: att.hull ?? 0,
-    width: r6(att.width ?? 0),
-    height: r6(att.height ?? 0),
+    hull,
+    edges,
+    width: r6(width),
+    height: r6(height),
   };
   if (att.path !== undefined) out.path = att.path;
-  if (att.edges !== undefined) out.edges = att.edges;
   if (att.color !== undefined) out.color = att.color;
   // Register it as `authored`: geometry rigc did not build and whose topology it
   // therefore gets to assume nothing about. The generator-topology assertions
@@ -2421,7 +2501,7 @@ function buildGeneratedMesh(
     uvs: geometry.uvs,
     triangles: geometry.triangles,
     vertices,
-    hull: geometry.hullVertices,
+    ...generatedHullAndEdges(geometry, where),
     width: r6(w),
     height: r6(h),
   };
@@ -2539,7 +2619,7 @@ function buildContourAttachment(
     uvs: geometry.uvs,
     triangles: geometry.triangles,
     vertices,
-    hull: geometry.hullVertices,
+    ...generatedHullAndEdges(geometry, where),
     width: r6(w),
     height: r6(h),
   };
@@ -3031,7 +3111,7 @@ function buildMesh(
       uvs: geometry.uvs,
       triangles: geometry.triangles,
       vertices,
-      hull: geometry.hullVertices,
+      ...generatedHullAndEdges(geometry, `slot "${part.slot}" mesh`),
       width: win.w,
       height: win.h,
     },

@@ -7035,6 +7035,36 @@ const TURN_COLUMNS = [-162, -120, 0, 120, 162];
 const TURN_ROWS = [180, 90, 0, -90, -180];
 
 /**
+ * The order the fixture lists its grid in: the perimeter first — top row, right
+ * column, bottom row, left column — then the interior, row-major. Each entry is
+ * the row-major id `row · columns + column` of the vertex at that position.
+ *
+ * Spine's `hull` is the first `hull` vertices of the list in order, and rigc
+ * derives it from the triangles and refuses a list arranged any other way
+ * (issue #368) — a row-major grid's perimeter is interleaved with its interior
+ * and is refused by name. This is the order `gallery/portrait` ships in, so a
+ * flipped triangle's index means the same thing in both, and `turnColumn` is
+ * how a case reads an emitted vertex index back to its column.
+ */
+const TURN_ORDER: number[] = (() => {
+  const cols = TURN_COLUMNS.length;
+  const rows = TURN_ROWS.length;
+  const id = (c: number, r: number): number => r * cols + c;
+  const perimeter: number[] = [];
+  for (let c = 0; c < cols; c++) perimeter.push(id(c, 0));
+  for (let r = 1; r < rows; r++) perimeter.push(id(cols - 1, r));
+  for (let c = cols - 2; c >= 0; c--) perimeter.push(id(c, rows - 1));
+  for (let r = rows - 2; r >= 1; r--) perimeter.push(id(0, r));
+  const seen = new Set(perimeter);
+  return [...perimeter, ...[...Array(cols * rows).keys()].filter((v) => !seen.has(v))];
+})();
+
+/** The column an emitted vertex index sits in. */
+function turnColumn(vertex: number): number {
+  return TURN_ORDER[vertex] % TURN_COLUMNS.length;
+}
+
+/**
  * The angle at which THIS column table folds, from the closed form rather than
  * from a search: `tan θ = Δx/Δz` over adjacent columns, minimised over the pairs
  * (docs/FACE.md §4.2). Turning one way, only one side's pairs can cross, which
@@ -7119,14 +7149,17 @@ function buildTurnRig(
   writeProbePng(join(dir, 'head.png'), width, height, [200, 170, 150, 255]);
   const uvs: number[] = [];
   const vertices: number[] = [];
-  for (const y of TURN_ROWS) {
-    for (const x of TURN_COLUMNS) {
-      uvs.push(round6(x / width + 0.5), round6(0.5 - y / height));
-      vertices.push(x, y);
-    }
+  for (const id of TURN_ORDER) {
+    const x = TURN_COLUMNS[id % TURN_COLUMNS.length];
+    const y = TURN_ROWS[Math.floor(id / TURN_COLUMNS.length)];
+    uvs.push(round6(x / width + 0.5), round6(0.5 - y / height));
+    vertices.push(x, y);
   }
-  // Row-major quads, each split into the two triangles `gallery/portrait`
-  // declares, so a flipped triangle's index means the same thing in both.
+  // The quads in row-major ids, each split into the two triangles
+  // `gallery/portrait` declares, then each id mapped to its place in the
+  // perimeter-first list — so a flipped triangle's index means the same thing
+  // in both.
+  const position = new Map(TURN_ORDER.map((id, i) => [id, i]));
   const triangles: number[] = [];
   for (let r = 0; r + 1 < TURN_ROWS.length; r++) {
     for (let c = 0; c + 1 < TURN_COLUMNS.length; c++) {
@@ -7134,7 +7167,7 @@ function buildTurnRig(
       const tr = tl + 1;
       const bl = tl + TURN_COLUMNS.length;
       const br = bl + 1;
-      triangles.push(tl, bl, br, tl, br, tr);
+      triangles.push(...[tl, bl, br, tl, br, tr].map((id) => position.get(id)!));
     }
   }
   const rigPath = join(dir, 'turn.rig.json');
@@ -7165,9 +7198,11 @@ function buildTurnRig(
   // derives it from the same line, so agreement is the claim and a byte
   // difference is a defect in one of the two.
   const midTime = extra.time ?? 0.5;
+  // The transcribed table is one pair per vertex IN LIST ORDER, so each vertex
+  // takes its own column's pair out of `row` rather than `row` repeated per row.
   const midKey =
     extra.transform === undefined
-      ? { t: midTime, fromVertex: 0, vertices: TURN_ROWS.flatMap(() => row) }
+      ? { t: midTime, fromVertex: 0, vertices: TURN_ORDER.flatMap((id) => [row[2 * (id % TURN_COLUMNS.length)], row[2 * (id % TURN_COLUMNS.length) + 1]]) }
       : { t: midTime, transform: extra.transform };
   writeFileSync(
     motionPath,
@@ -7262,7 +7297,7 @@ function runDeformWindingSuite(): number {
   // and 1, the outermost gap — and no other. Read off the message because the
   // message is the product: it is what an agent holding a folded rig reads.
   const spans = [...detail.matchAll(/triangle \d+ \[(\d+),(\d+),(\d+)\]/g)].map((m) =>
-    [m[1], m[2], m[3]].map((v) => Number(v) % TURN_COLUMNS.length),
+    [m[1], m[2], m[3]].map((v) => turnColumn(Number(v))),
   );
   const onlyTheOuterPair = spans.length > 0 && spans.every((cols) => cols.every((c) => c === 0 || c === 1));
   say(
@@ -8641,6 +8676,308 @@ function runMeshSuite(): number {
     `the fixture's ${meshPiece.triangles.length / 3} triangles cover their worst pixel ${shared}x, ` +
       `while two deliberately coincident triangles cover theirs ${doubled}x`,
     'source-over blending makes a doubly-covered edge visible wherever the art is not opaque',
+  );
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// mesh outline — `hull`, `edges`, `width`/`height` (issue #368)
+// ---------------------------------------------------------------------------
+//
+// The first editor round-trip (#285 stage 4) imported every authored mesh with
+// two WARNING lines — `computed new hull length` and `mesh internal edges lost`
+// — because rigc wrote `hull: 0`, no `edges`, and `width`/`height` 0 whenever the
+// spec omitted them. The editor's repair is to make EVERY vertex a hull vertex in
+// list order, which is a wrong outline the person refining the draft then works
+// on. `hull` is now derived from the triangles, `edges` is always written, and
+// the two sizes come off the PNG; the derivation refuses a vertex list Spine's
+// hull rule cannot describe, with the walk to renumber along.
+//
+// The probes are grids built from geometry THIS FILE knows: a `cols`x`rows`
+// lattice has exactly `2·(cols + rows) − 4` perimeter vertices, and its
+// outline-first order is written down here by walking its four sides — so the
+// number the compiler derives is compared against a number it did not produce.
+// Generated meshes are checked against the fixture manifest's own polygon.
+
+/** One emitted mesh, read back off the skeleton JSON rigc wrote. */
+interface EmittedMesh {
+  slot: string;
+  name: string;
+  hull: number;
+  edges: number[] | undefined;
+  triangles: number[];
+  vertexCount: number;
+  width: number;
+  height: number;
+}
+
+function emittedMeshes(skeletonText: string): EmittedMesh[] {
+  const skeleton = JSON.parse(skeletonText) as {
+    skins: Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }>;
+  };
+  const out: EmittedMesh[] = [];
+  for (const skin of skeleton.skins) {
+    for (const [slot, placeholders] of Object.entries(skin.attachments)) {
+      for (const [name, att] of Object.entries(placeholders)) {
+        if (att.type !== 'mesh') continue;
+        out.push({
+          slot,
+          name,
+          hull: att.hull as number,
+          edges: att.edges as number[] | undefined,
+          triangles: att.triangles as number[],
+          vertexCount: (att.uvs as number[]).length / 2,
+          width: att.width as number,
+          height: att.height as number,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** The undirected edge set of a triangle list, as `lo-hi` keys. */
+function triangleEdgeKeys(triangles: readonly number[]): Set<string> {
+  const keys = new Set<string>();
+  for (let i = 0; i < triangles.length; i += 3) {
+    const t = [triangles[i], triangles[i + 1], triangles[i + 2]];
+    for (const [a, b] of [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]]) keys.add(`${Math.min(a, b)}-${Math.max(a, b)}`);
+  }
+  return keys;
+}
+
+/**
+ * Decode an emitted `edges` list — each entry a vertex index times two, the
+ * convention read off the editor's exports — into the same keys, or null when
+ * the list is not in that encoding (odd length, an odd entry, an index past the
+ * vertex list).
+ */
+function edgeKeys(edges: readonly number[], vertexCount: number): Set<string> | null {
+  if (edges.length % 2 !== 0) return null;
+  const keys = new Set<string>();
+  for (let i = 0; i < edges.length; i += 2) {
+    const [a, b] = [edges[i], edges[i + 1]];
+    if (a % 2 !== 0 || b % 2 !== 0 || a < 0 || b < 0 || a / 2 >= vertexCount || b / 2 >= vertexCount) return null;
+    keys.add(`${Math.min(a, b) / 2}-${Math.max(a, b) / 2}`);
+  }
+  return keys;
+}
+
+function sameKeys(a: Set<string>, b: Set<string>): boolean {
+  return a.size === b.size && [...a].every((k) => b.has(k));
+}
+
+/**
+ * An unweighted `cols`x`rows` grid over the probe's 12x8 `block.png`, in the
+ * order asked for. `row-major` is how a table of columns and rows is naturally
+ * written and is what Spine's hull rule cannot describe once the grid has an
+ * interior; `outline-first` walks the top row, the right column, the bottom row
+ * and the left column, then lists the interior row-major.
+ */
+function gridMesh(cols: number, rows: number, order: 'row-major' | 'outline-first', width = 12, height = 8): Record<string, unknown> {
+  const id = (c: number, r: number): number => r * cols + c;
+  const uvs: number[] = [];
+  const vertices: number[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      uvs.push(c / (cols - 1), r / (rows - 1));
+      vertices.push(-width / 2 + (c * width) / (cols - 1), height / 2 - (r * height) / (rows - 1));
+    }
+  }
+  const triangles: number[] = [];
+  for (let r = 0; r < rows - 1; r++) {
+    for (let c = 0; c < cols - 1; c++) {
+      triangles.push(id(c, r), id(c, r + 1), id(c + 1, r + 1), id(c, r), id(c + 1, r + 1), id(c + 1, r));
+    }
+  }
+  if (order === 'row-major') return { type: 'mesh', image: 'block.png', uvs, vertices, triangles };
+  const perimeter: number[] = [];
+  for (let c = 0; c < cols; c++) perimeter.push(id(c, 0));
+  for (let r = 1; r < rows; r++) perimeter.push(id(cols - 1, r));
+  for (let c = cols - 2; c >= 0; c--) perimeter.push(id(c, rows - 1));
+  for (let r = rows - 2; r >= 1; r--) perimeter.push(id(0, r));
+  const seen = new Set(perimeter);
+  const sequence = [...perimeter, ...[...Array(cols * rows).keys()].filter((v) => !seen.has(v))];
+  const position = new Map(sequence.map((old, i) => [old, i]));
+  return {
+    type: 'mesh',
+    image: 'block.png',
+    uvs: sequence.flatMap((old) => [uvs[2 * old], uvs[2 * old + 1]]),
+    vertices: sequence.flatMap((old) => [vertices[2 * old], vertices[2 * old + 1]]),
+    triangles: triangles.map((v) => position.get(v)!),
+  };
+}
+
+/** The probe rig with its `block` slot carrying the given authored mesh. */
+function meshProbe(mesh: Record<string, unknown>): ProbeDirs {
+  return writeProbeRig({ skins: { default: { block: { block: mesh }, marker: { marker: { image: 'marker.png' } } } } });
+}
+
+/** Compile the probe against the static motion, for the artifact rather than the gate. */
+function compileProbe(dirs: ProbeDirs): ReturnType<typeof compile> {
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+  return compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+}
+
+function runMeshOutlineSuite(): number {
+  let bad = 0;
+  console.log('\n── mesh outline: hull derived, edges written, size measured (issue #368) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): number => reportCase(name, ok, detail, why);
+  const GRID = 5;
+  const PERIMETER = 2 * (GRID + GRID) - 4;
+  const INTERIOR = GRID * GRID - PERIMETER;
+
+  // --- control: the derived hull is the number the geometry fixes ------------
+  const grid = emittedMeshes(compileProbe(meshProbe(gridMesh(GRID, GRID, 'outline-first'))).skeletonText)[0];
+  bad += say(
+    'MO00_CONTROL_DERIVED_HULL_IS_THE_GRIDS_PERIMETER',
+    grid !== undefined && grid.hull === PERIMETER && grid.vertexCount === GRID * GRID,
+    grid === undefined
+      ? 'the probe emitted no mesh at all'
+      : `a ${GRID}x${GRID} grid listed outline-first emitted hull ${grid.hull}; its perimeter is ` +
+        `2·(${GRID}+${GRID})−4 = ${PERIMETER} of ${grid.vertexCount} vertices, with ${INTERIOR} interior`,
+    'the spec stated no hull, so the number in the file can only have come from the triangles — and every ' +
+      'authored mesh used to get 0 there, which the editor repairs on import by making every vertex a hull vertex',
+  );
+
+  // --- the refusals, each named ---------------------------------------------
+  const rowMajor = refusal(meshProbe(gridMesh(GRID, GRID, 'row-major')), STATIC_MOTION);
+  bad += say(
+    'MO01_A_ROW_MAJOR_GRID_IS_REFUSED_WITH_THE_OUTLINE_TO_LIST_FIRST',
+    rowMajor !== null &&
+      rowMajor.includes('hull vertices must come first; vertex 19 is on the boundary and vertex 6 is not') &&
+      rowMajor.includes(`list those ${PERIMETER} vertices first, in that order, then the ${INTERIOR} interior vertices`),
+    rowMajor === null ? 'the row-major grid compiled — a wrong hull went to disk' : `refused with: ${rowMajor}`,
+    "Spine's hull is the FIRST `hull` vertices in order; a row-major grid interleaves perimeter and interior, " +
+      'and the only honest numbers are the outline walk and a refusal that prints it',
+  );
+  const strip = refusal(meshProbe(gridMesh(2, 6, 'row-major')), STATIC_MOTION);
+  bad += say(
+    'MO02_A_ZIGZAG_STRIP_IS_REFUSED_EVEN_THOUGH_EVERY_VERTEX_IS_ON_THE_OUTLINE',
+    strip !== null &&
+      strip.includes('hull vertices must trace the outline in order') &&
+      strip.includes('so vertex 3 has to follow vertex 1 in the list, and vertex 2 does'),
+    strip === null ? 'the zigzag strip compiled — its hull polygon would self-intersect' : `refused with: ${strip}`,
+    'a prefix test alone passes a two-column strip, and the hull it would declare joins 0→1→2→3… across the ' +
+      "strip — the self-intersecting outline the editor's own repair produced on gallery/nod",
+  );
+  const disagree = refusal(meshProbe({ ...gridMesh(GRID, GRID, 'outline-first'), hull: PERIMETER - 4 }), STATIC_MOTION);
+  bad += say(
+    'MO03_A_STATED_HULL_THAT_DISAGREES_WITH_THE_TRIANGLES_IS_REFUSED',
+    disagree !== null &&
+      disagree.includes(`hull ${PERIMETER - 4} disagrees with the triangles, whose outline has ${PERIMETER} vertices`),
+    disagree === null ? 'the contradiction compiled' : `refused with: ${disagree}`,
+    "the binary reader computes the triangle count from `hull` — (2·vertices − hull − 2) — so a hull that " +
+      'disagrees with the triangles is a mesh that cannot be read back from a .skel, not a cosmetic slip',
+  );
+  // Two structural breaks. Doubling a triangle whose three vertices are all
+  // interior leaves the outline intact and breaks Euler's count; doubling one on
+  // the perimeter uses a boundary edge twice, so the outline no longer closes.
+  const tris = gridMesh(GRID, GRID, 'outline-first').triangles as number[];
+  let inner = -1;
+  for (let i = 0; i < tris.length; i += 3) {
+    if (tris[i] >= PERIMETER && tris[i + 1] >= PERIMETER && tris[i + 2] >= PERIMETER) {
+      inner = i;
+      break;
+    }
+  }
+  const euler = refusal(meshProbe({ ...gridMesh(GRID, GRID, 'outline-first'), triangles: [...tris, ...tris.slice(inner, inner + 3)] }), STATIC_MOTION);
+  const pinched = refusal(meshProbe({ ...gridMesh(GRID, GRID, 'outline-first'), triangles: [...tris, ...tris.slice(0, 3)] }), STATIC_MOTION);
+  bad += say(
+    'MO04_TRIANGLES_THAT_DO_NOT_TILE_ONE_OUTLINE_ARE_REFUSED',
+    inner >= 0 &&
+      euler !== null &&
+      euler.includes('the triangles do not tile the outline') &&
+      pinched !== null &&
+      pinched.includes("the triangles' outline is not one closed loop"),
+    `a doubled interior triangle: ${euler === null ? 'COMPILED' : `refused with: ${euler}`} | a doubled boundary triangle: ` +
+      `${pinched === null ? 'COMPILED' : `refused with: ${pinched}`}`,
+    "Euler's count and a closed boundary walk are the two things the derivation can check about the interior; " +
+      'a doubled triangle, an unused vertex or a pinched outline all load through spine-core without a word',
+  );
+
+  // --- edges: present, in the export encoding, and exactly the triangle edges -
+  const gridEdges = grid?.edges === undefined ? null : edgeKeys(grid.edges, grid.vertexCount);
+  const loopFirst =
+    grid !== undefined &&
+    grid.edges !== undefined &&
+    [...Array(PERIMETER).keys()].every((i) => grid.edges![2 * i] === 2 * i && grid.edges![2 * i + 1] === 2 * ((i + 1) % PERIMETER));
+  bad += say(
+    'MO05_AUTHORED_EDGES_ARE_EVERY_TRIANGLE_EDGE_OUTLINE_LOOP_FIRST',
+    grid !== undefined && gridEdges !== null && sameKeys(gridEdges, triangleEdgeKeys(grid.triangles)) && loopFirst,
+    grid === undefined
+      ? 'no mesh'
+      : grid.edges === undefined
+        ? 'the mesh has no `edges` key — the editor reports its internal edges lost'
+        : gridEdges === null
+          ? `edges are not index-times-two pairs: ${JSON.stringify(grid.edges.slice(0, 8))}…`
+          : `${grid.edges.length / 2} edge pairs, ${gridEdges.size} distinct, over ${triangleEdgeKeys(grid.triangles).size} ` +
+            `triangle edges; the first ${PERIMETER} pairs ${loopFirst ? 'are' : 'are NOT'} the outline loop`,
+    "the editor's exports encode `edges` as vertex index × 2 — a 22-vertex mesh tops out at 42 — and carry the " +
+      'outline loop plus every drawn interior edge; writing every triangle edge is what lets its constrained ' +
+      'triangulation reproduce these exact triangles',
+  );
+
+  // --- generated meshes: the same two fields, checked against the fixture ----
+  const manifest = JSON.parse(readFileSync(ARTICULATED.manifestPath!, 'utf8')) as {
+    parts: Array<{ slot: string; polygon?: number[][]; mesh?: { kind: string; rows?: number } }>;
+  };
+  const knownHull = (slot: string): number | null => {
+    const part = manifest.parts.find((p) => p.slot === slot);
+    if (!part?.mesh) return null;
+    if (part.mesh.kind === 'ring') return part.polygon?.length ?? null;
+    if (part.mesh.kind === 'ribbon') return part.mesh.rows === undefined ? null : 2 * part.mesh.rows;
+    return null;
+  };
+  const generated = emittedMeshes(compile(optsForFixture(ARTICULATED)).skeletonText);
+  const contour = emittedMeshes(buildContourRig(CONTOUR_ATTACHMENT).result.skeletonText);
+  const generatedReport = [
+    ...generated.map((m) => ({ m, known: knownHull(m.slot), kind: manifest.parts.find((p) => p.slot === m.slot)?.mesh?.kind })),
+    ...contour.map((m) => ({ m, known: m.vertexCount, kind: 'contour' })),
+  ].map(({ m, known, kind }) => {
+    const keys = m.edges === undefined ? null : edgeKeys(m.edges, m.vertexCount);
+    const ok = known !== null && m.hull === known && keys !== null && sameKeys(keys, triangleEdgeKeys(m.triangles));
+    return { ok, line: `${kind} "${m.slot}": hull ${m.hull} (fixture says ${known}), edges ${m.edges === undefined ? 'ABSENT' : `${m.edges.length / 2} pairs, ${keys === null ? 'BAD encoding' : 'the triangle edges'}`}` };
+  });
+  bad += say(
+    'MO06_GENERATED_MESHES_CARRY_THEIR_KNOWN_HULL_AND_THEIR_EDGES',
+    generatedReport.length >= 3 && generatedReport.every((r) => r.ok),
+    generatedReport.length < 3 ? `only ${generatedReport.length} generated mesh(es) — the control is vacuous` : generatedReport.map((r) => r.line).join('; '),
+    "a ring's hull is its manifest polygon's point count, a ribbon's is two per row and a contour's is every " +
+      'vertex — numbers the fixture states — and the generators used to write no `edges` at all, so the editor ' +
+      'imported every one of them with "mesh internal edges lost"',
+  );
+
+  // --- width/height ----------------------------------------------------------
+  bad += say(
+    'MO07_A_MESH_WITHOUT_A_SIZE_TAKES_ITS_PNGS',
+    grid !== undefined && grid.width === 12 && grid.height === 8,
+    grid === undefined ? 'no mesh' : `the mesh over the probe's 12x8 block.png emitted width ${grid.width}, height ${grid.height}`,
+    'they used to be written as 0 — a size the spec never stated — and the PNG was already measured for the atlas',
+  );
+  const sized = emittedMeshes(compileProbe(meshProbe({ ...gridMesh(GRID, GRID, 'outline-first'), width: 40, height: 30 })).skeletonText)[0];
+  const sizeless = refusal(meshProbe({ ...gridMesh(GRID, GRID, 'outline-first'), image: undefined }), STATIC_MOTION);
+  bad += say(
+    'MO08_A_STATED_SIZE_WINS_AND_NO_SIZE_AT_ALL_IS_REFUSED',
+    sized !== undefined &&
+      sized.width === 40 &&
+      sized.height === 30 &&
+      sizeless !== null &&
+      sizeless.includes('a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG'),
+    `stated 40x30 emitted as ${sized?.width}x${sized?.height}; with no image and no size: ${sizeless === null ? 'COMPILED' : `refused with: ${sizeless}`}`,
+    'the same rule a region follows — the spec wins, the PNG fills in, and 0 is never a fallback',
+  );
+
+  // --- tolerance: authored edges are the author's ---------------------------
+  const authored = [0, 2, 2, 4, 4, 0];
+  const kept = emittedMeshes(compileProbe(meshProbe({ ...gridMesh(GRID, GRID, 'outline-first'), edges: authored })).skeletonText)[0];
+  bad += say(
+    'MO09_STATED_EDGES_PASS_THROUGH_VERBATIM',
+    kept !== undefined && JSON.stringify(kept.edges) === JSON.stringify(authored),
+    kept === undefined ? 'no mesh' : `stated ${JSON.stringify(authored)}, emitted ${JSON.stringify(kept.edges)}`,
+    "an editor export carries only the edges somebody drew, and a transcription of one keeps them — deriving " +
+      'the full set over a stated list would rewrite the author\'s data',
   );
   return bad;
 }
@@ -16418,6 +16755,8 @@ function main(): void {
   substantive += 8;
   bad += runMeshSuite();
   substantive += 4;
+  bad += runMeshOutlineSuite();
+  substantive += 10;
   const meshRungBad = runMeshRungSuite();
   if (meshRungBad !== null) {
     bad += meshRungBad;
