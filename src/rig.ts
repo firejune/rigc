@@ -309,36 +309,47 @@ export interface RigDepthMap {
   gamma?: number;
   contrast?: number;
   bias?: number;
+}
+
+/**
+ * Which part of a mesh is **soft**, and which bone carries it — so a physics
+ * constraint on that bone answers an impact over exactly that region.
+ *
+ * ## Why this is a painted mask and not a depth threshold
+ *
+ * 🚨 It was a depth threshold for one day (2026-09-05) and that was wrong.
+ * Softness and prominence are different properties of the art: on a face the
+ * most prominent thing is the **nose**, and a nose does not wobble. A threshold
+ * over the depth map produced a region that was plausible, gated green and
+ * carried the wrong pixels — the exact shape of failure this compiler exists to
+ * refuse, arrived at by reaching for a number that was already in the manifest.
+ *
+ * It also claimed something untrue. "No mask painted" was the selling line, and
+ * a consumer rendering the same effect had a hand-painted spring mask all
+ * along. rigc does not get to delete an input by guessing it.
+ *
+ * ⇒ The mask is authored, like `zScale` and like every other number here that
+ * describes a decision about the art rather than a measurement of it.
+ */
+export interface RigSoftRegion {
   /**
-   * Bind the near part of the map to a second bone, so a physics constraint on
-   * that bone makes exactly that region wobble.
-   *
-   * ⭐ This is the jiggle with no mask painted and no weights assigned: the same
-   * depth pass that gave every vertex its `z` says which vertices are near
-   * enough to move, and how much. What a person would otherwise do with a
-   * weight brush.
-   *
-   * The weight is a smoothstep from `above` to `above + feather` over the
-   * NEARNESS (the tone-curved 0..1 value, before `zScale`), and the remainder
-   * stays on the slot bone — so a vertex is always fully accounted for and the
-   * mesh cannot drift off its plate.
+   * The bone the soft region is carried by. It must already exist — a bone a
+   * physics constraint targets is part of the skeleton, not a side effect of a
+   * mesh.
    */
-  bind?: {
-    /** The bone the near region binds to. It must already exist in the rig. */
-    bone: string;
-    /** Nearness at which the region starts. Below this a vertex does not move. */
-    above: number;
-    /**
-     * Nearness over which the weight ramps 0 -> 1. Default 0, a hard edge.
-     *
-     * ⚠️ A hard edge is authorable and usually wrong: neighbouring vertices go
-     * from fully carried to fully still, and the triangle between them takes
-     * the whole difference as stretch. rigc does not pick a value — a feather
-     * is a decision about the art — but the report prints how many vertices
-     * landed in the ramp, which is 0 when the edge is hard.
-     */
-    feather?: number;
-  };
+  bone: string;
+  /**
+   * A greyscale sheet in the part's own pixel grid: the level IS the weight,
+   * black still and white fully carried, sampled at each vertex.
+   *
+   * ⭐ The ramp is painted rather than parameterised. A `feather` would be this
+   * file guessing the shape of a falloff somebody can simply draw, and a hard
+   * edge — which a threshold gives you by default — puts the whole difference
+   * between carried and still into one triangle.
+   *
+   * Alpha is not read: a transparent pixel is black, which is weight 0.
+   */
+  mask: string;
 }
 
 export type RigMeshGenerator =
@@ -401,6 +412,8 @@ export type RigMeshGenerator =
       alpha?: number;
       /** A depth map for this part — see `RigDepthMap`. */
       depth?: RigDepthMap;
+      /** A soft region carried by its own bone — see `RigSoftRegion`. */
+      soft?: RigSoftRegion;
     }
   | {
       /**
@@ -434,6 +447,8 @@ export type RigMeshGenerator =
       rows?: number;
       /** A depth map for this part — see `RigDepthMap`. */
       depth?: RigDepthMap;
+      /** A soft region carried by its own bone — see `RigSoftRegion`. */
+      soft?: RigSoftRegion;
     };
 
 /** `SkeletonJson.ts:540-559`. `type` defaults to `region` (`:539`). */

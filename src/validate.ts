@@ -1397,16 +1397,16 @@ export function validate(input: ValidateInput): ValidateReport {
           }
           continue;
         }
-        // A rim the depth map deliberately CARRIED (issue #382). The rule splits
+        // A rim a soft mask deliberately CARRIED (issue #382). The rule splits
         // by declaration rather than being relaxed — the same move the ribbon
-        // branch above makes, and for the same reason: a jiggling silhouette is
+        // branch above makes, and for the same reason: a wobbling silhouette is
         // supposed to move, and the invariant is that nothing ELSE does. So on
-        // such a mesh a rim vertex is either pinned to the slot bone at 1 or
-        // shared between it and the ONE bone the rig declared, and a third bone,
-        // a wrong bone or a weight that does not close is still a failure.
+        // such a mesh a vertex is either pinned to the slot bone at 1 or shared
+        // between it and the ONE bone the rig declared, and a third bone, a
+        // wrong bone or a weight that does not close is still a failure.
         const boundBone = (() => {
           const slot = slotOfAttachment(mesh);
-          return slot ? (input.rig?.meshDepthBinds[slot] ?? null) : null;
+          return slot ? (input.rig?.meshSoftBones[slot] ?? null) : null;
         })();
         if (boundBone !== null) {
           const allowed = new Set([slotBoneOf?.name, boundBone]);
@@ -1420,7 +1420,7 @@ export function validate(input: ValidateInput): ValidateReport {
                 fail(
                   'A21_MESH_RIM_PINNED',
                   `mesh "${mesh.name}" vertex ${v} is carried by "${name}", and this mesh declares only ` +
-                    `"${slotBoneOf?.name}" and the depth-bound "${boundBone}"`,
+                    `"${slotBoneOf?.name}" and the soft region's "${boundBone}"`,
                 );
               }
               if (name === boundBone && weight > 0) carried = carried + (weight >= 1 ? 1 : 0);
@@ -1434,12 +1434,12 @@ export function validate(input: ValidateInput): ValidateReport {
               );
             }
           }
-          // A bind that carried nothing reached here as a mesh pinned exactly as
-          // before, which is not the thing that was declared.
+          // A mask that carried nothing reached here as a mesh pinned exactly
+          // as before, which is not the thing that was declared.
           if (carried === 0) {
             fail(
               'A21_MESH_RIM_PINNED',
-              `mesh "${mesh.name}" declares a depth bind to "${boundBone}" and no vertex is fully carried by it`,
+              `mesh "${mesh.name}" declares a soft region on "${boundBone}" and no vertex is fully carried by it`,
             );
           }
           continue;

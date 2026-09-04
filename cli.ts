@@ -407,6 +407,32 @@ function runGate(
  * unconditionally, so a build whose only mesh was a ribbon or a contour got a
  * sentence about a rim ring and a seam it does not have.
  */
+/**
+ * What a depth map and a soft region put on a mesh, when it named either.
+ *
+ * The digests are the reason this prints at all: a claim about a rig can name
+ * WHICH sheet produced it, and two runs a reader believes differ can be shown to
+ * have read the same pixels. The ranges and counts are what say the input
+ * reached the geometry rather than merely being resolved — a `carried 0` never
+ * gets here (it is refused) and a `ramped 0` is a hard-edged mask, which is
+ * legal and usually not what somebody meant.
+ */
+function meshDepthNote(m: CompileResult['meshes'][number]): string {
+  const parts: string[] = [];
+  if (m.depth) {
+    parts.push(
+      `depth "${m.depth.image}" ${m.depth.digest} near=${m.depth.near} zScale=${m.depth.zScale} ` +
+        `z=[${m.depth.range[0]}, ${m.depth.range[1]}]`,
+    );
+  }
+  if (m.soft) {
+    parts.push(
+      `soft "${m.soft.mask}" ${m.soft.digest} -> ${m.soft.bone}, ${m.soft.carried} carried / ${m.soft.ramped} in the falloff`,
+    );
+  }
+  return parts.length === 0 ? '' : `\n        ${parts.join('\n        ')}`;
+}
+
 const MESH_KIND_NOTES: Record<CompileResult['meshes'][number]['kind'], string> = {
   ring: 'ring      rim ring pinned on the window edge, seam ring pinned on the mask contour, aperture moves',
   ribbon: 'ribbon    entry row pinned, rows share their weights so the strip lengthens without widening',
@@ -797,7 +823,8 @@ function cmdBuild(flags: Record<string, string>): void {
   for (const m of result.meshes) {
     console.log(
       `  MESH  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
-        `${meshBudget(result.rig)}  bones=[${m.bones.join(', ')}]  attachments=[${m.attachments.join(', ')}]${meshFit(m)}`,
+        `${meshBudget(result.rig)}  bones=[${m.bones.join(', ')}]  attachments=[${m.attachments.join(', ')}]${meshFit(m)}` +
+        meshDepthNote(m),
     );
   }
   for (const ph of result.physics) {

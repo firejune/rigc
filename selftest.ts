@@ -91,7 +91,6 @@ import {
 import { buildAtlasText, compile, CompileError } from './src/compile.ts';
 import { parseMotionSpec } from './src/motion.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, type FieldAgreement } from './src/depth.ts';
-import { evaluateDeformTransform } from './src/deformgen.ts';
 import {
   buildGridMesh,
   contourOvershootBound,
@@ -6630,7 +6629,7 @@ function writeContourArt(path: string, art: (x: number, y: number) => boolean, w
  */
 function writeDepthSheet(
   path: string,
-  kind: 'flat' | 'ramp' | 'tight' | 'colour',
+  kind: 'flat' | 'ramp' | 'tight' | 'colour' | 'softmask',
   width: number,
   height: number,
   art: (x: number, y: number) => boolean,
@@ -6643,7 +6642,15 @@ function writeDepthSheet(
         plate.set(x, y, [10, 200, 10, 255]);
         continue;
       }
-      const level = kind === 'flat' ? flatLevel : Math.round((x / (width - 1)) * 255);
+      // A painted region rather than a threshold: white over the left third,
+      // a drawn falloff across the next third, black after that — which is
+      // what a person with a brush produces and what a threshold cannot.
+      const level =
+        kind === 'flat'
+          ? flatLevel
+          : kind === 'softmask'
+            ? Math.round(255 * Math.min(1, Math.max(0, (width * 0.6 - x) / (width * 0.3))))
+            : Math.round((x / (width - 1)) * 255);
       const covered = kind === 'tight' ? art(x, y) : true;
       plate.set(x, y, [level, level, level, covered ? 255 : 0]);
     }
@@ -6693,6 +6700,8 @@ function buildContourRig(
     invariants?: Record<string, unknown> | null;
     /** Also write a depth sheet beside the art — see `writeDepthSheet`. */
     depth?: { kind: 'flat' | 'ramp' | 'tight' | 'colour'; width?: number; height?: number };
+    /** Also write a soft-region mask beside the art. */
+    softmask?: { kind: 'softmask' | 'colour' | 'flat'; level?: number; width?: number; height?: number };
     /** A motion spec other than the empty one, for the cases that key a deform. */
     motion?: Record<string, unknown>;
   } = {},
@@ -6708,6 +6717,16 @@ function buildContourRig(
       extra.depth.width ?? extra.width ?? CONTOUR_W,
       extra.depth.height ?? extra.height ?? CONTOUR_H,
       art,
+    );
+  }
+  if (extra.softmask) {
+    writeDepthSheet(
+      join(dir, 'blob_soft.png'),
+      extra.softmask.kind,
+      extra.softmask.width ?? extra.width ?? CONTOUR_W,
+      extra.softmask.height ?? extra.height ?? CONTOUR_H,
+      art,
+      extra.softmask.level ?? 0,
     );
   }
   const [bx, by] = extra.bone ?? CONTOUR_BONE;
@@ -7368,32 +7387,31 @@ function runContourMeshSuite(): number {
     'every one of these compiles to a plausible number with correct arithmetic behind it — the coverage case is the loudest, since a sheet cut to the art gives the whole rim the background depth and folds the silhouette away from the turn',
   );
 
-  // --- the jiggle, from the same depth pass (issue #382) -------------------
+  // --- the soft region, and why it is painted (issue #382) -----------------
   //
-  // The last thing the map buys: a physics constraint that moves exactly the
-  // near region, with no mask painted and no weights assigned. The threshold
-  // does what a weight brush would.
-  const jiggleRig = (bind: Record<string, unknown> | undefined, extra?: Record<string, unknown>) => ({
+  // A physics constraint answers an impact over exactly the vertices a mask
+  // says are soft.
+  //
+  // 🚨 This was a DEPTH THRESHOLD for one day. It is not, and the reason is the
+  // whole point of these cases: softness and prominence are different
+  // properties of a drawing. The most prominent thing on a face is the nose,
+  // and a nose does not wobble. A threshold produced a plausible region that
+  // gated green and carried the wrong pixels, which is exactly the silence this
+  // compiler exists to convert into a refusal — arrived at by reaching for a
+  // number that happened to already be in the manifest.
+  const softRig = (soft: Record<string, unknown> | undefined) => ({
     type: 'mesh',
     image: 'blob.png',
-    generator: {
-      kind: 'grid',
-      cols: 7,
-      rows: 7,
-      depth: { image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE, ...(bind ? { bind } : {}), ...extra },
-    },
+    generator: { kind: 'grid', cols: 7, rows: 7, ...(soft ? { soft } : {}) },
   });
-  const JIGGLE_BONES = [{ name: 'wobble', parent: 'blob', x: 0, y: 0 }];
+  const SOFT_BONES = [{ name: 'wobble', parent: 'blob', x: 0, y: 0 }];
+  const SOFT_ART = { softmask: { kind: 'softmask' as const }, bones: SOFT_BONES };
   {
-    const build = buildContourRig(jiggleRig({ bone: 'wobble', above: 0.5, feather: 0.2 }), {
-      depth: { kind: 'ramp' },
-      bones: JIGGLE_BONES,
-    });
-    const report = build.result.meshes[0].depth;
-    // Read the weights off the ARTIFACT rather than through a helper: every
-    // vertex has to close at 1 across at most the two declared bones, some
-    // vertex has to be fully carried, and some has to be untouched — a
-    // threshold that carried everything or nothing is not a region.
+    const build = buildContourRig(softRig({ bone: 'wobble', mask: 'blob_soft.png' }), SOFT_ART);
+    const report = build.result.meshes[0].soft;
+    // Read the weights off the ARTIFACT: every vertex closes at 1 across at
+    // most the two declared bones, some vertex fully carried, some untouched —
+    // a mask that carried everything, or nothing, would still load and gate.
     interface EmittedRig {
       bones: Array<{ name: string }>;
       skins: Array<{ attachments: { blob: { blob: { vertices: number[] } } } }>;
@@ -7410,7 +7428,6 @@ function runContourMeshSuite(): number {
       }
       perVertex.push(influences);
     }
-    const boneName = (i: number): string => emitted.bones[i].name;
     let closed = 0;
     let carried = 0;
     let still = 0;
@@ -7419,7 +7436,7 @@ function runContourMeshSuite(): number {
       let sum = 0;
       let onWobble = 0;
       for (const { bone, weight } of vertex) {
-        const name = boneName(bone);
+        const name = emitted.bones[bone].name;
         if (name !== 'blob' && name !== 'wobble') stranger++;
         if (name === 'wobble') onWobble += weight;
         sum += weight;
@@ -7429,140 +7446,91 @@ function runContourMeshSuite(): number {
       else if (onWobble <= 1e-6) still++;
     }
     say(
-      'JG01_A_DEPTH_THRESHOLD_CARRIES_A_REGION_AND_LEAVES_THE_REST_PINNED',
-      closed === perVertex.length && stranger === 0 && carried > 0 && still > 0 && report?.bind === 'wobble',
+      'SF01_A_PAINTED_MASK_CARRIES_ITS_REGION_AND_LEAVES_THE_REST_PINNED',
+      closed === perVertex.length && stranger === 0 && carried > 0 && still > 0 && report?.bone === 'wobble',
       `${perVertex.length} vertices: ${carried} carried by "wobble", ${still} still on the slot bone, ` +
-        `${perVertex.length - carried - still} in the feather; all ${closed} close at 1, ${stranger} stranger bones; ` +
-        `the report says bind=${report?.bind} carried=${report?.carried} ramped=${report?.ramped}`,
-      'a threshold that carried everything, or nothing, would still produce a mesh that loads and gates — so both ends have to be measured, not just the total',
+        `${perVertex.length - carried - still} in the painted falloff; all ${closed} close at 1, ` +
+        `${stranger} stranger bones; the report says bone=${report?.bone} carried=${report?.carried} ` +
+        `ramped=${report?.ramped} mask=${report?.mask}`,
+      'both ends have to be measured, not the total: a mask that carried every vertex, or none, still produces a mesh that loads and gates',
     );
   }
   {
-    const jiggleRefusals: Array<[string, string | null, string]> = [
+    const softRefusals: Array<[string, string | null, string]> = [
       [
         'a bone the rig does not declare',
-        contourRefusal(jiggleRig({ bone: 'nowhere', above: 0.5 }), { depth: { kind: 'ramp' }, bones: JIGGLE_BONES }),
+        contourRefusal(softRig({ bone: 'nowhere', mask: 'blob_soft.png' }), SOFT_ART),
         'which this rig does not declare',
       ],
       [
         "the slot's own bone, which moves nothing",
-        contourRefusal(jiggleRig({ bone: 'blob', above: 0.5 }), { depth: { kind: 'ramp' }, bones: JIGGLE_BONES }),
+        contourRefusal(softRig({ bone: 'blob', mask: 'blob_soft.png' }), SOFT_ART),
         'moves nothing',
       ],
       [
-        'a threshold no vertex reaches',
-        contourRefusal(jiggleRig({ bone: 'wobble', above: 1 }), { depth: { kind: 'flat' }, bones: JIGGLE_BONES }),
+        'a mask that is black everywhere',
+        contourRefusal(softRig({ bone: 'wobble', mask: 'blob_soft.png' }), {
+          softmask: { kind: 'flat', level: 0 },
+          bones: SOFT_BONES,
+        }),
         'carries no vertex',
       ],
       [
-        'a nearness outside 0..1',
-        contourRefusal(jiggleRig({ bone: 'wobble', above: 1.5 }), { depth: { kind: 'ramp' }, bones: JIGGLE_BONES }),
-        'a number in 0..1',
+        'a colour mask',
+        contourRefusal(softRig({ bone: 'wobble', mask: 'blob_soft.png' }), {
+          softmask: { kind: 'colour' },
+          bones: SOFT_BONES,
+        }),
+        'is not greyscale',
       ],
       [
-        'a negative feather',
-        contourRefusal(jiggleRig({ bone: 'wobble', above: 0.5, feather: -0.2 }), { depth: { kind: 'ramp' }, bones: JIGGLE_BONES }),
-        'it is 0 or more',
+        "a mask that is not the part's size",
+        contourRefusal(softRig({ bone: 'wobble', mask: 'blob_soft.png' }), {
+          softmask: { kind: 'softmask', width: CONTOUR_W / 2, height: CONTOUR_H / 2 },
+          bones: SOFT_BONES,
+        }),
+        'and the part is',
+      ],
+      [
+        'a mask that is not on disk',
+        contourRefusal(softRig({ bone: 'wobble', mask: 'no_such_mask.png' }), SOFT_ART),
+        'is not at',
       ],
     ];
-    const missed = jiggleRefusals.filter(([, got, want]) => got === null || !got.includes(want));
+    const missed = softRefusals.filter(([, got, want]) => got === null || !got.includes(want));
     say(
-      'JG02_THE_FIVE_WAYS_A_DEPTH_BIND_CAN_MOVE_NOTHING_ARE_REFUSED_BY_NAME',
+      'SF02_THE_SIX_WAYS_A_SOFT_REGION_CAN_MOVE_NOTHING_ARE_REFUSED_BY_NAME',
       missed.length === 0,
       missed.length === 0
-        ? jiggleRefusals.map(([label]) => label).join('; ')
+        ? softRefusals.map(([label]) => label).join('; ')
         : missed.map(([label, got, want]) => `${label}: expected "${want}", got ${got === null ? 'a clean compile' : got}`).join(' | '),
       'each of these compiles to a mesh that loads, draws and gates — and wobbles nothing, which is the silence a physics constraint is least likely to be checked for',
     );
   }
   {
-    // ⚠️ The limitation, asserted rather than described. A depth-bound mesh has
-    // two bones on some vertices, and a `transform` key needs one space to be
-    // evaluated in — so the two halves of the motion family the map buys cannot
-    // today ride the same attachment. Recording it as a control means the day
-    // it changes, this fails and says so.
-    const both = contourRefusal(jiggleRig({ bone: 'wobble', above: 0.5, feather: 0.2 }), {
-      depth: { kind: 'ramp' },
-      bones: JIGGLE_BONES,
-      motion: depthMotion(DEPTH_DEGREES),
-    });
+    // ⚠️ The limitation, asserted rather than described. A carried mesh has two
+    // bones on some vertices and a `transform` key needs one space to be
+    // evaluated in, so a turn and a soft region cannot ride one attachment
+    // today. Recording it as a control means the day it changes, this fails.
+    const both = contourRefusal(
+      {
+        type: 'mesh',
+        image: 'blob.png',
+        generator: {
+          kind: 'grid',
+          cols: 7,
+          rows: 7,
+          depth: { image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE },
+          soft: { bone: 'wobble', mask: 'blob_soft.png' },
+        },
+      },
+      { depth: { kind: 'ramp' }, softmask: { kind: 'softmask' }, bones: SOFT_BONES, motion: depthMotion(DEPTH_DEGREES) },
+    );
     say(
-      'JG03_A_CARRIED_MESH_CANNOT_ALSO_TAKE_A_TRANSFORM_KEY_TODAY',
+      'SF03_A_CARRIED_MESH_CANNOT_ALSO_TAKE_A_TURN_KEY_TODAY',
       both !== null && both.includes('no single space to evaluate it in'),
       both ?? 'a clean compile — the limitation is gone and this control should become the case that proves it',
-      'the parallax and the jiggle both come out of one depth pass and cannot yet ride one attachment; the refusal is correct as the compiler stands, and this control is what will notice when it stops being',
-    );
-  }
-
-  // --- parallax IS yaw's small-angle limit, and exactly so (issue #382) -----
-  //
-  // The form a per-pixel depth shader evaluates is `d = z · offset` — no angle,
-  // no radius, no trigonometry. The claim that it is the same model as `yaw`
-  // seen at a small angle is not a hand-wave: subtract them and the whole
-  // remainder is `u · (cos t − 1)`, the in-plane term, INDEPENDENT of the
-  // depth. So it can be asserted as an identity rather than as a tolerance.
-  {
-    // The emitter's own rounder, so both sides are quantised exactly as the
-    // file they would be written into.
-    const r6 = (n: number): number => {
-      const v = Math.round(n * 1e6) / 1e6;
-      return v === 0 ? 0 : v;
-    };
-    const setup: number[] = [];
-    const zs: number[] = [];
-    for (let i = 0; i < 9; i++) {
-      // An uneven depth on purpose: an identity that only holds for one z is
-      // not the identity being claimed.
-      setup.push(-60 + 15 * i, 10 * Math.sin(i));
-      zs.push(5 + 4 * i);
-    }
-    const count = setup.length / 2;
-    const angles = [16, 8, 4, 2, 1];
-    const gaps: number[] = [];
-    let worstResidual = 0;
-    for (const deg of angles) {
-      const rad = (deg * Math.PI) / 180;
-      const yaw = evaluateDeformTransform({ kind: 'yaw', depth: true, degrees: deg }, setup, r6, 'yaw', zs);
-      const par = evaluateDeformTransform({ kind: 'parallax', offset: [-Math.sin(rad), 0] }, setup, r6, 'parallax', zs);
-      let gap = 0;
-      for (let v = 0; v < count; v++) {
-        const difference = yaw.offsets[2 * v] - par.offsets[2 * v];
-        worstResidual = Math.max(worstResidual, Math.abs(difference - setup[2 * v] * (Math.cos(rad) - 1)));
-        gap = Math.max(gap, Math.abs(difference));
-      }
-      gaps.push(gap);
-    }
-    // 1e-5 rather than 0: both sides are rounded to the six decimals the
-    // emitter writes, so the identity can only hold to that.
-    say(
-      'DP05_PARALLAX_IS_YAW_MINUS_ITS_IN_PLANE_TERM_EXACTLY',
-      worstResidual < 1e-5,
-      `over ${count} vertices at ${angles.join('°, ')}°: worst |yaw − parallax − u·(cos t − 1)| is ` +
-        `${worstResidual.toExponential(2)}, which is the six decimals both sides are rounded to`,
-      'the depths here are uneven on purpose — a remainder that came out independent of z only for one z would not be the identity being claimed',
-    );
-    // Halving the angle has to quarter the gap: the remainder is O(t²).
-    const ratios = gaps.slice(1).map((g, i) => gaps[i] / g);
-    say(
-      'DP06_AND_THEY_CONVERGE_AT_SECOND_ORDER_AS_THE_ANGLE_SHRINKS',
-      ratios.every((r) => r > 3.8 && r < 4.2),
-      `gap ${gaps.map((g) => g.toFixed(5)).join(' -> ')} px as the angle halves, ratios ` +
-        `${ratios.map((r) => r.toFixed(2)).join(', ')} against the 4.00 that u·(cos t − 1) predicts`,
-      'a form that merely resembled the turn at small angles would converge at SOME rate; this says which, and the rate is the whole content of "small-angle limit"',
-    );
-    const noMap = ((): string => {
-      try {
-        evaluateDeformTransform({ kind: 'parallax', offset: [0.25, 0] }, setup, r6, 'parallax', null);
-        return 'a clean evaluation';
-      } catch (err) {
-        return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
-      }
-    })();
-    say(
-      'DP07_PARALLAX_WITHOUT_A_DEPTH_MAP_IS_REFUSED_AS_THE_BONE_MOVE_IT_WOULD_BE',
-      noMap.includes('translation of the whole attachment'),
-      noMap,
-      'with no per-vertex z every vertex moves by the same amount, and a deform run that says what a translate says is a hundred numbers standing in for two',
+      'the angle a raised surface turns through and the impact a soft one answers are the two things rigc states about a depth pass, and they cannot yet ride one attachment; issue #389 has the arithmetic showing the refusal is unnecessary',
     );
   }
 
@@ -18030,7 +17998,7 @@ function main(): void {
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'and which bones a skin switches on), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
-      '+ 27 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      '+ 24 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
       'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
       'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
@@ -18051,18 +18019,14 @@ function main(): void {
       + 'depth, over a dome at 18 degrees, converging 6.4141 -> 0.0926 px as the lattice goes 3x3 -> 33x33, while the '
       + 'SAME lattices reading a cylinder instead settle at 3.4 px and never move — and the reading that forces that '
       + 'framing, where at 3x3 the WRONG surface scores better than the right one, so no single density can tell them '
-      + 'apart; and the PARALLAX form the same map buys — asserted as an identity rather than a tolerance, since yaw minus '
-      + 'parallax is exactly the in-plane term u·(cos t − 1) and independent of the depth (worst residual 1e-6, the six '
-      + 'decimals both sides round to), converging at second order as the angle halves (2.32 -> 0.0091 px over 16° -> 1°, '
-      + 'ratios 3.98-4.00 against the 4.00 the remainder predicts, where a form that merely RESEMBLED the turn would '
-      + 'converge at some other rate — a mutant ignoring z converges at 2.0), and refused outright without a depth map, '
-      + 'because one z for every vertex is a translate keyed on the bone; and the JIGGLE the same pass buys, where a '
-      + 'nearness threshold carries a region to a second bone with no mask painted — the weights read back off the '
-      + 'ARTIFACT, every vertex closing at 1 across at most the two declared bones with both ends measured (a threshold '
-      + 'that carried everything, or nothing, would still load and gate), five ways a bind can move nothing refused by '
-      + 'name, and the limitation recorded as a control rather than as a comment: a carried mesh cannot also take a '
-      + 'transform key, so the parallax and the jiggle cannot yet ride one attachment, and JG03 is what will notice when '
-      + 'that stops being true, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
+      + 'apart; and the SOFT REGION a physics constraint answers an impact over, carried to its own bone by a PAINTED '
+      + 'mask — which it is because it was a depth threshold for one day and that conflated two properties of a '
+      + 'drawing: the most prominent thing on a face is the nose, and a nose does not wobble. The weights are read back '
+      + 'off the ARTIFACT, every vertex closing at 1 across at most the two declared bones with both ends measured (a '
+      + 'mask that carried everything, or nothing, would still load and gate), six ways a soft region can move nothing '
+      + 'refused by name, and the limitation recorded as a control rather than as a comment: a carried mesh cannot also '
+      + 'take a turn key, so the two things rigc states about a depth pass cannot yet ride one attachment, and SF03 is '
+      + 'what will notice when that stops being true, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +

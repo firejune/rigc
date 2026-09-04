@@ -1019,156 +1019,63 @@ A sheet with **no alpha channel** covers its whole grid by construction and the
 coverage check has nothing to test; what its background level means is then your
 statement, and the reported range is where it shows up.
 
-##### `bind` — the jiggle, from the same pass
+##### `soft` — which part is soft, and which bone carries it
 
-A depth map can also say **which vertices wobble**. `bind` carries the near part
-of the map to a second bone; a `physics` constraint (§3.5) on that bone then
-moves exactly that region.
+A mesh can say **which vertices are soft**, so a `physics` constraint (§3.5) on
+their bone answers an impact over exactly that region — a chest, a cheek, a
+hanging sleeve.
 
 ```json
-"depth": { "image": "face_depth.png", "near": "white", "zScale": 40,
-           "bind": { "bone": "hair_wobble", "above": 0.55, "feather": 0.2 } }
+"generator": {
+  "kind": "grid", "cols": 9, "rows": 9,
+  "depth": { "image": "face_depth.png", "near": "white", "zScale": 40 },
+  "soft":  { "bone": "cheek_wobble", "mask": "cheek_soft.png" }
+}
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `bone` | **required.** The bone the near region is carried by. It has to already exist — a bone a physics constraint targets is part of the skeleton, not a side effect of a mesh |
-| `above` | **required.** The nearness (`0..1`, after the tone curve) at which the region starts |
-| `feather` | nearness over which the weight ramps 0 → 1, by smoothstep. Default `0` |
+| `bone` | **required.** The bone the region is carried by. It has to already exist — a bone a physics constraint targets is part of the skeleton, not a side effect of a mesh |
+| `mask` | **required.** A greyscale sheet in the part's own pixel grid: the level IS the weight, black still and white fully carried, sampled at each vertex. Alpha is not read — a transparent pixel is black |
 
 The remainder always stays on the slot bone, so every vertex closes at 1 by
 construction rather than by `A20` catching it later. `build` and `explain` report
-how many vertices were carried outright and how many landed in the ramp.
+the mask's digest, how many vertices were carried outright and how many landed in
+the painted falloff.
 
-⚠️ **`feather: 0` is authorable and usually wrong.** Neighbouring vertices go
-from fully carried to fully still and the triangle between them takes the whole
-difference as stretch. rigc does not pick a value — a feather is a decision about
-the art — but `ramped: 0` in the report is what a hard edge looks like.
+🚨 **Why a painted mask and not a depth threshold.** rigc tried the threshold —
+"the near part wobbles" — for exactly one day. It is wrong, and instructively so:
+**softness and prominence are different properties of a drawing.** The most
+prominent thing on a face is the nose, and a nose does not wobble. A threshold
+produced a region that was plausible, gated green and carried the wrong pixels.
+It also claimed something untrue — "no mask painted" — while the renderer this
+was modelled on had a hand-painted spring mask all along. rigc does not get to
+delete an input by guessing it.
 
-**`A21_MESH_RIM_PINNED` splits on this rather than being relaxed.** A jiggling
-silhouette is *supposed* to move; the invariant is that nothing else does. On a
-depth-bound mesh every vertex must be pinned to the slot bone or shared between
-it and the one declared bone, must close at 1, and at least one must actually be
-carried — a bind that moves nothing is refused.
+⭐ The falloff is painted for the same reason. A `feather` parameter would be
+rigc guessing the shape of something you can simply draw.
+
+**`A21_MESH_RIM_PINNED` splits on this rather than being relaxed.** A wobbling
+silhouette is *supposed* to move; the invariant is that nothing else does. Every
+vertex must be pinned to the slot bone or shared between it and the one declared
+bone, must close at 1, and at least one must actually be carried.
 
 | The input | What you get |
 | --- | --- |
 | a bone the rig does not declare | `names bone "x", which this rig does not declare … a bone a physics constraint has to target is part of the skeleton` |
-| the slot's own bone | `moves nothing — the region needs a bone that can move independently` |
-| an `above` no vertex reaches | `carries no vertex — "above" is 1 and the nearest vertex of this mesh reaches 0.6000` |
-| an `above` outside `0..1` | `it is a nearness, so a number in 0..1` |
-| a negative `feather` | `it is 0 or more` |
+| the slot's own bone | `moves nothing — a soft region needs a bone that can move independently` |
+| a mask that is black everywhere | `carries no vertex of this mesh — every one of its 49 vertices samples black` |
+| a colour mask | `is not greyscale — pixel (0, 0) is rgb(10, 200, 10)` |
+| a mask that is not the part's size | `is 48x32 and the part is 96x64` |
+| a mask that is not on disk | `the soft mask "x.png" is not at …` |
 
 🚨 **What it cannot do yet.** A carried mesh has two bones on some vertices, and
-a `transform` key (§4.12) needs one coordinate space to be evaluated in — so a
-`parallax` and a jiggle cannot ride the *same* attachment today. The refusal is
-correct as the compiler stands and names the reason; `JG03` in the selftest holds
-it, so the day it changes something fails and says so. Until then, put the two on
-separate slots, or key the slide on the bone.
-
-🖼️ **Worked example: [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex)** — four contours over real art, with
-the `tolerance`/`margin` sweep that picked their settings and what each one measured.
-
-**Bounding box** ([Spine: bounding boxes](http://esotericsoftware.com/spine-bounding-boxes))
-and **clipping** ([Spine: clipping](http://esotericsoftware.com/spine-clipping))
-attachments — a polygon, and nothing else.
-
-**When you need one:** a *bounding box* is a shape the game hit-tests against — a
-hurt box, a pick region, a trigger volume — that follows the skeleton and draws
-nothing. A *clipping* attachment is a **mask**: everything drawn from the slot
-carrying it up to and including `end` is clipped to the polygon, so a window, a
-portal or a wipe is one attachment rather than a second set of art.
-
-```json
-"hitbox_a": { "hitbox_a": { "type": "boundingbox", "vertexCount": 4,
-                            "vertices": [-30, -10, 30, -10, 30, 50, -30, 50] } },
-"mask_a": { "mask_a": { "type": "clipping", "end": "box", "vertexCount": 3,
-                        "vertices": [0, 0, 200, 0, 0, 160],
-                        "color": "ff00ffff" } }
-```
-
-Both polygons above are invented — an axis-aligned rectangle and a right triangle,
-in round numbers, so that nothing here can be mistaken for a shape measured off a
-reference. A real one is measured off your own art (§8) or drawn to the volume the
-game needs.
-
-| Field | Meaning |
-| --- | --- |
-| `vertexCount` | **required.** How many vertices the polygon has, stated outright — see the warning below |
-| `vertices` / `weights` | the same two encodings a mesh's geometry uses, with the same by-name default and the same `"boneIndexing": "raw"` opt-in |
-| `color` | `rrggbbaa`; the colour the editor draws the outline in |
-| `end` | clipping only. The **last** slot the clip applies to, by name |
-| `convex`, `inverse` | clipping only, 4.3, both default false |
-
-🚨 **`vertexCount` has no parser default and rigc will not infer one.** A mesh gets
-its count from `uvs.length`; a polygon has no uvs, and the parser reads
-`map.vertexCount << 1` as the number of coordinates to expect. With the field
-absent that is `undefined << 1` = **0**, so the coordinate array is decoded as a
-*weighted* run — bone counts and weights read out of your x/y pairs — and the
-attachment ends up holding nothing. It loads. Neither type draws a pixel, so
-nothing downstream notices. rigc requires the count and cross-checks it against
-whichever encoding you used; `A33_VERTEX_ATTACHMENT_GEOMETRY` checks it again on
-the artifact.
-
-⚠️ **A clipping `end` that names nothing is not an error to Spine.**
-`skeletonData.findSlot` returns `null` on a miss and the parser assigns that null
-without a word, so the clip never ends — it runs to the bottom of the draw order
-and takes every slot below it out of the frame. rigc refuses a name the rig does
-not declare. Omitting `end` entirely is the format's own way of saying "clip
-everything after this one", and is left alone.
-
-🚫 Under `--profile spine-html` a clipping attachment is refused by
-`A11_NO_CLIPPING_ATTACHMENTS` — that renderer skips them silently, so a mask that
-was supposed to hide something would not. It is valid Spine and the default
-`--profile spine` accepts it; the refusal is policy, not validity.
-
-**Path attachment** ([Spine: paths](http://esotericsoftware.com/spine-paths)) — a
-composite cubic Bezier, and the only attachment whose purpose is to be *followed*.
-
-**When you need one:** a path constraint has nowhere to aim without it (§3.5). The
-curve is not drawn — no runtime renders a path — and it deforms with its slot's
-bone like any other vertex attachment, so an animated path is a moving track.
-
-```json
-"track": { "track": { "type": "path", "vertexCount": 9,
-                      "vertices": [-30, 0,  0, 0,  30, 0,  60, 0,  90, 0,
-                                   120, 0,  150, 0,  180, 0,  210, 0] } }
-```
-
-That is nine invented points forming a straight line: knots at x = 0, 90 and 180
-with their handles evenly spaced between them, which is the simplest path there is
-and the one worth reading twice.
-
-| Field | Meaning |
-| --- | --- |
-| `vertexCount` | **required**, and a multiple of 3 — see below |
-| `vertices` / `weights` | the same two encodings a mesh's geometry uses, with the same by-name default |
-| `closed` | default false. When true the last knot joins the first |
-| `constantSpeed` | default **true**: the runtime re-measures the curve every frame so travel along it is even. `false` makes it trust the emitted `lengths` instead — cheaper, and exact only while the path holds its setup shape |
-| `color` | `rrggbbaa`; the colour the editor draws the curve in |
-
-🚨 **`vertexCount` counts knots AND handles, and the arithmetic is not the one you
-would guess.** The vertices are walked in groups of three, and an **open** path
-drops the first and last point — those two are the outer control handles of the end
-knots, and no curve uses them. So:
-
-- an open path of K curves has `vertexCount = 3(K + 1)`, minimum **6** (one curve);
-- a closed one has `vertexCount = 3K`, minimum **3**, because the chain wraps.
-
-A count that is not a multiple of 3 does not throw anywhere:
-`Utils.newArray(vertexCount / 3, 0)` takes a fractional size happily, the groups of
-six then straddle the knots, and bones slide along a curve nobody drew. rigc refuses
-it, and `A33_VERTEX_ATTACHMENT_GEOMETRY` refuses it again on the artifact.
-
-⚠️ **`lengths` is not yours to write.** The emitted file carries one — the
-cumulative arc length at the end of each curve, in world units, in the setup pose —
-and rigc **measures** it off the geometry above, exactly as it measures a region's
-`width`/`height` off its PNG (R5). Writing one is a `CompileError`: it is a second
-copy of a number the vertices already determine, a copy that disagrees is only
-visible under `constantSpeed: false`, and there it silently rescales the whole
-traversal. `explain` prints the measurement, so `position: 0.25` on a curve that
-reports `180 long` is a bone at 45 units along it.
-
+a `transform` key (§4.12) needs one coordinate space to be evaluated in — so the
+**angle** a raised surface turns through and the **impact** a soft one answers
+cannot ride the *same* attachment today. `SF03` holds that refusal, so the day it
+changes something fails and says so;
+[#389](https://github.com/firejune/rigc/issues/389) has the arithmetic showing it
+need not be true. Until then, put the two on separate slots.
 #### 3.4.1 A skin that switches bones and constraints on
 
 **When you need one:** a skin that is more than a change of art — a variant with an
@@ -2233,14 +2140,13 @@ of this section's parameters are invented.** A radius, an amplitude and a point 
 scale is about are all measurements of a shape the drawing only implies — the
 compiler evaluates what you state and states nothing itself.
 
-**The six kinds.** Each is one closed form, and each ships because a worked
+**The five kinds.** Each is one closed form, and each ships because a worked
 example needed it:
 
 | `kind` | Parameters | What it evaluates | Worked case |
 | --- | --- | --- | --- |
 | `yaw` | `radius` **or** `depth`, `degrees`, `about` | `dx = (x−about)·(cos t − 1) − z·sin t`, with `z = √(radius² − (x−about)²)` from a cylinder or `z` read per vertex off a depth map — the 2.5D turn (FACE §1) | `gallery/portrait` |
 | `pitch` | the same | the same expression with `y` for `x` — a nod rather than a turn | `gallery/nod` |
-| `parallax` | `offset` | `dx = z·offset.x`, `dy = z·offset.y` — the turn's small-angle limit, driven by two numbers instead of an angle. **Requires a `depth` map**; without per-vertex `z` it is a translation, which is a bone move | — |
 | `affine` | `scale`, `about` | `dx = (sx−1)·(x−ax)`, `dy = (sy−1)·(y−ay)` — a scale about a fixed point | `gallery/squash` |
 | `wave` | `amplitude`, `wavelength`, `phase`, `along`, `axis` | `d = amplitude · sin(2π·along/wavelength + phase)` | `gallery/nod` |
 | `bend` | `amount`, `from`, `to`, `power`, `along`, `axis` | `d = amount · u^power`, `u = (along − from)/(to − from)` | `gallery/flex` |
@@ -2262,18 +2168,15 @@ of a run leaves a **step at the run's edge**, and that is one half of the defect
 [#313](https://github.com/firejune/rigc/issues/313) records. If you want a
 partial run, write it.
 
-**`parallax` is `yaw` with the in-plane term dropped, and exactly so.** A turn
-is `dx = u·(cos t − 1) − z·sin t`; a parallax is the second term alone. Subtract
-them and the whole remainder is `u·(cos t − 1)` — **independent of the depth** —
-so as the angle halves the gap quarters. Measured, at 9 vertices with uneven
-depths: `2.32 → 0.58 → 0.15 → 0.037 → 0.0091` px at 16° → 1°, ratios 3.98–4.00
-(`DP05`/`DP06`). Reach for it when a pointer or a camera drives the slide
-directly and there is no angle in the input; reach for `yaw` when there is.
-
-⚠️ It is **refused without a depth map**, and that is a rule rather than a gap:
-with one `z` for every vertex the whole attachment moves by the same amount,
-which is a translate keyed on the bone at two numbers instead of a deform run at
-two per vertex.
+**There is no `parallax` kind, and the reason is worth stating.** A pure depth
+slide — `d = z · offset`, no angle — is this form with a term dropped: subtract
+them and the whole remainder is `u·(cos t − 1)`, independent of the depth, so
+the slide *is* a turn at a small angle (at 16° the gap is 2.32px, at 1°
+0.0091px, quartering with each halving). 🚨 And what it is for is not rigc's to
+state: a depth slide is a **camera** move, driven by a pointer rather than by a
+clock, and this spec is a timeline. What rigc states about a raised surface is
+the **angle** it may turn through, and — for a soft one — how it answers an
+**impact**. The camera belongs to whatever draws the result.
 
 **A turn projects off one surface, stated one way.** `"depth": true` reads each
 vertex's `z` off the map its attachment's generator names (§3.4) instead of

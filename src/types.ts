@@ -960,16 +960,16 @@ export interface RigInfo {
    */
   meshKinds: Record<string, MeshKind | 'authored'>;
   /**
-   * Slots whose mesh binds a region to a second bone by depth, and which bone
-   * — from a generator's `depth.bind` block.
+   * Slots whose mesh carries a SOFT region on a second bone, and which bone —
+   * from a generator's `soft` block.
    *
-   * ⭐ A21 reads it. A rim vertex the depth map CARRIED is supposed to move —
-   * that is what a jiggle is — so the rule splits by declaration rather than
+   * ⭐ A21 reads it. A rim vertex the mask CARRIED is supposed to move — that
+   * is what a soft region is — so the rule splits by declaration rather than
    * being relaxed, exactly as it already splits for a ribbon's entry row: on
-   * such a mesh the invariant is that a rim vertex is either pinned to the slot
+   * such a mesh the invariant is that a vertex is either pinned to the slot
    * bone or shared between it and the declared bone, and never anything else.
    */
-  meshDepthBinds: Record<string, string>;
+  meshSoftBones: Record<string, string>;
   /**
    * Slots whose deform timelines may turn a triangle inside out, from
    * `invariants.deformMayFold`. Empty is the ordinary case, and A39 gates every
@@ -1065,6 +1065,15 @@ export interface CompileResult {
      * a corner of it. Absent when no map was named — never zeroes, which would
      * read as "sampled and found flat".
      */
+    /**
+     * The soft region a `soft` block carried to its own bone, when one was
+     * named — the mask, its digest, and how many vertices it reached.
+     *
+     * ⚠️ Separate from `depth` on purpose. It WAS a depth threshold and that
+     * conflated two properties: the most prominent thing on a face is the nose,
+     * and a nose does not wobble.
+     */
+    soft?: { mask: string; digest: string; bone: string; carried: number; ramped: number };
     depth?: {
       /** The sheet, as written in the spec. */
       image: string;
@@ -1076,11 +1085,7 @@ export interface CompileResult {
       tone: { gamma: number; contrast: number; bias: number };
       /** Least and greatest `z` over the mesh's vertices, in attachment units. */
       range: [number, number];
-      /** The bone a `bind` block carried the near region to, when one was named. */
-      bind?: string;
-      /** Vertices carried outright, and vertices in the feather ramp. */
-      carried?: number;
-      ramped?: number;
+
     };
   }>;
   /** Structural expectations handed to the validator. */

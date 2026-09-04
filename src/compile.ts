@@ -55,6 +55,7 @@ import {
   type RigSpec,
   type RigVertexGeometry,
   type RigDepthMap,
+  type RigSoftRegion,
 } from './rig.ts';
 import {
   buildContourMesh,
@@ -2747,42 +2748,7 @@ function sampleMeshDepth(
     throw err;
   }
 
-  const path = join(ctx.imagesDir, spec.image);
-  if (!existsSync(path)) {
-    throw new CompileError(`${where}: the depth map "${spec.image}" is not at ${relative(process.cwd(), path)}`);
-  }
-  const sheet = readPlate(path);
-  if (sheet.width !== partWidth || sheet.height !== partHeight) {
-    throw new CompileError(
-      `${where}: the depth map "${spec.image}" is ${sheet.width}x${sheet.height} and the part is ` +
-        `${partWidth}x${partHeight}. A depth map is sampled in the part's own pixel grid, so the two are the same ` +
-        'size — resample the sheet, or point at the one that was made for this part.',
-    );
-  }
-
-  // One channel, proved rather than assumed.
-  const level = new Uint8Array(partWidth * partHeight);
-  const cover = new Uint8Array(partWidth * partHeight);
-  let opaqueEverywhere = true;
-  for (let i = 0; i < level.length; i++) {
-    const r = sheet.data[i * 4];
-    const g = sheet.data[i * 4 + 1];
-    const b = sheet.data[i * 4 + 2];
-    if (r !== g || g !== b) {
-      const x = i % partWidth;
-      const y = Math.floor(i / partWidth);
-      throw new CompileError(
-        `${where}: the depth map "${spec.image}" is not greyscale — pixel (${x}, ${y}) is rgb(${r}, ${g}, ${b}). ` +
-          'A depth map is one channel; reading red out of a colour file would turn the part by whatever that ' +
-          'channel happened to hold.',
-      );
-    }
-    level[i] = r;
-    const a = sheet.data[i * 4 + 3];
-    cover[i] = a;
-    if (a !== 255) opaqueEverywhere = false;
-  }
-  const map: DepthMap = { width: partWidth, height: partHeight, level };
+  const { map, cover, opaqueEverywhere } = readGreySheet(spec.image, 'depth', partWidth, partHeight, where, ctx);
 
   // Every texel a bilinear tap touches has to be covered, not just the nearest
   // one: a vertex half a pixel outside the sheet blends real depth with the
@@ -2855,62 +2821,108 @@ function meshBoneRef(name: string, where: string, ctx: AttachmentContext): MeshB
 }
 
 /**
- * Turn a depth map's nearness into mesh weights on a second bone.
+ * Read a one-channel sheet in a part's own pixel grid.
  *
- * ⭐ The jiggle with no mask painted and no weights assigned. The same pass
- * that gave every vertex its `z` says which vertices are near enough to be
- * carried, and by how much; a physics constraint on that bone then moves
- * exactly that region. What a person would otherwise do with a weight brush,
- * derived from a number the manifest already had.
+ * Two callers want the same three refusals — the depth map and the soft-region
+ * mask — and both are a greyscale image that has to line up with the art. What
+ * they do with the levels differs; that a colour file or a mismatched size is a
+ * refusal by name does not.
  *
- * The remainder always stays on the slot bone, so every vertex sums to 1 by
- * construction rather than by A20 catching it later.
+ * `purpose` only spells the messages. It is not a mode: the checks are the same
+ * either way, and a reader has to be told which of their inputs is at fault.
  */
-function bindDepthWeights(
-  bind: NonNullable<RigDepthMap['bind']>,
-  nearness: readonly number[],
+function readGreySheet(
+  image: string,
+  purpose: 'depth' | 'soft',
+  partWidth: number,
+  partHeight: number,
   where: string,
   ctx: AttachmentContext,
-): { weights: MeshVertexWeight[][]; bone: string; carried: number; ramped: number } {
-  const { bone } = bind;
+): { map: DepthMap; cover: Uint8Array; opaqueEverywhere: boolean } {
+  const noun = purpose === 'depth' ? 'depth map' : 'soft mask';
+  if (typeof image !== 'string' || image.length === 0) {
+    throw new CompileError(`${where}: the "${purpose}" block has no image to read`);
+  }
+  const path = join(ctx.imagesDir, image);
+  if (!existsSync(path)) {
+    throw new CompileError(`${where}: the ${noun} "${image}" is not at ${relative(process.cwd(), path)}`);
+  }
+  const sheet = readPlate(path);
+  if (sheet.width !== partWidth || sheet.height !== partHeight) {
+    throw new CompileError(
+      `${where}: the ${noun} "${image}" is ${sheet.width}x${sheet.height} and the part is ` +
+        `${partWidth}x${partHeight}. It is sampled in the part's own pixel grid, so the two are the same size — ` +
+        'resample the sheet, or point at the one that was made for this part.',
+    );
+  }
+  // One channel, proved rather than assumed.
+  const level = new Uint8Array(partWidth * partHeight);
+  const cover = new Uint8Array(partWidth * partHeight);
+  let opaqueEverywhere = true;
+  for (let i = 0; i < level.length; i++) {
+    const r = sheet.data[i * 4];
+    const g = sheet.data[i * 4 + 1];
+    const b = sheet.data[i * 4 + 2];
+    if (r !== g || g !== b) {
+      throw new CompileError(
+        `${where}: the ${noun} "${image}" is not greyscale — pixel (${i % partWidth}, ${Math.floor(i / partWidth)}) ` +
+          `is rgb(${r}, ${g}, ${b}). It is one channel; reading red out of a colour file would use whatever that ` +
+          'channel happened to hold.',
+      );
+    }
+    level[i] = r;
+    const a = sheet.data[i * 4 + 3];
+    cover[i] = a;
+    if (a !== 255) opaqueEverywhere = false;
+  }
+  return { map: { width: partWidth, height: partHeight, level }, cover, opaqueEverywhere };
+}
+
+/**
+ * Read a soft-region mask and turn it into mesh weights on a second bone.
+ *
+ * ⭐ The level IS the weight — black still, white carried — sampled at each
+ * vertex with the same bilinear the depth map uses, so a painted falloff
+ * reaches the mesh as a painted falloff. The remainder always stays on the slot
+ * bone, so every vertex closes at 1 by construction rather than by A20 catching
+ * it later.
+ *
+ * 🚨 This was a DEPTH THRESHOLD for one day and that was wrong: softness and
+ * prominence are different properties, the most prominent thing on a face is
+ * the nose, and a nose does not wobble. See `RigSoftRegion` for the whole of
+ * that correction.
+ */
+function softRegionWeights(
+  spec: RigSoftRegion,
+  points: ReadonlyArray<readonly [number, number]>,
+  partWidth: number,
+  partHeight: number,
+  where: string,
+  ctx: AttachmentContext,
+): { weights: MeshVertexWeight[][]; bone: string; mask: string; digest: string; carried: number; ramped: number } {
+  const { bone } = spec;
   if (typeof bone !== 'string' || bone.length === 0) {
-    throw new CompileError(`${where}: the depth "bind" block has no "bone"; it is the bone the near region is carried by`);
+    throw new CompileError(`${where}: the "soft" block has no "bone"; it is the bone the soft region is carried by`);
   }
   if (!ctx.bones.some((b) => b.name === bone)) {
     throw new CompileError(
-      `${where}: the depth "bind" names bone "${bone}", which this rig does not declare. rigc binds a region to a ` +
-        'bone that already exists rather than creating one — a bone a physics constraint has to target is part of ' +
-        'the skeleton, not a side effect of a mesh.',
+      `${where}: "soft" names bone "${bone}", which this rig does not declare. rigc binds a region to a bone that ` +
+        'already exists rather than creating one — a bone a physics constraint has to target is part of the ' +
+        'skeleton, not a side effect of a mesh.',
     );
   }
   if (bone === ctx.anchorBone) {
     throw new CompileError(
-      `${where}: the depth "bind" names "${bone}", which is this slot's own bone. Binding the near region to the ` +
-        'bone the rest of the mesh is already pinned to moves nothing — the region needs a bone that can move ' +
-        'independently, which is what a physics constraint is put on.',
+      `${where}: "soft" names "${bone}", which is this slot's own bone. Carrying the region with the bone the rest ` +
+        'of the mesh is already pinned to moves nothing — a soft region needs a bone that can move independently, ' +
+        'which is what a physics constraint is put on.',
     );
   }
-  const above = bind.above;
-  if (typeof above !== 'number' || !Number.isFinite(above) || above < 0 || above > 1) {
-    throw new CompileError(
-      `${where}: the depth "bind" has "above": ${JSON.stringify(above)}; it is a nearness, so a number in 0..1`,
-    );
-  }
-  const feather = bind.feather ?? 0;
-  if (typeof feather !== 'number' || !Number.isFinite(feather) || feather < 0) {
-    throw new CompileError(`${where}: the depth "bind" has "feather": ${JSON.stringify(feather)}; it is 0 or more`);
-  }
+  const { map: sheet } = readGreySheet(spec.mask, 'soft', partWidth, partHeight, where, ctx);
   let carried = 0;
   let ramped = 0;
-  const weights = nearness.map((n) => {
-    // Smoothstep rather than a straight ramp: a linear weight has a kink at
-    // both ends of the band, and a kink in the weights is a crease in the art.
-    let w: number;
-    if (feather === 0) w = n >= above ? 1 : 0;
-    else {
-      const t = Math.min(1, Math.max(0, (n - above) / feather));
-      w = t * t * (3 - 2 * t);
-    }
+  const weights = points.map(([x, y]) => {
+    const w = sampleLevel(sheet, x, y) / 255;
     if (w >= 1) carried++;
     else if (w > 0) ramped++;
     if (w <= 0) return [{ bone: 'anchor', weight: 1 }] as MeshVertexWeight[];
@@ -2922,12 +2934,12 @@ function bindDepthWeights(
   });
   if (carried === 0 && ramped === 0) {
     throw new CompileError(
-      `${where}: the depth "bind" carries no vertex — "above" is ${above} and the nearest vertex of this mesh ` +
-        `reaches ${Math.max(...nearness).toFixed(4)}. A region that moves nothing is a physics constraint with ` +
-        'nothing on the end of it; lower "above", or check the map\'s "near" convention.',
+      `${where}: the soft mask "${spec.mask}" carries no vertex of this mesh — every one of its ${points.length} ` +
+        'vertices samples black. A region that moves nothing is a physics constraint with nothing on the end of it; ' +
+        'check that the mask is painted where the mesh actually is, and that it is white where the art is soft.',
     );
   }
-  return { weights, bone, carried, ramped };
+  return { weights, bone, mask: spec.mask, digest: depthDigest(sheet), carried, ramped };
 }
 
 /**
@@ -3024,9 +3036,9 @@ function buildGridAttachment(
       ? undefined
       : sampleMeshDepth(generator.depth, 'grid', geometry.points, plate.width, plate.height, where, ctx);
   const bound =
-    generator.depth?.bind === undefined || depth === undefined
+    generator.soft === undefined
       ? undefined
-      : bindDepthWeights(generator.depth.bind, depth.nearness, where, ctx);
+      : softRegionWeights(generator.soft, geometry.points, plate.width, plate.height, where, ctx);
   if (bound) geometry = { ...geometry, weights: bound.weights };
   const vertices = encodeWeightedVertices(
     geometry,
@@ -3046,12 +3058,11 @@ function buildGridAttachment(
     vertices: geometry.uvs.length / 2,
     triangles: geometry.triangles.length / 3,
     bones: bound ? [ctx.anchorBone, bound.bone] : [ctx.anchorBone],
-    depth:
-      depth === undefined
+    depth: depth?.summary,
+    soft:
+      bound === undefined
         ? undefined
-        : bound === undefined
-          ? depth.summary
-          : { ...depth.summary, bind: bound.bone, carried: bound.carried, ramped: bound.ramped },
+        : { mask: bound.mask, digest: bound.digest, bone: bound.bone, carried: bound.carried, ramped: bound.ramped },
   });
   const out: SpineMeshAttachment = {
     type: 'mesh',
@@ -3493,8 +3504,8 @@ function buildRigInfo(
   }
   const meshKinds: RigInfo['meshKinds'] = {};
   for (const mesh of meshes) meshKinds[mesh.slot] = mesh.kind;
-  const meshDepthBinds: RigInfo['meshDepthBinds'] = {};
-  for (const mesh of meshes) if (mesh.depth?.bind !== undefined) meshDepthBinds[mesh.slot] = mesh.depth.bind;
+  const meshSoftBones: RigInfo['meshSoftBones'] = {};
+  for (const mesh of meshes) if (mesh.soft !== undefined) meshSoftBones[mesh.slot] = mesh.soft.bone;
   // A fold exemption on a slot that carries no mesh cannot exempt anything —
   // A39 reads triangles, and only a mesh has them. `parseRigSpec` already
   // refused a name that is not a SLOT; this is the second half, and it needs
@@ -3531,7 +3542,7 @@ function buildRigInfo(
     detached: (rig.invariants?.detached ?? []).map((d) => [d.bone, d.notUnder] as [string, string]),
     slotOrder: rig.slots.length ? rig.slots.map((s) => s.name) : null,
     meshKinds,
-    meshDepthBinds,
+    meshSoftBones,
     deformMayFold,
     meshSlotBudget: rig.invariants?.meshSlots ?? null,
     meshTriangleBudget: rig.invariants?.meshTriangles ?? null,
