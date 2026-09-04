@@ -155,8 +155,8 @@ What the flags mean:
 | --- | --- |
 | `--rig` | the rig spec — skeleton structure |
 | `--motion` | the motion spec — time |
-| `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths are written relative to it |
-| `--copy-images` | `build` only: also copies every referenced page PNG into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own. Default is unchanged — page paths still point at the source art (issue #217) |
+| `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths and `skeleton.images` are written relative to it |
+| `--copy-images` | `build` only: also copies every referenced page PNG into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own, and points `skeleton.images` at `--out` itself so the editor's import finds the parts beside the skeleton (issue #370; §3.1 says why it is spelled `../<out>/` and not `./`). Default is unchanged — page paths still point at the source art (issue #217) |
 | `--pack` | `build` only: arrange every part onto **shared** atlas page(s), written into `--out` as real PNGs, instead of one page per part. Lossless — nothing is resampled, trimmed or rotated. Default is unchanged (issue #4) — **§0.1** |
 | `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
 | `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1** |
@@ -587,11 +587,15 @@ is recorded in `bench/runs/README.md`, *What a run may read*.)
 | `width`, `height` | setup-pose bounding box size | falls back to the manifest's crop; **with neither, the compile fails** |
 | `fps` | nonessential editor hint | `SkeletonData.fps` stays 30 |
 | `referenceScale` | 4.2+ physics/scale reference | parser default 100 |
-| `images` | nonessential path hint the editor writes | carried through verbatim |
+| `images` | where the editor's import looks for the part PNGs, as a path from the skeleton file | **written for you**: under `--copy-images` the `--out` directory itself, spelled `../<its basename>/` (a literal `./` is dropped by the editor on import; a named directory is kept and every part is found — measured on 4.3.23); otherwise the relative path from `--out` to the one directory the spec names every part PNG in (the rig's images directory, or the manifest's plates). A declared value is carried through verbatim — and overridden by `--copy-images`, which moved the parts. Parts spread over several directories have no single true path, so nothing is written (issue #370) |
 
 `spine` and `hash` are not yours to write: rigc emits its own version label
 (`A16` re-checks it is on the 4.3 line) and inventing a hash would claim an export
-this file did not come from.
+this file did not come from. The editor's import then warns `Data version 4.3.13
+does not match Spine version 4.3.23. The Spine version should match the version
+that exported the data file.` and imports anyway — the label is the runtime rigc
+links, not the editor that will open the file, and the warning is harmless
+(issue #370).
 
 `width`/`height` are what `A14` and `A19` measure against, so a guessed stage is a
 gate measuring against a number nobody wrote down.

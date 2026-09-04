@@ -743,6 +743,10 @@ function cmdBuild(flags: Record<string, string>): void {
         'the loose part PNGs, which a packed atlas does not reference. Drop --copy-images',
     );
   }
+  // The copy itself happens after the gate (below). The header has to know NOW,
+  // because the skeleton text the gate reads is the skeleton text that is written
+  // — `skeleton.images` says where the parts will be (issue #370).
+  if (flags['copy-images'] !== undefined) opts.copyImages = true;
   // `--pack --profile spine-html` used to be the third refusal here, because
   // A06's coverage clause was "one part per page" flat and a legitimate pack
   // arrived at the gate reading as a defect. Since issue #266's second follow-up
@@ -2248,12 +2252,13 @@ function cmdExplain(flags: Record<string, string>): void {
 const FLAG_MEANINGS: Record<string, string> = {
   rig: 'the rig spec — skeleton structure',
   motion: 'the motion spec — time',
-  out: 'directory for skeleton.json + skeleton.atlas; atlas page paths are written relative to it',
+  out: 'directory for skeleton.json + skeleton.atlas; atlas page paths and skeleton.images are written relative to it',
   images: "override the rig spec's own images directory (relative to your working directory)",
   manifest: 'a cut manifest, for a rig with measured art behind it; a foreign skeleton has none',
   'copy-images':
     'also copy every referenced page PNG into --out and rewrite the atlas to the copies, so the directory is ' +
-    'self-contained enough to zip or commit on its own (default: page paths still point at the source art)',
+    'self-contained enough to zip or commit on its own, and point skeleton.images at --out itself so the editor finds ' +
+    'the parts beside the skeleton on import (default: page paths still point at the source art)',
   pack: 'arrange every part PNG onto shared atlas page(s) written into --out as real PNGs, instead of one page ' +
     'per part. Lossless: every region is a byte-for-byte copy and nothing is resampled, trimmed or rotated ' +
     '(default: one part, one page, pointing at the source art)',

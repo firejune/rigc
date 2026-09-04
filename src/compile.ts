@@ -515,6 +515,72 @@ export interface CompileOptions {
    * to `outDir`. See `resolveFromAtlas`.
    */
   atlasInPath?: string;
+  /**
+   * `build --copy-images` is copying every page PNG into `outDir` (`src/emit.ts`),
+   * so the header's `images` path names `outDir` itself — the parts will sit
+   * beside the skeleton file, wherever the rig's own images directory is. The copy
+   * itself stays in `cli.ts`; this only tells `skeletonImagesPath` where the parts
+   * will be.
+   */
+  copyImages?: boolean;
+}
+
+/**
+ * `skeleton.images` — where the editor's import looks for the part images, as a
+ * path from the skeleton file (issue #370).
+ *
+ * The editor reads a build with this field absent, shows every attachment
+ * missing, and prints `Images path not found` on the way out, because nothing
+ * told it where the parts are — and under `--copy-images` they are RIGHT BESIDE
+ * `skeleton.json`, one PNG per part, named as the attachments are. So the field
+ * states a fact about the build's own layout, the same fact the atlas's page
+ * names already state, and it is derived the same way they are (`relative` from
+ * `outDir`, POSIX separators — so two checkouts of one tree emit one file and
+ * A18 holds). In precedence order:
+ *
+ *   1. `--copy-images` → the output directory itself, spelled from the skeleton's
+ *      own point of view as `../<its basename>/`. The flag moved the pages next to
+ *      the skeleton, and a declared path would be a claim about a layout the flag
+ *      replaced — exactly as the flag rewrites the atlas's page names.
+ *   2. A declared `skeleton.images` → verbatim. R1: a field the author wrote is
+ *      emitted as written.
+ *   3. Otherwise the relative path from `outDir` to the ONE directory the spec
+ *      names every part PNG in — the rig's images directory, or the manifest's
+ *      plates. `partDirs` is that set: read from the spec's own paths, so a
+ *      `--atlas-in` build names the same directory its loose twin does (the pack
+ *      changed the pixel source, not the rig) and the two skeletons stay
+ *      byte-identical. Parts spread over more than one directory have no single
+ *      path that is true of all of them, and a rig with no parts has nothing to
+ *      point at: neither writes the field. An absence is a fact; a guess is not.
+ *
+ * ⚠️ Why `../build/` and never `./` for "this very directory": the editor was
+ * measured (Spine 4.3.23, CLI import then export, issue #370). It resolves
+ * `images` against the skeleton file's directory and re-anchors it to the project
+ * on export — `./images` and `../parts/` both come back as a path to the same
+ * directory with every part found — but it collapses `./` and `.` to no path at
+ * all, after which the parts are found only if the project happens to be saved
+ * beside the skeleton. Naming the directory says the same thing in the one
+ * spelling the editor keeps.
+ *
+ * A trailing `/` throughout, as the format page's own example (`"./images/"`)
+ * spells it, so `../build/` and `../parts/` read alike.
+ */
+function skeletonImagesPath(
+  declared: string | undefined,
+  opts: CompileOptions,
+  outDir: string,
+  partDirs: Set<string>,
+): string | undefined {
+  // `outDir` named from inside itself. The filesystem root has no basename to
+  // name it by; `./` is the only spelling left there, and nobody builds into `/`.
+  const self = basename(outDir) === '' ? './' : `../${basename(outDir)}/`;
+  if (opts.copyImages) return self;
+  if (declared !== undefined) return declared;
+  if (partDirs.size !== 1) return undefined;
+  const [partsDir] = partDirs;
+  const rel = relative(outDir, partsDir).split('\\').join('/');
+  if (rel === '') return self;
+  return rel.startsWith('..') ? `${rel}/` : `./${rel}/`;
 }
 
 /**
@@ -834,6 +900,13 @@ export function compile(opts: CompileOptions): CompileResult {
   const images: CompiledImage[] = [];
   const droppedStates: CompileResult['droppedStates'] = [];
   const seenRegions = new Set<string>();
+  /**
+   * Every directory the spec names a part PNG in — `skeletonImagesPath` reads it.
+   * Recorded from the spec's own path whether or not the pixels came from there:
+   * `--atlas-in` changes the pixel source, not where the rig says its parts are,
+   * and the skeleton has to stay byte-identical between the two (PK11).
+   */
+  const partDirs = new Set<string>();
 
   /** The pre-packed atlas `--atlas-in` named, parsed once, or null. */
   const atlasIn = opts.atlasInPath === undefined ? null : readAtlasIn(resolve(opts.atlasInPath));
@@ -843,11 +916,13 @@ export function compile(opts: CompileOptions): CompileResult {
     if (seenRegions.has(region)) {
       throw new CompileError(`duplicate region name "${region}" (${relPath})`);
     }
+    const loosePath = resolve(baseDir, relPath);
     const img =
       atlasIn === null
-        ? fromLoosePng(relPath, resolve(baseDir, relPath), region, isBase, outDir)
+        ? fromLoosePng(relPath, loosePath, region, isBase, outDir)
         : resolveFromAtlas(relPath, region, isBase, outDir, atlasIn);
     seenRegions.add(region);
+    partDirs.add(dirname(loosePath));
     images.push(img);
     return img;
   };
@@ -1592,7 +1667,8 @@ export function compile(opts: CompileOptions): CompileResult {
   };
   if (rig.skeleton?.fps !== undefined) header.fps = rig.skeleton.fps;
   if (rig.skeleton?.referenceScale !== undefined) header.referenceScale = rig.skeleton.referenceScale;
-  if (rig.skeleton?.images !== undefined) header.images = rig.skeleton.images;
+  const imagesPath = skeletonImagesPath(rig.skeleton?.images, opts, outDir, partDirs);
+  if (imagesPath !== undefined) header.images = imagesPath;
 
   // Event definitions. Emitted in the order the rig spec declares them — object
   // key order is the spec's, not a set's, so A18 stays a contract.
