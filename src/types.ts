@@ -1045,6 +1045,27 @@ export interface CompileResult {
      * authored mesh was not traced.
      */
     holePixels?: number;
+    /**
+     * What a depth map put on this mesh's vertices, when one was named.
+     *
+     * The digest is over the levels rather than the file, so a re-encode of the
+     * same sheet reports the same provenance; `range` is what was actually
+     * sampled, which is the number that says whether the map covers the part or
+     * a corner of it. Absent when no map was named — never zeroes, which would
+     * read as "sampled and found flat".
+     */
+    depth?: {
+      /** The sheet, as written in the spec. */
+      image: string;
+      /** First 16 hex of a sha256 over width, height and levels. */
+      digest: string;
+      near: 'white' | 'black';
+      zScale: number;
+      /** The stated curve, in full — `1 / 1 / 0` is the straight line. */
+      tone: { gamma: number; contrast: number; bias: number };
+      /** Least and greatest `z` over the mesh's vertices, in attachment units. */
+      range: [number, number];
+    };
   }>;
   /** Structural expectations handed to the validator. */
   rig: RigInfo;

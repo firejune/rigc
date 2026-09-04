@@ -17,9 +17,20 @@
  * Determinism is a contract, not a habit: `validate` re-runs this and compares
  * the two emits byte for byte (assertion A18).
  */
-import { basename, dirname, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { readPngInfo } from './png.ts';
+import {
+  DEPTH_TONE_IDENTITY,
+  DepthError,
+  checkTone,
+  checkZScale,
+  depthDigest,
+  sampleDepth,
+  type DepthMap,
+  type DepthNear,
+  type DepthTone,
+} from './depth.ts';
 import { CompileError, NotImplementedError } from './errors.ts';
 import { parseJsonWithPosition } from './json-position.ts';
 import { parseMotionSpec } from './motion.ts';
@@ -1246,6 +1257,9 @@ export function compile(opts: CompileOptions): CompileResult {
   for (const skinName of skinNames) tableFor(skinName);
   const meshBones = new Set<string>();
   const meshes: CompileResult['meshes'] = [];
+  // `skin/slot/attachment` -> per-vertex z, for the attachments that named a
+  // depth map. Read at deform-key time; never emitted. See `AttachmentContext`.
+  const attachmentDepths = new Map<string, number[]>();
 
   for (const rigSlot of rig.slots) {
     const part = partBySlot.get(rigSlot.name);
@@ -1335,6 +1349,9 @@ export function compile(opts: CompileOptions): CompileResult {
           meshes,
           slotName: rigSlot.name,
           anchorBone: rigSlot.bone,
+          skinName,
+          imagesDir,
+          depths: attachmentDepths,
           slotNames: new Set(rig.slots.map((s) => s.name)),
         });
       }
@@ -1665,7 +1682,10 @@ export function compile(opts: CompileOptions): CompileResult {
           motion,
           animName,
           anim.duration,
-          deformGeometryOf(attachment, at),
+          {
+            ...deformGeometryOf(attachment, at),
+            depth: attachmentDepths.get(`${skinName}/${track.slot}/${track.attachment}`) ?? null,
+          },
           deformTransforms,
         );
         for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
@@ -1930,6 +1950,25 @@ interface AttachmentContext {
   meshes: CompileResult['meshes'];
   slotName: string;
   anchorBone: string;
+  /** Which skin this attachment is being built for — half of a `depths` key. */
+  skinName: string;
+  /**
+   * Where a file the spec names is resolved from. A depth map is read from here
+   * and never packed, so it is the one input path that does not go through
+   * `images`.
+   */
+  imagesDir: string;
+  /**
+   * Per-vertex `z` for the attachments that named a depth map, keyed by
+   * `skin/slot/attachment`.
+   *
+   * ⭐ It rides beside the emitted attachment rather than on it. A `z` written
+   * into the mesh would be a field the Spine format has no room for — the
+   * parser drops what it does not know, so it would survive exactly until the
+   * round trip and then vanish — and the whole point of this table is to be
+   * read by `evaluateDeformTransform` at key time and never emitted at all.
+   */
+  depths: Map<string, number[]>;
   /** Every slot the rig declares — a clipping attachment's `end` resolves here. */
   slotNames: Set<string>;
 }
@@ -2638,6 +2677,152 @@ function buildGeneratedMesh(
   return out;
 }
 
+/**
+ * Read a depth map, check it against the part it claims to describe, and put a
+ * `z` on every vertex.
+ *
+ * ## The three refusals, and why each one is a refusal
+ *
+ * **A size that is not the part's.** The map is sampled in part-local pixels,
+ * so a sheet of a different size is a different coordinate system; sampling it
+ * anyway would read the right shape from the wrong place and produce a turn
+ * that is subtly, plausibly wrong everywhere.
+ *
+ * **A colour image.** A depth map is one channel. Silently taking red from an
+ * RGB file works right up until somebody hands over a normal map or a tinted
+ * preview, and then the part turns by whatever the red channel happened to say.
+ *
+ * **A vertex the map does not cover.** This is the one that is easy to miss and
+ * ruins the result. A `contour` mesh's vertices are ALL on the silhouette, and
+ * the outline is pushed `margin` pixels OUTSIDE it — while a depth sheet is
+ * usually cut to the art's own alpha. Sample naively and every vertex reads the
+ * sheet's transparent background, the whole rim takes the background depth, and
+ * the silhouette folds away from the turn. Nothing about that is detectable
+ * downstream: the arithmetic is correct and the numbers are plausible. So a
+ * sheet that carries an alpha channel is held to it, and the fix — dilate the
+ * sheet past the mesh margin — is named in the message.
+ *
+ * A sheet with no alpha channel covers its whole grid by construction and the
+ * third check has nothing to test; what the background level means is then the
+ * author's statement, and `range` in the report is where it shows up.
+ */
+function sampleContourDepth(
+  spec: NonNullable<Extract<NonNullable<RigMeshAttachment['generator']>, { kind: 'contour' }>['depth']>,
+  points: ReadonlyArray<readonly [number, number]>,
+  partWidth: number,
+  partHeight: number,
+  where: string,
+  ctx: AttachmentContext,
+): { z: number[]; summary: NonNullable<CompileResult['meshes'][number]['depth']> } {
+  if (typeof spec.image !== 'string' || spec.image.length === 0) {
+    throw new CompileError(`${where}: the depth block has no "image"; it is the sheet to sample, relative to the rig's images directory`);
+  }
+  if (spec.near !== 'white' && spec.near !== 'black') {
+    throw new CompileError(
+      `${where}: the depth block says "near": ${JSON.stringify(spec.near)}; it is "white" or "black". Both ` +
+        'conventions are in use, and a sheet read with the wrong one turns the part inside out with every gate green.',
+    );
+  }
+  const tone: DepthTone = {
+    gamma: spec.gamma ?? DEPTH_TONE_IDENTITY.gamma,
+    contrast: spec.contrast ?? DEPTH_TONE_IDENTITY.contrast,
+    bias: spec.bias ?? DEPTH_TONE_IDENTITY.bias,
+  };
+  try {
+    checkTone(tone, where);
+    checkZScale(spec.zScale, where);
+  } catch (err) {
+    if (err instanceof DepthError) throw new CompileError(err.message);
+    throw err;
+  }
+
+  const path = join(ctx.imagesDir, spec.image);
+  if (!existsSync(path)) {
+    throw new CompileError(`${where}: the depth map "${spec.image}" is not at ${relative(process.cwd(), path)}`);
+  }
+  const sheet = readPlate(path);
+  if (sheet.width !== partWidth || sheet.height !== partHeight) {
+    throw new CompileError(
+      `${where}: the depth map "${spec.image}" is ${sheet.width}x${sheet.height} and the part is ` +
+        `${partWidth}x${partHeight}. A depth map is sampled in the part's own pixel grid, so the two are the same ` +
+        'size — resample the sheet, or point at the one that was made for this part.',
+    );
+  }
+
+  // One channel, proved rather than assumed.
+  const level = new Uint8Array(partWidth * partHeight);
+  const cover = new Uint8Array(partWidth * partHeight);
+  let opaqueEverywhere = true;
+  for (let i = 0; i < level.length; i++) {
+    const r = sheet.data[i * 4];
+    const g = sheet.data[i * 4 + 1];
+    const b = sheet.data[i * 4 + 2];
+    if (r !== g || g !== b) {
+      const x = i % partWidth;
+      const y = Math.floor(i / partWidth);
+      throw new CompileError(
+        `${where}: the depth map "${spec.image}" is not greyscale — pixel (${x}, ${y}) is rgb(${r}, ${g}, ${b}). ` +
+          'A depth map is one channel; reading red out of a colour file would turn the part by whatever that ' +
+          'channel happened to hold.',
+      );
+    }
+    level[i] = r;
+    const a = sheet.data[i * 4 + 3];
+    cover[i] = a;
+    if (a !== 255) opaqueEverywhere = false;
+  }
+  const map: DepthMap = { width: partWidth, height: partHeight, level };
+
+  // Every texel a bilinear tap touches has to be covered, not just the nearest
+  // one: a vertex half a pixel outside the sheet blends real depth with the
+  // background and lands somewhere neither states.
+  const uncovered: number[] = [];
+  if (!opaqueEverywhere) {
+    const cx = (i: number): number => (i < 0 ? 0 : i > partWidth - 1 ? partWidth - 1 : i);
+    const cy = (j: number): number => (j < 0 ? 0 : j > partHeight - 1 ? partHeight - 1 : j);
+    for (let v = 0; v < points.length; v++) {
+      const x0 = Math.floor(points[v][0] - 0.5);
+      const y0 = Math.floor(points[v][1] - 0.5);
+      let covered = true;
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+        if (cover[cy(y0 + dy) * partWidth + cx(x0 + dx)] !== 255) covered = false;
+      }
+      if (!covered) uncovered.push(v);
+    }
+  }
+  if (uncovered.length > 0) {
+    const first = uncovered[0];
+    throw new CompileError(
+      `${where}: the depth map "${spec.image}" does not cover ${uncovered.length} of the mesh's ${points.length} ` +
+        `vertices — the first is vertex ${first} at (${points[first][0]}, ${points[first][1]}). A contour mesh puts ` +
+        'every vertex ON the silhouette and pushes it out by the margin, so a sheet cut to the art stops short of ' +
+        'them; sampling anyway would give the whole rim the background depth and fold it away from the turn. ' +
+        'Dilate the sheet past the mesh margin, or lower the margin.',
+    );
+  }
+
+  const z: number[] = [];
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const [x, y] of points) {
+    const d = sampleDepth(map, x, y, spec.near as DepthNear, tone, spec.zScale);
+    z.push(d);
+    if (d < lo) lo = d;
+    if (d > hi) hi = d;
+  }
+  return {
+    z,
+    summary: {
+      image: spec.image,
+      digest: depthDigest(map),
+      near: spec.near,
+      zScale: spec.zScale,
+      tone,
+      range: [r6(lo), r6(hi)],
+    },
+  };
+}
+
 /** Defaults for the `contour` generator's optional parameters, stated once. */
 const CONTOUR_DEFAULTS = { margin: 1, maxVertices: 64, alpha: 1 } as const;
 
@@ -2731,6 +2916,14 @@ function buildContourAttachment(
     { anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) }, controls: [] },
   );
   ctx.meshBones.add(ctx.anchorBone);
+  // The depth map is sampled on the TRACED grid — the plate's — because that is
+  // the grid the vertices are in. `toArt` scales positions into world units
+  // afterwards and does not touch `z`, which carries its own stated scale.
+  const depth =
+    generator.depth === undefined
+      ? undefined
+      : sampleContourDepth(generator.depth, geometry.points, plate.width, plate.height, where, ctx);
+  if (depth !== undefined) ctx.depths.set(`${ctx.skinName}/${ctx.slotName}/${placeholder}`, depth.z);
   ctx.meshes.push({
     slot: ctx.slotName,
     kind: 'contour',
@@ -2741,6 +2934,7 @@ function buildContourAttachment(
     coverage: geometry.contour?.coverage,
     overshoot: geometry.contour?.overshoot,
     holePixels: geometry.contour?.holePixels,
+    depth: depth?.summary,
   });
   const out: SpineMeshAttachment = {
     type: 'mesh',
@@ -3757,6 +3951,15 @@ interface DeformGeometry {
   setup: number[] | null;
   /** Why `setup` is null, phrased for the refusal. Null when it is not. */
   setupWhy: string | null;
+  /**
+   * Per-vertex `z`, when this attachment's generator named a depth map.
+   *
+   * Not measured from the emitted attachment like everything else here — there
+   * is nowhere in the format to measure it FROM, which is the whole reason the
+   * sampler keeps it beside the skeleton instead of in it. Filled in by the
+   * caller, which is where the skin, slot and attachment names live.
+   */
+  depth: readonly number[] | null;
 }
 
 /**
@@ -3801,6 +4004,9 @@ function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
       // vertex in the slot bone's space, which is the space the offsets are in.
       setup: vertices.slice(),
       setupWhy: null,
+      // Filled in by the caller; `deformGeometryOf` reads the emitted
+      // attachment, and the depth is deliberately not in it.
+      depth: null,
     };
   }
   // Walk the weight run for the per-vertex influence counts. The run's own shape
@@ -3850,6 +4056,7 @@ function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
     boneCounts,
     setup: setupWhy === null ? bindSpace : null,
     setupWhy,
+    depth: null,
   };
 }
 
@@ -3942,7 +4149,7 @@ function compileDeformTrack(
             'write the bind-space pairs yourself and start the run with "offset".',
         );
       }
-      const report = evaluateDeformTransform(key.transform, geometry.setup, r6, `${where} (t=${key.t})`);
+      const report = evaluateDeformTransform(key.transform, geometry.setup, r6, `${where} (t=${key.t})`, geometry.depth);
       if (report.offsets.length !== geometry.deformLength) {
         // Unreachable while `setup` is one pair per vertex and `deformLength` is
         // twice the vertex count, which is the whole reason both are derived

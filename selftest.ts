@@ -6608,6 +6608,58 @@ function writeContourArt(path: string, art: (x: number, y: number) => boolean, w
   plate.writePng(path);
 }
 
+/**
+ * A depth sheet for the blob, in the blob's own grid (issue #382).
+ *
+ * `kind` picks which property of the input is being exercised:
+ *
+ *   flat    — one level everywhere, fully opaque. Every vertex gets the SAME z,
+ *             which is the only shape whose expected value survives bilinear
+ *             sampling as exact arithmetic and can therefore be asserted
+ *             against a number written here rather than against the sampler.
+ *   ramp    — level rises with x, fully opaque. The case that proves z actually
+ *             VARIES per vertex, which is the whole feature.
+ *   tight   — a ramp cut to the art's own alpha. The hazard: a contour mesh's
+ *             vertices are all on the silhouette, pushed out by the margin, so
+ *             a sheet cut to the art covers NONE of them.
+ *   colour  — not greyscale.
+ */
+function writeDepthSheet(
+  path: string,
+  kind: 'flat' | 'ramp' | 'tight' | 'colour',
+  width: number,
+  height: number,
+  art: (x: number, y: number) => boolean,
+  flatLevel = DEPTH_FLAT_LEVEL,
+): void {
+  const plate = new Plate(width, height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (kind === 'colour') {
+        plate.set(x, y, [10, 200, 10, 255]);
+        continue;
+      }
+      const level = kind === 'flat' ? flatLevel : Math.round((x / (width - 1)) * 255);
+      const covered = kind === 'tight' ? art(x, y) : true;
+      plate.set(x, y, [level, level, level, covered ? 255 : 0]);
+    }
+  }
+  plate.writePng(path);
+}
+
+/**
+ * The one level a `flat` sheet carries.
+ *
+ * 51, because 51/255 is 0.2 and 0.2 × 50 is 10 — a chain of exact arithmetic,
+ * so DP01 can assert a NUMBER rather than a tolerance and a wrong sampler has
+ * nowhere to hide inside rounding.
+ */
+const DEPTH_FLAT_LEVEL = 51;
+/** World units the sheet's full range spans, stated in the spec like a radius. */
+const DEPTH_Z_SCALE = 50;
+/** The turn the depth cases project, in degrees. */
+const DEPTH_DEGREES = 18;
+
 interface ContourBuild {
   dir: string;
   opts: Options;
@@ -6635,11 +6687,25 @@ function buildContourRig(
     height?: number;
     bone?: [number, number];
     invariants?: Record<string, unknown> | null;
+    /** Also write a depth sheet beside the art — see `writeDepthSheet`. */
+    depth?: { kind: 'flat' | 'ramp' | 'tight' | 'colour'; width?: number; height?: number };
+    /** A motion spec other than the empty one, for the cases that key a deform. */
+    motion?: Record<string, unknown>;
   } = {},
 ): ContourBuild {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-contour-'));
   const artPath = join(dir, 'blob.png');
-  writeContourArt(artPath, extra.art ?? contourBlob, extra.width ?? CONTOUR_W, extra.height ?? CONTOUR_H);
+  const art = extra.art ?? contourBlob;
+  writeContourArt(artPath, art, extra.width ?? CONTOUR_W, extra.height ?? CONTOUR_H);
+  if (extra.depth) {
+    writeDepthSheet(
+      join(dir, 'blob_depth.png'),
+      extra.depth.kind,
+      extra.depth.width ?? extra.width ?? CONTOUR_W,
+      extra.depth.height ?? extra.height ?? CONTOUR_H,
+      art,
+    );
+  }
   const [bx, by] = extra.bone ?? CONTOUR_BONE;
   const rigPath = join(dir, 'probe.rig.json');
   writeFileSync(
@@ -6659,7 +6725,7 @@ function buildContourRig(
     )}\n`,
   );
   const motionPath = join(dir, 'probe.motion.json');
-  writeFileSync(motionPath, `${JSON.stringify(CONTOUR_MOTION, null, 2)}\n`);
+  writeFileSync(motionPath, `${JSON.stringify(extra.motion ?? CONTOUR_MOTION, null, 2)}\n`);
   const opts: Options = { rigPath, motionPath, outDir: join(dir, 'spine'), imagesDir: dir };
   return { dir, opts, artPath, result: compile(opts) };
 }
@@ -7093,6 +7159,209 @@ function runContourMeshSuite(): number {
           .map(([label, got, want]) => `${label}: expected "${want}", got ${got === null ? 'a clean compile' : got}`)
           .join(' | '),
     'the parser drops an attachment it cannot read and says nothing, so a generator that cannot deliver has to say so itself',
+  );
+
+  // --- a depth map instead of a cylinder (issue #382) ----------------------
+  //
+  // `yaw` derives z from one radius. A depth map states it per vertex, and what
+  // these cases have to establish is that the stated one is what reached the
+  // artifact — so every reading below is RECOVERED FROM THE EMITTED SKELETON by
+  // inverting the closed form, never read off the compiler's own report. The
+  // sampler is not allowed to be its own witness.
+  const depthAttachment = (depth: Record<string, unknown>): Record<string, unknown> => ({
+    type: 'mesh',
+    image: 'blob.png',
+    generator: { kind: 'contour', tolerance: CONTOUR_TOLERANCE, margin: CONTOUR_MARGIN, maxVertices: 48, depth },
+  });
+  const depthMotion = (degrees: number): Record<string, unknown> => ({
+    ...CONTOUR_MOTION,
+    animations: {
+      turn: {
+        duration: 1,
+        tracks: [],
+        deform: [
+          {
+            slot: 'blob',
+            attachment: 'blob',
+            keys: [{ t: 1, transform: { kind: 'yaw', depth: true, degrees } }],
+          },
+        ],
+      },
+    },
+  });
+
+  /**
+   * Every vertex's z, recovered from the emitted deform run.
+   *
+   * `dx = x·(cos t − 1) − z·sin t` with `about` unstated, so `z` falls out as
+   * `(x·(cos t − 1) − dx) / sin t`. Both `x` and `dx` are read out of
+   * `skeleton.json` — the weighted vertex run gives the bind-space x, the
+   * deform key gives the offset — which is what makes this a measurement of the
+   * ARTIFACT rather than a restatement of the report.
+   */
+  const recoverDepths = (skeletonText: string, degrees: number): number[] => {
+    // Typed to exactly the two paths this reads. A cast to `any` here would let
+    // a rename anywhere along either path go through as `undefined` and come
+    // back as NaN, which is the shape of failure this whole file exists to stop.
+    interface EmittedSkeleton {
+      skins: Array<{ attachments: { blob: { blob: { vertices: number[] } } } }>;
+      animations: {
+        turn: { attachments: { default: { blob: { blob: { deform: Array<{ vertices: number[] }> } } } } };
+      };
+    }
+    const skel = JSON.parse(skeletonText) as EmittedSkeleton;
+    const run = skel.skins[0].attachments.blob.blob.vertices;
+    const xs: number[] = [];
+    for (let i = 0; i < run.length; ) {
+      const n = run[i++];
+      if (n !== 1) throw new Error(`a depth case emitted a vertex with ${n} influences; these are pinned meshes`);
+      xs.push(run[i + 1]);
+      i += 4;
+    }
+    const offsets = skel.animations.turn.attachments.default.blob.blob.deform[0].vertices;
+    const rad = (degrees * Math.PI) / 180;
+    const cosMinus1 = Math.cos(rad) - 1;
+    const sin = Math.sin(rad);
+    return xs.map((x, v) => (x * cosMinus1 - offsets[2 * v]) / sin);
+  };
+
+  const flatBuild = buildContourRig(
+    depthAttachment({ image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE }),
+    { depth: { kind: 'flat' }, motion: depthMotion(DEPTH_DEGREES) },
+  );
+  const flatZ = recoverDepths(flatBuild.result.skeletonText, DEPTH_DEGREES);
+  // 51/255 · 50 = 10, exactly, at every vertex — the sheet is one level and
+  // bilinear sampling of a constant is that constant wherever it lands.
+  const flatWant = (DEPTH_FLAT_LEVEL / 255) * DEPTH_Z_SCALE;
+  const flatWorst = flatZ.reduce((m, z) => Math.max(m, Math.abs(z - flatWant)), 0);
+  say(
+    'DP01_A_FLAT_DEPTH_SHEET_PUTS_ITS_STATED_Z_ON_EVERY_VERTEX',
+    flatZ.length > 0 && flatWorst < 1e-4,
+    `${flatZ.length} vertices, each recovered from the emitted turn at z=${flatWant} (worst error ${flatWorst.toExponential(2)})`,
+    'the whole chain — sheet, near, tone, zScale, the key — collapses to one number on a constant sheet, so a wrong step anywhere in it moves this off 10',
+  );
+
+  const rampBuild = buildContourRig(
+    depthAttachment({ image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE }),
+    { depth: { kind: 'ramp' }, motion: depthMotion(DEPTH_DEGREES) },
+  );
+  const rampZ = recoverDepths(rampBuild.result.skeletonText, DEPTH_DEGREES);
+  const rampPoints = contourPointsOf(loadedContourMesh(rampBuild).mesh);
+  // The sheet rises with x, so the leftmost vertex has to come back nearer the
+  // far end and the rightmost nearer the near end. A sampler that ignored the
+  // position — or read the map transposed — passes DP01 and fails this.
+  let leftV = 0;
+  let rightV = 0;
+  rampPoints.forEach(([x], v) => {
+    if (x < rampPoints[leftV][0]) leftV = v;
+    if (x > rampPoints[rightV][0]) rightV = v;
+  });
+  const rampSpread = Math.max(...rampZ) - Math.min(...rampZ);
+  say(
+    'DP02_A_RAMPED_SHEET_GIVES_EACH_VERTEX_ITS_OWN_Z_IN_THE_DIRECTION_THE_SHEET_RISES',
+    rampZ[leftV] < rampZ[rightV] && rampSpread > DEPTH_Z_SCALE * 0.5,
+    `leftmost vertex (x=${rampPoints[leftV][0]}) z=${rampZ[leftV].toFixed(3)} < rightmost (x=${rampPoints[rightV][0]}) ` +
+      `z=${rampZ[rightV].toFixed(3)}; spread ${rampSpread.toFixed(3)} over ${rampZ.length} vertices`,
+    'per-vertex depth is the entire feature, and a cylinder cannot produce a monotone ramp across a concave outline',
+  );
+
+  const blackBuild = buildContourRig(
+    depthAttachment({ image: 'blob_depth.png', near: 'black', zScale: DEPTH_Z_SCALE }),
+    { depth: { kind: 'ramp' }, motion: depthMotion(DEPTH_DEGREES) },
+  );
+  const blackZ = recoverDepths(blackBuild.result.skeletonText, DEPTH_DEGREES);
+  // near: black is the same sheet read the other way round, so every vertex has
+  // to land at zScale − its white reading. Stated as an identity rather than as
+  // "the order flips", because the order flipping is also what a sign error does.
+  const blackWorst = blackZ.reduce((m, z, v) => Math.max(m, Math.abs(z - (DEPTH_Z_SCALE - rampZ[v]))), 0);
+  say(
+    'DP03_NEAR_BLACK_READS_THE_SAME_SHEET_AS_ZSCALE_MINUS_THE_WHITE_READING',
+    blackWorst < 1e-4,
+    `${blackZ.length} vertices, worst departure from zScale − z_white: ${blackWorst.toExponential(2)}`,
+    'both conventions are in use and a sheet read with the wrong one turns the part inside out with every gate still green, so the convention has to do exactly this and nothing else',
+  );
+
+  const depthRefusals: Array<[string, string | null, string]> = [
+    [
+      'a sheet cut to the art, which covers none of a contour mesh\'s vertices',
+      contourRefusal(depthAttachment({ image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE }), {
+        depth: { kind: 'tight' },
+      }),
+      'does not cover',
+    ],
+    [
+      'a colour sheet',
+      contourRefusal(depthAttachment({ image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE }), {
+        depth: { kind: 'colour' },
+      }),
+      'is not greyscale',
+    ],
+    [
+      'a sheet that is not the part\'s size',
+      contourRefusal(depthAttachment({ image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE }), {
+        depth: { kind: 'flat', width: CONTOUR_W / 2, height: CONTOUR_H / 2 },
+      }),
+      'the part is',
+    ],
+    [
+      'a zScale of zero',
+      contourRefusal(depthAttachment({ image: 'blob_depth.png', near: 'white', zScale: 0 }), { depth: { kind: 'flat' } }),
+      'positive number',
+    ],
+    [
+      'a contrast of zero, which describes a flat part',
+      contourRefusal(
+        depthAttachment({ image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE, contrast: 0 }),
+        { depth: { kind: 'ramp' } },
+      ),
+      'collapses the range',
+    ],
+    [
+      'a near the sheet does not have a convention for',
+      contourRefusal(depthAttachment({ image: 'blob_depth.png', near: 'grey', zScale: DEPTH_Z_SCALE }), {
+        depth: { kind: 'flat' },
+      }),
+      'it is "white" or "black"',
+    ],
+    [
+      'a key that says depth: true beside a radius',
+      contourRefusal(depthAttachment({ image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE }), {
+        depth: { kind: 'flat' },
+        motion: {
+          ...CONTOUR_MOTION,
+          animations: {
+            turn: {
+              duration: 1,
+              tracks: [],
+              deform: [
+                {
+                  slot: 'blob',
+                  attachment: 'blob',
+                  keys: [{ t: 1, transform: { kind: 'yaw', depth: true, radius: 40, degrees: DEPTH_DEGREES } }],
+                },
+              ],
+            },
+          },
+        },
+      }),
+      'two answers to how far forward',
+    ],
+    [
+      'a key that says depth: true on an attachment that named no sheet',
+      contourRefusal(CONTOUR_ATTACHMENT, { motion: depthMotion(DEPTH_DEGREES) }),
+      'this attachment has no depth map',
+    ],
+  ];
+  const depthMissed = depthRefusals.filter(([, got, want]) => got === null || !got.includes(want));
+  say(
+    'DP04_THE_EIGHT_WAYS_A_DEPTH_MAP_CAN_BE_SILENTLY_WRONG_ARE_REFUSED_BY_NAME',
+    depthMissed.length === 0,
+    depthMissed.length === 0
+      ? depthRefusals.map(([label]) => label).join('; ')
+      : depthMissed
+          .map(([label, got, want]) => `${label}: expected "${want}", got ${got === null ? 'a clean compile' : got}`)
+          .join(' | '),
+    'every one of these compiles to a plausible number with correct arithmetic behind it — the coverage case is the loudest, since a sheet cut to the art gives the whole rim the background depth and folds the silhouette away from the turn',
   );
 
   // --- determinism ---------------------------------------------------------
@@ -17327,14 +17596,19 @@ function main(): void {
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'and which bones a skin switches on), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
-      '+ 11 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      '+ 15 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
       'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
       'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
       'trip of the indices, the hull and the pin to the slot bone, the undeformed mesh drawn beside the plain ' +
       'region of the same part with the same part moved two pixels as the instrument\'s control, the no-manifest ' +
       'placement convention measured on a ring and a ribbon and on a moved slot bone, six ways to ask for an ' +
-      'impossible mesh each refused by name, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
+      'impossible mesh each refused by name, a DEPTH MAP put on the same mesh — a flat sheet landing its stated z on '
+      + 'every vertex to 1e-4, a ramped one giving each vertex its own in the direction the sheet rises, `near: black` '
+      + 'reading that same sheet as zScale minus the white reading, and eight ways a map can be silently wrong refused '
+      + 'by name (the loudest being a sheet cut to the art, which covers NONE of a contour mesh vertices because they '
+      + 'all sit on the silhouette and outside it) — every one of those readings RECOVERED from the emitted skeleton '
+      + 'by inverting the turn rather than read off the report, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +

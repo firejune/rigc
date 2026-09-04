@@ -245,6 +245,35 @@ shape the drawing only implies. Two readings that help:
    measured 5.406 on the artifact. If the fringe does not read as separate,
    this is the one number to move, and moving it moves nothing else.
 
+### 2.1 One depth per part, and the limit of that
+
+Everything above states **one depth per part** — a stand-off the whole plate
+shares. That is the right resolution for a part list: the fringe is 26 in front
+of the skull, and arguing about which *pixel* of the fringe is 26 would be
+arguing past what the drawing says.
+
+It stops being the right resolution the moment a part's own surface is the
+subject. §4 meshes the face plate into columns precisely because the plate is not
+flat, and §4.2 then finds that refining those columns makes the fold **worse**,
+not better — the columns are sampling a cylinder that was never the shape of a
+face. A cylinder is one number pretending to be a surface, and past a certain
+density the pretence is what fails.
+
+⭐ **A depth map is that number becoming a surface.** A greyscale sheet in the
+part's own pixel grid gives every mesh vertex its own `z`, sampled where the
+vertex actually is, and `yaw`/`pitch` project off it with the same closed form as
+§1 — only the source of `z` changes. What it buys is stated where it is authored:
+[AUTHORING §3.4](AUTHORING.md#depth--give-every-vertex-its-own-z-instead-of-one-cylinder-radius),
+with the sampling order, the refusals and the one that matters most (a sheet cut
+to the art covers **none** of a contour mesh's vertices, because they all sit on
+the silhouette and outside it).
+
+⚠️ **It does not make depth measurable.** The map is relative — 8 bits of level
+say nothing about world units — so `zScale` is authored exactly as the fringe's
+26 was, and the two warnings above survive intact: get it right and the parallax
+is free, get it wrong and nothing complains. What the map removes is the
+*resolution* limit, not the judgement.
+
 ---
 
 ## 3. One shared shift, then residuals
