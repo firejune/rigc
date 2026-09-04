@@ -411,6 +411,7 @@ const MESH_KIND_NOTES: Record<CompileResult['meshes'][number]['kind'], string> =
   ring: 'ring      rim ring pinned on the window edge, seam ring pinned on the mask contour, aperture moves',
   ribbon: 'ribbon    entry row pinned, rows share their weights so the strip lengthens without widening',
   contour: 'contour   the art\'s own silhouette, every vertex pinned to the slot bone (geometry, not a deformation)',
+  grid: 'grid      a lattice over the part window at stated column and row positions, every vertex pinned to the slot bone',
   authored: 'authored  geometry rigc did not build; it assumes nothing about the topology',
 };
 

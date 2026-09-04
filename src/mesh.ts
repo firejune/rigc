@@ -63,6 +63,33 @@ export interface MeshSpecInput {
   controlAngles?: number[];
 }
 
+/**
+ * A lattice over the part window — the topology `docs/FACE.md` §4 turns a plate
+ * into so that a `yaw` has somewhere to put its columns.
+ *
+ * ⭐ It exists because that lattice was being written BY HAND. `gallery/portrait`
+ * shipped a 5x5 grid as 25 authored vertex pairs, 32 triangles and a perimeter
+ * numbered in the one order Spine accepts, and every one of those numbers was
+ * a person's arithmetic. A grid is the least interesting geometry in the format
+ * and the easiest to get subtly wrong: the hull has to come first, in walk
+ * order, or the loader silently treats interior vertices as the outline.
+ *
+ * ⚠️ `us` and `vs` are POSITIONS, not a count, and that is the point of the
+ * shape. FACE §4.1 places columns where the drawing needs them — the worked
+ * example's are 0.0235, 0.1471, 0.5, 0.8529, 0.9765, which is dense at the
+ * silhouette and sparse across the middle — and a generator that could only
+ * divide evenly would be a step backwards from the hand-written table it
+ * replaces. Nor do they have to reach the window edge: that example's do not.
+ */
+export interface GridSpecInput {
+  /** Part window size in pixels, for UVs and positions. */
+  size: [number, number];
+  /** Column positions across the window, 0..1, ascending. At least 2. */
+  us: number[];
+  /** Row positions down the window, 0..1, ascending. At least 2. */
+  vs: number[];
+}
+
 export interface MeshVertexWeight {
   /** 'anchor' pins to the slot bone, 'control' to a control/chain bone. */
   bone: 'anchor' | 'control';
@@ -72,7 +99,7 @@ export interface MeshVertexWeight {
 }
 
 /** Which builder in this file made a mesh's geometry. */
-export type MeshKind = 'ring' | 'ribbon' | 'contour';
+export type MeshKind = 'ring' | 'ribbon' | 'contour' | 'grid';
 
 export interface MeshGeometry {
   kind: MeshKind;
@@ -432,6 +459,82 @@ export function buildRibbonMesh(input: RibbonSpecInput): MeshGeometry {
 // the numbers of a skeleton file, so it is not left to a reader to notice.
 
 /** One part's alpha channel, as the tracer wants it. */
+/**
+ * Build the lattice: perimeter first in walk order, then the interior.
+ *
+ * The numbering is not a preference. Spine's `hull` is a COUNT — the first
+ * `hull` entries of the vertex array are the outline — so the perimeter has to
+ * be listed first and in the order it is walked, or the runtime reads an
+ * interior vertex as a boundary one. `checkHullOrder` says the same thing from
+ * the other side, and this builder is written to satisfy it by construction
+ * rather than to be checked against it afterwards.
+ *
+ * Winding is read off the worked example rather than derived here: its first
+ * two triangles are `[0, 15, 16]` and `[0, 16, 1]`, which is
+ * `[top-left, bottom-left, bottom-right]` and `[top-left, bottom-right,
+ * top-right]` per cell — counter-clockwise in Spine world once y is flipped up.
+ */
+export function buildGridMesh(input: GridSpecInput): MeshGeometry {
+  const { size, us, vs } = input;
+  const [w, h] = size;
+  const axis = (values: number[], name: string): void => {
+    if (!Array.isArray(values) || values.length < 2) {
+      throw new MeshError(`"${name}" has ${Array.isArray(values) ? values.length : 0} positions; a grid needs at least 2 on each axis`);
+    }
+    values.forEach((t, i) => {
+      if (typeof t !== 'number' || !Number.isFinite(t)) throw new MeshError(`"${name}"[${i}] is ${JSON.stringify(t)}; positions are finite numbers`);
+      if (t < 0 || t > 1) throw new MeshError(`"${name}"[${i}] is ${t}; positions are fractions of the part window, 0..1`);
+      // Equal neighbours would put two vertices in one place and collapse a
+      // whole row or column of triangles to zero area — a mesh that loads,
+      // draws and cannot be deformed, which is the silence this refuses.
+      if (i > 0 && !(t > values[i - 1])) {
+        throw new MeshError(`"${name}" is not ascending: [${i - 1}]=${values[i - 1]} and [${i}]=${t}`);
+      }
+    });
+  };
+  axis(us, 'us');
+  axis(vs, 'vs');
+  if (!(w > 0) || !(h > 0)) throw new MeshError(`the part window is ${w}x${h}; a grid needs a positive size`);
+
+  const cols = us.length;
+  const rows = vs.length;
+  // Grid coordinate -> vertex index, filled as the two passes below number them.
+  const index: number[][] = Array.from({ length: rows }, () => new Array<number>(cols).fill(-1));
+  const points: Array<[number, number]> = [];
+  const place = (i: number, j: number): void => {
+    index[j][i] = points.length;
+    points.push([r6(us[i] * w), r6(vs[j] * h)]);
+  };
+
+  // 1. the perimeter, clockwise in part-local space (y down).
+  for (let i = 0; i < cols; i++) place(i, 0);
+  for (let j = 1; j < rows; j++) place(cols - 1, j);
+  for (let i = cols - 2; i >= 0; i--) place(i, rows - 1);
+  for (let j = rows - 2; j >= 1; j--) place(0, j);
+  const hullVertices = points.length;
+  // 2. the interior, row major.
+  for (let j = 1; j < rows - 1; j++) for (let i = 1; i < cols - 1; i++) place(i, j);
+
+  const triangles: number[] = [];
+  for (let j = 0; j < rows - 1; j++) {
+    for (let i = 0; i < cols - 1; i++) {
+      const tl = index[j][i];
+      const tr = index[j][i + 1];
+      const bl = index[j + 1][i];
+      const br = index[j + 1][i + 1];
+      triangles.push(tl, bl, br, tl, br, tr);
+    }
+  }
+
+  const uvs: number[] = [];
+  for (const [x, y] of points) uvs.push(r6(x / w), r6(y / h));
+  // Every vertex on the slot bone at weight 1, the same weighting model a
+  // `contour` has: the lattice is geometry to deform, not an authority split.
+  const weights: MeshVertexWeight[][] = points.map(() => [{ bone: 'anchor', weight: 1 }]);
+
+  return { kind: 'grid', points, uvs, triangles, weights, hullVertices };
+}
+
 export interface AlphaMask {
   width: number;
   height: number;
