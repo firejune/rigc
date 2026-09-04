@@ -198,3 +198,151 @@ export function depthDigest(map: DepthMap): string {
   h.update(map.level);
   return h.digest('hex').slice(0, 16);
 }
+
+// ---------------------------------------------------------------------------
+// Two evaluations of one turn, compared
+// ---------------------------------------------------------------------------
+
+/**
+ * The 2.5D turn's displacement along the driving axis, for one point.
+ *
+ * The same closed form `evaluateDeformTransform` runs, written once more here
+ * because this file compares two ways of EVALUATING it and neither may quietly
+ * be a different model. `u` is the point's offset from the axis; `z` is how far
+ * in front of that axis it sits.
+ */
+export function turnDisplacement(u: number, z: number, radians: number): number {
+  return u * (Math.cos(radians) - 1) - z * Math.sin(radians);
+}
+
+/** What a field comparison measured. Pixels, in the part's own grid. */
+export interface FieldAgreement {
+  /** Pixels compared: inside the art and inside some triangle. */
+  samples: number;
+  /** Pixels the mesh covers that the art does not reach, or vice versa. */
+  skipped: number;
+  /** Mean |mesh − continuous| displacement, in part pixels. */
+  mean: number;
+  /** Worst |mesh − continuous| displacement, in part pixels. */
+  worst: number;
+}
+
+/**
+ * How closely a mesh's piecewise-linear turn reproduces the continuous one.
+ *
+ * ## What this measures, and what it does not
+ *
+ * ⚠️ It is **not** a check of the sampler. Both sides read the same sheet
+ * through `sampleDepth`, deliberately — a comparison where the two sides
+ * disagreed about the depth would be measuring the wrong thing. `DP01`–`DP03`
+ * in `selftest.ts` are what hold the sampler honest.
+ *
+ * What differs is the **evaluation**. The continuous side gives every pixel its
+ * own depth and displaces it by that; the mesh side gives depth to its vertices
+ * only and interpolates linearly across each triangle. That is the whole
+ * approximation a mesh IS, and this puts a number on it: the two agree where
+ * the depth field is locally flat across a cell, and part where it curves.
+ *
+ * ⭐ So the figure to read is not the absolute error but **how it falls as the
+ * lattice refines**. A mesh that is evaluating the same model converges on it;
+ * one that is evaluating something else does not, however dense it gets.
+ *
+ * 🚨 And it is a different quantity from FACE §4.2's fold angle, which gets
+ * WORSE as the columns refine. Both are true and they are not in tension:
+ * refining the lattice buys fidelity to the model and costs the angle at which
+ * a column pair inverts. This measures the first; `A39` refuses the second.
+ */
+export function compareTurnFields(input: {
+  map: DepthMap;
+  near: DepthNear;
+  tone: DepthTone;
+  zScale: number;
+  /** One byte per pixel over the same grid; a pixel under `threshold` is not art. */
+  alpha: Uint8Array;
+  threshold: number;
+  /** Mesh vertices in part-local pixels, y down. */
+  points: ReadonlyArray<readonly [number, number]>;
+  triangles: ReadonlyArray<number>;
+  degrees: number;
+  /** Where the axis crosses the driving coordinate, in part pixels. Default 0. */
+  about?: number;
+  /** 'yaw' reads x and displaces x; 'pitch' reads y and displaces y. */
+  kind?: 'yaw' | 'pitch';
+  /**
+   * The mesh side's per-vertex `z`, when it should NOT come from the map.
+   *
+   * Two uses, and the second is the important one. A caller that has the
+   * compiler's own sampled depths can pass them, so the comparison is against
+   * what was actually emitted rather than against a re-sampling. And a NEGATIVE
+   * control can pass depths from a different model entirely — a cylinder's, say
+   * — which is what makes the convergence claim mean anything: a mesh
+   * evaluating the same model converges on it, and one evaluating another does
+   * not, however dense it gets.
+   */
+  vertexDepths?: readonly number[];
+}): FieldAgreement {
+  const { map, near, tone, zScale, alpha, threshold, points, triangles, degrees } = input;
+  const about = input.about ?? 0;
+  const along = (input.kind ?? 'yaw') === 'yaw' ? 0 : 1;
+  const rad = (degrees * Math.PI) / 180;
+
+  if (input.vertexDepths !== undefined && input.vertexDepths.length !== points.length) {
+    throw new DepthError(
+      `the mesh has ${points.length} vertices and ${input.vertexDepths.length} depths were supplied for it`,
+    );
+  }
+  // The mesh side, per vertex, once.
+  const vertexShift = points.map((p, v) =>
+    turnDisplacement(
+      p[along] - about,
+      input.vertexDepths === undefined ? sampleDepth(map, p[0], p[1], near, tone, zScale) : input.vertexDepths[v],
+      rad,
+    ),
+  );
+
+  const { width: w, height: h } = map;
+  // Which pixels a triangle covered, so a pixel in two triangles is counted
+  // once and the untouched remainder can be reported rather than ignored.
+  const seen = new Uint8Array(w * h);
+  let samples = 0;
+  let total = 0;
+  let worst = 0;
+
+  for (let t = 0; t < triangles.length; t += 3) {
+    const [ia, ib, ic] = [triangles[t], triangles[t + 1], triangles[t + 2]];
+    const [ax, ay] = points[ia];
+    const [bx, by] = points[ib];
+    const [cx, cy] = points[ic];
+    const den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+    if (den === 0) continue; // a degenerate triangle covers nothing
+    const x0 = Math.max(0, Math.floor(Math.min(ax, bx, cx)));
+    const x1 = Math.min(w - 1, Math.ceil(Math.max(ax, bx, cx)));
+    const y0 = Math.max(0, Math.floor(Math.min(ay, by, cy)));
+    const y1 = Math.min(h - 1, Math.ceil(Math.max(ay, by, cy)));
+    for (let py = y0; py <= y1; py++) {
+      for (let px = x0; px <= x1; px++) {
+        const i = py * w + px;
+        if (seen[i] || alpha[i] < threshold) continue;
+        // Pixel centres, the same convention the sampler uses.
+        const sx = px + 0.5;
+        const sy = py + 0.5;
+        const l0 = ((by - cy) * (sx - cx) + (cx - bx) * (sy - cy)) / den;
+        const l1 = ((cy - ay) * (sx - cx) + (ax - cx) * (sy - cy)) / den;
+        const l2 = 1 - l0 - l1;
+        if (l0 < 0 || l1 < 0 || l2 < 0) continue;
+        seen[i] = 1;
+        const meshShift = l0 * vertexShift[ia] + l1 * vertexShift[ib] + l2 * vertexShift[ic];
+        const u = (along === 0 ? sx : sy) - about;
+        const exact = turnDisplacement(u, sampleDepth(map, sx, sy, near, tone, zScale), rad);
+        const d = Math.abs(meshShift - exact);
+        samples++;
+        total += d;
+        if (d > worst) worst = d;
+      }
+    }
+  }
+
+  let skipped = 0;
+  for (let i = 0; i < alpha.length; i++) if (alpha[i] >= threshold && !seen[i]) skipped++;
+  return { samples, skipped, mean: samples === 0 ? 0 : total / samples, worst };
+}

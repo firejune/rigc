@@ -276,6 +276,30 @@ with the sampling order, the refusals and the one that matters most (a sheet cut
 to the art covers **none** of a contour mesh's vertices, because they all sit on
 the silhouette and outside it).
 
+⭐ **And the mesh really is evaluating the pixels' model — measured, not
+asserted.** A consumer that renders the same sheet in a shader displaces every
+PIXEL by its own depth; a mesh displaces vertices and interpolates across
+triangles. On a dome (a ramp would prove nothing — linear interpolation is exact
+on a linear field) at 18°, the two evaluations converge as the lattice refines:
+
+| lattice | 3×3 | 5×5 | 9×9 | 17×17 | 33×33 |
+| --- | --- | --- | --- | --- | --- |
+| mean disagreement, px | 6.4141 | 1.8452 | 0.5887 | 0.2276 | **0.0926** |
+| the same lattice reading a **cylinder** instead | 3.8972 | 3.1628 | 3.2558 | 3.3429 | **3.3777** |
+
+🚨 **Read the second row before the first.** A mesh evaluating the wrong surface
+does not converge — it settles at ~3.4px however dense it gets — and at 3×3 it
+reads *better* than the right one. So one measurement at one density cannot tell
+the two models apart, and would have picked the wrong one. The claim is the
+convergence, never a single number. (`CS01`–`CS03` in `selftest.ts`; the worst
+case falls more slowly than the mean and is expected to, because the dome's rim
+has an unbounded depth gradient.)
+
+⚠️ **This is not the same quantity as §4.2's fold angle, which refining makes
+WORSE.** Both are true: a finer lattice buys fidelity to the model and costs the
+angle at which a column pair inverts. This measures the first; `A39` refuses the
+second.
+
 ⚠️ **It does not make depth measurable.** The map is relative — 8 bits of level
 say nothing about world units — so `zScale` is authored exactly as the fringe's
 26 was, and the two warnings above survive intact: get it right and the parallax
