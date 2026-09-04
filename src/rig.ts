@@ -92,7 +92,17 @@ export interface RigSkeletonHeader {
   fps?: number;
   /** 4.2+; the runtime's physics/scale reference. Parser default 100. */
   referenceScale?: number;
-  /** Nonessential path hint the editor writes; carried through verbatim. */
+  /**
+   * Nonessential: where the editor's import looks for the part images, as a path
+   * from the skeleton file. Declared here it is carried through verbatim; absent,
+   * rigc writes the path from `--out` to the one directory the spec names every
+   * part PNG in — `--out` itself, spelled `../<its basename>/`, under
+   * `--copy-images`, which moved them beside the skeleton and overrides a
+   * declaration for the same reason it rewrites the atlas's page names (the
+   * editor drops a literal `./` on import; a named directory it keeps). Parts
+   * spread over several directories have no single true path, so nothing is
+   * written (issue #370).
+   */
   images?: string;
 }
 

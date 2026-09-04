@@ -562,7 +562,8 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 | `x`, `y` | ✅ | always literal `0, 0` |
 | `width`, `height` | ✅ | from `manifest.crop.w/h` |
 | `hash` | ❌ | never emitted (harmless; the parser stores it and nothing reads it) |
-| `fps`, `images`, `referenceScale` | ✅ | copied from `rig.skeleton` when the rig spec gives them, omitted when it does not (`compile.ts:810-812`, landed in `c5eda3b`) |
+| `fps`, `referenceScale` | ✅ | copied from `rig.skeleton` when the rig spec gives them, omitted when it does not (landed in `c5eda3b`) |
+| `images` | ✅ | a declared `rig.skeleton.images` verbatim; otherwise the path from `--out` to the one directory the spec names every part PNG in — `--out` itself, spelled `../<basename>/`, under `--copy-images`, which overrides a declaration — so the editor's import finds them (issue #370). Omitted when the parts are spread over several directories, since no single path is true of all of them |
 | `audio` | ❌ | |
 
 **Bones** (`compile.ts:367-456`; type at `types.ts:285-292`)

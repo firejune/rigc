@@ -42,6 +42,7 @@
 import { spawnSync } from 'node:child_process';
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -9850,6 +9851,119 @@ function runCopyImagesSuite(): number {
       'invariant changes, plus a case-insensitive filesystem colliding two basenames the region check saw as distinct',
   );
 
+  // --- skeleton.images says where the parts are (issue #370) ------------------
+  //
+  // The editor's import shows every attachment missing and its export prints
+  // `Images path not found` when the header has no `images`; under --copy-images
+  // the parts sit right beside skeleton.json. Five facts: the flag writes `./`;
+  // the default writes the relative path to the directory the parts were read
+  // from; neither depends on where the checkout is (two copies of one tree emit
+  // one file, which is what keeps A18 a contract rather than a coincidence); a
+  // declared path is carried through and overridden only by the flag that moved
+  // the parts; and --atlas-in, which read no loose parts, writes nothing unless
+  // the rig declared a path.
+  const copyHeader = compile({ ...opts, copyImages: true }).skeleton.skeleton;
+  bad += reportCase(
+    'CPI04_COPY_IMAGES_POINTS_SKELETON_IMAGES_AT_OUT_ITSELF',
+    copyHeader.images === `../${basename(opts.outDir)}/`,
+    `skeleton.images = ${JSON.stringify(copyHeader.images)} for --out .../${basename(opts.outDir)}`,
+    'the editor resolves images against the skeleton file and --copy-images puts the parts right beside it; measured ' +
+      'on 4.3.23, a literal "./" is dropped to no path on import while a named directory is kept and every part ' +
+      'found, so the directory is named from inside itself (issue #370)',
+  );
+  // The probe rig below keeps both of its PNGs in ONE directory, which the
+  // generated fixtures deliberately do not (OVERLAY reads `plates/` and
+  // `parts/`, so its header carries no `images` at all — CPI09 is that case).
+  const oneDir = writeProbeRig();
+  const oneDirMotion = join(oneDir.dir, 'probe.motion.json');
+  const probeMotion = timelineMotion({
+    duration: 1,
+    loop: false,
+    tracks: [{ bone: 'block', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [10] }] }],
+  });
+  writeFileSync(oneDirMotion, `${JSON.stringify(probeMotion, null, 2)}\n`);
+  const oneDirOpts: Options = { rigPath: oneDir.rigPath, motionPath: oneDirMotion, outDir: oneDir.outDir, imagesDir: oneDir.dir };
+  const oneDirBuild = compile(oneDirOpts);
+  const defaultHeader = oneDirBuild.skeleton.skeleton;
+  bad += reportCase(
+    'CPI05_THE_DEFAULT_WRITES_THE_RELATIVE_PATH_TO_THE_PARTS_DIRECTORY',
+    defaultHeader.images === '../',
+    `skeleton.images = ${JSON.stringify(defaultHeader.images)} — out is ${basename(oneDir.outDir)}/ under the directory ` +
+      'both parts were read from',
+    "the same fact the atlas's page names already state, derived the same way; a build that points at its own parts " +
+      'is a build the editor can open',
+  );
+  const elsewhere = mkdtempSync(join(tmpdir(), 'rigc-elsewhere-'));
+  cpSync(oneDir.dir, elsewhere, { recursive: true });
+  const moved = compile({
+    rigPath: join(elsewhere, basename(oneDir.rigPath)),
+    motionPath: join(elsewhere, basename(oneDirMotion)),
+    outDir: join(elsewhere, basename(oneDir.outDir)),
+    imagesDir: elsewhere,
+  });
+  bad += reportCase(
+    'CPI06_THE_EMIT_IS_BYTE_IDENTICAL_FROM_A_SECOND_CHECKOUT_LOCATION',
+    moved.skeletonText === oneDirBuild.skeletonText && moved.atlasText === oneDirBuild.atlasText,
+    `the same tree copied to ${elsewhere}: skeleton ${moved.skeletonText === oneDirBuild.skeletonText ? 'identical' : 'DIFFERS'}, ` +
+      `atlas ${moved.atlasText === oneDirBuild.atlasText ? 'identical' : 'DIFFERS'}, images ${JSON.stringify(moved.skeleton.skeleton.images)}`,
+    'skeleton.images is a path, and a path that carried the absolute location of the checkout would make two builds ' +
+      'of one tree two different files — A18 compares a second compile in the SAME place and cannot see that',
+  );
+  const declaredRigPath = join(OVERLAY.dir, 'declared_images.rig.json');
+  const declaredRig = JSON.parse(readFileSync(OVERLAY.rigPath, 'utf8')) as { skeleton?: Record<string, unknown> };
+  declaredRig.skeleton = { ...(declaredRig.skeleton ?? {}), images: 'parts/' };
+  writeFileSync(declaredRigPath, `${JSON.stringify(declaredRig, null, 2)}\n`);
+  const declaredHeader = compile({ ...opts, rigPath: declaredRigPath, imagesDir: OVERLAY.dir }).skeleton.skeleton;
+  const declaredThenCopied = compile({ ...opts, rigPath: declaredRigPath, imagesDir: OVERLAY.dir, copyImages: true }).skeleton.skeleton;
+  bad += reportCase(
+    'CPI07_A_DECLARED_IMAGES_PATH_IS_CARRIED_THROUGH_AND_OVERRIDDEN_ONLY_BY_THE_FLAG',
+    declaredHeader.images === 'parts/' && declaredThenCopied.images === `../${basename(opts.outDir)}/`,
+    `declared "parts/" emits ${JSON.stringify(declaredHeader.images)}; the same rig under --copy-images emits ` +
+      `${JSON.stringify(declaredThenCopied.images)}`,
+    'R1 says a declared field is emitted as written; the one thing that may override it is the flag that moved the ' +
+      "parts, for the same reason that flag rewrites the atlas's page names",
+  );
+  const packDir = join(oneDir.dir, 'packed');
+  mkdirSync(packDir, { recursive: true });
+  const packedProbe = packAtlas(
+    oneDirBuild.images.map((img) => ({ region: img.region, absPath: img.absPath, width: img.width, height: img.height })),
+    { pageSize: DEFAULT_PAGE_SIZE, padding: DEFAULT_PADDING, pageStem: 'skeleton' },
+  );
+  for (const page of packedProbe.pages) page.plate.writePng(join(packDir, page.name));
+  writeFileSync(join(packDir, 'skeleton.atlas'), packedProbe.atlasText);
+  const viaAtlas = compile({ ...oneDirOpts, atlasInPath: join(packDir, 'skeleton.atlas') });
+  bad += reportCase(
+    'CPI08_ATLAS_IN_NAMES_THE_SAME_PARTS_DIRECTORY_AS_THE_LOOSE_BUILD',
+    viaAtlas.skeleton.skeleton.images === '../' && viaAtlas.skeletonText === oneDirBuild.skeletonText,
+    `skeleton.images = ${JSON.stringify(viaAtlas.skeleton.skeleton.images)} with the parts resolved against ` +
+      `${packedProbe.pages.map((p) => p.name).join(', ')}; the skeleton is ` +
+      `${viaAtlas.skeletonText === oneDirBuild.skeletonText ? 'byte-identical to' : 'DIFFERENT from'} the loose build`,
+    'the pack changed where the PIXELS come from, not where the rig says its parts are; the skeleton has to stay ' +
+      "byte-identical between the two builds (PK11), and the field is read from the spec's own paths for that reason",
+  );
+  const split = writeProbeRig({
+    skins: {
+      default: {
+        block: { block: { image: 'a/block.png' } },
+        marker: { marker: { image: 'b/marker.png' } },
+      },
+    },
+  });
+  mkdirSync(join(split.dir, 'a'), { recursive: true });
+  mkdirSync(join(split.dir, 'b'), { recursive: true });
+  copyFileSync(join(split.dir, 'block.png'), join(split.dir, 'a', 'block.png'));
+  copyFileSync(join(split.dir, 'marker.png'), join(split.dir, 'b', 'marker.png'));
+  const splitMotion = join(split.dir, 'probe.motion.json');
+  writeFileSync(splitMotion, `${JSON.stringify(probeMotion, null, 2)}\n`);
+  const splitHeader = compile({ rigPath: split.rigPath, motionPath: splitMotion, outDir: split.outDir, imagesDir: split.dir }).skeleton.skeleton;
+  bad += reportCase(
+    'CPI09_PARTS_IN_TWO_DIRECTORIES_WRITE_NO_SINGLE_PATH',
+    splitHeader.images === undefined,
+    `parts in a/ and b/: skeleton.images = ${JSON.stringify(splitHeader.images)}`,
+    'the editor resolves every attachment name under ONE images directory, so no single path is true of parts in ' +
+      'two; an absence is a fact and a common ancestor would be a guess the editor cannot use',
+  );
+
   return bad;
 }
 
@@ -17071,7 +17185,7 @@ function main(): void {
   bad += runBallotSuite();
   substantive += 13;
   bad += runCopyImagesSuite();
-  substantive += 3;
+  substantive += 9;
   bad += runSamplingSuite();
   substantive += 8;
   bad += runPackerSuite();
@@ -17332,7 +17446,11 @@ function main(): void {
       'deliberate re-vote as attempt 2, the candidate count bounded at both ends with a repeated --candidate ' +
       'elsewhere refused as the typo it is, an animation no candidate has refused by name, `vote` in the help, and ' +
       'the player referenced rather than vendored)' +
-      ', + 3 copy-images controls (self-contained out dir, unchanged default, deterministic basename collision)' +
+      ', + 9 copy-images controls (self-contained out dir, unchanged default, deterministic basename collision, ' +
+      'skeleton.images pointing at --out itself under the flag and at the parts directory without it, the whole emit ' +
+      'byte-identical from a second checkout location, a declared images path carried through and overridden only ' +
+      'by the flag, an --atlas-in build naming the same parts directory as its loose twin, and parts in two ' +
+      'directories writing no single path)' +
       ', + 8 bilinear-sampling controls (a transparent texel getting no vote in the colour with the straight ' +
       'average beside it as the red-first control, the alpha channel bit-identical over 4900 ragged taps and an ' +
       'opaque tap unchanged to the last bit, the #292 overlap rendered and re-rendered byte for byte, the same ' +

@@ -469,7 +469,7 @@ commands take it and what its default is.
 
 | Command | Does |
 | --- | --- |
-| `build --rig … --motion … --out …` | compiles, gates, and **writes only if the gate is green**. `--images <dir>` says where the rig spec's `image` names resolve, `--manifest` adds measured art, and `--copy-images` copies every page PNG into `--out` so the directory is self-contained |
+| `build --rig … --motion … --out …` | compiles, gates, and **writes only if the gate is green**. `--images <dir>` says where the rig spec's `image` names resolve, `--manifest` adds measured art, and `--copy-images` copies every page PNG into `--out` so the directory is self-contained, with `skeleton.images` pointing at it so the editor's import finds the parts |
 | `build … --pack` | the same build with every part arranged onto **shared** atlas pages, written into `--out` — losslessly, and gated a second time as the pair that ships. `--page-size` and `--padding` tune it |
 | `build … --atlas-in <file.atlas>` | the same build with every part resolved to a **region of an existing pack** instead of a loose PNG; a name the atlas lacks, a size the spec disagrees with or a rectangle off its page is refused by name |
 | `validate <dir>` | re-gates artifacts already on disk |
