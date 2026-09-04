@@ -1398,6 +1398,15 @@ stepped.
   pages is that Bezier is the shape to adopt and linear the one you argue for. So
   leaving `ease` off is a positive claim of constant speed, not a way of declining to
   decide; §8 has what that bet cost on the ladder.
+- **A named easing on a hold is emitted `stepped`.** When every value channel of a
+  key equals the next key's *as emitted* — a `translate` whose x moves and whose y
+  does not is **not** a hold — the curve would run from a value to the same value and
+  draw nothing, and the editor writes that segment as `"curve": "stepped"`. So rigc
+  does too (§10.4, issue #369): the frames are byte-identical either way, and a build
+  stops differing from its own editor export on `diff`'s `animations.curve_kinds`. A
+  raw `curve` is **not** rewritten — it states the file's own numbers verbatim, and
+  the editor's own exports do carry beziers over holds, so a transcription has to be
+  able to write one back.
 - `curve` is the raw form: **four numbers per value channel**, concatenated in field
   order, as absolute `(time, value)` control points. A short array multiplies
   `undefined` into the cubic and yields `NaN` with no error, so rigc length- and
@@ -3855,6 +3864,9 @@ frames. Every line is marked with where it comes from:
 
 - 📗 **stated** — quoted or paraphrased from the page linked in the line.
 - 🧩 **inferred** — this guide's reading of those pages. Spine does not say it.
+- 🔬 **observed** — read off the editor's own export of a rigc build in the round
+  trip of [issue #285](https://github.com/firejune/rigc/issues/285) (Spine 4.3.23),
+  not from a page. Used only where rigc now emits the same thing.
 
 ### 10.1 Structure
 
@@ -4337,6 +4349,18 @@ the silent failure §4.1 warns about.
 of key does not have a transition, such as slot attachment or event keys"* —
 [Dopesheet](http://esotericsoftware.com/spine-dopesheet). This is why rigc refuses
 `ease` and `curve` on attachment keys (§4.4) and on draw-order keys (§4.7).
+
+🔬 **A Bezier on a hold is written `stepped`.** Import a build, export it again, and
+every key that carried a curve into a segment whose next key holds the same value on
+every channel comes back as `"curve": "stepped"` — 14 keys on the gallery's `nod`
+alone, with every rendered frame byte-identical, because a curve over a flat segment
+draws nothing. rigc emits the same for a **named** easing (§4.5, issue #369), so
+`diff`'s `animations.curve_kinds` reads 1.000 between a build and its own export
+rather than charging the hold rewrites against the timing. A raw `curve` stays as
+written: it is the file's own numbers, and the reference corpus has the editor itself
+shipping beziers over holds in 18 keys, so the format legitimately holds both. ⚠️ The
+editor also turned some *linear* holds into `stepped` on one example and none on two
+others; a rule that cannot be stated is not adopted, so those still show in `diff`.
 
 ### 10.5 What the export leaves out
 
