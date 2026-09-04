@@ -83,3 +83,7 @@ examples/
 /films/three-scene/*.log
 /films/three-scene/rigc-scene.gif
 /films/three-scene/preview.html
+
+# Local-only preservation area — session artifacts, contact drafts, production sources.
+# Never committed; see scratch/README.md inside it (also ignored).
+/scratch/
