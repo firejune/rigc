@@ -104,6 +104,11 @@ about.
 | **frame rate** | *"at 12 fps"* | ⛔ **do not adopt one.** Spine's times are seconds and frames exist only for convenience (AUTHORING §10.3), so a rate belongs to `render --fps` and to nothing in either spec file |
 | **pose-frame scale** | almost never stated | search the default window once, read the `search` block back, and narrow it if the answer sits at a window edge — §2.2 |
 
+📖 **A request in an animator's words — *"heavier"*, *"follow through"*, *"keep
+the volume"* — maps to a construct in §3.1.1's table.** Two of its rows are
+corrections rather than translations, so read it before assuming a word means
+here what it means elsewhere.
+
 ⚠️ **Read the intent adjectives before you read the pictures, and write down what
 you think they mean, in movement terms, before any measurement.** *"Snap"* means the
 extreme arrives early and the value settles late; *"heavy"* means the parts separate
@@ -269,6 +274,53 @@ it paraphrases.
 🚨 **Nothing here is the answer to any request.** Each item is a default to adopt
 *unless the intent says otherwise*, exactly as AUTHORING §10 puts it, and the
 adjectives in §1 are what overrides them.
+
+### 3.1.1 The animator's words, in this vocabulary
+
+A request arrives in an animator's words — *"make it feel heavier"*, *"keep the
+volume when it lands"*, *"the cape should follow through"* — and this table is
+the map from those to the construct that carries them. §1's intent-adjective
+paragraph does this for three words; this is its full form.
+
+⚠️ **Two rows are corrections rather than translations**, and they are the
+reason the table earns its place: Spine's `Ease in`/`Ease out` mean the
+**opposite** of the web's, and a *moving hold* is not §3.3's *hold*. Both are
+words an agent already thinks it knows.
+
+Marks are §3.1's: 📗 stated on the linked page, 🧩 this guide's reading. Per
+cell, because most rows are a sourced word mapped to an unsourced construct.
+
+| The animator's word | What it means | rigc's construct |
+| --- | --- | --- |
+| **weight** — *"make it feel heavier"* | 📗 how an object answers a push: a light one reacts sooner than a heavy one ([twelve principles]) | 🧩 not one field. A longer `duration`, a slower attack on the leading `ease`, and **larger** offsets down §3.7's table — heavy is *parts separating in time*, which is what §1 already says the adjective means |
+| **timing** | 📗 how many frames an action takes, which is its speed ([twelve principles]) | 📗 `duration` and the key times, **in seconds** — frames exist for convenience only ([Keys]) · §3.3 |
+| **spacing** | 🧩 how far the value moves between one sampled frame and the next. Timing is *when the keys are*; spacing is *what happens between them* | 🧩 the `ease` on the key, not the key times. It has no field of its own — §2.1 sends you to the contact sheet because spacing is only visible across frames · §3.4 |
+| **slow in / slow out** | 📗 a body needs time to accelerate and to stop, so more drawings fall near each end ([twelve principles]) | 📗 a named entry in `easings` · §3.4. 🚨 **Spine's preset names invert the web's**: its *Ease out* changes more slowly near **the key**, its *Ease in* more slowly near **the next key** ([Graph]). An agent carrying the CSS meaning picks the opposite shape |
+| **arcs** | 📗 natural movement follows a curved path; straight lines read as mechanical ([twelve principles]) | 🧩 the **channel**, not a setting: `rotate` gives the arc free, `translate` draws the straight line. The question is never *arc or line*, it is *which channel carries this move* · §3.5 |
+| **anticipation** — *"wind up first"* | 📗 a small preparation that makes the action read ([twelve principles]) | 🧩 §3.6's interior key, the other way. 🚨 It goes **after** `t: 0` at L1/L2 — `t: 0` is a given condition, not a pose to move |
+| **follow-through** | 📗 loosely attached parts keep going after the body stops, then are pulled back ([twelve principles]) | 🧩 the trailing part's extreme lands later than its driver's **and overshoots once** — §3.7's last rows are that pull-back · §3.8 |
+| **overlapping action** — *"don't let it move as one piece"* | 📗 parts of a body move on different timings from one another ([twelve principles]) | 📗 in the editor it is literally *moving keys in time*, which is what the offset button is for ([Keys]). 🧩 here: a later extreme per bone, or `groups` + `stagger` where members share a value · §3.7 |
+| **drag** — *"it should lag"* | 📗 parts take a few frames to catch up when a body starts moving ([twelve principles]) | 🧩 the same offset applied at the **start** rather than at the stop. ⚠️ Convert the source's frames to a **fraction** of the duration — §3.7's offsets are fractions, so a 0.15 s snap and a 2 s idle share one table · §3.7 |
+| **the wave principle** | 📗 Esoteric's own framing: the thing to understand for tails, hair, cloth and flags — anything that follows through (video 4) | 🧩 the offset **compounding down a chain**, so the lag travels: `groups` + `stagger` where the members are a chain. ⚠️ **`wave` already names something else here** — a deform transform kind (AUTHORING §4.11.1) that ripples an attachment's vertices, not a chain's timing |
+| **squash and stretch** | 📗 what gives a drawing weight and flexibility ([twelve principles]); Spine notes the shear tool is used in small amounts for organic squash and stretch ([Tools]) | 🧩 two spellings. **Cheap:** a `scale` key whose two axes differ. **Full:** a `deform` timeline, which is what `gallery/squash` uses. §7 is rigid-first — land the movement, then deform · §4 |
+| **keeping the volume** | 📗 in *realistic* animation a squashed object keeps its volume: stretch it one way and it must narrow the other ([twelve principles]) | 🧩 `x·y ≈ 1` on a `scale` key, which `explain` now prints beside it, and the `area` figure a `deform` key already carried. **A reading, never a rule** — a shadow, a zoom and a cartoon squash all change area on purpose. ⚠️ Say *scale product* in a message: `volume` already means an event's audio and 4.3's `ScaleYMode.Volume` |
+| **overshoot and settle** | 📗 exaggeration — a motion that imitates reality exactly reads as dull ([twelve principles]) | 🧩 §3.8's interior key past the final value, then back. 🚨 The last key still carries the given end pose exactly |
+| **a moving hold** — *"it should never be fully still"* | 📗 a character that is barely moving still breathes; two nearly-identical poses keep it from going lifeless ([twelve principles]) | 🧩 **not** §3.3's *hold*, which is two EQUAL keys meaning *nothing moves here*. A moving hold is the opposite: §3.3's 1.5–3 s idle band with a small excursion — §0's A=B case |
+| **secondary action** | 📗 a supporting movement that emphasises the main one rather than competing with it ([twelve principles]) | 🧩 a whole extra timeline, and the **first thing to leave out of a first candidate**: a ballot spreading on both primary timing and a secondary action has asked two questions · §3.10 |
+| **pose to pose** vs **straight ahead** | 📗 the two ways animation is made — extremes first and fill in, or forward frame by frame ([twelve principles]) | 🧩 a keyframed skeleton can only do the first. Nothing in the format means *"and then draw the next frame"* — §3.2 |
+
+[twelve principles]: https://en.wikipedia.org/wiki/Twelve_basic_principles_of_animation
+[Keys]: http://esotericsoftware.com/spine-keys
+[Graph]: http://esotericsoftware.com/spine-graph
+[Tools]: http://esotericsoftware.com/spine-tools
+
+⚠️ **The eight *Animating with Spine* videos are the obvious source for this
+table and none of it comes from them.** Their captions could not be retrieved —
+the manifest is served and the body is not — so nothing here is presented as
+something said in one. Two rows cite a video's published *description*, which is
+Esoteric's own prose and marked as such; everything else is the twelve
+principles and Spine's written documentation. If the narration becomes readable,
+this table is where it belongs.
 
 ### 3.2 📗 Pose to pose is the normal form, and it is one of two
 

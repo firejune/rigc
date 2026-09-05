@@ -13212,6 +13212,76 @@ function runCliSuite(): number {
     );
   }
 
+  // --- CLI12: the scale key's own area factor, and the key that has none ----
+  //
+  // `explain` already printed this reading for the OTHER spelling of squash and
+  // stretch: a `transform: affine` deform key reports `area x1.020800`, which is
+  // exactly its own 0.88 x 1.16. The `scale` timeline got nothing — so the
+  // author who reached for the advanced spelling was told whether the volume
+  // held and the author who reached for the cheap one was not, while
+  // `docs/MOTION.md` §7 points a first candidate at the cheap one on purpose
+  // (issue #377).
+  //
+  // 🔒 Read through the SUBPROCESS, because the report is the product.
+  //
+  // ⚠️ `scaleProduct`'s "both axes or nothing" branch is NOT exercised here, and
+  // saying so is the point. It was written for a key that moves one axis, on the
+  // assumption that Spine's writer omits a value of 1 — measured, and rigc's
+  // emitter does not: a `v: [2, 1]` key comes back as `x=2 y=1`. So the branch is
+  // type narrowing over an `unknown`, not a reachable case, and a clause
+  // asserting it would have been a control over something this tool cannot
+  // produce. The figure moving between two keys is what is checked instead.
+  {
+    const scaleMotion = {
+      ...CONTOUR_MOTION,
+      animations: {
+        squash: {
+          duration: 1,
+          tracks: [
+            {
+              bone: 'blob',
+              property: 'scale',
+              // 0.8 x 1.25 is EXACTLY 1 — the volume kept — and 1.6 x 0.5 is
+              // 0.8, which is not. Two keys on one track, so the reader sees
+              // the figure move rather than one number that might be a constant.
+              keys: [
+                { t: 0, v: [0.8, 1.25] },
+                { t: 1, v: [1.6, 0.5] },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    let printed: string[] = [];
+    let ran = false;
+    try {
+      const build = buildContourRig(CONTOUR_ATTACHMENT, { motion: scaleMotion });
+      const out = runCli(['explain', '--rig', build.opts.rigPath, '--motion', build.opts.motionPath, '--out', build.opts.outDir, '--images', build.dir]);
+      ran = out.status === 0;
+      printed = out.stdout.split('\n').filter((l) => /x=|x·y=|area factor/.test(l));
+    } catch (err) {
+      ran = false;
+      printed = [`(refused: ${(err as Error).message})`];
+    }
+    // 0.8 x 1.25 is exactly 1, which is the volume KEPT — and 1.6 x 0.5 is 0.8,
+    // which is not. Both stated, because a reader has to see the figure move.
+    const kept = printed.some((l) => /x=0\.8 y=1\.25/.test(l) && /x·y=1\.0000/.test(l));
+    const lost = printed.some((l) => /x=1\.6 y=0\.5/.test(l) && /x·y=0\.8000/.test(l));
+    const caveat = printed.some((l) => /never a rule/.test(l));
+    say(
+      'CLI12_A_SCALE_KEY_REPORTS_ITS_OWN_AREA_FACTOR_BESIDE_THE_CAVEAT_THAT_IT_IS_NOT_A_RULE',
+      ran && kept && lost && caveat,
+      ran
+        ? `0.8x1.25 ${kept ? 'reads x·y=1.0000' : 'did NOT read 1.0000'}; 1.6x0.5 ${lost ? 'reads x·y=0.8000' : 'did NOT read 0.8000'}; ` +
+          `the caveat line is ${caveat ? 'present' : 'MISSING'}`
+        : `explain did not run on the probe, so nothing here concluded — ${(printed[0] ?? '(no reason captured)').slice(0, 400)}`,
+      'the volume an animator asks about is a product, and rigc printed it for one spelling of squash and stretch ' +
+        'and not for the other — the one the guide recommends first. It is a READING and can never be a gate: a ' +
+        'shadow, a zoom and a cartoon squash all change area on purpose',
+    );
+  }
+
   return bad;
 }
 
@@ -18387,7 +18457,7 @@ function main(): void {
       `with no \`loop\` hint still accepted, every one of the ${motion.specs} motion specs in this repository parsing ` +
       'clean, and the walk that finds them skipping the local-only `scratch/` area, dot-directories and a dangling ' +
       'symlink rather than dying on one), ' +
-      '+ 11 cli ergonomics controls (unknown command, bare invocation, `build --help`, ' +
+      '+ 12 cli ergonomics controls (a scale key reporting its own x·y area factor beside the caveat that it is a reading and never a rule — the volume an animator asks about, which `explain` printed for the DEFORM spelling of squash and stretch and not for the scale spelling the guide recommends first — plus unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
       'builds green with no flag and is refused by every rule under `--profile spine-html`, and the MESH report line ' +
       "quoting the rig's own triangle budget with the hole its outline encloses, or saying no budget is declared " +

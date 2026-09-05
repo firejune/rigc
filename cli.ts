@@ -780,6 +780,51 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
 }
 
 /**
+ * The header the `scale` rows carry, because the figure beside them lies without
+ * it.
+ *
+ * ⛔ Three things it has to say, and each one is a way the number is wrong if
+ * taken at face value:
+ *   - it is the key's OWN factor. A nonuniform parent shears its children, so
+ *     the drawn area is not this product;
+ *   - a key that moved only one axis has no product to state, and gets none
+ *     rather than an invented 1 on the other;
+ *   - a uniform scale has a product too, and it is a zoom rather than a squash.
+ */
+const SCALE_PRODUCT_NOTE =
+  '..  x·y is the key\'s own local area factor: ~1.00 is the volume kept, and it is a READING, never a rule — ' +
+  'a nonuniform parent shears this, and a uniform scale has a product without being a squash';
+
+/**
+ * `x·y` for a `scale` key that states both, and nothing otherwise.
+ *
+ * ⭐ Why it is here at all: `explain` ALREADY prints this reading for the other
+ * spelling of squash and stretch. A `transform: affine` deform key reports
+ * `area x1.020800`, which is exactly its own `0.88 × 1.16` — so the author who
+ * reaches for the advanced spelling is told whether the volume held and the
+ * author who reaches for the cheap one is not, while `docs/MOTION.md` §7 points
+ * a first candidate at the cheap one on purpose. That asymmetry is the defect;
+ * this is not a new kind of number (issue #377).
+ *
+ * 🔒 A reading and never an assertion. `deformReportLines` states the test a
+ * geometric figure has to pass to become a gate — no legitimate counter-example
+ * — and this fails it in quantity: a shadow, a zoom, a cartoon squash that
+ * gains mass on purpose. Volume preservation is a style commitment no spec can
+ * declare, so a bar here would be one consumer's house style failing correct
+ * foreign data. There is no honest SKIP either: an absent declaration is not
+ * "nothing to measure", it is "no way to know what was meant".
+ */
+function scaleProduct(timelineName: string, key: Record<string, unknown>): string {
+  if (timelineName !== 'scale') return '';
+  const x = key.x;
+  const y = key.y;
+  // Both axes, or nothing: a key that moved one axis has no area factor, and
+  // defaulting the other to 1 would invent the very number being reported.
+  if (typeof x !== 'number' || typeof y !== 'number') return '';
+  return `  x·y=${(x * y).toFixed(4)}`;
+}
+
+/**
  * Read one non-negative integer flag, or its default.
  *
  * A usage error rather than a `NaN` that reaches the packer: `--padding two`
@@ -2090,6 +2135,7 @@ function cmdExplain(flags: Record<string, string>): void {
       const drives = result.meshBones.includes(boneName) ? '  <- drives a mesh' : '';
       for (const [timelineName, keys] of Object.entries(timelines)) {
         console.log(`    ${boneName}.${timelineName}  ${keys.length} key(s)${drives}`);
+        if (timelineName === 'scale') console.log(`      ${SCALE_PRODUCT_NOTE}`);
         for (const key of keys) {
           const fields = Object.entries(key)
             .filter(([k]) => k !== 'time' && k !== 'curve')
@@ -2100,7 +2146,7 @@ function cmdExplain(flags: Record<string, string>): void {
             : key.curve === 'stepped'
               ? 'stepped'
               : 'linear';
-          console.log(`      t=${String(key.time).padEnd(7)} ${fields.padEnd(30)} ${curve}`);
+          console.log(`      t=${String(key.time).padEnd(7)} ${fields.padEnd(30)} ${curve}${scaleProduct(timelineName, key)}`);
         }
       }
     }

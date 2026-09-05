@@ -1,6 +1,6 @@
 ---
 name: motion
-description: Author a Spine animation with rigc from key poses — an idle, a loop, a move from one picture to another — with timing, easing, anticipation, follow-through, and candidate variants a person can choose between. Use when the request is a movement on an existing or planned rig, such as "animate this rig", "make it breathe" or "go from pose A to pose B", including reading the poses out of reference frames. Not for Live2D, separating an image into parts, or motion capture and real-time tracking.
+description: Author a Spine animation with rigc from key poses — an idle, a loop, a move from one picture to another — with timing and spacing, ease in and out, anticipation, arcs, overlap, follow-through, squash and stretch, and candidate variants a person can choose between. Use when the request is a movement on an existing or planned rig, in the animator's words too: "animate this rig", "make it breathe", "go from pose A to pose B", "make it feel heavier", "the cape should follow through". Not for Live2D, separating an image into parts, or real-time tracking.
 license: MIT
 compatibility: Requires Bun 1.2 or later and the npm package spine-rigc.
 ---
