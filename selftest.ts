@@ -6525,6 +6525,12 @@ function runPathAndSliderSuite(): number {
       wrapped.includes('run from -15.000° to 15.000°') &&
       wrapped.includes('read as 345.000°') &&
       wrapped.includes('maps to time 12.000s') &&
+      // …and the computed consequence, which this end shares with the other one
+      // (issue #423): the window is -15°..15°, the reader returns [0, 360), so
+      // 0°..15° is all of the circle that lands in the animation — 0.500s..1.000s
+      // of it — and the 345° above 15° is held on the last frame.
+      wrapped.includes("reaches only 0.500s..1.000s of the animation's 1s") &&
+      wrapped.includes('95.8% of the circle — every reading above 15.000° — is held on the frame at 1.000s') &&
       wrapped.includes('"local": true'),
     wrapped === null ? 'the compile went through' : `refused with: ${wrapped}`,
     'FromRotate.value ends `if (value < 0) value += 360`, so the negative half of the axis is not merely wrong, it is ' +
@@ -6575,6 +6581,11 @@ function runPathAndSliderSuite(): number {
       overflowed.includes('run from 300.000° to 500.000°') &&
       overflowed.includes('read as 140.000°') &&
       overflowed.includes('maps to time -0.800s') &&
+      // The computed consequence, and the exact numbers issue #423's comment
+      // derives in closed form: [0, 360) ∩ [300, 500] is 300°..360°, which maps
+      // to 0.000s..0.300s, and the 300° below it is held on frame 0.
+      overflowed.includes("reaches only 0.000s..0.300s of the animation's 1s") &&
+      overflowed.includes('83.3% of the circle — every reading below 300.000° — is held on the frame at 0.000s') &&
       overflowed.includes('past 360°') &&
       overflowed.includes('move the range so it does not run past 360°') &&
       overflowed.includes('"local": true'),
@@ -6734,8 +6745,11 @@ function runPathAndSliderSuite(): number {
   // own start. A rule that only spared `from: 0` would pass PS38 and fail here.
   //
   // The span is 200°, deliberately under a full turn, so the wrapped reading
-  // (0.001°) lands BELOW the range and the message's "outside the animation"
-  // clause is true of it: -0.400s against a 0.5s animation.
+  // (0.001°) lands BELOW the animation: -0.400s against a 0.5s one. (That used
+  // to matter because the message ASSERTED "outside the animation" and this was
+  // the fixture where the assertion happened to be true; since issue #423 the
+  // clause is computed, so what this rig gives is a third, distinct pair of
+  // figures — 44.4% of the circle held, and 160.001° as the bound.)
   const ARC_POSE = {
     duration: 0.5,
     loop: false,
@@ -6757,6 +6771,11 @@ function runPathAndSliderSuite(): number {
       overTheLine.includes('run from 160.001° to 360.001°') &&
       overTheLine.includes('read as 0.001°') &&
       overTheLine.includes('maps to time -0.400s') &&
+      // A thousandth of a degree past the line, the computed clause is a
+      // thousandth of a degree's worth of dead arc short of the whole 200° span:
+      // 160.001°..360° reaches 0.000s..0.500s and 160.001° of circle is held.
+      overTheLine.includes("reaches only 0.000s..0.500s of the animation's 0.5s") &&
+      overTheLine.includes('44.4% of the circle — every reading below 160.001° — is held on the frame at 0.000s') &&
       overTheLine.includes('past 360°'),
     onTheLineRefused !== null
       ? `160°..360.000° was REFUSED at compile — the line sits AT 360 rather than past it: ${onTheLineRefused}`
@@ -6770,6 +6789,221 @@ function runPathAndSliderSuite(): number {
     'a threshold is a claim about a boundary, and a control that only tests points far from it checks the sign and ' +
       'not the number. 360.000 and 360.001 are the two nearest cases this fixture can state, and they must land on ' +
       'opposite sides',
+  );
+
+  // --- the two corners the COMPUTED consequence has to tell apart (issue #423)
+  //
+  // ⭐ The clause both refusals end on used to ASSERT one — *"— outside the
+  // animation's Ds. With `loop`: false that is `Math.max(0, time)` holding the
+  // last frame; with `loop`: true it wraps to some other frame"* — and an
+  // asserted consequence is wrong somewhere. It is wrong for a range spanning a
+  // full turn, where the wrapped reading lands INSIDE the animation: `0°..500°`
+  // over 1 s reads 140° and maps to 0.280s, comfortably in range. It is also two
+  // answers with the reader left to pick one. Both halves of the replacement are
+  // read off `[0, 360)` met with the driving window the range clause already
+  // prints — the reachable interval of the animation, and the arc of the circle
+  // that is held on one frame.
+  //
+  // Two shapes on opposite corners of what that clause can say, and **no figure
+  // in either appears in the other**, which is PS37's rule applied to the
+  // arithmetic instead of to the side clauses:
+  //
+  //   PS36  a full turn and more    300°..500° / 1s      0.000s..0.300s  83.3% at 0.000s
+  //   PS41  over the edge by 8°      -8°..350° / 0.895s  0.020s..0.895s   2.8% at 0.895s
+  //
+  // ⚠️ PS41 is a LOW-end refusal on purpose. The leftover arc is then at the TOP
+  // of the circle and the frame it holds is the animation's LAST one, so the two
+  // corners also cover both signs of the arithmetic that picks the bound and the
+  // frame — a mirrored sign in either would print the other corner's shape.
+  //
+  // 📐 Both were checked against a sweep through spine-core before they were
+  // written, on DW21's artifact idiom (compile the range under `local: true`,
+  // flip the emitted flag off): 3600 dials at 0.1° over the whole circle, the
+  // runtime's own applied time against the closed form to **3.2e-8s** on PS36's
+  // rig and **1.7e-8s** on PS41's — the reader's `atan2` noise, the same order
+  // PS38 measures — with 3000 of 3600 readings outside PS36's window against a
+  // predicted 83.3333%, and the pose of a reading in the held arc within
+  // **9.5e-7°** of the pose at the frame the clause names.
+  const TIP_POSE = {
+    duration: 0.895,
+    loop: false,
+    tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.895, v: [30] }] }],
+  };
+  const overTheEdge = (patch: Record<string, unknown> = {}): Array<Record<string, unknown>> => [
+    pairSlider('yaw', 'tip-pose', 'yaw-dial', { from: 0, to: 0.02, scale: 0.0025, ...patch }),
+  ];
+  const overshot = refusal(sliderPairDirs(overTheEdge()), sliderPairMotion({ 'tip-pose': TIP_POSE }));
+  /** Which of the two corners' figures a message carries, read out of it rather than restated. */
+  const corner = (message: string): string[] =>
+    [
+      '300.000°',
+      '500.000°',
+      '140.000°',
+      '0.000s..0.300s',
+      '83.3%',
+      'at 0.000s',
+      '-8.000°',
+      '350.000°',
+      '352.000°',
+      '0.020s..0.895s',
+      '2.8%',
+      'at 0.895s',
+    ].filter((clause) => message.includes(clause));
+  say(
+    'PS41_AN_OVERSHOOT_BY_A_LITTLE_PRINTS_ITS_OWN_FIGURES_AND_NONE_OF_THE_FULL_TURNS',
+    overshot !== null &&
+      overflowed !== null &&
+      overshot.includes('run from -8.000° to 350.000°') &&
+      overshot.includes('read as 352.000°') &&
+      overshot.includes('maps to time 0.900s') &&
+      overshot.includes("reaches only 0.020s..0.895s of the animation's 0.895s") &&
+      overshot.includes('2.8% of the circle — every reading above 350.000° — is held on the frame at 0.895s') &&
+      overshot.includes('below 0°') &&
+      // …and neither corner carries a single one of the other's numbers.
+      !overshot.includes('300.000°') &&
+      !overshot.includes('500.000°') &&
+      !overshot.includes('140.000°') &&
+      !overshot.includes('0.000s..0.300s') &&
+      !overshot.includes('83.3%') &&
+      !overshot.includes('at 0.000s') &&
+      !overflowed.includes('-8.000°') &&
+      !overflowed.includes('350.000°') &&
+      !overflowed.includes('352.000°') &&
+      !overflowed.includes('0.020s..0.895s') &&
+      !overflowed.includes('2.8%') &&
+      !overflowed.includes('at 0.895s'),
+    overshot === null || overflowed === null
+      ? `one of the two corners compiled: overshoot=${overshot === null ? 'compiled' : 'refused'} ` +
+        `full-turn=${overflowed === null ? 'compiled' : 'refused'}`
+      : `the 8°-over corner carries [${corner(overshot).join(' + ') || 'none of the twelve figures'}]; the ` +
+        `full-turn corner carries [${corner(overflowed).join(' + ') || 'none of the twelve figures'}]`,
+    'a consequence that is computed can be computed WRONG, and the way that shows is one refusal printing the ' +
+      "other's arithmetic. These two are the extremes of the clause — nearly the whole animation reachable with a " +
+      'sliver of circle held, against a sliver of animation with five sixths of the circle held — so a sign ' +
+      'flipped in the intersection, or the reachable interval read off the wrong bound, moves a figure that only ' +
+      'one of them carries',
+  );
+
+  // --- and the flag that decides which consequence there IS -----------------
+  //
+  // 🚨 `Slider.js:63-66` is the whole of it: `p.time = duration + (p.time %
+  // duration)` when the slider loops, `Math.max(0, p.time)` when it does not. So
+  // "held on one frame" is not a property of the range at all — it is a property
+  // of that flag, and a message asserting the clamp on a looping slider would be
+  // issue #423's own defect one field over.
+  //
+  // 📐 Measured, not argued: the same 300°..500° rig PS36 refuses was swept at
+  // 0.1° through spine-core with `loop: true`, and NOTHING is held — the applied
+  // time runs 0.000s..1.2995s and all 3600 readings land inside the animation,
+  // against 3000 of 3600 outside it under the default. (The one sample that
+  // disagreed with the closed form is the dial at 100°, where the mapping lands
+  // on exactly −1×duration and `duration + (time % duration)` is discontinuous;
+  // the reader's own noise decides the side. That is the wrap's knife edge, not
+  // a model error.)
+  const looped = refusal(sliderPairDirs(pastTheCircle({ loop: true })), sliderPairMotion({ sweep: sweepFrom(300, 500) }));
+  say(
+    'PS42_A_LOOPING_SLIDER_IS_TOLD_ABOUT_THE_WRAP_AND_NOT_ABOUT_A_CLAMP',
+    looped !== null &&
+      overflowed !== null &&
+      // the same range, so the range clause and the reading are word for word
+      // PS36's — only the consequence moves.
+      looped.includes('run from 300.000° to 500.000°') &&
+      looped.includes('read as 140.000°') &&
+      looped.includes('past 360°') &&
+      looped.includes('Nothing is held: "loop": true wraps the time as `duration + (time % duration)`') &&
+      looped.includes('the 140.000° of the range past 360° selects nothing a reading inside the circle') &&
+      // …and not one word of the clamp clause, which is false here.
+      !looped.includes('is held on the frame at') &&
+      !looped.includes('reaches only') &&
+      !looped.includes('83.3%') &&
+      // …while the default spelling of the same rig still carries all of it.
+      overflowed.includes('is held on the frame at 0.000s') &&
+      !overflowed.includes('Nothing is held'),
+    looped === null
+      ? 'the looping slider compiled: the guard reads `loop` as a reason not to refuse, which it is not'
+      : `loop: true is refused with "…${(looped.match(/Nothing is held.*?(?= The whole part of the range)/) ?? ['(no wrap clause)'])[0]}…" and ` +
+        `carries ${looped.includes('is held on the frame at') ? 'the clamp clause anyway' : 'no clamp clause'}; ` +
+        `the same range at the default carries ` +
+        `"${(overflowed?.match(/This dial reaches.*?(?= The whole part of the range)/) ?? ['(no clamp clause)'])[0]}"`,
+    'the clause this issue replaced was false because it asserted a consequence. Reading the animation window and ' +
+      'the circle and then asserting the CLAMP would be the same mistake at one remove — `loop: true` clamps ' +
+      'nothing, so five sixths of a circle that pins to frame 0 under the default pins to nothing here',
+  );
+
+  // --- the two shapes where the general sentence would be a lie -------------
+  //
+  // ⭐ Computing a consequence puts two edges in the arithmetic that asserting
+  // one did not have, and both are reachable rigs rather than curiosities:
+  //
+  //   0°..500° over 1s     the circle is INSIDE the window, so nothing is held —
+  //                        0.0% and "every reading below 0.000°" would be a
+  //                        vacuous clause dressed as a measurement. What is
+  //                        wrong with this rig is the other half: 0.720s..1s of
+  //                        the animation is not reachable at all. 🚨 This is
+  //                        issue #423's OWN headline example, the one whose
+  //                        wrapped reading lands INSIDE the animation (0.280s)
+  //                        and which the retired clause called "outside".
+  //   -200°..-50° over 0.6s  the window misses the circle entirely, so there is
+  //                        no reachable interval to print and every reading is
+  //                        held.
+  //
+  // ⚠️ The first deliberately shares PS36's 500.000° and 140.000°: the same bone
+  // position, read the same way, with a completely different consequence — which
+  // is the whole claim that the clause is computed off the range rather than
+  // attached to the reading. So this case asserts its own text and makes no
+  // disjointness claim; PS41 is where that rule lives.
+  //
+  // 🐛 The second stays within ONE turn of the circle (-200°, not -500°) on
+  // purpose, and the reason is a defect this case would otherwise have to freeze:
+  // `dead.readAs` is `end ± 360` rather than a modulo, inherited from #405, so a
+  // range further out than one turn prints a reading no bone can have — `from:
+  // -500, scale: 0.005` over 1s says *"the bone at -500.000° is read as
+  // -140.000°"* where the reader returns 220.000°. Pre-existing, untouched here,
+  // and out of #423's scope; at -200° the reading it names (160.000°) is true.
+  const INSIDE_POSE = {
+    duration: 1,
+    loop: false,
+    tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [30] }] }],
+  };
+  const MISSES_POSE = {
+    duration: 0.6,
+    loop: false,
+    tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.6, v: [30] }] }],
+  };
+  const nothingHeld = refusal(
+    sliderPairDirs([pairSlider('yaw', 'inside-pose', 'yaw-dial', { from: 0, to: 0, scale: 0.002 })]),
+    sliderPairMotion({ 'inside-pose': INSIDE_POSE }),
+  );
+  const nothingReached = refusal(
+    sliderPairDirs([pairSlider('yaw', 'misses-pose', 'yaw-dial', { from: 0, to: 0.8, scale: 0.004 })]),
+    sliderPairMotion({ 'misses-pose': MISSES_POSE }),
+  );
+  say(
+    'PS43_THE_TWO_EDGES_OF_THE_COMPUTED_CLAUSE_SAY_WHAT_IS_TRUE_INSTEAD_OF_A_VACUOUS_ZERO',
+    nothingHeld !== null &&
+      nothingReached !== null &&
+      nothingHeld.includes('run from 0.000° to 500.000°') &&
+      // the reading #423 says lands INSIDE the animation, where the retired
+      // clause asserted it was outside
+      nothingHeld.includes('read as 140.000° and maps to time 0.280s') &&
+      nothingHeld.includes("reaches only 0.000s..0.720s of the animation's 1s") &&
+      nothingHeld.includes('no reading of the circle reaches the rest of it') &&
+      !nothingHeld.includes('0.0% of the circle') &&
+      !nothingHeld.includes('is held on the frame at') &&
+      nothingReached.includes('run from -200.000° to -50.000°') &&
+      nothingReached.includes('read as 160.000° and maps to time 1.440s') &&
+      nothingReached.includes("reaches none of the animation's 0.6s — the whole circle is held on the frame at 0.600s") &&
+      !nothingReached.includes('reaches only') &&
+      !nothingReached.includes('% of the circle'),
+    nothingHeld === null || nothingReached === null
+      ? `one of the two edges compiled: circle-inside=${nothingHeld === null ? 'compiled' : 'refused'} ` +
+        `window-misses=${nothingReached === null ? 'compiled' : 'refused'}`
+      : `the circle inside the window is told "…${(nothingHeld.match(/This dial reaches.*?(?= The whole part of the range)/) ?? ['(no reach clause)'])[0]}…", ` +
+        `and the window that misses the circle "…${(nothingReached.match(/This dial reaches.*?(?= The whole part of the range)/) ?? ['(no reach clause)'])[0]}…"`,
+    'an assertion has one shape and a measurement has as many as the arithmetic does. These are the two the ' +
+      'general sentence cannot cover — a held arc of zero width, and no reachable interval at all — and a branch ' +
+      'that prints "0.0% of the circle — every reading below 0.000°" is a vacuous clause wearing a number, which ' +
+      'is exactly the dressing this issue took off',
   );
 
   return bad;
@@ -21903,7 +22137,7 @@ function main(): void {
       'on the effective channels, a deform hold read off the expanded run so two spellings of one run are one ' +
       'geometry, a raw curve over a hold left verbatim, the named easing and an explicit stepped emitting one file, ' +
       'and the hold posed through spine-core identically whether stepped or linear), ' +
-      '+ 41 path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' +
+      '+ 44 path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' +
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'which bones a skin switches on, and what TWO sliders on one bone do to it: 7.50 or 18.75 or their sum ' +
       '26.25 degrees, decided only by which of them is later in the constraints array and whether that one is ' +
@@ -21911,7 +22145,15 @@ function main(): void {
       'pair below full mix, a pair a skin switch keeps apart, and a pair on different properties) and the 360 ' +
       'wrap at BOTH ends, where a rotate slider reading a WORLD rotation can neither dip below 0 degrees nor run ' +
       'PAST 360 — one refusal each, with the frame each would otherwise pin to, asserted to stay two messages and ' +
-      'not one, and beside them the shapes that must NOT be refused: the FULL TURN ending exactly on 360, whose ' +
+      'not one, each ending on a consequence this repository COMPUTES rather than asserts (which interval of the ' +
+      'animation the dial can reach at all, and what percentage of the circle is held on one frame, both read off ' +
+      '[0, 360) met with the driving window the same message prints) — the two extremes of that clause required ' +
+      "to print their own figures and none of the other's, and a LOOPING slider told about the wrap instead, " +
+      'because `Math.max(0, time)` is what the other flag runs and asserting a clamp there would be the same ' +
+      'defect one field over, plus the two edges that arithmetic has and an assertion did not — a circle wholly ' +
+      'inside the window, where nothing is held and a 0.0% clause would be a vacuous number, and a window that ' +
+      'misses the circle, where there is no reachable interval to print at all, ' +
+      'and beside them the shapes that must NOT be refused: the FULL TURN ending exactly on 360, whose ' +
       'only unreachable value is a supremum measured here to pose the skeleton within 4e-7 degrees of 0, and the ' +
       'same past-360 range under `local: true`, which is the repair the refusal names — with the line between them ' +
       'pinned by two rigs a thousandth of a degree apart, 360.000 green and 360.001 refused), ' +

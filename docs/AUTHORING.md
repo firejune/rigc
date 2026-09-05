@@ -1431,6 +1431,33 @@ Both are refused at compile, each with its own arithmetic in the message and its
 own repair — *"move the range so it does not cross 0°"* and *"move the range so it
 does not run past 360°"*.
 
+📐 **The consequence in that message is computed, not described.** Both refusals
+end on two numbers read off `[0, 360)` met with the driving values that reach the
+animation — the same two the message has already printed:
+
+```
+reachable = { to + (v − from) × scale : v ∈ [0, 360) } ∩ [0, duration]
+held      = { v ∈ [0, 360) : the mapped time falls outside [0, duration] }
+```
+
+so the 300°..500° dial above is refused with *"This dial reaches only
+0.000s..0.300s of the animation's 1s, and 83.3% of the circle — every reading
+below 300.000° — is held on the frame at 0.000s"*, and the −15°..15° one with
+*"…only 0.500s..1.000s of the animation's 1s, and 95.8% of the circle — every
+reading above 15.000° — is held on the frame at 1.000s"*. [measured] the first of
+those reproduces a 0.1° sweep of the rig through `spine-core` to **3.2e-8 s**,
+which is the reader's own `atan2` noise.
+
+⚠️ **`loop: true` gets a different sentence, because it is a different runtime.**
+`Slider.js:63-66` is `p.time = duration + (p.time % duration)` when the slider
+loops and `Math.max(0, p.time)` when it does not, so nothing is held on a looping
+slider — [measured] the same 300°..500° rig pins 5⁄6 of the circle to frame 0 at
+the default and pins *nothing* under `loop: true`. The refusal says so: *"Nothing
+is held: `"loop": true` wraps the time as `duration + (time % duration)`, so the
+140.000° of the range past 360° selects nothing a reading inside the circle does
+not already select."* The range is still refused either way — a bone cannot be
+read at 500°, whatever happens to the time afterwards.
+
 ⭐ **A range ending exactly on 360° is legal**, and that is the whole turn: a
 wheel, a turntable, a head that goes all the way round, written `from: 0` with a
 `scale` that puts 360° on the last frame. It misses exactly one value — its own

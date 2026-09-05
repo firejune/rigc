@@ -400,9 +400,10 @@ and here is that refusal on this rig, produced by flipping the flag:
 rigc compile error: rig constraint "yaw": drives off bone "yaw_dial" rotate with "local": false, and the
 driving values that reach animation "turn" (0s..1.9s) run from -19.000° to 19.000°. A world rotation is read
 through `FromRotate.value`, which ends `if (value < 0) value += 360`, so the bone at -19.000° is read as
-341.000° and maps to time 18.000s — outside the animation's 1.9s. With "loop": false that is
-`Math.max(0, time)` holding the last frame; with "loop": true it wraps to some other frame. Either way the
-whole part of the range below 0° is dead and nothing at runtime reports it.
+341.000° and maps to time 18.000s. This dial reaches only 0.950s..1.900s of the animation's 1.9s, and 94.7% of
+the circle — every reading above 19.000° — is held on the frame at 1.900s. The whole part of the range below
+0° is dead and nothing at runtime reports it. Add `"local": true` to read the bone's own rotation signed and
+unwrapped — that is the form a face axis wants — or move the range so it does not cross 0°.
 ```
 
 ### ⭐ Both sliders are at `mix: 1`, and both `A39` and `A40` gate this rig
