@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.18.0](https://github.com/firejune/rigc/compare/v0.17.0...v0.18.0) (2026-09-05)
+
+
+### Features
+
+* **deform:** a transform key over a multi-bone attachment, pushed into each bind space ([#413](https://github.com/firejune/rigc/issues/413)) ([7eb0a32](https://github.com/firejune/rigc/commit/7eb0a32af271d3190fd32228e27c7b83f77ae575))
+* **depth:** the turn ceiling says whether it is describing the form or the sheet's grain ([#416](https://github.com/firejune/rigc/issues/416)) ([f1d6a67](https://github.com/firejune/rigc/commit/f1d6a677347505ab2e7aa14cb47bdf6eb87d3d48))
+* **gallery:** look — a face whose angle is a value, not a time ([#408](https://github.com/firejune/rigc/issues/408)) ([c2a79d6](https://github.com/firejune/rigc/commit/c2a79d683bc1ab03f53a9acdda21e143c0c2101d))
+* **motion:** the animator's words, mapped to the constructs that carry them ([#397](https://github.com/firejune/rigc/issues/397)) ([2ae784f](https://github.com/firejune/rigc/commit/2ae784f8e406e24a67ce487fde354ca22e80a48d))
+* **tools:** the editor round trip, promoted out of a scratch shell script ([#396](https://github.com/firejune/rigc/issues/396)) ([19266b5](https://github.com/firejune/rigc/commit/19266b54b03a54a5ab96e79aecb29c8c6b793155))
+* **validate:** A40 — two sliders on one target, and the yaw axis that dies at 0° ([#405](https://github.com/firejune/rigc/issues/405)) ([a546b20](https://github.com/firejune/rigc/commit/a546b209fc5ce236684fdea4e67d516786b66a78))
+
+
+### Bug Fixes
+
+* **tools:** the round trip refuses the Spine trial by name, and says what it can still do ([#414](https://github.com/firejune/rigc/issues/414)) ([7467c1e](https://github.com/firejune/rigc/commit/7467c1e31e1a2ed14cea148f924a6802541800be))
+* two claims the repository makes about itself, neither of them derived ([#394](https://github.com/firejune/rigc/issues/394)) ([e43aca9](https://github.com/firejune/rigc/commit/e43aca983a7e5623e97efbd7b3ba5d2d38faefc0))
+* **validate:** a triangle that draws no pixels cannot draw them backwards ([#404](https://github.com/firejune/rigc/issues/404)) ([554bfbe](https://github.com/firejune/rigc/commit/554bfbe2c29388b0b74bb1e58187d83f6f899a6f))
+* **validate:** A39 poses a slider-applied animation at the slider's own mapping ([#418](https://github.com/firejune/rigc/issues/418)) ([ae6be2a](https://github.com/firejune/rigc/commit/ae6be2a9c4526b4a141f73354b0e44335967891f))
+* **validate:** A39 scans the span between keys, in closed form ([#409](https://github.com/firejune/rigc/issues/409)) ([7ebebc9](https://github.com/firejune/rigc/commit/7ebebc974f7429c74872436165a3037b06b2a42d))
+
 ## [0.17.0](https://github.com/firejune/rigc/compare/v0.16.0...v0.17.0) (2026-09-05)
 
 **A part can state its own depth, and rigc will tell you how far it turns.**
