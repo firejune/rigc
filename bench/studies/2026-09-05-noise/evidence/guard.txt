@@ -1,0 +1,109 @@
+# noise probe — the work-directory guard, fired
+
+Every refusal below was run for real and the stderr and exit code are exactly
+what the shell captured. A guard nobody has seen fire is not a guard, and this
+one stands in front of an rmSync(recursive, force) on a caller-supplied path.
+
+Repository root, derived by the tool from import.meta.dir and never from cwd:
+  /Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88
+
+## A path inside the repository — one that EXISTS and holds the compiler
+
+```
+$ bun '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/bench/studies/2026-09-05-noise/tools/noiseprobe.ts' src --experiment=quant
+noiseprobe: "src" resolves to /Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/src, which is inside the repository at /Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88; the work directory is created and DELETED on every run, so it must be outside it. It also has to be, for the reason the density study learned: a harness that writes into the tree it measures gets its own leavings swept up by the selftest's walk over every motion spec.
+exit 2
+```
+
+## The repository root itself
+
+```
+$ bun '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/bench/studies/2026-09-05-noise/tools/noiseprobe.ts' '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88' --experiment=quant
+noiseprobe: "/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88" resolves to /Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88, which is inside the repository at /Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88; the work directory is created and DELETED on every run, so it must be outside it. It also has to be, for the reason the density study learned: a harness that writes into the tree it measures gets its own leavings swept up by the selftest's walk over every motion spec.
+exit 2
+```
+
+## The filesystem root
+
+```
+$ bun '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/bench/studies/2026-09-05-noise/tools/noiseprobe.ts' / --experiment=quant
+noiseprobe: "/" resolves to /, the filesystem root; the work directory is created and DELETED on every run, so it is a directory of its own
+exit 2
+```
+
+## The home directory itself
+
+```
+$ bun '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/bench/studies/2026-09-05-noise/tools/noiseprobe.ts' "$HOME" --experiment=quant
+noiseprobe: "/Users/firejune" resolves to /Users/firejune, the home directory; the work directory is created and DELETED on every run, so it is a directory of its own
+exit 2
+```
+
+## A literal ~, unexpanded by the shell, from inside the repository
+
+```
+$ bun '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/bench/studies/2026-09-05-noise/tools/noiseprobe.ts' '~' --experiment=quant
+noiseprobe: "~" begins with a tilde the shell did not expand, so it would resolve to /Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/~ — a directory literally named "~", not a path under /Users/firejune. The work directory is created and DELETED recursively on every run, so it is given as a path that is already expanded: drop the quotes, or write it out in full.
+exit 2
+```
+
+## The same literal ~ from OUTSIDE the repository, where no other rule would catch it
+
+```
+$ cd /tmp && bun '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/bench/studies/2026-09-05-noise/tools/noiseprobe.ts' '~' --experiment=quant
+noiseprobe: "~" begins with a tilde the shell did not expand, so it would resolve to /private/tmp/~ — a directory literally named "~", not a path under /Users/firejune. The work directory is created and DELETED recursively on every run, so it is given as a path that is already expanded: drop the quotes, or write it out in full.
+exit 2
+```
+
+## A literal ~/somewhere, likewise unexpanded
+
+```
+$ cd /tmp && bun '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/bench/studies/2026-09-05-noise/tools/noiseprobe.ts' '~/np' --experiment=quant
+noiseprobe: "~/np" begins with a tilde the shell did not expand, so it would resolve to /private/tmp/~/np — a directory literally named "~", not a path under /Users/firejune. The work directory is created and DELETED recursively on every run, so it is given as a path that is already expanded: drop the quotes, or write it out in full.
+exit 2
+```
+
+## A path that exists and is not a directory
+
+```
+$ bun '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/bench/studies/2026-09-05-noise/tools/noiseprobe.ts' '/private/tmp/claude-501/-Users-firejune-Workspace-Firejune-rigc/98d1ff9a-00ff-4c19-b0eb-87a063c997eb/scratchpad/plainfile' --experiment=quant
+noiseprobe: "/private/tmp/claude-501/-Users-firejune-Workspace-Firejune-rigc/98d1ff9a-00ff-4c19-b0eb-87a063c997eb/scratchpad/plainfile" resolves to /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-rigc/98d1ff9a-00ff-4c19-b0eb-87a063c997eb/scratchpad/plainfile, which exists and is a file; the work directory is created and DELETED recursively on every run, so it is a directory this harness owns or a path that does not exist yet
+exit 2
+```
+
+## Cwd-independence: the same in-repo path, from the filesystem root
+
+```
+$ cd / && bun '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/bench/studies/2026-09-05-noise/tools/noiseprobe.ts' '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/src' --experiment=quant
+noiseprobe: "/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/src" resolves to /Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/src, which is inside the repository at /Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88; the work directory is created and DELETED on every run, so it must be outside it. It also has to be, for the reason the density study learned: a harness that writes into the tree it measures gets its own leavings swept up by the selftest's walk over every motion spec.
+exit 2
+```
+
+## The positive control — a path outside the repository still runs
+
+```
+$ bun '/Users/firejune/Workspace/Firejune/rigc/.claude/worktrees/agent-a4437ba5bc84d2c88/bench/studies/2026-09-05-noise/tools/noiseprobe.ts' '/private/tmp/claude-501/-Users-firejune-Workspace-Firejune-rigc/98d1ff9a-00ff-4c19-b0eb-87a063c997eb/scratchpad/guardok' --experiment=quant | tail -4
+noiseprobe: removing and recreating /private/tmp/claude-501/-Users-firejune-Workspace-Firejune-rigc/98d1ff9a-00ff-4c19-b0eb-87a063c997eb/scratchpad/guardok
+| band-0.5px | 0.500 | 243 | 59.53 | 64.77 | 64.77 | -5.24 | 64.80 | 54.78 |
+| band-0.25px | 0.250 | 483 | 59.53 | 64.77 | 64.77 | -5.24 | 46.74 | 54.78 |
+| band-0.125px | 0.125 | 963 | 59.53 | 64.77 | 64.77 | -5.24 | 27.98 | 54.78 |
+| band-0.0625px | 0.063 | 1923 | 59.53 | 64.77 | 64.77 | -5.24 | 14.88 | 54.78 |
+exit 0
+```
+
+## Nothing was deleted
+
+```
+$ git status --porcelain
+ M docs/FACE.md
+?? bench/studies/2026-09-05-noise/
+?? examples
+?? node_modules
+```
+
+`src/` is not listed as deleted, and it still holds its files:
+
+```
+$ ls src | wc -l
+      29
+```

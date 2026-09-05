@@ -1,0 +1,53 @@
+# noise probe — per-pixel white noise against amplitude and density
+
+part 400x400, raised cosine of radius 200 px, seed 20260905, continuous closed form 64.77° at peak 255 / zScale 60
+invocation: bun bench/studies/2026-09-05-noise/tools/noiseprobe.ts <workdir> --experiment=white
+
+Each cell: the tightest reported ceiling, degrees. Row 0 is the 8-bit sheet with nothing added.
+
+| ±LSB | grid-17 | grid-33 | grid-65 | grid-129 | grid-257 |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 65.35 | 64.80 | 64.58 | 63.06 | 61.37 |
+| 1 | 64.80 | 63.49 | 61.37 | 58.15 | 52.34 |
+| 2 | 64.47 | 62.21 | 58.15 | 53.37 | 42.98 |
+| 4 | 63.71 | 59.74 | 52.68 | 45.07 | 32.60 |
+| 8 | 62.21 | 55.14 | 45.34 | 33.10 | 20.71 |
+| 16 | 58.74 | 46.88 | 33.10 | 20.99 | 11.93 |
+| 32 | 52.42 | 35.40 | 21.55 | 11.72 | 6.24 |
+
+## The same, as the tangent the ceiling actually is
+
+`tan t` is what the arithmetic is linear in; degrees compress the top of the range.
+
+| ±LSB | grid-17 | grid-33 | grid-65 | grid-129 | grid-257 |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 2.1795 | 2.1250 | 2.1040 | 1.9676 | 1.8319 |
+| 1 | 2.1250 | 2.0047 | 1.8319 | 1.6098 | 1.2957 |
+| 2 | 2.0936 | 1.8973 | 1.6098 | 1.3449 | 0.9320 |
+| 4 | 2.0238 | 1.7137 | 1.3117 | 1.0024 | 0.6396 |
+| 8 | 1.8973 | 1.4358 | 1.0119 | 0.6518 | 0.3781 |
+| 16 | 1.6473 | 1.0678 | 0.6518 | 0.3836 | 0.2112 |
+| 32 | 1.2997 | 0.7107 | 0.3950 | 0.2075 | 0.1094 |
+
+## The level gradient the noise actually added
+
+A ceiling IS a sampled gradient: `Δlevel = 255·h / (zScale·tan t)`. Subtracting row 0's from each row's gives the excess levels the noise put across the steepest cell — no model, just the identity inverted.
+
+| ±LSB | grid-17 | grid-33 | grid-65 | grid-129 | grid-257 | mean excess ÷ ±LSB |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1.25 | 1.50 | 1.88 | 1.50 | 1.50 | 1.53 |
+| 2 | 2.00 | 3.00 | 3.88 | 3.13 | 3.50 | 1.55 |
+| 4 | 3.75 | 6.00 | 7.63 | 6.50 | 6.76 | 1.53 |
+| 8 | 7.25 | 12.00 | 13.63 | 13.63 | 13.94 | 1.51 |
+| 16 | 15.75 | 24.75 | 28.12 | 27.88 | 27.81 | 1.55 |
+| 32 | 33.00 | 49.75 | 54.63 | 57.25 | 57.06 | 1.57 |
+
+## Seed stability — five seeds at ±1 LSB
+
+| lattice | seed 20260905 | seed 20260906 | seed 20260907 | seed 20260908 | seed 20260909 | spread |
+| --- | --- | --- | --- | --- | --- | --- |
+| grid-17 | 64.80 | 64.91 | 65.02 | 65.24 | 65.02 | 0.44 |
+| grid-33 | 63.49 | 63.06 | 63.49 | 64.36 | 63.49 | 1.30 |
+| grid-65 | 61.37 | 61.37 | 61.79 | 61.37 | 61.37 | 0.42 |
+| grid-129 | 58.15 | 58.15 | 57.57 | 58.15 | 58.15 | 0.58 |
+| grid-257 | 52.34 | 52.34 | 52.17 | 52.34 | 51.01 | 1.33 |

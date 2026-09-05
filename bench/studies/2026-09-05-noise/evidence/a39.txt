@@ -1,0 +1,17 @@
+# noise probe — does the runtime agree — the reported ceiling against what the deform survey refuses
+
+part 400x400, raised cosine of radius 200 px, seed 20260905, continuous closed form 64.77° at peak 255 / zScale 60
+invocation: bun bench/studies/2026-09-05-noise/tools/noiseprobe.ts <workdir> --experiment=a39
+
+| sheet | lattice | yaw+ ° | walk + admits | yaw− ° | walk − admits | pitch+ ° | pitch− ° | worst |floor − walk| |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| clean 8-bit | grid-33 | 64.80 | 64 | 64.80 | 64 | 64.80 | 64.80 | 0 |
+| ±1 LSB | grid-33 | 63.49 | 63 | 64.14 | 64 | 63.92 | 63.49 | 0 |
+| ±8 LSB | grid-33 | 59.74 | 59 | 58.54 | 58 | 55.14 | 55.88 | 0 |
+| one stray pixel (δ 245) | grid-33 | 12.07 | 12 | 12.38 | 12 | 12.76 | 11.90 | 0 |
+| clean 8-bit | grid-65 | 64.80 | 64 | 64.58 | 64 | 64.58 | 64.80 | 0 |
+| ±1 LSB | grid-65 | 62.21 | 62 | 62.53 | 62 | 61.37 | 61.37 | 0 |
+| ±8 LSB | grid-65 | 49.66 | 49 | 49.73 | 49 | 47.02 | 45.34 | 0 |
+| one stray pixel (δ 245) | grid-65 | 6.14 | 6 | 6.24 | 6 | 6.32 | 6.08 | 0 |
+
+worst |floor(reported) − last degree admitted| over the table: 0°
