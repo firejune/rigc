@@ -14987,6 +14987,68 @@ function runCurrencySuite(): number {
       probeFaults.push(`${probe.row}: the REPAIRED spelling faulted — ${clean.faults.join('; ')}`);
     }
   }
+  // --- CUR07: the module boundary CLAUDE.md names, against the tree ---------
+  //
+  // The same defect one surface over, and it is the surface the doctrine cares
+  // about most. `CLAUDE.md`'s *Conventions* names the files allowed to link
+  // spine-core "because an unnamed exception is how a rule erodes" — and then
+  // went stale in exactly that way: `src/deformmeasure.ts` began posing meshes
+  // through the runtime (#296, #316) and the sentence still said **Two**
+  // (issue #379). Nothing read it, so nothing said so for two weeks.
+  //
+  // 🔒 The clause that MATTERS is the negative one. `src/compile.ts` staying off
+  // the list is what keeps the compiler and the gate from checking each other's
+  // assumptions, and until now no test asserted it at all.
+  {
+    const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+    // A VALUE import, which is what "links the runtime" means: a type-only
+    // import compiles to nothing and cannot pose anything.
+    const linkers: string[] = [];
+    const candidates = ['cli.ts', ...readdirSync(join(root, 'src')).filter((f) => f.endsWith('.ts')).map((f) => `src/${f}`)];
+    for (const rel of candidates) {
+      const text = readFileSync(join(root, rel), 'utf8');
+      const importsIt = [...text.matchAll(/import\s+(type\s+)?\{[^}]*\}\s*from\s*'@esotericsoftware\/spine-core'/g)];
+      if (importsIt.some((m) => m[1] === undefined)) linkers.push(rel);
+    }
+    linkers.sort();
+
+    const claudeMd = readFileSync(join(root, 'CLAUDE.md'), 'utf8');
+    // Bullets, so the rule stays ordinary prose rather than becoming a table
+    // maintained for a test's benefit.
+    const bullet = claudeMd
+      .split(/\n- /)
+      .map((b) => b.replace(/\s+/g, ' '))
+      .find((b) => /files link spine-core/.test(b));
+    const stated = bullet === undefined ? [] : [...bullet.matchAll(/`(src\/[\w.]+\.ts|cli\.ts)`/g)].map((m) => m[1]);
+    const countWord = bullet?.match(/\*\*(\w+)\*\* files link spine-core/)?.[1]?.toLowerCase();
+    // `src/compile.ts` is named in that bullet as a PROHIBITION, not as one of
+    // the linkers, so it is the one name the comparison must not read as a
+    // claim. Naming it here is naming the invariant, which is the point.
+    const FORBIDDEN = 'src/compile.ts';
+    const claimed = [...new Set(stated.filter((f) => f !== FORBIDDEN))].sort();
+
+    const faults: string[] = [];
+    if (bullet === undefined) faults.push('CLAUDE.md has no bullet stating which files link spine-core');
+    if (countWord !== WORDS[linkers.length]) {
+      faults.push(`the bullet says "${countWord ?? '(none)'}" and the tree has ${linkers.length} (${WORDS[linkers.length] ?? linkers.length})`);
+    }
+    for (const f of linkers) if (!claimed.includes(f)) faults.push(`${f} links spine-core and the doctrine does not name it`);
+    for (const f of claimed) if (!linkers.includes(f)) faults.push(`the doctrine names ${f} as a linker and it does not link spine-core`);
+    if (linkers.includes(FORBIDDEN)) faults.push(`🔒 ${FORBIDDEN} LINKS THE RUNTIME — the compiler and the gate must not check each other's assumptions`);
+
+    say(
+      'CUR07_THE_FILES_CLAUDE_MD_ALLOWS_TO_LINK_SPINE_CORE_ARE_THE_FILES_THAT_DO',
+      faults.length === 0 && linkers.length > 0 && claimed.length > 0,
+      faults.length === 0
+        ? `${linkers.length} file(s) link the runtime as values — ${linkers.join(', ')} — and the doctrine names ` +
+          `exactly those, as "${countWord}". ${FORBIDDEN} is not among them, which is the clause that matters`
+        : faults.join('; '),
+      'the rule says an unnamed exception is how a rule erodes, and then eroded that way itself (#379): a third ' +
+        'file began posing through the runtime and the sentence still said Two. A rule about drift that nothing ' +
+        'derives is a comment',
+    );
+  }
+
   say(
     'CUR06_THE_SCANNER_STILL_FAULTS_THE_ROWS_THIS_GATE_WAS_BUILT_FROM',
     probeFaults.length === 0 && CURRENCY_RED_FIRST.length >= 11,

@@ -80,13 +80,21 @@ sincere about it. rigc exists to convert that silence into a named failure.
 ## Conventions
 
 - Bun + TypeScript, ESM, `.ts` extensions in relative imports.
-- `src/` is pure: no clock, no randomness, no network. **Two** files link
+- `src/` is pure: no clock, no randomness, no network. **Three** files link
   spine-core and they are named here, because an unnamed exception is how a rule
-  erodes: `src/validate.ts` owns the round trip, and `src/render.ts` poses a
-  skeleton in order to draw it (posing *is* running the runtime; there is no
-  honest way to render one without it). What the rule protects has not moved —
-  `src/compile.ts` must stay independent of the runtime so the compiler and the
-  gate are not checking each other's assumptions.
+  erodes: `src/validate.ts` owns the round trip, `src/render.ts` poses a
+  skeleton in order to draw it, and `src/deformmeasure.ts` poses one in order to
+  measure what a deform key did to it. All three are the same justification —
+  posing *is* running the runtime, and there is no honest way to read a posed
+  vertex without it. What the rule protects has not moved: `src/compile.ts` must
+  stay independent of the runtime so the compiler and the gate are not checking
+  each other's assumptions.
+
+  ⚠️ This sentence said **Two** for two weeks after the third file arrived
+  (issue #379) — the rule eroded in exactly the way its own clause predicts,
+  because nothing read it. `CUR07` in `selftest.ts` now derives the list from
+  the tree and compares, and its sharpest clause is the negative one: nothing
+  had ever asserted that `src/compile.ts` does *not* link the runtime.
 - **A new runtime import that crosses a directory has to be added to `files` in
   `package.json`.** The published package is an allowlist, not the repository:
   `cli.ts`, `src/`, and the only two modules `src/` reaches outside itself
