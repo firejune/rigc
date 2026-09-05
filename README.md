@@ -505,9 +505,9 @@ work on any frames you have, and `bench` is a repository workflow that needs a c
 and `bun run fetch-examples`. The reasoning behind all three is in
 [the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md).
 
-`build` and `validate` both default to `--profile spine` — the 25 validity rules, which
+`build` and `validate` both default to `--profile spine` — the 26 validity rules, which
 ask *is this valid Spine 4.3 that any runtime plays correctly?* `--profile spine-html`
-adds all 40: the other 15 are one renderer's policy and one canvas budget's, and they
+adds all 41: the other 15 are one renderer's policy and one canvas budget's, and they
 fire on perfectly correct editor-produced Spine data, so reach for that profile when
 you are shipping into *that* project rather than to be thorough. A report always names
 the profile it ran and lists what that profile left out.
@@ -563,7 +563,7 @@ letting `A17` blame the editor for the harness's own doing.
 | 📥 **[docs/INGEST.md](docs/INGEST.md)** | **working with a skeleton you did not author.** What every command can and cannot do with a foreign `skeleton.json`, reading it with the toolchain, transcription as the route that makes it yours, what each validator complaint means on an export, and the re-pivot/rename/extend recipes. Ships in the package too |
 | 🤖 **[docs/PROMPTING.md](docs/PROMPTING.md)** | **handing the authoring to an AI agent** — the prompt clauses a measured pilot run paid for, and what you can leave unsaid. Ships in the package too |
 | 🔬 **[docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md)** | Spine 4.3's full export surface against what rigc emits and what the official examples measurably use, with the ordered gap list |
-| 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 40 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
+| 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 41 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
 | 📋 [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) · [GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md) · [PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) | the live rung ledger, the clause statements a candidate is graded against, and how to run an agent through the ladder and score what comes back |
 
 ## Why you can trust the output
@@ -618,7 +618,7 @@ quality."* All six, with their verdicts, are in
 [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).
 
 The whole dossier — the yardstick, `diff` and `check` and what neither of them can
-see, every rung, the run viewer, the 40 assertions and the selftest behind them — is
+see, every rung, the run viewer, the 41 assertions and the selftest behind them — is
 [docs/BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md).
 Live rung status is
 [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).

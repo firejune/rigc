@@ -163,7 +163,7 @@ What the flags mean:
 | `--atlas-in` | `build` only: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; the atlas is re-emitted into `--out`, re-anchored — **§0.2** |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order. For `chainfit` it is only where each attachment's image name **resolves**: the candidate decides what the parts are, so extra PNGs are unused and a missing name is refused by name (§12.3) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
-| `--profile` | `spine` = the 25 validity rules (**the default**) · `spine-html` = all 40, opt-in |
+| `--profile` | `spine` = the 26 validity rules (**the default**) · `spine-html` = all 41, opt-in |
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview`, and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote`, so is a name that only *some* candidates have |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
@@ -1310,6 +1310,69 @@ looks at. Two more shapes `A37_SLIDER_CONSTRAINT_EFFECTIVE` catches from the
 artifact side: an animation with no timelines (the slider runs and the skeleton
 never changes), and `loop: true` on a zero-length animation — looping computes
 `duration + (time % duration)`, so the animation is applied at **NaN**.
+
+🚨 **`additive` defaults to `false`, and that default is wrong the moment two
+sliders meet.** A slider applies its animation with `MixFrom.current` and that
+flag, so at `mix: 1` a non-additive apply **writes the value outright** instead of
+adding to the pose it found. Two sliders whose animations key the same bone
+therefore do not compose: the one **later in the `constraints` array** wins and
+the earlier one contributes nothing at all. [measured] two dials on one bone,
+contributing 7.50° and 18.75°:
+
+| the two sliders | the bone poses |
+| --- | ---: |
+| both at the default | **18.75°** — the later one alone |
+| the same two, array order swapped | **7.50°** — the other one alone |
+| both `"additive": true` | **26.25°** — the sum |
+| an additive one *under* a non-additive one | 18.75° — the later one still wins |
+
+So a two- or three-axis face wants `"additive": true` on **every** slider that
+shares a target. The first entry could keep the default — nothing runs before it —
+but do not: a non-additive slider also erases the **playing animation** on the
+bones its own animation keys, even sitting at its neutral where it looks switched
+off ([measured] an idle keying that bone to 4.00° reads 0.00° under a non-additive
+slider and 4.00° + the slider's own value under an additive one), and writing the
+flag on all of them is also what survives a reorder.
+
+`A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` refuses the rest — it names the bone or
+slot, the property, every slider keying it in array order with its flag, and which
+one wins today. ⛔ rigc does **not** set the flag for you. The compiler never
+invents a value that is not in the spec, and a rig whose composition was chosen by
+the tool is one nobody can reason about.
+
+⚠️ **And `"additive": true` is not always available.** Only some timelines support
+additive application at all: bone, deform, transform-constraint, path `position`,
+physics `wind`/`gravity`, and a slider's own `mix`. A **slot colour, an attachment
+swap, a draw order or a sequence ignores the flag entirely**, so two sliders
+sharing one of those overwrite each other whatever you write. A40 names that case
+separately, because the fix is different: key such a property from one slider
+only, or move both edits into the single animation one slider applies.
+
+🚨 **A `rotate`-driven slider with `local: false` cannot cross 0°.** `local: false`
+reads the bone's **world** rotation through `FromRotate.value`, which ends
+`if (value < 0) value += 360`. A yaw axis authored the natural way — neutral at 0°,
+range −15°..+15° — therefore never sees a negative value: the bone at −15° arrives
+as 345°, and `time = to + (value − from) * scale` lands far past the animation.
+[measured] with `from: 0, to: 0.5, scale: 0.033333` over a 1 s animation the dial
+at −15° applies time **12.000 s**, so with `loop: false` the entire negative half
+of the axis holds the last frame — 15° of face jumping between −0.001° and 0°, with
+nothing anywhere reporting it. The same rig with `"local": true` ramps
+0 s → 0.5 s → 1 s as written.
+
+⇒ **`local: true` is the form a face axis wants.** It reads `source.rotation`
+signed and unwrapped, which for a dial bone is the number you authored. rigc
+refuses the crossing case at compile, with that arithmetic in the message; the
+alternative it leaves open is to move the range so it does not cross 0° (a neutral
+at 180°, say), which is the only form `local: false` can express.
+
+🔸 **`scale` is rounded to six decimals on emit**, like every other number rigc
+writes, so `1/60` ships as `0.016667` — 2e-5 relative. Invisible in the middle of
+the range; it shows at the top of it, where a 60° turn then applies at 1.00002 s
+rather than 1 s. With `loop: false` that is the last frame and harmless, with
+`loop: true` it wraps to the start. When the range comes from a *measured* ceiling
+— the turn ceiling `build` reports for a depth mesh (§3.4, `depth`) is the natural
+one — pick `to`/`scale` so the endpoint lands **inside** the duration rather than
+exactly on it.
 
 ### 3.6 `events` — names the animation can fire
 
@@ -2596,6 +2659,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `rig constraint "X": applies animation "Y", which the motion spec does not declare (it declares: …)` | §3.5.2 — fix the slider's `animation`, or add it to the motion spec |
 | `rig constraint "X": declares both a "bone" and "time"` | §3.5.2 — `bone` picks the model and `time` belongs to the other one |
 | `rig constraint "X": declares "property" but no "bone"` | §3.5.2 — name the driving bone, or key `slider.<name>.time` instead |
+| `rig constraint "X": drives off bone "Y" rotate with "local": false, and the driving values that reach animation "A" (0s..Ds) run from −15.000° to 15.000° …` | §3.5.2 — add `"local": true`, which reads the bone's own rotation signed and unwrapped, or move the range so it does not cross 0°. A world rotation is wrapped into `[0, 360)` before the slider maps it, so the negative half of the range is unreachable and pins to one frame |
 | `skin "S" activates bone "B", but that bone does not declare \`"skin": true\`` | §3.4.1 — the list and the flag are one switch; add the flag or drop the list |
 | `bone "B" declares \`"skin": true\` but no skin activates it` | §3.4.1 — the other half: list it in the skin it belongs to, or drop the flag |
 | `skin "S": uses the long form … and also has a key "X"` | §3.4.1 — move the slot inside `attachments` |
@@ -2667,6 +2731,7 @@ The report prints one line per assertion:
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
 | `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels, or when there is no rig info at all |
+| `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where a later one is not `additive` — it writes that property outright at `mix: 1` and every earlier slider on it is dead (§3.5.2). Also fires when the shared timeline **cannot** be additive (a slot colour, an attachment swap, a draw order, a sequence), where `"additive": true` is not the fix and one of the two has to go. The detail names the bone or slot and the property, every slider keying it in `constraints` order with its flag, and which one wins today. Three shapes are deliberately not findings: a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, not an overwrite), two `skinRequired` sliders no skin activates together, and two sliders on different properties. **SKIP** when fewer than two sliders are at full authority; a PASS means two were compared |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
