@@ -50,17 +50,29 @@ sincere about it. rigc exists to convert that silence into a named failure.
 - 🔒 **Validation through spine-core is not optional — this is a structural
   invariant, not a default.** There must never be a `--no-validate` or
   `--emit-anyway` flag, an environment escape, or an exported API that hands back
-  emitted artifacts without the round-trip having run. Two reasons, and either one
-  alone is sufficient:
-  1. **Correctness.** The round trip through the official parser is the only thing
-     that makes the output trustworthy; a bypass turns rigc back into a program
-     that prints plausible JSON.
-  2. **Licensing.** rigc links `spine-core`, so the Spine Runtimes License covers
-     running it — see [NOTICE.md](NOTICE.md). A build path that does not link the
-     runtime would be a Spine-format emitter with no runtime dependency, i.e.
-     exactly the shape of a tool for working around the editor licence. rigc is
-     complementary to the Spine editor and must remain structurally incapable of
-     being used as a substitute for it. Do not accept a "just for testing" bypass.
+  emitted artifacts without the round-trip having run. **Correctness is the whole
+  of the reason, and it is sufficient by itself:** the round trip through the
+  official parser is the only thing that makes the output trustworthy; a bypass
+  turns rigc back into a program that prints plausible JSON. Do not accept a
+  "just for testing" bypass.
+
+  A second reason stood here until 2026-09-05, when issue #398 retired it: that a
+  build path not linking the runtime would be a Spine-format emitter with no
+  runtime dependency, and that rigc therefore "must remain structurally incapable
+  of being used as a substitute for" the editor. Declaring a format-agnostic core
+  with its own format and player (issue #380) makes that a promise the roadmap
+  already contradicts, and an unkeepable promise is worth less than none — so it
+  is retired rather than reworded. What that does not touch: rigc links
+  `spine-core`, so the Spine Runtimes License covers running it. That is a fact
+  about what the code links, [NOTICE.md](NOTICE.md) states it, and it stands
+  whether or not the clause does.
+
+  ⚠️ **None of that authorises an emit path with no oracle behind it.** What the
+  invariant requires is that everything written to disk was read back by a parser
+  rigc did not write, and spine-core is what supplies that today. A backend
+  emitting rigc's own format has no such parser, so it needs its own: issue
+  #380's cross-backend oracle is the prerequisite for shipping one, not a nicety
+  attached to it.
 - **Determinism is a contract, not a habit.** `A18_DETERMINISTIC_EMIT` compares a
   second, independent compile byte for byte. Anything non-deterministic —
   iteration over an unordered set, a timestamp, a locale-sensitive format, floating

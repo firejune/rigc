@@ -48,12 +48,29 @@ it cuts both ways:
 
 - The output loads in any Spine runtime, and it **imports into the Spine editor**.
   A compiled rig is a starting point on a timeline, not a finished shot — **an AI
-  drafts, a human refines in the editor**. rigc is complementary to the editor. It
-  is not a replacement for it, and it is not a way around one.
+  drafts, a human refines in the editor**. That hand-off is what emitting somebody
+  else's format buys, and `tools/editor_roundtrip.ts` measures that it survives
+  the trip in both directions.
 - rigc **links `@esotericsoftware/spine-core`** to validate what it emits — the
   round-trip through the official parser is the only reason its output can be
   trusted at all. So the [Spine Runtimes License Agreement](https://esotericsoftware.com/spine-runtimes-license)
   applies to rigc exactly as it applies to any other runtime integration.
+
+🗓️ **One sentence left this section on 2026-09-05, and its removal is a decision
+rather than a tidy-up.** It read *"rigc is complementary to the editor. It is not
+a replacement for it, and it is not a way around one."* That was a claim about
+what rigc would never become, and
+[#380](https://github.com/firejune/rigc/issues/380) — a format-agnostic core with
+its own format and web player, Spine kept as one backend among others — is a
+course the claim cannot survive. A promise the roadmap contradicts is worth less
+than no promise, so it is retired rather than reworded
+([#398](https://github.com/firejune/rigc/issues/398)). What a reader can check is
+unchanged: rigc emits Spine skeleton data, links `spine-core`, validates through
+it with no flag that turns that off, and carries the licence obligation the next
+section states in full. A backend emitting something other than Spine data would
+have no spine-core to check it against, and #380 treats an oracle of its own as
+the prerequisite for shipping one — nothing here makes an unchecked emit path
+acceptable.
 
 ### Licensing, stated plainly
 
