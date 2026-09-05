@@ -1106,9 +1106,10 @@ export interface CompileResult {
    * emit order — reported by `explain` (issue #294).
    *
    * ⭐ The report carries the offsets it **emitted**, not a second evaluation of
-   * the same model, so the printed audit and the artifact cannot disagree. An
-   * empty array is the ordinary case: a spec whose deform keys are all authored
-   * runs generated nothing to report.
+   * the same model, so the printed audit and the artifact cannot disagree — and
+   * where the two are not one array, `expanded` carries the second (issue #389).
+   * An empty array is the ordinary case: a spec whose deform keys are all
+   * authored runs generated nothing to report.
    */
   deformTransforms: Array<
     DeformTransformReport & {
@@ -1118,6 +1119,17 @@ export interface CompileResult {
       attachment: string;
       /** The key's own time, as emitted. */
       time: number;
+      /**
+       * The deform array actually written, when it is not `offsets` itself
+       * (issue #389).
+       *
+       * Present only on a multi-influence attachment, where the model is
+       * evaluated at setup **world** positions and `offsets` is therefore one
+       * world displacement per vertex, while the array holds one `Mᵢ⁻¹ · D` pair
+       * per bone INFLUENCE. Absent everywhere else, because there the two are
+       * the same numbers and a second copy of them could only ever drift.
+       */
+      expanded?: number[];
     }
   >;
   /**

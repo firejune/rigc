@@ -7766,11 +7766,21 @@ function runContourMeshSuite(): number {
     );
   }
   {
-    // ⚠️ The limitation, asserted rather than described. A carried mesh has two
-    // bones on some vertices and a `transform` key needs one space to be
-    // evaluated in, so a turn and a soft region cannot ride one attachment
-    // today. Recording it as a control means the day it changes, this fails.
-    const both = contourRefusal(
+    // ⭐ #382's "two thirds of one", made whole (issue #389). ONE attachment
+    // carrying both of the things rigc states about a depth pass: the ANGLE the
+    // raised surface turns through, as a depth-driven `yaw`, and the IMPACT the
+    // soft part answers, as a painted mask handing its region to a bone a
+    // physics constraint wobbles. Until #389 those could not ride one attachment
+    // — the mask puts two bones on the vertices in its falloff, and a
+    // `transform` key was refused on any attachment that had one — and this case
+    // asserted the refusal.
+    //
+    // What it has to demonstrate is the COMBINATION rather than the absence of a
+    // refusal, so all four halves are read off the artifact: the mask really did
+    // blend two bones, the turn key really is measured in influences rather than
+    // in vertices, the physics constraint really is on the carrying bone, and
+    // the whole thing gates green.
+    const both = buildContourRig(
       {
         type: 'mesh',
         image: 'blob.png',
@@ -7782,13 +7792,56 @@ function runContourMeshSuite(): number {
           soft: { bone: 'wobble', mask: 'blob_soft.png' },
         },
       },
-      { depth: { kind: 'ramp' }, softmask: { kind: 'softmask' }, bones: SOFT_BONES, motion: depthMotion(DEPTH_DEGREES) },
+      {
+        depth: { kind: 'ramp' },
+        softmask: { kind: 'softmask' },
+        bones: SOFT_BONES,
+        // The physics table lives in the MOTION spec, which is where
+        // `result.physics` — and therefore `drivesMesh` — comes from.
+        motion: {
+          ...depthMotion(DEPTH_DEGREES),
+          physics: { wobble_settle: { bone: 'wobble', x: 0.5, y: 0.5, inertia: 0.55, strength: 90, damping: 0.8, mass: 1, mix: 1 } },
+        },
+      },
     );
+    interface CarriedRig {
+      skins: Array<{ attachments: { blob: { blob: { vertices: number[]; uvs: number[] } } } }>;
+      animations: { turn: { attachments: { default: { blob: { blob: { deform: Array<{ vertices?: number[] }> } } } } } };
+    }
+    const emitted = JSON.parse(both.result.skeletonText) as CarriedRig;
+    const attachment = emitted.skins[0].attachments.blob.blob;
+    const counts: number[] = [];
+    for (let i = 0; i < attachment.vertices.length; ) {
+      const n = attachment.vertices[i++];
+      counts.push(n);
+      i += n * 4;
+    }
+    const influences = counts.reduce((a, b) => a + b, 0);
+    const blended = counts.filter((n) => n > 1).length;
+    const run = emitted.animations.turn.attachments.default.blob.blob.deform[0].vertices ?? [];
+    const gated = validate({
+      skeletonText: both.result.skeletonText,
+      atlasText: both.result.atlasText,
+      atlasDir: both.opts.outDir,
+      declaredDurations: both.result.declaredDurations,
+      rig: both.result.rig,
+      profile: 'spine',
+    });
+    const wobbled = both.result.physics.filter((p) => p.bone === 'wobble' && p.drivesMesh);
     say(
-      'SF03_A_CARRIED_MESH_CANNOT_ALSO_TAKE_A_TURN_KEY_TODAY',
-      both !== null && both.includes('no single space to evaluate it in'),
-      both ?? 'a clean compile — the limitation is gone and this control should become the case that proves it',
-      'the angle a raised surface turns through and the impact a soft one answers are the two things rigc states about a depth pass, and they cannot yet ride one attachment; issue #389 has the arithmetic showing the refusal is unnecessary',
+      'SF03_A_CARRIED_MESH_TAKES_A_TURN_KEY_TOO',
+      blended > 0 &&
+        influences > counts.length &&
+        run.length === influences * 2 &&
+        wobbled.length === 1 &&
+        gated.failures.length === 0,
+      `${counts.length} vertices carrying ${influences} influences, ${blended} of them blended across two bones; the ` +
+        `turn key's run is ${run.length} numbers, which is ${influences} pairs and not ${counts.length}; physics ` +
+        `"${wobbled[0]?.name ?? '(none)'}" drives bone "${wobbled[0]?.bone ?? '(none)'}"; the gate reports ` +
+        `${gated.failures.length} failure(s)`,
+      'the angle a raised surface turns through and the impact a soft one answers are the two things rigc states ' +
+        'about a depth pass, and one depth pass now buys both on one part; the run being measured in INFLUENCES is ' +
+        'what says the model was pushed through each bone rather than written once per vertex',
     );
   }
 
@@ -9436,6 +9489,98 @@ function emittedDeformRun(result: CompileResult, animation: string, slot: string
   return attachments.default[slot][slot].deform[key].vertices ?? [];
 }
 
+// ---------------------------------------------------------------------------
+// the blended quad: a model over a mesh that TWO bones share (issue #389)
+// ---------------------------------------------------------------------------
+//
+// ⭐ Both bones have to be in DIFFERENT poses or the whole case is vacuous.
+// `TIMELINE_RIG`'s `bound` is weighted across `thigh` and `shin`, and both sit
+// at rotation 0 — so every bone inverse there is the identity, world equals bind
+// everywhere, and a build that forgot the inverse entirely would measure
+// perfect. `armB` is turned 60° off `armA` for exactly that reason, and the
+// difference it makes is what DT10's second mutant is.
+//
+// The quad's corners are stated in setup WORLD, and each bone's bind pairs are
+// derived from them by that bone's own inverse — the fixture's arithmetic, not
+// the compiler's, and `block.png`'s own 12x8 so the attachment is honest about
+// its size.
+// 47° and not a round number: at 60° the chord `|rot θ · D − D|` is exactly
+// `|D|`, which makes DT11's two mutants print the SAME worst error on the same
+// vertex — two distinct mistakes reading as one channel, which is the failure
+// this repository has walked into four times. 47° separates them.
+const BLEND_B_DEGREES = 47;
+const BLEND_B_ORIGIN: [number, number] = [40, 0];
+/** The quad's setup world corners, wound the way `flat`'s are. */
+const BLEND_WORLD: Array<[number, number]> = [
+  [0, 0],
+  [12, 0],
+  [12, 8],
+  [0, 8],
+];
+/** How much of each corner `armB` carries; `armA` carries the rest. */
+const BLEND_B_SHARE = [0, 0.25, 0.75, 1];
+/** The rotation `armB` is keyed to at t=1, in the track's own delta units. */
+const BLEND_B_TURN = 25;
+/** The model DT09 and DT10 state. Every corner moves, including the origin one. */
+const BLEND_TRANSFORM = { kind: 'affine', scale: [1.4, 0.8], about: [-5, -3] };
+
+/** A world point in `armB`'s bind space, by this file's own arithmetic. */
+function blendBindB(wx: number, wy: number): [number, number] {
+  const rad = (BLEND_B_DEGREES * Math.PI) / 180;
+  const px = wx - BLEND_B_ORIGIN[0];
+  const py = wy - BLEND_B_ORIGIN[1];
+  return [round6(px * Math.cos(rad) + py * Math.sin(rad)), round6(-px * Math.sin(rad) + py * Math.cos(rad))];
+}
+
+/**
+ * The blended-quad rig spec.
+ *
+ * `shortAt` names a vertex whose weights are made to sum to 0.9 instead of 1 —
+ * the one case issue #389 leaves refused, because `Σ wᵢ · Mᵢ · Mᵢ⁻¹ · D = D·Σwᵢ`
+ * is the whole identity and that sum is what it cancels against.
+ */
+function blendRig(shortAt: number | null = null): Record<string, unknown> {
+  return {
+    bones: [
+      { name: 'root' },
+      { name: 'armA', parent: 'root', x: 0, y: 0 },
+      { name: 'armB', parent: 'root', x: BLEND_B_ORIGIN[0], y: BLEND_B_ORIGIN[1], rotation: BLEND_B_DEGREES },
+    ],
+    slots: [{ name: 'band', bone: 'armA', attachment: 'band' }],
+    skins: {
+      default: {
+        band: {
+          band: {
+            type: 'mesh',
+            image: 'block.png',
+            path: 'block',
+            uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+            triangles: [0, 1, 2, 0, 2, 3],
+            weights: BLEND_WORLD.map(([wx, wy], v) => {
+              const b = BLEND_B_SHARE[v];
+              const a = (v === shortAt ? 0.9 : 1) - b;
+              const influences: Array<Record<string, unknown>> = [];
+              if (a > 0) influences.push({ bone: 'armA', x: wx, y: wy, weight: round6(a) });
+              if (b > 0) influences.push({ bone: 'armB', x: blendBindB(wx, wy)[0], y: blendBindB(wx, wy)[1], weight: round6(b) });
+              return influences;
+            }),
+            hull: 4,
+            width: 12,
+            height: 8,
+          },
+        },
+      },
+    },
+  };
+}
+
+/** `[dx, dy]` the stated affine gives a vertex sitting at `(x, y)`, derived here. */
+function blendDisplacement(x: number, y: number): [number, number] {
+  const [sx, sy] = BLEND_TRANSFORM.scale;
+  const [ax, ay] = BLEND_TRANSFORM.about;
+  return [(sx - 1) * (x - ax), (sy - 1) * (y - ay)];
+}
+
 /**
  * A deform key stated as a MODEL, and the four rules that keep it one (#294).
  *
@@ -9605,17 +9750,33 @@ function runDeformTransformSuite(): number {
       'non-positive determinant reverses every triangle at once — both are wrong answers rather than failures',
   );
 
-  // --- DT05: a weighted attachment, and the space a model needs ------------
+  // --- DT05: a weighted attachment, and the one weighting a model refuses ---
   //
-  // `bound`'s vertex 2 carries two bones, so its offset is a weighted sum of a
-  // pair in each bone's own bind space and there is no single space to evaluate
-  // a closed form in. Refused for the same reason `fromVertex` is (T13).
-  const multiSpace = refusal(dirs, timelineMotion({
-    duration: 1,
-    loop: false,
-    tracks: [],
-    deform: [{ slot: 'bound', attachment: 'bound', keys: [{ t: 0 }, { t: 1, transform: { kind: 'affine', scale: [2, 1] } }] }],
-  }));
+  // `bound`'s vertex 2 carries two bones. That was refused until issue #389 —
+  // "no single space to evaluate a model in", which is true of the deform ARRAY
+  // and false of the model — and it now compiles, with DT09/DT10 measuring where
+  // its vertices land. What survives is the case the arithmetic does not cover:
+  // `Σ wᵢ · Mᵢ · Mᵢ⁻¹ · D` is `D · Σ wᵢ`, so a vertex whose weights do not close
+  // at 1 has no displacement that lands it where the model says, and 1e-3 is
+  // `A20_MESH_WEIGHTS_COHERENT`'s own tolerance rather than a second one.
+  const openWeights = refusalOf(() => {
+    const short = writeProbeRig(blendRig(1));
+    const motionPath = join(short.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        timelineMotion({
+          duration: 1,
+          loop: false,
+          tracks: [],
+          deform: [{ slot: 'band', attachment: 'band', keys: [{ t: 0 }, { t: 1, transform: BLEND_TRANSFORM }] }],
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+    compile({ rigPath: short.rigPath, motionPath, outDir: short.outDir, imagesDir: short.dir });
+  });
   const weightedControl = timelineMotion({
     duration: 1,
     loop: false,
@@ -9635,11 +9796,12 @@ function runDeformTransformSuite(): number {
   }));
   say(
     'DT05_A_WEIGHTED_ATTACHMENT_IS_MEASURED_AND_REFUSED_IN_INFLUENCES',
-    multiSpace !== null &&
-      /no single space to evaluate it in/.test(multiSpace) &&
+    openWeights !== null &&
+      /weights sum to 0.9000 rather than 1/.test(openWeights) &&
+      /A20_MESH_WEIGHTS_COHERENT/.test(openWeights) &&
       weightedOverrun !== null &&
       /deform array is 10 long \(5 bone influences\)/.test(weightedOverrun),
-    `a model over several bind spaces: ${JSON.stringify(multiSpace)} | a 12-number run: ${JSON.stringify(weightedOverrun)}`,
+    `a model over weights that do not close at 1: ${JSON.stringify(openWeights)} | a 12-number run: ${JSON.stringify(weightedOverrun)}`,
     "`bound` has 4 vertices and 5 influences, so its array is 10 long; measuring it as vertices.length / 3 gave 16 and " +
       'made the overrun bar 6 numbers too wide on every weighted mesh in the repository',
   );
@@ -9732,6 +9894,213 @@ function runDeformTransformSuite(): number {
     'the refusal above is about WHERE the identity is stated, not about the run being zero: a key whose parameters ' +
       'say `degrees: 0` or `amplitude: 0` means the setup pose and has to keep compiling, and it is what makes ' +
       "`explain`'s \"this key IS the setup pose\" line true of every transform key that can still reach it",
+  );
+
+  // --- DT09/DT10: a model over a mesh two bones share (issue #389) ----------
+  //
+  // The refusal DT05 used to assert said a multi-bone attachment has "no single
+  // space to evaluate a model in". True of the deform ARRAY, false of the model:
+  // the vertex has one setup world position whatever its weighting, and a world
+  // displacement `D` written into influence `i` as `Mᵢ⁻¹·D` composes back to
+  // `D · Σ wᵢ = D`. These two cases are what makes that a measurement.
+  //
+  // 🚨 spine-core is the oracle and nothing here compares the compiler with
+  // itself. Every expected number below is either READ off the posed skeleton
+  // (the setup world position of each vertex, the world rotation each bone is
+  // actually in) or derived in this file from the affine's own definition
+  // (`blendDisplacement`). ⚠️ `TC04` was deleted for being the other thing — a
+  // reading checked against the same closed form the code runs — and the shape
+  // to avoid is exactly that.
+  const blendDirs = writeProbeRig(blendRig());
+  const blendMotion = (tracks: Array<Record<string, unknown>>): Record<string, unknown> =>
+    timelineMotion({
+      duration: 1,
+      loop: false,
+      tracks,
+      deform: [{ slot: 'band', attachment: 'band', keys: [{ t: 0 }, { t: 1, transform: BLEND_TRANSFORM }] }],
+    });
+  /** Compile the blended quad, optionally forge the artifact, and load it. */
+  const blendPosable = (
+    motion: Record<string, unknown>,
+    mutate?: (skeleton: Record<string, unknown>, built: CompileResult) => void,
+  ): Posable => {
+    const motionPath = join(blendDirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+    const built = compile({ rigPath: blendDirs.rigPath, motionPath, outDir: blendDirs.outDir, imagesDir: blendDirs.dir });
+    let text = built.skeletonText;
+    if (mutate) {
+      const skeleton = JSON.parse(text) as Record<string, unknown>;
+      mutate(skeleton, built);
+      text = `${JSON.stringify(skeleton, null, 2)}\n`;
+    }
+    return posableFromText(text, built.atlasText, blendDirs.outDir);
+  };
+  /** Where every vertex sits at t=0 and at t=1, posed by spine-core. */
+  const blendMoves = (posable: Posable): Array<{ setup: [number, number]; moved: [number, number] }> => {
+    const before = poseAtSample(posable.data, 'move', 1, 0);
+    const after = poseAtSample(posable.data, 'move', 1, 1);
+    return BLEND_WORLD.map((_, v) => ({ setup: worldVertex(before, 'band', v), moved: worldVertex(after, 'band', v) }));
+  };
+
+  const still = blendMoves(blendPosable(blendMotion([])));
+  // The claim: with every bone still in its setup pose, each vertex lands at its
+  // own setup world position plus the displacement the affine states THERE. The
+  // setup position is spine-core's; the displacement is this file's arithmetic.
+  const stillErrors = still.map(({ setup, moved }) => {
+    const [dx, dy] = blendDisplacement(setup[0], setup[1]);
+    return Math.hypot(moved[0] - (setup[0] + dx), moved[1] - (setup[1] + dy));
+  });
+  const stillWorst = Math.max(...stillErrors);
+  say(
+    'DT09_A_MODEL_OVER_A_TWO_BONE_MESH_LANDS_EVERY_VERTEX_WHERE_THE_CLOSED_FORM_SAYS',
+    stillWorst < 2e-3 && still.length === 4,
+    still
+      .map(({ setup, moved }, v) => {
+        const [dx, dy] = blendDisplacement(setup[0], setup[1]);
+        return (
+          `v${v} (armB ${BLEND_B_SHARE[v]}) setup (${setup[0].toFixed(3)}, ${setup[1].toFixed(3)}) + ` +
+          `(${dx.toFixed(3)}, ${dy.toFixed(3)}) -> posed (${moved[0].toFixed(3)}, ${moved[1].toFixed(3)}), ` +
+          `off by ${stillErrors[v].toExponential(2)}`
+        );
+      })
+      .join(' | '),
+    'the compiler writes one Mᵢ⁻¹·D pair per INFLUENCE and the runtime sums them; the only way to know it summed ' +
+      'back to D is to let spine-core do the summing',
+  );
+
+  // And the half the arithmetic is actually FOR: when a bone moves, the
+  // displacement is carried by the same blend the vertex is. `armA` does not
+  // move, so its share of the displacement stays `D`; `armB` turns, so its share
+  // arrives rotated by however far it turned — and the rotation is read off the
+  // posed bone rather than assumed from the track's own number, because a
+  // `rotate` key is a delta on the setup rotation and this case must not depend
+  // on remembering that.
+  //
+  // ⚠️ The vertex is carried by the turning bone as well, so the displacement
+  // has to be isolated: the SAME bone track is compiled twice, once with the
+  // deform key and once without, and what is measured is the difference between
+  // the two at the same time. Reading it off one build would measure the bone
+  // move and the deform together and call the sum the deform.
+  const carriedTracks = [{ bone: 'armB', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [BLEND_B_TURN] }] }];
+  const carriedWith = blendPosable(blendMotion(carriedTracks));
+  const carriedWithout = blendPosable(timelineMotion({ duration: 1, loop: false, tracks: carriedTracks }));
+  const boneBefore = poseAtSample(carriedWithout.data, 'move', 1, 0);
+  const boneAfter = poseAtSample(carriedWithout.data, 'move', 1, 1);
+  const deformed = poseAtSample(carriedWith.data, 'move', 1, 1);
+  const turned =
+    boneAfter.findBone('armB')!.appliedPose.getWorldRotationX() - boneBefore.findBone('armB')!.appliedPose.getWorldRotationX();
+  const turnedRad = (turned * Math.PI) / 180;
+  const carriedErrors = BLEND_WORLD.map((_, v) => {
+    const setup = worldVertex(boneBefore, 'band', v);
+    const [dx, dy] = blendDisplacement(setup[0], setup[1]);
+    // armB's share of the displacement turns with armB; armA's does not.
+    const b = BLEND_B_SHARE[v];
+    const rx = dx * Math.cos(turnedRad) - dy * Math.sin(turnedRad);
+    const ry = dx * Math.sin(turnedRad) + dy * Math.cos(turnedRad);
+    const want: [number, number] = [(1 - b) * dx + b * rx, (1 - b) * dy + b * ry];
+    const plain = worldVertex(boneAfter, 'band', v);
+    const moved = worldVertex(deformed, 'band', v);
+    const got: [number, number] = [moved[0] - plain[0], moved[1] - plain[1]];
+    return { v, got, want, off: Math.hypot(got[0] - want[0], got[1] - want[1]) };
+  });
+  const carriedWorst = Math.max(...carriedErrors.map((e) => e.off));
+  say(
+    'DT10_A_MOVING_BONE_CARRIES_ITS_SHARE_OF_THE_DISPLACEMENT',
+    carriedWorst < 2e-3 && Math.abs(turned - BLEND_B_TURN) < 1e-3,
+    `armB turned ${turned.toFixed(4)}°; ` +
+      carriedErrors
+        .map(
+          (e) =>
+            `v${e.v} (armB ${BLEND_B_SHARE[e.v]}) moved (${e.got[0].toFixed(3)}, ${e.got[1].toFixed(3)}) against ` +
+            `(${e.want[0].toFixed(3)}, ${e.want[1].toFixed(3)}), off by ${e.off.toExponential(2)}`,
+        )
+        .join(' | '),
+    'this is the behaviour the issue claims over an approximation of it: the vertex fully on the turning bone takes ' +
+      'the displacement rotated, the vertex fully off it takes the displacement unturned, and the two shared corners ' +
+      'take the weighted blend of both — with no key anywhere stating any of that',
+  );
+
+  // --- DT11: the two ways the expansion goes wrong, and DT09 seeing them ----
+  //
+  // 🚨 A gate nobody has seen fail is not a gate, and DT09 measures a difference
+  // of a few pixels — a measurement that generous has to be shown rejecting
+  // something. The two mutants are the two mistakes the expansion invites, and
+  // they are forged into the ARTIFACT rather than into the compiler so they run
+  // on every selftest instead of living in a comment:
+  //
+  //   one influence  — the displacement written into a vertex's FIRST pair and
+  //                    zeros into the rest. The single-influence corners are
+  //                    untouched, so this is only visible on the shared ones,
+  //                    which is why the fixture has two of them.
+  //   no inverse     — the world displacement written into every pair verbatim.
+  //                    The runtime then applies each bone's rotation TO it
+  //                    instead of undoing it, so the corner on the 60° bone is
+  //                    off by the whole turn.
+  //
+  // ⚠️ Neither is refused by a validator assertion and neither could be: both
+  // produce a well-formed rig of the right length, and only the compiler knows
+  // which deformation was asked for. That is what makes this control the gate
+  // rather than an illustration of one.
+  const blendInfluenceCounts = (skeleton: Record<string, unknown>): number[] => {
+    const skins = skeleton.skins as Array<{ attachments: { band: { band: { vertices: number[] } } } }>;
+    const run = skins[0].attachments.band.band.vertices;
+    const counts: number[] = [];
+    for (let i = 0; i < run.length; ) {
+      const n = run[i++];
+      counts.push(n);
+      i += n * 4;
+    }
+    return counts;
+  };
+  const blendDeformKey = (skeleton: Record<string, unknown>): { vertices: number[] } => {
+    const animations = skeleton.animations as Record<
+      string,
+      { attachments: { default: { band: { band: { deform: Array<{ vertices?: number[] }> } } } } }
+    >;
+    return animations.move.attachments.default.band.band.deform[1] as { vertices: number[] };
+  };
+  const worstOf = (posable: Posable): number =>
+    Math.max(
+      ...blendMoves(posable).map(({ setup, moved }) => {
+        const [dx, dy] = blendDisplacement(setup[0], setup[1]);
+        return Math.hypot(moved[0] - (setup[0] + dx), moved[1] - (setup[1] + dy));
+      }),
+    );
+  const oneInfluence = worstOf(
+    blendPosable(blendMotion([]), (skeleton) => {
+      const counts = blendInfluenceCounts(skeleton);
+      const key = blendDeformKey(skeleton);
+      const kept: number[] = [];
+      for (let v = 0, k = 0; v < counts.length; v++) {
+        for (let n = 0; n < counts[v]; n++, k++) kept.push(n === 0 ? key.vertices[2 * k] : 0, n === 0 ? key.vertices[2 * k + 1] : 0);
+      }
+      key.vertices = kept;
+    }),
+  );
+  const noInverse = worstOf(
+    blendPosable(blendMotion([]), (skeleton, built) => {
+      const counts = blendInfluenceCounts(skeleton);
+      const key = blendDeformKey(skeleton);
+      // `offsets` is the model's own per-vertex world displacement — the very
+      // thing the inverse is supposed to be applied to.
+      const displacement = built.deformTransforms[0].offsets;
+      const raw: number[] = [];
+      for (let v = 0; v < counts.length; v++) {
+        for (let n = 0; n < counts[v]; n++) raw.push(displacement[2 * v], displacement[2 * v + 1]);
+      }
+      key.vertices = raw;
+    }),
+  );
+  say(
+    'DT11_THE_EXPANSION_IS_RED_FIRST_ON_ONE_INFLUENCE_AND_ON_A_MISSING_INVERSE',
+    // ⚠️ The third clause is the one that keeps the first two apart. Both
+    // mutants are worst on the same vertex, and at a bone angle of 60° they are
+    // worst by exactly the same amount — one number standing for two checks.
+    oneInfluence > 0.5 && noInverse > 0.5 && Math.abs(oneInfluence - noInverse) > 0.5 && stillWorst < 2e-3,
+    `the honest build is off by ${stillWorst.toExponential(2)}; writing D into one influence only is off by ` +
+      `${oneInfluence.toFixed(4)}; writing D with no bone inverse is off by ${noInverse.toFixed(4)}`,
+    'both mutants load, gate and animate — the deform array is the right length and every number in it is finite, so ' +
+      'nothing but a measurement of where the vertices actually go can tell them from the correct run',
   );
 
   return bad;
@@ -19275,9 +19644,11 @@ function main(): void {
       + 'drawing: the most prominent thing on a face is the nose, and a nose does not wobble. The weights are read back '
       + 'off the ARTIFACT, every vertex closing at 1 across at most the two declared bones with both ends measured (a '
       + 'mask that carried everything, or nothing, would still load and gate), six ways a soft region can move nothing '
-      + 'refused by name, and the limitation recorded as a control rather than as a comment: a carried mesh cannot also '
-      + 'take a turn key, so the two things rigc states about a depth pass cannot yet ride one attachment, and SF03 is '
-      + 'what will notice when that stops being true; and the TURN CEILING the compiler now reports BEFORE a key is '
+      + 'refused by name, and the combination that used to be the limitation recorded here as a control (issue #389): '
+      + 'ONE attachment carrying both a depth-driven turn key and a mask that hands its region to a physics-wobbled '
+      + 'bone, where SF03 reads the blended vertices, the physics on the carrying bone and the turn run measured in '
+      + 'INFLUENCES rather than in vertices off the artifact, so what it asserts is the combination rather than the '
+      + 'absence of a refusal; and the TURN CEILING the compiler now reports BEFORE a key is '
       + 'written — the angle `tan t = A0/A_axis` at which this geometry on this sheet first reverses a triangle, per '
       + 'axis and per direction, held to 0.01 degrees against the angle A39 actually refuses at AND against the '
       + 'triangle A39 actually names, on all four ceilings because a y flip in the bind mapping leaves the yaw pair '
@@ -19322,19 +19693,27 @@ function main(): void {
       'than by a rig failing — a quadratic opens either way, so the wrong-signed set is BETWEEN its roots or ' +
       'OUTSIDE them, and a span that is inside out at both ends and correct in the middle is two windows whose ' +
       'merge would have put the probe in the one part of it that is fine), ' +
-      '+ 9 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
+      '+ 12 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
       'from docs/FACE.md §1 byte for byte, the same model past the fold angle still firing A39, the other three ' +
       'closed forms — affine, wave and bend — evaluated against arithmetic derived here, and the five refusals that ' +
       'keep a model from becoming a second answer: a run beside it, a start index, a parameter that would evaluate ' +
       'a DIFFERENT model — a radius inside the part, a mirroring determinant, a bend that reads and displaces one ' +
-      "axis — a weighted attachment with no single bind space, whose array is now measured in influences, on both " +
+      "axis — a weighted attachment whose weights do not close at 1, which is the one weighting the arithmetic " +
+      'cannot place, whose array is measured in influences on both ' +
       'sides of the encoding: the compiler refuses a 12-number run on it and A35 fires on the same run reached ' +
       'through the artifact; and a model the GEOMETRY sampled to nothing — a wave whose every vertex lands on a ' +
       'zero crossing and a bend over a span the part barely enters, both of which stated a deformation, emitted a ' +
       'run of zeros and gated green, since A35 is right that the run fits and A39 is right that no triangle moved ' +
       '(issue #350) — held apart from the identity a key MEANS by the control beside it, where `degrees: 0`, a ' +
       'whole revolution, `amplitude: 0`, `amount: 0` and `scale: [1, 1]` each still compile to that same all-zero ' +
-      'run), ' +
+      'run; then the weighting that used to be refused outright and is not (issue #389) — a quad shared between a ' +
+      'bone at the origin and one turned 60° off it, whose every vertex spine-core puts at its own setup WORLD ' +
+      'position plus the displacement the affine states THERE, and whose displacement is then CARRIED by the same ' +
+      'blend the vertex is when one of the two bones turns: unturned on the corner off it, turned by the measured ' +
+      "angle on the corner fully on it, and the weighted mix of both on the two shared corners — with the gate's " +
+      'own generosity shown red-first on the two mistakes the expansion invites, the displacement written into one ' +
+      'influence instead of all and the displacement written with no bone inverse at all, neither of which any ' +
+      'validator assertion can see because both are well-formed runs of the right length), ' +
       "+ 7 deform-report controls (`explain`'s DEFORM block read as a subprocess prints the area and stretch " +
       'extremes the closed form predicts — the column-spacing ratios of docs/FACE.md §4.2 for a yaw and `sx·sy` with ' +
       'its two scale factors for an affine, whose product is the area ratio — while its reversal and collapse counts ' +

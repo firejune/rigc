@@ -2350,6 +2350,24 @@ function cmdExplain(flags: Record<string, string>): void {
                 }
                 console.log(`                 ${pairs.join('  ')}`);
               }
+              // On a multi-influence attachment those pairs are the model's
+              // WORLD displacements, and the file holds one `Mᵢ⁻¹·D` pair per
+              // influence instead (issue #389). Printing the first without the
+              // second would put numbers on the screen that are nowhere in the
+              // artifact — the exact gap this block exists to close.
+              if (gen.expanded !== undefined) {
+                console.log(
+                  `               written as ${gen.expanded.length / 2} per-influence pair(s), each vertex's D through ` +
+                    'its own bone inverse',
+                );
+                for (let i = 0; i < gen.expanded.length / 2; i += 4) {
+                  const pairs: string[] = [];
+                  for (let k = i; k < Math.min(i + 4, gen.expanded.length / 2); k++) {
+                    pairs.push(`i${String(k).padStart(3)} (${gen.expanded[2 * k]}, ${gen.expanded[2 * k + 1]})`);
+                  }
+                  console.log(`                 ${pairs.join('  ')}`);
+                }
+              }
             }
           }
         }
