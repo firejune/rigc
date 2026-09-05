@@ -114,6 +114,30 @@ export function toBoneLocal(m: BoneTransform, worldX: number, worldY: number): [
 }
 
 /**
+ * A world **displacement** -> the bone's local space: rotation and scale only,
+ * with the translation left out.
+ *
+ * ⭐ Not a variant of `toBoneLocal` for convenience — it is the other half of a
+ * different identity. `computeWorldVertices` composes a weighted vertex as
+ * `Σ wᵢ · (Rᵢ · (bindᵢ + deformᵢ) + tᵢ)`, so the translation `tᵢ` lands on the
+ * vertex once and never on the offset. Writing `Rᵢ⁻¹ · D` into every influence
+ * therefore moves the vertex by exactly `D · Σ wᵢ`, which is `D` because the
+ * weights close at 1 (issue #389). Running a displacement through `toBoneLocal`
+ * instead would subtract the bone's origin from it and land the vertex
+ * somewhere nobody asked for.
+ *
+ * ⚠️ **Not rounded**, for `toWorld`'s reason: the caller quantises the one
+ * number it emits, and rounding an intermediate would bias it.
+ */
+export function toBoneLocalVector(m: BoneTransform, worldDX: number, worldDY: number): [number, number] {
+  const det = m.a * m.d - m.b * m.c;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-9) {
+    throw new TransformError(`bone transform is singular (det ${det}); a zero-scale bone cannot carry a displacement`);
+  }
+  return [(worldDX * m.d - worldDY * m.b) / det, (worldDY * m.a - worldDX * m.c) / det];
+}
+
+/**
  * A bone-local point -> world. The inverse of `toBoneLocal`, and the direction
  * `VertexAttachment.computeWorldVertices` takes at setup.
  *

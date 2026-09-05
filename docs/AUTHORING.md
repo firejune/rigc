@@ -1122,13 +1122,16 @@ bone, must close at 1, and at least one must actually be carried.
 | a mask that is not the part's size | `is 48x32 and the part is 96x64` |
 | a mask that is not on disk | `the soft mask "x.png" is not at …` |
 
-🚨 **What it cannot do yet.** A carried mesh has two bones on some vertices, and
-a `transform` key (§4.12) needs one coordinate space to be evaluated in — so the
-**angle** a raised surface turns through and the **impact** a soft one answers
-cannot ride the *same* attachment today. `SF03` holds that refusal, so the day it
-changes something fails and says so;
-[#389](https://github.com/firejune/rigc/issues/389) has the arithmetic showing it
-need not be true. Until then, put the two on separate slots.
+⭐ **One depth pass buys both, on one part.** A carried mesh has two bones on the
+vertices in the mask's falloff, and a `transform` key (§4.12) used to be refused
+on any attachment that did — so the **angle** a raised surface turns through and
+the **impact** a soft one answers had to sit on separate slots. Since
+[#389](https://github.com/firejune/rigc/issues/389) they do not: the model is
+evaluated at each vertex's setup world position and pushed into every influence
+through that bone's own inverse. `SF03` is the case that measures the
+combination. ⚠️ Read §4.11.1 before you add a mask to a part that already turns:
+past one bone the model's own coordinates are **world** ones, so `radius` and
+`about` change units.
 #### 3.4.1 A skin that switches bones and constraints on
 
 **When you need one:** a skin that is more than a change of art — a variant with an
@@ -2170,6 +2173,10 @@ on a weighted one.** Its length is `vertices.length` in the first case and
   guess. Either key the control bone instead — which is what a rigc-generated ring
   or ribbon mesh is *for* — or write the bind-space pairs yourself and start the
   run with `offset`. The refusal tells you the index that vertex starts at.
+  ⭐ A **`transform` key** (§4.11.1) is the exception, and for a reason that does
+  not extend here: rigc evaluates that model itself, so it can state the
+  displacement in world and push it into every influence through that bone's own
+  inverse. `fromVertex` hands it a number you wrote in a space it cannot know.
 
 **The curve eases the blend.** A deform timeline has exactly one channel and
 `readCurve` builds it between **0 and 1** — the fraction of the way from this key's
@@ -2190,7 +2197,7 @@ animation half of the format:
 | a deform on a region attachment | `a deform timeline keys the vertices of an attachment, and this one is a "region"` |
 | `transform` beside a `vertices` run | `the key carries both a "transform" and a "vertices" run, and they are two answers to one question` |
 | `transform` with `fromVertex` or `offset` | `A transform is a model of the whole attachment and is evaluated over all 25 of its vertices, so it always starts at deform index 0` |
-| a `transform` on a multi-bone or multi-space weighted attachment | `this attachment has no single space to evaluate it in — vertex 2 has 2 bone influences on it` |
+| a `transform` on an attachment whose weights do not close at 1 | `this one has a vertex the arithmetic cannot place — vertex 1's 2 weights sum to 0.9000 rather than 1` |
 
 The overrun is the one to fear. `readAnimation` copies with
 `Utils.arrayCopy(vertices, 0, deform, offset, vertices.length)` into a
@@ -2319,12 +2326,38 @@ parameters that key states, and what happens between two keys is still the
 timeline's own single 0..1 blend channel. Sweeping an angle is editing one number
 per key.
 
-**It needs one coordinate space.** On an unweighted attachment the deform array
-is one `x, y` per vertex in the slot bone's space, so the model has a space to be
-evaluated in. On a weighted one it does only while every vertex has exactly one
-bone **and they all share it** — the same honesty rule `fromVertex` is bounded by
-(§4.11), refused for the same reason: a multi-bone vertex's offset is a weighted
-sum of a pair in each bone's own bind space, and rigc will not guess one.
+**It works on a weighted attachment, and reads world coordinates there**
+([#389](https://github.com/firejune/rigc/issues/389)). On an unweighted
+attachment the deform array is one `x, y` per vertex in the slot bone's space,
+and the model is evaluated in that space. The same is true of a weighted
+attachment while every vertex has exactly one bone and they all share it — the
+array is that bone's bind space. **Past that, the model is evaluated at each
+vertex's setup *world* position instead**, and the displacement it produces is
+written into every influence as `Mᵢ⁻¹ · D`, where `Mᵢ` is that bone's setup world
+rotation. The runtime then composes `Σ wᵢ · Mᵢ · Mᵢ⁻¹ · D`, which is `D` because
+the weights close at 1; and once a bone moves, the displacement is carried by the
+same blend that carries the vertex. Nothing is guessed and nothing is
+approximated.
+
+⚠️ **So `radius`, `about`, `from` and `to` change units the moment a second bone
+touches any vertex** — they are read in the attachment's own space in the first
+case and in world coordinates in the second. `explain`'s `DEFORM` block says
+which, on a `derived` line that only appears on the world path; if you add a
+`soft` region (§3.4) to a part that already carries a turn key, read that line
+and check the numbers still mean what they meant. A `radius` smaller than the
+world coordinates it now spans is refused by name rather than clamped, which is
+the loud version of the same event.
+
+The one weighting this cannot cover is a vertex whose weights do **not** sum to
+1: `D · Σ wᵢ` is the whole identity, so there is no run that lands such a vertex
+where the model says. That is refused by name, at
+`A20_MESH_WEIGHTS_COHERENT`'s own 1e-3.
+
+`fromVertex` on a multi-bone vertex is still refused (§4.11), and the difference
+is worth stating because the two look alike: `fromVertex` hands rigc a pair
+**you** wrote, in a space only you know, so rigc would have to guess. A model is
+a displacement rigc evaluates itself, so it can put it in world and push it
+through each bone.
 
 **It is gated like any other key.** `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` and
 `A39_DEFORM_KEEPS_TRIANGLE_WINDING` see the emitted numbers and know nothing
@@ -2720,7 +2753,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `deform …: slot "X" in skin "default" has no attachment "Y" (it has: …)` | §4.11 — fix the placeholder name |
 | `deform … (t=…): the key carries both a "transform" and a "vertices" run` | §4.11.1 — a model and a table are two answers to one question; drop one |
 | `deform … (t=…): the key states a "transform" and a start index` | §4.11.1 — a model covers every vertex, so drop the index or write the partial run by hand |
-| `deform … (t=…): … has no single space to evaluate it in` | §4.11.1 — the attachment's vertices are in several bind spaces; key the control bone, or write the pairs with `offset` |
+| `deform … (t=…): … has a vertex the arithmetic cannot place — vertex v's N weights sum to …` | §4.11.1 — a model lands a vertex by `D · Σ wᵢ`, so the weights have to close at 1; fix them, or write the pairs with `offset` |
 | `deform … (t=…): transform yaw has radius R, and vertex v sits at x=… past it` | §4.11.1 — the cylinder has no surface there; raise the radius to where the part sits |
 | `deform … (t=…): transform affine has scale […], whose determinant is …` | §4.11.1 — at or below zero the map reverses every triangle |
 | `deform … (t=…): transform <kind> states …, and every one of this attachment's N vertices evaluates to an offset of 0` | §4.11.1 — the parameters state a deformation and the geometry sampled it to nothing; the message names the measured cause. A key that means the setup pose states the identity in its parameters, or carries no run |

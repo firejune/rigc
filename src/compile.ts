@@ -93,6 +93,7 @@ import {
   normaliseDegrees,
   screenToSpineDegrees,
   toBoneLocal,
+  toBoneLocalVector,
   toWorld,
   TransformError,
   type BoneTransform,
@@ -1690,7 +1691,7 @@ export function compile(opts: CompileOptions): CompileResult {
           animName,
           anim.duration,
           {
-            ...deformGeometryOf(attachment, at),
+            ...deformGeometryOf(attachment, at, bones, transforms),
             depth: attachmentDepths.get(`${skinName}/${track.slot}/${track.attachment}`) ?? null,
           },
           deformTransforms,
@@ -4298,17 +4299,40 @@ interface DeformGeometry {
   /** Bone influences per vertex, in vertex order. Null on an unweighted attachment. */
   boneCounts: number[] | null;
   /**
-   * Setup `x, y` per vertex **in the space a deform offset lives in**, for a
-   * `transform` key to evaluate a model over (issue #294).
+   * Setup `x, y` per vertex, for a `transform` key to evaluate a model over
+   * (issue #294).
    *
-   * Null when there is no single such space, and `setupWhy` then says which of
-   * the two reasons it was: a vertex with more than one bone on it, whose offset
-   * is a weighted sum of a pair in each bone's own bind space; or a run bound to
-   * several bones, where one closed form would be evaluated across several
-   * unrelated coordinate systems. Both are the `fromVertex` refusal's reasoning
-   * applied to a whole run — rigc will not guess a space.
+   * ⚠️ **Two spaces, and `influenceBones` is which.** Where every vertex of
+   * the attachment occupies exactly one pair of one bone's bind space — an
+   * unweighted run, or a weighted one whose every vertex is a single influence
+   * of a single bone — this is that space, the model's output IS the deform
+   * array, and `influenceBones` is null. Where it is not, this is the
+   * vertex's setup **world** position, `Σ wᵢ · Mᵢ · bindᵢ`, which is defined for
+   * any weighting; the model's output is then a world displacement that the
+   * caller pushes into each influence through `influenceBones`.
+   *
+   * That seam is deliberate and it is the reason the field is documented rather
+   * than named: keeping the first case in its own space is what makes the
+   * change to the second byte-for-byte invisible to every rig that already
+   * compiles (issue #389's own gate). It does mean a `radius` or an `about` is
+   * read in world units the moment a second bone touches any vertex, so the
+   * report says which space it evaluated in whenever it is not the first one.
+   *
+   * Null only in the one case that has no identity behind it: weights that do
+   * not close at 1. `setupWhy` then says so.
    */
   setup: number[] | null;
+  /**
+   * The setup world transform of the bone behind each influence, in the deform
+   * array's **own order** — one entry per pair — or null when `setup` is
+   * already the space the array is in.
+   *
+   * Non-null is the multi-influence path: a vertex's world displacement `D`
+   * becomes `Mᵢ⁻¹ · D` in every one of its influences (`toBoneLocalVector`), so
+   * the runtime's `Σ wᵢ · Mᵢ · Mᵢ⁻¹ · D` collapses to `D · Σ wᵢ = D` at setup,
+   * and to the same blend that carries the vertex once a bone moves.
+   */
+  influenceBones: BoneTransform[] | null;
   /** Why `setup` is null, phrased for the refusal. Null when it is not. */
   setupWhy: string | null;
   /**
@@ -4329,7 +4353,14 @@ interface DeformGeometry {
  * all, so `attachment.vertices.length` throws inside the parser — one of the very
  * few places this format fails loudly, and it fails in the consumer's process.
  */
-function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
+function deformGeometryOf(
+  att: SpineAttachment,
+  where: string,
+  /** The emitted bone array, which a weight run's `boneIndex` indexes into. */
+  rigBones: SpineBone[],
+  /** Their setup world transforms, by name. */
+  transforms: Map<string, BoneTransform>,
+): DeformGeometry {
   const type = (att as { type?: string }).type ?? 'region';
   let worldVerticesLength: number;
   if (type === 'mesh') {
@@ -4363,6 +4394,7 @@ function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
       // An unweighted attachment IS its own space: the array is one `x, y` per
       // vertex in the slot bone's space, which is the space the offsets are in.
       setup: vertices.slice(),
+      influenceBones: null,
       setupWhy: null,
       // Filled in by the caller; `deformGeometryOf` reads the emitted
       // attachment, and the depth is deliberately not in it.
@@ -4375,6 +4407,8 @@ function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
   const boneCounts: number[] = [];
   const bindSpace: number[] = [];
   const bones = new Set<number>();
+  /** `boneIndex, bindX, bindY, weight` per influence, in deform-array order. */
+  const influenceRun: number[] = [];
   for (let i = 0; i < vertices.length; ) {
     const n = vertices[i++];
     if (!Number.isInteger(n) || n < 1) {
@@ -4384,10 +4418,12 @@ function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
       bones.add(vertices[i]);
       bindSpace.push(vertices[i + 1], vertices[i + 2]);
     }
+    const from = i;
     i += n * 4;
     if (i > vertices.length) {
       throw new CompileError(`${where}: the attachment's weighted vertex run is truncated at vertex ${boneCounts.length}`);
     }
+    for (let k = from; k < i; k++) influenceRun.push(vertices[k]);
     boneCounts.push(n);
   }
   // ⚠️ The influence count is the SUM of the per-vertex counts, not a division
@@ -4400,23 +4436,65 @@ function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
   // LOADED attachment, which is where the `/3*2` in the parser comes from.
   let influences = 0;
   for (const n of boneCounts) influences += n;
-  const multi = boneCounts.findIndex((n) => n !== 1);
-  const setupWhy =
-    multi !== -1
-      ? `vertex ${multi} has ${boneCounts[multi]} bone influences on it, and one x, y pair for such a vertex is not a ` +
-        'thing the deform array can hold: its world offset is the weighted sum of a pair in each bone\'s own bind space'
-      : bones.size > 1
-        ? `its ${boneCounts.length} vertices are bound to ${bones.size} different bones, so their x, y pairs are in ` +
-          'that many different bind spaces and one closed form evaluated across them would mean nothing'
-        : null;
+  const common = { weighted, deformLength: influences * 2, vertexCount: boneCounts.length, boneCounts, depth: null };
+  // -- one bind space, unchanged -------------------------------------------
+  //
+  // Every vertex a single influence of a single bone: the run IS that bone's
+  // bind space, a model evaluated over it lands straight in the deform array,
+  // and not one byte of this path moved for issue #389. Keeping it separate is
+  // what makes that provable — the alternative, folding it into the world path
+  // below, would re-evaluate every existing `transform` key at world
+  // coordinates and emit a different file for a spec nobody edited.
+  if (boneCounts.every((n) => n === 1) && bones.size === 1) {
+    return { ...common, setup: bindSpace, influenceBones: null, setupWhy: null };
+  }
+  // -- several influences, evaluated in world (issue #389) -------------------
+  //
+  // The refusal that used to stand here was right about the ARRAY and wrong
+  // about the MODEL. There is no single space the array lives in, true; but the
+  // vertex has one setup world position whatever its weighting —
+  // `Σ wᵢ · Mᵢ · bindᵢ` — and a world displacement `D` written into influence
+  // `i` as `Mᵢ⁻¹ · D` moves it by `D · Σ wᵢ`. So the model is evaluated once, in
+  // world, and pushed into each bind space rather than guessed at in one of
+  // them.
+  //
+  // ⭐ The one case with no identity behind it is a vertex whose weights do not
+  // close at 1, because that is the `Σ wᵢ` the arithmetic cancels against.
+  // `A20_MESH_WEIGHTS_COHERENT` is the assertion that requires it and 1e-3 is
+  // the tolerance it uses, quoted here rather than chosen again.
+  const setupWorld: number[] = [];
+  const influenceBones: BoneTransform[] = [];
+  let openWeights: string | null = null;
+  for (let v = 0, k = 0; v < boneCounts.length; v++) {
+    let wx = 0;
+    let wy = 0;
+    let sum = 0;
+    for (let n = 0; n < boneCounts[v]; n++, k++) {
+      const index = influenceRun[4 * k];
+      const bone = rigBones[index];
+      const m = bone === undefined ? undefined : transforms.get(bone.name);
+      if (!m) throw new CompileError(`${where}: vertex ${v} binds bone index ${index}, which is not in the bone list`);
+      const weight = influenceRun[4 * k + 3];
+      const [x, y] = toWorld(m, influenceRun[4 * k + 1], influenceRun[4 * k + 2]);
+      wx += x * weight;
+      wy += y * weight;
+      sum += weight;
+      influenceBones.push(m);
+    }
+    setupWorld.push(wx, wy);
+    if (openWeights === null && Math.abs(sum - 1) > 1e-3) {
+      openWeights =
+        `vertex ${v}'s ${boneCounts[v]} weights sum to ${sum.toFixed(4)} rather than 1. A stated model becomes a deform ` +
+        'run by writing each vertex\'s world displacement D into every influence as Mᵢ⁻¹·D, which moves the vertex by ' +
+        'D·Σwᵢ — so a sum that is not 1 has no displacement that lands it where the model says. ' +
+        'A20_MESH_WEIGHTS_COHERENT is the assertion that requires that sum, at the same 1e-3';
+    }
+  }
   return {
-    weighted,
-    deformLength: influences * 2,
-    vertexCount: boneCounts.length,
-    boneCounts,
-    setup: setupWhy === null ? bindSpace : null,
-    setupWhy,
-    depth: null,
+    ...common,
+    setup: openWeights === null ? setupWorld : null,
+    influenceBones: openWeights === null ? influenceBones : null,
+    setupWhy: openWeights,
   };
 }
 
@@ -4452,6 +4530,15 @@ function deformGeometryOf(att: SpineAttachment, where: string): DeformGeometry {
  * bone happens to share one world matrix. So that case is refused by name and
  * `offset` stays available for an author who really is writing bind-space
  * offsets per influence.
+ *
+ * ⭐ **A `transform` key is not in that bind, and since issue #389 it is not
+ * refused for it.** The difference is where the numbers come from: `fromVertex`
+ * hands rigc a pair the AUTHOR wrote, in a space only the author knows, and
+ * rigc will not guess which. A model states a displacement rigc evaluates
+ * itself, so it can put that displacement in world and push it into each
+ * influence through that bone's own inverse — `Σ wᵢ · Mᵢ · Mᵢ⁻¹ · D = D`, with
+ * nothing guessed. What survives is the one case the identity does not cover: a
+ * vertex whose weights do not close at 1.
  */
 function compileDeformTrack(
   track: MotionDeformTrack,
@@ -4483,9 +4570,9 @@ function compileDeformTrack(
     // `vertices` and would otherwise be read as the format's "back to the setup
     // pose". The three refusals are the bounds the issue drew: a key states one
     // or the other, never both; a model covers every vertex, so a start index
-    // has nothing to mean; and a model needs one coordinate space to be
-    // evaluated in, which a multi-bone or multi-space weighted attachment does
-    // not have.
+    // has nothing to mean; and a model has to land each vertex somewhere
+    // definite, which the arithmetic does for any weighting that closes at 1 and
+    // for no weighting that does not (issue #389).
     if (key.transform !== undefined) {
       if (key.vertices !== undefined && key.vertices !== null) {
         throw new CompileError(
@@ -4504,24 +4591,63 @@ function compileDeformTrack(
       }
       if (geometry.setup === null) {
         throw new CompileError(
-          `${where} (t=${key.t}): a "transform" is evaluated over the attachment's own setup geometry, and this ` +
-            `attachment has no single space to evaluate it in — ${geometry.setupWhy}. Key the control bone instead, or ` +
-            'write the bind-space pairs yourself and start the run with "offset".',
+          `${where} (t=${key.t}): a "transform" states where every vertex of this attachment goes, and this one has a ` +
+            `vertex the arithmetic cannot place — ${geometry.setupWhy}. Fix the weights, or write the bind-space pairs ` +
+            'yourself and start the run with "offset".',
         );
       }
       const report = evaluateDeformTransform(key.transform, geometry.setup, r6, `${where} (t=${key.t})`, geometry.depth);
-      if (report.offsets.length !== geometry.deformLength) {
-        // Unreachable while `setup` is one pair per vertex and `deformLength` is
-        // twice the vertex count, which is the whole reason both are derived
-        // from the same walk. Stated rather than assumed: a silent mismatch here
-        // is the overrun A35 exists for.
+      if (report.offsets.length !== geometry.vertexCount * 2) {
+        // Unreachable while `setup` is one pair per vertex, which is the whole
+        // reason both are derived from the same walk. Stated rather than
+        // assumed: a silent mismatch here is the overrun A35 exists for.
         throw new CompileError(
-          `${where} (t=${key.t}): the transform produced ${report.offsets.length} numbers and this attachment's deform ` +
+          `${where} (t=${key.t}): the transform produced ${report.offsets.length} numbers for ` +
+            `${geometry.vertexCount} vertices`,
+        );
+      }
+      // -- one displacement per vertex -> one pair per influence (issue #389) -
+      //
+      // On a single-space attachment the two are the same array and this is a
+      // no-op by construction. On a multi-influence one the model's output is a
+      // WORLD displacement, and it reaches the deform array through each
+      // influencing bone's own inverse: `Σ wᵢ · Mᵢ · Mᵢ⁻¹ · D = D`. The
+      // displacement it expands is the ROUNDED one the report prints, so a
+      // reader can reproduce every emitted pair from the audit rather than from
+      // a second evaluation.
+      const run = expandDeformToInfluences(report.offsets, geometry);
+      if (run.length !== geometry.deformLength) {
+        throw new CompileError(
+          `${where} (t=${key.t}): the transform expanded to ${run.length} numbers and this attachment's deform ` +
             `array is ${geometry.deformLength} long`,
         );
       }
-      generated.push({ animation: animName, skin, slot: track.slot, attachment: track.attachment, time, ...report });
-      out.push({ time, vertices: report.offsets });
+      generated.push({
+        animation: animName,
+        skin,
+        slot: track.slot,
+        attachment: track.attachment,
+        time,
+        ...report,
+        // ⚠️ Which space the model was read in is not a detail: `radius`,
+        // `about`, `from` and `to` all mean something different in world
+        // coordinates, and a reader comparing two keys on two attachments has no
+        // other way to know they were not evaluated alike. Said only on the path
+        // where it is not the attachment's own space, so every existing report
+        // prints exactly the lines it printed before.
+        ...(geometry.influenceBones === null
+          ? {}
+          : {
+              expanded: run,
+              derived: [
+                ...report.derived,
+                `evaluated at setup WORLD positions, because ${geometry.vertexCount} vertices carry ` +
+                  `${geometry.deformLength / 2} influences; each displacement D is written into every influence as ` +
+                  'Mᵢ⁻¹·D, so the runtime composes Σwᵢ·Mᵢ·Mᵢ⁻¹·D = D',
+              ],
+            }),
+      });
+      out.push({ time, vertices: run });
       continue;
     }
     if (key.offset !== undefined && key.fromVertex !== undefined) {
@@ -4581,6 +4707,42 @@ function compileDeformTrack(
   // emitted geometry — a named easing over a hold is `stepped` — and that
   // geometry is only known once the next key has been through the checks above.
   for (let i = 0; i < out.length; i++) deformKeyCurve(out[i], keys[i], keys, i, motion, where, out[i + 1]);
+  return out;
+}
+
+/**
+ * A stated model's per-vertex displacement, as the deform array holds it.
+ *
+ * Two encodings once more, and the caller does not choose between them —
+ * `influenceBones` does, because it is null exactly when `setup` was already the
+ * array's own space:
+ *
+ *   one space  — the displacements ARE the array, returned untouched. This is
+ *                every `transform` key that compiled before issue #389, and
+ *                returning the same array object is what makes that visibly
+ *                true rather than arithmetically true.
+ *   several    — `D` is in world, and influence `i` of a vertex gets
+ *                `Mᵢ⁻¹ · D` (rotation and scale, no translation), which the
+ *                runtime sums back to `D · Σ wᵢ = D`.
+ *
+ * ⚠️ `toBoneLocalVector` and not `toBoneLocal`: a displacement has no origin to
+ * subtract, and subtracting one would move the vertex by the bone's own
+ * position. The coordinate contract lives in `src/transform.ts` and this reads
+ * it rather than restating it.
+ */
+function expandDeformToInfluences(displacements: number[], geometry: DeformGeometry): number[] {
+  const perInfluence = geometry.influenceBones;
+  if (perInfluence === null) return displacements;
+  const counts = geometry.boneCounts ?? [];
+  const out: number[] = [];
+  for (let v = 0, k = 0; v < counts.length; v++) {
+    const dx = displacements[2 * v];
+    const dy = displacements[2 * v + 1];
+    for (let n = 0; n < counts[v]; n++, k++) {
+      const [bx, by] = toBoneLocalVector(perInfluence[k], dx, dy);
+      out.push(r6(bx), r6(by));
+    }
+  }
   return out;
 }
 

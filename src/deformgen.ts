@@ -221,7 +221,16 @@ export interface DeformTransformReport {
   /** Largest offset magnitude in the run, and the vertex carrying it. */
   maxOffset: number;
   maxOffsetVertex: number;
-  /** The emitted run: `x, y` per vertex, already quantised by the caller's rounder. */
+  /**
+   * The displacement the model states: `x, y` per vertex, already quantised by
+   * the caller's rounder.
+   *
+   * On an attachment whose deform array is one pair per vertex this IS the
+   * emitted run, which is the case every report printed before issue #389. On a
+   * multi-influence one it is one WORLD displacement per vertex, and the array
+   * the caller wrote from it is `expanded` on the compile result — the report
+   * still quotes what was emitted rather than re-evaluating anything.
+   */
   offsets: number[];
 }
 
@@ -231,11 +240,14 @@ export type Rounder = (n: number) => number;
 /**
  * Evaluate one transform over an attachment's setup geometry.
  *
- * `setup` is `x, y` per vertex **in the space a deform offset lives in** — the
- * slot bone's space on an unweighted attachment, and the single influencing
- * bone's bind space on a weighted one where every vertex has exactly one. The
- * caller owns that distinction and refuses the cases where there is no one such
- * space; by the time execution reaches here the array means one thing.
+ * `setup` is `x, y` per vertex, and what comes back is **one displacement per
+ * vertex in the same space** — this function neither knows nor needs to know
+ * which space that is. The caller owns it, and since issue #389 there are two:
+ * the deform array's own space, where every vertex is one pair of one bone's
+ * bind space and the result IS the array; and setup **world**, where a vertex
+ * has several influences and the caller pushes each displacement into every one
+ * of them through that bone's inverse. Either way the array handed in means one
+ * thing all the way down it, which is the precondition the closed forms need.
  *
  * Returns a run as long as `setup`, so it always starts at deform index 0 and
  * covers the whole attachment. That is deliberate and it is not a convenience:

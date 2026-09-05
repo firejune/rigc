@@ -442,12 +442,16 @@ at `--max 640`: **7.24 px** of horizontal lag at worst, at `f0059`, which is
 just after the head arrives at −19° and stops. That is the whole claim; it is a
 small part and a small impulse.
 
-⚠️ **A soft mesh cannot also take a turn key today** — a carried vertex has two
-bones and a `transform` key needs one coordinate space, which is why the
-cowlick has no depth sheet and the face has no mask.
-[`SF03`](../../selftest.ts) holds that refusal and
-[#389](https://github.com/firejune/rigc/issues/389) has the arithmetic showing
-it need not stay true.
+🗒️ **A soft mesh could not also take a turn key when this example was built**,
+which is why the cowlick has no depth sheet and the face has no mask — a carried
+vertex has two bones, and a `transform` key was refused on any attachment that
+did. [#389](https://github.com/firejune/rigc/issues/389) removed that: the model
+is now evaluated at each vertex's setup world position and pushed into every
+influence through that bone's own inverse, and
+[`SF03`](../../selftest.ts) measures the combination rather than the refusal.
+This example has not been rebuilt around it, and its skeleton is byte-identical
+either way — the two things it separates are still on separate parts because
+that is how it was authored, not because the tool requires it.
 
 ---
 

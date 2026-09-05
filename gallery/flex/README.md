@@ -239,11 +239,15 @@ Read back off the posed skeleton, the timeline arrives:
 | `gust` t = 0.26 s | 154 | 77 | **14.882 px** at vertex 0 |
 
 Two notes on that array. It is **154** numbers for 77 vertices — one pair each —
-because a contour pins every vertex to one bone, and that is also what lets a
-`transform` be evaluated over it at all: one bone means **one coordinate space**.
-Had any vertex carried two bones it would occupy two pairs, the model would be
-refused by name, and the run would have to be written in bind space with a raw
-`offset`. And every pair is non-zero because a stated model covers the whole
+because a contour pins every vertex to one bone, and that is also what makes the
+model's own coordinates the attachment's own: one bone means **one coordinate
+space**, and the offsets below are in it. Had any vertex carried two bones it
+would occupy two pairs, and since
+[#389](https://github.com/firejune/rigc/issues/389) the model would still be
+evaluated — at each vertex's setup **world** position, pushed into every
+influence through that bone's inverse — so the numbers here would be world ones
+rather than these ([AUTHORING §4.11.1](../../docs/AUTHORING.md)). And every pair
+is non-zero because a stated model covers the whole
 attachment — a model applied to part of a run leaves a step at the run's edge,
 which is exactly how the defect below got in.
 
