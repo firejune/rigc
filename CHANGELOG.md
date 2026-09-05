@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.2](https://github.com/firejune/rigc/compare/v0.18.1...v0.18.2) (2026-09-05)
+
+
+### Bug Fixes
+
+* **compile:** the wrap refusal computes its consequence instead of asserting one ([#430](https://github.com/firejune/rigc/issues/430)) ([60e3774](https://github.com/firejune/rigc/commit/60e37741756d6c1580d4412a33e2e845ae0a85e3))
+
 ## [0.18.1](https://github.com/firejune/rigc/compare/v0.18.0...v0.18.1) (2026-09-05)
 
 
