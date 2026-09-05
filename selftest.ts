@@ -18243,7 +18243,7 @@ function main(): void {
     'expanded from `files` rather than guessed, and the whole derivation asserted first, because a link regex ' +
     'that matched nothing would otherwise report a clean tree)';
   const currency =
-    ', + 6 currency controls (issue #360 — every tally, gate version, `Worked case` cell, assertion name and ' +
+    ', + 8 currency controls (issue #360 — every tally, gate version, `Worked case` cell, assertion name and ' +
     'installed path a SHIPPED or LANDING doc states about the tool, derived from the tool rather than listed ' +
     'beside it: the registry and profile counts off `src/validate.ts`, the renderer / archetype split and the ' +
     'roster BY NAME off a live `validate()` report whose own floor is that it reached every assertion, the ' +
@@ -18252,7 +18252,15 @@ function main(): void {
     '`reportLines` itself formats, which is where a stale roster was quoted back at the reader — a document ' +
     'whose statements are a dated snapshot declares it in its header and drops out, and the scanner is held ' +
     'against the eleven rows this gate was built from, each required to fault in its stale spelling and to come ' +
-    'back clean in its repaired one)';
+    'back clean in its repaired one. Then the same defect on two surfaces no gate reached: the files CLAUDE.md ' +
+    'ALLOWS to link spine-core against the files that do — a rule whose own sentence says an unnamed exception ' +
+    'is how a rule erodes, and which had eroded that way (#379), red-first on a planted value import in ' +
+    '`src/compile.ts` (the negative clause nothing had ever asserted), on a name left behind after its file ' +
+    'stops linking, and green on a TYPE-only import, which compiles to nothing and cannot pose anything; and ' +
+    "the profile counts in the CLI's own help (#373), which said 20 / 36 / 14 while the tool ran 25 / 40 / 15 " +
+    'and are now compared against a LIVE report\'s own PROF lines rather than against the counting function the ' +
+    'help itself calls, red-first both on the stale literals replanted and on a reworded line the pattern stops ' +
+    'matching, because a scan that goes silent is the one failure a tally gate cannot afford)';
   const skillSurface =
     ', + 5 agent-skill controls (issue #366 — the surface an agent discovers rigc through: every `skills/*/SKILL.md` ' +
     'carrying the frontmatter the Agent Skills specification requires (a `name` equal to its directory, a ' +
