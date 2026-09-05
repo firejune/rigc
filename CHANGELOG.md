@@ -1,5 +1,70 @@
 # Changelog
 
+## [0.17.0](https://github.com/firejune/rigc/compare/v0.16.0...v0.17.0) (2026-09-05)
+
+**A part can state its own depth, and rigc will tell you how far it turns.**
+
+Until now a 2.5D turn read one radius shared by a whole column of vertices — a
+cylinder standing in for a surface. A generator can now name a **depth map**, and
+`yaw`/`pitch` read a `z` per vertex off it. The lattice that carries those
+vertices is **generated** rather than hand-numbered. A **painted mask** says
+which region is soft, so a `physics` constraint answers an impact over exactly
+that area. And `build` and `explain` now print the **turn ceiling**: the largest
+angle this geometry on this sheet takes before a triangle reverses, per axis and
+per direction, naming the triangle that goes first.
+
+That last one changes the loop. The angle was previously found by writing a key,
+building, reading `A39`'s refusal and guessing again; it is closed form —
+`tan t = A₀/A_axis` — and the compiler now says it up front.
+
+### Features
+
+* **deform:** a depth map gives every vertex its own z, and yaw/pitch read it ([#383](https://github.com/firejune/rigc/issues/383)) ([e0371e8](https://github.com/firejune/rigc/commit/e0371e899feb279dd46c8348ddaa74845bdb62d0)), closes [#382](https://github.com/firejune/rigc/issues/382)
+* **mesh:** a `grid` generator, so the lattice stops being hand-numbered ([#386](https://github.com/firejune/rigc/issues/386)) ([b0ec75a](https://github.com/firejune/rigc/commit/b0ec75a8e24cbf2f11754874fa498a79846e5574)), closes [#382](https://github.com/firejune/rigc/issues/382)
+* **depth:** a painted mask marks a soft region, and a physics constraint on its bone answers an impact over it ([#390](https://github.com/firejune/rigc/issues/390), [#391](https://github.com/firejune/rigc/issues/391)) ([843aad4](https://github.com/firejune/rigc/commit/843aad49fd44d54a0b000851df9301ea4955ac08))
+* **depth:** report the turn a sheet supports, before a key is written ([#393](https://github.com/firejune/rigc/issues/393)) ([cc79286](https://github.com/firejune/rigc/commit/cc7928635673795e98c1089f83fa8e35543555a0))
+* **docs:** `FACE.md` §2.2 and `AUTHORING.md` §3.4 — the fold angle belongs to the depth map's steepest slope, not to the mesh density ([#392](https://github.com/firejune/rigc/issues/392)) ([e409077](https://github.com/firejune/rigc/commit/e409077))
+
+### The one rule to read before using any of it
+
+**The angle a part can turn through is a property of its depth map, not of how
+finely it is meshed** — approximately `1 / max|dz/du|`, the reciprocal of the
+sheet's steepest slope. Refining a lattice does not lower the ceiling; it finds
+slopes that were always there. A map that reaches its floor with a *vertical*
+edge — a dome, a hemisphere, anything traced straight off a rendered normal —
+folds at any angle you like once it is meshed finely enough, while a map whose
+slope is bounded holds the same angle at every density. Measured over a 1,300×
+range of vertex counts: 62° → 14° for the first, a steady 63–64° for the second.
+
+So a ceiling you cannot live with is fixed by editing the **sheet**, not the
+mesh. rigc will not flatten a map for you; a depth map is a measurement, and the
+compiler never invents a value that is not in the spec.
+
+### What this release does not do
+
+* **None of it has met real art.** Every figure quoted for the depth work was
+  measured on generated fixtures — analytic ramps, domes and checkerboard blobs.
+* **The angle and the jiggle cannot ride one attachment yet.** A mesh carried by
+  a soft-region bone has two influences on some vertices, and a `transform` key
+  needs one bind space, so per part it is one or the other
+  ([#389](https://github.com/firejune/rigc/issues/389)).
+* **A dense mesh is a large file.** 449 bytes per vertex, plus ~1.77 MB per
+  deform key at 32,761 vertices. The gate itself stays linear and green to
+  64,800 triangles; the artifact is what grows.
+
+### Bug Fixes
+
+* ignore scratch as a path, not only as a directory ([#385](https://github.com/firejune/rigc/issues/385)) ([87bb21f](https://github.com/firejune/rigc/commit/87bb21febd6ce80086d34e97ac0413abc093f771)) — repository housekeeping, no effect on the published package
+
+### Withdrawn inside this release
+
+Two commits in the log add things that **do not exist in 0.17.0**. They were
+built and taken back out before release, and are listed here only so a reader of
+the commit history is not left looking for them:
+
+* `parallax` as a deform kind ([#388](https://github.com/firejune/rigc/issues/388), removed in [#391](https://github.com/firejune/rigc/issues/391)) — it was a `yaw` with a term dropped, and baking a pointer-driven value into time keys is a category error. Parallax is camera work and belongs to whatever draws the result.
+* a soft region chosen by a **depth threshold** ([#390](https://github.com/firejune/rigc/issues/390), replaced in [#391](https://github.com/firejune/rigc/issues/391)) — softness is not prominence. The most prominent thing on a face is the nose, and a nose does not wobble. The region is painted now.
+
 ## [0.16.0](https://github.com/firejune/rigc/compare/v0.15.0...v0.16.0) (2026-09-04)
 
 
