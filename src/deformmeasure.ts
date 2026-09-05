@@ -49,6 +49,16 @@
  * cannot draw them backwards. It is per key and per time, never per slot —
  * `invariants.deformMayFold` is the per-slot instrument and it is a declaration,
  * not a measurement.
+ *
+ * ## And what a key is not enough to say either (issue #403)
+ *
+ * The keys are where the data is; they are not where the runtime is. Between two
+ * of them it interpolates, so a deform inside its fold angle at every key can be
+ * past it in between and no key-time measurement looks there. `scanDeformSpan`
+ * closes that, and the derivation is in its own comment: the reversal condition
+ * over a span has a **closed form** — a quadratic in the interpolation fraction —
+ * so the time is solved for rather than searched, and the measurement taken there
+ * is this file's ordinary one, at a time no key lands on.
  */
 import {
   AnimationState,
@@ -62,6 +72,7 @@ import {
   type SkeletonData,
   SkeletonJson,
   TextureAtlas,
+  type Timeline,
 } from '@esotericsoftware/spine-core';
 
 /**
@@ -241,18 +252,17 @@ export interface DeformKeyDraw {
   blank: string | null;
 }
 
-/** What one deform key does to one attachment's geometry. */
-export interface DeformKeyMeasure {
-  animation: string;
-  skin: string;
-  slot: string;
-  /** The attachment the timeline resolved to — the name A39's message carries. */
-  attachment: string;
-  /** The placeholder it sits behind in `skin`, which is what the spec wrote. */
-  placeholder: string;
-  /** Index into the timeline's own frames, which is the index A39's message names. */
-  key: number;
-  time: number;
+/**
+ * What one deform timeline is doing to one attachment's geometry at **one posed
+ * time**, whatever that time is.
+ *
+ * ⭐ A key and a between-keys probe (issue #403) are the same measurement taken
+ * at two kinds of time, so they are one interface and one function
+ * (`measurePosed`). Giving the span scan its own arithmetic would be the second
+ * derivation this file's opening paragraph exists to forbid — the count A39
+ * refuses on between two keys has to be the count it refuses on at one.
+ */
+export interface DeformFrameMeasure {
   /** Vertices in the attachment. */
   vertices: number;
   /**
@@ -282,8 +292,88 @@ export interface DeformKeyMeasure {
   stretchMin: DeformExtreme | null;
   /** The dead band every count above was taken against, in px². */
   band: number;
-  /** What the slot draws of this mesh at this key's own time (issue #401). */
+  /** What the slot draws of this mesh at this time (issue #401). */
   draw: DeformKeyDraw;
+}
+
+/** What one deform key does to one attachment's geometry. */
+export interface DeformKeyMeasure extends DeformFrameMeasure {
+  animation: string;
+  skin: string;
+  slot: string;
+  /** The attachment the timeline resolved to — the name A39's message carries. */
+  attachment: string;
+  /** The placeholder it sits behind in `skin`, which is what the spec wrote. */
+  placeholder: string;
+  /** Index into the timeline's own frames, which is the index A39's message names. */
+  key: number;
+  time: number;
+}
+
+/**
+ * How the runtime gets from one deform key's geometry to the next one's.
+ *
+ * The three the format has, and what each does to the span scan below:
+ *
+ * - `linear` — the interpolation fraction sweeps `[0, 1]` affinely in time, so a
+ *   fraction the closed form names converts to a time exactly;
+ * - `stepped` — the fraction is **0 for the whole span**: the runtime does not
+ *   interpolate, it holds the earlier key's geometry. So the span introduces no
+ *   geometry the key survey has not already measured — but it holds that
+ *   geometry across times whose *alpha* differs from the key's, which is the
+ *   same hole in another coat and is checked (`DW15`);
+ * - `bezier` — the fraction is the stored curve, which spine-core evaluates as a
+ *   **polyline** of ten points (`DeformTimeline.getCurvePercent`). The scan reads
+ *   that polyline rather than the cubic, so it is exact about the thing the
+ *   runtime actually does, overshoot past 0 or 1 included.
+ */
+export type DeformSpanCurve = 'linear' | 'stepped' | 'bezier';
+
+/**
+ * The interval between two consecutive deform keys, scanned (issue #403).
+ *
+ * ⚠️ A span is recorded whether or not anything was found, because "the scan ran
+ * and said nothing" and "the scan did not run" are the two things a gate must
+ * never print the same way.
+ */
+export interface DeformSpan {
+  animation: string;
+  skin: string;
+  slot: string;
+  attachment: string;
+  placeholder: string;
+  /** The two keys it lies between, by the index A39's own message uses. */
+  fromKey: number;
+  toKey: number;
+  fromTime: number;
+  toTime: number;
+  curve: DeformSpanCurve;
+  /** Triangles the closed form says reverse somewhere strictly inside the span. */
+  predicted: number;
+  /**
+   * Times the closed form named and the scan then measured at, in probe order.
+   * **Empty is the ordinary case** — a span nothing is predicted to fold in
+   * costs no posed measurement at all.
+   */
+  probed: number[];
+  /** The probe that found a reversal on a frame the mesh DRAWS, or `null`. */
+  fold: { time: number; percent: number; measure: DeformFrameMeasure } | null;
+  /**
+   * Probes that found the predicted reversal at a time the mesh draws no pixels
+   * — issue #401's exemption, applied at a time no key lands on, which is what
+   * keeps this from refusing a rig that fades out *before* the fold.
+   */
+  notDrawn: number;
+  /**
+   * The closed form predicted a fold and no probe reproduced one.
+   *
+   * Not a failure — refusing on a prediction nothing measured would be the false
+   * red this repository has paid for twice (issues #44, #262) — and not a
+   * silence either: it is on A39's stats line, because the one case that reaches
+   * it is a weighted mesh whose BONES move across the span, and that is a limit
+   * a reader has to be able to see.
+   */
+  unconfirmed: boolean;
 }
 
 /** Every deform key in a skeleton, measured — and what was passed over. */
@@ -314,6 +404,27 @@ export interface DeformSurvey {
   notDrawn: number;
   /** Reversed triangles found on those keys, which nothing gates. */
   notDrawnReversed: number;
+  /**
+   * Every interval between two consecutive keys, scanned (issue #403).
+   *
+   * One entry per consecutive pair per timeline, including the pairs where
+   * nothing was predicted — a scan that ran and found nothing has to be
+   * distinguishable from a scan that never ran.
+   */
+  spans: DeformSpan[];
+  /** Spans whose predicted fold was measured at a time the mesh draws. */
+  spanFolds: number;
+  /** Spans whose predicted fold landed only where the mesh draws nothing. */
+  spansNotDrawn: number;
+  /** Spans that predicted a fold no probe reproduced. See `DeformSpan.unconfirmed`. */
+  spansUnconfirmed: number;
+  /**
+   * Extra posed measurements the span scan took — **the cost figure**, and 0 on
+   * a rig the closed form flags nothing in, which is every green rig. `CUR`-style
+   * accounting rather than a timing: a wall clock in a gate is not reproducible
+   * and this is (`DW16`).
+   */
+  spanProbes: number;
 }
 
 /**
@@ -346,6 +457,7 @@ export function skeletonDataFromText(skeletonText: string, atlasText: string): S
  */
 export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string> = new Set()): DeformSurvey {
   const keys: DeformKeyMeasure[] = [];
+  const spans: DeformSpan[] = [];
   const exempted = new Set<string>();
   const notAMesh = new Set<string>();
   let timelines = 0;
@@ -370,137 +482,51 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
         exempted.add(`"${slotName}"`);
         continue;
       }
-      const count = attachment.worldVerticesLength;
       const triangles = attachment.triangles;
       if (!triangles || triangles.length < 3) continue; // A04 owns a mesh with no triangles
+      const placement = placementOf(data, timeline.slotIndex, attachment);
+      const named = {
+        animation: anim.name,
+        skin: placement.skin,
+        slot: slotName,
+        attachment: attachment.name,
+        placeholder: placement.placeholder,
+      };
+      /** The previous key's posed frame, kept so the span between them can be scanned. */
+      let previous: PosedFrame | null = null;
       for (let frame = 0; frame < timeline.frames.length; frame++) {
         const time = timeline.frames[frame];
-        // Posed per key, by the same route A10 steps an animation. A fresh state
-        // per key is what lands the sample exactly ON the key rather than one
-        // update short of it.
-        const posed = new Skeleton(data);
-        const state = new AnimationState(new AnimationStateData(data));
-        state.setAnimation(0, anim.name, false);
-        posed.setupPose();
-        posed.update(0);
-        posed.updateWorldTransform(Physics.reset);
-        state.update(time);
-        state.apply(posed);
-        posed.update(time);
-        posed.updateWorldTransform(Physics.update);
-        const slot = posed.slots[timeline.slotIndex];
-        // Read BEFORE the deform is cleared below, and off the same posed
-        // skeleton: what the slot shows here and at what alpha is the other half
-        // of what this key does (issue #401).
-        const draw = drawOfKey(posed, timeline.slotIndex, attachment);
-        const deformed = new Float32Array(count);
-        attachment.computeWorldVertices(posed, slot, 0, count, deformed, 0, 2);
-        // The same bones, with the deform taken away. `computeWorldVertices`
-        // reads the array off the slot, so emptying it is the whole control.
-        slot.appliedPose.deform.length = 0;
-        const plain = new Float32Array(count);
-        attachment.computeWorldVertices(posed, slot, 0, count, plain, 0, 2);
-
-        const before = triangleAreas(plain, triangles);
-        const after = triangleAreas(deformed, triangles);
-        const largest = before.reduce((m, a) => Math.max(m, Math.abs(a)), 0);
-        // Both bands, and the wider one wins. The relative one is about the
-        // SHAPE (a triangle with no area has no winding); the noise one is about
-        // the arithmetic (a sign read off float32 rounding is not a
-        // measurement). Each is the larger on a different mesh.
-        const band = Math.max(largest * DEFORM_AREA_EPSILON, float32AreaNoise(plain), float32AreaNoise(deformed));
-
-        let moved = 0;
-        let maxDisplacement = 0;
-        let maxDisplacementVertex = -1;
-        for (let v = 0; v * 2 + 1 < count; v++) {
-          const dx = deformed[v * 2] - plain[v * 2];
-          const dy = deformed[v * 2 + 1] - plain[v * 2 + 1];
-          if (dx === 0 && dy === 0) continue;
-          moved++;
-          const distance = Math.hypot(dx, dy);
-          if (distance > maxDisplacement) {
-            maxDisplacement = distance;
-            maxDisplacementVertex = v;
-          }
-        }
-
-        const reversed: DeformReversal[] = [];
-        let collapsed = 0;
-        let degenerate = 0;
-        let areaRatioMin: DeformExtreme | null = null;
-        let areaRatioMax: DeformExtreme | null = null;
-        let stretchMax: DeformExtreme | null = null;
-        let stretchMin: DeformExtreme | null = null;
-        for (let t = 0; t < before.length; t++) {
-          // A triangle with no area at the cleared pose has no winding to keep
-          // and no map to take singular values of.
-          if (Math.abs(before[t]) <= band) {
-            degenerate++;
-            continue;
-          }
-          const ratio = after[t] / before[t];
-          if (areaRatioMin === null || ratio < areaRatioMin.value) areaRatioMin = { triangle: t, value: ratio };
-          if (areaRatioMax === null || ratio > areaRatioMax.value) areaRatioMax = { triangle: t, value: ratio };
-          const stretch = stretchSingularValues(plain, deformed, triangles, t);
-          if (stretch !== null) {
-            if (stretchMax === null || stretch.max > stretchMax.value) stretchMax = { triangle: t, value: stretch.max };
-            if (stretchMin === null || stretch.min < stretchMin.value) stretchMin = { triangle: t, value: stretch.min };
-          }
-          // A triangle the key collapses ONTO zero has been pinched rather than
-          // turned over — a real idiom, counted and never a bar. Its ratio and
-          // its stretch are kept above, because a triangle crushed to nothing IS
-          // the worst compression on that key and hiding it would flatter the
-          // report.
-          if (Math.abs(after[t]) <= band) {
-            collapsed++;
-            continue;
-          }
-          if (Math.sign(before[t]) !== Math.sign(after[t])) {
-            reversed.push({
-              triangle: t,
-              ids: [triangles[t * 3], triangles[t * 3 + 1], triangles[t * 3 + 2]],
-              before: before[t],
-              after: after[t],
-            });
-          }
-        }
+        const posed = poseAt(data, anim.name, time);
+        const frameMeasure = measurePosed(posed, time, timeline.slotIndex, attachment, triangles);
         // A key that draws no pixels is measured and then left out of the
         // totals, because those totals are "what the gate ran on" — A39 reads
         // them onto its stats line and the report's rollup has to match them.
-        if (draw.blank === null) {
-          trianglesMeasured += before.length;
-          collapsedTotal += collapsed;
+        if (frameMeasure.measure.draw.blank === null) {
+          trianglesMeasured += frameMeasure.measure.triangles;
+          collapsedTotal += frameMeasure.measure.collapsed;
         } else {
           notDrawn++;
-          notDrawnReversed += reversed.length;
+          notDrawnReversed += frameMeasure.measure.reversed.length;
         }
-        const placement = placementOf(data, timeline.slotIndex, attachment);
-        keys.push({
-          animation: anim.name,
-          skin: placement.skin,
-          slot: slotName,
-          attachment: attachment.name,
-          placeholder: placement.placeholder,
-          key: frame,
-          time,
-          vertices: count / 2,
-          moved,
-          maxDisplacement,
-          maxDisplacementVertex,
-          triangles: before.length,
-          reversed,
-          collapsed,
-          degenerate,
-          areaRatioMin,
-          areaRatioMax,
-          stretchMax,
-          stretchMin,
-          band,
-          draw,
-        });
+        keys.push({ ...named, key: frame, time, ...frameMeasure.measure });
+        if (previous !== null) {
+          spans.push(
+            scanDeformSpan(data, anim, timeline, attachment, triangles, named, frame - 1, previous, frameMeasure),
+          );
+        }
+        previous = frameMeasure;
       }
     }
+  }
+  let spanProbes = 0;
+  let spanFolds = 0;
+  let spansNotDrawn = 0;
+  let spansUnconfirmed = 0;
+  for (const span of spans) {
+    spanProbes += span.probed.length;
+    if (span.fold !== null) spanFolds++;
+    if (span.notDrawn > 0) spansNotDrawn++;
+    if (span.unconfirmed) spansUnconfirmed++;
   }
   return {
     keys,
@@ -511,7 +537,620 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
     collapsed: collapsedTotal,
     notDrawn,
     notDrawnReversed,
+    spans,
+    spanFolds,
+    spansNotDrawn,
+    spansUnconfirmed,
+    spanProbes,
   };
+}
+
+/**
+ * The skeleton of `data`, posed by `animation` at `time`.
+ *
+ * By the same route A10 steps an animation, and with a fresh state every call:
+ * that is what lands the sample exactly ON `time` rather than one update short of
+ * it, and it is why a probe between two keys is as trustworthy as a key.
+ */
+function poseAt(data: SkeletonData, animation: string, time: number): Skeleton {
+  const posed = new Skeleton(data);
+  const state = new AnimationState(new AnimationStateData(data));
+  state.setAnimation(0, animation, false);
+  posed.setupPose();
+  posed.update(0);
+  posed.updateWorldTransform(Physics.reset);
+  state.update(time);
+  state.apply(posed);
+  posed.update(time);
+  posed.updateWorldTransform(Physics.update);
+  return posed;
+}
+
+/** One posed time, measured — and the two world arrays it was measured from. */
+interface PosedFrame {
+  time: number;
+  posed: Skeleton;
+  /** The mesh as the runtime deformed it there. */
+  deformed: Float32Array;
+  /** The same bones with the deform cleared. The denominator, by construction 1.000. */
+  plain: Float32Array;
+  /** `triangleAreas(plain)`, kept so the span scan does not take it a second time. */
+  plainAreas: number[];
+  measure: DeformFrameMeasure;
+}
+
+/**
+ * Everything this file says about one attachment at whatever time a skeleton is
+ * already posed at.
+ *
+ * ⚠️ It **clears the slot's deform array** to take the plain side, so the
+ * skeleton it is handed is spent for any purpose that wanted the runtime's own
+ * deform back. The span scan below relies on that: it writes its own arrays into
+ * the emptied slot to evaluate the two keys' geometry at one pose.
+ */
+function measurePosed(
+  posed: Skeleton,
+  time: number,
+  slotIndex: number,
+  attachment: MeshAttachment,
+  triangles: ArrayLike<number>,
+): PosedFrame {
+  const count = attachment.worldVerticesLength;
+  const slot = posed.slots[slotIndex];
+  // Read BEFORE the deform is cleared below, and off the same posed skeleton:
+  // what the slot shows here and at what alpha is the other half of what this
+  // frame does (issue #401).
+  const draw = drawOfKey(posed, slotIndex, attachment);
+  const deformed = new Float32Array(count);
+  attachment.computeWorldVertices(posed, slot, 0, count, deformed, 0, 2);
+  // The same bones, with the deform taken away. `computeWorldVertices` reads the
+  // array off the slot, so emptying it is the whole control.
+  slot.appliedPose.deform.length = 0;
+  const plain = new Float32Array(count);
+  attachment.computeWorldVertices(posed, slot, 0, count, plain, 0, 2);
+
+  const before = triangleAreas(plain, triangles);
+  const after = triangleAreas(deformed, triangles);
+  const band = areaBand(before, plain, deformed);
+
+  let moved = 0;
+  let maxDisplacement = 0;
+  let maxDisplacementVertex = -1;
+  for (let v = 0; v * 2 + 1 < count; v++) {
+    const dx = deformed[v * 2] - plain[v * 2];
+    const dy = deformed[v * 2 + 1] - plain[v * 2 + 1];
+    if (dx === 0 && dy === 0) continue;
+    moved++;
+    const distance = Math.hypot(dx, dy);
+    if (distance > maxDisplacement) {
+      maxDisplacement = distance;
+      maxDisplacementVertex = v;
+    }
+  }
+
+  const reversed: DeformReversal[] = [];
+  let collapsed = 0;
+  let degenerate = 0;
+  let areaRatioMin: DeformExtreme | null = null;
+  let areaRatioMax: DeformExtreme | null = null;
+  let stretchMax: DeformExtreme | null = null;
+  let stretchMin: DeformExtreme | null = null;
+  for (let t = 0; t < before.length; t++) {
+    // A triangle with no area at the cleared pose has no winding to keep and no
+    // map to take singular values of.
+    if (Math.abs(before[t]) <= band) {
+      degenerate++;
+      continue;
+    }
+    const ratio = after[t] / before[t];
+    if (areaRatioMin === null || ratio < areaRatioMin.value) areaRatioMin = { triangle: t, value: ratio };
+    if (areaRatioMax === null || ratio > areaRatioMax.value) areaRatioMax = { triangle: t, value: ratio };
+    const stretch = stretchSingularValues(plain, deformed, triangles, t);
+    if (stretch !== null) {
+      if (stretchMax === null || stretch.max > stretchMax.value) stretchMax = { triangle: t, value: stretch.max };
+      if (stretchMin === null || stretch.min < stretchMin.value) stretchMin = { triangle: t, value: stretch.min };
+    }
+    // A triangle the key collapses ONTO zero has been pinched rather than turned
+    // over — a real idiom, counted and never a bar. Its ratio and its stretch are
+    // kept above, because a triangle crushed to nothing IS the worst compression
+    // on that key and hiding it would flatter the report.
+    if (Math.abs(after[t]) <= band) {
+      collapsed++;
+      continue;
+    }
+    if (Math.sign(before[t]) !== Math.sign(after[t])) {
+      reversed.push({
+        triangle: t,
+        ids: [triangles[t * 3], triangles[t * 3 + 1], triangles[t * 3 + 2]],
+        before: before[t],
+        after: after[t],
+      });
+    }
+  }
+  return {
+    time,
+    posed,
+    deformed,
+    plain,
+    plainAreas: before,
+    measure: {
+      vertices: count / 2,
+      moved,
+      maxDisplacement,
+      maxDisplacementVertex,
+      triangles: before.length,
+      reversed,
+      collapsed,
+      degenerate,
+      areaRatioMin,
+      areaRatioMax,
+      stretchMax,
+      stretchMin,
+      band,
+      draw,
+    },
+  };
+}
+
+/**
+ * The dead band a set of areas is read against.
+ *
+ * Both bands, and the wider one wins. The relative one is about the SHAPE (a
+ * triangle with no area has no winding); the noise one is about the arithmetic (a
+ * sign read off float32 rounding is not a measurement). Each is the larger on a
+ * different mesh.
+ */
+function areaBand(plainAreas: readonly number[], ...worlds: ReadonlyArray<ArrayLike<number>>): number {
+  const largest = plainAreas.reduce((m, a) => Math.max(m, Math.abs(a)), 0);
+  let band = largest * DEFORM_AREA_EPSILON;
+  for (const world of worlds) band = Math.max(band, float32AreaNoise(world));
+  return band;
+}
+
+// ---------------------------------------------------------------------------
+// Between two keys — issue #403
+// ---------------------------------------------------------------------------
+
+/**
+ * A closed interval, in whatever the caller is measuring. Empty when `hi < lo`.
+ */
+interface Interval {
+  lo: number;
+  hi: number;
+}
+
+/** One straight piece of the curve the runtime reads a span's fraction off. */
+interface CurveLeg {
+  t0: number;
+  p0: number;
+  t1: number;
+  p1: number;
+}
+
+/**
+ * The runtime's own interpolation fraction over one span, as a polyline in
+ * `(time, fraction)`.
+ *
+ * ⭐ **Read off `timeline.curves`, not re-derived from the cubic.**
+ * `DeformTimeline.getCurvePercent` evaluates a bezier by walking the ten points
+ * the parser sampled into that array and interpolating *linearly* between them —
+ * so the polyline below is not an approximation of what the runtime does, it is
+ * what the runtime does. A curve that overshoots (a fraction below 0 or above 1,
+ * which the format allows and `back`-style easings produce) is therefore inside
+ * this rather than assumed away.
+ */
+function curveLegs(timeline: DeformTimeline, frame: number): { kind: DeformSpanCurve; legs: CurveLeg[] } {
+  const t0 = timeline.frames[frame];
+  const t1 = timeline.frames[frame + 1];
+  const curves = curveStorage(timeline);
+  const code = curves[frame];
+  // 1 is STEPPED: `getCurvePercent` returns a flat 0 across the whole span, so
+  // the runtime holds the earlier key's geometry and interpolates nothing.
+  if (code === 1) return { kind: 'stepped', legs: [{ t0, p0: 0, t1, p1: 0 }] };
+  if (code === 0) return { kind: 'linear', legs: [{ t0, p0: 0, t1, p1: 1 }] };
+  // 2 + i is BEZIER, with the sampled points starting at `i`. Nine of them are
+  // stored; the runtime ramps into the first from (t0, 0) and out of the last to
+  // (t1, 1), which is the two legs added either side.
+  const legs: CurveLeg[] = [];
+  let x = t0;
+  let y = 0;
+  for (let i = code - 2, n = code - 2 + BEZIER_POINTS * 2; i < n; i += 2) {
+    legs.push({ t0: x, p0: y, t1: curves[i], p1: curves[i + 1] });
+    x = curves[i];
+    y = curves[i + 1];
+  }
+  legs.push({ t0: x, p0: y, t1, p1: 1 });
+  return { kind: 'bezier', legs };
+}
+
+/** Points `CurveTimeline.setBezier` stores per curve — `BEZIER_SIZE / 2`. */
+const BEZIER_POINTS = 9;
+
+/**
+ * `CurveTimeline.curves`, which is `protected` and is read anyway.
+ *
+ * ⚠️ A deliberate reach into the runtime's own storage, in the one file whose
+ * whole job is reading what the runtime will do. The public surface is
+ * `getCurvePercent(time, frame)` — a fraction at a time — and the scan needs the
+ * inverse and the reachable range, which no sequence of forward evaluations
+ * gives exactly: the breakpoints of the polyline it interpolates over are
+ * precisely what this array holds, and any other route to them would be sampling
+ * with a spacing to defend. The alternative considered and rejected was
+ * re-deriving the sampling from the four bezier handles in the emitted JSON,
+ * which would be a **second** derivation of the runtime's own arithmetic — the
+ * thing this file's opening paragraph forbids — and would then be checking
+ * rigc's copy of spine-core's maths rather than spine-core's.
+ *
+ * `A05` already gates the emitted curve arrays, and `DW18` is the control that
+ * the reading here matches what the runtime does with them.
+ */
+function curveStorage(timeline: DeformTimeline): ArrayLike<number> {
+  return (timeline as unknown as { curves: ArrayLike<number> }).curves;
+}
+
+/** The fractions this span's curve actually reaches, overshoot included. */
+function reachedFractions(legs: readonly CurveLeg[]): Interval {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const leg of legs) {
+    lo = Math.min(lo, leg.p0, leg.p1);
+    hi = Math.max(hi, leg.p0, leg.p1);
+  }
+  return { lo, hi };
+}
+
+/**
+ * The times at which the curve's fraction is inside `window`, as intervals.
+ *
+ * Every leg is straight, so each contributes one interval and the answer is
+ * exact — a non-monotone curve simply contributes more than one.
+ */
+function timesAtFractions(legs: readonly CurveLeg[], window: Interval): Interval[] {
+  const out: Interval[] = [];
+  for (const leg of legs) {
+    if (leg.p0 === leg.p1) {
+      if (leg.p0 >= window.lo && leg.p0 <= window.hi) out.push({ lo: leg.t0, hi: leg.t1 });
+      continue;
+    }
+    const at = (p: number): number => leg.t0 + ((leg.t1 - leg.t0) * (p - leg.p0)) / (leg.p1 - leg.p0);
+    const a = at(window.lo);
+    const b = at(window.hi);
+    const lo = Math.max(Math.min(leg.t0, leg.t1), Math.min(a, b));
+    const hi = Math.min(Math.max(leg.t0, leg.t1), Math.max(a, b));
+    if (hi >= lo) out.push({ lo, hi });
+  }
+  return out;
+}
+
+/** The fraction the curve is at, at one time. */
+function fractionAt(legs: readonly CurveLeg[], time: number): number {
+  for (const leg of legs) {
+    if (time < Math.min(leg.t0, leg.t1) || time > Math.max(leg.t0, leg.t1)) continue;
+    if (leg.t1 === leg.t0) return leg.p0;
+    return leg.p0 + ((leg.p1 - leg.p0) * (time - leg.t0)) / (leg.t1 - leg.t0);
+  }
+  return legs[legs.length - 1].p1;
+}
+
+/** Overlapping intervals folded into the maximal ones they cover. */
+function mergeIntervals(intervals: readonly Interval[]): Interval[] {
+  const sorted = [...intervals].filter((i) => i.hi > i.lo).sort((a, b) => a.lo - b.lo || a.hi - b.hi);
+  const out: Interval[] = [];
+  for (const interval of sorted) {
+    const last = out[out.length - 1];
+    if (last !== undefined && interval.lo <= last.hi) last.hi = Math.max(last.hi, interval.hi);
+    else out.push({ ...interval });
+  }
+  return out;
+}
+
+/**
+ * Where a triangle's area has the **wrong sign** over one span, in the
+ * interpolation fraction — the closed form, and the whole reason this scan needs
+ * no subdivision count.
+ *
+ * ## The arithmetic, in full, because it is four lines
+ *
+ * `DeformTimeline.applyToSlot` writes `v1 + (v2 − v1)·p` into the slot's deform
+ * array, and a world vertex is an **affine** function of that array at a fixed
+ * pose — unweighted, the array *is* the local positions; weighted, each pair is
+ * added in a bone's bind space and summed with fixed weights. So over one span
+ * every vertex travels a straight line, `W(p) = A + p·(B − A)`, and a triangle's
+ * doubled signed area is a cross product of two such lines:
+ *
+ *     2A(p) = (e₁ + p·d₁) × (e₂ + p·d₂)
+ *           = e₁×e₂  +  p·(e₁×d₂ + d₁×e₂)  +  p²·(d₁×d₂)
+ *
+ * — a **quadratic in p, exactly**, with `e` the edges at `p = 0` and `d` the
+ * edges of the displacement to `p = 1`. The reversal condition is therefore two
+ * roots of a quadratic, not a search, and there is no sample spacing to defend.
+ *
+ * ⭐ Compare `turnCeiling` in [`src/depth.ts`](src/depth.ts), which is the same
+ * move on the other side of the wall: there a yaw makes the area linear in
+ * `cos t` and `sin t` and the fold angle is `atan(A₀/A_axis)`; here the runtime's
+ * own interpolation makes it quadratic in `p` and the fold fraction is a root.
+ * Both replace "build, read the refusal, guess again" with arithmetic.
+ *
+ * 🚨 **What is NOT closed-form is the pose.** `A(p)` above holds the bones still.
+ * The bones move across a span too, and on a WEIGHTED mesh their motion changes
+ * the map from offsets to world — so this is evaluated at both of the span's own
+ * key poses and the union taken, and whatever it names is then *measured* at the
+ * real posed time before anything is refused. On an unweighted mesh the question
+ * does not arise at all: one bone matrix multiplies every vertex, so its
+ * determinant factors out of both sides of the comparison and the reversal is a
+ * property of the offsets alone.
+ */
+function wrongSignFractions(
+  c0: number,
+  c1: number,
+  c2: number,
+  plainArea: number,
+  band: number,
+  reach: Interval,
+): Interval[] {
+  // g(p) < 0 is "reversed by more than the band", with the sign folded in so the
+  // question is the same one whichever way the mesh is wound.
+  const s = plainArea > 0 ? 1 : -1;
+  const a = s * c2;
+  const b = s * c1;
+  const c = s * c0 + band;
+  const clip = (lo: number, hi: number): Interval[] => {
+    const out = { lo: Math.max(lo, reach.lo), hi: Math.min(hi, reach.hi) };
+    return out.hi >= out.lo ? [out] : [];
+  };
+  if (a === 0) {
+    // Degenerate to a straight line, which is what a deform that moves one axis
+    // only comes to — a `yaw` leaves y alone, so its areas are affine in `p` and
+    // two unfolded keys cannot fold between them at all (`DW14`).
+    if (b === 0) return c < 0 ? [{ ...reach }] : [];
+    const root = -c / b;
+    return b > 0 ? clip(-Infinity, root) : clip(root, Infinity);
+  }
+  const discriminant = b * b - 4 * a * c;
+  // No crossing: the sign of `a` is the sign of `g` everywhere.
+  if (discriminant <= 0) return a < 0 ? [{ ...reach }] : [];
+  const sq = Math.sqrt(discriminant);
+  const left = Math.min((-b - sq) / (2 * a), (-b + sq) / (2 * a));
+  const right = Math.max((-b - sq) / (2 * a), (-b + sq) / (2 * a));
+  // ⚠️ An upward parabola is wrong-signed BETWEEN its roots; a downward one is
+  // wrong-signed OUTSIDE them, and those are two disjoint windows with a
+  // correctly-wound middle. Merging them into one — which this did until it was
+  // read back — would put the probe's midpoint in that middle and report a fold
+  // nothing reproduced.
+  return a > 0 ? clip(left, right) : [...clip(-Infinity, left), ...clip(right, Infinity)];
+}
+
+/**
+ * The times at which the slot's **visibility** can change across a span.
+ *
+ * ⚠️ This is the half of issue #403 that is about the fade rather than the fold,
+ * and getting it wrong in either direction is a defect: read the alpha only at
+ * the keys and a correct rig that fades out over the fold is refused (undoing
+ * issue #401); probe one arbitrary time inside the fold window and a fold that is
+ * drawn for only part of that window is missed.
+ *
+ * ⭐ The way out needs no threshold. A slot's alpha and its attachment are
+ * piecewise functions of time whose pieces are **the slot timelines' own key
+ * times**, so `alpha == 0` can start or stop only there. Splitting the fold
+ * window at those times leaves pieces on which "does this draw?" has one answer,
+ * and the probe inside a piece is representative of the whole piece.
+ *
+ * Every timeline carrying a `slotIndex` counts, for this slot and for any other
+ * slot the deform reaches (`timelineSlots`) — duck-typed rather than matched
+ * against a list of classes, because a list is a thing that goes stale when the
+ * format grows a timeline and the failure would be silent.
+ */
+function visibilityKeyTimes(timelines: readonly Timeline[], slots: ReadonlySet<number>): number[] {
+  const times: number[] = [];
+  for (const timeline of timelines) {
+    const carrier = timeline as unknown as { slotIndex?: unknown };
+    if (typeof carrier.slotIndex !== 'number' || !slots.has(carrier.slotIndex)) continue;
+    const entries = timeline.getFrameEntries();
+    for (let i = 0; i < timeline.getFrameCount(); i++) times.push(timeline.frames[i * entries]);
+  }
+  return times;
+}
+
+/**
+ * Scan the interval between two consecutive deform keys (issue #403).
+ *
+ * ## What it does, in order
+ *
+ * 1. **Solve.** At each of the span's two key poses, take every triangle's
+ *    quadratic (`wrongSignFractions`) and collect the fractions at which it is
+ *    reversed. Nothing is measured here and nothing is refused here.
+ * 2. **Convert.** Map those fractions to times through the runtime's own curve
+ *    polyline (`timesAtFractions`), keep only what is **strictly inside** the
+ *    span — the two ends are the keys, and the key survey owns those — and merge
+ *    the overlaps.
+ * 3. **Split.** Cut each merged window at the slot's own visibility key times, so
+ *    no piece straddles a change in what is drawn.
+ * 4. **Measure.** Pose the skeleton at one time inside each piece and take this
+ *    file's ordinary measurement there, alpha included, in time order. Stop at
+ *    the first piece that comes back with a reversal on a frame that draws.
+ *
+ * ⇒ Nothing is refused on a prediction. What A39 reads is step 4's measurement,
+ * at a real time, through the real runtime — the closed form only decides *where
+ * to look*, which is exactly the part a subdivision count would have been
+ * guessing at.
+ *
+ * ## Cost — measured, because the multiplier had to be chosen rather than assumed
+ *
+ * Step 1 is **one** extra `computeWorldVertices` per span per anchor (the other
+ * end of the line is the anchor key's own `deformed` array) plus three cross
+ * products per triangle; steps 2–3 are interval arithmetic, `O(triangles)`.
+ * **Step 4 costs nothing at all on a span nothing is predicted in**, which is
+ * every span of every green rig, and that is what keeps the whole figure a
+ * fraction rather than a multiple. Against the same survey with this function
+ * switched off, same process, alternated, on the `2026-09-05-density` study's
+ * own grid ladder and on the four gallery rigs that carry a deform timeline:
+ *
+ * | fixture | keys | spans | triangle samples | keys only | + spans |
+ * | --- | ---: | ---: | ---: | ---: | ---: |
+ * | `grid-129`, weighted, 32,768 triangles | 4 | 3 | 131,072 | 5.5 ms | **8.1 ms (×1.47)** |
+ * | `grid-97`, weighted, 18,432 triangles | 4 | 3 | 73,728 | 3.4 ms | 4.7 ms (×1.40) |
+ * | `gallery/flex`, weighted, 75 triangles | 8 | 6 | 600 | 0.16 ms | 0.30 ms (×1.9) |
+ * | `gallery/nod` | 36 | 30 | 624 | 0.34 ms | 0.46 ms (×1.37) |
+ * | `gallery/portrait`, unweighted | 8 | 6 | 192 | 0.22 ms | 0.25 ms (×1.12) |
+ *
+ * ⇒ **The survey costs about half as much again**, and where in that range a rig
+ * lands is set by two things and not by the triangle count: how many spans it
+ * has per key (a timeline of two keys has one span; `nod`'s 36 keys have 30),
+ * and whether the mesh is weighted — an unweighted one takes a single anchor for
+ * the reason above and a much cheaper `computeWorldVertices` with it. ⚠️ Read
+ * the ratio at `grid-129` and treat the sub-millisecond rows as noisy: they move
+ * ±15% between runs, which is the caveat the density study's README already
+ * carries about single readings. On a rig that DOES fold, add one posed
+ * measurement — the cost of one key — per predicted window, and the build is
+ * being refused anyway.
+ */
+function scanDeformSpan(
+  data: SkeletonData,
+  anim: { name: string; timelines: Timeline[] },
+  timeline: DeformTimeline,
+  attachment: MeshAttachment,
+  triangles: ArrayLike<number>,
+  named: { animation: string; skin: string; slot: string; attachment: string; placeholder: string },
+  /** The index of the key the span starts at — `frame + 1` is the one it ends at. */
+  frame: number,
+  from: PosedFrame,
+  to: PosedFrame,
+): DeformSpan {
+  const { kind, legs } = curveLegs(timeline, frame);
+  const span: DeformSpan = {
+    ...named,
+    fromKey: frame,
+    toKey: frame + 1,
+    fromTime: from.time,
+    toTime: to.time,
+    curve: kind,
+    predicted: 0,
+    probed: [],
+    fold: null,
+    notDrawn: 0,
+    unconfirmed: false,
+  };
+  const count = attachment.worldVerticesLength;
+  const reach = reachedFractions(legs);
+  const v1 = timeline.vertices[frame];
+  const v2 = timeline.vertices[frame + 1];
+  if (!v1 || !v2) return span;
+
+  const windows: Interval[] = [];
+  const flagged = new Set<number>();
+  // ⭐ **One anchor on an unweighted attachment, and it costs nothing to be
+  // sure of.** Every vertex of one is transformed by the SAME bone matrix `M`,
+  // so a triangle's world area is `det M` times its local area on both sides of
+  // the comparison and the factor cancels: whether the deform reverses a
+  // winding is then a property of the offsets alone, identical at every pose,
+  // and the second anchor would recompute the same answer. A WEIGHTED
+  // attachment blends a different matrix per vertex, `det` does not factor out,
+  // and the fixed-pose quadratic is only exact where the bones hold still — so
+  // both of the span's own key poses are taken and the union used. `DW17` is
+  // the control for the claim: a bone rotation across the span moves nothing
+  // about where an unweighted mesh is found to fold.
+  for (const anchor of attachment.bones === null ? [from] : [from, to]) {
+    // The two ends of the straight line every vertex travels, evaluated at THIS
+    // anchor's bones. `measurePosed` has already emptied the slot's deform array
+    // to take its plain side, so writing into it is how the two are posed.
+    //
+    // ⭐ Half of these four are already in hand. At a key's own time the
+    // runtime's interpolation fraction is 0, so `applyToSlot` copies that key's
+    // array verbatim — which makes the anchor's own `deformed` exactly the end
+    // of the line that belongs to it, provided the slot was showing the mesh
+    // there for the runtime to have applied anything at all.
+    const own = anchor.measure.draw.showsThisMesh;
+    const a =
+      own && anchor === from ? from.deformed : worldWithDeform(anchor.posed, timeline.slotIndex, attachment, v1, count);
+    const b =
+      own && anchor === to ? to.deformed : worldWithDeform(anchor.posed, timeline.slotIndex, attachment, v2, count);
+    // The anchor's own plain areas, taken once when it was measured as a key —
+    // the same numbers, so the span cannot disagree with the key about which
+    // triangles have a winding to keep.
+    const plainAreas = anchor.plainAreas;
+    const band = areaBand(plainAreas, anchor.plain, a, b);
+    for (let t = 0; t < plainAreas.length; t++) {
+      if (Math.abs(plainAreas[t]) <= band) continue; // no winding to keep
+      const i0 = triangles[t * 3] * 2;
+      const i1 = triangles[t * 3 + 1] * 2;
+      const i2 = triangles[t * 3 + 2] * 2;
+      const e1x = a[i1] - a[i0];
+      const e1y = a[i1 + 1] - a[i0 + 1];
+      const e2x = a[i2] - a[i0];
+      const e2y = a[i2 + 1] - a[i0 + 1];
+      const d1x = b[i1] - b[i0] - e1x;
+      const d1y = b[i1 + 1] - b[i0 + 1] - e1y;
+      const d2x = b[i2] - b[i0] - e2x;
+      const d2y = b[i2 + 1] - b[i0 + 1] - e2y;
+      const c0 = 0.5 * (e1x * e2y - e2x * e1y);
+      const c1 = 0.5 * (e1x * d2y - d2x * e1y + d1x * e2y - e2x * d1y);
+      const c2 = 0.5 * (d1x * d2y - d2x * d1y);
+      for (const wrong of wrongSignFractions(c0, c1, c2, plainAreas[t], band, reach)) {
+        const inside = timesAtFractions(legs, wrong)
+          .map((i) => ({ lo: Math.max(i.lo, from.time), hi: Math.min(i.hi, to.time) }))
+          .filter((i) => i.hi > i.lo);
+        if (inside.length === 0) continue;
+        flagged.add(t);
+        windows.push(...inside);
+      }
+    }
+  }
+  span.predicted = flagged.size;
+  if (windows.length === 0) return span;
+
+  // Split each merged window at the slot's own visibility keys, so no piece
+  // straddles a change in what is drawn. Every point of a merged window is
+  // inside at least one triangle's window, so its middle is a fold and not a gap.
+  const slots = new Set<number>([timeline.slotIndex, ...attachment.timelineSlots]);
+  const cuts = visibilityKeyTimes(anim.timelines, slots);
+  const pieces: Interval[] = [];
+  for (const window of mergeIntervals(windows)) {
+    const inner = [...new Set(cuts.filter((t) => t > window.lo && t < window.hi))].sort((x, y) => x - y);
+    let lo = window.lo;
+    for (const cut of [...inner, window.hi]) {
+      if (cut > lo) pieces.push({ lo, hi: cut });
+      lo = cut;
+    }
+  }
+  for (const piece of pieces) {
+    const time = (piece.lo + piece.hi) / 2;
+    span.probed.push(time);
+    const probe = measurePosed(poseAt(data, anim.name, time), time, timeline.slotIndex, attachment, triangles);
+    if (probe.measure.reversed.length === 0) continue;
+    if (probe.measure.draw.blank !== null) {
+      span.notDrawn++;
+      continue;
+    }
+    span.fold = { time, percent: fractionAt(legs, time), measure: probe.measure };
+    return span;
+  }
+  span.unconfirmed = span.fold === null && span.notDrawn === 0;
+  return span;
+}
+
+/**
+ * The mesh's world vertices with one deform array written into the slot.
+ *
+ * The array is copied rather than aliased: for an unweighted attachment with no
+ * `vertices` on its key, `SkeletonJson` stores the ATTACHMENT'S OWN setup array
+ * as that key's deform, and handing the runtime a live reference to it would let
+ * a later write edit the mesh itself.
+ */
+function worldWithDeform(
+  posed: Skeleton,
+  slotIndex: number,
+  attachment: MeshAttachment,
+  deform: ArrayLike<number>,
+  count: number,
+): Float32Array {
+  const slot = posed.slots[slotIndex];
+  const array = slot.appliedPose.deform;
+  array.length = deform.length;
+  for (let i = 0; i < deform.length; i++) array[i] = deform[i];
+  const world = new Float32Array(count);
+  attachment.computeWorldVertices(posed, slot, 0, count, world, 0, 2);
+  array.length = 0;
+  return world;
 }
 
 /**

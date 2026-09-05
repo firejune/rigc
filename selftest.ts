@@ -61,6 +61,7 @@ import {
   AnimationStateData,
   BoundingBoxAttachment,
   ClippingAttachment,
+  DeformTimeline,
   EventTimeline,
   IkConstraint,
   MeshAttachment,
@@ -8530,6 +8531,17 @@ function buildTurnRig(
      * must not travel to another.
      */
     also?: { name: string; tracks?: Array<Record<string, unknown>> };
+    /**
+     * The deform run written out in full, in place of the three-key `{ t } ->
+     * row -> { t }` shape above (issue #403).
+     *
+     * The between-keys cases need to state what happens BETWEEN two keys, which
+     * means writing both of them: a table that is not `row`, or a curve on the
+     * segment. `{ mid: true }` in an entry is replaced by the transcribed `row`,
+     * so a case that only wants a curve on the usual fold does not restate the
+     * table.
+     */
+    deformKeys?: Array<Record<string, unknown>>;
   } = {},
 ): TurnBuild {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-turn-'));
@@ -8598,6 +8610,12 @@ function buildTurnRig(
     extra.transform === undefined
       ? { t: midTime, fromVertex: 0, vertices: TURN_ORDER.flatMap((id) => [row[2 * (id % TURN_COLUMNS.length)], row[2 * (id % TURN_COLUMNS.length) + 1]]) }
       : { t: midTime, transform: extra.transform };
+  // The three-key run, or the one a between-keys case wrote out in full with
+  // `{ mid: true }` standing in for the transcribed table.
+  const deformKeys =
+    extra.deformKeys === undefined
+      ? [{ t: 0 }, midKey, { t: 1 }]
+      : extra.deformKeys.map((k) => (k.mid === true ? { ...midKey, ...k, mid: undefined } : k));
   writeFileSync(
     motionPath,
     `${JSON.stringify(
@@ -8615,7 +8633,7 @@ function buildTurnRig(
               {
                 slot: 'head',
                 attachment: 'head',
-                keys: [{ t: 0 }, midKey, { t: 1 }],
+                keys: deformKeys,
               },
             ],
           },
@@ -8628,7 +8646,7 @@ function buildTurnRig(
                   duration: 1,
                   loop: false,
                   tracks: extra.also.tracks ?? [],
-                  deform: [{ slot: 'head', attachment: 'head', keys: [{ t: 0 }, midKey, { t: 1 }] }],
+                  deform: [{ slot: 'head', attachment: 'head', keys: deformKeys }],
                 },
               }
             : {}),
@@ -9023,6 +9041,383 @@ function runDeformWindingSuite(): number {
       : `[${neverDrawn.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'an assertion whose every key was passed over has measured nothing, and folding that into the pass count is ' +
       'how a gate comes to look kept while checking nothing — the same rule DW04 holds for a declared fold',
+  );
+
+  // --- the times no key lands on (issue #403) ------------------------------
+  //
+  // 🚨 Everything above measures KEYS. The runtime interpolates between them, so
+  // a deform inside its fold angle at every key can be past it in between —
+  // and DW06's own idiom makes that easy to reach rather than merely possible.
+  // Each case below is red on the code that shipped #401: the first three were
+  // measured green before the scan existed.
+  const between = (report: ReturnType<typeof validate>): Array<{ detail: string }> =>
+    report.failures.filter((f) => f.assertion === A39 && /BETWEEN key/.test(f.detail));
+
+  // --- ⛔ the hole itself: the fade lands ON the folding key ----------------
+  //
+  // DW06's rig with the alpha-0 key moved from t=0.25 onto t=0.5, where the fold
+  // is. Every key is then honest — key 1 really does draw nothing — and the
+  // frames just before it are drawn, nearly folded, and land on no key at all.
+  const fadeOntoTheFold: Array<Record<string, unknown>> = [
+    {
+      slot: 'head',
+      property: 'rgba',
+      keys: [
+        { t: 0, v: [1, 1, 1, 1] },
+        { t: 0.5, v: [1, 1, 1, 0] },
+        { t: 1, v: [1, 1, 1, 1] },
+      ],
+    },
+  ];
+  const onTheFold = gateTurn(buildTurnRig(turnRow(40), { tracks: fadeOntoTheFold }));
+  const onTheFoldHits = between(onTheFold);
+  const onTheFoldTime = Number(/at t=([0-9.]+)s/.exec(onTheFoldHits[0]?.detail ?? '')?.[1] ?? NaN);
+  const onTheFoldAlpha = Number(/at alpha ([0-9.]+)/.exec(onTheFoldHits[0]?.detail ?? '')?.[1] ?? NaN);
+  say(
+    'DW11_A_FADE_LANDING_ON_THE_FOLDING_KEY_IS_REFUSED_AT_A_TIME_NO_KEY_HOLDS',
+    onTheFoldHits.length === 2 &&
+      onTheFoldTime > 0 &&
+      onTheFoldTime < 0.5 &&
+      Number.isFinite(onTheFoldAlpha) &&
+      onTheFoldAlpha > 0 &&
+      // The key itself is still exempt and still says so: #401 is not undone,
+      // it is completed.
+      Number(onTheFold.stats.deformKeysNotDrawn) === 1 &&
+      !/deform head\/head key 1 \(/.test(onTheFoldHits[0].detail) &&
+      /BETWEEN key 0 \(t=0s\) and key 1 \(t=0.5s\)/.test(onTheFoldHits[0].detail) &&
+      /% of the way from one to the other/.test(onTheFoldHits[0].detail) &&
+      /land the alpha-0 key BEFORE the folding key/.test(onTheFoldHits[0].detail),
+    onTheFoldHits.length
+      ? `the alpha-0 key ON the 40° key: key 1 is still passed over (deformKeysNotDrawn=` +
+          `${onTheFold.stats.deformKeysNotDrawn}) and ${A39} refuses the ${onTheFoldHits.length} SPAN(s) around it ` +
+          `instead, naming t=${onTheFoldTime} — a time no key holds — at alpha ${onTheFoldAlpha}, still drawing`
+      : `${A39} did not fire between any two keys; the report was [${onTheFold.passed.join(', ')}]`,
+    "issue #403: the survey measured key times and the runtime interpolates between them, so #401's exemption was " +
+      'reachable by landing the fade exactly on the fold — 8 reversed triangles at alpha 0.20, gating green. The ' +
+      'documentation said "land the fade before the fold" and nothing checked it',
+  );
+
+  // --- and the shape that has to STAY green --------------------------------
+  //
+  // ⚠️ The positive control for the case above, and the one that says the scan
+  // did not undo #401: DW06's own rig, whose fade reaches 0 BEFORE the fold, is
+  // still green — and the scan found the fold there and passed it over, which
+  // is a different fact from not having looked.
+  const beforeTheFold = gateTurn(buildTurnRig(turnRow(40), { tracks: fadeOverTheFold }));
+  say(
+    'DW12_THE_SAME_FADE_LANDING_BEFORE_THE_FOLD_IS_STILL_GREEN_AND_SAYS_IT_LOOKED',
+    beforeTheFold.failures.length === 0 &&
+      beforeTheFold.passed.includes(A39) &&
+      Number(beforeTheFold.stats.deformSpansScanned) === 2 &&
+      Number(beforeTheFold.stats.deformSpansNotDrawn) === 2 &&
+      Number(beforeTheFold.stats.deformSpanProbes) === 2 &&
+      beforeTheFold.stats.deformSpansUnconfirmed === undefined,
+    beforeTheFold.failures.length === 0
+      ? `the alpha-0 key at t=0.25, BEFORE the 40° key at t=0.5: ${A39} ` +
+          `${beforeTheFold.passed.includes(A39) ? 'PASSES' : 'did NOT run'}, having scanned ` +
+          `${beforeTheFold.stats.deformSpansScanned} span(s), predicted a fold in ` +
+          `${beforeTheFold.stats.deformSpansNotDrawn} of them and measured at ` +
+          `${beforeTheFold.stats.deformSpanProbes} time(s) inside them, every one of which draws nothing`
+      : `[${beforeTheFold.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'a between-keys check that read the alpha only at the keys would refuse exactly the frames the fade is hiding, ' +
+      'which is #401 undone and correct art refused again — so the alpha is read at the same time as the geometry, ' +
+      'and the stats line says the scan ran rather than leaving a green that could equally mean it did not',
+  );
+
+  // --- the subject with no fade in it at all -------------------------------
+  //
+  // ⭐ The case that exists independently of #401, and the one the closed form
+  // is checkable on. `M = diag(sx, sy)` is a mirror with a POSITIVE determinant
+  // — winding kept at the key — and the straight line the runtime takes to get
+  // there is `(1−p)·I + p·M`, whose determinant is `(1 − (1−sx)·p)·(1 − (1−sy)·p)`.
+  // That is negative between its two roots, so the mesh is inside out for part
+  // of the way with both ends of the way correct. This is what "a turn inside
+  // the ceiling at both keys and past it in between" has to be built out of:
+  // a pure yaw CANNOT do it (see DW13's own note below).
+  const flipSx = -1;
+  const flipSy = -0.5;
+  const flipRoots = [1 / (1 - flipSx), 1 / (1 - flipSy)].sort((a, b) => a - b);
+  const flipTable = TURN_ORDER.flatMap((id) => [
+    round6((flipSx - 1) * TURN_COLUMNS[id % TURN_COLUMNS.length]),
+    round6((flipSy - 1) * TURN_ROWS[Math.floor(id / TURN_COLUMNS.length)]),
+  ]);
+  const flipKeys = [{ t: 0 }, { t: 0.5, fromVertex: 0, vertices: flipTable }, { t: 1 }];
+  const flipped = gateTurn(buildTurnRig(turnRow(12), { deformKeys: flipKeys }));
+  const flipHits = between(flipped);
+  const flipTime = Number(/at t=([0-9.]+)s/.exec(flipHits[0]?.detail ?? '')?.[1] ?? NaN);
+  // The scan probes the middle of the window it solved for, and on a uniform
+  // affine every triangle's window is the SAME pair of roots — so the time it
+  // names is `(r1 + r2) / 2` scaled onto the span, from the closed form and
+  // never from a search.
+  const flipPredicted = 0.5 * ((flipRoots[0] + flipRoots[1]) / 2);
+  say(
+    'DW13_A_BLEND_THAT_FOLDS_BETWEEN_TWO_UNFOLDED_KEYS_IS_REFUSED_AT_THE_CLOSED_FORM_TIME',
+    flipHits.length === 2 &&
+      // 1e-4, and not tighter: the roots are solved off world areas that came
+      // back through a `Float32Array`. What is being checked is that the time
+      // came out of the closed form rather than out of a grid, and the nearest
+      // round number a grid would land on is a thousand tolerances away.
+      Math.abs(flipTime - flipPredicted) < 1e-4 &&
+      /32 of 32 triangle\(s\) reverse winding/.test(flipHits[0].detail) &&
+      /NO KEY LANDS THERE/.test(flipHits[0].detail) &&
+      // No key of it is refused — that is the whole claim.
+      flipped.failures.filter((f) => f.assertion === A39).length === flipHits.length,
+    flipHits.length
+      ? `key 1 is the mirror diag(${flipSx}, ${flipSy}), determinant ${(flipSx * flipSy).toFixed(3)} — winding kept ` +
+          `— and the interpolation to it passes through inside-out between p=${flipRoots[0].toFixed(6)} and ` +
+          `p=${flipRoots[1].toFixed(6)}. ${A39} refuses both spans and names t=${flipTime}; the closed form's own ` +
+          `midpoint is ${flipPredicted}. No key is refused: ${flipped.failures.length} failure(s), all of them spans`
+      : `${A39} did not fire between any two keys; the report was [${flipped.passed.join(', ')}]`,
+    'this is the fold that has nothing to do with a fade: both keys are correct, every frame between them for a ' +
+      'third of the span is not, and the keys are the only thing the gate could see',
+  );
+
+  // --- ⚠️ and the case the method cannot construct out of a yaw -------------
+  //
+  // A `yaw` moves x and leaves y alone, so a triangle's area is AFFINE in the
+  // shifts and therefore affine in the interpolation fraction — a straight line
+  // between two positive endpoints stays positive. ⇒ Two yaw keys both inside
+  // the fold angle cannot fold between them, at any pair of angles, and DW13 had
+  // to be built out of an affine instead. Stated as a measurement rather than as
+  // a comment, because it is the reason the fixture is shaped the way it is.
+  let yawFoldsBetween = 0;
+  for (const [a, b] of [
+    [30, -30],
+    [31, 12],
+    [-31, 31],
+    [25, 5],
+  ]) {
+    const pair = gateTurn(
+      buildTurnRig(turnRow(12), {
+        deformKeys: [
+          { t: 0, fromVertex: 0, vertices: TURN_ORDER.flatMap((id) => [turnRow(a)[2 * (id % TURN_COLUMNS.length)], 0]) },
+          { t: 1, fromVertex: 0, vertices: TURN_ORDER.flatMap((id) => [turnRow(b)[2 * (id % TURN_COLUMNS.length)], 0]) },
+        ],
+      }),
+    );
+    if (pair.failures.some((f) => f.assertion === A39)) yawFoldsBetween++;
+  }
+  say(
+    'DW14_TWO_YAW_KEYS_INSIDE_THE_FOLD_ANGLE_CANNOT_FOLD_BETWEEN_THEM',
+    yawFoldsBetween === 0,
+    `4 pairs of yaw keys either side of rest, every one inside this grid's ${fold.toFixed(3)}° fold angle: ` +
+      `${yawFoldsBetween} refused. A yaw leaves y alone, so a triangle's area is affine in the column shifts and ` +
+      'therefore affine in the interpolation fraction — a straight line between two areas of one sign never ' +
+      'changes sign',
+    'the shape of DW13 is forced by this: the between-keys fold cannot be demonstrated on the projection the rest ' +
+      'of this suite uses, and a case built out of one would have been green for a reason nobody had noticed',
+  );
+
+  // --- a stepped segment, which interpolates nothing -----------------------
+  //
+  // ⭐ The scan reads `timeline.curves` rather than assuming linearity, and what
+  // it says about a stepped segment is that the reachable fraction is the single
+  // point 0: the runtime HOLDS the earlier key's geometry across the whole span.
+  // So no new geometry — and yet the hole is still reachable, because what the
+  // span holds that geometry across is a stretch of time whose ALPHA is the next
+  // key's business. Key 1 folds and draws nothing; the runtime goes on drawing
+  // that same folded geometry as the slot fades back in.
+  const heldBuild = buildTurnRig(turnRow(40), {
+    deformKeys: [{ t: 0 }, { mid: true, ease: 'stepped' }, { t: 1 }],
+    tracks: [
+      {
+        slot: 'head',
+        property: 'rgba',
+        keys: [
+          { t: 0, v: [1, 1, 1, 0] },
+          { t: 0.5, v: [1, 1, 1, 0] },
+          { t: 1, v: [1, 1, 1, 1] },
+        ],
+      },
+    ],
+  });
+  const held = gateTurn(heldBuild);
+  const heldHits = between(held);
+  say(
+    'DW15_A_STEPPED_SEGMENT_HOLDS_ITS_KEYS_GEOMETRY_AND_IS_SCANNED_FOR_WHAT_IT_DRAWS',
+    heldHits.length === 1 &&
+      /a stepped segment\)/.test(heldHits[0].detail) &&
+      /BETWEEN key 1 \(t=0.5s\) and key 2 \(t=1s\)/.test(heldHits[0].detail) &&
+      /interpolates nothing, it HOLDS key 1's geometry/.test(heldHits[0].detail) &&
+      /8 of 32 triangle\(s\) reverse winding/.test(heldHits[0].detail) &&
+      // The span BEFORE it is stepped-free and linear, folds only where nothing
+      // is drawn, and is not refused — one refusal, not two.
+      Number(held.stats.deformSpansScanned) === 2,
+    heldHits.length === 1
+      ? `key 1 folds at alpha 0 and holds that geometry to t=1 on a stepped curve while the slot fades back in: ` +
+          `${A39} refuses the SPAN rather than the key, and says the segment interpolates nothing — ` +
+          `${heldHits[0].detail.slice(0, 170)}…`
+      : `${A39} fired between keys ${heldHits.length} time(s); the report was [${held.passed.join(', ')}]`,
+    'a stepped segment is the one case where "the geometry between two keys" is a key\'s own geometry, so a scan ' +
+      'that assumed linear interpolation would either invent a fold that is not there or, reading the fraction as ' +
+      'a sweep to the next key, miss this one entirely',
+  );
+
+  // --- what the scan cost, which is a number and not an impression ---------
+  //
+  // ⚠️ Structural rather than a stopwatch: a wall-clock bound in a gate is not
+  // reproducible and this is. What it says is the shape of the cost — the closed
+  // form runs on every span and a POSED MEASUREMENT runs only where the closed
+  // form found something, so a rig that does not fold pays for no measurement at
+  // all, and one that does pays one per predicted window.
+  const cleanCost = gateTurn(buildTurnRig(turnRow(12)));
+  say(
+    'DW16_A_SPAN_NOTHING_FOLDS_IN_COSTS_NO_POSED_MEASUREMENT',
+    Number(cleanCost.stats.deformSpansScanned) === 2 &&
+      cleanCost.stats.deformSpanProbes === undefined &&
+      Number(onTheFold.stats.deformSpanProbes) === 2 &&
+      Number(beforeTheFold.stats.deformSpanProbes) === 2,
+    `a 12° turn inside the fold angle: ${cleanCost.stats.deformSpansScanned} span(s) scanned, ` +
+      `${cleanCost.stats.deformSpanProbes ?? 0} posed measurement(s) taken. The 40° folds either side of it take ` +
+      `${onTheFold.stats.deformSpanProbes} (refused) and ${beforeTheFold.stats.deformSpanProbes} (passed over, ` +
+      'nothing drawn) — one per predicted window, and the window count comes from the geometry rather than from a ' +
+      'subdivision this repository would be choosing',
+    'the survey is the per-triangle cost on the hot path of every build; a scan that posed the skeleton at a fixed ' +
+      'number of sub-samples per span would multiply it by that number on every rig, folding or not',
+  );
+
+  // --- the anchor claim, which is what makes an unweighted mesh cheap ------
+  //
+  // The closed form holds the BONES still, and the scan therefore evaluates it
+  // at the span's own key poses. On an unweighted attachment one matrix
+  // transforms every vertex, its determinant multiplies both sides of the
+  // comparison and cancels, so one anchor is the whole answer — which is a claim
+  // about the arithmetic, checkable by moving the bones and seeing nothing move.
+  const turned = gateTurn(
+    buildTurnRig(turnRow(12), {
+      deformKeys: flipKeys,
+      tracks: [
+        {
+          bone: 'head',
+          property: 'rotate',
+          keys: [
+            { t: 0, v: [0] },
+            { t: 0.5, v: [140] },
+            { t: 1, v: [-25] },
+          ],
+        },
+        { bone: 'head', property: 'scale', keys: [{ t: 0, v: [1, 1] }, { t: 0.5, v: [2.5, 0.4] }, { t: 1, v: [1, 1] }] },
+      ],
+    }),
+  );
+  const turnedHits = between(turned);
+  const turnedTime = Number(/at t=([0-9.]+)s/.exec(turnedHits[0]?.detail ?? '')?.[1] ?? NaN);
+  say(
+    'DW17_A_BONE_MOVING_ACROSS_THE_SPAN_DOES_NOT_MOVE_WHERE_AN_UNWEIGHTED_MESH_FOLDS',
+    turnedHits.length === flipHits.length && Math.abs(turnedTime - flipTime) < 1e-9,
+    turnedHits.length
+      ? `DW13's rig with the slot bone swung 0° -> 140° -> -25° and scaled 1 -> [2.5, 0.4] -> 1 across the same ` +
+          `spans: ${A39} names t=${turnedTime}, which is DW13's own t=${flipTime} to the last bit`
+      : `${A39} did not fire between any two keys with the bone moving; the report was [${turned.passed.join(', ')}]`,
+    'the scan takes ONE anchor pose on an unweighted attachment because the bone matrix cancels out of the sign ' +
+      'comparison — half the cost of the two a weighted mesh needs. That is an argument until something moves the ' +
+      'bones and reads the same answer back',
+  );
+
+  // --- the third curve kind, read off the runtime's own storage ------------
+  //
+  // 🚨 The scan converts a fraction to a time through `CurveTimeline.curves`,
+  // which is `protected` and read anyway (`curveStorage`), because the public
+  // surface evaluates the curve forwards and the scan needs the inverse. That
+  // reach has to be checked against the public surface it bypasses: the
+  // percentage the refusal PRINTS is compared with what spine-core's own
+  // `getCurvePercent` returns at the time the refusal NAMES.
+  //
+  // Built on DW11's rig — the fade landing on the fold — so the KEY is passed
+  // over and the span is the thing refused; on a rig whose key folds visibly the
+  // span refusal is suppressed as one defect, one message, and there would be
+  // nothing here to read.
+  const bezierBuild = buildTurnRig(turnRow(40), {
+    deformKeys: [{ t: 0, curve: [0.05, 0.9, 0.2, 0.98] }, { mid: true }, { t: 1 }],
+    tracks: fadeOntoTheFold,
+  });
+  const bezier = gateTurn(bezierBuild);
+  const bezierHit = between(bezier).find((f) => /BETWEEN key 0 /.test(f.detail));
+  const bezierTime = Number(/at t=([0-9.]+)s/.exec(bezierHit?.detail ?? '')?.[1] ?? NaN);
+  const bezierPrinted = Number(/— ([0-9.]+)% of the way/.exec(bezierHit?.detail ?? '')?.[1] ?? NaN);
+  // spine-core's own answer, through the public method, on the loaded artifact.
+  const bezierData = skeletonDataFromText(bezierBuild.result.skeletonText, bezierBuild.result.atlasText);
+  const bezierTimeline = bezierData.animations[0].timelines.find((t): t is DeformTimeline => t instanceof DeformTimeline);
+  const runtimePercent = bezierTimeline === undefined ? NaN : bezierTimeline.getCurvePercent(bezierTime, 0);
+  say(
+    'DW18_THE_FRACTION_THE_SCAN_READS_OFF_A_BEZIER_IS_THE_ONE_THE_RUNTIME_EVALUATES',
+    bezierHit !== undefined &&
+      /on a linear segment/.test(bezierHit.detail) === false &&
+      Number.isFinite(bezierPrinted) &&
+      Math.abs(bezierPrinted / 100 - runtimePercent) < 0.0005 &&
+      // A front-loaded curve reaches the fold EARLIER than a straight line
+      // does, which is the whole reason a scan cannot assume linearity.
+      bezierTime < onTheFoldTime,
+    bezierHit !== undefined
+      ? `a raw curve [0.05, 0.9, 0.2, 0.98] on the segment into the 40° key: the refusal names t=${bezierTime} and ` +
+          `prints ${bezierPrinted}% of the way, where spine-core's own getCurvePercent(${bezierTime}, 0) returns ` +
+          `${runtimePercent.toFixed(6)}. The linear spelling of the same fold is not reached until ` +
+          `t=${onTheFoldTime}`
+      : `${A39} did not fire between keys 0 and 1 on the bezier segment; the report was [${bezier.passed.join(', ')}]`,
+    'the fraction is stored as a ten-point polyline the runtime interpolates linearly, not as the cubic the JSON ' +
+      'carries — so re-deriving it from the four handles would be a second copy of spine-core\'s arithmetic, and ' +
+      'reading the polyline is only safe while something checks it against the evaluation it is the inverse of',
+  );
+
+  // --- ⚠️ a span with TWO windows and a correct middle ---------------------
+  //
+  // 🚨 Found by reading the arithmetic back rather than by a case failing. The
+  // quadratic can open either way: upward, and the wrong sign is BETWEEN its two
+  // roots; downward, and the wrong sign is OUTSIDE them — two disjoint windows
+  // with a correctly wound middle. The first draft merged those into one window
+  // and probed its midpoint, which is exactly the part of the span that is fine,
+  // so the scan would have reported "predicted a fold nothing reproduced" over a
+  // span with two real ones in it.
+  //
+  // `P = diag(-3, 1)` and `Q = diag(1, -3)` both have determinant −3, so both
+  // keys fold; the blend's determinant is `(-3 + 4p)(1 - 4p)`, positive between
+  // p=0.25 and p=0.75. So the mesh is inside out, then correct, then inside out
+  // again — and the two windows are `(0, 0.25)` and `(0.75, 1)`.
+  const mirrorTable = (sx: number, sy: number): number[] =>
+    TURN_ORDER.flatMap((id) => [
+      round6((sx - 1) * TURN_COLUMNS[id % TURN_COLUMNS.length]),
+      round6((sy - 1) * TURN_ROWS[Math.floor(id / TURN_COLUMNS.length)]),
+    ]);
+  const twoWindowBuild = buildTurnRig(turnRow(12), {
+    deformKeys: [
+      { t: 0, fromVertex: 0, vertices: mirrorTable(-3, 1) },
+      { t: 1, fromVertex: 0, vertices: mirrorTable(1, -3) },
+    ],
+  });
+  const twoWindow = surveyDeformKeys(
+    skeletonDataFromText(twoWindowBuild.result.skeletonText, twoWindowBuild.result.atlasText),
+  );
+  const twoWindowSpan = twoWindow.spans[0];
+  const twoWindowGate = gateTurn(twoWindowBuild);
+  say(
+    'DW19_A_SPAN_WRONG_SIGNED_AT_BOTH_ENDS_AND_RIGHT_IN_THE_MIDDLE_IS_TWO_WINDOWS',
+    twoWindowSpan !== undefined &&
+      twoWindowSpan.unconfirmed === false &&
+      twoWindowSpan.probed.length === 1 &&
+      // The middle of the FIRST window, (0, 0.25) — not the middle of the span,
+      // which is the one place in it nothing is wrong. ⚠️ The tolerance is 1e-4
+      // rather than exact because the roots are solved off world areas that came
+      // back through a `Float32Array`; the claim is which window the probe is
+      // in, and 0.5 is four thousand tolerances away.
+      twoWindowSpan.probed[0] > 0 &&
+      twoWindowSpan.probed[0] < 0.25 &&
+      Math.abs(twoWindowSpan.probed[0] - 0.125) < 1e-4 &&
+      twoWindowSpan.fold !== null &&
+      twoWindowSpan.fold.measure.reversed.length === 32 &&
+      // And the whole span is suppressed from the refusals, because both of its
+      // keys already say it: one defect, one message.
+      twoWindowGate.failures.filter((f) => f.assertion === A39).length === 2 &&
+      between(twoWindowGate).length === 0,
+    twoWindowSpan === undefined
+      ? 'the scan recorded no span at all between the two keys'
+      : `both keys are mirrors of determinant -3 and the blend's is (-3 + 4p)(1 - 4p), correct only between ` +
+          `p=0.25 and p=0.75: the scan probes t=${twoWindowSpan.probed.join(', ')} — inside the first window, not ` +
+          `the span's own middle — finds ${twoWindowSpan.fold?.measure.reversed.length ?? 0} reversed and reports ` +
+          `unconfirmed=${twoWindowSpan.unconfirmed}. A39 refuses the two KEYS ` +
+          `(${twoWindowGate.failures.filter((f) => f.assertion === A39).length}) and adds no span message`,
+    'a quadratic opens either way and the wrong-signed set is between the roots or outside them; treating both as ' +
+      '"between" puts the probe in the one part of the span that is correct, and the scan then reports a ' +
+      'prediction it could not reproduce over two folds it should have named',
   );
 
   return bad;
@@ -18649,7 +19044,7 @@ function main(): void {
   bad += runContourMeshSuite();
   substantive += 8;
   bad += runDeformWindingSuite();
-  substantive += 11;
+  substantive += 20;
   bad += runDeformTransformSuite();
   substantive += 7;
   bad += runDeformReportSuite();
@@ -18894,7 +19289,7 @@ function main(): void {
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
-      '+ 11 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
+      '+ 20 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
       'angle it gates green, past that angle A39 names the animation, the key, the time and every reversed triangle ' +
       'with both its areas, and the eight it names span only the outermost column pair the formula picks out; the ' +
       'angle A39 first fires at, bisected, agrees with that formula to 0.0001°; a band INVERTED rather than folded ' +
@@ -18906,7 +19301,27 @@ function main(): void {
       'DEFORM block, and not gated, while the SAME fold at alpha 0.5 is still refused with the alpha in the ' +
       'message, and a slot exempt in one animation is still refused in another, because the exemption is a ' +
       'property of one key at one time and never of a slot, while a rig whose every key draws nothing SKIPs rather ' +
-      'than reporting a pass over an empty measurement), ' +
+      'than reporting a pass over an empty measurement; then the times NO key lands on (issue #403), where the ' +
+      'runtime interpolates and the survey used to look at nothing — the same fade landing ON the folding key ' +
+      'instead of before it, which left 8 triangles reversed at alpha 0.20 and gated green, now refused at a time ' +
+      'the closed form solved for rather than sampled, with DW06\'s own rig beside it still green AND saying on ' +
+      'the stats line that the scan looked, because a green that could equally mean "nothing was checked" is the ' +
+      'failure this whole file is built against; the fold that has no fade in it at all — a mirror with a POSITIVE ' +
+      'determinant, so both keys keep their winding while the straight line the runtime takes to get there is ' +
+      'inside out for a third of the way — refused at `det((1−p)·I + p·M)`\'s own root to six decimals; the reason ' +
+      'that case is a mirror and not a turn, which is that a yaw leaves y alone and so cannot fold between two ' +
+      'unfolded keys at ANY pair of angles; a STEPPED segment, which interpolates nothing and holds its key\'s ' +
+      'geometry — no new geometry, and yet the hole again, because what it holds that geometry across is a ' +
+      'stretch of time whose alpha is the next key\'s business; a BEZIER segment, where the fraction the refusal ' +
+      'prints is checked against spine-core\'s own `getCurvePercent` at the time the refusal names, because the ' +
+      'scan reads the runtime\'s protected curve storage to invert it; the cost, as a structural figure rather ' +
+      'than a stopwatch — a span nothing folds in costs no posed measurement at all, and one that does costs one ' +
+      'per predicted window; and the claim that makes an unweighted mesh cheap, that one bone matrix cancels out ' +
+      'of the sign comparison, checked by swinging the slot bone 140° and scaling it 2.5x0.4 across the same spans ' +
+      'and reading the same fold time back to the last bit; and the case found by reading the arithmetic rather ' +
+      'than by a rig failing — a quadratic opens either way, so the wrong-signed set is BETWEEN its roots or ' +
+      'OUTSIDE them, and a span that is inside out at both ends and correct in the middle is two windows whose ' +
+      'merge would have put the probe in the one part of it that is fine), ' +
       '+ 9 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
       'from docs/FACE.md §1 byte for byte, the same model past the fold angle still firing A39, the other three ' +
       'closed forms — affine, wave and bend — evaluated against arithmetic derived here, and the five refusals that ' +
