@@ -16,6 +16,7 @@
  */
 import type { AtlasRegion } from './atlas.ts';
 import type { DeformTransform, DeformTransformReport } from './deformgen.ts';
+import type { TurnCeiling } from './depth.ts';
 import type { MeshKind } from './mesh.ts';
 import type { TrackDerive, TrackDeriveReport } from './trackgen.ts';
 
@@ -1085,7 +1086,15 @@ export interface CompileResult {
       tone: { gamma: number; contrast: number; bias: number };
       /** Least and greatest `z` over the mesh's vertices, in attachment units. */
       range: [number, number];
-
+      /**
+       * The turn this geometry takes on this sheet before a triangle reverses,
+       * per axis and per direction — `src/depth.ts`'s `turnCeiling`.
+       *
+       * ⭐ It is what an author needs BEFORE writing a key, and the loop it
+       * replaces is "pick an angle, build, read `A39`'s refusal, guess again".
+       * A report and never a refusal: `A39` owns the refusal, from the artifact.
+       */
+      ceiling: TurnCeiling;
     };
   }>;
   /** Structural expectations handed to the validator. */

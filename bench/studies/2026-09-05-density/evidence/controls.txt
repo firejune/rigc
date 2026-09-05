@@ -10,6 +10,13 @@ corpus, on private art, or on anything outside this repository.
     # since the fold ladder's whole job is to find the angle.
     bun bench/studies/2026-09-05-density/tools/densprobe.ts <workdir> --degrees=20
 
+⚠️ <workdir> is required and must sit OUTSIDE this repository. The harness had a
+default of `render/` — git-ignored, so invisible — and the rig and motion specs
+it left there were swept up by the selftest's own walk over every motion spec in
+the tree, which reported 66 where the repository holds 38. Nothing asserted that
+count, so nothing went red; a harness that writes into the tree it measures is
+the same hazard as running an indexer while something else is still writing.
+
 Its four tables are `cost.txt`, `keycost.txt`, `depth.txt` and `fold.txt` in
 this directory, in that order and unedited.
 

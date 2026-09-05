@@ -90,7 +90,7 @@ import {
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError } from './src/compile.ts';
 import { parseMotionSpec } from './src/motion.ts';
-import { compareTurnFields, DEPTH_TONE_IDENTITY, type FieldAgreement } from './src/depth.ts';
+import { compareTurnFields, DEPTH_TONE_IDENTITY, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
   buildGridMesh,
   contourOvershootBound,
@@ -6629,7 +6629,7 @@ function writeContourArt(path: string, art: (x: number, y: number) => boolean, w
  */
 function writeDepthSheet(
   path: string,
-  kind: 'flat' | 'ramp' | 'tight' | 'colour' | 'softmask',
+  kind: 'flat' | 'ramp' | 'tight' | 'colour' | 'softmask' | 'dome',
   width: number,
   height: number,
   art: (x: number, y: number) => boolean,
@@ -6650,7 +6650,17 @@ function writeDepthSheet(
           ? flatLevel
           : kind === 'softmask'
             ? Math.round(255 * Math.min(1, Math.max(0, (width * 0.6 - x) / (width * 0.3))))
-            : Math.round((x / (width - 1)) * 255);
+            : // A dome curves on BOTH axes, which a ramp does not: `TC03` shows
+              // that a sheet linear in x cannot fold a `pitch` at all, so the
+              // four-ceiling case needs a sheet whose gradient turns.
+              kind === 'dome'
+              ? Math.round(
+                  255 *
+                    Math.sqrt(
+                      Math.max(0, 1 - (((x + 0.5) / width - 0.5) * 2) ** 2 - (((y + 0.5) / height - 0.5) * 2) ** 2),
+                    ),
+                )
+              : Math.round((x / (width - 1)) * 255);
       const covered = kind === 'tight' ? art(x, y) : true;
       plate.set(x, y, [level, level, level, covered ? 255 : 0]);
     }
@@ -6699,7 +6709,7 @@ function buildContourRig(
     bone?: [number, number];
     invariants?: Record<string, unknown> | null;
     /** Also write a depth sheet beside the art — see `writeDepthSheet`. */
-    depth?: { kind: 'flat' | 'ramp' | 'tight' | 'colour'; width?: number; height?: number };
+    depth?: { kind: 'flat' | 'ramp' | 'tight' | 'colour' | 'dome'; width?: number; height?: number };
     /** Also write a soft-region mask beside the art. */
     softmask?: { kind: 'softmask' | 'colour' | 'flat'; level?: number; width?: number; height?: number };
     /** A motion spec other than the empty one, for the cases that key a deform. */
@@ -7531,6 +7541,173 @@ function runContourMeshSuite(): number {
       both !== null && both.includes('no single space to evaluate it in'),
       both ?? 'a clean compile — the limitation is gone and this control should become the case that proves it',
       'the angle a raised surface turns through and the impact a soft one answers are the two things rigc states about a depth pass, and they cannot yet ride one attachment; issue #389 has the arithmetic showing the refusal is unnecessary',
+    );
+  }
+
+  // --- the turn ceiling: the angle the sheet supports, said BEFORE a key ----
+  //
+  // A `yaw` moves each vertex to `x' = u·cos t − z·sin t`, so a triangle's
+  // doubled signed area is linear in the two trig terms — `2A₀·cos t −
+  // 2A_yaw·sin t`, where `A_yaw` is the setup area with z substituted for u —
+  // and it crosses zero at `tan t = A₀/A_yaw`, exactly. The compiler now
+  // reports the smallest such angle over the mesh, per axis and per direction.
+  //
+  // 🚨 The number is worth nothing unless it is the angle `A39` actually fires
+  // at. Two derivations of one wall drift, and the compiler's runs on part
+  // geometry while the gate's runs on the posed artifact through spine-core.
+  // TC01 is what holds them together, and it is deliberately two-sided on all
+  // FOUR ceilings, each of which lands on a DIFFERENT triangle (32, 46, 117, 9
+  // on this fixture) — four independent readings, not one printed four times.
+  //
+  // Run red first, three ways:
+  //   - y flipped in the bind mapping: 2/4. The yaw pair is unmoved and the
+  //     pitch pair swaps, which is the whole reason this is not a yaw-only
+  //     suite. ⚠️ Both ANGLES stayed identical on a symmetric dome, so the half
+  //     that caught it is the triangle the report names, not the number.
+  //   - the mapping dropped entirely: also 2/4, and only through the same
+  //     channel — this fixture's part is at its native size, so the scale
+  //     factor is 1 and dropping it is nothing but that y flip.
+  //   - positions scaled by 3 with the y direction kept: 0/4, all four wrong
+  //     and three of the four naming the wrong triangle too. This is the one
+  //     that proves the unit relationship is guarded, and it had to be written
+  //     specially, because the first two hid behind one channel.
+  //
+  // A fourth control comparing the ceiling at two `zScale`s against
+  // `atan(tan t / 2)` was written and REMOVED: it is a self-comparison against
+  // the same closed form the code runs, it passed the third mutant, and TC01
+  // already pins the same quantity to 0.01° against an independent
+  // implementation. Folding it in would have grown the pass count and checked
+  // nothing new.
+  {
+    const say = (name: string, ok: boolean, detail: string, why: string): void => {
+      bad += reportCase(name, ok, detail, why);
+    };
+    const ceilingRig = (
+      sheetKind: 'dome' | 'ramp' | 'flat',
+      depth: Record<string, unknown>,
+      motion?: Record<string, unknown>,
+    ) =>
+      buildContourRig(
+        { type: 'mesh', image: 'blob.png', generator: { kind: 'grid', cols: 9, rows: 9, depth } },
+        { depth: { kind: sheetKind }, invariants: { meshSlots: 1, meshTriangles: 200 }, motion },
+      );
+    const sheet = { image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE };
+    const turnMotion = (kind: 'yaw' | 'pitch', degrees: number): Record<string, unknown> => ({
+      ...CONTOUR_MOTION,
+      animations: {
+        turn: {
+          duration: 1,
+          tracks: [],
+          deform: [{ slot: 'blob', attachment: 'blob', keys: [{ t: 1, transform: { kind, depth: true, degrees } }] }],
+        },
+      },
+    });
+    const gateAt = (kind: 'yaw' | 'pitch', degrees: number) => {
+      const build = ceilingRig('dome', sheet, turnMotion(kind, degrees));
+      return validate({
+        skeletonText: build.result.skeletonText,
+        atlasText: build.result.atlasText,
+        atlasDir: build.opts.outDir,
+        declaredDurations: build.result.declaredDurations,
+        rig: build.result.rig,
+        profile: 'spine-html',
+      });
+    };
+
+    const reported = ceilingRig('dome', sheet).result.meshes[0].depth?.ceiling;
+    type Axis = ['yaw' | 'pitch', '+' | '-', FoldLimit | null];
+    const axes: Axis[] = reported
+      ? [
+          ['yaw', '+', reported.yaw.positive],
+          ['yaw', '-', reported.yaw.negative],
+          ['pitch', '+', reported.pitch.positive],
+          ['pitch', '-', reported.pitch.negative],
+        ]
+      : [];
+    // A margin, not an epsilon: the two sides evaluate in different arithmetic
+    // (part geometry here, a posed spine-core skeleton there) and the claim is
+    // that the wall is in the same place, not that two floats agree.
+    //
+    // ⭐ 0.01° is chosen rather than picked: swept down, this suite still holds
+    // at **0.001°** and separates at 0.0001°, so the margin is ten times the
+    // measured disagreement between the two implementations. Tightening it
+    // further would be testing float noise, and loosening it costs
+    // discrimination — a systematic error smaller than the margin passes.
+    const NUDGE = 0.01;
+    const verdicts: string[] = [];
+    let held = 0;
+    for (const [kind, sign, limit] of axes) {
+      if (limit === null) continue;
+      const dir = sign === '+' ? 1 : -1;
+      const under = gateAt(kind, dir * (limit.degrees - NUDGE));
+      const over = gateAt(kind, dir * (limit.degrees + NUDGE));
+      const overHit = over.failures.find((f) => f.assertion === A39);
+      // The triangle the report NAMED has to be among the ones the gate names,
+      // which is the half that a coincidentally-similar angle cannot satisfy.
+      const named = overHit ? new RegExp(`triangle ${limit.triangle} \\[${limit.ids.join(',')}\\]`).test(overHit.detail) : false;
+      const ok = !under.failures.some((f) => f.assertion === A39) && overHit !== undefined && named;
+      if (ok) held++;
+      verdicts.push(
+        `${kind}${sign}${limit.degrees.toFixed(3)}° -> ` +
+          `${under.failures.some((f) => f.assertion === A39) ? 'FOLDS under (wrong)' : 'green under'}, ` +
+          `${overHit === undefined ? 'green over (wrong)' : named ? `refused over on triangle ${limit.triangle}` : 'refused over on ANOTHER triangle'}`,
+      );
+    }
+    say(
+      'TC01_THE_REPORTED_CEILING_IS_THE_ANGLE_A39_FIRES_AT_ON_THE_TRIANGLE_IT_NAMES',
+      axes.length === 4 && held === axes.filter(([, , l]) => l !== null).length && held > 0,
+      `${held}/${axes.filter(([, , l]) => l !== null).length} ceiling(s) held at ±${NUDGE}°: ${verdicts.join('; ')}`,
+      'the compiler measures this wall from part geometry and A39 measures it from a posed artifact through spine-core; ' +
+        'two derivations of one number drift, and a ceiling that is not the angle the gate refuses at is worse than none',
+    );
+
+    // A flat sheet has no gradient anywhere, so `A₀·cos t` is the whole area
+    // and nothing folds short of a right angle. `none` is a different claim
+    // from a large number and has to be reachable, or every "no ceiling" the
+    // report ever prints is really an unmeasured one.
+    const flat = ceilingRig('dome', sheet).result.meshes[0].depth?.ceiling;
+    const flatCeiling = ceilingRig('flat', sheet).result.meshes[0].depth?.ceiling;
+    say(
+      'TC02_A_SHEET_WITH_NO_GRADIENT_REPORTS_NO_CEILING_RATHER_THAN_A_LARGE_ONE',
+      flatCeiling !== undefined &&
+        flatCeiling.yaw.positive === null &&
+        flatCeiling.yaw.negative === null &&
+        flatCeiling.pitch.positive === null &&
+        flatCeiling.pitch.negative === null &&
+        flatCeiling.measured > 0 &&
+        flat?.yaw.positive != null,
+      `a flat sheet: ${flatCeiling?.measured} triangle(s) measured, all four ceilings ` +
+        `${flatCeiling && flatCeiling.yaw.positive === null ? 'null' : 'NOT null'}; the dome beside it reports ` +
+        `yaw +${flat?.yaw.positive?.degrees.toFixed(2)}°, so the null is the sheet and not the reader`,
+      'an assertion with nothing to measure reports SKIP and never a pass — the same rule for a figure: a sheet that ' +
+        'cannot fold anything must say so, and printing 90° would be quoting a limit nothing measured',
+    );
+
+    // ⭐ Rewritten by its own red run, which is why it is the sharper claim.
+    // It first asserted only that the two axes "differ" on a sheet rising in x,
+    // and the pitch ceiling came back NULL — not different, absent. That is
+    // arithmetic, not an accident: a `pitch` substitutes z into the y slot, so
+    // `A_pitch = Δx_b·Δz_c − Δx_c·Δz_b`, and on a sheet where `z = kx` every
+    // `Δz` is `kΔx`, which makes that expression identically ZERO. **A depth
+    // that varies linearly along one axis cannot fold the other, at any angle.**
+    //
+    // So the control states the exact zero and puts the dome beside it as the
+    // positive control: a reader that always returned null for a pitch would
+    // satisfy the first half and fail the second.
+    const ramp = ceilingRig('ramp', sheet).result.meshes[0].depth?.ceiling;
+    const dome = ceilingRig('dome', sheet).result.meshes[0].depth?.ceiling;
+    say(
+      'TC03_A_DEPTH_LINEAR_ALONG_ONE_AXIS_CANNOT_FOLD_THE_OTHER_AT_ANY_ANGLE',
+      ramp !== undefined &&
+        ramp.yaw.positive !== null &&
+        ramp.pitch.positive === null &&
+        ramp.pitch.negative === null &&
+        dome?.pitch.positive != null,
+      `a sheet rising linearly in x: yaw +${ramp?.yaw.positive?.degrees.toFixed(3)}° and pitch ` +
+        `${ramp?.pitch.positive === null && ramp.pitch.negative === null ? 'unfoldable on both sides, as A_pitch is identically zero' : 'FOLDABLE, which the arithmetic forbids'}; ` +
+        `the dome beside it folds a pitch at +${dome?.pitch.positive?.degrees.toFixed(3)}°, so the null is the sheet`,
+      'the two axes substitute z into different slots of the same area, and a reader that computed one and reported ' +
+        'it twice — or one that returned null for the axis it never implemented — passes every other control here',
     );
   }
 
@@ -17998,7 +18175,7 @@ function main(): void {
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'and which bones a skin switches on), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
-      '+ 24 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      '+ 27 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
       'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
       'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
@@ -18026,7 +18203,15 @@ function main(): void {
       + 'mask that carried everything, or nothing, would still load and gate), six ways a soft region can move nothing '
       + 'refused by name, and the limitation recorded as a control rather than as a comment: a carried mesh cannot also '
       + 'take a turn key, so the two things rigc states about a depth pass cannot yet ride one attachment, and SF03 is '
-      + 'what will notice when that stops being true, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
+      + 'what will notice when that stops being true; and the TURN CEILING the compiler now reports BEFORE a key is '
+      + 'written — the angle `tan t = A0/A_axis` at which this geometry on this sheet first reverses a triangle, per '
+      + 'axis and per direction, held to 0.01 degrees against the angle A39 actually refuses at AND against the '
+      + 'triangle A39 actually names, on all four ceilings because a y flip in the bind mapping leaves the yaw pair '
+      + 'alone and swaps the pitch pair (2/4 red, and 0/4 for a position-scale error that had to be written specially '
+      + 'because the first two mutants hid behind that one channel); a sheet with no gradient reporting NO ceiling '
+      + 'rather than a large one; and the exact zero the arithmetic forces — a depth varying linearly along one axis '
+      + 'cannot fold the other at ANY angle — with a dome beside it as the control that the null is the sheet and not '
+      + 'the reader, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +

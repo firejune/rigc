@@ -356,6 +356,19 @@ are two different quantities and both are true — §2.1 measures the first, `A3
 refuses the second. What is new here is that the second is a fact about the
 sheet, and can be fixed there.
 
+⭐ **And you no longer have to find the ceiling by building into it.** `build`
+and `explain` print it for any mesh with a depth map — per axis, per direction,
+naming the triangle that goes first — from `tan t = A₀/A_axis` on the mesh's own
+geometry ([AUTHORING §3.4](AUTHORING.md)):
+
+```
+        turn ceiling  yaw +31.41° / -32.01°   pitch +32.01° / -31.41°
+                      first to fold: yaw + at 31.41°, triangle 960 [113,112,593]
+```
+
+Read it as a fact about **the sheet**. If the number is too small, the fix is in
+the map — flatten it where the part curves away — and not in the lattice.
+
 📐 Method, harness and the full ladders live in the repository rather than in
 this package, as
 [`bench/studies/2026-09-05-density`](https://github.com/firejune/rigc/tree/main/bench/studies/2026-09-05-density) —

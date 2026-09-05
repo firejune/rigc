@@ -346,3 +346,148 @@ export function compareTurnFields(input: {
   for (let i = 0; i < alpha.length; i++) if (alpha[i] >= threshold && !seen[i]) skipped++;
   return { samples, skipped, mean: samples === 0 ? 0 : total / samples, worst };
 }
+
+// ---------------------------------------------------------------------------
+// The turn a mesh can take before it folds
+// ---------------------------------------------------------------------------
+
+/**
+ * The relative floor under a triangle's setup area, below which no ceiling is
+ * quoted for it.
+ *
+ * ⚠️ **Deliberately not `deformmeasure.ts`'s `DEFORM_AREA_EPSILON`, and the two
+ * must not be merged.** That one is a *shape band* on a measured reversal,
+ * combined with a float32 noise bound, and it decides whether a triangle the
+ * artifact already holds has turned over. This one guards a DIVISION: the
+ * ceiling below is `A0 / A_axis`, and a setup triangle with no area to speak of
+ * gives an angle of nearly zero that says nothing about the sheet.
+ *
+ * 🔒 What keeps them from drifting is not a shared constant — the compiler
+ * cannot import that file without linking the runtime — but a control:
+ * `TC01` in `selftest.ts` requires the ceiling reported here to be the angle
+ * `A39` actually fires at, on the triangle it actually names. A disagreement
+ * between these two numbers is a red test, not a silent difference.
+ */
+const CEILING_AREA_FLOOR = 1e-6;
+
+/** Where one triangle turns inside out, and which triangle that is. */
+export interface FoldLimit {
+  /** Degrees from setup, in (0, 90). */
+  degrees: number;
+  /** Which triangle: its ordinal in the triangle list, not an index into it. */
+  triangle: number;
+  /** Its three vertex indices, so a message can name them. */
+  ids: [number, number, number];
+}
+
+/**
+ * What a mesh's own geometry says about the turn it can take, per axis and per
+ * direction. `null` where nothing in the mesh folds short of 90°.
+ */
+export interface TurnCeiling {
+  yaw: { positive: FoldLimit | null; negative: FoldLimit | null };
+  pitch: { positive: FoldLimit | null; negative: FoldLimit | null };
+  /** Triangles with enough setup area to give an answer. */
+  measured: number;
+  /** Triangles already flat in setup, which no angle makes worse. */
+  degenerate: number;
+}
+
+/**
+ * The largest turn this mesh takes on this depth before a triangle reverses.
+ *
+ * ## The arithmetic, in full, because it is three lines
+ *
+ * A `yaw` moves each vertex to `x' = u·cos t − z·sin t` and leaves `y` alone, so
+ * a triangle's doubled signed area is *linear in the two trig terms*:
+ *
+ *     2A(t) = cos t · [Δu_b·Δy_c − Δu_c·Δy_b] − sin t · [Δz_b·Δy_c − Δz_c·Δy_b]
+ *           = 2A₀·cos t − 2A_yaw·sin t
+ *
+ * where `A_yaw` is the setup area with **z substituted for u**. It crosses zero
+ * at `tan t = A₀ / A_yaw` — exactly, with no search and no iteration. A `pitch`
+ * is the same statement with the substitution in the other slot.
+ *
+ * ⭐ **The sign of that ratio picks the direction.** A positive ratio folds at
+ * `+atan(ratio)` and a negative one at `−atan|ratio|`, so every triangle folds
+ * in exactly ONE direction and a part's two ceilings are generally different.
+ * Reporting one number for both would be quoting the tighter of two answers as
+ * if it were the only one — a face that turns 30° left and 18° right is the
+ * ordinary case, not an anomaly.
+ *
+ * ## Why this is a report and not a refusal
+ *
+ * `A39` already refuses a key that folds, from the artifact, through the
+ * runtime. This measures the same wall from the other side and *before* a key
+ * is written, which is the whole of its value: the loop it replaces is "pick an
+ * angle, build, read the refusal, guess again". Adding a second refusal here
+ * would be the compiler inventing a policy out of a measurement.
+ *
+ * @param points Vertices in the BIND space the deform offsets are authored in.
+ *   Areas are translation-invariant, so the origin does not matter; the scale
+ *   and the axis directions do. A y flip alone leaves a `yaw` answer alone and
+ *   SWAPS a `pitch`'s two directions, which is why the caller composes the
+ *   emitter's own mapping rather than approximating it.
+ * @param z One depth per vertex, in those same units.
+ */
+export function turnCeiling(
+  points: ReadonlyArray<readonly [number, number]>,
+  z: readonly number[],
+  triangles: ReadonlyArray<number>,
+): TurnCeiling {
+  if (z.length !== points.length) {
+    throw new DepthError(`the mesh has ${points.length} vertices and ${z.length} depths were supplied for it`);
+  }
+  const out: TurnCeiling = {
+    yaw: { positive: null, negative: null },
+    pitch: { positive: null, negative: null },
+    measured: 0,
+    degenerate: 0,
+  };
+  // The floor is relative, so it needs the mesh's own scale first.
+  let largest = 0;
+  const areas: number[] = [];
+  for (let t = 0; t < triangles.length; t += 3) {
+    const [ia, ib, ic] = [triangles[t], triangles[t + 1], triangles[t + 2]];
+    const a = (points[ib][0] - points[ia][0]) * (points[ic][1] - points[ia][1])
+      - (points[ic][0] - points[ia][0]) * (points[ib][1] - points[ia][1]);
+    areas.push(a);
+    if (Math.abs(a) > largest) largest = Math.abs(a);
+  }
+  const floor = largest * CEILING_AREA_FLOOR;
+
+  const keep = (slot: { positive: FoldLimit | null; negative: FoldLimit | null }, ratio: number, limit: FoldLimit) => {
+    const side = ratio > 0 ? 'positive' : 'negative';
+    const held = slot[side];
+    if (held === null || limit.degrees < held.degrees) slot[side] = limit;
+  };
+
+  for (let t = 0, n = 0; t < triangles.length; t += 3, n++) {
+    const [ia, ib, ic] = [triangles[t], triangles[t + 1], triangles[t + 2]];
+    const a0 = areas[n];
+    if (Math.abs(a0) <= floor) {
+      out.degenerate++;
+      continue;
+    }
+    out.measured++;
+    const dyb = points[ib][1] - points[ia][1];
+    const dyc = points[ic][1] - points[ia][1];
+    const dxb = points[ib][0] - points[ia][0];
+    const dxc = points[ic][0] - points[ia][0];
+    const dzb = z[ib] - z[ia];
+    const dzc = z[ic] - z[ia];
+    const ids: [number, number, number] = [ia, ib, ic];
+    // z in the driven axis's slot: x for a yaw, y for a pitch.
+    for (const [slot, aAxis] of [
+      [out.yaw, dzb * dyc - dzc * dyb],
+      [out.pitch, dxb * dzc - dxc * dzb],
+    ] as const) {
+      // A zero here is a triangle the axis cannot fold at all: its area stays
+      // `A₀·cos t`, which only reaches zero at a right angle.
+      if (aAxis === 0) continue;
+      const ratio = a0 / aAxis;
+      keep(slot, ratio, { degrees: (Math.atan(Math.abs(ratio)) * 180) / Math.PI, triangle: n, ids });
+    }
+  }
+  return out;
+}

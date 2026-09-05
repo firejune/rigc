@@ -28,6 +28,7 @@ import {
   depthDigest,
   sampleLevel,
   toneLevel,
+  turnCeiling,
   type DepthMap,
   type DepthNear,
   type DepthTone,
@@ -2716,6 +2717,21 @@ function sampleMeshDepth(
   spec: NonNullable<Extract<NonNullable<RigMeshAttachment['generator']>, { kind: 'contour' }>['depth']>,
   kind: 'contour' | 'grid',
   points: ReadonlyArray<readonly [number, number]>,
+  /** The mesh's own triangle list, for the turn ceiling. */
+  triangles: ReadonlyArray<number>,
+  /**
+   * A part-local pixel to the BIND space this mesh's vertices are emitted in —
+   * the same composition `encodeWeightedVertices` applies, handed in rather than
+   * rebuilt so the two cannot diverge.
+   *
+   * 🚨 The ceiling has to be taken in bind space and in no other. A deform
+   * offset is authored there, so a rotated slot bone MIXES the two axes: a
+   * ceiling measured in part-aligned pixels would report the yaw limit of a
+   * turn nobody is taking. It is also scale-sensitive — a ratio of an area to
+   * an area with a depth substituted into it — so part pixels have to reach the
+   * units `z` is already in before it is taken.
+   */
+  toBind: (px: number, py: number) => readonly [number, number],
   partWidth: number,
   partHeight: number,
   where: string,
@@ -2807,6 +2823,11 @@ function sampleMeshDepth(
       zScale: spec.zScale,
       tone,
       range: [r6(lo), r6(hi)],
+      ceiling: turnCeiling(
+        points.map(([px, py]) => toBind(px, py)),
+        z,
+        triangles,
+      ),
     },
   };
 }
@@ -3034,7 +3055,18 @@ function buildGridAttachment(
   const depth =
     generator.depth === undefined
       ? undefined
-      : sampleMeshDepth(generator.depth, 'grid', geometry.points, plate.width, plate.height, where, ctx);
+      :
+        sampleMeshDepth(
+          generator.depth,
+          'grid',
+          geometry.points,
+          geometry.triangles,
+          (px, py) => toBoneLocal(anchor, anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt),
+          plate.width,
+          plate.height,
+          where,
+          ctx,
+        );
   const bound =
     generator.soft === undefined
       ? undefined
@@ -3178,7 +3210,18 @@ function buildContourAttachment(
   const depth =
     generator.depth === undefined
       ? undefined
-      : sampleMeshDepth(generator.depth, 'contour', geometry.points, plate.width, plate.height, where, ctx);
+      :
+        sampleMeshDepth(
+          generator.depth,
+          'contour',
+          geometry.points,
+          geometry.triangles,
+          (px, py) => toBoneLocal(anchor, anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt),
+          plate.width,
+          plate.height,
+          where,
+          ctx,
+        );
   if (depth !== undefined) ctx.depths.set(`${ctx.skinName}/${ctx.slotName}/${placeholder}`, depth.z);
   ctx.meshes.push({
     slot: ctx.slotName,
