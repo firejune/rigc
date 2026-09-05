@@ -1583,6 +1583,25 @@ export function validate(input: ValidateInput): ValidateReport {
     // author* knows whether the page is turning over — and as of #313 nothing in
     // this repository uses it.
     //
+    // ## The keys it reads no winding off at all (issue #401)
+    //
+    // One whose slot draws **no pixels** at that key's own time: faded to alpha
+    // exactly 0, or showing another attachment. The message below states the
+    // harm as "draws its texture backwards there", and that sentence is false
+    // when nothing of the mesh lands — so the key is measured, printed, counted
+    // on the stats line and then passed over. A triangle that draws no pixels
+    // cannot draw them backwards.
+    //
+    // 🚨 **Exactly 0, and per key.** At alpha 0.5 a reversed triangle is plainly
+    // visible at half strength and this goes on refusing it, with the alpha in
+    // the message; any floor above 0 would be this repository choosing a
+    // visibility policy, which is the thing an archetype rule exists not to do.
+    // And a slot keyed to 0 in ONE animation is still gated in every other,
+    // because the measurement is of a time and not of a slot — which is the
+    // whole difference between this and `deformMayFold`, and why widening that
+    // field was the wrong fix: it would have bought the fade at the price of a
+    // blind spot at every angle where the part is fully visible.
+    //
     // ## Where the arithmetic lives
     //
     // In [`src/deformmeasure.ts`](src/deformmeasure.ts), not here — because issue
@@ -1601,6 +1620,15 @@ export function validate(input: ValidateInput): ValidateReport {
       }
       const survey = surveyDeformKeys(data, new Set(input.rig.deformMayFold));
       for (const key of survey.keys) {
+        // ⭐ The one thing this rule cannot say about a key that draws nothing.
+        // Its own message below states the harm as "draws its texture
+        // backwards", and that sentence is false when no pixel of the mesh
+        // lands at this time — the slot has faded to alpha 0, or shows another
+        // attachment. So the key is measured, reported and not gated (issue
+        // #401). Per key and per time: the SAME slot folding at full alpha in
+        // another animation, or at another key, is refused as before, which is
+        // what makes this a measurement rather than a second `deformMayFold`.
+        if (key.draw.blank !== null) continue;
         if (key.reversed.length === 0) continue;
         const shown = key.reversed
           .slice(0, 4)
@@ -1610,7 +1638,16 @@ export function validate(input: ValidateInput): ValidateReport {
           'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
           `animation "${key.animation}" deform ${key.slot}/${key.attachment} key ${key.key} (t=${key.time}s): ` +
             `${key.reversed.length} of ${key.triangles} triangle(s) reverse winding — triangle ${shown.join('; triangle ')}` +
-            `${more}. The mesh has turned inside out there and draws its texture backwards. Fix the key's ` +
+            `${more}. The mesh has turned inside out there and draws its texture backwards` +
+            // The alpha is in the message whenever it is not full, because the
+            // one thing that would make this key exempt is alpha exactly 0 and
+            // an author who has already faded the part half out needs to be
+            // told that half is not none (issue #401).
+            (key.draw.alpha === 1
+              ? ''
+              : ` at alpha ${key.draw.alpha.toFixed(4)} — visible at that strength, and only alpha exactly 0 draws ` +
+                'no pixels at all') +
+            '. Fix the key\'s ' +
             'offsets in the motion spec\'s deform timeline (a projection past its fold angle is the usual ' +
             'cause — docs/FACE.md §4.2 has the closed form), or, if this slot folds on purpose, declare it ' +
             `in the rig spec as invariants.deformMayFold: [{ "slot": "${key.slot}", "why": … }]`,
@@ -1629,9 +1666,30 @@ export function validate(input: ValidateInput): ValidateReport {
           `no deform timeline here has a winding to keep: ${why.join('; ') || 'every mesh keyed has no triangles'}`,
         );
       }
-      stats.deformKeysMeasured = survey.keys.length;
+      // ⚠️ Silence is not a pass. A key passed over because nothing of it is
+      // drawn has to be visible on a green run too — this is the only surface
+      // `validate` has, and `explain`'s DEFORM block prints the whole sentence
+      // beside the key's own figures.
+      const blank = survey.keys.filter((k) => k.draw.blank !== null);
+      const name = (k: (typeof survey.keys)[number]): string =>
+        `${k.animation}/${k.slot}/${k.attachment}#${k.key}:${k.draw.showsThisMesh ? 'alpha0' : 'notShown'}`;
+      if (blank.length === survey.keys.length) {
+        return skip(
+          'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
+          `every deform key here draws no pixels at its own time, so none of them has a texture that could be ` +
+            `drawn backwards — ${blank[0].animation} ${blank[0].slot}/${blank[0].attachment} key ${blank[0].key}: ` +
+            `${blank[0].draw.blank}` +
+            (blank.length > 1 ? `, and ${blank.length - 1} more key(s) like it` : ''),
+        );
+      }
+      stats.deformKeysMeasured = survey.keys.length - blank.length;
       stats.deformTrianglesMeasured = survey.trianglesMeasured;
       stats.deformTrianglesCollapsed = survey.collapsed;
+      if (blank.length) {
+        stats.deformKeysNotDrawn = blank.length;
+        stats.deformNotDrawn = blank.map(name).join(',');
+        if (survey.notDrawnReversed) stats.deformNotDrawnReversed = survey.notDrawnReversed;
+      }
       if (survey.exempted.length) stats.deformFoldExempt = survey.exempted.join(',');
     });
 

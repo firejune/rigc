@@ -1009,6 +1009,23 @@ number that says whether the map covers the part or a corner of it.
 Past that angle a triangle turns inside out and `A39` refuses the build by name.
 The loop this replaces is *pick an angle, build, read the refusal, guess again*.
 
+⭐ **Three ways to live with the ceiling**, and the third is the one a face
+actually uses: flatten the depth map, stay inside the angle, or **take the part
+off the screen before it gets there** — fade the slot to alpha 0 (`rgba`, §4.4) or
+swap the attachment away, as the far cheek or ear does while the head turns. That
+third one is measured rather than declared: a deform key whose slot draws no
+pixels at that key's own time is passed over by name, with the reason on the
+stats line and in the `DEFORM` block
+([#401](https://github.com/firejune/rigc/issues/401)). **Alpha exactly 0** — a
+part faded halfway is still refused, and the alpha is in the message.
+
+🚨 **Land the alpha-0 key *before* the folding key, not on it.** The gate measures
+**keys**, and the geometry between two keys is interpolated: on the turn probe,
+with the fade ending exactly on a 40° key, 8 triangles are already reversed at
+`t=0.4` where the slot is still drawing at **alpha 0.20** — and no key is
+measured there, so nothing says so. Fade out over the run *up to* the angle you
+cannot take, and the keys that fold are the ones that draw nothing.
+
 The arithmetic is exact and worth knowing, because it tells you what to change.
 A `yaw` sends each vertex to `x' = u·cos t − z·sin t`, so a triangle's area is
 `A₀·cos t − A_yaw·sin t` where `A_yaw` is the same area with **z substituted for
@@ -1366,6 +1383,13 @@ and the entry is gone. ⇒ An exemption whose `why` reads *"known defect, see
 #N"* is a legitimate use of the field and an honest one, but it is a loan
 against a fix, not a fix — and the thing that made it repayable was A39
 measuring the ceiling the art could actually take.
+
+🚫 **Do not reach for it to cover a part you have faded out.** A key whose slot
+draws no pixels at that key's own time is already passed over — `A39` measures
+that and says so (§4.11, and the `skipped` line in the `DEFORM` block). Declaring
+the slot instead would turn the check off at every angle where the part is fully
+visible too, which is trading a false positive for a blind spot on the same slot
+([#401](https://github.com/firejune/rigc/issues/401)).
 
 ---
 
@@ -2358,6 +2382,25 @@ ratio would go stale the moment somebody moved a column.
 saying nothing there is gated. An author who has declared a fold is the one
 person with no other way to see how far it goes.
 
+⚠️ **A key that draws no pixels says so, on a `skipped` line.** When the slot has
+faded to alpha exactly 0 at that key's own time, or shows another attachment,
+`A39` reads no winding off it — and the block prints the reason in the same words
+the gate counted it under, keeps the key's own figures where there are any, and
+leaves it out of the `WORST` rollup's counts, because that line ends by claiming
+`A39` reads the same two. The rollup then carries a second line naming how many
+keys were passed over and how many reversed triangles nothing gated:
+
+```
+  DEFORM  turn  default/head/head  key 1  t=0.500000  transform yaw  radius=170 degrees=40
+          skipped    A39 reads no winding off this key: the slot's alpha is exactly 0 at this
+                     time (slot 0.0000 x attachment 1.0000), so this key draws no pixels — a
+                     triangle that draws no pixels cannot draw them backwards
+          ...
+          winding    24 of 32 kept, 0 collapsed  <- a fold, and nothing gates it: this key draws no pixels (see above)
+  ..            1 key(s) draw no pixels at their own time and are read for no winding, carrying
+                8 reversed triangle(s) nothing gates  <- A39 counts them as deformKeysNotDrawn
+```
+
 🚫 **What it does not print, and why — `coverage`.** A deform **cannot move
 coverage.** That figure is rasterised from the attachment's **uvs** against the
 part's alpha, and a deform moves positions and never uvs, so it is identical at
@@ -2623,7 +2666,7 @@ The report prints one line per assertion:
 | `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying its `mix` (§3.5.1). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. **SKIP** when the skeleton declares no path constraint |
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
-| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, or when there is no rig info at all |
+| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels, or when there is no rig info at all |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.

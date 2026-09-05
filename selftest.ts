@@ -8263,6 +8263,26 @@ function buildTurnRig(
      * compiled `transform` to a loaded key has to tolerate the rounding.
      */
     time?: number;
+    /**
+     * Slot tracks alongside the deform — an `rgba` fade or an `attachment` swap,
+     * which is how a face gets past its own turn ceiling (issue #401) and
+     * therefore how the DW06+ cases put the mesh out of sight at the key that
+     * folds.
+     */
+    tracks?: Array<Record<string, unknown>>;
+    /**
+     * A second attachment in the same slot's skin, with a plate of its own, so a
+     * case can key `attachment` to something OTHER than null. "Shows nothing" and
+     * "shows another part" reach A39 down different branches and the second is
+     * the one a real crossfade uses.
+     */
+    swapTo?: string;
+    /**
+     * A second animation carrying the SAME deform timeline under its own name and
+     * its own tracks. The loophole control: an exemption earned in one animation
+     * must not travel to another.
+     */
+    also?: { name: string; tracks?: Array<Record<string, unknown>> };
   } = {},
 ): TurnBuild {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-turn-'));
@@ -8292,6 +8312,13 @@ function buildTurnRig(
       triangles.push(...[tl, bl, br, tl, br, tr].map((id) => position.get(id)!));
     }
   }
+  const attachments: Record<string, unknown> = {
+    head: { type: 'mesh', image: 'head.png', width, height, uvs, triangles, vertices },
+  };
+  if (extra.swapTo !== undefined) {
+    writeProbePng(join(dir, `${extra.swapTo}.png`), 20, 20, [90, 60, 40, 255]);
+    attachments[extra.swapTo] = { type: 'region', image: `${extra.swapTo}.png`, width: 20, height: 20 };
+  }
   const rigPath = join(dir, 'turn.rig.json');
   writeFileSync(
     rigPath,
@@ -8303,9 +8330,7 @@ function buildTurnRig(
         invariants: extra.invariants ?? { meshSlots: 1, meshTriangles: 40 },
         bones: [{ name: 'root' }, { name: 'head', parent: 'root', x: 400, y: 400 }],
         slots: extra.slots ?? [{ name: 'head', bone: 'head', attachment: 'head' }],
-        skins: extra.skins ?? {
-          default: { head: { head: { type: 'mesh', image: 'head.png', width, height, uvs, triangles, vertices } } },
-        },
+        skins: extra.skins ?? { default: { head: attachments } },
       },
       null,
       2,
@@ -8338,7 +8363,7 @@ function buildTurnRig(
           turn: {
             duration: 1,
             loop: false,
-            tracks: [],
+            tracks: extra.tracks ?? [],
             deform: [
               {
                 slot: 'head',
@@ -8347,6 +8372,19 @@ function buildTurnRig(
               },
             ],
           },
+          // The same fold under a second name, when a case asked for one. It
+          // carries its own tracks so the two animations can differ in exactly
+          // one thing: whether the slot is drawing the mesh at the folding key.
+          ...(extra.also
+            ? {
+                [extra.also.name]: {
+                  duration: 1,
+                  loop: false,
+                  tracks: extra.also.tracks ?? [],
+                  deform: [{ slot: 'head', attachment: 'head', keys: [{ t: 0 }, midKey, { t: 1 }] }],
+                },
+              }
+            : {}),
         },
       },
       null,
@@ -8538,6 +8576,206 @@ function runDeformWindingSuite(): number {
     `an undeclared slot: ${JSON.stringify(typo)}; a blank reason: ${JSON.stringify(noWhy)}; a slot with no mesh: ${JSON.stringify(noMesh)}`,
     'a fold exemption naming nothing exempts nothing and reads exactly like the check working — and an exemption ' +
       'with no reason is how a defect ships as a decision',
+  );
+
+  // --- and the key that draws nothing (issue #401) -------------------------
+  //
+  // 🚨 Every case below is measured against DW01, which is the SAME fixture at
+  // the SAME 40° and is refused: the red is not a separate rig, it is this one
+  // with the slot drawing. What changes is whether any pixel of the mesh lands
+  // at the folding key's own time — and a triangle that draws no pixels cannot
+  // draw them backwards.
+  const refusedCount = Number(/(\d+) of \d+ triangle\(s\) reverse winding/.exec(detail)?.[1] ?? NaN);
+  // The idiom the issue is about: the part is fully drawn at both ends of the
+  // turn and faded out across the middle, which is where the projection passes
+  // this grid's own fold angle. So key 0 and key 2 are gated as ever and only
+  // key 1 is passed over — the mixed case, not a rig that draws nothing at all.
+  const fadeOverTheFold: Array<Record<string, unknown>> = [
+    {
+      slot: 'head',
+      property: 'rgba',
+      keys: [
+        { t: 0, v: [1, 1, 1, 1] },
+        { t: 0.25, v: [1, 1, 1, 0] },
+        { t: 0.75, v: [1, 1, 1, 0] },
+        { t: 1, v: [1, 1, 1, 1] },
+      ],
+    },
+  ];
+  const fadedBuild = buildTurnRig(turnRow(40), { tracks: fadeOverTheFold });
+  const faded = gateTurn(fadedBuild);
+  const fadedBlock = turnDeformBlock(fadedBuild);
+  const fadedSkip = fadedBlock.find((l) => l.includes('skipped')) ?? '';
+  // ⚠️ Anchored on the label. The `skipped` line says "reads no winding off this
+  // key", so a `includes('winding')` here quietly matches it instead and the
+  // case compares that line with itself.
+  const fadedWinding = fadedBlock.find((l) => /^\s+winding\s/.test(l)) ?? '';
+  // The same agreement DR03 asserts, in the one situation that can break it: the
+  // rollup's totals are what the gate ran on, and a key nothing gated is in
+  // neither figure.
+  const fadedRollup = /reversed (\d+), collapsed \d+, over (\d+) key\(s\) and (\d+) triangle sample\(s\)/.exec(
+    fadedBlock.find((l) => l.includes('triangle sample(s)')) ?? '',
+  );
+  say(
+    'DW06_A_KEY_THAT_DRAWS_NO_PIXELS_IS_MEASURED_REPORTED_AND_NOT_GATED',
+    faded.failures.length === 0 &&
+      faded.passed.includes(A39) &&
+      Number(faded.stats.deformKeysNotDrawn) === 1 &&
+      /alpha0/.test(String(faded.stats.deformNotDrawn)) &&
+      Number(faded.stats.deformNotDrawnReversed) === refusedCount &&
+      /alpha is exactly 0/.test(fadedSkip) &&
+      /cannot draw them backwards/.test(fadedSkip) &&
+      new RegExp(`${32 - refusedCount} of 32 kept`).test(fadedWinding) &&
+      /nothing gates it/.test(fadedWinding) &&
+      fadedRollup !== null &&
+      Number(fadedRollup[1]) === 0 &&
+      Number(fadedRollup[2]) === Number(faded.stats.deformKeysMeasured) &&
+      Number(fadedRollup[3]) === Number(faded.stats.deformTrianglesMeasured),
+    faded.failures.length === 0
+      ? `the same 40° fold with the slot keyed to alpha 0 across it: ${A39} ` +
+          `${faded.passed.includes(A39) ? 'PASSES' : 'did NOT run'} on the ${faded.stats.deformKeysMeasured} key(s) ` +
+          `that draw and reports deformKeysNotDrawn=${faded.stats.deformKeysNotDrawn} ` +
+          `deformNotDrawn=${faded.stats.deformNotDrawn} ` +
+          `deformNotDrawnReversed=${faded.stats.deformNotDrawnReversed} — the same ${refusedCount} reversals DW01 ` +
+          `refuses. The block says "${fadedSkip.trim()}" and still prints "${fadedWinding.trim()}"`
+      : `[${faded.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'a face past its turn ceiling fades the far part out (#392, #399) — A39\'s own message says the mesh "draws ' +
+      'its texture backwards there", and that sentence is false when the slot draws nothing, so the assertion was ' +
+      'measuring something other than what it says',
+  );
+
+  // --- the bar, which is the whole question --------------------------------
+  const half = gateTurn(
+    buildTurnRig(turnRow(40), {
+      tracks: [
+        {
+          slot: 'head',
+          property: 'rgba',
+          keys: [
+            { t: 0, v: [1, 1, 1, 0.5] },
+            { t: 1, v: [1, 1, 1, 0.5] },
+          ],
+        },
+      ],
+    }),
+  );
+  const halfHits = half.failures.filter((f) => f.assertion === A39);
+  const halfAlpha = Number(/at alpha ([0-9.]+)/.exec(halfHits[0]?.detail ?? '')?.[1] ?? NaN);
+  // ⚠️ NOT compared with 0.5. The format stores a slot colour as 8-bit channels,
+  // so an authored 0.5 arrives as 128/255 — which is the reason `exactly 0` is a
+  // safe test and `approximately 0` would not be one: 0 is the only alpha that
+  // survives the quantisation as itself.
+  say(
+    'DW07_HALF_FADED_IS_STILL_REFUSED_AND_THE_ALPHA_IS_IN_THE_MESSAGE',
+    halfHits.length === 1 &&
+      Number.isFinite(halfAlpha) &&
+      halfAlpha > 0 &&
+      Math.abs(halfAlpha - 0.5) <= 1 / 255 &&
+      /only alpha exactly 0 draws no pixels/.test(halfHits[0].detail),
+    halfHits.length === 1
+      ? `the same fold at alpha 0.5 is refused, and the message carries the alpha it found (${halfAlpha}, which is ` +
+          `${Math.round(halfAlpha * 255)}/255 — the format stores the channel as a byte) and says only exactly 0 ` +
+          'draws nothing'
+      : `${A39} fired ${halfHits.length} time(s) at alpha 0.5; the report was [${half.passed.join(', ')}]`,
+    'any floor above 0 would be this repository choosing a visibility policy — at half strength a reversed ' +
+      'triangle is plainly visible, and an archetype rule that guessed where "invisible enough" starts would be ' +
+      'refusing correct art on one cut and passing a defect on the next',
+  );
+
+  // --- the other half: shown, but not this mesh ----------------------------
+  //
+  // ⭐ This one was already green before #401 and for the WRONG reason:
+  // spine-core applies no deform to a slot that is not showing the timeline's
+  // attachment, so the survey measured an undeformed pose and the block printed
+  // "this key IS the setup pose" — which is exactly what a key with 50 offsets
+  // in it is not. The claim here is the reporting, not the verdict.
+  const swappedBuild = buildTurnRig(turnRow(40), {
+    swapTo: 'away',
+    tracks: [
+      {
+        slot: 'head',
+        property: 'attachment',
+        keys: [
+          { t: 0, v: 'head' },
+          { t: 0.25, v: 'away' },
+          { t: 0.75, v: 'head' },
+        ],
+      },
+    ],
+  });
+  const swapped = gateTurn(swappedBuild);
+  const swappedBlock = turnDeformBlock(swappedBuild);
+  const swappedSkip = swappedBlock.find((l) => l.includes('skipped')) ?? '';
+  const setupPoseLines = swappedBlock.filter((l) => l.includes('IS the setup pose')).length;
+  say(
+    'DW08_A_KEY_WHOSE_SLOT_SHOWS_ANOTHER_ATTACHMENT_IS_NOT_GATED_AND_SAYS_SO',
+    swapped.failures.length === 0 &&
+      swapped.passed.includes(A39) &&
+      Number(swapped.stats.deformKeysNotDrawn) === 1 &&
+      /notShown/.test(String(swapped.stats.deformNotDrawn)) &&
+      /shows attachment "away"/.test(swappedSkip) &&
+      setupPoseLines === 2 &&
+      swappedBlock.some((l) => l.includes('no posed geometry to measure')),
+    swapped.failures.length === 0
+      ? `the same 40° fold with the slot showing "away" over it: ${A39} ` +
+          `${swapped.passed.includes(A39) ? 'PASSES' : 'did NOT run'} and reports ` +
+          `deformNotDrawn=${swapped.stats.deformNotDrawn}. The block says "${swappedSkip.trim()}", and the two ` +
+          `"IS the setup pose" lines left are the two keys that really are it — the folding key no longer claims to be`
+      : `[${swapped.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'the deformed mesh is not on screen at all, which is the cleaner half of the same argument — but a green that ' +
+      'comes from a false sentence about the geometry is the failure mode this repository is built against',
+  );
+
+  // --- ⛔ the loophole: an exemption is a time, never a slot ----------------
+  const bothWays = gateTurn(
+    buildTurnRig(turnRow(40), { tracks: fadeOverTheFold, also: { name: 'turn_seen', tracks: [] } }),
+  );
+  const seenHits = bothWays.failures.filter((f) => f.assertion === A39);
+  say(
+    'DW09_AN_EXEMPTION_IN_ONE_ANIMATION_DOES_NOT_TRAVEL_TO_ANOTHER',
+    seenHits.length === 1 &&
+      /animation "turn_seen"/.test(seenHits[0].detail) &&
+      !/animation "turn"/.test(seenHits[0].detail) &&
+      Number(bothWays.stats.deformKeysNotDrawn) === 1 &&
+      /^turn\//.test(String(bothWays.stats.deformNotDrawn)),
+    seenHits.length === 1
+      ? `one rig, one slot, the same deform run under two names: refused in "turn_seen" where the slot draws it — ` +
+          `${seenHits[0].detail.slice(0, 120)}… — and passed over in "turn" where it does not ` +
+          `(deformNotDrawn=${bothWays.stats.deformNotDrawn})`
+      : `${A39} fired ${seenHits.length} time(s): [${seenHits.map((f) => f.detail).join(' | ')}]`,
+    'this is the difference between a measurement and invariants.deformMayFold: the field turns the check off for ' +
+      'a slot for all time, and issues #44 and #262 are what that trade costs — so the exemption has to be a ' +
+      'property of one key at one time or it is the same mistake with a nicer name',
+  );
+
+  // --- and the vacuous pass it must not become -----------------------------
+  const neverDrawn = gateTurn(
+    buildTurnRig(turnRow(40), {
+      tracks: [
+        {
+          slot: 'head',
+          property: 'rgba',
+          keys: [
+            { t: 0, v: [1, 1, 1, 0] },
+            { t: 1, v: [1, 1, 1, 0] },
+          ],
+        },
+      ],
+    }),
+  );
+  const neverReason = neverDrawn.skipped.find((s) => s.assertion === A39)?.reason ?? '';
+  say(
+    'DW10_A_RIG_WHERE_EVERY_KEY_DRAWS_NOTHING_SKIPS_RATHER_THAN_PASSES',
+    neverDrawn.failures.length === 0 &&
+      !neverDrawn.passed.includes(A39) &&
+      /draws no pixels/.test(neverReason) &&
+      /head\/head key 0/.test(neverReason),
+    neverDrawn.failures.length === 0
+      ? `the slot never drawn at all: ${A39} reports ${neverDrawn.passed.includes(A39) ? 'PASS' : 'SKIP'} — ` +
+          `"${neverReason}"`
+      : `[${neverDrawn.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'an assertion whose every key was passed over has measured nothing, and folding that into the pass count is ' +
+      'how a gate comes to look kept while checking nothing — the same rule DW04 holds for a declared fold',
   );
 
   return bad;
@@ -18164,7 +18402,7 @@ function main(): void {
   bad += runContourMeshSuite();
   substantive += 8;
   bad += runDeformWindingSuite();
-  substantive += 6;
+  substantive += 11;
   bad += runDeformTransformSuite();
   substantive += 7;
   bad += runDeformReportSuite();
@@ -18404,13 +18642,19 @@ function main(): void {
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
-      '+ 6 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
+      '+ 11 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
       'angle it gates green, past that angle A39 names the animation, the key, the time and every reversed triangle ' +
       'with both its areas, and the eight it names span only the outermost column pair the formula picks out; the ' +
       'angle A39 first fires at, bisected, agrees with that formula to 0.0001°; a band INVERTED rather than folded ' +
-      'must leave it silent, because a wrong projection with intact winding is only visible to `check`; and the ' +
+      'must leave it silent, because a wrong projection with intact winding is only visible to `check`; the ' +
       'escape hatch both ways — a declared fold SKIPs rather than passes, while an exemption naming an undeclared ' +
-      'slot, a slot with no mesh, or carrying no reason is refused by name), ' +
+      'slot, a slot with no mesh, or carrying no reason is refused by name; and the same fold with the mesh OFF ' +
+      'THE SCREEN at the key that folds, which is how a face gets past its own turn ceiling — the slot faded to ' +
+      'alpha exactly 0 or showing another attachment is measured, reported by name on the stats line and in the ' +
+      'DEFORM block, and not gated, while the SAME fold at alpha 0.5 is still refused with the alpha in the ' +
+      'message, and a slot exempt in one animation is still refused in another, because the exemption is a ' +
+      'property of one key at one time and never of a slot, while a rig whose every key draws nothing SKIPs rather ' +
+      'than reporting a pass over an empty measurement), ' +
       '+ 9 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
       'from docs/FACE.md §1 byte for byte, the same model past the fold angle still firing A39, the other three ' +
       'closed forms — affine, wave and bend — evaluated against arithmetic derived here, and the five refusals that ' +
