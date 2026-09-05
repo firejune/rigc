@@ -22,17 +22,23 @@ import {
   type BoneData,
   BoundingBoxAttachment,
   ClippingAttachment,
+  DeformTimeline,
+  isBoneTimeline,
+  isConstraintTimeline,
+  isSlotTimeline,
   MeshAttachment,
   PathAttachment,
   PathConstraintData,
   Physics,
   PhysicsConstraintData,
+  Property,
   RegionAttachment,
   Skeleton,
   SkeletonJson,
   SliderData,
   TextureAtlas,
   type TextureAtlasRegion,
+  type Timeline,
 } from '@esotericsoftware/spine-core';
 // ⚠️ `src/` reaches outside itself for exactly two modules and this is one of
 // them, so it is already on `package.json`'s `files` allowlist — see CLAUDE.md.
@@ -150,6 +156,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A37_SLIDER_CONSTRAINT_EFFECTIVE: 'validity',
   A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED: 'validity',
   A39_DEFORM_KEEPS_TRIANGLE_WINDING: 'archetype',
+  A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET: 'validity',
 };
 
 /**
@@ -1876,6 +1883,187 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
       stats.sliderConstraints = sliders.length;
+    });
+
+    // --- A40: two sliders on one property, and the later one erases the other -
+    //
+    // 🚨 The hole A37 leaves. Every clause above is INTRA-slider — it asks
+    // whether one slider applies anything at all — so nothing in the gate had an
+    // opinion about two of them meeting, which is the shape a parameter-driven
+    // face IS: one slider per axis, all of them on the same bones.
+    //
+    // `Slider.update` ends with
+    //
+    //   animation.apply(skeleton, p.time, p.time, data.loop, null, p.mix,
+    //                   MixFrom.current, data.additive, false, true)
+    //
+    // and `additive` defaults to **false** (`SkeletonJson.js`: `getValue(map,
+    // "additive", false)`). With `add` false and `alpha` 1 every value function
+    // in `Animation.js` drops the pose it was handed — `getRelativeValue`
+    // returns `setup + value`, `getAbsoluteValue` and `getScaleValue` return
+    // `value` — so whatever an earlier slider wrote to that property is gone,
+    // and the sliders run in the order the `constraints` array puts them in
+    // (`Skeleton.updateCache` walks that array and each `Slider.sort` pushes
+    // itself onto the update cache as it is reached).
+    //
+    // [measured, issue #402, and reproduced by the controls in `selftest.ts`]
+    // Two dials on one bone contributing 7.50° and 18.75°: both at the default
+    // pose the bone at **18.7498°** — the later one alone; the same pair with
+    // the array order swapped poses **7.4999°** — the other one alone; both
+    // `additive: true` pose **26.2497°**, the sum. On a three-axis face two axes
+    // are silently dead, the rig builds, and every other assertion is green.
+    //
+    // ## ⚠️ Why this is `validity`
+    //
+    // Because the claim is Spine's own arithmetic and not this project's taste:
+    // a skeleton shaped this way is wrong for every runtime that plays it, so a
+    // `renderer` or `archetype` kind would exclude the rule from `--profile
+    // spine` — the CLI default — and the rig the issue is about would build
+    // green for exactly the stranger it was written for.
+    //
+    // The counter-question is the one issues #44 and #262 cost this file twice:
+    // can correct editor output trip it? Three shapes could, and each is
+    // excluded STRUCTURALLY rather than by a threshold:
+    //
+    //   1. **Authority below 1.** At `mix < 1` the apply is a lerp from the
+    //      current pose (`current + (value + setup - current) * alpha`), so the
+    //      earlier slider still contributes and a chain of partial mixes is a
+    //      legitimate — if order-dependent — weighting. A slider whose setup mix
+    //      is under 1, or whose `mix` any animation keys, is dropped before the
+    //      comparison. This assertion has no opinion below full authority.
+    //   2. **A skin switch.** `Skeleton.updateCache` makes a `skinRequired`
+    //      constraint active only while `skin.constraints.includes(data)`, and a
+    //      skeleton wears one skin, so two sliders listed by disjoint skins can
+    //      never be active in the same frame and cannot erase each other.
+    //   3. **Different properties.** The unit compared is spine-core's own
+    //      `Timeline.propertyIds`, so two sliders on one bone that key different
+    //      properties — a yaw that rotates and a lift that translates — are not
+    //      a finding, and a partial overlap is refused only on the properties
+    //      that actually overlap.
+    //
+    // What is left is not a judgement call. At full authority, with both sliders
+    // active, there is no value of the erased slider's dial at which it changes
+    // that property: it is dead weight on every frame. That is also why this
+    // rule has no `invariants` escape hatch where A39 needs one — there is
+    // nothing an author could be preserving.
+    //
+    // ⚠️ Unmeasured, and stated as such: no editor export in this repository
+    // carries a slider AT ALL — it is 4.3's newest constraint — so unlike A39
+    // the "correct editor output" question rests on the runtime's arithmetic
+    // rather than on a counter-example anybody has held. If an export ever
+    // trips it, this paragraph is the one to reread.
+    //
+    // ## The second clause: `additive: true` is not always available
+    //
+    // `Timeline.additive` is the runtime's own flag for "supports being applied
+    // additively", and it is true for only some of them — bone timelines,
+    // deform, transform-constraint, path position, physics wind and gravity, and
+    // a slider's own mix. A slot colour, an attachment swap, a draw order or a
+    // sequence IGNORES the `add` argument entirely (`RGBATimeline.apply1` takes
+    // it and never reads it), so two sliders sharing one of those overwrite each
+    // other whatever the flags say. Refusing that case too is what keeps this
+    // message from teaching a fix that does not work: an author told to set
+    // `additive: true` on a shared rgba would get a green gate over the same
+    // dead axis. Reading the runtime's flag rather than a list written here is
+    // also what keeps the rule from drifting when that list changes.
+    check('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET', () => {
+      const sliders = data.constraints.filter((c) => c instanceof SliderData);
+      if (sliders.length < 2) {
+        return skip(
+          'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET',
+          `the skeleton declares ${sliders.length} slider constraint${sliders.length === 1 ? '' : 's'}, and one slider has nothing to compose with`,
+        );
+      }
+      // Clause 1 of the "could this be correct?" list above.
+      const authoritative = sliders.filter((s) => s.setupPose.mix >= 1 && !keyedBy('slider', s.name, 'mix'));
+      if (authoritative.length < 2) {
+        return skip(
+          'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET',
+          `${authoritative.length} of the ${sliders.length} slider constraints apply at full authority; below mix 1 an ` +
+            'apply is a lerp from the current pose rather than an overwrite, so what the others do to a shared property is a weighting',
+        );
+      }
+      /** Which skins switch a slider on, or null when it is active under every skin. */
+      const skinsOf = new Map<SliderData, Set<string> | null>();
+      for (const slider of authoritative) {
+        if (!slider.skinRequired) {
+          skinsOf.set(slider, null);
+          continue;
+        }
+        const names = new Set<string>();
+        for (const skin of data.skins) {
+          if (skin.constraints.includes(slider)) names.add(skin.name);
+        }
+        skinsOf.set(slider, names);
+      }
+      /** Clause 2: can these two ever run in the same frame? */
+      const canOverlap = (a: SliderData, b: SliderData): boolean => {
+        const skinsA = skinsOf.get(a) ?? null;
+        const skinsB = skinsOf.get(b) ?? null;
+        if (!skinsA || !skinsB) return true;
+        for (const name of skinsA) {
+          if (skinsB.has(name)) return true;
+        }
+        return false;
+      };
+      /** What a property id points at, in the words the rig spec uses. */
+      const describe = (timeline: Timeline, id: string): string => {
+        const property = Property[Number(id.split('|')[0])] ?? id;
+        if (isBoneTimeline(timeline)) return `bone "${data.bones[timeline.boneIndex]?.name ?? timeline.boneIndex}" ${property}`;
+        if (timeline instanceof DeformTimeline) {
+          return `slot "${data.slots[timeline.slotIndex]?.name ?? timeline.slotIndex}" deform of "${timeline.attachment.name}"`;
+        }
+        if (isSlotTimeline(timeline)) return `slot "${data.slots[timeline.slotIndex]?.name ?? timeline.slotIndex}" ${property}`;
+        if (isConstraintTimeline(timeline) && timeline.constraintIndex >= 0) {
+          return `constraint "${data.constraints[timeline.constraintIndex]?.name ?? timeline.constraintIndex}" ${property}`;
+        }
+        return `the skeleton's ${property}`;
+      };
+      /** property id -> the sliders whose animation keys it, in constraints-array order. */
+      const byProperty = new Map<string, Array<{ slider: SliderData; timeline: Timeline }>>();
+      for (const slider of authoritative) {
+        const seen = new Set<string>();
+        for (const timeline of slider.animation?.timelines ?? []) {
+          for (const id of timeline.propertyIds) {
+            if (seen.has(id)) continue;
+            seen.add(id);
+            byProperty.set(id, [...(byProperty.get(id) ?? []), { slider, timeline }]);
+          }
+        }
+      }
+      let shared = 0;
+      for (const [id, users] of byProperty) {
+        if (users.length < 2) continue;
+        shared++;
+        const at = (slider: SliderData): string =>
+          `"${slider.name}" (constraints[${data.constraints.indexOf(slider)}], additive: ${String(slider.additive)})`;
+        const chain = users.map((u) => at(u.slider)).join(', ');
+        for (let j = 1; j < users.length; j++) {
+          const later = users[j];
+          const composes = later.timeline.additive;
+          if (composes && later.slider.additive) continue;
+          const erased = users.slice(0, j).filter((e) => canOverlap(e.slider, later.slider));
+          if (!erased.length) continue;
+          const erasedNames = `${erased.map((e) => `"${e.slider.name}"`).join(', ')} contribute${erased.length === 1 ? 's' : ''}`;
+          const why = composes
+            ? `slider "${later.slider.name}" applies animation "${later.slider.animation?.name}" with additive false, and at ` +
+              'mix 1 a non-additive apply writes the value outright (`getRelativeValue` returns `setup + value`, ' +
+              '`getAbsoluteValue` returns `value`) rather than adding to the pose it found. Set `"additive": true` on ' +
+              `slider "${later.slider.name}" in the rig spec — rigc will not choose that flag for you — or key this ` +
+              'property from one slider only'
+            : `the ${Property[Number(id.split('|')[0])] ?? id} timeline they share does not support additive application at all ` +
+              '(`Timeline.additive` is false for it and its `apply` ignores the `add` argument), so `"additive": true` ' +
+              `would NOT compose these — slider "${later.slider.name}" overwrites whatever the flags say. Key this ` +
+              'property from one slider only, or move both edits into the one animation a single slider applies';
+          fail(
+            'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET',
+            `${describe(later.timeline, id)} is keyed by the animations of ${users.length} sliders — ${chain} — and every ` +
+              `one of them applies at mix 1. Today ${at(later.slider)} wins that property and ${erasedNames} ` +
+              `nothing to it: ${why}.`,
+          );
+        }
+      }
+      stats.sliderSharedTargets = shared;
     });
 
     // --- A38: a per-skin member list and its `skin: true` flag agree --------

@@ -1447,6 +1447,7 @@ export function compile(opts: CompileOptions): CompileResult {
     slotNames: new Set(rig.slots.map((s) => s.name)),
     pathSlots,
     animationNames: new Set(Object.keys(motion.animations ?? {})),
+    animationDurations: new Map(Object.entries(motion.animations ?? {}).map(([name, anim]) => [name, anim.duration])),
   };
   // Read as the raw records they are on disk: `buildRigConstraint` checks every
   // field itself, because a spec that came off a file has whatever the author
@@ -3271,6 +3272,12 @@ interface ConstraintContext {
   pathSlots: Map<string, string[]>;
   /** Animations the motion spec declares — a slider names one of them. */
   animationNames: Set<string>;
+  /**
+   * The duration each of those declares, which is what turns a slider's
+   * `from`/`to`/`scale` into the range of driving values that can reach a frame.
+   * Only the slider's 360° refusal reads it.
+   */
+  animationDurations: Map<string, number>;
 }
 
 /**
@@ -3452,6 +3459,57 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
       if (spec.scale !== undefined && spec.scale === 0) {
         // time = to + (value - from) * 0, so the slider holds one frame forever.
         throw new CompileError(`${where}: scale is 0, so the bone's property cannot move the slider's time at all`);
+      }
+      // ⚠️ `local: false` reads the bone's WORLD rotation, and `FromRotate.value`
+      // (`TransformConstraintData.js`) ends
+      //
+      //   let value = Math.atan2(source.c / sy, source.a / sx) * radDeg + …;
+      //   if (value < 0) value += 360;
+      //
+      // so a driving value below 0° is one the runtime never produces: it arrives
+      // as `value + 360` instead, and `time = to + (value - from) * scale` then
+      // lands far outside the animation. A yaw axis with its neutral at 0° — the
+      // natural way to author a face — therefore has its entire negative half
+      // pinned to one frame, and nothing anywhere says so (issue #402).
+      //
+      // ⭐ Refused here rather than documented, and rather than left to the gate,
+      // for three reasons. The failure is invisible AND total, so a note in a
+      // guide is read after the loss rather than before it. The fix is one field
+      // in the rig spec, which is the file this message can name — an artifact
+      // -side assertion would have to name the emitted `local`/`offset` fields the
+      // author never typed. And the arithmetic that proves it needs the
+      // animation's declared DURATION, which is a motion-spec fact the compiler
+      // has in front of it: the range of driving values that can reach a frame is
+      // exactly `[to, to + duration]` mapped back through `scale`.
+      //
+      // The refusal is deliberately narrow: `rotate` only, because `FromRotate` is
+      // the one property whose reader wraps, and only when the range actually
+      // crosses (or sits below) 0°, because a dial authored at 340°..20° is how
+      // you write this axis under `local: false` and it works.
+      if (property === 'rotate' && spec.local !== true) {
+        const fromValue = spec.from === undefined ? 0 : needNumber(spec.from, 'from');
+        const toTime = spec.to === undefined ? 0 : needNumber(spec.to, 'to');
+        const perUnit = spec.scale === undefined ? 1 : needNumber(spec.scale, 'scale');
+        const duration = ctx.animationDurations.get(animation) ?? 0;
+        /** The driving value that maps to the animation's first frame, and to its last. */
+        const atStart = fromValue - toTime / perUnit;
+        const atEnd = fromValue + (duration - toTime) / perUnit;
+        const lowest = Math.min(atStart, atEnd);
+        const highest = Math.max(atStart, atEnd);
+        if (lowest < -1e-6) {
+          const readAs = lowest + 360;
+          const lands = toTime + (readAs - fromValue) * perUnit;
+          throw new CompileError(
+            `${where}: drives off bone "${String(spec.bone)}" rotate with "local": false, and the driving values ` +
+              `that reach animation "${animation}" (0s..${duration}s) run from ${lowest.toFixed(3)}° to ${highest.toFixed(3)}°. ` +
+              'A world rotation is read through `FromRotate.value`, which ends `if (value < 0) value += 360`, so the bone ' +
+              `at ${lowest.toFixed(3)}° is read as ${readAs.toFixed(3)}° and maps to time ${lands.toFixed(3)}s — outside ` +
+              `the animation's ${duration}s. With "loop": false that is \`Math.max(0, time)\` holding the last frame; with ` +
+              '"loop": true it wraps to some other frame. Either way the whole part of the range below 0° is dead and ' +
+              'nothing at runtime reports it. Add `"local": true` to read the bone\'s own rotation signed and unwrapped — ' +
+              'that is the form a face axis wants — or move the range so it does not cross 0°.',
+          );
+        }
       }
       for (const field of timeSide) {
         if (spec[field] !== undefined) {

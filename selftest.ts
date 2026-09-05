@@ -5872,6 +5872,75 @@ const PATH_MOVE = {
   ],
 };
 
+// ---------------------------------------------------------------------------
+// two sliders meeting on one target (issue #402)
+// ---------------------------------------------------------------------------
+//
+// ⭐ The shape a parameter-driven face has — one slider per axis, all of them on
+// the same bones — and the one A37 had no opinion about. Two dials drive two
+// animations that key the SAME bone, so "did they compose or did one erase the
+// other" is a number this rig can be asked for rather than a claim.
+//
+// The arithmetic is chosen to be exact at the sample the controls read. At
+// sample 2 of 4 the played animation has each dial at 22.5°, `scale` 0.011111
+// (≈ 1/90) makes that time 0.25, and the two animations reach 30° and 75° at
+// their own t=1 — so yaw contributes 7.50°, pitch 18.75°, and the three
+// outcomes are 7.50 (yaw alone), 18.75 (pitch alone) and 26.25 (the sum). No
+// tolerance can hide which of those a build landed on.
+const SLIDER_PAIR_BONES = [
+  { name: 'root' },
+  // The base probe's own slots hang off `block`, so it stays.
+  { name: 'block', parent: 'root', x: 0, y: 0, length: 12 },
+  { name: 'yaw-dial', parent: 'root', x: 0, y: 40 },
+  { name: 'pitch-dial', parent: 'root', x: 20, y: 40 },
+  { name: 'flag', parent: 'root', x: 40, y: 0, length: 20 },
+  { name: 'tilt', parent: 'root', x: 60, y: 0, length: 20 },
+];
+
+/** `writeProbeRig`'s own default skin, restated so a control can add skins beside it. */
+const PROBE_DEFAULT_SKIN = {
+  block: { block: { image: 'block.png' } },
+  marker: { marker: { image: 'marker.png' } },
+};
+
+/** One slider on one dial, with whatever flags the case is about. */
+function pairSlider(name: string, animation: string, bone: string, patch: Record<string, unknown> = {}): Record<string, unknown> {
+  return { name, type: 'slider', animation, bone, property: 'rotate', scale: 0.011111, ...patch };
+}
+
+function sliderPairDirs(constraints: Array<Record<string, unknown>>, skins?: Record<string, unknown>): ProbeDirs {
+  return writeProbeRig({ bones: SLIDER_PAIR_BONES, constraints, ...(skins ? { skins } : {}) });
+}
+
+/** The animations the sliders apply, plus `turn`, which is what a player is running. */
+function sliderPairMotion(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const ramp = (bone: string, at: number): Record<string, unknown> => ({
+    duration: 1,
+    loop: false,
+    tracks: [{ bone, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [at] }] }],
+  });
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      'yaw-pose': ramp('flag', 30),
+      'pitch-pose': ramp('flag', 75),
+      'tilt-pose': ramp('tilt', 75),
+      turn: {
+        duration: 1,
+        loop: false,
+        tracks: [
+          { bone: 'yaw-dial', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [45] }] },
+          { bone: 'pitch-dial', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [45] }] },
+        ],
+      },
+      ...extra,
+    },
+  };
+}
+
 function runPathAndSliderSuite(): number {
   const dirs = writeProbeRig(PATH_RIG);
   let bad = 0;
@@ -6291,6 +6360,184 @@ function runPathAndSliderSuite(): number {
     emptyKeys.failures.find((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS')?.detail ??
       'A34 accepted an empty key array on a path timeline',
     '`let keyMap = timelineMap[0]; if (!keyMap) continue;` — the group is walked, the timeline is skipped, and nothing is said',
+  );
+
+  // --- two sliders meeting on one target (issue #402) -----------------------
+  const composedFlag = (constraints: Array<Record<string, unknown>>): number =>
+    boneOf(poseAtSample(timelinePosable(sliderPairDirs(constraints), sliderPairMotion()).data, 'turn', 4, 2), 'flag').rotation;
+  const yawSlider = (patch: Record<string, unknown> = {}) => pairSlider('yaw', 'yaw-pose', 'yaw-dial', patch);
+  const pitchSlider = (patch: Record<string, unknown> = {}) => pairSlider('pitch', 'pitch-pose', 'pitch-dial', patch);
+  const pairGate = (
+    constraints: Array<Record<string, unknown>>,
+    motionExtra: Record<string, unknown> = {},
+    skins?: Record<string, unknown>,
+  ): ReturnType<typeof validate> => gateProbe(sliderPairDirs(constraints, skins), sliderPairMotion(motionExtra));
+  const a40Of = (report: ReturnType<typeof validate>): string[] =>
+    report.failures.filter((f) => f.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET').map((f) => f.detail);
+
+  const defaultPair = composedFlag([yawSlider(), pitchSlider()]);
+  const swappedPair = composedFlag([pitchSlider(), yawSlider()]);
+  const additivePair = composedFlag([yawSlider({ additive: true }), pitchSlider({ additive: true })]);
+  const mixedPair = composedFlag([yawSlider({ additive: false }), pitchSlider({ additive: true })]);
+  say(
+    'PS25_two_sliders_on_one_bone_compose_only_when_the_LATER_one_is_additive',
+    near(defaultPair, 18.75, 0.01) &&
+      near(swappedPair, 7.5, 0.01) &&
+      near(additivePair, 26.25, 0.01) &&
+      near(mixedPair, 26.25, 0.01),
+    `yaw contributes 7.50° and pitch 18.75°: both at the default pose flag at ${defaultPair.toFixed(4)}°, the same two ` +
+      `with the constraints array swapped pose ${swappedPair.toFixed(4)}°, both additive pose ${additivePair.toFixed(4)}° ` +
+      `and a non-additive yaw under an additive pitch poses ${mixedPair.toFixed(4)}°`,
+    'the whole assertion below rests on this being an ERASURE rather than a blend, and on the erasing one being the later ' +
+      'entry in the constraints array — both are read off a posed skeleton here rather than asserted',
+  );
+
+  const bothDefault = pairGate([yawSlider(), pitchSlider()]);
+  const bothDefaultDetail = a40Of(bothDefault)[0] ?? '';
+  say(
+    'PS26_A40_fires_on_two_non_additive_sliders_that_key_one_bone',
+    a40Of(bothDefault).length === 1 &&
+      bothDefaultDetail.includes('bone "flag" rotate') &&
+      bothDefaultDetail.includes('"yaw"') &&
+      bothDefaultDetail.includes('"pitch"') &&
+      bothDefaultDetail.includes('Today "pitch"'),
+    a40Of(bothDefault).join(' | ') || 'A40 accepted two sliders whose animations key one bone with neither of them additive',
+    'the rig PS25 measured at 18.75° — one axis of two alive — with every other assertion green',
+  );
+
+  const bothAdditive = pairGate([yawSlider({ additive: true }), pitchSlider({ additive: true })]);
+  say(
+    'PS27_two_ADDITIVE_sliders_on_one_bone_are_green',
+    bothAdditive.failures.length === 0 && bothAdditive.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET'),
+    bothAdditive.failures.length === 0
+      ? `${bothAdditive.passed.length} assertions ran and A40 is one of them`
+      : `[${bothAdditive.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'the positive control, and the point of the whole rule: this is the CORRECT two-axis rig — PS25 poses it at 26.25°, ' +
+      'the sum — so an assertion that refused it would have taken the feature away rather than gated it',
+  );
+
+  const mixedGate = pairGate([yawSlider({ additive: true }), pitchSlider({ additive: false })]);
+  const mixedDetail = a40Of(mixedGate)[0] ?? '';
+  say(
+    'PS28_A40_fires_on_a_mixed_pair_whose_LATER_slider_is_not_additive',
+    a40Of(mixedGate).length === 1 && mixedDetail.includes('Today "pitch"') && mixedDetail.includes('"yaw"'),
+    a40Of(mixedGate).join(' | ') || 'A40 accepted an additive slider under a non-additive one',
+    'the flag that decides is the LATER slider\'s: PS25 measures the same pair the other way round at 26.25° because a ' +
+      'non-additive apply that runs FIRST is overwritten by nothing, and the assertion has to draw the line where the arithmetic does',
+  );
+
+  const disjoint = pairGate([yawSlider(), pairSlider('tilt', 'tilt-pose', 'pitch-dial')]);
+  say(
+    'PS29_two_sliders_on_DISJOINT_targets_are_green',
+    disjoint.failures.length === 0 && disjoint.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET'),
+    disjoint.failures.length === 0
+      ? 'two non-additive sliders, one keying bone "flag" and one keying bone "tilt": A40 ran and passed'
+      : `[${disjoint.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'the unit is spine-core\'s own propertyIds, so "two sliders" is never the finding — "two sliders on one property" is. ' +
+      'A PASS rather than a SKIP because the comparison was made and answered',
+  );
+
+  const alone = pairGate([yawSlider()]);
+  const aloneSkip = alone.skipped.find((s) => s.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET');
+  say(
+    'PS30_one_non_additive_slider_leaves_A40_with_nothing_to_compare',
+    alone.failures.length === 0 &&
+      aloneSkip !== undefined &&
+      aloneSkip.reason.includes('1 slider constraint') &&
+      !alone.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET'),
+    aloneSkip ? `SKIP: ${aloneSkip.reason}` : 'A40 did not report a skip on a single-slider rig',
+    'a lone non-additive slider is the ordinary case and must stay legal — and an assertion with nothing to look at reports ' +
+      'SKIP, never a pass, or the count says a rig was checked for something nobody could check',
+  );
+
+  const skinned = pairGate(
+    [yawSlider({ skin: true }), pitchSlider({ skin: true })],
+    {},
+    { default: PROBE_DEFAULT_SKIN, left: { slider: ['yaw'] }, right: { slider: ['pitch'] } },
+  );
+  say(
+    'PS31_two_sliders_a_SKIN_SWITCH_keeps_apart_are_green',
+    skinned.failures.length === 0 && skinned.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET'),
+    skinned.failures.length === 0
+      ? 'the same two non-additive sliders on bone "flag", each skinRequired and listed by a different skin: A40 ran and passed'
+      : `[${skinned.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'updateCache activates a skinRequired constraint only while the CURRENT skin lists it, and a skeleton wears one skin, ' +
+      'so these two are never in the same frame — the exemption is structural, and this is the control that it exists',
+  );
+
+  const fade = {
+    duration: 1,
+    loop: false,
+    tracks: [{ slot: 'marker', property: 'rgba', keys: [{ t: 0, v: [1, 1, 1, 1] }, { t: 1, v: [1, 1, 1, 0] }] }],
+  };
+  const dim = {
+    duration: 1,
+    loop: false,
+    tracks: [{ slot: 'marker', property: 'rgba', keys: [{ t: 0, v: [1, 1, 1, 1] }, { t: 1, v: [0.2, 0.2, 0.2, 1] }] }],
+  };
+  const colours = pairGate(
+    [
+      pairSlider('fade', 'marker-fade', 'yaw-dial', { additive: true }),
+      pairSlider('dim', 'marker-dim', 'pitch-dial', { additive: true }),
+    ],
+    { 'marker-fade': fade, 'marker-dim': dim },
+  );
+  const colourDetails = a40Of(colours);
+  say(
+    'PS32_A40_fires_when_the_shared_timeline_cannot_be_additive_AT_ALL',
+    colourDetails.length === 2 &&
+      colourDetails.some((d) => d.includes('slot "marker" rgb')) &&
+      colourDetails.some((d) => d.includes('slot "marker" alpha')) &&
+      colourDetails.every((d) => d.includes('does not support additive application at all')),
+    colourDetails.join(' | ') || 'A40 accepted two additive sliders sharing one slot colour',
+    'both sliders say `additive: true` and it buys them nothing: `Timeline.additive` is false for a colour timeline and ' +
+      '`RGBATimeline.apply1` never reads the flag, so the later one still overwrites — a message that told this author to ' +
+      'set the flag they already set would be a gate teaching a fix that does not work',
+  );
+
+  const weighted = pairGate([yawSlider({ mix: 0.5 }), pitchSlider({ mix: 0.5 })]);
+  const weightedSkip = weighted.skipped.find((s) => s.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET');
+  say(
+    'PS33_two_sliders_BELOW_full_authority_are_left_alone',
+    weighted.failures.length === 0 && weightedSkip !== undefined && weightedSkip.reason.includes('full authority'),
+    weightedSkip ? `SKIP: ${weightedSkip.reason}` : 'A40 had an opinion about a pair of half-mixed sliders',
+    'at mix < 1 the apply is `current + (value + setup - current) * alpha` — a lerp FROM the pose it found, so the earlier ' +
+      'slider still contributes. The erasure this rule refuses is only total at full authority, and a rule that fired here ' +
+      'would be refusing a legitimate weighting',
+  );
+
+  const sweep = {
+    duration: 1,
+    loop: false,
+    tracks: [{ bone: 'yaw-dial', property: 'rotate', keys: [{ t: 0, v: [-15] }, { t: 1, v: [15] }] }],
+  };
+  // -15°..+15° onto 0..1s: to = 0.5 at the neutral, 1/30 of a second per degree.
+  const crossesZero = (patch: Record<string, unknown> = {}): Array<Record<string, unknown>> => [
+    pairSlider('yaw', 'yaw-pose', 'yaw-dial', { from: 0, to: 0.5, scale: 1 / 30, ...patch }),
+  ];
+  const wrapped = refusal(sliderPairDirs(crossesZero()), sliderPairMotion({ sweep }));
+  say(
+    'PS34_a_rotate_slider_whose_range_crosses_zero_with_local_false_is_refused',
+    wrapped !== null &&
+      wrapped.includes('run from -15.000° to 15.000°') &&
+      wrapped.includes('read as 345.000°') &&
+      wrapped.includes('maps to time 12.000s') &&
+      wrapped.includes('"local": true'),
+    wrapped === null ? 'the compile went through' : `refused with: ${wrapped}`,
+    'FromRotate.value ends `if (value < 0) value += 360`, so the negative half of the axis is not merely wrong, it is ' +
+      'unreachable — and the refusal has to carry the arithmetic, because the author cannot see the frame it pins to',
+  );
+
+  const unwrapped = pairGate(crossesZero({ local: true }), { sweep });
+  const sweptData = timelinePosable(sliderPairDirs(crossesZero({ local: true })), sliderPairMotion({ sweep })).data;
+  const swept = [0, 2, 4].map((sample) => boneOf(poseAtSample(sweptData, 'sweep', 4, sample), 'flag').rotation);
+  say(
+    'PS35_the_same_range_with_local_true_compiles_and_drives_its_whole_negative_half',
+    unwrapped.failures.length === 0 && near(swept[0], 0, 0.01) && near(swept[1], 15, 0.01) && near(swept[2], 30, 0.01),
+    `the dial sweeping -15° -> 0° -> +15° poses flag at ${swept.map((v) => `${v.toFixed(3)}°`).join(' -> ')}` +
+      (unwrapped.failures.length ? ` — but the gate said [${unwrapped.failures.map((f) => f.assertion).join(', ')}]` : ''),
+    'the refusal above is only worth having if the form it points at works: `local: true` reads `source.rotation` signed ' +
+      'and unwrapped, so the negative half maps to the first half of the animation instead of past its end',
   );
 
   return bad;
@@ -15052,17 +15299,17 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   {
     row: 'README: the benchmark-dossier row (#359)',
     stale: 'the run viewer, the 36 named assertions with their profiles, and the selftest\n',
-    clean: 'the run viewer, the 40 named assertions with their profiles, and the selftest\n',
+    clean: 'the run viewer, the 41 named assertions with their profiles, and the selftest\n',
   },
   {
     row: 'AUTHORING: the `--profile` row (#359)',
     stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
-    clean: '| `--profile` | `spine` = the 25 validity rules (**the default**) · `spine-html` = all 40, opt-in |\n',
+    clean: '| `--profile` | `spine` = the 26 validity rules (**the default**) · `spine-html` = all 41, opt-in |\n',
   },
   {
     row: 'BENCHMARK: the profiles paragraph (#359)',
     stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
-    clean: 'Not all 40 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+    clean: 'Not all 41 rules are about Spine. Some are about **spine-html**, the renderer this\n',
   },
   {
     row: 'BENCHMARK: the profile table\'s own row (#359)',
@@ -15071,7 +15318,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      '| `spine-html` | all 40 — those 25 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
+      '| `spine-html` | all 41 — those 26 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
@@ -18598,9 +18845,14 @@ function main(): void {
       'on the effective channels, a deform hold read off the expanded run so two spellings of one run are one ' +
       'geometry, a raw curve over a hold left verbatim, the named easing and an explicit stepped emitting one file, ' +
       'and the hold posed through spine-core identically whether stepped or linear), ' +
-      '+ 25 path / slider / per-skin controls (8 of them a spine-core round trip that reads the world position a ' +
+      '+ 36 path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' +
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
-      'and which bones a skin switches on), ' +
+      'which bones a skin switches on, and what TWO sliders on one bone do to it: 7.50 or 18.75 or their sum ' +
+      '26.25 degrees, decided only by which of them is later in the constraints array and whether that one is ' +
+      'additive — the arithmetic A40 refuses on, with the three shapes it has to stay silent about beside it (a ' +
+      'pair below full mix, a pair a skin switch keeps apart, and a pair on different properties) and the 360 ' +
+      'wrap, where a rotate slider reading a WORLD rotation cannot cross 0 degrees and is refused at compile ' +
+      'with the frame it would otherwise pin to), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       '+ 27 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +

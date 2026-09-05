@@ -6,7 +6,7 @@ yardstick rigc is measured against, the three instruments that do the measuring
 (`rigc diff`, `rigc bonedist` and `rigc check`) and what none of them can see, the eight-rung
 benchmark ladder and the spineboy graduation exam, the commands that let you look at a
 rig with no reference at all, the run viewer, the input and output surface as it stands
-today, the 40 named assertions and their profiles, the selftest that has watched every
+today, the 41 named assertions and their profiles, the selftest that has watched every
 one of them fire, and the layout of the repository all of that lives in.
 
 It is **repository material rather than package material** — most of what it names
@@ -806,7 +806,7 @@ model (what is pinned, what may move, how authority falls off), and the
 ### The validator
 
 [`src/validate.ts`](../src/validate.ts) parses the emitted artifacts with `spine-core`
-and then runs 40 named assertions over the loaded skeleton. Each one exists because
+and then runs 41 named assertions over the loaded skeleton. Each one exists because
 the failure it catches is **silent**: the file loads, animates, and lies.
 
 Assertions whose data is absent are reported as **SKIP**, never folded into the pass
@@ -814,7 +814,7 @@ count — an assertion with nothing to check has not checked anything.
 
 #### Profiles — "wrong" versus "not how we do it here"
 
-Not all 40 rules are about Spine. Some are about **spine-html**, the renderer this
+Not all 41 rules are about Spine. Some are about **spine-html**, the renderer this
 compiler was built to feed, and about one project's frame budget; they fire on real,
 correct, editor-produced Spine data, because the official example projects carry
 clipping attachments, unweighted meshes, 116-triangle meshes and packed atlases —
@@ -827,8 +827,8 @@ So `validate` and `build` take a `--profile`:
 
 | Profile | Runs | For |
 | --- | --- | --- |
-| `spine` | the 25 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
-| `spine-html` | all 40 — those 25 plus 7 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
+| `spine` | the 26 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
+| `spine-html` | all 41 — those 26 plus 7 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
 
 Those are the two numbers `src/validate.ts` exports rather than states in prose:
 `ASSERTION_NAMES.length` is 40 and `assertionCountForProfile('spine')` is 25, so a
@@ -837,7 +837,7 @@ is added.
 
 `spine` is the default because it is the question this package's output answers:
 the artifact imports into the Spine editor and plays in any 4.3 runtime, and
-that is what the 25 validity rules are about. The other 15 are somebody's policy
+that is what the 26 validity rules are about. The other 15 are somebody's policy
 — one renderer's, one canvas budget's, one compiler's own formations' — and a
 rig arriving from anywhere else has no stake in them. Ask for them with
 `--profile spine-html` when you want them.
@@ -892,6 +892,7 @@ the renderer policy*.
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | every slider applies an animation that carries at least one timeline, does not loop a zero-length one, does not read a bone property at `scale: 0`, and is either mixed in at setup or keyed. A slider is the only constraint that applies an **animation**, so its failures are about that animation: an empty one changes nothing, and looping a zero-length one computes `duration + (time % duration)` and applies the animation at **NaN**. SKIPs when the skeleton declares no slider |
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates is `skinRequired`, and everything `skinRequired` is activated by some skin. Two halves of one switch that live in two places — the member's own `skin: true` and the skin's list — and either half alone is dead data in silence: listed without the flag, the object is active under every skin and the list changes nothing; flagged and listed nowhere, it is inactive under every skin there is. The artifact is internally consistent either way, which is why nothing else can see it. SKIPs when no skin activates anything and nothing is `skinRequired` |
 | `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding. Measured at the key's own time as the deformed mesh against the same posed bones with the deform cleared, so the bone pose — a mirror included — cancels and what is left is what the key did. A reversed triangle draws its texture backwards and the mesh has locally turned inside out; a *wrong projection* whose winding survives is correctly silent here and visible only to `check` against a trusted render. Not `validity`, and measured rather than assumed: an official `spineboy-pro` export reverses one of `hoverboard-board`'s 101 triangles, so a rule that fired on every skeleton would refuse correct editor output. `invariants.deformMayFold` exempts a slot that folds on purpose, and a key whose slot draws no pixels at that key's own time — alpha exactly 0, or another attachment shown — is measured and then passed over by name (issue #401): "draws its texture backwards" is false when nothing of it is drawn. SKIPs when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels, or with no rig info |
+| `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where one of the later ones is not `additive`. `Slider.update` applies its animation with `MixFrom.current` and that flag, and at `mix: 1` a non-additive apply writes the value outright — so the slider later in the `constraints` array wins the property and every earlier one on it is dead weight on every frame. Measured: two dials on one bone contributing 7.50° and 18.75° pose 18.75° at the default, 7.50° with the array order swapped, and 26.25° — the sum — when both are additive. It also fires when the shared timeline **cannot** be additive at all (a slot colour, an attachment swap, a draw order, a sequence ignore the `add` argument), because there `"additive": true` is not the fix and a message recommending it would be a green gate over the same dead axis. `validity` rather than policy: the arithmetic is the runtime's, not this project's. Three shapes are excluded structurally rather than by a threshold — a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, and a chain of those is a legitimate weighting), two `skinRequired` sliders no single skin activates, and two sliders on different properties. SKIPs when fewer than two sliders are at full authority |
 
 ## Usage
 
@@ -966,7 +967,7 @@ bun cli.ts pose    --images path/to/parts --frame poseA.png # read a pose OUT of
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
 it re-derive the declared durations and the structural expectations too, and the
 report says which it had. `build` and `validate` both default to `--profile spine`,
-the 25 validity rules; `--profile spine-html` adds this project's renderer and
+the 26 validity rules; `--profile spine-html` adds this project's renderer and
 archetype policy on top.
 
 `render` and `preview` are the two that need no reference at all — see
