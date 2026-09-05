@@ -1,0 +1,39 @@
+# noise probe — one stray pixel
+
+part 400x400, raised cosine of radius 200 px, seed 20260905, continuous closed form 64.77° at peak 255 / zScale 60
+invocation: bun bench/studies/2026-09-05-noise/tools/noiseprobe.ts <workdir> --experiment=outlier
+
+grid-65 reads 12544 of 160000 texels (7.84 %). Hottest texel inside the art (137, 37) at weight 1.0000; unread control texel (200, 16).
+clean 8-bit ceiling: 64.58°
+
+| δ levels | on the hottest read texel ° | on an unread texel ° | predicted from w·δ ° |
+| --- | --- | --- | --- |
+| 1 | 64.58 | 64.58 | 64.58 |
+| 2 | 64.58 | 64.58 | 64.58 |
+| 4 | 64.58 | 64.58 | 64.58 |
+| 8 | 64.58 | 64.58 | 64.58 |
+| 16 | 52.68 | 64.58 | 58.94 |
+| 22 | 45.34 | 64.58 | 50.37 |
+| 32 | 36.23 | 64.58 | 39.70 |
+| 64 | 21.27 | 64.58 | 22.54 |
+| 128 | 11.36 | 64.58 | 11.72 |
+| 255 | 6.08 | 64.58 | 5.95 |
+
+## The same stray pixel against density
+
+One texel driven to whichever end of the range is further from what it held, at each lattice's own hardest-read texel inside the art, and at a texel that lattice cannot read at all.
+
+| lattice | texels read | largest weight in art | δ levels | clean ° | hottest-texel ° | unread-texel ° |
+| --- | --- | --- | --- | --- | --- | --- |
+| grid-5 | 0.04 % | 0.2500 | 207 | 73.15 | 73.15 | 73.15 |
+| grid-9 | 0.16 % | 0.2500 | 250 | 66.87 | 66.87 | 66.87 |
+| grid-17 | 0.64 % | 0.2500 | 251 | 65.35 | 57.57 | 65.35 |
+| grid-33 | 1.44 % | 1.0000 | 245 | 64.80 | 11.90 | 64.80 |
+| grid-65 | 7.84 % | 1.0000 | 245 | 64.58 | 6.08 | 64.58 |
+| grid-97 | 19.36 % | 1.0000 | 245 | 63.49 | 4.08 | 63.49 |
+| grid-129 | 36.00 % | 1.0000 | 245 | 63.06 | 3.08 | 63.06 |
+| grid-181 | 81.00 % | 0.8920 | 248 | 62.37 | 2.43 | 62.37 |
+| grid-257 | 100.00 % | 1.0000 | 245 | 61.37 | 1.55 | no unread texel inside the art |
+| grid-401 | 100.00 % | 0.2500 | 251 | 62.10 | 3.84 | no unread texel inside the art |
+| grid-577 | 100.00 % | 1.0000 | 245 | 56.57 | 0.99 | no unread texel inside the art |
+| grid-801 | 100.00 % | 1.0000 | 251 | 54.78 | 0.97 | no unread texel inside the art |

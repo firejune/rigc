@@ -1,0 +1,24 @@
+# noise probe — the shape of the distribution — can one compile tell noise from form
+
+part 400x400, raised cosine of radius 200 px, seed 20260905, continuous closed form 64.77° at peak 255 / zScale 60
+invocation: bun bench/studies/2026-09-05-noise/tools/noiseprobe.ts <workdir> --experiment=shape
+
+Per-triangle fold angles at grid-65, 8,192 triangles × 2 axes.
+
+| sheet | min (= ceiling) ° | p0.1 ° | p1 ° | p50 ° | within 5 % of min | share | p1 / min |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| clean 8-bit | 64.58 | 64.80 | 64.80 | 79.34 | 1100 / 12016 | 9.154 % | 1.003 |
+| ±1 LSB | 61.37 | 62.63 | 64.36 | 83.02 | 170 / 15625 | 1.088 % | 1.049 |
+| ±8 LSB | 45.34 | 49.73 | 55.42 | 81.17 | 6 / 16014 | 0.037 % | 1.222 |
+| ±32 LSB | 21.55 | 25.78 | 30.48 | 68.43 | 2 / 16134 | 0.012 % | 1.414 |
+| one stray pixel (δ 245) | 6.08 | 64.80 | 64.80 | 79.21 | 8 / 12016 | 0.067 % | 10.652 |
+
+## The same five sheets at grid-17, where a coarse lattice barely reads the map
+
+| sheet | min ° | p1 ° | p50 ° | within 5 % of min | share | p1 / min |
+| --- | --- | --- | --- | --- | --- | --- |
+| clean 8-bit | 65.35 | 65.46 | 80.38 | 88 / 808 | 10.891 % | 1.002 |
+| ±1 LSB | 64.80 | 65.46 | 83.82 | 64 / 953 | 6.716 % | 1.010 |
+| ±8 LSB | 62.21 | 64.36 | 84.09 | 24 / 1008 | 2.381 % | 1.035 |
+| ±32 LSB | 52.42 | 58.84 | 83.02 | 4 / 1012 | 0.395 % | 1.122 |
+| one stray pixel (δ 245) | 65.35 | 65.46 | 80.38 | 88 / 808 | 10.891 % | 1.002 |

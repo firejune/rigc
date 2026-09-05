@@ -378,6 +378,21 @@ silhouette so it samples **2 %** of the depth range, and its ear-clipped interio
 holds triangles three orders of magnitude apart in area, the smallest of which
 reverse under a fraction of a pixel.
 
+🚨 **The sheet's grain is a slope too, and the ceiling reads it.** Because
+`max|dz/du|` is a maximum over sampled gradients, there is no averaging anywhere
+in it. On a sheet whose true ceiling is 64.77°, measured at 4,225 vertices:
+**±1 level** of noise reports 61.37°, **±8 levels** reports 45.34°, and **one
+stray pixel out of 160,000** reports 6.08° — and `A39` refuses at each of those
+angles, so the rig is as damaged as the report says. Refining the lattice makes
+every one of them worse. Two hard bounds follow, both independent of the form:
+a sheet can never report above `atan(255·h / zScale)` for cell size `h`, and
+below one texel per cell the answer saturates at the steepest adjacent-texel
+step. ⇒ **Author the sheet so it changes by at least ~8 levels across one mesh
+cell**, and spend its whole 0–255 range on the part — a map using an eighth of
+the range describes the same surface and reports 5.8° less of it. Method and
+ladders:
+[`bench/studies/2026-09-05-noise`](https://github.com/firejune/rigc/tree/main/bench/studies/2026-09-05-noise).
+
 ---
 
 ## 3. One shared shift, then residuals
