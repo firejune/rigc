@@ -93,7 +93,7 @@ import {
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError } from './src/compile.ts';
 import { parseMotionSpec } from './src/motion.ts';
-import { compareTurnFields, DEPTH_TONE_IDENTITY, type FieldAgreement, type FoldLimit } from './src/depth.ts';
+import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
   buildGridMesh,
   contourOvershootBound,
@@ -6960,6 +6960,18 @@ function buildContourRig(
     invariants?: Record<string, unknown> | null;
     /** Also write a depth sheet beside the art — see `writeDepthSheet`. */
     depth?: { kind: 'flat' | 'ramp' | 'tight' | 'colour' | 'dome'; width?: number; height?: number };
+    /**
+     * Also write a depth sheet beside the art, one level per TEXEL from a
+     * function of its integer coordinates, fully opaque.
+     *
+     * The turn-ceiling spread cases (`TC04`–`TC06`, issue #412) need sheets
+     * `writeDepthSheet`'s five kinds cannot express — a bounded-slope form, the
+     * same form with exactly one texel moved, and a staircase placed at a
+     * stated number of levels per mesh cell. Their whole point is that the
+     * caller fixes every texel, so a named kind here would be a fixture nobody
+     * could read the expected answer off.
+     */
+    depthLevels?: (x: number, y: number) => number;
     /** Also write a soft-region mask beside the art. */
     softmask?: { kind: 'softmask' | 'colour' | 'flat'; level?: number; width?: number; height?: number };
     /** A motion spec other than the empty one, for the cases that key a deform. */
@@ -6978,6 +6990,18 @@ function buildContourRig(
       extra.depth.height ?? extra.height ?? CONTOUR_H,
       art,
     );
+  }
+  if (extra.depthLevels) {
+    const dw = extra.width ?? CONTOUR_W;
+    const dh = extra.height ?? CONTOUR_H;
+    const plate = new Plate(dw, dh);
+    for (let y = 0; y < dh; y++) {
+      for (let x = 0; x < dw; x++) {
+        const l = extra.depthLevels(x, y);
+        plate.set(x, y, [l, l, l, 255]);
+      }
+    }
+    plate.writePng(join(dir, 'blob_depth.png'));
   }
   if (extra.softmask) {
     writeDepthSheet(
@@ -8012,6 +8036,271 @@ function runContourMeshSuite(): number {
       'the two axes substitute z into different slots of the same area, and a reader that computed one and reported ' +
         'it twice — or one that returned null for the axis it never implemented — passes every other control here',
     );
+
+    // --- what the minimum alone cannot say (issue #412) -------------------
+    //
+    // `turnCeiling` reports the minimum of the per-triangle fold angles.
+    // `bench/studies/2026-09-05-noise` measured that the minimum ALONE cannot
+    // tell a limit set by the shape from one set by the sampling, and that the
+    // gap is not small: a clean 8-bit sheet at 4,225 vertices reports 64.58°
+    // with a 1st percentile of 64.80°, and the same sheet with ONE texel of
+    // 160,000 moved 245 levels reports 6.08° with the same 64.80° behind it.
+    // Both are correct — `A39` refuses at each, to 0° — which is exactly the
+    // problem. So each fold now carries its side's 1st percentile and the depth
+    // step across the triangle that goes first, and neither moves a ceiling.
+    //
+    // 🚨 Every sheet below is written texel by texel by the fixture, and the
+    // lattices are stated as `us`/`vs` rather than a count, because both
+    // controls turn on WHICH TEXEL A VERTEX READS. A vertex at a half-integer
+    // pixel has `fx = fy = 0` in `sampleLevel`, so its bilinear tap collapses
+    // onto exactly one texel at weight 1 — which is what lets the fixture say,
+    // by construction rather than by measurement, that the dense lattice reads
+    // the bad texel at full weight and the coarse one does not read it at all.
+    //
+    // ⚠️ `TC04` was DELETED once for being a self-comparison against the same
+    // closed form the code runs, so nothing here checks the diagnostic against
+    // its own arithmetic. `TC04` compares two sheets that differ in one texel;
+    // `TC05` requires a lattice that cannot see that texel to be unmoved by it,
+    // BIT for bit, with the dense pair beside it as the positive control; and
+    // `TC06`'s two answers are fixed by the fixture — a staircase placed at a
+    // stated number of levels per mesh cell, where the study's closed form says
+    // the ceiling is `atan(255·h / zScale)`.
+    //
+    // Run red first, four ways, each the whole suite:
+    //   - `p1` taking the population's MINIMUM instead of its first percentile:
+    //     `TC04` alone, and it is the only FAIL in the file. Every ratio reads
+    //     x1.000 on both sheets, so the separation clause reports "a factor of
+    //     1.0" and all four sides say NOT A SPIKE / PERCENTILE MOVED.
+    //   - `sampleLevel` sampling at `i` instead of `i + 0.5` — the hazard its
+    //     own header names: `TC05` (2/4 sides), plus `TC04` and the `look`
+    //     gallery example. ⚠️ The coarse ANGLES did not move (27.795139625 on
+    //     both sheets); what moved was the POPULATION, 66 against 68, because
+    //     the shifted taps give previously flat cells a gradient. A control
+    //     comparing only the angle and the percentile would have passed this.
+    //   - `depthStepLevels` dividing the wrong way, `zScale / (255·step)`:
+    //     `TC06` alone — and ⭐ its ONE-level rung still reported 1.000000,
+    //     which is the entire reason there is a two-level rung. It reads 0.5.
+    //   - `depthStep` taking one edge, `|Δz_b|`, instead of the largest of the
+    //     three: `TC06` alone, 0.000000 levels on both rungs.
+    const SPREAD_ZSCALE = 60;
+    /** Vertices on texel CENTRES: `first + step·i`, as a fraction of the window. */
+    const centres = (n: number, first: number, step: number, span: number): number[] =>
+      Array.from({ length: n }, (_, i) => (first + step * i) / span);
+    // Texel columns 0, 2 … 94 and rows 0, 2 … 62 — 1,536 vertices, 2,914 triangles.
+    const denseUs = centres(48, 0.5, 2, CONTOUR_W);
+    const denseVs = centres(32, 0.5, 2, CONTOUR_H);
+    // Texel columns 1, 9 … 89 and rows 1, 9 … 57 — 96 vertices, 154 triangles.
+    // The odd offset is deliberate: it makes the coarse lattice's set of read
+    // texels DISJOINT from the dense one's (odd against even), while leaving
+    // the stray texel below inside a coarse vertex's 2x2 bilinear footprint at
+    // weight exactly zero. A sampler that lost its weighting — a box average, a
+    // dropped half-pixel shift — would read it, and `TC05` is what says so.
+    const coarseUs = centres(12, 1.5, 8, CONTOUR_W);
+    const coarseVs = centres(8, 1.5, 8, CONTOUR_H);
+    /** A raised cosine: flat at the centre, flat at the rim, slope bounded between. */
+    const cosineSheet = (x: number, y: number): number => {
+      const r = Math.min(
+        1,
+        Math.hypot((x + 0.5 - CONTOUR_W / 2) / (CONTOUR_W / 2), (y + 0.5 - CONTOUR_H / 2) / (CONTOUR_H / 2)),
+      );
+      return Math.round(255 * 0.5 * (1 + Math.cos(Math.PI * r)));
+    };
+    // (10, 10): both even, so the dense lattice reads it at weight 1.0000, and
+    // it is outside the cosine's own footprint, so the clean sheet reads 0
+    // there and the edit is the full 255 levels. Neither 10 nor 10 is 1 mod 8,
+    // so no coarse vertex reads it AT ALL — but it does sit in the tap window
+    // {9, 10} x {9, 10} of the coarse vertex at (9.5, 9.5), at weight exactly
+    // zero. That is the placement `TC05` needs: `sampleLevel`'s own header
+    // warns that sampling at `i` instead of `i + 0.5` is "invisible on a smooth
+    // sheet and wrong at every edge", and dropping that shift puts weight 0.25
+    // on this texel. A control the documented hazard cannot reach is not one.
+    const STRAY_X = 10;
+    const STRAY_Y = 10;
+    const strayedSheet = (x: number, y: number): number =>
+      x === STRAY_X && y === STRAY_Y ? 255 : cosineSheet(x, y);
+    const spreadRig = (us: number[], vs: number[], level: (x: number, y: number) => number, zScale: number) =>
+      buildContourRig(
+        {
+          type: 'mesh',
+          image: 'blob.png',
+          generator: { kind: 'grid', us, vs, depth: { image: 'blob_depth.png', near: 'white', zScale } },
+        },
+        { depthLevels: level, invariants: { meshSlots: 1, meshTriangles: 4000 } },
+      ).result.meshes[0].depth;
+    type Sides = Array<[string, FoldLimit | null]>;
+    const sides = (c: { yaw: { positive: FoldLimit | null; negative: FoldLimit | null }; pitch: { positive: FoldLimit | null; negative: FoldLimit | null } }): Sides => [
+      ['yaw+', c.yaw.positive],
+      ['yaw-', c.yaw.negative],
+      ['pitch+', c.pitch.positive],
+      ['pitch-', c.pitch.negative],
+    ];
+
+    const denseForm = spreadRig(denseUs, denseVs, cosineSheet, SPREAD_ZSCALE);
+    const denseStray = spreadRig(denseUs, denseVs, strayedSheet, SPREAD_ZSCALE);
+
+    // A band and a spike, on two sheets that differ in ONE texel of 6,144.
+    //
+    // The two thresholds are stated here rather than derived, and they are
+    // stated with room on both sides: the study measured 1.003 for a clean
+    // sheet against 10.652 for one stray pixel, and this coarser fixture
+    // measures at worst 1.06 against at worst 8.3. A ratio is a report and
+    // nothing in `src/` reads either number — they exist so this control can
+    // fail, and the separation clause below is what stops them both passing on
+    // a diagnostic that returns one constant.
+    const FORM_BAND = 1.5;
+    const TEXEL_SPIKE = 5;
+    {
+      const rows: string[] = [];
+      let held = 0;
+      const pairs = sides(denseForm?.ceiling ?? { yaw: { positive: null, negative: null }, pitch: { positive: null, negative: null } });
+      const strayPairs = sides(denseStray?.ceiling ?? { yaw: { positive: null, negative: null }, pitch: { positive: null, negative: null } });
+      let worstForm = 0;
+      let bestStray = Infinity;
+      for (let i = 0; i < pairs.length; i++) {
+        const [name, f] = pairs[i];
+        const s = strayPairs[i][1];
+        if (f === null || s === null || f.p1 === null || s.p1 === null) {
+          rows.push(`${name}: MISSING`);
+          continue;
+        }
+        const fr = f.p1 / f.degrees;
+        const sr = s.p1 / s.degrees;
+        worstForm = Math.max(worstForm, fr);
+        bestStray = Math.min(bestStray, sr);
+        // Four claims per side, and they fail for different reasons: the form's
+        // percentile sits ON its ceiling, the texel's sits far above it, the
+        // ceiling itself collapses, and the percentile does NOT move with it —
+        // which is the one a diagnostic that merely tracked the minimum fails.
+        const band = fr < FORM_BAND;
+        const spike = sr > TEXEL_SPIKE;
+        const collapsed = s.degrees * 5 < f.degrees;
+        const steady = Math.abs(s.p1 - f.p1) <= 0.1 * f.p1;
+        if (band && spike && collapsed && steady) held++;
+        rows.push(
+          `${name}: form ${f.degrees.toFixed(2)}°/p1 ${f.p1.toFixed(2)}° x${fr.toFixed(3)}${band ? '' : ' NOT A BAND'} -> ` +
+            `texel ${s.degrees.toFixed(2)}°/p1 ${s.p1.toFixed(2)}° x${sr.toFixed(3)}` +
+            `${spike ? '' : ' NOT A SPIKE'}${collapsed ? '' : ' CEILING HELD'}${steady ? '' : ' PERCENTILE MOVED'}`,
+        );
+      }
+      const separated = bestStray >= 5 * worstForm;
+      say(
+        'TC04_A_CEILING_SET_BY_ONE_TEXEL_READS_DIFFERENTLY_FROM_ONE_SET_BY_THE_FORM',
+        held === 4 && separated && denseForm?.digest !== denseStray?.digest,
+        `two sheets differing in one texel of ${CONTOUR_W * CONTOUR_H} (digests ${denseForm?.digest} and ` +
+          `${denseStray?.digest}), on one 2,914-triangle lattice: ${held}/4 side(s) separated; worst form ratio ` +
+          `x${worstForm.toFixed(3)} against best texel ratio x${bestStray.toFixed(3)}, a factor of ` +
+          `${(bestStray / worstForm).toFixed(1)}${separated ? '' : ' — NOT the 5x this asserts'}. ${rows.join('; ')}`,
+        'the minimum is the same kind of number either way and both are correct, so the report has to carry ' +
+          'something that is not the minimum: 99 % of a mesh surviving to the form\'s angle while the reported ' +
+          'number collapses is the one reading that says the sheet has a bad texel in it rather than a steep shape',
+      );
+    }
+
+    // The case a naive diagnostic cries wolf on: the same bad texel, under a
+    // lattice that cannot reach it. The study measured that this costs exactly
+    // zero at every amplitude and every density, so the claim is exact equality
+    // and not a tolerance — and it is made on all five reported fields at once,
+    // because a diagnostic reading the SHEET rather than the mesh's samples
+    // would move at least one of them.
+    {
+      const coarseForm = spreadRig(coarseUs, coarseVs, cosineSheet, SPREAD_ZSCALE);
+      const coarseStray = spreadRig(coarseUs, coarseVs, strayedSheet, SPREAD_ZSCALE);
+      const fields = (l: FoldLimit | null): string =>
+        l === null
+          ? 'none'
+          : `${l.degrees.toFixed(9)}/${l.p1 === null ? 'unranked' : l.p1.toFixed(9)}/${l.count}/${l.triangle}/${l.depthStep.toFixed(9)}`;
+      const coarseRows: string[] = [];
+      let same = 0;
+      const cf = sides(coarseForm?.ceiling ?? { yaw: { positive: null, negative: null }, pitch: { positive: null, negative: null } });
+      const cs = sides(coarseStray?.ceiling ?? { yaw: { positive: null, negative: null }, pitch: { positive: null, negative: null } });
+      for (let i = 0; i < cf.length; i++) {
+        const a = fields(cf[i][1]);
+        const b = fields(cs[i][1]);
+        if (a === b) same++;
+        else coarseRows.push(`${cf[i][0]}: ${a} != ${b}`);
+      }
+      // The positive control, and it is not optional: "identical" is also what
+      // a diagnostic that ignored the sheet entirely would report.
+      const df = sides(denseForm?.ceiling ?? { yaw: { positive: null, negative: null }, pitch: { positive: null, negative: null } });
+      const ds = sides(denseStray?.ceiling ?? { yaw: { positive: null, negative: null }, pitch: { positive: null, negative: null } });
+      let moved = 0;
+      for (let i = 0; i < df.length; i++) if (fields(df[i][1]) !== fields(ds[i][1])) moved++;
+      const differing = coarseForm?.digest !== coarseStray?.digest;
+      say(
+        'TC05_A_TEXEL_NO_VERTEX_READS_MOVES_NOTHING_IN_THE_REPORT',
+        same === 4 && moved === 4 && differing && coarseForm !== undefined,
+        `the same one-texel edit under a lattice whose taps never reach (${STRAY_X}, ${STRAY_Y}): ${same}/4 side(s) ` +
+          `identical in degrees/p1/count/triangle/step${coarseRows.length ? ` — ${coarseRows.join('; ')}` : ''}; the ` +
+          `sheets themselves differ (${coarseForm?.digest} vs ${coarseStray?.digest} = ${differing}); and under the ` +
+          `dense lattice that DOES read it, ${moved}/4 side(s) move — worst ` +
+          `${(cf[0][1]?.degrees ?? 0).toFixed(2)}° unchanged against ${(ds[0][1]?.degrees ?? 0).toFixed(2)}°`,
+        'a spread figure is worth having only if it is a reading of what the MESH sampled: one that went looking at ' +
+          'the sheet would report a bad texel nothing in this rig can reach, and the author would go and fix a ' +
+          'pixel that was never in the geometry',
+      );
+    }
+
+    // The level step, on two sheets whose answers are arithmetic rather than
+    // measurements. Both are a staircase rising along x with a stated number of
+    // levels per 8 px mesh cell, at `zScale` 1020 — so one level is exactly 4
+    // world units and the study's closed form `ceiling = atan(255·h / zScale)`
+    // fixes the angle at `atan(2)` and `atan(1)`.
+    //
+    // ⚠️ TWO rungs, because one hides a failure mode. At exactly one level the
+    // step in world units EQUALS `zScale/255`, so a reader that divided the two
+    // the wrong way round would print 1.00 and pass. At two levels the same
+    // mistake prints 0.50. The other confusable quantities are 8 (the cell, in
+    // pixels), 4 and 8 (the step, in world units) and 1020 — none of them 1 or 2.
+    {
+      const CELL = 8;
+      const LEVEL_ZSCALE = 1020;
+      const levelUs = centres(12, 0.5, CELL, CONTOUR_W);
+      const levelVs = centres(8, 0.5, CELL, CONTOUR_H);
+      const staircase = (perCell: number) => (x: number): number => perCell * Math.floor(x / CELL);
+      const rung = (perCell: number) => {
+        const d = spreadRig(levelUs, levelVs, staircase(perCell), LEVEL_ZSCALE);
+        const l = d?.ceiling.yaw.positive ?? null;
+        return {
+          d,
+          l,
+          levels: l === null ? NaN : depthStepLevels(l.depthStep, LEVEL_ZSCALE),
+          want: (Math.atan((255 * CELL) / (LEVEL_ZSCALE * perCell)) * 180) / Math.PI,
+        };
+      };
+      const one = rung(1);
+      const two = rung(2);
+      const NEAR = 1e-6;
+      const ok = (r: typeof one, perCell: number): boolean =>
+        r.l !== null &&
+        Math.abs(r.levels - perCell) < NEAR &&
+        Math.abs(r.l.degrees - r.want) < NEAR &&
+        // A sheet linear in x cannot fold a pitch at all (TC03), which is also
+        // what says this fixture is the staircase it claims to be.
+        r.d?.ceiling.pitch.positive === null &&
+        r.d?.ceiling.pitch.negative === null &&
+        // Every triangle of a uniform staircase folds at the same angle, so the
+        // 1st percentile IS the ceiling — the purest band there is.
+        r.l.p1 === r.l.degrees;
+      // The separation, asserted rather than assumed: doubling the step must
+      // halve the tangent, which a constant or a reciprocal cannot do.
+      const halved = Math.abs(Math.tan((one.l?.degrees ?? 0) * (Math.PI / 180)) / Math.tan((two.l?.degrees ?? 1) * (Math.PI / 180)) - 2) < 1e-6;
+      say(
+        'TC06_AT_ONE_LEVEL_PER_CELL_THE_REPORT_SAYS_THE_CEILING_IS_THE_ENCODING',
+        ok(one, 1) && ok(two, 2) && halved,
+        `a staircase over an ${CELL}px cell at zScale ${LEVEL_ZSCALE}, so one level is ` +
+          `${LEVEL_ZSCALE / 255} world units: 1 level/cell reports ${one.levels.toFixed(6)} level(s) at ` +
+          `${one.l?.degrees.toFixed(6)}° against atan(255·${CELL}/${LEVEL_ZSCALE}) = ${one.want.toFixed(6)}°, ` +
+          `2 levels/cell reports ${two.levels.toFixed(6)} level(s) at ${two.l?.degrees.toFixed(6)}° against ` +
+          `${two.want.toFixed(6)}°; tan ratio ` +
+          `${(Math.tan((one.l?.degrees ?? 0) * (Math.PI / 180)) / Math.tan((two.l?.degrees ?? 1) * (Math.PI / 180))).toFixed(6)}` +
+          `${halved ? '' : ' — NOT the 2 that doubling the step forces'}; pitch ` +
+          `${one.d?.ceiling.pitch.positive === null && one.d?.ceiling.pitch.negative === null ? 'unfoldable on both sides' : 'FOLDABLE, which the arithmetic forbids'}` +
+          `, and the 1st percentile is the ceiling itself on ${one.l?.count} triangle(s)`,
+        'below about three levels per mesh cell the ceiling is arithmetic about the encoding rather than about the ' +
+          'form, and at one level it is exactly atan(255·h/zScale) — a plausible-looking angle for a surface whose ' +
+          'real answer is anything at all, which the author cannot see unless the report says how many levels it read',
+      );
+    }
   }
 
   // --- the lattice, generated instead of hand-numbered (issue #382) --------
@@ -19854,7 +20143,7 @@ function main(): void {
       'wrap, where a rotate slider reading a WORLD rotation cannot cross 0 degrees and is refused at compile ' +
       'with the frame it would otherwise pin to), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
-      '+ 27 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      '+ 30 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
       'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
       'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
@@ -19892,7 +20181,16 @@ function main(): void {
       + 'because the first two mutants hid behind that one channel); a sheet with no gradient reporting NO ceiling '
       + 'rather than a large one; and the exact zero the arithmetic forces — a depth varying linearly along one axis '
       + 'cannot fold the other at ANY angle — with a dome beside it as the control that the null is the sheet and not '
-      + 'the reader, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
+      + 'the reader; then what that minimum alone CANNOT say (issue #412) — two sheets differing in one texel of '
+      + '6,144, where the form-limited one puts its 1st percentile within 6% of its own ceiling and the '
+      + 'texel-limited one puts it 10 to 15 times above a ceiling that collapsed, separated by a factor this '
+      + 'asserts rather than eyeballs, while the SAME bad texel under a lattice whose bilinear taps never reach it '
+      + 'moves nothing at all — identical degrees, percentile, population, triangle and depth step, bit for bit, '
+      + 'with the dense pair beside it as the control that "identical" is not just a diagnostic ignoring its input; '
+      + 'and the depth step in LEVELS, on a staircase placed at a stated number of levels per mesh cell, where the '
+      + 'ceiling is atan(255·h/zScale) by arithmetic and not by measurement — two rungs rather than one, because at '
+      + 'exactly one level the world step equals zScale/255 and a reader dividing them the wrong way round would '
+      + 'still print 1.00, two traces of one PNG emitting the same bytes, an AUTHORED fan over a ' +
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +

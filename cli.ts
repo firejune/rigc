@@ -122,7 +122,7 @@ import {
   type ValidateProfile,
 } from './src/validate.ts';
 import { parseMotionSpec } from './src/motion.ts';
-import type { FoldLimit, TurnCeiling } from './src/depth.ts';
+import { depthStepLevels, type FoldLimit, type TurnCeiling } from './src/depth.ts';
 import type { CompileResult } from './src/types.ts';
 
 /**
@@ -439,6 +439,39 @@ function ceilingPair(axis: { positive: FoldLimit | null; negative: FoldLimit | n
   return `${one(axis.positive, '+')} / ${one(axis.negative, '-')}`;
 }
 
+/**
+ * The same axis's two 1st percentiles, each with its ratio to the ceiling above
+ * it and the population it came out of — `+64.80° x1.003 of 5988`.
+ *
+ * ⭐ The ratio is the whole point and it is printed rather than judged. A
+ * ceiling set by the FORM is the floor of a band: the steepest region of a
+ * smooth sheet has area, so the 1st percentile sits a fraction of a percent
+ * above the minimum. A ceiling set by one bad texel has 99 % of the mesh
+ * surviving to the form's angle while the reported number collapses — 64.58°
+ * against 6.08° for one texel of 160,000, with the percentile unmoved at 64.80°
+ * in both ([#412](https://github.com/firejune/rigc/issues/412),
+ * `bench/studies/2026-09-05-noise` §6).
+ *
+ * Three spellings, three different claims, for the reason `ceilingPair` prints
+ * `none` rather than 90: `+none` is a side nothing folds on at all, `+unranked
+ * of 36` is a side whose population is too small for a first percentile to be
+ * anything but the minimum itself, and a number is a measurement.
+ *
+ * ⛔ No threshold lives here. What ratio means what is in `docs/AUTHORING.md`
+ * §3.4, because a number rigc printed an adjective beside would be a policy the
+ * compiler invented out of a measurement — and `A39` would go on refusing at the
+ * raw angle either way.
+ */
+function spreadPair(axis: { positive: FoldLimit | null; negative: FoldLimit | null }): string {
+  const one = (l: FoldLimit | null, sign: string) =>
+    l === null
+      ? `${sign}none`
+      : l.p1 === null
+        ? `${sign}unranked of ${l.count}`
+        : `${sign}${l.p1.toFixed(2)}° x${(l.p1 / l.degrees).toFixed(3)} of ${l.count}`;
+  return `${one(axis.positive, '+')} / ${one(axis.negative, '-')}`;
+}
+
 /** The tightest of the four, so the line that names a triangle names the right one. */
 function tightestFold(c: TurnCeiling): { kind: string; sign: string; limit: FoldLimit } | null {
   const all = [
@@ -461,11 +494,15 @@ function meshDepthNote(m: CompileResult['meshes'][number]): string {
     const c = m.depth.ceiling;
     parts.push(`turn ceiling  yaw ${ceilingPair(c.yaw)}   pitch ${ceilingPair(c.pitch)}`);
     const worst = tightestFold(c);
+    if (worst !== null) {
+      parts.push(`  1st pct     yaw ${spreadPair(c.yaw)}   pitch ${spreadPair(c.pitch)}`);
+    }
     parts.push(
       worst === null
         ? `              nothing in this sheet folds: ${c.measured} triangle(s) measured, none with a depth gradient across it`
         : `              first to fold: ${worst.kind} ${worst.sign} at ${worst.limit.degrees.toFixed(2)}°, ` +
-          `triangle ${worst.limit.triangle} [${worst.limit.ids.join(',')}]` +
+          `triangle ${worst.limit.triangle} [${worst.limit.ids.join(',')}], the sheet steps ` +
+          `${depthStepLevels(worst.limit.depthStep, m.depth.zScale).toFixed(2)} level(s) across it` +
           `${c.degenerate ? `; ${c.degenerate} triangle(s) too flat in setup to measure` : ''}`,
     );
   }
