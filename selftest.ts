@@ -17853,28 +17853,45 @@ function runCurrencySuite(): number {
 // rather than output of it (shape 3 — `selftest.ts` still carries one of those
 // by hand, the `96 · cos(π/8) = 88.7 > 80` comment on `FAN_RIM_COVERING`).
 //
-// **How a block and its command are decided to belong together.** By the block's
-// first line carrying a tag at rigc's own report gutter — `MESH`, `DEFORM`,
-// `MEMBER`, `PHYS`, `PASS`, `SKIP`, `PROF`. The vocabulary is not a list written
-// here: it is collected from the output of the runs themselves, so a tag rigc
-// stops printing stops being an anchor, and the floor below is what makes that
-// loud instead of silent. The anchor has to be something that does NOT change
-// when the block goes stale — the whole defect is that the block's CONTENT
-// drifted — and a record's tag is the last part of it to move.
+// **How a block and its command are decided to belong together.** By its first
+// line naming a record the run prints, and there are two ways a rigc report
+// names one. Neither is a list written here — both are collected from the output
+// of the runs themselves, so a name rigc stops printing stops being an anchor,
+// and the floor below is what makes that loud instead of silent.
 //
-// What that leaves uncovered inside shape 1, stated rather than implied: a block
-// whose first line is a report record's CONTINUATION rather than its head —
-// `explain`'s per-key deform expansions, six of them across `flex`, `nod`,
-// `portrait`, `ride` and `squash` — and blocks that are output of a different
-// program altogether (`gallery/loop_seam.ts`, an example's `make_parts.ts`, a
-// `bun -e` snippet). A continuation line has no stable head to anchor on, and an
-// anchor that is the line's own content goes silent exactly when that line goes
-// stale, which is the one failure this class cannot afford. ⚠️ Two of those six
-// were STALE when this suite was written — `nod`'s and `portrait`'s both still
-// read `bezier[4]` on a hold segment that #376 taught the tool to emit as
-// `stepped` — so the remainder is a real gap and not a theoretical one. They are
-// repaired, and the anchor that would keep them repaired is somebody else's
-// issue.
+//  1. **A tag at rigc's own report gutter** — `MESH`, `DEFORM`, `MEMBER`, `PHYS`,
+//     `PASS`, `SKIP`, `PROF`.
+//  2. **The field a record head names itself with**, for the parts of the report
+//     that are a tree rather than a gutter — `explain`'s `animations` and
+//     `path constraints` sections, where a record is named `default/head/head.deform`
+//     or `t=0.6` or `path constraints` and its detail hangs off it by indent.
+//     A **record head** is derived, not described: a line the run prints with at
+//     least one line deeper than it hanging off it — an interior node of the
+//     report's own tree. Everything up to the first column gap is the anchor; the
+//     rest of the line is content and is checked as content. (Issue #422.)
+//
+// 🚨 **Rule 2 is an addition to rule 1, and it must not become a relaxation of
+// it.** The anchor has to be something that does NOT change when the block goes
+// stale — the whole defect is that the block's CONTENT drifted. What keeps rule 2
+// honest is the interior-node qualifier: a report's LEAF lines are the figures,
+// so an anchor on one goes silent exactly when it goes stale, and that is the one
+// failure this class cannot afford. ⚠️ Measured on this tree rather than argued:
+// the stated runs print 340 indented
+// `moved`/`area`/`stretch`/`winding`/`frame`/`skipped` rows (25 flex, 100 look,
+// 168 nod, 28 portrait, 19 squash) and rule 2 reaches **none** of them, because
+// none has anything hanging off it; over all 59 plain fenced blocks in the
+// gallery it reaches 15, 9 of which rule 1 already had, so what it adds is
+// exactly the 6 rule 1 cannot reach and nothing else. GT03 plants the loss of
+// the anchor on every verified block under whichever rule found it, and requires
+// that it fault NOTHING — a block that stops being a block is what the floor is
+// for, not what a fault is for.
+//
+// What that leaves uncovered inside shape 1, stated rather than implied: blocks
+// that are output of a different program altogether (`gallery/loop_seam.ts`, an
+// example's `make_parts.ts`, a `bun -e` snippet). ⚠️ Two of the six that rule 2
+// brought in were STALE when this suite was written — `nod`'s and `portrait`'s
+// both still read `bezier[4]` on a hold segment that #376 taught the tool to
+// emit as `stepped` — so that class was a real gap and not a theoretical one.
 //
 // 📌 **A block a run cannot reproduce declares itself**, the way a dated snapshot
 // drops out of the currency gate: `<!-- transcript: <why> -->` on the line before
@@ -17884,9 +17901,12 @@ function runCurrencySuite(): number {
 // refused, as CUR01 refuses a `dated-record` marker with no date), the declared
 // set is reported so it cannot grow quietly, and a declaration on a block that
 // DOES reproduce is a fault — otherwise the marker would be a way to switch the
-// gate off. A declaration also brings a block IN: two of the six open on a
-// continuation line the tag anchor cannot reach, and saying so is what puts them
-// on the ledger at all.
+// gate off. A declaration also brings a block IN, for a block neither anchor
+// rule can reach. ⚠️ Two of the six used to be in on that footing alone, because
+// the tag anchor could not reach an `explain` record head; rule 2 reaches both of
+// them now, so what still keeps them out of `verified` is the thing their
+// declaration actually says — they are abridged, and an abridged block is not a
+// contiguous run of anything.
 //
 // ⚠️ **Cost, measured rather than guessed.** The pool is one subprocess per
 // stated command per example: `build` for all seven, `explain` for the six whose
@@ -17922,6 +17942,67 @@ const TRANSCRIPT_REASON_MIN = 12;
 const TRANSCRIPT_GUTTER = /^ {2}([A-Z][A-Z\d_]{1,9}) {2}\S/;
 /** The same tag on a block's first line, where the gutter has already been taken off. */
 const TRANSCRIPT_BLOCK_TAG = /^([A-Z][A-Z\d_]{1,9}) {2}\S/;
+
+/** How far in a report line sits — the only structure the tree half of a report has. */
+function transcriptIndent(line: string): number {
+  return line.length - line.trimStart().length;
+}
+
+/**
+ * The field a report line names its record with: everything up to the first
+ * column gap.
+ *
+ * ⭐ This is the SAME split the gutter tag is, generalised. A `DEFORM  idle  …`
+ * line names its record `DEFORM` and the rest is content; an
+ * `explain` timeline head names its record `default/head/head.deform` and the
+ * `3 key(s)` beside it is content. Taking only the first field is what keeps the
+ * anchor off the figures — a key count moving has to be a FAULT, not a silent
+ * unanchoring.
+ */
+function transcriptAnchorField(line: string): string {
+  return line.trimStart().split(/ {2,}/)[0];
+}
+
+/**
+ * Every record head a run prints, by the field it names itself with.
+ *
+ * 🔒 A record head is an INTERIOR NODE of the report's own tree: a line with at
+ * least one line hanging deeper off it. That qualifier is the whole of what keeps
+ * this rule from being the loose anchor issue #422 forbids — a report's leaves
+ * are its figures, and an anchor on a figure goes quiet on exactly the edit it
+ * exists to catch. Derived from the run, never listed: a head rigc stops printing
+ * stops being an anchor, and GT01's floor is what makes that loud.
+ */
+function transcriptRecordHeads(lines: string[]): Set<string> {
+  const heads = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/\s+$/, '');
+    if (line.trim() === '') continue;
+    let next = i + 1;
+    while (next < lines.length && lines[next].trim() === '') next++;
+    if (next >= lines.length) continue;
+    if (transcriptIndent(lines[next]) <= transcriptIndent(line)) continue;
+    heads.add(transcriptAnchorField(line));
+  }
+  return heads;
+}
+
+/**
+ * Does this block open on a record head, and carry at least one line of that
+ * record's detail?
+ *
+ * The second half is not decoration: a head is a line something hangs off, so a
+ * block quoting a head with nothing under it is not quoting a record. Requiring
+ * the block to have that shape too is what stops the rule reaching a one-line
+ * quotation whose first field happens to collide with a head's.
+ */
+function transcriptHeadAnchored(body: string[], heads: Set<string>): boolean {
+  let next = 1;
+  while (next < body.length && body[next].trim() === '') next++;
+  if (next >= body.length) return false;
+  if (transcriptIndent(body[next]) <= transcriptIndent(body[0])) return false;
+  return heads.has(transcriptAnchorField(body[0]));
+}
 
 function galleryBlocks(text: string): GalleryBlock[] {
   const raw = text.split('\n');
@@ -18017,9 +18098,12 @@ function transcriptRunsFor(example: string, readme: string, outDir: string): Tra
 
 /** What one README's transcript scan found. */
 interface TranscriptScan {
-  /** Blocks the gutter-tag anchor recognised as transcripts. */
+  /** Blocks either anchor rule recognised as transcripts, plus the declared ones. */
   found: number;
-  verified: Array<{ where: string; command: string; lines: number }>;
+  /** Of those, how many each anchor rule reached — reported so neither can go quiet. */
+  byTag: number;
+  byHead: number;
+  verified: Array<{ where: string; command: string; lines: number; anchor: 'tag' | 'head' }>;
   declared: Array<{ where: string; reason: string }>;
   faults: string[];
 }
@@ -18098,22 +18182,25 @@ function scanGalleryTranscripts(
   readme: string,
   runs: TranscriptRun[],
   vocabulary: Set<string>,
+  heads: Set<string>,
 ): TranscriptScan {
-  const scan: TranscriptScan = { found: 0, verified: [], declared: [], faults: [] };
+  const scan: TranscriptScan = { found: 0, byTag: 0, byHead: 0, verified: [], declared: [], faults: [] };
   for (const block of galleryBlocks(readme)) {
     if (block.info !== '') continue; // ```json / ```sh are spec and invocation, not output
     const body = transcriptBody(block.lines);
     if (body.length === 0) continue;
     const tag = TRANSCRIPT_BLOCK_TAG.exec(body[0]);
-    // The tag is how a block gets picked up WITHOUT anybody saying so, and a
-    // declaration is somebody saying so — a block that calls itself a transcript
-    // is one, whatever it opens with. That is what brings the two abridged
-    // `explain` expansions (`flex`, `portrait`) into the declared count even
-    // though the anchor cannot reach a record's continuation line; and because
-    // "declared and it reproduces" is a fault, saying so is not free either.
-    const anchored = tag !== null && vocabulary.has(tag[1]);
+    // Either anchor is how a block gets picked up WITHOUT anybody saying so, and
+    // a declaration is somebody saying so — a block that calls itself a
+    // transcript is one, whatever it opens with. Because "declared and it
+    // reproduces" is a fault, saying so is not free either.
+    const byTag = tag !== null && vocabulary.has(tag[1]);
+    const byHead = !byTag && transcriptHeadAnchored(body, heads);
+    const anchored = byTag || byHead;
     if (!anchored && block.declared === null) continue;
     scan.found++;
+    if (byTag) scan.byTag++;
+    if (byHead) scan.byHead++;
     const at = `${where}:${block.line}`;
     const best = bestTranscriptWindow(body, runs);
     const reproduces = best !== null && best.shared === body.length;
@@ -18132,12 +18219,13 @@ function scanGalleryTranscripts(
         scan.declared.push({ where: at, reason: block.declared });
       }
     } else if (reproduces && best !== null) {
-      scan.verified.push({ where: at, command: best.command, lines: body.length });
+      scan.verified.push({ where: at, command: best.command, lines: body.length, anchor: byTag ? 'tag' : 'head' });
     } else if (best === null || best.shared === 0) {
       const near = nearestPrintedLine(body[0].trimStart(), runs);
       scan.faults.push(
-        `${at}  quotes ${body.length} line(s) of ${tag === null ? 'tool' : `\`${tag[1]}\``} output whose first ` +
-          `line no command this README states prints: "${body[0].trim()}"` +
+        `${at}  quotes ${body.length} line(s) of ` +
+          `${byTag && tag !== null ? `\`${tag[1]}\`` : byHead ? `\`${transcriptAnchorField(body[0])}\`` : 'tool'} ` +
+          `output whose first line no command this README states prints: "${body[0].trim()}"` +
           (near === null ? '' : `; the closest \`${near.command}\` prints is "${near.line}"`),
       );
     } else {
@@ -18186,6 +18274,36 @@ const TRANSCRIPT_PLANTS: Array<{ name: string; plant: (lines: string[]) => strin
     plant: (lines) => [...lines.slice(0, -1), `${lines[lines.length - 1]} and a bit more`],
   },
 ];
+
+/**
+ * Take the block's ANCHOR off its first line — whichever of the two rules found
+ * it — and nothing else.
+ *
+ * ⛔ This plant is the one that has to fault NOTHING. A block that stops being
+ * recognisable does not go red, it goes quiet, and GT01's floor is the only thing
+ * that sees it. Both rules anchor on the first field of the first line, so one
+ * edit serves both: flip the case of its first letter. `DEFORM` becomes `dEFORM`,
+ * which no run prints at the gutter; `t=0.6` becomes `T=0.6`, which no run prints
+ * as a record head. Structural, no literal — and it deliberately leaves the rest
+ * of the line alone, so what is being demonstrated is the loss of the ANCHOR
+ * rather than a content edit that would fault for the ordinary reason.
+ *
+ * Returns `null` for a first field with no letter in it, which the caller counts
+ * rather than skips: a plant that cannot be made is not a plant that passed.
+ */
+function transcriptWithoutItsAnchor(lines: string[]): string[] | null {
+  const first = lines.findIndex((line) => line.trim() !== '');
+  if (first < 0) return null;
+  const line = lines[first];
+  const margin = transcriptIndent(line);
+  const at = transcriptAnchorField(line).search(/[A-Za-z]/);
+  if (at < 0) return null;
+  const letter = line[margin + at];
+  const flipped = letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase();
+  const next = [...lines];
+  next[first] = `${line.slice(0, margin + at)}${flipped}${line.slice(margin + at + 1)}`;
+  return next;
+}
 
 /**
  * The report tags `gallery/README.md`'s own prose names, and how many places it
@@ -18264,14 +18382,33 @@ function runGalleryTranscriptSuite(): number {
     }
   }
 
+  // 🔒 The gutter vocabulary is one report-wide alphabet, so it is pooled across
+  // every example. Record heads are NOT: `default/head/head.deform` is a name out
+  // of one rig, and letting one example's names anchor another example's blocks
+  // would be a rule looser than the thing it is derived from. Per example.
+  const headsBy = new Map<string, Set<string>>();
+  for (const [example, runs] of pools) {
+    const heads = new Set<string>();
+    for (const run of runs) for (const head of transcriptRecordHeads(run.lines)) heads.add(head);
+    headsBy.set(example, heads);
+  }
+
   const scans = new Map<string, TranscriptScan>();
   for (const [example, runs] of pools) {
     scans.set(
       example,
-      scanGalleryTranscripts(`gallery/${example}/README.md`, readmes.get(example) ?? '', runs, vocabulary),
+      scanGalleryTranscripts(
+        `gallery/${example}/README.md`,
+        readmes.get(example) ?? '',
+        runs,
+        vocabulary,
+        headsBy.get(example) ?? new Set<string>(),
+      ),
     );
   }
   const found = [...scans.values()].reduce((n, scan) => n + scan.found, 0);
+  const byTag = [...scans.values()].reduce((n, scan) => n + scan.byTag, 0);
+  const byHead = [...scans.values()].reduce((n, scan) => n + scan.byHead, 0);
   const verified = [...scans.values()].flatMap((scan) => scan.verified);
   const declared = [...scans.values()].flatMap((scan) => scan.declared);
   const faults = [...scans.values()].flatMap((scan) => scan.faults);
@@ -18283,9 +18420,17 @@ function runGalleryTranscriptSuite(): number {
   // 🔒 CUR01's argument, and it is the one that matters most here. Every step
   // above can come back empty — a gallery with no example, a README that stops
   // stating its own build line, a command that starts failing, a gutter tag the
-  // tool renames — and each of those makes GT02 below pass while reading
-  // nothing. A scanner that silently matched no block would report a clean tree,
-  // which is the one failure a gate like this cannot afford.
+  // tool renames, a record head it restructures — and each of those makes GT02
+  // below pass while reading nothing. A scanner that silently matched no block
+  // would report a clean tree, which is the one failure a gate like this cannot
+  // afford. ⭐ The two anchor rules are floored SEPARATELY, because a floor on
+  // their sum would let one of them go to zero while the other grew.
+  // ⚠️ `headCount >= 100` below is a SMOKE floor, chosen against an observed 281
+  // and not a measured bound. Nobody has established how far it could honestly
+  // fall on a smaller gallery; it is there to catch the head derivation returning
+  // nothing at all, which is the failure that would make rule 2 silently stop
+  // anchoring. Do not read it as a budget.
+  const headCount = [...headsBy.values()].reduce((n, heads) => n + heads.size, 0);
   say(
     'GT01_THE_TRANSCRIPT_SCAN_READ_THE_GALLERY_THE_TOOL_AND_THE_BLOCKS',
     unstated.length === 0 &&
@@ -18294,22 +18439,27 @@ function runGalleryTranscriptSuite(): number {
       pools.size === examples.length &&
       runCount >= 14 &&
       vocabulary.size >= 5 &&
-      found >= 16 &&
-      verified.length >= 10 &&
-      covered.length >= 5,
+      headCount >= 100 &&
+      found >= 20 &&
+      byTag >= 14 &&
+      byHead >= 6 &&
+      verified.length >= 14 &&
+      covered.length >= 6,
     unstated.length > 0
       ? `these examples' READMEs no longer state a \`bun cli.ts build --rig gallery/<name>/rig.json\` line, so ` +
         `this gate has no command to hold their blocks to: ${unstated.join(', ')}`
       : broken.length > 0
         ? `a command a README states did not run: ${broken.join('; ')}`
         : `${examples.length} example(s), ${runCount} stated command run(s), gutter vocabulary ` +
-          `{${[...vocabulary].sort().join(' ')}}; ${found} quoted transcript(s) found by that vocabulary — ` +
+          `{${[...vocabulary].sort().join(' ')}} and ${headCount} record head(s) the runs print; ` +
+          `${found} quoted transcript(s) found — ${byTag} by a gutter tag, ${byHead} by a record head — ` +
           `${verified.length} reproduced verbatim across ${covered.length} example(s) (${covered.join(', ')}), ` +
           `${declared.length} declared unreproducible ` +
           `(${declared.map((d) => `${d.where} — ${d.reason}`).join('; ') || 'none'})`,
-    'both ends of this can come back empty: the anchor is a tag the tool prints, so a renamed tag takes every ' +
-      'block anchored on it out of the scan at once, and the pool is the commands a README states, so a rewritten ' +
-      'quickstart takes the whole example out. The floors are what make either loud instead of silent',
+    'every end of this can come back empty: one anchor is a tag the tool prints and the other is a record head ' +
+      'it prints, so a renamed tag or a restructured section takes every block anchored on it out of the scan at ' +
+      'once, and the pool is the commands a README states, so a rewritten quickstart takes the whole example out. ' +
+      'The floors — one per anchor rule, not one on their sum — are what make any of that loud instead of silent',
   );
 
   // --- GT02: the blocks themselves ------------------------------------------
@@ -18333,13 +18483,18 @@ function runGalleryTranscriptSuite(): number {
   // Red-first, on every block GT02 verifies rather than on one chosen by hand,
   // and two-sided: the planted spelling must fault and the tree's own must not
   // (GT02 is that half). The last plant is the one that motivates GT01 — take
-  // the TAG off a block's first line and the block does not fault, it silently
-  // stops being a block at all.
+  // the ANCHOR off a block's first line and the block does not fault, it
+  // silently stops being a block at all. ⭐ Since #422 that plant runs over both
+  // anchor rules with one edit, because both anchor on the first line's first
+  // field: it flips the case of that field's first letter, which un-tags a
+  // gutter record and un-names a record head alike.
   const misses: string[] = [];
   let planted = 0;
   let silenced = 0;
+  let unplantable = 0;
   for (const [example, runs] of pools) {
     const readme = readmes.get(example) ?? '';
+    const heads = headsBy.get(example) ?? new Set<string>();
     const verifiedHere = new Set((scans.get(example)?.verified ?? []).map((v) => v.where));
     for (const block of galleryBlocks(readme)) {
       if (!verifiedHere.has(`gallery/${example}/README.md:${block.line}`)) continue;
@@ -18352,6 +18507,7 @@ function runGalleryTranscriptSuite(): number {
           plantIntoReadme(readme, block, edited),
           runs,
           vocabulary,
+          heads,
         );
         if (after.faults.length === 0) misses.push(`gallery/${example}/README.md:${block.line}: ${name} — not faulted`);
       }
@@ -18360,44 +18516,116 @@ function runGalleryTranscriptSuite(): number {
       const declaredLines = declaredOnly.split('\n');
       declaredLines.splice(block.line - 1, 0, '<!-- transcript: lifted out of a run that does not print it -->');
       planted++;
-      if (scanGalleryTranscripts(`gallery/${example}/README.md`, declaredLines.join('\n'), runs, vocabulary).faults.length === 0) {
+      if (
+        scanGalleryTranscripts(`gallery/${example}/README.md`, declaredLines.join('\n'), runs, vocabulary, heads)
+          .faults.length === 0
+      ) {
         misses.push(`gallery/${example}/README.md:${block.line}: declared while still reproducing — not faulted`);
       }
       // A marker with nothing after the colon is not a declaration.
       const emptyLines = declaredOnly.split('\n');
       emptyLines.splice(block.line - 1, 0, '<!-- transcript: -->');
       planted++;
-      if (scanGalleryTranscripts(`gallery/${example}/README.md`, emptyLines.join('\n'), runs, vocabulary).faults.length === 0) {
+      if (
+        scanGalleryTranscripts(`gallery/${example}/README.md`, emptyLines.join('\n'), runs, vocabulary, heads)
+          .faults.length === 0
+      ) {
         misses.push(`gallery/${example}/README.md:${block.line}: declared with no reason — not faulted`);
       }
-      // And the silent one: no tag, no candidate, no fault — only the floor.
-      const untagged = [...block.lines];
-      const first = untagged.findIndex((line) => line.trim() !== '');
-      untagged[first] = untagged[first].replace(/[A-Z]/, (c) => c.toLowerCase());
+      // And the silent one: no anchor, no candidate, no fault — only the floor.
+      const unanchored = transcriptWithoutItsAnchor(block.lines);
+      if (unanchored === null) {
+        unplantable++;
+        continue;
+      }
       const after = scanGalleryTranscripts(
         `gallery/${example}/README.md`,
-        plantIntoReadme(readme, block, untagged),
+        plantIntoReadme(readme, block, unanchored),
         runs,
         vocabulary,
+        heads,
       );
       const scan = scans.get(example);
       if (scan === undefined || after.found !== scan.found - 1 || after.faults.length !== 0) silenced++;
     }
   }
+
+  // ⭐ `unplantable` is the one clause above that this gallery cannot make fire,
+  // so it gets a mutant rather than standing as a line that is always true.
+  //
+  // It counts a verified block whose anchor field has no letter to flip — the
+  // negative plant would then be a silent no-op, and a plant that does nothing is
+  // a control that checks nothing. Measured: all 281 record heads the runs print
+  // today name themselves with a field that has a letter in it, so no README in
+  // this tree can reach the branch. That is exactly the shape `TC04` was DELETED
+  // for — a control that passed the mutant it existed to catch — and the
+  // difference here is that the branch is reachable by data the report could
+  // plausibly grow (a record named by a number, beside the `t=0.6` it already
+  // prints), not merely by an edit to this file. So it is exercised on a
+  // synthetic report, through the same functions the real loop calls: a run that
+  // prints one record named `12.5`, and a README quoting it.
+  //
+  // Two-sided, because a probe that only showed `null` would also be satisfied by
+  // a helper that returned `null` for everything: the same block with a letter in
+  // its anchor field has to come back plantable.
+  const synthetic = (name: string): { body: string[]; scan: TranscriptScan } => {
+    const body = [`  ${name}  a record this report names without a letter`, '        one line of detail under it'];
+    const runs: TranscriptRun[] = [{ command: 'a synthetic run', lines: ['', ...body, ''], status: 0 }];
+    return {
+      body,
+      // No gutter vocabulary at all, so only rule 2 can anchor this and a pass
+      // cannot be the tag rule quietly standing in for it.
+      scan: scanGalleryTranscripts(
+        'synthetic',
+        ['```', ...body, '```'].join('\n'),
+        runs,
+        new Set<string>(),
+        transcriptRecordHeads(runs[0].lines),
+      ),
+    };
+  };
+  const letterless = synthetic('12.5');
+  const lettered = synthetic('v12.5');
+  const built = (probe: { scan: TranscriptScan }): boolean =>
+    probe.scan.verified.length === 1 && probe.scan.byHead === 1 && probe.scan.faults.length === 0;
+  const probes = [
+    ...(built(letterless) && built(lettered)
+      ? []
+      : ['the synthetic probes did not build a verified head-anchored block, so they say nothing about the counter']),
+    ...(transcriptWithoutItsAnchor(letterless.body) === null
+      ? []
+      : ['a verified block whose anchor field has no letter was still plantable, so `unplantable` is a clause that cannot fire']),
+    ...(transcriptWithoutItsAnchor(lettered.body) !== null
+      ? []
+      : ['the same block with a letter in its anchor field was NOT plantable, so the counter would swallow every block']),
+  ];
+
   say(
     'GT03_THE_SCANNER_FAULTS_EVERY_WAY_A_QUOTED_TRANSCRIPT_GOES_STALE',
-    misses.length === 0 && planted >= 40 && silenced === 0 && verified.length > 0,
-    misses.length === 0
+    misses.length === 0 &&
+      planted >= 60 &&
+      silenced === 0 &&
+      unplantable === 0 &&
+      probes.length === 0 &&
+      verified.length > 0,
+    misses.length === 0 && unplantable === 0 && probes.length === 0
       ? `${planted} planted edit(s) over the ${verified.length} verified block(s) — a figure bumped, an interior ` +
         'line dropped, a suffix appended, a reproducing block declared away, and a declaration with no reason — ' +
-        'each faulted; and taking the gutter tag off a first line faulted NOTHING on all ' +
-        `${verified.length} of them, dropping each silently out of the scan, which is what GT01's floor is for`
+        'each faulted; and taking the anchor off a first line — the gutter tag on ' +
+        `${verified.filter((v) => v.anchor === 'tag').length} of them, the record head's own name on ` +
+        `${verified.filter((v) => v.anchor === 'head').length} — faulted NOTHING on all ${verified.length}, ` +
+        `dropping each silently out of the scan, which is what GT01's floors are for; and the guard that says ` +
+        'every one of them actually RECEIVED that plant is itself shown to fire, on a synthetic record this ' +
+        'gallery cannot produce — one named `12.5`, with no letter in it to take off'
       : `${misses.length} of ${planted} planted edit(s) did not fault` +
-        (silenced > 0 ? ` (and ${silenced} untagged block(s) did not drop out cleanly)` : '') +
-        `:\n          ${misses.join('\n          ')}`,
+        (silenced > 0 ? ` (and ${silenced} unanchored block(s) did not drop out cleanly)` : '') +
+        (unplantable > 0 ? ` (and ${unplantable} block(s) had no anchor letter to take off)` : '') +
+        `:\n          ${[...misses, ...probes].join('\n          ')}`,
     'a scanner is a vocabulary of shapes and a shape that stops matching goes silent, not red. #412 was a line ' +
       'and a suffix; a figure moving is the same defect a third way, and the declaration has to be refused on a ' +
-      'block that reproduces or it becomes the bypass',
+      'block that reproduces or it becomes the bypass. #422 added a second anchor rule and this is what holds it ' +
+      'to the same bar: the new rule has to go quiet in exactly the way the old one does, never louder and never ' +
+      'more forgiving',
   );
 
   // --- GT04: the vocabulary the gallery index NAMES, against the derived one --
@@ -21640,8 +21868,10 @@ function main(): void {
   const galleryTranscripts =
     ", + 4 gallery-transcript controls (issue #415 — the currency gate on the surface this project's audience " +
     'actually reads: every fenced block a `gallery/*/README.md` QUOTES the tool as printing, held to a contiguous ' +
-    'run of the output of a command that README states. The blocks are found by the tag rigc prints at its own ' +
-    'report gutter, and that vocabulary is collected from the runs rather than listed here; the pool is the ' +
+    'run of the output of a command that README states. The blocks are found by the two things a rigc report ' +
+    'names a record with — the tag at its own gutter, and, for the sections that are a tree rather than a gutter, ' +
+    'the field a record head names itself with, which is an interior node of that tree and never one of its ' +
+    'figures (issue #422). Both vocabularies are collected from the runs rather than listed here; the pool is the ' +
     'commands each README names, one subprocess each, because those lines come out of `cli.ts` and reading them ' +
     'out of the library instead would be the report agreeing with the report — which is exactly what #412 changed ' +
     'and nothing noticed, twice in one night. The derivation is asserted first, since a renamed tag would take ' +
