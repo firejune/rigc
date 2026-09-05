@@ -39,6 +39,7 @@
     "tools/contact.ts",
     "tools/png_probe.mjs",
     "tools/measure_contact_depth.ts",
+    "tools/editor_roundtrip.ts",
     "docs/AUTHORING.md",
     "docs/SPEC_COVERAGE.md",
     "docs/PROMPTING.md",

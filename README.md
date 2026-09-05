@@ -501,6 +501,40 @@ relative to the `cuts.json` file itself, so the table lives with the project tha
 the art. Its shape is under
 [Usage](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md#usage).
 
+### The editor round trip — for a licence holder, never in CI
+
+`tools/editor_roundtrip.ts` drives the loop the output's whole premise rests on:
+build → **import into the Spine editor** → export back to JSON → gate, `diff`,
+`render` and `check` the export against the build it came from.
+
+```
+bun cli.ts build --rig … --motion … --out build/ --copy-images
+bun tools/editor_roundtrip.ts --build build/ --editor /Applications/Spine.app/Contents/MacOS/Spine
+```
+
+It prints the import and export exit codes, the validator's verdict on the
+export, every `diff` measure that moved, `check`'s mean MAE and worst drift per
+animation, and a field-by-field list of what the editor rewrote. On its first
+run it found three emitter defects — [#368](https://github.com/firejune/rigc/issues/368),
+[#369](https://github.com/firejune/rigc/issues/369),
+[#370](https://github.com/firejune/rigc/issues/370) — and then showed that a
+human edit made in the editor survives the trip back.
+
+🔒 **It requires a licensed Spine editor on the machine, by construction**, and
+drives only the [documented command line](https://esotericsoftware.com/spine-command-line-interface)
+— never the UI, and it produces nothing the editor did not produce. With no
+editor present it refuses by name and exits non-zero.
+
+⛔ **It is not, and must not become, a selftest control.** `bun run selftest` is
+self-contained and CI has no editor; a control that needed one would report SKIP
+for ever, which is how a gate comes to look kept while checking nothing. Run
+this by hand, on a machine that has the editor.
+
+⚠️ Build with `--copy-images`. An ordinary build's atlas names its pages by a
+relative path back to the art directory, and the round trip copies that atlas to
+a directory at another depth — the tool refuses such a build by name rather than
+letting `A17` blame the editor for the harness's own doing.
+
 ## Documentation
 
 | Document | For |
