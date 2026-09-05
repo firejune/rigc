@@ -1452,7 +1452,11 @@ draws no pixels at that key's own time is already passed over — `A39` measures
 that and says so (§4.11, and the `skipped` line in the `DEFORM` block). Declaring
 the slot instead would turn the check off at every angle where the part is fully
 visible too, which is trading a false positive for a blind spot on the same slot
-([#401](https://github.com/firejune/rigc/issues/401)).
+([#401](https://github.com/firejune/rigc/issues/401)). ⚠️ And land that alpha-0
+key **before** the folding key rather than on it — the frames in between are
+drawn and are gated (§4.11.3); this used to be a rule you had to follow and is
+now one the gate keeps
+([#403](https://github.com/firejune/rigc/issues/403)).
 
 ---
 
@@ -2405,6 +2409,7 @@ deform  (what each key does to the geometry — figures with names, never a bar;
           winding    32 of 32 kept, 0 collapsed
   WORST   turn  area x0.637174 (head/head key 1 tri 17)  stretch x1.319121 (head/head key 1 tri 22)  squash x0.637175 (head/head key 1 tri 8)
   ..            reversed 0, collapsed 0, over 8 key(s) and 192 triangle sample(s)  <- A39 reads the same two counts
+  ..            6 span(s) between consecutive keys scanned for a fold no key lands on: none folds (the closed form flagged nothing, so no span cost a posed measurement)  <- A39 reads the same scan
 ```
 
 **The rows, and what each one is for:**
@@ -2416,7 +2421,8 @@ deform  (what each key does to the geometry — figures with names, never a bar;
 | `area` | signed area **after ÷ before**, its smallest and largest over the triangles, each with the triangle. `x0.637` is a band compressed to 64%; **a negative ratio is a triangle turned inside out** |
 | `stretch` | the two singular values of the map from the cleared triangle to the deformed one — the worst stretch and the worst squash the **drawing** takes. `σ₁·σ₂ = \|area ratio\|`, so the two rows are two readings of one map and cannot disagree |
 | `winding` | triangles whose winding survived, and how many the key pinched onto zero area. A fold says so and points at `A39` |
-| `WORST` | per animation: the worst key by each quantity, then the reversal and collapse totals over every key |
+| the `BETWEEN` line | a fold at a time **no key lands on** (§4.11.3): the two keys it lies between, the time, the segment's curve kind, and how far along the interpolation it is. Present only where one was found |
+| `WORST` | per animation: the worst key by each quantity, then the reversal and collapse totals over every key, then how many spans between keys were scanned and what the scan found |
 
 📌 **The frame is the posed one, and the denominator is 1.000 by definition.**
 Both sides of every comparison are taken at the key's own time with the animation
@@ -2488,6 +2494,73 @@ at once. Its `pitch` band ratios are *derived* from the mesh's own row table and
 keys then report an area ratio of `1.000000 ± 1e-6` at **every** amplitude — not
 a measurement but a **proof** showing up as one, because a wave that reads `y`
 and displaces `x` over row-major quads preserves every signed area exactly.
+
+---
+
+### 4.11.3 The times no key lands on — `A39` between two keys
+
+🚨 **Your keys are not where the runtime is.** It interpolates between them, so a
+deform that is inside its fold angle at *every* key can be past it in between —
+and until issue
+[#403](https://github.com/firejune/rigc/issues/403) nothing looked there. The
+reachable version of that was the fade above: land the alpha-0 key **on** the
+folding key and every key is honest — that one really does draw nothing — while
+the frames just before it are drawn, nearly folded, and land on no key at all. On
+the turn probe that is **8 reversed triangles at alpha 0.20, gating green**.
+
+⇒ `A39` now scans every interval between two consecutive deform keys as well, and
+refuses one with its own sentence:
+
+```
+FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform head/head BETWEEN key 0
+      (t=0s) and key 1 (t=0.5s), at t=0.444089s — 88.8% of the way from one to the other:
+      8 of 32 triangle(s) reverse winding — triangle 0 [0,15,16] 1890.001 -> -272.314px²; …
+      NO KEY LANDS THERE: the runtime interpolates between the two keys, and the mesh is
+      inside out for part of the way, drawing its texture backwards at alpha 0.1118 …
+```
+
+**What to change when you see it**, in the order worth trying:
+
+| | |
+| --- | --- |
+| the fade landed **on** the fold | move the alpha-0 key **before** the folding key, so every frame that folds is a frame that draws nothing. This is the case the message calls out by name |
+| two keys are simply too far apart | add a key inside the span, so the geometry the runtime passes through is geometry you wrote rather than geometry it inferred |
+| the two keys' models disagree | move their offsets closer together — a projection past its fold angle is the usual cause, and [FACE.md §4.2](FACE.md) has the closed form |
+| the fold is the drawing | `invariants.deformMayFold` (§3.7), as for a key |
+
+**Three things the scan is, and one it is not:**
+
+- **Solved, not sampled.** A deform interpolated between two keys travels a
+  straight line through offset space, so a triangle's signed area is a
+  **quadratic in the interpolation fraction** and the fold is a root of it. There
+  is no subdivision count and so no sample spacing to argue about.
+- **Measured before it refuses.** The closed form only decides *where to look*;
+  the time it names is then posed and measured by exactly the code that measures
+  a key. So a `BETWEEN` refusal is the same measurement as a key refusal, taken
+  at a time no key holds.
+- **Alpha-aware at that same time.** The fade interpolates too, so the alpha is
+  read at the moment the geometry is — otherwise this would refuse the very
+  frames a correct fade is hiding. A fold that lands only where nothing is drawn
+  is reported and not gated, exactly as a key's is.
+- ⚠️ **Not a claim about the bones.** The closed form holds them still. On an
+  *unweighted* attachment that costs nothing — one bone matrix multiplies every
+  vertex and its determinant cancels out of the comparison — but on a **weighted**
+  mesh whose bones move across the span it is an approximation, and a prediction
+  no measurement reproduced is reported as `deformSpansUnconfirmed` rather than
+  refused. Nothing on this surface can see a fold caused by the bones alone;
+  `rigc check` against a trusted render is what can.
+
+📌 **A stepped segment holds rather than interpolates**, so it introduces no
+geometry the keys do not already have — but it is still scanned, because what it
+holds that geometry across is a stretch of time whose *alpha* is the next key's
+business. A key that folds at alpha 0 and is held, stepped, while the slot fades
+back in is refused, and the message says the segment interpolates nothing.
+
+📌 **Silence is not a pass here either.** `deformSpansScanned` is on the stats
+line of every build `A39` runs on, and the `WORST` rollup names it too, because
+"the scan ran and found nothing" and "the scan never ran" must not print the
+same. `deformSpanProbes` beside it is what the scan cost: 0 on a rig nothing was
+predicted in, one posed measurement per predicted window otherwise.
 
 ---
 
@@ -2730,7 +2803,7 @@ The report prints one line per assertion:
 | `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying its `mix` (§3.5.1). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. **SKIP** when the skeleton declares no path constraint |
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
-| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels, or when there is no rig info at all |
+| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. ⚠️ And the **spans between** consecutive keys are scanned too (§4.11.3, issue #403): the runtime interpolates, so a deform inside its fold angle at every key can be past it in between. That refusal is its own sentence — `BETWEEN key 0 (t=0s) and key 1 (t=0.5s), at t=…` — with the time solved for in closed form and then posed and measured like any key, alpha read at that same moment. `deformSpansScanned` says on every green build that the scan ran. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels *and no span between them folds where anything is drawn*, or when there is no rig info at all |
 | `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where a later one is not `additive` — it writes that property outright at `mix: 1` and every earlier slider on it is dead (§3.5.2). Also fires when the shared timeline **cannot** be additive (a slot colour, an attachment swap, a draw order, a sequence), where `"additive": true` is not the fix and one of the two has to go. The detail names the bone or slot and the property, every slider keying it in `constraints` order with its flag, and which one wins today. Three shapes are deliberately not findings: a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, not an overwrite), two `skinRequired` sliders no skin activates together, and two sliders on different properties. **SKIP** when fewer than two sliders are at full authority; a PASS means two were compared |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy

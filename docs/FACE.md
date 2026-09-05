@@ -625,6 +625,16 @@ full alpha anywhere else is refused as before. ⛔ It is also not
 `invariants.deformMayFold`: that field turns the check off for the slot at every
 angle, including the ones where the part is fully visible.
 
+🚨 **Fade out *up to* the angle you cannot take, never *at* it — and the gate now
+keeps that rule rather than asking you to.** The runtime interpolates between
+keys, so an alpha-0 key landing exactly on the folding key leaves the frames just
+before it drawn and nearly folded (§9.2 measures it: 8 reversed triangles at
+alpha 0.20). `A39` scans the spans between consecutive keys as well and refuses
+one by name, at a time solved for in closed form and then posed and measured
+([#403](https://github.com/firejune/rigc/issues/403), AUTHORING §4.11.3). ⇒ The
+practical shape is unchanged and now checkable: **key the fade to 0 at or before
+the last angle that gates green, and let the fold happen after it.**
+
 📘 **The identity above, used forwards on a `pitch`.**
 [`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod)
 (repository material) picks its ceiling first and solves the *rows* out of it —
@@ -1187,12 +1197,54 @@ it was measuring something other than what it said. The bar is **alpha exactly
 same fold at full alpha in another animation is still refused, because the
 measurement is of one key at one time.
 
-🚨 **And the limit of that, measured rather than assumed: the gate reads KEYS, and
+🚨 **And the limit of that, measured rather than assumed: the gate read KEYS, and
 the geometry between two keys is interpolated.** Put the alpha-0 key exactly on
 the 40° key and 8 triangles are already reversed at `t=0.4`, where the slot is
-still drawing at **alpha 0.20** — nothing samples there, so nothing says so. ⇒
-Fade out over the run *up to* the angle you cannot take, so that every key past
-the ceiling is one that draws nothing.
+still drawing at **alpha 0.20**:
+
+| t | slot alpha | reversed triangles |
+| --- | ---: | ---: |
+| 0.30 | 0.40 | 0 |
+| 0.40 | **0.20** | **8** |
+| 0.45 | 0.10 | 8 |
+| 0.49 | 0.02 | 8 |
+| 0.50 | 0.00 | 8 |
+
+📌 The table and the refusal below are on the **turn probe** — this head's own
+five columns and 32 triangles on a one-second timeline, which is why the times
+are not build (b)'s. It is `selftest.ts`'s fixture, so the rows are reproduced by
+every run rather than transcribed once.
+
+🆕 **Closed on 2026-09-05
+([#403](https://github.com/firejune/rigc/issues/403)), and the shape of the fix
+is the reason it is here rather than in a paragraph of advice.** Every interval
+between two consecutive deform keys is scanned. A deform interpolated between two
+keys travels a **straight line through offset space**, so a triangle's signed
+area is a *quadratic in the interpolation fraction* — the fold is a root of it,
+solved for rather than searched, with no sample spacing anybody would have to
+defend. What that arithmetic names is then posed and measured by the same code
+that measures a key, **alpha read at that same instant**, so the fade a correct
+rig relies on is not refused and the frames it does not cover are:
+
+```
+FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform head/head BETWEEN key 0
+      (t=0s) and key 1 (t=0.5s), at t=0.444089s — 88.8% of the way from one to the other:
+      8 of 32 triangle(s) reverse winding … NO KEY LANDS THERE … at alpha 0.1118
+```
+
+⇒ The rule this section gave — *fade out over the run up to the angle you cannot
+take, so that every key past the ceiling is one that draws nothing* — is
+unchanged. What changed is that it is now a **measurement**: land the alpha-0 key
+on the fold and the build is refused, with the frame it is refused for.
+
+⚠️ **What that scan still cannot see**, stated because the limit moved rather
+than vanished: the closed form holds the BONES still across the span. On an
+unweighted attachment that is exact — one matrix multiplies every vertex and its
+determinant cancels out of the sign comparison — but on a weighted mesh whose
+bones move across the span it is an approximation, and a prediction no
+measurement reproduced is reported (`deformSpansUnconfirmed`) rather than
+refused. A fold caused by the bones alone is not this rule's subject at all, and
+`check` against a trusted render (§9.3) is what sees it.
 
 ⚠️ **One thing it deliberately does not do.** It is an **archetype** rule, so a
 `--profile spine` build reads `PROF` — the premise "a fold has no legitimate

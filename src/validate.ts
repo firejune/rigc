@@ -1609,15 +1609,35 @@ export function validate(input: ValidateInput): ValidateReport {
     // field was the wrong fix: it would have bought the fade at the price of a
     // blind spot at every angle where the part is fully visible.
     //
+    // ## And the times NO key lands on (issue #403)
+    //
+    // The keys are where the data is; they are not where the runtime is. A deform
+    // inside its fold angle at every key can be past it in between, and the
+    // exemption above makes that easy to build into rather than merely possible:
+    // land the alpha-0 key ON the folding key and the frames just before it are
+    // drawn, nearly folded and — until this — unmeasured. Measured on the turn
+    // probe: eight reversed triangles at alpha 0.20, gating green.
+    //
+    // So the survey also scans every SPAN between two consecutive keys. Its
+    // arithmetic is a closed form rather than a subdivision count (the derivation
+    // is on `wrongSignFractions`), and what it names is then *measured* at that
+    // real posed time, alpha included — so a span refusal below is the same
+    // measurement as a key refusal, taken at a time no key lands on.
+    //
+    // ⭐ **A span refusal is suppressed when either of its own two keys is
+    // already refused.** The span check exists to say what the keys cannot; when
+    // a key has already said it, a second and third message about one defect is
+    // noise, and the build is refused either way.
+    //
     // ## Where the arithmetic lives
     //
     // In [`src/deformmeasure.ts`](src/deformmeasure.ts), not here — because issue
     // #316's `DEFORM` report block prints the same reversal count this assertion
     // refuses on, and two derivations of one number drift. The survey measures
-    // every key of every timeline; this reads the reversals out of it and the
-    // report prints the rest. What stays here is the SEVERITY and the exemption:
-    // the survey has no opinion about either, which is what lets a report run it
-    // with no exemption at all.
+    // every key of every timeline and every span between them; this reads the
+    // reversals out of it and the report prints the rest. What stays here is the
+    // SEVERITY and the exemption: the survey has no opinion about either, which
+    // is what lets a report run it with no exemption at all.
     check('A39_DEFORM_KEEPS_TRIANGLE_WINDING', () => {
       if (!input.rig) {
         return skip(
@@ -1626,6 +1646,8 @@ export function validate(input: ValidateInput): ValidateReport {
         );
       }
       const survey = surveyDeformKeys(data, new Set(input.rig.deformMayFold));
+      /** A key this rule is refusing, by the triple that identifies it. */
+      const refusedKey = new Set<string>();
       for (const key of survey.keys) {
         // ⭐ The one thing this rule cannot say about a key that draws nothing.
         // Its own message below states the harm as "draws its texture
@@ -1637,6 +1659,7 @@ export function validate(input: ValidateInput): ValidateReport {
         // what makes this a measurement rather than a second `deformMayFold`.
         if (key.draw.blank !== null) continue;
         if (key.reversed.length === 0) continue;
+        refusedKey.add(`${key.animation} ${key.slot} ${key.attachment} ${key.key}`);
         const shown = key.reversed
           .slice(0, 4)
           .map((r) => `${r.triangle} [${r.ids.join(',')}] ${r.before.toFixed(3)} -> ${r.after.toFixed(3)}px²`);
@@ -1660,6 +1683,56 @@ export function validate(input: ValidateInput): ValidateReport {
             `in the rig spec as invariants.deformMayFold: [{ "slot": "${key.slot}", "why": … }]`,
         );
       }
+      // --- and the folds no key lands on (issue #403) ------------------------
+      let spanFolds = 0;
+      for (const span of survey.spans) {
+        if (span.fold === null) continue;
+        // Suppressed when a bounding key already says it: one defect, one
+        // message. The span check is here for what the keys cannot see.
+        const bounded = `${span.animation} ${span.slot} ${span.attachment} `;
+        if (refusedKey.has(bounded + span.fromKey) || refusedKey.has(bounded + span.toKey)) continue;
+        spanFolds++;
+        const at = span.fold;
+        const shown = at.measure.reversed
+          .slice(0, 4)
+          .map((r) => `${r.triangle} [${r.ids.join(',')}] ${r.before.toFixed(3)} -> ${r.after.toFixed(3)}px²`);
+        const more =
+          at.measure.reversed.length > shown.length ? `, and ${at.measure.reversed.length - shown.length} more` : '';
+        // A stepped segment interpolates NOTHING — it holds the earlier key's
+        // geometry across the whole span — so saying "the runtime interpolates"
+        // there would be telling the author to look for a defect in the wrong
+        // place. What changed across a stepped span is what the slot DRAWS.
+        const held = span.curve === 'stepped';
+        fail(
+          'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
+          `animation "${span.animation}" deform ${span.slot}/${span.attachment} BETWEEN key ${span.fromKey} ` +
+            `(t=${span.fromTime}s) and key ${span.toKey} (t=${span.toTime}s), at t=${at.time.toFixed(6)}s` +
+            (held ? ' (a stepped segment)' : ` — ${(at.percent * 100).toFixed(1)}% of the way from one to the other`) +
+            `: ${at.measure.reversed.length} of ${at.measure.triangles} triangle(s) reverse winding — ` +
+            `triangle ${shown.join('; triangle ')}${more}. NO KEY LANDS THERE: ` +
+            (held
+              ? `a stepped segment interpolates nothing, it HOLDS key ${span.fromKey}'s geometry across the whole ` +
+                'span — so the fold is that key\'s and what changes here is what the slot draws'
+              : 'the runtime interpolates between the two keys, and the mesh is inside out for part of the way') +
+            ', drawing its texture backwards' +
+            (at.measure.draw.alpha === 1
+              ? ''
+              : ` at alpha ${at.measure.draw.alpha.toFixed(4)} — visible at that strength, and only alpha exactly 0 ` +
+                'draws no pixels at all') +
+            '. ' +
+            (held
+              ? `Fix key ${span.fromKey}'s offsets, or keep the slot drawing nothing for as long as it holds them`
+              : 'Add a key inside the span so the geometry the runtime passes through is geometry you wrote, or ' +
+                "move the two keys' offsets closer together (a projection past its fold angle is the usual cause " +
+                '— docs/FACE.md §4.2 has the closed form)') +
+            (at.measure.draw.alpha === 1
+              ? ''
+              : '; if the part is being faded out over this turn, land the alpha-0 key BEFORE the folding key ' +
+                'rather than on it, so every frame that folds is a frame that draws nothing (docs/FACE.md §9.2)') +
+            `, or, if this slot folds on purpose, declare it in the rig spec as invariants.deformMayFold: ` +
+            `[{ "slot": "${span.slot}", "why": … }]`,
+        );
+      }
       if (survey.timelines === 0) {
         return skip('A39_DEFORM_KEEPS_TRIANGLE_WINDING', 'no animation carries a deform timeline');
       }
@@ -1680,13 +1753,21 @@ export function validate(input: ValidateInput): ValidateReport {
       const blank = survey.keys.filter((k) => k.draw.blank !== null);
       const name = (k: (typeof survey.keys)[number]): string =>
         `${k.animation}/${k.slot}/${k.attachment}#${k.key}:${k.draw.showsThisMesh ? 'alpha0' : 'notShown'}`;
-      if (blank.length === survey.keys.length) {
+      // ⚠️ `&& spanFolds === 0` because a rig whose every key draws nothing can
+      // still fold at a time between two of them that DOES draw — that is issue
+      // #403's own case, and a SKIP printed over a refusal would be this rule
+      // reporting "nothing to measure" about the thing it just measured.
+      if (blank.length === survey.keys.length && spanFolds === 0) {
         return skip(
           'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
           `every deform key here draws no pixels at its own time, so none of them has a texture that could be ` +
             `drawn backwards — ${blank[0].animation} ${blank[0].slot}/${blank[0].attachment} key ${blank[0].key}: ` +
             `${blank[0].draw.blank}` +
-            (blank.length > 1 ? `, and ${blank.length - 1} more key(s) like it` : ''),
+            (blank.length > 1 ? `, and ${blank.length - 1} more key(s) like it` : '') +
+            (survey.spans.length
+              ? `. The ${survey.spans.length} span(s) between them were scanned too and none folds where anything ` +
+                'is drawn'
+              : ''),
         );
       }
       stats.deformKeysMeasured = survey.keys.length - blank.length;
@@ -1698,6 +1779,21 @@ export function validate(input: ValidateInput): ValidateReport {
         if (survey.notDrawnReversed) stats.deformNotDrawnReversed = survey.notDrawnReversed;
       }
       if (survey.exempted.length) stats.deformFoldExempt = survey.exempted.join(',');
+      // ⚠️ The between-keys scan on the stats line, on a GREEN run too (issue
+      // #403). `deformSpansScanned` is the positive control an agent can read —
+      // a scan that ran and found nothing has to be distinguishable from a scan
+      // that never ran — and `deformSpanProbes` is what it cost: 0 on a rig the
+      // closed form flags nothing in, one posed measurement per flagged window
+      // otherwise.
+      stats.deformSpansScanned = survey.spans.length;
+      if (survey.spanProbes) stats.deformSpanProbes = survey.spanProbes;
+      if (survey.spansNotDrawn) stats.deformSpansNotDrawn = survey.spansNotDrawn;
+      // A prediction nothing reproduced. Never a refusal — that would be the
+      // false red issues #44 and #262 already cost this file — and never a
+      // silence either: the one case that reaches it is a weighted mesh whose
+      // bones move across the span, where the closed form's fixed-pose
+      // assumption is the thing that did not hold.
+      if (survey.spansUnconfirmed) stats.deformSpansUnconfirmed = survey.spansUnconfirmed;
     });
 
     // --- A23: a physics constraint that does nothing, quietly ---------------

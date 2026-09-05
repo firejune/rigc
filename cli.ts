@@ -63,6 +63,7 @@ import {
   surveyDeformKeys,
   type DeformExtreme,
   type DeformKeyMeasure,
+  type DeformSpan,
 } from './src/deformmeasure.ts';
 import { diffLines, diffSkeletons, reportedFigures, sectionFigures, type DiffReport } from './src/diff.ts';
 import { copyAtlasImages } from './src/emit.ts';
@@ -656,7 +657,13 @@ function sameKeyTime(specTime: number, loaded: number): boolean {
  * - and a key the gate read **no winding** off — because the slot draws no pixels
  *   of the mesh at that key's own time (issue #401) — says so on a `skipped` line
  *   with the survey's own sentence, and is kept out of the rollup's counts,
- *   because that line ends by claiming A39 reads the same two.
+ *   because that line ends by claiming A39 reads the same two;
+ * - the **spans** between the keys are the survey's too (issue #403). A `BETWEEN`
+ *   line appears wherever the closed form found a fold at a time no key lands
+ *   on, whether the gate refuses it or passes it over because nothing is drawn
+ *   there — and a `spans` line says how many were scanned even when nothing was
+ *   found, because a scan that ran and found nothing has to be distinguishable
+ *   from a scan that never ran.
  *
  * ## And what it deliberately does not print
  *
@@ -777,6 +784,28 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
       );
     }
   }
+  // The folds at times no key lands on (issue #403), printed after the keys they
+  // lie between rather than interleaved: they are a different measurement — the
+  // closed form named the time and the runtime was posed there — and a reader
+  // needs to be able to tell the two apart at a glance.
+  for (const span of survey.spans) {
+    if (span.fold === null) continue;
+    const at = span.fold;
+    out.push(
+      `  BETWEEN ${span.animation}  ${span.skin}/${span.slot}/${span.placeholder}  key ${span.fromKey} -> ` +
+        `${span.toKey}  t=${at.time.toFixed(6)}  ${span.curve}` +
+        (span.curve === 'stepped' ? '  (held, not interpolated)' : `  ${(at.percent * 100).toFixed(1)}% of the way`),
+    );
+    out.push(
+      `          winding    ${at.measure.triangles - at.measure.reversed.length} of ${at.measure.triangles} kept, ` +
+        `${at.measure.collapsed} collapsed  <- a fold at a time no key lands on` +
+        (at.measure.draw.blank !== null
+          ? ', and nothing gates it: nothing is drawn there'
+          : exempt.has(span.slot)
+            ? ', and A39 does not gate it (invariants.deformMayFold)'
+            : `: A39 refuses this span by name, at alpha ${at.measure.draw.alpha.toFixed(4)}`),
+    );
+  }
   // The rollup, per animation: the worst key by each quantity. A timeline's own
   // eight keys are eight blocks above, and "which of them is the one to look at"
   // is the question the sweep in issue #313's landing comment answered by hand.
@@ -820,8 +849,40 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
           'them as deformKeysNotDrawn',
       );
     }
+    // ⚠️ Printed on a clean animation too. "The scan ran and found nothing" and
+    // "the scan never ran" are the two things a gate must never say the same
+    // way, and this line is the only place an author can tell them apart
+    // (issue #403).
+    const spans = survey.spans.filter((s) => s.animation === animation);
+    if (spans.length) {
+      out.push(
+        `  ..      ${keys.length || blank.length ? ''.padEnd(animation.length) : animation}  ${spans.length} ` +
+          `span(s) between consecutive keys scanned for a fold no key lands on: ` +
+          `${spanTally(spans)}  <- A39 reads the same scan`,
+      );
+    }
   }
   return out;
+}
+
+/** What the between-keys scan found, in one clause (issue #403). */
+function spanTally(spans: readonly DeformSpan[]): string {
+  const folds = spans.filter((s) => s.fold !== null).length;
+  const notDrawn = spans.filter((s) => s.notDrawn > 0).length;
+  const unconfirmed = spans.filter((s) => s.unconfirmed).length;
+  const probes = spans.reduce((n, s) => n + s.probed.length, 0);
+  if (folds === 0 && notDrawn === 0 && unconfirmed === 0) {
+    return `none folds (the closed form flagged nothing, so no span cost a posed measurement)`;
+  }
+  return (
+    [
+      folds ? `${folds} fold(s)` : '',
+      notDrawn ? `${notDrawn} folding only where nothing is drawn` : '',
+      unconfirmed ? `${unconfirmed} predicted a fold no probe reproduced` : '',
+    ]
+      .filter(Boolean)
+      .join(', ') + `, at a cost of ${probes} posed measurement(s)`
+  );
 }
 
 /**
