@@ -3567,14 +3567,76 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
                 }
               : null;
         if (dead !== null) {
-          const lands = toTime + (dead.readAs - fromValue) * perUnit;
+          /**
+           * The time this mapping puts a driving value at, before the runtime
+           * touches it — the one arithmetic every figure below comes off.
+           *
+           * ⚠️ **Computed, not asserted** (issue #423). This clause used to end
+           * *"— outside the animation's Ds. With `loop`: false that is
+           * `Math.max(0, time)` holding the last frame; with `loop`: true it
+           * wraps to some other frame"*, which states a consequence rather than
+           * measuring one — and is flatly false for a range spanning a full
+           * turn, where the wrapped reading lands INSIDE the animation. It also
+           * printed both loop modes and left the reader to pick. A message that
+           * hedges is a message that has not measured.
+           */
+          const timeAt = (value: number): number => toTime + (value - fromValue) * perUnit;
+          const lands = timeAt(dead.readAs);
+          // `[0, 360)` is the whole of what `FromRotate.value` returns (issue
+          // #417), so the readings that reach the animation at all are that
+          // circle met with the driving window `lowest`..`highest` the range
+          // clause above already prints. A second derivation beside these two
+          // numbers is exactly how a pair drifts, which is why #417 collapsed
+          // the two ends into one `dead` record in the first place.
+          const reachLo = Math.max(0, lowest);
+          const reachHi = Math.min(360, highest);
+          const reaches = reachLo <= reachHi;
+          const intoFrame = (time: number): number => Math.min(Math.max(time, 0), duration);
+          const reachA = intoFrame(timeAt(reachLo));
+          const reachB = intoFrame(timeAt(reachHi));
+          const span = `${Math.min(reachA, reachB).toFixed(3)}s..${Math.max(reachA, reachB).toFixed(3)}s`;
+          // ⭐ Exactly ONE arc of the circle is ever left over, and that is what
+          // lets the message name one bound and one frame instead of a set: the
+          // refusal means `[lowest, highest]` already runs off one end of
+          // `[0, 360)`, so the part of the circle outside it is a single run.
+          // (Both ends outside means the whole circle reaches — `dead` is 0° wide
+          // — and neither end outside is not a refusal at all.)
+          const dark = reaches ? 360 - (reachHi - reachLo) : 360;
+          const heldAt = intoFrame(timeAt(reachLo > 0 ? 0 : 360));
+          const arc = !reaches
+            ? 'every reading'
+            : reachLo > 0
+              ? `every reading below ${reachLo.toFixed(3)}°`
+              : `every reading above ${reachHi.toFixed(3)}°`;
+          // How much of the range is a bone position no reader ever returns.
+          const outside = (lowest < 0 ? -lowest : 0) + (highest > 360 ? highest - 360 : 0);
+          // ⚠️ WHICH consequence the runtime produces is the slider's own `loop`,
+          // read rather than guessed: `Slider.js:63-66` is
+          // `p.time = duration + (p.time % duration)` when it is true and
+          // `Math.max(0, p.time)` when it is false, so a reading held on one
+          // frame under the second is replayed from elsewhere under the first and
+          // nothing is dead in time at all. Swept through spine-core at 0.1° over
+          // the whole circle before this was written, both ways.
+          const consequence =
+            spec.loop === true
+              ? `Nothing is held: "loop": true wraps the time as \`duration + (time % duration)\`, so the ` +
+                `${outside.toFixed(3)}° of the range ${dead.side} selects nothing a reading inside the circle does ` +
+                'not already select.'
+              : !reaches
+                ? `This dial reaches none of the animation's ${duration}s — the whole circle is held on the frame at ` +
+                  `${heldAt.toFixed(3)}s.`
+                : dark === 0
+                  ? `This dial reaches only ${span} of the animation's ${duration}s, and no reading of the circle ` +
+                    'reaches the rest of it.'
+                  : `This dial reaches only ${span} of the animation's ${duration}s, and ` +
+                    `${((dark / 360) * 100).toFixed(1)}% of the circle — ${arc} — is held on the frame at ` +
+                    `${heldAt.toFixed(3)}s.`;
           throw new CompileError(
             `${where}: drives off bone "${String(spec.bone)}" rotate with "local": false, and the driving values ` +
               `that reach animation "${animation}" (0s..${duration}s) run from ${lowest.toFixed(3)}° to ${highest.toFixed(3)}°. ` +
               'A world rotation is read through `FromRotate.value`, which ends `if (value < 0) value += 360`, so the bone ' +
-              `at ${dead.end.toFixed(3)}° is read as ${dead.readAs.toFixed(3)}° and maps to time ${lands.toFixed(3)}s — outside ` +
-              `the animation's ${duration}s. With "loop": false that is \`Math.max(0, time)\` holding the last frame; with ` +
-              `"loop": true it wraps to some other frame. Either way the whole part of the range ${dead.side} is dead and ` +
+              `at ${dead.end.toFixed(3)}° is read as ${dead.readAs.toFixed(3)}° and maps to time ${lands.toFixed(3)}s. ` +
+              `${consequence} The whole part of the range ${dead.side} is dead and ` +
               'nothing at runtime reports it. Add `"local": true` to read the bone\'s own rotation signed and unwrapped — ' +
               `that is the form a face axis wants — or ${dead.repair}.`,
           );
