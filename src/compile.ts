@@ -3265,6 +3265,21 @@ type RigConstraintInput = { name: string; type: string } & Record<string, unknow
 /** The six property names a transform constraint may map between (`:241`, `:521`). */
 const TRANSFORM_PROPERTIES = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'];
 
+/**
+ * How far past a boundary an end of a `rotate` slider's driving range may sit
+ * before the refusal below fires, in degrees.
+ *
+ * ⭐ **Outward at both ends**, which is the whole reason it is named: 0° and 360°
+ * are the two values an author of a face axis or a full-circle dial actually aims
+ * at, and `from − to / scale` is three authored numbers and a division, so an
+ * intended 0° can arrive as `-1e-13` and an intended 360° as `360.0000000001`.
+ * The slack exists so arithmetic noise around either aim is not a refusal.
+ *
+ * Nothing is tuned. The failure it separates from is gross: a wrapped reading
+ * moves the applied time by `360 · scale`.
+ */
+const SLIDER_WRAP_SLACK = 1e-6;
+
 /** What a constraint's names resolve against. */
 interface ConstraintContext {
   boneNames: Set<string>;
@@ -3467,11 +3482,14 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
       //   let value = Math.atan2(source.c / sy, source.a / sx) * radDeg + …;
       //   if (value < 0) value += 360;
       //
-      // so a driving value below 0° is one the runtime never produces: it arrives
-      // as `value + 360` instead, and `time = to + (value - from) * scale` then
-      // lands far outside the animation. A yaw axis with its neutral at 0° — the
-      // natural way to author a face — therefore has its entire negative half
-      // pinned to one frame, and nothing anywhere says so (issue #402).
+      // `Math.atan2` returns `(-180, 180]` and the `offsets` a slider hands that
+      // reader are `Slider.offsets`, a private all-zero array — so **`[0, 360)`
+      // is the whole of what it can ever produce**. A driving value outside that
+      // is one the runtime never returns: it arrives 360° away, and
+      // `time = to + (value - from) * scale` then lands far outside the
+      // animation. A yaw axis with its neutral at 0° — the natural way to author
+      // a face — therefore has its entire negative half pinned to one frame, and
+      // nothing anywhere says so (issue #402).
       //
       // ⭐ Refused here rather than documented, and rather than left to the gate,
       // for three reasons. The failure is invisible AND total, so a note in a
@@ -3483,10 +3501,35 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
       // has in front of it: the range of driving values that can reach a frame is
       // exactly `[to, to + duration]` mapped back through `scale`.
       //
+      // ⚠️ **Both ends, out of one piece of arithmetic** (issue #417). As #405
+      // landed it, `highest` was computed and never tested, so a range running
+      // PAST 360° — `"from": 300, "scale": 0.005` over a 1 s animation asks for
+      // 300°..500° — compiled clean with everything above 360° just as dead: turn
+      // the bone to 500° and its world rotation is 140°, read as 140°, mapped to
+      // a time nowhere near the one the author meant. A copy-pasted second branch
+      // with a sign edited is how such a pair drifts apart, so the two ends share
+      // `dead` below and every number in the message comes off it.
+      //
+      // ⭐ **And the line is PAST 360°, not at it** — measured before it was
+      // written, because the two are one degree of arc apart and only one of them
+      // costs an author anything. A range ending exactly on 360° misses exactly
+      // one value, its own supremum, and that value is not a dial position: a
+      // bone at 360° IS a bone at 0°, reads within 5.3e-6° of it and poses the
+      // skeleton identically. Swept through spine-core over 0°..360° at 0.1°, a
+      // `from: 0, scale: 0.0025` dial on a 0.9 s animation lands every reading
+      // within **1.7e-8 s** of the time the mapping asks for, and on `loop: true`
+      // the endpoint is not even distinct — the circle closes on 0.900000 s
+      // exactly. Above 360° the dead set has width instead: 300°..500° reaches
+      // only 0.000 s..0.2995 s of its own 1 s animation, and the dial positions
+      // an author would set for the top 140° of it are read as something else and
+      // land on a wrong frame. That silent wrong answer is the hazard, and it
+      // starts strictly above 360.
+      //
       // The refusal is deliberately narrow: `rotate` only, because `FromRotate` is
       // the one property whose reader wraps, and only when the range actually
-      // crosses (or sits below) 0°, because a dial authored at 340°..20° is how
-      // you write this axis under `local: false` and it works.
+      // runs outside `[0, 360]`, because a dial inside that circle — 20°..340°,
+      // or the whole turn 0°..360° — is how you write this axis under
+      // `local: false` and it works.
       if (property === 'rotate' && spec.local !== true) {
         const fromValue = spec.from === undefined ? 0 : needNumber(spec.from, 'from');
         const toTime = spec.to === undefined ? 0 : needNumber(spec.to, 'to');
@@ -3497,18 +3540,43 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
         const atEnd = fromValue + (duration - toTime) / perUnit;
         const lowest = Math.min(atStart, atEnd);
         const highest = Math.max(atStart, atEnd);
-        if (lowest < -1e-6) {
-          const readAs = lowest + 360;
-          const lands = toTime + (readAs - fromValue) * perUnit;
+        // Which end of the circle the range leaves, and which way the reader
+        // moves it: below 0° the wrap ADDS 360, past 360° there is nothing above
+        // to wrap from and the value arrives 360 LOWER instead. One record, so
+        // the end, its reading, the time it lands on and the two clauses that
+        // name the side are derived once rather than twice.
+        //
+        // The two tests ARE each other's mirror, and that is deliberate: each
+        // gives its own boundary — 0° and 360°, the two values an author aims at
+        // — the same outward slack, so only a range that genuinely leaves the
+        // closed circle `[0, 360]` is refused.
+        const dead =
+          lowest < -SLIDER_WRAP_SLACK
+            ? {
+                end: lowest,
+                readAs: lowest + 360,
+                side: 'below 0°',
+                repair: 'move the range so it does not cross 0°',
+              }
+            : highest > 360 + SLIDER_WRAP_SLACK
+              ? {
+                  end: highest,
+                  readAs: highest - 360,
+                  side: 'past 360°',
+                  repair: 'move the range so it does not run past 360°',
+                }
+              : null;
+        if (dead !== null) {
+          const lands = toTime + (dead.readAs - fromValue) * perUnit;
           throw new CompileError(
             `${where}: drives off bone "${String(spec.bone)}" rotate with "local": false, and the driving values ` +
               `that reach animation "${animation}" (0s..${duration}s) run from ${lowest.toFixed(3)}° to ${highest.toFixed(3)}°. ` +
               'A world rotation is read through `FromRotate.value`, which ends `if (value < 0) value += 360`, so the bone ' +
-              `at ${lowest.toFixed(3)}° is read as ${readAs.toFixed(3)}° and maps to time ${lands.toFixed(3)}s — outside ` +
+              `at ${dead.end.toFixed(3)}° is read as ${dead.readAs.toFixed(3)}° and maps to time ${lands.toFixed(3)}s — outside ` +
               `the animation's ${duration}s. With "loop": false that is \`Math.max(0, time)\` holding the last frame; with ` +
-              '"loop": true it wraps to some other frame. Either way the whole part of the range below 0° is dead and ' +
+              `"loop": true it wraps to some other frame. Either way the whole part of the range ${dead.side} is dead and ` +
               'nothing at runtime reports it. Add `"local": true` to read the bone\'s own rotation signed and unwrapped — ' +
-              'that is the form a face axis wants — or move the range so it does not cross 0°.',
+              `that is the form a face axis wants — or ${dead.repair}.`,
           );
         }
       }

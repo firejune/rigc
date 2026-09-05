@@ -351,9 +351,11 @@ export interface DeformDial {
    * `applied` is not `wanted`: **no dial value selects this key's time.**
    *
    * The reachable one, and it is not hypothetical: `FromRotate.value` ends
-   * `if (value < 0) value += 360`, so a `rotate` slider reading a WORLD rotation
-   * cannot be driven below 0° and everything the inversion asks for down there
-   * arrives 360° away (issue #405). `Math.max(0, time)` is the other.
+   * `if (value < 0) value += 360` over an `atan2`, so `[0, 360)` is the whole of
+   * what a `rotate` slider reading a WORLD rotation can be driven to, and
+   * everything the inversion asks for outside it arrives 360° away — below 0°
+   * (issue #405) and at or above 360° (issue #417) alike. `Math.max(0, time)` is
+   * the other.
    *
    * ⚠️ A key like that is measured — at the frame the runtime does land on, which
    * the report names — and then left OUT of the gate's counts, because the
@@ -582,10 +584,12 @@ export function unreachableWhy(key: DeformKeyMeasure): string {
   // `if (value < 0) value += 360`, so **[0, 360) is the whole of its range** and
   // `"local": true` is the fix (issue #405).
   //
-  // ⚠️ Both ends, not just the low one. The compiler refuses a range that dips
-  // below 0° — the natural way to author a face yaw, and the case #405 was filed
-  // on — and says nothing about one that runs past 360°, which dies in exactly
-  // the same way. This is the surface that sees it.
+  // ⚠️ Both ends, not just the low one — a range running past 360° dies in
+  // exactly the way one dipping below 0° does. The compiler refuses both since
+  // issue #417 (it refused only the low end when #405 landed), so a rig spec in
+  // this repository cannot ask for either. This clause is still not redundant:
+  // an artifact reaching the gate from the editor, a hand edit or an older rigc
+  // can carry a dead range, and the artifact is what this file reads.
   const wrap =
     key.reach.property === 'rotate' && !key.reach.local && (dial.value < 0 || dial.value >= 360)
       ? '. A world rotation is read through `FromRotate.value`, an `atan2` ending `if (value < 0) value += 360`, ' +
