@@ -652,7 +652,11 @@ function sameKeyTime(specTime: number, loaded: number): boolean {
  *   block names the same `kind` and parameters the spec stated;
  * - the fold ANGLE is nowhere here. It is A39's, derived at run time from the
  *   grid, and a second copy of it printed beside a ratio would be a number that
- *   goes stale when somebody moves a column.
+ *   goes stale when somebody moves a column;
+ * - and a key the gate read **no winding** off — because the slot draws no pixels
+ *   of the mesh at that key's own time (issue #401) — says so on a `skipped` line
+ *   with the survey's own sentence, and is kept out of the rollup's counts,
+ *   because that line ends by claiming A39 reads the same two.
  *
  * ## And what it deliberately does not print
  *
@@ -702,6 +706,31 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
       `  DEFORM  ${key.animation}  ${key.skin}/${key.slot}/${key.placeholder}  key ${key.key}  ` +
         `t=${key.time.toFixed(6)}  ${states}`,
     );
+    // ⚠️ An exemption nobody can see is how a gate comes to look kept while
+    // checking nothing (issue #401). A key the gate passed over because the mesh
+    // draws no pixels there says so on its own line, in the survey's own words,
+    // whether or not it folds.
+    if (key.draw.blank !== null) {
+      out.push(
+        `          skipped    A39 reads no winding off this key: ${key.draw.blank} — a triangle that draws no ` +
+          'pixels cannot draw them backwards',
+      );
+    }
+    // And when the slot shows something else, the figures below would be a
+    // second falsehood rather than a caveat: the runtime applies no deform to a
+    // slot that is not showing the mesh (`DeformTimeline.applyToSlot`), so every
+    // figure would be the identity and `moved 0` would read as "this key is the
+    // setup pose" — which is exactly what the key is NOT.
+    if (!key.draw.showsThisMesh) {
+      out.push(
+        `          ..         the slot shows ${key.draw.shown === null ? 'no attachment' : `"${key.draw.shown}"`} ` +
+          'here, so the runtime applied no deform and there is no posed geometry to measure' +
+          (key.draw.blank === null
+            ? ' — but the mesh IS drawn in another slot this deform reaches (timelineSlots), so nothing here is exempt'
+            : ''),
+      );
+      continue;
+    }
     // A key that moves nothing gets one line and no figures. `{ "t": 2.2 }` with
     // no run is the format's own way of writing "back to the setup pose" (§4.11),
     // and its geometry is bit-identical to the cleared pose it would be measured
@@ -732,9 +761,11 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
     // A39 does not refuse it — it SKIPs the slot entirely.
     const exempted = exempt.has(key.slot);
     const fold = key.reversed.length
-      ? exempted
-        ? '  <- a fold, and A39 does not gate it — see below'
-        : '  <- a fold: A39 refuses this key by name'
+      ? key.draw.blank !== null
+        ? '  <- a fold, and nothing gates it: this key draws no pixels (see above)'
+        : exempted
+          ? '  <- a fold, and A39 does not gate it — see below'
+          : '  <- a fold: A39 refuses this key by name'
       : '';
     out.push(
       `          winding    ${key.triangles - key.reversed.length} of ${key.triangles} kept, ` +
@@ -750,7 +781,11 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
   // eight keys are eight blocks above, and "which of them is the one to look at"
   // is the question the sweep in issue #313's landing comment answered by hand.
   for (const animation of [...new Set(survey.keys.map((k) => k.animation))]) {
-    const keys = survey.keys.filter((k) => k.animation === animation);
+    // Only the keys the gate ran on, because the line ends by claiming A39 reads
+    // the same two counts and A39 reads none of a key that draws nothing. The
+    // ones it left out get their own line rather than a silence (issue #401).
+    const keys = survey.keys.filter((k) => k.animation === animation && k.draw.blank === null);
+    const blank = survey.keys.filter((k) => k.animation === animation && k.draw.blank !== null);
     const worst = (
       pick: (key: DeformKeyMeasure) => DeformExtreme | null,
       better: (a: number, b: number) => boolean,
@@ -766,15 +801,25 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
     const reversed = keys.reduce((n, k) => n + k.reversed.length, 0);
     const collapsed = keys.reduce((n, k) => n + k.collapsed, 0);
     const samples = keys.reduce((n, k) => n + k.triangles, 0);
-    out.push(
-      `  WORST   ${animation}  area ${worst((k) => k.areaRatioMin, (a, b) => a < b)}  ` +
-        `stretch ${worst((k) => k.stretchMax, (a, b) => a > b)}  ` +
-        `squash ${worst((k) => k.stretchMin, (a, b) => a < b)}`,
-    );
-    out.push(
-      `  ..      ${''.padEnd(animation.length)}  reversed ${reversed}, collapsed ${collapsed}, over ` +
-        `${keys.length} key(s) and ${samples} triangle sample(s)  <- A39 reads the same two counts`,
-    );
+    if (keys.length) {
+      out.push(
+        `  WORST   ${animation}  area ${worst((k) => k.areaRatioMin, (a, b) => a < b)}  ` +
+          `stretch ${worst((k) => k.stretchMax, (a, b) => a > b)}  ` +
+          `squash ${worst((k) => k.stretchMin, (a, b) => a < b)}`,
+      );
+      out.push(
+        `  ..      ${''.padEnd(animation.length)}  reversed ${reversed}, collapsed ${collapsed}, over ` +
+          `${keys.length} key(s) and ${samples} triangle sample(s)  <- A39 reads the same two counts`,
+      );
+    }
+    if (blank.length) {
+      out.push(
+        `  ..      ${keys.length ? ''.padEnd(animation.length) : animation}  ${blank.length} key(s) draw no pixels ` +
+          `at their own time and are read for no winding, carrying ` +
+          `${blank.reduce((n, k) => n + k.reversed.length, 0)} reversed triangle(s) nothing gates  <- A39 counts ` +
+          'them as deformKeysNotDrawn',
+      );
+    }
   }
   return out;
 }

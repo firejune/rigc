@@ -611,6 +611,20 @@ above the 16° §8 calls the instrument's ceiling. ⇒ **Then let the last band 
 single wide one** — that is the direction that buys safety, and it is the
 opposite of refining.
 
+🎭 **The fourth way out, and the one a Live2D-style face actually takes: stop
+drawing the part.** The ceiling only binds while the part is on screen, so a turn
+that has to go past it fades the far cheek or ear out — `rgba` to alpha 0 — or
+swaps the attachment away, and another part takes over. `A39` measures that: a
+deform key whose slot draws **no pixels at that key's own time** is passed over by
+name rather than refused, with the reason on the stats line and beside the key's
+own figures in the `DEFORM` block
+([#401](https://github.com/firejune/rigc/issues/401)). Two things it is not — the
+bar is alpha **exactly 0**, so a part faded halfway is still refused with the
+alpha in the message; and it is per key and per time, so the same slot folding at
+full alpha anywhere else is refused as before. ⛔ It is also not
+`invariants.deformMayFold`: that field turns the check off for the slot at every
+angle, including the ones where the part is fully visible.
+
 📘 **The identity above, used forwards on a `pitch`.**
 [`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod)
 (repository material) picks its ceiling first and solves the *rows* out of it —
@@ -1150,6 +1164,35 @@ and builds (a) and the good one both still PASS it, because **an inverted band i
 not a fold**: its winding survives. The angle A39 first fires at agrees with
 §4.2's `tan θ = Δx/Δz` to **0.0001°**, so the formula above is now checkable by
 running the gate instead of by rendering seven variants.
+
+🆕 **And one thing it stopped doing, on 2026-09-05
+([#401](https://github.com/firejune/rigc/issues/401)).** Build (b) is refused
+because the head is *drawn* while it folds. Fade that slot to alpha exactly 0 over
+the same keys — §4.2's fourth way out, and what a face past its ceiling actually
+does — and the same build is green, with the key still measured and the reason
+printed rather than passed over in silence:
+
+```
+  DEFORM  turn  default/head/head  key 1  t=0.500000  transform yaw  radius=170 degrees=40
+          skipped    A39 reads no winding off this key: the slot's alpha is exactly 0 at this
+                     time (slot 0.0000 x attachment 1.0000), so this key draws no pixels — a
+                     triangle that draws no pixels cannot draw them backwards
+          winding    24 of 32 kept, 0 collapsed  <- a fold, and nothing gates it: this key draws no pixels
+```
+
+`A39`'s message says the mesh "draws its texture backwards there", and that
+sentence is false when the slot draws nothing — the assertion was not too strict,
+it was measuring something other than what it said. The bar is **alpha exactly
+0**; at 0.5 build (b) is refused as before, with the alpha in the message. The
+same fold at full alpha in another animation is still refused, because the
+measurement is of one key at one time.
+
+🚨 **And the limit of that, measured rather than assumed: the gate reads KEYS, and
+the geometry between two keys is interpolated.** Put the alpha-0 key exactly on
+the 40° key and 8 triangles are already reversed at `t=0.4`, where the slot is
+still drawing at **alpha 0.20** — nothing samples there, so nothing says so. ⇒
+Fade out over the run *up to* the angle you cannot take, so that every key past
+the ceiling is one that draws nothing.
 
 ⚠️ **One thing it deliberately does not do.** It is an **archetype** rule, so a
 `--profile spine` build reads `PROF` — the premise "a fold has no legitimate

@@ -37,10 +37,23 @@
  * tautology dressed as a measurement. What actually moves — how much art each
  * drawn pixel now carries — is the stretch below, and `DR04` in `selftest.ts` is
  * the control that says the coverage figure cannot move.
+ *
+ * ## What the geometry is not enough to say (issue #401)
+ *
+ * A winding is a claim about **drawn** pixels: A39's own message says the mesh
+ * "draws its texture backwards there", and that sentence is false when the slot
+ * draws nothing at that time. So each key also carries `draw` — the attachment
+ * the slot actually shows and the alpha it shows it at, both read off the same
+ * posed skeleton the geometry came from. A key whose `draw.blank` is set is
+ * measured and then **passed over by name**: a triangle that draws no pixels
+ * cannot draw them backwards. It is per key and per time, never per slot —
+ * `invariants.deformMayFold` is the per-slot instrument and it is a declaration,
+ * not a measurement.
  */
 import {
   AnimationState,
   AnimationStateData,
+  type Attachment,
   AtlasAttachmentLoader,
   DeformTimeline,
   MeshAttachment,
@@ -191,6 +204,43 @@ export interface DeformReversal {
   after: number;
 }
 
+/**
+ * What the slot is doing with this mesh at one key's own time (issue #401).
+ *
+ * ⭐ Read off the SAME posed skeleton the geometry came from, one key at a time,
+ * so the two halves cannot disagree about which frame they describe.
+ */
+export interface DeformKeyDraw {
+  /** The attachment the slot shows at that time, or `null` when it shows none. */
+  shown: string | null;
+  /**
+   * Whether `shown` IS this timeline's mesh — compared the way spine-core
+   * compares it (`Attachment.timelineAttachment`), so a linked mesh counts as
+   * the mesh it links to. When this is false the runtime applies no deform to
+   * this slot at all (`DeformTimeline.applyToSlot` returns early), which is why
+   * the geometry below is the cleared pose and says nothing about the key.
+   */
+  showsThisMesh: boolean;
+  /**
+   * `slot.color.a × attachment.color.a` at that time — the product
+   * [`src/render.ts`](src/render.ts) tints a piece with, which is what decides
+   * whether a texel lands. 0 when the slot shows something else, because then
+   * none of this mesh is drawn.
+   */
+  alpha: number;
+  /**
+   * Why this mesh puts no pixels on the screen at that time, in the words the
+   * `DEFORM` block and A39's stats line both print — or `null` when it puts some
+   * there and every figure below is gated normally.
+   *
+   * ⚠️ The bar is **exactly** 0 and nothing above it. At alpha 0.5 a reversed
+   * triangle is plainly visible at half strength, and a floor above 0 would be
+   * this repository picking a visibility policy, which is the thing an archetype
+   * rule exists not to do.
+   */
+  blank: string | null;
+}
+
 /** What one deform key does to one attachment's geometry. */
 export interface DeformKeyMeasure {
   animation: string;
@@ -232,6 +282,8 @@ export interface DeformKeyMeasure {
   stretchMin: DeformExtreme | null;
   /** The dead band every count above was taken against, in px². */
   band: number;
+  /** What the slot draws of this mesh at this key's own time (issue #401). */
+  draw: DeformKeyDraw;
 }
 
 /** Every deform key in a skeleton, measured — and what was passed over. */
@@ -243,10 +295,25 @@ export interface DeformSurvey {
   exempted: string[];
   /** Slots whose attachment has a vertex array and no triangles, quoted. */
   notAMesh: string[];
-  /** Triangle samples across every key — one mesh's triangles counted once per key. */
+  /**
+   * Triangle samples across every key that draws — one mesh's triangles counted
+   * once per key. ⚠️ A key whose `draw.blank` is set is NOT in this figure: it
+   * is the sample the gate ran, and the gate does not run on those.
+   */
   trianglesMeasured: number;
-  /** Triangles pinched onto zero, summed. A real idiom, never a bar. */
+  /** Triangles pinched onto zero, summed over the same keys. A real idiom, never a bar. */
   collapsed: number;
+  /**
+   * Keys in `keys` whose `draw.blank` is set — measured, then passed over
+   * because the mesh draws no pixels at that time (issue #401).
+   *
+   * ⚠️ Carried rather than left implicit because an exemption nobody can see is
+   * how a gate comes to look kept while checking nothing. Both consumers print
+   * it: A39 on its stats line, the `DEFORM` block per key and in its rollup.
+   */
+  notDrawn: number;
+  /** Reversed triangles found on those keys, which nothing gates. */
+  notDrawnReversed: number;
 }
 
 /**
@@ -270,6 +337,12 @@ export function skeletonDataFromText(skeletonText: string, atlasText: string): S
  * set on purpose: an exempted slot is the one an author most wants figures for,
  * and a report that went quiet where the gate does would leave the only surface
  * that can say anything about a declared fold saying nothing.
+ *
+ * ⭐ Not the same thing as `draw.blank` on a key, and the difference is the whole
+ * of issue #401: `exempt` is a **declaration** about a slot for all time and is
+ * not measured, `draw.blank` is a **measurement** of one key at one time and
+ * cannot be declared. A key that draws nothing is still surveyed and still
+ * printed; what it is not is gated.
  */
 export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string> = new Set()): DeformSurvey {
   const keys: DeformKeyMeasure[] = [];
@@ -278,6 +351,8 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
   let timelines = 0;
   let trianglesMeasured = 0;
   let collapsedTotal = 0;
+  let notDrawn = 0;
+  let notDrawnReversed = 0;
   for (const anim of data.animations) {
     for (const timeline of anim.timelines) {
       if (!(timeline instanceof DeformTimeline)) continue;
@@ -314,6 +389,10 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
         posed.update(time);
         posed.updateWorldTransform(Physics.update);
         const slot = posed.slots[timeline.slotIndex];
+        // Read BEFORE the deform is cleared below, and off the same posed
+        // skeleton: what the slot shows here and at what alpha is the other half
+        // of what this key does (issue #401).
+        const draw = drawOfKey(posed, timeline.slotIndex, attachment);
         const deformed = new Float32Array(count);
         attachment.computeWorldVertices(posed, slot, 0, count, deformed, 0, 2);
         // The same bones, with the deform taken away. `computeWorldVertices`
@@ -386,8 +465,16 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
             });
           }
         }
-        trianglesMeasured += before.length;
-        collapsedTotal += collapsed;
+        // A key that draws no pixels is measured and then left out of the
+        // totals, because those totals are "what the gate ran on" — A39 reads
+        // them onto its stats line and the report's rollup has to match them.
+        if (draw.blank === null) {
+          trianglesMeasured += before.length;
+          collapsedTotal += collapsed;
+        } else {
+          notDrawn++;
+          notDrawnReversed += reversed.length;
+        }
         const placement = placementOf(data, timeline.slotIndex, attachment);
         keys.push({
           animation: anim.name,
@@ -410,6 +497,7 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
           stretchMax,
           stretchMin,
           band,
+          draw,
         });
       }
     }
@@ -421,7 +509,98 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
     notAMesh: [...notAMesh],
     trianglesMeasured,
     collapsed: collapsedTotal,
+    notDrawn,
+    notDrawnReversed,
   };
+}
+
+/**
+ * What one slot shows of one mesh at the pose it is currently in, and at what
+ * alpha — with no opinion about whether that is a reason for anything.
+ *
+ * `alpha` is `slot.color.a × attachment.color.a`, which is the product
+ * `src/render.ts` builds a piece's tint from; it is 0 when the slot shows some
+ * other attachment, because then none of this mesh is on screen. The skeleton's
+ * own colour is deliberately not a factor: it is runtime state a consumer sets,
+ * not something the skeleton data can say, and `src/render.ts` does not read it
+ * either.
+ */
+function shownAt(
+  posed: Skeleton,
+  slotIndex: number,
+  attachment: MeshAttachment,
+): { shown: Attachment | null; showsThisMesh: boolean; slotAlpha: number; attachmentAlpha: number; alpha: number } {
+  const pose = posed.slots[slotIndex]?.appliedPose;
+  const shown = pose?.attachment ?? null;
+  // The same comparison `DeformTimeline.applyToSlot` makes before it writes
+  // anything, so "shown" here means exactly "the runtime deforms it here".
+  const showsThisMesh = shown !== null && shown.timelineAttachment === attachment;
+  const slotAlpha = pose?.color.a ?? 0;
+  const attachmentAlpha = shown instanceof MeshAttachment ? shown.color.a : 1;
+  return {
+    shown,
+    showsThisMesh,
+    slotAlpha,
+    attachmentAlpha,
+    alpha: showsThisMesh ? slotAlpha * attachmentAlpha : 0,
+  };
+}
+
+/**
+ * Whether this key's mesh draws any pixels at this key's own time, and if not,
+ * the sentence that says why (issue #401).
+ *
+ * ## The two ways a key draws nothing, and the one bar
+ *
+ * - **The slot shows something else** — or nothing. The runtime then applies no
+ *   deform to the slot at all, so the mesh is neither on screen nor deformed.
+ * - **The slot's alpha is exactly 0.** Every blend mode the format has multiplies
+ *   the source by that alpha, so no channel of the destination moves.
+ *
+ * 🚨 **Exactly 0.** Not "small", not "below a floor". At 0.5 a reversed triangle
+ * is visible at half strength and A39 goes on refusing it, with the alpha in the
+ * message.
+ *
+ * ⚠️ **A deform reaches more than its own slot.** `Attachment.timelineSlots` (4.3)
+ * lists the other slots a deform timeline is applied to, and spine-core applies
+ * it to every one of them. So a mesh the timeline's own slot has swapped away may
+ * still be drawn — and folded — in another slot, and the exemption is refused
+ * unless NONE of the slots the deform reaches draws it. rigc emits no
+ * `timelineSlots` of its own, so on a rigc-compiled skeleton the list is empty
+ * and this loop runs zero times; it is here because a foreign skeleton reaching
+ * `explain` is exactly where a silent false green would be unnoticeable.
+ */
+function drawOfKey(posed: Skeleton, slotIndex: number, attachment: MeshAttachment): DeformKeyDraw {
+  const own = shownAt(posed, slotIndex, attachment);
+  const draw = { shown: own.shown?.name ?? null, showsThisMesh: own.showsThisMesh, alpha: own.alpha };
+  for (const other of attachment.timelineSlots) {
+    if (other === slotIndex) continue;
+    const there = shownAt(posed, other, attachment);
+    if (there.alpha > 0) {
+      // Drawn somewhere the deform reaches, so there is nothing to exempt — and
+      // the geometry above was measured on a slot that is not the one drawing
+      // it, which the report says out loud rather than passing over.
+      return { ...draw, blank: null };
+    }
+  }
+  if (!own.showsThisMesh) {
+    const instead = own.shown === null ? 'no attachment at all' : `attachment "${own.shown.name}"`;
+    return {
+      ...draw,
+      blank:
+        `the slot shows ${instead} at this time, not this mesh, so the runtime applies no deform to it here ` +
+        'and draws none of it',
+    };
+  }
+  if (own.alpha === 0) {
+    return {
+      ...draw,
+      blank:
+        `the slot's alpha is exactly 0 at this time (slot ${own.slotAlpha.toFixed(4)} x attachment ` +
+        `${own.attachmentAlpha.toFixed(4)}), so this key draws no pixels`,
+    };
+  }
+  return { ...draw, blank: null };
 }
 
 /**
