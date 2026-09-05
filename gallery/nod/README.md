@@ -104,7 +104,7 @@ left), so the top row is `v 0`/`v 1` and every row below it pairs `v r` with
 `v 11−r`:
 
 ```
-      t=0.6     deform[0..20]  10 pair(s)                      bezier[4]
+      t=0.6     deform[0..20]  10 pair(s)                      stepped
                transform pitch  radius=150 degrees=12
                dy = (y−about)·(cos t − 1) − z·sin t,   z = √(radius² − (y−about)²)
                  t = 0.20944 rad
@@ -135,6 +135,7 @@ agree to the last digit printed.** The table is arithmetic on the row positions;
 ratio taken off **posed float32 world vertices** at each key. Nothing connects
 them but the geometry:
 
+<!-- transcript: the two `area` lines of two different animations, each abridged out of its own DEFORM record -->
 ```
   DEFORM  idle  default/head/head  key 1  t=0.900000  transform pitch  radius=150 degrees=5
           area       min x0.863544 tri 6   max x1.128845 tri 0   (8 triangles, 0 with no area at the cleared pose, band 0.092526px²)
@@ -550,6 +551,7 @@ arithmetic*. This example uses both, twelve lines apart:
 
 `explain` labels which is which, and that label is the whole audit:
 
+<!-- transcript: two MEMBER lines lifted out of one `explain` run, which does not print them adjacent -->
 ```
   MEMBER  bow  group "features".translatey  t=0.600000  5 member(s)  derive pitch  degrees=12 carried=150  -> the displacement
   MEMBER  bow  group "ears".rotate  t=0.780000  2 member(s)  stated per member

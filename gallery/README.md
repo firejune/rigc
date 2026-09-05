@@ -120,6 +120,36 @@ from a file that IS published have to be absolute GitHub URLs; links *within* th
 gallery are relative, because the gallery is only ever read from a checkout or
 from GitHub.
 
+**A README that quotes the tool is checked against the tool.** A fenced block
+whose first line opens with a report tag — `MESH`, `DEFORM`, `MEMBER`, `PHYS`,
+`PASS`, `SKIP`, `PROF` — is read by the selftest as a transcript, and it has to
+be a **contiguous, verbatim run** of the output of a command that README states
+([#415](https://github.com/firejune/rigc/issues/415)). The margin is yours; every
+character after it is the tool's. That means a block cannot be trimmed to its
+interesting lines or re-wrapped to fit, because both make it something the tool
+never printed — and a block quoting a run this repository cannot make (lines
+lifted out of a run that does not print them adjacent, a line cut short with an
+ellipsis) says so above its fence:
+
+```html
+<!-- transcript: two MEMBER lines lifted out of one `explain` run, which does not print them adjacent -->
+```
+
+The reason is required, the declared set is reported on every run, and a
+declaration on a block that *does* reproduce is a failure — otherwise the marker
+would be a way to switch the check off. Declaring also brings a block **in**: a
+quotation that opens partway into a record, on one of the indented lines under
+its head, is invisible to the check until it says so, and then it is on the
+ledger. **Regenerate a stale block; do not repair it by hand.** Two of these went
+stale in one night because they were edited by eye, and two more had been sitting
+stale since [#376](https://github.com/firejune/rigc/issues/376) — which is why the
+check exists.
+
+⚠️ **A quotation that opens on an indented line is not checked yet**, only
+counted once it declares itself; the head-of-record anchor cannot reach it, and
+an anchor that keyed on the line's own text would go quiet exactly when that line
+went wrong. Both of the ones found stale here were that shape.
+
 **The character's art scale is per-example and stated.** `rigby.ts` draws at a
 nominal size that its outline weight was chosen for, and `rasterise`'s `scale`
 re-renders rather than resampling. `ride` and `flex` ask for half of nominal

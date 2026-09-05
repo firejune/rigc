@@ -51,10 +51,10 @@ bun gallery/flex/make_parts.ts
 line to read rather than the parameters you asked for:
 
 ```
-MESH  flag_a       contour  52 vertices / 50 triangles  (budget 96)  bones=[flag_a]  covers 100.00% of the art, reaching 2.00px past it
-MESH  flag_b       contour  48 vertices / 46 triangles  (budget 96)  bones=[flag_b]  covers 100.00% of the art, reaching 2.00px past it, enclosing 848px of hole
-MESH  flag_c       contour  81 vertices / 79 triangles  (budget 96)  bones=[flag_c]  covers  99.96% of the art, reaching 2.00px past it
-MESH  leaf         contour  77 vertices / 75 triangles  (budget 96)  bones=[leaf]    covers 100.00% of the art, reaching 2.00px past it
+MESH  flag_a       contour  52 vertices / 50 triangles  (budget 96)  bones=[flag_a]  attachments=[flag_a]  covers 100.00% of the art, reaching 2.00px past it
+MESH  flag_b       contour  48 vertices / 46 triangles  (budget 96)  bones=[flag_b]  attachments=[flag_b]  covers 100.00% of the art, reaching 2.00px past it, enclosing 848px of hole
+MESH  flag_c       contour  81 vertices / 79 triangles  (budget 96)  bones=[flag_c]  attachments=[flag_c]  covers 99.96% of the art, reaching 2.00px past it
+MESH  leaf         contour  77 vertices / 75 triangles  (budget 96)  bones=[leaf]  attachments=[leaf]  covers 100.00% of the art, reaching 2.00px past it
 ```
 
 The budget is this rig's declared `invariants.meshTriangles`, and `flag_c` at 79
@@ -254,6 +254,7 @@ which is exactly how the defect below got in.
 `explain` prints the model and every offset it produced, so the table above and
 the artifact are the same numbers:
 
+<!-- transcript: abridged — the last line stands in for nineteen more the run prints -->
 ```
       t=0.26    deform[0..154]  77 pair(s)                     bezier[4]
                transform bend  amount=15 from=-81 to=77 power=2 along=y axis=x

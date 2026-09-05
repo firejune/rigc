@@ -316,12 +316,17 @@ the run above it is at alpha exactly 0 the whole way:
   DEFORM  turn  default/hair_lock_l/hair_lock_l  key 5  t=1.600000  transform yaw  depth=true degrees=13
           frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 13.000000 -> t=1.600000
           skipped    A39 reads no winding off this key: the slot's alpha is exactly 0 at this time (slot 0.0000 x attachment 1.0000), so this key draws no pixels — a triangle that draws no pixels cannot draw them backwards
+          moved      39 of 39 vertices, worst 13.8048px at v23
+          area       min x0.240413 tri 2   max x1.193150 tri 12   (48 triangles, 0 with no area at the cleared pose, band 0.115973px²)
+          stretch    max x1.193150 tri 37   min x0.240413 tri 27
           winding    48 of 48 kept, 0 collapsed
   DEFORM  turn  default/hair_lock_l/hair_lock_l  key 6  t=1.900000  transform yaw  depth=true degrees=19
           frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 19.000000 -> t=1.900000
           skipped    A39 reads no winding off this key: the slot's alpha is exactly 0 at this time (slot 0.0000 x attachment 1.0000), so this key draws no pixels — a triangle that draws no pixels cannot draw them backwards
+          moved      39 of 39 vertices, worst 19.5969px at v23
           area       min x-0.116728 tri 27   max x1.262154 tri 38   (48 triangles, 0 with no area at the cleared pose, band 0.115567px²)
-          winding    44 of 48 kept, 0 collapsed  <- a fold, and nothing gates it: this key draws no pixels
+          stretch    max x1.262154 tri 38   min x0.073931 tri 24
+          winding    44 of 48 kept, 0 collapsed  <- a fold, and nothing gates it: this key draws no pixels (see above)
 ```
 
 ⭐ The `frame` line is the point of
@@ -431,6 +436,7 @@ construction**, and A39 was measuring the two independently. It now inverts the
 slider's own mapping and drives `yaw_dial` to the value that selects each key's
 time (AUTHORING §4.11.4), which is the frame a playthrough actually contains:
 
+<!-- transcript: abridged — the `skipped` line is cut at the ellipsis; it is quoted in full above -->
 ```
   DEFORM  turn  default/hair_lock_l/hair_lock_l  key 6  t=1.900000  transform yaw  depth=true degrees=19
           frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 19.000000 -> t=1.900000
@@ -440,6 +446,7 @@ time (AUTHORING §4.11.4), which is the frame a playthrough actually contains:
 ⇒ **both sliders declare `"mix": 1`, `sweep` keys no `mix` at all, and both
 assertions run:**
 
+<!-- transcript: two verdict lines lifted out of one `--profile spine-html` run, which does not print them adjacent -->
 ```
   PASS  A39_DEFORM_KEEPS_TRIANGLE_WINDING
   PASS  A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET
