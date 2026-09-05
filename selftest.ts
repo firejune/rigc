@@ -17232,6 +17232,650 @@ function runCurrencySuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// the gallery READMEs quote real command output (issue #415)
+// ---------------------------------------------------------------------------
+//
+// ⭐ **Why this suite exists.** The currency gate above holds a doc's claims
+// ABOUT the tool to the tool. This is the same class one surface over, and the
+// surface is the one this project's audience actually reads: an agent that has
+// never seen a rig opens `gallery/<name>/README.md` to learn what a run looks
+// like, and a fenced block that no longer matches the tool is a wrong answer
+// handed to exactly the reader who cannot check it.
+//
+// 🚨 It bit twice in one night. [#412](https://github.com/firejune/rigc/issues/412)
+// added one line and one suffix to what `build` prints for a depth mesh, and
+// `gallery/look/README.md` — which quotes that block — went stale the moment it
+// landed. Nothing went red. [#407](https://github.com/firejune/rigc/issues/407)
+// then regenerated the same README from a worktree that predated #412, so it
+// landed stale again, and again nothing went red. A block repaired by hand is a
+// block that will be stale again.
+//
+// The gap was visible rather than theoretical because these files are already
+// HALF gated: `LS03` reads every gallery README and asserts that every
+// *invocation* they ship is a measurement the tool will actually take. The
+// commands were derived; the output beside them was not.
+//
+// **Scope: shape 1 of the three issue #415 names, deliberately.** A fenced block
+// that is a transcript of a command the same README states. Left out on purpose,
+// so a later reader knows the boundary was chosen and not missed: figures quoted
+// in running prose (shape 2), and numbers that are arithmetic ABOUT the example
+// rather than output of it (shape 3 — `selftest.ts` still carries one of those
+// by hand, the `96 · cos(π/8) = 88.7 > 80` comment on `FAN_RIM_COVERING`).
+//
+// **How a block and its command are decided to belong together.** By the block's
+// first line carrying a tag at rigc's own report gutter — `MESH`, `DEFORM`,
+// `MEMBER`, `PHYS`, `PASS`, `SKIP`, `PROF`. The vocabulary is not a list written
+// here: it is collected from the output of the runs themselves, so a tag rigc
+// stops printing stops being an anchor, and the floor below is what makes that
+// loud instead of silent. The anchor has to be something that does NOT change
+// when the block goes stale — the whole defect is that the block's CONTENT
+// drifted — and a record's tag is the last part of it to move.
+//
+// What that leaves uncovered inside shape 1, stated rather than implied: a block
+// whose first line is a report record's CONTINUATION rather than its head —
+// `explain`'s per-key deform expansions, six of them across `flex`, `nod`,
+// `portrait`, `ride` and `squash` — and blocks that are output of a different
+// program altogether (`gallery/loop_seam.ts`, an example's `make_parts.ts`, a
+// `bun -e` snippet). A continuation line has no stable head to anchor on, and an
+// anchor that is the line's own content goes silent exactly when that line goes
+// stale, which is the one failure this class cannot afford. ⚠️ Two of those six
+// were STALE when this suite was written — `nod`'s and `portrait`'s both still
+// read `bezier[4]` on a hold segment that #376 taught the tool to emit as
+// `stepped` — so the remainder is a real gap and not a theoretical one. They are
+// repaired, and the anchor that would keep them repaired is somebody else's
+// issue.
+//
+// 📌 **A block a run cannot reproduce declares itself**, the way a dated snapshot
+// drops out of the currency gate: `<!-- transcript: <why> -->` on the line before
+// the fence. Six blocks need it and all six are the same shape — lines lifted
+// out of a run that does not print them adjacent, or a run cut short with an
+// ellipsis. The reason is required (a marker with nothing after the colon is
+// refused, as CUR01 refuses a `dated-record` marker with no date), the declared
+// set is reported so it cannot grow quietly, and a declaration on a block that
+// DOES reproduce is a fault — otherwise the marker would be a way to switch the
+// gate off. A declaration also brings a block IN: two of the six open on a
+// continuation line the tag anchor cannot reach, and saying so is what puts them
+// on the ledger at all.
+//
+// ⚠️ **Cost, measured rather than guessed.** The pool is one subprocess per
+// stated command per example: `build` for all seven, `explain` for the six whose
+// README names it, `build --profile spine-html` for the seven that mention that
+// profile. Twenty runs, 6–18 s of wall clock depending on what else the machine
+// is doing. It is NOT taken from `GALLERY_EXAMPLE_IS_GREEN`'s in-process
+// `compile()` + `validate()`, which is the cheaper thing sitting right there:
+// those lines are printed by `cli.ts`, so reading them out of the library would
+// be the report agreeing with the report, and a change to the PRINTER — which is
+// exactly what #412 was — would go unseen.
+//
+// The comparison is fair at all because emit is deterministic (`A18`) and every
+// figure in these blocks is a function of the tree.
+
+/** One fenced block of a gallery README, with the declaration that may precede it. */
+interface GalleryBlock {
+  /** 1-based line number of the opening fence. */
+  line: number;
+  /** The fence's info string — `json`, `sh`, or empty for a plain block. */
+  info: string;
+  /** The block's body, verbatim. */
+  lines: string[];
+  /** The reason a `<!-- transcript: … -->` comment above the fence gives, if there is one. */
+  declared: string | null;
+}
+
+/** The escape hatch, and the lookback that finds it: the line above the fence, blank lines allowed. */
+const TRANSCRIPT_DECLARATION = /<!--\s*transcript:\s*(.*?)\s*-->/;
+const TRANSCRIPT_DECLARATION_LOOKBACK = 3;
+/** A declaration shorter than this is not a reason, and a marker without a reason is refused. */
+const TRANSCRIPT_REASON_MIN = 12;
+/** `  TAG  ` — how every record and every verdict rigc prints begins, at the report gutter. */
+const TRANSCRIPT_GUTTER = /^ {2}([A-Z][A-Z\d_]{1,9}) {2}\S/;
+/** The same tag on a block's first line, where the gutter has already been taken off. */
+const TRANSCRIPT_BLOCK_TAG = /^([A-Z][A-Z\d_]{1,9}) {2}\S/;
+
+function galleryBlocks(text: string): GalleryBlock[] {
+  const raw = text.split('\n');
+  const out: GalleryBlock[] = [];
+  let open: GalleryBlock | null = null;
+  let fence: string | null = null;
+  raw.forEach((line, i) => {
+    const marker = /^ {0,3}(```+|~~~+)(.*)$/.exec(line);
+    if (marker !== null) {
+      if (open === null) {
+        fence = marker[1][0];
+        let declared: string | null = null;
+        for (let k = i - 1; k >= 0 && k >= i - TRANSCRIPT_DECLARATION_LOOKBACK; k--) {
+          const found = TRANSCRIPT_DECLARATION.exec(raw[k]);
+          if (found !== null) {
+            declared = found[1];
+            break;
+          }
+          if (raw[k].trim() !== '') break;
+        }
+        open = { line: i + 1, info: marker[2].trim(), lines: [], declared };
+      } else if (marker[1][0] === fence) {
+        out.push(open);
+        open = null;
+        fence = null;
+      }
+      return;
+    }
+    if (open !== null) open.lines.push(line);
+  });
+  return out;
+}
+
+/**
+ * Strip the blank edges and the common left margin, and nothing else.
+ *
+ * READMEs re-indent a quoted report to taste — `gallery/flex` keeps none of the
+ * two-space gutter, `gallery/look` keeps all of it — so the margin is not part of
+ * the claim. What IS part of it is the relative indentation inside the block,
+ * which is how a record's continuation lines hang off it, so only the margin
+ * every line shares comes off.
+ */
+function transcriptBody(lines: string[]): string[] {
+  const body = lines.map((line) => line.replace(/\s+$/, ''));
+  while (body.length > 0 && body[0] === '') body.shift();
+  while (body.length > 0 && body[body.length - 1] === '') body.pop();
+  if (body.length === 0) return [];
+  const margin = Math.min(...body.filter((line) => line !== '').map((line) => line.length - line.trimStart().length));
+  return body.map((line) => (line === '' ? '' : line.slice(margin)));
+}
+
+/** One command a README states, and what it printed. */
+interface TranscriptRun {
+  /** As the README spells it, which is what a failure detail has to name. */
+  command: string;
+  lines: string[];
+  status: number | null;
+  /** Trimmed line text → the offsets it occurs at, built on first use by `anchorsIn`. */
+  anchors?: Map<string, number[]>;
+}
+
+/** Does the README state this command at all? `bun cli.ts explain`, `rigc explain`, or a bare `explain`. */
+function readmeStates(readme: string, verb: string): boolean {
+  return new RegExp(`(?:bun cli\\.ts|rigc)\\s+${verb}\\b|\`${verb}\``).test(readme);
+}
+
+/**
+ * Run every command this example's README states, over the example's own spec.
+ *
+ * The third is what keeps a `--profile spine-html` verdict from being reported
+ * stale: under the default profile those rules print `PROF`, not `PASS`, so a
+ * README quoting the opt-in run would have nothing to match against.
+ */
+function transcriptRunsFor(example: string, readme: string, outDir: string): TranscriptRun[] {
+  const spec = [
+    '--rig',
+    `gallery/${example}/rig.json`,
+    '--motion',
+    `gallery/${example}/motion.json`,
+    '--out',
+    outDir,
+  ];
+  const wanted: Array<[string, string[]]> = [['build', ['build', ...spec]]];
+  if (readmeStates(readme, 'explain')) wanted.push(['explain', ['explain', ...spec]]);
+  if (readme.includes('spine-html')) {
+    wanted.push(['build --profile spine-html', ['build', ...spec, '--profile', 'spine-html']]);
+  }
+  return wanted.map(([command, argv]) => {
+    const result = runCli(argv);
+    return { command, lines: `${result.stdout}${result.stderr}`.split('\n'), status: result.status };
+  });
+}
+
+/** What one README's transcript scan found. */
+interface TranscriptScan {
+  /** Blocks the gutter-tag anchor recognised as transcripts. */
+  found: number;
+  verified: Array<{ where: string; command: string; lines: number }>;
+  declared: Array<{ where: string; reason: string }>;
+  faults: string[];
+}
+
+/**
+ * The longest run of the block's own lines a stated command actually prints,
+ * which is both the match test and the failure message.
+ *
+ * Reporting the FIRST line that diverges, and what the tool printed there
+ * instead, is the whole difference between a detail somebody can act on and
+ * "this block is stale" — the same bar every assertion in this repository is
+ * held to.
+ */
+function bestTranscriptWindow(
+  body: string[],
+  runs: TranscriptRun[],
+): { command: string; window: string[]; shared: number } | null {
+  let best: { command: string; window: string[]; shared: number } | null = null;
+  for (const run of runs) {
+    // ⚡ Only the lines whose own trimmed text IS the block's first line can
+    // start a match, and that is not a heuristic: a window matches only if every
+    // line of it equals the block's after one common margin comes off both, and
+    // a margin is spaces, so the two first lines agree once trimmed. Testing
+    // every offset instead costs the whole suite about a minute over the plants.
+    for (const i of anchorsIn(run, body[0].trimStart())) {
+      if (i + body.length > run.lines.length) continue;
+      const window = transcriptBody(run.lines.slice(i, i + body.length));
+      if (window.length !== body.length) continue;
+      let shared = 0;
+      while (shared < body.length && window[shared] === body[shared]) shared++;
+      if (best === null || shared > best.shared) best = { command: run.command, window, shared };
+      if (shared === body.length) return best;
+    }
+  }
+  return best;
+}
+
+/** The lines of a run whose trimmed text is `head`, indexed once per run. */
+function anchorsIn(run: TranscriptRun, head: string): number[] {
+  if (run.anchors === undefined) {
+    run.anchors = new Map<string, number[]>();
+    run.lines.forEach((line, i) => {
+      const key = line.trimStart().replace(/\s+$/, '');
+      const at = run.anchors?.get(key);
+      if (at === undefined) run.anchors?.set(key, [i]);
+      else at.push(i);
+    });
+  }
+  return run.anchors.get(head) ?? [];
+}
+
+/**
+ * The line the tool prints that comes closest to one a README claims it prints.
+ *
+ * Only reached when nothing anchors, which is the case where "no command prints
+ * this" is true and useless — `gallery/flex`'s roster had gained an
+ * `attachments=[…]` column, so every line was wrong from the same character on,
+ * and naming that character is the whole difference between a detail somebody
+ * can act on and one they have to go bisect by hand.
+ */
+function nearestPrintedLine(want: string, runs: TranscriptRun[]): { command: string; line: string } | null {
+  let best: { command: string; line: string; shared: number } | null = null;
+  for (const run of runs) {
+    for (const raw of run.lines) {
+      const line = raw.trimStart().replace(/\s+$/, '');
+      let shared = 0;
+      while (shared < line.length && shared < want.length && line[shared] === want[shared]) shared++;
+      if (shared > 0 && (best === null || shared > best.shared)) best = { command: run.command, line, shared };
+    }
+  }
+  return best === null ? null : { command: best.command, line: best.line };
+}
+
+function scanGalleryTranscripts(
+  where: string,
+  readme: string,
+  runs: TranscriptRun[],
+  vocabulary: Set<string>,
+): TranscriptScan {
+  const scan: TranscriptScan = { found: 0, verified: [], declared: [], faults: [] };
+  for (const block of galleryBlocks(readme)) {
+    if (block.info !== '') continue; // ```json / ```sh are spec and invocation, not output
+    const body = transcriptBody(block.lines);
+    if (body.length === 0) continue;
+    const tag = TRANSCRIPT_BLOCK_TAG.exec(body[0]);
+    // The tag is how a block gets picked up WITHOUT anybody saying so, and a
+    // declaration is somebody saying so — a block that calls itself a transcript
+    // is one, whatever it opens with. That is what brings the two abridged
+    // `explain` expansions (`flex`, `portrait`) into the declared count even
+    // though the anchor cannot reach a record's continuation line; and because
+    // "declared and it reproduces" is a fault, saying so is not free either.
+    const anchored = tag !== null && vocabulary.has(tag[1]);
+    if (!anchored && block.declared === null) continue;
+    scan.found++;
+    const at = `${where}:${block.line}`;
+    const best = bestTranscriptWindow(body, runs);
+    const reproduces = best !== null && best.shared === body.length;
+    if (block.declared !== null) {
+      if (block.declared.length < TRANSCRIPT_REASON_MIN) {
+        scan.faults.push(
+          `${at}  declares itself a transcript no run reproduces and gives no reason for it ` +
+            `("${block.declared}"): a marker is an as-of annotation, so it has to say as of what`,
+        );
+      } else if (reproduces) {
+        scan.faults.push(
+          `${at}  is declared unreproducible ("${block.declared}") and \`${best.command}\` prints it verbatim — ` +
+            'a declaration is the escape for a block the tool cannot print, not a way to stop checking one it can',
+        );
+      } else {
+        scan.declared.push({ where: at, reason: block.declared });
+      }
+    } else if (reproduces && best !== null) {
+      scan.verified.push({ where: at, command: best.command, lines: body.length });
+    } else if (best === null || best.shared === 0) {
+      const near = nearestPrintedLine(body[0].trimStart(), runs);
+      scan.faults.push(
+        `${at}  quotes ${body.length} line(s) of ${tag === null ? 'tool' : `\`${tag[1]}\``} output whose first ` +
+          `line no command this README states prints: "${body[0].trim()}"` +
+          (near === null ? '' : `; the closest \`${near.command}\` prints is "${near.line}"`),
+      );
+    } else {
+      scan.faults.push(
+        `${at}  line ${best.shared + 1} of ${body.length} reads "${body[best.shared].trim()}" and ` +
+          `\`${best.command}\` prints "${best.window[best.shared].trim()}"`,
+      );
+    }
+  }
+  return scan;
+}
+
+/**
+ * The three ways a quoted transcript goes stale, planted on EVERY block this
+ * suite verifies rather than on one chosen by hand (issue #415's red-first bar).
+ *
+ * ⭐ Structural, no literal: the figure to bump is found by walking for the last
+ * digit run, the line to drop is an interior one, and the suffix is a token
+ * nothing prints. That is the same rule the fixture mutants obey — reintroducing
+ * a measured number here is how a suite stops being runnable when the numbers
+ * move. Each returns `null` where it does not apply, and a block only one line
+ * long has no interior to drop.
+ */
+const TRANSCRIPT_PLANTS: Array<{ name: string; plant: (lines: string[]) => string[] | null }> = [
+  {
+    name: 'a figure the tool prints, changed by one',
+    plant: (lines) => {
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const digits = [...lines[i].matchAll(/\d+/g)];
+        if (digits.length === 0) continue;
+        const last = digits[digits.length - 1];
+        const bumped = String(Number(last[0]) + 1);
+        const next = [...lines];
+        next[i] = `${lines[i].slice(0, last.index)}${bumped}${lines[i].slice(last.index + last[0].length)}`;
+        return next;
+      }
+      return null;
+    },
+  },
+  {
+    name: 'a line the tool prints, dropped',
+    plant: (lines) => (lines.length < 3 ? null : [...lines.slice(0, 1), ...lines.slice(2)]),
+  },
+  {
+    name: 'a suffix the tool does not print, appended',
+    plant: (lines) => [...lines.slice(0, -1), `${lines[lines.length - 1]} and a bit more`],
+  },
+];
+
+/**
+ * The report tags `gallery/README.md`'s own prose names, and how many places it
+ * names them in.
+ *
+ * ⭐ By paragraph rather than by line, because the sentence wraps and the list
+ * wraps with it. The phrase it keys on is the one the sentence exists to define,
+ * so a rewrite that drops it takes the count to zero — which GT04 reads as a
+ * fault, not as agreement. That is the whole point of returning the count.
+ */
+function reportTagsNamedIn(text: string): { paragraphs: number; tags: string[] } {
+  const paragraphs = text.split(/\n[ \t]*\n/).filter((block) => /report tag/i.test(block));
+  const tags = new Set<string>();
+  for (const block of paragraphs) for (const m of block.matchAll(/`([A-Z][A-Z\d_]{1,9})`/g)) tags.add(m[1]);
+  return { paragraphs: paragraphs.length, tags: [...tags].sort() };
+}
+
+/** Splice an edited block body back into the README text it came from. */
+function plantIntoReadme(readme: string, block: GalleryBlock, edited: string[]): string {
+  const raw = readme.split('\n');
+  return [...raw.slice(0, block.line), ...edited, ...raw.slice(block.line + block.lines.length)].join('\n');
+}
+
+function runGalleryTranscriptSuite(): number {
+  console.log('\n── what a gallery README QUOTES the tool as printing (issue #415) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const root = import.meta.dir;
+  const galleryRoot = join(root, 'gallery');
+  if (!existsSync(galleryRoot)) {
+    console.log('  INFO  no gallery/ directory, so no quoted transcript was checked in this run.');
+    return bad;
+  }
+  const examples = readdirSync(galleryRoot)
+    .filter(
+      (name) =>
+        existsSync(join(galleryRoot, name, 'README.md')) &&
+        existsSync(join(galleryRoot, name, 'rig.json')) &&
+        existsSync(join(galleryRoot, name, 'motion.json')),
+    )
+    .sort();
+
+  const readmes = new Map<string, string>();
+  const pools = new Map<string, TranscriptRun[]>();
+  const unstated: string[] = [];
+  const broken: string[] = [];
+  for (const example of examples) {
+    const readme = readFileSync(join(galleryRoot, example, 'README.md'), 'utf8');
+    readmes.set(example, readme);
+    // Shape 1 is "a command the same README states", so the pool is derived from
+    // the README rather than assumed: an example whose README never hands a
+    // stranger a `build` line is not one this gate has a command for.
+    if (!new RegExp(`bun cli\\.ts build[^\\n]*--rig gallery/${example}/rig\\.json`).test(readme)) {
+      unstated.push(example);
+      continue;
+    }
+    const runs = transcriptRunsFor(example, readme, mkdtempSync(join(tmpdir(), `rigc-transcript-${example}-`)));
+    for (const run of runs) {
+      if (run.status !== 0 || run.lines.length < 20) {
+        broken.push(`gallery/${example}: \`${run.command}\` exited ${run.status} with ${run.lines.length} line(s)`);
+      }
+    }
+    pools.set(example, runs);
+  }
+
+  const vocabulary = new Set<string>();
+  for (const runs of pools.values()) {
+    for (const run of runs) {
+      for (const line of run.lines) {
+        const tag = TRANSCRIPT_GUTTER.exec(line);
+        if (tag !== null) vocabulary.add(tag[1]);
+      }
+    }
+  }
+
+  const scans = new Map<string, TranscriptScan>();
+  for (const [example, runs] of pools) {
+    scans.set(
+      example,
+      scanGalleryTranscripts(`gallery/${example}/README.md`, readmes.get(example) ?? '', runs, vocabulary),
+    );
+  }
+  const found = [...scans.values()].reduce((n, scan) => n + scan.found, 0);
+  const verified = [...scans.values()].flatMap((scan) => scan.verified);
+  const declared = [...scans.values()].flatMap((scan) => scan.declared);
+  const faults = [...scans.values()].flatMap((scan) => scan.faults);
+  const covered = [...scans].filter(([, scan]) => scan.verified.length > 0).map(([example]) => example);
+  const runCount = [...pools.values()].reduce((n, runs) => n + runs.length, 0);
+
+  // --- GT01: the derivation floor, asserted before anything about content ----
+  //
+  // 🔒 CUR01's argument, and it is the one that matters most here. Every step
+  // above can come back empty — a gallery with no example, a README that stops
+  // stating its own build line, a command that starts failing, a gutter tag the
+  // tool renames — and each of those makes GT02 below pass while reading
+  // nothing. A scanner that silently matched no block would report a clean tree,
+  // which is the one failure a gate like this cannot afford.
+  say(
+    'GT01_THE_TRANSCRIPT_SCAN_READ_THE_GALLERY_THE_TOOL_AND_THE_BLOCKS',
+    unstated.length === 0 &&
+      broken.length === 0 &&
+      examples.length >= 5 &&
+      pools.size === examples.length &&
+      runCount >= 14 &&
+      vocabulary.size >= 5 &&
+      found >= 16 &&
+      verified.length >= 10 &&
+      covered.length >= 5,
+    unstated.length > 0
+      ? `these examples' READMEs no longer state a \`bun cli.ts build --rig gallery/<name>/rig.json\` line, so ` +
+        `this gate has no command to hold their blocks to: ${unstated.join(', ')}`
+      : broken.length > 0
+        ? `a command a README states did not run: ${broken.join('; ')}`
+        : `${examples.length} example(s), ${runCount} stated command run(s), gutter vocabulary ` +
+          `{${[...vocabulary].sort().join(' ')}}; ${found} quoted transcript(s) found by that vocabulary — ` +
+          `${verified.length} reproduced verbatim across ${covered.length} example(s) (${covered.join(', ')}), ` +
+          `${declared.length} declared unreproducible ` +
+          `(${declared.map((d) => `${d.where} — ${d.reason}`).join('; ') || 'none'})`,
+    'both ends of this can come back empty: the anchor is a tag the tool prints, so a renamed tag takes every ' +
+      'block anchored on it out of the scan at once, and the pool is the commands a README states, so a rewritten ' +
+      'quickstart takes the whole example out. The floors are what make either loud instead of silent',
+  );
+
+  // --- GT02: the blocks themselves ------------------------------------------
+  say(
+    'GT02_EVERY_QUOTED_TRANSCRIPT_IS_A_RUN_OF_THE_COMMAND_ITS_README_STATES',
+    faults.length === 0,
+    faults.length === 0
+      ? `${verified.length} block(s) — ${verified.reduce((n, v) => n + v.lines, 0)} line(s) — each a contiguous run ` +
+        `of the output of the command it sits beside (${[
+          ...new Set(verified.map((v) => `\`${v.command}\``)),
+        ].join(', ')}), and ${declared.length} declared block(s) that none of those commands prints, as declared`
+      : `${faults.length} quoted transcript(s) the tool no longer prints:\n          ${faults.join('\n          ')}`,
+    'the positive half is load-bearing: a check that only reported failures would pass a tool that had stopped ' +
+      'printing anything at all, so the line count and the commands are named. #412 added one line and one ' +
+      'suffix to a depth-mesh report and #407 regenerated the same README from a worktree that predated it — ' +
+      'twice stale in one night, twice green',
+  );
+
+  // --- GT03: the scanner against the ways a transcript goes stale -----------
+  //
+  // Red-first, on every block GT02 verifies rather than on one chosen by hand,
+  // and two-sided: the planted spelling must fault and the tree's own must not
+  // (GT02 is that half). The last plant is the one that motivates GT01 — take
+  // the TAG off a block's first line and the block does not fault, it silently
+  // stops being a block at all.
+  const misses: string[] = [];
+  let planted = 0;
+  let silenced = 0;
+  for (const [example, runs] of pools) {
+    const readme = readmes.get(example) ?? '';
+    const verifiedHere = new Set((scans.get(example)?.verified ?? []).map((v) => v.where));
+    for (const block of galleryBlocks(readme)) {
+      if (!verifiedHere.has(`gallery/${example}/README.md:${block.line}`)) continue;
+      for (const { name, plant } of TRANSCRIPT_PLANTS) {
+        const edited = plant(block.lines);
+        if (edited === null) continue;
+        planted++;
+        const after = scanGalleryTranscripts(
+          `gallery/${example}/README.md`,
+          plantIntoReadme(readme, block, edited),
+          runs,
+          vocabulary,
+        );
+        if (after.faults.length === 0) misses.push(`gallery/${example}/README.md:${block.line}: ${name} — not faulted`);
+      }
+      // The declaration is not a way to switch the gate off.
+      const declaredOnly = plantIntoReadme(readme, block, block.lines);
+      const declaredLines = declaredOnly.split('\n');
+      declaredLines.splice(block.line - 1, 0, '<!-- transcript: lifted out of a run that does not print it -->');
+      planted++;
+      if (scanGalleryTranscripts(`gallery/${example}/README.md`, declaredLines.join('\n'), runs, vocabulary).faults.length === 0) {
+        misses.push(`gallery/${example}/README.md:${block.line}: declared while still reproducing — not faulted`);
+      }
+      // A marker with nothing after the colon is not a declaration.
+      const emptyLines = declaredOnly.split('\n');
+      emptyLines.splice(block.line - 1, 0, '<!-- transcript: -->');
+      planted++;
+      if (scanGalleryTranscripts(`gallery/${example}/README.md`, emptyLines.join('\n'), runs, vocabulary).faults.length === 0) {
+        misses.push(`gallery/${example}/README.md:${block.line}: declared with no reason — not faulted`);
+      }
+      // And the silent one: no tag, no candidate, no fault — only the floor.
+      const untagged = [...block.lines];
+      const first = untagged.findIndex((line) => line.trim() !== '');
+      untagged[first] = untagged[first].replace(/[A-Z]/, (c) => c.toLowerCase());
+      const after = scanGalleryTranscripts(
+        `gallery/${example}/README.md`,
+        plantIntoReadme(readme, block, untagged),
+        runs,
+        vocabulary,
+      );
+      const scan = scans.get(example);
+      if (scan === undefined || after.found !== scan.found - 1 || after.faults.length !== 0) silenced++;
+    }
+  }
+  say(
+    'GT03_THE_SCANNER_FAULTS_EVERY_WAY_A_QUOTED_TRANSCRIPT_GOES_STALE',
+    misses.length === 0 && planted >= 40 && silenced === 0 && verified.length > 0,
+    misses.length === 0
+      ? `${planted} planted edit(s) over the ${verified.length} verified block(s) — a figure bumped, an interior ` +
+        'line dropped, a suffix appended, a reproducing block declared away, and a declaration with no reason — ' +
+        'each faulted; and taking the gutter tag off a first line faulted NOTHING on all ' +
+        `${verified.length} of them, dropping each silently out of the scan, which is what GT01's floor is for`
+      : `${misses.length} of ${planted} planted edit(s) did not fault` +
+        (silenced > 0 ? ` (and ${silenced} untagged block(s) did not drop out cleanly)` : '') +
+        `:\n          ${misses.join('\n          ')}`,
+    'a scanner is a vocabulary of shapes and a shape that stops matching goes silent, not red. #412 was a line ' +
+      'and a suffix; a figure moving is the same defect a third way, and the declaration has to be refused on a ' +
+      'block that reproduces or it becomes the bypass',
+  );
+
+  // --- GT04: the vocabulary the gallery index NAMES, against the derived one --
+  //
+  // 🔒 `gallery/README.md` documents this convention, and documenting it means
+  // writing the tag list down by hand while the scanner COLLECTS it from the
+  // runs. That is this issue's own defect one turn later, in a file this suite
+  // reads: the day `cli.ts` prints a new tag at the gutter the code learns it
+  // and the paragraph does not. So the prose is derived too.
+  //
+  // The locator is a paragraph rather than a line, because the sentence wraps —
+  // and it reports how many paragraphs it matched, because a locator that
+  // silently matched none would compare an empty set against an empty set and
+  // call the tree clean. Both directions are probed below: a tag the runs print
+  // that the prose omits, a tag the prose names that no run prints, and the
+  // reworded sentence that takes the locator to zero.
+  {
+    const index = existsSync(join(galleryRoot, 'README.md'))
+      ? readFileSync(join(galleryRoot, 'README.md'), 'utf8')
+      : '';
+    const named = reportTagsNamedIn(index);
+    const derived = [...vocabulary].sort();
+    const disagree = (prose: string[], tags: string[]): string[] => [
+      ...tags
+        .filter((tag) => !prose.includes(tag))
+        .map((tag) => `the runs print \`${tag}\` at the gutter and gallery/README.md does not name it`),
+      ...prose
+        .filter((tag) => !tags.includes(tag))
+        .map((tag) => `gallery/README.md names \`${tag}\` as a report tag and no run prints one`),
+    ];
+    const faults = [
+      ...(named.paragraphs === 1
+        ? []
+        : [`${named.paragraphs} paragraph(s) of gallery/README.md define a "report tag"; the locator needs exactly one`]),
+      ...(named.tags.length >= 5 ? [] : [`the locator read ${named.tags.length} tag name(s) out of that paragraph`]),
+      ...disagree(named.tags, derived),
+    ];
+    // A name nothing in the tree carries, so neither probe can pass by accident.
+    const INVENTED = 'NOSUCHTAG';
+    const probes = [
+      ...(disagree(named.tags, [...derived, INVENTED]).length > 0
+        ? []
+        : ['a tag the runs print and the prose omits was not faulted']),
+      ...(disagree([...named.tags, INVENTED], derived).length > 0
+        ? []
+        : ['a tag the prose names and no run prints was not faulted']),
+      ...(reportTagsNamedIn(index.replace(/report tag/gi, 'report label')).paragraphs === 0
+        ? []
+        : ['the locator still found its paragraph after the phrase it keys on was reworded away']),
+    ];
+    say(
+      'GT04_THE_REPORT_TAGS_GALLERY_README_NAMES_ARE_THE_ONES_THE_RUNS_PRINT',
+      faults.length === 0 && probes.length === 0 && derived.length > 0,
+      faults.length === 0 && probes.length === 0
+        ? `gallery/README.md's one "report tag" paragraph names ${named.tags.length} tag(s) — ` +
+          `${named.tags.map((tag) => `\`${tag}\``).join(', ')} — and that is exactly the gutter vocabulary the ` +
+          `${runCount} stated run(s) print; red-first both ways, plus the reworded sentence that takes the ` +
+          'locator to zero paragraphs'
+        : [...faults, ...probes].join('\n          '),
+      'the paragraph that explains this gate would otherwise be the next thing it fails to cover: the scanner ' +
+        'collects the vocabulary and the prose spells it out, so a new report tag teaches the code and leaves ' +
+        'the documentation wrong. That is #360 exactly, one surface further in',
+    );
+  }
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // seeing the result — `rigc render` and `rigc preview` (issues #216, #226)
 // ---------------------------------------------------------------------------
 //
@@ -20254,6 +20898,8 @@ function main(): void {
   substantive += 5;
   bad += runCurrencySuite();
   substantive += 6;
+  bad += runGalleryTranscriptSuite();
+  substantive += 4;
   bad += runSeeItSuite();
   substantive += 11;
   bad += runPoseSuite();
@@ -20400,6 +21046,21 @@ function main(): void {
     "manifests naming one plugin whose entry skill exists and whose `version`, if one is ever written, is `package.json`'s; " +
     'the derivation asserted first, and the same reader held against three planted surfaces that have to fault in ' +
     'every way it knows and one clean surface that has to fault in none)';
+  const galleryTranscripts =
+    ", + 4 gallery-transcript controls (issue #415 — the currency gate on the surface this project's audience " +
+    'actually reads: every fenced block a `gallery/*/README.md` QUOTES the tool as printing, held to a contiguous ' +
+    'run of the output of a command that README states. The blocks are found by the tag rigc prints at its own ' +
+    'report gutter, and that vocabulary is collected from the runs rather than listed here; the pool is the ' +
+    'commands each README names, one subprocess each, because those lines come out of `cli.ts` and reading them ' +
+    'out of the library instead would be the report agreeing with the report — which is exactly what #412 changed ' +
+    'and nothing noticed, twice in one night. The derivation is asserted first, since a renamed tag would take ' +
+    'every block anchored on it out of the scan at once and leave a clean tree; a block no run can reproduce ' +
+    'declares itself with a reason and is reported so the declared set cannot grow quietly; and the scanner is ' +
+    'planted on every block it verifies — a figure bumped, an interior line dropped, a suffix appended, a ' +
+    'reproducing block declared away, a declaration with no reason — each required to fault. And the last ' +
+    'control is that gate turned on its own documentation: the paragraph in `gallery/README.md` that names ' +
+    'the tag vocabulary is compared against the vocabulary the runs actually print, red-first in both ' +
+    'directions and on the reworded sentence that would take its locator silently to zero)';
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
@@ -20596,6 +21257,7 @@ function main(): void {
       shippedDocs +
       skillSurface +
       currency +
+      galleryTranscripts +
       ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +
       'to RGBA while still refusing a colour type that is not one, a preview embedding the skeleton, the atlas and ' +
