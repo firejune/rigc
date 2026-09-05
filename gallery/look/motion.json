@@ -1,0 +1,338 @@
+{
+  "spec": "rigc-motion/1",
+  "archetype": "look",
+  "cut": "gallery-look",
+
+  "easings": {
+    "rise": [0.4, 0, 0.86, 0.38],
+    "settle": [0.12, 0.7, 0.3, 1],
+    "swell": [0.42, 0, 0.58, 1]
+  },
+
+  "groups": {
+    "features": ["eye_l", "eye_r", "iris_l", "iris_r", "spark_l", "spark_r", "brow_l", "brow_r", "nose", "mouth"],
+    "sockets": ["eye_l", "eye_r", "brow_l", "brow_r", "nose", "mouth"],
+    "hair": ["hairmass", "bang", "ahoge"]
+  },
+
+  "physics": {
+    "whip": {
+      "bone": "ahoge_whip",
+      "rotate": 1,
+      "inertia": 0.55,
+      "strength": 55,
+      "damping": 0.72,
+      "mass": 1,
+      "mix": 1
+    }
+  },
+
+  "animations": {
+    "turn": {
+      "duration": 1.9,
+      "loop": false,
+      "note": "NOT an animation anybody plays. It is the yaw slider's LOOKUP TABLE: the `yaw` constraint maps the dial bone's local rotation to a time here at 0.05 s per degree, so t = (degrees + 19) * 0.05 and the whole 1.9 s is the axis from -19 to +19. 🚨 Every key is therefore LINEAR — no `ease` anywhere. An easing curve would make the pose a non-linear function of the dial, so the face would lag and overshoot a number the consumer is holding still. Shaping belongs to whatever moves the value, which here is `sweep`. For the same reason there is no anticipation and no follow-through: both are functions of time, and this is a function of a value. 19 deg is the largest whole degree inside the turn ceiling `build` reports for the face mesh; the two sidelocks fold well before it, so they are keyed to alpha 0 on the key BEFORE the one that folds them (issue #403).",
+
+      "tracks": [
+        {
+          "bone": "faceshift",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "derive": { "kind": "yaw", "degrees": -19, "depth": 168.2 } },
+            { "t": 0.3, "derive": { "kind": "yaw", "degrees": -13, "depth": 168.2 } },
+            { "t": 0.65, "derive": { "kind": "yaw", "degrees": -6, "depth": 168.2 } },
+            { "t": 0.95, "v": [0] },
+            { "t": 1.25, "derive": { "kind": "yaw", "degrees": 6, "depth": 168.2 } },
+            { "t": 1.6, "derive": { "kind": "yaw", "degrees": 13, "depth": 168.2 } },
+            { "t": 1.9, "derive": { "kind": "yaw", "degrees": 19, "depth": 168.2 } }
+          ]
+        },
+
+        {
+          "group": "features",
+          "property": "translatex",
+          "keys": [
+            {
+              "t": 0,
+              "derive": {
+                "kind": "yaw",
+                "degrees": -19,
+                "carried": 168.2,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "iris_l": 120.2, "iris_r": 120.2, "spark_l": 120.2, "spark_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            },
+            {
+              "t": 0.3,
+              "derive": {
+                "kind": "yaw",
+                "degrees": -13,
+                "carried": 168.2,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "iris_l": 120.2, "iris_r": 120.2, "spark_l": 120.2, "spark_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            },
+            {
+              "t": 0.65,
+              "derive": {
+                "kind": "yaw",
+                "degrees": -6,
+                "carried": 168.2,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "iris_l": 120.2, "iris_r": 120.2, "spark_l": 120.2, "spark_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            },
+            { "t": 0.95, "v": [0] },
+            {
+              "t": 1.25,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 6,
+                "carried": 168.2,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "iris_l": 120.2, "iris_r": 120.2, "spark_l": 120.2, "spark_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            },
+            {
+              "t": 1.6,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 13,
+                "carried": 168.2,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "iris_l": 120.2, "iris_r": 120.2, "spark_l": 120.2, "spark_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            },
+            {
+              "t": 1.9,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 19,
+                "carried": 168.2,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "iris_l": 120.2, "iris_r": 120.2, "spark_l": 120.2, "spark_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            }
+          ]
+        },
+
+        {
+          "group": "sockets",
+          "property": "scalex",
+          "keys": [
+            {
+              "t": 0,
+              "derive": {
+                "kind": "yaw",
+                "degrees": -19,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            },
+            {
+              "t": 0.3,
+              "derive": {
+                "kind": "yaw",
+                "degrees": -13,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            },
+            {
+              "t": 0.65,
+              "derive": {
+                "kind": "yaw",
+                "degrees": -6,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            },
+            { "t": 0.95, "v": [1] },
+            {
+              "t": 1.25,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 6,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            },
+            {
+              "t": 1.6,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 13,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            },
+            {
+              "t": 1.9,
+              "derive": {
+                "kind": "yaw",
+                "degrees": 19,
+                "depth": { "eye_l": 120.2, "eye_r": 120.2, "brow_l": 144.2, "brow_r": 144.2, "nose": 191.4, "mouth": 138.6 }
+              }
+            }
+          ]
+        },
+
+        {
+          "group": "hair",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "derive": { "kind": "yaw", "degrees": -19, "depth": { "hairmass": -55, "bang": 163.2, "ahoge": 20 } } },
+            { "t": 0.3, "derive": { "kind": "yaw", "degrees": -13, "depth": { "hairmass": -55, "bang": 163.2, "ahoge": 20 } } },
+            { "t": 0.65, "derive": { "kind": "yaw", "degrees": -6, "depth": { "hairmass": -55, "bang": 163.2, "ahoge": 20 } } },
+            { "t": 0.95, "v": [0] },
+            { "t": 1.25, "derive": { "kind": "yaw", "degrees": 6, "depth": { "hairmass": -55, "bang": 163.2, "ahoge": 20 } } },
+            { "t": 1.6, "derive": { "kind": "yaw", "degrees": 13, "depth": { "hairmass": -55, "bang": 163.2, "ahoge": 20 } } },
+            { "t": 1.9, "derive": { "kind": "yaw", "degrees": 19, "depth": { "hairmass": -55, "bang": 163.2, "ahoge": 20 } } }
+          ]
+        },
+
+        {
+          "bone": "neck",
+          "property": "translatex",
+          "keys": [
+            { "t": 0, "derive": { "kind": "yaw", "degrees": -19, "depth": 84.1 } },
+            { "t": 0.3, "derive": { "kind": "yaw", "degrees": -13, "depth": 84.1 } },
+            { "t": 0.65, "derive": { "kind": "yaw", "degrees": -6, "depth": 84.1 } },
+            { "t": 0.95, "v": [0] },
+            { "t": 1.25, "derive": { "kind": "yaw", "degrees": 6, "depth": 84.1 } },
+            { "t": 1.6, "derive": { "kind": "yaw", "degrees": 13, "depth": 84.1 } },
+            { "t": 1.9, "derive": { "kind": "yaw", "degrees": 19, "depth": 84.1 } }
+          ]
+        },
+
+        {
+          "bone": "headroll",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [-1.9] },
+            { "t": 0.3, "v": [-1.3] },
+            { "t": 0.65, "v": [-0.6] },
+            { "t": 0.95, "v": [0] },
+            { "t": 1.25, "v": [0.6] },
+            { "t": 1.6, "v": [1.3] },
+            { "t": 1.9, "v": [1.9] }
+          ]
+        },
+
+        {
+          "slot": "hair_lock_l",
+          "property": "rgba",
+          "keys": [
+            { "t": 0, "v": [1, 1, 1, 1] },
+            { "t": 1.25, "v": [1, 1, 1, 1] },
+            { "t": 1.6, "v": [1, 1, 1, 0] },
+            { "t": 1.9, "v": [1, 1, 1, 0] }
+          ]
+        },
+        {
+          "slot": "hair_lock_r",
+          "property": "rgba",
+          "keys": [
+            { "t": 0, "v": [1, 1, 1, 0] },
+            { "t": 0.3, "v": [1, 1, 1, 0] },
+            { "t": 0.65, "v": [1, 1, 1, 1] },
+            { "t": 1.9, "v": [1, 1, 1, 1] }
+          ]
+        }
+      ],
+
+      "deform": [
+        {
+          "slot": "head",
+          "attachment": "head",
+          "keys": [
+            { "t": 0, "transform": { "kind": "yaw", "depth": true, "degrees": -19 } },
+            { "t": 0.3, "transform": { "kind": "yaw", "depth": true, "degrees": -13 } },
+            { "t": 0.65, "transform": { "kind": "yaw", "depth": true, "degrees": -6 } },
+            { "t": 0.95 },
+            { "t": 1.25, "transform": { "kind": "yaw", "depth": true, "degrees": 6 } },
+            { "t": 1.6, "transform": { "kind": "yaw", "depth": true, "degrees": 13 } },
+            { "t": 1.9, "transform": { "kind": "yaw", "depth": true, "degrees": 19 } }
+          ]
+        },
+        {
+          "slot": "hair_lock_l",
+          "attachment": "hair_lock_l",
+          "keys": [
+            { "t": 0, "transform": { "kind": "yaw", "depth": true, "degrees": -19 } },
+            { "t": 0.3, "transform": { "kind": "yaw", "depth": true, "degrees": -13 } },
+            { "t": 0.65, "transform": { "kind": "yaw", "depth": true, "degrees": -6 } },
+            { "t": 0.95 },
+            { "t": 1.25, "transform": { "kind": "yaw", "depth": true, "degrees": 6 } },
+            { "t": 1.6, "transform": { "kind": "yaw", "depth": true, "degrees": 13 } },
+            { "t": 1.9, "transform": { "kind": "yaw", "depth": true, "degrees": 19 } }
+          ]
+        },
+        {
+          "slot": "hair_lock_r",
+          "attachment": "hair_lock_r",
+          "keys": [
+            { "t": 0, "transform": { "kind": "yaw", "depth": true, "degrees": -19 } },
+            { "t": 0.3, "transform": { "kind": "yaw", "depth": true, "degrees": -13 } },
+            { "t": 0.65, "transform": { "kind": "yaw", "depth": true, "degrees": -6 } },
+            { "t": 0.95 },
+            { "t": 1.25, "transform": { "kind": "yaw", "depth": true, "degrees": 6 } },
+            { "t": 1.6, "transform": { "kind": "yaw", "depth": true, "degrees": 13 } },
+            { "t": 1.9, "transform": { "kind": "yaw", "depth": true, "degrees": 19 } }
+          ]
+        }
+      ]
+    },
+
+    "tilt": {
+      "duration": 0.5,
+      "loop": false,
+      "note": "The second axis, and the second lookup table. Same 0.05 s per degree, over a -5..+5 range, so it is 0.5 s long. It keys `headroll`'s rotation, which `turn` also keys — which is the whole reason BOTH sliders declare `additive: true`: at the default a slider WRITES its animation's value outright, so whichever of the two sits later in the rig's constraints array would be the only one that moved the head (AUTHORING §3.5.2). Linear keys, for the reason `turn` gives.",
+
+      "tracks": [
+        {
+          "bone": "headroll",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [-5] },
+            { "t": 0.25, "v": [0] },
+            { "t": 0.5, "v": [5] }
+          ]
+        },
+        {
+          "bone": "neck",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [-2] },
+            { "t": 0.25, "v": [0] },
+            { "t": 0.5, "v": [2] }
+          ]
+        }
+      ]
+    },
+
+    "sweep": {
+      "duration": 3.2,
+      "loop": true,
+      "note": "⭐ The only animation here that is meant to be played, and it does not touch the face. It turns the two GAUGE NEEDLES, and the head follows because the sliders are reading them. All the shaping lives here — MOTION.md §3.6's anticipation is not in `turn` and cannot be, because `turn` is indexed by a value rather than by time. The two needles run on different waveforms so that a reader can see two independent numbers rather than one: yaw holds at each extreme, tilt does not.",
+
+      "tracks": [
+        {
+          "bone": "yaw_dial",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swell" },
+            { "t": 0.7, "v": [19], "ease": "settle" },
+            { "t": 1.1, "v": [19], "ease": "swell" },
+            { "t": 1.7, "v": [0], "ease": "swell" },
+            { "t": 2.4, "v": [-19], "ease": "settle" },
+            { "t": 2.8, "v": [-19], "ease": "swell" },
+            { "t": 3.2, "v": [0] }
+          ]
+        },
+        {
+          "bone": "tilt_dial",
+          "property": "rotate",
+          "keys": [
+            { "t": 0, "v": [0], "ease": "swell" },
+            { "t": 1.0, "v": [5], "ease": "swell" },
+            { "t": 2.0, "v": [-5], "ease": "swell" },
+            { "t": 3.2, "v": [0] }
+          ]
+        },
+
+        { "slider": "yaw", "property": "mix", "keys": [{ "t": 0, "v": [1] }, { "t": 3.2, "v": [1] }] },
+        { "slider": "tilt", "property": "mix", "keys": [{ "t": 0, "v": [1] }, { "t": 3.2, "v": [1] }] }
+      ]
+    }
+  }
+}

@@ -1,0 +1,205 @@
+{
+  "spec": "rigc-rig/1",
+  "name": "look",
+  "images": "parts",
+  "skeleton": { "x": 0, "y": 0, "width": 800, "height": 880 },
+
+  "bones": [
+    { "name": "root" },
+
+    { "name": "bust", "parent": "root", "x": 400, "y": 0 },
+    { "name": "torso", "parent": "bust", "y": 120 },
+    { "name": "chest", "parent": "bust", "y": 268 },
+
+    { "name": "neckbase", "parent": "chest", "y": 107 },
+    { "name": "neck", "parent": "neckbase" },
+    { "name": "choker", "parent": "neck", "y": 5 },
+
+    { "name": "headroll", "parent": "neckbase", "y": 85 },
+    { "name": "head", "parent": "headroll", "y": 140 },
+
+    { "name": "hairmass", "parent": "head" },
+    { "name": "bang", "parent": "head", "y": 137 },
+
+    { "name": "lock_l", "parent": "head", "x": -150, "y": -80 },
+    { "name": "lock_r", "parent": "head", "x": 150, "y": -80 },
+
+    { "name": "ahoge", "parent": "head", "x": -8, "y": 205 },
+    { "name": "ahoge_whip", "parent": "ahoge", "x": -16, "y": -55 },
+
+    { "name": "faceshift", "parent": "head" },
+
+    { "name": "eye_l", "parent": "faceshift", "x": -62, "y": -15 },
+    { "name": "eye_r", "parent": "faceshift", "x": 62, "y": -15 },
+    { "name": "iris_l", "parent": "faceshift", "x": -62, "y": -15 },
+    { "name": "iris_r", "parent": "faceshift", "x": 62, "y": -15 },
+    { "name": "spark_l", "parent": "faceshift", "x": -73, "y": -4 },
+    { "name": "spark_r", "parent": "faceshift", "x": 51, "y": -4 },
+    { "name": "brow_l", "parent": "faceshift", "x": -62, "y": 36 },
+    { "name": "brow_r", "parent": "faceshift", "x": 62, "y": 36 },
+    { "name": "nose", "parent": "faceshift", "y": -64 },
+    { "name": "mouth", "parent": "faceshift", "y": -106 },
+
+    { "name": "yaw_gauge", "parent": "root", "x": 90, "y": 620 },
+    { "name": "yaw_dial", "parent": "yaw_gauge" },
+    { "name": "tilt_gauge", "parent": "root", "x": 710, "y": 620 },
+    { "name": "tilt_dial", "parent": "tilt_gauge" }
+  ],
+
+  "slots": [
+    { "name": "plate", "bone": "root", "attachment": "plate" },
+    { "name": "hair_back", "bone": "hairmass", "attachment": "hair_back" },
+    { "name": "neck", "bone": "neck", "attachment": "neck" },
+    { "name": "torso", "bone": "torso", "attachment": "torso" },
+    { "name": "choker", "bone": "choker", "attachment": "choker" },
+    { "name": "head", "bone": "head", "attachment": "head" },
+    { "name": "eye_l", "bone": "eye_l", "attachment": "eye_l" },
+    { "name": "eye_r", "bone": "eye_r", "attachment": "eye_r" },
+    { "name": "iris_l", "bone": "iris_l", "attachment": "iris_l" },
+    { "name": "iris_r", "bone": "iris_r", "attachment": "iris_r" },
+    { "name": "spark_l", "bone": "spark_l", "attachment": "spark_l" },
+    { "name": "spark_r", "bone": "spark_r", "attachment": "spark_r" },
+    { "name": "brow_l", "bone": "brow_l", "attachment": "brow_l" },
+    { "name": "brow_r", "bone": "brow_r", "attachment": "brow_r" },
+    { "name": "nose", "bone": "nose", "attachment": "nose" },
+    { "name": "mouth", "bone": "mouth", "attachment": "mouth" },
+    { "name": "hair_bang", "bone": "bang", "attachment": "hair_bang" },
+    { "name": "hair_lock_l", "bone": "lock_l", "attachment": "hair_lock_l" },
+    { "name": "hair_lock_r", "bone": "lock_r", "attachment": "hair_lock_r" },
+    { "name": "ahoge", "bone": "ahoge", "attachment": "ahoge" },
+    { "name": "dial_yaw", "bone": "yaw_gauge", "attachment": "dial_yaw" },
+    { "name": "needle_yaw", "bone": "yaw_dial", "attachment": "needle_yaw" },
+    { "name": "dial_tilt", "bone": "tilt_gauge", "attachment": "dial_tilt" },
+    { "name": "needle_tilt", "bone": "tilt_dial", "attachment": "needle_tilt" }
+  ],
+
+  "constraints": [
+    {
+      "name": "yaw",
+      "type": "slider",
+      "animation": "turn",
+      "bone": "yaw_dial",
+      "property": "rotate",
+      "from": -19,
+      "to": 0,
+      "scale": 0.05,
+      "max": 19,
+      "local": true,
+      "additive": true,
+      "mix": 0
+    },
+    {
+      "name": "tilt",
+      "type": "slider",
+      "animation": "tilt",
+      "bone": "tilt_dial",
+      "property": "rotate",
+      "from": -5,
+      "to": 0,
+      "scale": 0.05,
+      "max": 5,
+      "local": true,
+      "additive": true,
+      "mix": 0
+    }
+  ],
+
+  "invariants": {
+    "meshSlots": 4,
+    "meshTriangles": 320
+  },
+
+  "skins": {
+    "default": {
+      "plate": { "plate": { "image": "plate.png", "x": 400, "y": 440 } },
+
+      "hair_back": { "hair_back": { "image": "hair_back.png" } },
+      "neck": { "neck": { "image": "neck.png" } },
+      "torso": { "torso": { "image": "torso.png", "y": 94 } },
+      "choker": { "choker": { "image": "choker.png" } },
+
+      "head": {
+        "head": {
+          "type": "mesh",
+          "image": "head.png",
+          "generator": {
+            "kind": "grid",
+            "us": [
+              0.0058824, 0.0529412, 0.1235294, 0.2117647, 0.3117647, 0.3882353,
+              0.4294118, 0.4529412, 0.4705882, 0.4852941, 0.5, 0.5147059,
+              0.5294118, 0.5470588, 0.5705882, 0.6117647, 0.6882353, 0.7882353,
+              0.8764706, 0.9470588, 0.9941176
+            ],
+            "vs": [
+              0.0105263, 0.1157895, 0.2368421, 0.3631579, 0.5, 0.6368421,
+              0.7631579, 0.8842105, 0.9894737
+            ],
+            "depth": { "image": "face_depth.png", "near": "white", "zScale": 194 }
+          }
+        }
+      },
+
+      "eye_l": { "eye_l": { "image": "eye_l.png" } },
+      "eye_r": { "eye_r": { "image": "eye_r.png" } },
+      "iris_l": { "iris_l": { "image": "iris_l.png" } },
+      "iris_r": { "iris_r": { "image": "iris_r.png" } },
+      "spark_l": { "spark_l": { "image": "spark_l.png" } },
+      "spark_r": { "spark_r": { "image": "spark_r.png" } },
+      "brow_l": { "brow_l": { "image": "brow_l.png" } },
+      "brow_r": { "brow_r": { "image": "brow_r.png" } },
+      "nose": { "nose": { "image": "nose.png" } },
+      "mouth": { "mouth": { "image": "mouth.png" } },
+
+      "hair_bang": { "hair_bang": { "image": "hair_bang.png" } },
+
+      "hair_lock_l": {
+        "hair_lock_l": {
+          "type": "mesh",
+          "image": "hair_lock_l.png",
+          "generator": {
+            "kind": "grid",
+            "us": [
+              0.0238095, 0.0952381, 0.1666667, 0.2380952, 0.3095238, 0.4047619,
+              0.5, 0.5952381, 0.6904762, 0.7619048, 0.8333333, 0.9047619, 0.9761905
+            ],
+            "vs": [0, 0.5, 1],
+            "depth": { "image": "lock_l_depth.png", "near": "white", "zScale": 64 }
+          }
+        }
+      },
+      "hair_lock_r": {
+        "hair_lock_r": {
+          "type": "mesh",
+          "image": "hair_lock_r.png",
+          "generator": {
+            "kind": "grid",
+            "us": [
+              0.0238095, 0.0952381, 0.1666667, 0.2380952, 0.3095238, 0.4047619,
+              0.5, 0.5952381, 0.6904762, 0.7619048, 0.8333333, 0.9047619, 0.9761905
+            ],
+            "vs": [0, 0.5, 1],
+            "depth": { "image": "lock_r_depth.png", "near": "white", "zScale": 64 }
+          }
+        }
+      },
+
+      "ahoge": {
+        "ahoge": {
+          "type": "mesh",
+          "image": "ahoge.png",
+          "generator": {
+            "kind": "grid",
+            "cols": 5,
+            "rows": 7,
+            "soft": { "bone": "ahoge_whip", "mask": "ahoge_soft.png" }
+          }
+        }
+      },
+
+      "dial_yaw": { "dial_yaw": { "image": "dial_yaw.png" } },
+      "needle_yaw": { "needle_yaw": { "image": "needle_yaw.png", "y": 40 } },
+      "dial_tilt": { "dial_tilt": { "image": "dial_tilt.png" } },
+      "needle_tilt": { "needle_tilt": { "image": "needle_tilt.png", "y": 40 } }
+    }
+  }
+}
