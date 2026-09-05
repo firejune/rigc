@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.17.0](https://github.com/firejune/rigc/compare/v0.16.0...v0.17.0) (2026-09-05)
+
+
+### Features
+
+* **deform:** a `parallax` form — the turn's small-angle limit, driven by two numbers ([#388](https://github.com/firejune/rigc/issues/388)) ([3a56f2b](https://github.com/firejune/rigc/commit/3a56f2b669fa62af9ccaeebb92a4c32adb9e1c7a)), closes [#382](https://github.com/firejune/rigc/issues/382)
+* **deform:** a depth map gives every vertex its own z, and yaw/pitch read it ([#383](https://github.com/firejune/rigc/issues/383)) ([e0371e8](https://github.com/firejune/rigc/commit/e0371e899feb279dd46c8348ddaa74845bdb62d0)), closes [#382](https://github.com/firejune/rigc/issues/382)
+* **depth:** a depth threshold carries a region to a bone, so a physics constraint jiggles it ([#390](https://github.com/firejune/rigc/issues/390)) ([e91cd86](https://github.com/firejune/rigc/commit/e91cd86152b3b1b2e9a05f1bc394ecc6b5316bd5)), closes [#382](https://github.com/firejune/rigc/issues/382)
+* **depth:** report the turn a sheet supports, before a key is written ([#393](https://github.com/firejune/rigc/issues/393)) ([cc79286](https://github.com/firejune/rigc/commit/cc7928635673795e98c1089f83fa8e35543555a0))
+* **mesh:** a `grid` generator, so the lattice stops being hand-numbered ([#386](https://github.com/firejune/rigc/issues/386)) ([b0ec75a](https://github.com/firejune/rigc/commit/b0ec75a8e24cbf2f11754874fa498a79846e5574)), closes [#382](https://github.com/firejune/rigc/issues/382)
+
+
+### Bug Fixes
+
+* **depth:** take `parallax` back out, and make the soft region a painted mask ([#391](https://github.com/firejune/rigc/issues/391)) ([843aad4](https://github.com/firejune/rigc/commit/843aad49fd44d54a0b000851df9301ea4955ac08)), closes [#382](https://github.com/firejune/rigc/issues/382)
+* ignore scratch as a path, not only as a directory ([#385](https://github.com/firejune/rigc/issues/385)) ([87bb21f](https://github.com/firejune/rigc/commit/87bb21febd6ce80086d34e97ac0413abc093f771))
+
 ## [0.16.0](https://github.com/firejune/rigc/compare/v0.15.0...v0.16.0) (2026-09-04)
 
 
