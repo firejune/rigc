@@ -363,7 +363,8 @@ geometry ([AUTHORING §3.4](AUTHORING.md)):
 
 ```
         turn ceiling  yaw +31.41° / -32.01°   pitch +32.01° / -31.41°
-                      first to fold: yaw + at 31.41°, triangle 960 [113,112,593]
+          1st pct     yaw +31.55° x1.004 of 1004 / -32.10° x1.003 of 1044   pitch +32.10° x1.003 of 1044 / -31.55° x1.004 of 1004
+                      first to fold: yaw + at 31.41°, triangle 960 [113,112,593], the sheet steps 12.52 level(s) across it
 ```
 
 Read it as a fact about **the sheet**. If the number is too small, the fix is in
@@ -392,6 +393,18 @@ cell**, and spend its whole 0–255 range on the part — a map using an eighth 
 the range describes the same surface and reports 5.8° less of it. Method and
 ladders:
 [`bench/studies/2026-09-05-noise`](https://github.com/firejune/rigc/tree/main/bench/studies/2026-09-05-noise).
+
+⭐ **And you do not have to guess which of the two you are looking at.** The two
+lines under the ceiling say it ([#412](https://github.com/firejune/rigc/issues/412)):
+the **1st percentile over the ceiling** is near 1 when a band of the mesh reaches
+the limit together, which is a form, and near 10 when one triangle does, which is
+a texel — 1.003 against 10.652 for the two sheets above. The **depth step across
+the triangle that folds first**, in levels, is the other half: below about 3 the
+ceiling is quantisation, and at 1 it is `atan(255·h / zScale)` and carries nothing
+about the form at all. Both are reports and neither moves the ceiling — ⛔ rigc
+will not filter a depth map, because a smoothed measurement would describe a
+surface the deform key is not built from and `A39` would go on refusing at the
+raw angle. [AUTHORING §3.4](AUTHORING.md) has the reading table.
 
 ---
 

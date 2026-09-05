@@ -1003,11 +1003,66 @@ number that says whether the map covers the part or a corner of it.
   MESH  face   grid  1089 vertices / 2048 triangles  (budget 3000)  bones=[face]
         depth "face_depth.png" f552a2f50d21 near=white zScale=60 z=[0, 60]
         turn ceiling  yaw +31.41° / -32.01°   pitch +32.01° / -31.41°
-                      first to fold: yaw + at 31.41°, triangle 960 [113,112,593]
+          1st pct     yaw +31.55° x1.004 of 1004 / -32.10° x1.003 of 1044   pitch +32.10° x1.003 of 1044 / -31.55° x1.004 of 1004
+                      first to fold: yaw + at 31.41°, triangle 960 [113,112,593], the sheet steps 12.52 level(s) across it
 ```
 
 Past that angle a triangle turns inside out and `A39` refuses the build by name.
 The loop this replaces is *pick an angle, build, read the refusal, guess again*.
+
+#### Is the ceiling describing the form, or the sheet's grain?
+
+The second and third lines answer that, and they are **reports only** — nothing
+in them refuses a build or moves a ceiling
+([#412](https://github.com/firejune/rigc/issues/412)).
+
+The ceiling is the **minimum** of the per-triangle fold angles, and a minimum
+cannot say whether it is the floor of a band or one bad pixel. Measured: a clean
+8-bit sheet at 4,225 vertices reports **64.58°**; move **one texel of 160,000**
+by 245 levels and the same sheet reports **6.08°** — and `A39` refuses at both,
+to 0°. The number is not lying. 99 % of that mesh still turns to 64.80° and one
+triangle does not, and nothing on the first line says so.
+
+| the figure | how to read it |
+| --- | --- |
+| `x1.003` — the **1st percentile over the ceiling** | near 1 means a *band* of the mesh reaches the limit together, which is what a smooth form looks like: its steepest region has area. Near 10 means **one triangle** does, which is what a bad texel looks like. The clean and stray sheets above read `x1.003` and `x10.652` |
+| `of 1004` — the **population** that percentile came out of | it is the nearest rank, so below **51** folding triangles there is no percentile to take and the line says `unranked of 36` instead of printing the minimum twice. Just over 51 it is the *second*-smallest angle, and a limit two triangles share is not yet a band |
+| `12.52 level(s)` — the **depth step across the triangle that folds first** | how much of the sheet's 0–255 range that triangle actually read. **Below about 3 the ceiling is quantisation rather than form**, and at exactly 1 it is `atan(255·h / zScale)` for cell size `h` — arithmetic about the encoding, with no form left in it at any density |
+| `+none` | on the ceiling line, nothing folds on that side at all, at any angle. On the percentile line it is the same statement — there is no population, because there is nothing to take a percentile of |
+
+A real one rather than the illustration above — `bun cli.ts build --rig
+gallery/look/rig.json --motion gallery/look/motion.json --images
+gallery/look/parts --out <dir>`, whose two meshes happen to print two of the
+three spellings:
+
+```
+  MESH  head         grid     189 vertices / 320 triangles  (budget 320)  bones=[head]  attachments=[head]
+        depth "face_depth.png" bf156ea0cfc970a3 near=white zScale=194 z=[0, 194]
+        turn ceiling  yaw +19.32° / -19.32°   pitch +22.92° / -26.94°
+          1st pct     yaw +19.32° x1.000 of 80 / -19.32° x1.000 of 80   pitch +22.92° x1.000 of 102 / -26.94° x1.000 of 130
+                      first to fold: yaw + at 19.32°, triangle 174 [119,138,139], the sheet steps 28.50 level(s) across it
+  MESH  hair_lock_l  grid     39 vertices / 48 triangles  (budget 320)  bones=[lock_l]  attachments=[hair_lock_l]
+        depth "lock_l_depth.png" 0c4eaeb36b7c5cac near=white zScale=64 z=[22.086275, 63.874511]
+        turn ceiling  yaw +17.04° / -45.80°   pitch +none / -none
+          1st pct     yaw +unranked of 12 / -unranked of 36   pitch +none / -none
+                      first to fold: yaw + at 17.04°, triangle 2 [1,28,29], the sheet steps 78.00 level(s) across it
+```
+
+⭐ Both of those sheets are **form**, and the figures say so from opposite ends:
+the head's 320 triangles put the percentile exactly on the ceiling, and the
+lock's 48 are too few to rank at all — but at 28.50 and 78.00 levels across the
+folding triangle, neither ceiling is anywhere near the encoding.
+
+⇒ **A small ceiling with a ratio near 1 and a step well above 3 is a steep
+surface: flatten the map.** A small ceiling with a large ratio, or with a step
+near 1, is a *sheet* problem: the grain, the 8-bit rounding, or a stray pixel.
+[`docs/FACE.md` §2.2](FACE.md) has the amplitudes and what each one costs.
+
+⛔ **rigc will not filter the sheet for you, and you should not want it to.** A
+smoothed measurement would describe a surface the deform key is not built from:
+the mesh still samples the raw sheet, `A39` still refuses at the raw angle, and
+the report and the gate would part company. The compiler never invents a value
+that is not in the spec — the fix is an edit to the map.
 
 ⭐ **Three ways to live with the ceiling**, and the third is the one a face
 actually uses: flatten the depth map, stay inside the angle, or **take the part

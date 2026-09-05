@@ -370,7 +370,24 @@ export function compareTurnFields(input: {
  */
 const CEILING_AREA_FLOOR = 1e-6;
 
-/** Where one triangle turns inside out, and which triangle that is. */
+/**
+ * Where one triangle turns inside out, which triangle that is — and, beside it,
+ * what the REST of this axis and side's triangles do.
+ *
+ * The first four fields are about one triangle. `count` and `p1` are about the
+ * population it is the minimum of, and they are here because the minimum alone
+ * cannot answer the question an author actually has: `degrees` is the same
+ * number whether a whole band of the mesh reaches the limit together or one
+ * triangle does, and those are a form and a bad texel respectively
+ * ([#412](https://github.com/firejune/rigc/issues/412),
+ * `bench/studies/2026-09-05-noise` §6).
+ *
+ * ⛔ Neither figure changes `degrees`, and neither is a threshold. rigc does not
+ * have the authority to guess its input away, so nothing here filters,
+ * smooths or rejects a sample — the ceiling stays the raw sheet read through
+ * the mesh, which is the only thing `A39` will agree with. What to read off the
+ * two numbers is stated in `docs/AUTHORING.md` §3.4, not decided here.
+ */
 export interface FoldLimit {
   /** Degrees from setup, in (0, 90). */
   degrees: number;
@@ -378,6 +395,63 @@ export interface FoldLimit {
   triangle: number;
   /** Its three vertex indices, so a message can name them. */
   ids: [number, number, number];
+  /**
+   * The largest depth difference between two of THIS triangle's vertices, in
+   * the units `z` was supplied in.
+   *
+   * A reading of the sheet and not a restatement of the angle: pass it through
+   * `depthStepLevels` and it is the step in encoding levels, which is what says
+   * whether the sheet had anything to say across this triangle at all. One
+   * level is the smallest step an 8-bit sheet can carry, and at one level the
+   * ceiling is exactly `atan(255·h / zScale)` — arithmetic about the encoding
+   * with no form left in it (`bench/studies/2026-09-05-noise` §3).
+   */
+  depthStep: number;
+  /** How many triangles fold on this axis and side — the population below. */
+  count: number;
+  /**
+   * The 1st percentile of those triangles' fold angles in degrees, or `null`
+   * where the population is too small to have one.
+   *
+   * Nearest-rank on the ascending angles, the same definition the noise study
+   * measured its distribution tables with: index `round(0.01·(count−1))`. That
+   * index is **zero for every `count` below 51**, so on a small mesh the first
+   * percentile is arithmetically the minimum and a ratio of exactly 1.000 would
+   * be printed for a sheet with one bad texel in it as readily as for a form.
+   *
+   * ⭐ `null` rather than that number, for the reason `A21` needed a third
+   * `meshKinds` state: a default is how "nothing to measure" quietly becomes a
+   * measurement of the wrong thing. `count` is reported beside it so a reader
+   * can see how thin a population a printed percentile came from — at 51 it is
+   * the second-smallest angle, and a limit two triangles share is not yet a
+   * band.
+   */
+  p1: number | null;
+}
+
+/**
+ * A depth step in the units `z` was supplied in, restated in ENCODING LEVELS.
+ *
+ * One arithmetic in one place: `zScale` spans the sheet's full 0..255 range, so
+ * one level is `zScale/255` world units. The CLI prints this and the controls
+ * assert on it, and neither writes the division out again.
+ */
+export function depthStepLevels(depthStep: number, zScale: number): number {
+  return (depthStep * 255) / zScale;
+}
+
+/**
+ * Which index of an ascending list of `n` the nearest-rank `q` percentile is.
+ *
+ * The same rule `bench/studies/2026-09-05-noise` measured its distribution
+ * tables with, so the figure the compiler prints and the figure that study
+ * reports are one statistic. Round-half-up makes it deterministic for every
+ * length, which `A18` requires. **Zero is a real answer and the caller has to
+ * read it as one** — it means the percentile of this population is its own
+ * minimum, which is a fact about the population and not a percentile.
+ */
+function nearestRankIndex(n: number, q: number): number {
+  return Math.min(n - 1, Math.max(0, Math.round(q * (n - 1))));
 }
 
 /**
@@ -423,6 +497,22 @@ export interface TurnCeiling {
  * angle, build, read the refusal, guess again". Adding a second refusal here
  * would be the compiler inventing a policy out of a measurement.
  *
+ * ## What the minimum alone cannot say (issue #412)
+ *
+ * The four angles are correct and, on a noisy sheet, useless on their own. A
+ * clean 8-bit sheet read at 4,225 vertices reports 64.58°; move ONE texel of
+ * 160,000 by 245 levels and the same sheet reports 6.08° — and `A39` refuses at
+ * both, measured to 0°. So each `FoldLimit` also carries `p1`, the 1st
+ * percentile of its own side's fold angles, and `depthStep`, what the sheet
+ * changed across the triangle that goes first. A `p1/degrees` near 1 is a band
+ * of the mesh reaching the limit together, which is a form; near 10 it is one
+ * triangle, which is a texel. A `depthStep` of one level is `atan(255·h/zScale)`
+ * and says nothing about the form at all.
+ *
+ * ⛔ Both are reports. Nothing here filters the sheet, and nothing here moves a
+ * ceiling: a smoothed measurement would describe a surface the deform key is
+ * not built from, and would part company with the gate that reads the raw one.
+ *
  * @param points Vertices in the BIND space the deform offsets are authored in.
  *   Areas are translation-invariant, so the origin does not matter; the scale
  *   and the axis directions do. A y flip alone leaves a `yaw` answer alone and
@@ -456,10 +546,13 @@ export function turnCeiling(
   }
   const floor = largest * CEILING_AREA_FLOOR;
 
-  const keep = (slot: { positive: FoldLimit | null; negative: FoldLimit | null }, ratio: number, limit: FoldLimit) => {
-    const side = ratio > 0 ? 'positive' : 'negative';
-    const held = slot[side];
-    if (held === null || limit.degrees < held.degrees) slot[side] = limit;
+  // One list per axis and side, so the ceiling can say whether it is the floor
+  // of a BAND or of a single triangle. Nothing here filters: every measurable
+  // triangle goes in exactly once, in triangle order, and the sort below is
+  // numeric — `A18` compares a second compile byte for byte.
+  const angles = {
+    yaw: { positive: [] as number[], negative: [] as number[] },
+    pitch: { positive: [] as number[], negative: [] as number[] },
   };
 
   for (let t = 0, n = 0; t < triangles.length; t += 3, n++) {
@@ -477,16 +570,40 @@ export function turnCeiling(
     const dzb = z[ib] - z[ia];
     const dzc = z[ic] - z[ia];
     const ids: [number, number, number] = [ia, ib, ic];
+    // The sheet read through THIS triangle, in the units `z` came in. It is the
+    // step, not the angle: a triangle whose three vertices sample one level
+    // apart has nothing but the encoding to say, whatever angle that works out
+    // to. Reported per fold below, and never used to change one.
+    const depthStep = Math.max(Math.abs(dzb), Math.abs(dzc), Math.abs(dzc - dzb));
     // z in the driven axis's slot: x for a yaw, y for a pitch.
-    for (const [slot, aAxis] of [
-      [out.yaw, dzb * dyc - dzc * dyb],
-      [out.pitch, dxb * dzc - dxc * dzb],
+    for (const [axis, aAxis] of [
+      ['yaw', dzb * dyc - dzc * dyb],
+      ['pitch', dxb * dzc - dxc * dzb],
     ] as const) {
       // A zero here is a triangle the axis cannot fold at all: its area stays
       // `A₀·cos t`, which only reaches zero at a right angle.
       if (aAxis === 0) continue;
       const ratio = a0 / aAxis;
-      keep(slot, ratio, { degrees: (Math.atan(Math.abs(ratio)) * 180) / Math.PI, triangle: n, ids });
+      const degrees = (Math.atan(Math.abs(ratio)) * 180) / Math.PI;
+      const side = ratio > 0 ? 'positive' : 'negative';
+      angles[axis][side].push(degrees);
+      const held = out[axis][side];
+      // `count` and `p1` are filled once the whole population is in; a minimum
+      // cannot know its own percentile while it is still being found.
+      if (held === null || degrees < held.degrees) {
+        out[axis][side] = { degrees, triangle: n, ids, depthStep, count: 0, p1: null };
+      }
+    }
+  }
+
+  for (const axis of ['yaw', 'pitch'] as const) {
+    for (const side of ['positive', 'negative'] as const) {
+      const held = out[axis][side];
+      if (held === null) continue;
+      const sorted = angles[axis][side].slice().sort((a, b) => a - b);
+      const rank = nearestRankIndex(sorted.length, 0.01);
+      held.count = sorted.length;
+      held.p1 = rank === 0 ? null : sorted[rank];
     }
   }
   return out;
