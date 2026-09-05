@@ -86,9 +86,20 @@ is two commits.
 Not to shut down discussion, but so nobody spends an afternoon on a patch that was
 already weighed:
 
-- **rigc is complementary to the Spine editor, not a substitute for it.** A
-  compiled rig is a starting point on a timeline that a human refines. Changes
-  that push it toward being a way around an editor licence are out of scope.
+- **Nothing rigc writes to disk goes unread by a parser rigc did not write.** No
+  `--no-validate`, no `--emit-anyway`, no environment escape, no exported API that
+  hands back artifacts with the round trip skipped — not for testing either. A
+  patch that adds one will be declined whatever it is for; `CLAUDE.md` states the
+  invariant and the reason.
+
+  🗓️ This bullet used to read *"rigc is complementary to the Spine editor, not a
+  substitute for it … Changes that push it toward being a way around an editor
+  licence are out of scope."* Retired 2026-09-05 (issue #398): declaring a
+  format-agnostic core with its own format and player (issue #380) makes that a
+  promise the roadmap already contradicts, and a decided-questions list is the
+  worst place to keep one. What is unchanged is the sentence above it and the
+  fact under it — rigc links `spine-core`, so the Spine Runtimes License covers
+  running it, which `NOTICE.md` states and this retirement does not touch.
 - **`strict: false` with `strictNullChecks: true`** in `tsconfig.json`. Turning on
   the rest is a refactor, not a gate; `tsconfig.json` says so in place. Raise it
   when somebody is prepared to do that work.
