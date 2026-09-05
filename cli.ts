@@ -61,6 +61,7 @@ import { compile, CompileError, type CompileOptions } from './src/compile.ts';
 import {
   skeletonDataFromText,
   surveyDeformKeys,
+  unreachableWhy,
   type DeformExtreme,
   type DeformKeyMeasure,
   type DeformSpan,
@@ -686,6 +687,12 @@ function sameKeyTime(specTime: number, loaded: number): boolean {
  * - the reversal and collapse counts are the **survey's**, which is A39's own
  *   survey ([`src/deformmeasure.ts`](src/deformmeasure.ts)) — one measurement,
  *   two readers, so the block and the gate cannot disagree about a fold;
+ * - 🔒 and so is **the frame each key was posed in** (issue #407), which every
+ *   `DEFORM` line now names: `on a track`, or the slider that applies the
+ *   animation and the dial value its own mapping had to be inverted to. The
+ *   derivation moved and the report had to move with it — a block that went on
+ *   printing the same figures under a changed meaning would be worse than the
+ *   red it replaced;
  * - a key's model is the **compiler's** `transform` report (§4.11.1), so the
  *   block names the same `kind` and parameters the spec stated;
  * - the fold ANGLE is nowhere here. It is A39's, derived at run time from the
@@ -723,6 +730,8 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
     out.push(
       '  ..    every key measured at its OWN time against the same pose with the deform CLEARED, so the',
       '  ..    denominator is 1.000 by definition and a NEGATIVE area ratio IS a reversed triangle',
+      '  ..    the FRAME is on each key line: on a track, or the slider that applies the animation with the',
+      '  ..    dial value its mapping was inverted to — a slider picks the time, so the key\'s time IS it',
       '  ..    stretch is the two singular values of the map from the cleared triangle to the deformed one —',
       '  ..    the worst stretch and the worst squash the drawing takes there; their product is |area ratio|',
       '  ..    coverage is NOT here: it is rasterised from the uvs, which no deform moves, so the figure on',
@@ -750,6 +759,29 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
       `  DEFORM  ${key.animation}  ${key.skin}/${key.slot}/${key.placeholder}  key ${key.key}  ` +
         `t=${key.time.toFixed(6)}  ${states}`,
     );
+    // 🔒 The frame, on every key, because the derivation is shared with A39 and
+    // this block is where a reader finds out which one it was (issue #407). A
+    // track frame says so in three words; a slider frame names the dial value
+    // its own mapping inverts this time to, which is the number an author sets.
+    out.push(
+      `          frame      ${key.reach.label}` +
+        (key.dial === null
+          ? ''
+          : `, dial ${key.dial.value.toFixed(6)}` +
+            (key.reach.local || key.dial.driven === key.dial.value
+              ? ''
+              : ` (bone local ${key.dial.driven.toFixed(6)})`) +
+            ` -> t=${key.dial.applied.toFixed(6)}`),
+    );
+    // A key at a time no dial selects: the figures below are the frame the
+    // runtime DOES land on, which is some other time's geometry, so the line
+    // that says so comes before them and the gate reads none of them.
+    if (key.dial?.unreachable === true) {
+      out.push(
+        `          unreachable A39 gates nothing here: ${unreachableWhy(key)}. Every figure below is that other ` +
+          "frame's, not this key's",
+      );
+    }
     // ⚠️ An exemption nobody can see is how a gate comes to look kept while
     // checking nothing (issue #401). A key the gate passed over because the mesh
     // draws no pixels there says so on its own line, in the survey's own words,
@@ -829,7 +861,8 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
     if (span.fold === null) continue;
     const at = span.fold;
     out.push(
-      `  BETWEEN ${span.animation}  ${span.skin}/${span.slot}/${span.placeholder}  key ${span.fromKey} -> ` +
+      `  BETWEEN ${span.animation}${span.reach.kind === 'slider' ? ` via ${span.reach.slider}` : ''}  ` +
+        `${span.skin}/${span.slot}/${span.placeholder}  key ${span.fromKey} -> ` +
         `${span.toKey}  t=${at.time.toFixed(6)}  ${span.curve}` +
         (span.curve === 'stepped' ? '  (held, not interpolated)' : `  ${(at.percent * 100).toFixed(1)}% of the way`),
     );
@@ -846,12 +879,27 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
   // The rollup, per animation: the worst key by each quantity. A timeline's own
   // eight keys are eight blocks above, and "which of them is the one to look at"
   // is the question the sweep in issue #313's landing comment answered by hand.
-  for (const animation of [...new Set(survey.keys.map((k) => k.animation))]) {
+  //
+  // ⚠️ Per animation AND per frame (issue #407). Two sliders applying one
+  // animation are two frames and two rollups: merging them would average a fold
+  // one dial reaches into a run of keys another one is clean over, which is the
+  // hiding the two frames exist to prevent.
+  const rollups = new Map<string, { animation: string; label: string }>();
+  for (const key of survey.keys) {
+    rollups.set(`${key.animation} ${key.reach.slider ?? ''}`, {
+      animation: key.animation,
+      label: key.reach.kind === 'slider' ? `${key.animation} via ${key.reach.slider}` : key.animation,
+    });
+  }
+  for (const [id, { animation, label }] of rollups) {
     // Only the keys the gate ran on, because the line ends by claiming A39 reads
-    // the same two counts and A39 reads none of a key that draws nothing. The
-    // ones it left out get their own line rather than a silence (issue #401).
-    const keys = survey.keys.filter((k) => k.animation === animation && k.draw.blank === null);
-    const blank = survey.keys.filter((k) => k.animation === animation && k.draw.blank !== null);
+    // the same two counts and A39 reads none of a key that draws nothing, nor of
+    // one at a time no dial selects. The ones it left out get their own line
+    // rather than a silence (issues #401, #407).
+    const mine = survey.keys.filter((k) => `${k.animation} ${k.reach.slider ?? ''}` === id);
+    const unreachable = mine.filter((k) => k.dial?.unreachable === true);
+    const keys = mine.filter((k) => k.dial?.unreachable !== true && k.draw.blank === null);
+    const blank = mine.filter((k) => k.dial?.unreachable !== true && k.draw.blank !== null);
     const worst = (
       pick: (key: DeformKeyMeasure) => DeformExtreme | null,
       better: (a: number, b: number) => boolean,
@@ -869,35 +917,52 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
     const samples = keys.reduce((n, k) => n + k.triangles, 0);
     if (keys.length) {
       out.push(
-        `  WORST   ${animation}  area ${worst((k) => k.areaRatioMin, (a, b) => a < b)}  ` +
+        `  WORST   ${label}  area ${worst((k) => k.areaRatioMin, (a, b) => a < b)}  ` +
           `stretch ${worst((k) => k.stretchMax, (a, b) => a > b)}  ` +
           `squash ${worst((k) => k.stretchMin, (a, b) => a < b)}`,
       );
       out.push(
-        `  ..      ${''.padEnd(animation.length)}  reversed ${reversed}, collapsed ${collapsed}, over ` +
+        `  ..      ${''.padEnd(label.length)}  reversed ${reversed}, collapsed ${collapsed}, over ` +
           `${keys.length} key(s) and ${samples} triangle sample(s)  <- A39 reads the same two counts`,
       );
     }
     if (blank.length) {
       out.push(
-        `  ..      ${keys.length ? ''.padEnd(animation.length) : animation}  ${blank.length} key(s) draw no pixels ` +
+        `  ..      ${keys.length ? ''.padEnd(label.length) : label}  ${blank.length} key(s) draw no pixels ` +
           `at their own time and are read for no winding, carrying ` +
           `${blank.reduce((n, k) => n + k.reversed.length, 0)} reversed triangle(s) nothing gates  <- A39 counts ` +
           'them as deformKeysNotDrawn',
+      );
+    }
+    if (unreachable.length) {
+      out.push(
+        `  ..      ${keys.length || blank.length ? ''.padEnd(label.length) : label}  ${unreachable.length} key(s) ` +
+          'at a time no dial selects, measured in the frame the runtime lands on instead and read for no winding, ' +
+          `carrying ${unreachable.reduce((n, k) => n + k.reversed.length, 0)} reversed triangle(s) nothing gates ` +
+          ' <- A39 counts them as deformKeysUnreachable',
       );
     }
     // ⚠️ Printed on a clean animation too. "The scan ran and found nothing" and
     // "the scan never ran" are the two things a gate must never say the same
     // way, and this line is the only place an author can tell them apart
     // (issue #403).
-    const spans = survey.spans.filter((s) => s.animation === animation);
+    const spans = survey.spans.filter((s) => `${s.animation} ${s.reach.slider ?? ''}` === id);
     if (spans.length) {
       out.push(
-        `  ..      ${keys.length || blank.length ? ''.padEnd(animation.length) : animation}  ${spans.length} ` +
-          `span(s) between consecutive keys scanned for a fold no key lands on: ` +
+        `  ..      ${keys.length || blank.length || unreachable.length ? ''.padEnd(label.length) : label}  ` +
+          `${spans.length} span(s) between consecutive keys scanned for a fold no key lands on: ` +
           `${spanTally(spans)}  <- A39 reads the same scan`,
       );
     }
+  }
+  // ⚠️ And the spans that were NOT scanned, once, because a scan that did not
+  // run has to be distinguishable from one that ran and found nothing — the same
+  // rule the line above keeps, on the other side of it (issue #407).
+  if (survey.spansNotScanned) {
+    out.push(
+      `  ..      ${survey.spansNotScanned} span(s) NOT scanned: one of the two keys bounding each is at a time no ` +
+        'dial selects, so the interpolation between them is between two poses of some other time',
+    );
   }
   return out;
 }

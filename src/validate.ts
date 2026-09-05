@@ -45,7 +45,7 @@ import {
 // A19 needs the DECODED page, not its header, to measure one region's own
 // rectangle on a shared page.
 import { readPlate } from '../tools/plate.ts';
-import { surveyDeformKeys } from './deformmeasure.ts';
+import { surveyDeformKeys, unreachableWhy, type DeformReach } from './deformmeasure.ts';
 import { colourTypeName, readPngInfo } from './png.ts';
 import { CHANNELS_BY_KIND, KEY_TIME_EPSILON, walkTimelines } from './timelines.ts';
 import type { RigInfo } from './types.ts';
@@ -225,6 +225,17 @@ export interface ValidateReport {
    */
   profileSkipped: Array<{ assertion: string; kind: 'renderer' | 'archetype' }>;
   stats: Record<string, number | string>;
+}
+
+/**
+ * The clause A39 puts after an animation's name when the frame it measured is
+ * not the track (issue #407).
+ *
+ * Empty on the track, which is what every animation no slider applies gets — so
+ * a message about a rig with no sliders in it reads exactly as it always has.
+ */
+function frameClause(reach: DeformReach): string {
+  return reach.kind === 'slider' ? ` (applied by slider "${reach.slider}", not played on a track)` : '';
 }
 
 const FRAME = 1 / 60;
@@ -1561,6 +1572,17 @@ export function validate(input: ValidateInput): ValidateReport {
     // makes a MIRRORED slot bone a non-event: a negative determinant flips every
     // triangle on both sides and cancels.
     //
+    // 🚨 **And "applied" means applied the way the animation is reached** (issue
+    // #407). An animation a slider applies is never played on a track — the dial
+    // selects the time, so the key's time and the applied time are the same
+    // number by construction — and posing it on a track while its own slider
+    // applies it at the neutral is the same error as setup bones, one level up:
+    // a frame no playthrough contains. It reported a fold on a correct rig, and
+    // the slot-colour half of the neutral apply undid the very alpha-0 key the
+    // exemption below reads. So the survey inverts the slider's own mapping and
+    // drives its bone until the runtime selects this key's time; the frame it
+    // used is on every `DEFORM` line and on the stats line here.
+    //
     // ## ⚠️ Why this is `archetype` and not `validity`
     //
     // Because the issue's premise — "it has no legitimate counter-example" — is
@@ -1658,6 +1680,11 @@ export function validate(input: ValidateInput): ValidateReport {
         // another animation, or at another key, is refused as before, which is
         // what makes this a measurement rather than a second `deformMayFold`.
         if (key.draw.blank !== null) continue;
+        // And the one thing it cannot say about a key at a time no dial selects
+        // (issue #407): the frame posed is not this key's, so its geometry
+        // belongs to some other time and a winding read off it would be a
+        // measurement of the wrong thing. Named below, on the stats line.
+        if (key.dial?.unreachable === true) continue;
         if (key.reversed.length === 0) continue;
         refusedKey.add(`${key.animation} ${key.slot} ${key.attachment} ${key.key}`);
         const shown = key.reversed
@@ -1666,7 +1693,12 @@ export function validate(input: ValidateInput): ValidateReport {
         const more = key.reversed.length > shown.length ? `, and ${key.reversed.length - shown.length} more` : '';
         fail(
           'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
-          `animation "${key.animation}" deform ${key.slot}/${key.attachment} key ${key.key} (t=${key.time}s): ` +
+          // ⚠️ The frame is in the message whenever it is not the track, because
+          // the same key can be refused in one frame and passed over in another
+          // — two sliders applying one animation are two frames — and a message
+          // that named only the key would be ambiguous about which (issue #407).
+          `animation "${key.animation}"${frameClause(key.reach)} deform ${key.slot}/${key.attachment} ` +
+            `key ${key.key} (t=${key.time}s): ` +
             `${key.reversed.length} of ${key.triangles} triangle(s) reverse winding — triangle ${shown.join('; triangle ')}` +
             `${more}. The mesh has turned inside out there and draws its texture backwards` +
             // The alpha is in the message whenever it is not full, because the
@@ -1705,7 +1737,8 @@ export function validate(input: ValidateInput): ValidateReport {
         const held = span.curve === 'stepped';
         fail(
           'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
-          `animation "${span.animation}" deform ${span.slot}/${span.attachment} BETWEEN key ${span.fromKey} ` +
+          `animation "${span.animation}"${frameClause(span.reach)} deform ${span.slot}/${span.attachment} ` +
+            `BETWEEN key ${span.fromKey} ` +
             `(t=${span.fromTime}s) and key ${span.toKey} (t=${span.toTime}s), at t=${at.time.toFixed(6)}s` +
             (held ? ' (a stepped segment)' : ` — ${(at.percent * 100).toFixed(1)}% of the way from one to the other`) +
             `: ${at.measure.reversed.length} of ${at.measure.triangles} triangle(s) reverse winding — ` +
@@ -1750,33 +1783,62 @@ export function validate(input: ValidateInput): ValidateReport {
       // drawn has to be visible on a green run too — this is the only surface
       // `validate` has, and `explain`'s DEFORM block prints the whole sentence
       // beside the key's own figures.
-      const blank = survey.keys.filter((k) => k.draw.blank !== null);
+      // ⚠️ Unreachable first and `blank` second, in the survey's own order, so
+      // the two counts partition the ungated keys instead of double-counting a
+      // key that is both.
+      const unreachable = survey.keys.filter((k) => k.dial?.unreachable === true);
+      const blank = survey.keys.filter((k) => k.dial?.unreachable !== true && k.draw.blank !== null);
+      const ungated = blank.length + unreachable.length;
       const name = (k: (typeof survey.keys)[number]): string =>
         `${k.animation}/${k.slot}/${k.attachment}#${k.key}:${k.draw.showsThisMesh ? 'alpha0' : 'notShown'}`;
       // ⚠️ `&& spanFolds === 0` because a rig whose every key draws nothing can
       // still fold at a time between two of them that DOES draw — that is issue
       // #403's own case, and a SKIP printed over a refusal would be this rule
       // reporting "nothing to measure" about the thing it just measured.
-      if (blank.length === survey.keys.length && spanFolds === 0) {
+      if (ungated === survey.keys.length && spanFolds === 0) {
+        const first = blank[0] ?? unreachable[0];
         return skip(
           'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
-          `every deform key here draws no pixels at its own time, so none of them has a texture that could be ` +
-            `drawn backwards — ${blank[0].animation} ${blank[0].slot}/${blank[0].attachment} key ${blank[0].key}: ` +
-            `${blank[0].draw.blank}` +
-            (blank.length > 1 ? `, and ${blank.length - 1} more key(s) like it` : '') +
+          `no deform key here is measurable in the frame its animation is reached in — ` +
+            `${first.animation} ${first.slot}/${first.attachment} key ${first.key}: ` +
+            `${first.draw.blank ?? unreachableWhy(first)}` +
+            (survey.keys.length > 1 ? `, and ${survey.keys.length - 1} more key(s) like it` : '') +
+            (unreachable.length
+              ? `. ${unreachable.length} of them at a time no dial selects, which is a rig defect this rule does ` +
+                'not refuse and does not pass over in silence either'
+              : '') +
             (survey.spans.length
               ? `. The ${survey.spans.length} span(s) between them were scanned too and none folds where anything ` +
                 'is drawn'
               : ''),
         );
       }
-      stats.deformKeysMeasured = survey.keys.length - blank.length;
+      stats.deformKeysMeasured = survey.keys.length - ungated;
       stats.deformTrianglesMeasured = survey.trianglesMeasured;
       stats.deformTrianglesCollapsed = survey.collapsed;
+      // Which frame each animation was posed in (issue #407) — printed only when
+      // a slider chose one, because on every other rig it says "a track" about
+      // every animation and a stats line that never varies is not a reading.
+      const frames = [...new Map(survey.keys.map((k) => [`${k.animation}/${k.reach.slider ?? 'track'}`, k])).values()];
+      if (frames.some((k) => k.reach.kind === 'slider')) {
+        stats.deformFrames = frames
+          .map((k) => `${k.animation}:${k.reach.kind === 'slider' ? `slider/${k.reach.slider}` : 'track'}`)
+          .join(',');
+      }
       if (blank.length) {
         stats.deformKeysNotDrawn = blank.length;
         stats.deformNotDrawn = blank.map(name).join(',');
         if (survey.notDrawnReversed) stats.deformNotDrawnReversed = survey.notDrawnReversed;
+      }
+      // 🚨 A key at a time no dial can select is NOT a pass and NOT a refusal —
+      // it is a rig whose slider cannot reach its own animation's key, named
+      // here so a green run cannot be read as having measured it (issue #407).
+      if (unreachable.length) {
+        stats.deformKeysUnreachable = unreachable.length;
+        stats.deformUnreachable = unreachable
+          .map((k) => `${k.animation}/${k.slot}/${k.attachment}#${k.key}@${k.dial?.applied.toFixed(6) ?? '?'}`)
+          .join(',');
+        if (survey.notReachableReversed) stats.deformUnreachableReversed = survey.notReachableReversed;
       }
       if (survey.exempted.length) stats.deformFoldExempt = survey.exempted.join(',');
       // ⚠️ The between-keys scan on the stats line, on a GREEN run too (issue
@@ -1786,6 +1848,11 @@ export function validate(input: ValidateInput): ValidateReport {
       // closed form flags nothing in, one posed measurement per flagged window
       // otherwise.
       stats.deformSpansScanned = survey.spans.length;
+      // ⚠️ And the ones it could NOT scan, for the same reason the line above
+      // exists: a span bounded by a key at a time no dial selects would be
+      // solved over two poses of some other time, so it is skipped — and a skip
+      // nobody can see is the silence this whole surface is against (#407).
+      if (survey.spansNotScanned) stats.deformSpansNotScanned = survey.spansNotScanned;
       if (survey.spanProbes) stats.deformSpanProbes = survey.spanProbes;
       if (survey.spansNotDrawn) stats.deformSpansNotDrawn = survey.spansNotDrawn;
       // A prediction nothing reproduced. Never a refusal — that would be the

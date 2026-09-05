@@ -25,6 +25,10 @@ answering an impact ([#391](https://github.com/firejune/rigc/issues/391)),
 `A39` reading a slot's **alpha** so a part can fade out past its own ceiling
 ([#404](https://github.com/firejune/rigc/issues/404)), and `A40` on **two
 sliders sharing a bone** ([#405](https://github.com/firejune/rigc/issues/405)).
+The seventh arrived because of this example rather than before it: `A39` posing a
+slider-applied animation **at the slider's own mapping**
+([#407](https://github.com/firejune/rigc/issues/407)), which is what lets the two
+above run on one rig.
 
 ⚠️ **The art is generated, like every gallery example's** — Vela is drawn in
 SVG by [`../portrait/make_parts.ts`](../portrait/make_parts.ts) and imported
@@ -69,7 +73,7 @@ committed**. The frames to look at:
 | `render/sweep@25fps/f0020.png` | the dial is held at **+19°** and the face is with it. **Look at this one at 1:1** — the contact sheet cannot tell a turn from a slide |
 | `render/sweep@25fps/f0000.png` | the neutral, for the comparison. The pair is the example |
 | `render/sweep@25fps/f0060.png` | **−19°**, the other end. The far sidelock has swapped sides |
-| `render/turn@25fps/contact.png` | the axis itself, played straight: seven poses from −19° to +19°, with both needles sitting at zero because nothing is driving them |
+| `render/turn@25fps/contact.png` | the axis itself, played straight: seven poses from −19° to +19°, with both needles sitting at zero because nothing is driving them. ⚠️ **The sidelock crossfade is not visible here** — see below |
 
 ---
 
@@ -82,7 +86,7 @@ property on it, and an affine map from that property's value to a time:
 { "name": "yaw",  "type": "slider", "animation": "turn",
   "bone": "yaw_dial",  "property": "rotate",
   "from": -19, "to": 0, "scale": 0.05, "max": 19,
-  "local": true, "additive": true, "mix": 0 }
+  "local": true, "additive": true, "mix": 1 }
 ```
 
 `time = to + (value − from) × scale`, so the dial at −19° applies `turn` at
@@ -114,7 +118,8 @@ inside out**, from `tan t = A₀/A_yaw` on the mesh's own triangles
   MESH  head         grid     189 vertices / 320 triangles  (budget 320)  bones=[head]  attachments=[head]
         depth "face_depth.png" bf156ea0cfc970a3 near=white zScale=194 z=[0, 194]
         turn ceiling  yaw +19.32° / -19.32°   pitch +22.92° / -26.94°
-                      first to fold: yaw + at 19.32°, triangle 174 [119,138,139]
+          1st pct     yaw +19.32° x1.000 of 80 / -19.32° x1.000 of 80   pitch +22.92° x1.000 of 102 / -26.94° x1.000 of 130
+                      first to fold: yaw + at 19.32°, triangle 174 [119,138,139], the sheet steps 28.50 level(s) across it
 ```
 
 ⇒ **The range is the largest whole degree strictly inside that ceiling: 19.**
@@ -138,6 +143,7 @@ the extreme key:
 
 ```
   DEFORM  turn  default/head/head  key 6  t=1.900000  transform yaw  depth=true degrees=19
+          frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 19.000000 -> t=1.900000
           moved      187 of 189 vertices, worst 63.1602px at v141
           area       min x0.016691 tri 215   max x1.874341 tri 225   (320 triangles, 0 with no area at the cleared pose, band 0.149321px²)
           stretch    max x1.879574 tri 225   min x0.016410 tri 215
@@ -263,7 +269,8 @@ the inside — and the ceiling comes back asymmetric:
   MESH  hair_lock_l  grid     39 vertices / 48 triangles  (budget 320)  bones=[lock_l]  attachments=[hair_lock_l]
         depth "lock_l_depth.png" 0c4eaeb36b7c5cac near=white zScale=64 z=[22.086275, 63.874511]
         turn ceiling  yaw +17.04° / -45.80°   pitch +none / -none
-                      first to fold: yaw + at 17.04°, triangle 2 [1,28,29]
+          1st pct     yaw +unranked of 12 / -unranked of 36   pitch +none / -none
+                      first to fold: yaw + at 17.04°, triangle 2 [1,28,29], the sheet steps 78.00 level(s) across it
 ```
 
 ⭐ **And the side it folds on is the side the head has turned it away from.** A
@@ -307,19 +314,27 @@ the run above it is at alpha exactly 0 the whole way:
 
 ```
   DEFORM  turn  default/hair_lock_l/hair_lock_l  key 5  t=1.600000  transform yaw  depth=true degrees=13
+          frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 13.000000 -> t=1.600000
           skipped    A39 reads no winding off this key: the slot's alpha is exactly 0 at this time (slot 0.0000 x attachment 1.0000), so this key draws no pixels — a triangle that draws no pixels cannot draw them backwards
           winding    48 of 48 kept, 0 collapsed
   DEFORM  turn  default/hair_lock_l/hair_lock_l  key 6  t=1.900000  transform yaw  depth=true degrees=19
+          frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 19.000000 -> t=1.900000
           skipped    A39 reads no winding off this key: the slot's alpha is exactly 0 at this time (slot 0.0000 x attachment 1.0000), so this key draws no pixels — a triangle that draws no pixels cannot draw them backwards
           area       min x-0.116728 tri 27   max x1.262154 tri 38   (48 triangles, 0 with no area at the cleared pose, band 0.115567px²)
           winding    44 of 48 kept, 0 collapsed  <- a fold, and nothing gates it: this key draws no pixels
 ```
 
+⭐ The `frame` line is the point of
+[#407](https://github.com/firejune/rigc/issues/407) (see below): `turn` is applied
+by the slider, so `A39` measures it with the dial where the mapping puts it rather
+than on a track — which is what lets those alpha-0 keys BE alpha 0 at the moment
+they are read.
+
 and the stats line says so on a green run too, which is the half that keeps the
 exemption from being silence:
 
 ```
-deformKeysMeasured=17 deformTrianglesMeasured=2720 deformKeysNotDrawn=4
+deformKeysMeasured=17 deformTrianglesMeasured=2720 deformFrames=turn:slider/yaw deformKeysNotDrawn=4
 deformNotDrawn=turn/hair_lock_l/hair_lock_l#5:alpha0,turn/hair_lock_l/hair_lock_l#6:alpha0,turn/hair_lock_r/hair_lock_r#0:alpha0,turn/hair_lock_r/hair_lock_r#1:alpha0
 deformNotDrawnReversed=8
 ```
@@ -335,6 +350,16 @@ ladder at `--max 880` (10 frames, so the last sample is at 1.8 s = +17°):
 | `f0004` | −3° | 151 | 177 |
 | `f0007` | +9° | 173 | 121 |
 | `f0009` | +17° | **0** | 88 |
+
+⚠️ **That reading is from before [#407](https://github.com/firejune/rigc/issues/407)
+and `render/turn` no longer reproduces it** — the sliders are live at setup now, so
+playing `turn` on a track holds both locks at alpha 1 and the zeros above are gone
+from that set (measured: the whole difference between the two builds' `turn` frames
+is those two slots, above). The crossfade itself has not moved — `sweep`'s frames
+are byte-identical across the change and the gate reads the same four alpha-0 keys
+— and `render/sweep@25fps` is where it is now visible on frames. **The box count
+has not been re-taken there**; the numbers above stand as the reading that was
+made, of a frame set that has changed under them.
 
 ---
 
@@ -375,45 +400,77 @@ through `FromRotate.value`, which ends `if (value < 0) value += 360`, so the bon
 whole part of the range below 0° is dead and nothing at runtime reports it.
 ```
 
-### 🚨 Both sliders are muted at setup, and `A40` therefore SKIPs
+### ⭐ Both sliders are at `mix: 1`, and both `A39` and `A40` gate this rig
 
-This is the one place where two of the constructs above are in tension, and the
-README is not going to print a skip as a pass.
+This was the one place where two of the constructs above were in tension, and it
+is worth reading as a repaired defect rather than as a feature.
 
-Both sliders declare `"mix": 0`, and `sweep` switches them on with a
-`slider.<name>.mix` timeline — AUTHORING §4.12's idiom for turning a constraint
-on from an animation. **It is load-bearing here, for a reason worth knowing
-before you build a rig like this one:** a slider at full authority applies its
-animation continuously, at whatever time its bone currently points at, and the
-slot-colour half of that apply is an *overwrite*. So a full-authority `yaw`
-slider pins both sidelocks to their **neutral** alpha — 1 — including at the
-moment `A39` poses `turn` to measure it. Measured, with the yaw slider at
-`mix: 1` and everything else unchanged:
+**The shape it shipped in first:** both sliders at `"mix": 0`, with `sweep`
+switching them on through a `slider.<name>.mix` timeline — AUTHORING §4.12's
+idiom for turning a constraint on from an animation. It was not a preference. A
+slider at full authority applies its animation continuously, at whatever time its
+bone currently points at, and the slot-colour half of that apply is an
+*overwrite*. `A39` posed `turn` on a **track** to measure it, the yaw slider
+simultaneously applied `turn` at the **neutral** time, and the alpha-0 key the
+animation itself wrote was undone:
 
 ```
 FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform hair_lock_l/hair_lock_l key 6
 (t=1.899999976158142s): 4 of 48 triangle(s) reverse winding — triangle 2 [1,28,29] 540.000 -> -63.033px² …
 ```
 
-— with no alpha named in the message, because the alpha it found was 1. Muting
-at setup is what lets the animation's own colour keys be the thing measured,
-which is what they will be in use.
+— with no alpha named in the message, because the alpha it found was 1. Muting at
+setup bought that back, and it cost `A40`, which correctly excludes a slider below
+full authority: the composition this example is *about* was verified by
+measurement and not by the gate.
 
-⚠️ **The cost, stated: `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` does not gate
-this rig.**
+🚨 **[#407](https://github.com/firejune/rigc/issues/407) is that the frame was
+wrong, not the alpha rule.** `turn` is never played on a track — the dial selects
+its time, so **the key's time and the applied time are the same number by
+construction**, and A39 was measuring the two independently. It now inverts the
+slider's own mapping and drives `yaw_dial` to the value that selects each key's
+time (AUTHORING §4.11.4), which is the frame a playthrough actually contains:
 
 ```
-SKIP  A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET: 0 of the 2 slider constraints apply at full authority;
-below mix 1 an apply is a lerp from the current pose rather than an overwrite, so what the others do
-to a shared property is a weighting
+  DEFORM  turn  default/hair_lock_l/hair_lock_l  key 6  t=1.900000  transform yaw  depth=true degrees=19
+          frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 19.000000 -> t=1.900000
+          skipped    A39 reads no winding off this key: the slot's alpha is exactly 0 at this time …
 ```
 
-The composition is real — the 6.90° above is this artifact through the runtime —
-but it is **verified by measurement here and not by the gate**. Two constructs
-that both landed this week cannot yet be exercised on one rig: the alpha
-exemption needs the slider quiet while `A39` looks, and `A40` needs it at full
-authority. Worth an issue; recorded here so nobody reads the green run as
-covering it.
+⇒ **both sliders declare `"mix": 1`, `sweep` keys no `mix` at all, and both
+assertions run:**
+
+```
+  PASS  A39_DEFORM_KEEPS_TRIANGLE_WINDING
+  PASS  A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET
+```
+
+The 6.90° below is still read off the posed artifact, but it is no longer the only
+thing standing behind the composition.
+
+📏 **What that does to the rendered frames, measured** (both builds rendered at
+5 fps / `--max 320` and compared with `rigc check`):
+
+| set | reading |
+| --- | --- |
+| `sweep` | **MAE 0.00** — byte-identical. The mix timeline keyed 1 from `t=0`, so nothing about the animation you actually play has moved |
+| `tilt` | every committed frame byte-identical |
+| `turn` | **MAE 0.52** (worst 1.08 at `f0000`), and `check` attributes **100% of it to `lock_l` (45.3%) and `lock_r` (54.7%)** with every other chain at 0.0% and slot drift ≤ 0.2 px — i.e. no geometry moved at all |
+
+⚠️ **That last row is the one to understand rather than to fix.** `turn` played
+straight on a track is not a thing this rig does in use — it is the slider's lookup
+table — and with the sliders live, playing it means the yaw slider is *also*
+applying `turn`, at its neutral `0.95 s`. The pose there is the neutral, so nothing
+moves; but the slot-colour half of that apply is an overwrite, so **both sidelocks
+are held at alpha 1** and the crossfade the animation writes is invisible in
+`render/turn`. It is visible in `render/sweep`, where the dial is what moves —
+which is the frame the gate now measures too.
+
+⚠️ **One cost, stated:** removing the two `slider.<name>.mix` tracks left this rig
+with **no constraint timeline at all**, so `A34_CONSTRAINT_TIMELINE_TARGETS` now
+reports SKIP here (*"no animation carries a constraint timeline"*) where it used to
+pass. It is the same 41 assertions either way; a rig that keys one is what exercises
+that rule, and six other gallery examples do.
 
 ---
 
@@ -520,7 +577,8 @@ gauge read backwards while both files stayed self-consistent.
 | the selftest's gallery suite gates it under **both** | `bun run selftest` | `GALLERY_EXAMPLE_IS_GREEN[look/spine]`, `[look/spine-html]` |
 | deterministic | `A18`, plus the suite compiling it three times | byte-identical |
 | the far lock folds and draws nothing when it does | `A39` + the stats line | 4 keys not drawn, 8 reversed triangles among them, 17 keys still measured |
-| the two sliders compose | posed through `spine-core` | 1.90 + 5.00 = **6.90°** on `headroll` |
+| `turn` is measured in the frame the slider puts it in | `A39` + the `DEFORM` block | `deformFrames=turn:slider/yaw`, and each key line names the dial value its mapping inverts to |
+| the two sliders compose | posed through `spine-core`, **and gated** | 1.90 + 5.00 = **6.90°** on `headroll`; `A40` PASSes since [#407](https://github.com/firejune/rigc/issues/407) let both sliders sit at `mix: 1` |
 | the `local: false` refusal fires on this rig | flipping the flag and building | refused at compile, message quoted above |
 | `sweep` closes on its opening pose | `loop_seam.ts --duration 3.2` at `--max 640` | **169 / 255**, 941 px of 375 040 — see below |
 | …with the spring inert | the same, on a control build with `inertia: 0` | **1 / 255**, 1 px |
@@ -543,8 +601,9 @@ carrying either to another size.
   because it is the one thing a reader might assume from the other examples: no
   editor export in this repository carries a slider, so nothing here says the
   editor preserves two of them, their flags, or their array order.
-- ⚠️ **`A40` does not gate this rig** (see above). The composition is measured;
-  it is not gated.
+- ⚠️ **`A34_CONSTRAINT_TIMELINE_TARGETS` SKIPs here** (see above): with the two
+  `slider.<name>.mix` tracks gone this rig keys no constraint timeline at all, so
+  that rule has nothing to look at on this example.
 - ⚠️ **Nothing here says a depth map works on real art.** Three generated
   sheets, one generated face. The convergence result
   ([FACE §2.1](../../docs/FACE.md)) is about a mesh approaching its own sheet's
@@ -560,9 +619,13 @@ carrying either to another size.
 - **The gauge was drawn mirrored**: SVG's y-down against Spine's
   counter-clockwise, so `+19` was printed on the side the needle never reaches.
   Neither file was wrong on its own.
-- **`A39`'s alpha exemption and `A40` cannot both run on one rig today**
-  (above). Found by hitting it: the first build with both sliders at `mix: 1`
-  was red on `A39`, at an alpha the animation had keyed to 0.
+- **`A39`'s alpha exemption and `A40` could not both run on one rig** when this
+  example was first built (above). Found by hitting it: the first build with both
+  sliders at `mix: 1` was red on `A39`, at an alpha the animation had keyed to 0.
+  It shipped muted at setup, the tension went to
+  [#407](https://github.com/firejune/rigc/issues/407) as an issue, and the answer
+  turned out to be that **A39 was posing the wrong frame** — not that either rule
+  was too strict. This README is the before and after of that.
 - **A slider-applied animation is a lookup table and wants linear keys.** Not a
   defect — a thing that is obvious afterwards and was not before, and the
   reason `turn` looks so unlike `portrait`'s.
