@@ -59,18 +59,49 @@
  * over a span has a **closed form** — a quadratic in the interpolation fraction —
  * so the time is solved for rather than searched, and the measurement taken there
  * is this file's ordinary one, at a time no key lands on.
+ *
+ * ## And WHICH frame, when the animation is never on a track (issue #407)
+ *
+ * Everything above says *at the key's own time*, and until #407 that meant one
+ * thing: the animation played on track 0. An animation a **slider** applies is
+ * never played that way — spine-core says so itself, in
+ * `SkeletonData.findSliderAnimations`: *"Slider animations are designed to be
+ * applied by slider constraints rather than on their own."* The slider picks the
+ * time out of a bone property, so **the key's time and the applied time are the
+ * same number by construction**; posing the animation on a track while its own
+ * slider applies it at the neutral is a frame no playthrough contains, and it
+ * reported a fold on a rig that is correct.
+ *
+ * ⇒ So a deform key is posed at the **reach** its animation actually has
+ * (`DeformReach`): on a track when nothing applies it, and otherwise once per
+ * slider, with that slider's own mapping inverted and its driving bone moved
+ * until the runtime selects this key's time. Inverting the constraint away
+ * instead was considered and refused for A39's own reason — a slider's animation
+ * may carry bone tracks that move the very bones the offsets are authored
+ * against, so dropping it reintroduces "setup bones measure a pose that never
+ * occurs" one level up.
+ *
+ * ⚠️ **What the artifact cannot say, and this therefore does not:** whether a
+ * slider's animation is ALSO played on a track somewhere. Nothing in skeleton
+ * data records that, so a slider-applied animation is measured in its slider
+ * frames only. Two sliders on one animation are two frames and both are measured
+ * — one frame's pass never hides another's fold — but a consumer that plays a
+ * slider animation on a track as well is outside what this can see.
  */
 import {
   AnimationState,
   AnimationStateData,
   type Attachment,
   AtlasAttachmentLoader,
+  type Bone,
   DeformTimeline,
   MeshAttachment,
   Physics,
   Skeleton,
   type SkeletonData,
   SkeletonJson,
+  Slider,
+  SliderData,
   TextureAtlas,
   type Timeline,
 } from '@esotericsoftware/spine-core';
@@ -253,6 +284,86 @@ export interface DeformKeyDraw {
 }
 
 /**
+ * How an animation is reached, which is the frame its keys are posed in (#407).
+ *
+ * ⭐ One per way in. An animation nothing applies has exactly one — the track —
+ * and an animation two sliders apply has two, both measured, because a fold only
+ * one dial can reach is still a fold.
+ */
+export interface DeformReach {
+  /** `track` — played on track 0; `slider` — applied by the named constraint. */
+  kind: 'track' | 'slider';
+  /** The slider that applies it, or `null` on the track. */
+  slider: string | null;
+  /** The slider's driving bone. `null` on the track, and on a bone-less slider. */
+  bone: string | null;
+  /**
+   * The transform property the slider reads off that bone, as spine-core's own
+   * reader class is named minus the `From` (`rotate`, `x`, `y`, `scaleX`, …), or
+   * `null` when there is no bone. Derived from which local field moves the
+   * slider's time rather than from a table, so it cannot drift from the runtime.
+   */
+  property: string | null;
+  /** `SliderData.local` — whether the property is read local or world. */
+  local: boolean;
+  /** The clause the `DEFORM` block and A39's stats line print. */
+  label: string;
+}
+
+/** The reach every animation has when no slider applies it. */
+const TRACK_REACH: DeformReach = {
+  kind: 'track',
+  slider: null,
+  bone: null,
+  property: null,
+  local: false,
+  label: 'played on a track',
+};
+
+/**
+ * What the slider's dial had to be set to for this key's time to be the one the
+ * runtime applies — and whether it worked (issue #407).
+ *
+ * `null` on a track frame, where there is no dial and the time is the time.
+ */
+export interface DeformDial {
+  /**
+   * The property value the mapping inversion asks for.
+   *
+   * `Slider.update` computes `time = offset + (value − property.offset) · scale`
+   * — `to`, `from` and `scale` in a rig spec — so this is that line solved for
+   * `value`: `property.offset + (time − offset) / scale`. On a bone-less slider
+   * the "value" IS the time and this is the time.
+   */
+  value: number;
+  /**
+   * What the driving bone's own LOCAL field was set to so that spine-core's
+   * reader returns `value`. The same number under `local: true`, where the
+   * reader is `source.rotation` and nothing intervenes; a different one under
+   * `local: false`, where the reader goes through the world transform.
+   */
+  driven: number;
+  /** `SliderPose.time` the runtime then computed, read off the posed skeleton. */
+  applied: number;
+  /** What `Slider.update` would have stored for this key's own time. */
+  wanted: number;
+  /**
+   * `applied` is not `wanted`: **no dial value selects this key's time.**
+   *
+   * The reachable one, and it is not hypothetical: `FromRotate.value` ends
+   * `if (value < 0) value += 360`, so a `rotate` slider reading a WORLD rotation
+   * cannot be driven below 0° and everything the inversion asks for down there
+   * arrives 360° away (issue #405). `Math.max(0, time)` is the other.
+   *
+   * ⚠️ A key like that is measured — at the frame the runtime does land on, which
+   * the report names — and then left OUT of the gate's counts, because the
+   * geometry there belongs to some other time. Never silent: A39 puts it on the
+   * stats line and the `DEFORM` block gives it a line of its own.
+   */
+  unreachable: boolean;
+}
+
+/**
  * What one deform timeline is doing to one attachment's geometry at **one posed
  * time**, whatever that time is.
  *
@@ -294,6 +405,10 @@ export interface DeformFrameMeasure {
   band: number;
   /** What the slot draws of this mesh at this time (issue #401). */
   draw: DeformKeyDraw;
+  /** How the animation was reached, which is the frame this was posed in (#407). */
+  reach: DeformReach;
+  /** The dial that selected this time, or `null` on a track frame (#407). */
+  dial: DeformDial | null;
 }
 
 /** What one deform key does to one attachment's geometry. */
@@ -342,6 +457,8 @@ export interface DeformSpan {
   slot: string;
   attachment: string;
   placeholder: string;
+  /** The frame its two keys were posed in, which is the frame it probes (#407). */
+  reach: DeformReach;
   /** The two keys it lies between, by the index A39's own message uses. */
   fromKey: number;
   toKey: number;
@@ -405,6 +522,23 @@ export interface DeformSurvey {
   /** Reversed triangles found on those keys, which nothing gates. */
   notDrawnReversed: number;
   /**
+   * Keys whose `dial.unreachable` is set — no value of the slider's driving bone
+   * selects that key's time, so the frame posed is not the key's (issue #407).
+   *
+   * ⚠️ Out of `trianglesMeasured` for the same reason `notDrawn` is: those totals
+   * are what the gate ran on, and the gate does not run on these.
+   */
+  notReachable: number;
+  /** Reversed triangles found on those keys, which nothing gates. */
+  notReachableReversed: number;
+  /**
+   * Spans not scanned because one of the two keys bounding them is unreachable.
+   *
+   * A scan that did not run and a scan that found nothing must never print the
+   * same way, and the span list only holds the ones that ran.
+   */
+  spansNotScanned: number;
+  /**
    * Every interval between two consecutive keys, scanned (issue #403).
    *
    * One entry per consecutive pair per timeline, including the pairs where
@@ -425,6 +559,44 @@ export interface DeformSurvey {
    * and this is (`DW16`).
    */
   spanProbes: number;
+}
+
+/**
+ * Why no dial value selects this key's time, in the one sentence A39's stats
+ * line, its SKIP reason and the `DEFORM` block all print (issue #407).
+ *
+ * ⭐ One sentence, three readers, for the reason the whole of this file is one
+ * survey: a report and a gate that describe the same key differently are two
+ * derivations, and the one that drifts is the one nobody exits non-zero on.
+ * Empty on a key that IS reachable, so a caller cannot print it by accident.
+ */
+export function unreachableWhy(key: DeformKeyMeasure): string {
+  const dial = key.dial;
+  if (dial === null || !dial.unreachable) return '';
+  const driven =
+    key.reach.bone === null
+      ? `slider "${key.reach.slider}"'s own time`
+      : `${key.reach.bone}.${key.reach.property} (${key.reach.local ? 'local' : 'world'})`;
+  // The one reader that cannot produce a value it is asked for, named where an
+  // author will meet it: a WORLD rotation is an `atan2` ending in
+  // `if (value < 0) value += 360`, so **[0, 360) is the whole of its range** and
+  // `"local": true` is the fix (issue #405).
+  //
+  // ⚠️ Both ends, not just the low one. The compiler refuses a range that dips
+  // below 0° — the natural way to author a face yaw, and the case #405 was filed
+  // on — and says nothing about one that runs past 360°, which dies in exactly
+  // the same way. This is the surface that sees it.
+  const wrap =
+    key.reach.property === 'rotate' && !key.reach.local && (dial.value < 0 || dial.value >= 360)
+      ? '. A world rotation is read through `FromRotate.value`, an `atan2` ending `if (value < 0) value += 360`, ' +
+        'so its whole range is [0, 360) and a driving value outside that is one the runtime never produces — ' +
+        '`"local": true` on the slider reads the bone\'s own rotation signed and unwrapped'
+      : '';
+  return (
+    `no value of ${driven} selects t=${key.time}s: slider "${key.reach.slider}" maps that time back to ` +
+    `${dial.value.toFixed(6)}, and driven there the runtime applies the animation at ${dial.applied.toFixed(6)}s ` +
+    `rather than ${dial.wanted.toFixed(6)}s${wrap}`
+  );
 }
 
 /**
@@ -465,56 +637,88 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
   let collapsedTotal = 0;
   let notDrawn = 0;
   let notDrawnReversed = 0;
+  let notReachable = 0;
+  let notReachableReversed = 0;
+  let spansNotScanned = 0;
+  const reaches = reachesOf(data);
   for (const anim of data.animations) {
-    for (const timeline of anim.timelines) {
-      if (!(timeline instanceof DeformTimeline)) continue;
-      timelines++;
-      const attachment = timeline.attachment;
-      const slotName = data.slots[timeline.slotIndex]?.name ?? `#${timeline.slotIndex}`;
-      // A bounding box, a clipping polygon and a path all have a vertex array
-      // and NO triangles, so they have no winding to keep and no area to take a
-      // ratio of. Saying nothing about them beats inventing a measurement.
-      if (!(attachment instanceof MeshAttachment)) {
-        notAMesh.add(`"${slotName}"`);
-        continue;
-      }
-      if (exempt.has(slotName)) {
-        exempted.add(`"${slotName}"`);
-        continue;
-      }
-      const triangles = attachment.triangles;
-      if (!triangles || triangles.length < 3) continue; // A04 owns a mesh with no triangles
-      const placement = placementOf(data, timeline.slotIndex, attachment);
-      const named = {
-        animation: anim.name,
-        skin: placement.skin,
-        slot: slotName,
-        attachment: attachment.name,
-        placeholder: placement.placeholder,
-      };
-      /** The previous key's posed frame, kept so the span between them can be scanned. */
-      let previous: PosedFrame | null = null;
-      for (let frame = 0; frame < timeline.frames.length; frame++) {
-        const time = timeline.frames[frame];
-        const posed = poseAt(data, anim.name, time);
-        const frameMeasure = measurePosed(posed, time, timeline.slotIndex, attachment, triangles);
-        // A key that draws no pixels is measured and then left out of the
-        // totals, because those totals are "what the gate ran on" — A39 reads
-        // them onto its stats line and the report's rollup has to match them.
-        if (frameMeasure.measure.draw.blank === null) {
-          trianglesMeasured += frameMeasure.measure.triangles;
-          collapsedTotal += frameMeasure.measure.collapsed;
-        } else {
-          notDrawn++;
-          notDrawnReversed += frameMeasure.measure.reversed.length;
+    // One pass per way in (issue #407). The animations nothing applies get the
+    // single track pass this loop has always been.
+    for (const dials of reaches.get(anim.name) ?? [null]) {
+      const poseFrame = (time: number): PoseOfFrame =>
+        dials === null ? { posed: poseAt(data, anim.name, time), dial: null } : poseDial(data, dials, time);
+      const reach = dials === null ? TRACK_REACH : dials.reach;
+      for (const timeline of anim.timelines) {
+        if (!(timeline instanceof DeformTimeline)) continue;
+        timelines++;
+        const attachment = timeline.attachment;
+        const slotName = data.slots[timeline.slotIndex]?.name ?? `#${timeline.slotIndex}`;
+        // A bounding box, a clipping polygon and a path all have a vertex array
+        // and NO triangles, so they have no winding to keep and no area to take a
+        // ratio of. Saying nothing about them beats inventing a measurement.
+        if (!(attachment instanceof MeshAttachment)) {
+          notAMesh.add(`"${slotName}"`);
+          continue;
         }
-        keys.push({ ...named, key: frame, time, ...frameMeasure.measure });
-        if (previous !== null) {
-          spans.push(
-            scanDeformSpan(data, anim, timeline, attachment, triangles, named, frame - 1, previous, frameMeasure),
-          );
+        if (exempt.has(slotName)) {
+          exempted.add(`"${slotName}"`);
+          continue;
         }
-        previous = frameMeasure;
+        const triangles = attachment.triangles;
+        if (!triangles || triangles.length < 3) continue; // A04 owns a mesh with no triangles
+        const placement = placementOf(data, timeline.slotIndex, attachment);
+        const named = {
+          animation: anim.name,
+          skin: placement.skin,
+          slot: slotName,
+          attachment: attachment.name,
+          placeholder: placement.placeholder,
+        };
+        /** The previous key's posed frame, kept so the span between them can be scanned. */
+        let previous: PosedFrame | null = null;
+        for (let frame = 0; frame < timeline.frames.length; frame++) {
+          const time = timeline.frames[frame];
+          const at = poseFrame(time);
+          const frameMeasure = measurePosed(at.posed, time, timeline.slotIndex, attachment, triangles, reach, at.dial);
+          // A key that draws no pixels — or one at a time no dial can select —
+          // is measured and then left out of the totals, because those totals
+          // are "what the gate ran on": A39 reads them onto its stats line and
+          // the report's rollup has to match them.
+          if (at.dial?.unreachable === true) {
+            notReachable++;
+            notReachableReversed += frameMeasure.measure.reversed.length;
+          } else if (frameMeasure.measure.draw.blank === null) {
+            trianglesMeasured += frameMeasure.measure.triangles;
+            collapsedTotal += frameMeasure.measure.collapsed;
+          } else {
+            notDrawn++;
+            notDrawnReversed += frameMeasure.measure.reversed.length;
+          }
+          keys.push({ ...named, key: frame, time, ...frameMeasure.measure });
+          if (previous !== null) {
+            // ⚠️ A span whose end is a frame the runtime cannot reach has no
+            // interpolation to scan: the anchors it would solve the quadratic
+            // over are two poses of some other time. Counted, never silent.
+            if (at.dial?.unreachable === true || previous.measure.dial?.unreachable === true) {
+              spansNotScanned++;
+            } else {
+              spans.push(
+                scanDeformSpan(
+                  anim,
+                  timeline,
+                  attachment,
+                  triangles,
+                  named,
+                  frame - 1,
+                  previous,
+                  frameMeasure,
+                  poseFrame,
+                ),
+              );
+            }
+          }
+          previous = frameMeasure;
+        }
       }
     }
   }
@@ -537,11 +741,296 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
     collapsed: collapsedTotal,
     notDrawn,
     notDrawnReversed,
+    notReachable,
+    notReachableReversed,
     spans,
     spanFolds,
     spansNotDrawn,
     spansUnconfirmed,
+    spansNotScanned,
     spanProbes,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Which frame a key is posed in — issue #407
+// ---------------------------------------------------------------------------
+
+/**
+ * The six local fields of a `BonePose` a `FromProperty` can be made to read.
+ *
+ * In `SkeletonJson.fromProperty`'s own order, and the property name a reach
+ * reports is this list's entry rather than a second table: `rotation` is spelled
+ * `rotate` in a rig spec and the rest are spelled as they are here.
+ */
+const DIAL_FIELDS = ['rotation', 'x', 'y', 'scaleX', 'scaleY', 'shearY'] as const;
+type DialField = (typeof DIAL_FIELDS)[number];
+
+/** The rig-spec spelling of one of those, which is the name a report prints. */
+const DIAL_PROPERTY: Record<DialField, string> = {
+  rotation: 'rotate',
+  x: 'x',
+  y: 'y',
+  scaleX: 'scaleX',
+  scaleY: 'scaleY',
+  shearY: 'shearY',
+};
+
+/**
+ * How far a field is nudged to find out whether it moves the slider's time.
+ *
+ * A scale is a multiplier around 1 and the others are degrees or units around 0,
+ * so one step of each is a different size. The number only has to be large enough
+ * that the resulting change in the property is not float noise and small enough
+ * not to wrap a rotation: any value in between gives the same answer, because
+ * every one of these readers is affine in its own field at a fixed parent pose.
+ */
+function dialStep(field: DialField): number {
+  return field === 'scaleX' || field === 'scaleY' ? 0.25 : 1;
+}
+
+/**
+ * A slider whose animation is being posed, with everything the inversion needs
+ * measured off the runtime rather than assumed.
+ */
+interface DialPlan {
+  slider: SliderData;
+  reach: DeformReach;
+  /**
+   * The bone field that drives it, or `null` on a bone-less slider — whose time
+   * IS its pose value and is set directly.
+   */
+  field: DialField | null;
+  /** Two points of the affine map `local field -> property value`, from probes. */
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+}
+
+/**
+ * How near the wanted time the runtime has to land before the dial is called
+ * good, in seconds.
+ *
+ * Nothing is being tuned here: on an affine reader the residual is float64 noise
+ * — 1e-15 on `gallery/look` — and the two failures this separates it from are
+ * both *gross*. `FromRotate`'s wrap moves the value by 360, so the time moves by
+ * `360 · scale`; `Math.max(0, time)` moves it by the whole of whatever was
+ * negative. There is nothing measured between the two.
+ */
+const DIAL_TIME_EPSILON = 1e-6;
+
+/** How many secant steps the solve takes before it calls a time unreachable. */
+const DIAL_SOLVE_STEPS = 4;
+
+/**
+ * Every way each animation is reached, keyed by animation name.
+ *
+ * A `null` entry in the returned list is the track — the frame every animation
+ * had before #407 — and it is what an animation NO slider applies gets. An
+ * animation a slider applies gets one plan per slider and no track entry, on
+ * spine-core's own statement that *"slider animations are designed to be applied
+ * by slider constraints rather than on their own"*
+ * (`SkeletonData.findSliderAnimations`).
+ *
+ * ⚠️ A slider **muted at setup** applies nothing: `Slider.update` returns before
+ * it reads the bone when `mix` is 0. So it is not a way in, and its animation
+ * keeps the track frame — which is the older idiom of muting at setup and keying
+ * `slider.<name>.mix` from a playing animation, where the frame the deform keys
+ * actually occur in is that playing animation's, and rigc has no way to know
+ * which one that is.
+ */
+function reachesOf(data: SkeletonData): Map<string, Array<DialPlan | null>> {
+  const out = new Map<string, Array<DialPlan | null>>();
+  for (const anim of data.animations) out.set(anim.name, []);
+  for (const constraint of data.constraints) {
+    if (!(constraint instanceof SliderData)) continue;
+    if (constraint.setupPose.mix === 0) continue;
+    const list = out.get(constraint.animation?.name ?? '');
+    if (list === undefined) continue;
+    const plan = planDial(data, constraint);
+    if (plan !== null) list.push(plan);
+  }
+  for (const list of out.values()) if (list.length === 0) list.push(null);
+  return out;
+}
+
+/** The `Slider` on `skeleton` that `data` describes, or `null`. */
+function sliderOn(skeleton: Skeleton, data: SliderData): Slider | null {
+  for (const constraint of skeleton.constraints) {
+    if (constraint instanceof Slider && constraint.data === data) return constraint;
+  }
+  return null;
+}
+
+/**
+ * Find which local field of the driving bone moves a slider's time, and read the
+ * affine map from that field to the property value off two probes.
+ *
+ * ⭐ **Probed rather than tabulated.** Which `BonePose` field a `FromProperty`
+ * reads is spine-core's business, and under `local: false` the reader goes
+ * through the world transform — so a table here would be a second copy of the
+ * runtime's dispatch AND a claim about parents this file has no business making.
+ * Two calls to `data.property.value` — the same call `Slider.update` makes, with
+ * the same all-zero offsets — say it instead, and every one of the six readers is
+ * affine in its own field at a fixed parent pose, so two points are the whole map.
+ */
+function planDial(data: SkeletonData, slider: SliderData): DialPlan | null {
+  const reach = (field: DialField | null): DeformReach => ({
+    kind: 'slider',
+    slider: slider.name,
+    bone: slider.bone?.name ?? null,
+    property: field === null ? null : DIAL_PROPERTY[field],
+    local: slider.local,
+    label:
+      field === null
+        ? `applied by slider "${slider.name}" at its own time`
+        : `applied by slider "${slider.name}" off ${slider.bone?.name ?? '?'}.${DIAL_PROPERTY[field]}` +
+          `${slider.local ? ' (local)' : ' (world)'}`,
+  });
+  // The bone-less form: `Slider.update` leaves `p.time` alone, so the dial IS the
+  // pose value and the map is the identity.
+  if (slider.bone === null) return { slider, reach: reach(null), field: null, u0: 0, v0: 0, u1: 1, v1: 1 };
+  const skeleton = new Skeleton(data);
+  const instance = sliderOn(skeleton, slider);
+  const bone = instance?.bone ?? null;
+  if (instance === null || bone === null) return null;
+  for (const field of DIAL_FIELDS) {
+    const step = dialStep(field);
+    skeleton.setupPose();
+    const base = bone.pose[field];
+    const v0 = dialValue(skeleton, slider, bone, field, base);
+    const v1 = dialValue(skeleton, slider, bone, field, base + step);
+    if (v1 === v0) continue;
+    return { slider, reach: reach(field), field, u0: base, v0, u1: base + step, v1 };
+  }
+  // Nothing moves it: a bone another constraint pins, or a reader that cannot see
+  // this bone at all. A37 owns the `scale: 0` shape of the same silence.
+  return null;
+}
+
+/**
+ * The property value spine-core reads off the driving bone with its local field
+ * set to `u` — `Slider.update`'s own call, at its own point in the update.
+ */
+function dialValue(skeleton: Skeleton, slider: SliderData, bone: Bone, field: DialField, u: number): number {
+  skeleton.setupPose();
+  skeleton.update(0);
+  bone.pose[field] = u;
+  skeleton.updateWorldTransform(Physics.reset);
+  if (slider.local) bone.appliedPose.validateLocalTransform(skeleton);
+  return slider.property.value(skeleton, bone.appliedPose, slider.local, DIAL_ZERO_OFFSETS);
+}
+
+/**
+ * The `offsets` argument every `FromProperty.value` takes.
+ *
+ * `Slider.offsets` is a private all-zero array — a slider has no per-property
+ * offset the way a transform constraint does — so this is that constant, spelled
+ * out because it cannot be imported.
+ */
+const DIAL_ZERO_OFFSETS = [0, 0, 0, 0, 0, 0];
+
+/** A posed frame and the dial that selected it, or `null` on a track frame. */
+interface PoseOfFrame {
+  posed: Skeleton;
+  dial: DeformDial | null;
+}
+
+/**
+ * What `Slider.update` stores in `SliderPose.time` for a wanted animation time.
+ *
+ * The two clamps at the end of its bone branch, transcribed, because the
+ * verification below compares against what the runtime STORED and not against
+ * what was asked for. ⚠️ `loop` on a zero-length animation gives NaN here exactly
+ * as it does there, which is `A37_SLIDER_CONSTRAINT_EFFECTIVE`'s refusal.
+ */
+function sliderTimeFor(slider: SliderData, time: number): number {
+  if (slider.bone === null) return time;
+  if (slider.loop) return slider.animation.duration + (time % slider.animation.duration);
+  return Math.max(0, time);
+}
+
+/**
+ * The skeleton of `data` with `plan`'s slider applying its animation at `time`.
+ *
+ * Three steps, and each is answerable on its own:
+ *
+ *  1. **invert the mapping.** `Slider.update` computes
+ *     `time = offset + (value − property.offset) · scale`, so the value that
+ *     selects `time` is `property.offset + (time − offset) / scale`. This is the
+ *     step the whole change is, and it is load-bearing rather than a hint —
+ *     everything below aims at the `value` it names and nothing corrects it.
+ *  2. **drive the bone until spine-core's own reader returns that value.**
+ *     Through the affine map `planDial` measured; a secant closes any residual.
+ *     ⚠️ It converges on the VALUE and never on the time, which is what keeps
+ *     step 1 checkable: a solve aimed at the time would quietly absorb a wrong
+ *     sign or a dropped offset in the inversion and pose the right frame off the
+ *     wrong arithmetic — measured, it does exactly that — so the dial the report
+ *     prints would be a number no author could use. Aimed at the value, a wrong
+ *     inversion drives the bone somewhere else and step 3 says so.
+ *  3. **check the runtime agrees.** `SliderPose.time` off the posed skeleton
+ *     against `sliderTimeFor` — spine-core's answer, not this function's. A time
+ *     no dial value selects is reported and never guessed at.
+ */
+function poseDial(data: SkeletonData, plan: DialPlan, time: number): PoseOfFrame {
+  const slider = plan.slider;
+  const wanted = sliderTimeFor(slider, time);
+  const value = plan.field === null ? time : slider.property.offset + (time - slider.offset) / slider.scale;
+  const posed = new Skeleton(data);
+  const instance = sliderOn(posed, slider);
+  const bone = instance?.bone ?? null;
+  if (instance === null) return { posed: poseAt(data, slider.animation.name, time), dial: null };
+  /** Pose with the driving field at `candidate`, and read both sides back. */
+  const at = (candidate: number): { read: number; applied: number } => {
+    posed.setupPose();
+    posed.update(0);
+    if (plan.field !== null && bone !== null) bone.pose[plan.field] = candidate;
+    else instance.pose.time = candidate;
+    posed.updateWorldTransform(Physics.reset);
+    if (plan.field === null || bone === null) return { read: candidate, applied: instance.appliedPose.time };
+    if (slider.local) bone.appliedPose.validateLocalTransform(posed);
+    return {
+      read: slider.property.value(posed, bone.appliedPose, slider.local, DIAL_ZERO_OFFSETS),
+      applied: instance.appliedPose.time,
+    };
+  };
+  /** The affine first guess, and what it is judged against. */
+  const first = plan.u0 + ((value - plan.v0) * (plan.u1 - plan.u0)) / (plan.v1 - plan.v0);
+  const near = 1e-9 * (1 + Math.abs(value));
+  let u = first;
+  let got = at(u);
+  // Zero iterations on every affine reader, which is all six of them at a fixed
+  // parent pose. The loop is here for the one that is not — `FromRotate` under
+  // `local: false`, whose `[0, 360)` wrap is a step in the middle of the range —
+  // and where it fails to close, the naive drive is what gets posed and reported,
+  // because "the bone put where the mapping says" is the frame an author can act
+  // on and a wandered secant point is not.
+  let pu = first === plan.u0 ? plan.u1 : plan.u0;
+  let pv = Number.NaN;
+  for (let step = 0; step < DIAL_SOLVE_STEPS && Math.abs(got.read - value) > near; step++) {
+    if (!Number.isFinite(pv)) pv = at(pu).read;
+    if (pv === got.read || !Number.isFinite(pv) || !Number.isFinite(got.read)) break;
+    const next = u + ((value - got.read) * (u - pu)) / (got.read - pv);
+    if (!Number.isFinite(next)) break;
+    pu = u;
+    pv = got.read;
+    u = next;
+    got = at(u);
+  }
+  if (Math.abs(got.read - value) > near && u !== first) {
+    u = first;
+    got = at(u);
+  }
+  return {
+    posed,
+    dial: {
+      value,
+      driven: u,
+      applied: got.applied,
+      wanted,
+      unreachable: !(Math.abs(got.applied - wanted) <= DIAL_TIME_EPSILON),
+    },
   };
 }
 
@@ -594,6 +1083,8 @@ function measurePosed(
   slotIndex: number,
   attachment: MeshAttachment,
   triangles: ArrayLike<number>,
+  reach: DeformReach,
+  dial: DeformDial | null,
 ): PosedFrame {
   const count = attachment.worldVerticesLength;
   const slot = posed.slots[slotIndex];
@@ -688,6 +1179,8 @@ function measurePosed(
       stretchMin,
       band,
       draw,
+      reach,
+      dial,
     },
   };
 }
@@ -1005,7 +1498,6 @@ function visibilityKeyTimes(timelines: readonly Timeline[], slots: ReadonlySet<n
  * being refused anyway.
  */
 function scanDeformSpan(
-  data: SkeletonData,
   anim: { name: string; timelines: Timeline[] },
   timeline: DeformTimeline,
   attachment: MeshAttachment,
@@ -1015,10 +1507,17 @@ function scanDeformSpan(
   frame: number,
   from: PosedFrame,
   to: PosedFrame,
+  /**
+   * The same frame the two keys were posed in, at a time between them (#407).
+   * A probe taken on a track while a slider applies the animation elsewhere is
+   * the frame that never occurs, one interpolation step further in.
+   */
+  poseFrame: (time: number) => PoseOfFrame,
 ): DeformSpan {
   const { kind, legs } = curveLegs(timeline, frame);
   const span: DeformSpan = {
     ...named,
+    reach: from.measure.reach,
     fromKey: frame,
     toKey: frame + 1,
     fromTime: from.time,
@@ -1114,8 +1613,22 @@ function scanDeformSpan(
   }
   for (const piece of pieces) {
     const time = (piece.lo + piece.hi) / 2;
+    const at = poseFrame(time);
+    // A probe the dial cannot select is no probe: it would be measuring some
+    // other time. Both keys bounding this span were reachable, and the map from
+    // dial to time is affine, so this is a shape nothing in the corpus reaches —
+    // which is exactly why it must not be recorded as a probe that ran.
+    if (at.dial?.unreachable === true) continue;
     span.probed.push(time);
-    const probe = measurePosed(poseAt(data, anim.name, time), time, timeline.slotIndex, attachment, triangles);
+    const probe = measurePosed(
+      at.posed,
+      time,
+      timeline.slotIndex,
+      attachment,
+      triangles,
+      from.measure.reach,
+      at.dial,
+    );
     if (probe.measure.reversed.length === 0) continue;
     if (probe.measure.draw.blank !== null) {
       span.notDrawn++;

@@ -1423,6 +1423,16 @@ refuses the crossing case at compile, with that arithmetic in the message; the
 alternative it leaves open is to move the range so it does not cross 0° (a neutral
 at 180°, say), which is the only form `local: false` can express.
 
+⚠️ **The refusal is on the LOW end only.** `[0, 360)` is the whole of what
+`FromRotate.value` returns, so a range running past **360°** is dead in the same
+way and compiles clean. Nothing refuses that at compile; `A39` reports it from the
+artifact side as a key at a time no dial selects (§4.11.4).
+
+📌 **A slider's animation is measured in the slider's own frame** — `A39` inverts
+the mapping above and drives the bone to the value it names, rather than playing
+the animation on a track while the slider sits at its neutral. §4.11.4 is what
+that changes and why it matters at `mix: 1`.
+
 🔸 **`scale` is rounded to six decimals on emit**, like every other number rigc
 writes, so `1/60` ships as `0.016667` — 2e-5 relative. Invisible in the middle of
 the range; it shows at the top of it, where a 60° turn then applies at 1.00002 s
@@ -2484,13 +2494,17 @@ that is failing.
 deform  (what each key does to the geometry — figures with names, never a bar; issue #316)
   ..    every key measured at its OWN time against the same pose with the deform CLEARED, so the
   ..    denominator is 1.000 by definition and a NEGATIVE area ratio IS a reversed triangle
+  ..    the FRAME is on each key line: on a track, or the slider that applies the animation with the
+  ..    dial value its mapping was inverted to — a slider picks the time, so the key's time IS it
   ..    stretch is the two singular values of the map from the cleared triangle to the deformed one —
   ..    the worst stretch and the worst squash the drawing takes there; their product is |area ratio|
   ..    coverage is NOT here: it is rasterised from the uvs, which no deform moves, so the figure on
   ..    the `meshes` line below is already the deformed one
   DEFORM  turn  default/head/head  key 0  t=0.000000  authored table
+          frame      played on a track
           moved      0 of 25 vertices — this key IS the setup pose, so every figure is the identity (32 triangles, all kept)
   DEFORM  turn  default/head/head  key 1  t=0.620000  transform yaw  radius=170 degrees=12
+          frame      played on a track
           moved      25 of 25 vertices, worst 35.3450px at v2
           area       min x0.637174 tri 17   max x1.319122 tri 31   (32 triangles, 0 with no area at the cleared pose, band 0.146694px²)
           stretch    max x1.319121 tri 22   min x0.637175 tri 8
@@ -2505,6 +2519,7 @@ deform  (what each key does to the geometry — figures with names, never a bar;
 | Row | What it is |
 | --- | --- |
 | the `DEFORM` line | `animation`, the `skin/slot/attachment` triple the timeline is keyed on, the key's index — **the same index `A39`'s message names** — its time, and its model: the `transform` kind and parameters the spec stated (§4.11.1), or `authored table` |
+| `frame` | how the animation was reached, which is the pose everything below was measured in: `played on a track`, or the slider that applies it with the dial value its mapping inverts this time to (§4.11.4). On a key at a time no dial selects, an `unreachable` line follows it and the figures below belong to the frame the runtime landed on instead |
 | `moved` | how many vertices this key moves at all, and the largest **world** displacement with the vertex carrying it. Not the same number as §4.11.1's `largest offset`: that one is the offset the spec stated, this one is where the vertex ended up after the bones |
 | `area` | signed area **after ÷ before**, its smallest and largest over the triangles, each with the triangle. `x0.637` is a band compressed to 64%; **a negative ratio is a triangle turned inside out** |
 | `stretch` | the two singular values of the map from the cleared triangle to the deformed one — the worst stretch and the worst squash the **drawing** takes. `σ₁·σ₂ = \|area ratio\|`, so the two rows are two readings of one map and cannot disagree |
@@ -2652,6 +2667,76 @@ predicted in, one posed measurement per predicted window otherwise.
 
 ---
 
+### 4.11.4 Which frame a deform key is measured in — a slider changes it
+
+Everything above says *at the key's own time*, and on an ordinary animation that
+means one thing: played on track 0. **An animation a `slider` applies (§3.5.2) is
+never played that way** — spine-core says so in `SkeletonData.findSliderAnimations`
+— and posing it as though it were is a frame no playthrough contains. The dial
+picks the time, so **the key's time and the applied time are the same number by
+construction**; measuring them independently was issue
+[#407](https://github.com/firejune/rigc/issues/407), and it refused a correct rig.
+
+⇒ For every deform key of an animation some slider applies, `A39` **inverts that
+slider's own mapping** and drives its bone until the runtime selects this key's
+time, then measures there:
+
+```
+time  = to + (value − from) × scale        the slider's mapping (§3.5.2)
+value = from + (time − to) / scale         what A39 sets the dial to
+```
+
+🔒 **The `DEFORM` block prints the frame on every key**, because the derivation
+changed and a block that went on printing the same figures under a changed meaning
+would be worse than the red it replaced:
+
+```
+  DEFORM  turn  default/head/head  key 6  t=1.900000  transform yaw  depth=true degrees=19
+          frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 19.000000 -> t=1.900000
+```
+
+`A39`'s stats line carries `deformFrames` on any build where a slider chose one,
+and its refusals name the slider — `animation "turn" (applied by slider "yaw", not
+played on a track) deform …` — because the same key can be refused through one
+dial and not reached at all through another.
+
+**Three consequences worth knowing before you build a rig like this:**
+
+- ⭐ **A slider at `mix: 1` in setup no longer forces the older idiom.** Muting at
+  setup and keying `slider.<name>.mix` from a playing animation (§4.12) is still
+  legitimate, but it is no longer the only way to keep `A39` honest about a slot
+  the animation itself fades — and it costs `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET`,
+  which excludes a slider below full authority. A slider muted at setup is **not**
+  a way in: `Slider.update` returns before it reads the bone, so its animation
+  keeps the track frame.
+- **Two sliders applying one animation are two frames**, and both are measured.
+  A fold only one dial can reach is still a fold.
+- ⚠️ **A key at a time no dial can select is named, not passed.** The cause is
+  [#405](https://github.com/firejune/rigc/issues/405)'s wrap: `FromRotate.value`
+  under `local: false` is an `atan2` ending `if (value < 0) value += 360`, so
+  **`[0, 360)` is the whole of its range** and a mapping needing anything outside
+  it selects nothing. 🚨 The compiler refuses a range that dips **below** 0°
+  (§3.5.2) and says nothing about one running **past 360°** — `from: 300` with
+  `scale: 0.005` over a 1 s animation needs 300°..500° and compiles clean — so
+  this is the surface that sees the second half. `A39` measures the frame the
+  runtime *does* land on, leaves the key out of `deformKeysMeasured`, and names
+  it:
+
+```
+deformKeysUnreachable=2 deformUnreachable=turn/head/head#0@10.800000,turn/head/head#1@11.300000
+deformSpansNotScanned=2
+```
+
+  — the `@` is the time the runtime lands on instead — with the `DEFORM` block
+  giving the whole sentence and the spans those keys bound left unscanned rather
+  than scanned over two poses of some other time.
+
+⚠️ **What the artifact cannot say, and rigc therefore does not:** whether a
+slider's animation is *also* played on a track somewhere. Nothing in skeleton data
+records that, so a slider-applied animation is measured in its slider frames only.
+
+---
+
 ### 4.12 `path` and `slider` timelines — tracks, not their own groups
 
 Unlike `ik` and `transform`, these two are ordinary `tracks` entries: the format
@@ -2682,7 +2767,7 @@ tell a working traversal from a plausible one.
 | `path` | `spacing` | 1 | in the unit `spacingMode` chose |
 | `path` | `mix` | **3** | `[mixRotate, mixX, mixY]` in one key, so a raw `curve` is 12 numbers |
 | `slider` | `time` | 1 | the bone-less slider's own time. A slider WITH a bone takes its time from the bone and this timeline is not what drives it |
-| `slider` | `mix` | 1 | mix 0 makes `update()` return, so this is the on/off switch |
+| `slider` | `mix` | 1 | mix 0 makes `update()` return, so this is the on/off switch. It is also what decides the frame a deform key of that slider's animation is measured in — §4.11.4 |
 
 ⚠️ **A `path.mix` key states all three mixes.** In the file `mixY` defaults to the
 same key's `mixX`, and every field has a per-key default rather than carrying the
@@ -2891,7 +2976,7 @@ The report prints one line per assertion:
 | `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying its `mix` (§3.5.1). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. **SKIP** when the skeleton declares no path constraint |
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
-| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. ⚠️ And the **spans between** consecutive keys are scanned too (§4.11.3, issue #403): the runtime interpolates, so a deform inside its fold angle at every key can be past it in between. That refusal is its own sentence — `BETWEEN key 0 (t=0s) and key 1 (t=0.5s), at t=…` — with the time solved for in closed form and then posed and measured like any key, alpha read at that same moment. `deformSpansScanned` says on every green build that the scan ran. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels *and no span between them folds where anything is drawn*, or when there is no rig info at all |
+| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. ⚠️ And the **spans between** consecutive keys are scanned too (§4.11.3, issue #403): the runtime interpolates, so a deform inside its fold angle at every key can be past it in between. That refusal is its own sentence — `BETWEEN key 0 (t=0s) and key 1 (t=0.5s), at t=…` — with the time solved for in closed form and then posed and measured like any key, alpha read at that same moment. `deformSpansScanned` says on every green build that the scan ran. ⚠️ And the **frame** it poses in is the one the animation is reached in (§4.11.4, issue #407): on a track when nothing applies it, and otherwise once per **slider**, with that slider's mapping inverted and its bone driven until the runtime selects the key's own time — because a slider picks the time, so the two are one number and posing them independently is a frame that never occurs. The frame is on every `DEFORM` line, on the stats line as `deformFrames`, and in the refusal itself when it is not the track. A key at a time **no dial value selects** is measured in the frame the runtime does land on, left out of `deformKeysMeasured` and named as `deformKeysUnreachable`/`deformUnreachable` — never refused and never silent. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels or is unreachable *and no span between them folds where anything is drawn*, or when there is no rig info at all |
 | `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where a later one is not `additive` — it writes that property outright at `mix: 1` and every earlier slider on it is dead (§3.5.2). Also fires when the shared timeline **cannot** be additive (a slot colour, an attachment swap, a draw order, a sequence), where `"additive": true` is not the fix and one of the two has to go. The detail names the bone or slot and the property, every slider keying it in `constraints` order with its flag, and which one wins today. Three shapes are deliberately not findings: a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, not an overwrite), two `skinRequired` sliders no skin activates together, and two sliders on different properties. **SKIP** when fewer than two sliders are at full authority; a PASS means two were compared |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy

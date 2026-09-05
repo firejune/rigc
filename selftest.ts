@@ -194,7 +194,7 @@ import {
 import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
 import { readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson } from './src/types.ts';
-import { skeletonDataFromText, surveyDeformKeys } from './src/deformmeasure.ts';
+import { skeletonDataFromText, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
 import {
   ASSERTION_NAMES,
   assertionCountForProfile,
@@ -8886,6 +8886,16 @@ function buildTurnRig(
      * table.
      */
     deformKeys?: Array<Record<string, unknown>>;
+    /**
+     * Slider constraints applying the deform animation (issue #407).
+     *
+     * ⭐ The whole of #407 is that an animation a slider applies is never played
+     * on a track, so the only way to build the case is to put one here: each
+     * entry is a rig-spec `slider` minus its `type`, and every `bone` it names
+     * that the rig does not already have is added as a child of `root` at the
+     * origin — a dial, which is what a driving bone is.
+     */
+    sliders?: Array<Record<string, unknown>>;
   } = {},
 ): TurnBuild {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-turn-'));
@@ -8923,6 +8933,11 @@ function buildTurnRig(
     attachments[extra.swapTo] = { type: 'region', image: `${extra.swapTo}.png`, width: 20, height: 20 };
   }
   const rigPath = join(dir, 'turn.rig.json');
+  // A dial for every driving bone a slider names, so a case states the mapping
+  // and nothing else (issue #407).
+  const dials = [
+    ...new Set((extra.sliders ?? []).map((s) => String(s.bone ?? '')).filter((name) => name.length > 0)),
+  ].map((name) => ({ name, parent: 'root', x: 400, y: 400 }));
   writeFileSync(
     rigPath,
     `${JSON.stringify(
@@ -8931,8 +8946,9 @@ function buildTurnRig(
         name: 'turn_probe',
         skeleton: { width: 800, height: 800 },
         invariants: extra.invariants ?? { meshSlots: 1, meshTriangles: 40 },
-        bones: [{ name: 'root' }, { name: 'head', parent: 'root', x: 400, y: 400 }],
+        bones: [{ name: 'root' }, { name: 'head', parent: 'root', x: 400, y: 400 }, ...dials],
         slots: extra.slots ?? [{ name: 'head', bone: 'head', attachment: 'head' }],
+        ...(extra.sliders ? { constraints: extra.sliders.map((s) => ({ type: 'slider', ...s })) } : {}),
         skins: extra.skins ?? { default: { head: attachments } },
       },
       null,
@@ -9004,10 +9020,17 @@ function buildTurnRig(
   return { dir, opts, result: compile(opts) };
 }
 
-/** Gate one turn build under the profile A39 lives in. */
-function gateTurn(build: TurnBuild): ReturnType<typeof validate> {
+/**
+ * Gate one turn build under the profile A39 lives in — or a mutated ARTIFACT of
+ * it, which is how a case reaches a rig the compiler is right to refuse.
+ *
+ * `"local": false` on a `rotate` slider whose range dips below 0° is the one
+ * that matters here (issue #405 refuses it at compile, and #407's unreachable
+ * report is what the artifact side then has to say about it).
+ */
+function gateTurn(build: TurnBuild, skeletonText?: string): ReturnType<typeof validate> {
   return validate({
-    skeletonText: build.result.skeletonText,
+    skeletonText: skeletonText ?? build.result.skeletonText,
     atlasText: build.result.atlasText,
     atlasDir: build.opts.outDir,
     declaredDurations: build.result.declaredDurations,
@@ -9762,6 +9785,270 @@ function runDeformWindingSuite(): number {
     'a quadratic opens either way and the wrong-signed set is between the roots or outside them; treating both as ' +
       '"between" puts the probe in the one part of the span that is correct, and the scan then reports a ' +
       'prediction it could not reproduce over two folds it should have named',
+  );
+
+  // --- the frame, when a slider applies the animation (issue #407) ----------
+  //
+  // 🚨 Everything above poses the animation on a track. An animation a SLIDER
+  // applies is never played that way, and posing it as though it were is the
+  // frame that never occurs: the dial picks the time, so the key's time and the
+  // applied time are one number, and a slider sitting at its neutral while A39
+  // walks the keys overwrites the very alpha the key set (issue #405's second
+  // clause). It refused `gallery/look` on a rig that is correct.
+  //
+  // The mapping the fixture states is deliberately non-degenerate in all three
+  // of its terms — `from: -20`, `to: 0.25`, `scale: 0.03` — because a mapping
+  // with `to: 0` or `scale: 1` in it is one a dropped or mis-signed term would
+  // still get right, and the whole of DW20 is that the inversion is the real one.
+  const DIAL_FROM = -20;
+  const DIAL_TO = 0.25;
+  const DIAL_SCALE = 0.03;
+  const dialSlider = {
+    name: 'dial',
+    animation: 'turn',
+    bone: 'knob',
+    property: 'rotate',
+    from: DIAL_FROM,
+    to: DIAL_TO,
+    scale: DIAL_SCALE,
+    local: true,
+    additive: true,
+  };
+  /** `Slider.update`'s line solved for the value, derived HERE and not imported. */
+  const dialValueFor = (time: number): number => DIAL_FROM + (time - DIAL_TO) / DIAL_SCALE;
+
+  const drivenBuild = buildTurnRig(turnRow(40), { tracks: fadeOverTheFold, sliders: [dialSlider] });
+  const driven = gateTurn(drivenBuild);
+  const drivenSurvey = surveyDeformKeys(
+    skeletonDataFromText(drivenBuild.result.skeletonText, drivenBuild.result.atlasText),
+  );
+  const drivenBlock = turnDeformBlock(drivenBuild);
+  // ⭐ The independent oracle, and the reason this case is not a self-comparison:
+  // the two frames are built HERE, out of spine-core, and the slot's alpha is
+  // read off each of them without the survey being involved at all. The old
+  // frame plays `turn` on track 0 while the dial sits at its neutral; the new one
+  // plays nothing and moves the dial to the value the arithmetic above names.
+  const alphaOnTrack = (time: number): number => {
+    const skeleton = new Skeleton(
+      skeletonDataFromText(drivenBuild.result.skeletonText, drivenBuild.result.atlasText),
+    );
+    const state = new AnimationState(new AnimationStateData(skeleton.data));
+    state.setAnimation(0, 'turn', false);
+    skeleton.setupPose();
+    skeleton.update(0);
+    skeleton.updateWorldTransform(Physics.reset);
+    state.update(time);
+    state.apply(skeleton);
+    skeleton.update(time);
+    skeleton.updateWorldTransform(Physics.update);
+    return skeleton.slots[0].appliedPose.color.a;
+  };
+  const alphaOnDial = (value: number): number => {
+    const skeleton = new Skeleton(
+      skeletonDataFromText(drivenBuild.result.skeletonText, drivenBuild.result.atlasText),
+    );
+    skeleton.setupPose();
+    skeleton.update(0);
+    const knob = skeleton.bones.find((b) => b.data.name === 'knob');
+    if (knob !== undefined) knob.pose.rotation = value;
+    skeleton.updateWorldTransform(Physics.reset);
+    return skeleton.slots[0].appliedPose.color.a;
+  };
+  const foldTime = drivenSurvey.keys[1]?.time ?? 0.5;
+  const trackAlpha = alphaOnTrack(foldTime);
+  const dialAlpha = alphaOnDial(dialValueFor(foldTime));
+  const drivenDials = drivenSurvey.keys.map((k) => k.dial);
+  const inversionExact = drivenSurvey.keys.every(
+    (k) => k.dial !== null && Math.abs(k.dial.value - dialValueFor(k.time)) <= 1e-9,
+  );
+  const landsOnTheKey = drivenSurvey.keys.every(
+    (k) => k.dial !== null && !k.dial.unreachable && Math.abs(k.dial.applied - k.time) <= 1e-6,
+  );
+  say(
+    'DW20_A_SLIDER_APPLIED_ANIMATION_IS_POSED_AT_THE_SLIDERS_OWN_MAPPING',
+    driven.failures.length === 0 &&
+      driven.passed.includes(A39) &&
+      drivenSurvey.keys.every((k) => k.reach.kind === 'slider' && k.reach.slider === 'dial') &&
+      inversionExact &&
+      landsOnTheKey &&
+      // The oracle: drawn in the old frame, not drawn in the new one, both read
+      // off spine-core by this file.
+      trackAlpha > 0 &&
+      dialAlpha === 0 &&
+      Number(driven.stats.deformKeysNotDrawn) === 1 &&
+      String(driven.stats.deformFrames) === 'turn:slider/dial' &&
+      drivenBlock.some((l) => /frame\s+applied by slider "dial" off knob\.rotate \(local\)/.test(l)) &&
+      drivenBlock.some((l) => l.includes(`dial ${dialValueFor(foldTime).toFixed(6)}`)),
+    driven.failures.length === 0
+      ? `the same 40° fold, faded out across it, applied by a slider at mix 1: the inversion of ` +
+          `\`time = ${DIAL_TO} + (value − ${DIAL_FROM}) × ${DIAL_SCALE}\` names ` +
+          `${drivenDials.map((d) => d?.value.toFixed(4) ?? '?').join(', ')}° for the three keys, and driven there ` +
+          `spine-core applies the animation at ${drivenDials.map((d) => d?.applied.toFixed(6) ?? '?').join(', ')}s ` +
+          `— the key times themselves. Posed by this file both ways at t=${foldTime}: the slot's alpha is ` +
+          `${trackAlpha.toFixed(4)} on a track with the dial at its neutral, and ${dialAlpha.toFixed(4)} with the ` +
+          `dial where the mapping puts it. ${A39} ${driven.passed.includes(A39) ? 'PASSES' : 'did NOT run'}`
+      : `[${driven.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    'issue #407: A39 posed the animation on a track while its own slider applied it at the neutral, which is a ' +
+      'frame no playthrough contains — and the slot-colour half of that apply is an overwrite, so the alpha-0 key ' +
+      'the animation itself set was undone and a correct rig went red',
+  );
+
+  // --- the mutant: a time no dial can select -------------------------------
+  //
+  // 🚨 A rig the COMPILER accepts, and that is the finding rather than a
+  // convenience. `FromRotate.value` under `local: false` is an `atan2` ending
+  // `if (value < 0) value += 360`, so its whole range is `[0, 360)` — and the
+  // refusal issue #405 landed checks only that the range does not dip below 0°.
+  // A range running PAST 360° dies in exactly the same way and compiles clean:
+  // `from: 300, scale: 0.005` over a 1 s animation needs 300° … 500°, and
+  // everything above 360° comes back 360 lower and maps outside the animation.
+  // ⇒ this is the artifact-side surface seeing what the compile-side refusal
+  // does not, which is also why it can be reached through `explain` and its
+  // `DEFORM` block asserted below.
+  const WRAP_FROM = 300;
+  const WRAP_SCALE = 0.005;
+  const wrapValueFor = (time: number): number => WRAP_FROM + time / WRAP_SCALE;
+  const wrappedBuild = buildTurnRig(turnRow(12), {
+    sliders: [
+      {
+        name: 'dial',
+        animation: 'turn',
+        bone: 'knob',
+        property: 'rotate',
+        from: WRAP_FROM,
+        to: 0,
+        scale: WRAP_SCALE,
+        local: false,
+        additive: true,
+      },
+    ],
+  });
+  const wrappedGate = gateTurn(wrappedBuild);
+  const wrappedSurvey = surveyDeformKeys(
+    skeletonDataFromText(wrappedBuild.result.skeletonText, wrappedBuild.result.atlasText),
+  );
+  const wrappedOut = wrappedSurvey.keys.filter((k) => k.dial?.unreachable === true);
+  // Which keys cannot be reached is arithmetic, not a literal: a world rotation
+  // comes back inside [0, 360), so exactly the keys whose inverted value is
+  // outside it are the unreachable ones.
+  const outsideTheCircle = wrappedSurvey.keys.filter((k) => wrapValueFor(k.time) >= 360);
+  // ⚠️ Read through a guard rather than as `wrappedOut[0]`. The case a mutant
+  // reaches here is "the report was never written", and a control that throws
+  // instead of failing takes every suite after it down with it.
+  const wrappedWhy = wrappedOut.length ? unreachableWhy(wrappedOut[0]) : '(no key was reported unreachable)';
+  const wrappedBlock = turnDeformBlock(wrappedBuild);
+  say(
+    'DW21_A_KEY_AT_A_TIME_NO_DIAL_SELECTS_IS_NAMED_AND_NOT_COUNTED_AS_MEASURED',
+    wrappedGate.failures.length === 0 &&
+      wrappedOut.length === outsideTheCircle.length &&
+      wrappedOut.length > 0 &&
+      wrappedOut.length < wrappedSurvey.keys.length &&
+      Number(wrappedGate.stats.deformKeysUnreachable) === wrappedOut.length &&
+      Number(wrappedGate.stats.deformKeysMeasured) === wrappedSurvey.keys.length - wrappedOut.length &&
+      wrappedOut.every((k) => String(wrappedGate.stats.deformUnreachable).includes(`#${k.key}@`)) &&
+      // And the spans those keys bound are NOT scanned, and say so rather than
+      // reporting a clean scan over two poses of some other time.
+      wrappedSurvey.spansNotScanned === 2 &&
+      Number(wrappedGate.stats.deformSpansNotScanned) === wrappedSurvey.spansNotScanned &&
+      /whole range is \[0, 360\)/.test(wrappedWhy) &&
+      // 🔒 and the report says it too, in the same words, on its own line.
+      wrappedBlock.filter((l) => /^\s+unreachable /.test(l)).length === wrappedOut.length &&
+      wrappedBlock.some((l) => /unreachable .*no value of knob\.rotate \(world\) selects/.test(l)),
+    wrappedGate.failures.length === 0
+      ? `a rig the compiler ACCEPTS — "local": false over 300°..${wrapValueFor(1)}°, where #405's refusal checks ` +
+          `only the low end: ${wrappedOut.length} of ${wrappedSurvey.keys.length} keys need a dial past 360° and a ` +
+          `world rotation never is one, so the gate measures ${wrappedGate.stats.deformKeysMeasured} and names the ` +
+          `rest — deformUnreachable=${wrappedGate.stats.deformUnreachable}, ` +
+          `deformSpansNotScanned=${wrappedGate.stats.deformSpansNotScanned}. The DEFORM block carries ` +
+          `${wrappedBlock.filter((l) => /^\s+unreachable /.test(l)).length} unreachable line(s): ` +
+          `"${wrappedWhy.slice(0, 150)}…"`
+      : `[${wrappedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    'a dial that cannot select a key is a rig defect this rule does not refuse — and folding it into the pass ' +
+      'count would be the silence the whole exemption machinery exists not to be. It is also the shape a wrong ' +
+      'inversion would produce, which is what makes the sign and the offset of that arithmetic checkable at all',
+  );
+
+  // --- and the red the frame does NOT relieve ------------------------------
+  //
+  // ⛔ The half that says #407 changed the frame and not the alpha rule. Here the
+  // slider applies a DIFFERENT animation, one holding the slot opaque, while
+  // `turn` really is played on a track — so `turn`'s alpha-0 key is overwritten
+  // by a frame that DOES occur, and A39 goes on refusing it exactly as before.
+  const trackedBuild = buildTurnRig(turnRow(40), {
+    tracks: fadeOverTheFold,
+    also: {
+      name: 'turn_seen',
+      tracks: [
+        {
+          slot: 'head',
+          property: 'rgba',
+          keys: [
+            { t: 0, v: [1, 1, 1, 1] },
+            { t: 1, v: [1, 1, 1, 1] },
+          ],
+        },
+      ],
+    },
+    sliders: [{ ...dialSlider, animation: 'turn_seen' }],
+  });
+  const tracked = gateTurn(trackedBuild);
+  const trackedHits = tracked.failures.filter((f) => f.assertion === A39);
+  const onTrack = trackedHits.find((f) => /animation "turn" deform/.test(f.detail));
+  const viaSlider = trackedHits.find((f) => /animation "turn_seen" \(applied by slider "dial"/.test(f.detail));
+  say(
+    'DW22_AN_ANIMATION_NO_SLIDER_APPLIES_KEEPS_THE_TRACK_FRAME_AND_ITS_RED',
+    trackedHits.length === 2 &&
+      onTrack !== undefined &&
+      viaSlider !== undefined &&
+      !/applied by slider/.test(onTrack.detail) &&
+      /8 of 32 triangle\(s\) reverse winding/.test(onTrack.detail) &&
+      // No alpha clause on the track refusal: the slider's apply put the slot
+      // back to 1, which is the whole reason that frame refuses.
+      !/at alpha /.test(onTrack.detail) &&
+      String(tracked.stats.deformFrames) === 'turn:track,turn_seen:slider/dial',
+    trackedHits.length === 2
+      ? `one rig, two animations, two frames: "turn" is played on a track and refused — the slider applying ` +
+          `"turn_seen" holds the slot opaque at its neutral, so the fade the animation wrote is overwritten by a ` +
+          `frame that DOES occur — while "turn_seen" is refused in its own slider frame and the message says which ` +
+          `(deformFrames=${tracked.stats.deformFrames})`
+      : `${A39} fired ${trackedHits.length} time(s): [${trackedHits.map((f) => f.detail.slice(0, 120)).join(' | ')}]`,
+    '#407 moved the FRAME and nothing else. If the fix had been a looser alpha rule, or "exclude the slider while ' +
+      'posing", this rig would be green — and it is a rig where the fold is genuinely on screen',
+  );
+
+  // --- two ways in, and neither hides the other ----------------------------
+  const twoDials = buildTurnRig(turnRow(40), {
+    sliders: [dialSlider, { ...dialSlider, name: 'dial2', bone: 'knob2' }],
+  });
+  const twoWrapped = JSON.parse(twoDials.result.skeletonText) as { constraints: Array<Record<string, unknown>> };
+  for (const constraint of twoWrapped.constraints) if (constraint.name === 'dial2') constraint.local = false;
+  const twoText = JSON.stringify(twoWrapped);
+  const twoGate = gateTurn(twoDials, twoText);
+  const twoSurvey = surveyDeformKeys(skeletonDataFromText(twoText, twoDials.result.atlasText));
+  const perSlider = (slider: string): typeof twoSurvey.keys =>
+    twoSurvey.keys.filter((k) => k.reach.slider === slider);
+  const twoHits = twoGate.failures.filter((f) => f.assertion === A39);
+  say(
+    'DW23_TWO_SLIDERS_ON_ONE_ANIMATION_ARE_TWO_FRAMES_AND_NEITHER_HIDES_THE_OTHER',
+    perSlider('dial').length === 3 &&
+      perSlider('dial2').length === 3 &&
+      // Through the reachable dial every key is measured and the fold refused…
+      perSlider('dial').every((k) => k.dial?.unreachable === false) &&
+      twoHits.length === 1 &&
+      /animation "turn" \(applied by slider "dial", not played on a track\)/.test(twoHits[0].detail) &&
+      // …while through the other one the two keys needing a negative dial are
+      // not gated at all. A silence in one frame is not a verdict in the other.
+      perSlider('dial2').filter((k) => k.dial?.unreachable === true).length === 2 &&
+      String(twoGate.stats.deformFrames) === 'turn:slider/dial,turn:slider/dial2',
+    twoHits.length >= 1
+      ? `two sliders applying one animation: every key is measured twice, once per dial. Through "dial" all ` +
+          `${perSlider('dial').length} are reachable and the fold at key 1 is refused BY FRAME — ` +
+          `"${twoHits[0].detail.slice(0, 110)}…" — while through "dial2", which cannot cross 0°, ` +
+          `${perSlider('dial2').filter((k) => k.dial?.unreachable === true).length} of them are unreachable and ` +
+          'gated by nothing'
+      : `${A39} fired ${twoHits.length} time(s) over ${twoSurvey.keys.length} key measurement(s)`,
+    'an animation reached two ways has two frames, and a fold only one dial can reach is still a fold — a survey ' +
+      'that measured the first frame and stopped would report a pass earned somewhere else',
   );
 
   return bad;
@@ -19924,7 +20211,7 @@ function main(): void {
   bad += runContourMeshSuite();
   substantive += 8;
   bad += runDeformWindingSuite();
-  substantive += 20;
+  substantive += 24;
   bad += runDeformTransformSuite();
   substantive += 7;
   bad += runDeformReportSuite();
@@ -20194,7 +20481,7 @@ function main(): void {
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
-      '+ 20 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
+      '+ 24 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
       'angle it gates green, past that angle A39 names the animation, the key, the time and every reversed triangle ' +
       'with both its areas, and the eight it names span only the outermost column pair the formula picks out; the ' +
       'angle A39 first fires at, bisected, agrees with that formula to 0.0001°; a band INVERTED rather than folded ' +
@@ -20226,7 +20513,22 @@ function main(): void {
       'and reading the same fold time back to the last bit; and the case found by reading the arithmetic rather ' +
       'than by a rig failing — a quadratic opens either way, so the wrong-signed set is BETWEEN its roots or ' +
       'OUTSIDE them, and a span that is inside out at both ends and correct in the middle is two windows whose ' +
-      'merge would have put the probe in the one part of it that is fine), ' +
+      'merge would have put the probe in the one part of it that is fine; and then the FRAME all of that is posed ' +
+      'in (issue #407), because an animation a SLIDER applies is never played on a track and posing it as though ' +
+      'it were is a frame no playthrough contains — the dial picks the time, so a slider sitting at its neutral ' +
+      "overwrote the very alpha-0 key the exemption above reads and refused a correct rig. The slider's mapping is " +
+      'inverted from a non-degenerate `from`/`to`/`scale` — degenerate in any of the three and a dropped or ' +
+      'mis-signed term would still land — and the two frames are then built out of spine-core BY THIS FILE and ' +
+      'their slot alpha read off each, drawn in the old one and not in the new; the inversion is load-bearing ' +
+      'rather than a hint, because a solve aimed at the TIME absorbs a wrong sign and poses the right frame off ' +
+      'the wrong arithmetic (measured, it does), so it aims at the value and a bad inversion reports the key ' +
+      'unreachable instead; the wrap that makes a key unreachable for real — `local: false` on rotate, whose ' +
+      "reader's whole range is [0, 360), on a rig the COMPILER ACCEPTS because #405's refusal checks only the low " +
+      'end and this one runs past 360 — named on the stats line with the time the runtime lands on, on its own ' +
+      'line in the DEFORM block, and the spans it bounds left unscanned; the red the frame does NOT relieve, ' +
+      'where a slider applying ' +
+      'ANOTHER animation holds the slot opaque while this one really is on a track; and two sliders on one ' +
+      'animation, which are two frames, where a fold only one dial can reach is still refused by name), ' +
       '+ 12 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
       'from docs/FACE.md §1 byte for byte, the same model past the fold angle still firing A39, the other three ' +
       'closed forms — affine, wave and bend — evaluated against arithmetic derived here, and the five refusals that ' +

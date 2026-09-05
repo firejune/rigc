@@ -86,7 +86,7 @@
       "max": 19,
       "local": true,
       "additive": true,
-      "mix": 0
+      "mix": 1
     },
     {
       "name": "tilt",
@@ -100,7 +100,7 @@
       "max": 5,
       "local": true,
       "additive": true,
-      "mix": 0
+      "mix": 1
     }
   ],
 
