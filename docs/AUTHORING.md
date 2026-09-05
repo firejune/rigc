@@ -2545,7 +2545,7 @@ deform  (what each key does to the geometry — figures with names, never a bar;
 | Row | What it is |
 | --- | --- |
 | the `DEFORM` line | `animation`, the `skin/slot/attachment` triple the timeline is keyed on, the key's index — **the same index `A39`'s message names** — its time, and its model: the `transform` kind and parameters the spec stated (§4.11.1), or `authored table` |
-| `frame` | how the animation was reached, which is the pose everything below was measured in: `played on a track`, or the slider that applies it with the dial value its mapping inverts this time to (§4.11.4). On a key at a time no dial selects, an `unreachable` line follows it and the figures below belong to the frame the runtime landed on instead |
+| `frame` | how the animation was reached, which is the pose everything below was measured in: `played on a track`, or the slider that applies it, the property that slider reads off its bone **as the emitted skeleton names it**, and the dial value its mapping inverts this time to (§4.11.4). Under `local: false` a further clause appears when the field that measurably moves the reading is not the one the skeleton names, or when two fields move it equally — reported, never resolved out of sight. On a key at a time no dial selects, an `unreachable` line follows it and the figures below belong to the frame the runtime landed on instead |
 | `moved` | how many vertices this key moves at all, and the largest **world** displacement with the vertex carrying it. Not the same number as §4.11.1's `largest offset`: that one is the offset the spec stated, this one is where the vertex ended up after the bones |
 | `area` | signed area **after ÷ before**, its smallest and largest over the triangles, each with the triangle. `x0.637` is a band compressed to 64%; **a negative ratio is a triangle turned inside out** |
 | `stretch` | the two singular values of the map from the cleared triangle to the deformed one — the worst stretch and the worst squash the **drawing** takes. `σ₁·σ₂ = \|area ratio\|`, so the two rows are two readings of one map and cannot disagree |
@@ -2757,6 +2757,47 @@ deformSpansNotScanned=2
   — the `@` is the time the runtime lands on instead — with the `DEFORM` block
   giving the whole sentence and the spans those keys bound left unscanned rather
   than scanned over two poses of some other time.
+- 🚨 **A dial past `±16777216` is named, not printed.** The drive is a number you
+  are meant to act on — *set `knob.scaleX` to this* — and past 2²⁴ a float32 no
+  longer separates consecutive integers, so a figure up there is not one anybody
+  can set and read back. `A39` leaves the bone at its setup value instead, counts
+  the key as unreachable, and says so with both numbers:
+
+```
+unreachable A39 gates nothing here: the dial for t=1s is out of bounds: slider "dial" maps
+that time back to 17000000.000000, which needs knob.rotate at 1.7000e+7 — past the ±16777216
+this solve will drive a bone field to. …
+```
+
+  The usual cause is a `from` or a `scale` that puts the animation's own range out
+  of reach; check the two against `value = from + (time − to) / scale` above.
+
+#### Which property the `frame` line names
+
+The name on the `frame` line — `off yaw_dial.rotate (local)` — is read off the
+**emitted skeleton**: it is whichever `FromProperty` the parser built out of your
+`property` field, so it is the word you wrote. rigc *also* probes all six local
+fields of the driving bone to find which one moves the reading, because under
+`local: false` the reader goes through the world transform and only a measurement
+can say what drives it there. **The two answers must agree, and when they do not
+the line says so rather than picking one silently.**
+
+- Under `local: true` they always agree and the line carries nothing extra.
+- Under `local: false` they can legitimately differ, because the reading is a
+  *world* one. A bone whose parent is turned 90° has a world x that its own local
+  `x` does not move at all and its local `y` moves entirely, so the line reads
+  `off knob.x (world), driven through knob.y — the probe moves the reading by
+  knob.y 1.000e+0 while the skeleton says the reader is knob.x, which moves it by
+  2.321e-8. The two disagree and both are reported…`, and the `bone local` figure
+  beside the dial names its field (`bone local y 398.999991`).
+- At 45° the two fields move it *equally*, which no ranking can separate; the line
+  says the probe did not settle it and that the skeleton's own reader broke the
+  tie. ⛔ Neither case is a refusal and neither is guessed past — an ambiguous
+  discovery is a thing to report.
+
+None of this needs anything from you unless a `frame` line carries one of those
+clauses. If one does, it is telling you the dial bone's parent transform is doing
+something you may not have intended.
 
 ⚠️ **What the artifact cannot say, and rigc therefore does not:** whether a
 slider's animation is *also* played on a track somewhere. Nothing in skeleton data

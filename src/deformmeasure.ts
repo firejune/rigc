@@ -95,6 +95,13 @@ import {
   AtlasAttachmentLoader,
   type Bone,
   DeformTimeline,
+  FromProperty,
+  FromRotate,
+  FromScaleX,
+  FromScaleY,
+  FromShearY,
+  FromX,
+  FromY,
   MeshAttachment,
   Physics,
   Skeleton,
@@ -298,12 +305,26 @@ export interface DeformReach {
   /** The slider's driving bone. `null` on the track, and on a bone-less slider. */
   bone: string | null;
   /**
-   * The transform property the slider reads off that bone, as spine-core's own
-   * reader class is named minus the `From` (`rotate`, `x`, `y`, `scaleX`, …), or
-   * `null` when there is no bone. Derived from which local field moves the
-   * slider's time rather than from a table, so it cannot drift from the runtime.
+   * The transform property the slider reads off that bone, as a rig spec spells
+   * it (`rotate`, `x`, `y`, `scaleX`, …), or `null` when there is no bone.
+   *
+   * 🚨 Off the **artifact** since issue #419 — spine-core's own `FromProperty`
+   * subclass, which is what the parser built out of the rig spec's `property`
+   * field. It used to be whichever local field the probe below found first, and
+   * float noise makes `rotation` move a world `sqrt(a² + c²)` reading, so every
+   * world `scaleX` / `scaleY` / `shearY` slider was reported as `rotate`.
    */
   property: string | null;
+  /**
+   * The bone field the solve actually drives, when that is **not** the one
+   * `property` names; `null` when they are the same, which is every rig that has
+   * a plain parent.
+   *
+   * They come apart under `local: false`, where the reader goes through the world
+   * transform: a `FromX` slider on a bone whose parent is at 90° reads a world x
+   * that local `x` does not move at all and local `y` moves entirely.
+   */
+  drive: string | null;
   /** `SliderData.local` — whether the property is read local or world. */
   local: boolean;
   /** The clause the `DEFORM` block and A39's stats line print. */
@@ -316,6 +337,7 @@ const TRACK_REACH: DeformReach = {
   slider: null,
   bone: null,
   property: null,
+  drive: null,
   local: false,
   label: 'played on a track',
 };
@@ -343,6 +365,17 @@ export interface DeformDial {
    * `local: false`, where the reader goes through the world transform.
    */
   driven: number;
+  /**
+   * The drive the mapping asked for when it was past `DIAL_DRIVE_LIMIT` and the
+   * bone was therefore stopped at the bound instead — `null` on every dial that
+   * stayed inside it, which is every correct rig (issue #419).
+   *
+   * 🚨 The runaway made visible. Before #419 a world scale slider was solved
+   * through `rotation`, whose response to it is float noise, and the drive ran to
+   * 4.9e9 with nothing saying so. Now the ask is carried here, the bone is not
+   * posed there, and the key is reported unreachable naming both numbers.
+   */
+  beyondLimit: number | null;
   /** `SliderPose.time` the runtime then computed, read off the posed skeleton. */
   applied: number;
   /** What `Slider.update` would have stored for this key's own time. */
@@ -579,6 +612,22 @@ export function unreachableWhy(key: DeformKeyMeasure): string {
     key.reach.bone === null
       ? `slider "${key.reach.slider}"'s own time`
       : `${key.reach.bone}.${key.reach.property} (${key.reach.local ? 'local' : 'world'})`;
+  // 🚨 The runaway, named with both numbers instead of printed as a dial (issue
+  // #419). This comes first because it is a different fact from the one below: the
+  // bone was never put where the mapping asked, so what the runtime applied is the
+  // clamp's time and says nothing about whether the key is otherwise reachable.
+  if (dial.beyondLimit !== null) {
+    const field = key.reach.drive ?? key.reach.property;
+    return (
+      `the dial for t=${key.time}s is out of bounds: slider "${key.reach.slider}" maps that time back to ` +
+      `${dial.value.toFixed(6)}, which needs ${key.reach.bone}.${field} at ${dial.beyondLimit.toExponential(4)} — ` +
+      `past the ±${DIAL_DRIVE_LIMIT} this solve will drive a bone field to. Past 2^24 a float32 no longer holds ` +
+      'two consecutive integers apart, so a figure up there is not a value anybody can set and read back. The ' +
+      'bone was left at its setup value rather than driven there, so what was posed is the setup frame and not ' +
+      `the one that mapping names — the runtime applied ${dial.applied.toFixed(6)}s against the ` +
+      `${dial.wanted.toFixed(6)}s wanted`
+    );
+  }
   // The one reader that cannot produce a value it is asked for, named where an
   // author will meet it: a WORLD rotation is an `atan2` ending in
   // `if (value < 0) value += 360`, so **[0, 360) is the whole of its range** and
@@ -794,6 +843,70 @@ function dialStep(field: DialField): number {
 }
 
 /**
+ * Which `BonePose` field spine-core's own reader is named for — off the ARTIFACT,
+ * which is the second, independent answer the probe below is checked against
+ * (issue #419).
+ *
+ * ⭐ This is an identity, not a dispatch table. `SliderData.property` is one of
+ * six classes the parser built out of the rig spec's `property` field, so asking
+ * which class it is asks the file what the author wrote; it says nothing about
+ * *how* the value is computed, which is the part #407 was careful never to
+ * transcribe and which the probe still measures.
+ *
+ * `null` for a reader this file does not know — unreachable against spine-core
+ * 4.3, which has exactly these six, and deliberately not folded into a default:
+ * a seventh reader in some later runtime must be **named** in the report, not
+ * silently mapped to whatever the probe happened to find.
+ */
+function readerField(property: FromProperty): DialField | null {
+  if (property instanceof FromRotate) return 'rotation';
+  if (property instanceof FromX) return 'x';
+  if (property instanceof FromY) return 'y';
+  if (property instanceof FromScaleX) return 'scaleX';
+  if (property instanceof FromScaleY) return 'scaleY';
+  if (property instanceof FromShearY) return 'shearY';
+  return null;
+}
+
+/**
+ * How the artifact's answer and the probe's answer settled (issue #419).
+ *
+ * - `agreed` — one field responds decisively and it is the reader's own. Every
+ *   rig in the gallery and every `local: true` slider.
+ * - `settled` — the probe was **not** decisive (two or more fields within
+ *   `DIAL_PROBE_MARGIN` of each other) and the reader's own field is one of them,
+ *   so the artifact broke the tie. Real: a `FromX` slider under `local: false` on
+ *   a bone whose parent is at 45° is driven exactly equally by local `x` and
+ *   local `y`, and letting list order decide between them would be the same
+ *   silent arbitrariness #419 was filed on.
+ * - `disagreed` — the field that moves the reading is not the reader's own field.
+ *   Also real: the same slider with the parent at 90° is moved by local `y` alone
+ *   and not at all by local `x`. The probe wins the drive, because it is the one
+ *   that measured something, and the disagreement is printed rather than resolved.
+ */
+type DialVerdict = 'agreed' | 'settled' | 'disagreed';
+
+/** The two answers, what they were, and how they settled. */
+interface DialDiscovery {
+  /** The reader's own field, off the artifact. `null` on a reader not known here. */
+  stated: DialField | null;
+  /** What the artifact's reader is called, for a report that has to name it. */
+  reader: string;
+  /** The field the solve drives. Always one the probe measured a response on. */
+  drive: DialField;
+  /** What one step of that field moved the reading by. */
+  driveResponse: number;
+  /**
+   * The other fields inside `DIAL_PROBE_MARGIN` of the winner — the ones that
+   * stopped the probe being decisive. Empty whenever it was.
+   */
+  rivals: Array<{ field: DialField; response: number }>;
+  /** What the reader's OWN field responded, when it is not the one driven. */
+  statedResponse: number | null;
+  verdict: DialVerdict;
+}
+
+/**
  * A slider whose animation is being posed, with everything the inversion needs
  * measured off the runtime rather than assumed.
  */
@@ -806,6 +919,19 @@ interface DialPlan {
    */
   field: DialField | null;
   /** Two points of the affine map `local field -> property value`, from probes. */
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+}
+
+/**
+ * One field's probe: how far one step of it moved the reading, and the two points
+ * of the affine map that step traced.
+ */
+interface DialProbe {
+  field: DialField;
+  response: number;
   u0: number;
   v0: number;
   u1: number;
@@ -826,6 +952,51 @@ const DIAL_TIME_EPSILON = 1e-6;
 
 /** How many secant steps the solve takes before it calls a time unreachable. */
 const DIAL_SOLVE_STEPS = 4;
+
+/**
+ * How far the largest probe response has to clear the runner-up before the probe
+ * alone is allowed to name the field the solve drives (issue #419).
+ *
+ * ⭐ **A ratio, so it carries no units and no fixture's scale.** What it separates
+ * was measured rather than assumed, on this file's own probe:
+ *
+ * | reading | field | response to one step | ratio to the winner |
+ * | --- | --- | --- | --- |
+ * | `FromScaleX`, world, plain parent | `scaleX` | 2.5e-1 | — |
+ * | | `rotation` | 4.0e-10 (float noise in `sqrt(a²+c²)`) | 6.2e8 |
+ * | `FromX`, world, parent at 90° | `y` | 1.0 | — |
+ * | | `x` | 4.6e-8 (float noise) | 2.2e7 |
+ * | `FromScaleX`, world, parent scaled 2×1 | `scaleX` | 5.0e-1 | — |
+ * | | `rotation` | 2.3e-4 (**real**, not noise) | 2.2e3 |
+ * | `FromX`, world, parent at 45° | `x` | 7.07e-1 | — |
+ * | | `y` | 7.07e-1 (**real**, and exactly equal) | 1.0 |
+ *
+ * So 1e3 sits between the smallest genuine secondary dependency measured (2.2e3)
+ * and the largest float-noise ratio (2.2e7), with four orders of headroom on the
+ * side that matters. ⚠️ It is not a noise threshold and must not be read as one:
+ * a rig with a heavier parent scale pushes that 2.2e3 down through it, and what
+ * happens then is not a wrong answer but an *ambiguous* one — which this file
+ * reports and the artifact settles, below.
+ */
+const DIAL_PROBE_MARGIN = 1e3;
+
+/**
+ * The largest magnitude the solve will drive a bone field to (issue #419).
+ *
+ * 🚨 **This is the bound that replaces "gave up at 4.9e9".** A dial figure is an
+ * instruction — *set `knob.scaleX` to this* — and past 2²⁴ a float32 cannot hold
+ * two consecutive integers apart, so a number up there is not one an author can
+ * set and read back; the emitted skeleton, which rounds to six decimals, has lost
+ * the precision long before. A drive the mapping asks for beyond this is
+ * therefore **not posed**: the bone stops at the bound, the runtime lands on some
+ * other time, and the key is reported unreachable with the ask and the bound both
+ * named — never printed as if it were advice.
+ *
+ * The runaway #419 was filed on reached 1.2e9, 2.5e9 and 4.9e9, all two orders
+ * above this, and every dial `gallery/look` and the DW fixtures ask for is under
+ * 200.
+ */
+const DIAL_DRIVE_LIMIT = 2 ** 24;
 
 /**
  * Every way each animation is reached, keyed by animation name.
@@ -871,27 +1042,66 @@ function sliderOn(skeleton: Skeleton, data: SliderData): Slider | null {
  * Find which local field of the driving bone moves a slider's time, and read the
  * affine map from that field to the property value off two probes.
  *
- * ⭐ **Probed rather than tabulated.** Which `BonePose` field a `FromProperty`
- * reads is spine-core's business, and under `local: false` the reader goes
- * through the world transform — so a table here would be a second copy of the
- * runtime's dispatch AND a claim about parents this file has no business making.
- * Two calls to `data.property.value` — the same call `Slider.update` makes, with
- * the same all-zero offsets — say it instead, and every one of the six readers is
- * affine in its own field at a fixed parent pose, so two points are the whole map.
+ * ⭐ **Probed rather than tabulated.** How a `FromProperty` turns a bone into a
+ * number is spine-core's business, and under `local: false` it goes through the
+ * world transform — so a table of that here would be a second copy of the
+ * runtime's arithmetic AND a claim about parents this file has no business
+ * making. Calls to `data.property.value` — the same call `Slider.update` makes,
+ * with the same all-zero offsets — say it instead, and every one of the six
+ * readers is affine in its own field at a fixed parent pose, so two points of the
+ * winner are the whole map.
+ *
+ * 🚨 **What the probe is NOT allowed to do is stop at the first field that
+ * moves** (issue #419). A world scale is read as `sqrt(a² + c²)`; perturbing
+ * `rotation` changes `a` and `c` by amounts that do not cancel in floating point,
+ * `rotation` is probed first, and every world `scaleX` / `scaleY` / `shearY`
+ * slider was therefore reported as `rotate` — and then solved through a field
+ * whose response to it is 4e-10, which is how a drive reached 4.9e9. So:
+ *
+ *  1. **every** field is probed and they are ranked by response;
+ *  2. the winner has to clear the runner-up by `DIAL_PROBE_MARGIN` to be called
+ *     decisive — a tie is a real thing (a `FromX` slider on a bone whose parent
+ *     is at 45° is moved exactly equally by local `x` and local `y`) and letting
+ *     `DIAL_FIELDS`'s order settle it silently is the same defect one step over;
+ *  3. and the answer is cross-checked against the **artifact** — spine-core's own
+ *     reader class, which is what the parser built out of the rig spec's
+ *     `property`. That is what the report names, it settles a tie the probe could
+ *     not, and where the two genuinely differ the report says so by name.
+ *
+ * ⛔ Nothing here falls back to `rotation`, or to any field, when the search does
+ * not settle. Two answers that disagree are two answers, printed.
  */
 function planDial(data: SkeletonData, slider: SliderData): DialPlan | null {
-  const reach = (field: DialField | null): DeformReach => ({
-    kind: 'slider',
-    slider: slider.name,
-    bone: slider.bone?.name ?? null,
-    property: field === null ? null : DIAL_PROPERTY[field],
-    local: slider.local,
-    label:
-      field === null
-        ? `applied by slider "${slider.name}" at its own time`
-        : `applied by slider "${slider.name}" off ${slider.bone?.name ?? '?'}.${DIAL_PROPERTY[field]}` +
-          `${slider.local ? ' (local)' : ' (world)'}`,
-  });
+  const boneName = slider.bone?.name ?? '?';
+  const where = slider.local ? ' (local)' : ' (world)';
+  const reach = (discovery: DialDiscovery | null): DeformReach => {
+    if (discovery === null) {
+      return {
+        kind: 'slider',
+        slider: slider.name,
+        bone: slider.bone?.name ?? null,
+        property: null,
+        drive: null,
+        local: slider.local,
+        label: `applied by slider "${slider.name}" at its own time`,
+      };
+    }
+    // The name comes off the artifact whenever the artifact has one. A reader
+    // this file does not know is named by its class rather than by a guess.
+    const property = discovery.stated === null ? discovery.reader : DIAL_PROPERTY[discovery.stated];
+    const drive = discovery.stated === discovery.drive ? null : DIAL_PROPERTY[discovery.drive];
+    return {
+      kind: 'slider',
+      slider: slider.name,
+      bone: slider.bone?.name ?? null,
+      property,
+      drive,
+      local: slider.local,
+      label:
+        `applied by slider "${slider.name}" off ${boneName}.${property}${where}` +
+        dialDiscoveryClause(discovery, boneName),
+    };
+  };
   // The bone-less form: `Slider.update` leaves `p.time` alone, so the dial IS the
   // pose value and the map is the identity.
   if (slider.bone === null) return { slider, reach: reach(null), field: null, u0: 0, v0: 0, u1: 1, v1: 1 };
@@ -899,18 +1109,71 @@ function planDial(data: SkeletonData, slider: SliderData): DialPlan | null {
   const instance = sliderOn(skeleton, slider);
   const bone = instance?.bone ?? null;
   if (instance === null || bone === null) return null;
+  const probes: DialProbe[] = [];
   for (const field of DIAL_FIELDS) {
     const step = dialStep(field);
     skeleton.setupPose();
     const base = bone.pose[field];
     const v0 = dialValue(skeleton, slider, bone, field, base);
     const v1 = dialValue(skeleton, slider, bone, field, base + step);
-    if (v1 === v0) continue;
-    return { slider, reach: reach(field), field, u0: base, v0, u1: base + step, v1 };
+    const response = Math.abs(v1 - v0);
+    if (!Number.isFinite(response) || response === 0) continue;
+    probes.push({ field, response, u0: base, v0, u1: base + step, v1 });
   }
   // Nothing moves it: a bone another constraint pins, or a reader that cannot see
   // this bone at all. A37 owns the `scale: 0` shape of the same silence.
-  return null;
+  if (probes.length === 0) return null;
+  // ⚠️ A stable sort on a strict comparison, so an exact tie keeps `DIAL_FIELDS`'s
+  // order and the tie is DETECTED below rather than decided here. A comparator
+  // that broke ties would put the arbitrary choice back where nothing sees it.
+  probes.sort((a, b) => b.response - a.response);
+  const winner = probes[0];
+  const stated = readerField(slider.property);
+  const leaders = probes.filter((p) => p.response * DIAL_PROBE_MARGIN >= winner.response);
+  const decisive = leaders.length === 1;
+  const chosen = decisive || stated === null ? winner : (leaders.find((p) => p.field === stated) ?? winner);
+  const verdict: DialVerdict = chosen.field === stated ? (decisive ? 'agreed' : 'settled') : 'disagreed';
+  const discovery: DialDiscovery = {
+    stated,
+    reader: slider.property.constructor.name,
+    drive: chosen.field,
+    driveResponse: chosen.response,
+    rivals: leaders.filter((p) => p.field !== chosen.field).map((p) => ({ field: p.field, response: p.response })),
+    statedResponse:
+      stated === null || stated === chosen.field ? null : (probes.find((p) => p.field === stated)?.response ?? 0),
+    verdict,
+  };
+  return { slider, reach: reach(discovery), field: chosen.field, u0: chosen.u0, v0: chosen.v0, u1: chosen.u1, v1: chosen.v1 };
+}
+
+/**
+ * The clause the frame line carries when the two answers did not simply agree —
+ * empty on every rig where they did, which is every one in the gallery.
+ *
+ * ⭐ It names both answers and both responses, because "the probe and the file
+ * disagree" without the numbers is a sentence an author cannot act on.
+ */
+function dialDiscoveryClause(discovery: DialDiscovery, bone: string): string {
+  if (discovery.verdict === 'agreed') return '';
+  const drive = `${bone}.${DIAL_PROPERTY[discovery.drive]} ${discovery.driveResponse.toExponential(3)}`;
+  if (discovery.verdict === 'settled') {
+    const rivals = discovery.rivals
+      .map((r) => `${bone}.${DIAL_PROPERTY[r.field]} ${r.response.toExponential(3)}`)
+      .join(', ');
+    return (
+      `, driven through ${bone}.${DIAL_PROPERTY[discovery.drive]} — the probe did not settle that on its own ` +
+      `(${drive} against ${rivals}, inside the ${DIAL_PROBE_MARGIN}x margin), so the skeleton's own reader broke ` +
+      'the tie'
+    );
+  }
+  const statedName = discovery.stated === null ? discovery.reader : `${bone}.${DIAL_PROPERTY[discovery.stated]}`;
+  const statedAt =
+    discovery.statedResponse === null ? 'which this file does not know' : `which moves it by ${discovery.statedResponse.toExponential(3)}`;
+  return (
+    `, driven through ${bone}.${DIAL_PROPERTY[discovery.drive]} — the probe moves the reading by ${drive} while ` +
+    `the skeleton says the reader is ${statedName}, ${statedAt}. The two disagree and both are reported: the ` +
+    'drive is the one that measurably moves the reading'
+  );
 }
 
 /**
@@ -1000,7 +1263,24 @@ function poseDial(data: SkeletonData, plan: DialPlan, time: number): PoseOfFrame
     };
   };
   /** The affine first guess, and what it is judged against. */
-  const first = plan.u0 + ((value - plan.v0) * (plan.u1 - plan.u0)) / (plan.v1 - plan.v0);
+  const asked = plan.u0 + ((value - plan.v0) * (plan.u1 - plan.u0)) / (plan.v1 - plan.v0);
+  // 🚨 The bound, and it is on the drive the answer is READ off, not on the
+  // arithmetic that got there (issue #419). Two different things wanted bounding
+  // and they want it differently:
+  //
+  //  - **the mapping's own ask.** A map measured through a field the reading
+  //    barely moves inverts to nonsense — this is #419's own case, where a world
+  //    scale solved through `rotation` asked for 4.9e9 — and that is the frame
+  //    the report would print as advice. Out of bounds, it is not posed at all:
+  //    the bone stays at the setup value of its field, the key is unreachable,
+  //    and `unreachableWhy` names the ask and the bound.
+  //  - **a secant step.** The loop below is a search and a search may step
+  //    anywhere; a step out of bounds is a step this stops taking, not a verdict.
+  //    `FromRotate`'s wrap sends one there routinely on a rig whose real defect is
+  //    the wrap, and reporting the bound instead of the wrap would swap a
+  //    diagnosis for a symptom.
+  const runaway = !Number.isFinite(asked) || Math.abs(asked) > DIAL_DRIVE_LIMIT;
+  const first = runaway ? plan.u0 : asked;
   const near = 1e-9 * (1 + Math.abs(value));
   let u = first;
   let got = at(u);
@@ -1012,11 +1292,11 @@ function poseDial(data: SkeletonData, plan: DialPlan, time: number): PoseOfFrame
   // on and a wandered secant point is not.
   let pu = first === plan.u0 ? plan.u1 : plan.u0;
   let pv = Number.NaN;
-  for (let step = 0; step < DIAL_SOLVE_STEPS && Math.abs(got.read - value) > near; step++) {
+  for (let step = 0; !runaway && step < DIAL_SOLVE_STEPS && Math.abs(got.read - value) > near; step++) {
     if (!Number.isFinite(pv)) pv = at(pu).read;
     if (pv === got.read || !Number.isFinite(pv) || !Number.isFinite(got.read)) break;
     const next = u + ((value - got.read) * (u - pu)) / (got.read - pv);
-    if (!Number.isFinite(next)) break;
+    if (!Number.isFinite(next) || Math.abs(next) > DIAL_DRIVE_LIMIT) break;
     pu = u;
     pv = got.read;
     u = next;
@@ -1031,9 +1311,13 @@ function poseDial(data: SkeletonData, plan: DialPlan, time: number): PoseOfFrame
     dial: {
       value,
       driven: u,
+      beyondLimit: runaway ? asked : null,
       applied: got.applied,
       wanted,
-      unreachable: !(Math.abs(got.applied - wanted) <= DIAL_TIME_EPSILON),
+      // ⚠️ A drive the bound refused is unreachable WHATEVER the runtime then
+      // landed on. Nothing was posed where the mapping asked, so a time that
+      // happens to match is a coincidence of the setup pose and not a measurement.
+      unreachable: runaway || !(Math.abs(got.applied - wanted) <= DIAL_TIME_EPSILON),
     },
   };
 }
