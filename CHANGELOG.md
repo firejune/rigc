@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.1](https://github.com/firejune/rigc/compare/v0.18.0...v0.18.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **compile:** the slider wrap guard tests both ends, and the line is past 360 ([#424](https://github.com/firejune/rigc/issues/424)) ([cc3a391](https://github.com/firejune/rigc/commit/cc3a39171a3c786b18c70a82645034b62358d348))
+* **deformmeasure:** the artifact names the dial's property, the probe drives it, and the two are checked against each other ([#426](https://github.com/firejune/rigc/issues/426)) ([da8971d](https://github.com/firejune/rigc/commit/da8971d4ef0eacf2d8cbf949502ad07a96416001))
+
 ## [0.18.0](https://github.com/firejune/rigc/compare/v0.17.0...v0.18.0) (2026-09-05)
 
 
