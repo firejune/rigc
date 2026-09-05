@@ -114,6 +114,7 @@ import {
 } from './src/render.ts';
 import { CLI_DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
 import { parseMotionSpec } from './src/motion.ts';
+import type { FoldLimit, TurnCeiling } from './src/depth.ts';
 import type { CompileResult } from './src/types.ts';
 
 /**
@@ -417,12 +418,47 @@ function runGate(
  * gets here (it is refused) and a `ramped 0` is a hard-edged mask, which is
  * legal and usually not what somebody meant.
  */
+/**
+ * One axis's two ceilings, as `+31.41 / -18.03`, or what is unbounded on it.
+ *
+ * ⚠️ `none` and a number are different claims and are printed differently. A
+ * sheet with no gradient along an axis cannot fold anything on it AT ANY ANGLE,
+ * which is a fact about the sheet worth reading; printing `90` for it would be
+ * a limit nothing measured.
+ */
+function ceilingPair(axis: { positive: FoldLimit | null; negative: FoldLimit | null }): string {
+  const one = (l: FoldLimit | null, sign: string) => (l === null ? `${sign}none` : `${sign}${l.degrees.toFixed(2)}°`);
+  return `${one(axis.positive, '+')} / ${one(axis.negative, '-')}`;
+}
+
+/** The tightest of the four, so the line that names a triangle names the right one. */
+function tightestFold(c: TurnCeiling): { kind: string; sign: string; limit: FoldLimit } | null {
+  const all = [
+    { kind: 'yaw', sign: '+', limit: c.yaw.positive },
+    { kind: 'yaw', sign: '-', limit: c.yaw.negative },
+    { kind: 'pitch', sign: '+', limit: c.pitch.positive },
+    { kind: 'pitch', sign: '-', limit: c.pitch.negative },
+  ].filter((e): e is { kind: string; sign: string; limit: FoldLimit } => e.limit !== null);
+  if (all.length === 0) return null;
+  return all.reduce((best, e) => (e.limit.degrees < best.limit.degrees ? e : best));
+}
+
 function meshDepthNote(m: CompileResult['meshes'][number]): string {
   const parts: string[] = [];
   if (m.depth) {
     parts.push(
       `depth "${m.depth.image}" ${m.depth.digest} near=${m.depth.near} zScale=${m.depth.zScale} ` +
         `z=[${m.depth.range[0]}, ${m.depth.range[1]}]`,
+    );
+    const c = m.depth.ceiling;
+    parts.push(`turn ceiling  yaw ${ceilingPair(c.yaw)}   pitch ${ceilingPair(c.pitch)}`);
+    const worst = tightestFold(c);
+    parts.push(
+      worst === null
+        ? `              nothing in this sheet folds: ${c.measured} triangle(s) measured, none with a depth gradient across it`
+        : `              first to fold: ${worst.kind} ${worst.sign} at ${worst.limit.degrees.toFixed(2)}°, ` +
+          `triangle ${worst.limit.triangle} [${worst.limit.ids.join(',')}]` +
+          `${c.degenerate ? `; ${c.degenerate} triangle(s) too flat in setup to measure` : ''}`,
     );
   }
   if (m.soft) {
@@ -2251,9 +2287,14 @@ function cmdExplain(flags: Record<string, string>): void {
     console.log('\nmeshes');
     for (const kind of new Set(result.meshes.map((m) => m.kind))) console.log(`  ${MESH_KIND_NOTES[kind]}`);
     for (const m of result.meshes) {
+      // The depth block belongs here more than it belongs in `build`: `explain`
+      // is the command that says what a spec MEANS, and the turn ceiling is the
+      // number an author needs before writing a key rather than after a refusal.
+      // It was absent, while `docs/AUTHORING.md` said both commands printed it.
       console.log(
         `  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
-          `${meshBudget(result.rig)}  bones=[${m.bones.join(', ')}]${meshFit(m)}`,
+          `${meshBudget(result.rig)}  bones=[${m.bones.join(', ')}]${meshFit(m)}` +
+          meshDepthNote(m),
       );
     }
   }

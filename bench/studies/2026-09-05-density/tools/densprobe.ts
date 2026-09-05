@@ -405,7 +405,18 @@ function fmt(n: number, places = 2): string {
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
-  const dir = args.find((a) => !a.startsWith('--')) ?? join(process.cwd(), 'render', 'density');
+  // ⚠️ Required, with no default inside the repository. It had one — `render/`,
+  // which is git-ignored — and the specs it left there were picked up by the
+  // selftest's own walk over every motion spec in the tree, inflating that
+  // count from 38 to 66 on a run made while they sat there. A harness that
+  // writes into the tree it is measuring is the same hazard as running a
+  // generator while something else is still writing files.
+  const dir = args.find((a) => !a.startsWith('--'));
+  if (dir === undefined) {
+    console.error('usage: bun bench/studies/2026-09-05-density/tools/densprobe.ts <workdir> [--degrees=N]');
+    console.error('       <workdir> is created and overwritten; keep it OUTSIDE this repository.');
+    process.exit(2);
+  }
   const degrees = Number(args.find((a) => a.startsWith('--degrees='))?.slice(10) ?? 12);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });

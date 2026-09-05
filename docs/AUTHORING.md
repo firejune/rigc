@@ -997,6 +997,42 @@ on its own — a `yaw` or `pitch` key has to ask for it with `"depth": true`.
 of the same map reads the same) and the `z` range actually sampled, which is the
 number that says whether the map covers the part or a corner of it.
 
+⭐ **And the TURN CEILING — the angle to write on the key, before you write it.**
+
+```
+  MESH  face   grid  1089 vertices / 2048 triangles  (budget 3000)  bones=[face]
+        depth "face_depth.png" f552a2f50d21 near=white zScale=60 z=[0, 60]
+        turn ceiling  yaw +31.41° / -32.01°   pitch +32.01° / -31.41°
+                      first to fold: yaw + at 31.41°, triangle 960 [113,112,593]
+```
+
+Past that angle a triangle turns inside out and `A39` refuses the build by name.
+The loop this replaces is *pick an angle, build, read the refusal, guess again*.
+
+The arithmetic is exact and worth knowing, because it tells you what to change.
+A `yaw` sends each vertex to `x' = u·cos t − z·sin t`, so a triangle's area is
+`A₀·cos t − A_yaw·sin t` where `A_yaw` is the same area with **z substituted for
+u** — and it reaches zero at `tan t = A₀/A_yaw`. Three consequences:
+
+- ⚠️ **The ceiling is a property of the SHEET, not of the mesh.** Over a smooth
+  map the limit approaches `1 / max|dz/du|`, the reciprocal of its steepest
+  slope, with no mesh term in it. Refining the lattice does not lower the angle
+  — it finds slopes that were always there. So a ceiling you cannot live with is
+  fixed by editing the depth map, not by meshing differently:
+  [`docs/FACE.md` §2.2](FACE.md) has the measured ladder and the rule.
+- **The four numbers are four different answers**, each from its own triangle.
+  A part that turns 30° left and 18° right is ordinary, not an anomaly.
+- **`none` means no gradient on that axis**, and is a different statement from a
+  large number. A sheet varying linearly along one axis cannot fold the other at
+  *any* angle — `A_pitch` is then identically zero — so a linear ramp reports a
+  yaw ceiling and `pitch +none / -none`.
+
+⛔ It is a **report and never a refusal**. `A39` owns the refusal, from the
+artifact and through the runtime; a second wall here would be the compiler
+inventing a policy out of a measurement. What holds the two together is a
+control: `TC01` requires this number to be the angle `A39` actually fires at, on
+the triangle `A39` actually names, to 0.01°.
+
 🚨 **The one that will catch you: the sheet has to cover the mesh, and usually
 it does not.** A contour mesh puts every vertex *on* the silhouette and pushes it
 `margin` pixels outside; a grid spans the whole window, corners included. A depth
