@@ -1406,27 +1406,53 @@ sharing one of those overwrite each other whatever you write. A40 names that cas
 separately, because the fix is different: key such a property from one slider
 only, or move both edits into the single animation one slider applies.
 
-🚨 **A `rotate`-driven slider with `local: false` cannot cross 0°.** `local: false`
-reads the bone's **world** rotation through `FromRotate.value`, which ends
-`if (value < 0) value += 360`. A yaw axis authored the natural way — neutral at 0°,
-range −15°..+15° — therefore never sees a negative value: the bone at −15° arrives
-as 345°, and `time = to + (value − from) * scale` lands far past the animation.
-[measured] with `from: 0, to: 0.5, scale: 0.033333` over a 1 s animation the dial
-at −15° applies time **12.000 s**, so with `loop: false` the entire negative half
-of the axis holds the last frame — 15° of face jumping between −0.001° and 0°, with
-nothing anywhere reporting it. The same rig with `"local": true` ramps
-0 s → 0.5 s → 1 s as written.
+🚨 **A `rotate`-driven slider with `local: false` has to stay inside the circle
+`[0, 360]`.** `local: false` reads the bone's **world** rotation through
+`FromRotate.value`, which is a `Math.atan2` — so `(−180, 180]` — with
+`if (value < 0) value += 360` on the end, and the `offsets` a slider hands it are
+all zero. `[0, 360)` is therefore the whole set of values that reader can ever
+return, and a range leaving it on either side is a wall:
 
-⇒ **`local: true` is the form a face axis wants.** It reads `source.rotation`
-signed and unwrapped, which for a dial bone is the number you authored. rigc
-refuses the crossing case at compile, with that arithmetic in the message; the
-alternative it leaves open is to move the range so it does not cross 0° (a neutral
-at 180°, say), which is the only form `local: false` can express.
+- **Below 0°.** A yaw axis authored the natural way — neutral at 0°, range
+  −15°..+15° — never sees a negative value: the bone at −15° arrives as 345°, and
+  `time = to + (value − from) * scale` lands far past the animation. [measured]
+  with `from: 0, to: 0.5, scale: 0.033333` over a 1 s animation the dial at −15°
+  applies time **12.000 s**, so with `loop: false` the entire negative half of the
+  axis holds the last frame — 15° of face jumping between −0.001° and 0°.
+- **Past 360°.** There is nothing above 360 to wrap *from*, so the value arrives
+  360 **lower** instead. [measured] with `from: 300, to: 0, scale: 0.005` over a
+  1 s animation the range is 300°..500°; the bone turned to 500° has a world
+  rotation of 140°, is read as 140°, and applies time **−0.800 s** —
+  `Math.max(0, time)` under `loop: false`. Swept through spine-core, that rig
+  reaches only **0.000 s..0.2995 s of its own 1 s animation**: the top 140° of the
+  dial does not merely fail to arrive, it arrives somewhere else.
 
-⚠️ **The refusal is on the LOW end only.** `[0, 360)` is the whole of what
-`FromRotate.value` returns, so a range running past **360°** is dead in the same
-way and compiles clean. Nothing refuses that at compile; `A39` reports it from the
-artifact side as a key at a time no dial selects (§4.11.4).
+Both are refused at compile, each with its own arithmetic in the message and its
+own repair — *"move the range so it does not cross 0°"* and *"move the range so it
+does not run past 360°"*.
+
+⭐ **A range ending exactly on 360° is legal**, and that is the whole turn: a
+wheel, a turntable, a head that goes all the way round, written `from: 0` with a
+`scale` that puts 360° on the last frame. It misses exactly one value — its own
+supremum — and that value is not a dial position: a bone at 360° *is* a bone at
+0°, and [measured] it poses the skeleton to within **4e-7°** of it, an `atan2`
+artefact rather than a frame. Swept at 0.1° over the circle, `from: 0,
+scale: 0.0025` on a 0.9 s animation lands every reading within **1.7e-8 s** of the
+time the mapping asks for; on `loop: true` the endpoint is not even distinct,
+closing on **0.900000 s** exactly. Use `loop: true` for a dial that really does go
+round, so the seam at 0°/360° is the wrap it is meant to be.
+
+⇒ **`local: true` is the form a face axis wants**, and it is the first repair both
+messages name. It reads `source.rotation` signed and unwrapped, which for a dial
+bone is the number you authored — 500° included — because `FromRotate`'s wrap is
+not on that path at all. The alternative each refusal leaves open is to move the
+range inside the circle (a neutral at 180°, say), which is the only form
+`local: false` can express.
+
+⚠️ **An artifact can still carry a dead range** — one exported from the editor,
+hand-edited, or built by an older rigc. `A39` reports that from the artifact side
+as a key at a time no dial selects (§4.11.4); the compile refusal above is what
+stops a rig spec in this repository from producing one.
 
 📌 **A slider's animation is measured in the slider's own frame** — `A39` inverts
 the mapping above and drives the bone to the value it names, rather than playing
@@ -2715,12 +2741,13 @@ dial and not reached at all through another.
   [#405](https://github.com/firejune/rigc/issues/405)'s wrap: `FromRotate.value`
   under `local: false` is an `atan2` ending `if (value < 0) value += 360`, so
   **`[0, 360)` is the whole of its range** and a mapping needing anything outside
-  it selects nothing. 🚨 The compiler refuses a range that dips **below** 0°
-  (§3.5.2) and says nothing about one running **past 360°** — `from: 300` with
-  `scale: 0.005` over a 1 s animation needs 300°..500° and compiles clean — so
-  this is the surface that sees the second half. `A39` measures the frame the
-  runtime *does* land on, leaves the key out of `deformKeysMeasured`, and names
-  it:
+  it selects nothing. 🚨 A **rig spec** can no longer ask for one — the compiler
+  refuses both ends of that circle (§3.5.2), the low one since #405 and the high
+  one since [#417](https://github.com/firejune/rigc/issues/417) — but an
+  **artifact** can, because it may have come from the editor, from a hand edit or
+  from an older rigc, and this is the surface that reads what actually shipped.
+  `A39` measures the frame the runtime *does* land on, leaves the key out of
+  `deformKeysMeasured`, and names it:
 
 ```
 deformKeysUnreachable=2 deformUnreachable=turn/head/head#0@10.800000,turn/head/head#1@11.300000
@@ -2905,7 +2932,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `rig constraint "X": applies animation "Y", which the motion spec does not declare (it declares: …)` | §3.5.2 — fix the slider's `animation`, or add it to the motion spec |
 | `rig constraint "X": declares both a "bone" and "time"` | §3.5.2 — `bone` picks the model and `time` belongs to the other one |
 | `rig constraint "X": declares "property" but no "bone"` | §3.5.2 — name the driving bone, or key `slider.<name>.time` instead |
-| `rig constraint "X": drives off bone "Y" rotate with "local": false, and the driving values that reach animation "A" (0s..Ds) run from −15.000° to 15.000° …` | §3.5.2 — add `"local": true`, which reads the bone's own rotation signed and unwrapped, or move the range so it does not cross 0°. A world rotation is wrapped into `[0, 360)` before the slider maps it, so the negative half of the range is unreachable and pins to one frame |
+| `rig constraint "X": drives off bone "Y" rotate with "local": false, and the driving values that reach animation "A" (0s..Ds) run from −15.000° to 15.000° … the whole part of the range below 0° is dead` | §3.5.2 — add `"local": true`, which reads the bone's own rotation signed and unwrapped, or move the range so it does not cross 0°. A world rotation is wrapped into `[0, 360)` before the slider maps it, so the negative half of the range is unreachable and pins to one frame |
+| `… run from 300.000° to 500.000° … the whole part of the range past 360° is dead` | §3.5.2 — the same wall at the other end, and the same first repair: `"local": true`, or move the range so it does not run past 360°. `[0, 360)` is the whole of what that reader returns, so a bone turned to 500° is read as 140° and selects a time far from the one the range asked for. Ending *exactly* on 360° is fine — that is the full turn, and the only value it misses is a supremum no dial can be parked at separately |
 | `skin "S" activates bone "B", but that bone does not declare \`"skin": true\`` | §3.4.1 — the list and the flag are one switch; add the flag or drop the list |
 | `bone "B" declares \`"skin": true\` but no skin activates it` | §3.4.1 — the other half: list it in the skin it belongs to, or drop the flag |
 | `skin "S": uses the long form … and also has a key "X"` | §3.4.1 — move the slot inside `attachments` |

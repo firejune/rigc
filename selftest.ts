@@ -6543,6 +6543,235 @@ function runPathAndSliderSuite(): number {
       'and unwrapped, so the negative half maps to the first half of the animation instead of past its end',
   );
 
+  // --- the other end of the same circle (issue #417) ------------------------
+  //
+  // `[0, 360)` is the whole of what `FromRotate.value` produces under
+  // `local: false`, so a range running PAST 360° is dead in exactly the way one
+  // dipping below 0° is — and #405's refusal computed `highest` and never tested
+  // it. These five cases are the pair: the two refusals, the proof that they are
+  // two, the two shapes that must still build, and the boundary between them.
+  //
+  // ⭐ The numbers are chosen so no two of these cases can print the same figure.
+  // The low end runs -15°..15°, reads 345° and lands at 12.000s; the high end
+  // runs 300°..500°, reads 140° and lands at -0.800s; the boundary case runs
+  // 160.001°..360.001°, reads 0.001° and lands at -0.400s. A sign flipped in
+  // either branch, or the two branches collapsed into one, moves a number that no
+  // other case here carries.
+  //
+  // 300° + 1s / 0.005 s-per-degree = 500°, which is issue #417's own example.
+  const pastTheCircle = (patch: Record<string, unknown> = {}): Array<Record<string, unknown>> => [
+    pairSlider('yaw', 'yaw-pose', 'yaw-dial', { from: 300, to: 0, scale: 0.005, ...patch }),
+  ];
+  /** A dial sweep over whatever range the case is about, for the two builds below. */
+  const sweepFrom = (a: number, b: number): Record<string, unknown> => ({
+    duration: 1,
+    loop: false,
+    tracks: [{ bone: 'yaw-dial', property: 'rotate', keys: [{ t: 0, v: [a] }, { t: 1, v: [b] }] }],
+  });
+  const overflowed = refusal(sliderPairDirs(pastTheCircle()), sliderPairMotion({ sweep: sweepFrom(300, 500) }));
+  say(
+    'PS36_a_rotate_slider_whose_range_runs_PAST_360_with_local_false_is_refused',
+    overflowed !== null &&
+      overflowed.includes('run from 300.000° to 500.000°') &&
+      overflowed.includes('read as 140.000°') &&
+      overflowed.includes('maps to time -0.800s') &&
+      overflowed.includes('past 360°') &&
+      overflowed.includes('move the range so it does not run past 360°') &&
+      overflowed.includes('"local": true'),
+    overflowed === null ? 'the compile went through' : `refused with: ${overflowed}`,
+    'issue #417: `Math.atan2` returns (-180, 180] and the slider hands that reader an all-zero offsets array, so [0, 360) ' +
+      'is its whole output — there is nothing above 360 to wrap FROM, and a bone turned to 500° reads 140° and selects a ' +
+      'time the author never meant. Measured, this rig reaches only 0.000s..0.2995s of its own 1s animation. #405 ' +
+      'computed this end of the range and tested only the other one',
+  );
+
+  say(
+    'PS37_the_two_ends_are_two_refusals_and_neither_says_the_other_thing',
+    wrapped !== null &&
+      overflowed !== null &&
+      wrapped.includes('below 0°') &&
+      !wrapped.includes('past 360°') &&
+      overflowed.includes('past 360°') &&
+      !overflowed.includes('below 0°') &&
+      wrapped.includes('does not cross 0°') &&
+      !wrapped.includes('does not run past 360°') &&
+      overflowed.includes('does not run past 360°') &&
+      !overflowed.includes('does not cross 0°') &&
+      // …and the arithmetic each carries is its own, not the other's.
+      !wrapped.includes('140.000°') &&
+      !overflowed.includes('345.000°'),
+    // ⚠️ Read out of the two messages rather than restated, so a FAIL says what
+    // they actually carry. A detail that recites the wanted answer is how a
+    // control comes to look like it passed while the run says otherwise.
+    ((): string => {
+      if (wrapped === null || overflowed === null) {
+        return `one of the two compiled: low=${wrapped === null ? 'compiled' : 'refused'} high=${overflowed === null ? 'compiled' : 'refused'}`;
+      }
+      const carries = (message: string): string =>
+        [
+          [
+            'below 0°',
+            'past 360°',
+            'does not cross 0°',
+            'does not run past 360°',
+            '345.000°',
+            '140.000°',
+          ].filter((clause) => message.includes(clause)),
+        ]
+          .map((found) => (found.length ? found.join(' + ') : 'none of the six clauses'))
+          .join('');
+      return `the low end carries [${carries(wrapped)}]; the high end carries [${carries(overflowed)}]`;
+    })(),
+    'the two branches share their arithmetic on purpose, and the failure that buys is a message that stops naming which ' +
+      'end went dead. An author who is told only "out of range" has to work out which way to move the dial',
+  );
+
+  // 🚨 The canonical FULL-CIRCLE dial — a wheel, a turntable, a head that goes
+  // all the way round — written the natural way: `from: 0`, and a `scale` that
+  // puts 360° on the animation's last frame. `highest` is exactly 360.000, and
+  // this must build.
+  //
+  // ⭐ Why nothing is dead there, which is the claim the threshold rests on: the
+  // one value the reader cannot return is the range's own supremum, and 360° is
+  // not a dial position that 0° is not — the same bone, the same pose, the same
+  // frame. The clause below measures exactly that rather than asserting it.
+  //
+  // 0.9s at 0.0025 s-per-degree is 360° exactly, and 0.0025 is exact at the six
+  // decimals rigc emits, so no rounding sits between the spec and the runtime.
+  const CIRCLE_POSE = {
+    duration: 0.9,
+    loop: false,
+    tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.9, v: [30] }] }],
+  };
+  const wholeCircle = (patch: Record<string, unknown> = {}): Array<Record<string, unknown>> => [
+    pairSlider('yaw', 'circle-pose', 'yaw-dial', { from: 0, to: 0, scale: 0.0025, ...patch }),
+  ];
+  const circleExtra = { 'circle-pose': CIRCLE_POSE, sweep: sweepFrom(0, 359.9) };
+  // ⚠️ Asked for the refusal FIRST, and everything after it guarded on there not
+  // being one. A control that reaches `compile` unguarded turns "the rig this
+  // case exists to defend was refused" into a thrown error that takes every
+  // suite after it down — DW21 makes the same note about its own report read.
+  const wholeRefused = refusal(sliderPairDirs(wholeCircle()), sliderPairMotion(circleExtra));
+  const whole = wholeRefused === null ? pairGate(wholeCircle(), circleExtra) : null;
+  const wholeData =
+    wholeRefused === null ? timelinePosable(sliderPairDirs(wholeCircle()), sliderPairMotion(circleExtra)).data : null;
+  const wholeSwept =
+    wholeData === null
+      ? []
+      : [0, 2, 4].map((sample) => boneOf(poseAtSample(wholeData, 'sweep', 4, sample), 'flag').rotation);
+  /** The flag with the dial parked at one reading, posed by this file off spine-core. */
+  const flagAtDial = (value: number): number => {
+    if (wholeData === null) return Number.NaN;
+    const skeleton = new Skeleton(wholeData);
+    skeleton.setupPose();
+    skeleton.update(0);
+    const knob = skeleton.bones.find((b) => b.data.name === 'yaw-dial');
+    if (knob !== undefined) knob.pose.rotation = value;
+    skeleton.updateWorldTransform(Physics.reset);
+    return boneOf(skeleton, 'flag').rotation;
+  };
+  const atSupremum = flagAtDial(360);
+  const atOrigin = flagAtDial(0);
+  const seam = Math.abs(atSupremum - atOrigin);
+  say(
+    'PS38_THE_FULL_CIRCLE_DIAL_IS_GREEN_AND_ITS_SUPREMUM_IS_NOT_A_SEPARATE_POSE',
+    wholeRefused === null &&
+      whole !== null &&
+      whole.failures.length === 0 &&
+      near(wholeSwept[0], 0, 0.02) &&
+      near(wholeSwept[1], 15, 0.02) &&
+      near(wholeSwept[2], 29.99, 0.02) &&
+      // The measurement the threshold rests on: 360° and 0° are one pose.
+      //
+      // ⚠️ Not `===`. `Math.cos(2π)`/`Math.sin(2π)` leave the bone matrix a few
+      // parts in 1e11 off the identity, so the reader returns 5.3e-6° rather than
+      // 0 and the flag follows it. The bound is 1e-4° against a 30° swing — five
+      // orders under the smallest real disagreement there is, which would be the
+      // whole animation (0° against 30°) if the supremum were a frame of its own.
+      seam < 1e-4,
+    wholeRefused !== null
+      ? `the full turn was REFUSED at compile: ${wholeRefused}`
+      : `0°..360.000° over a 0.9s animation: the dial sweeping 0° -> 179.95° -> 359.9° poses flag at ` +
+        `${wholeSwept.map((v) => `${v.toFixed(3)}°`).join(' -> ')}, and parked at exactly 360° it poses ` +
+        `${atSupremum.toExponential(3)}° against ${atOrigin.toExponential(3)}° at 0° — a seam of ` +
+        `${seam.toExponential(3)}° in a 30° swing` +
+        (whole !== null && whole.failures.length
+          ? ` — but the gate said [${whole.failures.map((f) => f.assertion).join(', ')}]`
+          : ''),
+    '🚨 the load-bearing one, twice over. A compiler that refused every rotate slider would pass both refusals above; ' +
+      'and a threshold set AT 360 rather than past it would refuse this rig, whose only unreachable value is a ' +
+      'supremum no dial can be parked at separately — measured here, not argued. Swept at 0.1° through spine-core, ' +
+      'every reading in [0°, 360°) lands within 1.7e-8s of the time the mapping asks for',
+  );
+
+  const unwound = pairGate(pastTheCircle({ local: true }), { sweep: sweepFrom(300, 500) });
+  const unwoundData = timelinePosable(
+    sliderPairDirs(pastTheCircle({ local: true })),
+    sliderPairMotion({ sweep: sweepFrom(300, 500) }),
+  ).data;
+  const unwoundSwept = [0, 2, 4].map((sample) => boneOf(poseAtSample(unwoundData, 'sweep', 4, sample), 'flag').rotation);
+  say(
+    'PS39_the_same_300_to_500_range_with_local_true_compiles_and_drives_all_of_it',
+    unwound.failures.length === 0 &&
+      near(unwoundSwept[0], 0, 0.01) &&
+      near(unwoundSwept[1], 15, 0.01) &&
+      near(unwoundSwept[2], 30, 0.01),
+    `the dial sweeping 300° -> 400° -> 500° poses flag at ${unwoundSwept.map((v) => `${v.toFixed(3)}°`).join(' -> ')}` +
+      (unwound.failures.length ? ` — but the gate said [${unwound.failures.map((f) => f.assertion).join(', ')}]` : ''),
+    'the same numbers PS36 refuses, under the flag PS36 tells the author to add: `FromRotate` is not what reads a ' +
+      '`local: true` slider, so 400° and 500° are ordinary readings and the refusal must not fire on them',
+  );
+
+  // --- and where exactly the line is ---------------------------------------
+  //
+  // ⭐ PS38 shows a full circle building and PS36 shows 500° refused; between
+  // them lies the question the threshold actually answers, and 140° of slop is
+  // not an answer. These two rigs are **one thousandth of a degree apart** and on
+  // opposite sides of it: 160°..360.000° builds, 160.001°..360.001° does not.
+  //
+  // ⚠️ Note the low end is 160°, not 0°: exactly-360 is legal because the missing
+  // value is a supremum, not because the circle happens to close on the range's
+  // own start. A rule that only spared `from: 0` would pass PS38 and fail here.
+  //
+  // The span is 200°, deliberately under a full turn, so the wrapped reading
+  // (0.001°) lands BELOW the range and the message's "outside the animation"
+  // clause is true of it: -0.400s against a 0.5s animation.
+  const ARC_POSE = {
+    duration: 0.5,
+    loop: false,
+    tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [30] }] }],
+  };
+  const arc = (from: number): Array<Record<string, unknown>> => [
+    pairSlider('yaw', 'arc-pose', 'yaw-dial', { from, to: 0, scale: 0.0025 }),
+  ];
+  // Same guard as PS38: ask whether it was refused before trying to gate it.
+  const onTheLineRefused = refusal(sliderPairDirs(arc(160)), sliderPairMotion({ 'arc-pose': ARC_POSE }));
+  const onTheLine = onTheLineRefused === null ? pairGate(arc(160), { 'arc-pose': ARC_POSE }) : null;
+  const overTheLine = refusal(sliderPairDirs(arc(160.001)), sliderPairMotion({ 'arc-pose': ARC_POSE }));
+  say(
+    'PS40_the_line_is_PAST_360_and_a_thousandth_of_a_degree_decides_it',
+    onTheLineRefused === null &&
+      onTheLine !== null &&
+      onTheLine.failures.length === 0 &&
+      overTheLine !== null &&
+      overTheLine.includes('run from 160.001° to 360.001°') &&
+      overTheLine.includes('read as 0.001°') &&
+      overTheLine.includes('maps to time -0.400s') &&
+      overTheLine.includes('past 360°'),
+    onTheLineRefused !== null
+      ? `160°..360.000° was REFUSED at compile — the line sits AT 360 rather than past it: ${onTheLineRefused}`
+      : onTheLine === null || onTheLine.failures.length > 0
+        ? `160°..360.000° did not gate green: [${(onTheLine?.failures ?? []).map((f) => f.assertion).join(', ')}]`
+        : overTheLine === null
+          ? '160.001°..360.001° compiled: the line is somewhere above 360.001, not just past 360'
+          : `160°..360.000° built green (${onTheLine.passed.length} assertions ran) and 160.001°..360.001° was refused: ` +
+            `"…${(overTheLine.match(/run from -?\d+\.\d+° to -?\d+\.\d+°/) ?? ['(no range clause)'])[0]}…` +
+            `read as ${(overTheLine.match(/read as (-?\d+\.\d+)°/) ?? [, '?'])[1]}°…"`,
+    'a threshold is a claim about a boundary, and a control that only tests points far from it checks the sign and ' +
+      'not the number. 360.000 and 360.001 are the two nearest cases this fixture can state, and they must land on ' +
+      'opposite sides',
+  );
+
   return bad;
 }
 
@@ -9895,38 +10124,59 @@ function runDeformWindingSuite(): number {
 
   // --- the mutant: a time no dial can select -------------------------------
   //
-  // 🚨 A rig the COMPILER accepts, and that is the finding rather than a
-  // convenience. `FromRotate.value` under `local: false` is an `atan2` ending
-  // `if (value < 0) value += 360`, so its whole range is `[0, 360)` — and the
-  // refusal issue #405 landed checks only that the range does not dip below 0°.
-  // A range running PAST 360° dies in exactly the same way and compiles clean:
-  // `from: 300, scale: 0.005` over a 1 s animation needs 300° … 500°, and
+  // 🚨 `FromRotate.value` under `local: false` is an `atan2` ending
+  // `if (value < 0) value += 360`, so its whole range is `[0, 360)` — and a
+  // slider range running PAST 360° is dead in exactly the way one dipping below
+  // 0° is: `from: 300, scale: 0.005` over a 1 s animation needs 300° … 500°, and
   // everything above 360° comes back 360 lower and maps outside the animation.
-  // ⇒ this is the artifact-side surface seeing what the compile-side refusal
-  // does not, which is also why it can be reached through `explain` and its
-  // `DEFORM` block asserted below.
+  //
+  // ⚠️ **This case was first built as a rig spec, because the compiler accepted
+  // one.** Issue #405 refused only the low end, so `"local": false` over
+  // 300°..500° compiled clean; issue #417 closed the other end, and the rig spec
+  // here is now `"local": true` — legal, and `PS39` poses the whole of that same
+  // range through it — with the ARTIFACT carrying the `"local": false` this case
+  // is about. That is `gateTurn`'s second argument and `DW23`'s idiom two cases
+  // below, and it is the honest frame for what is left: an artifact reaches this
+  // gate from an editor, from a hand edit or from an older rigc, and the surface
+  // that names an unreachable key is the one that has to answer for it. The
+  // emitted file differs from the one the old fixture compiled in that one flag
+  // and nothing else, so every number this case quotes is the number it quoted
+  // before.
+  //
+  // ⇒ The compile-side refusal is asserted here too, on these same three
+  // numbers, so the two cannot drift apart: #417 rolled back shows up as this
+  // case's first clause and not only as `PS36`'s.
+  //
+  // ⛔ What that costs, stated rather than quietly dropped: `explain` compiles a
+  // rig spec, so the `DEFORM` block cannot be read for an artifact no rig spec
+  // produces. Its `unreachable` line — asserted here until #417 — is no longer
+  // covered by anything. What is still covered is that the block does NOT invent
+  // one (below), and that the stats line and `unreachableWhy` carry the sentence
+  // the block would have printed, since all three read the same survey.
   const WRAP_FROM = 300;
   const WRAP_SCALE = 0.005;
   const wrapValueFor = (time: number): number => WRAP_FROM + time / WRAP_SCALE;
-  const wrappedBuild = buildTurnRig(turnRow(12), {
-    sliders: [
-      {
-        name: 'dial',
-        animation: 'turn',
-        bone: 'knob',
-        property: 'rotate',
-        from: WRAP_FROM,
-        to: 0,
-        scale: WRAP_SCALE,
-        local: false,
-        additive: true,
-      },
-    ],
-  });
-  const wrappedGate = gateTurn(wrappedBuild);
-  const wrappedSurvey = surveyDeformKeys(
-    skeletonDataFromText(wrappedBuild.result.skeletonText, wrappedBuild.result.atlasText),
-  );
+  const wrapSlider = {
+    name: 'dial',
+    animation: 'turn',
+    bone: 'knob',
+    property: 'rotate',
+    from: WRAP_FROM,
+    to: 0,
+    scale: WRAP_SCALE,
+    additive: true,
+  };
+  // Clause one: the rig-spec spelling of exactly these numbers is refused, by
+  // name, with the end of the range that cannot be read (issue #417).
+  const wrapRefused = turnRefusal({ sliders: [{ ...wrapSlider, local: false }] });
+  const wrappedBuild = buildTurnRig(turnRow(12), { sliders: [{ ...wrapSlider, local: true }] });
+  const wrappedJson = JSON.parse(wrappedBuild.result.skeletonText) as {
+    constraints: Array<Record<string, unknown>>;
+  };
+  for (const constraint of wrappedJson.constraints) if (constraint.name === 'dial') constraint.local = false;
+  const wrappedText = JSON.stringify(wrappedJson);
+  const wrappedGate = gateTurn(wrappedBuild, wrappedText);
+  const wrappedSurvey = surveyDeformKeys(skeletonDataFromText(wrappedText, wrappedBuild.result.atlasText));
   const wrappedOut = wrappedSurvey.keys.filter((k) => k.dial?.unreachable === true);
   // Which keys cannot be reached is arithmetic, not a literal: a world rotation
   // comes back inside [0, 360), so exactly the keys whose inverted value is
@@ -9936,10 +10186,16 @@ function runDeformWindingSuite(): number {
   // reaches here is "the report was never written", and a control that throws
   // instead of failing takes every suite after it down with it.
   const wrappedWhy = wrappedOut.length ? unreachableWhy(wrappedOut[0]) : '(no key was reported unreachable)';
+  // The block for the rig as it is ACTUALLY spelled — every key reachable, so
+  // not one `unreachable` line. A report that printed them from the mapping
+  // rather than from the runtime's answer would fail here.
   const wrappedBlock = turnDeformBlock(wrappedBuild);
   say(
     'DW21_A_KEY_AT_A_TIME_NO_DIAL_SELECTS_IS_NAMED_AND_NOT_COUNTED_AS_MEASURED',
-    wrappedGate.failures.length === 0 &&
+    wrapRefused !== null &&
+      wrapRefused.includes('run from 300.000° to 500.000°') &&
+      wrapRefused.includes('past 360°') &&
+      wrappedGate.failures.length === 0 &&
       wrappedOut.length === outsideTheCircle.length &&
       wrappedOut.length > 0 &&
       wrappedOut.length < wrappedSurvey.keys.length &&
@@ -9951,19 +10207,26 @@ function runDeformWindingSuite(): number {
       wrappedSurvey.spansNotScanned === 2 &&
       Number(wrappedGate.stats.deformSpansNotScanned) === wrappedSurvey.spansNotScanned &&
       /whole range is \[0, 360\)/.test(wrappedWhy) &&
-      // 🔒 and the report says it too, in the same words, on its own line.
-      wrappedBlock.filter((l) => /^\s+unreachable /.test(l)).length === wrappedOut.length &&
-      wrappedBlock.some((l) => /unreachable .*no value of knob\.rotate \(world\) selects/.test(l)),
-    wrappedGate.failures.length === 0
-      ? `a rig the compiler ACCEPTS — "local": false over 300°..${wrapValueFor(1)}°, where #405's refusal checks ` +
-          `only the low end: ${wrappedOut.length} of ${wrappedSurvey.keys.length} keys need a dial past 360° and a ` +
-          `world rotation never is one, so the gate measures ${wrappedGate.stats.deformKeysMeasured} and names the ` +
-          `rest — deformUnreachable=${wrappedGate.stats.deformUnreachable}, ` +
-          `deformSpansNotScanned=${wrappedGate.stats.deformSpansNotScanned}. The DEFORM block carries ` +
-          `${wrappedBlock.filter((l) => /^\s+unreachable /.test(l)).length} unreachable line(s): ` +
-          `"${wrappedWhy.slice(0, 150)}…"`
-      : `[${wrappedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
-    'a dial that cannot select a key is a rig defect this rule does not refuse — and folding it into the pass ' +
+      /no value of knob\.rotate \(world\) selects/.test(wrappedWhy) &&
+      // 🔒 and the `local: true` spelling of the same numbers has none of it.
+      wrappedBlock.filter((l) => /^\s+unreachable /.test(l)).length === 0,
+    wrapRefused !== null && wrappedGate.failures.length === 0
+      ? // The refusal is quoted from what was thrown, not restated, so a clause
+        // that stopped holding shows here rather than being recited back.
+        `the rig spec is refused — "…${(wrapRefused.match(/run from -?\d+\.\d+° to -?\d+\.\d+°/) ?? ['(no range clause)'])[0]}…` +
+          `${wrapRefused.includes('past 360°') ? 'past 360°' : 'NOT naming the high end'}…" — ` +
+          `and the artifact that says ` +
+          `"local": false anyway is measured rather than believed: ${wrappedOut.length} of ` +
+          `${wrappedSurvey.keys.length} keys need a dial past 360° and a world rotation never is one, so the gate ` +
+          `measures ${wrappedGate.stats.deformKeysMeasured} and names the rest — ` +
+          `deformUnreachable=${wrappedGate.stats.deformUnreachable}, ` +
+          `deformSpansNotScanned=${wrappedGate.stats.deformSpansNotScanned}, why="${wrappedWhy.slice(0, 130)}…". The ` +
+          `same rig as actually spelled ("local": true) carries ` +
+          `${wrappedBlock.filter((l) => /^\s+unreachable /.test(l)).length} unreachable line(s) in its DEFORM block`
+      : wrapRefused === null
+        ? 'the rig spec compiled: #417 is not in this tree'
+        : `[${wrappedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    'a dial that cannot select a key is an artifact defect this rule does not refuse — and folding it into the pass ' +
       'count would be the silence the whole exemption machinery exists not to be. It is also the shape a wrong ' +
       'inversion would produce, which is what makes the sign and the offset of that arithmetic checkable at all',
   );
@@ -21082,14 +21345,18 @@ function main(): void {
       'on the effective channels, a deform hold read off the expanded run so two spellings of one run are one ' +
       'geometry, a raw curve over a hold left verbatim, the named easing and an explicit stepped emitting one file, ' +
       'and the hold posed through spine-core identically whether stepped or linear), ' +
-      '+ 36 path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' +
+      '+ 41 path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' +
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'which bones a skin switches on, and what TWO sliders on one bone do to it: 7.50 or 18.75 or their sum ' +
       '26.25 degrees, decided only by which of them is later in the constraints array and whether that one is ' +
       'additive — the arithmetic A40 refuses on, with the three shapes it has to stay silent about beside it (a ' +
       'pair below full mix, a pair a skin switch keeps apart, and a pair on different properties) and the 360 ' +
-      'wrap, where a rotate slider reading a WORLD rotation cannot cross 0 degrees and is refused at compile ' +
-      'with the frame it would otherwise pin to), ' +
+      'wrap at BOTH ends, where a rotate slider reading a WORLD rotation can neither dip below 0 degrees nor run ' +
+      'PAST 360 — one refusal each, with the frame each would otherwise pin to, asserted to stay two messages and ' +
+      'not one, and beside them the shapes that must NOT be refused: the FULL TURN ending exactly on 360, whose ' +
+      'only unreachable value is a supremum measured here to pose the skeleton within 4e-7 degrees of 0, and the ' +
+      'same past-360 range under `local: true`, which is the repair the refusal names — with the line between them ' +
+      'pinned by two rigs a thousandth of a degree apart, 360.000 green and 360.001 refused), ' +
       '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
       '+ 30 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
@@ -21184,9 +21451,10 @@ function main(): void {
       'rather than a hint, because a solve aimed at the TIME absorbs a wrong sign and poses the right frame off ' +
       'the wrong arithmetic (measured, it does), so it aims at the value and a bad inversion reports the key ' +
       'unreachable instead; the wrap that makes a key unreachable for real — `local: false` on rotate, whose ' +
-      "reader's whole range is [0, 360), on a rig the COMPILER ACCEPTS because #405's refusal checks only the low " +
-      'end and this one runs past 360 — named on the stats line with the time the runtime lands on, on its own ' +
-      'line in the DEFORM block, and the spans it bounds left unscanned; the red the frame does NOT relieve, ' +
+      "reader's whole range is [0, 360), over a range that runs past 360, refused now in the rig spec (issue #417 " +
+      'closed the end #405 left open) and reached here through the ARTIFACT, which is where one can still arrive ' +
+      'from — named on the stats line with the time the runtime lands on and the spans it bounds left unscanned, ' +
+      'while the rig as it is actually spelled carries no such line at all; the red the frame does NOT relieve, ' +
       'where a slider applying ' +
       'ANOTHER animation holds the slot opaque while this one really is on a track; and two sliders on one ' +
       'animation, which are two frames, where a fold only one dial can reach is still refused by name), ' +
