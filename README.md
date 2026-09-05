@@ -540,12 +540,22 @@ human edit made in the editor survives the trip back.
 🔒 **It requires a licensed Spine editor on the machine, by construction**, and
 drives only the [documented command line](https://esotericsoftware.com/spine-command-line-interface)
 — never the UI, and it produces nothing the editor did not produce. With no
-editor present it refuses by name and exits non-zero.
+editor present it refuses by name and exits non-zero, and so does the **trial**:
+the trial cannot save projects or export animation data, so the refusal names
+what it found — the executable, the bundle, the `CFBundleName` that bundle
+declares, or the banner the binary prints about itself — rather than starting it
+and failing downstream. Both refusals point at `--exported <file>`, which
+measures an export the editor already made and is the half of this tool that
+needs no editor at all.
 
-⛔ **It is not, and must not become, a selftest control.** `bun run selftest` is
-self-contained and CI has no editor; a control that needed one would report SKIP
-for ever, which is how a gate comes to look kept while checking nothing. Run
-this by hand, on a machine that has the editor.
+⛔ **The round trip is not, and must not become, a selftest control.** `bun run
+selftest` is self-contained and CI has no editor; a control that needed one would
+report SKIP for ever, which is how a gate comes to look kept while checking
+nothing. Run the round trip by hand, on a machine that has the editor. Its
+**refusals** are gated, because they are the half a machine with no editor can
+answer for: the suite points the tool at stubs in a temp directory and reads what
+comes back, including the case that must *not* be refused — an editor at an
+unfamiliar path, which is who `--editor` exists for.
 
 ⚠️ Build with `--copy-images`. An ordinary build's atlas names its pages by a
 relative path back to the art directory, and the round trip copies that atlas to

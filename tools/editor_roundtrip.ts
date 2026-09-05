@@ -20,11 +20,19 @@
  * `spine-core` and is covered by the Spine Runtimes License; this tool needs a
  * licensed *editor* on the machine as well, by construction.
  *
- * ⛔ **It can never be a selftest control.** The suite is self-contained and CI
- * has no editor; a control that needs one would report SKIP forever, which is
- * how a gate comes to look kept while checking nothing. When the editor is
- * absent this tool REFUSES by name and exits non-zero — the honest answer, and
- * never a pass.
+ * ⛔ **The round trip can never be a selftest control.** The suite is
+ * self-contained and CI has no editor; a control that needs one would report
+ * SKIP forever, which is how a gate comes to look kept while checking nothing.
+ * When the editor is absent, or is the trial, this tool REFUSES by name and
+ * exits non-zero — the honest answer, and never a pass.
+ *
+ * ⭐ Those REFUSALS are gated, and they are the half of this file a machine with
+ * no editor can answer for (issue #410). The `ERT` suite in `selftest.ts` points
+ * the tool at stubs in a temp directory and reads what comes back; it needs no
+ * editor, because the question is whether the refusal fires and what it says.
+ * The no-editor branch had never executed anywhere until 2026-09-05 — it was
+ * written on the machine that has the editor — which is precisely the shape of
+ * a gate nobody has seen fail.
  */
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -46,6 +54,116 @@ const EDITOR_DEFAULTS: Record<string, string> = {
  * is working, so the wall clock is part of the measurement.
  */
 const DEFAULT_TIMEOUT_S = 600;
+
+/**
+ * The tail both refusals end on.
+ *
+ * ⭐ Named once because the second clause is the point of it (issue #410): the
+ * person reading either refusal has just found out they cannot run the round
+ * trip, and `--exported` is the one thing they *can* run — its own usage text
+ * says it exists "so the measuring half can be exercised on a machine with no
+ * editor installed", and the refusals were the only place that never said so.
+ */
+const NO_EDITOR_HINT =
+  'Pass --editor <path to a licensed editor>, or run this on a machine that has one installed. ' +
+  'What you can still do here: --exported <file> measures an export the editor ALREADY made, skips steps 1-2 ' +
+  'and runs every measurement below. ' +
+  'See https://esotericsoftware.com/spine-command-line-interface';
+
+/**
+ * A name that reads "Spine Trial" — the executable's, the bundle's, or the one
+ * the bundle declares.
+ *
+ * ⚠️ Anchored, not a substring search. `spine-trial-comparison/Spine` is a
+ * directory somebody named, not a trial, and refusing it would lock out exactly
+ * the caller `--editor` exists for.
+ */
+const TRIAL_NAME = /^spine[\s_-]*trial$/i;
+
+/**
+ * The launcher banner the trial prints, as MEASURED on this machine 2026-09-05:
+ *
+ *     Spine Launcher 4.3.06 Trial (macOS Apple Silicon)
+ *
+ * ⚠️ What the LICENSED editor prints on that line has not been measured here —
+ * there is no licensed editor on the machine this was written on. So the match
+ * is anchored to the launcher's own banner line and to `Trial` standing alone
+ * inside it, rather than to "trial appears somewhere in the output": a build
+ * path with the word in it must not be able to refuse a real editor.
+ */
+const TRIAL_BANNER = /^[^\n]*\bSpine Launcher\b[^\n]*\bTrial\b[^\n]*$/im;
+
+/**
+ * Everything about this path that says it is the Spine TRIAL, phrased as what
+ * was found and where.
+ *
+ * 🔒 Read off the FILE SYSTEM, never by running it — running it is the hazard
+ * this exists to avoid. `--version` on
+ * `/Applications/SpineTrial.app/Contents/MacOS/Spine Trial` (4.3.06, macOS)
+ * prints its banner and then does not return: measured 2026-09-05 and killed at
+ * a 20 s bound, and the first attempt at this round trip on 2026-09-04 held the
+ * terminal for over three minutes.
+ *
+ * ⚠️ Ambiguity is not a signal. A path that is neither obviously the trial nor
+ * obviously the licensed editor comes back with an EMPTY list and the run
+ * proceeds to fail — or succeed — on its own merits. rigc does not have the
+ * authority to guess its input away, and a false refusal here would lock out
+ * someone with a perfectly good editor at a nonstandard path.
+ */
+function trialSignalsFromPath(editor: string): string[] {
+  const found: string[] = [];
+  const exe = editor.split(/[/\\]/).filter((s) => s !== '').pop() ?? '';
+  if (TRIAL_NAME.test(exe.replace(/\.(exe|com|bat|cmd)$/i, ''))) found.push(`its executable is named "${exe}"`);
+
+  // The application bundle it sits in, and what that bundle says it is. Both are
+  // macOS shapes; on a platform with no bundle neither fires and neither lies.
+  const bundleDir = /^(.*?\.app)(?:[/\\]|$)/i.exec(editor)?.[1];
+  if (bundleDir !== undefined) {
+    const bundle = bundleDir.split(/[/\\]/).pop() ?? '';
+    if (TRIAL_NAME.test(bundle.replace(/\.app$/i, ''))) found.push(`it sits inside the bundle "${bundle}"`);
+    const declared = bundleName(join(bundleDir, 'Contents', 'Info.plist'));
+    if (declared !== null && TRIAL_NAME.test(declared)) {
+      found.push(`its bundle's Info.plist declares CFBundleName "${declared}"`);
+    }
+  }
+  return found;
+}
+
+/**
+ * `CFBundleName` out of an XML `Info.plist`, or null when there is nothing
+ * readable there. A plist this cannot read is not a signal — it is silence, and
+ * silence lets the run proceed.
+ */
+function bundleName(plist: string): string | null {
+  if (!existsSync(plist)) return null;
+  try {
+    const m = /<key>\s*CFBundleName\s*<\/key>\s*<string>([^<]*)<\/string>/i.exec(readFileSync(plist, 'utf8'));
+    return m === null ? null : m[1].trim();
+  } catch {
+    return null;
+  }
+}
+
+/** The trial naming itself in its own `--version` output, or null. */
+function trialSignalFromVersion(output: string): string | null {
+  const banner = TRIAL_BANNER.exec(output);
+  return banner === null ? null : `it introduces itself as "${banner[0].trim()}"`;
+}
+
+/**
+ * The refusal, in the doctrine's shape: the object, what was found, what is
+ * required, and what the reader can do instead.
+ */
+function trialRefusal(editor: string, signals: string[]): string {
+  return (
+    `the editor at ${editor} is the Spine TRIAL, not a licensed editor — ${signals.join('; ')}. ` +
+    'The trial cannot save projects or export animation data, which is the whole of what steps 1-2 do, so ' +
+    'there is no round trip to be had on it; worse, it does not fail cleanly — a trial call with no export ' +
+    'verb has been measured opening a window and never returning. This tool needs the licensed editor, whose ' +
+    'bundle and executable are named "Spine". ' +
+    NO_EDITOR_HINT
+  );
+}
 
 interface Options {
   build: string;
@@ -323,14 +441,25 @@ function main(): void {
     if (opts.editor === '' || !existsSync(opts.editor)) {
       fail(
         `Spine editor not found at ${opts.editor || '(no default known for platform ' + process.platform + ')'}. ` +
-          'This tool round-trips through a LICENSED Spine editor and has nothing to measure without one — ' +
-          'pass --editor <path>, or run it on a machine that has the editor installed. ' +
-          'See https://esotericsoftware.com/spine-command-line-interface',
+          'This tool round-trips through a LICENSED Spine editor and has nothing to measure without one. ' +
+          NO_EDITOR_HINT,
       );
     }
+    // 🔒 The trial, refused BEFORE it is run (issue #410). The refusal above used
+    // to invite `--editor <path>` on a machine whose only Spine is the trial,
+    // which cannot export and does not fail cleanly — so a path that names itself
+    // a trial is answered here, off the file system, without a process starting.
+    const named = trialSignalsFromPath(opts.editor);
+    if (named.length > 0) fail(trialRefusal(opts.editor, named));
+
     const ver = run(opts.editor, ['--version'], 60);
     emit(`  editor   ${opts.editor}`);
     for (const line of ver.stdout.trim().split('\n').slice(-3)) emit(`           ${line}`);
+    // The second signal, and the only one that works on a platform whose trial
+    // path this repository has never seen: the binary's own banner. It costs no
+    // extra call — `--version` above is one the tool already made.
+    const introduced = trialSignalFromVersion(`${ver.stdout}\n${ver.stderr}`);
+    if (introduced !== null) fail(trialRefusal(opts.editor, [introduced]));
     const pin = opts.editorVersion === null ? [] : ['-u', opts.editorVersion];
 
     emit('');
