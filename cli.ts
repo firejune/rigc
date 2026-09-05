@@ -768,9 +768,12 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
         (key.dial === null
           ? ''
           : `, dial ${key.dial.value.toFixed(6)}` +
+            // ⚠️ `reach.drive` names the field when it is NOT the one `property`
+            // names, which happens under `local: false` on a rotated parent — a
+            // bare figure there would read as a value of the wrong field (#419).
             (key.reach.local || key.dial.driven === key.dial.value
               ? ''
-              : ` (bone local ${key.dial.driven.toFixed(6)})`) +
+              : ` (bone local ${key.reach.drive === null ? '' : `${key.reach.drive} `}${key.dial.driven.toFixed(6)})`) +
             ` -> t=${key.dial.applied.toFixed(6)}`),
     );
     // A key at a time no dial selects: the figures below are the frame the

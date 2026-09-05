@@ -9125,6 +9125,17 @@ function buildTurnRig(
      * origin — a dial, which is what a driving bone is.
      */
     sliders?: Array<Record<string, unknown>>;
+    /**
+     * A rotation on `root`, which every dial above hangs off (issue #419).
+     *
+     * ⭐ The only way to reach a case where the field that drives a slider is not
+     * the one its `property` names. `FromX.value` under `local: false` returns
+     * `parent.a·x + parent.b·y + parent.worldX`, so what moves a world reading is
+     * the PARENT's business: at 45° local `x` and local `y` move it equally, at
+     * 90° local `x` does not move it at all. Nothing on the slider can express
+     * that, and turning the driving bone itself cannot either.
+     */
+    rootRotation?: number;
   } = {},
 ): TurnBuild {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-turn-'));
@@ -9175,7 +9186,11 @@ function buildTurnRig(
         name: 'turn_probe',
         skeleton: { width: 800, height: 800 },
         invariants: extra.invariants ?? { meshSlots: 1, meshTriangles: 40 },
-        bones: [{ name: 'root' }, { name: 'head', parent: 'root', x: 400, y: 400 }, ...dials],
+        bones: [
+          extra.rootRotation === undefined ? { name: 'root' } : { name: 'root', rotation: extra.rootRotation },
+          { name: 'head', parent: 'root', x: 400, y: 400 },
+          ...dials,
+        ],
         slots: extra.slots ?? [{ name: 'head', bone: 'head', attachment: 'head' }],
         ...(extra.sliders ? { constraints: extra.sliders.map((s) => ({ type: 'slider', ...s })) } : {}),
         skins: extra.skins ?? { default: { head: attachments } },
@@ -10312,6 +10327,319 @@ function runDeformWindingSuite(): number {
       : `${A39} fired ${twoHits.length} time(s) over ${twoSurvey.keys.length} key measurement(s)`,
     'an animation reached two ways has two frames, and a fold only one dial can reach is still a fold — a survey ' +
       'that measured the first frame and stopped would report a pass earned somewhere else',
+  );
+
+  // --- which dial the report names, and which field the solve drives (#419) --
+  //
+  // 🚨 Red-first on a defect NOTHING was failing on. `planDial` took the first
+  // field whose probe moved the reading, and a world scale is read as
+  // `sqrt(a² + c²)`: perturbing `rotation` changes `a` and `c` by amounts that do
+  // not cancel in float64, `rotation` is probed first, and the search stopped
+  // there. Measured on these three readers with a plain parent, one step each:
+  //
+  //   FromScaleX world   scaleX 2.5e-1   rotation 4.0e-10 (noise)
+  //   FromScaleY world   scaleY 2.5e-1   rotation 4.0e-10 (noise)
+  //   FromShearY world   shearY 1.0e+0   rotation 8.1e-10 (noise)
+  //
+  // so all three reported `off knob.rotate (world)` and then solved through a
+  // field whose response to the reading is 4e-10 — the drive reached 1.2e9 and
+  // 2.5e9 on the smallest rig that shows it, and 4.9e9 on the one #419 was filed
+  // on. Both halves were silent: nothing on disk changes, so nothing downstream
+  // disagrees, and an author reads a confident sentence naming the wrong dial.
+  //
+  // ⚠️ **Three mappings unlike each other in every term.** Nine dial values, all
+  // different, so no two of these cases can print the same figure — and the
+  // control asserts that separation before it asserts anything else, because
+  // three times in two days here two distinct errors produced one signal.
+  const worldDials = [
+    { property: 'scaleX', from: 1.25, to: 0.1, scale: 0.4 },
+    { property: 'scaleY', from: 2, to: 0.2, scale: 0.25 },
+    { property: 'shearY', from: -5, to: 0.05, scale: 0.02 },
+  ];
+  /** `Slider.update`'s line solved for the value, derived HERE and not imported. */
+  const worldDialFor = (m: (typeof worldDials)[number], time: number): number => m.from + (time - m.to) / m.scale;
+  const worldCases = worldDials.map((m) => {
+    const build = buildTurnRig(turnRow(12), {
+      sliders: [
+        {
+          name: 'dial',
+          animation: 'turn',
+          bone: 'knob',
+          property: m.property,
+          from: m.from,
+          to: m.to,
+          scale: m.scale,
+          local: false,
+          additive: true,
+        },
+      ],
+    });
+    return {
+      m,
+      gate: gateTurn(build),
+      survey: surveyDeformKeys(skeletonDataFromText(build.result.skeletonText, build.result.atlasText)),
+      block: turnDeformBlock(build),
+    };
+  });
+  const worldValues = worldCases.flatMap((c) => c.survey.keys.map((k) => k.dial?.value ?? Number.NaN));
+  const worldNamed = worldCases.map((c) => `${c.m.property}:${c.survey.keys[0]?.reach.property ?? '?'}`);
+  const worldDrive = worldCases.flatMap((c) => c.survey.keys.map((k) => k.dial?.driven ?? Number.NaN));
+  say(
+    'DW24_A_WORLD_SCALE_OR_SHEAR_SLIDER_IS_REPORTED_AS_THE_PROPERTY_THE_RIG_DECLARES',
+    // The separation first: nine values, none repeated, so a case that printed
+    // another case's figure could not pass by accident.
+    new Set(worldValues.map((v) => v.toFixed(6))).size === worldValues.length &&
+      worldValues.every((v) => Number.isFinite(v)) &&
+      worldCases.every(
+        (c) =>
+          c.gate.failures.length === 0 &&
+          c.gate.passed.includes(A39) &&
+          c.survey.keys.length === 3 &&
+          // the name is the rig's own, on every key…
+          c.survey.keys.every((k) => k.reach.property === c.m.property) &&
+          // …the field driven is that same one, so nothing is reported through
+          // a second name…
+          c.survey.keys.every((k) => k.reach.drive === null && !/driven through/.test(k.reach.label)) &&
+          // …every key is reachable and the runtime lands on its own time…
+          c.survey.keys.every((k) => k.dial !== null && !k.dial.unreachable) &&
+          c.survey.keys.every(
+            (k, i) => Math.abs((k.dial?.value ?? Number.NaN) - worldDialFor(c.m, [0, 0.5, 1][i])) <= 1e-9,
+          ) &&
+          // …and the DEFORM block an author reads says it too.
+          c.block.some((l) =>
+            new RegExp(`frame\\s+applied by slider "dial" off knob\\.${c.m.property} \\(world\\)`).test(l),
+          ),
+      ),
+    worldCases.every((c) => c.gate.failures.length === 0)
+      ? `three world sliders on one dial bone, one per reader the float noise used to capture: ` +
+          `${worldNamed.join(', ')} — each reported as the property the rig declares, each solved through that ` +
+          `same field, and all ${worldValues.length} dial values distinct ` +
+          `(${worldValues.map((v) => v.toFixed(4)).join(', ')}). The drives stay in ` +
+          `[${Math.min(...worldDrive).toFixed(4)}, ${Math.max(...worldDrive).toFixed(4)}]`
+      : `[${worldCases.flatMap((c) => c.gate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 120)}`)).join('; ')}]`,
+    'issue #419: the probe took the FIRST field that moved the reading and float noise makes `rotation` move a ' +
+      'world `sqrt(a² + c²)`, so every world scale and shear slider was named `rotate` and then solved through a ' +
+      'field it can barely move. The name now comes off the artifact — spine-core\'s own `FromProperty` subclass — ' +
+      'and the probe ranks all six fields instead of stopping at the first',
+  );
+
+  // --- 🔒 the negative control: nothing that named `rotate` stopped -----------
+  //
+  // ⭐ This is the half that stops a fix trading one wrong answer for another,
+  // and it is not a formality: that shape caught real mutants twice in this
+  // repository this week. Both existing rotate frames are re-read here — DW20's
+  // under `local: true`, DW21's under `local: false`, which is the reader whose
+  // wrap makes it the one most likely to be disturbed — and both must still name
+  // `rotate`, drive `rotate`, and carry no discovery clause at all.
+  const rotateReaches = [...drivenSurvey.keys, ...wrappedSurvey.keys].map((k) => k.reach);
+  say(
+    'DW25_EVERY_ROTATE_SLIDER_STILL_NAMES_ROTATE_AND_SAYS_NOTHING_EXTRA',
+    rotateReaches.length === 6 &&
+      rotateReaches.every((r) => r.property === 'rotate') &&
+      rotateReaches.every((r) => r.drive === null) &&
+      rotateReaches.every((r) => !/driven through/.test(r.label)) &&
+      // and the two are still told apart by the one thing that differs
+      drivenSurvey.keys.every((k) => k.reach.label.includes('off knob.rotate (local)')) &&
+      wrappedSurvey.keys.every((k) => k.reach.label.includes('off knob.rotate (world)')),
+    `${rotateReaches.length} rotate key reach(es) across DW20's \`local: true\` dial and DW21's \`local: false\` ` +
+      `one: every one still reports \`rotate\`, drives \`rotate\`, and adds no clause — ` +
+      `"${drivenSurvey.keys[0]?.reach.label ?? '?'}" and "${wrappedSurvey.keys[0]?.reach.label ?? '?'}"`,
+    'the ranked probe and the artifact cross-check have to leave the answer they already got right exactly where ' +
+      'it was. A rule that fixed the three world scale readers by disturbing the six rotate ones would be the ' +
+      'same defect wearing the other face',
+  );
+
+  // --- the bound that replaces "gave up at 4.9e9" ---------------------------
+  //
+  // 🚨 The bound is stated HERE as well as in `src/deformmeasure.ts`, and
+  // deliberately not imported: a control that reads the constant it is checking
+  // agrees with itself and guards nothing.
+  const DRIVE_LIMIT = 2 ** 24;
+  // `from` sits just under the bound and one second of animation carries the
+  // dial 1e6 past it, so the SAME rig has reachable keys and an out-of-bounds
+  // one — a bound that bit early would take keys 0 and 1 with it, and one that
+  // never bit would leave key 2 printing an eight-digit dial as advice.
+  const LIMIT_FROM = 16000000;
+  const LIMIT_SCALE = 0.000001;
+  const limitBuild = buildTurnRig(turnRow(12), {
+    sliders: [
+      {
+        name: 'dial',
+        animation: 'turn',
+        bone: 'knob',
+        property: 'rotate',
+        from: LIMIT_FROM,
+        to: 0,
+        scale: LIMIT_SCALE,
+        local: true,
+        additive: true,
+      },
+    ],
+  });
+  const limitGate = gateTurn(limitBuild);
+  const limitSurvey = surveyDeformKeys(
+    skeletonDataFromText(limitBuild.result.skeletonText, limitBuild.result.atlasText),
+  );
+  const limitValueFor = (time: number): number => LIMIT_FROM + time / LIMIT_SCALE;
+  const overTheLimit = limitSurvey.keys.filter((k) => limitValueFor(k.time) > DRIVE_LIMIT);
+  const limitOut = limitSurvey.keys.filter((k) => k.dial?.beyondLimit !== null && k.dial !== null);
+  const limitWhy = limitOut.length ? unreachableWhy(limitOut[0]) : '(no key was reported out of bounds)';
+  // The bound over EVERY dial this suite drove, not only this rig's.
+  const everyDrive = [
+    ...worldDrive,
+    ...drivenSurvey.keys.map((k) => k.dial?.driven ?? 0),
+    ...wrappedSurvey.keys.map((k) => k.dial?.driven ?? 0),
+    ...limitSurvey.keys.map((k) => k.dial?.driven ?? 0),
+  ];
+  say(
+    'DW26_A_DIAL_PAST_THE_DRIVE_BOUND_IS_NAMED_AND_THE_BONE_IS_NOT_PUT_THERE',
+    limitGate.failures.length === 0 &&
+      // which keys are out of bounds is arithmetic, not a literal
+      limitOut.length === overTheLimit.length &&
+      limitOut.length === 1 &&
+      limitOut.length < limitSurvey.keys.length &&
+      limitOut.every((k) => k.dial?.unreachable === true) &&
+      Number(limitGate.stats.deformKeysUnreachable) === limitOut.length &&
+      Number(limitGate.stats.deformKeysMeasured) === limitSurvey.keys.length - limitOut.length &&
+      // the message carries the bound and the ask, both as numbers
+      limitWhy.includes(`±${DRIVE_LIMIT}`) &&
+      limitWhy.includes(limitValueFor(1).toExponential(4)) &&
+      // 🚨 and NOTHING anywhere in this suite was driven past it
+      everyDrive.every((d) => Number.isFinite(d) && Math.abs(d) <= DRIVE_LIMIT),
+    limitGate.failures.length === 0
+      ? `a dial mapped 1e6 per second off ${LIMIT_FROM}: keys 0 and 1 need ${limitValueFor(0)} and ` +
+          `${limitValueFor(0.5)}, inside ±${DRIVE_LIMIT}, and are measured; key 2 needs ${limitValueFor(1)}, past ` +
+          `it, and is named instead — "${limitWhy.slice(0, 130)}…". Across all ${everyDrive.length} dial(s) this ` +
+          `suite drove, the largest magnitude is ${Math.max(...everyDrive.map(Math.abs)).toFixed(0)}`
+      : `[${limitGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    'issue #419: a drive of 4.9e9 in a report is the visible end of a silent failure, and a fix that only makes it ' +
+      'rarer is not one. Past 2^24 a float32 no longer separates consecutive integers, so a figure up there is not ' +
+      'a value an author can set and read back — the bone is left where the rig put it and the key is not gated',
+  );
+
+  // --- an ambiguous discovery is reported, never guessed past ----------------
+  //
+  // ⚠️ Both cases below are ordinary rigs the compiler accepts, not forgeries.
+  // Under `local: false` the reader is `source.worldX`, which spine-core builds
+  // as `parent.a·x + parent.b·y + parent.worldX`, so what moves it is the
+  // PARENT's business: turn the parent 45° and local `x` and local `y` move it
+  // EXACTLY equally, turn it 90° and local `x` does not move it at all. Nothing
+  // on the slider can express either, which is why the rigs differ only in
+  // `root`'s rotation.
+  const AXIS_FROM = -400;
+  const AXIS_SCALE = 0.01;
+  /** The same `x` slider on a dial bone whose parent is turned `degrees`. */
+  const axisBuildAt = (degrees: number): TurnBuild =>
+    buildTurnRig(turnRow(12), {
+      rootRotation: degrees,
+      sliders: [
+        {
+          name: 'dial',
+          animation: 'turn',
+          bone: 'knob',
+          property: 'x',
+          from: AXIS_FROM,
+          to: 0,
+          scale: AXIS_SCALE,
+          local: false,
+          additive: true,
+        },
+      ],
+    });
+  /**
+   * Every `d.dddE±dd` figure on a frame line, in order.
+   *
+   * ⭐ The responses are read back OUT of the report rather than restated here:
+   * a control that spelled `4.641e-8` would be one parent transform away from
+   * being a literal nobody could re-derive, and the claim it has to make is about
+   * the RATIO of the two — which the figures carry and a hardcoded number does
+   * not.
+   */
+  const responsesIn = (label: string): number[] =>
+    [...label.matchAll(/\d\.\d{3}e[+-]\d+/g)].map((m) => Number(m[0]));
+  const tiedBuild = axisBuildAt(45);
+  const tiedGate = gateTurn(tiedBuild);
+  const tiedSurvey = surveyDeformKeys(
+    skeletonDataFromText(tiedBuild.result.skeletonText, tiedBuild.result.atlasText),
+  );
+  const tiedLabel = tiedSurvey.keys[0]?.reach.label ?? '';
+  const tiedFigures = responsesIn(tiedLabel);
+  const tiedBlock = turnDeformBlock(tiedBuild);
+  say(
+    'DW27_A_PROBE_THAT_TIES_IS_SETTLED_BY_THE_ARTIFACT_AND_SAYS_SO',
+    tiedGate.failures.length === 0 &&
+      tiedSurvey.keys.length === 3 &&
+      // the artifact's answer is what the report names, and what is driven
+      tiedSurvey.keys.every((k) => k.reach.property === 'x' && k.reach.drive === null) &&
+      tiedSurvey.keys.every((k) => k.dial !== null && !k.dial.unreachable) &&
+      // and the tie is on the line rather than resolved out of sight
+      /the probe did not settle that on its own/.test(tiedLabel) &&
+      /knob\.x [\d.e+-]+ against knob\.y [\d.e+-]+/.test(tiedLabel) &&
+      /the skeleton's own reader broke the tie/.test(tiedLabel) &&
+      // a TIE is the claim, so the two figures have to be the same number
+      tiedFigures.length === 2 &&
+      tiedFigures[0] === tiedFigures[1] &&
+      // and the DEFORM block an author reads carries the whole clause
+      tiedBlock.some((l) => /frame\s+applied by slider "dial" off knob\.x \(world\), driven through knob\.x/.test(l)) &&
+      tiedBlock.some((l) => l.includes("the skeleton's own reader broke the tie")) &&
+      // ⚠️ the drive IS `x` here, so the figure keeps its bare spelling
+      tiedBlock.some((l) => /\(bone local -?\d+\.\d+\)/.test(l)),
+    tiedGate.failures.length === 0
+      ? `the same \`x\` slider with its dial bone's parent at 45°: local x and local y move the reading by the ` +
+          `same ${tiedFigures[0]?.toExponential(3) ?? '?'}, so ranking them is a coin toss and the report says so — ` +
+          `"${tiedLabel.slice(60, 230)}…". All 3 keys still reachable at dials ` +
+          `${tiedSurvey.keys.map((k) => k.dial?.value.toFixed(2) ?? '?').join(', ')}`
+      : `[${tiedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    '⛔ the one thing a discovery must not do is guess. Before #419 the tie was decided by `DIAL_FIELDS`\'s order ' +
+      'with nothing printed — the same silent arbitrariness the issue was filed on, one step over. The artifact ' +
+      'breaking it is a SECOND answer, not a default',
+  );
+
+  const splitBuild = axisBuildAt(90);
+  const splitGate = gateTurn(splitBuild);
+  const splitSurvey = surveyDeformKeys(
+    skeletonDataFromText(splitBuild.result.skeletonText, splitBuild.result.atlasText),
+  );
+  const splitLabel = splitSurvey.keys[0]?.reach.label ?? '';
+  const splitFigures = responsesIn(splitLabel);
+  const splitBlock = turnDeformBlock(splitBuild);
+  say(
+    'DW28_A_PROBE_THAT_DISAGREES_WITH_THE_ARTIFACT_PRINTS_BOTH_ANSWERS',
+    splitGate.failures.length === 0 &&
+      splitSurvey.keys.length === 3 &&
+      // the reader is still named off the artifact…
+      splitSurvey.keys.every((k) => k.reach.property === 'x') &&
+      // …and the field that actually moves it is named beside it, never instead
+      splitSurvey.keys.every((k) => k.reach.drive === 'y') &&
+      splitSurvey.keys.every((k) => k.dial !== null && !k.dial.unreachable) &&
+      /the skeleton says the reader is knob\.x, which moves it by [\d.e+-]+/.test(splitLabel) &&
+      /the probe moves the reading by knob\.y [\d.e+-]+/.test(splitLabel) &&
+      /The two disagree and both are reported/.test(splitLabel) &&
+      // a DISAGREEMENT is the claim, so the two figures have to be orders apart
+      splitFigures.length === 2 &&
+      splitFigures[0] >= 1e6 * splitFigures[1] &&
+      // 🔒 and the two cases cannot be read off each other's signal: no figure
+      // this one prints appears on the tie's line, or the other way round.
+      splitFigures.every((f) => !tiedFigures.includes(f)) &&
+      tiedFigures.every((f) => !splitFigures.includes(f)) &&
+      // 🔒 and the `DEFORM` line names the driven FIELD beside the figure, because
+      // a bare `bone local 398.999991` there is a value of `y` printed under a
+      // heading that says `x` — which is the shape of #419's own defect.
+      splitBlock.some((l) => /frame\s+applied by slider "dial" off knob\.x \(world\), driven through knob\.y/.test(l)) &&
+      splitBlock.some((l) => /\(bone local y -?\d+\.\d+\)/.test(l)) &&
+      tiedBlock.every((l) => !/\(bone local y /.test(l)),
+    splitGate.failures.length === 0
+      ? `the same slider with the parent at 90°: the reading is \`-y\` and local x does not touch it ` +
+          `(${splitFigures[1]?.toExponential(3) ?? '?'} of float noise against ` +
+          `${splitFigures[0]?.toExponential(3) ?? '?'}, a factor of ` +
+          `${(splitFigures[0] / splitFigures[1]).toExponential(1)}), so the two answers genuinely differ and both ` +
+          `are printed — "${splitLabel.slice(60, 250)}…". The 45° tie prints ` +
+          `${tiedFigures.map((f) => f.toExponential(3)).join(' and ')} and this one prints neither, so no mutant ` +
+          "here can pass on the other's signal"
+      : `[${splitGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    'the probe is what keeps the frame logic independent of a transcribed dispatch table, which is what #407 ' +
+      'bought; the artifact is what names the property an author wrote. Two independent answers that must agree ' +
+      'is strictly better than one, and where they do not the report is the only place that can say so',
   );
 
   return bad;
@@ -21409,7 +21737,7 @@ function main(): void {
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
-      '+ 24 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
+      '+ 29 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
       'angle it gates green, past that angle A39 names the animation, the key, the time and every reversed triangle ' +
       'with both its areas, and the eight it names span only the outermost column pair the formula picks out; the ' +
       'angle A39 first fires at, bisected, agrees with that formula to 0.0001°; a band INVERTED rather than folded ' +
@@ -21457,7 +21785,19 @@ function main(): void {
       'while the rig as it is actually spelled carries no such line at all; the red the frame does NOT relieve, ' +
       'where a slider applying ' +
       'ANOTHER animation holds the slot opaque while this one really is on a track; and two sliders on one ' +
-      'animation, which are two frames, where a fold only one dial can reach is still refused by name), ' +
+      'animation, which are two frames, where a fold only one dial can reach is still refused by name; and then ' +
+      'WHICH dial that frame is on (issue #419), because the search for it stopped at the first field whose probe ' +
+      'moved the reading and a world scale is `sqrt(a² + c²)`, which `rotation` moves by 4e-10 of float noise — so ' +
+      'every world scaleX / scaleY / shearY slider was named `rotate` and then solved through a field it can ' +
+      'barely move, out to 4.9e9. Three such sliders, one per captured reader, with mappings unlike each other in ' +
+      'every term so no two of the nine dial values can be confused, each now named as the rig declares it; the ' +
+      'six existing rotate reaches unchanged as the negative control, since a fix that traded one wrong answer ' +
+      'for another would look identical from here; the bound that replaces the runaway, asserted with its number ' +
+      'on a rig whose dial crosses ±2^24 mid-animation, so keys inside it are still measured and the one outside ' +
+      'is named rather than printed; and the two shapes an ambiguous discovery has, both reached by turning the ' +
+      "dial bone's parent in the emitted skeleton — at 45° local x and local y move a world x EXACTLY equally and " +
+      "the artifact breaks the tie, at 90° local x does not move it at all and the two answers are printed side " +
+      'by side, with the figures of each asserted absent from the other), ' +
       '+ 12 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
       'from docs/FACE.md §1 byte for byte, the same model past the fold angle still firing A39, the other three ' +
       'closed forms — affine, wave and bend — evaluated against arithmetic derived here, and the five refusals that ' +
