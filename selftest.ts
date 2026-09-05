@@ -41,6 +41,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   copyFileSync,
   cpSync,
   existsSync,
@@ -49,6 +50,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -14625,6 +14627,226 @@ function runLauncherSuite(): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// the editor round trip's refusals — issue #410
+// ---------------------------------------------------------------------------
+//
+// `tools/editor_roundtrip.ts` needs a LICENSED Spine editor and CI has none, so
+// what is gated here is not the round trip — it is what the tool does when the
+// editor is wrong. That is the whole half of the file a machine with no editor
+// can answer for, and it was the unexercised half: the no-editor branch had
+// never executed anywhere until 2026-09-05, because the tool was written on the
+// machine that has the editor.
+//
+// ⛔ Nothing here needs an editor. Every case points the tool at a STUB written
+// into a temp directory, so the question is whether the refusal fires and what
+// it says, never whether any editor works. A control that needed an editor would
+// report SKIP forever, which this file treats as worse than useless.
+//
+// ⭐ ERT05 is the load-bearing one and it is the only case that must NOT be
+// refused. `--editor` exists precisely so a licensed editor at a nonstandard
+// path can be used; a detector that refused on a hunch would lock out the one
+// caller the flag was built for, and a suite made only of refusals would pass a
+// tool that refuses everything.
+//
+// ⚠️ ERT02 and ERT03 also assert that the stub was never RUN. Running the trial
+// is the hazard — `--version` on the 4.3.06 macOS trial printed its banner and
+// then did not return, measured at a 20 s bound on 2026-09-05 — so "refused" and
+// "refused before starting a process" are different claims and only the second
+// one is worth anything.
+// ---------------------------------------------------------------------------
+
+/** Run `bun tools/editor_roundtrip.ts <args>` as a real subprocess, from the repository root. */
+function runRoundtrip(args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, ['tools/editor_roundtrip.ts', ...args], {
+    cwd: import.meta.dir,
+    encoding: 'utf8',
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * An executable stub that prints `banner` and touches `ran` when it is invoked.
+ *
+ * The sentinel is the whole reason it is a script rather than an empty file: a
+ * refusal that fired only after the process had started would look identical
+ * from the outside, and on the real trial that difference is minutes.
+ */
+function writeStubEditor(path: string, ran: string, banner: string[]): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `#!/bin/sh\n: > '${ran}'\n${banner.map((l) => `echo '${l}'`).join('\n')}\nexit 0\n`);
+  chmodSync(path, 0o755);
+}
+
+/** An XML `Info.plist` declaring one `CFBundleName`, the way a real .app carries it. */
+function writeBundlePlist(bundleDir: string, name: string): void {
+  mkdirSync(join(bundleDir, 'Contents'), { recursive: true });
+  writeFileSync(
+    join(bundleDir, 'Contents', 'Info.plist'),
+    '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n' +
+      `\t<key>CFBundleName</key>\n\t<string>${name}</string>\n</dict>\n</plist>\n`,
+  );
+}
+
+function runEditorRoundtripSuite(): number {
+  console.log('\n── editor_roundtrip refusals (subprocess: bun tools/editor_roundtrip.ts …) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const root = mkdtempSync(join(tmpdir(), 'rigc-ert-'));
+  // A build directory is only a precondition here: the tool checks for
+  // skeleton.json before it looks at the editor at all, and every case below
+  // stops long before anything reads it.
+  const build = join(root, 'build');
+  mkdirSync(build, { recursive: true });
+  writeFileSync(join(build, 'skeleton.json'), '{}\n');
+  const invoke = (editor: string): { status: number | null; stdout: string; stderr: string } =>
+    runRoundtrip(['--build', build, '--out', join(root, 'out'), '--editor', editor]);
+
+  // --- ERT01: no editor at all ----------------------------------------------
+  // An explicit missing path, not the platform default: on the machine that HAS
+  // the editor the default exists, and this case would quietly turn into a real
+  // round trip.
+  {
+    const missing = join(root, 'nowhere', 'Spine');
+    const { status, stderr } = invoke(missing);
+    say(
+      'ERT01_NO_EDITOR_IS_REFUSED_BY_THE_PATH_IT_LOOKED_AT',
+      status === 1 && stderr.includes(`Spine editor not found at ${missing}`),
+      `exit=${String(status)} stderr=${JSON.stringify(stderr.trim().split('\n')[0].slice(0, 160))}`,
+      'the branch that says "there is no editor here" is the one branch of this tool that a machine with no ' +
+        'editor can execute, and until issue #410 nothing had ever executed it',
+    );
+  }
+
+  // --- ERT02: the trial by the names on disk ---------------------------------
+  // The exact shape measured on this machine: bundle `SpineTrial.app`, executable
+  // `Spine Trial`, and the bundle declaring itself. All three signals have to
+  // appear in the refusal, so a regression in any one of them is red here.
+  {
+    const bundle = join(root, 'Applications', 'SpineTrial.app');
+    const editor = join(bundle, 'Contents', 'MacOS', 'Spine Trial');
+    const ran = join(root, 'ert02-ran');
+    writeStubEditor(editor, ran, ['Spine Launcher 4.3.06 Trial (macOS Apple Silicon)']);
+    writeBundlePlist(bundle, 'Spine Trial');
+    const { status, stderr } = invoke(editor);
+    const names = [
+      'its executable is named "Spine Trial"',
+      'it sits inside the bundle "SpineTrial.app"',
+      'its bundle\'s Info.plist declares CFBundleName "Spine Trial"',
+    ];
+    say(
+      'ERT02_A_TRIAL_ON_DISK_IS_REFUSED_BY_NAME_WITHOUT_BEING_RUN',
+      status === 1 &&
+        stderr.includes('is the Spine TRIAL, not a licensed editor') &&
+        names.every((n) => stderr.includes(n)) &&
+        !existsSync(ran),
+      `exit=${String(status)} signals named ${names.filter((n) => stderr.includes(n)).length}/3, ` +
+        `the stub was ${existsSync(ran) ? 'RUN' : 'never run'}`,
+      'the refusal used to say "pass --editor <path>" on a machine whose only Spine is the trial — which cannot ' +
+        'export animation data, and whose CLI has been measured opening a window and never returning',
+    );
+  }
+
+  // --- ERT03: the trial by its bundle's own declaration ----------------------
+  // Nothing in this path reads "trial": the bundle is `Spine.app` and the
+  // executable is `Spine`. Only the Info.plist knows, which is what makes this
+  // the control for that signal rather than for the two path signals.
+  {
+    const bundle = join(root, 'Renamed', 'Spine.app');
+    const editor = join(bundle, 'Contents', 'MacOS', 'Spine');
+    const ran = join(root, 'ert03-ran');
+    writeStubEditor(editor, ran, ['Spine Launcher 4.3.06 (macOS Apple Silicon)']);
+    writeBundlePlist(bundle, 'Spine Trial');
+    const { status, stderr } = invoke(editor);
+    say(
+      'ERT03_A_RENAMED_TRIAL_BUNDLE_IS_STILL_REFUSED_BY_WHAT_IT_DECLARES',
+      status === 1 &&
+        stderr.includes('is the Spine TRIAL, not a licensed editor') &&
+        stderr.includes('its bundle\'s Info.plist declares CFBundleName "Spine Trial"') &&
+        !existsSync(ran),
+      `exit=${String(status)} stderr names the plist = ${stderr.includes('CFBundleName "Spine Trial"')}, ` +
+        `the stub was ${existsSync(ran) ? 'RUN' : 'never run'}`,
+      'a bundle can be renamed and a copied executable can be renamed with it; what the application says it is ' +
+        'cannot be, and reading it costs no process',
+    );
+  }
+
+  // --- ERT04: the trial by its own banner ------------------------------------
+  // No `.app` and no "trial" anywhere in the path, so both path signals are
+  // silent and only the binary's own words are left. This is the signal that has
+  // to carry a platform whose trial layout this repository has never seen.
+  {
+    const editor = join(root, 'editors', 'spine-4.3', 'Spine');
+    const ran = join(root, 'ert04-ran');
+    writeStubEditor(editor, ran, [
+      'Spine Launcher 4.3.06 Trial (macOS Apple Silicon)',
+      'Esoteric Software LLC (C) 2013-2026 | http://esotericsoftware.com',
+    ]);
+    const { status, stderr } = invoke(editor);
+    say(
+      'ERT04_A_TRIAL_THAT_ONLY_ITS_BANNER_NAMES_IS_STILL_REFUSED',
+      status === 1 &&
+        stderr.includes('is the Spine TRIAL, not a licensed editor') &&
+        stderr.includes('it introduces itself as "Spine Launcher 4.3.06 Trial (macOS Apple Silicon)"') &&
+        existsSync(ran),
+      `exit=${String(status)} stderr quotes the banner = ` +
+        `${stderr.includes('introduces itself as "Spine Launcher 4.3.06 Trial')}, the stub ran = ${existsSync(ran)}`,
+      'the banner is the one signal measured from the trial itself rather than off a path — 2026-09-05, ' +
+        '`Spine Launcher 4.3.06 Trial (macOS Apple Silicon)` — and it is all a platform whose trial path nobody ' +
+        'here has seen would have',
+    );
+  }
+
+  // --- ERT05: the ambiguous case, which must NOT be refused ------------------
+  // ⭐ The load-bearing control. A licensed editor at a path nobody standardised:
+  // an ordinary `Spine.app` bundle declaring `Spine`, an ordinary banner. Every
+  // signal must stay silent, the tool must go on to actually run it, and the
+  // refusal it eventually gives must be the real one — "you wrote no project" —
+  // and not a guess about what kind of editor this is.
+  {
+    const bundle = join(root, 'Applications-alt', 'Spine.app');
+    const editor = join(bundle, 'Contents', 'MacOS', 'Spine');
+    const ran = join(root, 'ert05-ran');
+    writeStubEditor(editor, ran, ['Spine Launcher 4.3.06 (macOS Apple Silicon)']);
+    writeBundlePlist(bundle, 'Spine');
+    const { status, stderr } = invoke(editor);
+    say(
+      'ERT05_AN_EDITOR_AT_AN_UNFAMILIAR_PATH_IS_NOT_REFUSED_ON_A_HUNCH',
+      status === 1 &&
+        !stderr.includes('TRIAL') &&
+        existsSync(ran) &&
+        stderr.includes('the editor wrote no project file; the import did not happen'),
+      `exit=${String(status)} said TRIAL = ${stderr.includes('TRIAL')}, the stub ran = ${existsSync(ran)}, ` +
+        `stderr=${JSON.stringify(stderr.trim().split('\n').pop()?.slice(0, 120) ?? '')}`,
+      'rigc does not have the authority to guess its input away, and `--editor` exists for exactly the caller a ' +
+        'false refusal here would lock out. A suite of nothing but refusals would pass a tool that refuses ' +
+        'everything',
+    );
+  }
+
+  // --- ERT06: the clause both refusals were missing --------------------------
+  // Issue #410's second half, and it is one clause: `--exported` is the thing a
+  // reader of either refusal CAN still run, and neither refusal said so.
+  {
+    const missing = invoke(join(root, 'nowhere', 'Spine')).stderr;
+    const trial = invoke(join(root, 'Applications', 'SpineTrial.app', 'Contents', 'MacOS', 'Spine Trial')).stderr;
+    const mentions = (s: string): boolean => s.includes('--exported <file> measures an export the editor ALREADY made');
+    say(
+      'ERT06_BOTH_REFUSALS_POINT_AT_THE_HALF_THAT_NEEDS_NO_EDITOR',
+      mentions(missing) && mentions(trial),
+      `no-editor names --exported = ${mentions(missing)}, trial names --exported = ${mentions(trial)}`,
+      "`--exported`'s own usage text says it exists so the measuring half can run on a machine with no editor — " +
+        'and the two messages printed in exactly that situation were the two that never mentioned it',
+    );
+  }
+
+  rmSync(root, { recursive: true, force: true });
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // the published package's own links — issue #333
 // ---------------------------------------------------------------------------
 //
@@ -19448,6 +19670,8 @@ function main(): void {
     bad += launcherBad;
     substantive += 3;
   }
+  bad += runEditorRoundtripSuite();
+  substantive += 6;
   bad += runShippedDocSuite();
   substantive += 2;
   bad += runSkillSurfaceSuite();
@@ -19553,6 +19777,18 @@ function main(): void {
         'exercised in this run.'
       : ', + 3 bin-launcher controls (`--version` and an unknown command match direct invocation, and the exact ' +
         'message printed when Bun is missing from PATH)';
+  const roundtripRefusals =
+    ', + 6 editor-roundtrip refusal controls (issue #410 — the half of `tools/editor_roundtrip.ts` a machine ' +
+    'with no editor can answer for, which is the half that had never run: a missing editor refused by the path ' +
+    'it looked at, the Spine TRIAL refused by all three names on disk — its executable, its bundle and the ' +
+    "CFBundleName that bundle declares — and by that declaration ALONE when both names are innocent, neither " +
+    'stub having been started, because the trial does not fail cleanly but hangs; the trial refused again on a ' +
+    'path with nothing in it by the banner it prints about itself, which is the only signal a platform whose ' +
+    'trial layout nobody here has seen would have; and — the case the other five are worthless without — an ' +
+    'ordinary editor at an unfamiliar path NOT refused, run, and failing on what it actually did wrong, because ' +
+    '`--editor` exists for that caller and a suite of nothing but refusals would pass a tool that refuses ' +
+    'everything. Then the clause both messages were missing: `--exported`, the measurement that needs no editor, ' +
+    'named in the two refusals printed at exactly the moment somebody needs it)';
   const shippedDocs =
     ", + 2 shipped-doc link controls (issue #333 — every relative link in every `.md` the `files` allowlist " +
     'ships, plus the README npm forces in beside it, resolving to a path that ALSO ships: the class found three ' +
@@ -19756,6 +19992,7 @@ function main(): void {
       'bare, and every flag printed with one still refused when it is given none, which is the refusal that keeps ' +
       'the first from being satisfied by inferring switches from the next argument)' +
       `${launcher.startsWith(',') ? launcher : ''}` +
+      roundtripRefusals +
       shippedDocs +
       skillSurface +
       currency +
