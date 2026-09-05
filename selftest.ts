@@ -14987,6 +14987,117 @@ function runCurrencySuite(): number {
       probeFaults.push(`${probe.row}: the REPAIRED spelling faulted — ${clean.faults.join('; ')}`);
     }
   }
+  // --- CUR08: the counts the CLI's own help prints --------------------------
+  //
+  // `README.md` states the profile split and this gate holds it there. The HELP
+  // stated it too, in a usage string no gate read, and so it kept **20 / 36 /
+  // 14** from before `A36`–`A39` landed while the tool ran 25 / 40 / 15 (issue
+  // #373). A literal in a usage string is a hand-maintained tally like any
+  // other, and the help is the surface an agent meets FIRST.
+  //
+  // 🚨 The reference is a live report's own PROF lines, not
+  // `assertionCountForProfile`. The help calls that function now, so comparing
+  // the two would be the code agreeing with itself — the shape of check this
+  // repository keeps catching itself writing. A `spine`-profile report reaches
+  // every assertion in the registry and names each one it excluded, which
+  // yields all three numbers with the counting function nowhere in the path.
+  {
+    const help = runCli(['--help']).stdout;
+    const seen = (re: RegExp): number | null => {
+      const m = re.exec(help);
+      return m ? Number(m[1]) : null;
+    };
+    const printedDefault = seen(/THE DEFAULT — (\d+) rules/);
+    const printedAll = seen(/all (\d+) rules, opt-in/);
+    const printedExtra = seen(/Those extra (\d+) fire on real/);
+    // Independent of the counting function, by construction.
+    const wantAll = truth.reached;
+    const wantExtra = truth.rendererNames.length + truth.archetypeNames.length;
+    const wantDefault = wantAll - wantExtra;
+    const rows: Array<[string, number | null, number]> = [
+      ['THE DEFAULT — N rules', printedDefault, wantDefault],
+      ['all N rules, opt-in', printedAll, wantAll],
+      ['Those extra N', printedExtra, wantExtra],
+    ];
+    // A `null` here is a row whose wording moved out from under the pattern,
+    // and it counts as WRONG rather than as absent — a scan that stops matching
+    // goes silent, which is the one failure a tally gate cannot afford.
+    const wrong = rows.filter(([, got, want]) => got !== want);
+    say(
+      'CUR08_THE_PROFILE_COUNTS_IN_THE_CLI_HELP_ARE_THE_TOOLS_OWN',
+      wrong.length === 0 && wantAll > 0 && wantExtra > 0,
+      wrong.length === 0
+        ? `\`rigc --help\` prints ${printedDefault} / ${printedAll} / ${printedExtra}, and a live spine-profile ` +
+          `report reached ${wantAll} assertion(s) and excluded ${truth.rendererNames.length} renderer + ` +
+          `${truth.archetypeNames.length} archetype`
+        : wrong.map(([row, got, want]) => `"${row}" printed ${got ?? '(no match)'} and the tool has ${want}`).join('; '),
+      'the help is the first surface an agent meets and the only one that had no gate, so it kept 20 / 36 / 14 ' +
+        'through two assertions landing and a profile split moving (#373)',
+    );
+  }
+
+  // --- CUR07: the module boundary CLAUDE.md names, against the tree ---------
+  //
+  // The same defect one surface over, and it is the surface the doctrine cares
+  // about most. `CLAUDE.md`'s *Conventions* names the files allowed to link
+  // spine-core "because an unnamed exception is how a rule erodes" — and then
+  // went stale in exactly that way: `src/deformmeasure.ts` began posing meshes
+  // through the runtime (#296, #316) and the sentence still said **Two**
+  // (issue #379). Nothing read it, so nothing said so for two weeks.
+  //
+  // 🔒 The clause that MATTERS is the negative one. `src/compile.ts` staying off
+  // the list is what keeps the compiler and the gate from checking each other's
+  // assumptions, and until now no test asserted it at all.
+  {
+    const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+    // A VALUE import, which is what "links the runtime" means: a type-only
+    // import compiles to nothing and cannot pose anything.
+    const linkers: string[] = [];
+    const candidates = ['cli.ts', ...readdirSync(join(root, 'src')).filter((f) => f.endsWith('.ts')).map((f) => `src/${f}`)];
+    for (const rel of candidates) {
+      const text = readFileSync(join(root, rel), 'utf8');
+      const importsIt = [...text.matchAll(/import\s+(type\s+)?\{[^}]*\}\s*from\s*'@esotericsoftware\/spine-core'/g)];
+      if (importsIt.some((m) => m[1] === undefined)) linkers.push(rel);
+    }
+    linkers.sort();
+
+    const claudeMd = readFileSync(join(root, 'CLAUDE.md'), 'utf8');
+    // Bullets, so the rule stays ordinary prose rather than becoming a table
+    // maintained for a test's benefit.
+    const bullet = claudeMd
+      .split(/\n- /)
+      .map((b) => b.replace(/\s+/g, ' '))
+      .find((b) => /files link spine-core/.test(b));
+    const stated = bullet === undefined ? [] : [...bullet.matchAll(/`(src\/[\w.]+\.ts|cli\.ts)`/g)].map((m) => m[1]);
+    const countWord = bullet?.match(/\*\*(\w+)\*\* files link spine-core/)?.[1]?.toLowerCase();
+    // `src/compile.ts` is named in that bullet as a PROHIBITION, not as one of
+    // the linkers, so it is the one name the comparison must not read as a
+    // claim. Naming it here is naming the invariant, which is the point.
+    const FORBIDDEN = 'src/compile.ts';
+    const claimed = [...new Set(stated.filter((f) => f !== FORBIDDEN))].sort();
+
+    const faults: string[] = [];
+    if (bullet === undefined) faults.push('CLAUDE.md has no bullet stating which files link spine-core');
+    if (countWord !== WORDS[linkers.length]) {
+      faults.push(`the bullet says "${countWord ?? '(none)'}" and the tree has ${linkers.length} (${WORDS[linkers.length] ?? linkers.length})`);
+    }
+    for (const f of linkers) if (!claimed.includes(f)) faults.push(`${f} links spine-core and the doctrine does not name it`);
+    for (const f of claimed) if (!linkers.includes(f)) faults.push(`the doctrine names ${f} as a linker and it does not link spine-core`);
+    if (linkers.includes(FORBIDDEN)) faults.push(`🔒 ${FORBIDDEN} LINKS THE RUNTIME — the compiler and the gate must not check each other's assumptions`);
+
+    say(
+      'CUR07_THE_FILES_CLAUDE_MD_ALLOWS_TO_LINK_SPINE_CORE_ARE_THE_FILES_THAT_DO',
+      faults.length === 0 && linkers.length > 0 && claimed.length > 0,
+      faults.length === 0
+        ? `${linkers.length} file(s) link the runtime as values — ${linkers.join(', ')} — and the doctrine names ` +
+          `exactly those, as "${countWord}". ${FORBIDDEN} is not among them, which is the clause that matters`
+        : faults.join('; '),
+      'the rule says an unnamed exception is how a rule erodes, and then eroded that way itself (#379): a third ' +
+        'file began posing through the runtime and the sentence still said Two. A rule about drift that nothing ' +
+        'derives is a comment',
+    );
+  }
+
   say(
     'CUR06_THE_SCANNER_STILL_FAULTS_THE_ROWS_THIS_GATE_WAS_BUILT_FROM',
     probeFaults.length === 0 && CURRENCY_RED_FIRST.length >= 11,
@@ -18132,7 +18243,7 @@ function main(): void {
     'expanded from `files` rather than guessed, and the whole derivation asserted first, because a link regex ' +
     'that matched nothing would otherwise report a clean tree)';
   const currency =
-    ', + 6 currency controls (issue #360 — every tally, gate version, `Worked case` cell, assertion name and ' +
+    ', + 8 currency controls (issue #360 — every tally, gate version, `Worked case` cell, assertion name and ' +
     'installed path a SHIPPED or LANDING doc states about the tool, derived from the tool rather than listed ' +
     'beside it: the registry and profile counts off `src/validate.ts`, the renderer / archetype split and the ' +
     'roster BY NAME off a live `validate()` report whose own floor is that it reached every assertion, the ' +
@@ -18141,7 +18252,15 @@ function main(): void {
     '`reportLines` itself formats, which is where a stale roster was quoted back at the reader — a document ' +
     'whose statements are a dated snapshot declares it in its header and drops out, and the scanner is held ' +
     'against the eleven rows this gate was built from, each required to fault in its stale spelling and to come ' +
-    'back clean in its repaired one)';
+    'back clean in its repaired one. Then the same defect on two surfaces no gate reached: the files CLAUDE.md ' +
+    'ALLOWS to link spine-core against the files that do — a rule whose own sentence says an unnamed exception ' +
+    'is how a rule erodes, and which had eroded that way (#379), red-first on a planted value import in ' +
+    '`src/compile.ts` (the negative clause nothing had ever asserted), on a name left behind after its file ' +
+    'stops linking, and green on a TYPE-only import, which compiles to nothing and cannot pose anything; and ' +
+    "the profile counts in the CLI's own help (#373), which said 20 / 36 / 14 while the tool ran 25 / 40 / 15 " +
+    'and are now compared against a LIVE report\'s own PROF lines rather than against the counting function the ' +
+    'help itself calls, red-first both on the stale literals replanted and on a reworded line the pattern stops ' +
+    'matching, because a scan that goes silent is the one failure a tally gate cannot afford)';
   const skillSurface =
     ', + 5 agent-skill controls (issue #366 — the surface an agent discovers rigc through: every `skills/*/SKILL.md` ' +
     'carrying the frontmatter the Agent Skills specification requires (a `name` equal to its directory, a ' +
