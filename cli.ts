@@ -112,7 +112,14 @@ import {
   type FramesSidecar,
   type FrameSet,
 } from './src/render.ts';
-import { CLI_DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from './src/validate.ts';
+import {
+  assertionCountForProfile,
+  CLI_DEFAULT_PROFILE,
+  reportLines,
+  validate,
+  VALIDATE_PROFILES,
+  type ValidateProfile,
+} from './src/validate.ts';
 import { parseMotionSpec } from './src/motion.ts';
 import type { FoldLimit, TurnCeiling } from './src/depth.ts';
 import type { CompileResult } from './src/types.ts';
@@ -2675,10 +2682,11 @@ const USAGE = [
   '',
   'build, validate and bench take --profile spine|spine-html:',
   '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
-  '              THE DEFAULT — 20 rules, and the question the output answers when',
+  `              THE DEFAULT — ${assertionCountForProfile('spine')} rules, and the question the output answers when`,
   '              you import it into the Spine editor.',
   '  spine-html  the above, plus this project\'s renderer and archetype policy:',
-  '              all 36 rules, opt-in. Those extra 14 fire on real, correct,',
+  `              all ${assertionCountForProfile('spine-html')} rules, opt-in. Those extra ` +
+    `${assertionCountForProfile('spine-html') - assertionCountForProfile('spine')} fire on real, correct,`,
   '              editor-produced Spine data, so they are somebody\'s policy rather',
   '              than anybody\'s validity.',
   '',

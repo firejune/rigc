@@ -14987,6 +14987,55 @@ function runCurrencySuite(): number {
       probeFaults.push(`${probe.row}: the REPAIRED spelling faulted — ${clean.faults.join('; ')}`);
     }
   }
+  // --- CUR08: the counts the CLI's own help prints --------------------------
+  //
+  // `README.md` states the profile split and this gate holds it there. The HELP
+  // stated it too, in a usage string no gate read, and so it kept **20 / 36 /
+  // 14** from before `A36`–`A39` landed while the tool ran 25 / 40 / 15 (issue
+  // #373). A literal in a usage string is a hand-maintained tally like any
+  // other, and the help is the surface an agent meets FIRST.
+  //
+  // 🚨 The reference is a live report's own PROF lines, not
+  // `assertionCountForProfile`. The help calls that function now, so comparing
+  // the two would be the code agreeing with itself — the shape of check this
+  // repository keeps catching itself writing. A `spine`-profile report reaches
+  // every assertion in the registry and names each one it excluded, which
+  // yields all three numbers with the counting function nowhere in the path.
+  {
+    const help = runCli(['--help']).stdout;
+    const seen = (re: RegExp): number | null => {
+      const m = re.exec(help);
+      return m ? Number(m[1]) : null;
+    };
+    const printedDefault = seen(/THE DEFAULT — (\d+) rules/);
+    const printedAll = seen(/all (\d+) rules, opt-in/);
+    const printedExtra = seen(/Those extra (\d+) fire on real/);
+    // Independent of the counting function, by construction.
+    const wantAll = truth.reached;
+    const wantExtra = truth.rendererNames.length + truth.archetypeNames.length;
+    const wantDefault = wantAll - wantExtra;
+    const rows: Array<[string, number | null, number]> = [
+      ['THE DEFAULT — N rules', printedDefault, wantDefault],
+      ['all N rules, opt-in', printedAll, wantAll],
+      ['Those extra N', printedExtra, wantExtra],
+    ];
+    // A `null` here is a row whose wording moved out from under the pattern,
+    // and it counts as WRONG rather than as absent — a scan that stops matching
+    // goes silent, which is the one failure a tally gate cannot afford.
+    const wrong = rows.filter(([, got, want]) => got !== want);
+    say(
+      'CUR08_THE_PROFILE_COUNTS_IN_THE_CLI_HELP_ARE_THE_TOOLS_OWN',
+      wrong.length === 0 && wantAll > 0 && wantExtra > 0,
+      wrong.length === 0
+        ? `\`rigc --help\` prints ${printedDefault} / ${printedAll} / ${printedExtra}, and a live spine-profile ` +
+          `report reached ${wantAll} assertion(s) and excluded ${truth.rendererNames.length} renderer + ` +
+          `${truth.archetypeNames.length} archetype`
+        : wrong.map(([row, got, want]) => `"${row}" printed ${got ?? '(no match)'} and the tool has ${want}`).join('; '),
+      'the help is the first surface an agent meets and the only one that had no gate, so it kept 20 / 36 / 14 ' +
+        'through two assertions landing and a profile split moving (#373)',
+    );
+  }
+
   // --- CUR07: the module boundary CLAUDE.md names, against the tree ---------
   //
   // The same defect one surface over, and it is the surface the doctrine cares
