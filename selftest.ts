@@ -18735,10 +18735,19 @@ function runCurrencySuite(): number {
 // emit as `stepped` — so that class was a real gap and not a theoretical one.
 //
 // 📌 **A block a run cannot reproduce declares itself**, the way a dated snapshot
-// drops out of the currency gate: `<!-- transcript: <why> -->` on the line before
-// the fence. Six blocks need it and all six are the same shape — lines lifted
-// out of a run that does not print them adjacent, or a run cut short with an
-// ellipsis. The reason is required (a marker with nothing after the colon is
+// drops out of the currency gate: one line before the fence, opening on
+// `DECLARATION_LEAD` below and giving its reason as the rest of that line —
+// spelled once, there, for the reason the recipe grammar is. Six blocks need it
+// and all six are the same shape — lines lifted out of a run that does not print
+// them adjacent, or a run cut short with an ellipsis.
+//
+// ⭐ **And that line RENDERS**, which is the half of it a reader needs. This
+// marker was an HTML comment, so a block the gate knew to be ABRIDGED read on
+// the page as a complete transcript: not merely hidden — misleading. The recipe
+// below had the same shape of defect the other way round, being the one thing on
+// the page its reader would most want and the one thing they could not see.
+//
+// The reason is required (a marker with nothing after the lead is
 // refused, as CUR01 refuses a `dated-record` marker with no date), the declared
 // set is reported so it cannot grow quietly, and a declaration on a block that
 // DOES reproduce is a fault — otherwise the marker would be a way to switch the
@@ -18770,14 +18779,46 @@ interface GalleryBlock {
   info: string;
   /** The block's body, verbatim. */
   lines: string[];
-  /** The reason a `<!-- transcript: … -->` comment above the fence gives, if there is one. */
+  /** The reason the declaration above the fence gives, if there is one. */
   declared: string | null;
-  /** The body of a `<!-- refusal: … -->` comment above the fence, unparsed, if there is one. */
+  /** The sentence the recipe above the fence states, unparsed, if there is one. */
   recipe: string | null;
 }
 
+// ── the two markers, and the one thing that is true of both ────────────────────
+//
+// 🔒 **A marker is one string: the line a reader reads IS the line this scanner
+// parses.** Both of these used to be HTML comments, which render to nothing — so
+// the recipe that says how to reproduce a refusal was invisible to the only
+// audience that needs it, and, worse, a block declared ABRIDGED read on the page
+// as a complete transcript.
+//
+// ⛔ The fix is NOT a comment for the scanner and a sentence for the reader. Two
+// copies of one fact drifting apart is the defect every gate in this section was
+// written for — #415, #422 and #429 each found the same shape again — so a marker
+// with a machine half and a reader half would be that defect, committed by the
+// gate against it. There is exactly one form, an author writes it as prose, and
+// this scanner reads the characters they wrote.
+//
+// ⚠️ A second ACCEPTED spelling is the same defect one step removed, so the
+// comment form is gone rather than deprecated and the migration is total. What
+// that costs, measured rather than implied: a marker is ONE line however long the
+// sentence runs, the longest in this gallery being 198 characters in
+// `gallery/look` against the 191 of the comment it replaced. So nothing about
+// the source shape has moved; what has moved is that the line renders.
+
+/** Escape a literal so it can stand inside a pattern — the markers are prose, and prose has dots in it. */
+function literalPattern(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The lead that makes a line a declaration — what a reader sees, and the whole of
+ * what the scanner keys on. The reason is the rest of the line, verbatim.
+ */
+const DECLARATION_LEAD = '**No run reproduces this:**';
 /** The escape hatch, and the lookback that finds it: the line above the fence, blank lines allowed. */
-const TRANSCRIPT_DECLARATION = /<!--\s*transcript:\s*(.*?)\s*-->/;
+const TRANSCRIPT_DECLARATION = new RegExp(`^${literalPattern(DECLARATION_LEAD)}[ \\t]*(.*?)[ \\t]*$`);
 const TRANSCRIPT_DECLARATION_LOOKBACK = 3;
 /** A declaration shorter than this is not a reason, and a marker without a reason is refused. */
 const TRANSCRIPT_REASON_MIN = 12;
@@ -18860,9 +18901,22 @@ function transcriptHeadAnchored(body: string[], heads: Set<string>): boolean {
 // `gallery/look/README.md`'s verbatim quote left stale, and the suite ran green.
 //
 // 📌 **A refusal block states the edit that makes it**, on the line before the
-// fence, in a grammar that cannot express anything else:
+// fence, in one sentence that cannot say anything else: a `from`, a `to`, the
+// example spec they are replaced in, and the command that is then run.
 //
-//     <!-- refusal: <example> <rig|motion> build [--profile <name>] | <from> | <to> -->
+// ⭐ **That sentence is written down exactly once** — `RECIPE_GRAMMAR` below —
+// and everything else is generated from it: the pattern that parses an author's
+// line, the shape a failure message shows them, and every probe GT05 builds. It
+// is not spelled out again here, or in a message, or beside the marker, because
+// the drift between two copies of one fact is the entire defect this family of
+// gates exists to remove. `gallery/README.md` shows one filled in, and GT05
+// checks that the one it shows parses and is a recipe a README really carries.
+//
+// It reads as prose because it renders as prose: the recipe is for the author
+// who has to reproduce the refusal, and a recipe they cannot see is a recipe
+// they do not have. ⚠️ The literal fields sit in code spans, which is what makes
+// one string serve reader and scanner at once — so a field may not contain a
+// backtick, and one that does faults by name rather than going quiet.
 //
 // ⛔ The bound such a declaration needs is a property of the GRAMMAR here, not a
 // rule policed after the fact. There is no path in it — the file is
@@ -18930,9 +18984,10 @@ function transcriptHeadAnchored(body: string[], heads: Set<string>): boolean {
 //     never sees either — they are #415's shape 2, left out there because a
 //     quotation inside prose has nothing to anchor on. ⚠️ Note what that means
 //     for the informal "a quote here may be abridged" convention the guide runs
-//     on: it cannot become this file's `transcript:` declaration, because a
-//     declaration is an escape FROM a check and shape 2 has no check to escape.
-//     Giving the guide the marker first would leave it looking gated and not be.
+//     on: it cannot become this file's declaration, because a declaration is an
+//     escape FROM a check and shape 2 has no check to escape. Giving the guide
+//     the marker first would leave it looking gated and not be — and now that
+//     the marker renders, looking gated is what it would actually do.
 //
 // ⚠️ **Cost, measured rather than guessed**, on the same footing as the green
 // half's twenty runs: four recipe runs plus GT05's one deliberately-green probe,
@@ -18947,8 +19002,69 @@ function transcriptHeadAnchored(body: string[], heads: Set<string>): boolean {
 // until things match is the knob that eventually swallows a real drift, so a
 // fenced quote carries the tool's characters and nothing else.
 
-/** `<!-- refusal: … -->` — the recipe that says which edit to a gallery spec prints this block. */
-const REFUSAL_RECIPE = /<!--\s*refusal:\s*(.*?)\s*-->/;
+/**
+ * The recipe sentence, as the pieces it is made of.
+ *
+ * 🔒 One list, two products: the shape a failure message SHOWS an author and the
+ * pattern that PARSES an author's line are generated from it, so the sentence the
+ * gate teaches and the sentence the gate accepts cannot be different sentences.
+ * That is the same one-string rule the marker itself obeys, one level in — a
+ * hand-written copy of the grammar in an error message is a second surface, and
+ * the trap's message used to be exactly that.
+ *
+ * The fields are delimited by code spans, which is what makes the sentence
+ * parseable AND readable at once: a reader sees the literal to replace set in
+ * code, and the scanner takes everything between the backticks. ⚠️ The bound that
+ * buys is that a field cannot itself contain a backtick — a recipe whose `from`
+ * does is not a recipe, and faults by name rather than going quiet.
+ */
+interface RecipeField {
+  /** How the rest of this file addresses the field — never its position, so the sentence can be reordered. */
+  name: 'from' | 'to' | 'example' | 'spec' | 'command';
+  /** The placeholder a message shows in its place. */
+  shown: string;
+  /** What may stand there. Every field is delimited by code spans, so none may contain a backtick. */
+  pattern: string;
+}
+
+const RECIPE_GRAMMAR: Array<string | RecipeField> = [
+  'replace `',
+  { name: 'from', shown: '<from>', pattern: '[^`]*' },
+  '` with `',
+  { name: 'to', shown: '<to>', pattern: '[^`]*' },
+  '` in `gallery/',
+  { name: 'example', shown: '<example>', pattern: '[^`/]*' },
+  '/',
+  { name: 'spec', shown: '<spec>', pattern: '[^`/.]*' },
+  '.json`, then run `',
+  { name: 'command', shown: 'build [--profile <name>]', pattern: '[^`]*' },
+  '`.',
+];
+const RECIPE_FIELDS = RECIPE_GRAMMAR.filter((part): part is RecipeField => typeof part !== 'string');
+/** The sentence, with its fields left as placeholders — what a message shows an author. */
+const RECIPE_SHAPE = RECIPE_GRAMMAR.map((part) => (typeof part === 'string' ? part : part.shown)).join('');
+/** The same sentence as the pattern that reads its five fields out. */
+const RECIPE_BODY = new RegExp(
+  `^${RECIPE_GRAMMAR.map((part) => (typeof part === 'string' ? literalPattern(part) : `(${part.pattern})`)).join('')}$`,
+);
+
+/**
+ * Write a recipe sentence out with its fields filled in — the only way one is
+ * spelled anywhere in this file, GT05's nine probes included.
+ *
+ * ⛔ By NAME rather than by position, and that is the whole of why it exists. A
+ * probe that filled the fields in order would keep agreeing with a grammar whose
+ * order had changed — `from` and `to` swapped would produce a sentence the parser
+ * read back swapped, and every clause would stay green while the sentence a
+ * README carries meant the opposite thing.
+ */
+function recipeSentence(values: Record<RecipeField['name'], string>): string {
+  return RECIPE_GRAMMAR.map((part) => (typeof part === 'string' ? part : values[part.name])).join('');
+}
+/** The lead that makes a line a recipe. The sentence after it is `RECIPE_SHAPE`. */
+const RECIPE_LEAD = '**Reproduce it:**';
+/** The lead, and the sentence after it: which edit to a gallery spec prints this block. */
+const REFUSAL_RECIPE = new RegExp(`^${literalPattern(RECIPE_LEAD)}[ \\t]*(.*?)[ \\t]*$`);
 /** How a refusal announces itself at column 0, so the head itself can be collected from a run. */
 const REFUSAL_ERROR_HEAD = /^(rigc [a-z]+ error):/;
 
@@ -18958,7 +19074,7 @@ interface RefusalRecipe {
   profile: string | null;
   from: string;
   to: string;
-  /** Everything between the marker's colon and its `-->`, for the cache key and for failure detail. */
+  /** The sentence after the marker's lead, for the cache key and for failure detail. */
   text: string;
 }
 
@@ -18971,16 +19087,15 @@ interface RefusalRecipe {
  * than not having the marker at all.
  */
 function parseRefusalRecipe(text: string, examples: Set<string>): RefusalRecipe | string {
-  const fields = text.split('|').map((field) => field.trim());
-  if (fields.length !== 3) {
-    return (
-      'a recipe is three `|`-separated fields — `<example> <rig|motion> build [--profile <name>] | <from> | <to>` — ' +
-      `and this has ${fields.length}`
-    );
+  const fields = RECIPE_BODY.exec(text);
+  if (fields === null) {
+    return `is not the sentence a recipe is: it reads "${text}", where a recipe reads — ${RECIPE_SHAPE}`;
   }
-  const [head, from, to] = fields;
-  const words = head.split(/\s+/).filter((word) => word !== '');
-  const [example, spec, verb, ...rest] = words;
+  // Read out by name, for the reason `recipeSentence` fills them in by name.
+  const field = (name: RecipeField['name']): string => fields[RECIPE_FIELDS.findIndex((f) => f.name === name) + 1];
+  const [from, to, example, spec] = [field('from'), field('to'), field('example'), field('spec')];
+  const words = field('command').split(/\s+/).filter((word) => word !== '');
+  const [verb, ...rest] = words;
   if (!examples.has(example ?? '')) {
     return `names example "${example ?? ''}", which is not one of the ${examples.size} this run found (${[...examples].sort().join(', ')})`;
   }
@@ -19122,12 +19237,14 @@ function galleryBlocks(text: string): GalleryBlock[] {
         fence = marker[1][0];
         let declared: string | null = null;
         let recipe: string | null = null;
-        // ⚠️ A marker does not stop the lookback, a line of prose does. The two
-        // markers can be stacked — and GT03 stacks them on purpose, planting a
-        // `transcript:` declaration above a block that already carries a
-        // `refusal:` recipe to show that declaring a reproducing block away is
-        // still a fault. Breaking on the first marker found would silently take
-        // the recipe off instead, and the plant would pass by going quiet.
+        // ⚠️ A marker does not stop the lookback, ordinary prose does — and
+        // a marker IS prose now, so the two are told apart by the lead
+        // each opens with and by nothing else. The two markers can be stacked,
+        // and GT03 stacks them on purpose: a declaration above a block that
+        // already carries a recipe, to show that declaring a reproducing block
+        // away is still a fault. Breaking on the first marker found would
+        // silently take the recipe off instead, and the plant would pass by
+        // going quiet.
         for (let k = i - 1; k >= 0 && k >= i - TRANSCRIPT_DECLARATION_LOOKBACK; k--) {
           const found = TRANSCRIPT_DECLARATION.exec(raw[k]);
           if (found !== null) {
@@ -19347,7 +19464,7 @@ function scanGalleryTranscripts(
     if (byRecipe && block.recipe !== null) {
       const parsed = parseRefusalRecipe(block.recipe, refusal.examples);
       if (typeof parsed === 'string') {
-        scan.faults.push(`${at}  carries a \`refusal:\` recipe that does not parse — it ${parsed}`);
+        scan.faults.push(`${at}  carries a \`${RECIPE_LEAD}\` line that does not parse — it ${parsed}`);
         continue;
       }
       command = `build gallery/${parsed.example} with ${parsed.spec}.json's "${parsed.from}" -> "${parsed.to}"` +
@@ -19380,9 +19497,9 @@ function scanGalleryTranscripts(
     } else if (trapped) {
       command = 'no recipe';
       mismatch =
-        `${at}  opens on something only a refusal prints ("${body[0].trim().slice(0, 70)}") and says nothing about ` +
-        'how to make one: give it a `<!-- refusal: <example> <rig|motion> build | <from> | <to> -->` recipe, or ' +
-        '`<!-- transcript: <why> -->` if no edit to a gallery spec produces it';
+        `${at}  opens on something only a refusal prints ("${body[0].trim().slice(0, 70)}") and says nothing ` +
+        `about how to make one: put \`${RECIPE_LEAD} ${RECIPE_SHAPE}\` on the line above the fence, or ` +
+        `\`${DECLARATION_LEAD} <why>\` if no edit to a gallery spec produces it`;
     } else {
       const best = bestTranscriptWindow(body, runs);
       reproduces = best !== null && best.shared === body.length;
@@ -19759,14 +19876,14 @@ function runGalleryTranscriptSuite(): number {
       // The declaration is not a way to switch the gate off.
       const declaredOnly = plantIntoReadme(readme, block, block.lines);
       const declaredLines = declaredOnly.split('\n');
-      declaredLines.splice(block.line - 1, 0, '<!-- transcript: lifted out of a run that does not print it -->');
+      declaredLines.splice(block.line - 1, 0, `${DECLARATION_LEAD} lifted out of a run that does not print it`);
       planted++;
       if (rescan(declaredLines.join('\n')).faults.length === 0) {
         misses.push(`gallery/${example}/README.md:${block.line}: declared while still reproducing — not faulted`);
       }
       // A marker with nothing after the colon is not a declaration.
       const emptyLines = declaredOnly.split('\n');
-      emptyLines.splice(block.line - 1, 0, '<!-- transcript: -->');
+      emptyLines.splice(block.line - 1, 0, DECLARATION_LEAD);
       planted++;
       if (rescan(emptyLines.join('\n')).faults.length === 0) {
         misses.push(`gallery/${example}/README.md:${block.line}: declared with no reason — not faulted`);
@@ -19986,15 +20103,20 @@ function runGalleryTranscriptSuite(): number {
     // rejection below is satisfied by a parser that rejects everything — and
     // each way of stepping outside the bound has to come back as a sentence.
     const anExample = [...recipeNames].sort()[0] ?? '';
-    const wellFormed = parseRefusalRecipe(`${anExample} rig build --profile spine-html | a | b`, recipeNames);
+    // Every probe below is the grammar filled in, never a sentence typed out
+    // beside it: a change to the sentence has to reach these or they would go on
+    // testing a spelling no README carries.
+    const aRecipe = (over: Partial<Record<RecipeField['name'], string>>): string =>
+      recipeSentence({ from: 'a', to: 'b', example: anExample, spec: 'rig', command: 'build', ...over });
+    const wellFormed = parseRefusalRecipe(aRecipe({ command: 'build --profile spine-html' }), recipeNames);
     const malformed: Array<[string, string]> = [
-      ['two fields instead of three', `${anExample} rig build | a`],
-      ['an example this run never found', `no-such-example rig build | a | b`],
-      ['a file that is neither spec', `${anExample} atlas build | a | b`],
-      ['a verb that is not build', `${anExample} rig explain | a | b`],
-      ['an argument the bound does not allow', `${anExample} rig build --out /tmp/anywhere | a | b`],
-      ['nothing to replace', `${anExample} rig build |  | b`],
-      ['nothing to replace it with', `${anExample} rig build | a |  `],
+      ['a line that is not the sentence at all', `${anExample} rig build | a | b`],
+      ['an example this run never found', aRecipe({ example: 'no-such-example' })],
+      ['a file that is neither spec', aRecipe({ spec: 'atlas' })],
+      ['a verb that is not build', aRecipe({ command: 'explain' })],
+      ['an argument the bound does not allow', aRecipe({ command: 'build --out /tmp/anywhere' })],
+      ['nothing to replace', aRecipe({ from: '' })],
+      ['nothing to replace it with', aRecipe({ to: '' })],
     ];
     const grammar = [
       ...(typeof wellFormed === 'string'
@@ -20013,14 +20135,14 @@ function runGalleryTranscriptSuite(): number {
     const probeScan = (recipeText: string): TranscriptScan =>
       scanGalleryTranscripts(
         'probe',
-        `<!-- refusal: ${recipeText} -->\n\`\`\`\nrigc compile error: a line no run prints\n\`\`\``,
+        `${RECIPE_LEAD} ${recipeText}\n\`\`\`\nrigc compile error: a line no run prints\n\`\`\``,
         [],
         vocabulary,
         new Set<string>(),
         refusal,
       );
-    const absent = probeScan(`${anExample} rig build | a string no rig spec in this gallery contains | x`);
-    const green = probeScan(`${anExample} rig build | "name" | "name"`);
+    const absent = probeScan(aRecipe({ from: 'a string no rig spec in this gallery contains', to: 'x' }));
+    const green = probeScan(aRecipe({ from: '"name"', to: '"name"' }));
     const runs = [
       ...(absent.faults.some((f) => f.includes('is not in the file'))
         ? []
@@ -20062,6 +20184,14 @@ function runGalleryTranscriptSuite(): number {
     // reported so a locator that matched nothing cannot compare empty against
     // empty, and the documented example recipe has to be one this tree really
     // carries rather than an invented one that no longer parses.
+    //
+    // ⭐ **Both markers are shown there, so both examples are checked here.** The
+    // declaration's was not, and that was the gap this card walked into: the
+    // index carried a hand-typed `transcript:` comment that nothing compared to
+    // anything, so the day the marker changed shape the paragraph teaching it
+    // would have gone on teaching the old one. It is held to exactly the recipe's
+    // bar — the example parses as a declaration, and it is one a README really
+    // carries.
     const index = existsSync(join(galleryRoot, 'README.md'))
       ? readFileSync(join(galleryRoot, 'README.md'), 'utf8')
       : '';
@@ -20072,7 +20202,10 @@ function runGalleryTranscriptSuite(): number {
       ...[...derived].filter((x) => !prose.has(x)).map((x) => `the runs print \`${x}\` as ${what} and gallery/README.md does not name it`),
       ...[...prose].filter((x) => !derived.has(x)).map((x) => `gallery/README.md names \`${x}\` as ${what} and no refusal run prints one`),
     ];
-    const documented = [...index.matchAll(new RegExp(REFUSAL_RECIPE.source, 'g'))].map((m) => m[1]);
+    // Both markers are one anchored line, so the index is read line by line for them.
+    const documented = [...index.matchAll(new RegExp(REFUSAL_RECIPE.source, 'gm'))].map((m) => m[1]);
+    const shownDeclarations = [...index.matchAll(new RegExp(TRANSCRIPT_DECLARATION.source, 'gm'))].map((m) => m[1]);
+    const carriedDeclarations = new Set(declared.map((d) => d.reason));
     const prose = [
       ...(announces.length === 1
         ? []
@@ -20086,6 +20219,15 @@ function runGalleryTranscriptSuite(): number {
       ...documented
         .filter((text) => ![...recipeRuns.keys()].includes(text))
         .map((text) => `the recipe gallery/README.md shows is not one any README carries: "${text}"`),
+      ...(shownDeclarations.length === 1
+        ? []
+        : [`gallery/README.md shows ${shownDeclarations.length} example declaration(s); it should show exactly one`]),
+      ...shownDeclarations
+        .filter((reason) => reason.length < TRANSCRIPT_REASON_MIN)
+        .map((reason) => `the declaration gallery/README.md shows gives no reason: "${reason}"`),
+      ...shownDeclarations
+        .filter((reason) => !carriedDeclarations.has(reason))
+        .map((reason) => `the declaration gallery/README.md shows is not one any README carries: "${reason}"`),
       // Red-first both ways, on a name nothing in the tree can print.
       ...(disagree(namedHeads, new Set([...refusalVocab.heads, 'rigc nosuch error']), 'an error head').length > 0
         ? []
@@ -20108,7 +20250,9 @@ function runGalleryTranscriptSuite(): number {
         elisionProbes === recipeBlocks.length &&
         elisionProbes >= 4 &&
         namedHeads.size >= 1 &&
-        namedTags.size >= 1,
+        namedTags.size >= 1 &&
+        documented.length === 1 &&
+        shownDeclarations.length === 1,
       trouble.length === 0
         ? `${notDragged} block(s) a stated command already reproduces: none reads as a refusal to the trap and ` +
           `none carries a recipe; ${malformed.length} way(s) of stepping outside the recipe grammar each refused ` +
@@ -20117,7 +20261,8 @@ function runGalleryTranscriptSuite(): number {
           'matched the run it came from and refused a path the recipe never wrote; and the one paragraph of ' +
           'gallery/README.md that says what announces a refusal names ' +
           `{${[...namedHeads].sort().join(' ')}} and {${[...namedTags].sort().join(' ')}}, which is exactly what ` +
-          'the recipe runs print, with the recipe it shows as an example being one this gallery really carries'
+          `the recipe runs print, with the ${documented.length} recipe and the ${shownDeclarations.length} ` +
+          'declaration it shows as examples each being one a README really carries'
         : trouble.join('\n          '),
       'the recipe widens what may be RUN, so the thing to prove is that it did not widen what COUNTS. Every ' +
         'clause here is two-sided on purpose: a parser that refused every recipe would satisfy the grammar half, ' +

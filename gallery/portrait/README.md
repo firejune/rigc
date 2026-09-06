@@ -209,7 +209,7 @@ for every `y` — and the key that says so is the model, not the run:
 which is the whole input; `explain` prints the 50 numbers it produced so the
 table and the artifact can be read against each other:
 
-<!-- transcript: abridged — the last three lines stand in for five more the run prints -->
+**No run reproduces this:** abridged — the last three lines stand in for five more the run prints
 ```
       t=0.62    deform[0..50]  25 pair(s)                      stepped
                transform yaw  radius=170 degrees=12
