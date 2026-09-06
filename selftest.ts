@@ -11210,6 +11210,279 @@ function runDeformWindingSuite(): number {
       'is strictly better than one, and where they do not the report is the only place that can say so',
   );
 
+  // --- and a build-only run has to see it too (issue #427) -------------------
+  //
+  // 🚨 Everything above reads `reach.label`, which `explain` prints and NOTHING
+  // else does. A `build` is the normal loop and the one an agent that cannot see
+  // the rig actually runs, and until #427 it went green without ever saying that
+  // rigc's two halves had named different fields.
+  //
+  // ⛔ Reported and not refused, and the measurement rather than taste is what
+  // settles that. What makes a survey trustworthy is not the property's NAME but
+  // the set of frames it poses, so both answers are turned into the span of the
+  // animation each can select. Measured on these very fixtures: under a
+  // disagreement the driven field's reach always CONTAINS the artifact's — the
+  // drive is the largest response the probe found and a disagreement needs it to
+  // clear the artifact's field by the margin — so the survey never poses fewer
+  // frames than the artifact's answer would have, and every frame it does pose
+  // was checked against `SliderPose.time` by the runtime itself. Nothing goes
+  // unexamined either way; what the comparison finds is a rig naming a property
+  // no settable value of turns that far, which is a thing to report.
+  /** Every `deformDial…` reading on one gate's stats line. */
+  const dialStats = (gate: ReturnType<typeof validate>): Record<string, string> =>
+    Object.fromEntries(
+      Object.entries(gate.stats)
+        .filter(([k]) => k.startsWith('deformDial'))
+        .map(([k, v]) => [k, String(v)]),
+    );
+  /** Every `lo..hi` reach interval on a stats reading, in order. */
+  const reachesIn = (line: string): Array<{ lo: number; hi: number }> =>
+    [...line.matchAll(/reaches:(\d+\.\d{6})\.\.(\d+\.\d{6})s/g)].map((m) => ({ lo: Number(m[1]), hi: Number(m[2]) }));
+  /** Every `…s` time in the `outside:` list of a stats reading. */
+  const outsideIn = (line: string): number[] =>
+    (/\|outside:none/.test(line)
+      ? []
+      : [...(/\|outside:([^|,]+)/.exec(line)?.[1] ?? '').matchAll(/(\d+\.\d{6})s/g)].map((m) => Number(m[1])));
+
+  const splitStats = dialStats(splitGate);
+  const splitLine = splitStats.deformDialDisagreed ?? '';
+  const splitReaches = reachesIn(splitLine);
+  const splitOutside = outsideIn(splitLine);
+  const splitTimes = [...new Set(splitSurvey.keys.map((k) => k.time))].sort((a, b) => a - b);
+  const inSpan = (t: number, s: { lo: number; hi: number } | undefined): boolean =>
+    s !== undefined && t >= s.lo && t <= s.hi;
+  say(
+    'DW29_A_DIAL_DISAGREEMENT_IS_ON_THE_STATS_LINE_A_BUILD_PRINTS_WITH_BOTH_REACHES',
+    splitGate.failures.length === 0 &&
+      // the census, and the reading beside it
+      Number(splitStats.deformDialsDisagreed) === 1 &&
+      /^dial\|artifact:knob\.x@/.test(splitLine) &&
+      /\|probe:knob\.y@/.test(splitLine) &&
+      // both answers carry the same two figures the `explain` label carries, so
+      // the stats line is the same derivation and not a second one
+      responsesIn(splitLine).length === 2 &&
+      responsesIn(splitLine).every((f) => splitFigures.includes(f)) &&
+      // both reaches are printed, and the artifact's is the strictly narrower
+      splitReaches.length === 2 &&
+      splitReaches[0].lo >= splitReaches[1].lo &&
+      splitReaches[0].hi < splitReaches[1].hi &&
+      // ⭐ and the frames the artifact's answer could not have posed are named by
+      // TIME — each of them outside its reach and inside the drive's, and every
+      // key time NOT named inside both. The list is a measurement (each time was
+      // posed through the artifact's own field and spine-core asked where it
+      // landed), so this is the closed form agreeing with it.
+      splitOutside.length > 0 &&
+      splitOutside.every((t) => !inSpan(t, splitReaches[0]) && inSpan(t, splitReaches[1])) &&
+      splitTimes.filter((t) => !splitOutside.includes(t)).every((t) => inSpan(t, splitReaches[0])) &&
+      // 🔒 and the survey measured every one of them anyway — the measurement
+      // that makes this a report. A disagreement costs the gate no frame.
+      Number(splitGate.stats.deformKeysMeasured) === splitSurvey.keys.length &&
+      splitGate.stats.deformKeysUnreachable === undefined,
+    splitGate.failures.length === 0
+      ? `the parent-90° rig's BUILD now says it: "${splitLine}". The artifact's own field reaches ` +
+          `${splitReaches[0]?.lo.toFixed(6)}..${splitReaches[0]?.hi.toFixed(6)}s of a 1s animation and the ` +
+          `driven one reaches ${splitReaches[1]?.lo.toFixed(6)}..${splitReaches[1]?.hi.toFixed(6)}s, so key ` +
+          `time(s) ${splitOutside.map((t) => `${t}s`).join(', ')} of ${splitTimes.length} were surveyed through ` +
+          `knob.y and no settable knob.x reaches them — and all ${splitGate.stats.deformKeysMeasured} were still ` +
+          `measured. ⚠️ At exactly 90° the artifact's field responds ${responsesIn(splitLine)[0]?.toExponential(3)}, ` +
+          'which is float noise in the world matrix and not the analytic cos 90°'
+      : `[${splitGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    'issue #427: the verdict lived in `reach.label`, which `explain` prints and nothing else does, so a build-only ' +
+      'run never learned that the measurement half and the artifact half had different beliefs about which dial ' +
+      'was turned. A gate whose finding only one other command prints is a finding the normal loop does not have',
+  );
+
+  // The other branch, and it is the one that settles report-against-refusal: a
+  // disagreement where BOTH answers reach every frame the survey posed. The
+  // angle is derived from the tool's own margin rather than picked — `tan θ`
+  // twice the margin puts the two responses far enough apart to disagree with
+  // headroom, while leaving the artifact's field able to select the whole
+  // animation, which at this `scale` needs only 1/16777216 of the drive bound.
+  const PROBE_MARGIN = Number(/inside the (\d+)x margin/.exec(tiedLabel)?.[1] ?? '0');
+  const wideDegrees = (Math.atan(2 * PROBE_MARGIN) * 180) / Math.PI;
+  const wideBuild = axisBuildAt(wideDegrees);
+  const wideGate = gateTurn(wideBuild);
+  const wideSurvey = surveyDeformKeys(skeletonDataFromText(wideBuild.result.skeletonText, wideBuild.result.atlasText));
+  const wideStats = dialStats(wideGate);
+  const wideLine = wideStats.deformDialDisagreed ?? '';
+  const wideReaches = reachesIn(wideLine);
+  // `FromX.value` under `local: false` is `parent.a·x + parent.b·y + parent.worldX`
+  // and the root carries no scale, so one unit of local `x` moves the reading by
+  // `cos θ` exactly. The closed form, against the figure the tool printed.
+  const wideExpected = Math.cos((wideDegrees * Math.PI) / 180);
+  const wideResponse = responsesIn(wideLine)[0] ?? NaN;
+  say(
+    'DW30_A_DISAGREEMENT_BOTH_ANSWERS_REACH_THROUGH_SAYS_OUTSIDE_NONE_RATHER_THAN_GOING_QUIET',
+    wideGate.failures.length === 0 &&
+      // the same class of rig as DW29 — a genuine disagreement, not a tie
+      /The two disagree and both are reported/.test(wideSurvey.keys[0]?.reach.label ?? '') &&
+      Number(wideStats.deformDialsDisagreed) === 1 &&
+      wideStats.deformDialTied === undefined &&
+      // …whose two reaches both cover the whole animation
+      wideReaches.length === 2 &&
+      wideReaches.every((r) => r.lo === 0 && r.hi === wideSurvey.keys[wideSurvey.keys.length - 1].time) &&
+      // ⭐ so nothing was surveyed past the artifact's answer, and the line SAYS
+      // that rather than omitting the comparison
+      /\|outside:none/.test(wideLine) &&
+      outsideIn(wideLine).length === 0 &&
+      // 🔒 anchored to the closed form, not to itself: the printed response is
+      // `cos θ` to the four digits it is printed with
+      Math.abs(wideResponse - wideExpected) <= 1e-3 * wideExpected &&
+      // 🔒 and the two disagreement cases cannot be read off each other: this one
+      // names no time outside and DW29 names two
+      splitOutside.length > 0,
+    wideGate.failures.length === 0
+      ? `the same slider with the parent at ${wideDegrees.toFixed(5)}° — tan θ twice the tool's own ${PROBE_MARGIN}x ` +
+          `margin — still disagrees, and both answers select the whole animation: "${wideLine}". The artifact's ` +
+          `field responds ${wideResponse.toExponential(3)} against the closed form's cos θ = ` +
+          `${wideExpected.toExponential(3)}, which at scale ${AXIS_SCALE} reaches ` +
+          `${(2 ** 24 * wideExpected * AXIS_SCALE).toFixed(1)}s of a ` +
+          `${wideSurvey.keys[wideSurvey.keys.length - 1].time}s animation. ⇒ the disagreement changed no frame, ` +
+          'and that is a reading rather than a silence'
+      : `[${wideGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    'issue #427 asked whether a disagreement is a report or a refusal, and narrowed it to whether the two answers ' +
+      'pose the same frames. This is the rig where they do — refusing it would be a false red on geometry the ' +
+      'runtime poses correctly at every key, so the comparison decides what the line SAYS and never whether it fires',
+  );
+
+  const agreedBuild = axisBuildAt(0);
+  const agreedGate = gateTurn(agreedBuild);
+  const agreedSurvey = surveyDeformKeys(
+    skeletonDataFromText(agreedBuild.result.skeletonText, agreedBuild.result.atlasText),
+  );
+  say(
+    'DW31_AN_AGREED_DIAL_PUTS_NOTHING_EXTRA_ON_THE_STATS_LINE',
+    agreedGate.failures.length === 0 &&
+      // ⚠️ the anti-vacuity anchor: this rig really does carry a slider-applied
+      // deform, so "nothing extra" is a silence about something and not about
+      // nothing
+      agreedGate.stats.deformFrames === 'turn:slider/dial' &&
+      Number(agreedGate.stats.deformKeysMeasured) === agreedSurvey.keys.length &&
+      // …and the two answers agreed, so the line carries no reading about them
+      Object.keys(dialStats(agreedGate)).length === 0 &&
+      // and neither does the `explain` label, which is where DW27 and DW28 read
+      agreedSurvey.keys.every((k) => k.reach.label === 'applied by slider "dial" off knob.x (world)'),
+    agreedGate.failures.length === 0
+      ? `the same \`x\` slider with the dial bone's parent unturned: local x moves the reading and nothing else ` +
+          `does, so the two answers agree and the ${Object.keys(agreedGate.stats).length} stats readings this ` +
+          `build prints include ${Number(agreedGate.stats.deformKeysMeasured)} measured keys in frame ` +
+          `"${agreedGate.stats.deformFrames}" and not one deformDial… reading`
+      : `[${agreedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    '🔒 a gate that only tested the loud case would pass a tool that shouts on every rig. The silence is the half ' +
+      'of this that has to be checked, and it is only a control at all because the rig it is checked on carries ' +
+      'the very thing it must stay quiet about',
+  );
+
+  const tiedStats = dialStats(tiedGate);
+  const tiedLine = tiedStats.deformDialTied ?? '';
+  const tiedStatFigures = responsesIn(tiedLine);
+  say(
+    'DW32_A_TIE_IS_NAMED_A_TIE_ON_THE_STATS_LINE_AND_NEVER_A_DISAGREEMENT',
+    tiedGate.failures.length === 0 &&
+      Number(tiedStats.deformDialsTied) === 1 &&
+      /^dial\|artifact:knob\.x@/.test(tiedLine) &&
+      /\|tied:knob\.y@/.test(tiedLine) &&
+      // a TIE is the claim, so the two figures have to be the same number
+      tiedStatFigures.length === 2 &&
+      tiedStatFigures[0] === tiedStatFigures[1] &&
+      // 🔒 and it carries none of a disagreement's shape: no second belief, no
+      // second reach, no `outside` comparison — there is one belief here
+      tiedStats.deformDialDisagreed === undefined &&
+      tiedStats.deformDialsDisagreed === undefined &&
+      !/\|probe:|reaches:|outside:/.test(tiedLine) &&
+      // 🔒 the mirror, so neither case can pass on the other's signal
+      splitStats.deformDialTied === undefined &&
+      splitStats.deformDialsTied === undefined,
+    tiedGate.failures.length === 0
+      ? `the parent-45° rig's build says "${tiedLine}" — one belief the artifact settled, printed with both tied ` +
+          `figures equal at ${tiedStatFigures[0]?.toExponential(3)}, and with no second reach because there is no ` +
+          'second answer. The parent-90° rig prints the disagreement reading and no tie reading; this one prints ' +
+          'the tie reading and no disagreement reading'
+      : `[${tiedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    '🔒 the probe tied and the skeleton broke the tie: there are not two beliefs in conflict, so there is no reach ' +
+      'to compare and nothing to report as a conflict. A stats line that graded a tie as a mild disagreement would ' +
+      'be reporting legitimate geometry — a `FromX` dial on a parent at 45° — as a fault',
+  );
+
+  // --- the reach is the line the survey actually stops at --------------------
+  //
+  // ⭐ DW26's own mapping — `from` just under the bound, a second of animation
+  // carrying the dial 1e6 past it — on the parent-90° dial, so ONE rig both
+  // disagrees and runs out of drive. That makes the reported interval checkable
+  // against something measured independently of it: the key A39 reports as
+  // `deformKeysUnreachable` has to be the key past the printed reach, and the
+  // interval's own end has to be the closed form of the bound.
+  //
+  // 🔒 And it is the only place the no-double-count rule is held: a key NO field
+  // can select is already named with its ask and its bound, so naming it again
+  // as something the artifact's answer missed would charge one defect to two
+  // reports and inflate the disagreement with a frame it did not cost.
+  const bothBuild = buildTurnRig(turnRow(12), {
+    rootRotation: 90,
+    sliders: [
+      {
+        name: 'dial',
+        animation: 'turn',
+        bone: 'knob',
+        property: 'x',
+        from: LIMIT_FROM,
+        to: 0,
+        scale: LIMIT_SCALE,
+        local: false,
+        additive: true,
+      },
+    ],
+  });
+  const bothGate = gateTurn(bothBuild);
+  const bothSurvey = surveyDeformKeys(skeletonDataFromText(bothBuild.result.skeletonText, bothBuild.result.atlasText));
+  const bothLine = dialStats(bothGate).deformDialDisagreed ?? '';
+  const bothReaches = reachesIn(bothLine);
+  const bothOutside = outsideIn(bothLine);
+  // `value = from + t / scale`, and the bound is on the drive, which at a parent
+  // of 90° is `-value` unit for unit. So the last selectable time is the one whose
+  // value IS the bound — arithmetic off the mapping, never a literal.
+  const bothEnd = (DRIVE_LIMIT - LIMIT_FROM) * LIMIT_SCALE;
+  const bothUnreachable = bothSurvey.keys.filter((k) => k.dial?.unreachable === true);
+  const bothMeasured = bothSurvey.keys.filter((k) => k.dial?.unreachable !== true);
+  say(
+    'DW33_THE_REPORTED_REACH_ENDS_WHERE_THE_SURVEY_STOPS_AND_AN_UNREACHED_KEY_IS_NOT_CHARGED_TWICE',
+    bothGate.failures.length === 0 &&
+      // one rig, both shapes: a disagreement AND a key past the bound
+      Number(bothGate.stats.deformDialsDisagreed) === 1 &&
+      Number(bothGate.stats.deformKeysUnreachable) === bothUnreachable.length &&
+      bothUnreachable.length === 1 &&
+      bothMeasured.length > 0 &&
+      // ⚠️ ONE interval, not two: the artifact's field selects no part of this
+      // animation at all, so its side reads `none` and the only span printed is
+      // the drive's. (The first draft of this case asserted two and went red —
+      // `reaches:none` is a reach as much as an interval is.)
+      bothReaches.length === 1 &&
+      // 🔒 the printed reach ends at the closed form of the bound, to the six
+      // decimals it is printed with
+      Math.abs(bothReaches[0].hi - bothEnd) < 5e-7 &&
+      // 🔒 and that end is the line the survey itself stopped at: every key past
+      // it is one A39 reported unreachable, and every key before it is one it
+      // measured — two derivations of one number, compared
+      bothUnreachable.every((k) => k.time > bothReaches[0].hi) &&
+      bothMeasured.every((k) => k.time <= bothReaches[0].hi) &&
+      // 🔒 the key nobody can select is NOT in `outside` — it is on
+      // `deformUnreachable` already, and the disagreement did not cost it
+      bothOutside.length === bothMeasured.length &&
+      bothUnreachable.every((k) => !bothOutside.includes(k.time)) &&
+      // the artifact's own field selects no part of this animation at all here
+      /\|artifact:knob\.x@[\d.e+-]+\|reaches:none\|/.test(bothLine),
+    bothGate.failures.length === 0
+      ? `DW26's mapping on the parent-90° dial: the drive reaches ${bothReaches[0]?.hi.toFixed(6)}s, which is the ` +
+          `closed form (${DRIVE_LIMIT} − ${LIMIT_FROM}) × ${LIMIT_SCALE} = ${bothEnd.toFixed(6)}s, and the ` +
+          `${bothUnreachable.length} key at t=${bothUnreachable[0]?.time}s is past it and is the one A39 counted ` +
+          `as deformKeysUnreachable. \`outside\` names the ${bothOutside.length} MEASURED key time(s) ` +
+          `${bothOutside.map((t) => `${t}s`).join(', ')} and not that one — "${bothLine}"`
+      : `[${bothGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    'a reported interval nothing is compared against is a number the tool agrees with itself about. This is the ' +
+      'one rig where the reach has an independent witness — the key the survey actually refused to measure — and ' +
+      'it is also where the two reports have to stay disjoint, because one frame counted twice reads as two',
+  );
+
   return bad;
 }
 
@@ -22838,7 +23111,7 @@ function main(): void {
   bad += runContourMeshSuite();
   substantive += 8;
   bad += runDeformWindingSuite();
-  substantive += 24;
+  substantive += 29;
   bad += runDeformTransformSuite();
   substantive += 7;
   bad += runDeformReportSuite();
@@ -23152,7 +23425,7 @@ function main(): void {
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
-      '+ 29 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
+      '+ 34 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
       'angle it gates green, past that angle A39 names the animation, the key, the time and every reversed triangle ' +
       'with both its areas, and the eight it names span only the outermost column pair the formula picks out; the ' +
       'angle A39 first fires at, bisected, agrees with that formula to 0.0001°; a band INVERTED rather than folded ' +
@@ -23212,7 +23485,17 @@ function main(): void {
       'is named rather than printed; and the two shapes an ambiguous discovery has, both reached by turning the ' +
       "dial bone's parent in the emitted skeleton — at 45° local x and local y move a world x EXACTLY equally and " +
       "the artifact breaks the tie, at 90° local x does not move it at all and the two answers are printed side " +
-      'by side, with the figures of each asserted absent from the other), ' +
+      'by side, with the figures of each asserted absent from the other; and then the same finding reaching a ' +
+      'BUILD (issue #427), which is the loop anybody actually runs and which saw none of it, as the span of the ' +
+      'animation each answer can select and the key times only one of them reaches — reported and never refused, ' +
+      'because the driven field is the largest response the probe found and its reach therefore contains the ' +
+      "artifact's, so a disagreement cannot cost the survey a frame, while every frame it does pose was checked " +
+      'against `SliderPose.time` by the runtime itself; both branches held apart, the 90° rig naming two key ' +
+      "times no settable `knob.x` reaches and a rig at tan θ = twice the tool's own margin still disagreeing " +
+      'while both answers select the whole animation, its printed response checked against cos θ; and the two ' +
+      'silences that make those readings mean anything — an AGREED dial adding not one reading to a stats line ' +
+      'that does carry its slider frame, and a TIE printed as a tie with no second reach, since the probe named ' +
+      'no field there and the artifact broke it), ' +
       '+ 12 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
       'from docs/FACE.md §1 byte for byte, the same model past the fold angle still firing A39, the other three ' +
       'closed forms — affine, wave and bend — evaluated against arithmetic derived here, and the five refusals that ' +
