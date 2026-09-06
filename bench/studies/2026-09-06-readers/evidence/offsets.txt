@@ -1,0 +1,47 @@
+# reader probe — offsets
+
+invocation: bun bench/studies/2026-09-06-readers/tools/readerprobe.ts --experiment=offsets
+seed 20260906, 40,000 sweep samples, spine-core 4.3.13
+
+A slider always passes `Slider.offsets`, which is all zeros. A `TransformConstraint` passes its own,
+and the same six readers serve both — so every figure in this study is stated FOR ZERO OFFSETS, and
+this is what the other case costs.
+
+The array is indexed `[ROTATION, X, Y, SCALEX, SCALEY, SHEARY]`.
+
+| cell | zero offsets | offsets = 100 in this cell's slot | Δ |
+| --- | --- | --- | --- |
+| `rotate-world` | 20.000000466584996 | 120.00000046658499 | 100 |
+| `rotate-local` | 20 | 120 | 100 |
+| `x-world` | 29.9999972153876 | 170.9538864972443 | 140.9538892818567 |
+| `x-local` | 30 | 130 | 100 |
+| `y-world` | 39.99999999999997 | 146.00600993592334 | 106.00600993592337 |
+| `y-local` | 40 | 140 | 100 |
+| `scaleX-world` | 1.4999999664391055 | 101.4999999664391 | 100 |
+| `scaleX-local` | 1.5 | 101.5 | 100 |
+| `scaleY-world` | 1.2500000391061434 | 101.25000003910614 | 100 |
+| `scaleY-local` | 1.25 | 101.25 | 100 |
+| `shearY-world` | 12.000002402004 | 112.000002402004 | 100 |
+| `shearY-local` | 12 | 112 | 100 |
+
+  ⚠️ `x` and `y` world are the two whose Δ is not the offset: their term is `offX·a + offY·b +
+     worldX`, so the offset is applied in the BONE's frame and comes out scaled and rotated.
+
+## …and what it does to the BOUNDS, not just the reading
+
+| offsets[ROTATION] / [SCALEX] | `rotate` world span | `scaleX` world floor |
+| --- | --- | --- |
+| 0 | [0.000000, 359.999995] | 0 |
+| 100 | [0.000004, 359.950009] | 100 |
+| -100 | [0.000004, 359.999999] | -100 |
+| 400 | [220.000005, 579.999995] | 400 |
+| -400 | [-219.999995, 139.999995] | -400 |
+
+⇒ **the two scale floors and the `shearY` window depend on the offsets being zero**: the floor IS the
+   offset, and the `shearY` window slides by it.
+
+⇒ **`rotate` world is the one that does not — until the offset leaves the circle.** The wrap runs
+   AFTER the offset is added, so any offset in [−360, 360] is renormalised and the set is `[0, 360)`
+   again, moved only in WHICH bone angle reads what. At ±400 there is nothing left to wrap and the
+   span moves bodily — measured above. A slider can never get there (`Slider.offsets` is zero), so
+   this row is for the reader who reaches these classes through a `TransformConstraint`.

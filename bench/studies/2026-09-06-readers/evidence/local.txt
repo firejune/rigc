@@ -1,0 +1,45 @@
+# reader probe — local
+
+invocation: bun bench/studies/2026-09-06-readers/tools/readerprobe.ts --experiment=local
+seed 20260906, 40,000 sweep samples, spine-core 4.3.13
+
+⛔ `local: true` takes a different branch entirely — the bone's own signed field. This is the
+   negative control for any refusal built on the world bounds: if it were bounded too, a compiler
+   that refused every non-`rotate` slider would look correct.
+
+## `src` is NOT in a transform constraint's `bones`
+
+  constraint order: rotate-world, rotate-local, x-world, x-local, y-world, y-local, scaleX-world, scaleX-local, scaleY-world, scaleY-local, shearY-world, shearY-local
+
+| pose | `rotate` | `x` | `y` | `scaleX` | `scaleY` | `shearY` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `rotation` 720 | 720 | 0 | 0 | 1 | 1 | 0 |
+| `rotation` −500 | -500 | 0 | 0 | 1 | 1 | 0 |
+| `scaleX` −2 | 0 | 0 | 0 | -2 | 1 | 0 |
+| `scaleY` −2 | 0 | 0 | 0 | 1 | -2 | 0 |
+| `shearY` 250 | 0 | 0 | 0 | 1 | 1 | 250 |
+| `x` 1e6 | 0 | 1000000 | 0 | 1 | 1 | 0 |
+| `y` −1e6 | 0 | 0 | -1000000 | 1 | 1 | 0 |
+
+## `src` IS in a transform constraint's `bones`
+
+  constraint order: pin, rotate-world, rotate-local, x-world, x-local, y-world, y-local, scaleX-world, scaleX-local, scaleY-world, scaleY-local, shearY-world, shearY-local
+
+| pose | `rotate` | `x` | `y` | `scaleX` | `scaleY` | `shearY` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `rotation` 720 | 0.000010636435716101843 | 0 | 0 | 1.0000000000000087 | 0.9999999999999918 | -0.0000026591089152816494 |
+| `rotation` −500 | -140.00000641689726 | 0 | 0 | 1.0000000228525652 | 0.9999999771474358 | -4.6175011192417514e-7 |
+| `scaleX` −2 | 179.99999734089107 | 0 | 0 | 2 | -1.0000000000000004 | 1.4210854715202004e-14 |
+| `scaleY` −2 | 0 | 0 | 0 | 1 | -2.000000000000001 | 0 |
+| `shearY` 250 | 0 | 0 | 0 | 1 | -0.9999999850840501 | 70.00000500716138 |
+| `x` 1e6 | 0 | 1000000 | 0 | 1 | 1.0000000000000004 | -0.0000026591089152816494 |
+| `y` −1e6 | 0 | -0.046410206666284856 | -1000000.0000000005 | 1 | 1.0000000000000004 | -0.0000026591089152816494 |
+
+🚨 The second table is not the first one with noise on it.
+   `Slider.update` calls `bone.appliedPose.validateLocalTransform(skeleton)` before reading, and that
+   recomputes the local pose from the world matrix WHEN A CONSTRAINT MOVED IT. The decomposition is
+   `BonePose.set5`: `atan2Deg` for the angles — so `rotation` and `shearY` come back inside
+   (−180, 180] — and `Math.sqrt` for `scaleX`, so a `scaleX` of −2 is read as +2.
+
+⇒ the PRODUCIBLE SET of each local cell is still unbounded (the passthrough case is in it), but
+   "`local: true` reads the number you authored" is true only of a bone nothing else drives.
