@@ -121,8 +121,9 @@ mechanically, every release.
   building that is the larger half of the job.
 - **Full coverage of the Spine 4.3 format.** 1.0 is not *everything works*, it
   is **the boundary is honest and stable**: what rigc emits, it emits
-  correctly, and what it does not, it refuses by name. Coverage is a separate
-  axis and is allowed to keep moving after 1.0.
+  correctly, and what it does not, it refuses by name. Coverage follows from
+  what authors need to express — it is not a direction of its own, and a
+  construct nobody has asked for is not a gap.
 - **Rewriting the dated research notes.** A note stamped with the day it was
   measured is doing its job; making it current would make it a live claim, and
   live claims have to be derived.
