@@ -150,6 +150,41 @@ counted once it declares itself; the head-of-record anchor cannot reach it, and
 an anchor that keyed on the line's own text would go quiet exactly when that line
 went wrong. Both of the ones found stale here were that shape.
 
+**A quoted refusal states the edit that makes it.** None of the above reaches
+one ([#429](https://github.com/firejune/rigc/issues/429)): a refusal has nothing
+at the gutter to anchor on, and no command a README states prints it, because
+making one needs a spec authored to be *refused* while every spec here is
+authored to be correct. So such a block names the edit on the line above its
+fence, and the selftest runs it:
+
+```html
+<!-- refusal: nod motion build --profile spine-html | "wavelength": 320 | "wavelength": 80 -->
+```
+
+Read it as: take `gallery/nod/motion.json`, replace every `"wavelength": 320`
+with `"wavelength": 80`, build that, and the block below has to be one of the
+lines it printed. The grammar holds nothing else — one example of this gallery,
+one of its two spec files, one literal replace-all, and `build` — so there is no
+path in it to point outside the repository and no shell for it to run. A recipe
+whose text is not in the file, or whose edit still builds green, is a failure.
+
+**What announces a refusal**, and it is not a courtesy: a block opening on the
+error head `rigc compile error` or on the gutter verdict `FAIL` is read as a
+quoted refusal whether or not it carries a recipe, and one with no recipe is a
+failure. Both of those are collected from the refusal runs rather than listed —
+the second by subtracting the tags a green run prints — so this sentence is
+checked against them and not the other way round.
+
+Two differences from the blocks above, and both are forced. **Wrap it however
+you like:** rigc prints a refusal on a single line, several hundred characters
+of it, so the check trims your lines and joins them with one space before
+comparing — the wrapping is yours and every character between the words is the
+tool's. **Cut the path, and nothing else:** a message about an input file is
+printed with that file's absolute path after `error:`, which is different on
+every machine, so quote the message from the word after it. Everything else,
+including the repair sentence at the end, is part of the quote — an ellipsis
+where the message went on is what this check exists to catch.
+
 **The character's art scale is per-example and stated.** `rigby.ts` draws at a
 nominal size that its outline weight was chosen for, and `rasterise`'s `scale`
 re-renders rather than resampling. `ride` and `flex` ask for half of nominal

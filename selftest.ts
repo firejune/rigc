@@ -18499,6 +18499,8 @@ interface GalleryBlock {
   lines: string[];
   /** The reason a `<!-- transcript: … -->` comment above the fence gives, if there is one. */
   declared: string | null;
+  /** The body of a `<!-- refusal: … -->` comment above the fence, unparsed, if there is one. */
+  recipe: string | null;
 }
 
 /** The escape hatch, and the lookback that finds it: the line above the fence, blank lines allowed. */
@@ -18572,6 +18574,269 @@ function transcriptHeadAnchored(body: string[], heads: Set<string>): boolean {
   return heads.has(transcriptAnchorField(body[0]));
 }
 
+// ── the refusal half (issue #429) ───────────────────────────────────────────
+//
+// Everything above gates what a README quotes a GREEN run as printing, and
+// #429 measured that it reaches no quoted REFUSAL at all — for two independent
+// reasons. A refusal block carries no gutter tag and no record head to anchor
+// on; and, the harder half, the command that prints it is not a command the
+// README states, because reproducing a refusal needs a spec authored to be
+// refused and the gallery's specs are authored to be correct. So the whole of
+// the surface CLAUDE.md's first doctrine bullet calls the product was outside
+// the gate: the wrap refusal's wording was changed in `src/compile.ts` with
+// `gallery/look/README.md`'s verbatim quote left stale, and the suite ran green.
+//
+// 📌 **A refusal block states the edit that makes it**, on the line before the
+// fence, in a grammar that cannot express anything else:
+//
+//     <!-- refusal: <example> <rig|motion> build [--profile <name>] | <from> | <to> -->
+//
+// ⛔ The bound such a declaration needs is a property of the GRAMMAR here, not a
+// rule policed after the fact. There is no path in it — the file is
+// `gallery/<example>/<rig|motion>.json` and the example has to be one this run
+// discovered. There is no shell in it — the edit is a literal replace-all over
+// that file's text into a temp directory the gate chooses, and the command is
+// `bun cli.ts build` with the gate's own `--out`. A recipe that names anything
+// else does not parse, and not parsing is a FAULT rather than a skip, so the
+// grammar cannot be widened by writing something it does not accept.
+//
+// ⚠️ `build` is the only verb and that is deliberate: every refusal this gallery
+// quotes is a `build` refusal, and a branch no data reaches is not a control —
+// the reason `TC04` was deleted rather than kept. Widen it when a block needs it.
+//
+// ⭐ **The comparison is UNWRAPPED, and that is measured rather than chosen.**
+// rigc prints a refusal on ONE line — the `local: false` message is 739
+// characters of it — and every README wraps it to taste, `look` at about 110
+// columns and `nod` at about 95. So the claim a block makes is not "these lines,
+// in this order", which is what the green half checks; it is "this text, and the
+// tool prints it as one line". The block's lines are trimmed and joined with a
+// single space and the result must EQUAL a line the run printed. Equality and
+// not prefix: an abridged quote is exactly the defect #423 found in
+// `gallery/look`, and this rule's first run found two more of it.
+//
+// ⚠️ One normalisation, and only one: a `CompileError` attributed to an input
+// file is printed with that file's `resolve()`d path in front of it, which is a
+// different string on every machine and in every temp directory. The gate takes
+// off exactly `${patched}: ` — the path of the file the recipe itself just
+// wrote, so it is known rather than pattern-matched — and compares the rest
+// character for character. A README therefore quotes such a message without a
+// path, which is what `gallery/nod`'s wavelength block already did by hand.
+//
+// 🔒 **The recipe is not opt-in, or it would be the bypass.** The vocabulary a
+// refusal announces itself with is DERIVED from these runs the way the gutter
+// vocabulary is derived from the green ones: the error head at column 0
+// (`rigc compile error`), and the gutter tags a refusal run prints that no green
+// run does (which comes out as exactly `FAIL`). A block that opens on either and
+// carries neither a recipe nor a declaration is a fault — it quotes a refusal
+// and says nothing about how to make one.
+//
+// What that still leaves uncovered, stated rather than implied, because every
+// clause of it was measured while writing this:
+//
+//  1. **`gallery/flex`'s three refusals are FRAGMENTS** — the body of a message
+//     with `rigc compile error:` cut off the front — so nothing announces them;
+//     and the edit behind two is not expressible as a literal replace-all (its
+//     four `"generator"` lines are byte-identical, so no `from` selects one)
+//     while the third needs the ART edited. Neither is a wording away.
+//  2. **`docs/` quotes refusals too, and this scan is `gallery/` only.** Swept:
+//     eight fenced refusal quotes live outside the gallery — `README.md`,
+//     `docs/AUTHORING.md`, `docs/FACE.md` ×2, `docs/INGEST.md` ×3,
+//     `docs/RIGGING.md`. **Not one is reachable by this grammar**, and the
+//     reason is the same for all eight: each comes from a spec this repository
+//     does not contain (`detached.rig.json`, a `turn` probe, `hull`,
+//     `pendulum-rig`), and most carry an ellipsis or an elided path besides. So
+//     widening the scan to `docs/` would reach zero of them while trapping all
+//     eight, whose only remedy would then be eight declarations — a bypass with
+//     a badge on. Lifting this needs those probe rigs to live in the tree, which
+//     is the `gallery/refusals/` cost issue #429 flags and does not decide.
+//  3. **A refusal quoted in running prose is out, and not for a reason this
+//     rule could fix.** `docs/AUTHORING.md` quotes the `loop: true` wrap refusal
+//     inside italics mid-sentence, with two backticks the author added around
+//     `"loop": true`, and quotes another in a failure-map table CELL with
+//     elisions and a U+2212 minus. Neither is a fenced block, so `galleryBlocks`
+//     never sees either — they are #415's shape 2, left out there because a
+//     quotation inside prose has nothing to anchor on. ⚠️ Note what that means
+//     for the informal "a quote here may be abridged" convention the guide runs
+//     on: it cannot become this file's `transcript:` declaration, because a
+//     declaration is an escape FROM a check and shape 2 has no check to escape.
+//     Giving the guide the marker first would leave it looking gated and not be.
+//
+// ⚠️ **Cost, measured rather than guessed**, on the same footing as the green
+// half's twenty runs: four recipe runs plus GT05's one deliberately-green probe,
+// and they are cheap because they stop early — 0.29 s for a `CompileError`,
+// which never reaches validation, and 0.56 s for the one that fails at `A39`
+// after the whole gate has run. Each is memoised on the recipe's own text, so
+// GT03's seventy-odd rescans add none.
+//
+// ⛔ And the rule this equality deliberately does NOT relax: markdown the author
+// added inside the fence — the emphasis in case 3 is two characters of it — is a
+// difference from what the tool printed and faults as one. Normalising markdown
+// until things match is the knob that eventually swallows a real drift, so a
+// fenced quote carries the tool's characters and nothing else.
+
+/** `<!-- refusal: … -->` — the recipe that says which edit to a gallery spec prints this block. */
+const REFUSAL_RECIPE = /<!--\s*refusal:\s*(.*?)\s*-->/;
+/** How a refusal announces itself at column 0, so the head itself can be collected from a run. */
+const REFUSAL_ERROR_HEAD = /^(rigc [a-z]+ error):/;
+
+interface RefusalRecipe {
+  example: string;
+  spec: 'rig' | 'motion';
+  profile: string | null;
+  from: string;
+  to: string;
+  /** Everything between the marker's colon and its `-->`, for the cache key and for failure detail. */
+  text: string;
+}
+
+/**
+ * Parse a recipe, or say in one sentence why it is not one.
+ *
+ * Every rejection below is a FAULT at the call site rather than a reason to skip
+ * the block: a marker that does not parse is an author who meant to gate
+ * something, and treating it as absent is the one outcome that would be worse
+ * than not having the marker at all.
+ */
+function parseRefusalRecipe(text: string, examples: Set<string>): RefusalRecipe | string {
+  const fields = text.split('|').map((field) => field.trim());
+  if (fields.length !== 3) {
+    return (
+      'a recipe is three `|`-separated fields — `<example> <rig|motion> build [--profile <name>] | <from> | <to>` — ' +
+      `and this has ${fields.length}`
+    );
+  }
+  const [head, from, to] = fields;
+  const words = head.split(/\s+/).filter((word) => word !== '');
+  const [example, spec, verb, ...rest] = words;
+  if (!examples.has(example ?? '')) {
+    return `names example "${example ?? ''}", which is not one of the ${examples.size} this run found (${[...examples].sort().join(', ')})`;
+  }
+  if (spec !== 'rig' && spec !== 'motion') {
+    return `patches "${spec ?? ''}"; a recipe patches a gallery example's own \`rig\` or \`motion\` and nothing else`;
+  }
+  if (verb !== 'build') {
+    return (
+      `runs \`${verb ?? ''}\`; \`build\` is the only verb, because every refusal this gallery quotes is a build ` +
+      'refusal and a branch no data reaches is not a control'
+    );
+  }
+  let profile: string | null = null;
+  if (rest.length === 2 && rest[0] === '--profile') profile = rest[1];
+  else if (rest.length !== 0) return `carries [${rest.join(' ')}] after the verb; the only thing that may follow is \`--profile <name>\``;
+  if (from === '') return 'has an empty <from>, so it would patch nothing and the run would be the example itself';
+  if (to === '') return 'has an empty <to>; a blank field cannot be told from a typo, so it is refused rather than read as a deletion';
+  return { example, spec, profile, from, to, text };
+}
+
+/** What one recipe printed. */
+interface RefusalRun {
+  /** Every line, right-trimmed only: the gutter is load-bearing for the tag vocabulary. */
+  lines: string[];
+  status: number | null;
+  /** The file the recipe wrote — the one path prefix a message is allowed to carry. */
+  patched: string;
+  /** How many times `from` occurred. Zero is a recipe that patched nothing. */
+  occurrences: number;
+}
+
+/**
+ * Materialise the example into a temp directory with one spec patched, and build it.
+ *
+ * ⚠️ Everything but the patched file is SYMLINKED rather than copied, and that is
+ * not a saving: a rig resolves `images` against its own directory, so a patched
+ * rig sitting anywhere else would stop finding the art and the refusal under
+ * measurement would be replaced by a missing-PNG one. Linking the whole example
+ * beside the patch is what keeps the run the example's own.
+ */
+function runRefusalRecipe(galleryRoot: string, recipe: RefusalRecipe): RefusalRun {
+  const src = join(galleryRoot, recipe.example);
+  const dir = mkdtempSync(join(tmpdir(), `rigc-refusal-${recipe.example}-`));
+  for (const entry of readdirSync(src)) {
+    if (entry === `${recipe.spec}.json`) continue;
+    symlinkSync(join(src, entry), join(dir, entry));
+  }
+  const text = readFileSync(join(src, `${recipe.spec}.json`), 'utf8');
+  const patched = join(dir, `${recipe.spec}.json`);
+  const occurrences = text.split(recipe.from).length - 1;
+  writeFileSync(patched, text.split(recipe.from).join(recipe.to));
+  // A recipe whose `from` is not in the file describes the example itself, and
+  // the caller faults on it — building it would be a green build nobody reads.
+  if (occurrences === 0) return { lines: [], status: null, patched, occurrences };
+  const argv = ['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', join(dir, 'build')];
+  if (recipe.profile !== null) argv.push('--profile', recipe.profile);
+  const result = runCli(argv);
+  return {
+    lines: `${result.stdout}${result.stderr}`.split('\n').map((line) => line.replace(/\s+$/, '')),
+    status: result.status,
+    patched,
+    occurrences,
+  };
+}
+
+/** The block as the one line the tool prints it on: every wrap taken back out. */
+function refusalText(body: string[]): string {
+  return body
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .join(' ');
+}
+
+/**
+ * The printed line closest to what the block claims, and whether it IS it.
+ *
+ * Reporting the divergence point rather than a verdict is the same bar the green
+ * half is held to — "line N of the message reads X and the tool prints Y" is
+ * actionable and "this block is stale" is not.
+ */
+function refusalMatch(body: string[], run: RefusalRun): { line: string; shared: number; equal: boolean } | null {
+  const want = refusalText(body);
+  const prefix = `${run.patched}: `;
+  let best: { line: string; shared: number; equal: boolean } | null = null;
+  for (const printed of run.lines) {
+    const trimmed = printed.trim();
+    if (trimmed === '') continue;
+    const forms = trimmed.includes(prefix) ? [trimmed, trimmed.split(prefix).join('')] : [trimmed];
+    for (const line of forms) {
+      if (line === want) return { line, shared: want.length, equal: true };
+      let shared = 0;
+      while (shared < line.length && shared < want.length && line[shared] === want[shared]) shared++;
+      if (best === null || shared > best.shared) best = { line, shared, equal: false };
+    }
+  }
+  return best;
+}
+
+/**
+ * How a refusal names itself, collected from the refusal runs and never listed.
+ *
+ * ⭐ The tag half is a DIFFERENCE, not a set: a failing build still prints
+ * `MESH`, `PASS` and `SKIP` at the gutter, and anchoring on those would drag
+ * every ordinary block into the refusal path. What names a refusal is a tag the
+ * green runs never print, which on this tree comes out as exactly `FAIL` — and
+ * comes out that way by subtraction rather than by anybody writing it down.
+ */
+function refusalVocabulary(runs: RefusalRun[], green: Set<string>): { heads: Set<string>; tags: Set<string> } {
+  const heads = new Set<string>();
+  const tags = new Set<string>();
+  for (const run of runs) {
+    for (const line of run.lines) {
+      const head = REFUSAL_ERROR_HEAD.exec(line.trim());
+      if (head !== null) heads.add(head[1]);
+      const tag = TRANSCRIPT_GUTTER.exec(line);
+      if (tag !== null && !green.has(tag[1])) tags.add(tag[1]);
+    }
+  }
+  return { heads, tags };
+}
+
+/** Does this block open on something only a refusal prints? */
+function refusalAnchored(body: string[], vocabulary: { heads: Set<string>; tags: Set<string> }): boolean {
+  const first = body[0].trim();
+  for (const head of vocabulary.heads) if (first.startsWith(`${head}:`)) return true;
+  const tag = TRANSCRIPT_BLOCK_TAG.exec(first);
+  return tag !== null && vocabulary.tags.has(tag[1]);
+}
+
 function galleryBlocks(text: string): GalleryBlock[] {
   const raw = text.split('\n');
   const out: GalleryBlock[] = [];
@@ -18583,15 +18848,27 @@ function galleryBlocks(text: string): GalleryBlock[] {
       if (open === null) {
         fence = marker[1][0];
         let declared: string | null = null;
+        let recipe: string | null = null;
+        // ⚠️ A marker does not stop the lookback, a line of prose does. The two
+        // markers can be stacked — and GT03 stacks them on purpose, planting a
+        // `transcript:` declaration above a block that already carries a
+        // `refusal:` recipe to show that declaring a reproducing block away is
+        // still a fault. Breaking on the first marker found would silently take
+        // the recipe off instead, and the plant would pass by going quiet.
         for (let k = i - 1; k >= 0 && k >= i - TRANSCRIPT_DECLARATION_LOOKBACK; k--) {
           const found = TRANSCRIPT_DECLARATION.exec(raw[k]);
           if (found !== null) {
-            declared = found[1];
-            break;
+            if (declared === null) declared = found[1];
+            continue;
+          }
+          const cooked = REFUSAL_RECIPE.exec(raw[k]);
+          if (cooked !== null) {
+            if (recipe === null) recipe = cooked[1];
+            continue;
           }
           if (raw[k].trim() !== '') break;
         }
-        open = { line: i + 1, info: marker[2].trim(), lines: [], declared };
+        open = { line: i + 1, info: marker[2].trim(), lines: [], declared, recipe };
       } else if (marker[1][0] === fence) {
         out.push(open);
         open = null;
@@ -18666,12 +18943,13 @@ function transcriptRunsFor(example: string, readme: string, outDir: string): Tra
 
 /** What one README's transcript scan found. */
 interface TranscriptScan {
-  /** Blocks either anchor rule recognised as transcripts, plus the declared ones. */
+  /** Blocks any anchor rule recognised as transcripts, plus the declared and the recipe-carrying ones. */
   found: number;
-  /** Of those, how many each anchor rule reached — reported so neither can go quiet. */
+  /** Of those, how many each rule reached — reported so none of the three can go quiet. */
   byTag: number;
   byHead: number;
-  verified: Array<{ where: string; command: string; lines: number; anchor: 'tag' | 'head' }>;
+  byRecipe: number;
+  verified: Array<{ where: string; command: string; lines: number; anchor: 'tag' | 'head' | 'recipe' }>;
   declared: Array<{ where: string; reason: string }>;
   faults: string[];
 }
@@ -18745,33 +19023,111 @@ function nearestPrintedLine(want: string, runs: TranscriptRun[]): { command: str
   return best === null ? null : { command: best.command, line: best.line };
 }
 
+/** Everything the refusal half of the scan needs, so the plants can reuse one set of runs. */
+interface RefusalContext {
+  /** The examples a recipe may name — the whole of what its grammar can address. */
+  examples: Set<string>;
+  /** What a refusal announces itself with, derived from the runs rather than listed. */
+  vocabulary: { heads: Set<string>; tags: Set<string> };
+  /** Run a recipe. Memoised by the caller: GT03 rescans the same READMEs 70-odd times. */
+  run: (recipe: RefusalRecipe) => RefusalRun;
+}
+
 function scanGalleryTranscripts(
   where: string,
   readme: string,
   runs: TranscriptRun[],
   vocabulary: Set<string>,
   heads: Set<string>,
+  refusal: RefusalContext,
 ): TranscriptScan {
-  const scan: TranscriptScan = { found: 0, byTag: 0, byHead: 0, verified: [], declared: [], faults: [] };
+  const scan: TranscriptScan = { found: 0, byTag: 0, byHead: 0, byRecipe: 0, verified: [], declared: [], faults: [] };
   for (const block of galleryBlocks(readme)) {
     if (block.info !== '') continue; // ```json / ```sh are spec and invocation, not output
     const body = transcriptBody(block.lines);
     if (body.length === 0) continue;
     const tag = TRANSCRIPT_BLOCK_TAG.exec(body[0]);
-    // Either anchor is how a block gets picked up WITHOUT anybody saying so, and
-    // a declaration is somebody saying so — a block that calls itself a
-    // transcript is one, whatever it opens with. Because "declared and it
-    // reproduces" is a fault, saying so is not free either.
-    const byTag = tag !== null && vocabulary.has(tag[1]);
-    const byHead = !byTag && transcriptHeadAnchored(body, heads);
-    const anchored = byTag || byHead;
-    if (!anchored && block.declared === null) continue;
+    // Any anchor is how a block gets picked up WITHOUT anybody saying so, and a
+    // declaration is somebody saying so — a block that calls itself a transcript
+    // is one, whatever it opens with. Because "declared and it reproduces" is a
+    // fault, saying so is not free either.
+    const byRecipe = block.recipe !== null;
+    const byTag = !byRecipe && tag !== null && vocabulary.has(tag[1]);
+    const byHead = !byRecipe && !byTag && transcriptHeadAnchored(body, heads);
+    // 🔒 And the trap: a block that opens on something only a refusal prints is
+    // IN whether or not anybody said so. That is the clause that stops the
+    // recipe being opt-in — having no recipe, such a block has nothing to be
+    // compared against, so it has to say why it has none.
+    const trapped = !byRecipe && refusalAnchored(body, refusal.vocabulary);
+    if (!byTag && !byHead && !byRecipe && !trapped && block.declared === null) continue;
     scan.found++;
     if (byTag) scan.byTag++;
     if (byHead) scan.byHead++;
+    if (byRecipe) scan.byRecipe++;
     const at = `${where}:${block.line}`;
-    const best = bestTranscriptWindow(body, runs);
-    const reproduces = best !== null && best.shared === body.length;
+
+    // What the tool says, by whichever route this block claims. Each branch sets
+    // the same three things, so the declaration rules below stay one chain.
+    let command = '';
+    let reproduces = false;
+    let mismatch = '';
+    if (byRecipe && block.recipe !== null) {
+      const parsed = parseRefusalRecipe(block.recipe, refusal.examples);
+      if (typeof parsed === 'string') {
+        scan.faults.push(`${at}  carries a \`refusal:\` recipe that does not parse — it ${parsed}`);
+        continue;
+      }
+      command = `build gallery/${parsed.example} with ${parsed.spec}.json's "${parsed.from}" -> "${parsed.to}"` +
+        (parsed.profile === null ? '' : ` --profile ${parsed.profile}`);
+      const run = refusal.run(parsed);
+      if (run.occurrences === 0) {
+        scan.faults.push(
+          `${at}  recipe replaces "${parsed.from}" in gallery/${parsed.example}/${parsed.spec}.json, and that text ` +
+            'is not in the file — so the run it names is the example itself, unedited',
+        );
+        continue;
+      }
+      if (run.status === 0) {
+        scan.faults.push(
+          `${at}  recipe's \`${command}\` replaced ${run.occurrences} occurrence(s) and exited 0: it quotes a ` +
+            'refusal, and the edit it names no longer refuses anything',
+        );
+        continue;
+      }
+      const want = refusalText(body);
+      const found = refusalMatch(body, run);
+      reproduces = found !== null && found.equal;
+      mismatch =
+        found === null || found.shared === 0
+          ? `${at}  quotes ${want.length} character(s) of refusal that its own recipe's run does not print, from the ` +
+            `first character: "${want.slice(0, 100)}"`
+          : `${at}  agrees with its recipe's run for ${found.shared} of ${want.length} character(s), and then the ` +
+            `README reads "${want.slice(found.shared, found.shared + 70)}" where the tool prints ` +
+            `"${found.line.slice(found.shared, found.shared + 70)}"`;
+    } else if (trapped) {
+      command = 'no recipe';
+      mismatch =
+        `${at}  opens on something only a refusal prints ("${body[0].trim().slice(0, 70)}") and says nothing about ` +
+        'how to make one: give it a `<!-- refusal: <example> <rig|motion> build | <from> | <to> -->` recipe, or ' +
+        '`<!-- transcript: <why> -->` if no edit to a gallery spec produces it';
+    } else {
+      const best = bestTranscriptWindow(body, runs);
+      reproduces = best !== null && best.shared === body.length;
+      command = best?.command ?? '';
+      if (best === null || best.shared === 0) {
+        const near = nearestPrintedLine(body[0].trimStart(), runs);
+        mismatch =
+          `${at}  quotes ${body.length} line(s) of ` +
+          `${byTag && tag !== null ? `\`${tag[1]}\`` : byHead ? `\`${transcriptAnchorField(body[0])}\`` : 'tool'} ` +
+          `output whose first line no command this README states prints: "${body[0].trim()}"` +
+          (near === null ? '' : `; the closest \`${near.command}\` prints is "${near.line}"`);
+      } else if (!reproduces) {
+        mismatch =
+          `${at}  line ${best.shared + 1} of ${body.length} reads "${body[best.shared].trim()}" and ` +
+          `\`${best.command}\` prints "${best.window[best.shared].trim()}"`;
+      }
+    }
+
     if (block.declared !== null) {
       if (block.declared.length < TRANSCRIPT_REASON_MIN) {
         scan.faults.push(
@@ -18780,27 +19136,21 @@ function scanGalleryTranscripts(
         );
       } else if (reproduces) {
         scan.faults.push(
-          `${at}  is declared unreproducible ("${block.declared}") and \`${best.command}\` prints it verbatim — ` +
+          `${at}  is declared unreproducible ("${block.declared}") and \`${command}\` prints it verbatim — ` +
             'a declaration is the escape for a block the tool cannot print, not a way to stop checking one it can',
         );
       } else {
         scan.declared.push({ where: at, reason: block.declared });
       }
-    } else if (reproduces && best !== null) {
-      scan.verified.push({ where: at, command: best.command, lines: body.length, anchor: byTag ? 'tag' : 'head' });
-    } else if (best === null || best.shared === 0) {
-      const near = nearestPrintedLine(body[0].trimStart(), runs);
-      scan.faults.push(
-        `${at}  quotes ${body.length} line(s) of ` +
-          `${byTag && tag !== null ? `\`${tag[1]}\`` : byHead ? `\`${transcriptAnchorField(body[0])}\`` : 'tool'} ` +
-          `output whose first line no command this README states prints: "${body[0].trim()}"` +
-          (near === null ? '' : `; the closest \`${near.command}\` prints is "${near.line}"`),
-      );
+    } else if (reproduces) {
+      scan.verified.push({
+        where: at,
+        command,
+        lines: body.length,
+        anchor: byRecipe ? 'recipe' : byTag ? 'tag' : 'head',
+      });
     } else {
-      scan.faults.push(
-        `${at}  line ${best.shared + 1} of ${body.length} reads "${body[best.shared].trim()}" and ` +
-          `\`${best.command}\` prints "${best.window[best.shared].trim()}"`,
-      );
+      scan.faults.push(mismatch);
     }
   }
   return scan;
@@ -18961,6 +19311,38 @@ function runGalleryTranscriptSuite(): number {
     headsBy.set(example, heads);
   }
 
+  // --- the refusal runs (issue #429) ----------------------------------------
+  //
+  // One subprocess per DISTINCT recipe, memoised on the recipe's own text: GT03
+  // rescans each README once per plant, and re-running a build for every one of
+  // those would be seventy builds instead of the four the gallery asks for.
+  // ⚠️ The cache is the reason a recipe's identity is its text — two blocks that
+  // state the same edit are the same run, and two that differ by one character
+  // are not.
+  const recipeNames = new Set(examples);
+  const recipeRuns = new Map<string, RefusalRun>();
+  const runRecipe = (recipe: RefusalRecipe): RefusalRun => {
+    const cached = recipeRuns.get(recipe.text);
+    if (cached !== undefined) return cached;
+    const fresh = runRefusalRecipe(galleryRoot, recipe);
+    recipeRuns.set(recipe.text, fresh);
+    return fresh;
+  };
+  // The vocabulary has to exist before the first scan, because the trap that
+  // makes the recipe non-optional reads it — so every recipe in the tree is
+  // parsed and run here, ahead of any block being looked at. A recipe that does
+  // not parse is not skipped: the scan below faults on it by name, and this pass
+  // simply has nothing to run for it.
+  for (const readme of readmes.values()) {
+    for (const block of galleryBlocks(readme)) {
+      if (block.info !== '' || block.recipe === null) continue;
+      const parsed = parseRefusalRecipe(block.recipe, recipeNames);
+      if (typeof parsed !== 'string') runRecipe(parsed);
+    }
+  }
+  const refusalVocab = refusalVocabulary([...recipeRuns.values()], vocabulary);
+  const refusal: RefusalContext = { examples: recipeNames, vocabulary: refusalVocab, run: runRecipe };
+
   const scans = new Map<string, TranscriptScan>();
   for (const [example, runs] of pools) {
     scans.set(
@@ -18971,12 +19353,14 @@ function runGalleryTranscriptSuite(): number {
         runs,
         vocabulary,
         headsBy.get(example) ?? new Set<string>(),
+        refusal,
       ),
     );
   }
   const found = [...scans.values()].reduce((n, scan) => n + scan.found, 0);
   const byTag = [...scans.values()].reduce((n, scan) => n + scan.byTag, 0);
   const byHead = [...scans.values()].reduce((n, scan) => n + scan.byHead, 0);
+  const byRecipe = [...scans.values()].reduce((n, scan) => n + scan.byRecipe, 0);
   const verified = [...scans.values()].flatMap((scan) => scan.verified);
   const declared = [...scans.values()].flatMap((scan) => scan.declared);
   const faults = [...scans.values()].flatMap((scan) => scan.faults);
@@ -18991,8 +19375,9 @@ function runGalleryTranscriptSuite(): number {
   // tool renames, a record head it restructures — and each of those makes GT02
   // below pass while reading nothing. A scanner that silently matched no block
   // would report a clean tree, which is the one failure a gate like this cannot
-  // afford. ⭐ The two anchor rules are floored SEPARATELY, because a floor on
-  // their sum would let one of them go to zero while the other grew.
+  // afford. ⭐ The anchor rules are floored SEPARATELY, because a floor on their
+  // sum would let one of them go to zero while the others grew — and issue #429
+  // added a third population and two more derived sets to keep that way up.
   // ⚠️ `headCount >= 100` below is a SMOKE floor, chosen against an observed 281
   // and not a measured bound. Nobody has established how far it could honestly
   // fall on a smaller gallery; it is there to catch the head derivation returning
@@ -19008,10 +19393,14 @@ function runGalleryTranscriptSuite(): number {
       runCount >= 14 &&
       vocabulary.size >= 5 &&
       headCount >= 100 &&
-      found >= 20 &&
+      found >= 25 &&
       byTag >= 14 &&
       byHead >= 6 &&
-      verified.length >= 14 &&
+      byRecipe >= 4 &&
+      recipeRuns.size >= 4 &&
+      refusalVocab.heads.size >= 1 &&
+      refusalVocab.tags.size >= 1 &&
+      verified.length >= 18 &&
       covered.length >= 6,
     unstated.length > 0
       ? `these examples' READMEs no longer state a \`bun cli.ts build --rig gallery/<name>/rig.json\` line, so ` +
@@ -19020,14 +19409,21 @@ function runGalleryTranscriptSuite(): number {
         ? `a command a README states did not run: ${broken.join('; ')}`
         : `${examples.length} example(s), ${runCount} stated command run(s), gutter vocabulary ` +
           `{${[...vocabulary].sort().join(' ')}} and ${headCount} record head(s) the runs print; ` +
-          `${found} quoted transcript(s) found — ${byTag} by a gutter tag, ${byHead} by a record head — ` +
+          `${recipeRuns.size} refusal recipe run(s), which name themselves ` +
+          `{${[...refusalVocab.heads].sort().join(' ')}} at column 0 and ` +
+          `{${[...refusalVocab.tags].sort().join(' ')}} at the gutter; ` +
+          `${found} quoted transcript(s) found — ${byTag} by a gutter tag, ${byHead} by a record head, ` +
+          `${byRecipe} by a refusal recipe — ` +
           `${verified.length} reproduced verbatim across ${covered.length} example(s) (${covered.join(', ')}), ` +
           `${declared.length} declared unreproducible ` +
           `(${declared.map((d) => `${d.where} — ${d.reason}`).join('; ') || 'none'})`,
-    'every end of this can come back empty: one anchor is a tag the tool prints and the other is a record head ' +
-      'it prints, so a renamed tag or a restructured section takes every block anchored on it out of the scan at ' +
-      'once, and the pool is the commands a README states, so a rewritten quickstart takes the whole example out. ' +
-      'The floors — one per anchor rule, not one on their sum — are what make any of that loud instead of silent',
+    'every end of this can come back empty: one anchor is a tag the tool prints, one is a record head it prints ' +
+      'and one is an edit to a gallery spec, so a renamed tag, a restructured section or a spec that stops ' +
+      'refusing takes every block anchored on it out of the scan at once, and the pool is the commands a README ' +
+      'states, so a rewritten quickstart takes the whole example out. The refusal vocabulary is derived from the ' +
+      'recipe runs the same way, and it is floored on its two halves separately because the tag half is a ' +
+      'SUBTRACTION from the green one — if a green run started printing `FAIL` the subtraction would empty and ' +
+      'the trap would stop trapping. The floors are one per rule, never one on their sum',
   );
 
   // --- GT02: the blocks themselves ------------------------------------------
@@ -19035,15 +19431,22 @@ function runGalleryTranscriptSuite(): number {
     'GT02_EVERY_QUOTED_TRANSCRIPT_IS_A_RUN_OF_THE_COMMAND_ITS_README_STATES',
     faults.length === 0,
     faults.length === 0
-      ? `${verified.length} block(s) — ${verified.reduce((n, v) => n + v.lines, 0)} line(s) — each a contiguous run ` +
-        `of the output of the command it sits beside (${[
-          ...new Set(verified.map((v) => `\`${v.command}\``)),
-        ].join(', ')}), and ${declared.length} declared block(s) that none of those commands prints, as declared`
+      ? `${verified.filter((v) => v.anchor !== 'recipe').length} block(s) — ` +
+        `${verified.filter((v) => v.anchor !== 'recipe').reduce((n, v) => n + v.lines, 0)} line(s) — each a ` +
+        'contiguous run of the output of the command it sits beside (' +
+        `${[...new Set(verified.filter((v) => v.anchor !== 'recipe').map((v) => `\`${v.command}\``))].join(', ')}); ` +
+        `${verified.filter((v) => v.anchor === 'recipe').length} refusal block(s) — ` +
+        `${verified.filter((v) => v.anchor === 'recipe').reduce((n, v) => n + v.lines, 0)} wrapped line(s) — each ` +
+        'unwrapped to exactly one line its own recipe\'s run prints (' +
+        `${verified.filter((v) => v.anchor === 'recipe').map((v) => v.where.replace('gallery/', '')).join(', ')}); ` +
+        `and ${declared.length} declared block(s) that none of those runs prints, as declared`
       : `${faults.length} quoted transcript(s) the tool no longer prints:\n          ${faults.join('\n          ')}`,
     'the positive half is load-bearing: a check that only reported failures would pass a tool that had stopped ' +
       'printing anything at all, so the line count and the commands are named. #412 added one line and one ' +
       'suffix to a depth-mesh report and #407 regenerated the same README from a worktree that predated it — ' +
-      'twice stale in one night, twice green',
+      'twice stale in one night, twice green. #429 added the refusal half and its first run found three more: a ' +
+      'FAIL verdict whose triangle indices had drifted, a message abridged at an ellipsis, and one carrying a ' +
+      "machine's own temp path",
   );
 
   // --- GT03: the scanner against the ways a transcript goes stale -----------
@@ -19060,45 +19463,61 @@ function runGalleryTranscriptSuite(): number {
   let planted = 0;
   let silenced = 0;
   let unplantable = 0;
+  let unrecipe = 0;
   for (const [example, runs] of pools) {
     const readme = readmes.get(example) ?? '';
     const heads = headsBy.get(example) ?? new Set<string>();
-    const verifiedHere = new Set((scans.get(example)?.verified ?? []).map((v) => v.where));
+    const verifiedHere = new Map(
+      (scans.get(example)?.verified ?? []).map((v) => [v.where, v.anchor] as const),
+    );
+    const rescan = (text: string): TranscriptScan =>
+      scanGalleryTranscripts(`gallery/${example}/README.md`, text, runs, vocabulary, heads, refusal);
     for (const block of galleryBlocks(readme)) {
-      if (!verifiedHere.has(`gallery/${example}/README.md:${block.line}`)) continue;
+      const anchor = verifiedHere.get(`gallery/${example}/README.md:${block.line}`);
+      if (anchor === undefined) continue;
       for (const { name, plant } of TRANSCRIPT_PLANTS) {
         const edited = plant(block.lines);
         if (edited === null) continue;
         planted++;
-        const after = scanGalleryTranscripts(
-          `gallery/${example}/README.md`,
-          plantIntoReadme(readme, block, edited),
-          runs,
-          vocabulary,
-          heads,
-        );
-        if (after.faults.length === 0) misses.push(`gallery/${example}/README.md:${block.line}: ${name} — not faulted`);
+        if (rescan(plantIntoReadme(readme, block, edited)).faults.length === 0) {
+          misses.push(`gallery/${example}/README.md:${block.line}: ${name} — not faulted`);
+        }
       }
       // The declaration is not a way to switch the gate off.
       const declaredOnly = plantIntoReadme(readme, block, block.lines);
       const declaredLines = declaredOnly.split('\n');
       declaredLines.splice(block.line - 1, 0, '<!-- transcript: lifted out of a run that does not print it -->');
       planted++;
-      if (
-        scanGalleryTranscripts(`gallery/${example}/README.md`, declaredLines.join('\n'), runs, vocabulary, heads)
-          .faults.length === 0
-      ) {
+      if (rescan(declaredLines.join('\n')).faults.length === 0) {
         misses.push(`gallery/${example}/README.md:${block.line}: declared while still reproducing — not faulted`);
       }
       // A marker with nothing after the colon is not a declaration.
       const emptyLines = declaredOnly.split('\n');
       emptyLines.splice(block.line - 1, 0, '<!-- transcript: -->');
       planted++;
-      if (
-        scanGalleryTranscripts(`gallery/${example}/README.md`, emptyLines.join('\n'), runs, vocabulary, heads)
-          .faults.length === 0
-      ) {
+      if (rescan(emptyLines.join('\n')).faults.length === 0) {
         misses.push(`gallery/${example}/README.md:${block.line}: declared with no reason — not faulted`);
+      }
+
+      // 🚨 The last plant differs by anchor rule, and the difference is the whole
+      // reason issue #429 exists. Take the anchor off a TAG- or HEAD-anchored
+      // block and it goes quiet — no fault, one fewer block, only GT01's floor
+      // between that and a clean tree. Take the RECIPE off a refusal block and it
+      // must NOT go quiet: the trap reads it as a refusal quote with nothing
+      // behind it and faults. That is the clause that keeps the recipe from being
+      // an opt-in, and it is planted on every refusal block rather than argued.
+      if (anchor === 'recipe') {
+        const withoutRecipe = readme
+          .split('\n')
+          .filter((line, i) => !(i < block.line - 1 && i >= block.line - 1 - TRANSCRIPT_DECLARATION_LOOKBACK && REFUSAL_RECIPE.test(line)))
+          .join('\n');
+        planted++;
+        if (withoutRecipe === readme) {
+          unrecipe++;
+        } else if (rescan(withoutRecipe).faults.length === 0) {
+          misses.push(`gallery/${example}/README.md:${block.line}: its recipe removed — not faulted by the trap`);
+        }
+        continue;
       }
       // And the silent one: no anchor, no candidate, no fault — only the floor.
       const unanchored = transcriptWithoutItsAnchor(block.lines);
@@ -19106,13 +19525,7 @@ function runGalleryTranscriptSuite(): number {
         unplantable++;
         continue;
       }
-      const after = scanGalleryTranscripts(
-        `gallery/${example}/README.md`,
-        plantIntoReadme(readme, block, unanchored),
-        runs,
-        vocabulary,
-        heads,
-      );
+      const after = rescan(plantIntoReadme(readme, block, unanchored));
       const scan = scans.get(example);
       if (scan === undefined || after.found !== scan.found - 1 || after.faults.length !== 0) silenced++;
     }
@@ -19149,6 +19562,7 @@ function runGalleryTranscriptSuite(): number {
         runs,
         new Set<string>(),
         transcriptRecordHeads(runs[0].lines),
+        refusal,
       ),
     };
   };
@@ -19171,29 +19585,35 @@ function runGalleryTranscriptSuite(): number {
   say(
     'GT03_THE_SCANNER_FAULTS_EVERY_WAY_A_QUOTED_TRANSCRIPT_GOES_STALE',
     misses.length === 0 &&
-      planted >= 60 &&
+      planted >= 78 &&
       silenced === 0 &&
       unplantable === 0 &&
+      unrecipe === 0 &&
       probes.length === 0 &&
       verified.length > 0,
-    misses.length === 0 && unplantable === 0 && probes.length === 0
+    misses.length === 0 && unplantable === 0 && unrecipe === 0 && probes.length === 0
       ? `${planted} planted edit(s) over the ${verified.length} verified block(s) — a figure bumped, an interior ` +
         'line dropped, a suffix appended, a reproducing block declared away, and a declaration with no reason — ' +
         'each faulted; and taking the anchor off a first line — the gutter tag on ' +
         `${verified.filter((v) => v.anchor === 'tag').length} of them, the record head's own name on ` +
-        `${verified.filter((v) => v.anchor === 'head').length} — faulted NOTHING on all ${verified.length}, ` +
-        `dropping each silently out of the scan, which is what GT01's floors are for; and the guard that says ` +
-        'every one of them actually RECEIVED that plant is itself shown to fire, on a synthetic record this ' +
-        'gallery cannot produce — one named `12.5`, with no letter in it to take off'
+        `${verified.filter((v) => v.anchor === 'head').length} — faulted NOTHING on those ` +
+        `${verified.filter((v) => v.anchor !== 'recipe').length}, dropping each silently out of the scan, which is ` +
+        "what GT01's floors are for; while taking the RECIPE off each of the " +
+        `${verified.filter((v) => v.anchor === 'recipe').length} refusal block(s) faulted every time, which is the ` +
+        'opposite behaviour and the reason the recipe is not an opt-in; and the guard that says every one of them ' +
+        'actually RECEIVED that plant is itself shown to fire, on a synthetic record this gallery cannot produce — ' +
+        'one named `12.5`, with no letter in it to take off'
       : `${misses.length} of ${planted} planted edit(s) did not fault` +
         (silenced > 0 ? ` (and ${silenced} unanchored block(s) did not drop out cleanly)` : '') +
         (unplantable > 0 ? ` (and ${unplantable} block(s) had no anchor letter to take off)` : '') +
+        (unrecipe > 0 ? ` (and ${unrecipe} refusal block(s) had no recipe line the plant could find)` : '') +
         `:\n          ${[...misses, ...probes].join('\n          ')}`,
     'a scanner is a vocabulary of shapes and a shape that stops matching goes silent, not red. #412 was a line ' +
       'and a suffix; a figure moving is the same defect a third way, and the declaration has to be refused on a ' +
       'block that reproduces or it becomes the bypass. #422 added a second anchor rule and this is what holds it ' +
       'to the same bar: the new rule has to go quiet in exactly the way the old one does, never louder and never ' +
-      'more forgiving',
+      'more forgiving. #429 added a third that must do the opposite — a refusal quote whose recipe is gone is ' +
+      'still recognisably a refusal quote, so the trap has to catch it rather than let it drop',
   );
 
   // --- GT04: the vocabulary the gallery index NAMES, against the derived one --
@@ -19256,6 +19676,182 @@ function runGalleryTranscriptSuite(): number {
       'the paragraph that explains this gate would otherwise be the next thing it fails to cover: the scanner ' +
         'collects the vocabulary and the prose spells it out, so a new report tag teaches the code and leaves ' +
         'the documentation wrong. That is #360 exactly, one surface further in',
+    );
+  }
+
+  // --- GT05: the refusal recipe's own bounds (issue #429) --------------------
+  //
+  // GT02 says the refusal blocks reproduce and GT03 says every way of breaking
+  // one faults. This is the other half of #429's bar: that the new path did not
+  // reach anything it has no business reaching, and that each of the ways the
+  // grammar refuses a recipe actually fires. Four probes, every one of them
+  // two-sided, because a refusal-only check passes a parser that refuses
+  // everything — which is the shape `ERT05` was written for.
+  {
+    const recipeBlocks = verified.filter((v) => v.anchor === 'recipe');
+    const statedAt = new Set(verified.filter((v) => v.anchor !== 'recipe').map((v) => v.where));
+
+    // ① Not dragged in. No block a STATED command already reproduces may look
+    // like a refusal to the trap, and none may carry a recipe: the refusal path
+    // is a second population, not a wider net over the first one.
+    const dragged: string[] = [];
+    let notDragged = 0;
+    for (const [example, readme] of readmes) {
+      for (const block of galleryBlocks(readme)) {
+        if (block.info !== '') continue;
+        const body = transcriptBody(block.lines);
+        if (body.length === 0) continue;
+        const at = `gallery/${example}/README.md:${block.line}`;
+        if (!statedAt.has(at)) continue;
+        notDragged++;
+        if (refusalAnchored(body, refusalVocab)) dragged.push(`${at} reads as a refusal to the trap`);
+        if (block.recipe !== null) dragged.push(`${at} reproduces from a stated command and carries a recipe too`);
+      }
+    }
+
+    // ② The grammar. One well-formed recipe has to parse — otherwise every
+    // rejection below is satisfied by a parser that rejects everything — and
+    // each way of stepping outside the bound has to come back as a sentence.
+    const anExample = [...recipeNames].sort()[0] ?? '';
+    const wellFormed = parseRefusalRecipe(`${anExample} rig build --profile spine-html | a | b`, recipeNames);
+    const malformed: Array<[string, string]> = [
+      ['two fields instead of three', `${anExample} rig build | a`],
+      ['an example this run never found', `no-such-example rig build | a | b`],
+      ['a file that is neither spec', `${anExample} atlas build | a | b`],
+      ['a verb that is not build', `${anExample} rig explain | a | b`],
+      ['an argument the bound does not allow', `${anExample} rig build --out /tmp/anywhere | a | b`],
+      ['nothing to replace', `${anExample} rig build |  | b`],
+      ['nothing to replace it with', `${anExample} rig build | a |  `],
+    ];
+    const grammar = [
+      ...(typeof wellFormed === 'string'
+        ? [`a well-formed recipe did not parse: it ${wellFormed}`]
+        : []),
+      ...malformed
+        .filter(([, text]) => typeof parseRefusalRecipe(text, recipeNames) !== 'string')
+        .map(([why]) => `a recipe naming ${why} parsed anyway`),
+    ];
+
+    // ③ The two ways a recipe can be well-formed and still say nothing. Both go
+    // through the whole scan rather than through the parser, because both are
+    // properties of the RUN: an edit that is not in the file, and an edit that
+    // leaves the build green. The second costs one green build and there is no
+    // way to see the clause fire without paying it.
+    const probeScan = (recipeText: string): TranscriptScan =>
+      scanGalleryTranscripts(
+        'probe',
+        `<!-- refusal: ${recipeText} -->\n\`\`\`\nrigc compile error: a line no run prints\n\`\`\``,
+        [],
+        vocabulary,
+        new Set<string>(),
+        refusal,
+      );
+    const absent = probeScan(`${anExample} rig build | a string no rig spec in this gallery contains | x`);
+    const green = probeScan(`${anExample} rig build | "name" | "name"`);
+    const runs = [
+      ...(absent.faults.some((f) => f.includes('is not in the file'))
+        ? []
+        : ['a recipe whose `from` is not in the spec was not faulted']),
+      ...(green.faults.some((f) => f.includes('exited 0'))
+        ? []
+        : ['a recipe whose edit leaves the build green was not faulted']),
+    ];
+
+    // ④ The one normalisation is not a wildcard. The gate takes the patched
+    // file's own path off a message; it must not take any other path off, or the
+    // comparison would quietly stop reading the part of a message that names
+    // what was wrong.
+    const foreign: string[] = [];
+    let elisionProbes = 0;
+    for (const [example, readme] of readmes) {
+      for (const block of galleryBlocks(readme)) {
+        if (block.info !== '' || block.recipe === null) continue;
+        const at = `gallery/${example}/README.md:${block.line}`;
+        if (!recipeBlocks.some((v) => v.where === at)) continue;
+        const parsed = parseRefusalRecipe(block.recipe, recipeNames);
+        if (typeof parsed === 'string') continue;
+        const run = refusal.run(parsed);
+        const body = transcriptBody(block.lines);
+        elisionProbes++;
+        if (refusalMatch(body, run)?.equal !== true) foreign.push(`${at} stopped matching its own run`);
+        const withForeignPath = [`/somewhere/else/${parsed.spec}.json: ${body[0].trim()}`, ...body.slice(1)];
+        if (refusalMatch(withForeignPath, run)?.equal === true) {
+          foreign.push(`${at} still matched with a path the recipe never wrote in front of it`);
+        }
+      }
+    }
+
+    // ⑤ GT04's rule, one surface further in — and the answer to "what does this
+    // change make stale next?". `gallery/README.md` now explains the recipe, and
+    // explaining it means writing down what announces a refusal while the code
+    // COLLECTS it from the runs. So the prose is derived too: the paragraph that
+    // names them is located by the phrase it exists to define, its count is
+    // reported so a locator that matched nothing cannot compare empty against
+    // empty, and the documented example recipe has to be one this tree really
+    // carries rather than an invented one that no longer parses.
+    const index = existsSync(join(galleryRoot, 'README.md'))
+      ? readFileSync(join(galleryRoot, 'README.md'), 'utf8')
+      : '';
+    const announces = index.split(/\n[ \t]*\n/).filter((para) => /announces a refusal/i.test(para));
+    const namedHeads = new Set(announces.flatMap((p) => [...p.matchAll(/`(rigc [a-z]+ error):?`/g)].map((m) => m[1])));
+    const namedTags = new Set(announces.flatMap((p) => [...p.matchAll(/`([A-Z][A-Z\d_]{1,9})`/g)].map((m) => m[1])));
+    const disagree = (prose: Set<string>, derived: Set<string>, what: string): string[] => [
+      ...[...derived].filter((x) => !prose.has(x)).map((x) => `the runs print \`${x}\` as ${what} and gallery/README.md does not name it`),
+      ...[...prose].filter((x) => !derived.has(x)).map((x) => `gallery/README.md names \`${x}\` as ${what} and no refusal run prints one`),
+    ];
+    const documented = [...index.matchAll(new RegExp(REFUSAL_RECIPE.source, 'g'))].map((m) => m[1]);
+    const prose = [
+      ...(announces.length === 1
+        ? []
+        : [`${announces.length} paragraph(s) of gallery/README.md say what "announces a refusal"; the locator needs exactly one`]),
+      ...disagree(namedHeads, refusalVocab.heads, 'an error head'),
+      ...disagree(namedTags, refusalVocab.tags, 'a refusal verdict'),
+      ...(documented.length === 1 ? [] : [`gallery/README.md shows ${documented.length} example recipe(s); it should show exactly one`]),
+      ...documented
+        .filter((text) => typeof parseRefusalRecipe(text, recipeNames) === 'string')
+        .map((text) => `the recipe gallery/README.md shows does not parse: "${text}"`),
+      ...documented
+        .filter((text) => ![...recipeRuns.keys()].includes(text))
+        .map((text) => `the recipe gallery/README.md shows is not one any README carries: "${text}"`),
+      // Red-first both ways, on a name nothing in the tree can print.
+      ...(disagree(namedHeads, new Set([...refusalVocab.heads, 'rigc nosuch error']), 'an error head').length > 0
+        ? []
+        : ['an error head the runs print and the prose omits was not faulted']),
+      ...(disagree(new Set([...namedTags, 'NOSUCHTAG']), refusalVocab.tags, 'a refusal verdict').length > 0
+        ? []
+        : ['a verdict the prose names and no refusal run prints was not faulted']),
+      ...(index.replace(/announces a refusal/gi, 'introduces a refusal').split(/\n[ \t]*\n/).filter((p) => /announces a refusal/i.test(p)).length === 0
+        ? []
+        : ['the locator still found its paragraph after the phrase it keys on was reworded away']),
+    ];
+
+    const trouble = [...dragged, ...grammar, ...runs, ...foreign, ...prose];
+    say(
+      'GT05_THE_REFUSAL_RECIPE_REACHES_REFUSALS_AND_NOTHING_ELSE',
+      trouble.length === 0 &&
+        recipeBlocks.length >= 4 &&
+        notDragged >= 14 &&
+        grammar.length === 0 &&
+        elisionProbes === recipeBlocks.length &&
+        elisionProbes >= 4 &&
+        namedHeads.size >= 1 &&
+        namedTags.size >= 1,
+      trouble.length === 0
+        ? `${notDragged} block(s) a stated command already reproduces: none reads as a refusal to the trap and ` +
+          `none carries a recipe; ${malformed.length} way(s) of stepping outside the recipe grammar each refused ` +
+          'by name with a well-formed one parsing beside them; a recipe whose `from` is absent and one whose edit ' +
+          `leaves the build green each faulted; on all ${elisionProbes} refusal block(s) the path elision ` +
+          'matched the run it came from and refused a path the recipe never wrote; and the one paragraph of ' +
+          'gallery/README.md that says what announces a refusal names ' +
+          `{${[...namedHeads].sort().join(' ')}} and {${[...namedTags].sort().join(' ')}}, which is exactly what ` +
+          'the recipe runs print, with the recipe it shows as an example being one this gallery really carries'
+        : trouble.join('\n          '),
+      'the recipe widens what may be RUN, so the thing to prove is that it did not widen what COUNTS. Every ' +
+        'clause here is two-sided on purpose: a parser that refused every recipe would satisfy the grammar half, ' +
+        'a matcher that equalled nothing would satisfy the elision half, and both would leave the gate reading ' +
+        'nothing while printing a clean line. The last clause is GT04 one surface further in and it is the answer ' +
+        'to what this change makes stale next — documenting the recipe means writing down what announces a ' +
+        'refusal, so the paragraph that does is derived from the same runs the code reads',
     );
   }
 
@@ -22436,7 +23032,7 @@ function main(): void {
     'the derivation asserted first, and the same reader held against three planted surfaces that have to fault in ' +
     'every way it knows and one clean surface that has to fault in none)';
   const galleryTranscripts =
-    ", + 4 gallery-transcript controls (issue #415 — the currency gate on the surface this project's audience " +
+    ", + 5 gallery-transcript controls (issue #415 — the currency gate on the surface this project's audience " +
     'actually reads: every fenced block a `gallery/*/README.md` QUOTES the tool as printing, held to a contiguous ' +
     'run of the output of a command that README states. The blocks are found by the two things a rigc report ' +
     'names a record with — the tag at its own gutter, and, for the sections that are a tree rather than a gutter, ' +
@@ -22451,7 +23047,15 @@ function main(): void {
     'reproducing block declared away, a declaration with no reason — each required to fault. And the last ' +
     'control is that gate turned on its own documentation: the paragraph in `gallery/README.md` that names ' +
     'the tag vocabulary is compared against the vocabulary the runs actually print, red-first in both ' +
-    'directions and on the reworded sentence that would take its locator silently to zero)';
+    'directions and on the reworded sentence that would take its locator silently to zero. Issue #429 added ' +
+    'the half none of that reached — a quoted REFUSAL, which has no gutter tag to anchor on and is printed by ' +
+    'no command a README states, because making one needs a spec authored to be refused. Such a block states ' +
+    'the edit instead, in a grammar with no path and no shell in it: one gallery example, one of its two spec ' +
+    'files, one literal replace-all, `build`. The comparison is UNWRAPPED, because rigc prints a refusal on ' +
+    'one line and every README wraps it differently, and it is equality rather than prefix so that an ' +
+    'abridged quote faults. The vocabulary a refusal announces itself with is derived from those runs too — ' +
+    'the error head at column 0, and the gutter tags a refusal run prints that no green run does — so a block ' +
+    'that opens on one and carries no recipe is a fault rather than an escape)';
   console.log(
     `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
