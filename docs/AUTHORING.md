@@ -1431,6 +1431,17 @@ Both are refused at compile, each with its own arithmetic in the message and its
 own repair — *"move the range so it does not cross 0°"* and *"move the range so it
 does not run past 360°"*.
 
+⭐ **The reading in that message is a modulo, not one turn** — the wrap the bone's
+matrix has already applied by the time `atan2` reads it, so a range that leaves
+the circle by *more* than 360° is folded all the way back into `[0, 360)`. The two
+examples above each sit within one turn, where a single ±360 gives the same
+answer; past that only the modulo does. [measured] through spine-core, a bone
+parked at **−500°** drives the slider to **3.600000 s**, which is exactly where a
+bone parked at **220°** drives it — so the reading is 220°, not −140°, and a
+refusal naming −140° would be naming a value that reader cannot return at all
+(issue [#431](https://github.com/firejune/rigc/issues/431)). The same on the other
+side: **900°** drives it to **0.200000 s**, the time a bone at **180°** selects.
+
 📐 **The consequence in that message is computed, not described.** Both refusals
 end on two numbers read off `[0, 360)` met with the driving values that reach the
 animation — the same two the message has already printed:
