@@ -396,6 +396,7 @@ slider reading a **world** rotation goes through `FromRotate.value`, which ends
 negative half. rigc refuses it at compile with the arithmetic in the message,
 and here is that refusal on this rig, produced by flipping the flag:
 
+<!-- refusal: look rig build | "local": true | "local": false -->
 ```
 rigc compile error: rig constraint "yaw": drives off bone "yaw_dial" rotate with "local": false, and the
 driving values that reach animation "turn" (0s..1.9s) run from -19.000° to 19.000°. A world rotation is read
@@ -420,6 +421,7 @@ bone currently points at, and the slot-colour half of that apply is an
 simultaneously applied `turn` at the **neutral** time, and the alpha-0 key the
 animation itself wrote was undone:
 
+<!-- transcript: the shape this rig no longer has — both sliders at `"mix": 0` with `sweep` keying them on — so no edit to the shipped spec prints it; abridged at the ellipsis besides -->
 ```
 FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform hair_lock_l/hair_lock_l key 6
 (t=1.899999976158142s): 4 of 48 triangle(s) reverse winding — triangle 2 [1,28,29] 540.000 -> -63.033px² …

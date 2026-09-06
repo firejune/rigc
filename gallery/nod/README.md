@@ -222,13 +222,18 @@ bun cli.ts build --rig gallery/nod/rig.json --motion /tmp/nod-34.json --out /tmp
 `33°` gates green; `34°` does not, and the refusal names the pair the closed form
 names:
 
+<!-- refusal: nod motion build --profile spine-html | "degrees": 12 | "degrees": 34 -->
 ```
-FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "bow" deform head/head key 2 (t=0.6000000238418579s):
-2 of 8 triangle(s) reverse winding — triangle 6 [6,8,9] 5320.002 -> -117.308px²;
-triangle 7 [6,9,7] 5320.002 -> -117.308px².
+FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "bow" deform head/head key 2
+(t=0.6000000238418579s): 2 of 8 triangle(s) reverse winding — triangle 6 [7,6,5] 5320.002 ->
+-117.308px²; triangle 7 [7,5,4] 5320.002 -> -117.308px². The mesh has turned inside out there and
+draws its texture backwards. Fix the key's offsets in the motion spec's deform timeline (a
+projection past its fold angle is the usual cause — docs/FACE.md §4.2 has the closed form), or, if
+this slot folds on purpose, declare it in the rig spec as invariants.deformMayFold: [{ "slot":
+"head", "why": … }]
 ```
 
-Vertices 6–9 are rows `−105` and `−140`: the outermost gap, bracketing the
+Vertices 4–7 are rows `−105` and `−140`: the outermost gap, bracketing the
 derived **33.3062°** to a degree. (Tighter than a degree needs a bisection, and
 the selftest already runs one — `DW03_THE_ANGLE_A39_FIRES_AT_IS_THE_CLOSED_FORM_FOLD_ANGLE`
 agrees with the same formula to 0.0001° on its own fixture.)
@@ -457,16 +462,22 @@ model and lost it is not the same event.
 ⭐ **It is a refusal now** ([#350](https://github.com/firejune/rigc/issues/350)),
 and the row above is what the compiler says instead:
 
+Its own path to the patched motion spec sits between `error:` and `animation`
+and is cut here, because it is a different string on every machine:
+
+<!-- refusal: nod motion build --profile spine-html | "wavelength": 320 | "wavelength": 80 -->
 ```
 rigc compile error: animation "idle" deform default/ear_l/ear_l (t=0): transform wave states
 amplitude=10 wavelength=80 phase=0 along=y axis=x, and every one of this attachment's 22
-vertices evaluates to an offset of 0 — the largest value the closed form reached at any of
-them is 1.225e-14, which quantises to 0 at the six decimals every emitted number carries.
-So the key states a deformation and emits the identity, and nothing downstream can tell it
-apart from a key that meant the setup pose. The closest two distinct y coordinates in this
-attachment are 40 apart, and a sinusoid has to be sampled to exist: a wavelength of at least
-4x that (160) to read as a wave at all and 8x (320) to read as a curve, where this key
-states 2x. …
+vertices evaluates to an offset of 0 — the largest value the closed form reached at any of them
+is 1.225e-14, which quantises to 0 at the six decimals every emitted number carries. So the key
+states a deformation and emits the identity, and nothing downstream can tell it apart from a
+key that meant the setup pose. The closest two distinct y coordinates in this attachment are 40
+apart, and a sinusoid has to be sampled to exist: a wavelength of at least 4x that (160) to
+read as a wave at all and 8x (320) to read as a curve, where this key states 2x. At 2x every
+sample lands on the same pair of phases, and at the zero crossings that pair is (0, 0).
+`gallery/nod`'s README carries that rule and the measured table behind it. A key that MEANS the
+identity states it in its own parameters (amplitude 0) or carries no run at all.
 ```
 
 📌 **The 160 row is still green and that is deliberate.** A zigzag is a *bad*
@@ -856,12 +867,15 @@ sed 's/"kind": "yaw", "radius"/"kind": "pitch", "radius"/' gallery/portrait/moti
 bun cli.ts build --rig gallery/portrait/rig.json --motion /tmp/pp.json --out /tmp/b-pp
 ```
 
+The message names the spec it read — `/tmp/pp.json` above — between `error:` and
+`animation`, and that half is cut here because it is whatever path you chose:
+
+<!-- refusal: portrait motion build | "kind": "yaw", "radius" | "kind": "pitch", "radius" -->
 ```
-rigc compile error: /tmp/pp.json: animation "turn" deform default/head/head (t=0.62):
-transform pitch has radius 170, and vertex 0 sits at y=180, which is 10 past it (about=0).
-The cylinder has no surface there, so its depth would be 0 and the projection would be a
-different model at that vertex. Raise the radius to where the part actually sits, or move
-the vertex.
+rigc compile error: animation "turn" deform default/head/head (t=0.62): transform pitch has
+radius 170, and vertex 0 sits at y=180, which is 10 past it (about=0). The cylinder has no
+surface there, so its depth would be 0 and the projection would be a different model at that
+vertex. Raise the radius to where the part actually sits, or move the vertex.
 ```
 
 ⇒ **A grid that is correct for a yaw is not a grid; it is a grid *for a yaw*.**
