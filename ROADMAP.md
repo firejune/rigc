@@ -2,6 +2,26 @@
 
 Rough, and deliberately so. No dates, no feature list.
 
+## What this is for
+
+**Rigging and animation produced by an AI, with no human hands.** That is the
+end state. Everything below is either a step toward it or a way of knowing
+whether a step worked.
+
+Spine is **one tool this supports, not what this is.** rigc links `spine-core`
+today for a narrower reason than allegiance to a format: everything written to
+disk has to have been read back by a parser rigc did not write, and that is
+the only thing making the output trustworthy. That is an **oracle, not a
+dependency**, and the distinction is the whole difference between a backend and
+a commitment. Another backend does not need permission — it needs its own
+oracle, and shipping one without that is the thing the doctrine refuses.
+
+⚠️ One consequence worth stating, because an earlier framing said the opposite:
+the goal is not an AI draft that a person then finishes by hand. A round trip
+through the editor is how a result gets **checked**, not where it gets
+finished. Where a face angle became a value rather than a moment on a
+timeline, that was the direction — nobody keys it.
+
 ## The road so far
 
 Rough too, and in order rather than by date. [LADDER.md](docs/LADDER.md) and
@@ -37,7 +57,10 @@ the [CHANGELOG](CHANGELOG.md) hold what actually happened.
 **The input spec stops moving.**
 
 Everything else about a version number is bookkeeping; that one thing is a
-promise to whoever writes a rig spec. Today it costs nothing to break — the
+promise to whoever writes a rig spec — and it is the promise that survives the
+goal above, because the rig and motion specs are the part that does not belong
+to any one backend. A format can be swapped under a spec that holds still. It
+cannot be swapped under one that does not. Today it costs nothing to break — the
 package is pre-1.0, so a spec change is a minor bump and nobody pays. After
 1.0 the author pays, so the number should not be claimed until the surface has
 earned it.
@@ -92,8 +115,10 @@ mechanically, every release.
 
 ## Not in 1.0
 
-- **A format-agnostic core with its own backend.** Ruled to come after the
-  feature work rather than during it, and nothing here changes that.
+- **A second backend.** Not because Spine is the point — it is not — but
+  because the sequencing was ruled: the feature work first, the core split
+  after. A backend also needs an oracle of its own before it can ship, and
+  building that is the larger half of the job.
 - **Full coverage of the Spine 4.3 format.** 1.0 is not *everything works*, it
   is **the boundary is honest and stable**: what rigc emits, it emits
   correctly, and what it does not, it refuses by name. Coverage is a separate
