@@ -1067,7 +1067,10 @@ public suite alone; a cuts path that is *named and missing* exits 2.
 Two suites measure against the Spine example corpus, which is downloaded rather
 than redistributed. When `examples/` is absent they say so loudly and the summary
 repeats it — an absent corpus is a hole in the run, not a pass — and a run in which
-nothing substantive executed exits 2 rather than printing green.
+nothing substantive executed exits 2 rather than printing green. That floor is one
+per suite, not one on their sum, and it is counted off the case lines each suite
+prints: a suite that reports it ran and then measures nothing exits 2 by name, even
+when the run's total grew around it (issue #439).
 
 ## Layout
 
