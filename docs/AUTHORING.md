@@ -1534,6 +1534,16 @@ is held: `"loop": true` wraps the time as `duration + (time % duration)`, so the
 not already select."* The range is still refused either way — a bone cannot be
 read at 500°, whatever happens to the time afterwards.
 
+⭐ **The degrees in that sentence are a *width*** — how much of `lowest..highest`
+lies outside `[0, 360]` — and not the reach from the boundary to the far end. The
+two are the same number for a range that *straddles* a boundary, as `300°..500°`
+does. A range lying **wholly** outside is told its own width instead: `400°..500°`
+reads *"the 100.000° of the range past 360°"*, and `-500°..-300°` *"the 200.000°
+of the range below 0°"* (issue
+[#434](https://github.com/firejune/rigc/issues/434) — both used to print the
+reach, which on the first of those was 140.000°, wider than the 100°-wide range
+it was describing).
+
 ⭐ **A range ending exactly on 360° is legal**, and that is the whole turn: a
 wheel, a turntable, a head that goes all the way round, written `from: 0` with a
 `scale` that puts 360° on the last frame. It misses **nothing**: [measured] the

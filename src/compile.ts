@@ -3636,8 +3636,51 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
             : reachLo > 0
               ? `every reading below ${reachLo.toFixed(3)}°`
               : `every reading above ${reachHi.toFixed(3)}°`;
-          // How much of the range is a bone position no reader ever returns.
-          const outside = (lowest < 0 ? -lowest : 0) + (highest > 360 ? highest - 360 : 0);
+          /**
+           * How much of the range is a bone position no reader ever returns:
+           * the WIDTH of `[lowest, highest]` lying outside `[0, 360]` (issue
+           * #434).
+           *
+           * 🚨 `-lowest` / `highest - 360` is the distance from the boundary to
+           * the FAR end, and that equals the dead width only while the range
+           * STRADDLES the boundary. A range lying wholly outside had the gap
+           * between the boundary and its NEAR end counted too: `400°..500°` —
+           * inside one turn and reachable today — was told `140.000°` of it is
+           * dead, wider than the 100° range itself, and `-500°..-300°` was told
+           * `500.000°` against a true 200°. Clamping the near end to the
+           * boundary is the whole of the fix, and it moves ONLY the ranges that
+           * lie wholly outside: measured, a range straddling either boundary, a
+           * range ending exactly on one, and a range hanging off both at once
+           * all print what they printed before. `PS45` is the two that move and
+           * `PS46` is the four that must not.
+           *
+           * ⭐ **Third instance of one shape in this clause.** #417 tested one
+           * end of the range because its fixture only ever left the circle at
+           * that end; #431 wrapped by a single subtraction because every
+           * fixture sat within one turn; this measured to the far end because
+           * `PS42` — the only control that reads this string — straddles 360°,
+           * where the two arithmetics agree to the bit. Every time, a
+           * computation right about the case its fixture happened to be and
+           * silent about the case beside it, with no second fixture standing
+           * anywhere else to say so.
+           *
+           * ⭐ Why it read as a measurement rather than as a bug: the wrong
+           * figure is always a number ALREADY IN THE SENTENCE. Past 360°,
+           * `highest - 360` reproduces `readAs` — `400°..500°` printed the same
+           * `140.000°` twice, once as the reading and once as a width. Below 0°,
+           * `-lowest` reproduces `dead.end` with its sign dropped.
+           *
+           * ⚠️ Each term stays BEHIND the test that says its side is the one
+           * that crossed, and those guards are load-bearing rather than tidy —
+           * measured, not argued. Drop `lowest < 0` and the low term on
+           * `400°..500°` is `Math.min(0, 500) - 400 = -400`, a negative
+           * contribution to a width: the refusal prints `-300.000°`, and
+           * `300°..500°` and `100°..900°` move to `-160.000°` and `440.000°`.
+           * Drop `highest > 360` and `-340°..-305°` prints `-630.000°`. Neither
+           * is a width, and a width is what the sentence says it is.
+           */
+          const outside =
+            (lowest < 0 ? Math.min(0, highest) - lowest : 0) + (highest > 360 ? highest - Math.max(360, lowest) : 0);
           // ⚠️ WHICH consequence the runtime produces is the slider's own `loop`,
           // read rather than guessed: `Slider.js:63-66` is
           // `p.time = duration + (p.time % duration)` when it is true and
