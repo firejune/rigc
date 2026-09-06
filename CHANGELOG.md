@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.19.0](https://github.com/firejune/rigc/compare/v0.18.1...v0.19.0) (2026-09-06)
+
+
+### Features
+
+* **docs:** the producible set of every slider reader, measured one at a time ([#435](https://github.com/firejune/rigc/issues/435)) ([a13be1b](https://github.com/firejune/rigc/commit/a13be1b285f009527c425377a06cf61f513ccdc9)), closes [#420](https://github.com/firejune/rigc/issues/420)
+* **validate:** a build sees a dial whose two answers disagree, and what each reaches ([#438](https://github.com/firejune/rigc/issues/438)) ([5340c52](https://github.com/firejune/rigc/commit/5340c526851c3334c6c515696dab876052336f01)), closes [#427](https://github.com/firejune/rigc/issues/427)
+
+
+### Bug Fixes
+
+* **compile:** the dead width of a range is a width, not the reach to its far end ([#436](https://github.com/firejune/rigc/issues/436)) ([52c9e14](https://github.com/firejune/rigc/commit/52c9e146361b8f789a492adeca3456b252fef2e0)), closes [#434](https://github.com/firejune/rigc/issues/434)
+* **compile:** the wrap refusal computes its consequence instead of asserting one ([#430](https://github.com/firejune/rigc/issues/430)) ([60e3774](https://github.com/firejune/rigc/commit/60e37741756d6c1580d4412a33e2e845ae0a85e3))
+* **compile:** the wrap refusal reads the bone by modulo, not by one subtraction ([#433](https://github.com/firejune/rigc/issues/433)) ([2204146](https://github.com/firejune/rigc/commit/2204146414903786227d716eb74d7484fd3ffcd9)), closes [#431](https://github.com/firejune/rigc/issues/431)
+
 ## [0.18.1](https://github.com/firejune/rigc/compare/v0.18.0...v0.18.1) (2026-09-05)
 
 
