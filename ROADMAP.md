@@ -68,6 +68,14 @@ rather than as an intent.
 the long-term feature's real content, and it is why the sequencing puts it
 after the rest rather than beside it.
 
+⭐ And *after*, not *beside*, for a second reason: **the three bets are the
+input to the format question, not a detour around it.** Proving 2.5D on real
+art is exactly the experiment that asks whether a deform should be stored as
+offsets or evaluated from a depth and an angle, and jiggle asks the same thing
+of an impulse response. Starting a format before those answers arrive would be
+designing a container for contents nobody has measured — and running both
+tracks at once would only mean guessing in two places instead of one.
+
 ## The road so far
 
 Rough too, and in order rather than by date. [LADDER.md](docs/LADDER.md) and
