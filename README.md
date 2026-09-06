@@ -575,6 +575,7 @@ letting `A17` blame the editor for the harness's own doing.
 | 🔬 **[docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md)** | Spine 4.3's full export surface against what rigc emits and what the official examples measurably use, with the ordered gap list |
 | 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 41 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
 | 📋 [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) · [GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md) · [PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) | the live rung ledger, the clause statements a candidate is graded against, and how to run an agent through the ladder and score what comes back |
+| 🗺️ [ROADMAP.md](https://github.com/firejune/rigc/blob/main/ROADMAP.md) | where this is going, and where it has been. What 1.0 has to mean before the number is claimed — conditions rather than a feature list, because direction here comes from what users hit |
 
 ## Why you can trust the output
 
