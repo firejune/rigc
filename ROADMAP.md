@@ -16,6 +16,32 @@ dependency**, and the distinction is the whole difference between a backend and
 a commitment. Another backend does not need permission — it needs its own
 oracle, and shipping one without that is the thing the doctrine refuses.
 
+### Where the machine is better, which is the whole bet
+
+Three places, and they are not chosen for being hard — they are chosen for
+being **the places a hand is the wrong instrument**:
+
+- **Vertex work.** Geometry dense enough that posing it by hand is not slow, it
+  is impossible.
+- **Jiggle tension.** How a soft region answers an impulse, as a property of
+  the region rather than a curve somebody drew.
+- **2.5D look and feel.** Turning a flat drawing through an angle it was never
+  drawn at, from a depth the art carries.
+
+⭐ **The line that makes this checkable is posing.** Writing the brief is not a
+hand. Choosing the art is not a hand. *Making a pose* is. Every neighbouring
+tool has a person making poses somewhere — key forms, key poses — and this one
+is trying not to, at any layer. That is a claim a run can be measured against
+rather than a slogan.
+
+⚠️ None of the three is proven end-to-end yet, and the honest statement of
+where each stands belongs with the first goal below rather than here. Two of
+them are additionally blocked by something outside the compiler: at the density
+that makes vertex work worth doing, a deform key is megabytes, which the
+current backend cannot carry. **The differentiator and the oracle question are
+the same question**, which is the strongest argument for the sequencing there
+is.
+
 ⚠️ One consequence worth stating, because an earlier framing said the opposite:
 the goal is not an AI draft that a person then finishes by hand. A round trip
 through the editor is how a result gets **checked**, not where it gets
@@ -102,7 +128,21 @@ cuts predate them. A spec frozen at 1.0 that real art has never exercised is a
 prediction, not a measurement.
 
 **Done when** each construct has at least one cut of real art compiling
-through it.
+through it, and each of the three bets above has a run behind it with **no
+hand-made pose at any layer**.
+
+Where they stand, stated rather than implied:
+
+- **Vertex work** — the gate holds at densities far past what a hand reaches,
+  and the artifact does not: at that density a deform key is megabytes. The
+  compiler is not the limit; the backend is.
+- **Jiggle tension** — emitted and gated for *structure*. Nothing yet measures
+  whether a jiggle is **right**, and a gate that cannot fail on a wrong one is
+  not a gate.
+- **2.5D** — the angle a depth map supports is derived in closed form and
+  reported before anything is animated. On measured depth, though, **noise is
+  also a slope**, so the reported angle could be set by sampling rather than by
+  shape. Unverified.
 
 This gates the next goal and is the reason the order is what it is.
 
