@@ -1406,11 +1406,76 @@ sharing one of those overwrite each other whatever you write. A40 names that cas
 separately, because the fix is different: key such a property from one slider
 only, or move both edits into the single animation one slider applies.
 
+#### 3.5.2.1 What each `property` can actually be read AS
+
+**A `property` under `local: false` is read through the world transform, and four
+of those readings are bounded.** A range that names values the reader cannot
+return is dead there: the dial moves, the reading does not follow, and nothing at
+runtime says so. [measured] against `spine-core` 4.3.13, one reader at a time —
+`bench/studies/2026-09-06-readers`:
+
+| `property` | `"local"` | Reads | Producible floor | Producible ceiling |
+| --- | --- | --- | --- | --- |
+| `rotate` | `false` | `FromRotate`, world | `0`, reached | `360`, reached |
+| `rotate` | `true` | `FromRotate`, local | none | none |
+| `x` | `false` | `FromX`, world | none | none |
+| `x` | `true` | `FromX`, local | none | none |
+| `y` | `false` | `FromY`, world | none | none |
+| `y` | `true` | `FromY`, local | none | none |
+| `scaleX` | `false` | `FromScaleX`, world | `0`, reached | none |
+| `scaleX` | `true` | `FromScaleX`, local | none | none |
+| `scaleY` | `false` | `FromScaleY`, world | `0`, reached | none |
+| `scaleY` | `true` | `FromScaleY`, local | none | none |
+| `shearY` | `false` | `FromShearY`, world | `-449.99999468`, reached | `269.99999468`, reached |
+| `shearY` | `true` | `FromShearY`, local | none | none |
+
+- **`none` is not "very large"** — those readers are `source.<field> + offset` and
+  the field is whatever the animation wrote, so there is nothing there to bound.
+- **Every world row assumes the offsets are zero**, and a slider cannot make them
+  anything else: `Slider.offsets` is a private all-zero array. The same six
+  classes serve a transform constraint, which passes its own — there the scale
+  floors move to the offset and the `shearY` window slides by it.
+- **`scaleX` / `scaleY` under `local: false` lose the sign.** The reader is
+  `Math.sqrt(a² + c²)`, so a bone at `scaleX: −1` reads **`+1`**, not `−1`: a
+  squash axis driven through negative scale gets the mirror of the dial you wrote.
+  The floor `0` is *reached*, not approached — a bone whose own scale or whose
+  parent's is 0 reads exactly 0 — so a range whose bottom is exactly 0 is fine and
+  one that dips below it is dead.
+- **`shearY` under `local: false` wraps like `rotate` does, and worse.** It is a
+  difference of two `atan2` calls, so at any one bone orientation the readable
+  window is 360° wide — `(−270 − θx, 90 − θx]`, where `θx` is the bone's world
+  x-axis angle. The bound in the table is the union over every orientation. ⇒ the
+  seam is **not at a fixed value of the driven field**; it is wherever the bone is
+  pointing. Prefer `local: true` for a shear axis.
+- **The bounds are not round numbers because `MathUtils.PI` is `3.1415927`** — the
+  float32 π of the reference runtime. Every degree in spine-core passes through
+  `180 / 3.1415927`, so a full turn converts as `359.99999468178214` and a bone at
+  360° reads 5.3e-6° rather than 0°. `shearY`'s two ends are `±2π · radDeg − 90`.
+- 🔸 A negative `skeleton.scaleX` / `scaleY` — how a consumer mirrors a character —
+  changes **nothing**: every world reader divides the same factor back out, and
+  [measured] the readings are identical to the digit at (1,1), (−1,1), (1,−1),
+  (−1,−1), (2,0.5) and (−0.5,3). A `skeleton` scale of **zero** makes every world
+  reader `NaN`, and `Math.max(0, NaN)` is NaN — but nothing in skeleton data sets
+  that field, so it is the consumer's to avoid.
+
+⚠️ **`local: true` reads the number you authored only on a bone nothing else
+drives.** `Slider.update` calls `bone.appliedPose.validateLocalTransform` first,
+and on a bone a constraint moved that recomputes the local pose *from the world
+matrix* — `atan2Deg` for the angles and `Math.sqrt` for `scaleX`. [measured] on
+one rig, the same slider: a free bone at `rotation: −500` reads `−500` and the
+same bone inside a transform constraint's `bones` reads `−140.000006`; at
+`scaleX: −2` the free bone reads `−2` and the constrained one reads `+2`. The
+producible *set* is unbounded either way — the free case is in it — but if
+`local: true` is your repair for a world reader's floor, check that the driving
+bone is not itself constrained.
+
+#### 3.5.2.2 The circle a `rotate` world dial has to stay inside
+
 🚨 **A `rotate`-driven slider with `local: false` has to stay inside the circle
 `[0, 360]`.** `local: false` reads the bone's **world** rotation through
 `FromRotate.value`, which is a `Math.atan2` — so `(−180, 180]` — with
 `if (value < 0) value += 360` on the end, and the `offsets` a slider hands it are
-all zero. `[0, 360)` is therefore the whole set of values that reader can ever
+all zero. `[0, 360]` is therefore the whole set of values that reader can ever
 return, and a range leaving it on either side is a wall:
 
 - **Below 0°.** A yaw axis authored the natural way — neutral at 0°, range
@@ -1443,12 +1508,12 @@ refusal naming −140° would be naming a value that reader cannot return at all
 side: **900°** drives it to **0.200000 s**, the time a bone at **180°** selects.
 
 📐 **The consequence in that message is computed, not described.** Both refusals
-end on two numbers read off `[0, 360)` met with the driving values that reach the
+end on two numbers read off `[0, 360]` met with the driving values that reach the
 animation — the same two the message has already printed:
 
 ```
-reachable = { to + (v − from) × scale : v ∈ [0, 360) } ∩ [0, duration]
-held      = { v ∈ [0, 360) : the mapped time falls outside [0, duration] }
+reachable = { to + (v − from) × scale : v ∈ [0, 360] } ∩ [0, duration]
+held      = { v ∈ [0, 360] : the mapped time falls outside [0, duration] }
 ```
 
 so the 300°..500° dial above is refused with *"This dial reaches only
@@ -1471,10 +1536,16 @@ read at 500°, whatever happens to the time afterwards.
 
 ⭐ **A range ending exactly on 360° is legal**, and that is the whole turn: a
 wheel, a turntable, a head that goes all the way round, written `from: 0` with a
-`scale` that puts 360° on the last frame. It misses exactly one value — its own
-supremum — and that value is not a dial position: a bone at 360° *is* a bone at
-0°, and [measured] it poses the skeleton to within **4e-7°** of it, an `atan2`
-artefact rather than a frame. Swept at 0.1° over the circle, `from: 0,
+`scale` that puts 360° on the last frame. It misses **nothing**: [measured] the
+wrap `value += 360` on a reading a hair below zero *rounds*, and bisecting the
+runtime's own `v + 360 === 360` puts the threshold at exactly half an ulp of 360 —
+so every reading in `[-2.842170943040401e-14°, 0°)` is read as exactly `360`, and
+the top of that range is reached rather than approached. Nor is 360 a separate
+dial position: a bone at 360° *is* a bone at 0°, and [measured] it poses the
+skeleton to within **4e-7°** of it, an `atan2` artefact rather than a frame. (The
+other half of that same `atan2` leaves a 5.3e-6°-wide hole at 180°, between
+`179.99999734…` and `180.00000265…` — measured, reported for completeness, and
+narrower than any dial anybody writes.) Swept at 0.1° over the circle, `from: 0,
 scale: 0.0025` on a 0.9 s animation lands every reading within **1.7e-8 s** of the
 time the mapping asks for; on `loop: true` the endpoint is not even distinct,
 closing on **0.900000 s** exactly. Use `loop: true` for a dial that really does go
@@ -2778,7 +2849,7 @@ dial and not reached at all through another.
 - ⚠️ **A key at a time no dial can select is named, not passed.** The cause is
   [#405](https://github.com/firejune/rigc/issues/405)'s wrap: `FromRotate.value`
   under `local: false` is an `atan2` ending `if (value < 0) value += 360`, so
-  **`[0, 360)` is the whole of its range** and a mapping needing anything outside
+  **`[0, 360]` is the whole of its range** and a mapping needing anything outside
   it selects nothing. 🚨 A **rig spec** can no longer ask for one — the compiler
   refuses both ends of that circle (§3.5.2), the low one since #405 and the high
   one since [#417](https://github.com/firejune/rigc/issues/417) — but an
@@ -3011,8 +3082,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `rig constraint "X": applies animation "Y", which the motion spec does not declare (it declares: …)` | §3.5.2 — fix the slider's `animation`, or add it to the motion spec |
 | `rig constraint "X": declares both a "bone" and "time"` | §3.5.2 — `bone` picks the model and `time` belongs to the other one |
 | `rig constraint "X": declares "property" but no "bone"` | §3.5.2 — name the driving bone, or key `slider.<name>.time` instead |
-| `rig constraint "X": drives off bone "Y" rotate with "local": false, and the driving values that reach animation "A" (0s..Ds) run from −15.000° to 15.000° … the whole part of the range below 0° is dead` | §3.5.2 — add `"local": true`, which reads the bone's own rotation signed and unwrapped, or move the range so it does not cross 0°. A world rotation is wrapped into `[0, 360)` before the slider maps it, so the negative half of the range is unreachable and pins to one frame |
-| `… run from 300.000° to 500.000° … the whole part of the range past 360° is dead` | §3.5.2 — the same wall at the other end, and the same first repair: `"local": true`, or move the range so it does not run past 360°. `[0, 360)` is the whole of what that reader returns, so a bone turned to 500° is read as 140° and selects a time far from the one the range asked for. Ending *exactly* on 360° is fine — that is the full turn, and the only value it misses is a supremum no dial can be parked at separately |
+| `rig constraint "X": drives off bone "Y" rotate with "local": false, and the driving values that reach animation "A" (0s..Ds) run from −15.000° to 15.000° … the whole part of the range below 0° is dead` | §3.5.2 — add `"local": true`, which reads the bone's own rotation signed and unwrapped, or move the range so it does not cross 0°. A world rotation is wrapped into `[0, 360]` before the slider maps it, so the negative half of the range is unreachable and pins to one frame |
+| `… run from 300.000° to 500.000° … the whole part of the range past 360° is dead` | §3.5.2 — the same wall at the other end, and the same first repair: `"local": true`, or move the range so it does not run past 360°. `[0, 360]` is the whole of what that reader returns, so a bone turned to 500° is read as 140° and selects a time far from the one the range asked for. Ending *exactly* on 360° is fine — that is the full turn, and it misses nothing: the wrap rounds, so a bone a hair below 0° is read as exactly 360 |
 | `skin "S" activates bone "B", but that bone does not declare \`"skin": true\`` | §3.4.1 — the list and the flag are one switch; add the flag or drop the list |
 | `bone "B" declares \`"skin": true\` but no skin activates it` | §3.4.1 — the other half: list it in the skin it belongs to, or drop the flag |
 | `skin "S": uses the long form … and also has a key "X"` | §3.4.1 — move the slot inside `attachments` |

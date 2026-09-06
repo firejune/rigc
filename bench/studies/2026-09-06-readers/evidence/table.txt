@@ -1,0 +1,24 @@
+# reader probe — table
+
+invocation: bun bench/studies/2026-09-06-readers/tools/readerprobe.ts --experiment=table --seed=20260906
+seed 20260906, 40,000 sweep samples, spine-core 4.3.13
+
+| cell | producible floor | producible ceiling |
+| --- | --- | --- |
+| `rotate-world` | 0 | 360 |
+| `rotate-local` | none | none |
+| `x-world` | none | none |
+| `x-local` | none | none |
+| `y-world` | none | none |
+| `y-local` | none | none |
+| `scaleX-world` | 0 | none |
+| `scaleX-local` | none | none |
+| `scaleY-world` | 0 | none |
+| `scaleY-local` | none | none |
+| `shearY-world` | -449.99999468178214 | 269.99999468178214 |
+| `shearY-local` | none | none |
+
+⚠️ `none` means the extreme passed ±1000000 while the driven field was held at ±1e9. That is a
+   statement about this sweep, not a proof of unboundedness — those readers are `source.<field> +
+   offset` and the field is whatever was written, so there is nothing there to bound. The six cells
+   the measurement EARNS are the four bounded ends and the two floors.

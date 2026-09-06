@@ -1,0 +1,62 @@
+# reader probe — controls
+
+invocation: bun bench/studies/2026-09-06-readers/tools/readerprobe.ts --experiment=controls
+seed 20260906, 40,000 sweep samples, spine-core 4.3.13
+
+## The twelve readers are the ones rigc's own `property` produced
+
+| slider | rig `property` | `"local"` | reader class the parser built | expected | `property.offset` |
+| --- | --- | --- | --- | --- | --- |
+| `rotate-world` | `rotate` | `false` | `FromRotate` | `FromRotate` | 0 |
+| `rotate-local` | `rotate` | `true` | `FromRotate` | `FromRotate` | 0 |
+| `x-world` | `x` | `false` | `FromX` | `FromX` | 0 |
+| `x-local` | `x` | `true` | `FromX` | `FromX` | 0 |
+| `y-world` | `y` | `false` | `FromY` | `FromY` | 0 |
+| `y-local` | `y` | `true` | `FromY` | `FromY` | 0 |
+| `scaleX-world` | `scaleX` | `false` | `FromScaleX` | `FromScaleX` | 0 |
+| `scaleX-local` | `scaleX` | `true` | `FromScaleX` | `FromScaleX` | 0 |
+| `scaleY-world` | `scaleY` | `false` | `FromScaleY` | `FromScaleY` | 0 |
+| `scaleY-local` | `scaleY` | `true` | `FromScaleY` | `FromScaleY` | 0 |
+| `shearY-world` | `shearY` | `false` | `FromShearY` | `FromShearY` | 0 |
+| `shearY-local` | `shearY` | `true` | `FromShearY` | `FromShearY` | 0 |
+
+reader/flag disagreements: 0
+
+## `instanceof`, against the six classes by name
+
+  `rotate` -> FromRotate
+  `x` -> FromX
+  `y` -> FromY
+  `scaleX` -> FromScaleX
+  `scaleY` -> FromScaleY
+  `shearY` -> FromShearY
+
+## The offsets array a slider hands its reader, read off a live `Slider`
+
+  live `Slider` instances: 12
+  `Slider.offsets` = [0, 0, 0, 0, 0, 0]  — all zero: true
+  it is a `private static readonly` on the class, so a slider cannot hand a reader anything else.
+  `--experiment=offsets` measures what a non-zero array does, because `TransformConstraint` passes its own.
+
+## The reading IS the slider's time — the mapping, through the runtime
+
+| slider | `property.value` | `offset + (value − property.offset)·scale` | `SliderPose.time` stored | Δ |
+| --- | --- | --- | --- | --- |
+| `rotate-local` | 20 | 0.1 | 0.1 | 0.00e+0 |
+| `x-local` | 30 | 0.15 | 0.15 | 0.00e+0 |
+| `y-local` | 40 | 0.2 | 0.2 | 0.00e+0 |
+| `scaleX-local` | 1.5 | 0.0075 | 0.0075 | 0.00e+0 |
+| `scaleY-local` | 1.25 | 0.00625 | 0.00625 | 0.00e+0 |
+| `shearY-local` | 12 | 0.06 | 0.06 | 0.00e+0 |
+
+worst |stored − mapped|: 0.00e+0 s
+
+## The constant every degree below passes through
+
+  `MathUtils.PI`     = 3.1415927          (`Math.PI` = 3.141592653589793)
+  `MathUtils.radDeg` = 57.29577866666166  (true 180/π = 57.29577951308232)
+  a full turn converts as 2π·radDeg = 359.99999468178214
+  (π − −π)·radDeg − 90 = 269.99999468178214
+  (−π − π)·radDeg − 90 = -449.99999468178214
+
+⇒ every "5.3e-6°" in this study is that constant and not a tolerance anybody chose.

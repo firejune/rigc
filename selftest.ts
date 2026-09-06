@@ -22112,6 +22112,8 @@ function main(): void {
     bad += checkBad;
     substantive += 3;
   }
+  bad += runSliderReaderSuite();
+  substantive += 10;
   bad += runLoopSeamSuite();
   const gallery = runGallerySuite();
   bad += gallery.failures;
@@ -22533,6 +22535,16 @@ function main(): void {
       'size conflict, an absent page and a rectangle off its page, names the ATLAS rather than a file when an ' +
       "optional state is not in the pack, and divides an imported size by the page's `scale:` while leaving a pack " +
       'that declares none byte-identical to the loose build)' +
+      ', + 10 slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +
+      'and compared to what the doc states, two-sided — nothing left a stated bound AND every stated end is ' +
+      'reached, so neither a loosened nor a tightened cell survives — with the parse itself asserted first, the ' +
+      'reader classes cross-checked by `instanceof` against what rigc\'s own `property` strings produced, the ' +
+      'all-zero offsets array read off a live Slider, the eighteen unbounded ends made to run past ±1e6, the ' +
+      'wrap shown to REACH 360 from a threshold bisected on `v + 360 === 360` and compared to the one the guide ' +
+      'prints, the 5.3e-6° hole at 180 measured from both branches, the scale floor attained exactly by a ' +
+      'degenerate bone with a negative scale reading positive, the same range compiling under `local: true` for ' +
+      'all six properties while its `rotate` world twin is refused, and a constrained bone shown to read a ' +
+      'decomposition rather than the number it was given)' +
       (atlasReaderBad === null
         ? '\n  ⚠️ The example corpus is absent, so the atlas READER was never compared against spine-core in this ' +
           'run — `src/atlas.ts` holds a second parser for the format and this run does not cover it.'
@@ -22552,3 +22564,659 @@ function main(): void {
 }
 
 main();
+
+// ---------------------------------------------------------------------------
+// what each of the twelve slider readers can produce (issue #420, stage 1)
+// ---------------------------------------------------------------------------
+//
+// 🔒 `docs/AUTHORING.md` §3.5.2.1 states a table: for each of the six
+// `FromProperty` readers, under each `local` flag, the floor and ceiling of what
+// the reader can return. A documented table nobody derives is exactly the defect
+// the CUR gates were built for — four of five cards in #380's checklist were the
+// same shape, *the repository makes a claim about itself and nothing derives it*
+// — so this suite re-measures every cell through spine-core and compares.
+//
+// ⭐ It is TWO-SIDED, and that is the whole design. A containment check alone
+// passes a table that has been loosened to `[-1e9, 1e9]`, and a tightness check
+// alone passes one that has been narrowed until the readings fall outside it. So
+// RD04 says nothing left the stated bound and RD05 says each stated end is
+// actually reached. RD06 is the third side — the eighteen ends the table calls
+// `none` have to genuinely run away, because a table that quietly bounded them is
+// a table that would licence refusing every non-`rotate` slider.
+//
+// ⚠️ The derivation is asserted BEFORE any of it (RD01). A scanner that stops
+// matching goes silent, not red: if the table were renamed, reformatted or
+// deleted, an unchecked scan would find zero rows and report twelve agreements
+// out of zero comparisons.
+//
+// The imports are their own statement rather than additions to the block at the
+// top of the file, so this suite lands as one contiguous hunk.
+import {
+  FromRotate,
+  FromScaleX,
+  FromScaleY,
+  FromShearY,
+  FromX,
+  FromY,
+  MathUtils,
+  SliderData,
+} from '@esotericsoftware/spine-core';
+
+/**
+ * The six property names the rig spec offers, in `RIG_FROM_PROPERTIES` order.
+ *
+ * ⚠️ A function and not a `const`, because this suite is appended AFTER `main()`
+ * is called: a module-level binding down here is in its temporal dead zone when
+ * the suite runs, and a function declaration is hoisted. Found by running it.
+ */
+function readerProperties(): string[] {
+  return ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'];
+}
+
+/** One row of the table `docs/AUTHORING.md` §3.5.2.1 states. */
+interface ReaderRow {
+  line: number;
+  property: string;
+  local: boolean;
+  reader: string;
+  /** `null` = the cell says `none`. */
+  floor: number | null;
+  ceiling: number | null;
+}
+
+/**
+ * Parse the table out of the shipped guide.
+ *
+ * The row form is fixed and narrow on purpose: five cells, the first one of the
+ * six property names in backticks and the second `true` or `false` in backticks.
+ * A table that stops matching that form yields zero rows, which RD01 refuses.
+ */
+function readerTableRows(text: string): { rows: ReaderRow[]; faults: string[] } {
+  const rows: ReaderRow[] = [];
+  const faults: string[] = [];
+  const props = new Set(readerProperties());
+  const bare = (cell: string): string => cell.replace(/[`*]/g, '').trim();
+  text.split('\n').forEach((line, i) => {
+    if (!line.trimStart().startsWith('|')) return;
+    const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+    if (cells.length !== 5) return;
+    const property = bare(cells[0]);
+    const flag = bare(cells[1]);
+    if (!props.has(property) || (flag !== 'true' && flag !== 'false')) return;
+    const at = `docs/AUTHORING.md:${i + 1}`;
+    // `` `FromScaleX`, world `` — the class and the branch, cross-checked here.
+    const reads = /^`(From[A-Za-z]+)`,\s*(world|local)$/.exec(cells[2].trim());
+    if (reads === null) {
+      faults.push(`${at}  the "Reads" cell is ${JSON.stringify(cells[2])}; wanted \`FromX\`, world|local`);
+      return;
+    }
+    if (reads[2] !== (flag === 'true' ? 'local' : 'world')) {
+      faults.push(`${at}  the "Reads" cell says ${reads[2]} and the \`"local"\` cell says ${flag}`);
+      return;
+    }
+    // `none`, or a backticked number followed by `reached` / `approached`.
+    const bound = (cell: string, which: string): { value: number | null } | null => {
+      if (bare(cell) === 'none') return { value: null };
+      const found = /^`(-?[\d.]+)`,\s*(reached|approached)$/.exec(cell.trim());
+      if (found === null) {
+        faults.push(
+          `${at}  the ${which} cell is ${JSON.stringify(cell)}; wanted \`none\` or \`<number>\`, reached|approached`,
+        );
+        return null;
+      }
+      return { value: Number(found[1]) };
+    };
+    const floor = bound(cells[3], 'floor');
+    const ceiling = bound(cells[4], 'ceiling');
+    if (floor === null || ceiling === null) return;
+    rows.push({ line: i + 1, property, local: flag === 'true', reader: reads[1], floor: floor.value, ceiling: ceiling.value });
+  });
+  return { rows, faults };
+}
+
+/** The bone fields a reader probe writes. */
+interface ReaderFields {
+  rotation?: number;
+  x?: number;
+  y?: number;
+  scaleX?: number;
+  scaleY?: number;
+  shearX?: number;
+  shearY?: number;
+}
+
+/** The rig the suite measures through: twelve sliders on one bone. */
+function readerFixtureRig(pinned: boolean): Record<string, unknown> {
+  const constraints: Array<Record<string, unknown>> = [];
+  if (pinned) {
+    constraints.push({
+      name: 'pin',
+      type: 'transform',
+      bones: ['src'],
+      source: 'driver',
+      properties: {
+        rotate: { to: { rotate: {} } },
+        scaleX: { to: { scaleX: {} } },
+        scaleY: { to: { scaleY: {} } },
+        shearY: { to: { shearY: {} } },
+      },
+      mixRotate: 1,
+      mixScaleX: 1,
+      mixScaleY: 1,
+      mixShearY: 1,
+    });
+  }
+  for (const property of readerProperties()) {
+    for (const local of [false, true]) {
+      constraints.push({
+        name: `${property}-${local ? 'local' : 'world'}`,
+        type: 'slider',
+        animation: 'wave',
+        bone: 'src',
+        property,
+        from: 0,
+        to: 0,
+        // ⚠️ Not decorative. A smaller `scale` puts the `rotate` world dial's own
+        // range past 360°, which `src/compile.ts` refuses by name — the fixture
+        // would not build at all. That refusal firing on this file's first draft
+        // is the shortest available proof that the guard is live.
+        scale: 0.005,
+        local,
+      });
+    }
+  }
+  return {
+    bones: [
+      { name: 'root' },
+      { name: 'gp', parent: 'root', x: 0, y: 0 },
+      { name: 'parent', parent: 'gp', x: 0, y: 0 },
+      { name: 'src', parent: 'parent', x: 0, y: 0, length: 10 },
+      { name: 'driver', parent: 'root', x: 0, y: 0, length: 10 },
+      { name: 'flag', parent: 'root', x: 20, y: 0, length: 10 },
+      { name: 'block', parent: 'root', x: 0, y: 0, length: 12 },
+    ],
+    constraints,
+  };
+}
+
+/** The motion spec the reader fixture's sliders apply. */
+function readerFixtureMotion(): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      wave: {
+        duration: 1,
+        loop: false,
+        tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [30] }] }],
+      },
+    },
+  };
+}
+
+/** Compile the reader fixture and parse it back through spine-core. */
+function readerFixture(pinned: boolean): { data: SkeletonData; sliders: Map<string, SliderData> } {
+  const dirs = writeProbeRig(readerFixtureRig(pinned));
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(readerFixtureMotion(), null, 2)}\n`);
+  const result = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+  const data = skeletonDataFromText(result.skeletonText, result.atlasText);
+  const sliders = new Map<string, SliderData>();
+  for (const constraint of data.constraints) {
+    if (constraint instanceof SliderData) sliders.set(constraint.name, constraint);
+  }
+  return { data, sliders };
+}
+
+/**
+ * One reading, taken the way `Slider.update` takes it: set up, write the local
+ * pose, run the world transform, and — only under `local` —
+ * `validateLocalTransform`, which is the call that decides whether the local
+ * branch reads the number the author wrote or a decomposition of what the
+ * constraints left behind (RD10).
+ */
+function readerValue(data: SkeletonData, slider: SliderData, src: ReaderFields, driver: ReaderFields = {}): number {
+  const skeleton = new Skeleton(data);
+  skeleton.setupPose();
+  skeleton.update(0);
+  const put = (name: string, fields: ReaderFields): void => {
+    const bone = skeleton.findBone(name);
+    if (bone === null) throw new Error(`reader suite: the fixture has no bone "${name}"`);
+    const pose = bone.pose;
+    if (fields.rotation !== undefined) pose.rotation = fields.rotation;
+    if (fields.x !== undefined) pose.x = fields.x;
+    if (fields.y !== undefined) pose.y = fields.y;
+    if (fields.scaleX !== undefined) pose.scaleX = fields.scaleX;
+    if (fields.scaleY !== undefined) pose.scaleY = fields.scaleY;
+    if (fields.shearX !== undefined) pose.shearX = fields.shearX;
+    if (fields.shearY !== undefined) pose.shearY = fields.shearY;
+  };
+  put('src', src);
+  put('driver', driver);
+  skeleton.updateWorldTransform(Physics.reset);
+  const bone = skeleton.findBone('src');
+  if (bone === null) throw new Error('reader suite: the fixture has no bone "src"');
+  if (slider.local) bone.appliedPose.validateLocalTransform(skeleton);
+  return slider.property.value(skeleton, bone.appliedPose, slider.local, [0, 0, 0, 0, 0, 0]);
+}
+
+/**
+ * The seam and extreme poses the table's six bounded ends come off, plus the two
+ * that drive every field to ±1e9 so the eighteen `none` ends have somewhere to
+ * run to. Each is measured in `bench/studies/2026-09-06-readers`.
+ */
+function readerSeamPoses(): ReaderFields[] {
+  return [
+    { rotation: -1e-14 },
+    { rotation: 0 },
+    { scaleX: 0, scaleY: 0 },
+    { rotation: -1e-14, shearX: 0, shearY: -89.99999999999999, scaleX: -1, scaleY: -1 },
+    { rotation: -179.999999999, shearX: 179.999999999, shearY: 89.999999999, scaleX: -1, scaleY: -1 },
+    { rotation: 1e9, x: 1e9, y: 1e9, scaleX: 1e9, scaleY: 1e9, shearX: 0, shearY: 1e9 },
+    { rotation: -1e9, x: -1e9, y: -1e9, scaleX: -1e9, scaleY: -1e9, shearX: 0, shearY: -1e9 },
+  ];
+}
+
+/**
+ * The pose lattice, fixed rather than seeded — this is a control, not the study.
+ * The axes straddle every branch the six readers have: the `atan2` seams at 0°
+ * and ±180°, both signs of every scale, and a zero scale.
+ */
+function readerSweepPoses(): ReaderFields[] {
+  const angles = [-540, -270, -180.0001, -180, -179.9999, -90, -0.0001, 0, 0.0001, 90, 179.9999, 180, 180.0001, 360, 1000];
+  const scales = [-3, -1, 0, 1e-9, 1, 3];
+  const shifts = [-1000, 0, 1000];
+  const out: ReaderFields[] = [];
+  for (const rotation of angles) {
+    for (const shearY of angles) {
+      for (const scaleX of scales) {
+        out.push({
+          rotation,
+          shearY,
+          shearX: rotation,
+          scaleX,
+          scaleY: -scaleX,
+          x: shifts[out.length % 3],
+          y: shifts[(out.length + 1) % 3],
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * A slider by name, or a throw. There are exactly twelve and they are named by
+ * construction, so a miss is a broken fixture rather than a case to fall back
+ * from — and a fallback here would be the "default that measures the wrong
+ * thing" this repository names in its own doctrine.
+ */
+function readerSlider(sliders: Map<string, SliderData>, name: string): SliderData {
+  const found = sliders.get(name);
+  if (found === undefined) throw new Error(`reader suite: the fixture has no slider "${name}"`);
+  return found;
+}
+
+/** The next representable double above `x`, by incrementing its bit pattern. */
+function readerNextDoubleAbove(x: number): number {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  view.setBigUint64(0, view.getBigUint64(0) + 1n);
+  return view.getFloat64(0);
+}
+
+/**
+ * Where `value += 360` starts rounding a negative reading up to exactly 360 —
+ * **bisected on the runtime's own expression, never computed.**
+ *
+ * 🚨 The bisection exists because the arithmetic was wrong. This figure was once
+ * `(360 * Number.EPSILON) / 2` = 3.997e-14: `Number.EPSILON` is the ulp of
+ * **1.0**, the spacing of the binade `[1, 2)`, and 360 lives in `[256, 512)`
+ * where the spacing is `256 · EPSILON`. The interval it supported claimed
+ * readings the reader does not produce — the exact failure the suite is about, in
+ * the suite. Bisecting `v + 360 === 360` models nothing and cannot be wrong by a
+ * binade.
+ */
+function readerWrapThreshold(): { misses: number; reaches: number; bracketMisses: boolean; bracketReaches: boolean } {
+  const reaches360 = (v: number): boolean => v + 360 === 360;
+  const from = -1e-13;
+  const to = -0;
+  let lo = from;
+  let hi = to;
+  for (let step = 0; step < 4096; step++) {
+    const mid = (lo + hi) / 2;
+    if (mid === lo || mid === hi) break;
+    if (reaches360(mid)) hi = mid;
+    else lo = mid;
+  }
+  // The bracket is asserted rather than assumed: both ends are facts about the
+  // arithmetic and either could move under a different engine.
+  return { misses: lo, reaches: hi, bracketMisses: !reaches360(from), bracketReaches: reaches360(to) };
+}
+
+/** An extreme by cell key, or a throw — every row is fed before any is read. */
+function readerExtreme(extremes: Map<string, number>, key: string): number {
+  const found = extremes.get(key);
+  if (found === undefined) throw new Error(`reader suite: no extreme recorded for ${key}`);
+  return found;
+}
+
+function runSliderReaderSuite(): number {
+  console.log('\n── what each of the twelve slider readers can produce, against the table (issue #420) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const authoring = readFileSync(join(import.meta.dir, 'docs', 'AUTHORING.md'), 'utf8');
+  const { rows, faults } = readerTableRows(authoring);
+  const wanted: string[] = [];
+  for (const property of readerProperties()) for (const local of [false, true]) wanted.push(`${property}/${local}`);
+  const seen = rows.map((r) => `${r.property}/${r.local}`);
+  const missing = wanted.filter((k) => !seen.includes(k));
+  const duplicated = seen.filter((k, i) => seen.indexOf(k) !== i);
+
+  // --- RD01: the derivation floor -------------------------------------------
+  say(
+    'RD01_the_readers_table_in_the_shipped_guide_is_FOUND_and_every_cell_parses',
+    rows.length === 12 && faults.length === 0 && missing.length === 0 && duplicated.length === 0,
+    `parsed ${rows.length} row(s) out of docs/AUTHORING.md` +
+      (missing.length ? `; missing ${missing.join(', ')}` : '') +
+      (duplicated.length ? `; duplicated ${duplicated.join(', ')}` : '') +
+      (faults.length ? `; ${faults.length} unparseable cell(s): ${faults.join(' | ')}` : ''),
+    'every case below compares a measurement against these rows, so a table that was renamed, reformatted or ' +
+      'deleted would leave them all agreeing with nothing. A scanner that stops matching goes silent, not red — ' +
+      'this is the clause that makes it red',
+  );
+
+  const { data, sliders } = readerFixture(false);
+  const keyOf = (row: ReaderRow): string => `${row.property}-${row.local ? 'local' : 'world'}`;
+
+  // --- RD02: the readers are the ones rigc's own `property` produced ---------
+  const classes: Record<string, (p: unknown) => boolean> = {
+    FromRotate: (p) => p instanceof FromRotate,
+    FromX: (p) => p instanceof FromX,
+    FromY: (p) => p instanceof FromY,
+    FromScaleX: (p) => p instanceof FromScaleX,
+    FromScaleY: (p) => p instanceof FromScaleY,
+    FromShearY: (p) => p instanceof FromShearY,
+  };
+  const readerMismatch = rows
+    .filter((row) => {
+      if (!sliders.has(keyOf(row))) return true;
+      const slider = readerSlider(sliders, keyOf(row));
+      const test = classes[row.reader];
+      return test === undefined || !test(slider.property) || slider.local !== row.local;
+    })
+    .map(
+      (row) =>
+        `${row.property}/${row.local} wants ${row.reader}, got ` +
+        `${sliders.has(keyOf(row)) ? readerSlider(sliders, keyOf(row)).property.constructor.name : 'no slider'}`,
+    );
+  // ⚠️ Every detail below names the ROW COUNT as well as the disagreement.
+  // Without it a run whose table lost eleven rows prints "all 1 rows agree" next
+  // to a FAIL, which is a detail reciting the wanted answer — the thing PS37's
+  // comment says not to write.
+  const over = `over ${rows.length} of 12 row(s)`;
+  say(
+    'RD02_every_row_names_the_reader_CLASS_the_parser_actually_built_from_that_property',
+    rows.length === 12 && readerMismatch.length === 0,
+    readerMismatch.length === 0
+      ? `${over}: every one agrees by \`instanceof\`, on a skeleton rigc compiled from the six \`property\` strings`
+      : `${over}: ${readerMismatch.join('; ')}`,
+    'the table is about spine-core classes and a rig spec names them with strings. If `SkeletonJson` ever mapped ' +
+      '`scaleX` to a different class, every bound below would be measured off the wrong reader and still agree ' +
+      'with itself',
+  );
+
+  // --- RD03: the basis — a slider cannot pass anything but zeros -------------
+  const liveSkeleton = new Skeleton(data);
+  liveSkeleton.setupPose();
+  liveSkeleton.update(0);
+  liveSkeleton.updateWorldTransform(Physics.reset);
+  const liveSliders = liveSkeleton.constraints.filter((c) => c instanceof Slider);
+  const sliderOffsets = (Slider as unknown as { offsets: number[] }).offsets;
+  say(
+    'RD03_the_offsets_array_a_slider_hands_its_reader_is_all_zeros',
+    liveSliders.length === 12 && sliderOffsets.length === 6 && sliderOffsets.every((v) => v === 0),
+    `${liveSliders.length} live Slider(s); \`Slider.offsets\` = [${sliderOffsets.join(', ')}]`,
+    'every world row of the table is stated FOR ZERO OFFSETS — with a non-zero array the two scale floors move to ' +
+      'the offset and the `rotate` circle moves bodily once the offset leaves [-360, 360]. `Slider.offsets` is a ' +
+      'private static, so a slider cannot reach that, and this is the clause that says so rather than a comment',
+  );
+
+  // --- the measurement every remaining case reads ---------------------------
+  const poses = [...readerSweepPoses(), ...readerSeamPoses()];
+  const low = new Map<string, number>();
+  const high = new Map<string, number>();
+  let negativeScaleWorld = 0;
+  for (const row of rows) {
+    if (!sliders.has(keyOf(row))) continue;
+    const slider = readerSlider(sliders, keyOf(row));
+    const key = `${row.property}/${row.local}`;
+    for (const pose of poses) {
+      const value = readerValue(data, slider, pose);
+      if (!Number.isFinite(value)) continue;
+      if (!low.has(key) || value < readerExtreme(low, key)) low.set(key, value);
+      if (!high.has(key) || value > readerExtreme(high, key)) high.set(key, value);
+      if (!row.local && (row.property === 'scaleX' || row.property === 'scaleY') && value < 0) negativeScaleWorld++;
+    }
+  }
+  const READER_TOLERANCE = 1e-6;
+  const READER_AWAY = 1e6;
+
+  // --- RD04: nothing left the stated bound ----------------------------------
+  const escaped: string[] = [];
+  for (const row of rows) {
+    const key = `${row.property}/${row.local}`;
+    if (row.floor !== null && readerExtreme(low, key) < row.floor - READER_TOLERANCE) {
+      escaped.push(`${key} read ${readerExtreme(low, key)}, below the stated floor ${row.floor}`);
+    }
+    if (row.ceiling !== null && readerExtreme(high, key) > row.ceiling + READER_TOLERANCE) {
+      escaped.push(`${key} read ${readerExtreme(high, key)}, above the stated ceiling ${row.ceiling}`);
+    }
+  }
+  say(
+    'RD04_no_reading_over_the_sweep_left_the_bound_its_row_states',
+    rows.length === 12 && escaped.length === 0,
+    `${over}, ${poses.length} pose(s) each = ${poses.length * rows.length} readings: ` +
+      (escaped.length === 0 ? 'none outside' : escaped.join('; ')),
+    'the containment half. On its own it would pass a table loosened to [-1e9, 1e9], which is what RD05 is for',
+  );
+
+  // --- RD05: and every stated end is actually REACHED -----------------------
+  const slack: string[] = [];
+  let ends = 0;
+  for (const row of rows) {
+    const key = `${row.property}/${row.local}`;
+    if (row.floor !== null) {
+      ends++;
+      if (Math.abs(readerExtreme(low, key) - row.floor) > READER_TOLERANCE) {
+        slack.push(`${key} floor states ${row.floor}, lowest measured ${readerExtreme(low, key)}`);
+      }
+    }
+    if (row.ceiling !== null) {
+      ends++;
+      if (Math.abs(readerExtreme(high, key) - row.ceiling) > READER_TOLERANCE) {
+        slack.push(`${key} ceiling states ${row.ceiling}, highest measured ${readerExtreme(high, key)}`);
+      }
+    }
+  }
+  say(
+    'RD05_every_stated_end_is_REACHED_by_a_measured_pose_and_not_merely_respected',
+    ends === 6 && slack.length === 0,
+    `${over}, ${ends} of 6 bounded end(s): ` +
+      (slack.length === 0
+        ? `each within ${READER_TOLERANCE} of a measured extreme — ` +
+          rows
+            .filter((r) => r.floor !== null || r.ceiling !== null)
+            .map(
+              (r) =>
+                `${r.property}/${r.local} [${readerExtreme(low, `${r.property}/${r.local}`)}, ` +
+                `${readerExtreme(high, `${r.property}/${r.local}`)}]`,
+            )
+            .join(', ')
+        : slack.join('; ')),
+    'the tightness half, and the one that catches the opposite drift: a bound nobody reaches is a bound nobody ' +
+      'measured. The count is asserted too, because a table that lost a bounded row would leave the survivors ' +
+      'agreeing among themselves',
+  );
+
+  // --- RD06: the `none` ends genuinely run away — the negative control ------
+  const notFar: string[] = [];
+  let nones = 0;
+  for (const row of rows) {
+    const key = `${row.property}/${row.local}`;
+    if (row.floor === null) {
+      nones++;
+      if (!(readerExtreme(low, key) < -READER_AWAY)) notFar.push(`${key} floor says none, lowest measured ${readerExtreme(low, key)}`);
+    }
+    if (row.ceiling === null) {
+      nones++;
+      if (!(readerExtreme(high, key) > READER_AWAY)) notFar.push(`${key} ceiling says none, highest measured ${readerExtreme(high, key)}`);
+    }
+  }
+  say(
+    'RD06_every_none_end_runs_past_1e6_including_all_six_local_rows',
+    nones === 18 && notFar.length === 0,
+    `${over}, ${nones} of 18 unbounded end(s): ` +
+      (notFar.length === 0
+        ? `all past ±${READER_AWAY} — the six \`local\` rows read ` +
+          rows
+            .filter((r) => r.local)
+            .map(
+              (r) =>
+                `${r.property} [${readerExtreme(low, `${r.property}/true`)}, ` +
+                `${readerExtreme(high, `${r.property}/true`)}]`,
+            )
+            .join(', ')
+        : notFar.join('; ')),
+    '⛔ the load-bearing negative control. `local: true` takes a different branch entirely, and if it were bounded ' +
+      'too then a compiler that refused every non-`rotate` slider would look correct against a suite that only ' +
+      'tested refusals. This exact shape caught a real mutant in #410',
+  );
+
+  // --- RD07: the correction to #417's `[0, 360)` ----------------------------
+  const rotateWorld = readerSlider(sliders, 'rotate-world');
+  const at360 = readerValue(data, rotateWorld, { rotation: -1e-14 });
+  const at0 = readerValue(data, rotateWorld, { rotation: 0 });
+  const piDeg = Math.PI * MathUtils.radDeg;
+  let holeLow = -Infinity;
+  let holeHigh = Infinity;
+  for (let i = 0; i <= 20000; i++) {
+    const value = readerValue(data, rotateWorld, { rotation: 179.99 + i * 1e-6 });
+    if (value <= 180 && value > holeLow) holeLow = value;
+    if (value > 180 && value < holeHigh) holeHigh = value;
+  }
+  // The two exact ends of the hole are the two branches of `atan2` at ±π, and a
+  // bone pointing along −x lands on one or the other by the SIGN OF THE ZERO in
+  // `c`. Nothing else in this suite needs a signed zero.
+  holeLow = Math.max(holeLow, readerValue(data, rotateWorld, { rotation: -0, shearX: -0, scaleX: -1 }));
+  holeHigh = Math.min(holeHigh, readerValue(data, rotateWorld, { rotation: 0, shearX: 0, scaleX: -1 }));
+  // 🔒 HOW FAR below zero the wrap reaches from, bisected — and compared against
+  // the figure the guide prints. This number was narrated in this case's origin
+  // string and asserted nowhere, which is #429's shape exactly; it was also
+  // WRONG, by a binade. Both halves are fixed here: the threshold is measured,
+  // and the doc's copy of it is inside the gate rather than beside it.
+  const wrap = readerWrapThreshold();
+  const halfUlp = (readerNextDoubleAbove(360) - 360) / 2;
+  const statedThreshold = [...authoring.matchAll(/`\[(-[0-9.e-]+)°, 0°\)`/g)].map((found) => Number(found[1]));
+  say(
+    'RD07_the_rotate_world_wrap_REACHES_360_from_a_MEASURED_threshold_and_leaves_a_hole_at_180',
+    at360 === 360 &&
+      at0 === 0 &&
+      Math.abs(holeLow - piDeg) < 1e-9 &&
+      Math.abs(holeHigh - (360 - piDeg)) < 1e-9 &&
+      holeHigh - holeLow > 5e-6 &&
+      wrap.bracketMisses &&
+      wrap.bracketReaches &&
+      wrap.reaches === -halfUlp &&
+      statedThreshold.length === 1 &&
+      statedThreshold[0] === wrap.reaches,
+    `a bone at -1e-14° reads ${at360} and at 0° reads ${at0}; the hole runs ${holeLow}..${holeHigh}, ` +
+      `${(holeHigh - holeLow).toExponential(3)}° wide (π·radDeg = ${piDeg}); the wrap bisects to ` +
+      `[${wrap.reaches}, 0) — largest miss ${wrap.misses} — and half an ulp of 360 off the representation is ` +
+      `${halfUlp} (agree: ${wrap.reaches === -halfUlp}); docs/AUTHORING.md prints ` +
+      `${statedThreshold.length === 1 ? statedThreshold[0] : `${statedThreshold.length} candidate interval(s)`}`,
+    "issue #417 established the reader's range as `[0, 360)` and this measures `[0, 360]`: `if (value < 0) value " +
+      '+= 360` on a reading a hair below zero ROUNDS, from -2.842170943040401e-14 up. ⚠️ That threshold was once ' +
+      'written `(360 * Number.EPSILON) / 2` = 3.997e-14, which is 360/256 too large — `Number.EPSILON` is the ulp ' +
+      'of 1.0 and 360 is in the binade [256, 512) — so the stated interval claimed readings the reader does not ' +
+      'produce, which is this suite\'s own subject applied to this suite. It is bisected on `v + 360 === 360` now, ' +
+      'cross-checked against the representation, and compared to the guide\'s copy so the figure is gated rather ' +
+      'than narrated. Nothing about the compile guard changes — it refuses above 360 + 1e-6, so 360 was already ' +
+      'inside the accepted set and this can only strengthen it',
+  );
+
+  // --- RD08: the scale floor is 0, attained, and the sign is gone -----------
+  const degenerateX = readerValue(data, readerSlider(sliders, 'scaleX-world'), { scaleX: 0, scaleY: 0 });
+  const degenerateY = readerValue(data, readerSlider(sliders, 'scaleY-world'), { scaleX: 0, scaleY: 0 });
+  const mirrored = readerValue(data, readerSlider(sliders, 'scaleX-world'), { scaleX: -1 });
+  const mirroredLocal = readerValue(data, readerSlider(sliders, 'scaleX-local'), { scaleX: -1 });
+  say(
+    'RD08_the_scale_world_floor_is_0_ATTAINED_and_a_negative_scale_reads_positive',
+    degenerateX === 0 &&
+      degenerateY === 0 &&
+      Math.abs(mirrored - 1) < 1e-9 &&
+      Math.abs(mirroredLocal + 1) < 1e-9 &&
+      negativeScaleWorld === 0,
+    `a zero-scale bone reads exactly ${degenerateX} / ${degenerateY}; \`scaleX: -1\` reads ${mirrored} in world and ` +
+      `${mirroredLocal} in local; negative world-scale readings over the sweep: ${negativeScaleWorld}`,
+    'issue #420 asked whether the floor is genuinely 0 and whether 0 is ATTAINED or only approached. It is ' +
+      'attained — by a degenerate bone, exactly — so the floor is a closed end and a range whose bottom is 0 is ' +
+      'legal. The second half is what a refusal has to say instead of "out of range": the sign is not clipped, it ' +
+      'is lost to `Math.sqrt`, so the author gets the mirror of their dial rather than a dead half',
+  );
+
+  // --- RD09: `local: true` is never the thing that gets refused -------------
+  const localRange = (property: string, local: boolean): Record<string, unknown> => ({
+    bones: [
+      { name: 'root' },
+      { name: 'block', parent: 'root', x: 0, y: 0, length: 12 },
+      { name: 'dial', parent: 'root', x: 0, y: 40, length: 10 },
+      { name: 'flag', parent: 'root', x: 40, y: 0, length: 20 },
+    ],
+    constraints: [
+      { name: 'axis', type: 'slider', animation: 'wave', bone: 'dial', property, from: 0, to: 0.5, scale: 0.033333, local },
+    ],
+  });
+  const localMotion = readerFixtureMotion();
+  const refusedLocal: string[] = [];
+  for (const property of readerProperties()) {
+    const message = refusal(writeProbeRig(localRange(property, true)), localMotion);
+    if (message !== null) refusedLocal.push(`${property}: ${message}`);
+  }
+  const worldRotateRefused = refusal(writeProbeRig(localRange('rotate', false)), localMotion);
+  say(
+    'RD09_the_same_range_compiles_under_local_true_for_all_six_while_the_rotate_world_twin_is_refused',
+    refusedLocal.length === 0 && worldRotateRefused !== null && worldRotateRefused.includes('below 0°'),
+    refusedLocal.length === 0
+      ? 'six `local: true` sliders over -15°..15° all compiled; the `rotate` `local: false` twin was ' +
+        (worldRotateRefused === null ? 'NOT refused — it compiled' : `refused: ${worldRotateRefused.slice(0, 120)}…`)
+      : refusedLocal.join(' | '),
+    '⛔ the compiler-side half of RD06, and it is not vacuous only because the twin IS refused: -15°..15° is ' +
+      'exactly the range #405 refuses under `local: false`. Whatever stage 2 adds for the scale floor, this case ' +
+      'has to keep passing for all six properties',
+  );
+
+  // --- RD10: `local: true` is a passthrough only on a free bone -------------
+  const pinned = readerFixture(true);
+  const freeRotate = readerValue(data, readerSlider(sliders, 'rotate-local'), { rotation: -500 });
+  const pinnedRotate = readerValue(pinned.data, readerSlider(pinned.sliders, 'rotate-local'), { rotation: -500 }, { rotation: -500 });
+  const freeScale = readerValue(data, readerSlider(sliders, 'scaleX-local'), { scaleX: -2 });
+  const pinnedScale = readerValue(pinned.data, readerSlider(pinned.sliders, 'scaleX-local'), { scaleX: -2 }, { scaleX: -2 });
+  say(
+    'RD10_a_constrained_bone_reads_a_DECOMPOSITION_on_the_local_branch_not_the_authored_number',
+    freeRotate === -500 && Math.abs(pinnedRotate + 140) < 1e-4 && freeScale === -2 && Math.abs(pinnedScale - 2) < 1e-9,
+    `rotation -500 reads ${freeRotate} on a free bone and ${pinnedRotate} on one a transform constraint drives; ` +
+      `scaleX -2 reads ${freeScale} free and ${pinnedScale} constrained`,
+    '`Slider.update` calls `bone.appliedPose.validateLocalTransform` first, and on a bone a constraint moved that ' +
+      'recomputes the local pose from the world matrix — `atan2Deg` for the angles, `Math.sqrt` for `scaleX`. The ' +
+      'producible SET is unbounded either way, so the table stands; what does not is "`local: true` reads the ' +
+      'number you authored", which is the repair every one of these refusals wants to name',
+  );
+
+  return bad;
+}

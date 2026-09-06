@@ -1,0 +1,98 @@
+# reader probe — bounds
+
+invocation: bun bench/studies/2026-09-06-readers/tools/readerprobe.ts --experiment=bounds
+seed 20260906, 40,000 sweep samples, spine-core 4.3.13
+
+## `FromRotate` world — the wrap, and the value #417 called unreachable
+
+`if (value < 0) value += 360` on an `atan2` that is a hair below zero ROUNDS: 360 is producible.
+
+| `src.rotation` | reading | `=== 0` | `=== 360` |
+| --- | --- | --- | --- |
+| -0.001 | 359.999 | false | false |
+| -0.000001 | 359.999999 | false | false |
+| -1e-9 | 359.999999999 | false | false |
+| -1e-12 | 359.999999999999 | false | false |
+| -1e-13 | 359.9999999999999 | false | false |
+| -1e-14 | 360 | false | true |
+| -1e-15 | 360 | false | true |
+| 0 | 0 | true | false |
+| 1e-14 | 9.999999999999994e-15 | false | false |
+| 0.001 | 0.0010000000000012145 | false | false |
+
+  the largest reading that does NOT reach 360:  -2.8421709430404014e-14  ->  359.99999999999994
+  the smallest reading that DOES reach 360:     -2.842170943040401e-14  ->  360
+  so the readings that arrive AS 360 are exactly [-2.842170943040401e-14°, 0°) — closed at the threshold.
+  bisection: 54 step(s) from -1e-13° to 0°, on `v + 360 === 360`.
+  for the record: half an ulp of 360 is 2.842170943040401e-14°, and the threshold IS that number: true.
+  ⚠️ This line used to read `(360 * Number.EPSILON) / 2` and print 3.997e-14, which is 360/256 too
+     large: `Number.EPSILON` is the ulp of 1.0, and 360 is in the binade [256, 512) where the
+     spacing is 256·EPSILON. The stated interval then CLAIMED READINGS THE READER DOES NOT PRODUCE
+     — inside a study whose subject is which values a reader can produce. It is the study's own
+     subject in miniature: a formula right in the regime it was written for and silently wrong one
+     binade over, which is #417, #431 and #434 in a row. It is bisected now, not derived.
+
+### …and the 5.3e-6° hole at 180°, which is the other half of the same `atan2`
+
+  largest reading at or below 180: 179.99999734089107   at rotation=−0 shearX=−0 scaleX=−1
+  smallest reading above 180:      180.00000265910893   at rotation=+0 shearX=+0 scaleX=−1
+  hole width: 0.000005318217858985008°  (π·radDeg = 179.99999734089107)
+  the image of `atan2` is (−π, π]; ×radDeg that is (−179.99999734…, 179.99999734…], and +360 puts
+  the negative half at [180.00000265…, 360). Nothing lands between the two.
+  ⚠️ A hole 5.3e-6° wide is not a hazard an author can fall into: no dial is that narrow. It is
+     reported because the cell in the table has to be the truth, not a rounding of it.
+
+## `FromScaleX` / `FromScaleY` world — is the floor 0, and is 0 ATTAINED?
+
+| pose | `scaleX` world | `=== 0` | `scaleY` world | `=== 0` |
+| --- | --- | --- | --- | --- |
+| `src.scale` 1 | 1 | false | 1.0000000000000033 | false |
+| `src.scale` 1e-9 | 1e-9 | false | 1.0000000000000036e-9 | false |
+| `src.scale` 1e-160 (a² is denormal) | 9.99994433575849e-161 | false | 9.99994433575849e-161 | false |
+| `src.scale` 1e-200 (a² underflows to 0) | 0 | true | 0 | true |
+| **`src.scale` 0 — the degenerate bone** | 0 | true | 0 | true |
+| `src.scaleX` 0 only | 0 | true | 1.0000000000000033 | false |
+| `parent.scale` 0 | 0 | true | 0 | true |
+| `src.scaleX` −1 (a mirror) | 1 | false | 1.0000000000000033 | false |
+| `src.scaleX` −3 | 3 | false | 1.0000000000000033 | false |
+| `src.scale` 1e150 | 1e+150 | false | 1.0000000000000034e+150 | false |
+| `src.scale` 1e200 (a² overflows) | Infinity | false | Infinity | false |
+
+  the reader is `Math.sqrt(a² + c²)`, so a negative local scale comes back POSITIVE and the sign
+  the author drove with is gone. 0 is not approached: a zero-scale bone reads exactly 0.
+
+## `FromShearY` world — a difference of two `atan2` calls, minus 90
+
+### the window one bone orientation gives, driving `shearY`
+
+| `src.rotation` | window low | window high | width | seams found |
+| --- | --- | --- | ---: | --- |
+| 0 | -269.999995 | 89.999995 | 359.999989 | shearY≈-269.75, shearY≈90.00, shearY≈450.00 |
+| 30 | -299.999996 | 59.999994 | 359.999989 | shearY≈-299.75, shearY≈60.00, shearY≈420.00 |
+| 90 | -359.999999 | -0.000009 | 359.999989 | shearY≈-359.75, shearY≈0.00, shearY≈360.00 |
+| 180 | -90.000000 | 269.999989 | 359.999989 | shearY≈-449.75, shearY≈-90.00, shearY≈270.00 |
+| -90 | -179.999999 | 179.999991 | 359.999989 | shearY≈-539.75, shearY≈-179.75, shearY≈180.00, shearY≈540.00 |
+
+  the width is 360 every time and the window SLIDES with the bone's world x-axis angle θx:
+  it is `(−270 − θx, 90 − θx]`. So a `shearY` world dial wraps exactly as a `rotate` one does,
+  and the seam is not at a fixed value of the driven field — it is wherever the bone is pointing.
+
+### the two extremes, and the determinant's sign
+
+  measured minimum: -449.99999468178214
+             at:    rotation=-1e-14 shearX=0 shearY=-89.99999999999999 scaleX=-1 scaleY=-1
+  measured maximum: 269.99999468178214
+             at:    rotation=-179.999999999 shearX=179.999999999 shearY=89.999999999 scaleX=-1 scaleY=-1
+  (−π − π)·radDeg − 90 = -449.99999468178214   |Δ| = 0.00e+0
+  (π − −π)·radDeg − 90 = 269.99999468178214   |Δ| = 0.00e+0
+
+| determinant of the local pose | min | max | reaches the closed form? |
+| --- | --- | --- | --- |
+| positive (unmirrored) | -449.99999468178214 | 269.99999468178214 | true |
+| negative (mirrored)   | -449.9999940226732 | 269.9999940226732 | false |
+
+  ⇒ the determinant's sign DOES change the answer, and not the way round it looks: over this grid the
+    unmirrored half hits both ends exactly and the mirrored half stops 6.6e-7° short of each. Both
+    extremes above come from a bone with BOTH scales negative — a 180° turn, determinant positive,
+    not a mirror. Neither end is approached in the limit: each is hit exactly, by an ordinary pose
+    with no signed zero in it. What the mirrored row states is what this grid found, not a bound.

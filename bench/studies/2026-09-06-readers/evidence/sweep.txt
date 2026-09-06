@@ -1,0 +1,24 @@
+# reader probe — sweep
+
+invocation: bun bench/studies/2026-09-06-readers/tools/readerprobe.ts --experiment=sweep --seed=20260906
+seed 20260906, 40,000 sweep samples, spine-core 4.3.13
+
+Every cell over the same poses: three bones and the skeleton scale drawn from the axes in `poseAxes`.
+
+| cell | samples | finite | NaN | ±∞ | min | max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `rotate-world` | 40,000 | 40,000 | 0 | 0 | 0 | 360 |
+| `rotate-local` | 40,000 | 40,000 | 0 | 0 | -540 | 1000 |
+| `x-world` | 40,000 | 40,000 | 0 | 0 | -1000002998990526800 | 1000002416108691600 |
+| `x-local` | 40,000 | 40,000 | 0 | 0 | -1000000 | 1000000 |
+| `y-world` | 40,000 | 40,000 | 0 | 0 | -1414104886685281500 | 1280681773494987000 |
+| `y-local` | 40,000 | 40,000 | 0 | 0 | -1000000 | 1000000 |
+| `scaleX-world` | 40,000 | 40,000 | 0 | 0 | 0 | 1000000011595261400 |
+| `scaleX-local` | 40,000 | 40,000 | 0 | 0 | -3 | 1000000 |
+| `scaleY-world` | 40,000 | 40,000 | 0 | 0 | 0 | 1000000011599647000 |
+| `scaleY-local` | 40,000 | 40,000 | 0 | 0 | -3 | 1000000 |
+| `shearY-world` | 40,000 | 40,000 | 0 | 0 | -449.99999468178214 | 269.99999468178214 |
+| `shearY-local` | 40,000 | 40,000 | 0 | 0 | -540 | 1000 |
+
+⚠️ A sweep gives an EXTREME, never a bound: it says what was seen, not what is possible.
+   `--experiment=bounds` is what aims at the seams; this is what says nothing else turned up.
