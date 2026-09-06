@@ -129,11 +129,18 @@ character after it is the tool's. That means a block cannot be trimmed to its
 interesting lines or re-wrapped to fit, because both make it something the tool
 never printed — and a block quoting a run this repository cannot make (lines
 lifted out of a run that does not print them adjacent, a line cut short with an
-ellipsis) says so above its fence:
+ellipsis) says so above its fence, in a line that renders:
 
-```html
-<!-- transcript: two MEMBER lines lifted out of one `explain` run, which does not print them adjacent -->
+```markdown
+**No run reproduces this:** two MEMBER lines lifted out of one `explain` run, which does not print them adjacent
 ```
+
+**One string, and it is the one you read.** Both markers on this page used to be
+HTML comments, so the page showed nothing: an abridged block read as a complete
+transcript, which is worse than hidden. The fix is not a comment for the checker
+and a sentence for you — two copies of one fact drifting apart is the whole
+defect these checks exist to catch — so there is exactly one form, it is prose,
+and the checker reads the same characters you do.
 
 The reason is required, the declared set is reported on every run, and a
 declaration on a block that *does* reproduce is a failure — otherwise the marker
@@ -155,18 +162,18 @@ one ([#429](https://github.com/firejune/rigc/issues/429)): a refusal has nothing
 at the gutter to anchor on, and no command a README states prints it, because
 making one needs a spec authored to be *refused* while every spec here is
 authored to be correct. So such a block names the edit on the line above its
-fence, and the selftest runs it:
+fence, the selftest runs it, and you can read it:
 
-```html
-<!-- refusal: nod motion build --profile spine-html | "wavelength": 320 | "wavelength": 80 -->
+```markdown
+**Reproduce it:** replace `"wavelength": 320` with `"wavelength": 80` in `gallery/nod/motion.json`, then run `build --profile spine-html`.
 ```
 
-Read it as: take `gallery/nod/motion.json`, replace every `"wavelength": 320`
-with `"wavelength": 80`, build that, and the block below has to be one of the
-lines it printed. The grammar holds nothing else — one example of this gallery,
-one of its two spec files, one literal replace-all, and `build` — so there is no
-path in it to point outside the repository and no shell for it to run. A recipe
-whose text is not in the file, or whose edit still builds green, is a failure.
+Every replacement is a replace-*all*, and the block below has to be one of the
+lines that build printed. The sentence holds nothing else — one example of this
+gallery, one of its two spec files, one literal replacement, and `build` — so
+there is no path in it to point outside the repository and no shell for it to
+run. A recipe whose text is not in the file, or whose edit still builds green, is
+a failure; so is a sentence that is not this sentence.
 
 **What announces a refusal**, and it is not a courtesy: a block opening on the
 error head `rigc compile error` or on the gutter verdict `FAIL` is read as a

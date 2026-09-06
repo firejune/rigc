@@ -254,7 +254,7 @@ which is exactly how the defect below got in.
 `explain` prints the model and every offset it produced, so the table above and
 the artifact are the same numbers:
 
-<!-- transcript: abridged — the last line stands in for nineteen more the run prints -->
+**No run reproduces this:** abridged — the last line stands in for nineteen more the run prints
 ```
       t=0.26    deform[0..154]  77 pair(s)                     bezier[4]
                transform bend  amount=15 from=-81 to=77 power=2 along=y axis=x

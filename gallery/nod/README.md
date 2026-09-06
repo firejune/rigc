@@ -135,7 +135,7 @@ agree to the last digit printed.** The table is arithmetic on the row positions;
 ratio taken off **posed float32 world vertices** at each key. Nothing connects
 them but the geometry:
 
-<!-- transcript: the two `area` lines of two different animations, each abridged out of its own DEFORM record -->
+**No run reproduces this:** the two `area` lines of two different animations, each abridged out of its own DEFORM record
 ```
   DEFORM  idle  default/head/head  key 1  t=0.900000  transform pitch  radius=150 degrees=5
           area       min x0.863544 tri 6   max x1.128845 tri 0   (8 triangles, 0 with no area at the cleared pose, band 0.092526px²)
@@ -222,7 +222,7 @@ bun cli.ts build --rig gallery/nod/rig.json --motion /tmp/nod-34.json --out /tmp
 `33°` gates green; `34°` does not, and the refusal names the pair the closed form
 names:
 
-<!-- refusal: nod motion build --profile spine-html | "degrees": 12 | "degrees": 34 -->
+**Reproduce it:** replace `"degrees": 12` with `"degrees": 34` in `gallery/nod/motion.json`, then run `build --profile spine-html`.
 ```
 FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "bow" deform head/head key 2
 (t=0.6000000238418579s): 2 of 8 triangle(s) reverse winding — triangle 6 [7,6,5] 5320.002 ->
@@ -465,7 +465,7 @@ and the row above is what the compiler says instead:
 Its own path to the patched motion spec sits between `error:` and `animation`
 and is cut here, because it is a different string on every machine:
 
-<!-- refusal: nod motion build --profile spine-html | "wavelength": 320 | "wavelength": 80 -->
+**Reproduce it:** replace `"wavelength": 320` with `"wavelength": 80` in `gallery/nod/motion.json`, then run `build --profile spine-html`.
 ```
 rigc compile error: animation "idle" deform default/ear_l/ear_l (t=0): transform wave states
 amplitude=10 wavelength=80 phase=0 along=y axis=x, and every one of this attachment's 22
@@ -562,7 +562,7 @@ arithmetic*. This example uses both, twelve lines apart:
 
 `explain` labels which is which, and that label is the whole audit:
 
-<!-- transcript: two MEMBER lines lifted out of one `explain` run, which does not print them adjacent -->
+**No run reproduces this:** two MEMBER lines lifted out of one `explain` run, which does not print them adjacent
 ```
   MEMBER  bow  group "features".translatey  t=0.600000  5 member(s)  derive pitch  degrees=12 carried=150  -> the displacement
   MEMBER  bow  group "ears".rotate  t=0.780000  2 member(s)  stated per member
@@ -870,7 +870,7 @@ bun cli.ts build --rig gallery/portrait/rig.json --motion /tmp/pp.json --out /tm
 The message names the spec it read — `/tmp/pp.json` above — between `error:` and
 `animation`, and that half is cut here because it is whatever path you chose:
 
-<!-- refusal: portrait motion build | "kind": "yaw", "radius" | "kind": "pitch", "radius" -->
+**Reproduce it:** replace `"kind": "yaw", "radius"` with `"kind": "pitch", "radius"` in `gallery/portrait/motion.json`, then run `build`.
 ```
 rigc compile error: animation "turn" deform default/head/head (t=0.62): transform pitch has
 radius 170, and vertex 0 sits at y=180, which is 10 past it (about=0). The cylinder has no

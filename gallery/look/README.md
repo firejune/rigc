@@ -396,7 +396,7 @@ slider reading a **world** rotation goes through `FromRotate.value`, which ends
 negative half. rigc refuses it at compile with the arithmetic in the message,
 and here is that refusal on this rig, produced by flipping the flag:
 
-<!-- refusal: look rig build | "local": true | "local": false -->
+**Reproduce it:** replace `"local": true` with `"local": false` in `gallery/look/rig.json`, then run `build`.
 ```
 rigc compile error: rig constraint "yaw": drives off bone "yaw_dial" rotate with "local": false, and the
 driving values that reach animation "turn" (0s..1.9s) run from -19.000° to 19.000°. A world rotation is read
@@ -421,7 +421,7 @@ bone currently points at, and the slot-colour half of that apply is an
 simultaneously applied `turn` at the **neutral** time, and the alpha-0 key the
 animation itself wrote was undone:
 
-<!-- transcript: the shape this rig no longer has — both sliders at `"mix": 0` with `sweep` keying them on — so no edit to the shipped spec prints it; abridged at the ellipsis besides -->
+**No run reproduces this:** the shape this rig no longer has — both sliders at `"mix": 0` with `sweep` keying them on — so no edit to the shipped spec prints it; abridged at the ellipsis besides
 ```
 FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform hair_lock_l/hair_lock_l key 6
 (t=1.899999976158142s): 4 of 48 triangle(s) reverse winding — triangle 2 [1,28,29] 540.000 -> -63.033px² …
@@ -439,7 +439,7 @@ construction**, and A39 was measuring the two independently. It now inverts the
 slider's own mapping and drives `yaw_dial` to the value that selects each key's
 time (AUTHORING §4.11.4), which is the frame a playthrough actually contains:
 
-<!-- transcript: abridged — the `skipped` line is cut at the ellipsis; it is quoted in full above -->
+**No run reproduces this:** abridged — the `skipped` line is cut at the ellipsis; it is quoted in full above
 ```
   DEFORM  turn  default/hair_lock_l/hair_lock_l  key 6  t=1.900000  transform yaw  depth=true degrees=19
           frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 19.000000 -> t=1.900000
@@ -449,7 +449,7 @@ time (AUTHORING §4.11.4), which is the frame a playthrough actually contains:
 ⇒ **both sliders declare `"mix": 1`, `sweep` keys no `mix` at all, and both
 assertions run:**
 
-<!-- transcript: two verdict lines lifted out of one `--profile spine-html` run, which does not print them adjacent -->
+**No run reproduces this:** two verdict lines lifted out of one `--profile spine-html` run, which does not print them adjacent
 ```
   PASS  A39_DEFORM_KEEPS_TRIANGLE_WINDING
   PASS  A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET
