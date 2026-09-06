@@ -3540,11 +3540,9 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
         const atEnd = fromValue + (duration - toTime) / perUnit;
         const lowest = Math.min(atStart, atEnd);
         const highest = Math.max(atStart, atEnd);
-        // Which end of the circle the range leaves, and which way the reader
-        // moves it: below 0° the wrap ADDS 360, past 360° there is nothing above
-        // to wrap from and the value arrives 360 LOWER instead. One record, so
-        // the end, its reading, the time it lands on and the two clauses that
-        // name the side are derived once rather than twice.
+        // Which end of the circle the range leaves. One record, so the end, its
+        // reading, the time it lands on and the two clauses that name the side
+        // are derived once rather than twice.
         //
         // The two tests ARE each other's mirror, and that is deliberate: each
         // gives its own boundary — 0° and 360°, the two values an author aims at
@@ -3554,19 +3552,49 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
           lowest < -SLIDER_WRAP_SLACK
             ? {
                 end: lowest,
-                readAs: lowest + 360,
                 side: 'below 0°',
                 repair: 'move the range so it does not cross 0°',
               }
             : highest > 360 + SLIDER_WRAP_SLACK
               ? {
                   end: highest,
-                  readAs: highest - 360,
                   side: 'past 360°',
                   repair: 'move the range so it does not run past 360°',
                 }
               : null;
         if (dead !== null) {
+          /**
+           * What `FromRotate.value` actually returns for a bone at that end: a
+           * MODULO, not one subtraction (issue #431).
+           *
+           * 🚨 `lowest + 360` / `highest - 360` is right only while the range
+           * stays within one turn of the circle, which every fixture in this
+           * tree happened to be. Further out it printed a number the reader
+           * cannot return, inside a refusal whose entire subject is which
+           * readings the reader CAN return: `from: -500, scale: 0.005` over a
+           * 1 s animation said *"the bone at -500.000° is read as -140.000° and
+           * maps to time 1.800s"*, and -140° is not in `[0, 360)` at all. Both
+           * figures in that sentence were wrong. Measured through spine-core,
+           * a bone parked at -500° drives `Slider.appliedPose.time` to
+           * 3.600000s — the same six decimals a bone parked at 220° drives it
+           * to — so the reading is 220° and the time is 3.600s.
+           *
+           * ⭐ Derived off `dead.end` rather than inside the two branches, so
+           * the wrap is written ONCE. That is what #424 collapsed the two ends
+           * into one record for, and a second copy of `% 360` with a sign
+           * edited is how the pair drifts apart again.
+           *
+           * ⚠️ The consequence clause below does NOT go through here and does
+           * not need to: `reachLo`/`reachHi` intersect the driving window with
+           * `[0, 360)` directly, which is the same set however many turns out
+           * the window sits. Swept through spine-core at 0.1° over the whole
+           * circle on both a beyond-a-turn low range (-500°..-300°) and a
+           * beyond-`+720°` high one (100°..900°), the held fraction and the
+           * frame the held arc pins to are the ones this clause names — 100.0%
+           * at 1.000s and 27.8% at 0.000s — and the runtime's own applied time
+           * tracks the closed form to 3.3e-8s.
+           */
+          const readAs = ((dead.end % 360) + 360) % 360;
           /**
            * The time this mapping puts a driving value at, before the runtime
            * touches it — the one arithmetic every figure below comes off.
@@ -3581,7 +3609,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
            * hedges is a message that has not measured.
            */
           const timeAt = (value: number): number => toTime + (value - fromValue) * perUnit;
-          const lands = timeAt(dead.readAs);
+          const lands = timeAt(readAs);
           // `[0, 360)` is the whole of what `FromRotate.value` returns (issue
           // #417), so the readings that reach the animation at all are that
           // circle met with the driving window `lowest`..`highest` the range
@@ -3635,7 +3663,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
             `${where}: drives off bone "${String(spec.bone)}" rotate with "local": false, and the driving values ` +
               `that reach animation "${animation}" (0s..${duration}s) run from ${lowest.toFixed(3)}° to ${highest.toFixed(3)}°. ` +
               'A world rotation is read through `FromRotate.value`, which ends `if (value < 0) value += 360`, so the bone ' +
-              `at ${dead.end.toFixed(3)}° is read as ${dead.readAs.toFixed(3)}° and maps to time ${lands.toFixed(3)}s. ` +
+              `at ${dead.end.toFixed(3)}° is read as ${readAs.toFixed(3)}° and maps to time ${lands.toFixed(3)}s. ` +
               `${consequence} The whole part of the range ${dead.side} is dead and ` +
               'nothing at runtime reports it. Add `"local": true` to read the bone\'s own rotation signed and unwrapped — ' +
               `that is the form a face axis wants — or ${dead.repair}.`,

@@ -6953,13 +6953,21 @@ function runPathAndSliderSuite(): number {
   // attached to the reading. So this case asserts its own text and makes no
   // disjointness claim; PS41 is where that rule lives.
   //
-  // 🐛 The second stays within ONE turn of the circle (-200°, not -500°) on
-  // purpose, and the reason is a defect this case would otherwise have to freeze:
-  // `dead.readAs` is `end ± 360` rather than a modulo, inherited from #405, so a
-  // range further out than one turn prints a reading no bone can have — `from:
-  // -500, scale: 0.005` over 1s says *"the bone at -500.000° is read as
-  // -140.000°"* where the reader returns 220.000°. Pre-existing, untouched here,
-  // and out of #423's scope; at -200° the reading it names (160.000°) is true.
+  // ⭐ The second stays within ONE turn of the circle (-200°, not -500°), and it
+  // is worth saying why it was chosen that way, because the reason has changed
+  // shape rather than gone away. It was chosen to avoid freezing a defect: the
+  // reading was `end ± 360` rather than a modulo, inherited from #405, so a range
+  // further out than one turn printed a reading no bone can have — `from: -500,
+  // scale: 0.005` over 1s said *"the bone at -500.000° is read as -140.000°"*
+  // where the reader returns 220.000°. Issue #431 fixed that, and the wrap is now
+  // `((end % 360) + 360) % 360`, so a -500° fixture would be honest today.
+  //
+  // What keeps -200° here is what the case is FOR. Within one turn the modulo and
+  // the subtraction agree to the bit, so this fixture cannot tell them apart —
+  // it is aimed at the two edges of the COMPUTED CONSEQUENCE, not at the reading,
+  // and 160.000° is true under either arithmetic. The turns-out ranges have their
+  // own case below (`PS44`), where they are the whole subject rather than a
+  // second variable in somebody else's control.
   const INSIDE_POSE = {
     duration: 1,
     loop: false,
@@ -7004,6 +7012,123 @@ function runPathAndSliderSuite(): number {
       'general sentence cannot cover — a held arc of zero width, and no reachable interval at all — and a branch ' +
       'that prints "0.0% of the circle — every reading below 0.000°" is a vacuous clause wearing a number, which ' +
       'is exactly the dressing this issue took off',
+  );
+
+  // --- the wrap is a MODULO, not one subtraction (issue #431) ---------------
+  //
+  // 🚨 The reading was computed as `end ± 360` — one turn — inside a refusal
+  // whose entire subject is which readings `FromRotate.value` can produce. A
+  // range further out than one turn therefore named a reading the runtime
+  // cannot give, and named the wrong frame with it. The two cases below are the
+  // two directions, both past the point where a single subtraction stops
+  // agreeing with `((end % 360) + 360) % 360`.
+  //
+  // 📐 Both figures were measured through spine-core before they were written,
+  // on DW21's artifact idiom (compile the range under `local: true`, flip the
+  // emitted flag off, park the dial and read `Slider.appliedPose.time`):
+  //
+  //   -500°   applied time 3.600000s — the same six decimals as a dial at 220°
+  //    900°   applied time 0.200000s — the same six decimals as a dial at 180°
+  //
+  // So the reading is the modulo in both directions, and the old text was wrong
+  // twice over each time: 220° against -140° and 3.600s against 1.800s on the
+  // low end, 180° against 540° — not even a value in `[0, 360)` — and 0.200s
+  // against 1.100s on the high one.
+  //
+  // ⭐ **The consequence clause does NOT move**, and that is measured rather
+  // than assumed (issue #423's own sweep, re-run on both of these ranges at
+  // 0.1° over the whole circle, 3600 dials):
+  //
+  //   -500°..-300° / 1s   3600/3600 readings held, all of them at 1.000s;
+  //                       the clause says 100.0% at 1.000s
+  //    100°..900° / 2s    1000/3600 readings held, all of them at 0.000s;
+  //                       the clause says 27.8% at 0.000s, reachable
+  //                       0.000s..0.650s against a measured 0.000s..0.649750s
+  //
+  // and `Slider.appliedPose.time` tracks the closed form to 3.3e-8s — the
+  // reader's own `atan2` noise, the order PS38 and PS41 already measure. The
+  // reason it does not move is structural: `reachLo`/`reachHi` intersect the
+  // driving window with `[0, 360)` directly, which is the same set however many
+  // turns out the window sits, and `heldAt` names an END of that intersection
+  // rather than the wrapped reading.
+  //
+  // ⚠️ No figure below appears in the other case, PS41's rule: the low end
+  // carries -500.000°, -300.000°, 220.000°, 3.600s and a hold at 1.000s over a
+  // 1 s animation; the high end carries 100.000°, 900.000°, 180.000°, 0.200s,
+  // 0.000s..0.650s, 27.8% and a hold at 0.000s over a 2 s one. A modulo applied
+  // to the wrong end, or a sign edited into it, moves a number that only one of
+  // them has.
+  const TWO_SECOND_POSE = {
+    duration: 2,
+    loop: false,
+    tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 2, v: [30] }] }],
+  };
+  const beyondBelow = refusal(
+    sliderPairDirs([pairSlider('yaw', 'yaw-pose', 'yaw-dial', { from: -500, to: 0, scale: 0.005 })]),
+    sliderPairMotion(),
+  );
+  const beyondPast = refusal(
+    sliderPairDirs([pairSlider('yaw', 'wide-pose', 'yaw-dial', { from: 100, to: 0, scale: 0.0025 })]),
+    sliderPairMotion({ 'wide-pose': TWO_SECOND_POSE }),
+  );
+  /** Which of the two cases' figures a message carries, read out of it rather than restated. */
+  const turnsOut = (message: string): string[] =>
+    [
+      '-500.000°',
+      '-300.000°',
+      '220.000°',
+      '3.600s',
+      "animation's 1s",
+      'at 1.000s',
+      '100.000°',
+      '900.000°',
+      '180.000°',
+      '0.200s',
+      '0.000s..0.650s',
+      '27.8%',
+      "animation's 2s",
+      'at 0.000s',
+    ].filter((clause) => message.includes(clause));
+  say(
+    'PS44_A_RANGE_FURTHER_OUT_THAN_ONE_TURN_IS_READ_BY_MODULO_AT_BOTH_ENDS',
+    beyondBelow !== null &&
+      beyondPast !== null &&
+      beyondBelow.includes('run from -500.000° to -300.000°') &&
+      beyondBelow.includes('read as 220.000° and maps to time 3.600s') &&
+      beyondBelow.includes("reaches none of the animation's 1s — the whole circle is held on the frame at 1.000s") &&
+      beyondBelow.includes('below 0°') &&
+      beyondPast.includes('run from 100.000° to 900.000°') &&
+      beyondPast.includes('read as 180.000° and maps to time 0.200s') &&
+      beyondPast.includes("reaches only 0.000s..0.650s of the animation's 2s") &&
+      beyondPast.includes('27.8% of the circle — every reading below 100.000° — is held on the frame at 0.000s') &&
+      beyondPast.includes('past 360°') &&
+      // 🚫 and neither of them says what one subtraction used to say — both of
+      // which are readings, or frames, the runtime does not produce here.
+      !beyondBelow.includes('-140.000°') &&
+      !beyondBelow.includes('1.800s') &&
+      !beyondPast.includes('540.000°') &&
+      !beyondPast.includes('1.100s') &&
+      // …and no figure of either case appears in the other.
+      !beyondBelow.includes('100.000°') &&
+      !beyondBelow.includes('900.000°') &&
+      !beyondBelow.includes('180.000°') &&
+      !beyondBelow.includes('0.200s') &&
+      !beyondBelow.includes('27.8%') &&
+      !beyondBelow.includes('at 0.000s') &&
+      !beyondPast.includes('-500.000°') &&
+      !beyondPast.includes('-300.000°') &&
+      !beyondPast.includes('220.000°') &&
+      !beyondPast.includes('3.600s') &&
+      !beyondPast.includes('at 1.000s'),
+    beyondBelow === null || beyondPast === null
+      ? `one of the two turns-out ranges compiled: below=${beyondBelow === null ? 'compiled' : 'refused'} ` +
+        `past=${beyondPast === null ? 'compiled' : 'refused'}`
+      : `the range below carries [${turnsOut(beyondBelow).join(' + ') || 'none of the fourteen figures'}]; ` +
+        `the range past carries [${turnsOut(beyondPast).join(' + ') || 'none of the fourteen figures'}]`,
+    'issue #431: `FromRotate.value` wraps by modulo, so a range more than a turn outside [0, 360) was told a reading ' +
+      'no bone can have — -140.000° on the low end, and 540.000° on the high one, which is not even inside the ' +
+      'circle the same sentence says is the whole of the output. Measured, a dial at -500° drives the slider to ' +
+      '3.600000s and a dial at 900° to 0.200000s, which are the times 220° and 180° drive it to',
   );
 
   return bad;
@@ -22137,7 +22262,7 @@ function main(): void {
       'on the effective channels, a deform hold read off the expanded run so two spellings of one run are one ' +
       'geometry, a raw curve over a hold left verbatim, the named easing and an explicit stepped emitting one file, ' +
       'and the hold posed through spine-core identically whether stepped or linear), ' +
-      '+ 44 path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' +
+      '+ 45 path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' +
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'which bones a skin switches on, and what TWO sliders on one bone do to it: 7.50 or 18.75 or their sum ' +
       '26.25 degrees, decided only by which of them is later in the constraints array and whether that one is ' +
@@ -22152,7 +22277,10 @@ function main(): void {
       'because `Math.max(0, time)` is what the other flag runs and asserting a clamp there would be the same ' +
       'defect one field over, plus the two edges that arithmetic has and an assertion did not — a circle wholly ' +
       'inside the window, where nothing is held and a 0.0% clause would be a vacuous number, and a window that ' +
-      'misses the circle, where there is no reachable interval to print at all, ' +
+      'misses the circle, where there is no reachable interval to print at all, plus a range further out than ONE ' +
+      'TURN at each end, where the reading is the MODULO and a single subtraction names a value the reader cannot ' +
+      'return — -140 degrees on the low side and 540, not even inside the circle, on the high one — measured ' +
+      'against the times a dial at 220 and at 180 degrees actually drives the slider to, ' +
       'and beside them the shapes that must NOT be refused: the FULL TURN ending exactly on 360, whose ' +
       'only unreachable value is a supremum measured here to pose the skeleton within 4e-7 degrees of 0, and the ' +
       'same past-360 range under `local: true`, which is the repair the refusal names — with the line between them ' +
