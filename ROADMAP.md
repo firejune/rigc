@@ -22,6 +22,26 @@ through the editor is how a result gets **checked**, not where it gets
 finished. Where a face angle became a value rather than a moment on a
 timeline, that was the direction — nobody keys it.
 
+## What changes the frame
+
+Today `spine-core` is the oracle, and that is **a fact about the code, not a
+preference**: nothing rigc writes is trusted until a parser rigc did not write
+has read it back. So a sentence that treats Spine as already optional is ahead
+of the code rather than describing it, and the benchmark ladder — Spine's own
+example projects, art this project did not author and answers it cannot tune
+to — is an oracle in exactly the same sense. Neither is deference. Both are
+the only independent check there is right now.
+
+The frame changes at one moment: **when this project's own core can be its own
+oracle.** Not when a second backend can emit — emitting is the easy half, and
+output nobody can check is worth nothing. When there is an independent check on
+the core's own format, Spine becomes one backend among several *as a fact*
+rather than as an intent.
+
+⇒ **The milestone is not the second backend. It is the second oracle.** That is
+the long-term feature's real content, and it is why the sequencing puts it
+after the rest rather than beside it.
+
 ## The road so far
 
 Rough too, and in order rather than by date. [LADDER.md](docs/LADDER.md) and
@@ -115,10 +135,10 @@ mechanically, every release.
 
 ## Not in 1.0
 
-- **A second backend.** Not because Spine is the point — it is not — but
-  because the sequencing was ruled: the feature work first, the core split
-  after. A backend also needs an oracle of its own before it can ship, and
-  building that is the larger half of the job.
+- **A second oracle, and the backend behind it.** Not because Spine is the
+  point — it is not — but because the sequencing was ruled: the feature work
+  first, the core split after. See *What changes the frame*: the emitting is
+  the easy half.
 - **Full coverage of the Spine 4.3 format.** 1.0 is not *everything works*, it
   is **the boundary is honest and stable**: what rigc emits, it emits
   correctly, and what it does not, it refuses by name. Coverage follows from
