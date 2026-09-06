@@ -88,6 +88,37 @@ sincere about it. rigc exists to convert that silence into a named failure.
   Since 2026-08-22 `bun run lint` enforces this rather than a reader, which is
   also what makes the scope of that exemption checkable — the file's
   `eslint-disable` comments now have to actually bracket every `any` in it.
+- **rigc compiles an object. The scene belongs to the consumer.** What the rig
+  can *do* is ours — its angles, its jiggle, its expression axes, the sockets
+  something attaches to, and the guarantee that its animations meet cleanly at
+  their rest poses. *When* it does any of that is not: the order animations play
+  in, what else is on screen, where the camera is, how two characters relate.
+  The line is not a modesty; crossing it makes the claims contradict each other,
+  because the code already refuses what the prose would be promising.
+
+  ⭐ **It is a name for a choice already made, which is why it holds.**
+  `gallery/look` deliberately makes a face angle *a value rather than a time* —
+  the object offers a dial and does not decide when it turns. A39 poses a
+  slider-applied animation at the slider's own mapping for the same reason
+  (issue #407): posing it as if a track were playing it invents a moment the
+  object never claimed.
+
+  ⚠️ The failure mode is vocabulary, not code. `films/three-scene` states the
+  boundary exactly right in its own text — *"that is a property of the rig
+  rather than of the assembler"*, measured at 0 differing pixels across the
+  hand-offs — and then the README caption over it calls the same thing "scene
+  direction". Prefer the honest claim, which is also the stronger one and the
+  only measurable one: **rigc makes an object that can be directed. It
+  guarantees the seams; the consumer does the composing.**
+
+  🎬 **A demo is the one place a scene belongs, because there we are the
+  consumer.** Showing what an object can do means putting it in time, and
+  someone has to compose that take — so `films/three-scene` is a scene, made
+  deliberately, and its name is honest. What is not honest is presenting that
+  composition as a rigc capability. The film may stage; the caption may not
+  claim. Read a "scene" in this tree as a question of *who is speaking*: the
+  demo says "we composed this with the tool", the product may only say "here is
+  what the object gives you to compose with".
 
 ## Conventions
 
