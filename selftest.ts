@@ -23212,148 +23212,510 @@ function runCutsSuite(): { failures: number; cuts: number } {
   return { failures: bad, cuts: names.length };
 }
 
+// ---------------------------------------------------------------------------
+// the run's own tally of itself (issue #439)
+// ---------------------------------------------------------------------------
+//
+// The summary at the end of this file used to restate every suite's size by
+// hand, twice: once as `substantive += 24`, the floor, and once as "29
+// deform-winding controls", the prose beside it. Both were stale at once and
+// disagreed with each other and with the suite, which had printed 34 lines.
+// That was the third count in this summary found stale, and it is the defect
+// `CUR07`, `CUR08` and `GT01`–`GT05` closed on every other surface this
+// repository has: **the repository states something about itself and nothing
+// derives it.**
+//
+// ⭐ And the `DW` pair was not the extent of it. Wrapping the calls and reading
+// the counts back put a number on the drift for the first time: **18 of the 47
+// hand-written floor increments were wrong**, the summed floor stood at 435
+// against a run of 551, and one suite — `runLoopSeamSuite` — had no increment at
+// all, so its four cases had never counted toward the floor in any run.
+//
+// So nothing below is stated. Every suite call is wrapped, the case lines it
+// prints are counted as it prints them, and the summary asks the tally for the
+// number instead of carrying one. Adding a case to a wrapped suite needs no
+// edit here at all — 34 of the summary's figures are now read off the run. The
+// four that are not are marked `#439` where they sit, because each disagrees
+// with what its suite printed and deciding them is a ruling, not a refactor.
+//
+// ⚠️ The floor is the sharper half, and it is one floor per suite, never one on
+// their sum. It exists so a run where nothing substantive executed exits 2
+// rather than printing green — and a total that still clears its floor hides a
+// suite that went to zero, which is the exact failure it is there for. `GT01`
+// splits its floors per rule for the same reason. A floor five cases below the
+// truth still fires, so the old drift was silent, but silent in the direction
+// of weakening the only thing standing between a vacuous run and a green one.
+//
+// 🔒 And the derivation is asserted before any number is read off it. A scanner
+// that stops matching goes quiet, not red: if a suite began printing its cases
+// under a gutter word this file does not know, every one of them would fall out
+// of the count and the run would still be green. `tallyFaults` refuses an
+// unrecognised gutter word, a run whose scan matched nothing at all, a suite
+// whose section printed no verdict, a suite that opened a section and said
+// nothing, and case lines printed outside every tallied suite — which is what a
+// suite call nobody wrapped looks like.
+
+/**
+ * The gutter words a case line reports under, and what each means to the tally.
+ *
+ * Measured rather than assumed: these are the only words this file prints at a
+ * two-space indent, and `TY07` refuses any other rather than counting past it.
+ * `PASS` and `FAIL` are a case that looked at something; `SKIP` and `INFO` are a
+ * suite saying it did not run, which is a HOLE and never a pass, so they are
+ * seen and deliberately not counted. (`HOLE` itself is only ever printed in the
+ * detail gutter, ten spaces in, so it is not listed here — a branch nothing
+ * reaches is not a control.)
+ */
+const VERDICT_GUTTER: readonly string[] = ['PASS', 'FAIL'];
+const QUIET_GUTTER: readonly string[] = ['SKIP', 'INFO'];
+
+/** The gutter word a printed line reports under, or null when it is not a case line. */
+function gutterWord(line: string): string | null {
+  const match = /^ {2}([A-Z]+)(?: |$)/.exec(line);
+  return match === null ? null : match[1];
+}
+
+/** True for the section header every suite opens with. */
+function isSectionHeader(line: string): boolean {
+  return /^\n?── .+ ──$/.test(line);
+}
+
+/** What one suite printed, counted off its own output rather than declared. */
+interface SuiteBlock {
+  /** The name the summary asks for this suite's count by. */
+  key: string;
+  /** Whether the suite reported it had something to measure. */
+  ran: boolean;
+  /** PASS and FAIL lines: cases that actually looked at something. */
+  controls: number;
+  /** SKIP and INFO lines: the suite saying out loud that it did not run. */
+  quiet: number;
+  /** Section headers the suite opened. Exactly one is a suite. */
+  headers: number;
+}
+
+/**
+ * Everything wrong with a run's own tally of itself. An empty list means
+ * nothing is — this is the derivation floor, and it is checked before the
+ * summary reads a single number off the tally.
+ */
+function tallyFaults(blocks: readonly SuiteBlock[], gutter: ReadonlyMap<string, number>, controls: number): string[] {
+  const faults: string[] = [];
+  if (blocks.length === 0) faults.push('not one suite was tallied, so this run counted nothing about itself');
+  const seen = new Set<string>();
+  for (const block of blocks) {
+    if (seen.has(block.key)) {
+      faults.push(`two suites were tallied under the key "${block.key}", so the summary cannot ask for either of them`);
+    }
+    seen.add(block.key);
+    if (block.ran) {
+      // ⭐ The floor, one suite at a time. Never on the sum: a total that still
+      // clears its floor is exactly how a suite that went to zero stays hidden.
+      if (block.controls === 0) {
+        faults.push(`the suite "${block.key}" reported that it ran and then printed no PASS or FAIL line at all`);
+      }
+      if (block.headers !== 1) {
+        faults.push(`the suite "${block.key}" opened ${block.headers} section header(s); a suite opens exactly one`);
+      }
+    } else {
+      if (block.controls > 0) {
+        faults.push(`the suite "${block.key}" reported that it did not run and then printed ${block.controls} case line(s)`);
+      }
+      if (block.headers > 1) {
+        faults.push(`the suite "${block.key}" did not run and opened ${block.headers} section headers`);
+      }
+      if (block.headers === 1 && block.quiet === 0) {
+        faults.push(`the suite "${block.key}" opened a section, did not run, and printed no line saying so`);
+      }
+    }
+  }
+  for (const [word, count] of gutter) {
+    if (!VERDICT_GUTTER.includes(word) && !QUIET_GUTTER.includes(word)) {
+      faults.push(
+        `${count} line(s) reported under the gutter word "${word}", which this tally does not know — a scan that ` +
+          'does not recognise a case line counts past it instead of failing',
+      );
+    }
+  }
+  if (controls === 0) faults.push('not one PASS or FAIL line was recognised in this whole run, so the scan matched nothing');
+  const summed = blocks.reduce((total, block) => total + block.controls, 0);
+  if (summed !== controls) {
+    faults.push(
+      `${controls - summed} case line(s) were printed outside every tallied suite, which is what a suite call ` +
+        'nobody wrapped looks like',
+    );
+  }
+  return faults;
+}
+
+/** The run counting its own suites, off the lines they print. */
+class RunTally {
+  readonly blocks: SuiteBlock[] = [];
+  /** Every gutter word this run has printed, and how often. Read by the floor. */
+  readonly gutter = new Map<string, number>();
+  private controlLines = 0;
+  private quietLines = 0;
+  private headerLines = 0;
+
+  /** Count one line the run printed. */
+  observe(line: string): void {
+    if (isSectionHeader(line)) {
+      this.headerLines++;
+      return;
+    }
+    const word = gutterWord(line);
+    if (word === null) return;
+    this.gutter.set(word, (this.gutter.get(word) ?? 0) + 1);
+    if (VERDICT_GUTTER.includes(word)) this.controlLines++;
+    else if (QUIET_GUTTER.includes(word)) this.quietLines++;
+  }
+
+  /**
+   * Run one suite and record what it printed.
+   *
+   * `ran` is how a suite says it had something to measure; the default is that
+   * it did. The corpus-dependent suites hand back `null` when their fixtures are
+   * absent and the two registry suites report how many entries they found, so
+   * their callers pass the predicate that reads that rather than declaring it.
+   */
+  of<T>(key: string, suite: () => T, ran: (value: T) => boolean = (): boolean => true): T {
+    const controls = this.controlLines;
+    const quiet = this.quietLines;
+    const headers = this.headerLines;
+    const value = suite();
+    this.blocks.push({
+      key,
+      ran: ran(value),
+      controls: this.controlLines - controls,
+      quiet: this.quietLines - quiet,
+      headers: this.headerLines - headers,
+    });
+    return value;
+  }
+
+  /** Every case in this run that looked at something. */
+  get total(): number {
+    return this.controlLines;
+  }
+
+  /**
+   * What the summary is allowed to say about one suite.
+   *
+   * 🔒 Throws rather than printing a number nobody produced. An unknown key is
+   * the summary describing a suite this run does not have, and a key whose suite
+   * printed nothing is the summary counting a hole as coverage.
+   */
+  countOf(key: string): number {
+    const block = this.blocks.find((candidate) => candidate.key === key);
+    if (block === undefined) {
+      throw new Error(`selftest summary: no suite ran under the key "${key}", so there is no count for it to state`);
+    }
+    if (block.controls === 0) {
+      throw new Error(`selftest summary: the suite "${key}" printed no case line, so the summary has nothing to count`);
+    }
+    return block.controls;
+  }
+}
+
+/**
+ * The tally against the ways it could count wrong, and the floor against the
+ * ways a suite goes quiet (issue #439).
+ *
+ * ⭐ `TY01` is the two-sided half everything else rests on: the scanner is held
+ * against the lines `reportCase` — the printer nearly every suite here uses —
+ * actually emits, so a change to the shape of a case line faults here instead of
+ * quietly taking the count down. The rest plant, on synthetic blocks, each way a
+ * run can stop covering what its summary says it covers.
+ */
+function runRunTallySuite(live: RunTally): number {
+  console.log("\n── the run's own tally of itself (issue #439) ──");
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  /** Everything a run prints while `emit` runs, captured instead of printed. */
+  const captured = (emit: () => void): string[] => {
+    const lines: string[] = [];
+    const real = console.log;
+    console.log = (...args: unknown[]): void => {
+      lines.push(args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' '));
+    };
+    try {
+      emit();
+    } finally {
+      console.log = real;
+    }
+    return lines;
+  };
+
+  const block = (over: Partial<SuiteBlock>): SuiteBlock => ({ key: 'suite', ran: true, controls: 3, quiet: 0, headers: 1, ...over });
+  const gutterOf = (...words: string[]): Map<string, number> => {
+    const counted = new Map<string, number>();
+    for (const word of words) counted.set(word, (counted.get(word) ?? 0) + 1);
+    return counted;
+  };
+  /** A healthy run: two suites that ran, one that said out loud that it did not. */
+  const healthy = [block({ key: 'alpha', controls: 2 }), block({ key: 'beta', controls: 3 }), block({ key: 'gamma', ran: false, controls: 0, quiet: 1 })];
+  const healthyGutter = gutterOf('PASS', 'PASS', 'PASS', 'PASS', 'FAIL', 'SKIP');
+  const healthyTotal = 5;
+
+  // --- TY01: the scanner against the lines this file actually prints ---------
+  const passLines = captured(() => {
+    reportCase('TY_PROBE', true, 'a detail line', 'an origin line');
+  });
+  const failLines = captured(() => {
+    reportCase('TY_PROBE', false, 'a detail line', 'an origin line');
+  });
+  const gutterLines = (lines: string[]): string[] => lines.filter((line) => gutterWord(line) !== null);
+  say(
+    'TY01_THE_SCANNER_READS_THE_CASE_LINES_THIS_FILE_PRINTS_AND_NOTHING_ELSE',
+    passLines.length === 3 &&
+      failLines.length === 1 &&
+      gutterLines(passLines).length === 1 &&
+      gutterLines(failLines).length === 1 &&
+      gutterWord(gutterLines(passLines)[0]) === 'PASS' &&
+      gutterWord(gutterLines(failLines)[0]) === 'FAIL' &&
+      VERDICT_GUTTER.includes('PASS') &&
+      VERDICT_GUTTER.includes('FAIL'),
+    `a green case prints ${passLines.length} line(s) and a red one ${failLines.length}, of which exactly one each ` +
+      `is a case line — {${gutterLines(passLines).map((line) => gutterWord(line)).join(', ')}} and ` +
+      `{${gutterLines(failLines).map((line) => gutterWord(line)).join(', ')}} — and its detail and origin lines ` +
+      'are not counted',
+    'the count is taken off the printed line, so the shape of that line is the derivation: if a case line moved to ' +
+      'a different indent or a different word, every count in the summary would fall and nothing would go red',
+  );
+
+  // --- TY02: the vocabulary THIS run has printed, against the known one ------
+  const unknown = [...live.gutter.keys()].filter((word) => !VERDICT_GUTTER.includes(word) && !QUIET_GUTTER.includes(word));
+  const verdictsSoFar = [...live.gutter].filter(([word]) => VERDICT_GUTTER.includes(word)).reduce((total, [, n]) => total + n, 0);
+  say(
+    'TY02_EVERY_GUTTER_WORD_THIS_RUN_HAS_PRINTED_IS_ONE_THE_TALLY_KNOWS',
+    unknown.length === 0 && verdictsSoFar > 0 && live.blocks.length > 0,
+    unknown.length > 0
+      ? `this run printed under gutter word(s) the tally does not know: ${unknown.join(', ')}`
+      : `${live.blocks.length} suite(s) tallied so far, ${verdictsSoFar} case line(s) recognised, gutter vocabulary ` +
+        `{${[...live.gutter.keys()].sort().join(' ')}} — all of it known`,
+    'the synthetic plants below prove the floor fires; this one proves the floor is looking at the real run, which ' +
+      'is the half a table of synthetic blocks cannot supply',
+  );
+
+  // --- TY03: the floor, red-first on a suite that went to zero --------------
+  const emptied = [block({ key: 'alpha', controls: 2 }), block({ key: 'beta', controls: 0 }), healthy[2]];
+  const emptiedFaults = tallyFaults(emptied, gutterOf('PASS', 'PASS', 'SKIP'), 2);
+  say(
+    'TY03_A_SUITE_THAT_RAN_AND_MEASURED_NOTHING_IS_NAMED',
+    tallyFaults(healthy, healthyGutter, healthyTotal).length === 0 &&
+      emptiedFaults.length === 1 &&
+      emptiedFaults[0].includes('"beta"'),
+    `the healthy set faults in no way; the same set with "beta" emptied faults once — ${emptiedFaults[0] ?? 'nothing'}`,
+    'two-sided on purpose: a floor that only ever reports is satisfied by a checker that reports on everything, and ' +
+      'the run this gate protects is green almost always',
+  );
+
+  // --- TY04: the floor is per suite, never on their sum ---------------------
+  //
+  // ⚠️ This is the shape issue #439 is about. The `DW` suite grew from 24 cases
+  // to 29 while its stated floor stayed at 24; the run stayed green because a
+  // sum that is too low still clears. Here the emptied set's TOTAL is HIGHER
+  // than the healthy one's and one suite is nevertheless dead.
+  const grown = [block({ key: 'alpha', controls: 20 }), block({ key: 'beta', controls: 0 }), healthy[2]];
+  const grownFaults = tallyFaults(grown, gutterOf(...Array<string>(20).fill('PASS'), 'SKIP'), 20);
+  const summedFloorHolds = grown.reduce((total, one) => total + one.controls, 0) > healthy.reduce((total, one) => total + one.controls, 0);
+  say(
+    'TY04_THE_FLOOR_IS_PER_SUITE_SO_A_HIGHER_TOTAL_DOES_NOT_HIDE_A_DEAD_ONE',
+    summedFloorHolds && grownFaults.length === 1 && grownFaults[0].includes('"beta"'),
+    `a set whose total (${grown.reduce((total, one) => total + one.controls, 0)}) is higher than the healthy set's ` +
+      `(${healthy.reduce((total, one) => total + one.controls, 0)}) still faults, because "beta" is dead: ` +
+      `${grownFaults[0] ?? 'nothing'}`,
+    'the floor this replaced was one number over the whole run, and a growing suite pays for a dead one under a sum',
+  );
+
+  // --- TY05: a suite call nobody wrapped ------------------------------------
+  const unwrapped = tallyFaults(healthy, healthyGutter, healthyTotal + 4);
+  say(
+    'TY05_CASE_LINES_PRINTED_OUTSIDE_EVERY_TALLIED_SUITE_ARE_NAMED',
+    unwrapped.length === 1 && unwrapped[0].includes('4 case line(s)') && tallyFaults(healthy, healthyGutter, healthyTotal).length === 0,
+    `4 case lines printed by nobody's suite fault — ${unwrapped[0] ?? 'nothing'} — and the same blocks with the ` +
+      'run\'s own count agree in no faults',
+    'the counts are derived, so the way this stops covering the run is a suite that is called and never wrapped: ' +
+      'its cases would print, pass, and belong to no block',
+  );
+
+  // --- TY06: one section per suite ------------------------------------------
+  const noHeader = tallyFaults([block({ key: 'alpha', headers: 0 })], gutterOf('PASS', 'PASS', 'PASS'), 3);
+  const twoHeaders = tallyFaults([block({ key: 'alpha', headers: 2 })], gutterOf('PASS', 'PASS', 'PASS'), 3);
+  const mute = tallyFaults([block({ key: 'alpha', ran: false, controls: 0, quiet: 0, headers: 1 })], gutterOf(), 0);
+  say(
+    'TY06_A_BLOCK_IS_ONE_SECTION_AND_A_SUITE_THAT_DID_NOT_RUN_SAYS_SO',
+    noHeader.length === 1 &&
+      twoHeaders.length === 1 &&
+      noHeader[0].includes('0 section') &&
+      twoHeaders[0].includes('2 section') &&
+      mute.some((fault) => fault.includes('printed no line saying so')),
+    `a block over no section and a block over two both fault (${noHeader[0] ?? 'nothing'}; ${twoHeaders[0] ?? 'nothing'}), ` +
+      `and a suite that opened a section, did not run and said nothing faults too (${mute.find((f) => f.includes('saying so')) ?? 'nothing'})`,
+    'a wrapper that brackets two suite calls at once would make one of them uncountable and both of them look ' +
+      'covered, and a suite that skips in silence reads exactly like a suite with no cases',
+  );
+
+  // --- TY07: the scanner going blind rather than red ------------------------
+  const strange = tallyFaults(healthy, gutterOf('PASS', 'PASS', 'PASS', 'PASS', 'FAIL', 'SKIP', 'WARN'), healthyTotal);
+  const nothing = tallyFaults([block({ key: 'alpha', controls: 0, ran: false, quiet: 1 })], gutterOf('SKIP'), 0);
+  say(
+    'TY07_AN_UNKNOWN_GUTTER_WORD_AND_A_SCAN_THAT_MATCHED_NOTHING_BOTH_FAULT',
+    strange.length === 1 && strange[0].includes('"WARN"') && nothing.some((fault) => fault.includes('matched nothing')),
+    `a line under an unrecognised gutter word faults (${strange[0] ?? 'nothing'}) and a run in which not one case ` +
+      `line was recognised faults (${nothing.find((f) => f.includes('matched nothing')) ?? 'nothing'})`,
+    "CUR01's argument on this surface: a scanner that stops matching does not go red, it goes quiet, and every " +
+      'count in the summary would come down with it while the run still printed green',
+  );
+
+  // --- TY08: the summary cannot describe a suite this run does not have -----
+  const absent = new RunTally();
+  absent.of('never-measured', () => null, () => false);
+  const threw = (read: () => number): string | null => {
+    try {
+      read();
+      return null;
+    } catch (err) {
+      return (err as Error).message;
+    }
+  };
+  const liveKey = live.blocks[0]?.key ?? '';
+  const unknownKeyMessage = threw(() => absent.countOf('a-suite-nobody-ran'));
+  const emptyKeyMessage = threw(() => absent.countOf('never-measured'));
+  say(
+    'TY08_THE_SUMMARY_CANNOT_STATE_A_COUNT_NO_SUITE_PRODUCED',
+    unknownKeyMessage !== null &&
+      unknownKeyMessage.includes('a-suite-nobody-ran') &&
+      emptyKeyMessage !== null &&
+      emptyKeyMessage.includes('never-measured') &&
+      liveKey !== '' &&
+      threw(() => live.countOf(liveKey)) === null &&
+      live.countOf(liveKey) === (live.blocks[0]?.controls ?? -1),
+    `asking for a suite that never ran refuses (${unknownKeyMessage ?? 'it did not'}), asking for one that measured ` +
+      `nothing refuses (${emptyKeyMessage ?? 'it did not'}), and asking for "${liveKey}" returns the ` +
+      `${live.countOf(liveKey)} case line(s) it actually printed`,
+    'the other direction of #439: a summary that names a suite the run does not have would otherwise print a ' +
+      'number for it, and the number would be whatever the last edit left behind',
+  );
+
+  return bad;
+}
+
 function main(): void {
   let bad = 0;
   let breaks = 0;
   let tolerances = 0;
-  // Every case that actually looked at something.
+  // Every case that actually looked at something, counted off the lines the
+  // suites print rather than restated here (issue #439 — see `RunTally` above).
   //
-  // ⚠️ Read this for what it is: a FLOOR, not a gate with a mutant behind it. It
-  // cannot fire while the tables above have entries in them, and if the fixture
-  // builder ever failed outright the process would die at import with a stack
-  // trace rather than reach here. What it does cover is attrition — a future run
-  // where the example corpus is gone, no cuts file is given and somebody has
-  // emptied a suite, which would otherwise print "green" over an empty gate.
-  let substantive = 0;
+  // ⚠️ This used to be one hand-written number per suite, summed. It was wrong
+  // in seventeen places when it was replaced, and one suite had been left out of
+  // it altogether. That is invisible by construction: a floor five cases below
+  // the truth still fires, so the drift is silent, and silent in the direction
+  // of weakening the only thing standing between a vacuous run and a green one.
+  // The floor is now one per suite and it is checked by `tallyFaults`.
+  const tally = new RunTally();
+  const printLine = console.log;
+  console.log = (...args: unknown[]): void => {
+    tally.observe(args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' '));
+    printLine(...args);
+  };
   for (const suite of SUITES) {
-    bad += runSuite(suite);
-    substantive += 1 + suite.mutants.length;
+    bad += tally.of(suite.name, () => runSuite(suite));
     for (const mutant of suite.mutants) {
       if (mutant.expect === null) tolerances++;
       else breaks++;
     }
   }
-  bad += runRigSuite();
-  substantive += 1 + RIG_MUTANTS.length;
-  bad += runStaticRigSuite();
-  substantive += 4;
-  bad += runPngTransparencySuite();
-  substantive += 7;
-  bad += runDrawOrderSuite();
-  substantive += 6;
-  bad += runKeyTimeSuite();
-  substantive += 5;
-  bad += runEventSuite();
-  substantive += 8;
-  bad += runConstraintAndDeformSuite();
-  substantive += 21;
-  bad += runHoldCurveSuite();
-  substantive += 10;
-  bad += runPathAndSliderSuite();
-  substantive += 25;
-  bad += runPolygonSuite();
-  substantive += 6;
-  bad += runContourMeshSuite();
-  substantive += 8;
-  bad += runDeformWindingSuite();
-  substantive += 29;
-  bad += runDeformTransformSuite();
-  substantive += 7;
-  bad += runDeformReportSuite();
-  substantive += 7;
-  bad += runGroupMemberSuite();
-  substantive += 8;
-  bad += runMeshSuite();
-  substantive += 4;
-  bad += runMeshOutlineSuite();
-  substantive += 10;
-  const meshRungBad = runMeshRungSuite();
-  if (meshRungBad !== null) {
-    bad += meshRungBad;
-    substantive += 1;
-  }
-  const meshCheckBad = runMeshCheckSuite();
-  if (meshCheckBad !== null) {
-    bad += meshCheckBad;
-    substantive += 2;
-  }
-  bad += runSlotSuite();
-  substantive += 2;
-  bad += runErrorAttributionSuite();
-  substantive += 5;
-  const motion = runMotionParseSuite();
+  bad += tally.of('rig-spec', runRigSuite);
+  bad += tally.of('static-rig', runStaticRigSuite);
+  bad += tally.of('png-transparency', runPngTransparencySuite);
+  bad += tally.of('draw-order', runDrawOrderSuite);
+  bad += tally.of('key-time', runKeyTimeSuite);
+  bad += tally.of('event', runEventSuite);
+  bad += tally.of('constraint-deform', runConstraintAndDeformSuite);
+  bad += tally.of('hold-curve', runHoldCurveSuite);
+  bad += tally.of('path-slider', runPathAndSliderSuite);
+  bad += tally.of('polygon', runPolygonSuite);
+  bad += tally.of('contour-mesh', runContourMeshSuite);
+  bad += tally.of('deform-winding', runDeformWindingSuite);
+  bad += tally.of('deform-transform', runDeformTransformSuite);
+  bad += tally.of('deform-report', runDeformReportSuite);
+  bad += tally.of('group-member', runGroupMemberSuite);
+  bad += tally.of('mesh-rasteriser', runMeshSuite);
+  bad += tally.of('mesh-outline', runMeshOutlineSuite);
+  // The corpus-dependent suites hand back `null` when their fixtures are absent,
+  // which is how they tell the tally they did not run: the floor then requires
+  // that they said so out loud instead of requiring cases they could not take.
+  const ranIt = (value: number | null): boolean => value !== null;
+  const meshRungBad = tally.of('mesh-rung', runMeshRungSuite, ranIt);
+  if (meshRungBad !== null) bad += meshRungBad;
+  const meshCheckBad = tally.of('mesh-check', runMeshCheckSuite, ranIt);
+  if (meshCheckBad !== null) bad += meshCheckBad;
+  bad += tally.of('slot-attribution', runSlotSuite);
+  bad += tally.of('error-attribution', runErrorAttributionSuite);
+  const motion = tally.of('motion-parse', runMotionParseSuite);
   bad += motion.failures;
-  substantive += motion.cases;
-  bad += runCliSuite();
-  substantive += 7;
-  const launcherBad = runLauncherSuite();
-  if (launcherBad !== null) {
-    bad += launcherBad;
-    substantive += 3;
-  }
-  bad += runEditorRoundtripSuite();
-  substantive += 6;
-  bad += runShippedDocSuite();
-  substantive += 2;
-  bad += runSkillSurfaceSuite();
-  substantive += 5;
-  bad += runCurrencySuite();
-  substantive += 6;
-  bad += runGalleryTranscriptSuite();
-  substantive += 4;
-  bad += runSeeItSuite();
-  substantive += 11;
-  bad += runPoseSuite();
-  substantive += 11;
-  bad += runChainFitSuite();
-  substantive += 12;
-  bad += runBallotSuite();
-  substantive += 13;
-  bad += runCopyImagesSuite();
-  substantive += 9;
-  bad += runSamplingSuite();
-  substantive += 8;
-  bad += runPackerSuite();
-  substantive += 18;
-  const atlasReaderBad = runAtlasReaderSuite();
-  if (atlasReaderBad !== null) {
-    bad += atlasReaderBad;
-    substantive += 3;
-  }
-  const diffBad = runDiffSuite();
-  if (diffBad !== null) {
-    bad += diffBad;
-    substantive += DIFF_IDENTITY_CONTROLS + DIFF_CASES.length;
-  }
-  const boneDistBad = runBoneDistSuite();
-  if (boneDistBad !== null) {
-    bad += boneDistBad;
-    substantive += BONEDIST_CONTROLS;
-  }
-  const checkBad = runCheckSuite();
-  if (checkBad !== null) {
-    bad += checkBad;
-    substantive += 3;
-  }
-  bad += runSliderReaderSuite();
-  substantive += 10;
-  bad += runLoopSeamSuite();
-  const gallery = runGallerySuite();
+  bad += tally.of('cli', runCliSuite);
+  const launcherBad = tally.of('bin-launcher', runLauncherSuite, ranIt);
+  if (launcherBad !== null) bad += launcherBad;
+  bad += tally.of('editor-roundtrip', runEditorRoundtripSuite);
+  bad += tally.of('shipped-doc', runShippedDocSuite);
+  bad += tally.of('agent-skill', runSkillSurfaceSuite);
+  bad += tally.of('currency', runCurrencySuite);
+  bad += tally.of('gallery-transcript', runGalleryTranscriptSuite);
+  bad += tally.of('see-it', runSeeItSuite);
+  bad += tally.of('pose', runPoseSuite);
+  bad += tally.of('chainfit', runChainFitSuite);
+  bad += tally.of('ballot', runBallotSuite);
+  bad += tally.of('copy-images', runCopyImagesSuite);
+  bad += tally.of('bilinear-sampling', runSamplingSuite);
+  bad += tally.of('packer', runPackerSuite);
+  const atlasReaderBad = tally.of('atlas-reader', runAtlasReaderSuite, ranIt);
+  if (atlasReaderBad !== null) bad += atlasReaderBad;
+  const diffBad = tally.of('diff', runDiffSuite, ranIt);
+  if (diffBad !== null) bad += diffBad;
+  const boneDistBad = tally.of('bonedist', runBoneDistSuite, ranIt);
+  if (boneDistBad !== null) bad += boneDistBad;
+  const checkBad = tally.of('check', runCheckSuite, ranIt);
+  if (checkBad !== null) bad += checkBad;
+  bad += tally.of('slider-reader', runSliderReaderSuite);
+  bad += tally.of('loop-seam', runLoopSeamSuite);
+  bad += tally.of('run-tally', () => runRunTallySuite(tally));
+  const gallery = tally.of('gallery-example', runGallerySuite, (value) => value.examples > 0);
   bad += gallery.failures;
-  substantive += gallery.examples;
-  const cuts = runCutsSuite();
+  const cuts = tally.of('registered-cut', runCutsSuite, (value) => value.cuts > 0);
   bad += cuts.failures;
-  substantive += cuts.cuts;
+  console.log = printLine;
 
   console.log('');
-  if (substantive === 0) {
-    console.error('rigc selftest: nothing substantive ran — this is not a pass, it is an empty gate');
+  // 🔒 The derivation before anything read off it. Every clause below is a way
+  // this run could stop covering what its summary says it covers while still
+  // printing green: a suite that ran and measured nothing, a suite call nobody
+  // wrapped, a section opened twice or not at all, a gutter word the scan does
+  // not recognise, a scan that matched nothing. `runRunTallySuite` plants each.
+  const floorFaults = tallyFaults(tally.blocks, tally.gutter, tally.total);
+  if (floorFaults.length > 0) {
+    console.error('rigc selftest: this run cannot account for itself — that is not a pass, it is an empty gate');
+    for (const fault of floorFaults) console.error(`  ${fault}`);
     process.exit(2);
   }
   if (bad > 0) {
     console.error(`rigc selftest: ${bad} control(s) failed`);
     process.exit(1);
   }
+  /**
+   * How many cases a suite took, asked of the run rather than remembered.
+   *
+   * ⚠️ Four figures below still do NOT go through this, and they are marked
+   * where they sit: they disagree with what their suites printed, so wiring them
+   * up would change the summary rather than derive it. Issue #439 reports the
+   * four and stops there; deciding them is a ruling, not a refactor.
+   */
+  const n = (key: string): number => tally.countOf(key);
   const corpus =
     diffBad === null || checkBad === null || boneDistBad === null
       ? '\n  ⚠️ The example corpus is absent, so the ' +
@@ -23363,7 +23725,7 @@ function main(): void {
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
       : `, + ${DIFF_IDENTITY_CONTROLS} diff identity controls (name-matched, name-agnostic and reported, over both a ` +
         `mesh-free and a mesh-carrying fixture), + ${DIFF_CASES.length} diff measure controls, ` +
-        '+ 19 check controls (frames-only reads, a faithful ' +
+        '+ ' + n('check') + ' check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +
         "not, one offset shot that must not move another shot's numbers, one bloated sprite that must " +
@@ -23384,26 +23746,37 @@ function main(): void {
             'matrix but not the scale, and a renamed bone that is named as unmatched under `identity` and returns to ' +
             'exactly zero under a supplied correspondence)');
   const loopSeam =
-    ', + 4 loop-seam controls (issue #337 — the four rows of that issue’s own table, two of which land on ' +
+    ', + ' + n('loop-seam') + ' loop-seam controls (issue #337 — the four rows of that issue’s own table, two of which land on ' +
     'the duration and two of which do not; the landing rates named as the multiples of the duration’s reduced ' +
     'denominator rather than searched for; every loop-seam invocation the gallery READMEs ship being a ' +
     'measurement the tool will actually take, which is the case that would have caught the defect; and — ' +
     'issue #336 — the long pixel side of a frame set being the `--max` it was rendered at, which is what lets ' +
     'the report name the scale a reading is relative to instead of leaving it out)';
+  const runTally =
+    ', + ' + n('run-tally') + ' run-tally controls (issue #439 — this summary counting itself, since every number ' +
+    'in it used to be written out twice, once as a floor and once as prose, and both spellings of one suite were ' +
+    'stale at the same time and disagreed with each other. The counts are now taken off the case lines the suites ' +
+    'print, so a suite that gains a case needs no edit here; the scanner is held two-sidedly against the lines ' +
+    '`reportCase` actually emits and against every gutter word THIS run printed, because a scan that stops ' +
+    'recognising a case line takes the whole count down without going red. Then the floor, one per suite and never ' +
+    'on their sum: a suite that ran and measured nothing is named even when the total GREW around it, case lines ' +
+    'printed outside every wrapped suite are named, a block over two sections or none is named, a suite that ' +
+    'skipped in silence is named, and a summary asking for a suite this run does not have — or for one that ' +
+    'measured nothing — is refused rather than answered with whatever the last edit left behind)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
-      : `, + 1 rung-6 mesh render${
-          meshCheckBad === null ? '' : ', + 7 rung-6 fidelity controls (4 mesh, 3 per-frame change)'
+      : `, + ${n('mesh-rung')} rung-6 mesh render${
+          meshCheckBad === null ? '' : ', + ' + n('mesh-check') + ' rung-6 fidelity controls (4 mesh, 3 per-frame change)'
         }`;
   const launcher =
     launcherBad === null
       ? '\n  ⚠️ No `node` binary was found on PATH, so the packaged bin/rigc.cjs launcher (issue #220) was not ' +
         'exercised in this run.'
-      : ', + 3 bin-launcher controls (`--version` and an unknown command match direct invocation, and the exact ' +
+      : ', + ' + n('bin-launcher') + ' bin-launcher controls (`--version` and an unknown command match direct invocation, and the exact ' +
         'message printed when Bun is missing from PATH)';
   const roundtripRefusals =
-    ', + 6 editor-roundtrip refusal controls (issue #410 — the half of `tools/editor_roundtrip.ts` a machine ' +
+    ', + ' + n('editor-roundtrip') + ' editor-roundtrip refusal controls (issue #410 — the half of `tools/editor_roundtrip.ts` a machine ' +
     'with no editor can answer for, which is the half that had never run: a missing editor refused by the path ' +
     'it looked at, the Spine TRIAL refused by all three names on disk — its executable, its bundle and the ' +
     "CFBundleName that bundle declares — and by that declaration ALONE when both names are innocent, neither " +
@@ -23415,7 +23788,7 @@ function main(): void {
     'everything. Then the clause both messages were missing: `--exported`, the measurement that needs no editor, ' +
     'named in the two refusals printed at exactly the moment somebody needs it)';
   const shippedDocs =
-    ", + 2 shipped-doc link controls (issue #333 — every relative link in every `.md` the `files` allowlist " +
+    ", + " + n('shipped-doc') + " shipped-doc link controls (issue #333 — every relative link in every `.md` the `files` allowlist " +
     'ships, plus the README npm forces in beside it, resolving to a path that ALSO ships: the class found three ' +
     'times before anything checked for it, where the repository is the one place a link into `bench/`, `gallery/` ' +
     'or `selftest.ts` still works and `node_modules/spine-rigc/` is where it does not. Markdown links, reference ' +
@@ -23423,7 +23796,7 @@ function main(): void {
     'expanded from `files` rather than guessed, and the whole derivation asserted first, because a link regex ' +
     'that matched nothing would otherwise report a clean tree)';
   const currency =
-    ', + 8 currency controls (issue #360 — every tally, gate version, `Worked case` cell, assertion name and ' +
+    ', + ' + n('currency') + ' currency controls (issue #360 — every tally, gate version, `Worked case` cell, assertion name and ' +
     'installed path a SHIPPED or LANDING doc states about the tool, derived from the tool rather than listed ' +
     'beside it: the registry and profile counts off `src/validate.ts`, the renderer / archetype split and the ' +
     'roster BY NAME off a live `validate()` report whose own floor is that it reached every assertion, the ' +
@@ -23442,7 +23815,7 @@ function main(): void {
     'help itself calls, red-first both on the stale literals replanted and on a reworded line the pattern stops ' +
     'matching, because a scan that goes silent is the one failure a tally gate cannot afford)';
   const skillSurface =
-    ', + 5 agent-skill controls (issue #366 — the surface an agent discovers rigc through: every `skills/*/SKILL.md` ' +
+    ', + ' + n('agent-skill') + ' agent-skill controls (issue #366 — the surface an agent discovers rigc through: every `skills/*/SKILL.md` ' +
     'carrying the frontmatter the Agent Skills specification requires (a `name` equal to its directory, a ' +
     '`description` inside its bound, the block opened on line 1 and closed), every relative link in a skill and every ' +
     'path in `.claude-plugin/plugin.json` and `marketplace.json` resolving to something in the repository, and the two ' +
@@ -23450,7 +23823,7 @@ function main(): void {
     'the derivation asserted first, and the same reader held against three planted surfaces that have to fault in ' +
     'every way it knows and one clean surface that has to fault in none)';
   const galleryTranscripts =
-    ", + 5 gallery-transcript controls (issue #415 — the currency gate on the surface this project's audience " +
+    ", + " + n('gallery-transcript') + " gallery-transcript controls (issue #415 — the currency gate on the surface this project's audience " +
     'actually reads: every fenced block a `gallery/*/README.md` QUOTES the tool as printing, held to a contiguous ' +
     'run of the output of a command that README states. The blocks are found by the two things a rigc report ' +
     'names a record with — the tag at its own gutter, and, for the sections that are a tree rather than a gutter, ' +
@@ -23474,28 +23847,47 @@ function main(): void {
     'abridged quote faults. The vocabulary a refusal announces itself with is derived from those runs too — ' +
     'the error head at column 0, and the gutter tags a refusal run prints that no green run does — so a block ' +
     'that opens on one and carries no recipe is a fault rather than an escape)';
+  // ⚠️ FOUR figures in this summary are still written out, and they are marked
+  // `#439` where they sit. Every one of them disagrees with what its suite
+  // printed in this very run, so asking the tally would silently CHANGE the
+  // summary rather than derive it, and issue #439 says that is a finding to
+  // report and not a licence to edit:
+  //
+  //   `SUITES.length + 3` positive controls   states 6, run prints 11
+  //   static-rig controls                     states 4, run prints 5
+  //   draw-order controls                     states 6, run prints 7
+  //   path / slider / per-skin controls        states 45, run prints 47
+  //
+  // The first three are one question — four suites here count their own positive
+  // control in the figure beside them (key-time 7, event 8, constraint 24 and
+  // polygon 6 are all "cases + control", and the diff clause states its six
+  // identity controls outright) while static-rig and draw-order do not, so no
+  // single reading reproduces what is written. The fourth is stale under every
+  // reading: that suite runs `PS01`–`PS46` plus its control, so 46 or 47 and
+  // never 45. `runMeshOutlineSuite` is a fifth shape and not a number at all:
+  // ten controls, described in this summary nowhere.
   console.log(
-    `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` +
+    `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` + // #439
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
-      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, ` +
-      '+ 7 PNG transparency controls (indexed, greyscale and truecolour art whose transparency lives in a tRNS ' +
+      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, ` + // #439
+      '+ ' + n('png-transparency') + ' PNG transparency controls (indexed, greyscale and truecolour art whose transparency lives in a tRNS ' +
       'chunk, a greyscale+alpha file, a genuinely opaque part the gate still refuses, and the wording of that ' +
-      'refusal), + 2 slot-attribution ' +
-      'controls (a blob one part dominates, and two parts that are two blobs), + 6 draw-order controls, ' +
-      '+ 7 key-time controls, + 8 event controls (2 of them a spine-core round trip of the firings), ' +
-      '+ 24 constraint- and deform-timeline controls (10 of them a spine-core round trip that reads the ik and ' +
+      'refusal), + ' + n('slot-attribution') + ' slot-attribution ' +
+      'controls (a blob one part dominates, and two parts that are two blobs), + 6 draw-order controls, ' + // #439
+      '+ ' + n('key-time') + ' key-time controls, + ' + n('event') + ' event controls (2 of them a spine-core round trip of the firings), ' +
+      '+ ' + n('constraint-deform') + ' constraint- and deform-timeline controls (10 of them a spine-core round trip that reads the ik and ' +
       'transform mixes off the posed constraints, the world position of a deformed vertex, and a weighted ' +
       "attachment's per-influence deform array, 2 of them the two sides of a TRIMMED deform run — a run that " +
       'starts and ends mid-pair accepted, the same run one float longer still refused, and 2 of them the knee an ik ' +
       "timeline reverted: the rig's own `bendPositive` reaching a timeline that states none, and a timeline that " +
       'states one still overriding it), ' +
-      '+ 10 hold-curve controls (a named easing on a hold emitted stepped with the same easing on the moving segment ' +
+      '+ ' + n('hold-curve') + ' hold-curve controls (a named easing on a hold emitted stepped with the same easing on the moving segment ' +
       'beside it still a bezier, a two-channel key holding on one channel only kept as a bezier and one holding on ' +
       'both rewritten, the hold read off the emitted six decimals, an rgba hold read off the emitted hex, an ik hold ' +
       'on the effective channels, a deform hold read off the expanded run so two spellings of one run are one ' +
       'geometry, a raw curve over a hold left verbatim, the named easing and an explicit stepped emitting one file, ' +
       'and the hold posed through spine-core identically whether stepped or linear), ' +
-      '+ 45 path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' +
+      '+ 45 path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' + // #439
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'which bones a skin switches on, and what TWO sliders on one bone do to it: 7.50 or 18.75 or their sum ' +
       '26.25 degrees, decided only by which of them is later in the constraints array and whether that one is ' +
@@ -23518,8 +23910,8 @@ function main(): void {
       'only unreachable value is a supremum measured here to pose the skeleton within 4e-7 degrees of 0, and the ' +
       'same past-360 range under `local: true`, which is the repair the refusal names — with the line between them ' +
       'pinned by two rigs a thousandth of a degree apart, 360.000 green and 360.001 refused), ' +
-      '+ 6 bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
-      '+ 30 contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
+      '+ ' + n('polygon') + ' bounding-box / clipping controls (2 of them a spine-core round trip of the polygon and its end slot), ' +
+      '+ ' + n('contour-mesh') + ' contour-mesh and rig-spec-generator controls (a mesh traced off a part\'s own alpha that gates green, a ' +
       'triangulation with area, one winding and no over-shared edge — with a folded triangle the same check must ' +
       'reject, the emitted triangles rasterised back over the very PNG they were traced from to cover 99.5% of the ' +
       'art without reaching past the margin while a mesh that would clip it is refused by name, a spine-core round ' +
@@ -23570,7 +23962,7 @@ function main(): void {
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
-      '+ 34 deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
+      '+ ' + n('deform-winding') + ' deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
       'angle it gates green, past that angle A39 names the animation, the key, the time and every reversed triangle ' +
       'with both its areas, and the eight it names span only the outermost column pair the formula picks out; the ' +
       'angle A39 first fires at, bisected, agrees with that formula to 0.0001°; a band INVERTED rather than folded ' +
@@ -23641,7 +24033,7 @@ function main(): void {
       'silences that make those readings mean anything — an AGREED dial adding not one reading to a stats line ' +
       'that does carry its slider frame, and a TIE printed as a tie with no second reach, since the probe named ' +
       'no field there and the artifact broke it), ' +
-      '+ 12 deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
+      '+ ' + n('deform-transform') + ' deform-transform controls (a yaw STATED on the key emitting the same grid table this file transcribes ' +
       'from docs/FACE.md §1 byte for byte, the same model past the fold angle still firing A39, the other three ' +
       'closed forms — affine, wave and bend — evaluated against arithmetic derived here, and the five refusals that ' +
       'keep a model from becoming a second answer: a run beside it, a start index, a parameter that would evaluate ' +
@@ -23662,7 +24054,7 @@ function main(): void {
       'own generosity shown red-first on the two mistakes the expansion invites, the displacement written into one ' +
       'influence instead of all and the displacement written with no bone inverse at all, neither of which any ' +
       'validator assertion can see because both are well-formed runs of the right length), ' +
-      "+ 7 deform-report controls (`explain`'s DEFORM block read as a subprocess prints the area and stretch " +
+      "+ " + n('deform-report') + " deform-report controls (`explain`'s DEFORM block read as a subprocess prints the area and stretch " +
       'extremes the closed form predicts — the column-spacing ratios of docs/FACE.md §4.2 for a yaw and `sx·sy` with ' +
       'its two scale factors for an affine, whose product is the area ratio — while its reversal and collapse counts ' +
       "and its per-animation sample totals are A39's own, on a folded build and again on the same fold DECLARED, " +
@@ -23671,7 +24063,7 @@ function main(): void {
       'block for a model and its transcription, which emit identical skeletons and must differ only on the line ' +
       'naming the model; and the band INVERTED rather than folded, which A39 is right to pass and the block prints ' +
       'as a ratio on the wrong side of the model, with no reference render), ' +
-      "+ 8 per-member group-value controls (five separate bone tracks, one group track carrying a `v` map and one " +
+      "+ " + n('group-member') + " per-member group-value controls (five separate bone tracks, one group track carrying a `v` map and one " +
       'carrying a `derive` model all emitting ONE skeleton — the transcribed spellings holding a table this file ' +
       "derived from docs/FACE.md §3 and §5 — the foreshortening's on-axis pair coming out equal from the arithmetic " +
       'rather than from a group entry, `pitch` reading the other setup coordinate, `stagger` moving every key time ' +
@@ -23681,8 +24073,8 @@ function main(): void {
       'got, members under two parents, a foreshortening behind the axis, a `carried` the closed form never reads, ' +
       "and a member turned edge-on — plus `explain`'s MEMBER block read as a subprocess, whose rows quote the " +
       'emitted values and the depths that produced them), ' +
-      `+ 4 mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
-      ', + 5 error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
+      `+ ${n('mesh-rasteriser')} mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
+      ', + ' + n('error-attribution') + ' error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +
       'the `null` that used to crash and the bare attachment name that used to compile green and hide the slot — ' +
       'with the documented `{ "attachment": null }` still hiding it), ' +
@@ -23695,7 +24087,7 @@ function main(): void {
       `with no \`loop\` hint still accepted, every one of the ${motion.specs} motion specs in this repository parsing ` +
       'clean, and the walk that finds them skipping the local-only `scratch/` area, dot-directories and a dangling ' +
       'symlink rather than dying on one), ' +
-      '+ 12 cli ergonomics controls (a scale key reporting its own x·y area factor beside the caveat that it is a reading and never a rule — the volume an animator asks about, which `explain` printed for the DEFORM spelling of squash and stretch and not for the scale spelling the guide recommends first — plus unknown command, bare invocation, `build --help`, ' +
+      '+ ' + n('cli') + ' cli ergonomics controls (a scale key reporting its own x·y area factor beside the caveat that it is a reading and never a rule — the volume an animator asks about, which `explain` printed for the DEFORM spelling of squash and stretch and not for the scale spelling the guide recommends first — plus unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
       'builds green with no flag and is refused by every rule under `--profile spine-html`, and the MESH report line ' +
       "quoting the rig's own triangle budget with the hole its outline encloses, or saying no budget is declared " +
@@ -23709,12 +24101,12 @@ function main(): void {
       skillSurface +
       currency +
       galleryTranscripts +
-      ', + 11 see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
+      ', + ' + n('see-it') + ' see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +
       'to RGBA while still refusing a colour type that is not one, a preview embedding the skeleton, the atlas and ' +
       'one data URI per page under the names the player asks for, the player referenced rather than vendored, both ' +
       'commands in the help, and a misspelled --animation refused by name)' +
-      ', + 11 pose controls (a rig rendered at a chosen scale and its placements read back out of the picture ' +
+      ', + ' + n('pose') + ' pose controls (a rig rendered at a chosen scale and its placements read back out of the picture ' +
       'within a pixel, a degree and 8% — one PNG posed twice reported as TWO placements rather than picked ' +
       "between, a round part's rotation reported as free where nothing else is, a foreign part / a part the " +
       'canvas cannot hold / an all-transparent part each refused by their own reason, an occluded part whose ' +
@@ -23722,7 +24114,7 @@ function main(): void {
       'declared scale window honoured in both directions, the command writing its JSON while a mistyped ' +
       'directory is refused by name, and the same picture read twice reporting the same numbers rather than ' +
       'nearly the same ones — the objective divides since #306)' +
-      ', + 18 chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
+      ', + ' + n('chainfit') + ' chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
       'and 3° with a fourth arriving two links out under a trunk-only anchor, every one of their residuals lower ' +
@@ -23744,7 +24136,7 @@ function main(): void {
       'determinant by name instead; the lever floor refusing the same two anchors at `--inward-lever 1000` with ' +
       'the measured 27.3 px span in the message; and the whole step inert on the untilted frame, where the ' +
       'outward walk already answers)' +
-      ', + 13 ballot controls (two candidates embedded whole in one page, neutral A/B panes with both source paths ' +
+      ', + ' + n('ballot') + ' ballot controls (two candidates embedded whole in one page, neutral A/B panes with both source paths ' +
       'in the manifest and nowhere else, a ballot id that derives from the candidate digests and changes when the ' +
       'panes swap, a winner and a tie each landing as a ledger line carrying the winning DIGEST and its coverage, ' +
       'four tampered results — a forged digest, a choice that is not on the ballot, a reason code contradicting the ' +
@@ -23752,18 +24144,18 @@ function main(): void {
       'deliberate re-vote as attempt 2, the candidate count bounded at both ends with a repeated --candidate ' +
       'elsewhere refused as the typo it is, an animation no candidate has refused by name, `vote` in the help, and ' +
       'the player referenced rather than vendored)' +
-      ', + 9 copy-images controls (self-contained out dir, unchanged default, deterministic basename collision, ' +
+      ', + ' + n('copy-images') + ' copy-images controls (self-contained out dir, unchanged default, deterministic basename collision, ' +
       'skeleton.images pointing at --out itself under the flag and at the parts directory without it, the whole emit ' +
       'byte-identical from a second checkout location, a declared images path carried through and overridden only ' +
       'by the flag, an --atlas-in build naming the same parts directory as its loose twin, and parts in two ' +
       'directories writing no single path)' +
-      ', + 8 bilinear-sampling controls (a transparent texel getting no vote in the colour with the straight ' +
+      ', + ' + n('bilinear-sampling') + ' bilinear-sampling controls (a transparent texel getting no vote in the colour with the straight ' +
       'average beside it as the red-first control, the alpha channel bit-identical over 4900 ragged taps and an ' +
       'opaque tap unchanged to the last bit, the #292 overlap rendered and re-rendered byte for byte, the same ' +
       'tap across a SILHOUETTE charging `pose`’s objective for coverage and no colour — #306, where the straight ' +
       'arithmetic charges 0.68 for a placement that disagrees with nothing — and the scan that keeps the straight ' +
       'tap a control by having no caller in `src/` at all)' +
-      ', + 25 packer/importer controls (shared pages on power-of-two edges, every region a lossless copy, two ' +
+      ', + ' + n('packer') + ' packer/importer controls (shared pages on power-of-two edges, every region a lossless copy, two ' +
       'packs byte-identical from shuffled input, the padding respected on every pair, a packed render that never ' +
       'reads a wrong texel with the gutterless case three orders of magnitude louder, an oversized part and a ' +
       'spill both named — each spilled page only as big as what is on it, cross-checked against the single-page ' +
@@ -23776,7 +24168,7 @@ function main(): void {
       'size conflict, an absent page and a rectangle off its page, names the ATLAS rather than a file when an ' +
       "optional state is not in the pack, and divides an imported size by the page's `scale:` while leaving a pack " +
       'that declares none byte-identical to the loose build)' +
-      ', + 10 slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +
+      ', + ' + n('slider-reader') + ' slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +
       'and compared to what the doc states, two-sided — nothing left a stated bound AND every stated end is ' +
       'reached, so neither a loosened nor a tightened cell survives — with the parse itself asserted first, the ' +
       'reader classes cross-checked by `instanceof` against what rigc\'s own `property` strings produced, the ' +
@@ -23789,11 +24181,12 @@ function main(): void {
       (atlasReaderBad === null
         ? '\n  ⚠️ The example corpus is absent, so the atlas READER was never compared against spine-core in this ' +
           'run — `src/atlas.ts` holds a second parser for the format and this run does not cover it.'
-        : ', + 5 atlas-reader controls (every field of every corpus region against the runtime\'s own parse, a ' +
+        : ', + ' + n('atlas-reader') + ' atlas-reader controls (every field of every corpus region against the runtime\'s own parse, a ' +
           'rotated region refused rather than guessed, page-name rewriting that touches only the name lines, the ' +
           'two readers of `scale:` held to one answer, and every descaled corpus region measured against the ' +
           'loose drawing beside it)') +
       loopSeam +
+      runTally +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (launcher.startsWith(',') ? '' : launcher) +

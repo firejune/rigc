@@ -199,7 +199,12 @@ Three rules hold that together and none of them is optional:
   suite became unrunnable outside one repository the first time.
 - **An absent corpus is a HOLE, not a pass.** When `examples/` is missing the
   `diff` and `check` suites say so loudly, the summary repeats it, and a run where
-  *nothing* substantive executed exits 2 rather than printing green.
+  *nothing* substantive executed exits 2 rather than printing green. Since issue
+  #439 that floor is one **per suite** rather than one on their sum, and it is
+  counted off the case lines each suite prints rather than restated beside the
+  call: any suite that reports it ran and then measures nothing exits 2 by name,
+  even when the total grew around it. The summary's own figures are read from the
+  same count, so adding a control to a wrapped suite needs no edit to it.
 
 `--cuts <cuts.json>` (or `RIGC_CUTS=<path>`) adds an **extra suite**: every cut in
 that table is compiled, gated and compiled again for `A18`. It is a positive
