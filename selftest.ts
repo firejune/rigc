@@ -7131,6 +7131,215 @@ function runPathAndSliderSuite(): number {
       '3.600000s and a dial at 900° to 0.200000s, which are the times 220° and 180° drive it to',
   );
 
+  // --- the dead width is a WIDTH, not the distance to the far end (issue #434)
+  //
+  // 🚨 The `loop: true` consequence names how much of the range is a bone
+  // position no reader ever returns, and it computed that as `-lowest` /
+  // `highest - 360` — the distance from the boundary to the FAR end. That is
+  // the dead width only while the range STRADDLES the boundary. Lying wholly
+  // outside, the gap between the boundary and the NEAR end was counted too:
+  //
+  //     400°..500°     printed 140.000°   true width 100.000°
+  //    -340°..-305°    printed 340.000°   true width  35.000°
+  //
+  // The first is inside one turn and reachable today — a 100°-wide range told
+  // that 140° of it is dead, wider than the range itself.
+  //
+  // ⭐ **This is the third instance of one shape in this one clause.** #417 was
+  // a range clause that tested one end because its fixture only ever left the
+  // circle at that end; #431 was a reading computed as one subtraction because
+  // every fixture sat within one turn; this is a width computed to the far end
+  // because `PS42` — the ONLY control that reads this string — straddles 360°,
+  // where the two arithmetics agree to the bit. Each time the computation was
+  // right about the case its fixture happened to be and silent about the case
+  // beside it, and each time nothing caught it because no second fixture stood
+  // anywhere else. That is the pattern worth more than the fix.
+  //
+  // ⭐ And it read as a measurement rather than as a bug because the wrong
+  // figure is always a number ALREADY IN THE SENTENCE: past 360°,
+  // `highest - 360` reproduces `readAs` (`400°..500°` printed `140.000°`
+  // twice, once as the reading and once as a width); below 0°, `-lowest`
+  // reproduces `dead.end` with the sign dropped.
+  //
+  // ⚠️ No figure below appears in the other case, PS41's rule, and the two
+  // ranges are chosen so it holds as a SUBSTRING and not just as a number: the
+  // past-360° case carries 400.000°, 500.000°, 140.000°, -2.600s, 100.000° and
+  // a 1s animation; the below-0° case carries -340.000°, -305.000°, 20.000°,
+  // 7.200s, 35.000° and a 0.7s one. The old arithmetic reprints an end of the
+  // range as the width, so a control whose ends and width share digits cannot
+  // tell the two apart.
+  const BELOW_POSE = {
+    duration: 0.7,
+    loop: false,
+    tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.7, v: [30] }] }],
+  };
+  const whollyPast = refusal(
+    sliderPairDirs([pairSlider('yaw', 'yaw-pose', 'yaw-dial', { from: 400, to: 0, scale: 0.01, loop: true })]),
+    sliderPairMotion(),
+  );
+  const whollyBelow = refusal(
+    sliderPairDirs([pairSlider('yaw', 'below-pose', 'yaw-dial', { from: -340, to: 0, scale: 0.02, loop: true })]),
+    sliderPairMotion({ 'below-pose': BELOW_POSE }),
+  );
+  /** Which of the two cases' figures a message carries, read out of it rather than restated. */
+  const whollyOut = (message: string): string[] =>
+    [
+      '400.000°',
+      '500.000°',
+      '140.000°',
+      '-2.600s',
+      '100.000°',
+      '(0s..1s)',
+      '-340.000°',
+      '-305.000°',
+      '20.000°',
+      '7.200s',
+      '35.000°',
+      '(0s..0.7s)',
+    ].filter((clause) => message.includes(clause));
+  say(
+    'PS45_A_RANGE_WHOLLY_OUTSIDE_THE_CIRCLE_IS_TOLD_ITS_OWN_WIDTH_AND_NOT_THE_REACH_TO_THE_FAR_END',
+    whollyPast !== null &&
+      whollyBelow !== null &&
+      whollyPast.includes('run from 400.000° to 500.000°') &&
+      whollyPast.includes('the 100.000° of the range past 360° selects nothing a reading inside the circle') &&
+      // 🚫 the far-end reach, which is this range's READING and not its width
+      !whollyPast.includes('the 140.000° of the range past 360°') &&
+      whollyBelow.includes('run from -340.000° to -305.000°') &&
+      whollyBelow.includes('the 35.000° of the range below 0° selects nothing a reading inside the circle') &&
+      // 🚫 the far-end reach, which is this range's own printed end unsigned
+      !whollyBelow.includes('the 340.000° of the range below 0°') &&
+      // …and no figure of either case appears in the other.
+      !whollyPast.includes('-340.000°') &&
+      !whollyPast.includes('-305.000°') &&
+      !whollyPast.includes('20.000°') &&
+      !whollyPast.includes('7.200s') &&
+      !whollyPast.includes('35.000°') &&
+      !whollyPast.includes('(0s..0.7s)') &&
+      !whollyBelow.includes('400.000°') &&
+      !whollyBelow.includes('500.000°') &&
+      !whollyBelow.includes('140.000°') &&
+      !whollyBelow.includes('-2.600s') &&
+      !whollyBelow.includes('100.000°') &&
+      !whollyBelow.includes('(0s..1s)'),
+    whollyPast === null || whollyBelow === null
+      ? `one of the two wholly-outside ranges compiled: past=${whollyPast === null ? 'compiled' : 'refused'} ` +
+        `below=${whollyBelow === null ? 'compiled' : 'refused'}`
+      : `400°..500° is told "…${(whollyPast.match(/so the -?\d+\.\d+° of the range[^.]*\./) ?? ['(no width clause)'])[0]}…" ` +
+        `and -340°..-305° "…${(whollyBelow.match(/so the -?\d+\.\d+° of the range[^.]*\./) ?? ['(no width clause)'])[0]}…"; ` +
+        `the past case carries [${whollyOut(whollyPast).join(' + ') || 'none of the twelve figures'}] and the below ` +
+        `case [${whollyOut(whollyBelow).join(' + ') || 'none of the twelve figures'}]`,
+    'issue #434: `-lowest` and `highest - 360` measure from the boundary to the FAR end, which is the dead width ' +
+      'only when the range straddles the boundary. A range lying wholly outside had the gap between the boundary ' +
+      'and its NEAR end counted as dead too, so a 100°-wide dial was told 140° of it selects nothing — wider than ' +
+      'the range. The near end has to be clamped to the boundary',
+  );
+
+  // --- and the four ranges the clamp must NOT move --------------------------
+  //
+  // ⭐ A guard tested only on the cases it changes would pass a formula that
+  // changed everything, so these four are the load-bearing half — every one of
+  // them prints, under the clamp, exactly what it printed before it:
+  //
+  //   100°..900°     wider than a full turn. The range still STARTS inside the
+  //                  circle, so `Math.max(360, lowest)` is 360 and the high
+  //                  clamp is inert. This is the row issue #434 names.
+  //   -200°..0°      the far end sits EXACTLY on the boundary, so
+  //                  `Math.min(0, highest)` is the boundary itself and the low
+  //                  clamp is an identity.
+  //   -40°..360°     the far end sits exactly on the OTHER boundary — a low-end
+  //                  refusal whose `highest` is 360.000° to the bit, so the
+  //                  high term's `highest > 360` test is false by a hair and
+  //                  the whole of the answer comes from the low term.
+  //   -100°..525°    BOTH ends are outside, so both terms fire and both clamps
+  //                  are inert: 100° below plus 165° past is 265.000°.
+  //
+  // 📐 Which of them earns its place is measured rather than asserted. Five
+  // ways of writing this arithmetic against the seven rows PS42/PS45/PS46 read,
+  // `<-` marking a row that moves:
+  //
+  //                past    below    turn     zero     360      both     straddle
+  //   shipped      100.000  35.000  540.000  200.000   40.000  265.000  140.000
+  //   #434's old   140<-    340<-   540      200       40      265      140
+  //   no `lo<0`   -300<-     35     440<-    200       40      265     -160<-
+  //   no `hi>360`  100     -630<-   540     -160<-     40      265      140
+  //   width only   100       35     800<-    200      400<-    625<-    200<-
+  //   if/else      100       35     540      200       40      100<-    140
+  //
+  // ⭐ Two rows are the only witness to their column. `-200°..0°` is the only
+  // one of the seven that moves when the `highest > 360` guard comes off — the
+  // guard whose absence PS45 catches on the other side. And `-100°..525°` is
+  // the only one that moves when the two terms are made an if/else instead of a
+  // sum, which is the tidier-looking shape somebody will reach for. `-40°..360°`
+  // is the weakest of the four on this table, caught only where three other
+  // rows are: it is kept because it is a boundary, and the sibling of the
+  // boundary #417 already had to measure rather than reason about.
+  //
+  // 🔒 `PS42` is the fifth row and it is deliberately somewhere else: it
+  // straddles 360°, it is the control that was ALREADY reading this string, and
+  // the whole claim of this fix is that it does not move. Restating its figure
+  // here would let a later edit satisfy the copy and change the original.
+  const STRADDLE_BOTH_POSE = {
+    duration: 1,
+    loop: false,
+    tracks: [{ bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [30] }] }],
+  };
+  const unmoved: Array<[string, string, string | null]> = [
+    [
+      'wider than a turn 100°..900°',
+      'the 540.000° of the range past 360°',
+      refusal(
+        sliderPairDirs([pairSlider('yaw', 'wide-pose', 'yaw-dial', { from: 100, to: 0, scale: 0.0025, loop: true })]),
+        sliderPairMotion({ 'wide-pose': TWO_SECOND_POSE }),
+      ),
+    ],
+    [
+      'far end exactly on 0° -200°..0°',
+      'the 200.000° of the range below 0°',
+      refusal(
+        sliderPairDirs([pairSlider('yaw', 'yaw-pose', 'yaw-dial', { from: -200, to: 0, scale: 0.005, loop: true })]),
+        sliderPairMotion(),
+      ),
+    ],
+    [
+      'far end exactly on 360° -40°..360°',
+      'the 40.000° of the range below 0°',
+      refusal(
+        sliderPairDirs([pairSlider('yaw', 'yaw-pose', 'yaw-dial', { from: -40, to: 0, scale: 0.0025, loop: true })]),
+        sliderPairMotion(),
+      ),
+    ],
+    [
+      'both ends outside -100°..525°',
+      'the 265.000° of the range below 0°',
+      refusal(
+        sliderPairDirs([pairSlider('yaw', 'straddle-pose', 'yaw-dial', { from: -100, to: 0, scale: 0.0016, loop: true })]),
+        sliderPairMotion({ 'straddle-pose': STRADDLE_BOTH_POSE }),
+      ),
+    ],
+  ];
+  const moved = unmoved.filter(([, wanted, message]) => message === null || !message.includes(wanted));
+  say(
+    'PS46_THE_CLAMP_LEAVES_EVERY_RANGE_THAT_ALREADY_TOUCHES_THE_CIRCLE_WHERE_IT_WAS',
+    moved.length === 0,
+    moved.length === 0
+      ? `all four print what they printed before the clamp: ${unmoved.map(([label, wanted]) => `${label} → "${wanted}"`).join('; ')}`
+      : moved
+          .map(
+            ([label, wanted, message]) =>
+              `${label} wanted "${wanted}" but ` +
+              (message === null
+                ? 'compiled instead of being refused'
+                : `got "${(message.match(/so the -?\d+\.\d+° of the range[^.]*\./) ?? ['(no width clause)'])[0]}"`),
+          )
+          .join(' | '),
+    'a fix measured only on the rows it is supposed to change is a fix nobody has bounded. These four are the rows ' +
+      'the clamp has to be inert on — a range that starts inside the circle, a range ending exactly on either ' +
+      'boundary, and a range hanging off both ends at once. Two of them are the only witness to a mutant on the ' +
+      'table above: the far end on 0° is the one row that moves when the `highest > 360` guard comes off, and both ' +
+      'ends outside is the one row that moves when the two terms are made an if/else instead of a sum',
+  );
+
   return bad;
 }
 
