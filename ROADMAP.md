@@ -144,6 +144,12 @@ Where they stand, stated rather than implied:
   also a slope**, so the reported angle could be set by sampling rather than by
   shape. Unverified.
 
+⭐ **"Real art" has a specific meaning, and it is not this repository's own
+fixtures or anyone's back catalogue.** A project is waiting on rigc to become
+usable before it starts, and its art is what this goal is about. That is also
+what makes the first goal gate the second: a spec cannot be declared finished
+against art chosen after the fact to fit it.
+
 This gates the next goal and is the reason the order is what it is.
 
 ### The spec has stopped growing on its own initiative
