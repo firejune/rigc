@@ -45,7 +45,14 @@ import {
 // A19 needs the DECODED page, not its header, to measure one region's own
 // rectangle on a shared page.
 import { readPlate } from '../tools/plate.ts';
-import { surveyDeformKeys, unreachableWhy, type DeformReach } from './deformmeasure.ts';
+import {
+  surveyDeformKeys,
+  unreachableWhy,
+  type DeformDialDispute,
+  type DeformDialTie,
+  type DeformReach,
+  type DialSpan,
+} from './deformmeasure.ts';
 import { colourTypeName, readPngInfo } from './png.ts';
 import { CHANNELS_BY_KIND, KEY_TIME_EPSILON, walkTimelines } from './timelines.ts';
 import type { RigInfo } from './types.ts';
@@ -236,6 +243,49 @@ export interface ValidateReport {
  */
 function frameClause(reach: DeformReach): string {
   return reach.kind === 'slider' ? ` (applied by slider "${reach.slider}", not played on a track)` : '';
+}
+
+/**
+ * A dial's reach as A39's stats line spells it, or `none` when it can select no
+ * part of its animation at all.
+ *
+ * Six decimals because a key time has six: a reach whose end is printed coarser
+ * than the times it is compared against cannot be read against them.
+ */
+function dialSpanText(span: DialSpan | null): string {
+  return span === null ? 'none' : `${span.lo.toFixed(6)}..${span.hi.toFixed(6)}s`;
+}
+
+/**
+ * One disputed dial on A39's stats line — both answers, both reaches, and the
+ * frames the artifact's answer could not have posed (issue #427).
+ *
+ * ⭐ **`outside:` is always there, `none` included.** The comparison it reports is
+ * what decides whether a disagreement changed anything the survey measured, and a
+ * comparison that came out equal must not look like one nobody made. It is the
+ * difference between "both answers pose the same frames, so the disagreement is a
+ * fact about rigc and not about this rig" and "these key times were surveyed
+ * through a field the skeleton does not name and no settable value of the one it
+ * does reaches them".
+ *
+ * ⚠️ No spaces anywhere in it: the stats line is `k=v` pairs joined by spaces, and
+ * a value with a space in it turns one reading into two.
+ */
+function dialDisputeText(dispute: DeformDialDispute): string {
+  const stated = dispute.statedResponse === null ? 'unmeasured' : dispute.statedResponse.toExponential(3);
+  return (
+    `${dispute.slider}|artifact:${dispute.bone}.${dispute.stated}@${stated}` +
+    `|reaches:${dialSpanText(dispute.statedReach)}` +
+    `|probe:${dispute.bone}.${dispute.drive}@${dispute.driveResponse.toExponential(3)}` +
+    `|reaches:${dialSpanText(dispute.driveReach)}` +
+    `|outside:${dispute.outside.length === 0 ? 'none' : dispute.outside.map((t) => `${t.toFixed(6)}s`).join('+')}`
+  );
+}
+
+/** One tied dial on the same line, in the shape that cannot be read as a dispute. */
+function dialTieText(tie: DeformDialTie): string {
+  const rivals = tie.rivals.map((r) => `${tie.bone}.${r.field}@${r.response.toExponential(3)}`).join('+');
+  return `${tie.slider}|artifact:${tie.bone}.${tie.drive}@${tie.driveResponse.toExponential(3)}|tied:${rivals}`;
 }
 
 const FRAME = 1 / 60;
@@ -1668,6 +1718,36 @@ export function validate(input: ValidateInput): ValidateReport {
         );
       }
       const survey = surveyDeformKeys(data, new Set(input.rig.deformMayFold));
+      // 🚨 Which dial was turned, when rigc's two halves did not simply agree
+      // about that — and BEFORE any of the returns below, because every one of
+      // them is a run that posed frames through this dial (issue #427).
+      //
+      // The verdict used to live in `DeformReach.label`, which `explain` prints
+      // and nothing else does, so a `build`-only run — the normal loop, and the
+      // one an agent that cannot see the rig actually runs — never learned that
+      // the artifact and the probe named different fields.
+      //
+      // ⛔ Not a refusal, and the measurement rather than taste is why (#427).
+      // The frames this survey posed were each checked against `SliderPose.time`
+      // by the runtime itself, so a disagreement cannot make it pose one that
+      // does not happen; and the field it drives is the largest response the
+      // probe found, so it cannot make it miss one that does. What a
+      // disagreement CAN do is leave the rig naming a property no settable value
+      // of turns far enough — which is what `outside` measures and what an
+      // author can act on. A refusal would refuse a rig spine-core poses
+      // correctly at every key, with no edit that would make it green.
+      //
+      // 🔒 A tie is not a disagreement and gets a line that cannot be read as
+      // one: there the probe named no field, the artifact broke the tie, and the
+      // parent-45° geometry that reaches it is legitimate.
+      if (survey.dialTies.length) {
+        stats.deformDialsTied = survey.dialTies.length;
+        stats.deformDialTied = survey.dialTies.map(dialTieText).join(',');
+      }
+      if (survey.dialDisputes.length) {
+        stats.deformDialsDisagreed = survey.dialDisputes.length;
+        stats.deformDialDisagreed = survey.dialDisputes.map(dialDisputeText).join(',');
+      }
       /** A key this rule is refusing, by the triple that identifies it. */
       const refusedKey = new Set<string>();
       for (const key of survey.keys) {

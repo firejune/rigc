@@ -331,6 +331,94 @@ export interface DeformReach {
   label: string;
 }
 
+/** The span of one animation's own `0..duration` a dial can select, in seconds. */
+export interface DialSpan {
+  lo: number;
+  hi: number;
+}
+
+/**
+ * A dial whose probe **tied** and whose artifact broke the tie (issue #419).
+ *
+ * 🔒 **Not a disagreement, and it must never be reported as one.** There is one
+ * belief here, not two: the probe measured two fields moving the reading by the
+ * same amount, named neither, and the skeleton's own reader said which of them
+ * the author wrote. A `FromX` slider under `local: false` on a bone whose parent
+ * is at 45° is exactly that, and it is legitimate geometry. So there is no second
+ * answer, no second reach and nothing to compare — which is why this is a type of
+ * its own and not a `verdict` field on the one below.
+ */
+export interface DeformDialTie {
+  /** The slider whose dial this is. */
+  slider: string;
+  /** Its driving bone. */
+  bone: string;
+  /** The field the artifact named, which is therefore the one the survey drives. */
+  drive: string;
+  /** What one step of it moved the reading by. */
+  driveResponse: number;
+  /** The other fields inside `DIAL_PROBE_MARGIN` of it, and what each moved it by. */
+  rivals: Array<{ field: string; response: number }>;
+}
+
+/**
+ * A dial the artifact and the probe name **differently**, with the span each of
+ * their answers can select (issues #419, #427).
+ *
+ * ⭐ Structured, and on the survey rather than only inside `DeformReach.label`,
+ * because that label is prose only `explain` prints. A `build`-only run is the
+ * loop an agent that cannot see the rig actually runs, and until this existed the
+ * fact that rigc's two halves disagreed about which dial was turned reached that
+ * run not at all.
+ *
+ * 🚨 **What the two reaches settle.** The property's name is not what makes this
+ * survey trustworthy — the set of frames it poses is. So both answers are turned
+ * into the span of the animation each can select, and `outside` is the part of
+ * what was posed that the artifact's answer could not have reached. Measured
+ * (issue #427): under a disagreement `driveReach` **always contains**
+ * `statedReach`, because the driven field is the largest response the probe found
+ * and a disagreement needs it to clear the artifact's field by
+ * `DIAL_PROBE_MARGIN`. So the survey never poses fewer frames than the artifact's
+ * answer would have, and `outside` is what the artifact's answer would have
+ * MISSED — never what this one invented.
+ */
+export interface DeformDialDispute {
+  /** The slider whose dial this is. */
+  slider: string;
+  /** Its driving bone. */
+  bone: string;
+  /**
+   * The field the artifact names, rig-spec spelled — or the reader's class name
+   * when it is one this file does not know.
+   */
+  stated: string;
+  /** What one step of the artifact's field moves the reading by. */
+  statedResponse: number | null;
+  /**
+   * The part of the animation's own `0..duration` the artifact's field can
+   * select, or `null` when it can select none of it — and on the one reader
+   * this file cannot name, where there is no field to probe.
+   */
+  statedReach: DialSpan | null;
+  /** The field the survey drives, which is the one that measurably moves the reading. */
+  drive: string;
+  /** What one step of THAT moves the reading by. */
+  driveResponse: number;
+  /** The part of `0..duration` the drive can select, or `null` when it can select none. */
+  driveReach: DialSpan | null;
+  /**
+   * The deform key times this survey posed through `drive` that no settable value
+   * of the artifact's field reaches, in ascending order.
+   *
+   * ⭐ Empty is a **reading**, not an absence: it says both answers pose the same
+   * frames, so the disagreement changed nothing about what was measured. A39
+   * prints `outside:none` for it rather than omitting the field, because a
+   * comparison that was made and came out equal must not look like one nobody
+   * made.
+   */
+  outside: number[];
+}
+
 /** The reach every animation has when no slider applies it. */
 const TRACK_REACH: DeformReach = {
   kind: 'track',
@@ -594,6 +682,17 @@ export interface DeformSurvey {
    * and this is (`DW16`).
    */
   spanProbes: number;
+  /**
+   * Dials whose probe tied and whose artifact broke the tie, in the skeleton's
+   * own constraint order (issue #419). Empty on every rig where it did not.
+   */
+  dialTies: DeformDialTie[];
+  /**
+   * Dials the artifact and the probe name differently, in the same order, each
+   * carrying both answers, both reaches and the frames the artifact's answer
+   * could not have posed (issues #419, #427).
+   */
+  dialDisputes: DeformDialDispute[];
 }
 
 /**
@@ -693,6 +792,8 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
   let notReachable = 0;
   let notReachableReversed = 0;
   let spansNotScanned = 0;
+  const dialTies: DeformDialTie[] = [];
+  const dialDisputes: DeformDialDispute[] = [];
   const reaches = reachesOf(data);
   for (const anim of data.animations) {
     // One pass per way in (issue #407). The animations nothing applies get the
@@ -701,6 +802,17 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
       const poseFrame = (time: number): PoseOfFrame =>
         dials === null ? { posed: poseAt(data, anim.name, time), dial: null } : poseDial(data, dials, time);
       const reach = dials === null ? TRACK_REACH : dials.reach;
+      /**
+       * The key times this plan actually **reached**, for the reach comparison
+       * below (#427).
+       *
+       * ⚠️ A key the drive itself could not select is not in here. It is already
+       * named on the stats line as `deformKeysUnreachable`, with the ask and the
+       * bound, and the artifact's answer cannot reach it either — so listing it
+       * as something the artifact's answer missed would count one defect twice
+       * and inflate a disagreement with a frame the disagreement did not cost.
+       */
+      const posedTimes = new Set<number>();
       for (const timeline of anim.timelines) {
         if (!(timeline instanceof DeformTimeline)) continue;
         timelines++;
@@ -748,6 +860,7 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
             notDrawnReversed += frameMeasure.measure.reversed.length;
           }
           keys.push({ ...named, key: frame, time, ...frameMeasure.measure });
+          if (at.dial?.unreachable !== true) posedTimes.add(time);
           if (previous !== null) {
             // ⚠️ A span whose end is a frame the runtime cannot reach has no
             // interpolation to scan: the anchors it would solve the quadratic
@@ -772,6 +885,56 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
           }
           previous = frameMeasure;
         }
+      }
+      // --- what the artifact's own answer could NOT have posed (issue #427) ---
+      //
+      // ⭐ Posed, not predicted. The survey builds a second plan out of the field
+      // the SKELETON names and runs it through the same `poseDial` every real
+      // frame goes through, so each entry is spine-core saying "no settable value
+      // of this field lands me on that time" rather than this file inferring it
+      // off an interval. Measured (#427): the list is empty whenever the two
+      // answers reach the same span, and empty is the reading that says the
+      // disagreement changed nothing about which frames were measured.
+      //
+      // 🚨 And nothing is reported at all about a dial that posed NOTHING — a
+      // slider whose animation carries no deform timeline. `outside` would be
+      // empty there for the one reason that must never print as agreement:
+      // there were no frames to disagree about. A comparison of nothing and a
+      // comparison that came out equal are the vacuous pass this file exists
+      // to keep apart.
+      if (posedTimes.size === 0) continue;
+      // A plan is visited exactly once — a slider names one animation — so the
+      // two lists need no de-duplication and come out in the skeleton's own
+      // constraint order.
+      if (dials?.tie) dialTies.push(dials.tie);
+      if (dials?.dispute) dialDisputes.push(dials.dispute);
+      if (dials?.dispute && dials.statedMap !== null) {
+        const shadow: DialPlan = {
+          ...dials,
+          field: dials.statedMap.field,
+          u0: dials.statedMap.u0,
+          v0: dials.statedMap.v0,
+          u1: dials.statedMap.u1,
+          v1: dials.statedMap.v1,
+        };
+        // ⚠️ The one time posing cannot answer: a field that moves the reading by
+        // NOTHING has no map to invert, so `poseDial` divides by zero and calls
+        // every time out of bounds — including the setup time, which that field
+        // reaches by being left alone. The reach says which one that is, and it
+        // is a single point. Nothing in spine-core 4.3 has been measured getting
+        // here (a parent at exactly 90° still moves a world x reading by 2.3e-8),
+        // and a report that over-stated a disagreement by one key would be the
+        // false red this file has paid for twice.
+        const flat = dials.statedMap.v1 === dials.statedMap.v0;
+        const only = dials.dispute.statedReach;
+        const outside = [...posedTimes]
+          .filter((time) =>
+            flat
+              ? only === null || Math.abs(time - only.lo) > DIAL_TIME_EPSILON
+              : poseDial(data, shadow, time).dial?.unreachable === true,
+          )
+          .sort((a, b) => a - b);
+        dials.dispute.outside.push(...outside);
       }
     }
   }
@@ -802,6 +965,8 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
     spansUnconfirmed,
     spansNotScanned,
     spanProbes,
+    dialTies,
+    dialDisputes,
   };
 }
 
@@ -914,6 +1079,13 @@ interface DialPlan {
   slider: SliderData;
   reach: DeformReach;
   /**
+   * The probe's tie, when it had one — the survey collects these so a `build`
+   * sees them and not only `explain` (issues #419, #427).
+   */
+  tie: DeformDialTie | null;
+  /** The two answers and their two reaches, when they named different fields. */
+  dispute: DeformDialDispute | null;
+  /**
    * The bone field that drives it, or `null` on a bone-less slider — whose time
    * IS its pose value and is set directly.
    */
@@ -923,6 +1095,17 @@ interface DialPlan {
   v0: number;
   u1: number;
   v1: number;
+  /**
+   * The ARTIFACT's own field as a map of its own, kept only on a disputed dial
+   * (issue #427).
+   *
+   * ⭐ It is what lets `DeformDialDispute.outside` be **posed** rather than
+   * predicted: the survey builds a second plan out of it and runs the same
+   * `poseDial` the real frames go through, so "no settable value of `knob.x`
+   * reaches t=0.5s" is a measurement taken against spine-core and not an
+   * inference off an interval.
+   */
+  statedMap: DialProbe | null;
 }
 
 /**
@@ -1104,22 +1287,26 @@ function planDial(data: SkeletonData, slider: SliderData): DialPlan | null {
   };
   // The bone-less form: `Slider.update` leaves `p.time` alone, so the dial IS the
   // pose value and the map is the identity.
-  if (slider.bone === null) return { slider, reach: reach(null), field: null, u0: 0, v0: 0, u1: 1, v1: 1 };
+  if (slider.bone === null) {
+    return { slider, reach: reach(null), tie: null, dispute: null, field: null, u0: 0, v0: 0, u1: 1, v1: 1, statedMap: null };
+  }
   const skeleton = new Skeleton(data);
   const instance = sliderOn(skeleton, slider);
   const bone = instance?.bone ?? null;
   if (instance === null || bone === null) return null;
-  const probes: DialProbe[] = [];
+  // ⚠️ Every field is kept, the dead ones included, because the ARTIFACT may name
+  // one of them: a reach comparison needs the map of the field the skeleton
+  // declares even when that field moves the reading by nothing at all (#427).
+  const all: DialProbe[] = [];
   for (const field of DIAL_FIELDS) {
     const step = dialStep(field);
     skeleton.setupPose();
     const base = bone.pose[field];
     const v0 = dialValue(skeleton, slider, bone, field, base);
     const v1 = dialValue(skeleton, slider, bone, field, base + step);
-    const response = Math.abs(v1 - v0);
-    if (!Number.isFinite(response) || response === 0) continue;
-    probes.push({ field, response, u0: base, v0, u1: base + step, v1 });
+    all.push({ field, response: Math.abs(v1 - v0), u0: base, v0, u1: base + step, v1 });
   }
+  const probes = all.filter((p) => Number.isFinite(p.response) && p.response !== 0);
   // Nothing moves it: a bone another constraint pins, or a reader that cannot see
   // this bone at all. A37 owns the `scale: 0` shape of the same silence.
   if (probes.length === 0) return null;
@@ -1140,10 +1327,80 @@ function planDial(data: SkeletonData, slider: SliderData): DialPlan | null {
     driveResponse: chosen.response,
     rivals: leaders.filter((p) => p.field !== chosen.field).map((p) => ({ field: p.field, response: p.response })),
     statedResponse:
-      stated === null || stated === chosen.field ? null : (probes.find((p) => p.field === stated)?.response ?? 0),
+      stated === null || stated === chosen.field ? null : (all.find((p) => p.field === stated)?.response ?? 0),
     verdict,
   };
-  return { slider, reach: reach(discovery), field: chosen.field, u0: chosen.u0, v0: chosen.v0, u1: chosen.u1, v1: chosen.v1 };
+  // 🔒 A tie and a disagreement are built as two different things, because they
+  // ARE two different things: a tie has one belief the artifact broke, and a
+  // disagreement has two that have to be compared. Folding them into one record
+  // with a `verdict` field is how a report comes to say "disagreed" about
+  // legitimate geometry (issues #419, #427).
+  const statedMap = stated === null ? null : (all.find((p) => p.field === stated) ?? null);
+  const tie: DeformDialTie | null =
+    verdict !== 'settled'
+      ? null
+      : {
+          slider: slider.name,
+          bone: boneName,
+          drive: DIAL_PROPERTY[chosen.field],
+          driveResponse: chosen.response,
+          rivals: discovery.rivals.map((r) => ({ field: DIAL_PROPERTY[r.field], response: r.response })),
+        };
+  const dispute: DeformDialDispute | null =
+    verdict !== 'disagreed'
+      ? null
+      : {
+          slider: slider.name,
+          bone: boneName,
+          stated: stated === null ? discovery.reader : DIAL_PROPERTY[stated],
+          statedResponse: discovery.statedResponse,
+          statedReach: statedMap === null ? null : dialReachOf(slider, statedMap),
+          drive: DIAL_PROPERTY[chosen.field],
+          driveResponse: chosen.response,
+          driveReach: dialReachOf(slider, chosen),
+          outside: [],
+        };
+  return {
+    slider,
+    reach: reach(discovery),
+    tie,
+    dispute,
+    field: chosen.field,
+    u0: chosen.u0,
+    v0: chosen.v0,
+    u1: chosen.u1,
+    v1: chosen.v1,
+    statedMap: dispute === null ? null : statedMap,
+  };
+}
+
+/**
+ * The part of an animation's own `0..duration` one field of the driving bone can
+ * select, or `null` when it can select none of it (issue #427).
+ *
+ * ⭐ **Closed form, and exact against the thing that decides.** `poseDial` refuses
+ * outright a drive whose magnitude exceeds `DIAL_DRIVE_LIMIT`, and the two maps
+ * between a field and a time are both affine — the probe's `field -> value`, and
+ * `Slider.update`'s own `value -> time` inverted. So the times a *settable* value
+ * of this field asks for are an interval, and its two ends are `±DIAL_DRIVE_LIMIT`
+ * put through both. A field that moves the reading by nothing gives a single
+ * point, which is the honest answer for it: the setup time and no other.
+ *
+ * ⚠️ It is a statement about what can be **asked for**, not about what the runtime
+ * then does with it — `FromRotate`'s `[0, 360)` wrap can refuse a time this
+ * interval contains. That is why the frames a disputed dial could not have posed
+ * are POSED rather than read off here.
+ */
+function dialReachOf(slider: SliderData, map: DialProbe): DialSpan | null {
+  const timeAt = (u: number): number => {
+    const value = map.v0 + ((u - map.u0) * (map.v1 - map.v0)) / (map.u1 - map.u0);
+    return slider.offset + (value - slider.property.offset) * slider.scale;
+  };
+  const ends = [timeAt(-DIAL_DRIVE_LIMIT), timeAt(DIAL_DRIVE_LIMIT)];
+  if (!ends.every((t) => Number.isFinite(t))) return null;
+  const lo = Math.max(0, Math.min(ends[0], ends[1]));
+  const hi = Math.min(slider.animation.duration, Math.max(ends[0], ends[1]));
+  return lo <= hi ? { lo, hi } : null;
 }
 
 /**

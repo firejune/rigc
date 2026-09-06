@@ -2914,9 +2914,45 @@ the line says so rather than picking one silently.**
   tie. ⛔ Neither case is a refusal and neither is guessed past — an ambiguous
   discovery is a thing to report.
 
-None of this needs anything from you unless a `frame` line carries one of those
-clauses. If one does, it is telling you the dial bone's parent transform is doing
-something you may not have intended.
+**And a `build` says it too, on `A39`'s stats line**
+([#427](https://github.com/firejune/rigc/issues/427)) — because `explain` is not
+the loop you run, and until this the whole finding lived on a line only `explain`
+prints. Nothing appears on a rig where the two answers agreed, which is every
+`local: true` slider and every gallery example:
+
+```
+deformDialsTied=1 deformDialTied=dial|artifact:knob.x@7.071e-1|tied:knob.y@7.071e-1
+deformDialsDisagreed=1 deformDialDisagreed=dial|artifact:knob.x@2.321e-8|reaches:0.000000..0.003893s|probe:knob.y@1.000e+0|reaches:0.000000..1.000000s|outside:0.500000s+1.000000s
+```
+
+- `artifact:` is the field the **skeleton** names and what one unit of it moves the
+  reading by; `probe:` is the field that **measurably** moves it and by how much.
+- `reaches:` is the part of that animation's own `0..duration` each of them can
+  select. It is bounded by the same `±16777216` the dial figure is: a field that
+  barely moves the reading needs an unsettable value to move it a whole second.
+- `outside:` is the key times this survey posed through `probe:` that **no
+  settable value of the field the skeleton names reaches**. Each one is posed
+  through that field and the runtime is asked where it landed, so the list is a
+  measurement. ⭐ `outside:none` is a reading, not an absence — it says both
+  answers select every frame that was measured, so the disagreement changed
+  nothing about what `A39` looked at.
+- A **tie** never carries `probe:`, `reaches:` or `outside:`, and never counts as a
+  disagreement. There is one belief there, not two.
+
+⛔ **None of it refuses a build**, and the reason is measured rather than chosen.
+The field the survey drives is the largest response the probe found, so its reach
+always *contains* the artifact's: a disagreement cannot make `A39` miss a frame the
+runtime reaches. And every frame it does pose is checked against `SliderPose.time`
+by spine-core itself, so it cannot make `A39` pose one that never happens either.
+What is left is a rig naming a property no settable value of turns far enough —
+which the line above tells you, and which no edit rigc could demand would fix,
+because the rig may be perfectly correct and driven through the other field.
+
+None of this needs anything from you unless a `frame` line or one of those stats
+readings appears. If one does, it is telling you the dial bone's parent transform
+is doing something you may not have intended — and if `outside:` names times, it is
+telling you the dial cannot be turned to them through the property your rig spec
+declares.
 
 ⚠️ **What the artifact cannot say, and rigc therefore does not:** whether a
 slider's animation is *also* played on a track somewhere. Nothing in skeleton data
