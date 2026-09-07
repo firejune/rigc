@@ -205,6 +205,20 @@ Three rules hold that together and none of them is optional:
   call: any suite that reports it ran and then measures nothing exits 2 by name,
   even when the total grew around it. The summary's own figures are read from the
   same count, so adding a control to a wrapped suite needs no edit to it.
+- **A suite's figure counts every case it prints, its own positive control
+  included** (issue #451). The tree answered this both ways — four suites counted
+  their control and two did not — so no single derivation reproduced the summary
+  and the last four figures had to stay literals. The rule is chosen for one
+  reason: the tally can only count printed lines, so a convention that subtracts
+  something the run printed cannot be derived at all and needs a hand-kept
+  exception table beside it, which is the "✅ applied" antipattern this repository
+  already has a judgment about. ⚠️ The run's *total* count of positive controls
+  was **deleted** rather than derived, because "positive control" is a role and
+  not a token on the line: `M16` and `M19` carry the word only because a **control
+  bone** is a rig concept, while `T04` and `PS25` are positive controls whose names
+  say nothing at all. Six, seventeen and twenty-nine were each a reading of it and
+  none of them was the number. Whether every suite *has* one is an invariant rather
+  than a figure, and nothing enforces it yet.
 
 `--cuts <cuts.json>` (or `RIGC_CUTS=<path>`) adds an **extra suite**: every cut in
 that table is compiled, gated and compiled again for `A18`. It is a positive
