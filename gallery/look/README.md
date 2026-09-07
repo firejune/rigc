@@ -117,9 +117,10 @@ inside out**, from `tan t = A₀/A_yaw` on the mesh's own triangles
 ```
   MESH  head         grid     189 vertices / 320 triangles  (budget 320)  bones=[head]  attachments=[head]
         depth "face_depth.png" bf156ea0cfc970a3 near=white zScale=194 z=[0, 194]
+        80 of 189 vertices sample a texel the part image does not draw — their z is the sheet's reading of somewhere the part is not
         turn ceiling  yaw +19.32° / -19.32°   pitch +22.92° / -26.94°
           1st pct     yaw +19.32° x1.000 of 80 / -19.32° x1.000 of 80   pitch +22.92° x1.000 of 102 / -26.94° x1.000 of 130
-                      first to fold: yaw + at 19.32°, triangle 174 [119,138,139], the sheet steps 28.50 level(s) across it
+                      first to fold: yaw + at 19.32°, triangle 174 [119,138,139], the sheet steps 28.50 level(s) across it, which is 0.112 of the range this mesh sampled
 ```
 
 ⇒ **The range is the largest whole degree strictly inside that ceiling: 19.**
@@ -136,6 +137,18 @@ Everything else falls out:
 | `turn`'s duration | `2 × 19 × 0.05` = **1.9 s** |
 | the map | `time = 0 + (degrees + 19) × 0.05` |
 | key times | 0, 0.3, 0.65, 0.95, 1.25, 1.6, 1.9 — the seven angles −19, −13, −6, 0, 6, 13, 19 |
+
+🔸 **The other two figures in that block are about the sheet rather than the
+angle**, and both say this one is a form. `which is 0.112 of the range this mesh
+sampled` is the step across the folding triangle divided by everything the map
+said across the whole mesh: a bounded slope halves that every time you double
+the lattice, while a **discontinuity** — the cliff an estimated depth map puts at
+every occlusion edge — pins it near 1 and halves the *angle* instead
+([AUTHORING §3.4](../../docs/AUTHORING.md)). And `80 of 189 vertices sample a
+texel the part image does not draw` is the lattice's own border: a `grid` spans
+the whole part window and a head is not a rectangle, so 80 of these vertices take
+their `z` from `face_depth.png` out past the silhouette. That is a count and not
+a complaint — read it next to the 0.112.
 
 📐 **How close 19° is to the wall is worth reading**, because it is the number
 that says the derivation is not decorative. `rigc explain`'s `DEFORM` block at
@@ -268,9 +281,10 @@ the inside — and the ceiling comes back asymmetric:
 ```
   MESH  hair_lock_l  grid     39 vertices / 48 triangles  (budget 320)  bones=[lock_l]  attachments=[hair_lock_l]
         depth "lock_l_depth.png" 0c4eaeb36b7c5cac near=white zScale=64 z=[22.086275, 63.874511]
+        32 of 39 vertices sample a texel the part image does not draw — their z is the sheet's reading of somewhere the part is not
         turn ceiling  yaw +17.04° / -45.80°   pitch +none / -none
           1st pct     yaw +unranked of 12 / -unranked of 36   pitch +none / -none
-                      first to fold: yaw + at 17.04°, triangle 2 [1,28,29], the sheet steps 78.00 level(s) across it
+                      first to fold: yaw + at 17.04°, triangle 2 [1,28,29], the sheet steps 78.00 level(s) across it, which is 0.468 of the range this mesh sampled
 ```
 
 ⭐ **And the side it folds on is the side the head has turned it away from.** A

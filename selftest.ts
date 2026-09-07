@@ -8465,6 +8465,279 @@ function runContourMeshSuite(): number {
     'every one of these compiles to a plausible number with correct arithmetic behind it — the coverage case is the loudest, since a sheet cut to the art gives the whole rim the background depth and folds the silhouette away from the turn',
   );
 
+  // --- a sheet that is opaque everywhere, and the count that replaced the
+  //     silence (issue #449) ---------------------------------------------
+  //
+  // 🚨 The hole these two cases close. The coverage refusal above is gated on
+  // the sheet having a transparent texel somewhere, so a sheet that is opaque
+  // EVERYWHERE — which is what monocular depth estimation produces, a
+  // full-frame render with the background in it — skipped it entirely. One
+  // depth field stored two ways was a named refusal in one and a green build
+  // in the other, and `range` did not show it: a map that is half background
+  // has exactly as full a range as one that is all subject.
+  //
+  // The fixture is chosen so that neither the answer nor the oracle is a
+  // measured number:
+  //
+  //   - the art is a stated RECTANGLE rather than the blob, so "does the part
+  //     draw here" is a predicate this file can evaluate itself;
+  //   - every lattice vertex sits on a texel centre whose whole 2x2 bilinear
+  //     footprint is on one side of that rectangle, so the footprint the
+  //     compiler walks and the predicate at the vertex cannot disagree —
+  //     which is what makes the count checkable at all;
+  //   - the two lattices are the whole window and the interior, so the "some
+  //     outside" and "none outside" answers are 56 and 0 and can never print
+  //     the same figure.
+  {
+    /** The art: a rectangle whose edges avoid every lattice vertex's footprint. */
+    const RECT = { x0: 20, x1: 78, y0: 12, y1: 54 };
+    const rectArt = (x: number, y: number): boolean => x >= RECT.x0 && x < RECT.x1 && y >= RECT.y0 && y < RECT.y1;
+    // One texel wider and taller than the blob's window, so both lattices below
+    // divide the span evenly and land on texel centres: 96 = 8·12 and 64 = 8·8.
+    const UNDRAWN_W = 97;
+    const UNDRAWN_H = 65;
+    /**
+     * `writeDepthSheet`'s own `ramp`, written out here so the OPAQUE sheet and
+     * the `tight` one carry byte-identical levels and differ only in alpha.
+     * That the two really are one depth field is asserted below by digest, not
+     * assumed from this line: `depthDigest` is taken over the levels alone.
+     */
+    const ramp = (x: number): number => Math.round((x / (UNDRAWN_W - 1)) * 255);
+    const centresOn = (n: number, first: number, step: number, span: number): number[] =>
+      Array.from({ length: n }, (_, i) => (first + step * i) / span);
+    // Texel columns 0, 12 … 96 and rows 0, 8 … 64. Inside the rectangle: the
+    // five columns 24 … 72 and the five rows 16 … 48.
+    const wholeUs = centresOn(9, 0.5, 12, UNDRAWN_W);
+    const wholeVs = centresOn(9, 0.5, 8, UNDRAWN_H);
+    const innerUs = wholeUs.slice(2, 7);
+    const innerVs = wholeVs.slice(2, 7);
+    const undrawnRig = (us: number[], vs: number[], sheet: 'opaque' | 'tight') =>
+      buildContourRig(
+        {
+          type: 'mesh',
+          image: 'blob.png',
+          generator: { kind: 'grid', us, vs, depth: { image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE } },
+        },
+        {
+          art: rectArt,
+          width: UNDRAWN_W,
+          height: UNDRAWN_H,
+          invariants: { meshSlots: 1, meshTriangles: 200 },
+          ...(sheet === 'opaque' ? { depthLevels: (x: number) => ramp(x) } : { depth: { kind: 'tight' as const } }),
+        },
+      );
+    /** How many of a build's OWN emitted vertices sit on a texel the rectangle does not draw. */
+    const offArt = (build: ContourBuild): number =>
+      contourPointsOf(loadedContourMesh(build).mesh).filter(([x, y]) => !rectArt(Math.floor(x), Math.floor(y))).length;
+
+    const whole = undrawnRig(wholeUs, wholeVs, 'opaque');
+    const inner = undrawnRig(innerUs, innerVs, 'opaque');
+    const innerTight = undrawnRig(innerUs, innerVs, 'tight');
+    let cutRefusal: string | null = null;
+    try {
+      undrawnRig(wholeUs, wholeVs, 'tight');
+    } catch (err) {
+      cutRefusal = err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+
+    {
+      const wholeDepth = whole.result.meshes[0].depth;
+      const vertices = whole.result.meshes[0].vertices;
+      // The two independent readings of the same fact, neither of them a
+      // literal: the lattice's own arithmetic, and the predicate applied to the
+      // vertices the ARTIFACT carries.
+      const byLattice = wholeUs.length * wholeVs.length - innerUs.length * innerVs.length;
+      const byArtifact = offArt(whole);
+      // ⭐ The refusal counts the same vertices from the other input, so the
+      // number it names has to be the number the report now prints. That is the
+      // whole of #449 in one comparison: one defect, two encodings, and until
+      // this case the second one printed nothing at all.
+      const named = cutRefusal === null ? null : /does not cover (\d+) of the mesh's (\d+)/.exec(cutRefusal);
+      const agreed =
+        wholeDepth !== undefined &&
+        wholeDepth.undrawn === byLattice &&
+        wholeDepth.undrawn === byArtifact &&
+        named !== null &&
+        Number(named[1]) === wholeDepth.undrawn &&
+        Number(named[2]) === vertices &&
+        wholeDepth.undrawn > 0 &&
+        // Not vacuous: the sheet is a real one that reports a real ceiling.
+        wholeDepth.ceiling.yaw.positive !== null &&
+        // And `range` is exactly as full as it would be on a mesh entirely on
+        // the art, which is the claim the module header used to make backwards.
+        wholeDepth.range[1] - wholeDepth.range[0] > 0;
+      say(
+        'DP05_A_SHEET_OPAQUE_EVERYWHERE_COUNTS_THE_VERTICES_THAT_SAMPLE_UNDRAWN_ART',
+        agreed,
+        `a ${wholeUs.length}x${wholeVs.length} lattice over a ${UNDRAWN_W}x${UNDRAWN_H} window whose art is the ` +
+          `rectangle [${RECT.x0}, ${RECT.x1}) x [${RECT.y0}, ${RECT.y1}): the report says ` +
+          `${wholeDepth?.undrawn} of ${vertices} vertices sample a texel the part does not draw, the lattice's own ` +
+          `arithmetic says ${byLattice}, and the predicate over the ${vertices} vertices read back through ` +
+          `spine-core says ${byArtifact}. The same field with its alpha cut to the same rectangle is REFUSED at ` +
+          `${named === null ? 'NO COUNT — the coverage refusal did not fire' : `${named[1]} of ${named[2]}`}, and ` +
+          `the sheet reports range [${wholeDepth?.range[0]}, ${wholeDepth?.range[1]}] with a ` +
+          `${wholeDepth?.ceiling.yaw.positive?.degrees.toFixed(2)}° yaw ceiling — a full range and a plausible angle, ` +
+          'which is what a build in this shape printed and all it printed',
+        'a depth sheet produced by estimation is opaque everywhere, so the coverage refusal has nothing to hold it ' +
+          'to and skips — and the defect it exists to catch is still there. `range` was claimed to be where that ' +
+          'shows up and it is not: a background level is a legitimate depth, so half a mesh reading background ' +
+          'reports exactly as healthy a range as none of it does',
+      );
+    }
+
+    {
+      // 🔒 The negative control, and it is the load-bearing half. A count that
+      // fired on every rig would separate nothing, and this one is easy to get
+      // wrong in the generous direction — the bilinear footprint reaches a
+      // texel past the vertex, so a lattice on the rectangle's own edge would
+      // report its whole border.
+      const innerDepth = inner.result.meshes[0].depth;
+      const explained = runCli([
+        'explain',
+        '--rig',
+        inner.opts.rigPath,
+        '--motion',
+        inner.opts.motionPath,
+        '--out',
+        inner.opts.outDir,
+        '--images',
+        inner.dir,
+      ]);
+      const wholeExplained = runCli([
+        'explain',
+        '--rig',
+        whole.opts.rigPath,
+        '--motion',
+        whole.opts.motionPath,
+        '--out',
+        whole.opts.outDir,
+        '--images',
+        whole.dir,
+      ]);
+      const LINE = 'sample a texel the part image does not draw';
+      const quiet = explained.status === 0 && !explained.stdout.includes(LINE);
+      const loud = wholeExplained.status === 0 && wholeExplained.stdout.includes(LINE);
+      const sameField = innerDepth?.digest === whole.result.meshes[0].depth?.digest;
+      const sameFieldCut = innerTight.result.meshes[0].depth?.digest === innerDepth?.digest;
+      const ok =
+        innerDepth !== undefined &&
+        innerDepth.undrawn === 0 &&
+        offArt(inner) === 0 &&
+        // Not vacuous: this mesh sampled a real slope and reports a real ceiling.
+        innerDepth.ceiling.yaw.positive !== null &&
+        innerDepth.range[1] > innerDepth.range[0] &&
+        quiet &&
+        loud &&
+        sameField &&
+        sameFieldCut &&
+        // The interior lattice is inside the ART, so the alpha-cut encoding of
+        // the same field covers it and is NOT refused — the refusal is about
+        // coverage and the count is about the drawing, and this is where the
+        // two part company.
+        innerTight.result.meshes[0].depth?.undrawn === 0;
+      say(
+        'DP06_A_MESH_ENTIRELY_ON_THE_ART_REPORTS_ZERO_AND_GAINS_NO_LINE',
+        ok,
+        `the interior ${innerUs.length}x${innerVs.length} lattice of the same window: ${innerDepth?.undrawn} ` +
+          `undrawn by the report and ${offArt(inner)} by the predicate over the emitted vertices, on a mesh that ` +
+          `still measures a ${innerDepth?.ceiling.yaw.positive?.degrees.toFixed(2)}° ceiling over range ` +
+          `[${innerDepth?.range[0]}, ${innerDepth?.range[1]}]; \`explain\` prints no such line for it ` +
+          `${quiet ? '' : '— IT DID '}and prints one for the whole-window lattice ${loud ? '' : '— IT DID NOT '}` +
+          `beside it. The three sheets are one depth field, by digest: ${innerDepth?.digest} opaque, ` +
+          `${innerTight.result.meshes[0].depth?.digest} cut to the art ` +
+          `${sameFieldCut ? '(identical, so only the alpha differs)' : '(DIFFERENT — these are two fields)'}, and ` +
+          `the cut encoding of THIS lattice is not refused at all, because the art covers it`,
+        'a count that fires on every rig is not a count, and this one has two easy ways to fire on everything: the ' +
+          'footprint reaches one texel past the vertex, and a `contour` mesh is pushed outside the silhouette by ' +
+          'design. Zero has to be reachable and it has to be silent, or the line stops meaning anything the first ' +
+          'time an author sees it on a rig that is correct',
+      );
+    }
+
+    {
+      // 🔸 The count on a `contour`, and the clause that stops it reading as a
+      // fault. Its outline is pushed `margin` pixels OUTSIDE the silhouette, so
+      // every vertex of one takes its depth from where the part draws nothing —
+      // the count is the whole mesh on a correctly authored rig, whatever the
+      // sheet's alpha is, and a diagnostic that says "15 of 15" on every
+      // contour rig is one authors learn to ignore.
+      //
+      // ⭐ The line says WHY instead, and rigc is entitled to: it built that
+      // outline. `buildContourMesh` returns `hullVertices: points.length` over
+      // `offsetPolygon(simplified, margin)`, so "every vertex is traced
+      // outline" is what the generator returns rather than something read back
+      // off the geometry. This case holds it to the ARTIFACT anyway — the
+      // emitted `hull` against the emitted vertex count — because a claim the
+      // report makes about the mesh's shape has to be true of the mesh.
+      //
+      // ⛔ What this is NOT is a margin discount. Subtracting the margin would
+      // mean borrowing a number authored for the TRACE to mean "close enough"
+      // for the SHEET, which is the guess this compiler refuses to make: on a
+      // dilated sheet the rim's depth is the art's and the count is noise, on a
+      // full-frame estimate the rim's depth is the background and the count is
+      // the failure, and nothing in the part's alpha tells those apart.
+      const tracedBuild = buildContourRig(
+        depthAttachment({ image: 'blob_depth.png', near: 'white', zScale: DEPTH_Z_SCALE }),
+        { depth: { kind: 'ramp' } },
+      );
+      const traced = tracedBuild.result.meshes[0];
+      interface HulledSkin {
+        skins: Array<{ attachments: { blob: { blob: { uvs: number[]; hull: number } } } }>;
+      }
+      const emittedMesh = (JSON.parse(tracedBuild.result.skeletonText) as HulledSkin).skins[0].attachments.blob.blob;
+      const emittedVertices = emittedMesh.uvs.length / 2;
+      const tracedLine = runCli([
+        'explain',
+        '--rig',
+        tracedBuild.opts.rigPath,
+        '--motion',
+        tracedBuild.opts.motionPath,
+        '--out',
+        tracedBuild.opts.outDir,
+        '--images',
+        tracedBuild.dir,
+      ]);
+      const gridLine = runCli([
+        'explain',
+        '--rig',
+        whole.opts.rigPath,
+        '--motion',
+        whole.opts.motionPath,
+        '--out',
+        whole.opts.outDir,
+        '--images',
+        whole.dir,
+      ]);
+      const TOPOLOGY = 'a contour\'s vertices are all traced outline, pushed out by the margin';
+      const SHEET = 'their z is the sheet\'s reading of somewhere the part is not';
+      // Two-sided on both halves: each kind has to carry its own clause AND not
+      // carry the other's. A report that appended both would satisfy either
+      // half alone and attribute a grid's lattice border to a margin it has not
+      // got.
+      const contourSays = tracedLine.status === 0 && tracedLine.stdout.includes(TOPOLOGY) && !tracedLine.stdout.includes(SHEET);
+      const gridSays = gridLine.status === 0 && gridLine.stdout.includes(SHEET) && !gridLine.stdout.includes(TOPOLOGY);
+      say(
+        'DP07_A_CONTOUR_ATTRIBUTES_ITS_COUNT_TO_THE_OUTLINE_IT_TRACED_AND_A_GRID_DOES_NOT',
+        traced.vertices > 0 &&
+          traced.depth?.undrawn === traced.vertices &&
+          emittedVertices === traced.vertices &&
+          emittedMesh.hull === emittedVertices &&
+          contourSays &&
+          gridSays,
+        `a contour at margin ${CONTOUR_MARGIN} over an opaque sheet: ${traced.depth?.undrawn} of ` +
+          `${traced.vertices} vertices sample a texel the part does not draw, and the emitted mesh declares hull ` +
+          `${emittedMesh.hull} of ${emittedVertices} vertices — every one of them outline, which is what the ` +
+          `report attributes the count to${contourSays ? '' : ' — BUT IT DOES NOT SAY SO'}. The whole-window grid ` +
+          `beside it says the sheet clause and not the topology one${gridSays ? '' : ' — IT DOES NOT'}, and the ` +
+          'interior lattice says neither, because it has nothing to report',
+        'a line that reads "15 of 15" on every correct contour rig is one an author stops reading, and the fix is ' +
+          'not to subtract the margin — it is that rigc BUILT that outline and can say so. On a grid the same ' +
+          'sentence would be a lie: a lattice border is where the author\'s `us`/`vs` put it, not where a margin ' +
+          'did, so the attribution is absent there and the count stands alone',
+      );
+    }
+  }
+
   // --- the soft region, and why it is painted (issue #382) -----------------
   //
   // A physics constraint answers an impact over exactly the vertices a mask
@@ -9093,6 +9366,180 @@ function runContourMeshSuite(): number {
         'below about three levels per mesh cell the ceiling is arithmetic about the encoding rather than about the ' +
           'form, and at one level it is exactly atan(255·h/zScale) — a plausible-looking angle for a surface whose ' +
           'real answer is anything at all, which the author cannot see unless the report says how many levels it read',
+      );
+    }
+
+    // A form and a cliff, told apart by the step over the range (issue #448).
+    //
+    // 🚨 The reading neither figure above can give. On an estimated depth sheet
+    // over cut-out art the ceiling is set by the OCCLUSION boundary rather than
+    // by the drawing's form, and both existing diagnostics call that healthy:
+    // `p1/degrees` reads as a band, because an outline is a band, and
+    // `depthStep` reads as plenty said, because the sheet said the whole
+    // distance from figure to background in one step. Divided by the range they
+    // say the opposite.
+    //
+    // ⚠️ And the ceiling is not lying when they do. A discontinuity simply has
+    // no slope to converge to, so the angle halves with every doubling of the
+    // lattice and describes nothing at any density — which is the property
+    // these two fixtures are built to show, on the same lattice ladder:
+    //
+    //   the form  — a raised cosine along x. Its slope is bounded, so the step
+    //               halves with the cell and the ceiling settles.
+    //   the cliff — half that cosine plus a jump of the other half at one
+    //               texel column. The jump is there at every density, so the
+    //               step stops shrinking and the ceiling keeps halving.
+    //
+    // The window is one texel wider and taller than the blob's so that 96 and
+    // 64 divide by 8, 16 and 32: every vertex of all three lattices lands on a
+    // texel centre, and the planted column sits strictly between two of them at
+    // every rung.
+    {
+      const REFINE_W = 97;
+      const REFINE_H = 65;
+      const REFINE_ZSCALE = 50;
+      /**
+       * Levels the cosine spans, and the base it sits on.
+       *
+       * ⚠️ Even, and every level below is rounded to a whole number before it
+       * is written. `depthLevels` hands its result straight to a `Uint8Array`,
+       * which TRUNCATES — so a fixture stating halves would plant a cliff of 95
+       * levels while this file believed it had planted 95.5.
+       */
+      const AMP = 190;
+      const FLOOR_LEVEL = 64;
+      /**
+       * A base above zero on purpose. With the sheet reaching level 0 the range
+       * and its upper end are the same number, so a `stepShare` that divided by
+       * `max z` instead of by `max − min` would read identically and this whole
+       * ladder would pass on it.
+       */
+      const raised = (x: number): number => 0.5 * (1 - Math.cos((2 * Math.PI * (x + 0.5)) / REFINE_W));
+      const formSheet = (x: number): number => Math.round(FLOOR_LEVEL + AMP * raised(x));
+      /** Not a multiple of 3, 6 or 12, so no lattice vertex ever lands on it. */
+      const CLIFF_COLUMN = 50;
+      const cliffSheet = (x: number): number =>
+        Math.round(FLOOR_LEVEL + (AMP / 2) * raised(x)) + (x >= CLIFF_COLUMN ? AMP / 2 : 0);
+      /**
+       * What the planted cliff is worth as a share, by construction rather than
+       * by measurement: it rises half of the levels the sheet spans.
+       */
+      const PLANTED_SHARE = AMP / 2 / AMP;
+      const refineRig = (cells: number, level: (x: number, y: number) => number): ContourBuild =>
+        buildContourRig(
+          {
+            type: 'mesh',
+            image: 'blob.png',
+            generator: {
+              kind: 'grid',
+              us: centres(cells + 1, 0.5, 96 / cells, REFINE_W),
+              vs: centres(cells + 1, 0.5, 64 / cells, REFINE_H),
+              depth: { image: 'blob_depth.png', near: 'white', zScale: REFINE_ZSCALE },
+            },
+          },
+          {
+            art: () => true,
+            width: REFINE_W,
+            height: REFINE_H,
+            depthLevels: level,
+            invariants: { meshSlots: 1, meshTriangles: 4000 },
+          },
+        );
+      const tightest = (build: ContourBuild): FoldLimit | null => {
+        const c = build.result.meshes[0].depth?.ceiling;
+        if (c === undefined) return null;
+        const all = [c.yaw.positive, c.yaw.negative, c.pitch.positive, c.pitch.negative].filter(
+          (f): f is FoldLimit => f !== null,
+        );
+        return all.length === 0 ? null : all.reduce((a, b) => (b.degrees < a.degrees ? b : a));
+      };
+      const RUNGS = [8, 16, 32];
+      const ladder = (level: (x: number, y: number) => number): Array<{ build: ContourBuild; limit: FoldLimit | null }> =>
+        RUNGS.map((cells) => {
+          const build = refineRig(cells, level);
+          return { build, limit: tightest(build) };
+        });
+      const form = ladder(formSheet);
+      const cliff = ladder(cliffSheet);
+      const tan = (deg: number): number => Math.tan((deg * Math.PI) / 180);
+      const ratios = (rungs: typeof form, of: (l: FoldLimit) => number): number[] =>
+        rungs.slice(0, -1).map((r, i) => {
+          const a = r.limit;
+          const b = rungs[i + 1].limit;
+          return a === null || b === null ? NaN : of(a) / of(b);
+        });
+      const shares = (rungs: typeof form): number[] => rungs.map((r) => r.limit?.stepShare ?? NaN);
+      const formShares = shares(form);
+      const cliffShares = shares(cliff);
+      const formShareRatio = ratios(form, (l) => l.stepShare);
+      const cliffShareRatio = ratios(cliff, (l) => l.stepShare);
+      const formTanRatio = ratios(form, (l) => tan(l.degrees));
+      const cliffTanRatio = ratios(cliff, (l) => tan(l.degrees));
+      // Every band is stated here with room on both sides and nothing in `src/`
+      // reads any of them. Measured on this fixture: the form's share ratio is
+      // 1.86 and 2.00 with a tangent ratio of 1.07 and 1.00; the cliff's share
+      // ratio is 0.94 and 0.98 with a tangent ratio of 2.25 and 2.07.
+      const HALVES: [number, number] = [1.6, 2.4];
+      const HOLDS: [number, number] = [0.85, 1.15];
+      const SETTLES: [number, number] = [0.85, 1.25];
+      const DOUBLES: [number, number] = [1.7, 2.5];
+      /** How near the finest rung has to land on the share that was planted. */
+      const PLANTED_TOLERANCE = 0.05;
+      const within = (v: number, [lo, hi]: [number, number]): boolean => Number.isFinite(v) && v >= lo && v <= hi;
+      const every = (vs: number[], band: [number, number]): boolean => vs.length > 0 && vs.every((v) => within(v, band));
+      // A share is a fraction of the mesh's own range and cannot exceed one.
+      // The clause that catches the arithmetic being skipped altogether, which
+      // every ratio above survives: an unnormalised step keeps its ratios.
+      const bounded = [...formShares, ...cliffShares].every((s) => Number.isFinite(s) && s > 0 && s <= 1);
+      const separated = Math.min(...cliffShares) > Math.max(...formShares);
+      const planted = Math.abs(cliffShares[cliffShares.length - 1] - PLANTED_SHARE) <= PLANTED_TOLERANCE;
+      // The block an author reads has to carry the figure the struct holds —
+      // a control on the struct alone passes a report that prints the wrong one.
+      const finest = form[form.length - 1].build;
+      const explained = runCli([
+        'explain',
+        '--rig',
+        finest.opts.rigPath,
+        '--motion',
+        finest.opts.motionPath,
+        '--out',
+        finest.opts.outDir,
+        '--images',
+        finest.dir,
+      ]);
+      const printed = `which is ${(form[form.length - 1].limit?.stepShare ?? NaN).toFixed(3)} of the range this mesh sampled`;
+      const inReport = explained.status === 0 && explained.stdout.includes(printed);
+      const ok =
+        bounded &&
+        separated &&
+        planted &&
+        inReport &&
+        every(formShareRatio, HALVES) &&
+        every(cliffShareRatio, HOLDS) &&
+        every(formTanRatio, SETTLES) &&
+        every(cliffTanRatio, DOUBLES) &&
+        form.every((r) => r.limit !== null) &&
+        cliff.every((r) => r.limit !== null) &&
+        form[0].build.result.meshes[0].depth?.digest !== cliff[0].build.result.meshes[0].depth?.digest;
+      const table = (name: string, rungs: typeof form, sh: number[]): string =>
+        `${name} ${RUNGS.map((cells, i) => `grid-${cells + 1} ${rungs[i].limit?.degrees.toFixed(2) ?? 'none'}°/${sh[i].toFixed(4)}`).join(' ')}`;
+      say(
+        'TC07_A_PLANTED_CLIFF_PINS_THE_STEP_SHARE_WHILE_A_FORMS_HALVES_UNDER_THE_SAME_REFINEMENT',
+        ok,
+        `${table('form', form, formShares)} (share x${formShareRatio.map((r) => r.toFixed(3)).join(', x')} per ` +
+          `doubling, tangent x${formTanRatio.map((r) => r.toFixed(3)).join(', x')}); ` +
+          `${table('cliff', cliff, cliffShares)} (share x${cliffShareRatio.map((r) => r.toFixed(3)).join(', x')}, ` +
+          `tangent x${cliffTanRatio.map((r) => r.toFixed(3)).join(', x')}). The cliff was planted at ` +
+          `${PLANTED_SHARE.toFixed(3)} of the sheet's own range and the finest lattice reads ` +
+          `${cliffShares[cliffShares.length - 1].toFixed(4)}${planted ? '' : ' — NOT what was planted'}; no cliff ` +
+          `reading falls to any form reading (${Math.min(...cliffShares).toFixed(4)} against ` +
+          `${Math.max(...formShares).toFixed(4)}${separated ? '' : ' — NOT SEPARATED'}), every reading is a ` +
+          `fraction${bounded ? '' : ' — ONE IS NOT'}, and \`explain\` prints "${printed}"` +
+          `${inReport ? '' : ' — IT DOES NOT'}`,
+        'a discontinuity has no slope to converge to, so its ceiling halves with the lattice and means nothing at ' +
+          'any density — and the two figures already in the report both read it as healthy, a band reaching the ' +
+          'limit together with plenty of levels across it. The form is the half that must NOT fire: a diagnostic ' +
+          'that pinned on both would separate nothing, and one that fell on both would miss the cliff',
       );
     }
   }

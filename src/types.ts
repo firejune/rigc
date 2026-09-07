@@ -1058,15 +1058,6 @@ export interface CompileResult {
      */
     holePixels?: number;
     /**
-     * What a depth map put on this mesh's vertices, when one was named.
-     *
-     * The digest is over the levels rather than the file, so a re-encode of the
-     * same sheet reports the same provenance; `range` is what was actually
-     * sampled, which is the number that says whether the map covers the part or
-     * a corner of it. Absent when no map was named — never zeroes, which would
-     * read as "sampled and found flat".
-     */
-    /**
      * The soft region a `soft` block carried to its own bone, when one was
      * named — the mask, its digest, and how many vertices it reached.
      *
@@ -1075,6 +1066,18 @@ export interface CompileResult {
      * and a nose does not wobble.
      */
     soft?: { mask: string; digest: string; bone: string; carried: number; ramped: number };
+    /**
+     * What a depth map put on this mesh's vertices, when one was named.
+     *
+     * The digest is over the levels rather than the file, so a re-encode of the
+     * same sheet reports the same provenance; `range` is what was actually
+     * sampled. Absent when no map was named — never zeroes, which would read as
+     * "sampled and found flat".
+     *
+     * ⚠️ This comment sat above `soft` rather than above the field it describes
+     * until issue #449 came to add to it, which is the same drift `CUR07` was
+     * built for one file over — nothing derives a doc comment's neighbour.
+     */
     depth?: {
       /** The sheet, as written in the spec. */
       image: string;
@@ -1086,6 +1089,24 @@ export interface CompileResult {
       tone: { gamma: number; contrast: number; bias: number };
       /** Least and greatest `z` over the mesh's vertices, in attachment units. */
       range: [number, number];
+      /**
+       * How many of the mesh's vertices took their depth from a texel **the
+       * part image does not draw** (issue #449).
+       *
+       * ⚠️ Not what `range` says, and this is the field that exists because
+       * `range` was claimed to say it. A map that is half background has
+       * exactly as full a range as one that is all subject, because a
+       * background level is a legitimate depth — so a full-frame sheet over a
+       * cut-out part reports a healthy `[0, 223.97]` of 224 with 54 % of the
+       * mesh reading background.
+       *
+       * A count and never a refusal: the same defect is already a named refusal
+       * when the sheet's alpha is cut to the art, and a sheet that is opaque
+       * everywhere is a statement rigc has no authority to guess away. Zero is
+       * a real answer here rather than an absence — every mesh that names a
+       * depth map also names an image, so the measurement is always taken.
+       */
+      undrawn: number;
       /**
        * The turn this geometry takes on this sheet before a triangle reverses,
        * per axis and per direction — `src/depth.ts`'s `turnCeiling`.

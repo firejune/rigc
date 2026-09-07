@@ -364,11 +364,53 @@ geometry ([AUTHORING §3.4](AUTHORING.md)):
 ```
         turn ceiling  yaw +31.41° / -32.01°   pitch +32.01° / -31.41°
           1st pct     yaw +31.55° x1.004 of 1004 / -32.10° x1.003 of 1044   pitch +32.10° x1.003 of 1044 / -31.55° x1.004 of 1004
-                      first to fold: yaw + at 31.41°, triangle 960 [113,112,593], the sheet steps 12.52 level(s) across it
+                      first to fold: yaw + at 31.41°, triangle 960 [113,112,593], the sheet steps 12.52 level(s) across it, which is 0.049 of the range this mesh sampled
 ```
 
 Read it as a fact about **the sheet**. If the number is too small, the fix is in
 the map — flatten it where the part curves away — and not in the lattice.
+
+#### ⚠️ That rule presumes the map is continuous
+
+"Flatten it where the part curves away" is an edit to a **surface**, and it
+assumes there is one under the whole mesh. A depth sheet estimated from a
+picture of cut-out art is not a surface: it is piecewise, with a **cliff at every
+occlusion boundary** — figure against background at the silhouette, and one part
+of the figure over another wherever they overlap. There is nothing to flatten
+across a cliff, because the two sides are not two ends of a slope. They are two
+different things at two different depths, and a 2.5D turn does not model
+occlusion at all.
+
+The ceiling reads the cliff, correctly, and the number it reports is real:
+walked one degree at a time through the survey `A39` refuses from, a reported
+1.936° admits +1° and reverses 8 triangles at +2°. **The rig genuinely folds at
+two degrees.** What is wrong is not the instrument and not the mesh — it is that
+the question "how far can this turn" has no answer for an input with a
+discontinuity in it, and the ceiling proves it by halving with every doubling of
+the lattice: measured tangent ratios 2.02 / 1.95 / 2.02, `tan t ∝ h` exactly,
+with no limit to converge to.
+
+🚨 **And the two figures beside the ceiling both call it healthy.** The 1st
+percentile reads 1.02–2.17, which is a band reaching the limit together — and it
+*is* a band, because an outline is long. The depth step reads 148–252 levels of
+255, far above the quantisation floor — and the sheet really did say that much,
+in one step. Divided by the range, the same number says the opposite: the step
+share pins at **0.92–0.99** where rigc's own gallery reads 0.112 and 0.468.
+
+⇒ Two ways out, and **neither of them is flattening**:
+
+- **Mesh only what is continuous.** One face, one lock, one sleeve — a region
+  the sheet describes without a jump in it — rather than a lattice over a whole
+  figure. Whether a mask that tight gives a usable angle is not yet measured;
+  the mask has to be painted rather than thresholded, for the reason `soft`
+  is painted (§3.4's `soft` block).
+- **State a sheet that was authored rather than estimated.** §2.2's raised
+  cosine holds 63–64° from 289 vertices to 32,761 because somebody drew its
+  slope. That is the input this whole section is about.
+
+⛔ rigc will not decide that your sheet is the wrong kind of thing. It has every
+authority to say what it measured, and the step share is that
+([#448](https://github.com/firejune/rigc/issues/448)).
 
 📐 Method, harness and the full ladders live in the repository rather than in
 this package, as
@@ -394,17 +436,22 @@ the range describes the same surface and reports 5.8° less of it. Method and
 ladders:
 [`bench/studies/2026-09-05-noise`](https://github.com/firejune/rigc/tree/main/bench/studies/2026-09-05-noise).
 
-⭐ **And you do not have to guess which of the two you are looking at.** The two
-lines under the ceiling say it ([#412](https://github.com/firejune/rigc/issues/412)):
-the **1st percentile over the ceiling** is near 1 when a band of the mesh reaches
-the limit together, which is a form, and near 10 when one triangle does, which is
-a texel — 1.003 against 10.652 for the two sheets above. The **depth step across
-the triangle that folds first**, in levels, is the other half: below about 3 the
-ceiling is quantisation, and at 1 it is `atan(255·h / zScale)` and carries nothing
-about the form at all. Both are reports and neither moves the ceiling — ⛔ rigc
-will not filter a depth map, because a smoothed measurement would describe a
-surface the deform key is not built from and `A39` would go on refusing at the
-raw angle. [AUTHORING §3.4](AUTHORING.md) has the reading table.
+⭐ **And you do not have to guess which of the three you are looking at.** The
+lines under the ceiling say it
+([#412](https://github.com/firejune/rigc/issues/412),
+[#448](https://github.com/firejune/rigc/issues/448)): the **1st percentile over
+the ceiling** is near 1 when a band of the mesh reaches the limit together and
+near 10 when one triangle does, which is a texel — 1.003 against 10.652 for the
+two sheets above. The **depth step across the triangle that folds first**, in
+levels, is the second: below about 3 the ceiling is quantisation, and at 1 it is
+`atan(255·h / zScale)` and carries nothing about the form at all. The **same step
+over the range the mesh sampled** is the third, and it is the one that separates
+a steep surface from a cliff — a form's halves with every doubling of the lattice
+while its angle settles, a discontinuity's does not move while its angle halves.
+All three are reports and none of them moves the ceiling — ⛔ rigc will not filter
+a depth map, because a smoothed measurement would describe a surface the deform
+key is not built from and `A39` would go on refusing at the raw angle.
+[AUTHORING §3.4](AUTHORING.md) has the reading table.
 
 ---
 
