@@ -467,10 +467,12 @@ was verified, and what writing it cost. Repository material: a clone and
 
 <p align="center"><em>The portrait rig playing its three animations in one take — the turn is
 the shot: both silhouette edges move apart, which a flat slide cannot do, because every
-feature carries its own depth. Scene direction of this kind is authorable on plain Spine
-4.3 — no plugin, no runtime patch — and the split was authoring cost rather than runtime
-capability; the cost is now one stated expression per key. Compiled and
-rendered entirely by the published package.</em></p>
+feature carries its own depth. The rig guarantees the seams — <code>idle</code> loops
+while <code>gaze</code> and <code>turn</code> return to rest, so the hand-offs meet at 0
+differing pixels — and the composing is the consumer's. Authorable on plain Spine 4.3, no
+plugin, no runtime patch; the split was authoring cost rather than runtime capability, and
+the cost is now one stated expression per key. Compiled and rendered entirely by the
+published package.</em></p>
 
 🎞️ **How the three films on this page were made** is kept with them, one directory per
 film in [`films/`](https://github.com/firejune/rigc/tree/main/films) — a `run.sh` that
