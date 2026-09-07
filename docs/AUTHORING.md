@@ -1004,7 +1004,7 @@ number that says whether the map covers the part or a corner of it.
         depth "face_depth.png" f552a2f50d21 near=white zScale=60 z=[0, 60]
         turn ceiling  yaw +31.41° / -32.01°   pitch +32.01° / -31.41°
           1st pct     yaw +31.55° x1.004 of 1004 / -32.10° x1.003 of 1044   pitch +32.10° x1.003 of 1044 / -31.55° x1.004 of 1004
-                      first to fold: yaw + at 31.41°, triangle 960 [113,112,593], the sheet steps 12.52 level(s) across it
+                      first to fold: yaw + at 31.41°, triangle 960 [113,112,593], the sheet steps 12.52 level(s) across it, which is 0.049 of the range this mesh sampled
 ```
 
 Past that angle a triangle turns inside out and `A39` refuses the build by name.
@@ -1012,9 +1012,10 @@ The loop this replaces is *pick an angle, build, read the refusal, guess again*.
 
 #### Is the ceiling describing the form, or the sheet's grain?
 
-The second and third lines answer that, and they are **reports only** — nothing
+The lines under the ceiling answer that, and they are **reports only** — nothing
 in them refuses a build or moves a ceiling
-([#412](https://github.com/firejune/rigc/issues/412)).
+([#412](https://github.com/firejune/rigc/issues/412),
+[#448](https://github.com/firejune/rigc/issues/448)).
 
 The ceiling is the **minimum** of the per-triangle fold angles, and a minimum
 cannot say whether it is the floor of a band or one bad pixel. Measured: a clean
@@ -1025,9 +1026,10 @@ triangle does not, and nothing on the first line says so.
 
 | the figure | how to read it |
 | --- | --- |
-| `x1.003` — the **1st percentile over the ceiling** | near 1 means a *band* of the mesh reaches the limit together, which is what a smooth form looks like: its steepest region has area. Near 10 means **one triangle** does, which is what a bad texel looks like. The clean and stray sheets above read `x1.003` and `x10.652` |
+| `x1.003` — the **1st percentile over the ceiling** | near 1 means a *band* of the mesh reaches the limit together, and near 10 means **one triangle** does, which is what a bad texel looks like. The clean and stray sheets above read `x1.003` and `x10.652`. ⚠️ A band is **not** sufficient evidence of a form, which is the third case: **an outline is a band**. A depth sheet estimated over cut-out art has a cliff along the whole silhouette, so its ceiling is a band too and this figure reads 1.02–2.17 — healthy — on a mesh whose angle means nothing. The row below is what tells those two apart |
 | `of 1004` — the **population** that percentile came out of | it is the nearest rank, so below **51** folding triangles there is no percentile to take and the line says `unranked of 36` instead of printing the minimum twice. Just over 51 it is the *second*-smallest angle, and a limit two triangles share is not yet a band |
 | `12.52 level(s)` — the **depth step across the triangle that folds first** | how much of the sheet's 0–255 range that triangle actually read. **Below about 3 the ceiling is quantisation rather than form**, and at exactly 1 it is `atan(255·h / zScale)` for cell size `h` — arithmetic about the encoding, with no form left in it at any density |
+| `which is 0.049 of the range this mesh sampled` — the **same step, over the range this mesh sampled** | how much of everything the sheet said across the whole part it said across that one triangle. A form's slope is bounded, so this **halves every time you double the lattice** while the angle settles. Near 1 it is a **cliff**: a step with no slope in it, whose angle halves with the lattice instead and describes nothing at any density. Measured: `gallery/look` reads 0.112 and 0.468, a synthetic raised cosine 0.394 falling to 0.027 under refinement, the same cosine with one planted cliff a flat 0.50, and estimated depth sheets over cut-out art **0.92–0.99** |
 | `+none` | on the ceiling line, nothing folds on that side at all, at any angle. On the percentile line it is the same statement — there is no population, because there is nothing to take a percentile of |
 
 A real one rather than the illustration above — `bun cli.ts build --rig
@@ -1038,25 +1040,48 @@ three spellings:
 ```
   MESH  head         grid     189 vertices / 320 triangles  (budget 320)  bones=[head]  attachments=[head]
         depth "face_depth.png" bf156ea0cfc970a3 near=white zScale=194 z=[0, 194]
+        80 of 189 vertices sample a texel the part image does not draw — their z is the sheet's reading of somewhere the part is not
         turn ceiling  yaw +19.32° / -19.32°   pitch +22.92° / -26.94°
           1st pct     yaw +19.32° x1.000 of 80 / -19.32° x1.000 of 80   pitch +22.92° x1.000 of 102 / -26.94° x1.000 of 130
-                      first to fold: yaw + at 19.32°, triangle 174 [119,138,139], the sheet steps 28.50 level(s) across it
+                      first to fold: yaw + at 19.32°, triangle 174 [119,138,139], the sheet steps 28.50 level(s) across it, which is 0.112 of the range this mesh sampled
   MESH  hair_lock_l  grid     39 vertices / 48 triangles  (budget 320)  bones=[lock_l]  attachments=[hair_lock_l]
         depth "lock_l_depth.png" 0c4eaeb36b7c5cac near=white zScale=64 z=[22.086275, 63.874511]
+        32 of 39 vertices sample a texel the part image does not draw — their z is the sheet's reading of somewhere the part is not
         turn ceiling  yaw +17.04° / -45.80°   pitch +none / -none
           1st pct     yaw +unranked of 12 / -unranked of 36   pitch +none / -none
-                      first to fold: yaw + at 17.04°, triangle 2 [1,28,29], the sheet steps 78.00 level(s) across it
+                      first to fold: yaw + at 17.04°, triangle 2 [1,28,29], the sheet steps 78.00 level(s) across it, which is 0.468 of the range this mesh sampled
 ```
 
 ⭐ Both of those sheets are **form**, and the figures say so from opposite ends:
 the head's 320 triangles put the percentile exactly on the ceiling, and the
 lock's 48 are too few to rank at all — but at 28.50 and 78.00 levels across the
-folding triangle, neither ceiling is anywhere near the encoding.
+folding triangle, neither ceiling is anywhere near the encoding, and at 0.112
+and 0.468 of their own range neither step is a cliff.
 
-⇒ **A small ceiling with a ratio near 1 and a step well above 3 is a steep
-surface: flatten the map.** A small ceiling with a large ratio, or with a step
-near 1, is a *sheet* problem: the grain, the 8-bit rounding, or a stray pixel.
-[`docs/FACE.md` §2.2](FACE.md) has the amplitudes and what each one costs.
+🔸 The line under each `depth "…"` is the other question, and it is not about
+the ceiling. A `grid` spans the whole part window and a head is not a rectangle, so
+some of the lattice lands where `head.png` draws nothing and takes its depth
+from the sheet out there. That is a **count and not a complaint** — read it
+against the mesh: 80 of 189 is the border of a lattice over a cut-out and the
+ceiling is still a form, while a count approaching the whole mesh with a step
+share near 1 beside it is a mesh reading background.
+
+⇒ **A small ceiling with a ratio near 1, a step well above 3 and a step share
+well under 1 is a steep surface: flatten the map.** A small ceiling with a large
+ratio, or with a step near 1, is a *sheet* problem: the grain, the 8-bit
+rounding, or a stray pixel. A small ceiling with a step share **near 1** is
+neither — it is a **discontinuity**, and no angle is the right one to quote for
+it. [`docs/FACE.md` §2.2](FACE.md) has the amplitudes, what each one costs, and
+why flattening does not apply to the third case.
+
+🚨 **How to tell a discontinuity from a steep surface in one move: refine the
+lattice and build again.** A form's ceiling settles and its step share halves; a
+cliff's ceiling **halves** and its step share does not move. Measured on a
+synthetic raised cosine against the same cosine with one column of cliff planted
+in it, over three doublings: the form goes 0.358 → 0.195 → 0.100 while its
+ceiling moves 41.99° → 39.59° → 38.84°, and the cliff goes 0.460 → 0.489 → 0.497
+while its ceiling goes 37.07° → 18.59° → 9.24°. The second one is not converging
+on anything.
 
 ⛔ **rigc will not filter the sheet for you, and you should not want it to.** A
 smoothed measurement would describe a surface the deform key is not built from:
@@ -1123,9 +1148,50 @@ refuses it instead:
 | `gamma` or `contrast` at or below 0 | `collapses the range onto the midpoint … so the map would describe a flat part` |
 | a `near` that is neither | `it is "white" or "black"` |
 
-A sheet with **no alpha channel** covers its whole grid by construction and the
-coverage check has nothing to test; what its background level means is then your
-statement, and the reported range is where it shows up.
+A sheet that is **opaque everywhere** — a full-frame render with the background
+in it, which is what monocular depth estimation produces — covers its whole grid
+by construction, so the coverage refusal has nothing to hold it to and skips.
+That is right: a full-frame sheet is a legitimate statement and rigc has no
+authority to guess an input away. But the defect the refusal exists to catch is
+still reachable in that encoding, so the report counts it instead
+([#449](https://github.com/firejune/rigc/issues/449)):
+
+```
+        80 of 189 vertices sample a texel the part image does not draw — their z is the sheet's reading of somewhere the part is not
+```
+
+⚠️ **The reported range is NOT where this shows up**, and this guide said it was
+until it was measured. A background level is a legitimate depth value, so a map
+half of which is background reports exactly as full a range as one that is all
+subject: on the measured build, `z=[0, 223.97]` of a stated 224 — healthy — with
+54 % of the mesh reading background. "Covers its whole grid" is true and about
+the wrong grid; the question was never coverage of the *sheet*, it was whether
+the mesh is sampling **art**.
+
+| The input | What you get |
+| --- | --- |
+| a sheet cut to the art's alpha, over a mesh that reaches past it | **refused** — `does not cover N of the mesh's V vertices`, with the fix for your topology named |
+| the same field stored opaque everywhere, over the same mesh | **compiled**, with `N of V vertices sample a texel the part image does not draw` in the report. The same N |
+| a mesh every one of whose vertices sits on drawn art | nothing — no line, and no refusal |
+
+🔸 It is a raw count with **no reach subtracted from it**, so a `contour` mesh
+reports most or all of its vertices: its outline is pushed `margin` pixels
+outside the silhouette by design, and out there the part draws nothing.
+Discounting the margin would mean borrowing a number authored for the trace to
+mean "close enough" for the sheet, and rigc does not invent tolerances.
+
+⭐ **So the line says why instead**, because rigc built that outline and knows
+what it is:
+
+```
+        15 of 15 vertices sample a texel the part image does not draw — a contour's vertices are all traced outline, pushed out by the margin, so this is the topology and not the sheet
+```
+
+The attribution is on a `contour` and **nowhere else**. A `grid`'s border is
+where your `us`/`vs` put it, not where a margin did, so the same sentence there
+would be a lie and the count stands alone. What that leaves true either way: the
+rim's depth really did come from off the art, which is harmless on a sheet
+dilated past the margin and is the whole failure on a full-frame estimate.
 
 ##### `soft` — which part is soft, and which bone carries it
 

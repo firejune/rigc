@@ -910,6 +910,21 @@ function partPlate(img: CompiledImage): Plate {
   return img.atlas === undefined ? page : extractRegion(page, img.atlas);
 }
 
+/**
+ * A part's alpha channel on its own grid — where the drawing is, and where it
+ * is not.
+ *
+ * Two readers want exactly this and they used to be one inline loop and one
+ * absence: the contour generator traces it, and `sampleMeshDepth` counts the
+ * vertices whose depth came from outside it (issue #449). One function so the
+ * two cannot come to mean different things by "the part draws here".
+ */
+function plateAlpha(plate: Plate): Uint8Array {
+  const alpha = new Uint8Array(plate.width * plate.height);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = plate.data[i * 4 + 3];
+  return alpha;
+}
+
 export function compile(opts: CompileOptions): CompileResult {
   const rigPath = resolve(opts.rigPath);
   const motionPath = resolve(opts.motionPath);
@@ -2711,9 +2726,40 @@ function buildGeneratedMesh(
  * sheet that carries an alpha channel is held to it, and the fix — dilate the
  * sheet past the mesh margin — is named in the message.
  *
- * A sheet with no alpha channel covers its whole grid by construction and the
- * third check has nothing to test; what the background level means is then the
- * author's statement, and `range` in the report is where it shows up.
+ * ## The count beside the third refusal, and why it is a count (issue #449)
+ *
+ * A sheet with no transparent texel anywhere covers its whole grid by
+ * construction, so the third refusal has nothing to hold it to and skips. That
+ * is the encoding a monocular depth estimator produces — a full-frame opaque
+ * render with the background in it — and it is a legitimate statement, so
+ * skipping the refusal is right. What was wrong is that nothing took its place:
+ * measured on one cell and one depth field, the same 54 %-background mesh is a
+ * named refusal when the sheet's alpha is cut to the art and a green build when
+ * it is 255 everywhere.
+ *
+ * ⚠️ **`range` is not where that shows up**, and this header said it was until
+ * #449 measured it. On the build above `range` reads `[0, 223.97]` of a stated
+ * 224 — full, healthy — because the background is a legitimate depth value and
+ * a map that is half background has exactly as full a range as one that is all
+ * subject. "Covers its whole grid" is true and about the wrong grid: the
+ * question was never coverage of the *sheet*, it was whether the mesh is
+ * sampling **art**.
+ *
+ * ⇒ what shows it is `undrawn`: how many of the mesh's vertices take their
+ * depth from a texel **the part image does not draw**, over the same four
+ * bilinear taps the refusal walks. That is a measurement, not a guess, so it is
+ * reported and never refused — a full-frame sheet is a statement rigc has no
+ * authority to guess away.
+ *
+ * 🔸 It is a raw count with no reach subtracted from it, which is why a
+ * `contour` mesh reports most or all of its vertices: its outline is pushed
+ * `margin` pixels outside the silhouette by design, and out there the part
+ * draws nothing. That is the true reading of that geometry rather than a defect
+ * in the count — the rim's depth really did come from off the art, which is
+ * benign on a sheet dilated past the margin and is the whole failure on a
+ * full-frame estimate. Discounting the margin would be borrowing a number
+ * authored for the trace to mean "close enough" for the sheet, and rigc does
+ * not invent tolerances.
  */
 function sampleMeshDepth(
   spec: NonNullable<Extract<NonNullable<RigMeshAttachment['generator']>, { kind: 'contour' }>['depth']>,
@@ -2734,6 +2780,14 @@ function sampleMeshDepth(
    * units `z` is already in before it is taken.
    */
   toBind: (px: number, py: number) => readonly [number, number],
+  /**
+   * The PART's own alpha channel, in the same grid the sheet is sampled in —
+   * what the drawing actually covers, as against what the sheet covers.
+   *
+   * The two are different questions and the header says why. This one has no
+   * refusal behind it: it is counted, reported, and left to the author.
+   */
+  partAlpha: Uint8Array,
   partWidth: number,
   partHeight: number,
   where: string,
@@ -2771,19 +2825,32 @@ function sampleMeshDepth(
   // Every texel a bilinear tap touches has to be covered, not just the nearest
   // one: a vertex half a pixel outside the sheet blends real depth with the
   // background and lands somewhere neither states.
+  //
+  // 🔒 One walk, one footprint, two readings. `cover` is the SHEET's alpha and
+  // decides a refusal; `partAlpha` is the PART's and decides a count. They are
+  // deliberately the same four taps and the same clamp — the second is the
+  // first's instinct applied to the other input (issue #449), and writing it as
+  // a second loop is how the two would come to disagree about which texels a
+  // vertex reads.
+  const cx = (i: number): number => (i < 0 ? 0 : i > partWidth - 1 ? partWidth - 1 : i);
+  const cy = (j: number): number => (j < 0 ? 0 : j > partHeight - 1 ? partHeight - 1 : j);
   const uncovered: number[] = [];
-  if (!opaqueEverywhere) {
-    const cx = (i: number): number => (i < 0 ? 0 : i > partWidth - 1 ? partWidth - 1 : i);
-    const cy = (j: number): number => (j < 0 ? 0 : j > partHeight - 1 ? partHeight - 1 : j);
-    for (let v = 0; v < points.length; v++) {
-      const x0 = Math.floor(points[v][0] - 0.5);
-      const y0 = Math.floor(points[v][1] - 0.5);
-      let covered = true;
-      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
-        if (cover[cy(y0 + dy) * partWidth + cx(x0 + dx)] !== 255) covered = false;
-      }
-      if (!covered) uncovered.push(v);
+  let undrawn = 0;
+  for (let v = 0; v < points.length; v++) {
+    const x0 = Math.floor(points[v][0] - 0.5);
+    const y0 = Math.floor(points[v][1] - 0.5);
+    let covered = true;
+    let drawn = true;
+    for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+      const at = cy(y0 + dy) * partWidth + cx(x0 + dx);
+      if (cover[at] !== 255) covered = false;
+      // Zero, not a threshold: "the part image draws nothing here" is a fact
+      // about the file, and any other cut-off would be rigc deciding how faint
+      // a texel has to be before it stops counting as art.
+      if (partAlpha[at] === 0) drawn = false;
     }
+    if (!opaqueEverywhere && !covered) uncovered.push(v);
+    if (!drawn) undrawn++;
   }
   if (uncovered.length > 0) {
     const first = uncovered[0];
@@ -2825,6 +2892,7 @@ function sampleMeshDepth(
       zScale: spec.zScale,
       tone,
       range: [r6(lo), r6(hi)],
+      undrawn,
       ceiling: turnCeiling(
         points.map(([px, py]) => toBind(px, py)),
         z,
@@ -3064,6 +3132,7 @@ function buildGridAttachment(
           geometry.points,
           geometry.triangles,
           (px, py) => toBoneLocal(anchor, anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt),
+          plateAlpha(plate),
           plate.width,
           plate.height,
           where,
@@ -3160,8 +3229,7 @@ function buildContourAttachment(
   // none — so "this part has no silhouette to trace" is a question about pixels,
   // and `buildContourMesh` refuses it by counting them.
   const plate = partPlate(img);
-  const alpha = new Uint8Array(plate.width * plate.height);
-  for (let i = 0; i < alpha.length; i++) alpha[i] = plate.data[i * 4 + 3];
+  const alpha = plateAlpha(plate);
 
   const margin = generator.margin ?? CONTOUR_DEFAULTS.margin;
   const maxVertices = generator.maxVertices ?? CONTOUR_DEFAULTS.maxVertices;
@@ -3219,6 +3287,7 @@ function buildContourAttachment(
           geometry.points,
           geometry.triangles,
           (px, py) => toBoneLocal(anchor, anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt),
+          alpha,
           plate.width,
           plate.height,
           where,

@@ -492,6 +492,30 @@ function meshDepthNote(m: CompileResult['meshes'][number]): string {
       `depth "${m.depth.image}" ${m.depth.digest} near=${m.depth.near} zScale=${m.depth.zScale} ` +
         `z=[${m.depth.range[0]}, ${m.depth.range[1]}]`,
     );
+    // Directly under the sheet's own line, because it is the other half of
+    // "what did this mesh read": `z=[…]` says how much of the map's range
+    // reached the vertices, and this says how many of them read a texel that
+    // draws nothing (issue #449). Reported only when there is something to
+    // report, so a mesh whose every vertex sits on drawn art gains no line.
+    //
+    // ⭐ A `contour` gets the OTHER half of the sentence, because rigc built
+    // that outline and knows what it is: `buildContourMesh` returns
+    // `hullVertices: points.length` over `offsetPolygon(simplified, margin)`,
+    // so every vertex of a contour mesh is the traced silhouette pushed out by
+    // the margin — there are no interior vertices for the count to be about.
+    // Nothing is derived, inferred or thresholded to say so; it is what the
+    // generator returns, and `generatedHullAndEdges` already cross-checks that
+    // hull against the triangulation's own outline. Without it the line reads
+    // as a fault on every correct contour rig, which is a diagnostic authors
+    // learn to ignore.
+    if (m.depth.undrawn > 0) {
+      parts.push(
+        `${m.depth.undrawn} of ${m.vertices} vertices sample a texel the part image does not draw — ` +
+          (m.kind === 'contour'
+            ? 'a contour\'s vertices are all traced outline, pushed out by the margin, so this is the topology and not the sheet'
+            : 'their z is the sheet\'s reading of somewhere the part is not'),
+      );
+    }
     const c = m.depth.ceiling;
     parts.push(`turn ceiling  yaw ${ceilingPair(c.yaw)}   pitch ${ceilingPair(c.pitch)}`);
     const worst = tightestFold(c);
@@ -503,7 +527,13 @@ function meshDepthNote(m: CompileResult['meshes'][number]): string {
         ? `              nothing in this sheet folds: ${c.measured} triangle(s) measured, none with a depth gradient across it`
         : `              first to fold: ${worst.kind} ${worst.sign} at ${worst.limit.degrees.toFixed(2)}°, ` +
           `triangle ${worst.limit.triangle} [${worst.limit.ids.join(',')}], the sheet steps ` +
-          `${depthStepLevels(worst.limit.depthStep, m.depth.zScale).toFixed(2)} level(s) across it` +
+          `${depthStepLevels(worst.limit.depthStep, m.depth.zScale).toFixed(2)} level(s) across it, ` +
+          // The same step over the range the mesh sampled (issue #448). A
+          // suffix and not a line of its own: it is an apposition on the step
+          // beside it, and the reading that matters is the two together — a
+          // discontinuity says "plenty of levels" and "nearly all of them" at
+          // once, and they have to be read in one breath to say the opposite.
+          `which is ${worst.limit.stepShare.toFixed(3)} of the range this mesh sampled` +
           `${c.degenerate ? `; ${c.degenerate} triangle(s) too flat in setup to measure` : ''}`,
     );
   }

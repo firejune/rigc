@@ -374,13 +374,19 @@ const CEILING_AREA_FLOOR = 1e-6;
  * Where one triangle turns inside out, which triangle that is — and, beside it,
  * what the REST of this axis and side's triangles do.
  *
- * The first four fields are about one triangle. `count` and `p1` are about the
- * population it is the minimum of, and they are here because the minimum alone
- * cannot answer the question an author actually has: `degrees` is the same
- * number whether a whole band of the mesh reaches the limit together or one
- * triangle does, and those are a form and a bad texel respectively
+ * Everything down to `stepShare` is about one triangle. `count` and `p1` are
+ * about the population it is the minimum of, and they are here because the
+ * minimum alone cannot answer the question an author actually has: `degrees` is
+ * the same number whether a whole band of the mesh reaches the limit together
+ * or one triangle does, and those are a form and a bad texel respectively
  * ([#412](https://github.com/firejune/rigc/issues/412),
  * `bench/studies/2026-09-05-noise` §6).
+ *
+ * ⚠️ And a band is not sufficient evidence of a form either, which is what
+ * `stepShare` is here for: an OUTLINE is a band, so a mesh whose ceiling is set
+ * by the occlusion edge of a cut-out reads `p1/degrees` near 1 and a `depthStep`
+ * of most of the sheet's range — both of the older figures reading *healthy* on
+ * the same measurement ([#448](https://github.com/firejune/rigc/issues/448)).
  *
  * ⛔ Neither figure changes `degrees`, and neither is a threshold. rigc does not
  * have the authority to guess its input away, so nothing here filters,
@@ -407,6 +413,42 @@ export interface FoldLimit {
    * with no form left in it (`bench/studies/2026-09-05-noise` §3).
    */
   depthStep: number;
+  /**
+   * `depthStep` over the depth range this mesh actually sampled — what fraction
+   * of everything the sheet said across the whole part it said across the one
+   * triangle that folds first.
+   *
+   * ⭐ The figure that tells a form from a cliff, and it is the one reading the
+   * other two cannot give ([#448](https://github.com/firejune/rigc/issues/448)).
+   * A form has a slope, so refining the lattice halves the step and halves this
+   * with it while the angle converges. A **discontinuity has no slope**: the
+   * step stays the whole range however fine the lattice gets, this figure pins
+   * near 1, and the ceiling halves with every doubling instead of converging —
+   * `tan t ∝ h`, an angle that describes nothing at any density.
+   *
+   * ⚠️ **The ceiling is not wrong when this reads high; the input is not a
+   * surface.** Measured on estimated sheets: reported 1.936°, and the runtime
+   * admits +1° and reverses 8 triangles at +2°. The rig genuinely folds at two
+   * degrees. What a `depthStep` near the whole range means is an occlusion
+   * boundary — figure against background, or one part of a figure over
+   * another — and a 2.5D turn does not model occlusion at all, so **no angle is
+   * the right one to quote for it**. The fix is upstream of the ceiling: mesh
+   * only what is continuous, or state a sheet that was authored rather than
+   * estimated.
+   *
+   * 🔒 In (0, 1] by construction, never a division by zero. `depthStep` is a
+   * difference between two of this mesh's own `z` values, so the span over all
+   * of them is at least as large; and a fold only exists where the axis area
+   * with `z` substituted in is non-zero, which needs two vertices of the
+   * triangle at different depths — so a mesh with no span reports no fold and
+   * never reaches the divide.
+   *
+   * ⛔ A report and never a threshold. rigc does not decide that an author's
+   * sheet is the wrong kind of thing; nothing here filters, and nothing here
+   * moves a ceiling. What to read off the number is stated in
+   * `docs/AUTHORING.md` §3.4.
+   */
+  stepShare: number;
   /** How many triangles fold on this axis and side — the population below. */
   count: number;
   /**
@@ -509,9 +551,26 @@ export interface TurnCeiling {
  * triangle, which is a texel. A `depthStep` of one level is `atan(255·h/zScale)`
  * and says nothing about the form at all.
  *
- * ⛔ Both are reports. Nothing here filters the sheet, and nothing here moves a
- * ceiling: a smoothed measurement would describe a surface the deform key is
- * not built from, and would part company with the gate that reads the raw one.
+ * ## What a band cannot say either (issue #448)
+ *
+ * Both of those figures read *healthy* on an estimated depth sheet over cut-out
+ * art, and they do not merely stay silent — they affirm it. `p1/degrees` comes
+ * back at 1.02–2.17, which reads as a band; `depthStep` at 148–252 levels of
+ * 255, which reads as plenty said. It **is** a band, because an outline is long,
+ * and the sheet did say a great deal across that triangle — it said the whole
+ * distance from the figure to the background in one step.
+ *
+ * So each `FoldLimit` also carries `stepShare`, the same step divided by the
+ * range this mesh sampled. A form's halves per refinement while its angle
+ * converges; a discontinuity's pins near 1 while the angle halves. Measured:
+ * rigc's own gallery reads 0.112 and 0.468, a synthetic raised cosine 0.394
+ * falling to 0.027 under refinement, the same cosine with one planted cliff a
+ * flat 0.50, and estimated sheets 0.92–0.99.
+ *
+ * ⛔ All three are reports. Nothing here filters the sheet, and nothing here
+ * moves a ceiling: a smoothed measurement would describe a surface the deform
+ * key is not built from, and would part company with the gate that reads the
+ * raw one.
  *
  * @param points Vertices in the BIND space the deform offsets are authored in.
  *   Areas are translation-invariant, so the origin does not matter; the scale
@@ -545,6 +604,18 @@ export function turnCeiling(
     if (Math.abs(a) > largest) largest = Math.abs(a);
   }
   const floor = largest * CEILING_AREA_FLOOR;
+
+  // The denominator `stepShare` is taken against: the depth range this mesh
+  // sampled, which is `range` in the report read off the same array. Taken over
+  // the WHOLE mesh rather than per triangle, because the question the figure
+  // answers is how much of what the sheet said here one triangle said.
+  let zLo = Infinity;
+  let zHi = -Infinity;
+  for (const d of z) {
+    if (d < zLo) zLo = d;
+    if (d > zHi) zHi = d;
+  }
+  const zSpan = zHi - zLo;
 
   // One list per axis and side, so the ceiling can say whether it is the floor
   // of a BAND or of a single triangle. Nothing here filters: every measurable
@@ -591,7 +662,11 @@ export function turnCeiling(
       // `count` and `p1` are filled once the whole population is in; a minimum
       // cannot know its own percentile while it is still being found.
       if (held === null || degrees < held.degrees) {
-        out[axis][side] = { degrees, triangle: n, ids, depthStep, count: 0, p1: null };
+        // `zSpan` cannot be zero here: `aAxis !== 0` needs two of this
+        // triangle's vertices at different depths, and the span over the whole
+        // mesh is at least that difference. A guard would be an unreachable
+        // branch, and an unreachable branch is not a control.
+        out[axis][side] = { degrees, triangle: n, ids, depthStep, stepShare: depthStep / zSpan, count: 0, p1: null };
       }
     }
   }
