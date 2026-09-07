@@ -141,6 +141,28 @@ sincere about it. rigc exists to convert that silence into a named failure.
   decisive argument *is* the decision** — taking it to a human afterwards is a
   round trip wearing a review's clothes.
 
+  🤝 **And the short list is not a list of things somebody dictates.** The axis
+  is not who owns an item, it is *what settles it*: what can be derived is
+  settled by derivation, and what cannot is settled by **agreement** — which
+  means an objection that has not been raised is a decision that has not been
+  made. Reading those four as handed down is how the human frame gets back in
+  through the side door, one clause after being shown the door: the authority
+  over conventions is removed, and then returned over direction.
+
+  ⚠️ An objection is held to the same standard as everything else here. *"I
+  would rather not"* is not one; **"it contradicts X", "it cannot be measured",
+  "it breaks Y"** are. A veto without grounds is the same emptiness as a
+  question without grounds, pointed the other way.
+
+  🔸 One of the four is the owner's alone, and the reason is observability
+  rather than authority: **what the spend is worth cannot be agreed to, because
+  an agent cannot see the cost.** The remaining budget, the reset, what else it
+  was being saved for — none of that is visible from here, so assent to it
+  would have the shape of agreement and none of the content. Which is the same
+  criterion applied in the other direction: consultation is worth something
+  exactly where measurement is unavailable, and here it is unavailable to the
+  agent.
+
   🔒 **And a question that survives because the tree cannot answer it is a card
   or a check, never a question.** This is the doctrine's own first move applied
   one level up: the answer to "an agent cannot see it" was never "ask someone",
