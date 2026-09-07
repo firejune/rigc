@@ -120,6 +120,51 @@ sincere about it. rigc exists to convert that silence into a named failure.
   demo says "we composed this with the tool", the product may only say "here is
   what the object gives you to compose with".
 
+- **The same doctrine governs how the repository is worked, and for a while it
+  did not.** Everything above says an agent is the author and the messages are
+  its only interface — and then the working habit was to carry decisions to the
+  owner for a ruling. Those two contradict, in the same file. A tool built on
+  the premise that the work happens without a person watching cannot be *built*
+  by asking a person to watch.
+
+  ⇒ **The fix is a change of lens, not a transfer of authority.** Most questions
+  worth carrying to a person are artifacts of looking at the work through a human
+  organisation, where conventions have owners and "which would you prefer" is a
+  real question. Under the lens this tool is built for they dissolve, because the
+  criterion is never preference: *which reading is derivable*, *which claim is
+  measurable*, *does a gate already cover this*. Each of those answers itself,
+  and each was asked of a person here at least once.
+
+  What survives the lens is short and none of it is a convention: direction,
+  licence posture, what the spend is worth, and any text that speaks as the
+  owner. Everything else is decided by stating the argument, because **stating a
+  decisive argument *is* the decision** — taking it to a human afterwards is a
+  round trip wearing a review's clothes.
+
+  🔒 **And a question that survives because the tree cannot answer it is a card
+  or a check, never a question.** This is the doctrine's own first move applied
+  one level up: the answer to "an agent cannot see it" was never "ask someone",
+  it was "convert the silence into a named failure". So "I cannot tell" is not a
+  reason to escalate — it is the exact condition this tool exists to remove, and
+  meeting it means the instrument is missing.
+
+  🚨 **This is not a licence to be more confident.** A reviewer was doing real
+  work — forcing the argument to be said out loud — and removing one without
+  replacing it makes the tree worse, not faster. The replacement is adversarial
+  structure *below*: a task that says **measure it yourself rather than trusting
+  this brief, and report what you rejected** comes back having contradicted its
+  own instructions where they were wrong, which is the outcome to design for.
+  Two claims in a task brief were corrected that way on the day this was written,
+  and neither would have been caught by reading the brief again.
+
+  📖 **The reader to write for is an agent with no memory of the conversation
+  that produced the work.** So a thing settled in a chat and not written into
+  the tree did not happen. What convinces such a reader is exactly what the
+  gates already produce — **a claim with its measurement beside it, and the
+  alternative that was rejected with the reason** — which is why commit messages
+  and pull requests here carry the argument rather than a summary of the diff.
+  That is not ceremony; it is the only channel that survives the session.
+
 ## Conventions
 
 - Bun + TypeScript, ESM, `.ts` extensions in relative imports.
