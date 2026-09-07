@@ -919,7 +919,7 @@ anything:
 Three collisions survive there: `headroll` rotate in all three, `brows`
 translatey in two, and the locks' rotate in two. ⚠️ **On plain Spine the fixes
 are ordinary — `MixBlend.add` on the layered track, or splitting a bone into a
-stack (`headroll_idle` under `headroll_scene`) — but both are runtime or rig
+stack (`headroll_idle` under `headroll_layer`) — but both are runtime or rig
 decisions the motion spec cannot express, so nothing warns an author that two of
 their animations will fight.**
 
