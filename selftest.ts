@@ -1805,9 +1805,6 @@ function runBoneDistSuite(): number | null {
   return bad;
 }
 
-/** How many controls `runBoneDistSuite` reports when it runs. */
-const BONEDIST_CONTROLS = 4;
-
 // ---------------------------------------------------------------------------
 // `rigc check` — the instrument for the thing the gate cannot see
 // ---------------------------------------------------------------------------
@@ -15310,20 +15307,37 @@ function runPackerSuite(): number {
 //
 // Returns null when `examples/` is absent, and the run says so rather than
 // counting a suite that never ran.
+//
+// ⚠️ It used to return that null before printing anything at all, so on a
+// machine with no corpus this suite left NO trace: the other five corpus-
+// dependent suites printed a header and a SKIP, and this one printed a blank
+// where a reader had no way to tell a suite that was skipped from a suite that
+// does not exist. The header is now unconditional and `tallyFaults` refuses the
+// shape outright — a suite that reports it did not run and opened no section is
+// a HOLE nobody can see (issue #451).
 function runAtlasReaderSuite(): number | null {
   const dir = resolve(import.meta.dir, 'examples');
-  if (!existsSync(dir)) return null;
   const atlases: string[] = [];
-  for (const example of readdirSync(dir).sort()) {
-    const exportDir = join(dir, example, 'export');
-    if (!existsSync(exportDir)) continue;
-    for (const file of readdirSync(exportDir).sort()) {
-      if (file.endsWith('.atlas')) atlases.push(join(exportDir, file));
+  if (existsSync(dir)) {
+    for (const example of readdirSync(dir).sort()) {
+      const exportDir = join(dir, example, 'export');
+      if (!existsSync(exportDir)) continue;
+      for (const file of readdirSync(exportDir).sort()) {
+        if (file.endsWith('.atlas')) atlases.push(join(exportDir, file));
+      }
     }
   }
-  if (atlases.length === 0) return null;
 
   console.log('\n── the atlas reader against spine-core (issue #4) ──');
+  if (atlases.length === 0) {
+    console.log('  SKIP  the atlas reader self-checks did not run: no example corpus on disk.');
+    console.log(`          expected at least one .atlas under ${dir}/<example>/export/`);
+    console.log('          run `bun run fetch-examples` and re-run this suite.');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — `src/atlas.ts` is a SECOND parser for the');
+    console.log('          format and nothing in this run compared it against the runtime that owns it.');
+    return null;
+  }
+
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -23324,6 +23338,14 @@ function tallyFaults(blocks: readonly SuiteBlock[], gutter: ReadonlyMap<string, 
       if (block.headers > 1) {
         faults.push(`the suite "${block.key}" did not run and opened ${block.headers} section headers`);
       }
+      // ⭐ The quietest hole of the lot, and the one the floor could not see
+      // until issue #451: a suite that returns before it prints anything leaves
+      // the reader a BLANK where the other five print a header and a SKIP, and
+      // nothing above fires, because every other clause here is about what a
+      // section said. `runAtlasReaderSuite` was exactly that for a year.
+      if (block.headers === 0) {
+        faults.push(`the suite "${block.key}" did not run and opened no section at all, so nothing this run printed says it was skipped`);
+      }
       if (block.headers === 1 && block.quiet === 0) {
         faults.push(`the suite "${block.key}" opened a section, did not run, and printed no line saying so`);
       }
@@ -23415,6 +23437,210 @@ class RunTally {
     }
     return block.controls;
   }
+}
+
+// ---------------------------------------------------------------------------
+// a figure in the summary comes off the run, never out of the source (#451)
+// ---------------------------------------------------------------------------
+//
+// `countOf` refuses a number no suite produced, but it can only refuse a number
+// somebody ASKED it for. The other half — a figure typed straight into the
+// summary's prose, which asks nothing and is therefore never wrong out loud —
+// is what issue #439 found four of and left standing, and what #451 settles.
+// So this reads the summary's own source and refuses a hand-written one.
+//
+// ⚠️ The trap the whole check has to get past is that the summary is FULL of
+// literal numbers that are not figures: "2 of them a spine-core round trip",
+// "26.25 degrees", "[0, 360)", "0 / 255", "`v + 360 === 360`". A scanner that
+// refused all of those would need an exception table beside it, and a
+// hand-kept exception table is the same defect one file over. So the rule is
+// structural rather than lexical, and it comes from the summary's own grammar:
+// **it is a list, and every clause of it opens with `+ ` — the head of the list
+// with `green — ` — followed immediately by that clause's figure.** A figure the
+// run produced arrives through a hole between two literal chunks, because an
+// interpolation or a concatenation supplies it. A figure somebody typed sits
+// INSIDE a chunk, as a digit right after the opening. Prose numbers are never
+// in that position: they sit mid-sentence, after a word.
+//
+// 🔒 Two-sided, for the reason `TY01` and `CUR01` are. A scanner that stops
+// matching does not go red, it goes quiet — a summary rewritten into a shape
+// with no `+ ` clauses in it would report a clean tree over nothing at all. So
+// `TY10` also requires that every `n('key')` in the region — the derivation
+// this file actually uses — sits at one of the openings the scanner found, and
+// `TY11` plants a hand-written figure on a miniature summary to watch it fault
+// and keeps the same text with the figure interpolated as the negative control.
+
+/**
+ * The line the summary's own source begins after, and the line it ends before.
+ *
+ * ⚠️ `SUMMARY_START` is spelled in two pieces because a file that reads itself
+ * finds itself first: written whole, this constant IS the earliest match for
+ * it, and the scan then reads the block comment above — including `TY11`'s
+ * deliberately planted miniature — instead of the summary. Measured before the
+ * split: 4 written figures reported, every one of them this suite's own test
+ * data. It is safe to reword the anchor and unsafe to rejoin it, and neither
+ * mistake is silent: the region is not found, and `TY10` goes red rather than
+ * reporting a clean tree over the wrong text.
+ */
+const SUMMARY_START = 'const n = (key: string)' + ': number => tally.countOf(key);';
+/** Safe whole, because the source spells the newline `\n` as two characters and this is one. */
+const SUMMARY_END = '\nmain();';
+
+/** One run of text the summary emits literally, and where that run ends in the region. */
+interface SummaryChunk {
+  /** The text itself, with `\n` and friends resolved to what they print. */
+  text: string;
+  /** Offset in the region just past the run — where an interpolation takes over. */
+  end: number;
+}
+
+/** The escapes this file's summary actually uses. Anything else is its own character. */
+const SUMMARY_ESCAPES: Record<string, string> = { n: '\n', t: '\t', r: '\r' };
+
+/**
+ * Every run of literal text a stretch of source emits, comments and
+ * interpolated expressions taken out.
+ *
+ * A stack rather than a loop over quotes, because `${}` nests: the summary's
+ * mesh-rung clause puts a whole `', + ' + n('mesh-check') + '…'` inside one, and
+ * a reader that skipped interpolation bodies wholesale would lose that clause's
+ * opening and report it as prose.
+ */
+function summaryChunks(region: string): { chunks: SummaryChunk[]; code: string } {
+  const chunks: SummaryChunk[] = [];
+  // The region with every comment blanked to spaces, offsets untouched. A
+  // comment emits nothing, so anything read out of the code — the `n('…')`
+  // calls below — has to be read out of this and not out of the raw text: this
+  // very block quotes one, and the scan would count it.
+  const code = region.split('');
+  const blank = (from: number, to: number): void => {
+    for (let k = from; k < to; k++) if (code[k] !== '\n') code[k] = ' ';
+  };
+  const stack: Array<{ kind: 'code'; depth: number } | { kind: 'text'; quote: string; text: string }> = [{ kind: 'code', depth: 0 }];
+  let i = 0;
+  while (i < region.length) {
+    const top = stack[stack.length - 1];
+    const ch = region[i];
+    if (top.kind === 'code') {
+      if (ch === '/' && region[i + 1] === '/') {
+        const opened = i;
+        while (i < region.length && region[i] !== '\n') i++;
+        blank(opened, i);
+        continue;
+      }
+      if (ch === '/' && region[i + 1] === '*') {
+        const close = region.indexOf('*/', i + 2);
+        const opened = i;
+        i = close < 0 ? region.length : close + 2;
+        blank(opened, i);
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') {
+        stack.push({ kind: 'text', quote: ch, text: '' });
+        i++;
+        continue;
+      }
+      if (ch === '{') top.depth++;
+      else if (ch === '}') {
+        if (top.depth === 0 && stack.length > 1) {
+          stack.pop();
+          i++;
+          continue;
+        }
+        top.depth--;
+      }
+      i++;
+      continue;
+    }
+    if (ch === '\\') {
+      top.text += SUMMARY_ESCAPES[region[i + 1]] ?? region[i + 1];
+      i += 2;
+      continue;
+    }
+    if (ch === top.quote) {
+      chunks.push({ text: top.text, end: i });
+      stack.pop();
+      i++;
+      continue;
+    }
+    if (top.quote === '`' && ch === '$' && region[i + 1] === '{') {
+      chunks.push({ text: top.text, end: i });
+      top.text = '';
+      stack.push({ kind: 'code', depth: 0 });
+      i += 2;
+      continue;
+    }
+    top.text += ch;
+    i++;
+  }
+  return { chunks, code: code.join('') };
+}
+
+/**
+ * Where a clause of the summary opens: at the head of the list, or at a `+ `
+ * that begins a chunk, follows the `, ` of the previous clause, or begins a
+ * continuation line. Never a `+ ` mid-sentence — that is arithmetic somebody is
+ * quoting, and the summary quotes one.
+ */
+const SUMMARY_CLAUSE_OPENING = /(?:^|, |\n {2})\+ |green — /g;
+
+/** What one pass of the scanner found in the summary's source. */
+interface SummaryScan {
+  /** Clause openings found. Zero means the scanner stopped recognising the summary. */
+  openings: number;
+  /** Openings a run-produced value fills, i.e. the literal text stops there. */
+  derived: number;
+  /** Openings a typed digit fills, quoted with enough text to find them by. */
+  written: string[];
+}
+
+/** Read one stretch of summary source for figures that were typed rather than counted. */
+function scanSummaryFigures(region: string): { scan: SummaryScan; chunks: SummaryChunk[]; code: string } {
+  const { chunks, code } = summaryChunks(region);
+  const scan: SummaryScan = { openings: 0, derived: 0, written: [] };
+  for (const chunk of chunks) {
+    SUMMARY_CLAUSE_OPENING.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = SUMMARY_CLAUSE_OPENING.exec(chunk.text)) !== null) {
+      const at = match.index + match[0].length;
+      scan.openings++;
+      if (at >= chunk.text.length) scan.derived++;
+      else if (chunk.text[at] >= '0' && chunk.text[at] <= '9') {
+        scan.written.push(chunk.text.slice(Math.max(0, match.index - 30), at + 40).replace(/\n/g, '\\n'));
+      }
+    }
+  }
+  return { scan, chunks, code };
+}
+
+/** True when this chunk's last clause opening is the last thing in it — i.e. a value follows. */
+function endsOnClauseOpening(text: string): boolean {
+  SUMMARY_CLAUSE_OPENING.lastIndex = 0;
+  let last = -1;
+  let match: RegExpExecArray | null;
+  while ((match = SUMMARY_CLAUSE_OPENING.exec(text)) !== null) last = match.index + match[0].length;
+  return text.length > 0 && last === text.length;
+}
+
+/**
+ * The tally reads in a stretch of summary code — comments already blanked — and
+ * whether each one sits at a clause opening, which is how the scanner proves it
+ * is looking where the figures are and not past them.
+ */
+function derivedFiguresAtOpenings(code: string, chunks: readonly SummaryChunk[]): { calls: string[]; misplaced: string[] } {
+  const calls: string[] = [];
+  const misplaced: string[] = [];
+  const pattern = /\bn\('([A-Za-z0-9-]+)'\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(code)) !== null) {
+    calls.push(match[1]);
+    let before: SummaryChunk | null = null;
+    for (const chunk of chunks) {
+      if (chunk.end <= match.index && (before === null || chunk.end > before.end)) before = chunk;
+    }
+    if (!endsOnClauseOpening(before?.text ?? '')) misplaced.push(match[1]);
+  }
+  return { calls, misplaced };
 }
 
 /**
@@ -23601,6 +23827,100 @@ function runRunTallySuite(live: RunTally): number {
       'number for it, and the number would be whatever the last edit left behind',
   );
 
+  // --- TY09: a suite that did not run and printed nothing at all ------------
+  //
+  // ⚠️ The one hole in the floor that was not about what a section SAID. Every
+  // other clause of `tallyFaults` reads a suite's own output, so a suite that
+  // returns before printing a header is judged by nothing: `runAtlasReaderSuite`
+  // did exactly that whenever `examples/` was absent, and the five suites beside
+  // it printed a header and a SKIP into the same blank (issue #451).
+  const alive = block({ key: 'alpha', controls: 1 });
+  const invisible = tallyFaults([alive, block({ key: 'beta', ran: false, controls: 0, quiet: 0, headers: 0 })], gutterOf('PASS'), 1);
+  const announced = tallyFaults([alive, block({ key: 'beta', ran: false, controls: 0, quiet: 1, headers: 1 })], gutterOf('PASS', 'SKIP'), 1);
+  const silentBlocks = live.blocks.filter((one) => !one.ran && one.headers === 0);
+  say(
+    'TY09_A_SUITE_THAT_DID_NOT_RUN_AND_OPENED_NO_SECTION_IS_NAMED',
+    invisible.length === 1 &&
+      invisible[0].includes('"beta"') &&
+      invisible[0].includes('opened no section at all') &&
+      announced.length === 0 &&
+      silentBlocks.length === 0,
+    `a suite that did not run and printed nothing faults (${invisible.find((f) => f.includes('no section')) ?? 'it did not'}); ` +
+      `the same suite having opened a section and said SKIP faults in no way; and of the ${live.blocks.length} suite(s) ` +
+      `tallied so far, the ${live.blocks.filter((one) => !one.ran).length} that did not run all opened one` +
+      (silentBlocks.length === 0 ? '' : ` EXCEPT ${silentBlocks.map((one) => one.key).join(', ')}`),
+    'the negative control is the load-bearing half — a floor that faulted on every suite that did not run would ' +
+      'refuse the five that report their absence correctly, and the point is the DIFFERENCE between a suite that ' +
+      'says it was skipped and one that leaves a blank a reader cannot tell from a suite that does not exist',
+  );
+
+  // --- TY10: no figure in the summary was typed rather than counted ---------
+  const selftestPath = resolve(import.meta.dir, 'selftest.ts');
+  const source = readFileSync(selftestPath, 'utf8');
+  const from = source.indexOf(SUMMARY_START);
+  const to = from < 0 ? -1 : source.indexOf(SUMMARY_END, from);
+  const summarySource = from < 0 || to < 0 ? null : source.slice(from + SUMMARY_START.length, to);
+  const read = summarySource === null ? null : scanSummaryFigures(summarySource);
+  const placed = read === null ? null : derivedFiguresAtOpenings(read.code, read.chunks);
+  say(
+    'TY10_EVERY_FIGURE_IN_THE_SUMMARY_COMES_OFF_THE_RUN_AND_NONE_IS_WRITTEN_INTO_IT',
+    summarySource !== null &&
+      read !== null &&
+      placed !== null &&
+      read.scan.written.length === 0 &&
+      read.scan.openings > 0 &&
+      read.scan.derived > 0 &&
+      placed.calls.length > 0 &&
+      placed.misplaced.length === 0,
+    summarySource === null
+      ? `the summary's own source was not found between ${JSON.stringify(SUMMARY_START)} and ${JSON.stringify(SUMMARY_END)} — ` +
+        'the scan has nothing to read and cannot report a clean one'
+      : `${read?.chunks.length ?? 0} literal run(s) of text, ${read?.scan.openings ?? 0} clause opening(s) of which ` +
+        `${read?.scan.derived ?? 0} are filled by a value this run produced, and ${placed?.calls.length ?? 0} ` +
+        `\`n('…')\` call(s) all sitting at one` +
+        (placed !== null && placed.misplaced.length > 0 ? ` EXCEPT ${placed.misplaced.join(', ')}` : '') +
+        (read !== null && read.scan.written.length > 0
+          ? `; ${read.scan.written.length} figure(s) are written into the text rather than counted: ${read.scan.written.map((one) => `…${one}…`).join(' | ')}`
+          : '; none is written into the text'),
+    'the half `countOf` cannot reach: it refuses a number nobody produced, but only when the summary ASKS for ' +
+      'one, and a digit typed into the prose asks for nothing. The three clauses left standing by #439 were each ' +
+      'that — and each disagreed with its own suite. The last three conditions are the scanner held against the ' +
+      'real region, because a summary rewritten into a shape with no clause openings in it would report a clean ' +
+      'tree over nothing at all',
+  );
+
+  // --- TY11: the scanner planted, and the prose it must not fault on --------
+  //
+  // The mutant is on a miniature summary rather than on the real one, because
+  // the real one is what the run must keep printing. What it carries is the
+  // exact ambiguity the rule has to survive: a figure the run supplies, a figure
+  // somebody typed, and two prose numbers — one mid-sentence and one inside the
+  // arithmetic this summary really does quote (`v + 360 === 360`).
+  const prose = "'…the wrap shown to REACH 360 from a threshold bisected on `v + 360 === 360`, 2 of them a round trip…'";
+  const planted = `\`rigc selftest: green — \${breaks} breaks, + 4 static-rig controls, \` + '+ ' + n('event') + ' event controls (' + ${prose} + ')'`;
+  const repaired = planted.replace('+ 4 static-rig controls', () => "+ ${n('static-rig')} static-rig controls");
+  const plantedScan = scanSummaryFigures(planted);
+  const repairedScan = scanSummaryFigures(repaired);
+  const commented = scanSummaryFigures(`// states 6, run prints 11: , + 4 static-rig controls\n${repaired}`);
+  say(
+    'TY11_A_PLANTED_FIGURE_FAULTS_WHILE_THE_PROSE_BESIDE_IT_DOES_NOT',
+    plantedScan.scan.written.length === 1 &&
+      plantedScan.scan.written[0].includes('+ 4 static-rig controls') &&
+      repairedScan.scan.written.length === 0 &&
+      repairedScan.scan.openings >= plantedScan.scan.openings &&
+      repairedScan.scan.derived === repairedScan.scan.openings &&
+      commented.scan.written.length === 0,
+    `the planted miniature faults exactly once, on …${plantedScan.scan.written[0] ?? 'nothing'}…, and its ` +
+      `${plantedScan.scan.openings} clause opening(s) leave the quoted \`v + 360 === 360\` and the "2 of them" ` +
+      `alone; the same text with that one figure interpolated faults in no way over ${repairedScan.scan.openings} ` +
+      `opening(s), all ${repairedScan.scan.derived} of them filled by a value; and a COMMENT quoting the stale ` +
+      'figure faults in no way either',
+    'the negative control is the whole design: a scanner that refused every literal number in this summary would ' +
+      'be red on "26.25 degrees" and "[0, 360)" and would then need an exception table beside it, which is the ' +
+      'defect this file gates for everywhere else. The comment case is the third side — a comment emits nothing, ' +
+      'so a note ABOUT a stale figure must not read as one',
+  );
+
   return bad;
 }
 
@@ -23739,12 +24059,12 @@ function main(): void {
         'must leave every world vertex where it was and every graded figure to the decimal — where loading it as ' +
         "the candidate's own atlas moves them by 234 MAE — and the texture resampling attributed under a bound the " +
         "decomposition obeys as arithmetic, with the candidate's own atlas reporting a floor of exactly nothing)" +
-        (boneDistBad === null
-          ? ''
-          : `, + ${BONEDIST_CONTROLS} stage-3 bonedist controls (one file against itself at exactly zero, a translated ` +
-            'leaf bone that moves position and nothing else, the same bone turned 30° that reads 30° and moves the ' +
-            'matrix but not the scale, and a renamed bone that is named as unmatched under `identity` and returns to ' +
-            'exactly zero under a supplied correspondence)');
+        // Not conditional on `boneDistBad`: reaching here already required all
+        // three suites to have run, so the empty arm was unreachable (#374).
+        `, + ${n('bonedist')} stage-3 bonedist controls (one file against itself at exactly zero, a translated ` +
+        'leaf bone that moves position and nothing else, the same bone turned 30° that reads 30° and moves the ' +
+        'matrix but not the scale, and a renamed bone that is named as unmatched under `identity` and returns to ' +
+        'exactly zero under a supplied correspondence)';
   const loopSeam =
     ', + ' + n('loop-seam') + ' loop-seam controls (issue #337 — the four rows of that issue’s own table, two of which land on ' +
     'the duration and two of which do not; the landing rates named as the multiples of the duration’s reduced ' +
@@ -23847,33 +24167,34 @@ function main(): void {
     'abridged quote faults. The vocabulary a refusal announces itself with is derived from those runs too — ' +
     'the error head at column 0, and the gutter tags a refusal run prints that no green run does — so a block ' +
     'that opens on one and carries no recipe is a fault rather than an escape)';
-  // ⚠️ FOUR figures in this summary are still written out, and they are marked
-  // `#439` where they sit. Every one of them disagrees with what its suite
-  // printed in this very run, so asking the tally would silently CHANGE the
-  // summary rather than derive it, and issue #439 says that is a finding to
-  // report and not a licence to edit:
+  // Not one figure below is written out any more (issue #451). The four that
+  // were are settled by the ruling *a suite's figure counts every case it
+  // prints, its own positive control included*, which is the only reading that
+  // reproduces the four clauses already derived — key-time, event, constraint
+  // and polygon each count theirs — so static-rig went 4 → 5, draw-order 6 → 7
+  // and path / slider 45 → 47, and all three now ask the tally.
   //
-  //   `SUITES.length + 3` positive controls   states 6, run prints 11
-  //   static-rig controls                     states 4, run prints 5
-  //   draw-order controls                     states 6, run prints 7
-  //   path / slider / per-skin controls        states 45, run prints 47
+  // The fourth had no derivation to go to. `SUITES.length + 3` stood for the
+  // run's positive controls, and there is no such quantity to count: "positive
+  // control" is a ROLE, not a token on a line. Measured on the run this file
+  // makes, 20 case names carry the word CONTROL and two of those — `M16` and
+  // `M19` — are mutants that carry it because a *control bone* is a rig
+  // concept, while `T04_GREYSCALE_ALPHA_STILL_PASSES` and `PS25` are genuine
+  // positive controls whose names say nothing at all. A derived-looking number
+  // over that set would be worse than the hand-written one, so the clause is
+  // gone and the last line of the summary points at where the controls are
+  // actually named instead. A pointer cannot go stale.
   //
-  // The first three are one question — four suites here count their own positive
-  // control in the figure beside them (key-time 7, event 8, constraint 24 and
-  // polygon 6 are all "cases + control", and the diff clause states its six
-  // identity controls outright) while static-rig and draw-order do not, so no
-  // single reading reproduces what is written. The fourth is stale under every
-  // reading: that suite runs `PS01`–`PS46` plus its control, so 46 or 47 and
-  // never 45. `runMeshOutlineSuite` is a fifth shape and not a number at all:
-  // ten controls, described in this summary nowhere.
+  // 🔒 `TY10` now refuses the whole class: a figure typed into this text rather
+  // than read off the run faults, and `TY11` plants one to prove it.
   console.log(
-    `rigc selftest: green — ${SUITES.length + 3} positive controls + ${breaks} deliberate breaks, each caught by its ` + // #439
+    `rigc selftest: green — ${breaks} deliberate breaks, each caught by its ` +
       `named assertion, + ${RIG_MUTANTS.length} broken rig specs the compiler refused by name, ` +
-      `+ ${tolerances} legal edits the gate had to accept, + 4 static-rig controls, ` + // #439
+      `+ ${tolerances} legal edits the gate had to accept, + ${n('static-rig')} static-rig controls, ` +
       '+ ' + n('png-transparency') + ' PNG transparency controls (indexed, greyscale and truecolour art whose transparency lives in a tRNS ' +
       'chunk, a greyscale+alpha file, a genuinely opaque part the gate still refuses, and the wording of that ' +
       'refusal), + ' + n('slot-attribution') + ' slot-attribution ' +
-      'controls (a blob one part dominates, and two parts that are two blobs), + 6 draw-order controls, ' + // #439
+      'controls (a blob one part dominates, and two parts that are two blobs), + ' + n('draw-order') + ' draw-order controls, ' +
       '+ ' + n('key-time') + ' key-time controls, + ' + n('event') + ' event controls (2 of them a spine-core round trip of the firings), ' +
       '+ ' + n('constraint-deform') + ' constraint- and deform-timeline controls (10 of them a spine-core round trip that reads the ik and ' +
       'transform mixes off the posed constraints, the world position of a deformed vertex, and a weighted ' +
@@ -23887,7 +24208,7 @@ function main(): void {
       'on the effective channels, a deform hold read off the expanded run so two spellings of one run are one ' +
       'geometry, a raw curve over a hold left verbatim, the named easing and an explicit stepped emitting one file, ' +
       'and the hold posed through spine-core identically whether stepped or linear), ' +
-      '+ 45 path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' + // #439
+      '+ ' + n('path-slider') + ' path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' +
       'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
       'which bones a skin switches on, and what TWO sliders on one bone do to it: 7.50 or 18.75 or their sum ' +
       '26.25 degrees, decided only by which of them is later in the constraints array and whether that one is ' +
@@ -24074,6 +24395,20 @@ function main(): void {
       "and a member turned edge-on — plus `explain`'s MEMBER block read as a subprocess, whose rows quote the " +
       'emitted values and the depths that produced them), ' +
       `+ ${n('mesh-rasteriser')} mesh-rasteriser controls${meshRung.startsWith(',') ? meshRung : ''}` +
+      ', + ' + n('mesh-outline') + ' mesh-outline controls (issue #368 — the two fields an editor import reported LOST on every ' +
+      'mesh rigc wrote: `hull`, which used to go out as 0, and `edges`, which used to not go out at all. The hull ' +
+      "is derived from the triangles rather than stated — a 5x5 grid's is its perimeter, 2·(5+5)−4 of 25 vertices — " +
+      'and Spine reads it as the FIRST `hull` entries in order, so the four ways a vertex list cannot supply one ' +
+      'are each refused by name with the walk to write instead: a row-major grid that interleaves perimeter and ' +
+      'interior, a two-column strip whose every vertex is on the outline and whose hull polygon would still ' +
+      "self-intersect (the shape the editor's own repair produced), a stated hull the triangles contradict, and " +
+      "triangles that do not tile ONE outline in both its spellings — a doubled interior triangle, which breaks " +
+      "Euler's count while the boundary still closes, and a doubled boundary one, which leaves the count intact " +
+      'and opens the loop. The edges are written in the export encoding, index times two, outline loop first and ' +
+      "then every interior triangle edge, on the authored grid and on the generated ring, ribbon and contour " +
+      'meshes against the hull each fixture states; a mesh with no size takes its PNG’s, a stated size wins, no ' +
+      'size at all is refused, and an edge list somebody authored passes through verbatim rather than being ' +
+      "rewritten, because a transcription of an export carries only the edges its author drew)" +
       ', + ' + n('error-attribution') + ' error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +
       'the `null` that used to crash and the bare attachment name that used to compile green and hide the slot — ' +
@@ -24193,7 +24528,8 @@ function main(): void {
       (gallery.examples > 0
         ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled three times and gated green under BOTH profiles`
         : '\n  ⚠️ No gallery/ directory, so no complete rig over real art was compiled in this run.') +
-      (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : ''),
+      (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : '') +
+      "\n  Each suite's own positive control is printed by name in its section above.",
   );
 }
 
