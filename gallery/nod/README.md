@@ -210,13 +210,11 @@ are at `±140` and not at some rounder number. It ships a 12° nod against a
 
 **And now measured, from the other side.** `A39_DEFORM_KEEPS_TRIANGLE_WINDING`
 reads posed geometry and knows nothing about the formula above, so bracketing the
-angle at which it fires is an independent check. Two builds:
+angle at which it fires is an independent check. The green side of the bracket:
 
 ```sh
 sed 's/"degrees": 12/"degrees": 33/g' gallery/nod/motion.json > /tmp/nod-33.json
-sed 's/"degrees": 12/"degrees": 34/g' gallery/nod/motion.json > /tmp/nod-34.json
 bun cli.ts build --rig gallery/nod/rig.json --motion /tmp/nod-33.json --out /tmp/b33 --profile spine-html   # green
-bun cli.ts build --rig gallery/nod/rig.json --motion /tmp/nod-34.json --out /tmp/b34 --profile spine-html   # A39 fires
 ```
 
 `33°` gates green; `34°` does not, and the refusal names the pair the closed form
@@ -860,15 +858,9 @@ taking the same offset, and the fan gone.
 
 **`portrait`'s head grid cannot carry a `pitch` at all.** Its rows are at
 `y = ±180, ±90, 0` against `R = 170`, so the outer rows are **outside their own
-cylinder** — and the compiler says so rather than clamping:
-
-```sh
-sed 's/"kind": "yaw", "radius"/"kind": "pitch", "radius"/' gallery/portrait/motion.json > /tmp/pp.json
-bun cli.ts build --rig gallery/portrait/rig.json --motion /tmp/pp.json --out /tmp/b-pp
-```
-
-The message names the spec it read — `/tmp/pp.json` above — between `error:` and
-`animation`, and that half is cut here because it is whatever path you chose:
+cylinder** — and the compiler says so rather than clamping. The message names the
+spec it read between `error:` and `animation`, and that half is cut here because
+it is whatever path you chose:
 
 **Reproduce it:** replace `"kind": "yaw", "radius"` with `"kind": "pitch", "radius"` in `gallery/portrait/motion.json`, then run `build`.
 ```

@@ -17676,13 +17676,31 @@ function runSkillSurfaceSuite(): number {
 //
 // 📌 **The escape hatch is one marker and it is deliberately blunt.** A document
 // whose statements are a dated snapshot rather than current state declares it in
-// its own header with `<!-- currency: dated-record -->`, and the whole file drops
-// out of the scan. Exactly one document needs it — `docs/SPEC_COVERAGE.md`, which
-// already says the same thing in three sentences of prose that nothing could read
-// — and CUR01 refuses a marker that does not sit beside an ISO date, refuses one
-// on `README.md`, and reports the marked set so it cannot grow quietly. A
-// line-level escape was designed and then **not shipped**: no line in the tree
-// needed one, and an untested way to silence the gate is worse than no way.
+// its own header, in one sentence the page SHOWS its reader — `DATED_RECORD_MARKER`
+// below, which is where it is written and the only place it is written — and the
+// whole file drops out of the scan. One document takes it today,
+// `docs/SPEC_COVERAGE.md`. CUR01 refuses a marker that does not sit beside an ISO
+// date, refuses one on `README.md`, refuses a line that opens with the marker's
+// lead and is then not the sentence, and floors the marked set at one so a marker
+// that has stopped matching goes red rather than quiet. A line-level escape was
+// designed and then **not shipped**: no line in the tree needed one, and an
+// untested way to silence the gate is worse than no way.
+//
+// ⚠️ One document takes the marker today and CUR01 prints the marked set rather
+// than capping it, so a second one would appear in that line and nothing would go
+// red. That is a gap this comment records rather than closes: how many documents
+// may be exempt is a decision and not a measurement.
+//
+// ⭐ **It was an HTML comment until issue #444**, and that was the same defect the
+// gallery's two markers had (#442): it rendered to nothing, so the one page in
+// this tree whose figures are deliberately NOT kept current carried no visible
+// sign of it, while the machinery that knows sat one layer down. The line a
+// reader reads IS the line this scanner parses — never a comment for the machine
+// beside a sentence for the reader, which would be two copies of one fact
+// installed by the gate against two copies of one fact. ⛔ The comment form is
+// retired rather than deprecated, and the paragraph that had to explain it beside
+// it went with it: a marker nobody can read needs a decoder, and one that renders
+// does not.
 //
 // ⚠️ **What this gate does NOT read, stated so the next reader does not assume
 // it does.** Recorded figures (`5.5550 px`, `1.0801×`, `0 of 124`) — their source
@@ -17707,11 +17725,38 @@ interface CurrencyDoc {
    * `raw`, and a claim is only ever read out of running text.
    */
   prose: (string | null)[];
-  /** Declared a dated snapshot by `<!-- currency: dated-record -->` in its header. */
+  /** Declared a dated snapshot by `DATED_RECORD_MARKER` in its header. */
   dated: boolean;
+  /** A header line that opens with the marker's lead and is then not the marker, verbatim. */
+  misdeclared: string | null;
   /** The ISO date its header carries, if any — a `dated` marker without one is refused. */
   headerDate: string | null;
 }
+
+/**
+ * The sentence a dated record shows its reader, which is the string this scan
+ * matches — one string, as in #442, never a comment beside a sentence.
+ *
+ * The lead is what makes a line a marker AT ALL; the rest is fixed. So a line that
+ * opens with the lead and then says something else is an author who meant to
+ * declare a dated record and mis-spelled it, and CUR01 faults on it by name rather
+ * than reading the file as undeclared — the one outcome that would be worse than
+ * having no marker, because it is the escape hatch silently not taken on the one
+ * document whose figures are known to be stale.
+ *
+ * ⚠️ There is deliberately no field in it, and the date is deliberately NOT one.
+ * The page already carries its date in its own prose, so interpolating it here
+ * would be a second copy of exactly the kind this scan exists to refuse; the
+ * marker points at that date instead, and the ISO-date clause below goes on
+ * requiring it to be there.
+ */
+const DATED_RECORD_LEAD = '**A dated record:**';
+const DATED_RECORD_REST =
+  ' what this page states was measured on the date it carries and is not kept current, so the ' +
+  "selftest's currency gate leaves its figures alone.";
+const DATED_RECORD_MARKER = `${DATED_RECORD_LEAD}${DATED_RECORD_REST}`;
+/** The lead, and whatever an author put after it — which has to be `DATED_RECORD_REST` and nothing else. */
+const DATED_RECORD_LINE = new RegExp(`^${literalPattern(DATED_RECORD_LEAD)}(.*?)[ \\t]*$`);
 
 /** How far into a file the dated-record marker and its date have to be to count as a header declaration. */
 const CURRENCY_HEADER_LINES = 40;
@@ -17737,12 +17782,21 @@ function readCurrencyDoc(path: string, tier: CurrencyDoc['tier'], text: string):
   }
   const header = raw.slice(0, CURRENCY_HEADER_LINES);
   const date = /\b(\d{4}-\d{2}-\d{2})\b/.exec(header.join('\n'));
+  let dated = false;
+  let misdeclared: string | null = null;
+  for (const line of header) {
+    const opened = DATED_RECORD_LINE.exec(line);
+    if (opened === null) continue;
+    if (opened[1] === DATED_RECORD_REST) dated = true;
+    else if (misdeclared === null) misdeclared = line;
+  }
   return {
     path,
     tier,
     raw,
     prose,
-    dated: header.some((line) => /<!--\s*currency:\s*dated-record\s*-->/.test(line)),
+    dated,
+    misdeclared,
     headerDate: date === null ? null : date[1],
   };
 }
@@ -18418,6 +18472,7 @@ function runCurrencySuite(): number {
   const markedReadme = docs.filter((doc) => doc.dated && doc.path === 'README.md');
   const thinForms = tallySites.filter(([, n]) => n === 0);
   const marked = docs.filter((doc) => doc.dated);
+  const misdeclared = docs.filter((doc) => doc.misdeclared !== null);
   say(
     'CUR01_THE_CURRENCY_SCAN_READ_THE_DOCS_THE_TOOL_AND_THE_GALLERY',
     unreadable.length === 0 &&
@@ -18441,32 +18496,45 @@ function runCurrencySuite(): number {
       sitesOf('gate version') >= 2 &&
       sitesOf('worked case') >= 5 &&
       sitesOf('assertion name') >= 100 &&
-      sitesOf('installed path') >= 3,
-    unreadable.length > 0
-      ? `\`files\` entries this scan could not expand: ${unreadable.join('; ')}`
-      : markedWithoutDate.length > 0
-        ? `dated-record marker with no ISO date in its first ${CURRENCY_HEADER_LINES} lines: ` +
-          `${markedWithoutDate.map((doc) => doc.path).join(', ')} — a marker is an as-of annotation, so it has to ` +
-          'say as of when'
-        : markedReadme.length > 0
-          ? 'README.md carries the dated-record marker, which would take the landing page itself out of the scan'
-          : truth.reached !== truth.total
-            ? `the live report reached ${truth.reached} of ${truth.total} assertions, so its profile split is not ` +
-              'the registry\'s split and no tally below can be trusted'
-            : thinForms.length > 0
-              ? `these tally forms matched nothing at all: ${thinForms.map(([limb]) => limb).join(', ')}`
-              : `${docs.length} doc(s) read — ${docs.filter((d) => d.tier === 'shipped').length} shipped, ` +
-                `${docs.filter((d) => d.tier === 'landing').length} one hop off README; ` +
-                `${marked.length} declared a dated record (${marked.map((d) => `${d.path} @ ${d.headerDate}`).join(', ') || 'none'}). ` +
-                `The tool answers: registry ${truth.total}, \`spine\` ${truth.spine}, excluded ${truth.excluded} ` +
-                `(${truth.rendererNames.length} renderer + ${truth.archetypeNames.length} archetype, off a live ` +
-                `report that reached all ${truth.reached}), gate ${truth.gateVersion} from docs/GATE.md, ` +
-                `${truth.galleryKinds.size} gallery-worked kind(s) ` +
-                `(${[...truth.galleryKinds].map(([k, v]) => `${k}→${v.join('+')}`).join(', ')}). Sites read: ` +
-                `${[...scan.sites].map(([limb, n]) => `${limb} ${n}`).join(', ')}`,
+      sitesOf('installed path') >= 3 &&
+      misdeclared.length === 0 &&
+      marked.length >= 1,
+    misdeclared.length > 0
+      ? `a header line opens with the dated-record marker's lead and is then not the marker: ` +
+        `${misdeclared.map((doc) => `${doc.path} reads "${doc.misdeclared}"`).join('; ')}. It is "${DATED_RECORD_MARKER}" ` +
+        'and nothing else, so a near miss is an escape hatch an author meant to take and did not — which is ' +
+        'worse than a file that never asked for one'
+      : marked.length === 0
+        ? 'not one document carries the dated-record marker and one is supposed to: either the sentence moved ' +
+          'in the tree and not here, or the escape hatch has stopped being taken and a page whose figures are ' +
+          'known to be stale is now being read as current'
+        : unreadable.length > 0
+            ? `\`files\` entries this scan could not expand: ${unreadable.join('; ')}`
+            : markedWithoutDate.length > 0
+              ? `dated-record marker with no ISO date in its first ${CURRENCY_HEADER_LINES} lines: ` +
+                `${markedWithoutDate.map((doc) => doc.path).join(', ')} — a marker is an as-of annotation, so it has to ` +
+                'say as of when'
+              : markedReadme.length > 0
+                ? 'README.md carries the dated-record marker, which would take the landing page itself out of the scan'
+                : truth.reached !== truth.total
+                  ? `the live report reached ${truth.reached} of ${truth.total} assertions, so its profile split is not ` +
+                    'the registry\'s split and no tally below can be trusted'
+                  : thinForms.length > 0
+                    ? `these tally forms matched nothing at all: ${thinForms.map(([limb]) => limb).join(', ')}`
+                    : `${docs.length} doc(s) read — ${docs.filter((d) => d.tier === 'shipped').length} shipped, ` +
+                      `${docs.filter((d) => d.tier === 'landing').length} one hop off README; ` +
+                      `${marked.length} declared a dated record (${marked.map((d) => `${d.path} @ ${d.headerDate}`).join(', ') || 'none'}). ` +
+                      `The tool answers: registry ${truth.total}, \`spine\` ${truth.spine}, excluded ${truth.excluded} ` +
+                      `(${truth.rendererNames.length} renderer + ${truth.archetypeNames.length} archetype, off a live ` +
+                      `report that reached all ${truth.reached}), gate ${truth.gateVersion} from docs/GATE.md, ` +
+                      `${truth.galleryKinds.size} gallery-worked kind(s) ` +
+                      `(${[...truth.galleryKinds].map(([k, v]) => `${k}→${v.join('+')}`).join(', ')}). Sites read: ` +
+                      `${[...scan.sites].map(([limb, n]) => `${limb} ${n}`).join(', ')}`,
     'every value this suite compares against is derived and every site is found by a scan, so both ends can come ' +
       'back empty. A form that stops matching its own phrasing is the quiet one: the case it feeds goes on ' +
-      'printing PASS over zero sites. The floors are what make that loud',
+      'printing PASS over zero sites. The floors are what make that loud — the marker is one of them, because a ' +
+      'sentence that has stopped matching would take the one dated document back into the scan, or, the other ' +
+      'way round, leave a near miss reading as a page that never claimed to be dated',
   );
 
   // --- CUR02: the assertion tallies -----------------------------------------
@@ -18673,6 +18741,81 @@ function runCurrencySuite(): number {
       'form that stops matching the TREE; this catches one that stops matching the DEFECT. Both directions are ' +
       'required, because a form loose enough to fault the repair is not a gate either',
   );
+
+  // --- CUR09: the marker a reader can see (issue #444) ----------------------
+  //
+  // 🔒 The whole of this case is the one-string rule, held to on the surface
+  // CUR01 depends on. The escape hatch used to be an HTML comment, so the one
+  // page in this tree whose figures are deliberately NOT kept current showed a
+  // reader nothing at all — the claim on the page and the machinery that exempts
+  // it were two different objects, one of them invisible. #442 settled the shape
+  // for the gallery's two markers and this is the same argument on the third.
+  //
+  // Every probe goes through `readCurrencyDoc` rather than through a copy of its
+  // rule, so a change to the parser reaches them; and every one is two-sided,
+  // because a reader that declared nothing would satisfy every refusal below on
+  // its own — the shape `ERT05` exists for.
+  {
+    const at = (body: string[]): CurrencyDoc => readCurrencyDoc('probe.md', 'landing', body.join('\n'));
+    const dated = (line: string): CurrencyDoc => at(['# probe', '', 'Research note, 2026-08-22.', '', line]);
+    const RETIRED_COMMENT = '<!-- currency: dated-record -->';
+    const nearMiss = `${DATED_RECORD_LEAD} a page that has not been re-measured.`;
+    const belowHeader = at(['# probe', 'Research note, 2026-08-22.', ...Array(CURRENCY_HEADER_LINES).fill(''), DATED_RECORD_MARKER]);
+    const undated = at(['# probe', '', DATED_RECORD_MARKER]);
+    const shown = docs.filter((doc) => doc.dated && doc.raw.slice(0, CURRENCY_HEADER_LINES).includes(DATED_RECORD_MARKER));
+    const inProse = docs.filter(
+      (doc) => doc.dated && doc.prose.slice(0, CURRENCY_HEADER_LINES).includes(DATED_RECORD_MARKER),
+    );
+    const probes = [
+      // ① the form that parses is the sentence, and it is not also a near miss.
+      ...(dated(DATED_RECORD_MARKER).dated ? [] : ['the marker sentence did not declare a dated record']),
+      ...(dated(DATED_RECORD_MARKER).misdeclared === null ? [] : ['the marker sentence was reported as a near miss too']),
+      // ② exactly one form. The comment it replaced is retired, not deprecated,
+      //    and a sentence hidden inside a comment is the same defect returning.
+      ...(dated(RETIRED_COMMENT).dated ? ['the retired HTML comment still declares a dated record'] : []),
+      ...(dated(RETIRED_COMMENT).misdeclared === null ? [] : ['the retired comment was reported as a near miss rather than as nothing']),
+      ...(dated(`<!-- ${DATED_RECORD_MARKER} -->`).dated
+        ? ['the marker declared a dated record from inside an HTML comment, where no reader would see it']
+        : []),
+      // ③ a near miss is a FAULT by name, never silence: an author who opened
+      //    with the lead meant to take the escape hatch.
+      ...(dated(nearMiss).misdeclared === nearMiss ? [] : ['a line opening with the lead and then not the sentence was not reported as a near miss']),
+      ...(dated(nearMiss).dated ? ['a line opening with the lead and then not the sentence declared a dated record anyway'] : []),
+      ...(dated(DATED_RECORD_LEAD).misdeclared === DATED_RECORD_LEAD ? [] : ['the lead with nothing after it was not reported as a near miss']),
+      // ④ the header bound, both ways.
+      ...(belowHeader.dated ? [`the marker declared a dated record from below the ${CURRENCY_HEADER_LINES}-line header bound`] : []),
+      // ⑤ the ISO-date clause CUR01 refuses on, seen to reach the state it refuses.
+      ...(undated.dated && undated.headerDate === null ? [] : ['a marked page with no ISO date in its header did not reach the state CUR01 refuses']),
+      ...(dated(DATED_RECORD_MARKER).headerDate === null ? ['a marked page WITH an ISO date in its header read as having none'] : []),
+      // ⑥ and the tree itself: the string is in the file, on a line that renders.
+      //    The floor is a probe rather than a bare conjunct in the verdict, because
+      //    a case whose detail says everything is fine while the gutter says FAIL
+      //    names nothing — measured by running the mutant, which printed exactly that.
+      ...(marked.length >= 1
+        ? []
+        : ['no document in the tree carries the marker, so every clause above was checked against synthetic text only']),
+      ...(shown.length === marked.length ? [] : ['a document declared a dated record without carrying the sentence verbatim']),
+      ...(inProse.length === marked.length ? [] : ['the marker line does not survive into the running text, so a reader does not see it']),
+    ];
+    say(
+      'CUR09_THE_DATED_RECORD_MARKER_IS_THE_SENTENCE_THE_PAGE_SHOWS',
+      probes.length === 0,
+      probes.length === 0
+        ? `the sentence parses and the retired comment does not; a line that opens with the lead and then is not ` +
+          `the sentence is reported by name rather than read as undeclared, and so is the lead alone; the same ` +
+          `sentence inside an HTML comment or below the ${CURRENCY_HEADER_LINES}-line header bound declares ` +
+          `nothing; a marked page with no ISO date reaches the state CUR01 refuses and one with a date does ` +
+          `not; and all ${marked.length} marked document(s) carry the sentence verbatim, on a line the running ` +
+          'text keeps'
+        : probes.join('\n          '),
+      'the marker is the only thing on the page that says how the claim is kept true, so hiding it in a comment ' +
+        'left the reader with a claim and no provenance while the machinery sat one layer down — #442 exactly, ' +
+        'one suite over. What this case has to prove is that making it visible did not buy a second accepted ' +
+        'spelling: the retired comment declares nothing, and the sentence wrapped back into a comment declares ' +
+        'nothing either. The near-miss clauses are the other half, because the worst outcome is not a malformed ' +
+        'marker but a malformed marker read as a page that never asked to be exempt',
+    );
+  }
 
   return bad;
 }
@@ -20284,6 +20427,107 @@ function runGalleryTranscriptSuite(): number {
         'nothing while printing a clean line. The last clause is GT04 one surface further in and it is the answer ' +
         'to what this change makes stale next — documenting the recipe means writing down what announces a ' +
         'refusal, so the paragraph that does is derived from the same runs the code reads',
+    );
+  }
+
+  // --- GT06: the edit a recipe states is spelled once (issue #443) ----------
+  //
+  // 🚨 The defect this closes was in the tree while #442 was written, one
+  // directory over: `gallery/nod/README.md` carried the recipe's own
+  // replace-all a second time, as a `sed` one-liner in a ```sh fence directly
+  // above the block. Both copies were real — measured rather than assumed, the
+  // `sed` lines ran and produced exactly the quoted refusals — and only one of
+  // them was checked, because the scan skips a fence with an info string. Two
+  // copies of one fact with a gate on one of them is #415, #422 and #429 in
+  // turn, and this is the fourth.
+  //
+  // ⛔ The remedy is removal and not a second checker. A gate over the copy
+  // would keep both spellings alive and make the tree agree with itself; what
+  // this case asserts is that the copy is GONE and cannot come back, which is
+  // why it reads the fences the transcript scan cannot see and nothing else.
+  //
+  // ⭐ What it deliberately does NOT refuse: a command that mentions a recipe's
+  // `from`. `gallery/nod` keeps the green half of its own bracket, which the
+  // recipe grammar structurally cannot express — a recipe whose edit leaves the
+  // build green is a fault one case up — and the sweeps
+  // beside it patch the same fields to other values. A rule that refused those
+  // would be refusing every command in the gallery that touches a spec, which
+  // is the `ERT05` shape: a check that refuses everything tells nothing from
+  // nothing. The line is both halves of one edit on one line.
+  //
+  // ⚠️ **`gallery/README.md` is outside this scan, and the reason is a
+  // measurement rather than an oversight.** The index shows one filled-in recipe
+  // inside a ```markdown fence, so it carries both halves of an edit on one line
+  // and this rule would read it as a copy. It is not one: `GT05` already requires
+  // that example to parse AND to be a recipe some README really carries, so it is
+  // DERIVED from this population rather than a second unchecked spelling of it.
+  // Widening the scan here would fault the one copy in the gallery already gated.
+  {
+    const recipes: RefusalRecipe[] = [];
+    for (const readme of readmes.values()) {
+      for (const block of galleryBlocks(readme)) {
+        if (block.info !== '' || block.recipe === null) continue;
+        const parsed = parseRefusalRecipe(block.recipe, recipeNames);
+        if (typeof parsed !== 'string') recipes.push(parsed);
+      }
+    }
+    const restates = (line: string, recipe: RefusalRecipe): boolean =>
+      line.includes(recipe.from) && line.includes(recipe.to);
+
+    const copies: string[] = [];
+    const infoStrings = new Set<string>();
+    let skippedFences = 0;
+    let mentions = 0;
+    for (const [example, readme] of readmes) {
+      for (const block of galleryBlocks(readme)) {
+        if (block.info === '') continue;
+        skippedFences++;
+        infoStrings.add(block.info);
+        block.lines.forEach((line, k) => {
+          for (const recipe of recipes) {
+            if (restates(line, recipe)) {
+              copies.push(
+                `gallery/${example}/README.md:${block.line + 1 + k} spells a recipe's whole edit a second time, ` +
+                  `in a \`${block.info}\` fence this scan skips — the recipe is "${recipe.text}"`,
+              );
+            } else if (line.includes(recipe.from)) mentions++;
+          }
+        });
+      }
+    }
+
+    // Red-first, on a command GENERATED from a recipe rather than typed here:
+    // the one that was deleted is the one the rule has to catch, and generating
+    // it is the only way this probe cannot drift away from the grammar.
+    const one = recipes[0];
+    const probes =
+      one === undefined
+        ? ['no recipe was parsed, so the rule was probed against nothing']
+        : [
+            ...(restates(`sed 's/${one.from}/${one.to}/g' gallery/${one.example}/${one.spec}.json > /tmp/x.json`, one)
+              ? []
+              : ['a command spelling a whole recipe edit was not caught']),
+            ...(restates(`sed 's/${one.from}/whatever else/g' gallery/${one.example}/${one.spec}.json`, one)
+              ? ['a command naming only the recipe\'s `from` was caught, so the rule refuses commands that copy nothing']
+              : []),
+            ...(restates(`bun cli.ts build --rig gallery/${one.example}/rig.json --out /tmp/x`, one)
+              ? ['a command naming neither half of the edit was caught']
+              : []),
+          ];
+
+    say(
+      'GT06_THE_EDIT_A_REFUSAL_RECIPE_STATES_IS_SPELLED_ONCE',
+      copies.length === 0 && probes.length === 0 && recipes.length >= 4 && skippedFences >= 10,
+      copies.length === 0 && probes.length === 0
+        ? `${skippedFences} fence(s) this scan skips — {${[...infoStrings].sort().join(' ')}} — read against the ` +
+          `${recipes.length} recipe(s) the gallery carries: none spells one of their edits a second time, while ` +
+          `${mentions} line(s) name a recipe's \`from\` and patch it to something else, which is the half the ` +
+          'rule has to leave alone'
+        : [...copies, ...probes].join('\n          '),
+      'a refusal recipe is checked to the character and a shell line beside it is checked not at all, so the two ' +
+        'spellings of one edit drift apart and the ungated one is the one a reader copies. #442 made both of them ' +
+        'visible and that is how this became legible at all: before it, the recipe was an HTML comment and only ' +
+        'the `sed` line was on the page, so there was nothing for a reader to compare',
     );
   }
 
