@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.20.0](https://github.com/firejune/rigc/compare/v0.19.0...v0.20.0) (2026-09-10)
+
+
+### Features
+
+* **depth:** what the sheet is not, and whether the ceiling read a form ([#455](https://github.com/firejune/rigc/issues/455)) ([dfcd808](https://github.com/firejune/rigc/commit/dfcd80854670c10b29b55c2c4e7abb1e44fcb98a))
+* **explain:** the disputed dial names its counter, and the scan line prints again ([#467](https://github.com/firejune/rigc/issues/467)) ([a42e9cf](https://github.com/firejune/rigc/commit/a42e9cfad10c8b67ba1f195883b78b2e9c16c7ac))
+
+
+### Bug Fixes
+
+* a file that reads as text stays readable by a text tool ([#466](https://github.com/firejune/rigc/issues/466)) ([da45092](https://github.com/firejune/rigc/commit/da450929b2c139b3144706b79d3dd647c84cf699))
+* an ignore line hides its path whatever that path turns out to be ([#463](https://github.com/firejune/rigc/issues/463)) ([26dd39d](https://github.com/firejune/rigc/commit/26dd39d6c422bf077db75056833169fc5680332b))
+
 ## [0.19.0](https://github.com/firejune/rigc/compare/v0.18.1...v0.19.0) (2026-09-06)
 
 
