@@ -2,6 +2,82 @@
 
 ## [0.20.0](https://github.com/firejune/rigc/compare/v0.19.0...v0.20.0) (2026-09-10)
 
+⚠️ **Read the two generated sections below last.** `release-please` builds them from
+commit **type**, so `test:` and `docs:` commits never appear in them. In this release
+that is **nine of fourteen commits**, and it is where most of the work is. What follows
+is the whole cut.
+
+### What this release is about
+
+Two things that turn out to be one: **the tool learned to say what it is not measuring,
+and the repository stopped making claims about itself that nothing derives.**
+
+**The depth report says what the sheet is *not*** (#448, #449). `sampleMeshDepth` refused
+a sheet that did not cover the mesh — but the check sat behind *"does this sheet have a
+transparent texel anywhere"*, so a **full-frame opaque render skipped it entirely**, which
+is exactly what monocular depth estimation produces. The same defect was a named refusal
+in one encoding and a green build in the other; the counts from both sides agree at **56
+of 81** on the fixture that proves it. It now **reports rather than refuses** — a
+full-frame sheet is a legitimate statement and rigc has no authority to guess an input
+away — and what it adds is a measurement: how many of a mesh's vertices sample a texel the
+part image does not draw.
+
+**`stepShare` separates a form from a discontinuity.** A form's share halves under lattice
+refinement while its ceiling converges; a cliff pins its share and halves its **ceiling**
+instead, because there is no slope to converge to. Measured on synthetic sheets: form
+0.358 → 0.100 with the angle steady, cliff 0.460 → 0.497 with the angle falling by half
+each time. No threshold anywhere — the number is reported so an author can see which kind
+of thing the ceiling read.
+
+**A line came back from the dead** (#440). Giving the disputed dial the breadcrumb its
+neighbours have exposed that the rollup identity was a literal at three sites, one of them
+with a different separator — so `N span(s) between consecutive keys scanned` had printed
+on **no rig at all** since #418. That line exists so *"the scan ran and found nothing"*
+cannot be read as *"the scan never ran"*, and it had silently become the second.
+
+**The run counts itself** (#439, #451, #453). The selftest's summary used to restate every
+suite's size by hand. Wrapping the calls put a number on the drift for the first time:
+**18 of 47 floor increments were wrong, the summed floor stood at 435 against a run of
+551, and one suite had never been counted at all** — a floor 116 cases below the truth
+being the only thing between a vacuous run and a green one. Every figure is read off the
+lines each suite prints now, and **no hand-written number is left anywhere the summary
+reads from**, which made buildable a check twice rejected as unbuildable: a numeric
+constant whose only reader is the summary is refused by name. ⇒ **Adding a control needs
+no summary edit**, measured twice on the day it landed by two independent changes.
+
+**Two silences in the toolchain, closed** (#457, #465). A `.gitignore` entry ending in a
+slash covers **one of the four things a path can be** — a symlink, a file and an absent
+path all slip past — and three paths here had already turned out to be symlinks, showing
+as untracked in a public tree. All 31 entries are slashless, and `CUR10` plants each path
+in a throwaway repository as a directory, as a symlink and as a file and asks git each
+time. Separately, two raw NUL bytes made `cli.ts` binary to the grep an agent has, so a
+search over the file that owns the report text matched nothing, silently, with the same
+exit code as an absence — it had already produced a wrong conclusion.
+
+**Doctrine** (#445, #446, #447). **rigc compiles an object; the scene belongs to the
+consumer.** The code had never crossed that line and the prose had — including a caption
+claiming "scene direction" over a film whose own text states the boundary correctly and
+measures it at **0 differing pixels across every hand-off**. The honest claim is the
+stronger one: the rig guarantees the seams, and the composing is the consumer's.
+[ROADMAP.md](https://github.com/firejune/rigc/blob/main/ROADMAP.md) is new.
+
+The selftest carries **577** named controls at this tag.
+
+### In this release but not in the sections below
+
+| | |
+| --- | --- |
+| [#450](https://github.com/firejune/rigc/pull/450) | `test:` the run counts itself, and the floor is one per suite |
+| [#452](https://github.com/firejune/rigc/pull/452) | `test:` the last figures come off the run, and a typed one is refused |
+| [#462](https://github.com/firejune/rigc/pull/462) | `test:` a suite stated in halves, and no figure left in a constant |
+| [#446](https://github.com/firejune/rigc/pull/446) | `docs:` rigc compiles an object, and the scene belongs to the consumer |
+| [#447](https://github.com/firejune/rigc/pull/447) | `docs:` a rough roadmap to 1.0, and the road so far |
+| [#454](https://github.com/firejune/rigc/pull/454) | `docs:` one fact spelled once, and the marker the reader can see |
+| [#459](https://github.com/firejune/rigc/pull/459) | `docs:` the rig guarantees the seams, and the composing is the consumer's |
+| [#460](https://github.com/firejune/rigc/pull/460) | `docs:` the doctrine that governs the product governs the work too |
+| [#461](https://github.com/firejune/rigc/pull/461) | `docs:` what settles a thing, rather than who owns it |
+| [#469](https://github.com/firejune/rigc/pull/469) | `docs:` two claims the tree contradicts, corrected against a run |
+
 
 ### Features
 
