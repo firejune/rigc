@@ -11942,6 +11942,172 @@ function runDeformWindingSuite(): number {
       'it is also where the two reports have to stay disjoint, because one frame counted twice reads as two',
   );
 
+  // --- the rollup's breadcrumbs, and the identity its lines are filtered by --
+  //
+  // Issue #440 asked for one breadcrumb on one line: two of the rollup's lines
+  // ended with `<- A39 counts them as …` and the disputed dial ended with
+  // nothing. What made it worth gating is what the red-first run found beside
+  // it — the rollup's identity was a literal spelled at three sites, and the
+  // third had drifted, so `DW37`'s line printed on no rig at all.
+
+  /** Every `deform…` identifier the breadcrumbs on this block hand the reader. */
+  const breadcrumbNames = (block: readonly string[]): string[] =>
+    block
+      .filter((line) => line.includes('<- A39'))
+      .flatMap((line) => [...line.matchAll(/\bdeform[A-Za-z]+\b/g)].map((m) => m[0]));
+  /** The rollup line reporting a disputed dial, or '' when the block has none. */
+  const disputeLine = (block: readonly string[]): string => block.find((line) => line.includes('disagree about:')) ?? '';
+  /** The rollup line reporting the between-keys scan, or '' when there is none. */
+  const scanLine = (block: readonly string[]): string =>
+    block.find((line) => line.includes('span(s) between consecutive keys scanned')) ?? '';
+
+  const splitDispute = disputeLine(splitBlock);
+  const splitCrumbs = breadcrumbNames(splitBlock);
+  const splitStated = /\|artifact:([^@]+)@/.exec(splitLine)?.[1] ?? 'no-artifact-field';
+  const splitDriven = /\|probe:([^@]+)@/.exec(splitLine)?.[1] ?? 'no-probe-field';
+  // ⚠️ The two ways the breadcrumb can be wrong, named separately, because a
+  // detail that reported neither would be a FAIL whose text reads clean.
+  const crumbsMissing = ['deformDialsDisagreed', 'deformDialDisagreed'].filter((name) => !splitCrumbs.includes(name));
+  const crumbsUnknown = splitCrumbs.filter((name) => !(name in splitGate.stats));
+  say(
+    'DW34_THE_ROLLUP_NAMES_THE_DISPUTED_DIAL_AND_ITS_BREADCRUMB_NAMES_READINGS_THAT_EXIST',
+    splitDispute !== '' &&
+      // one dispute, the one the stats line reports
+      /^\s+\.\.\s+1 dial\(s\) /.test(splitDispute) &&
+      // ⭐ the two fields are read back OUT of the stats reading rather than
+      // spelled here, so the rollup and the stats line cannot name different
+      // bones while both stay green
+      splitDispute.includes('the skeleton reads ' + splitStated) &&
+      splitDispute.includes('the probe drives ' + splitDriven) &&
+      // and the same count `outside:` carries
+      splitDispute.includes(splitOutside.length + ' key time(s) outside') &&
+      // 🔒 the half that makes the breadcrumb a derivation rather than a fourth
+      // spelling: every name it hands the reader is a key A39 REALLY put on this
+      // same build's stats line. `cli.ts` cannot import these — `stats` is a
+      // `Record<string, number | string>`, so there is no type to take a name
+      // off — so the two sides are derived independently and compared here.
+      splitCrumbs.includes('deformDialsDisagreed') &&
+      splitCrumbs.includes('deformDialDisagreed') &&
+      splitCrumbs.every((name) => name in splitGate.stats),
+    splitDispute === ''
+      ? 'the rollup carries NO disputed-dial line, on the one rig whose build reports a dispute: ' +
+          splitBlock.filter((l) => l.trimStart().startsWith('..')).join(' | ')
+      : crumbsMissing.length > 0 || crumbsUnknown.length > 0
+        ? 'the line is there but its breadcrumb is wrong — ' +
+            (crumbsMissing.length > 0 ? 'it names no ' + crumbsMissing.join(' and no ') + '; ' : '') +
+            (crumbsUnknown.length > 0
+              ? 'it names ' + crumbsUnknown.join(', ') + ', which this build\'s stats line does not carry; '
+              : '') +
+            'the ' + splitCrumbs.length + ' name(s) found were [' + splitCrumbs.join(', ') + '] in "' +
+            splitDispute.trim() + '"'
+        : 'the parent-90° rig\'s rollup says "' + splitDispute.trim() + '", naming the artifact\'s ' + splitStated +
+            ' and the probe\'s ' + splitDriven + ' as its own stats reading does, and ' + splitOutside.length +
+            ' key time(s) outside as `outside:` does. Every one of the ' + splitCrumbs.length +
+            ' name(s) its breadcrumbs carry — ' + splitCrumbs.join(', ') + ' — is a reading this build\'s stats ' +
+            'line has',
+    'the disputed dial was the one reading a build prints that `explain`\'s rollup could not account for. A ' +
+      'breadcrumb is only worth adding if it cannot drift from the key it names, so the last clause holds every ' +
+      'name against the stats line instead of against a literal — the drift #439 is about, one line further on',
+  );
+
+  const agreedBlock = turnDeformBlock(agreedBuild);
+  say(
+    'DW35_AN_AGREED_DIAL_ADDS_NO_LINE_TO_THE_ROLLUP',
+    // ⚠️ DW31's anti-vacuity anchor, on this surface: the rig carries a
+    // slider-applied deform and prints a real rollup, so the silence is a
+    // silence about something
+    agreedBlock.some((line) => line.trimStart().startsWith('WORST   turn via dial')) &&
+      disputeLine(agreedBlock) === '' &&
+      // ⚠️ scoped to `deformDial…` and NOT to "no breadcrumb at all". The
+      // `reversed …` line above names no reading today, and giving it one would
+      // be an improvement — a clause that went red for it would be a clause that
+      // fires when the tree gets better.
+      !breadcrumbNames(agreedBlock).some((name) => name.startsWith('deformDial')) &&
+      Object.keys(dialStats(agreedGate)).length === 0,
+    disputeLine(agreedBlock) !== ''
+      ? 'the agreed rig gained a disputed-dial line anyway: "' + disputeLine(agreedBlock).trim() + '"'
+      : breadcrumbNames(agreedBlock).some((name) => name.startsWith('deformDial'))
+        ? 'no disputed-dial line, but a breadcrumb still hands the reader [' +
+            breadcrumbNames(agreedBlock)
+              .filter((name) => name.startsWith('deformDial'))
+              .join(', ') + '] on a rig whose build reports no dial reading at all'
+        : !agreedBlock.some((line) => line.trimStart().startsWith('WORST   turn via dial'))
+          ? 'VACUOUS: this rig printed no `WORST   turn via dial` rollup, so its silence is a silence about ' +
+              'nothing — ' + agreedBlock.length + ' line(s): ' + agreedBlock.map((l) => l.trim()).join(' | ')
+          : 'the same `x` slider with the dial bone\'s parent unturned prints a ' + agreedBlock.length +
+              '-line block carrying a rollup and not one disputed-dial line, and no breadcrumb on it names a ' +
+              'deformDial… reading — the build agrees, with 0 deformDial… readings on its stats line',
+    '🔒 the loud half alone would pass a rollup that printed a dispute on every rig. This is DW31\'s silence, ' +
+      'checked on the surface issue #440 is about rather than on the stats line',
+  );
+
+  say(
+    'DW36_A_SETTLED_DIAL_IS_NOT_SHOWN_AS_A_DISPUTE_IN_THE_ROLLUP',
+    tiedBlock.some((line) => line.trimStart().startsWith('WORST   turn via dial')) &&
+      disputeLine(tiedBlock) === '' &&
+      !breadcrumbNames(tiedBlock).some((name) => name.startsWith('deformDial')) &&
+      // 🔒 a SETTLED dial and not an absent one: the frame lines say the
+      // skeleton's own reader broke a tie, so this rig really carries the thing
+      // the rollup must not call a disagreement
+      tiedBlock.some((line) => line.includes('broke the tie')) &&
+      // the mirror, so neither rig can pass on the other's signal
+      splitDispute !== '',
+    disputeLine(tiedBlock) !== ''
+      ? 'the tie was rolled up as a disagreement: "' + disputeLine(tiedBlock).trim() + '"'
+      : !tiedBlock.some((line) => line.includes('broke the tie'))
+        ? 'VACUOUS: no frame line on this rig says a tie was broken, so it is not the settled dial this case ' +
+            'claims to be reading'
+        : splitDispute === ''
+          ? 'the mirror is down: the parent-90° rig prints no disputed-dial line either, so this rig\'s silence ' +
+              'distinguishes nothing'
+          : 'the parent-45° rig\'s frame lines say the skeleton\'s own reader broke the tie and its rollup carries ' +
+              'no disputed-dial line, while the parent-90° rig\'s carries one. A tie is settled, not disputed',
+    'a tie and a disagreement differ by whether there are two beliefs in conflict. DW32 keeps them apart on the ' +
+      'stats line, and without this the rollup would be free to conflate them',
+  );
+
+  say(
+    'DW37_THE_BETWEEN_KEYS_SCAN_LINE_IS_PRINTED_AND_CARRIES_THE_GATES_OWN_FIGURE',
+    // 🚨 Red-first on a defect this issue's run FOUND rather than one it
+    // planted. The rollup's identity joins animation to slider with a NUL; the
+    // span filter joined with a space and compared the two, so `spans` was
+    // empty on every rig and this line printed nowhere.
+    scanLine(splitBlock) !== '' &&
+      scanLine(agreedBlock) !== '' &&
+      scanLine(tiedBlock) !== '' &&
+      // the figure is the gate's own, so the report and the gate cannot say
+      // different numbers about the same scan
+      scanLine(splitBlock).includes(Number(splitGate.stats.deformSpansScanned) + ' span(s) between consecutive keys') &&
+      scanLine(agreedBlock).includes(Number(agreedGate.stats.deformSpansScanned) + ' span(s) between consecutive keys') &&
+      Number(splitGate.stats.deformSpansScanned) > 0,
+    [
+      ['parent-90°', splitBlock],
+      ['agreed', agreedBlock],
+      ['tie', tiedBlock],
+    ].some(([, block]) => scanLine(block as string[]) === '')
+      ? 'the scan line is MISSING on [' +
+          [
+            ['parent-90°', splitBlock],
+            ['agreed', agreedBlock],
+            ['tie', tiedBlock],
+          ]
+            .filter(([, block]) => scanLine(block as string[]) === '')
+            .map(([tag]) => tag)
+            .join(', ') + '], so on those rigs "the scan ran and found nothing" is indistinguishable from "the ' +
+          'scan never ran"'
+      : !scanLine(splitBlock).includes(Number(splitGate.stats.deformSpansScanned) + ' span(s) between consecutive keys')
+        ? 'the line and the gate disagree about the same scan: the gate counted ' +
+            Number(splitGate.stats.deformSpansScanned) + ' span(s) and the line says "' +
+            scanLine(splitBlock).trim() + '"'
+        : 'all three dial rigs print the scan line, and the parent-90° one reports ' +
+            Number(splitGate.stats.deformSpansScanned) +
+            ' span(s) — the figure its own gate puts on deformSpansScanned. Until the rollup identity was derived ' +
+            'in one place this line printed on no rig at all',
+    'issue #403 added this line so "the scan ran and found nothing" could not be read as "the scan never ran". A ' +
+      'filter that matched nothing turned it back into the second, on every rig, with a green gate — and the ' +
+      'transcript in docs/AUTHORING.md went on quoting it, because docs/ is outside GT01–GT06',
+  );
+
   return bad;
 }
 
