@@ -1443,8 +1443,6 @@ const DIFF_CASES: DiffCase[] = [
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-/** Three identity controls, over each of the two fixtures. */
-const DIFF_IDENTITY_CONTROLS = 6;
 /** How many name-agnostic measures the two split sections carry between them. */
 const DIFF_AGNOSTIC_MEASURES = 9;
 /** How many `(reported)` measures the report carries in total. */
@@ -1513,31 +1511,9 @@ function runDiffIdentityControls(label: string, text: string): number {
   return bad;
 }
 
-/** Returns the number of failures, or `null` when the fixtures are not on disk. */
-function runDiffSuite(): number | null {
-  const missing = [DIFF_FIXTURE, DIFF_MESH_FIXTURE].filter((f) => !existsSync(f));
-  if (missing.length > 0) {
-    console.log('\n── rigc diff ──');
-    console.log('  SKIP  the diff self-checks did not run: no example corpus on disk.');
-    for (const f of missing) console.log(`          expected ${f}`);
-    console.log('          run `bun run fetch-examples` and re-run this suite.');
-    console.log('          ⚠️ This is a HOLE in this run, not a pass — `rigc diff` was not exercised at all.');
-    return null;
-  }
-  console.log('\n── rigc diff (fixtures: 3-timing-and-spacing-ess, 6-arcs-pro) ──');
-  const texts: Record<DiffFixture, string> = {
-    default: readFileSync(DIFF_FIXTURE, 'utf8'),
-    mesh: readFileSync(DIFF_MESH_FIXTURE, 'utf8'),
-  };
+/** The mutant cases, over whichever fixture each one names. Returns the failure count. */
+function runDiffMeasureControls(texts: Record<DiffFixture, string>): number {
   let bad = 0;
-
-  // Both fixtures, because they exercise different measures: `6-arcs-pro` is
-  // the only one of the two with a mesh, a constraint or a deform timeline in
-  // it, so identity over the rung-3 skeleton alone leaves every mesh and
-  // constraint measure at a vacuous 1.000 it did not earn.
-  bad += runDiffIdentityControls('3-timing-and-spacing-ess', texts.default);
-  bad += runDiffIdentityControls('6-arcs-pro', texts.mesh);
-
   for (const c of DIFF_CASES) {
     const text = texts[c.fixture ?? 'default'];
     const reference: Record<string, unknown> = JSON.parse(text);
@@ -1576,6 +1552,45 @@ function runDiffSuite(): number | null {
       }
     }
   }
+  return bad;
+}
+
+/**
+ * Returns the number of failures, or `null` when the fixtures are not on disk.
+ *
+ * The two phases are bracketed separately because the summary states them
+ * separately (issue #453). `tally.partOf` counts each off the lines it printed,
+ * exactly as `tally.of` counts the suite, and `partFaults` requires the two to
+ * add up to what the suite itself printed — so a third phase added here and not
+ * bracketed is named rather than quietly dropped out of one of the two halves.
+ */
+function runDiffSuite(tally: RunTally): number | null {
+  const missing = [DIFF_FIXTURE, DIFF_MESH_FIXTURE].filter((f) => !existsSync(f));
+  if (missing.length > 0) {
+    console.log('\n── rigc diff ──');
+    console.log('  SKIP  the diff self-checks did not run: no example corpus on disk.');
+    for (const f of missing) console.log(`          expected ${f}`);
+    console.log('          run `bun run fetch-examples` and re-run this suite.');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — `rigc diff` was not exercised at all.');
+    return null;
+  }
+  console.log('\n── rigc diff (fixtures: 3-timing-and-spacing-ess, 6-arcs-pro) ──');
+  const texts: Record<DiffFixture, string> = {
+    default: readFileSync(DIFF_FIXTURE, 'utf8'),
+    mesh: readFileSync(DIFF_MESH_FIXTURE, 'utf8'),
+  };
+  let bad = 0;
+
+  // Both fixtures, because they exercise different measures: `6-arcs-pro` is
+  // the only one of the two with a mesh, a constraint or a deform timeline in
+  // it, so identity over the rung-3 skeleton alone leaves every mesh and
+  // constraint measure at a vacuous 1.000 it did not earn.
+  bad += tally.partOf(
+    'diff',
+    'identity',
+    () => runDiffIdentityControls('3-timing-and-spacing-ess', texts.default) + runDiffIdentityControls('6-arcs-pro', texts.mesh),
+  );
+  bad += tally.partOf('diff', 'measure', () => runDiffMeasureControls(texts));
   return bad;
 }
 
@@ -24000,11 +24015,80 @@ interface SuiteBlock {
 }
 
 /**
+ * One phase of a suite, counted on its own so the summary can state a HALF of a
+ * suite off the run rather than out of the source (issue #453).
+ *
+ * A phase is not a suite: it opens no section of its own and it is not a place
+ * a case line may hide. What makes it honest is `partFaults` below — the halves
+ * of a suite have to add up to the suite — so a decomposition is checkable in a
+ * way two hand-written halves are not.
+ */
+interface SuitePart {
+  /** The suite this phase is a part of. */
+  suite: string;
+  /** The key the summary asks for it by, always `<suite>/<phase>`. */
+  key: string;
+  /** PASS and FAIL lines this phase printed. */
+  controls: number;
+}
+
+/**
+ * Everything wrong with the way a suite's phases add up.
+ *
+ * ⭐ The whole reason a phase may be stated at all. Two derived halves that do
+ * not sum to the whole are two hand-written numbers wearing a derivation, which
+ * is worse than the hand-written number they replaced: a derived-looking figure
+ * carries the derivation's credibility. So the sum is the gate, and everything
+ * a phase cannot account for shows up in it — a case line printed inside the
+ * suite and inside no phase, a phase bracketed twice, a phase whose suite
+ * nobody wrapped.
+ *
+ * Split out of `tallyFaults` so the live run can be asked this one question
+ * halfway through itself, when the block-level clauses would fault on suites
+ * that simply have not run yet.
+ */
+function partFaults(blocks: readonly SuiteBlock[], parts: readonly SuitePart[]): string[] {
+  const faults: string[] = [];
+  const seen = new Set<string>();
+  const summedBySuite = new Map<string, number>();
+  for (const part of parts) {
+    if (seen.has(part.key)) {
+      faults.push(`two phases were tallied under the key "${part.key}", so the summary cannot ask for either of them`);
+    }
+    seen.add(part.key);
+    summedBySuite.set(part.suite, (summedBySuite.get(part.suite) ?? 0) + part.controls);
+  }
+  for (const [suite, summed] of summedBySuite) {
+    const block = blocks.find((candidate) => candidate.key === suite);
+    if (block === undefined) {
+      faults.push(
+        `the phases of "${suite}" were tallied under a suite this run never wrapped, so nothing says what they are ` +
+          'a part of',
+      );
+      continue;
+    }
+    if (summed !== block.controls) {
+      faults.push(
+        `the phases of the suite "${suite}" count ${summed} case line(s) between them while the suite itself ` +
+          `printed ${block.controls}: a summary stating the halves would be ${Math.abs(block.controls - summed)} ` +
+          'case line(s) out, in a figure that looks derived',
+      );
+    }
+  }
+  return faults;
+}
+
+/**
  * Everything wrong with a run's own tally of itself. An empty list means
  * nothing is — this is the derivation floor, and it is checked before the
  * summary reads a single number off the tally.
  */
-function tallyFaults(blocks: readonly SuiteBlock[], gutter: ReadonlyMap<string, number>, controls: number): string[] {
+function tallyFaults(
+  blocks: readonly SuiteBlock[],
+  gutter: ReadonlyMap<string, number>,
+  controls: number,
+  parts: readonly SuitePart[] = [],
+): string[] {
   const faults: string[] = [];
   if (blocks.length === 0) faults.push('not one suite was tallied, so this run counted nothing about itself');
   const seen = new Set<string>();
@@ -24058,12 +24142,15 @@ function tallyFaults(blocks: readonly SuiteBlock[], gutter: ReadonlyMap<string, 
         'nobody wrapped looks like',
     );
   }
+  faults.push(...partFaults(blocks, parts));
   return faults;
 }
 
 /** The run counting its own suites, off the lines they print. */
 class RunTally {
   readonly blocks: SuiteBlock[] = [];
+  /** The phases of a suite the summary states separately. Held to `partFaults`. */
+  readonly parts: SuitePart[] = [];
   /** Every gutter word this run has printed, and how often. Read by the floor. */
   readonly gutter = new Map<string, number>();
   private controlLines = 0;
@@ -24106,27 +24193,46 @@ class RunTally {
     return value;
   }
 
+  /**
+   * Run one PHASE of a suite and record what it printed, so the summary can
+   * state a half of a suite without typing the half out (issue #453).
+   *
+   * Called from inside a suite that `of` has already bracketed, so the phase's
+   * lines are counted twice on purpose: once for the suite and once for the
+   * phase. That double count is what `partFaults` reads — a phase that does not
+   * add up to its share of the suite is the only way this can be wrong, and it
+   * is checkable, which a number somebody typed one hop away is not.
+   */
+  partOf<T>(suite: string, phase: string, run: () => T): T {
+    const controls = this.controlLines;
+    const value = run();
+    this.parts.push({ suite, key: `${suite}/${phase}`, controls: this.controlLines - controls });
+    return value;
+  }
+
   /** Every case in this run that looked at something. */
   get total(): number {
     return this.controlLines;
   }
 
   /**
-   * What the summary is allowed to say about one suite.
+   * What the summary is allowed to say about one suite, or about one phase of
+   * one — `diff` and `diff/identity` are both asked for here.
    *
    * 🔒 Throws rather than printing a number nobody produced. An unknown key is
    * the summary describing a suite this run does not have, and a key whose suite
    * printed nothing is the summary counting a hole as coverage.
    */
   countOf(key: string): number {
-    const block = this.blocks.find((candidate) => candidate.key === key);
-    if (block === undefined) {
-      throw new Error(`selftest summary: no suite ran under the key "${key}", so there is no count for it to state`);
+    const counted: { controls: number } | undefined =
+      this.blocks.find((candidate) => candidate.key === key) ?? this.parts.find((candidate) => candidate.key === key);
+    if (counted === undefined) {
+      throw new Error(`selftest summary: no suite or phase ran under the key "${key}", so there is no count for it to state`);
     }
-    if (block.controls === 0) {
+    if (counted.controls === 0) {
       throw new Error(`selftest summary: the suite "${key}" printed no case line, so the summary has nothing to count`);
     }
-    return block.controls;
+    return counted.controls;
   }
 }
 
@@ -24196,8 +24302,13 @@ const SUMMARY_ESCAPES: Record<string, string> = { n: '\n', t: '\t', r: '\r' };
  * mesh-rung clause puts a whole `', + ' + n('mesh-check') + '…'` inside one, and
  * a reader that skipped interpolation bodies wholesale would lose that clause's
  * opening and report it as prose.
+ *
+ * `blankText` blanks the string bodies out of `code` as well as the comments,
+ * which is what the constant scan below needs and what the figure scan must NOT
+ * have: `derivedFiguresAtOpenings` reads `n('key')` out of `code`, and blanking
+ * the quoted key would take the derivation the whole check is looking for.
  */
-function summaryChunks(region: string): { chunks: SummaryChunk[]; code: string } {
+function summaryChunks(region: string, blankText = false): { chunks: SummaryChunk[]; code: string } {
   const chunks: SummaryChunk[] = [];
   // The region with every comment blanked to spaces, offsets untouched. A
   // comment emits nothing, so anything read out of the code — the `n('…')`
@@ -24228,6 +24339,7 @@ function summaryChunks(region: string): { chunks: SummaryChunk[]; code: string }
       }
       if (ch === "'" || ch === '"' || ch === '`') {
         stack.push({ kind: 'text', quote: ch, text: '' });
+        if (blankText) blank(i, i + 1);
         i++;
         continue;
       }
@@ -24245,12 +24357,14 @@ function summaryChunks(region: string): { chunks: SummaryChunk[]; code: string }
     }
     if (ch === '\\') {
       top.text += SUMMARY_ESCAPES[region[i + 1]] ?? region[i + 1];
+      if (blankText) blank(i, i + 2);
       i += 2;
       continue;
     }
     if (ch === top.quote) {
       chunks.push({ text: top.text, end: i });
       stack.pop();
+      if (blankText) blank(i, i + 1);
       i++;
       continue;
     }
@@ -24258,10 +24372,12 @@ function summaryChunks(region: string): { chunks: SummaryChunk[]; code: string }
       chunks.push({ text: top.text, end: i });
       top.text = '';
       stack.push({ kind: 'code', depth: 0 });
+      if (blankText) blank(i, i + 2);
       i += 2;
       continue;
     }
     top.text += ch;
+    if (blankText) blank(i, i + 1);
     i++;
   }
   return { chunks, code: code.join('') };
@@ -24321,7 +24437,11 @@ function endsOnClauseOpening(text: string): boolean {
 function derivedFiguresAtOpenings(code: string, chunks: readonly SummaryChunk[]): { calls: string[]; misplaced: string[] } {
   const calls: string[] = [];
   const misplaced: string[] = [];
-  const pattern = /\bn\('([A-Za-z0-9-]+)'\)/g;
+  // `/` because a phase of a suite is asked for as `diff/identity` (issue
+  // #453). A pattern that did not admit one would not FAULT on the phases — it
+  // would stop seeing them, and `TY10`'s "every derivation sits at an opening"
+  // clause would be checking two fewer things while still printing green.
+  const pattern = /\bn\('([A-Za-z0-9/-]+)'\)/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
     calls.push(match[1]);
@@ -24332,6 +24452,102 @@ function derivedFiguresAtOpenings(code: string, chunks: readonly SummaryChunk[])
     if (!endsOnClauseOpening(before?.text ?? '')) misplaced.push(match[1]);
   }
   return { calls, misplaced };
+}
+
+// ---------------------------------------------------------------------------
+// the figure one hop outside the summary, where the scanner cannot see it (#453)
+// ---------------------------------------------------------------------------
+//
+// `TY10` refuses a digit typed at a clause opening, and that is the whole of
+// what it can see. A figure held in a constant arrives at the same opening
+// through an interpolation — which is EXACTLY the shape a derived figure has —
+// so the scanner reads a hand-written number as one the run produced.
+//
+// Measured on this tree before the check existed: `DIFF_IDENTITY_CONTROLS`, set
+// to 99 over a diff suite that printed 15 case lines of which 6 were identity
+// controls, ran to 568 PASS, 0 FAIL, exit 0, with the summary printing "+ 99
+// diff identity controls". The sibling constant did the same thing before #452
+// removed it.
+//
+// 🔒 The rule is the narrowest one that needs no exception table beside it, and
+// that is why it can be green: a top-level constant whose value is one bare
+// number, which the summary names, and which NOTHING outside the summary reads.
+// Each of those three does work.
+//   - one bare number, because a TABLE is not a figure: `DIFF_CASES.length` and
+//     `RIG_MUTANTS.length` move when the loops over them do, which is a
+//     derivation and not a claim.
+//   - named by the summary, because a constant the summary never mentions is
+//     not a figure the summary states.
+//   - read by nothing else, because a constant a suite also reads is checked BY
+//     that suite: `DIFF_AGNOSTIC_MEASURES` is asserted against the report it
+//     counts, and would go red on its own if it drifted. What is left over is a
+//     number that drives nothing, is compared with nothing, and is nevertheless
+//     printed as a fact about the run.
+//
+// ⚠️ Comments are not readers, for the same reason `TY11` requires a comment
+// quoting a stale figure not to fault: a comment emits nothing. So the readers
+// are counted in the source with comments AND string bodies blanked, and the
+// declaration itself is the one occurrence a lonely constant has left.
+
+/** A `const NAME = …` at the top level of this file, and whether it holds one bare number. */
+interface ModuleConstant {
+  name: string;
+  /** True when the initialiser is a single numeric literal — a figure, not a table. */
+  numeric: boolean;
+}
+
+/**
+ * Every top-level `const` this file declares.
+ *
+ * Column zero is the module scope here: everything else in this file is inside
+ * a function and indented, and the summary's own `const n = …` is indented too,
+ * which is what keeps this from reading the region's locals as declarations.
+ */
+function moduleConstants(source: string): ModuleConstant[] {
+  const found: ModuleConstant[] = [];
+  const pattern = /^const ([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:[^=\n]*)?\s*=\s*([^\n]*)$/gm;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null) {
+    found.push({ name: match[1], numeric: /^-?\d+(?:\.\d+)?;\s*$/.test(match[2]) });
+  }
+  return found;
+}
+
+/** What one pass of the constant scan found. */
+interface ConstantScan {
+  /** Top-level constants declared. Zero means the declaration scan stopped matching. */
+  declared: number;
+  /** Identifiers the summary's own code names. Zero means the region scan stopped matching. */
+  named: number;
+  /** Declared constants the summary names, whether or not they are figures. */
+  referenced: string[];
+  /** The figures: numeric, named by the summary, and read by nothing outside it. */
+  written: string[];
+}
+
+/**
+ * Constants whose only reader is the summary — the figures `TY10` cannot see.
+ *
+ * `from`/`to` bracket the summary's own source inside `source`, the same way
+ * `TY10` brackets it. Both halves are read off ONE walk with string bodies and
+ * comments blanked, so an occurrence counts only where it is code.
+ */
+function summaryOnlyConstants(source: string, from: number, to: number): ConstantScan {
+  const { code } = summaryChunks(source, true);
+  const named = new Set<string>();
+  for (const match of code.slice(from, to).matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)) named.add(match[0]);
+  const outside = code.slice(0, from) + code.slice(to);
+  const declared = moduleConstants(source);
+  const referenced = declared.filter((one) => named.has(one.name));
+  const readOutside = (name: string): number => (outside.match(new RegExp(`\\b${name}\\b`, 'g')) ?? []).length;
+  return {
+    declared: declared.length,
+    named: named.size,
+    referenced: referenced.map((one) => one.name),
+    // ⭐ `<= 1` rather than `=== 0`: the declaration is itself outside the
+    // region and is itself code, so a constant nobody reads still has one.
+    written: referenced.filter((one) => one.numeric && readOutside(one.name) <= 1).map((one) => one.name),
+  };
 }
 
 /**
@@ -24612,6 +24828,126 @@ function runRunTallySuite(live: RunTally): number {
       'so a note ABOUT a stale figure must not read as one',
   );
 
+  // --- TY12: the halves of a suite have to add up to the suite --------------
+  //
+  // What lets the summary state a PART of a suite at all (issue #453). The diff
+  // suite prints 15 case lines and the summary states two figures over them, 6
+  // and 9; before this, the 6 was a constant. Deriving it is only worth
+  // anything if the two halves are held to their whole — otherwise they are two
+  // hand-written numbers that have learned to look derived, which is strictly
+  // worse than the number they replaced.
+  const halves: SuitePart[] = [
+    { suite: 'alpha', key: 'alpha/first', controls: 2 },
+    { suite: 'alpha', key: 'alpha/second', controls: 3 },
+  ];
+  const alphaFive = [block({ key: 'alpha', controls: 5 })];
+  const short = partFaults(alphaFive, [halves[0], { suite: 'alpha', key: 'alpha/second', controls: 2 }]);
+  const doubled = partFaults(alphaFive, [...halves, halves[1]]);
+  const orphaned = partFaults([block({ key: 'beta', controls: 5 })], halves);
+  const liveParts = partFaults(live.blocks, live.parts);
+  say(
+    'TY12_THE_PHASES_OF_A_SUITE_ADD_UP_TO_THE_SUITE_OR_THE_SUMMARY_CANNOT_STATE_ONE',
+    partFaults(alphaFive, halves).length === 0 &&
+      partFaults(alphaFive, []).length === 0 &&
+      short.length === 1 &&
+      short[0].includes('"alpha"') &&
+      short[0].includes('4 case line(s) between them') &&
+      doubled.some((fault) => fault.includes('two phases were tallied')) &&
+      orphaned.length === 1 &&
+      orphaned[0].includes('never wrapped') &&
+      liveParts.length === 0,
+    `two phases that add up to their suite fault in no way, and a suite with no phases at all faults in no way; ` +
+      `one case line short faults — ${short[0] ?? 'nothing'} — a phase bracketed twice faults ` +
+      `(${doubled.find((one) => one.includes('two phases')) ?? 'it did not'}), a phase under a suite nobody wrapped ` +
+      `faults (${orphaned[0] ?? 'it did not'}), and the ${live.parts.length} phase(s) THIS run has bracketed so far ` +
+      `(${live.parts.map((one) => `${one.key}=${one.controls}`).join(', ') || 'none'}) fault ` +
+      (liveParts.length === 0 ? 'in no way' : `in ${liveParts.length} way(s): ${liveParts.join('; ')}`),
+    'the negative controls are the load-bearing half twice over: a floor that faulted on a suite with no phases ' +
+      'would refuse every suite in this file, and one that faulted on halves that do add up would refuse the only ' +
+      'shape it exists to permit. The sum is what makes a half checkable at all — a case line printed inside the ' +
+      'suite and inside no phase is named here, which is `TY05` one level down',
+  );
+
+  // --- TY13: no figure lives in a constant only the summary reads -----------
+  const constants = summarySource === null ? null : summaryOnlyConstants(source, from + SUMMARY_START.length, to);
+  say(
+    'TY13_NO_FIGURE_THE_SUMMARY_STATES_IS_HELD_IN_A_CONSTANT_NOTHING_ELSE_READS',
+    constants !== null && constants.written.length === 0 && constants.declared > 0 && constants.named > 0,
+    constants === null
+      ? 'the summary’s own source was not found, so the constant scan has nothing to read and cannot report a clean one'
+      : `${constants.declared} top-level constant(s) in this file and ${constants.named} identifier(s) in the ` +
+        `summary’s own code, of which the summary names ${constants.referenced.join(', ') || 'none'}; ` +
+        (constants.written.length > 0
+          ? `${constants.written.length} of them is a figure nothing outside the summary reads: ${constants.written.join(', ')}`
+          : 'not one of them is a figure nothing outside the summary reads'),
+    'the half `TY10` cannot reach. It refuses a digit typed at a clause opening, and a constant fills that opening ' +
+      'through an interpolation — the shape a DERIVED figure has — so a hand-written number one hop out reads as ' +
+      'counted: `DIFF_IDENTITY_CONTROLS` set to 99 over a suite that printed 15 lines ran green, 0 FAIL, exit 0. ' +
+      'The two counts are the scanner held against itself, because a declaration scan or a region scan that stopped ' +
+      'matching would report a clean tree over nothing. What is NOT asserted is that the summary still names any ' +
+      'constant at all: a summary that named none would be the best possible state, and a clause requiring one ' +
+      'would go red exactly when this tree got better',
+  );
+
+  // --- TY14: the constant scan planted, and the shapes it must not fault on -
+  //
+  // On a miniature file rather than the real one, for `TY11`'s reason: the real
+  // summary is what the run must keep printing. What the miniatures carry is
+  // the four ways a constant is NOT a figure the summary states by hand — read
+  // by a suite as well, a table rather than a number, read only outside the
+  // summary, and merely spoken about in the summary's prose — beside the two
+  // ways it is.
+  const miniature = (declaration: string, suiteBody: string, clause: string): string =>
+    [
+      declaration,
+      'function aSuite(): number {',
+      `  return ${suiteBody};`,
+      '}',
+      'function main(): void {',
+      `  ${SUMMARY_START}`,
+      `  console.log(\`green — ${clause}\`);`,
+      '}',
+      '',
+      'main();',
+      '',
+    ].join('\n');
+  const scanMiniature = (text: string): ConstantScan => {
+    const at = text.indexOf(SUMMARY_START);
+    return summaryOnlyConstants(text, at + SUMMARY_START.length, text.indexOf(SUMMARY_END, at));
+  };
+  const lonely = scanMiniature(miniature('const PLANTED_FIGURE = 6;', '0', '${PLANTED_FIGURE} controls'));
+  const shared = scanMiniature(miniature('const PLANTED_FIGURE = 6;', 'PLANTED_FIGURE', '${PLANTED_FIGURE} controls'));
+  const table = scanMiniature(miniature('const PLANTED_CASES: number[] = [1, 2, 3];', '0', '${PLANTED_CASES.length} controls'));
+  const noted = scanMiniature(miniature('const PLANTED_FIGURE = 6;', '0 /* PLANTED_FIGURE is the figure */', '${PLANTED_FIGURE} controls'));
+  const elsewhere = scanMiniature(miniature('const PLANTED_FIGURE = 6;', 'PLANTED_FIGURE', "${n('a-suite')} controls"));
+  const spokenOf = scanMiniature(
+    miniature('const PLANTED_FIGURE = 6;', '0', "${n('a-suite')} controls (PLANTED_FIGURE was retired)"),
+  );
+  say(
+    'TY14_A_CONSTANT_ONLY_THE_SUMMARY_READS_FAULTS_WHILE_A_SHARED_ONE_A_TABLE_AND_A_MENTION_DO_NOT',
+    lonely.written.join() === 'PLANTED_FIGURE' &&
+      noted.written.join() === 'PLANTED_FIGURE' &&
+      shared.written.length === 0 &&
+      table.written.length === 0 &&
+      table.referenced.includes('PLANTED_CASES') &&
+      elsewhere.written.length === 0 &&
+      elsewhere.referenced.length === 0 &&
+      spokenOf.written.length === 0 &&
+      spokenOf.referenced.length === 0,
+    `a miniature whose only reader of \`PLANTED_FIGURE\` is its summary faults on [${lonely.written.join(', ')}], and ` +
+      `so does the same file with the name in a COMMENT beside a suite [${noted.written.join(', ')}]; the same ` +
+      `constant read by the suite as well faults in no way (${shared.written.length} figure(s)), a TABLE the ` +
+      `summary takes a length off faults in no way while still being seen (${table.referenced.join(', ')}), a ` +
+      `constant the summary never names faults in no way (${elsewhere.referenced.length} referenced), and a ` +
+      `constant merely NAMED IN THE PROSE faults in no way (${spokenOf.referenced.length} referenced)`,
+    'the prose case is the sharpest of the negatives and the reason the scan blanks string bodies: that miniature ' +
+      'has a numeric constant nothing outside the summary reads, and the ONLY thing keeping it green is that the ' +
+      'mention is text rather than code. A scan that read the summary as characters would fault on it, need an ' +
+      'exception table, and become the defect it gates for. The comment case is the other side of the same rule — ' +
+      'a comment emits nothing, so mentioning a constant is not reading it, and a figure must not be able to hide ' +
+      'behind a note about itself',
+  );
+
   return bad;
 }
 
@@ -24687,7 +25023,7 @@ function main(): void {
   bad += tally.of('packer', runPackerSuite);
   const atlasReaderBad = tally.of('atlas-reader', runAtlasReaderSuite, ranIt);
   if (atlasReaderBad !== null) bad += atlasReaderBad;
-  const diffBad = tally.of('diff', runDiffSuite, ranIt);
+  const diffBad = tally.of('diff', () => runDiffSuite(tally), ranIt);
   if (diffBad !== null) bad += diffBad;
   const boneDistBad = tally.of('bonedist', runBoneDistSuite, ranIt);
   if (boneDistBad !== null) bad += boneDistBad;
@@ -24708,7 +25044,7 @@ function main(): void {
   // printing green: a suite that ran and measured nothing, a suite call nobody
   // wrapped, a section opened twice or not at all, a gutter word the scan does
   // not recognise, a scan that matched nothing. `runRunTallySuite` plants each.
-  const floorFaults = tallyFaults(tally.blocks, tally.gutter, tally.total);
+  const floorFaults = tallyFaults(tally.blocks, tally.gutter, tally.total, tally.parts);
   if (floorFaults.length > 0) {
     console.error('rigc selftest: this run cannot account for itself — that is not a pass, it is an empty gate');
     for (const fault of floorFaults) console.error(`  ${fault}`);
@@ -24719,12 +25055,16 @@ function main(): void {
     process.exit(1);
   }
   /**
-   * How many cases a suite took, asked of the run rather than remembered.
+   * How many cases a suite took — or one phase of one, as `diff/identity` —
+   * asked of the run rather than remembered.
    *
-   * ⚠️ Four figures below still do NOT go through this, and they are marked
-   * where they sit: they disagree with what their suites printed, so wiring them
-   * up would change the summary rather than derive it. Issue #439 reports the
-   * four and stops there; deciding them is a ruling, not a refactor.
+   * ⚠️ This said "four figures below still do NOT go through this" until issue
+   * #453 closed the last of them, and it went on saying it after #452 had taken
+   * three: the note about hand-written figures was itself a hand-written figure.
+   * There are now none, which is the precondition `TY13` needed — a scan for a
+   * constant nobody but the summary reads is only green once the tree has no
+   * such constant, and until then it would have needed an exception table
+   * naming the one it found.
    */
   const n = (key: string): number => tally.countOf(key);
   const corpus =
@@ -24734,8 +25074,8 @@ function main(): void {
           .filter(Boolean)
           .join(', ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
-      : `, + ${DIFF_IDENTITY_CONTROLS} diff identity controls (name-matched, name-agnostic and reported, over both a ` +
-        `mesh-free and a mesh-carrying fixture), + ${DIFF_CASES.length} diff measure controls, ` +
+      : `, + ${n('diff/identity')} diff identity controls (name-matched, name-agnostic and reported, over both a ` +
+        `mesh-free and a mesh-carrying fixture), + ${n('diff/measure')} diff measure controls, ` +
         '+ ' + n('check') + ' check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +
@@ -24773,7 +25113,13 @@ function main(): void {
     'on their sum: a suite that ran and measured nothing is named even when the total GREW around it, case lines ' +
     'printed outside every wrapped suite are named, a block over two sections or none is named, a suite that ' +
     'skipped in silence is named, and a summary asking for a suite this run does not have — or for one that ' +
-    'measured nothing — is refused rather than answered with whatever the last edit left behind)';
+    'measured nothing — is refused rather than answered with whatever the last edit left behind. Then the two ' +
+    'issue #453 left standing. A suite may now be stated in PHASES, counted off the same case lines, and the ' +
+    'phases of a suite are required to add up to the suite: two derived halves that do not are two hand-written ' +
+    'numbers wearing a derivation, which is worse than the number they replaced. And the figure the scan above ' +
+    'cannot see at all — one held in a constant, which reaches a clause opening through an interpolation and is ' +
+    'therefore shaped exactly like a number the run produced — is refused by reading who else in this file reads ' +
+    'that constant, a table and a mention in prose deliberately not counting as readers)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'

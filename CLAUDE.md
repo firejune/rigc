@@ -274,8 +274,8 @@ Three rules hold that together and none of them is optional:
   same count, so adding a control to a wrapped suite needs no edit to it.
 - **A suite's figure counts every case it prints, its own positive control
   included** (issue #451). The tree answered this both ways — four suites counted
-  their control and two did not — so no single derivation reproduced the summary
-  and the last four figures had to stay literals. The rule is chosen for one
+  their control and two did not — so for a while no single derivation reproduced
+  the summary and four figures stood as literals. The rule is chosen for one
   reason: the tally can only count printed lines, so a convention that subtracts
   something the run printed cannot be derived at all and needs a hand-kept
   exception table beside it, which is the "✅ applied" antipattern this repository
@@ -286,6 +286,32 @@ Three rules hold that together and none of them is optional:
   say nothing at all. Six, seventeen and twenty-nine were each a reading of it and
   none of them was the number. Whether every suite *has* one is an invariant rather
   than a figure, and nothing enforces it yet.
+- **A suite may be stated in halves, provided the halves are counted and sum to
+  the suite** (issue #453). The `diff` clause states 6 identity controls and 9
+  measures over one suite that prints 15, and no whole-suite count reproduces
+  either half — which is how the last hand-written figure survived #452: it
+  reached the summary through an interpolation, so the scanner that refuses a
+  typed digit read it as derived. Raising it to 99 produced a **green run, exit
+  0**, printing a figure its suite contradicts.
+
+  ⇒ A phase is bracketed the way a suite is and counted off the lines it printed,
+  🔒 and the clause that makes the split honest is the floor: **phases that do not
+  add up to their suite are a fault**, because two derived halves that need not
+  reconcile are two hand-written numbers wearing a derivation. The near-miss
+  direction is the load-bearing one — a control weakened to catch only
+  over-counting was measured green on a suite one case short.
+
+  ⭐ **With no literal left, the check #452 could not build is built** (`TY13`): a
+  top-level constant holding one bare number, named by the summary's code, that
+  nothing outside the summary reads. It needed no exception table only because
+  the tree had none left to except — and on the run where it names a planted
+  constant, `TY10` prints PASS on the same file, which is the card's whole thesis
+  in one run.
+
+  ⚠️ Its rejected sibling is worth keeping: a "still matching" clause of the form
+  *the summary must name at least one module constant* **goes red exactly when
+  the tree improves**, since naming none is the ideal end state. A two-sided
+  check has to be two-sided about the right thing.
 
 `--cuts <cuts.json>` (or `RIGC_CUTS=<path>`) adds an **extra suite**: every cut in
 that table is compiled, gated and compiled again for `A18`. It is a positive
