@@ -20323,16 +20323,30 @@ function transcriptHeadAnchored(body: string[], heads: Set<string>): boolean {
 //     four `"generator"` lines are byte-identical, so no `from` selects one)
 //     while the third needs the ART edited. Neither is a wording away.
 //  2. **`docs/` quotes refusals too, and this scan is `gallery/` only.** Swept:
-//     eight fenced refusal quotes live outside the gallery — `README.md`,
+//     NINE fenced refusal quotes live outside the gallery — `README.md`,
 //     `docs/AUTHORING.md`, `docs/FACE.md` ×2, `docs/INGEST.md` ×3,
-//     `docs/RIGGING.md`. **Not one is reachable by this grammar**, and the
-//     reason is the same for all eight: each comes from a spec this repository
-//     does not contain (`detached.rig.json`, a `turn` probe, `hull`,
-//     `pendulum-rig`), and most carry an ellipsis or an elided path besides. So
-//     widening the scan to `docs/` would reach zero of them while trapping all
-//     eight, whose only remedy would then be eight declarations — a bypass with
-//     a badge on. Lifting this needs those probe rigs to live in the tree, which
-//     is the `gallery/refusals/` cost issue #429 flags and does not decide.
+//     `docs/RIGGING.md`, and `bench/runs/2026-08-23-rung6-1/LOOP.md`.
+//
+//     ⚠️ This paragraph said EIGHT and said none of them was reachable, and
+//     both halves were wrong. Measured 2026-09-11: the ninth is a landed run
+//     record, sealed against editing by the ruling that seals every measure in
+//     `bench/runs/` (#181), so the summarise remedy is forbidden there rather
+//     than merely unattempted. And **three of the other eight do reproduce**
+//     — `README.md`'s buoy spec is spelled out in `README.md` itself, plates
+//     and all; `docs/INGEST.md`'s `A00` quote reproduces byte for byte from a
+//     command stated in the fence above it; and `docs/FACE.md`'s `A39` quote
+//     reproduces from a script over `gallery/portrait`, which is how it was
+//     caught printing a triangle index the tool does not.
+//
+//     What holds is the rest: five come from specs this repository does not
+//     contain (`detached.rig.json`, `pendulum-rig`, and a `turn` probe that
+//     exists only as a generator inside this file, invocable from nowhere a
+//     reader can reach), and most carry an ellipsis or an elided path besides.
+//     Widening the scan would trap all nine while reaching three, whose remedy
+//     would then be six declarations — a bypass with a badge on. The three
+//     reachable ones want a second grammar shape rather than a declaration:
+//     a command stated in a fence ABOVE the block, which `docs/INGEST.md`
+//     already satisfies. Issue #441 carries the split.
 //  3. **A refusal quoted in running prose is out, and not for a reason this
 //     rule could fix.** `docs/AUTHORING.md` quotes the `loop: true` wrap refusal
 //     inside italics mid-sentence, with two backticks the author added around

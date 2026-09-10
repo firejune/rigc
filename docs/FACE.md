@@ -1242,7 +1242,7 @@ by name, on both its keys, with the triangles listed:
 ```
 FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform head/head key 1
       (t=0.6200000047683716s): 8 of 32 triangle(s) reverse winding — triangle 0
-      [0,5,6] 1890.000 -> -544.548px²; …
+      [0,15,16] 1890.000 -> -544.548px²; …
 ```
 
 and builds (a) and the good one both still PASS it, because **an inverted band is
