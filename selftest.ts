@@ -19507,6 +19507,350 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR11: a byte that makes a text file binary to a text tool (#465) ----
+  //
+  // ⭐ **The doctrine's opening sentence, arriving in the toolchain instead of
+  // in the output.** `cli.ts` carried two literal NUL bytes as separators inside
+  // composite map keys — valid UTF-8, correct at runtime, and invisible: a grep
+  // over the file that owns rigc's report text matched nothing and exited 1,
+  // which is the same output, and the same exit code, as an absence. It had
+  // already produced a wrong conclusion in the tracker: several searches came
+  // back empty while investigating #440 and were written up as "the breadcrumbs
+  // appear in no `.ts` file". They were two screens further down the file that
+  // was searched.
+  //
+  // 🔸 **What is measured here rather than assumed, because the tools disagree
+  // and the disagreement is the whole defect.** On this tree, with the byte
+  // planted back in:
+  //
+  //  - `git grep`, `git grep -I` and `git diff` all read the file as TEXT and
+  //    found the matches. Git's binary test reads the first 8000 bytes only, and
+  //    the byte was at 43961.
+  //  - `git ls-files --eol` said `-text`, because that path scans the whole
+  //    blob. Two answers from one program, and the one an agent's search runs
+  //    through is the other one.
+  //  - `git check-attr` said `unspecified` for every path, here and for a PNG:
+  //    this repository has no `.gitattributes` and never has. A criterion built
+  //    on one would be a list of exceptions with git's name on it.
+  //  - The `grep` an agent actually runs skipped the file in silence.
+  //
+  // ⇒ **Git's own answer is therefore the wrong criterion**, and it is the one
+  // the issue proposed: a NUL a few thousand bytes earlier makes git call the
+  // file binary, which would take it out of the scan altogether — the gate would
+  // go quiet on a worse instance of the same defect. The criterion here is the
+  // one that does not have that hole and is still not a list: **a file is text
+  // when its whole content decodes as UTF-8.** A NUL is valid UTF-8, so a source
+  // file carrying one is still text and still reported; a PNG is not valid
+  // UTF-8 at any offset. Measured over all 2378 tracked files, the two
+  // partitions agree exactly — 953 text, 1425 not — so this is git's own line,
+  // drawn without git's blind spot.
+  //
+  // 🔒 Git is kept as the SECOND OPINION rather than as the criterion: any file
+  // the two partitions disagree about is reported by name, in both directions.
+  // That is what stops the criterion from being a private opinion. A text file
+  // whose bytes are not UTF-8 would otherwise be skipped in silence, and a
+  // "binary" that decodes cleanly would be scanned as source.
+  //
+  // ⚠️ The negative half is the load-bearing one and it is a real binary out of
+  // this tree, not a fabricated one: without it the check is "every file is
+  // binary", which passes on a tree of nothing but images.
+  {
+    type Sighting = { path: string; offset: number; line: number; column: number; source: string; size: number; total: number };
+    type Disagreement = { path: string; text: boolean };
+    type OpaqueScan = {
+      /** Files whose bytes this scan actually read. The floor is that it is not zero. */
+      read: number;
+      /** Of those, the ones the criterion calls text, and the ones it does not. */
+      text: number;
+      opaque: number;
+      /** Listed and not readable. Reported, never skipped. */
+      unread: string[];
+      /** Text files carrying the byte. */
+      sightings: Sighting[];
+      /** Files git and the criterion partition differently. */
+      disagreements: Disagreement[];
+      /** git declining to answer, which must not read as a clean tree. */
+      gitBroke: string | null;
+    };
+
+    /**
+     * The criterion, spelled once: a file is TEXT when its whole content decodes
+     * as UTF-8. Not a list, not an extension, not `.gitattributes`.
+     */
+    const readsAsText = (bytes: Uint8Array): boolean => {
+      try {
+        new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    /** The detector: the byte every text tool in this toolchain stops at. */
+    const OPAQUE = 0x00;
+    const NEWLINE = 0x0a;
+
+    const sightingOf = (path: string, bytes: Buffer): Sighting | null => {
+      const offset = bytes.indexOf(OPAQUE);
+      if (offset < 0) return null;
+      let line = 1;
+      let start = 0;
+      for (let i = 0; i < offset; i++) {
+        if (bytes[i] === NEWLINE) {
+          line++;
+          start = i + 1;
+        }
+      }
+      let end = bytes.indexOf(NEWLINE, offset);
+      if (end < 0) end = bytes.length;
+      // How many there are, not just where the first one is: a message naming
+      // one of two would be repaired once and read as finished, which is how
+      // `cli.ts` came to carry a second copy of the same separator.
+      let total = 0;
+      for (let i = offset; i >= 0; i = bytes.indexOf(OPAQUE, i + 1)) total++;
+      return {
+        path,
+        offset,
+        line,
+        column: offset - start + 1,
+        size: bytes.length,
+        total,
+        // The byte rendered as the escape it should have been, so the message
+        // shows the repair rather than describing it.
+        source: bytes.toString('utf8', start, end).replace(/\u0000/g, '\\0').trim().slice(0, 110),
+      };
+    };
+
+    /**
+     * Which of these files git reads as TEXT, answered in `dir`. Git declining
+     * is returned rather than thrown: silence read as a clean tree is the
+     * failure this case exists for.
+     */
+    const askGit = (dir: string, args: readonly string[]): { text: Set<string>; broke: string | null } => {
+      // A user's global excludes file would otherwise decide some of this, and a
+      // machine that has one would measure something this repository does not ship.
+      const isolated = ['-c', `core.excludesFile=${join(dir, 'no-such-global-excludes')}`];
+      const probe = spawnSync('git', [...isolated, ...args], {
+        cwd: dir,
+        encoding: 'buffer',
+        maxBuffer: 256 * 1024 * 1024,
+      });
+      // Exit 1 means "it matched nothing", which is an answer.
+      if (probe.error !== undefined || (probe.status !== 0 && probe.status !== 1)) {
+        return {
+          text: new Set(),
+          broke:
+            `git could not say which files it reads as text in ${dir} ` +
+            `(${probe.error?.message ?? `exit ${String(probe.status)}: ${probe.stderr.toString('utf8').trim()}`}); ` +
+            'this case fails closed rather than reading that as a clean tree',
+        };
+      }
+      return {
+        text: new Set(probe.stdout.toString('utf8').split('\u0000').filter((entry) => entry !== '')),
+        broke: null,
+      };
+    };
+
+    const scanDir = (dir: string, universe: readonly string[], gitArgs: readonly string[]): OpaqueScan => {
+      const { text: gitText, broke } = askGit(dir, gitArgs);
+      const out: OpaqueScan = { read: 0, text: 0, opaque: 0, unread: [], sightings: [], disagreements: [], gitBroke: broke };
+      for (const rel of universe) {
+        let bytes: Buffer;
+        try {
+          bytes = readFileSync(join(dir, rel));
+        } catch (err) {
+          // `readFileSync` throws ENOTDIR as readily as ENOENT when an ancestor
+          // of the path is not a directory, and a crash is not a report.
+          out.unread.push(`"${rel}" is listed in the tree and this scan could not read it: ${(err as Error).message}`);
+          continue;
+        }
+        out.read++;
+        const text = readsAsText(bytes);
+        if (text) out.text++;
+        else out.opaque++;
+        if (broke === null && text !== gitText.has(rel)) out.disagreements.push({ path: rel, text });
+        if (!text) continue;
+        const sighting = sightingOf(rel, bytes);
+        if (sighting !== null) out.sightings.push(sighting);
+      }
+      return out;
+    };
+
+    /**
+     * A message is a thing somebody reads. One or two files is the real shape of
+     * this fault; thousands only happens when the criterion itself is wrong, and
+     * there the first few plus the count say everything the whole list would.
+     */
+    const firstFew = (rows: readonly string[], what: string): string[] =>
+      rows.length <= 12 ? [...rows] : [...rows.slice(0, 12), `…and ${rows.length - 12} more ${what}`];
+
+    const faultsOf = (scan: OpaqueScan): string[] => [
+      // The floor is an entry here rather than a bare conjunct in the verdict, so
+      // a planted run's detail names what went wrong instead of reading clean.
+      ...(scan.read === 0
+        ? ['not one file was read, so every clause below was measured against nothing and this scan cannot say a tree is clean']
+        : []),
+      ...(scan.gitBroke === null ? [] : [scan.gitBroke]),
+      ...firstFew(scan.unread, 'unreadable'),
+      ...firstFew(
+        scan.sightings.map(
+          (hit) =>
+            `${hit.path} reads as text end to end (${hit.size} bytes, valid UTF-8) and carries ${hit.total} literal ` +
+            `NUL(s), the first at byte ${hit.offset}, line ${hit.line} column ${hit.column}: \`${hit.source}\`. Write ` +
+            'each as an escape — `\\0` or `\\u0000` — and the string value is identical while the file stops being ' +
+            'binary to a text tool. As a raw byte, a search over this file matches nothing and exits 1, which is the ' +
+            'same output as an absence',
+        ),
+        'text file(s) carrying the byte',
+      ),
+      ...firstFew(
+        scan.disagreements.map((row) =>
+          row.text
+            ? `${row.path} decodes as UTF-8 end to end and git reads it as BINARY: a byte inside the window git tests ` +
+              'makes it so, and a criterion taken from git would have dropped this file out of the scan instead of ' +
+              'reporting it'
+            : `${row.path} does not decode as UTF-8 and git reads it as TEXT: a text tool will search it and this ` +
+              'criterion will not, so the file is unscanned by exactly the check that claims to cover it',
+        ),
+        'file(s) the two partitions read differently',
+      ),
+    ];
+
+    // The live tree. `git ls-files` is the universe and git's own `-I` partition
+    // is the second opinion; both are asked of the repository this file sits in.
+    const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+    const treeFault =
+      listed.error !== undefined || listed.status !== 0
+        ? `git could not list the tracked files (${listed.error?.message ?? `exit ${String(listed.status)}: ${listed.stderr.toString('utf8').trim()}`})`
+        : null;
+    const tracked = treeFault === null ? listed.stdout.toString('utf8').split('\u0000').filter((entry) => entry !== '') : [];
+    const liveScan = scanDir(root, tracked, ['grep', '-I', '-l', '-z', '-e', '']);
+
+    // The controls, planted in a throwaway directory out of THIS tree's own
+    // files, so no shape below is a fabricated stand-in and no offset is a
+    // literal. The victims are the largest file on each side of the criterion:
+    // the biggest text file is the one long enough for git to still read the
+    // planted byte's file as text, which is the silent shape, and the biggest
+    // non-text file is a real binary rather than an imitation of one.
+    const biggestOf = (want: boolean): string | null => {
+      let best: { rel: string; size: number } | null = null;
+      for (const rel of tracked) {
+        let bytes: Buffer;
+        try {
+          bytes = readFileSync(join(root, rel));
+        } catch {
+          continue;
+        }
+        if (readsAsText(bytes) !== want) continue;
+        const size = bytes.length;
+        if (best === null || size > best.size) best = { rel, size };
+      }
+      return best?.rel ?? null;
+    };
+    const textVictim = biggestOf(true);
+    const opaqueVictim = biggestOf(false);
+
+    const controlFaults: string[] = [];
+    let controlNote = '';
+    if (textVictim === null) {
+      controlFaults.push('no tracked file reads as text, so the red-first plant had nothing to aim at');
+    } else {
+      const dir = mkdtempSync(join(tmpdir(), 'rigc-opaque-'));
+      try {
+        const source = readFileSync(join(root, textVictim));
+        // ① the same file, untouched: the positive control, reported in no way.
+        writeFileSync(join(dir, 'pristine.txt'), source);
+        // ② the byte at the END of it — as deep as this tree can put one, which
+        //    is the shape git still reads as text and a search still goes silent
+        //    over. This is issue #465 replayed on a real file at a real offset.
+        writeFileSync(join(dir, 'deep.txt'), Buffer.concat([source, Buffer.from([OPAQUE])]));
+        // ③ the byte at the FRONT of it: the instance a criterion taken from git
+        //    would have dropped, so it has to be reported AND to disagree.
+        writeFileSync(join(dir, 'front.txt'), Buffer.concat([Buffer.from([OPAQUE]), source]));
+        // ④ a real binary out of this tree: reported in no way. 🔒 the negative
+        //    half, and the one the whole case rests on — without it the check
+        //    is "every file is binary", which passes on a tree of images.
+        //
+        //    ⚠️ It FALLS BACK rather than faulting when the tree has no binary
+        //    in it. Faulting there would be a clause attached to the wrong
+        //    thing: moving the reference frames out of git is a repository
+        //    improvement, and it must not turn this case red. What the clause
+        //    needs is a file that does not decode as UTF-8, which a real one
+        //    supplies with more fidelity and a synthesised one supplies just as
+        //    validly; which was used is printed either way. The live tree's own
+        //    figure below is the measurement that says how many real ones were
+        //    read and excluded.
+        if (opaqueVictim !== null) copyFileSync(join(root, opaqueVictim), join(dir, 'opaque.bin'));
+        else writeFileSync(join(dir, 'opaque.bin'), Buffer.from([0xff, 0xfe, OPAQUE, 0xff]));
+        const opaqueName = opaqueVictim ?? 'four bytes no tracked file supplied, because this tree has no binary in it';
+
+        const planted = scanDir(dir, ['pristine.txt', 'deep.txt', 'front.txt', 'opaque.bin'], [
+          'grep', '--no-index', '-I', '-l', '-z', '-e', '',
+        ]);
+        const named = planted.sightings.map((hit) => hit.path).sort();
+        const differed = planted.disagreements.map((row) => row.path).sort();
+        const deep = planted.sightings.find((hit) => hit.path === 'deep.txt');
+        if (planted.gitBroke !== null) controlFaults.push(planted.gitBroke);
+        if (planted.unread.length > 0) controlFaults.push(...planted.unread);
+        if (planted.read !== 4) controlFaults.push(`the planted directory read ${planted.read} of its 4 files`);
+        if (named.join(', ') !== 'deep.txt, front.txt') {
+          controlFaults.push(
+            `the byte planted at the end of \`${textVictim}\` and at the front of it had to be reported and nothing ` +
+              `else had to be — the untouched copy and the binary \`${opaqueName}\` are the two halves that ` +
+              `keep this from being a check that reports everything — and instead the reported set was ` +
+              `[${named.join(', ') || 'nothing at all'}]`,
+          );
+        }
+        if (differed.join(', ') !== 'front.txt') {
+          controlFaults.push(
+            'git had to read the deep plant as TEXT and the front plant as BINARY — that difference is why the ' +
+              `criterion here is not git's — and instead the files the two partitions disagreed about were ` +
+              `[${differed.join(', ') || 'none of them'}]`,
+          );
+        }
+        if (deep !== undefined && deep.offset !== source.length) {
+          controlFaults.push(`the deep plant was reported at byte ${deep.offset} and it was written at ${source.length}`);
+        }
+        // ⑤ the floor, seen to fire: a scan that reads nothing must not report a
+        //    clean tree.
+        if (faultsOf(scanDir(dir, [], ['grep', '--no-index', '-I', '-l', '-z', '-e', ''])).length === 0) {
+          controlFaults.push(
+            'a scan given no files at all came back clean, so a scan that stopped finding files would go quiet ' +
+              'rather than red',
+          );
+        }
+        controlNote =
+          `the byte planted at both ends of \`${textVictim}\` (${source.length} bytes, the largest text file in the ` +
+          `tree) is reported at byte ${source.length} and at byte 0, git reads the first of those as text and the ` +
+          `second as binary, an untouched copy and \`${opaqueName}\` are reported in no way, and a scan of nothing ` +
+          'faults on its floor';
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    const probes = [
+      ...(treeFault === null ? [] : [treeFault]),
+      ...faultsOf(liveScan),
+      ...controlFaults,
+    ];
+    say(
+      'CUR11_NO_TRACKED_FILE_THAT_READS_AS_TEXT_CARRIES_A_BYTE_THAT_MAKES_IT_BINARY',
+      probes.length === 0,
+      probes.length === 0
+        ? `${liveScan.read} tracked file(s) read — ${liveScan.text} decode as UTF-8 end to end and ${liveScan.opaque} ` +
+          `do not — and not one of the ${liveScan.text} carries a NUL. Git partitions the same ${liveScan.read} the ` +
+          `same way, with no file either of them reads differently. The controls: ${controlNote}`
+        : probes.join('\n          '),
+      'a raw NUL two screens into `cli.ts` (#465) made every search over the file that owns rigc\'s report text come ' +
+        'back empty with exit 1 — indistinguishable from an absence, and already the source of one wrong conclusion ' +
+        'in the tracker (#440). The criterion for "text" is the hard half and it must not be a list: git\'s own ' +
+        'answer looks like one and is not usable, because git tests the first 8000 bytes only and would have dropped ' +
+        'this very file out of the scan had the byte been earlier. UTF-8 validity has no such window, and git is kept ' +
+        'beside it as a second opinion so a disagreement is named rather than silently deciding which files get read',
+    );
+  }
+
   return bad;
 }
 

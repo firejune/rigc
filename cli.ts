@@ -919,7 +919,7 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
   // hiding the two frames exist to prevent.
   const rollups = new Map<string, { animation: string; label: string }>();
   for (const key of survey.keys) {
-    rollups.set(`${key.animation} ${key.reach.slider ?? ''}`, {
+    rollups.set(`${key.animation}\0${key.reach.slider ?? ''}`, {
       animation: key.animation,
       label: key.reach.kind === 'slider' ? `${key.animation} via ${key.reach.slider}` : key.animation,
     });
@@ -929,7 +929,7 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
     // the same two counts and A39 reads none of a key that draws nothing, nor of
     // one at a time no dial selects. The ones it left out get their own line
     // rather than a silence (issues #401, #407).
-    const mine = survey.keys.filter((k) => `${k.animation} ${k.reach.slider ?? ''}` === id);
+    const mine = survey.keys.filter((k) => `${k.animation}\0${k.reach.slider ?? ''}` === id);
     const unreachable = mine.filter((k) => k.dial?.unreachable === true);
     const keys = mine.filter((k) => k.dial?.unreachable !== true && k.draw.blank === null);
     const blank = mine.filter((k) => k.dial?.unreachable !== true && k.draw.blank !== null);
