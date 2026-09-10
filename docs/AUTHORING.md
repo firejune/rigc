@@ -2736,7 +2736,7 @@ deform  (what each key does to the geometry — figures with names, never a bar;
 | `stretch` | the two singular values of the map from the cleared triangle to the deformed one — the worst stretch and the worst squash the **drawing** takes. `σ₁·σ₂ = \|area ratio\|`, so the two rows are two readings of one map and cannot disagree |
 | `winding` | triangles whose winding survived, and how many the key pinched onto zero area. A fold says so and points at `A39` |
 | the `BETWEEN` line | a fold at a time **no key lands on** (§4.11.3): the two keys it lies between, the time, the segment's curve kind, and how far along the interpolation it is. Present only where one was found |
-| `WORST` | per animation: the worst key by each quantity, then the reversal and collapse totals over every key, then how many spans between keys were scanned and what the scan found |
+| `WORST` | per animation **and per frame**: the worst key by each quantity, then the reversal and collapse totals over every key, then how many spans between keys were scanned and what the scan found. Each further line ends with a breadcrumb naming the `A39` reading that counts it — keys that draw no pixels (`deformKeysNotDrawn`, below), keys at a time no dial selects (`deformKeysUnreachable`, §4.11.4), and a dial the skeleton and the probe disagree about (`deformDialsDisagreed`, §4.11.4) |
 
 📌 **The frame is the posed one, and the denominator is 1.000 by definition.**
 Both sides of every comparison are taken at the key's own time with the animation
@@ -3004,6 +3004,21 @@ deformDialsDisagreed=1 deformDialDisagreed=dial|artifact:knob.x@2.321e-8|reaches
   nothing about what `A39` looked at.
 - A **tie** never carries `probe:`, `reaches:` or `outside:`, and never counts as a
   disagreement. There is one belief there, not two.
+
+**And `explain`'s rollup carries it too, with the breadcrumb its neighbours have**
+([#440](https://github.com/firejune/rigc/issues/440)). The per-key `frame` lines
+say it once each; the rollup says it once per animation, and ends by naming the
+two readings a `build` prints it under — because they differ by one letter, and a
+breadcrumb naming only one would send a reader to grep for the other:
+
+```
+  ..                     1 dial(s) the skeleton and the probe disagree about: the skeleton reads knob.x and the probe drives knob.y, 2 key time(s) outside what the skeleton's own field reaches  <- A39 counts them as deformDialsDisagreed and spells them out as deformDialDisagreed
+```
+
+The count after `outside` is the length of the stats line's own `outside:` list,
+and `deformDialsDisagreed` / `deformDialDisagreed` are checked against the keys
+`A39` really printed rather than restated — `DW34`. An agreed dial adds no line
+(`DW35`) and a **tie** is never rolled up as a disagreement (`DW36`).
 
 ⛔ **None of it refuses a build**, and the reason is measured rather than chosen.
 The field the survey drives is the largest response the probe found, so its reach

@@ -917,9 +917,37 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
   // animation are two frames and two rollups: merging them would average a fold
   // one dial reaches into a run of keys another one is clean over, which is the
   // hiding the two frames exist to prevent.
+  // 🔒 ONE derivation of a rollup's identity, read by every filter below.
+  //
+  // ⚠️ It was spelled three times and one of them drifted. The two key filters
+  // separate animation from slider with a NUL; the span filter used a SPACE, so
+  // its `=== id` never matched on any rig and `spans` was always empty — the
+  // "N span(s) … scanned" line silently stopped printing everywhere, taking with
+  // it the one thing issue #403 added it to say: that the scan RAN and found
+  // nothing, as opposed to never having run. A dead branch is the same silence
+  // this tool exists to convert into a named failure, and it survived because
+  // the identity was a literal at each site rather than a derivation (#440).
+  const rollupId = (animation: string, slider: string | null): string => `${animation}\u0000${slider ?? ''}`;
+  /**
+   * The readings A39 puts on its stats line for the three things this rollup
+   * reports — each spelled ONCE here and nowhere else in this file.
+   *
+   * 🔒 Checked rather than derived, and the difference is forced: `src/validate.ts`
+   * sets these on a `Record<string, number | string>`, so there is no type to take
+   * a name off and no constant to import. So they are spelled here and a control
+   * compiles a rig that triggers each one, then asserts the breadcrumb names a
+   * reading A39 really printed — two independent derivations compared, which is
+   * the shape `CUR07` uses for the same reason.
+   */
+  const A39_COUNTS = {
+    notDrawn: 'deformKeysNotDrawn',
+    unreachable: 'deformKeysUnreachable',
+    dialsDisagreed: 'deformDialsDisagreed',
+    dialDisagreed: 'deformDialDisagreed',
+  } as const;
   const rollups = new Map<string, { animation: string; label: string }>();
   for (const key of survey.keys) {
-    rollups.set(`${key.animation}\0${key.reach.slider ?? ''}`, {
+    rollups.set(rollupId(key.animation, key.reach.slider), {
       animation: key.animation,
       label: key.reach.kind === 'slider' ? `${key.animation} via ${key.reach.slider}` : key.animation,
     });
@@ -929,7 +957,7 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
     // the same two counts and A39 reads none of a key that draws nothing, nor of
     // one at a time no dial selects. The ones it left out get their own line
     // rather than a silence (issues #401, #407).
-    const mine = survey.keys.filter((k) => `${k.animation}\0${k.reach.slider ?? ''}` === id);
+    const mine = survey.keys.filter((k) => rollupId(k.animation, k.reach.slider) === id);
     const unreachable = mine.filter((k) => k.dial?.unreachable === true);
     const keys = mine.filter((k) => k.dial?.unreachable !== true && k.draw.blank === null);
     const blank = mine.filter((k) => k.dial?.unreachable !== true && k.draw.blank !== null);
@@ -964,7 +992,7 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
         `  ..      ${keys.length ? ''.padEnd(label.length) : label}  ${blank.length} key(s) draw no pixels ` +
           `at their own time and are read for no winding, carrying ` +
           `${blank.reduce((n, k) => n + k.reversed.length, 0)} reversed triangle(s) nothing gates  <- A39 counts ` +
-          'them as deformKeysNotDrawn',
+          `them as ${A39_COUNTS.notDrawn}`,
       );
     }
     if (unreachable.length) {
@@ -972,17 +1000,42 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
         `  ..      ${keys.length || blank.length ? ''.padEnd(label.length) : label}  ${unreachable.length} key(s) ` +
           'at a time no dial selects, measured in the frame the runtime lands on instead and read for no winding, ' +
           `carrying ${unreachable.reduce((n, k) => n + k.reversed.length, 0)} reversed triangle(s) nothing gates ` +
-          ' <- A39 counts them as deformKeysUnreachable',
+          ` <- A39 counts them as ${A39_COUNTS.unreachable}`,
+      );
+    }
+    // ⚠️ The dial rigc's two halves disagree about (issues #427, #440). It is a
+    // property of the SLIDER and not of any one key, so it is placed by the
+    // rollup's own identity rather than by a key filter — and it is REPORTED,
+    // never gated: A39 refuses nothing for it, because a disagreement can pose
+    // every frame correctly. Both readings are named because they differ by one
+    // letter, and a breadcrumb that named only one of `deformDialsDisagreed` /
+    // `deformDialDisagreed` would send a reader to grep for the other.
+    const disputes = survey.dialDisputes.filter((dispute) => rollupId(animation, dispute.slider) === id);
+    if (disputes.length) {
+      out.push(
+        `  ..      ${keys.length || blank.length || unreachable.length ? ''.padEnd(label.length) : label}  ` +
+          `${disputes.length} dial(s) the skeleton and the probe disagree about: ` +
+          disputes
+            .map(
+              (dispute) =>
+                `the skeleton reads ${dispute.bone}.${dispute.stated} and the probe drives ` +
+                `${dispute.bone}.${dispute.drive}, ` +
+                (dispute.outside.length === 0
+                  ? 'and both answers pose the same frames'
+                  : `${dispute.outside.length} key time(s) outside what the skeleton's own field reaches`),
+            )
+            .join('; ') +
+          `  <- A39 counts them as ${A39_COUNTS.dialsDisagreed} and spells them out as ${A39_COUNTS.dialDisagreed}`,
       );
     }
     // ⚠️ Printed on a clean animation too. "The scan ran and found nothing" and
     // "the scan never ran" are the two things a gate must never say the same
     // way, and this line is the only place an author can tell them apart
     // (issue #403).
-    const spans = survey.spans.filter((s) => `${s.animation} ${s.reach.slider ?? ''}` === id);
+    const spans = survey.spans.filter((s) => rollupId(s.animation, s.reach.slider) === id);
     if (spans.length) {
       out.push(
-        `  ..      ${keys.length || blank.length || unreachable.length ? ''.padEnd(label.length) : label}  ` +
+        `  ..      ${keys.length || blank.length || unreachable.length || disputes.length ? ''.padEnd(label.length) : label}  ` +
           `${spans.length} span(s) between consecutive keys scanned for a fold no key lands on: ` +
           `${spanTally(spans)}  <- A39 reads the same scan`,
       );
