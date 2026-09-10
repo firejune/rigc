@@ -19279,6 +19279,234 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR10: what .gitignore claims to hide, git actually hides (#457) -----
+  //
+  // ⭐ Why a `.gitignore` case belongs in this suite. Every other case here
+  // holds a claim the repository makes about itself to the thing it claims
+  // about, and this file makes one on every line: *this path does not appear*.
+  // Nothing derived it, and it was false on thirty-one lines at once. A pattern
+  // ending in `/` matches a **directory** and nothing else — of the four things
+  // a path can turn out to be (a directory, a symlink, a file, or absent) it
+  // covers one. So `scratch`, a link into a private store, sat visible to
+  // `git status` in this PUBLIC repository one `git add -A` from a commit, and
+  // `examples` did the same in a worktree that had symlinked it to reach the
+  // corpus. The judgment was made after the first occurrence and written into
+  // the file beside ONE path; the other thirty kept the defect for three weeks.
+  //
+  // 🔒 The measurement is deliberately NOT `git check-ignore` against this
+  // checkout. That call resolves the path on disk, so it answers IGNORED for
+  // `examples` here — where the corpus is a real directory — and answered NOT
+  // in the worktree where the same name was a link to one. A gate that reads
+  // today's disk passes on one machine and fails on another, which is the
+  // opposite of what a gate is for. Each entry's path is therefore planted in a
+  // throwaway repository as a directory, as a symlink and as a file in turn,
+  // and git is asked there. That also measures git's behaviour rather than
+  // restating the syntax rule, so a pattern form nobody has thought about yet
+  // is covered the day it is added.
+  //
+  // ⚠️ Two-sided, and neither side is a style rule about slashes. The negative
+  // half is a path no line mentions, which has to come back ignored in NONE of
+  // the three kinds: without it, a harness that wrote the wrong file — or a
+  // `check-ignore` that answered 0 for everything — would report a perfect
+  // `.gitignore` over nothing at all, which is `ERT05`'s shape. Beside it a
+  // control file that both hides a path and re-includes one with `!` has to be
+  // read in both directions. Both are synthetic on purpose: hanging the
+  // direction half on the tree's own `!` line would turn red the day somebody
+  // removed that line for a perfectly good reason, which is a two-sided clause
+  // attached to the wrong thing.
+  {
+    type IgnoreClaim = { line: number; text: string; path: string; expect: 'hidden' | 'shown' };
+    const KINDS = ['a directory', 'a symlink', 'a file'] as const;
+    type PlantKind = (typeof KINDS)[number];
+    type IgnoreScan = {
+      claims: IgnoreClaim[];
+      unreadable: string[];
+      broken: string[];
+      leaks: { claim: IgnoreClaim; kinds: PlantKind[] }[];
+      unlisted: PlantKind[];
+    };
+    /** Named by no line in any file below, so every kind of it must come back visible. */
+    const UNLISTED = 'a-path-no-gitignore-line-names';
+
+    /** The file as TEXT: what each line claims, and one concrete path to claim it about. */
+    const readClaims = (text: string): { claims: IgnoreClaim[]; unreadable: string[] } => {
+      const claims: IgnoreClaim[] = [];
+      const unreadable: string[] = [];
+      text.split('\n').forEach((raw, i) => {
+        const line = raw.replace(/\s+$/, '');
+        if (line === '' || line.startsWith('#')) return;
+        const expect: 'hidden' | 'shown' = line.startsWith('!') ? 'shown' : 'hidden';
+        const rel = (expect === 'shown' ? line.slice(1) : line).replace(/^\/+/, '').replace(/\/+$/, '');
+        // A pattern this case cannot plant one path for is UNREAD, and unread is
+        // reported rather than skipped: a silent skip is the hand-kept exception
+        // table wearing a parser's clothes.
+        if (rel === '' || rel.includes('**') || /[?[\]\\]/.test(rel)) {
+          unreadable.push(`.gitignore:${i + 1} \`${line}\` is a pattern this case cannot plant a single path for, so it was never measured`);
+          return;
+        }
+        claims.push({ line: i + 1, text: line, path: rel.replace(/\*/g, 'x'), expect });
+      });
+      return { claims, unreadable };
+    };
+
+    /** Plant every path as `kind` in a fresh repository carrying `text`, and ask git which it ignores. */
+    const askGit = (text: string, paths: string[], kind: PlantKind): { ignored: Set<string>; broken: string | null } => {
+      const dir = mkdtempSync(join(tmpdir(), 'rigc-gitignore-'));
+      // A user's global excludes file would otherwise decide some of these, and
+      // a machine that has one would measure something this repository does not
+      // ship. Point it at a path that does not exist.
+      const isolated = ['-c', `core.excludesFile=${join(dir, 'no-such-global-excludes')}`];
+      try {
+        const init = spawnSync('git', [...isolated, 'init', '-q', dir], { encoding: 'utf8' });
+        if (init.error !== undefined || init.status !== 0) {
+          return { ignored: new Set(), broken: `git could not make a throwaway repository (${init.error?.message ?? `exit ${String(init.status)}: ${init.stderr.trim()}`})` };
+        }
+        mkdirSync(join(dir, 'plant-target'));
+        writeFileSync(join(dir, 'plant-target', 'inside.txt'), 'x');
+        // Shallow first, so a parent directory exists before a child goes under it.
+        const order = [...paths].sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
+        for (const path of order) {
+          const full = join(dir, path);
+          let taken = false;
+          try {
+            taken = lstatSync(full, { throwIfNoEntry: false }) !== undefined;
+          } catch (err) {
+            // `throwIfNoEntry` only suppresses ENOENT. ENOTDIR means a line
+            // above this one owns one of its parent directories, and under the
+            // file kind it owns it as a file — which threw and took the whole
+            // run down until a mutant did exactly that. A crash is not a report.
+            return { ignored: new Set(), broken: `"${path}" could not be planted as ${kind} because a line above it owns one of its parent directories: ${(err as Error).message}` };
+          }
+          if (taken) {
+            return { ignored: new Set(), broken: `two lines want the same planted path "${path}", so one of them was never measured on its own` };
+          }
+          try {
+            mkdirSync(dirname(full), { recursive: true });
+            if (kind === 'a directory') {
+              mkdirSync(full);
+              writeFileSync(join(full, 'inside.txt'), 'x');
+            } else if (kind === 'a file') writeFileSync(full, 'x');
+            else symlinkSync(join(dir, 'plant-target'), full);
+          } catch (err) {
+            return { ignored: new Set(), broken: `"${path}" could not be planted as ${kind}: ${(err as Error).message}` };
+          }
+        }
+        writeFileSync(join(dir, '.gitignore'), text);
+        const probe = spawnSync('git', [...isolated, '-C', dir, 'check-ignore', '--stdin'], { encoding: 'utf8', input: `${paths.join('\n')}\n` });
+        // Exit 1 means "none of them"; anything else means git did not answer,
+        // and silence read as a clean file is the failure this case is for. One
+        // way it really happens, found by running the control mutant: git exits
+        // 128 with `pathspec … is beyond a symbolic link` when a line's path
+        // nests under a line planted as a link. No line here nests under
+        // another today, and one that did would be redundant with the line
+        // above it, so this is reported by name rather than accommodated.
+        if (probe.error !== undefined || (probe.status !== 0 && probe.status !== 1)) {
+          return { ignored: new Set(), broken: `git check-ignore could not answer for ${kind} (${probe.error?.message ?? `exit ${String(probe.status)}: ${probe.stderr.trim()}`}); this case fails closed rather than reading that as a clean file` };
+        }
+        return { ignored: new Set(probe.stdout.split('\n').map((l) => l.trim()).filter((l) => l !== '')), broken: null };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+
+    const scanIgnoreText = (text: string): IgnoreScan => {
+      const { claims, unreadable } = readClaims(text);
+      const paths = [...claims.map((c) => c.path), UNLISTED];
+      const broken: string[] = [];
+      const seen = new Map<PlantKind, Set<string>>();
+      for (const kind of KINDS) {
+        const answer = askGit(text, paths, kind);
+        if (answer.broken !== null) broken.push(answer.broken);
+        seen.set(kind, answer.ignored);
+      }
+      const hides = (kind: PlantKind, path: string): boolean => seen.get(kind)?.has(path) === true;
+      return {
+        claims,
+        unreadable,
+        broken,
+        leaks: claims
+          .map((claim) => ({ claim, kinds: KINDS.filter((kind) => hides(kind, claim.path) !== (claim.expect === 'hidden')) }))
+          .filter((row) => row.kinds.length > 0),
+        unlisted: KINDS.filter((kind) => hides(kind, UNLISTED)),
+      };
+    };
+
+    /** Every way one scan can be wrong. The mutants below run through this same list. */
+    const faultsOf = (scan: IgnoreScan): string[] => [
+      // The floor is an entry here rather than a conjunct in the verdict, so a
+      // planted run's detail names what went wrong instead of reading clean.
+      ...(scan.claims.length === 0 ? ['not one pattern was read out of the file, so every clause below was measured against nothing'] : []),
+      ...scan.unreadable,
+      ...scan.broken,
+      ...(scan.unlisted.length === 0
+        ? []
+        : [
+            `"${UNLISTED}" is not the derived path of any line in the file and still came back ignored as ` +
+              `${scan.unlisted.join(' and ')}: either some pattern reaches further than the line that wrote it, or this ` +
+              'probe answers "hidden" whatever it is asked and every clause beside this one is vacuous',
+          ]),
+      ...scan.leaks.map(
+        (row) =>
+          `.gitignore:${row.claim.line} \`${row.claim.text}\` is there to ${row.claim.expect === 'hidden' ? 'HIDE' : 'SHOW'} "${row.claim.path}" and does not when that path is ${row.kinds.join(' or ')}` +
+          (row.claim.text.endsWith('/') ? ' — a pattern ending in `/` matches a directory and nothing else, so drop the trailing slash' : ''),
+      ),
+    ];
+
+    const live = readFileSync(join(root, '.gitignore'), 'utf8');
+    const liveScan = scanIgnoreText(live);
+
+    // ① the floor, seen to fire: a file with nothing readable in it.
+    const floorFires = faultsOf(scanIgnoreText('# nothing but a comment\n')).length > 0;
+
+    // ② the direction half, on a control file that does both.
+    const control = ['probe-hidden', 'probe-dir/*', '!probe-dir/keep.mjs'].join('\n');
+    const controlScan = scanIgnoreText(control);
+    const controlFaults = faultsOf(controlScan);
+    const controlShaped =
+      controlScan.claims.filter((c) => c.expect === 'shown').length === 1 &&
+      controlScan.claims.filter((c) => c.expect === 'hidden').length === 2;
+
+    // ③ red-first: put the trailing slash back on one entry with a literal path.
+    const victim = liveScan.claims.find((c) => c.expect === 'hidden' && !c.text.includes('*'));
+    const revertFault = ((): string[] => {
+      if (victim === undefined) return ['no line in the file has a literal path, so the trailing-slash mutant had nothing to aim at'];
+      const back = scanIgnoreText(live.split('\n').map((l, i) => (i + 1 === victim.line ? `${l}/` : l)).join('\n'));
+      const said = faultsOf(back);
+      const only = back.leaks.length === 1 ? back.leaks[0] : null;
+      if (said.length === 1 && only !== null && only.claim.line === victim.line && only.kinds.join(', ') === 'a symlink, a file') return [];
+      return [
+        `putting the trailing slash back on .gitignore:${victim.line} \`${victim.text}\` had to fault that line and only that line, on exactly a symlink and a file; instead ` +
+          (said.length === 0 ? 'nothing faulted at all' : said.join('; ')),
+      ];
+    })();
+
+    const probes = [
+      ...faultsOf(liveScan),
+      ...(floorFires ? [] : ['a .gitignore carrying nothing but a comment was read as a clean file, so a scan that stopped matching would go quiet rather than red']),
+      ...(controlShaped ? [] : ['the control file did not parse into two hiding lines and one `!` line, so the direction half of this case was never exercised']),
+      ...(controlFaults.length === 0 ? [] : [`the control file that both hides and re-includes was not read in both directions: ${controlFaults.join('; ')}`]),
+      ...revertFault,
+    ];
+    say(
+      'CUR10_EVERY_GITIGNORE_LINE_HIDES_ITS_PATH_WHATEVER_THAT_PATH_TURNS_OUT_TO_BE',
+      probes.length === 0,
+      probes.length === 0
+        ? `all ${liveScan.claims.length} pattern(s) in .gitignore hide their path — or, for the ` +
+          `${liveScan.claims.filter((c) => c.expect === 'shown').length} \`!\` line(s), show it — when it is planted in a throwaway ` +
+          `repository as a directory, as a symlink and as a file in turn; a path no line names comes back ignored in none of the ` +
+          `three; a control file that both hides and re-includes is read in both directions; a file with nothing readable in it ` +
+          `faults on the floor rather than passing; and putting the trailing slash back on \`${victim?.text ?? ''}\` faults that ` +
+          'line alone, on a symlink and a file'
+        : probes.join('\n          '),
+      'the third occurrence of one defect (#457): `examples/` and `/scratch/` matched the directory and not the symlink, so a ' +
+        'path this PUBLIC repository keeps out of sight became visible to `git status` — silent, and in the direction of ' +
+        'exposure. The judgment after the first occurrence was recorded beside one path and applied to no other, which is why ' +
+        'the rule is now the whole file and this case is what re-reads it. Asking git in a throwaway repository rather than ' +
+        'here is the load-bearing choice: `git check-ignore` resolves on disk, so the live tree answers with what a name ' +
+        'happens to be today',
+    );
+  }
+
   return bad;
 }
 
