@@ -607,14 +607,11 @@ rigc validate examples/spineboy/export/spineboy-pro.json \
 rigc: green
 ```
 
-**Why it is worth a section anyway.** That line used to be two `FAIL`s:
-
-```
-  FAIL  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: … key 1: offset 1 is odd, so the run's x values land on y slots and back again
-  FAIL  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: … key 1: the run holds 147 numbers and the deform array is x, y pairs
-```
-
-and nothing was wrong with the data. `hoverboard-board` is an unweighted mesh with 148
+**Why it is worth a section anyway.** That line used to be two `FAIL`s on the same key —
+one for an **odd `offset`**, on the reading that the run's x values would land on y slots
+and back again, and one for an **odd-length run**, on the reading that the deform array is
+x, y pairs — and nothing was wrong with the data, so neither sentence exists in the tool
+any more. `hoverboard-board` is an unweighted mesh with 148
 floats; the key carries `offset: 1` and 147 values, covering `1..148` — the whole array
 minus a leading zero the editor trimmed. A trim can land on a y component, so an odd
 offset is what a trimmed run looks like, and Spine's own parser copies the run in at the
@@ -846,13 +843,12 @@ rig spec; the discipline is in what you check afterwards.
 `parent`, a slot's `bone`, a constraint's `bones` and `target`, a draw-order key's
 `slot`, an authored mesh's vertex `weights` — and, across the two files, the motion
 spec's `archetype` against the rig spec's `name`. That last one is the first refusal a
-rename produces, before anything else has a chance to go wrong:
-
-```
-rigc compile error: …/work/renamed/pendulum-rig.motion.json: motion spec names
-archetype "3-timing-and-spacing-ess" but the rig spec at
-…/work/renamed/pendulum-rig.rig.json is called "pendulum-rig"
-```
+rename produces, before anything else has a chance to go wrong: a `rigc compile error`
+naming the motion spec's path, the `archetype` that spec states, the path of the rig spec
+it was handed, and the `name` that rig actually carries — both sides of the mismatch in
+one sentence. [`src/compile.ts`](../src/compile.ts) builds it; the renamed copies this
+section works on are not committed, for the reason the Appendix gives, so the figure is
+described here rather than transcribed off one.
 
 ⭐ **A rename is therefore mostly safe by construction, and its failures arrive as
 sentences naming both sides.** That is the reason to do it in the specs rather than in

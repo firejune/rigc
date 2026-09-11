@@ -2823,15 +2823,23 @@ the frames just before it are drawn, nearly folded, and land on no key at all. O
 the turn probe that is **8 reversed triangles at alpha 0.20, gating green**.
 
 ⇒ `A39` now scans every interval between two consecutive deform keys as well, and
-refuses one with its own sentence:
+refuses one with its own sentence. No spec this repository ships produces one — the
+rig it was written from is a probe `selftest.ts` generates and nothing else can
+invoke — so the sentence is described here rather than transcribed.
 
-```
-FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform head/head BETWEEN key 0
-      (t=0s) and key 1 (t=0.5s), at t=0.444089s — 88.8% of the way from one to the other:
-      8 of 32 triangle(s) reverse winding — triangle 0 [0,15,16] 1890.001 -> -272.314px²; …
-      NO KEY LANDS THERE: the runtime interpolates between the two keys, and the mesh is
-      inside out for part of the way, drawing its texture backwards at alpha 0.1118 …
-```
+**What it carries**, in the order it says it: `BETWEEN key <i> (t=…s) and key <j>
+(t=…s)` where a key refusal puts one index; the time the closed form solved for, and
+how far along the segment that is — or `(a stepped segment)` instead, which
+interpolates nothing and holds the earlier key's geometry across the span; the
+reversed count out of the triangle total, with the first four named and each one's
+vertex ids and its signed area before and after; `NO KEY LANDS THERE` in those words,
+then whether the runtime interpolates across the span or holds it; the alpha read at
+that same instant, present only where it is not 1; and the ways out — for an
+interpolating span the four the table below gives, the fade one among them only
+where the alpha is not 1, and for a stepped one the key it holds instead, with
+`invariants.deformMayFold` the last resort either way.
+[`src/validate.ts`](../src/validate.ts) builds it, beside the key sentence §4.11.2
+quotes.
 
 **What to change when you see it**, in the order worth trying:
 
