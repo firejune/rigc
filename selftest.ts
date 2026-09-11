@@ -13895,13 +13895,37 @@ function runDeformReportSuite(): number {
     );
   })();
   const sameFit = fitOf(turn12) === fitOf(folded);
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). The selector below
+  // read `sameFit` and nothing else, so the branch it picked asserted the other
+  // two terms as facts: "posing every key left the attachment's uvs
+  // bit-identical" is the PREMISE of this whole control, and it was printed by
+  // the FAIL that the premise failing raised. The third term — that the block
+  // prints no coverage line — was not mentioned in either branch at all, so a
+  // `coverage` line appearing would have gone red with a detail about fits.
+  const coverageLines = block12.filter((l) => /^\s+coverage/.test(l));
+  const fitProbes = [
+    ...(sameFit ? [] : [`the two builds reported different fits: [${fitOf(turn12)}] vs [${fitOf(folded)}]`]),
+    ...(posedUvsHeld
+      ? []
+      : [
+          'posing every key did NOT leave the attachment\'s uvs bit-identical (or "head" came back as something ' +
+            'other than a mesh), so the premise that a deform cannot move coverage does not hold on this build',
+        ]),
+    ...firstFew(
+      coverageLines.map((l) => `the block prints a per-key coverage line after all: ${l.trim()}`),
+      'line(s)',
+    ),
+  ];
+  const fitHeld = fitProbes.length === 0;
   say(
     'DR04_A_DEFORM_CANNOT_MOVE_COVERAGE_SO_THE_BLOCK_DOES_NOT_PRINT_IT',
-    sameFit && posedUvsHeld && !block12.some((l) => /^\s+coverage/.test(l)),
-    sameFit
-      ? `the 12° build and the 40° FOLDED build report the same fit — ${fitOf(turn12)} — and posing every key left ` +
-          'the attachment\'s uvs bit-identical, so a per-key coverage figure could only ever repeat the `meshes` line'
-      : `the two builds reported different fits: [${fitOf(turn12)}] vs [${fitOf(folded)}]`,
+    fitHeld,
+    probeDetail(
+      fitHeld,
+      fitProbes,
+      `the 12° build and the 40° FOLDED build report the same fit — ${fitOf(turn12)} — and posing every key left ` +
+        'the attachment\'s uvs bit-identical, so a per-key coverage figure could only ever repeat the `meshes` line',
+    ),
     '#296 asked for "coverage movement" per key; the measurement it would come from has no term a deform can move, ' +
       'and printing 100.00% beside 100.00% is a measurement\'s clothes on a definition',
   );
@@ -14472,17 +14496,46 @@ function runGroupMemberSuite(): number {
     const m = line?.match(/(-?\d+(?:\.\d+)?)\s+<-\s+(-?\d+(?:\.\d+)?) at depth (-?\d+(?:\.\d+)?)/);
     return m ? { value: Number(m[1]), at: Number(m[2]), depth: Number(m[3]) } : null;
   });
-  const quotesTheArtifact = printed.every((p, i) => p !== null && p.value === gotShift[i] && p.at === MEMBER_BONES[i].x && p.depth === MEMBER_BONES[i].depth);
   const namesTheModel = block.some((line) => line.includes('derive yaw') && line.includes(`degrees=${DEG}`) && line.includes(`carried=${MEMBER_R}`));
   const namesTheFormula = block.some((line) => line.includes('(cos t − 1)') && line.includes('(depth − carried)'));
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). The selector read
+  // the subprocess's exit status, so the branch it picked on a zero exit said
+  // "the block names the model and its formula" — a claim about two terms of
+  // the verdict, printed by the FAIL that either of them failing raised. The
+  // member rows are the one term that was already honest: both sides of the
+  // comparison are interpolated, so a row that disagreed was visible. It keeps
+  // its figures and gains a row that says which row moved and by what.
+  const reportProbes = [
+    ...(run.status === 0 ? [] : [`explain exited ${run.status}: ${run.stderr}`]),
+    ...firstFew(
+      printed.flatMap((p, i) =>
+        p === null
+          ? [`${MEMBER_BONES[i].name} has no member row in the block at all`]
+          : p.value === gotShift[i] && p.at === MEMBER_BONES[i].x && p.depth === MEMBER_BONES[i].depth
+            ? []
+            : [
+                `${MEMBER_BONES[i].name} is printed as ${p.value} <- ${p.at} at depth ${p.depth} where the emitted ` +
+                  `artifact has ${gotShift[i]} <- ${MEMBER_BONES[i].x} at depth ${MEMBER_BONES[i].depth}`,
+              ],
+      ),
+      'member row(s)',
+    ),
+    ...(namesTheModel
+      ? []
+      : [`no line of the block names the model as \`derive yaw\` with degrees=${DEG} and carried=${MEMBER_R}`]),
+    ...(namesTheFormula ? [] : ['no line of the block names the formula, which is the two parenthesised factors']),
+  ];
+  const reportHeld = reportProbes.length === 0;
   say(
     'GM07_EXPLAIN_PRINTS_THE_MEMBERS_SIDE_BY_SIDE_AND_QUOTES_THE_ARTIFACT',
-    run.status === 0 && quotesTheArtifact && namesTheModel && namesTheFormula,
-    run.status === 0
-      ? `${block.length} line(s): the block names the model and its formula, and its ${printed.length} member rows read ` +
-          `[${printed.map((p, i) => (p === null ? `${MEMBER_BONES[i].name} MISSING` : `${MEMBER_BONES[i].name} ${p.value} <- ${p.at} at depth ${p.depth}`)).join(', ')}] ` +
-          `against the emitted [${gotShift.join(', ')}]`
-      : `explain exited ${run.status}: ${run.stderr}`,
+    reportHeld,
+    probeDetail(
+      reportHeld,
+      reportProbes,
+      `${block.length} line(s): the block names the model and its formula, and its ${printed.length} member rows read ` +
+        `[${printed.map((p, i) => (p === null ? `${MEMBER_BONES[i].name} MISSING` : `${MEMBER_BONES[i].name} ${p.value} <- ${p.at} at depth ${p.depth}`)).join(', ')}] ` +
+        `against the emitted [${gotShift.join(', ')}]`,
+    ),
     'FACE §3: a residual is 1–6 units where a total is 30–40, so the audit is the column of six — and a report that ' +
       're-evaluated the model instead of quoting the file could agree with itself while the artifact said otherwise',
   );
@@ -15434,17 +15487,44 @@ function runCopyImagesSuite(): number {
   const selfContainedDir = join(OVERLAY.dir, 'spine_self_contained');
   const copied = copyAtlasImages(result.images, selfContainedDir);
   const pageLines = copied.atlasText.split('\n').filter((l) => l.endsWith('.png'));
-  const flat = pageLines.every((l) => !l.includes('/') && !l.includes('\\'));
-  const landed = copied.pages.every((p) => {
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Three independent
+  // things are being asked of one directory — the atlas names basenames, the
+  // files are there, and the count did not move — and a run can fail any
+  // combination of them. What the sentence below used to print on the run it
+  // exists for was "every page stat-ed there", on a directory with a page
+  // missing from it: the stat is the whole claim of this control and the
+  // clean sentence was the only place it was made.
+  const notFlat = pageLines.filter((l) => l.includes('/') || l.includes('\\'));
+  const notLanded = copied.pages.filter((p) => {
     const abs = join(selfContainedDir, p.to);
-    return existsSync(abs) && statSync(abs).size > 0;
+    return !existsSync(abs) || statSync(abs).size === 0;
   });
-  const countMatches = pageLines.length === result.images.length && copied.pages.length === result.images.length;
+  const selfContainedProbes = [
+    ...firstFew(
+      notFlat.map((l) => `the rewritten atlas still names a path rather than a basename: ${JSON.stringify(l)}`),
+      'page line(s)',
+    ),
+    ...firstFew(
+      notLanded.map((p) => `${JSON.stringify(p.to)} is not a non-empty file in the output directory`),
+      'page(s)',
+    ),
+    ...(pageLines.length === result.images.length
+      ? []
+      : [`the rewritten atlas names ${pageLines.length} page(s) where the build emitted ${result.images.length}`]),
+    ...(copied.pages.length === result.images.length
+      ? []
+      : [`${copied.pages.length} page(s) were copied where the build emitted ${result.images.length}`]),
+  ];
+  const selfContained = selfContainedProbes.length === 0;
   bad += reportCase(
     'CPI02_COPY_IMAGES_MAKES_OUT_SELF_CONTAINED',
-    flat && landed && countMatches,
-    `${copied.pages.length} page(s) copied into ${selfContainedDir}; atlas re-read (${pageLines.join(', ')}) and ` +
-      'every page stat-ed there',
+    selfContained,
+    probeDetail(
+      selfContained,
+      selfContainedProbes,
+      `${copied.pages.length} page(s) copied into ${selfContainedDir}; atlas re-read (${pageLines.join(', ')}) and ` +
+        'every page stat-ed there',
+    ),
     'zipping or committing --out alone loses every texture, because the emitted paths pointed at the source art ' +
       'rather than at the directory being handed off',
   );
@@ -15466,17 +15546,50 @@ function runCopyImagesSuite(): number {
   // happened to be on disk already.
   const secondRun = copyAtlasImages(synthetic, join(collideRoot, 'out2'));
   const names = firstRun.pages.map((p) => p.to);
+  const secondNames = secondRun.pages.map((p) => p.to);
   const disambiguated = names[0] === 'torso.png' && names[1] === 'torso-2.png';
-  const deterministic = names.join(',') === secondRun.pages.map((p) => p.to).join(',');
-  const notMixedUp =
-    disambiguated &&
-    readPlate(join(collideRoot, 'out1', 'torso.png')).get(0, 0)[0] === 220 &&
-    readPlate(join(collideRoot, 'out1', 'torso-2.png')).get(0, 0)[1] === 220;
+  const deterministic = names.join(',') === secondNames.join(',');
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Two of the three
+  // terms below reached the reader ONLY as clauses of the clean sentence, and
+  // both of them are the kind that is asserted rather than shown: "identical on
+  // a second run" and "neither file's pixels landed under the other's name" are
+  // claims with no figure in them, so the FAIL they printed was the answer this
+  // control wanted rather than the one it got. `names` is the one term that
+  // does carry its own data, which is why a line here would repair a third of
+  // it.
+  //
+  // ⚠️ The pixel read is REACHED only when the naming held, and deliberately —
+  // reading `torso-2.png` when nothing was written under that name throws. So a
+  // run that loses the naming gets one row naming the naming, and the row for a
+  // comparison nobody could make is absent rather than invented.
+  const pixelsUnderNames = disambiguated
+    ? ([readPlate(join(collideRoot, 'out1', 'torso.png')).get(0, 0), readPlate(join(collideRoot, 'out1', 'torso-2.png')).get(0, 0)] as const)
+    : null;
+  const notMixedUp = pixelsUnderNames !== null && pixelsUnderNames[0][0] === 220 && pixelsUnderNames[1][1] === 220;
+  const collisionProbes = [
+    ...(disambiguated
+      ? []
+      : [`the collision resolved to ${JSON.stringify(names)} rather than ["torso.png","torso-2.png"]`]),
+    ...(deterministic
+      ? []
+      : [`a second run over the same inputs resolved it to ${JSON.stringify(secondNames)} instead`]),
+    ...(pixelsUnderNames === null || notMixedUp
+      ? []
+      : [
+          `torso.png reads [${pixelsUnderNames[0].join(', ')}] and torso-2.png reads [${pixelsUnderNames[1].join(', ')}], ` +
+            'where a/torso.png is red 220 and b/torso.png is green 220',
+        ]),
+  ];
+  const collisionHeld = collisionProbes.length === 0;
   bad += reportCase(
     'CPI03_BASENAME_COLLISION_IS_DISAMBIGUATED_DETERMINISTICALLY',
-    disambiguated && deterministic && notMixedUp,
-    `${JSON.stringify(names)}, identical on a second run over the same inputs, neither file's pixels landed under ` +
-      "the other's name",
+    collisionHeld,
+    probeDetail(
+      collisionHeld,
+      collisionProbes,
+      `${JSON.stringify(names)}, identical on a second run over the same inputs, neither file's pixels landed under ` +
+        "the other's name",
+    ),
     "compile() already refuses two images sharing a region (== basename); this is the defence for the day that " +
       'invariant changes, plus a case-insensitive filesystem colliding two basenames the region check saw as distinct',
   );
@@ -16486,15 +16599,47 @@ function runPackerSuite(): number {
     if (mismatch) uvMisses.push(mismatch);
   }
   const importedDelta = renderDelta(imported, importOpts.outDir, imported.atlasText, dirname(importOpts.atlasInPath));
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Four independent
+  // things, two of which reached the reader only as an assertion in the clean
+  // sentence — and the second of those threw away a diagnostic it had already
+  // computed. `uvMisses` names the region and the exact pixel that disagreed;
+  // the FAIL it raised printed "spine-core's own u/v put all 5 region(s) on the
+  // right pixels" and not one row of it.
+  const firstFieldApart = roundTripped.split('\n').findIndex((line, i) => line !== original.split('\n')[i]);
+  const importProbes = [
+    ...(roundTripped === original
+      ? []
+      : [
+          `the re-emitted atlas differs from the packed one below the page-name line, first at line ` +
+            `${firstFieldApart + 1}: ${JSON.stringify(roundTripped.split('\n')[firstFieldApart] ?? '')} against ` +
+            `${JSON.stringify(original.split('\n')[firstFieldApart] ?? '')}`,
+        ]),
+    ...firstFew(
+      uvMisses.map((miss) => `spine-core's own u/v did not land on the drawing — ${miss}`),
+      'region(s)',
+    ),
+    ...floorProbes(
+      [[importedDelta.frames, 1, `${importedDelta.frames} frame(s) were rendered from the imported atlas`]],
+      'a render that produced no frame compares the two builds on nothing at all',
+    ),
+    ...(importedDelta.worst <= 1
+      ? []
+      : [
+          `the worst rendered sample differs by ${importedDelta.worst} over ${importedDelta.samples} sample(s) — ` +
+            'the bound is 1',
+        ]),
+  ];
+  const importHeld = importProbes.length === 0;
   say(
     'PK12_PACK_THEN_IMPORT_ROUND_TRIPS_AND_THE_UVS_LAND_ON_THE_DRAWING',
-    roundTripped === original &&
-      uvMisses.length === 0 &&
-      importedDelta.frames > 0 &&
-      importedDelta.worst <= 1,
-    `every field below the page-name line identical; spine-core's own u/v put all ${spineAtlas.regions.length} ` +
-      `region(s) on the right pixels; ${importedDelta.frames} rendered frame(s) differ in ${importedDelta.samples} ` +
-      `sample(s), worst ${importedDelta.worst}`,
+    importHeld,
+    probeDetail(
+      importHeld,
+      importProbes,
+      `every field below the page-name line identical; spine-core's own u/v put all ${spineAtlas.regions.length} ` +
+        `region(s) on the right pixels; ${importedDelta.frames} rendered frame(s) differ in ${importedDelta.samples} ` +
+        `sample(s), worst ${importedDelta.worst}`,
+    ),
     'the natural self-test for an importer is the emitter it has to agree with, and a UV check through the RUNTIME ' +
       "is the only one that answers 'will the thing that loads this find the drawing'",
   );
@@ -26980,11 +27125,17 @@ function runRunTallySuite(live: RunTally): number {
 
   // --- TY05: a suite call nobody wrapped ------------------------------------
   const unwrapped = tallyFaults(healthy, healthyGutter, healthyTotal + 4);
+  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Exactly one term of
+  // the verdict below went unread, and its two siblings are already named by
+  // `unwrapped[0]`, so a list here would rewrite two branches that are right to
+  // repair one that is not. What that term printed was "agree in no faults" —
+  // the wanted answer, stated flat, on the run raised by them not agreeing.
+  const wrapped = tallyFaults(healthy, healthyGutter, healthyTotal);
   say(
     'TY05_CASE_LINES_PRINTED_OUTSIDE_EVERY_TALLIED_SUITE_ARE_NAMED',
-    unwrapped.length === 1 && unwrapped[0].includes('4 case line(s)') && tallyFaults(healthy, healthyGutter, healthyTotal).length === 0,
+    unwrapped.length === 1 && unwrapped[0].includes('4 case line(s)') && wrapped.length === 0,
     `4 case lines printed by nobody's suite fault — ${unwrapped[0] ?? 'nothing'} — and the same blocks with the ` +
-      'run\'s own count agree in no faults',
+      `run's own count ${wrapped.length === 0 ? 'agree in no faults' : `fault in ${wrapped.length}: ${wrapped.join('; ')}`}`,
     'the counts are derived, so the way this stops covering the run is a suite that is called and never wrapped: ' +
       'its cases would print, pass, and belong to no block',
   );
@@ -27059,6 +27210,14 @@ function runRunTallySuite(live: RunTally): number {
   const invisible = tallyFaults([alive, block({ key: 'beta', ran: false, controls: 0, quiet: 0, headers: 0 })], gutterOf('PASS'), 1);
   const announced = tallyFaults([alive, block({ key: 'beta', ran: false, controls: 0, quiet: 1, headers: 1 })], gutterOf('PASS', 'SKIP'), 1);
   const silentBlocks = live.blocks.filter((one) => !one.ran && one.headers === 0);
+  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). One term of the
+  // five goes unread — `announced`, the negative control the origin line below
+  // calls load-bearing — and the other four already reach the reader, three
+  // through `invisible[0]` and one through the `EXCEPT` clause this sentence
+  // already carries. So the repair is the same shape that clause is: bind the
+  // count, and let the sentence say what it found rather than what it wanted.
+  // What it said before was "faults in no way", printed by the FAIL that it
+  // faulting raised.
   say(
     'TY09_A_SUITE_THAT_DID_NOT_RUN_AND_OPENED_NO_SECTION_IS_NAMED',
     invisible.length === 1 &&
@@ -27067,7 +27226,7 @@ function runRunTallySuite(live: RunTally): number {
       announced.length === 0 &&
       silentBlocks.length === 0,
     `a suite that did not run and printed nothing faults (${invisible.find((f) => f.includes('no section')) ?? 'it did not'}); ` +
-      `the same suite having opened a section and said SKIP faults in no way; and of the ${live.blocks.length} suite(s) ` +
+      `the same suite having opened a section and said SKIP ${announced.length === 0 ? 'faults in no way' : `faults anyway: ${announced.join('; ')}`}; and of the ${live.blocks.length} suite(s) ` +
       `tallied so far, the ${live.blocks.filter((one) => !one.ran).length} that did not run all opened one` +
       (silentBlocks.length === 0 ? '' : ` EXCEPT ${silentBlocks.map((one) => one.key).join(', ')}`),
     'the negative control is the load-bearing half — a floor that faulted on every suite that did not run would ' +
