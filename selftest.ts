@@ -21599,6 +21599,25 @@ function runGalleryTranscriptSuite(): number {
     );
     const rescan = (text: string): TranscriptScan =>
       scanGalleryTranscripts(`gallery/${example}/README.md`, text, runs, vocabulary, heads, refusal);
+    // ⚠️ Did THIS BLOCK fault — not "did anything fault" (issue #491). A fault
+    // standing anywhere else in the same README satisfies a bare
+    // `faults.length === 0` whatever the plant did, so a clause written that
+    // way stops testing its plant the moment the example goes stale, which is
+    // the one run it exists for. Measured with every plant in this loop
+    // replaced by a no-op and one block the runs do not print appended to each
+    // README: the absolute form printed PASS over 94 plants that faulted
+    // nothing, and this form names all 94.
+    //
+    // 🔒 Attribution rather than the subtraction issue #486 used four lines
+    // down, and the reason is a measurement rather than a preference: three of
+    // these four plants MOVE LINES — the interior-line plant takes one out of
+    // the block, and both declaration markers put one in above the fence — so
+    // a fault standing lower in the file comes back with a different line
+    // number in it and a string subtraction reads it as newly raised. Every
+    // fault this scanner emits opens with the block's own name and two spaces,
+    // which is what makes the stronger claim available at all.
+    const faultedAt = (text: string, at: number): boolean =>
+      rescan(text).faults.some((fault) => fault.startsWith(`gallery/${example}/README.md:${at}  `));
     for (const block of galleryBlocks(readme)) {
       const anchor = verifiedHere.get(`gallery/${example}/README.md:${block.line}`);
       if (anchor === undefined) continue;
@@ -21606,23 +21625,29 @@ function runGalleryTranscriptSuite(): number {
         const edited = plant(block.lines);
         if (edited === null) continue;
         planted++;
-        if (rescan(plantIntoReadme(readme, block, edited)).faults.length === 0) {
+        // The plant replaces the block's body, so the fence it is named by has
+        // not moved.
+        if (!faultedAt(plantIntoReadme(readme, block, edited), block.line)) {
           misses.push(`gallery/${example}/README.md:${block.line}: ${name} — not faulted`);
         }
       }
-      // The declaration is not a way to switch the gate off.
+      // The declaration is not a way to switch the gate off. ⚠️ Both markers go
+      // in ABOVE the fence, so the block answers to one line further down in
+      // the rescan — computed for the reason the declaration-removal plant in
+      // the docs suite computes its own: reading the old name back would find
+      // nothing and report a miss it could not explain.
       const declaredOnly = plantIntoReadme(readme, block, block.lines);
       const declaredLines = declaredOnly.split('\n');
       declaredLines.splice(block.line - 1, 0, `${DECLARATION_LEAD} lifted out of a run that does not print it`);
       planted++;
-      if (rescan(declaredLines.join('\n')).faults.length === 0) {
+      if (!faultedAt(declaredLines.join('\n'), block.line + 1)) {
         misses.push(`gallery/${example}/README.md:${block.line}: declared while still reproducing — not faulted`);
       }
       // A marker with nothing after the colon is not a declaration.
       const emptyLines = declaredOnly.split('\n');
       emptyLines.splice(block.line - 1, 0, DECLARATION_LEAD);
       planted++;
-      if (rescan(emptyLines.join('\n')).faults.length === 0) {
+      if (!faultedAt(emptyLines.join('\n'), block.line + 1)) {
         misses.push(`gallery/${example}/README.md:${block.line}: declared with no reason — not faulted`);
       }
 
@@ -21639,9 +21664,13 @@ function runGalleryTranscriptSuite(): number {
           .filter((line, i) => !(i < block.line - 1 && i >= block.line - 1 - TRANSCRIPT_DECLARATION_LOOKBACK && REFUSAL_RECIPE.test(line)))
           .join('\n');
         planted++;
+        // Taking the recipe off deletes whole lines above the fence, so the
+        // block moves UP by however many came off — counted rather than assumed
+        // at one, because the lookback window can hold more than one.
+        const lifted = readme.split('\n').length - withoutRecipe.split('\n').length;
         if (withoutRecipe === readme) {
           unrecipe++;
-        } else if (rescan(withoutRecipe).faults.length === 0) {
+        } else if (!faultedAt(withoutRecipe, block.line - lifted)) {
           misses.push(`gallery/${example}/README.md:${block.line}: its recipe removed — not faulted by the trap`);
         }
         continue;
@@ -21822,11 +21851,21 @@ function runGalleryTranscriptSuite(): number {
     ];
     // A name nothing in the tree carries, so neither probe can pass by accident.
     const INVENTED = 'NOSUCHTAG';
+    // ⚠️ Each probe asks whether the INJECTED name was faulted, not whether
+    // anything was — issue #491, the same shape as the plant clauses two cases
+    // up and a spelling neither of that sweep's rules reached, because the list
+    // here is neither called `faults` nor produced by a rescan. A prose/runs
+    // disagreement standing in the tree satisfies `length > 0` whatever the
+    // injection did, so the red-first half of this case switches itself off on
+    // exactly the run the case goes red. Measured with one invented tag added
+    // to the prose side and the injected name replaced by one both sides
+    // already carry: the absolute form left both probes silent, and this form
+    // names both.
     const probes = [
-      ...(disagree(named.tags, [...derived, INVENTED]).length > 0
+      ...(disagree(named.tags, [...derived, INVENTED]).some((fault) => fault.includes(INVENTED))
         ? []
         : ['a tag the runs print and the prose omits was not faulted']),
-      ...(disagree([...named.tags, INVENTED], derived).length > 0
+      ...(disagree([...named.tags, INVENTED], derived).some((fault) => fault.includes(INVENTED))
         ? []
         : ['a tag the prose names and no run prints was not faulted']),
       ...(reportTagsNamedIn(index.replace(/report tag/gi, 'report label')).paragraphs === 0
@@ -21981,6 +22020,10 @@ function runGalleryTranscriptSuite(): number {
       ...[...derived].filter((x) => !prose.has(x)).map((x) => `the runs print \`${x}\` as ${what} and gallery/README.md does not name it`),
       ...[...prose].filter((x) => !derived.has(x)).map((x) => `gallery/README.md names \`${x}\` as ${what} and no refusal run prints one`),
     ];
+    // The two names nothing in this tree can print, which the red-first pair at
+    // the end of this list injects and then looks for by name.
+    const NOHEAD = 'rigc nosuch error';
+    const NOVERDICT = 'NOSUCHTAG';
     // Both markers are one anchored line, so the index is read line by line for them.
     const documented = [...index.matchAll(new RegExp(REFUSAL_RECIPE.source, 'gm'))].map((m) => m[1]);
     const shownDeclarations = [...index.matchAll(new RegExp(TRANSCRIPT_DECLARATION.source, 'gm'))].map((m) => m[1]);
@@ -22007,11 +22050,13 @@ function runGalleryTranscriptSuite(): number {
       ...shownDeclarations
         .filter((reason) => !carriedDeclarations.has(reason))
         .map((reason) => `the declaration gallery/README.md shows is not one any README carries: "${reason}"`),
-      // Red-first both ways, on a name nothing in the tree can print.
-      ...(disagree(namedHeads, new Set([...refusalVocab.heads, 'rigc nosuch error']), 'an error head').length > 0
+      // Red-first both ways, on a name nothing in the tree can print — and
+      // each probe asks whether THAT name was faulted rather than whether
+      // anything was, for the reason `GT04`'s pair states (issue #491).
+      ...(disagree(namedHeads, new Set([...refusalVocab.heads, NOHEAD]), 'an error head').some((f) => f.includes(NOHEAD))
         ? []
         : ['an error head the runs print and the prose omits was not faulted']),
-      ...(disagree(new Set([...namedTags, 'NOSUCHTAG']), refusalVocab.tags, 'a refusal verdict').length > 0
+      ...(disagree(new Set([...namedTags, NOVERDICT]), refusalVocab.tags, 'a refusal verdict').some((f) => f.includes(NOVERDICT))
         ? []
         : ['a verdict the prose names and no refusal run prints was not faulted']),
       ...(index.replace(/announces a refusal/gi, 'introduces a refusal').split(/\n[ \t]*\n/).filter((p) => /announces a refusal/i.test(p)).length === 0
@@ -28222,7 +28267,15 @@ function runDocScriptSuite(): number {
       at === i ? { ...claim, verdict: (claim.verdict === 'PASS' ? 'FAIL' : 'PASS') as 'PASS' | 'FAIL' } : claim,
     );
     planted++;
-    if (judgeDocScripts(verified, flipped, outcomes).length === 0) {
+    // ⚠️ Against what the unplanted run already judges, not against zero —
+    // issue #491, and the inverse of the correction the label plant below
+    // carries. A page this run already disagrees with leaves a fault standing
+    // whatever this flip does, so the absolute form reports the flip as caught
+    // without testing it. Measured with every flip replaced by a no-op and
+    // every verdict in the tree flipped to leave one standing disagreement per
+    // page: the absolute form printed PASS over four flips that changed
+    // nothing, and this form names all four.
+    if (judgeDocScripts(verified, flipped, outcomes).filter((fault) => !faults.includes(fault)).length === 0) {
       misses.push(`${scan.claims[i].where}: ${scan.claims[i].assertion} for \`(${scan.claims[i].label})\` flipped — not faulted`);
     }
   }
@@ -28269,7 +28322,14 @@ function runDocScriptSuite(): number {
       continue;
     }
     const round = runDocScriptRound(verified, new Map([[script.where, edited]]), root);
-    if (judgeDocScripts([script], scan.claims, round).length === 0) {
+    // ⚠️ Against the unplanted judgement, not against zero — issue #491. The
+    // judge here is scoped to one script, and so is the standing fault it can
+    // be satisfied by: a page already wrong about the verdicts of THIS script
+    // leaves this clause reporting nothing whatever the edit did. `faults` is
+    // that same judgement over the whole verified set, and because the judge
+    // walks scripts independently, what it holds for this one is exactly the
+    // baseline to take off.
+    if (judgeDocScripts([script], scan.claims, round).filter((fault) => !faults.includes(fault)).length === 0) {
       misses.push(`${script.where}: its write dropped — not faulted`);
     }
   }
@@ -28290,7 +28350,9 @@ function runDocScriptSuite(): number {
     if (edits.size === verified.length) {
       const round = runDocScriptRound(verified, edits, root);
       for (const script of verified) {
-        if (judgeDocScripts([script], scan.claims, round).length === 0) {
+        // Against the unplanted judgement, for the reason the write plant above
+        // gives — issue #491.
+        if (judgeDocScripts([script], scan.claims, round).filter((fault) => !faults.includes(fault)).length === 0) {
           misses.push(`${script.where}: the products rotated — not faulted`);
         }
       }
@@ -29442,7 +29504,20 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       lines.splice(line - 1, 0, marker);
       planted++;
       const out = rescan(withText(file, lines.join('\n')));
-      if (out.faults.length === 0) {
+      // ⚠️ Did THIS BLOCK fault — not "did anything fault" (issue #491). This
+      // rescan covers every tracked page, so one stale block or one bad marker
+      // anywhere in the tree satisfied the absolute form whatever the marker
+      // did. Measured with both markers replaced by a blank line and a
+      // sealed-subtree marker planted over the repository root to leave one
+      // standing fault: the absolute form printed PASS over twelve markers
+      // that faulted nothing, and this form names all twelve.
+      //
+      // 🔒 Attribution rather than subtracting the unplanted faults, because
+      // the marker goes in ABOVE the fence: everything below it in this page
+      // answers to a different line, so a standing fault there comes back as a
+      // different string and a subtraction reads it as newly raised. The
+      // block's own name moves by exactly the one line inserted.
+      if (!out.faults.some((fault) => fault.startsWith(`${file}:${line + 1}  `))) {
         misses.push(`${entry.where}: ${name} — not faulted`);
       }
     }
@@ -29581,7 +29656,17 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     unreasoned[at - 1] = sealedSubtreeLead();
     planted++;
     const bare = rescan(withText(file, unreasoned.join('\n')));
-    if (bare.faults.length === 0) {
+    // ⚠️ Did THIS MARKER fault — issue #491, the empty-seal clause below
+    // already asks it this way. Stripping the reason rewrites one line in
+    // place, so the marker keeps its name and the claim can be made about the
+    // marker rather than about the tree.
+    //
+    // 🔒 And the unplanted faults come off as well, which the first run of the
+    // repaired form is what found: a marker that is ALREADY faulting at its own
+    // name satisfies attribution alone whatever this edit did, so a name is not
+    // enough where the object being planted on can carry a fault of its own.
+    // Nothing moves here, so subtracting by string is exact.
+    if (!bare.faults.some((fault) => fault.startsWith(`${entry.where}  `) && !scan.faults.includes(fault))) {
       sealPlants.push(`${entry.where}: its reason stripped — not faulted`);
     }
 
@@ -29590,7 +29675,15 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     buried.push(lines[at - 1]);
     planted++;
     const sunk = rescan(withText(file, buried.join('\n')));
-    if (sunk.faults.length === 0) {
+    // ⚠️ Did THIS MARKER fault, at the line it was moved to — issue #491, and
+    // here the absolute form was the worst of the three: moving the marker
+    // UNSEALS its subtree, so every block it was holding out of the population
+    // comes back and may fault on its own account. Those are the faults that
+    // satisfied the old clause, and they are the ones that have nothing to do
+    // with what this plant is about. The marker is lifted out and pushed onto
+    // the end, so it answers to the last line of the page.
+    const sunkAt = `${file}:${lines.length}`;
+    if (!sunk.faults.some((fault) => fault.startsWith(`${sunkAt}  `) && !scan.faults.includes(fault))) {
       sealPlants.push(`${entry.where}: moved out of the header — not faulted`);
     }
   }
