@@ -155,9 +155,17 @@ overlap and reported the naming gap a third time: rung 1 read `0/8` where
 `attachments.names` read `0/16`. (The issue's own diagnosis — that Spine's
 exporter omits the fields when they match the atlas region, making the measure
 unwinnable — turned out not to hold: all twelve reference exports state a size on
-every one of their 168 regions.) It now asks, name-agnostically, whether the two
-rigs agree about **how big** their regions are. `attachments` moves as follows,
-and no other section is affected:
+every one of their regions, and no region omits either field.) ⛔ **No count on that
+claim, deliberately.** It used to carry one — *168 regions* — and nothing derives
+the figure: the plainest reading — every `region` attachment under `skins` in the
+twelve `export/*.json` skeletons — does not reach it, and neither does counting by
+skin, by slot, by attachment name, by atlas path or by atlas region
+([#490](https://github.com/firejune/rigc/issues/490)). The claim carries the
+argument without one, because it is universal and a single counterexample would
+refute it: after `bun run fetch-examples`, read the region attachments of those
+twelve files and check that each states both `width` and `height`. It now asks,
+name-agnostically, whether the two rigs agree about **how big** their regions are.
+`attachments` moves as follows, and no other section is affected:
 
 | run | `attachments` as recorded | recomputed | the measure itself |
 | --- | ---: | ---: | --- |
@@ -171,8 +179,19 @@ and no other section is affected:
 | rung 5 | 0.801 | **0.897** | `4/29` → `29/29` |
 | rung 6 | 0.321 | **0.396** | `0/3` → `2/3` |
 
-Where the new measure still reads short it is naming a real disagreement about a
-size — four rigs out of nine — which is what the old one never could.
+**Five of the nine rows still read short, and none of the five is a disagreement
+about a size.** In every one of them the smaller rig's stated sizes are wholly
+contained in the larger's — the overlap is exactly that rig's whole region count —
+so what the shortfall names is a region one rig has and the other has not:
+`ground-cover` on `drop`, two on each rung-2 attempt, one on rung 4, and on rung 6
+a part the candidate builds as a region where the reference meshes it — which is
+the reading *Operating rules* already gives that row. ⚠️ This sentence read *four
+rigs out of nine* and called the shortfall *a real disagreement about a size*, and
+both are wrong ([#490](https://github.com/firejune/rigc/issues/490)): the count is
+derivable off the table above — the rows whose `n/m` has `n` short of `m` — and the
+same reading is what refutes the characterisation. What the old measure could never
+do still stands, and the first row is where to see it: it read `0/8` on `balls`,
+whose eight regions agree on every size.
 
 **2026-08-25 — gate v1 introduced** (issue
 [#153](https://github.com/firejune/rigc/issues/153)). **No measure's definition
@@ -198,9 +217,16 @@ while the per-frame remainder is an order of magnitude smaller.
 
 ⚠️ **So a recorded MAE for a set framed `candidate-pixels` re-reads LOWER, and the
 per-slot drift in such a set can move either way** — the box it is measured in has
-moved. Over the 86 compared sets of the runs on this page, 52 refine to the exact
-identity and are unchanged (every set framed by `frames.json`'s own box is one of
-them); 33 move. `bench.json` files are **not** rewritten, and the re-read figures
+moved. Over the 86 compared sets of the runs on this page, **33 move**; the other
+**53 do not**, for any of the three reasons the clause above gives — the box is not
+an estimate, so it is searched and never moved (every set framed by
+`frames.json`'s own box is one of these); the search refines to the exact identity;
+or the gain it finds does not clear 1 %. ⛔ The three are not broken out, and not
+for brevity: this sentence split them *52* unchanged against *33* moved over 86,
+which leaves one set unaccounted for
+([#490](https://github.com/firejune/rigc/issues/490)), and the split cannot be
+re-taken — by the sentence that follows, the re-read that produced it was never
+written to disk. `bench.json` files are **not** rewritten, and the re-read figures
 belong to the adjudication pass rule 3 requires after an instrument change, not
 here. Nothing about `bench`'s own measures changed.
 
@@ -707,8 +733,9 @@ was once called, and notes drafted before 2026-08-23 that do are wrong twice ove
 The measure does not exist — it is `attachments.region_size` now — and the
 unwinnability claim it was retired *under* did not hold: Spine's exporter omits
 nothing, and all twelve reference exports state a width and a height on every one of
-their 168 regions. What made the old measure read `0/8` was that it was keyed by
-name. See the 🔴 correction under *Rung 1* and the 2026-08-23 entry under *Measure
+their regions — the count that used to stand on that claim is withdrawn. What made
+the old measure read `0/8` was that it was keyed by name. See the 🔴 correction
+under *Rung 1* and the 2026-08-23 entry under *Measure
 changes*. Its replacement is on the table above for a **different** reason, and only
 the new reason may be quoted: a size disagreement is observable, but the same
 histogram also moves when a part is meshed rather than posed, and no frame decides
@@ -4143,8 +4170,9 @@ exporter omits them; `bones.length_present`/`inherit` unobservable).
 > 🔴 **Correction, 2026-08-23.** The `region_size_present` half of that reading is
 > wrong, and the measure it names no longer exists. Spine's exporter does **not**
 > omit the fields: all twelve reference exports state a width and a height on every
-> one of their 168 regions. What made the measure read `0/8` was that it was keyed
-> by name — it could not exceed this run's `attachments.names`, which was `0/16`.
+> one of their regions — the count that used to stand on that claim is withdrawn,
+> and *Measure changes* says why. What made the measure read `0/8` was that it was
+> keyed by name — it could not exceed this run's `attachments.names`, which was `0/16`.
 > It has been replaced by the name-agnostic, numeric `attachments.region_size`
 > (issue #28), on which this run reads `8/8` and `4/5`; `attachments` recomputes to
 > 0.889 / 0.878. See *Measure changes* under **How a rung is scored**. The
