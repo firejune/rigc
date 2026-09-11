@@ -21,6 +21,26 @@ Every push to `main` runs `release.yml`, which hands the new commits to
   silently ([#163](https://github.com/firejune/rigc/issues/163)). Overriding the
   array replaces the default rather than extending it, so the whole list is
   written out — dropping a row from it hides that type.
+
+  ⚠️ **`docs` is the one hidden type that can still change the package, and
+  nothing notices.** The published tree is an allowlist and it includes guides:
+  `docs/AUTHORING.md`, `docs/FACE.md`, `docs/INGEST.md`, `docs/RIGGING.md`,
+  `docs/MOTION.md`, `docs/PROMPTING.md` and `docs/SPEC_COVERAGE.md` all ship, and
+  `CLAUDE.md` calls the first of them a first-class deliverable — the guide and
+  the validator's messages together are the only interface an agent that cannot
+  see the rig actually has. So a correction to a shipped guide changes what
+  `npm install spine-rigc` hands somebody, under a type the release machinery is
+  told to ignore, and the guides stay wrong on the registry until something else
+  happens to cut a release.
+
+  ⛔ The fix is **not** to un-hide `docs`: most of `docs/` does not ship
+  (`LADDER.md`, `PILOT.md`, `RELEASING.md` itself), so every note to a working
+  document would open a release pull request and the type would stop meaning
+  anything. What is wanted is a check that reads the allowlist — the same
+  `files` array `npm pack --dry-run` reads — and says so when a landing changes
+  a shipped file under a hidden type. Until that exists, the answer is the one
+  this section now records: **look at what changed in `files`, not at the commit
+  types**, and cut the release by hand when the two disagree.
 - **Something releasable** → it opens, or updates, a pull request titled
   `release: vX.Y.Z` containing exactly three generated changes: the
   `package.json` version, `CHANGELOG.md`, and `.release-please-manifest.json`.
