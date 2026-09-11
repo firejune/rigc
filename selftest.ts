@@ -25795,6 +25795,8 @@ function main(): void {
   bad += tally.of('agent-skill', runSkillSurfaceSuite);
   bad += tally.of('currency', runCurrencySuite);
   bad += tally.of('gallery-transcript', runGalleryTranscriptSuite);
+  const docsQuotes = tally.of('docs-transcript', runDocsQuoteSuite);
+  bad += docsQuotes.failures;
   bad += tally.of('doc-script', runDocScriptSuite);
   bad += tally.of('see-it', runSeeItSuite);
   bad += tally.of('pose', runPoseSuite);
@@ -25986,6 +25988,29 @@ function main(): void {
     'abridged quote faults. The vocabulary a refusal announces itself with is derived from those runs too — ' +
     'the error head at column 0, and the gutter tags a refusal run prints that no green run does — so a block ' +
     'that opens on one and carries no recipe is a fault rather than an escape)';
+  const docsTranscripts =
+    ', + ' + n('docs-transcript') + ' docs-transcript controls (issue #468 — the same question one surface over, on ' +
+    'the pages an agent is sent to before it has seen a rig. The population is every plain fenced block of a ' +
+    'tracked markdown file outside `gallery/`, anchored by the same two rules and through the same functions; ' +
+    'the pool is every rigc invocation each page states in a fence that carries an info string, with `--out` ' +
+    'redirected into the round and nothing else touched. What each block gets is one of four things that never ' +
+    'share a bucket — verified, declared, a HOLE, or unreachable WITH ITS REASON PRINTED — because the ruling ' +
+    'this card was reopened to reverse was a classification that read "currently failing" as "not reachable". ' +
+    'The coverage is the finding and it is published rather than implied: a fraction of what `docs/` fences is ' +
+    'reachable, and the floor states how big that fraction is, since this gate cannot fault a block for not ' +
+    'reproducing — four of them are illustrations and abridgements that open on a line a real run prints, and a ' +
+    'gate whose first act is demanding four document repairs buries the evidence it exists to surface. So a ' +
+    "block leaving the verified set goes red at that floor, which is the relationship GT03's anchor plant has " +
+    'to GT01, and every verified block is planted on three ways to make it stale plus two that would turn the ' +
+    'declaration marker into a bypass. The landed run records under `bench/runs/` are excluded by one rendered ' +
+    'marker line in that directory\'s own README, in the family the tree already has three of, and it is held ' +
+    'two-sidedly: a marker with no reason, one below its header, and one over a subtree holding no anchored ' +
+    'block each fault, while taking it off has to bring back exactly what it sealed and fault nothing)' +
+    (docsQuotes.holes === 0
+      ? ''
+      : `\n  ⚠️ ${docsQuotes.holes} anchored block(s) in the tracked docs were reported as a HOLE rather than ` +
+        'checked, because the commands their pages state read material this repository fetches rather than ' +
+        'tracking. `bun run fetch-examples` gets it.');
   const docScripts =
     ', + ' + n('doc-script') + ' doc-script controls (issue #477 — the two gates above read what a page QUOTES and ' +
     'what a page SAYS ABOUT the tool; this one RUNS what a page states. `docs/FACE.md` §9.2 ships two `bun -e` ' +
@@ -26273,6 +26298,7 @@ function main(): void {
       skillSurface +
       currency +
       galleryTranscripts +
+      docsTranscripts +
       docScripts +
       ', + ' + n('see-it') + ' see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +
@@ -27848,4 +27874,1094 @@ function runDocScriptSuite(): number {
   );
 
   return bad;
+}
+
+// ---------------------------------------------------------------------------
+// the transcripts `docs/` and `README.md` quote, held to the commands those
+// pages state (issue #468)
+// ---------------------------------------------------------------------------
+//
+// ⭐ **Why this suite exists, and why it is not `GT01`–`GT06` with a wider
+// glob.** The gallery gate holds a `gallery/*/README.md` block to a command that
+// README states, and #429 drew its boundary at `gallery/` deliberately. Issue
+// #468 priced widening it, ruled **no gate**, and was **reopened the same day**
+// because the ruling was wrong in a way worth keeping: the report's
+// recommendation said no stale block sat in the reachable set, while the
+// report's own per-block table classified two that did — `docs/FACE.md`'s
+// `DEFORM … key 1 t=0.620000` (**"does not reproduce"**, and reachable) and
+// `docs/LADDER.md`'s `bench 3` (called unreachable while being described as
+// reproducing for 38 of its 57 lines, which is not unreachable, it is failing).
+// Both were then found by hand and repaired by hand (#473, #480). Removing that
+// loop is the whole of what this suite is for.
+//
+// 🚨 **The root defect was a classification that put "not reachable" and
+// "currently failing" in one bucket**, so nothing here shares a bucket: a block
+// is **verified**, **declared**, **a HOLE**, or **unreachable with its reason
+// printed**, and those four are counted and named separately.
+//
+// **How the population is derived, and it is never a list.**
+//
+//  1. The universe is `git ls-files` filtered to markdown, minus `gallery/`,
+//     which `GT01`–`GT06` already hold. The repository's own answer to what is
+//     in the tree, so nothing is left out by a judgement made here.
+//  2. A **plain** fenced block (no info string) is output — the same split
+//     `galleryBlocks` already makes, where `json` and `bash` are source.
+//  3. It is anchored the two ways the gallery anchors one, through the same
+//     functions: a gutter tag in the vocabulary the runs print
+//     (`transcriptBlockTag`), or a **record head** those runs print
+//     (`transcriptHeadAnchored`) — an interior node of the report's own tree.
+//
+// ⚠️ **Rule 2 needs record heads POOLED across examples, which the gallery
+// suite refuses inside itself**, and that relaxation has a measured cost rather
+// than a theoretical one: it anchors `docs/FACE.md:571`, a hand-drawn plate
+// table that is not tool output in any sense, because `head` is a record head in
+// another example's run. **The decision is that a false positive may land in
+// `unreachable` and may never land in a fault**, which is exactly what it does
+// here — it is printed with the reason "its first line is printed by no run".
+// The relaxation is worth its false positive because rule 2 is what reaches
+// `docs/LADDER.md`'s `bench 3` block, one of the two the reopening comment
+// names, and `docs/AUTHORING.md`'s `deform` rollup.
+//
+// **The command pairing, derived and never told.** 🔒 A told-command table is
+// the hand-maintained list this repository has a standing judgment about, and
+// #468's first measurement rejected the whole gate partly on those grounds. So
+// the pool for a document is **every rigc invocation that document states in a
+// fence with an info string**, and everything that narrows it is a property of
+// the invocation, printed by `DQ01` for each one that falls out:
+//
+//  1. it is elided (`…`) or carries a `<placeholder>` no command of its own
+//     fence writes — a shape, not a command;
+//  2. it reads an absolute path, which is outside this repository;
+//  3. it reads a path the repository does not carry. Split in two, because the
+//     two mean different things: a path **the tree deliberately does not
+//     track** — the fetched corpus, a build product — is a **HOLE**, and any
+//     other absent path is simply out of reach. That split is asked of git in a
+//     throwaway repository holding this repository's own `.gitignore`, never of
+//     the live tree: `git check-ignore examples/…` answers off today's disk, and
+//     in the worktree this was written in it refused outright with *"beyond a
+//     symbolic link"*.
+//
+// ⚠️ **`--out` is redirected into the round's own directory and nothing else
+// is**, which is the same rule `DS01`'s runner obeys one surface over. Two
+// consequences, both stated because both are limits: a block quoting the `--out`
+// path back cannot verify (rigc prints it, and the runner's path is not the
+// page's), and a later command in the **same fence** reading what `--out` wrote
+// is given the runner's directory **only where the page wrote a
+// `<placeholder>`**. Where the page names a real directory the runner may not
+// write to, that later command is out of reach instead. ⭐ One override is a
+// redirection; two is a different recipe — and the measured cost of the rule is
+// exactly `docs/FACE.md`'s two `render` runs and one `preview`, **20.4 s of
+// 22.2 s**, feeding no anchored block.
+//
+// **The verdict, and the floor that makes a thin one honest.** #468's closing
+// argument against this gate was that a small verified set *"buys the appearance
+// of coverage"*. The answer is `GT01`'s own mechanism: a partial scan that
+// **publishes its own coverage** is not what this family refuses to be, a
+// **silent** one is. So `DQ01` states how many blocks were found, how many
+// verified, how many are a HOLE and how many are unreachable **with the reason
+// for each**, and a run that verifies nothing exits non-zero rather than
+// printing green.
+//
+// 🚨 **What this gate deliberately does NOT do, and the measurement behind it.**
+// `GT02` faults a gallery block that is anchored and does not reproduce. That
+// rule cannot cross into `docs/`, and the reason is measured rather than
+// argued: four blocks here are anchored, share a first line with a stated run,
+// and diverge — `docs/AUTHORING.md:2096` (a `MEMBER` record invented over a rig
+// that is not `portrait`), `:2730` (a `deform` rollup abridged over six keys),
+// `:3262` (four verdict lines assembled to show what a report looks like) and
+// `docs/FACE.md:530` (the same `MEMBER` block with its derivation lines cut).
+// None is stale; all four are illustrations or abridgements. Faulting them
+// would mean **the gate's first act is demanding four document repairs**, which
+// buries the evidence it exists to surface. ⇒ A block that stops reproducing
+// leaves the verified set, and **`DQ01`'s floor is what turns that red** — the
+// same relationship `GT03`'s anchor plant has to `GT01`.
+//
+// ⭐ **The road out is short, and the tree already has the mechanism, so it is
+// written here rather than left to be re-derived.** It is `DECLARATION_LEAD`,
+// the marker the gallery already carries on six blocks. ⚠️ Two of the four are
+// literally the shape that comment describes — *"lines lifted out of a run that
+// does not print them adjacent, or a run cut short with an ellipsis"* — which is
+// `:2730` abridged and `:3262` assembled. The other two are not: `:2096` and
+// `docs/FACE.md:530` quote a `MEMBER` record over a six-member `features` group
+// that no rig in this repository has, so their reason would read *illustration*
+// rather than *abridged*. The MARKER still covers them exactly, because what it
+// says is `No run reproduces this:` and that is the plain truth of both.
+//
+// ⇒ Give the four a declaration and every anchored block in `docs/` is verified
+// or declared; non-reproduction becomes a fault the way it is in the gallery;
+// `GT02`'s rule crosses; and `DQ01`'s counted floor — with the swap it cannot
+// see, described beside it below — is replaced by a per-block rule that has no
+// such hole. ⛔
+// Not done here, and the reason is the same one that shaped everything above: it
+// edits four documents and changes what renders on four pages, and a gate whose
+// first act is editing what it gates buries its own evidence. It is a card.
+//
+// 🔒 **The sealed subtree.** Three landed run records under `bench/runs/` carry
+// anchored output and [#181](https://github.com/firejune/rigc/issues/181)
+// forbids repairing any measure or reading in them; one of the three is
+// anchored by the two rules above. A gate whose population contains a record
+// nobody may touch is publishing a figure it cannot act on, so the subtree is
+// excluded **derivably**: one rendered marker line in the header of the
+// directory's own README, in the family this tree already has three of
+// (`DECLARATION_LEAD`, `RECIPE_LEAD`, `DATED_RECORD_MARKER`). Its floors come
+// with the family — the reason is required, the excluded set is printed so it
+// cannot grow quietly, and **a marker that excludes no block at all is a
+// fault**, which is what stops it becoming a way to switch the gate off.
+//
+// ⚠️ **Cost, measured rather than guessed.** The vocabulary has to come from
+// runs, and this suite builds its own gallery pool through `transcriptRunsFor`
+// rather than reaching into `runGalleryTranscriptSuite`'s locals: 20 runs,
+// ~1.6 s. The documents' own pool is 15 more, ~1.1 s, of which `bench 3` and
+// the build that feeds it are 90 ms — cheap, and worth it, because that block
+// is one of the two this card was reopened for. Every plant below is free: the
+// rescans re-read the runs already taken. **35 subprocesses, ~2.7 s.**
+// ⚠️ Deriving the vocabulary from the documents' OWN runs instead was built and
+// **rejected on measurement**: it costs the same (3.1 s), it drags `FAIL` into
+// the green vocabulary — the tag the refusal half derives by SUBTRACTION from
+// it — and, decisively, it is corpus-dependent, so a fresh clone would silently
+// anchor 119 heads instead of 205 and the population would shrink rather than
+// report a hole.
+
+/** One block of a document this gate can see, with how it was found. */
+interface DocsQuoteBlock {
+  file: string;
+  /** 1-based line of the opening fence. */
+  line: number;
+  body: string[];
+  anchor: 'tag' | 'head' | 'declared';
+  declared: string | null;
+}
+
+/** One rigc invocation a document states, and whether this runner can run it. */
+interface DocsQuoteCommand {
+  file: string;
+  line: number;
+  /** As the page spells it, whitespace collapsed — what a failure detail has to name. */
+  text: string;
+  argv: string[];
+  /** Index of `--out` in `argv`, or -1. Its value is the one thing the runner supplies. */
+  outAt: number;
+  /**
+   * Which shape of unrunnable this is, or `null` for one that runs.
+   *
+   * ⭐ A field rather than a reading of the sentence, because `DQ01` reports the
+   * out-of-reach set by KIND: 116 of them are stated in this tree, so spelling
+   * each one out would bury the per-block reasons the floor is actually for
+   * under a page of prose nobody reads. The kinds are the derivation's own
+   * branches, so a branch that stops being taken shows up as a zero.
+   */
+  kind: 'elided' | 'placeholder' | 'quoted' | 'absolute' | 'absent' | 'untracked' | null;
+  /** Why it is not run, in one sentence, or null. */
+  reason: string | null;
+  /** True when the reason is a path the tree deliberately does not track — a HOLE, not an absence. */
+  hole: boolean;
+}
+
+/** What one pass over the tree found. */
+interface DocsQuoteScan {
+  found: number;
+  byTag: number;
+  byHead: number;
+  byDeclared: number;
+  verified: Array<{ where: string; command: string; lines: number; anchor: DocsQuoteBlock['anchor'] }>;
+  declared: Array<{ where: string; reason: string }>;
+  holes: Array<{ where: string; why: string }>;
+  unreachable: Array<{ where: string; why: string }>;
+  /** Blocks a sealed marker took out of the population, by the marker that took them. */
+  excluded: Array<{ where: string; sealedBy: string }>;
+  faults: string[];
+}
+
+/**
+ * The lead that makes a line a sealed-subtree marker — what a reader reads, and
+ * the whole of what this scanner keys on. The reason is the rest of the line.
+ *
+ * ⚠️ A function rather than a `const`, for the reason `docScratchPrefix` above
+ * is one: this region is appended AFTER `main()` is called, so a module-level
+ * binding here is in its temporal dead zone when the suite runs.
+ */
+function sealedSubtreeLead(): string {
+  return '**A sealed subtree:**';
+}
+
+/** The lead, and whatever an author wrote after it — which has to be a reason. */
+function sealedSubtreeLine(): RegExp {
+  return new RegExp(`^${literalPattern(sealedSubtreeLead())}[ \\t]*(.*?)[ \\t]*$`);
+}
+
+/**
+ * Which directories a marker seals, and every way a marker can be wrong.
+ *
+ * A marker seals the directory of the file it sits in, and everything below it,
+ * so a run that lands tomorrow needs no action. It has to sit in the file's
+ * header — `CURRENCY_HEADER_LINES`, the same window the dated-record marker
+ * uses — because a declaration buried at the bottom of a long page is one the
+ * reader it is written for will not meet.
+ */
+function sealedSubtrees(docs: Map<string, string>): {
+  prefixes: Array<{ where: string; prefix: string; reason: string }>;
+  faults: string[];
+} {
+  const prefixes: Array<{ where: string; prefix: string; reason: string }> = [];
+  const faults: string[] = [];
+  for (const [path, text] of docs) {
+    const lines = text.split('\n');
+    lines.forEach((line, i) => {
+      const found = sealedSubtreeLine().exec(line);
+      if (found === null) return;
+      const where = `${path}:${i + 1}`;
+      if (i >= CURRENCY_HEADER_LINES) {
+        faults.push(
+          `${where}  opens with \`${sealedSubtreeLead()}\` below the header — a marker seals a subtree and a ` +
+            `reader has to meet it, so it belongs in the first ${CURRENCY_HEADER_LINES} lines or nowhere`,
+        );
+        return;
+      }
+      if (found[1].length < TRANSCRIPT_REASON_MIN) {
+        faults.push(
+          `${where}  seals a subtree and gives no reason for it ("${found[1]}"): the ruling that seals a ` +
+            'subtree is the whole of what makes the exclusion checkable, so it has to be named',
+        );
+        return;
+      }
+      const dir = dirname(path);
+      prefixes.push({ where, prefix: dir === '.' ? '' : `${dir}/`, reason: found[1] });
+    });
+  }
+  return { prefixes, faults };
+}
+
+/**
+ * The statements of one fenced block — a shell line at a time, a `\` at the end
+ * of a line holding the next one open.
+ *
+ * Comments come off before anything else, which is what stops a `# (a) …` label
+ * being read as part of the command below it.
+ */
+function docsQuoteStatements(body: readonly string[], first: number): Array<{ line: number; text: string }> {
+  const out: Array<{ line: number; text: string }> = [];
+  let held: string[] = [];
+  let at = first;
+  for (let i = 0; i < body.length; i++) {
+    const line = body[i];
+    if (held.length === 0 && /^\s*#/.test(line)) continue;
+    if (held.length === 0) at = first + i;
+    held.push(line.replace(/\s+#.*$/, ''));
+    if (/\\\s*$/.test(line)) continue;
+    const text = held.join(' ').replace(/\\\s+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (text !== '') out.push({ line: at, text });
+    held = [];
+  }
+  if (held.length > 0) {
+    const text = held.join(' ').replace(/\\\s+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (text !== '') out.push({ line: at, text });
+  }
+  return out;
+}
+
+/** How a page spells an invocation of this tool: from a checkout, or installed. */
+function docsQuoteInvocation(): RegExp {
+  return /^(?:bun cli\.ts|rigc)\s+([a-z][a-z-]*)\b/;
+}
+
+/**
+ * Is this argument something the tool would have to open?
+ *
+ * A slash or an extension, because both forms appear: `gallery/squash/rig.json`
+ * and `candidate.json`. Getting this wrong is not silent in the safe direction
+ * — a path-shaped word this misses is one the runner passes through to a
+ * command it then runs, which is how `--json report.json` would have written
+ * into the checkout.
+ */
+function docsQuoteLooksLikePath(word: string): boolean {
+  // A number list is not a path, whatever it ends in: `--viewport
+  // 20.4013,31.8317,119.1974,153.8671` ends in `.8671` and was reported as a
+  // path the repository does not carry until this line was here.
+  if (/^[\d.,+-]+$/.test(word)) return false;
+  return /\//.test(word) || /\.[A-Za-z0-9]{1,6}$/.test(word);
+}
+
+/**
+ * Every rigc invocation a document states, with the reason each unrunnable one
+ * is unrunnable.
+ *
+ * ⛔ Read out of fences that carry an info string ONLY. A plain fence is output,
+ * which is the split the population itself is made on — and it is not a nicety:
+ * `docs/INGEST.md` opens four transcripts with the bare line `rigc render`,
+ * `rigc diff`, `rigc check`, `rigc pose`, which is the tool's own report header.
+ * Reading those as invocations ran four commands that could only print usage.
+ */
+function docsQuoteCommands(file: string, text: string, root: string): DocsQuoteCommand[] {
+  const out: DocsQuoteCommand[] = [];
+  for (const block of galleryBlocks(text)) {
+    if (block.info === '') continue;
+    // A `<placeholder>` is resolvable only against an `--out` in its OWN fence:
+    // one fence is one runnable unit, as `DS01`'s runner has it.
+    const produced = new Set<string>();
+    for (const statement of docsQuoteStatements(block.lines, block.line + 1)) {
+      if (!docsQuoteInvocation().test(statement.text)) continue;
+      const argv = statement.text.replace(docsQuoteInvocation(), '$1').split(' ');
+      const outAt = argv.indexOf('--out');
+      const command: DocsQuoteCommand = {
+        file,
+        line: statement.line,
+        text: statement.text,
+        argv,
+        outAt,
+        kind: null,
+        reason: null,
+        hole: false,
+      };
+      const falls = (kind: DocsQuoteCommand['kind'], reason: string): void => {
+        command.kind = kind;
+        command.reason = reason;
+      };
+      if (/[…]|\.\.\./.test(statement.text)) falls('elided', 'the command it states is elided');
+      else {
+        for (let i = 1; i < argv.length; i++) {
+          const word = argv[i];
+          if (outAt >= 0 && i === outAt + 1) continue; // the one value this runner supplies
+          if (produced.has(word)) continue;
+          if (/[<>]/.test(word)) {
+            falls('placeholder', `it reads \`${word}\`, a placeholder no \`--out\` of its own fence writes`);
+            break;
+          }
+          if (/['"]/.test(word)) {
+            falls('quoted', `it reads \`${word}\`, which carries shell quoting this runner does not parse`);
+            break;
+          }
+          if (word.startsWith('-')) continue;
+          if (!docsQuoteLooksLikePath(word)) continue;
+          if (word.startsWith('/')) {
+            falls('absolute', `it reads \`${word}\`, an absolute path outside this repository`);
+            break;
+          }
+          if (!existsSync(join(root, word))) {
+            // `absent` or `untracked` is settled below, in one call, once every
+            // absent path is known: the two mean different things and only one
+            // of them is a HOLE. The reason holds the bare path until then.
+            falls('absent', word);
+            break;
+          }
+        }
+      }
+      if (command.reason === null && outAt >= 0 && /^<[^<>]+>$/.test(argv[outAt + 1] ?? '')) {
+        produced.add(argv[outAt + 1]);
+      }
+      out.push(command);
+    }
+  }
+  return out;
+}
+
+/**
+ * Which of these absent paths the repository deliberately does not track.
+ *
+ * 🔒 Asked of git, in a throwaway repository holding this repository's own
+ * `.gitignore`, and never of the live tree. `git check-ignore` reads today's
+ * disk: it answers IGNORED for `examples` only while that name happens to be a
+ * real directory, and in the worktree this was written in — where it was a
+ * symlink to one — it refused the whole query with *"beyond a symbolic link"*.
+ * The same command in a repository with nothing in it but the ignore file
+ * answers the question that was actually asked, which is about the RULES.
+ */
+function docsQuoteIgnored(paths: string[], root: string): { ignored: Set<string>; fault: string | null } {
+  if (paths.length === 0) return { ignored: new Set<string>(), fault: null };
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-docsquote-ignore-'));
+  try {
+    writeFileSync(join(dir, '.gitignore'), readFileSync(join(root, '.gitignore'), 'utf8'));
+    const init = spawnSync('git', ['init', '-q', dir], { encoding: 'utf8' });
+    if (init.error !== undefined || init.status !== 0) {
+      return { ignored: new Set<string>(), fault: 'git could not make the throwaway repository the ignore rules are asked in' };
+    }
+    const asked = spawnSync('git', ['-C', dir, 'check-ignore', '--stdin'], { input: paths.join('\n'), encoding: 'utf8' });
+    // Exit 1 means "none of them matched", which is an answer and not a failure.
+    if (asked.error !== undefined || (asked.status !== 0 && asked.status !== 1)) {
+      return {
+        ignored: new Set<string>(),
+        fault: `git could not say which of ${paths.length} absent path(s) this repository deliberately does not track`,
+      };
+    }
+    return { ignored: new Set(asked.stdout.split('\n').filter((line) => line !== '')), fault: null };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * What a git working copy looks like right now, as one string.
+ *
+ * 🚨 This suite runs commands **a document wrote for a reader who has a
+ * checkout**, and the reader's checkout is where those commands are meant to
+ * write. `--out` is the one value redirected, and the only thing standing
+ * between the rest and this tree is that every other path-shaped argument has
+ * to already exist: a `--json report.json` pointed at a file that DOES exist
+ * would be run and would overwrite it. That is an argument, and an argument is
+ * not a measurement — so the round is bracketed by this and a difference is a
+ * fault. `DQ03` shows it firing, on a throwaway repository rather than on this
+ * one, because a probe that proved it by dirtying the tree would be the defect.
+ */
+function docsQuoteWorkingCopy(dir: string): string {
+  const seen = spawnSync('git', ['-C', dir, 'status', '--porcelain', '--untracked-files=all'], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (seen.error !== undefined || seen.status !== 0) return `git could not read the working copy at ${dir}`;
+  return seen.stdout.split('\n').sort().join('\n');
+}
+
+/**
+ * Run one document's pool, in the order the page states it.
+ *
+ * Memoised on the resolved argv with `--out`'s value blanked, so two pages
+ * stating the same command are one subprocess — and two that differ by one flag
+ * are not, which is why the key is the argv and not the page's own wording.
+ */
+function docsQuotePool(
+  commands: readonly DocsQuoteCommand[],
+  roundDir: string,
+  memo: Map<string, TranscriptRun>,
+): TranscriptRun[] {
+  const produced = new Map<string, string>();
+  const runs: TranscriptRun[] = [];
+  for (const command of commands) {
+    if (command.reason !== null) continue;
+    const argv = command.argv.map((word, i) =>
+      command.outAt >= 0 && i === command.outAt + 1
+        ? join(roundDir, `out-${memo.size}-${runs.length}`)
+        : produced.get(word) ?? word,
+    );
+    const key = argv.map((word, i) => (command.outAt >= 0 && i === command.outAt + 1 ? '<out>' : word)).join(' ');
+    if (command.outAt >= 0 && /^<[^<>]+>$/.test(command.argv[command.outAt + 1] ?? '')) {
+      produced.set(command.argv[command.outAt + 1], argv[command.outAt + 1]);
+    }
+    const cached = memo.get(key);
+    if (cached !== undefined) {
+      runs.push(cached);
+      continue;
+    }
+    const result = runCli(argv);
+    const run: TranscriptRun = {
+      command: command.text,
+      lines: `${result.stdout}${result.stderr}`.split('\n'),
+      status: result.status,
+    };
+    memo.set(key, run);
+    runs.push(run);
+  }
+  return runs;
+}
+
+/**
+ * Every block, and its verdict — the whole of what `DQ01` reports and `DQ02`
+ * and `DQ03` read.
+ *
+ * Takes the pool rather than making one, so the plants below rescan seventy
+ * times and add not one subprocess.
+ */
+function scanDocsQuotes(
+  docs: Map<string, string>,
+  vocabulary: Set<string>,
+  heads: Set<string>,
+  commandsBy: Map<string, DocsQuoteCommand[]>,
+  runsBy: Map<string, TranscriptRun[]>,
+): DocsQuoteScan {
+  const scan: DocsQuoteScan = {
+    found: 0,
+    byTag: 0,
+    byHead: 0,
+    byDeclared: 0,
+    verified: [],
+    declared: [],
+    holes: [],
+    unreachable: [],
+    excluded: [],
+    faults: [],
+  };
+  const sealed = sealedSubtrees(docs);
+  scan.faults.push(...sealed.faults);
+  for (const [file, text] of docs) {
+    if (file.startsWith('gallery/')) continue;
+    const commands = commandsBy.get(file) ?? [];
+    const runs = runsBy.get(file) ?? [];
+    // A HOLE is a document whose pool is empty BECAUSE the tree does not carry
+    // what its commands read — never a document whose commands simply failed.
+    const hole = runs.length === 0 && commands.some((command) => command.hole);
+    for (const block of galleryBlocks(text)) {
+      if (block.info !== '') continue;
+      const body = transcriptBody(block.lines);
+      if (body.length === 0) continue;
+      const tag = TRANSCRIPT_BLOCK_TAG.exec(body[0]);
+      const byTag = tag !== null && vocabulary.has(tag[1]);
+      const byHead = !byTag && transcriptHeadAnchored(body, heads);
+      if (!byTag && !byHead && block.declared === null) continue;
+      const at = `${file}:${block.line}`;
+      const seal = sealed.prefixes.find((entry) => entry.prefix !== '' && file.startsWith(entry.prefix));
+      if (seal !== undefined) {
+        scan.excluded.push({ where: at, sealedBy: seal.where });
+        continue;
+      }
+      scan.found++;
+      const anchor: DocsQuoteBlock['anchor'] = byTag ? 'tag' : byHead ? 'head' : 'declared';
+      if (byTag) scan.byTag++;
+      else if (byHead) scan.byHead++;
+      else scan.byDeclared++;
+
+      const best = bestTranscriptWindow(body, runs);
+      const reproduces = best !== null && best.shared === body.length;
+      if (block.declared !== null) {
+        if (block.declared.length < TRANSCRIPT_REASON_MIN) {
+          scan.faults.push(
+            `${at}  declares itself a transcript no run reproduces and gives no reason for it ` +
+              `("${block.declared}"): a marker is an as-of annotation, so it has to say as of what`,
+          );
+        } else if (reproduces) {
+          scan.faults.push(
+            `${at}  is declared unreproducible ("${block.declared}") and \`${best?.command ?? ''}\` prints it ` +
+              'verbatim — a declaration is the escape for a block the tool cannot print, not a way to stop ' +
+              'checking one it can',
+          );
+        } else {
+          scan.declared.push({ where: at, reason: block.declared });
+        }
+        continue;
+      }
+      if (reproduces) {
+        scan.verified.push({ where: at, command: best?.command ?? '', lines: body.length, anchor });
+        continue;
+      }
+      if (hole) {
+        scan.holes.push({
+          where: at,
+          why:
+            `no command \`${file}\` states could run here — ` +
+            commands
+              .filter((command) => command.hole)
+              .map((command) => `\`${command.text.slice(0, 60)}\`: ${command.reason ?? ''}`)
+              .join('; '),
+        });
+        continue;
+      }
+      const near = runs.length === 0 ? null : nearestPrintedLine(body[0].trimStart(), runs);
+      scan.unreachable.push({
+        where: at,
+        why:
+          runs.length === 0
+            ? `no command \`${file}\` states can be run here, so nothing in this repository prints it`
+            : best === null || best.shared === 0
+              ? `its first line is printed by no command this page states` +
+                (near === null
+                  ? `: "${body[0].trim().slice(0, 96)}"`
+                  : (():
+                      string => {
+                      // 🔒 Where they FIRST differ, not the first 72 characters
+                      // of each. The nearest line usually shares a long prefix
+                      // — `MESH  head  authored 25 vertices …` against the same
+                      // line with one figure moved — so two truncations print
+                      // the same text and name nothing. The first `MESH` plant
+                      // below produced exactly that before this branch existed.
+                      const want = body[0].trim();
+                      let shared = 0;
+                      while (shared < want.length && shared < near.line.length && want[shared] === near.line[shared]) shared++;
+                      return (
+                        `; the closest \`${near.command.slice(0, 44)}\` prints agrees for ${shared} character(s), ` +
+                        `and then the page reads "${want.slice(shared, shared + 60)}" where the tool prints ` +
+                        `"${near.line.slice(shared, shared + 60)}"`
+                      );
+                    })())
+              : `line ${best.shared + 1} of ${body.length} reads "${body[best.shared].trim().slice(0, 64)}" and ` +
+                `\`${best.command.slice(0, 44)}\` prints "${best.window[best.shared].trim().slice(0, 64)}"`,
+      });
+    }
+  }
+  // 🔒 The seal's own floor, raised here rather than beside the call so a
+  // rescan sees it: a marker that excludes nothing is a fault, not a no-op.
+  // Without it the line would go on reading as an exclusion long after the
+  // thing it excluded had moved, which is the shape every marker in this family
+  // is floored against.
+  for (const entry of sealed.prefixes) {
+    if (entry.prefix === '') {
+      scan.faults.push(
+        `${entry.where}  seals the directory it sits in, and that is the repository root — a marker takes a ` +
+          'SUBTREE out of this gate, never the whole tree',
+      );
+      continue;
+    }
+    if (scan.excluded.some((block) => block.sealedBy === entry.where)) continue;
+    scan.faults.push(
+      `${entry.where}  seals \`${entry.prefix}\` and no anchored block is in it, so the marker excludes nothing ` +
+        'and would go on reading as an exclusion after the thing it excluded had gone',
+    );
+  }
+  return scan;
+}
+
+/** Splice an edited block body back into the document text it came from. */
+function docsQuotePlant(text: string, block: GalleryBlock, edited: string[]): string {
+  const raw = text.split('\n');
+  return [...raw.slice(0, block.line), ...edited, ...raw.slice(block.line + block.lines.length)].join('\n');
+}
+
+function runDocsQuoteSuite(): { failures: number; holes: number } {
+  console.log('\n── what `docs/` and `README.md` QUOTE the tool as printing (issue #468) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const root = import.meta.dir;
+  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+  const treeFault =
+    listed.error !== undefined || listed.status !== 0
+      ? `git could not list the tracked files (${listed.error?.message ?? `exit ${String(listed.status)}: ${listed.stderr.toString('utf8').trim()}`})`
+      : null;
+  const docs = new Map<string, string>();
+  if (treeFault === null) {
+    for (const path of listed.stdout.toString('utf8').split('\u0000')) {
+      if (path.endsWith('.md') && !path.startsWith('gallery/') && existsSync(join(root, path))) {
+        docs.set(path, readFileSync(join(root, path), 'utf8'));
+      }
+    }
+  }
+
+  // Bracket everything that runs a subprocess: nothing this suite does may
+  // reach the checkout, and that is measured rather than asserted.
+  const copyBefore = docsQuoteWorkingCopy(root);
+
+  // --- the vocabulary, from runs of the gallery's own stated commands -------
+  const galleryRoot = join(root, 'gallery');
+  const vocabulary = new Set<string>();
+  const heads = new Set<string>();
+  let galleryRuns = 0;
+  let galleryExamples = 0;
+  if (existsSync(galleryRoot)) {
+    for (const example of readdirSync(galleryRoot).sort()) {
+      const readmePath = join(galleryRoot, example, 'README.md');
+      if (!existsSync(readmePath) || !existsSync(join(galleryRoot, example, 'rig.json'))) continue;
+      const readme = readFileSync(readmePath, 'utf8');
+      if (!new RegExp(`bun cli\\.ts build[^\\n]*--rig gallery/${example}/rig\\.json`).test(readme)) continue;
+      galleryExamples++;
+      const runs = transcriptRunsFor(example, readme, mkdtempSync(join(tmpdir(), `rigc-docsquote-${example}-`)));
+      galleryRuns += runs.length;
+      for (const run of runs) {
+        for (const line of run.lines) {
+          const tag = TRANSCRIPT_GUTTER.exec(line);
+          if (tag !== null) vocabulary.add(tag[1]);
+        }
+        for (const head of transcriptRecordHeads(run.lines)) heads.add(head);
+      }
+    }
+  }
+
+  // --- each document's own pool ---------------------------------------------
+  const commandsBy = new Map<string, DocsQuoteCommand[]>();
+  const absent = new Set<string>();
+  for (const [file, text] of docs) {
+    const commands = docsQuoteCommands(file, text, root);
+    for (const command of commands) if (command.kind === 'absent' && command.reason !== null) absent.add(command.reason);
+    commandsBy.set(file, commands);
+  }
+  const asked = docsQuoteIgnored([...absent], root);
+  for (const commands of commandsBy.values()) {
+    for (const command of commands) {
+      if (command.kind !== 'absent' || command.reason === null) continue;
+      const path = command.reason;
+      command.hole = asked.ignored.has(path);
+      command.kind = command.hole ? 'untracked' : 'absent';
+      command.reason = command.hole
+        ? `it reads \`${path}\`, which this repository generates or fetches rather than tracking`
+        : `it reads \`${path}\`, which the repository does not carry`;
+    }
+  }
+
+  const roundDir = mkdtempSync(join(tmpdir(), 'rigc-docsquote-round-'));
+  const memo = new Map<string, TranscriptRun>();
+  const runsBy = new Map<string, TranscriptRun[]>();
+  for (const [file, commands] of commandsBy) runsBy.set(file, docsQuotePool(commands, roundDir, memo));
+
+  const copyAfter = docsQuoteWorkingCopy(root);
+
+  const scan = scanDocsQuotes(docs, vocabulary, heads, commandsBy, runsBy);
+  const stated = [...commandsBy.values()].reduce((n, commands) => n + commands.length, 0);
+  const outOfReach = [...commandsBy.values()].flat().filter((command) => command.reason !== null);
+  // By KIND rather than one sentence each: 116 invocations fall out of this
+  // tree, and spelling them all out here would bury the per-block reasons the
+  // floor exists for. A kind that stops being taken shows up as a zero, which
+  // is the property a list of sentences would not have had either.
+  const byKind = new Map<string, number>();
+  for (const command of outOfReach) byKind.set(command.kind ?? '?', (byKind.get(command.kind ?? '?') ?? 0) + 1);
+  // The ones that could have changed a verdict are named, and those are the
+  // ones on a page that holds an anchored block.
+  const pages = [...docs.keys()].filter((file) =>
+    [...scan.verified, ...scan.declared, ...scan.holes, ...scan.unreachable].some((entry) => entry.where.startsWith(`${file}:`)),
+  );
+  const reachable = scan.verified.length + scan.holes.length;
+  const sealed = sealedSubtrees(docs);
+
+  // --- DQ01: the derivation floor, and the coverage this run publishes ------
+  //
+  // 🔒 `GT01`'s argument, and here it carries more than usual: this gate does
+  // not fault a block that fails to reproduce, so a block leaving the verified
+  // set is caught HERE or nowhere. Every step above can also come back empty —
+  // a gallery that stops printing a tag, a page that stops stating its command,
+  // a corpus that is not on disk — and each of those makes `DQ02` pass over
+  // less while saying nothing. ⭐ The floors are one per step and never one on
+  // their sum.
+  //
+  // ⚠️ `reachable >= 6` is the load-bearing one and it is NOT a smoke floor:
+  // six blocks reproduce today and a seventh is a HOLE when the corpus is
+  // absent, so the sum is six either way and a block that stops reproducing
+  // takes it to five. The rest — `docs.size >= 50`, `heads.size >= 100` — are
+  // smoke floors against an observed 99 and 205, there to catch a derivation
+  // returning nothing at all. Do not read those as budgets.
+  //
+  // ⭐ The pairing of `verified` with `hole` is the clause that makes the
+  // corpus honest in both directions. Counting only `verified` would go red on
+  // a fresh clone, which is the failure that would get the floor lowered until
+  // it caught nothing; counting them together holds the sum while a missing
+  // corpus moves a block from one column to the other. Measured on a run with
+  // `examples/` deleted: 5 reproduce, 1 is a HOLE, and the sum is 6 with no
+  // slack in it, so the floor is exactly as tight on a fresh clone as it is in
+  // CI. ⚠️ That is a fact about today's tree rather than a property of the
+  // rule, and it turns on something thin: `docs/INGEST.md`'s pool survives a
+  // missing corpus because ONE of its stated commands reads
+  // `bench/transcriptions/`, which is tracked — so its two unreachable blocks
+  // stay unreachable instead of becoming HOLEs. Were that command to go, they
+  // would flip, the sum would read 8, and this floor would carry two blocks of
+  // slack on every corpus-less machine without anything going red.
+  //
+  // 🚨 **And the sum has the failure a sum always has, so it is written down
+  // rather than left to be rediscovered.** Every step of the DERIVATION above is
+  // floored on its own — `byTag` and `byHead` never share a number — but the
+  // VERDICT is floored on `verified + hole`, and one number over two columns
+  // cannot see a swap. **If one block leaves the verified set in the same change
+  // that another enters it, the sum holds and the run is green.** That is this
+  // repository's own recorded shape (*a derived gate splits its floor per rule,
+  // because a sum hides a rule that went to zero*) reappearing one level in, at
+  // the verdict rather than at the derivation.
+  //
+  // ⚠️ What softens it and what does not. The departure is not invisible: `DQ03`
+  // requires every content plant to leave its block NAMED in `unreachable` with
+  // the line it diverged at, so a swap still PRINTS the block that went. It
+  // simply does not go red, and a printed line in a green run is read by nobody.
+  // Splitting the floor by anchor rule would narrow the window to a swap inside
+  // one rule — today's verified set is 4 by tag and 2 by head — but it narrows
+  // rather than closes, and nothing here has measured it against a real swap, so
+  // it is named and not built.
+  //
+  // ⇒ **This is the price of the decision above, not an oversight.** A per-block
+  // rule needs non-reproduction to be a fault, a fault needs every anchored
+  // block to be verified or declared, and four of them are not. The one form
+  // that closes this without a hand-kept baseline is therefore the same road out
+  // the header names — and until it is taken, a counted floor is the honest
+  // instrument and this paragraph is what it costs.
+  const derivation = [
+    ...(treeFault === null ? [] : [treeFault]),
+    ...(asked.fault === null ? [] : [asked.fault]),
+    ...(copyBefore === copyAfter
+      ? []
+      : [
+          'running the commands these pages state CHANGED the working copy, which a gate may never do — before ' +
+            `the round git reported ${copyBefore.split('\n').length} line(s) and after it ${copyAfter.split('\n').length}: ` +
+            copyAfter
+              .split('\n')
+              .filter((line) => !copyBefore.split('\n').includes(line))
+              .join(', '),
+        ]),
+    ...scan.faults,
+    // 🚨 Every floor is a PROBE and not a conjunct, and this repository has
+    // already paid for that twice (`CUR09`, `TY12`): a floor in the verdict's
+    // boolean with a detail that reads only the fault list makes the FAIL print
+    // the sentence saying everything is fine. It happened here on the run this
+    // was written, on `reachable`, which is the one clause the whole gate rests
+    // on — the mutant said RED and the detail said clean.
+    ...([
+      [docs.size, 50, `${docs.size} tracked markdown file(s) outside \`gallery/\` were read`],
+      [galleryExamples, 5, `${galleryExamples} gallery example(s) gave up their stated commands`],
+      [galleryRuns, 14, `${galleryRuns} run(s) of those commands supplied the vocabulary`],
+      [vocabulary.size, 5, `${vocabulary.size} gutter tag(s) came out of them`],
+      [heads.size, 100, `${heads.size} record head(s) came out of them`],
+      [stated, 100, `${stated} rigc invocation(s) were found stated in those pages`],
+      [memo.size, 10, `${memo.size} distinct command(s) of them ran`],
+      [scan.found, 18, `${scan.found} block(s) were anchored`],
+      [scan.byTag, 12, `${scan.byTag} of them by a gutter tag`],
+      [scan.byHead, 6, `${scan.byHead} of them by a record head`],
+      [sealed.prefixes.length, 1, `${sealed.prefixes.length} sealed-subtree marker(s) were read`],
+      [scan.excluded.length, 1, `${scan.excluded.length} block(s) were excluded by one`],
+      [scan.verified.length, 1, `${scan.verified.length} block(s) reproduced`],
+      [
+        reachable,
+        6,
+        `${scan.verified.length} block(s) reproduce and ${scan.holes.length} are a HOLE, which is ${reachable} ` +
+          'block(s) this run could reach',
+      ],
+    ] as Array<[number, number, string]>).flatMap(([value, floor, said]) =>
+      value >= floor ? [] : [`${said} — the floor is ${floor}, so a step of this derivation came back thinner than it has ever been`],
+    ),
+  ];
+  say(
+    'DQ01_THE_DOCS_TRANSCRIPT_SCAN_READ_THE_TREE_THE_COMMANDS_AND_WHAT_IT_COULD_NOT_REACH',
+    derivation.length === 0,
+    derivation.length > 0
+      ? derivation.join('\n          ')
+      : `${docs.size} tracked markdown file(s) outside \`gallery/\`; the vocabulary comes from ${galleryRuns} run(s) ` +
+        `of ${galleryExamples} gallery example(s) — {${[...vocabulary].sort().join(' ')}} at the gutter and ` +
+        `${heads.size} record head(s). ${stated} rigc invocation(s) are stated in those pages and ${memo.size} ` +
+        `distinct one(s) ran; ${outOfReach.length} are out of reach — ` +
+        `${[...byKind].sort().map(([kind, count]) => `${count} ${kind}`).join(', ')} — of which the ones on a page ` +
+        `that holds an anchored block are:\n          ` +
+        (outOfReach
+          .filter((command) => pages.includes(command.file))
+          .map((command) => `      ${command.file}:${command.line} — ${command.reason ?? ''}`)
+          .join('\n          ') || '      none') +
+        `\n          ${scan.found} anchored block(s) over ${pages.length} page(s) — ${scan.byTag} by a gutter tag, ` +
+        `${scan.byHead} by a record head, ${scan.byDeclared} by a declaration alone — of which ` +
+        `${scan.verified.length} reproduce, ${scan.declared.length} are declared unreproducible, ` +
+        `${scan.holes.length} are a HOLE and ${scan.unreachable.length} are unreachable:\n          ` +
+        [
+          ...scan.holes.map((entry) => `HOLE  ${entry.where} — ${entry.why}`),
+          ...scan.unreachable.map((entry) => `      ${entry.where} — ${entry.why}`),
+        ].join('\n          ') +
+        `\n          ${scan.excluded.length} further block(s) are excluded as sealed records: ` +
+        `${scan.excluded.map((entry) => `${entry.where} (by ${entry.sealedBy})`).join(', ')}` +
+        (scan.holes.length === 0
+          ? ''
+          : '\n          ⚠️ Those HOLEs are not passes — this run did not check them. `bun run fetch-examples` gets the corpus.'),
+    'the coverage IS the finding. This gate reaches a fraction of what `docs/` fences, and a partial scan that ' +
+      'publishes its own coverage is not what this family refuses to be — a silent one is, which is why every ' +
+      'unreachable block is printed with its reason rather than counted. It is also the only place a block ' +
+      'leaving the verified set goes red: `DQ02` cannot fault non-reproduction, because four anchored blocks ' +
+      'here are illustrations and abridgements that share a first line with a real run, and a gate whose first ' +
+      'act is demanding four document repairs buries the evidence it exists to surface. The sealed set is ' +
+      'reported for the same reason, and a marker excluding nothing is a fault rather than a no-op',
+  );
+
+  // --- DQ02: the blocks themselves ------------------------------------------
+  say(
+    'DQ02_EVERY_DOCS_TRANSCRIPT_THIS_GATE_CAN_REACH_IS_STILL_A_RUN_OF_A_COMMAND_ITS_PAGE_STATES',
+    scan.faults.length === 0 && scan.verified.length > 0,
+    scan.faults.length > 0
+      ? `${scan.faults.length} fault(s):\n          ${scan.faults.join('\n          ')}`
+      : `${scan.verified.length} block(s) — ${scan.verified.reduce((n, entry) => n + entry.lines, 0)} line(s) — each ` +
+        'a contiguous run of the output of a command its own page states: ' +
+        `${scan.verified.map((entry) => `${entry.where} (${entry.lines}L, by ${entry.anchor}) <- \`${entry.command.slice(0, 60)}\``).join('; ')}` +
+        `; and ${scan.declared.length} declared block(s) that no such run prints, as declared`,
+    'the positive half is load-bearing exactly as `GT02`\'s is: a check that only reported failures would pass a ' +
+      'runner that had stopped running anything, so each block, its length and the command it came from are ' +
+      'named. The faults this CAN take are the two that would turn the declaration marker into a bypass — a ' +
+      'reproducing block declared away, and a declaration with no reason — plus a sealed marker that is ' +
+      'mis-placed or unreasoned. Non-reproduction is not among them, by measurement rather than by omission',
+  );
+
+  // --- DQ03: the scanner against the ways a quoted transcript goes stale ----
+  //
+  // Red-first, `GT03`'s shape, on every block `DQ02` verifies rather than on one
+  // chosen by hand. Three plants have to take a block OUT of the verified set
+  // and name where it diverged; two have to FAULT; and the last has to fault
+  // NOTHING, because a block that stops being anchored does not go red, it goes
+  // quiet — which is the whole of what `DQ01`'s floor is for.
+  const misses: string[] = [];
+  let planted = 0;
+  let silenced = 0;
+  let unplantable = 0;
+  const rescan = (edited: Map<string, string>): DocsQuoteScan =>
+    scanDocsQuotes(edited, vocabulary, heads, commandsBy, runsBy);
+  const withText = (file: string, text: string): Map<string, string> => {
+    const edited = new Map(docs);
+    edited.set(file, text);
+    return edited;
+  };
+  for (const entry of scan.verified) {
+    const file = entry.where.slice(0, entry.where.lastIndexOf(':'));
+    const line = Number(entry.where.slice(entry.where.lastIndexOf(':') + 1));
+    const text = docs.get(file) ?? '';
+    const block = galleryBlocks(text).find((candidate) => candidate.line === line);
+    if (block === undefined) {
+      misses.push(`${entry.where}: the verified block could not be found again to plant on`);
+      continue;
+    }
+    for (const { name, plant } of TRANSCRIPT_PLANTS) {
+      const edited = plant(block.lines);
+      if (edited === null) continue;
+      planted++;
+      const after = rescan(withText(file, docsQuotePlant(text, block, edited)));
+      const stillVerified = after.verified.some((candidate) => candidate.where === entry.where);
+      const named = after.unreachable.find((candidate) => candidate.where === entry.where);
+      if (stillVerified || named === undefined) {
+        misses.push(
+          `${entry.where}: ${name} — ${stillVerified ? 'still verified' : 'left the verified set without being named as unreachable'}`,
+        );
+      }
+    }
+    // The declaration is not a way to switch the gate off.
+    for (const [name, marker] of [
+      ['declared while still reproducing', `${DECLARATION_LEAD} lifted out of a run that does not print it`],
+      ['declared with no reason', DECLARATION_LEAD],
+    ] as const) {
+      const lines = text.split('\n');
+      lines.splice(line - 1, 0, marker);
+      planted++;
+      const out = rescan(withText(file, lines.join('\n')));
+      if (out.faults.length === 0) {
+        misses.push(`${entry.where}: ${name} — not faulted`);
+      }
+    }
+    // And the silent one: no anchor, no candidate, no fault — only the floor.
+    const unanchored = transcriptWithoutItsAnchor(block.lines);
+    if (unanchored === null) {
+      unplantable++;
+      continue;
+    }
+    const after = rescan(withText(file, docsQuotePlant(text, block, unanchored)));
+    if (after.found !== scan.found - 1 || after.faults.length !== 0) silenced++;
+  }
+
+  // --- the working-copy bracket, shown firing somewhere it is safe to fire --
+  //
+  // ⭐ Two-sided on a throwaway repository, because the one place this clause
+  // must never be demonstrated is the repository it protects: a probe that
+  // proved the guard by dirtying the checkout would be the defect committed by
+  // the check against it. Same function, same git, a directory nothing else
+  // reads.
+  {
+    const probe = mkdtempSync(join(tmpdir(), 'rigc-docsquote-probe-'));
+    try {
+      writeFileSync(join(probe, 'kept.txt'), 'a file the round leaves alone\n');
+      spawnSync('git', ['init', '-q', probe], { encoding: 'utf8' });
+      const clean = docsQuoteWorkingCopy(probe);
+      planted++;
+      if (docsQuoteWorkingCopy(probe) !== clean) {
+        misses.push('the working-copy bracket reported a change over a directory nothing touched');
+      }
+      writeFileSync(join(probe, 'written-by-a-command.json'), '{}\n');
+      planted++;
+      if (docsQuoteWorkingCopy(probe) === clean) {
+        misses.push('the working-copy bracket did not see a file a command wrote, so it would not see one here either');
+      }
+    } finally {
+      rmSync(probe, { recursive: true, force: true });
+    }
+  }
+
+  // --- and the sealed marker, held to the same bar ---------------------------
+  //
+  // ⭐ Two-sided, because the marker's danger is the opposite of a declaration's:
+  // a declaration that stops being read makes a gate louder, and a SEAL that
+  // stops being read makes it demand a repair #181 forbids — while a seal that
+  // reads too widely makes it quiet. So: taking the marker off has to bring
+  // exactly the excluded blocks back into the population and fault nothing;
+  // stripping its reason has to fault; and moving it to a directory with no
+  // anchored block in it has to fault as excluding nothing.
+  const sealPlants: string[] = [];
+  for (const entry of sealed.prefixes) {
+    const file = entry.where.slice(0, entry.where.lastIndexOf(':'));
+    const at = Number(entry.where.slice(entry.where.lastIndexOf(':') + 1));
+    const text = docs.get(file) ?? '';
+    const lines = text.split('\n');
+    const mine = scan.excluded.filter((block) => block.sealedBy === entry.where).length;
+
+    const removed = [...lines];
+    removed.splice(at - 1, 1);
+    planted++;
+    const without = rescan(withText(file, removed.join('\n')));
+    if (without.found !== scan.found + mine || without.faults.length !== 0) {
+      sealPlants.push(
+        `${entry.where}: taken off, the population moved from ${scan.found} to ${without.found} where ` +
+          `${scan.found + mine} was the whole of what it sealed, and ${without.faults.length} fault(s) were raised`,
+      );
+    }
+
+    const unreasoned = [...lines];
+    unreasoned[at - 1] = sealedSubtreeLead();
+    planted++;
+    const bare = rescan(withText(file, unreasoned.join('\n')));
+    if (bare.faults.length === 0) {
+      sealPlants.push(`${entry.where}: its reason stripped — not faulted`);
+    }
+
+    const buried = [...lines];
+    buried.splice(at - 1, 1);
+    buried.push(lines[at - 1]);
+    planted++;
+    const sunk = rescan(withText(file, buried.join('\n')));
+    if (sunk.faults.length === 0) {
+      sealPlants.push(`${entry.where}: moved out of the header — not faulted`);
+    }
+  }
+  // A marker over a directory this gate finds nothing in has to fault, and the
+  // page it is planted on is picked off the run rather than named here: the
+  // longest tracked page with no anchored block in it.
+  {
+    const idle = [...docs.keys()]
+      .filter((file) => !pages.includes(file) && !scan.excluded.some((block) => block.where.startsWith(`${file}:`)))
+      .sort((a, b) => (docs.get(b)?.length ?? 0) - (docs.get(a)?.length ?? 0))[0];
+    planted++;
+    if (idle === undefined) {
+      sealPlants.push('no page without an anchored block was found, so the empty-seal clause was never exercised');
+    } else {
+      const lines = (docs.get(idle) ?? '').split('\n');
+      lines.splice(1, 0, `${sealedSubtreeLead()} a subtree with nothing in it, planted to watch the floor fire.`);
+      const after = rescan(withText(idle, lines.join('\n')));
+      const fired = after.faults.filter((fault) => fault.startsWith(`${idle}:`));
+      if (fired.length === 0) sealPlants.push(`${idle}: a marker over a subtree with no anchored block — not faulted`);
+    }
+  }
+
+  // 🚨 The floor is DERIVED and it is a probe, not a conjunct — both halves of
+  // that were paid for on the run this was written. A literal `planted >= 30`
+  // was correct with the corpus on disk and red without it, because a block
+  // that becomes a HOLE takes its five plants with it; and because the clause
+  // sat in the verdict's boolean while the detail's ternary read only `misses`,
+  // the FAIL printed the sentence that says everything is fine. That is the
+  // CUR09/TY12 shape exactly, twice caught before and now a third time, so the
+  // rule is the one that catch produced: a floor belongs in the probe list the
+  // detail prints, and its number comes off the run.
+  //
+  // Two plants per verified block are unconditional (a figure bumped and a
+  // suffix appended — dropping an interior line needs three lines), two more
+  // are the declaration pair, three belong to each sealed marker, and three
+  // stand alone: the empty seal and the working copy's two sides.
+  const floor = scan.verified.length * 4 + sealed.prefixes.length * 3 + 3;
+  const probes = [
+    ...misses,
+    ...sealPlants,
+    ...(silenced === 0 ? [] : [`${silenced} unanchored block(s) did not drop out of the scan cleanly`]),
+    ...(unplantable === 0 ? [] : [`${unplantable} verified block(s) had no anchor letter to take off`]),
+    ...(planted >= floor
+      ? []
+      : [
+          `only ${planted} edit(s) were planted where ${floor} is what ${scan.verified.length} verified block(s) ` +
+            `and ${sealed.prefixes.length} sealed marker(s) owe, so a plant stopped being applied rather than ` +
+            'stopped being caught',
+        ]),
+    ...(scan.verified.length > 1 ? [] : ['one block or none is verified, which is not a population to plant on']),
+  ];
+  say(
+    'DQ03_THE_SCANNER_FAULTS_EVERY_WAY_A_QUOTED_DOCS_TRANSCRIPT_GOES_STALE',
+    probes.length === 0,
+    probes.length === 0
+      ? `${planted} planted edit(s) over the ${scan.verified.length} verified block(s) and the ` +
+        `${sealed.prefixes.length} sealed marker(s) — a figure bumped, an interior line dropped, a suffix ` +
+        'appended, each taking its block out of the verified set and naming the line it diverged at; a ' +
+        'reproducing block declared away and a declaration with no reason, each faulted; a marker with its ' +
+        'reason stripped, a marker moved out of its header and a marker over a subtree holding no anchored ' +
+        'block, each faulted; the marker taken off entirely, bringing exactly its ' +
+        `${scan.excluded.length} sealed block(s) back into the population and faulting nothing; the working-copy ` +
+        'bracket shown to see a file a command wrote and to stay quiet over a directory nothing touched, on a ' +
+        `throwaway repository rather than on this one; and taking the ANCHOR off a first line faulted NOTHING on ` +
+        `all ${scan.verified.length}, dropping each silently out of the scan, which is what DQ01's floor is for`
+      : `${probes.length} of ${planted} planted edit(s) did not do what they must:\n          ` +
+        probes.join('\n          '),
+    'a scanner is a vocabulary of shapes and a shape that stops matching goes silent, not red — and this gate ' +
+      'has more ways to go silent than the gallery one, because its population is anchored across pages and its ' +
+      'pool is bounded by what the tree carries. The three content plants have to name where the block ' +
+      'diverged, since "this block is stale" is not a detail anybody can act on; the two declaration plants ' +
+      'keep the marker from becoming a bypass; and the seal plants are two-sided in the direction that matters, ' +
+      'because a seal that reads too widely silences the gate and one that stops being read makes it demand a ' +
+      'repair issue #181 forbids. ⚠️ The plant floor is a probe rather than a conjunct, and derived rather than ' +
+      'typed: written as a literal it was correct with the corpus on disk and red without it, and written into ' +
+      'the verdict\'s boolean alone it made the FAIL print the sentence that says every plant behaved',
+  );
+
+  return { failures: bad, holes: scan.holes.length };
 }
