@@ -108,6 +108,36 @@ jobs:
   # only thing the declaration is for, which is saying WHICH control goes. It
   # would still have refused #503, and that is not enough to make it the rule.
   #
+  # 🚨 **That paragraph described a rule the code did not implement (issue
+  # #513).** A removal was declared by its name's FIRST SEGMENT, and the first
+  # segment is a family word for a large minority of the names this scan catches:
+  # every positive control in the suite answers to `CONTROL`, and a suite code is
+  # no safer, because `T01` names a different control in three different suites.
+  # Writing one word therefore permitted removing any member of its family — the
+  # relaxation refused in the prose above was present in the code, arrived at by
+  # how the code was extracted rather than by a decision anybody made. A rule that
+  # refuses something in prose and does it in code is worse than one that does it
+  # openly, because the prose is what a reader trusts. The run now prints the
+  # split it derives instead of a figure written here.
+  #
+  # ⇒ **The declaration is the first segment where that segment names ONE control
+  # in the base, and the whole name where it names several.** Derived per run off
+  # the revision the removal is measured against, so there is no table and it
+  # cannot loosen by itself: a code that is unique today and crowded tomorrow
+  # starts demanding the whole name the moment the second name lands. Replayed
+  # over the same three landings every verdict above is unchanged — #503 refused
+  # on all three, #413 accepted, #391 refused on the same four — and that is what
+  # chose it over declaring everything by its whole name, which flips #413 to
+  # refused and buys nothing: `SF03` named exactly one control in the revision it
+  # left.
+  #
+  # ⚠️ **Measured on the BASE side, not the branch's.** A declaration answers
+  # which control WENT, and what could have gone is what the base carried. #413 is
+  # the case that separates the two readings: it replaced `SF03`'s sentence, so
+  # the branch still carries an `SF03_…` name and a branch-side reading would
+  # demand the whole sentence for a code that named one thing at the moment it
+  # left.
+  #
   # ⛔ This job is not a required check until somebody makes it one in the
   # repository's settings, which is not a thing a file in the tree can assert.
   removals:
@@ -199,6 +229,64 @@ jobs:
           fi
           echo "control: $keep reported when planted, quiet when not"
 
+          # Which first segments name more than one control in the base, derived
+          # rather than listed — the split the declaration rule turns on, and the
+          # reason it needs no table.
+          sed 's/_.*//' "$work/base" | sort > "$work/segments"
+          uniq -d < "$work/segments" > "$work/family"
+          codes=$(uniq < "$work/segments" | wc -l)
+          families=$(wc -l < "$work/family")
+          crowded=$(grep -cxFf "$work/family" "$work/segments" || true)
+          echo "the base's $nb name(s) carry $codes distinct first segment(s); $families of those name more than one control, between them covering $crowded name(s)"
+
+          # What a change has to SAY to have declared one removal.
+          needs () {
+            code=${1%%_*}
+            if grep -qxF "$code" "$work/family"; then printf '%s\n' "$1"; else printf '%s\n' "$code"; fi
+          }
+
+          # The judgement, written once so the control below and the real run are
+          # the same code rather than two copies of it agreeing with each other.
+          judge () { # $1 names that left, $2 what the change said, $3 row prefix
+            undeclared=0
+            while read -r name; do
+              [ -n "$name" ] || continue
+              need=$(needs "$name")
+              if grep -qF "$need" "$2"; then
+                echo "$3declared    $name (named as $need)"
+              else
+                echo "$3UNDECLARED  $name — write $need in a commit message on this branch, or in the title or body"
+                undeclared=$((undeclared + 1))
+              fi
+            done < "$1"
+          }
+
+          # 🚨 The declaration rule's own positive control, two rows, on names
+          # taken off this tree rather than written here — and red under the rule
+          # it replaces, which asked for the first segment whatever it named.
+          fam=$(head -n 1 "$work/family")
+          famName=$(grep -m 1 -E "^${fam}_" "$work/base")
+          sole=$(sed 's/_.*//' "$work/base" | sort | uniq -u | head -n 1)
+          soleName=$(grep -m 1 -E "^${sole}_" "$work/base")
+          if [ -z "$famName" ] || [ -z "$soleName" ]; then
+            echo "control: the base carries no crowded first segment or no unique one, so the rule below cannot differ from the one it replaced and nothing here exercised the difference"
+            exit 1
+          fi
+          printf '%s\n' "$famName" > "$work/c-gone"
+          printf '%s\n' "$fam" > "$work/c-said"
+          judge "$work/c-gone" "$work/c-said" "  control  "
+          if [ "$undeclared" -ne 1 ]; then
+            echo "control: the bare $fam was accepted as declaring $famName, and $fam is the first segment of $(grep -cE "^${fam}_" "$work/base") name(s) in the base"
+            exit 1
+          fi
+          printf '%s\n' "$soleName" > "$work/c-gone"
+          printf '%s\n' "$sole" > "$work/c-said"
+          judge "$work/c-gone" "$work/c-said" "  control  "
+          if [ "$undeclared" -ne 0 ]; then
+            echo "control: $sole is the first segment of one name in the base and was not accepted as declaring $soleName"
+            exit 1
+          fi
+
           # What the change says about itself: every commit message on the branch,
           # plus the title and body, which are what the squash merge writes onto
           # `main` and therefore what a later reader will have.
@@ -206,17 +294,7 @@ jobs:
           printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" >> "$work/said"
 
           comm -23 "$work/base" "$work/head" > "$work/gone"
-          undeclared=0
-          while read -r name; do
-            [ -n "$name" ] || continue
-            code=${name%%_*}
-            if grep -qF "$code" "$work/said"; then
-              echo "  declared    $name (named as $code)"
-            else
-              echo "  UNDECLARED  $name — name $code in a commit message on this branch, or in the title or body"
-              undeclared=$((undeclared + 1))
-            fi
-          done < "$work/gone"
+          judge "$work/gone" "$work/said" "  "
 
           gone=$(wc -l < "$work/gone")
           echo "$gone control name(s) left the tree, $undeclared of them unnamed by the change that removed them"

@@ -12284,31 +12284,69 @@ function runDeformWindingSuite(): number {
   const tiedLabel = tiedSurvey.keys[0]?.reach.label ?? '';
   const tiedFigures = responsesIn(tiedLabel);
   const tiedBlock = turnDeformBlock(tiedBuild);
+  /**
+   * One row per clause that did not hold, and the verdict is the list being
+   * empty (issue #498). What the conjunction beside a one-term selector printed:
+   * the FAIL raised by the two responses NOT being equal read `local x and local
+   * y move the reading by the same 7.071e-1` — one figure standing in for a
+   * claim about two, so the sentence could not contradict itself.
+   */
+  const tiedProbes = [
+    ...tiedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+    ...(tiedSurvey.keys.length === 3
+      ? []
+      : [`the survey read ${tiedSurvey.keys.length} deform key(s) off this rig, which has 3`]),
+    // the artifact's answer is what the report names, and what is driven
+    ...tiedSurvey.keys.flatMap((k, i) =>
+      k.reach.property === 'x' && k.reach.drive === null
+        ? []
+        : [`key ${i} reads ${k.reach.property} driven through ${k.reach.drive ?? 'nothing'}, and a settled tie is x driven through nothing`],
+    ),
+    ...tiedSurvey.keys.flatMap((k, i) =>
+      k.dial !== null && !k.dial.unreachable
+        ? []
+        : [`key ${i} has ${k.dial === null ? 'no dial at all' : 'a dial no value of the slider reaches'}`],
+    ),
+    // and the tie is on the line rather than resolved out of sight
+    ...['the probe did not settle that on its own', "the skeleton's own reader broke the tie"].flatMap((phrase) =>
+      tiedLabel.includes(phrase) ? [] : [`the label does not say "${phrase}"; it reads "${tiedLabel.slice(0, 160)}"`],
+    ),
+    ...(/knob\.x [\d.e+-]+ against knob\.y [\d.e+-]+/.test(tiedLabel)
+      ? []
+      : [`the label does not print both fields with a figure each: "${tiedLabel.slice(0, 160)}"`]),
+    // a TIE is the claim, so the two figures have to be the same number
+    ...(tiedFigures.length === 2
+      ? tiedFigures[0] === tiedFigures[1]
+        ? []
+        : [
+            `the two responses are ${tiedFigures[0]?.toExponential(3)} and ${tiedFigures[1]?.toExponential(3)}, ` +
+              'and a tie is the two being one number',
+          ]
+      : [`the label carries ${tiedFigures.length} figure(s) and a tie is a claim about the two it is between`]),
+    // and the DEFORM block an author reads carries the whole clause
+    ...(tiedBlock.some((l) => /frame\s+applied by slider "dial" off knob\.x \(world\), driven through knob\.x/.test(l))
+      ? []
+      : ['no DEFORM frame line names the slider read off knob.x (world) and driven through knob.x']),
+    ...(tiedBlock.some((l) => l.includes("the skeleton's own reader broke the tie"))
+      ? []
+      : ['the DEFORM block an author reads does not carry the tie clause the `explain` label carries']),
+    // ⚠️ the drive IS `x` here, so the figure keeps its bare spelling
+    ...(tiedBlock.some((l) => /\(bone local -?\d+\.\d+\)/.test(l))
+      ? []
+      : ['no DEFORM frame line prints the bare `(bone local …)` figure, which is how a drive of `x` is spelled']),
+  ];
+  const tiedHeld = tiedProbes.length === 0;
   say(
     'DW27_A_PROBE_THAT_TIES_IS_SETTLED_BY_THE_ARTIFACT_AND_SAYS_SO',
-    tiedGate.failures.length === 0 &&
-      tiedSurvey.keys.length === 3 &&
-      // the artifact's answer is what the report names, and what is driven
-      tiedSurvey.keys.every((k) => k.reach.property === 'x' && k.reach.drive === null) &&
-      tiedSurvey.keys.every((k) => k.dial !== null && !k.dial.unreachable) &&
-      // and the tie is on the line rather than resolved out of sight
-      /the probe did not settle that on its own/.test(tiedLabel) &&
-      /knob\.x [\d.e+-]+ against knob\.y [\d.e+-]+/.test(tiedLabel) &&
-      /the skeleton's own reader broke the tie/.test(tiedLabel) &&
-      // a TIE is the claim, so the two figures have to be the same number
-      tiedFigures.length === 2 &&
-      tiedFigures[0] === tiedFigures[1] &&
-      // and the DEFORM block an author reads carries the whole clause
-      tiedBlock.some((l) => /frame\s+applied by slider "dial" off knob\.x \(world\), driven through knob\.x/.test(l)) &&
-      tiedBlock.some((l) => l.includes("the skeleton's own reader broke the tie")) &&
-      // ⚠️ the drive IS `x` here, so the figure keeps its bare spelling
-      tiedBlock.some((l) => /\(bone local -?\d+\.\d+\)/.test(l)),
-    tiedGate.failures.length === 0
-      ? `the same \`x\` slider with its dial bone's parent at 45°: local x and local y move the reading by the ` +
-          `same ${tiedFigures[0]?.toExponential(3) ?? '?'}, so ranking them is a coin toss and the report says so — ` +
-          `"${tiedLabel.slice(60, 230)}…". All 3 keys still reachable at dials ` +
-          `${tiedSurvey.keys.map((k) => k.dial?.value.toFixed(2) ?? '?').join(', ')}`
-      : `[${tiedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    tiedHeld,
+    probeDetail(
+      tiedHeld,
+      tiedProbes,
+      `the same \`x\` slider with its dial bone's parent at 45°: local x and local y move the reading by the ` +
+        `same ${tiedFigures[0]?.toExponential(3) ?? '?'}, so ranking them is a coin toss and the report says so — ` +
+        `"${tiedLabel.slice(60, 230)}…". All 3 keys still reachable at dials ` +
+        `${tiedSurvey.keys.map((k) => k.dial?.value.toFixed(2) ?? '?').join(', ')}`,
+    ),
     '⛔ the one thing a discovery must not do is guess. Before #419 the tie was decided by `DIAL_FIELDS`\'s order ' +
       'with nothing printed — the same silent arbitrariness the issue was filed on, one step over. The artifact ' +
       'breaking it is a SECOND answer, not a default',
@@ -12322,40 +12360,84 @@ function runDeformWindingSuite(): number {
   const splitLabel = splitSurvey.keys[0]?.reach.label ?? '';
   const splitFigures = responsesIn(splitLabel);
   const splitBlock = turnDeformBlock(splitBuild);
+  /**
+   * The same conversion as `DW27`'s and the same reason (issue #498): the
+   * sentence ended `and this one prints neither, so no mutant here can pass on
+   * the other's signal`, which is the LAST clause of the conjunction written out
+   * in words — so the run where a figure did cross between the two cases is
+   * exactly the run that printed the sentence denying it.
+   */
+  const splitProbes = [
+    ...splitGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+    ...(splitSurvey.keys.length === 3
+      ? []
+      : [`the survey read ${splitSurvey.keys.length} deform key(s) off this rig, which has 3`]),
+    // the reader is still named off the artifact, and the field that actually
+    // moves it is named BESIDE it rather than instead of it
+    ...splitSurvey.keys.flatMap((k, i) =>
+      k.reach.property === 'x' && k.reach.drive === 'y'
+        ? []
+        : [`key ${i} reads ${k.reach.property} driven through ${k.reach.drive ?? 'nothing'}, and this rig's disagreement is x driven through y`],
+    ),
+    ...splitSurvey.keys.flatMap((k, i) =>
+      k.dial !== null && !k.dial.unreachable
+        ? []
+        : [`key ${i} has ${k.dial === null ? 'no dial at all' : 'a dial no value of the slider reaches'}`],
+    ),
+    ...(
+      [
+        [/the skeleton says the reader is knob\.x, which moves it by [\d.e+-]+/, "the artifact's field and its response"],
+        [/the probe moves the reading by knob\.y [\d.e+-]+/, "the probe's field and its response"],
+        [/The two disagree and both are reported/, 'the sentence saying both are kept'],
+      ] as ReadonlyArray<readonly [RegExp, string]>
+    ).flatMap(([pattern, what]) =>
+      pattern.test(splitLabel) ? [] : [`the label is missing ${what}: "${splitLabel.slice(0, 160)}"`],
+    ),
+    // a DISAGREEMENT is the claim, so the two figures have to be orders apart
+    ...(splitFigures.length === 2
+      ? splitFigures[0] >= 1e6 * splitFigures[1]
+        ? []
+        : [
+            `the two responses are ${splitFigures[0]?.toExponential(3)} and ${splitFigures[1]?.toExponential(3)}, ` +
+              `a factor of ${(splitFigures[0] / splitFigures[1]).toExponential(1)} where a disagreement needs 1e+6`,
+          ]
+      : [`the label carries ${splitFigures.length} figure(s) and a disagreement is a claim about the two it is between`]),
+    // 🔒 and the two cases cannot be read off each other's signal: no figure
+    // this one prints appears on the tie's line, or the other way round.
+    ...splitFigures
+      .filter((f) => tiedFigures.includes(f))
+      .map((f) => `${f.toExponential(3)} is printed by both this case and the 45° tie, so one can pass on the other's signal`),
+    ...tiedFigures
+      .filter((f) => splitFigures.includes(f))
+      .map((f) => `${f.toExponential(3)} is printed by both the 45° tie and this case, so one can pass on the other's signal`),
+    // 🔒 and the `DEFORM` line names the driven FIELD beside the figure, because
+    // a bare `bone local 398.999991` there is a value of `y` printed under a
+    // heading that says `x` — which is the shape of #419's own defect.
+    ...(splitBlock.some((l) => /frame\s+applied by slider "dial" off knob\.x \(world\), driven through knob\.y/.test(l))
+      ? []
+      : ['no DEFORM frame line names the slider read off knob.x (world) and driven through knob.y']),
+    ...(splitBlock.some((l) => /\(bone local y -?\d+\.\d+\)/.test(l))
+      ? []
+      : ['no DEFORM frame line qualifies its figure as `(bone local y …)`, so a value of `y` is printed under a heading that says `x`']),
+    ...tiedBlock
+      .filter((l) => /\(bone local y /.test(l))
+      .map((l) => `the 45° tie's block qualifies a figure with \`y\` where its drive is \`x\`: "${l.trim().slice(0, 120)}"`),
+  ];
+  const splitHeld = splitProbes.length === 0;
   say(
     'DW28_A_PROBE_THAT_DISAGREES_WITH_THE_ARTIFACT_PRINTS_BOTH_ANSWERS',
-    splitGate.failures.length === 0 &&
-      splitSurvey.keys.length === 3 &&
-      // the reader is still named off the artifact…
-      splitSurvey.keys.every((k) => k.reach.property === 'x') &&
-      // …and the field that actually moves it is named beside it, never instead
-      splitSurvey.keys.every((k) => k.reach.drive === 'y') &&
-      splitSurvey.keys.every((k) => k.dial !== null && !k.dial.unreachable) &&
-      /the skeleton says the reader is knob\.x, which moves it by [\d.e+-]+/.test(splitLabel) &&
-      /the probe moves the reading by knob\.y [\d.e+-]+/.test(splitLabel) &&
-      /The two disagree and both are reported/.test(splitLabel) &&
-      // a DISAGREEMENT is the claim, so the two figures have to be orders apart
-      splitFigures.length === 2 &&
-      splitFigures[0] >= 1e6 * splitFigures[1] &&
-      // 🔒 and the two cases cannot be read off each other's signal: no figure
-      // this one prints appears on the tie's line, or the other way round.
-      splitFigures.every((f) => !tiedFigures.includes(f)) &&
-      tiedFigures.every((f) => !splitFigures.includes(f)) &&
-      // 🔒 and the `DEFORM` line names the driven FIELD beside the figure, because
-      // a bare `bone local 398.999991` there is a value of `y` printed under a
-      // heading that says `x` — which is the shape of #419's own defect.
-      splitBlock.some((l) => /frame\s+applied by slider "dial" off knob\.x \(world\), driven through knob\.y/.test(l)) &&
-      splitBlock.some((l) => /\(bone local y -?\d+\.\d+\)/.test(l)) &&
-      tiedBlock.every((l) => !/\(bone local y /.test(l)),
-    splitGate.failures.length === 0
-      ? `the same slider with the parent at 90°: the reading is \`-y\` and local x does not touch it ` +
-          `(${splitFigures[1]?.toExponential(3) ?? '?'} of float noise against ` +
-          `${splitFigures[0]?.toExponential(3) ?? '?'}, a factor of ` +
-          `${(splitFigures[0] / splitFigures[1]).toExponential(1)}), so the two answers genuinely differ and both ` +
-          `are printed — "${splitLabel.slice(60, 250)}…". The 45° tie prints ` +
-          `${tiedFigures.map((f) => f.toExponential(3)).join(' and ')} and this one prints neither, so no mutant ` +
-          "here can pass on the other's signal"
-      : `[${splitGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    splitHeld,
+    probeDetail(
+      splitHeld,
+      splitProbes,
+      `the same slider with the parent at 90°: the reading is \`-y\` and local x does not touch it ` +
+        `(${splitFigures[1]?.toExponential(3) ?? '?'} of float noise against ` +
+        `${splitFigures[0]?.toExponential(3) ?? '?'}, a factor of ` +
+        `${(splitFigures[0] / splitFigures[1]).toExponential(1)}), so the two answers genuinely differ and both ` +
+        `are printed — "${splitLabel.slice(60, 250)}…". The 45° tie prints ` +
+        `${tiedFigures.map((f) => f.toExponential(3)).join(' and ')} and this one prints neither, so no mutant ` +
+        "here can pass on the other's signal",
+    ),
     'the probe is what keeps the frame logic independent of a transcribed dispatch table, which is what #407 ' +
       'bought; the artifact is what names the property an author wrote. Two independent answers that must agree ' +
       'is strictly better than one, and where they do not the report is the only place that can say so',
@@ -12402,42 +12484,80 @@ function runDeformWindingSuite(): number {
   const splitTimes = [...new Set(splitSurvey.keys.map((k) => k.time))].sort((a, b) => a - b);
   const inSpan = (t: number, s: { lo: number; hi: number } | undefined): boolean =>
     s !== undefined && t >= s.lo && t <= s.hi;
+  /**
+   * Converted for the reason the two above it were (issue #498), and this one
+   * carries the sharpest of the three sentences: `all ${deformKeysMeasured} were
+   * still measured`, where the word is `all` and the figure is the STAT — so the
+   * FAIL raised by the stat disagreeing with the survey printed the stat's own
+   * number under the word that says they agree.
+   */
+  const dialProbes = [
+    ...splitGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+    // the census, and the reading beside it
+    ...(Number(splitStats.deformDialsDisagreed) === 1
+      ? []
+      : [`deformDialsDisagreed reads ${splitStats.deformDialsDisagreed ?? 'nothing'} and this rig has one disputed dial`]),
+    ...(
+      [
+        [/^dial\|artifact:knob\.x@/, "the artifact's field, at the head of the reading"],
+        [/\|probe:knob\.y@/, "the probe's field, beside it"],
+      ] as ReadonlyArray<readonly [RegExp, string]>
+    ).flatMap(([pattern, what]) => (pattern.test(splitLine) ? [] : [`the stats reading is missing ${what}: "${splitLine}"`])),
+    // both answers carry the same two figures the `explain` label carries, so
+    // the stats line is the same derivation and not a second one
+    ...(responsesIn(splitLine).length === 2
+      ? []
+      : [`the stats reading carries ${responsesIn(splitLine).length} response figure(s) where both answers is two`]),
+    ...responsesIn(splitLine)
+      .filter((f) => !splitFigures.includes(f))
+      .map((f) => `the stats reading prints ${f.toExponential(3)}, which the \`explain\` label does not, so the two are separate derivations`),
+    // both reaches are printed, and the artifact's is the strictly narrower
+    ...(splitReaches.length === 2
+      ? [
+          ...(splitReaches[0].lo >= splitReaches[1].lo
+            ? []
+            : [`the artifact's reach starts at ${splitReaches[0].lo.toFixed(6)}s, before the drive's ${splitReaches[1].lo.toFixed(6)}s`]),
+          ...(splitReaches[0].hi < splitReaches[1].hi
+            ? []
+            : [`the artifact's reach ends at ${splitReaches[0].hi.toFixed(6)}s, not before the drive's ${splitReaches[1].hi.toFixed(6)}s`]),
+        ]
+      : [`the stats reading carries ${splitReaches.length} reach interval(s) where both answers is two`]),
+    // ⭐ and the frames the artifact's answer could not have posed are named by
+    // TIME — each of them outside its reach and inside the drive's, and every
+    // key time NOT named inside both. The list is a measurement (each time was
+    // posed through the artifact's own field and spine-core asked where it
+    // landed), so this is the closed form agreeing with it.
+    ...(splitOutside.length > 0 ? [] : ['`outside` names no time at all, so the closed form has nothing to agree with']),
+    ...splitOutside
+      .filter((t) => inSpan(t, splitReaches[0]) || !inSpan(t, splitReaches[1]))
+      .map((t) => `${t}s is named outside the artifact's reach and it is ${inSpan(t, splitReaches[0]) ? 'inside it' : "outside the drive's too"}`),
+    ...splitTimes
+      .filter((t) => !splitOutside.includes(t) && !inSpan(t, splitReaches[0]))
+      .map((t) => `key time ${t}s is not named outside and the artifact's reach does not contain it either`),
+    // 🔒 and the survey measured every one of them anyway — the measurement
+    // that makes this a report. A disagreement costs the gate no frame.
+    ...(Number(splitGate.stats.deformKeysMeasured) === splitSurvey.keys.length
+      ? []
+      : [`the gate measured ${splitGate.stats.deformKeysMeasured} key(s) and the survey read ${splitSurvey.keys.length}`]),
+    ...(splitGate.stats.deformKeysUnreachable === undefined
+      ? []
+      : [`deformKeysUnreachable reads ${splitGate.stats.deformKeysUnreachable}, so the disagreement cost the gate a frame`]),
+  ];
+  const dialHeld = dialProbes.length === 0;
   say(
     'DW29_A_DIAL_DISAGREEMENT_IS_ON_THE_STATS_LINE_A_BUILD_PRINTS_WITH_BOTH_REACHES',
-    splitGate.failures.length === 0 &&
-      // the census, and the reading beside it
-      Number(splitStats.deformDialsDisagreed) === 1 &&
-      /^dial\|artifact:knob\.x@/.test(splitLine) &&
-      /\|probe:knob\.y@/.test(splitLine) &&
-      // both answers carry the same two figures the `explain` label carries, so
-      // the stats line is the same derivation and not a second one
-      responsesIn(splitLine).length === 2 &&
-      responsesIn(splitLine).every((f) => splitFigures.includes(f)) &&
-      // both reaches are printed, and the artifact's is the strictly narrower
-      splitReaches.length === 2 &&
-      splitReaches[0].lo >= splitReaches[1].lo &&
-      splitReaches[0].hi < splitReaches[1].hi &&
-      // ⭐ and the frames the artifact's answer could not have posed are named by
-      // TIME — each of them outside its reach and inside the drive's, and every
-      // key time NOT named inside both. The list is a measurement (each time was
-      // posed through the artifact's own field and spine-core asked where it
-      // landed), so this is the closed form agreeing with it.
-      splitOutside.length > 0 &&
-      splitOutside.every((t) => !inSpan(t, splitReaches[0]) && inSpan(t, splitReaches[1])) &&
-      splitTimes.filter((t) => !splitOutside.includes(t)).every((t) => inSpan(t, splitReaches[0])) &&
-      // 🔒 and the survey measured every one of them anyway — the measurement
-      // that makes this a report. A disagreement costs the gate no frame.
-      Number(splitGate.stats.deformKeysMeasured) === splitSurvey.keys.length &&
-      splitGate.stats.deformKeysUnreachable === undefined,
-    splitGate.failures.length === 0
-      ? `the parent-90° rig's BUILD now says it: "${splitLine}". The artifact's own field reaches ` +
-          `${splitReaches[0]?.lo.toFixed(6)}..${splitReaches[0]?.hi.toFixed(6)}s of a 1s animation and the ` +
-          `driven one reaches ${splitReaches[1]?.lo.toFixed(6)}..${splitReaches[1]?.hi.toFixed(6)}s, so key ` +
-          `time(s) ${splitOutside.map((t) => `${t}s`).join(', ')} of ${splitTimes.length} were surveyed through ` +
-          `knob.y and no settable knob.x reaches them — and all ${splitGate.stats.deformKeysMeasured} were still ` +
-          `measured. ⚠️ At exactly 90° the artifact's field responds ${responsesIn(splitLine)[0]?.toExponential(3)}, ` +
-          'which is float noise in the world matrix and not the analytic cos 90°'
-      : `[${splitGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    dialHeld,
+    probeDetail(
+      dialHeld,
+      dialProbes,
+      `the parent-90° rig's BUILD now says it: "${splitLine}". The artifact's own field reaches ` +
+        `${splitReaches[0]?.lo.toFixed(6)}..${splitReaches[0]?.hi.toFixed(6)}s of a 1s animation and the ` +
+        `driven one reaches ${splitReaches[1]?.lo.toFixed(6)}..${splitReaches[1]?.hi.toFixed(6)}s, so key ` +
+        `time(s) ${splitOutside.map((t) => `${t}s`).join(', ')} of ${splitTimes.length} were surveyed through ` +
+        `knob.y and no settable knob.x reaches them — and all ${splitGate.stats.deformKeysMeasured} were still ` +
+        `measured. ⚠️ At exactly 90° the artifact's field responds ${responsesIn(splitLine)[0]?.toExponential(3)}, ` +
+        'which is float noise in the world matrix and not the analytic cos 90°',
+    ),
     'issue #427: the verdict lived in `reach.label`, which `explain` prints and nothing else does, so a build-only ' +
       'run never learned that the measurement half and the artifact half had different beliefs about which dial ' +
       'was turned. A gate whose finding only one other command prints is a finding the normal loop does not have',
@@ -12527,29 +12647,65 @@ function runDeformWindingSuite(): number {
   const tiedStats = dialStats(tiedGate);
   const tiedLine = tiedStats.deformDialTied ?? '';
   const tiedStatFigures = responsesIn(tiedLine);
+  /**
+   * The two halves of this sentence are the two halves of the conjunction said
+   * in words (issue #498): `both tied figures equal at X` interpolates the FIRST
+   * of the two, and `this one prints the tie reading and no disagreement
+   * reading` interpolates neither. So the run where the figures differ printed
+   * one of them under the word `equal`, and the run where a disagreement reading
+   * appeared printed the sentence denying it.
+   */
+  const tieProbes = [
+    ...tiedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+    ...(Number(tiedStats.deformDialsTied) === 1
+      ? []
+      : [`deformDialsTied reads ${tiedStats.deformDialsTied ?? 'nothing'} and this rig has one tied dial`]),
+    ...(
+      [
+        [/^dial\|artifact:knob\.x@/, "the artifact's field, at the head of the reading"],
+        [/\|tied:knob\.y@/, 'the field it tied with, beside it'],
+      ] as ReadonlyArray<readonly [RegExp, string]>
+    ).flatMap(([pattern, what]) => (pattern.test(tiedLine) ? [] : [`the tie reading is missing ${what}: "${tiedLine}"`])),
+    // a TIE is the claim, so the two figures have to be the same number
+    ...(tiedStatFigures.length === 2
+      ? tiedStatFigures[0] === tiedStatFigures[1]
+        ? []
+        : [
+            `the tie reading prints ${tiedStatFigures[0]?.toExponential(3)} and ` +
+              `${tiedStatFigures[1]?.toExponential(3)}, and a tie is the two being one number`,
+          ]
+      : [`the tie reading carries ${tiedStatFigures.length} figure(s) and a tie is a claim about the two it is between`]),
+    // 🔒 and it carries none of a disagreement's shape: no second belief, no
+    // second reach, no `outside` comparison — there is one belief here
+    ...(tiedStats.deformDialDisagreed === undefined
+      ? []
+      : [`this rig also prints a disagreement reading: "${tiedStats.deformDialDisagreed}"`]),
+    ...(tiedStats.deformDialsDisagreed === undefined
+      ? []
+      : [`this rig also counts deformDialsDisagreed=${tiedStats.deformDialsDisagreed}`]),
+    ...(/\|probe:|reaches:|outside:/.test(tiedLine)
+      ? [`the tie reading carries a disagreement's own fields: "${tiedLine}"`]
+      : []),
+    // 🔒 the mirror, so neither case can pass on the other's signal
+    ...(splitStats.deformDialTied === undefined
+      ? []
+      : [`the parent-90° rig prints a tie reading too: "${splitStats.deformDialTied}"`]),
+    ...(splitStats.deformDialsTied === undefined
+      ? []
+      : [`the parent-90° rig counts deformDialsTied=${splitStats.deformDialsTied}`]),
+  ];
+  const tieHeld = tieProbes.length === 0;
   say(
     'DW32_A_TIE_IS_NAMED_A_TIE_ON_THE_STATS_LINE_AND_NEVER_A_DISAGREEMENT',
-    tiedGate.failures.length === 0 &&
-      Number(tiedStats.deformDialsTied) === 1 &&
-      /^dial\|artifact:knob\.x@/.test(tiedLine) &&
-      /\|tied:knob\.y@/.test(tiedLine) &&
-      // a TIE is the claim, so the two figures have to be the same number
-      tiedStatFigures.length === 2 &&
-      tiedStatFigures[0] === tiedStatFigures[1] &&
-      // 🔒 and it carries none of a disagreement's shape: no second belief, no
-      // second reach, no `outside` comparison — there is one belief here
-      tiedStats.deformDialDisagreed === undefined &&
-      tiedStats.deformDialsDisagreed === undefined &&
-      !/\|probe:|reaches:|outside:/.test(tiedLine) &&
-      // 🔒 the mirror, so neither case can pass on the other's signal
-      splitStats.deformDialTied === undefined &&
-      splitStats.deformDialsTied === undefined,
-    tiedGate.failures.length === 0
-      ? `the parent-45° rig's build says "${tiedLine}" — one belief the artifact settled, printed with both tied ` +
-          `figures equal at ${tiedStatFigures[0]?.toExponential(3)}, and with no second reach because there is no ` +
-          'second answer. The parent-90° rig prints the disagreement reading and no tie reading; this one prints ' +
-          'the tie reading and no disagreement reading'
-      : `[${tiedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    tieHeld,
+    probeDetail(
+      tieHeld,
+      tieProbes,
+      `the parent-45° rig's build says "${tiedLine}" — one belief the artifact settled, printed with both tied ` +
+        `figures equal at ${tiedStatFigures[0]?.toExponential(3)}, and with no second reach because there is no ` +
+        'second answer. The parent-90° rig prints the disagreement reading and no tie reading; this one prints ' +
+        'the tie reading and no disagreement reading',
+    ),
     '🔒 the probe tied and the skeleton broke the tie: there are not two beliefs in conflict, so there is no reach ' +
       'to compare and nothing to report as a conflict. A stats line that graded a tie as a mild disagreement would ' +
       'be reporting legitimate geometry — a `FromX` dial on a parent at 45° — as a fault',
@@ -12595,40 +12751,74 @@ function runDeformWindingSuite(): number {
   const bothEnd = (DRIVE_LIMIT - LIMIT_FROM) * LIMIT_SCALE;
   const bothUnreachable = bothSurvey.keys.filter((k) => k.dial?.unreachable === true);
   const bothMeasured = bothSurvey.keys.filter((k) => k.dial?.unreachable !== true);
+  /**
+   * Two claims in this sentence are the two disjointness clauses written out
+   * (issue #498): `is the one A39 counted as deformKeysUnreachable` and
+   * ``outside` names the N MEASURED key time(s) … and not that one`. Neither
+   * interpolates the comparison it stands for, so the FAIL raised by the
+   * unreachable key turning up in `outside` printed the words saying it had not.
+   */
+  const reachProbes = [
+    ...bothGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+    // one rig, both shapes: a disagreement AND a key past the bound
+    ...(Number(bothGate.stats.deformDialsDisagreed) === 1
+      ? []
+      : [`deformDialsDisagreed reads ${bothGate.stats.deformDialsDisagreed ?? 'nothing'} and this rig has one disputed dial`]),
+    ...(Number(bothGate.stats.deformKeysUnreachable) === bothUnreachable.length
+      ? []
+      : [`deformKeysUnreachable reads ${bothGate.stats.deformKeysUnreachable ?? 'nothing'} and the survey refused ${bothUnreachable.length} key(s)`]),
+    ...(bothUnreachable.length === 1
+      ? []
+      : [`the survey refused ${bothUnreachable.length} key(s), and this rig's one key past the bound is what the reach is witnessed by`]),
+    ...(bothMeasured.length > 0 ? [] : ['the survey measured no key at all, so there is nothing on the near side of the bound']),
+    // ⚠️ ONE interval, not two: the artifact's field selects no part of this
+    // animation at all, so its side reads `none` and the only span printed is
+    // the drive's. (The first draft of this case asserted two and went red —
+    // `reaches:none` is a reach as much as an interval is.)
+    ...(bothReaches.length === 1
+      ? [
+          // 🔒 the printed reach ends at the closed form of the bound, to the six
+          // decimals it is printed with
+          ...(Math.abs(bothReaches[0].hi - bothEnd) < 5e-7
+            ? []
+            : [`the printed reach ends at ${bothReaches[0].hi.toFixed(6)}s and the closed form is ${bothEnd.toFixed(6)}s`]),
+          // 🔒 and that end is the line the survey itself stopped at: every key
+          // past it is one A39 reported unreachable, and every key before it is
+          // one it measured — two derivations of one number, compared
+          ...bothUnreachable
+            .filter((k) => k.time <= bothReaches[0].hi)
+            .map((k) => `the key at t=${k.time}s was refused and is not past the printed reach's ${bothReaches[0].hi.toFixed(6)}s`),
+          ...bothMeasured
+            .filter((k) => k.time > bothReaches[0].hi)
+            .map((k) => `the key at t=${k.time}s was measured and is past the printed reach's ${bothReaches[0].hi.toFixed(6)}s`),
+        ]
+      : [`the stats reading carries ${bothReaches.length} reach interval(s), and the artifact's side reading \`none\` leaves one`]),
+    // 🔒 the key nobody can select is NOT in `outside` — it is on
+    // `deformUnreachable` already, and the disagreement did not cost it
+    ...(bothOutside.length === bothMeasured.length
+      ? []
+      : [`\`outside\` names ${bothOutside.length} time(s) and the survey measured ${bothMeasured.length} key(s)`]),
+    ...bothUnreachable
+      .filter((k) => bothOutside.includes(k.time))
+      .map((k) => `the refused key at t=${k.time}s is also named in \`outside\`, so one frame is counted on both reports`),
+    // the artifact's own field selects no part of this animation at all here
+    ...(/\|artifact:knob\.x@[\d.e+-]+\|reaches:none\|/.test(bothLine)
+      ? []
+      : [`the reading does not say the artifact's field reaches none of it: "${bothLine}"`]),
+  ];
+  const reachHeld = reachProbes.length === 0;
   say(
     'DW33_THE_REPORTED_REACH_ENDS_WHERE_THE_SURVEY_STOPS_AND_AN_UNREACHED_KEY_IS_NOT_CHARGED_TWICE',
-    bothGate.failures.length === 0 &&
-      // one rig, both shapes: a disagreement AND a key past the bound
-      Number(bothGate.stats.deformDialsDisagreed) === 1 &&
-      Number(bothGate.stats.deformKeysUnreachable) === bothUnreachable.length &&
-      bothUnreachable.length === 1 &&
-      bothMeasured.length > 0 &&
-      // ⚠️ ONE interval, not two: the artifact's field selects no part of this
-      // animation at all, so its side reads `none` and the only span printed is
-      // the drive's. (The first draft of this case asserted two and went red —
-      // `reaches:none` is a reach as much as an interval is.)
-      bothReaches.length === 1 &&
-      // 🔒 the printed reach ends at the closed form of the bound, to the six
-      // decimals it is printed with
-      Math.abs(bothReaches[0].hi - bothEnd) < 5e-7 &&
-      // 🔒 and that end is the line the survey itself stopped at: every key past
-      // it is one A39 reported unreachable, and every key before it is one it
-      // measured — two derivations of one number, compared
-      bothUnreachable.every((k) => k.time > bothReaches[0].hi) &&
-      bothMeasured.every((k) => k.time <= bothReaches[0].hi) &&
-      // 🔒 the key nobody can select is NOT in `outside` — it is on
-      // `deformUnreachable` already, and the disagreement did not cost it
-      bothOutside.length === bothMeasured.length &&
-      bothUnreachable.every((k) => !bothOutside.includes(k.time)) &&
-      // the artifact's own field selects no part of this animation at all here
-      /\|artifact:knob\.x@[\d.e+-]+\|reaches:none\|/.test(bothLine),
-    bothGate.failures.length === 0
-      ? `DW26's mapping on the parent-90° dial: the drive reaches ${bothReaches[0]?.hi.toFixed(6)}s, which is the ` +
-          `closed form (${DRIVE_LIMIT} − ${LIMIT_FROM}) × ${LIMIT_SCALE} = ${bothEnd.toFixed(6)}s, and the ` +
-          `${bothUnreachable.length} key at t=${bothUnreachable[0]?.time}s is past it and is the one A39 counted ` +
-          `as deformKeysUnreachable. \`outside\` names the ${bothOutside.length} MEASURED key time(s) ` +
-          `${bothOutside.map((t) => `${t}s`).join(', ')} and not that one — "${bothLine}"`
-      : `[${bothGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    reachHeld,
+    probeDetail(
+      reachHeld,
+      reachProbes,
+      `DW26's mapping on the parent-90° dial: the drive reaches ${bothReaches[0]?.hi.toFixed(6)}s, which is the ` +
+        `closed form (${DRIVE_LIMIT} − ${LIMIT_FROM}) × ${LIMIT_SCALE} = ${bothEnd.toFixed(6)}s, and the ` +
+        `${bothUnreachable.length} key at t=${bothUnreachable[0]?.time}s is past it and is the one A39 counted ` +
+        `as deformKeysUnreachable. \`outside\` names the ${bothOutside.length} MEASURED key time(s) ` +
+        `${bothOutside.map((t) => `${t}s`).join(', ')} and not that one — "${bothLine}"`,
+    ),
     'a reported interval nothing is compared against is a number the tool agrees with itself about. This is the ' +
       'one rig where the reach has an independent witness — the key the survey actually refused to measure — and ' +
       'it is also where the two reports have to stay disjoint, because one frame counted twice reads as two',
