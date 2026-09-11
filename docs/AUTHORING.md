@@ -1043,10 +1043,14 @@ triangle does not, and nothing on the first line says so.
 | `which is 0.049 of the range this mesh sampled` — the **same step, over the range this mesh sampled** | how much of everything the sheet said across the whole part it said across that one triangle. A form's slope is bounded, so this **halves every time you double the lattice** while the angle settles. Near 1 it is a **cliff**: a step with no slope in it, whose angle halves with the lattice instead and describes nothing at any density. Measured: `gallery/look` reads 0.112 and 0.468, a synthetic raised cosine 0.394 falling to 0.027 under refinement, the same cosine with one planted cliff a flat 0.50, and estimated depth sheets over cut-out art **0.92–0.99** |
 | `+none` | on the ceiling line, nothing folds on that side at all, at any angle. On the percentile line it is the same statement — there is no population, because there is nothing to take a percentile of |
 
-A real one rather than the illustration above — `bun cli.ts build --rig
-gallery/look/rig.json --motion gallery/look/motion.json --images
-gallery/look/parts --out <dir>`, whose two meshes happen to print two of the
-three spellings:
+A real one rather than the illustration above — `gallery/look`, whose two meshes
+happen to print two of the three spellings:
+
+```bash
+bun cli.ts build --rig gallery/look/rig.json \
+                 --motion gallery/look/motion.json \
+                 --images gallery/look/parts --out /tmp/look
+```
 
 ```
   MESH  head         grid     189 vertices / 320 triangles  (budget 320)  bones=[head]  attachments=[head]
@@ -2939,7 +2943,13 @@ value = from + (time − to) / scale         what A39 sets the dial to
 
 🔒 **The `DEFORM` block prints the frame on every key**, because the derivation
 changed and a block that went on printing the same figures under a changed meaning
-would be worse than the red it replaced:
+would be worse than the red it replaced. `gallery/look`'s `turn` is the animation
+a slider applies, and this is one of its keys:
+
+```bash
+bun cli.ts explain --rig gallery/look/rig.json \
+                   --motion gallery/look/motion.json --out /tmp/explain-look
+```
 
 ```
   DEFORM  turn  default/head/head  key 6  t=1.900000  transform yaw  depth=true degrees=19
