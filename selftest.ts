@@ -29529,13 +29529,36 @@ function runDocScriptSuite(): number {
 // anchor 119 heads instead of 205 and the population would shrink rather than
 // report a hole.
 
+/**
+ * The anchor RULES — the ways a fence in a document is recognised as output the
+ * tool prints. The declaration marker is deliberately not among them: it names
+ * a block the tool CANNOT print, and a declared block leaves this scan through
+ * its own branch before either the verified list or the HOLE list, so it can
+ * never be part of what a run reaches.
+ *
+ * ⭐ The floors below are one per entry here rather than one on their sum, and
+ * that is the whole reason this is a list rather than three literals at the
+ * floor table: a fourth rule cannot be added to the union without appearing in
+ * the population those floors iterate, because the union is derived from this.
+ *
+ * ⚠️ A function rather than a `const`, for the reason `sealedSubtreeLead` below
+ * is one: this region is appended AFTER `main()` is called, so a module-level
+ * binding here is in its temporal dead zone when the suite runs.
+ */
+function docsAnchorRules(): readonly ('tag' | 'head' | 'rule')[] {
+  return ['tag', 'head', 'rule'];
+}
+
+/** How a block was found: by one of the anchor rules, or by its declaration alone. */
+type DocsQuoteAnchor = ReturnType<typeof docsAnchorRules>[number] | 'declared';
+
 /** One block of a document this gate can see, with how it was found. */
 interface DocsQuoteBlock {
   file: string;
   /** 1-based line of the opening fence. */
   line: number;
   body: string[];
-  anchor: 'tag' | 'head' | 'rule' | 'declared';
+  anchor: DocsQuoteAnchor;
   declared: string | null;
 }
 
@@ -29583,7 +29606,16 @@ interface DocsQuoteScan {
    * the same value that decides the fault.
    */
   declared: Array<{ where: string; reason: string; compared: boolean }>;
-  holes: Array<{ where: string; why: string }>;
+  /**
+   * Anchored, and the material its page's commands read is not on this disk.
+   *
+   * ⭐ Carries its anchor for the same reason `verified` does: what a run
+   * reaches is verified PLUS these, and the floor on that is stated per anchor
+   * rule. A corpus that is not fetched moves a block from one list to the
+   * other without changing which rule found it, which is what lets the floor
+   * be the same on a fresh clone as it is in CI.
+   */
+  holes: Array<{ where: string; why: string; anchor: DocsQuoteAnchor }>;
   /**
    * Anchored, not verified, not declared — and `compared` says which of the two
    * very different things that is. `false` is an illustration: its first line is
@@ -29983,6 +30015,7 @@ function scanDocsQuotes(
       if (hole) {
         scan.holes.push({
           where: at,
+          anchor,
           why:
             `no command \`${file}\` states could run here — ` +
             commands
@@ -30054,6 +30087,55 @@ function scanDocsQuotes(
     );
   }
   return scan;
+}
+
+/**
+ * The floor on what a run REACHED — one row per anchor rule, never one on their
+ * sum (issue #510).
+ *
+ * 🔒 **Why a bound and not a figure.** A block that stops reproducing while it
+ * keeps its anchor faults in `DQ02` by name. What leaves silently is a block
+ * whose own FIRST LINE drifts: it loses its anchor, nothing is laid against it,
+ * and it falls out of this scan without a word. That departure is seen by a
+ * floor or by nothing, and a floor written as a number is the one thing it
+ * cannot be — the number would have to come off the run it bounds, which is the
+ * check agreeing with itself, and a hand-kept one drifts under the tree the way
+ * this comment's own predecessor did. So what is stated is a claim about the
+ * population instead: **each anchor rule still reaches something.**
+ *
+ * ⭐ **`verified + hole` and never `verified` alone**, which is the clause that
+ * makes a corpus-less machine honest rather than lenient. A missing corpus moves
+ * a block between those two lists and changes neither its anchor nor this
+ * count. ⚠️ Measured rather than assumed, because the two are NOT the same
+ * population: on a run with the corpus every reachable block reproduces, and on
+ * one without it the section-rule row reaches exactly one block and that block
+ * is a HOLE — so the same rows over `verified` alone would report a rule
+ * reaching nothing on a fresh clone, and the tightest floor here would be the
+ * first to be lowered until it caught nothing.
+ *
+ * ⚠️ **What this narrows and what it still cannot see.** One floor on the sum
+ * could be held by any block arriving anywhere; these are held only by a block
+ * arriving under the SAME rule. That is narrower and it is not closed: a rule
+ * reaching several blocks still hides one of them leaving. Closing it needs a
+ * comparison against something that is not this run, which nothing in the tree
+ * supplies — see the removal check in `.github/workflows/ci.yml`, which is that
+ * comparison for a neighbouring population and lives outside the suite for
+ * exactly the reason it cannot be built inside one.
+ */
+function docsQuoteReachFloors(scan: DocsQuoteScan): string[] {
+  return floorProbes(
+    docsAnchorRules().map((rule) => {
+      const reproduced = scan.verified.filter((entry) => entry.anchor === rule).length;
+      const holes = scan.holes.filter((entry) => entry.anchor === rule).length;
+      return [
+        reproduced + holes,
+        1,
+        `the ${rule} anchor reaches ${reproduced + holes} block(s) — ${reproduced} reproducing and ${holes} a HOLE`,
+      ] as const;
+    }),
+    'so this rule found blocks and a run could be laid against none of them, which is the state a block leaving ' +
+      'the scan silently arrives at',
+  );
 }
 
 /** Splice an edited block body back into the document text it came from. */
@@ -30176,10 +30258,13 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   const scan = scanDocsQuotes(docs, vocabulary, heads, commandsBy, runsBy);
   const stated = [...commandsBy.values()].reduce((n, commands) => n + commands.length, 0);
   const outOfReach = [...commandsBy.values()].flat().filter((command) => command.reason !== null);
-  // By KIND rather than one sentence each: 116 invocations fall out of this
-  // tree, and spelling them all out here would bury the per-block reasons the
-  // floor exists for. A kind that stops being taken shows up as a zero, which
-  // is the property a list of sentences would not have had either.
+  // By KIND rather than one sentence each: most of the invocations this tree
+  // states fall out of it, and spelling them all out here would bury the
+  // per-block reasons the floor exists for. A kind that stops being taken shows
+  // up as a zero, which is the property a list of sentences would not have had
+  // either. ⚠️ The count that stood in this sentence was wrong under both
+  // readings it could have had — the run prints one figure with the corpus and
+  // a larger one without — so the claim is kept and the number is the run's.
   const byKind = new Map<string, number>();
   for (const command of outOfReach) byKind.set(command.kind ?? '?', (byKind.get(command.kind ?? '?') ?? 0) + 1);
   // The ones that could have changed a verdict are named, and those are the
@@ -30200,35 +30285,46 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   // less while saying nothing. ⭐ The floors are one per step and never one on
   // their sum.
   //
-  // ⚠️ `reachable >= 6` is the load-bearing one and it is NOT a smoke floor:
-  // six blocks reproduce today and a seventh is a HOLE when the corpus is
-  // absent, so the sum is six either way and a block that stops reproducing
-  // takes it to five. The rest — `docs.size >= 50`, `heads.size >= 100` — are
-  // smoke floors against an observed 99 and 205, there to catch a derivation
-  // returning nothing at all. Do not read those as budgets.
+  // ⚠️ **What a run REACHED is floored per anchor rule and never on their sum**
+  // (issue #510), and the rows are in `docsQuoteReachFloors`. Each says the
+  // same thing about a different rule — *this one still reaches a block* — and
+  // that is a claim about the population rather than a figure off the run. The
+  // rest of the table — `docs.size`, `heads.size` and their neighbours — are
+  // smoke floors, there to catch a derivation returning nothing at all. Do not
+  // read any of them as budgets.
   //
-  // ⭐ The pairing of `verified` with `hole` is the clause that makes the
-  // corpus honest in both directions. Counting only `verified` would go red on
-  // a fresh clone, which is the failure that would get the floor lowered until
-  // it caught nothing; counting them together holds the sum while a missing
-  // corpus moves a block from one column to the other. Measured on a run with
-  // `examples/` deleted: 5 reproduce, 1 is a HOLE, and the sum is 6 with no
-  // slack in it, so the floor is exactly as tight on a fresh clone as it is in
-  // CI. ⚠️ That is a fact about today's tree rather than a property of the
-  // rule, and it turns on something thin: `docs/INGEST.md`'s pool survives a
-  // missing corpus because ONE of its stated commands reads
-  // `bench/transcriptions/`, which is tracked — so its two unreachable blocks
-  // stay unreachable instead of becoming HOLEs. Were that command to go, they
-  // would flip, the sum would read 8, and this floor would carry two blocks of
-  // slack on every corpus-less machine without anything going red.
+  // 🚨 **This clause used to be a number, and the number is how it failed.** It
+  // read `reachable >= 6`, and its own comment said in so many words that the
+  // floor was load-bearing and not a smoke floor — six blocks either way, one
+  // departure taking it to five. The tree then grew past it in both directions
+  // and nothing said so, because a bound cannot notice that its subject moved:
+  // at the measurement that replaced this text the reach was nine with the
+  // corpus and nine without, so a floor described as tight was carrying three
+  // blocks of slack. ⛔ Raising it to nine would have bought one week of the
+  // same thing. The bound has to be a claim the tree cannot outgrow.
   //
-  // 🚨 **The sum has the failure a sum always has, and issue #482 closed half of
-  // it — so what is written down here is the half that is left.** Every step of
-  // the DERIVATION above is floored on its own (`byTag` and `byHead` never share
-  // a number), but this VERDICT clause is floored on `verified + hole`, and one
-  // number over two columns cannot see a swap: **if one block leaves the
-  // verified set in the same change that another enters it, the sum holds and
-  // the run is green.**
+  // ⭐ **`verified + hole` and never `verified` alone**, which is what makes the
+  // rows say the same thing on a fresh clone as in CI: a missing corpus moves a
+  // block between those two lists and changes neither its anchor nor the count.
+  // The two figures were taken with `examples/` present and with it deleted and
+  // the per-rule reach is identical, so the clause that the sum is the same
+  // either way survives its figures being removed. ⚠️ It still turns on
+  // something thin: `docs/INGEST.md`'s pool survives a missing corpus because
+  // ONE of its stated commands reads `bench/transcriptions/`, which is tracked
+  // — so its unreachable blocks stay unreachable instead of becoming HOLEs.
+  // Were that command to go they would flip, and under a sum the floor would
+  // silently gain their slack on every corpus-less machine. Under a row per
+  // rule they arrive in the rule that found them and the row says so.
+  //
+  // 🚨 **What a floor cannot do, stated because splitting it does not fix it.**
+  // Issue #482 closed half of this: a block that stops reproducing while keeping
+  // its anchor faults in `DQ02` by name. What is left is a block whose first
+  // line drifts, and a floor sees that only where the rule it was found by has
+  // nothing else to stand in for it. **If one block leaves a rule's set in the
+  // same change that another enters it, the row holds and the run is green** —
+  // narrower than the sum, which any arriving block anywhere could hold up, and
+  // not closed. Closing it wants a comparison against a revision this run is not
+  // allowed to see, which is a different instrument in a different place.
   //
   // ✅ **What the fault rule took away.** A block that stops reproducing while
   // keeping its anchor is now a fault in `DQ02`, by name, with the line it
@@ -30239,17 +30335,14 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   // LINE drifts loses its anchor: nothing is laid against it, the fault rule
   // correctly does not reach it, and it leaves the verified set silently — the
   // failure `GT01`'s header names, *an anchor on a leaf goes silent exactly when
-  // it goes stale*. That departure shows up here, in this sum, or nowhere. And a
-  // sum can be held by a block arriving, so even here it is one coincidence from
-  // invisible.
+  // it goes stale*. That departure shows up in these rows or nowhere, and `DQ04`
+  // is what makes them a gate rather than a hope: it takes every reachable block
+  // of a rule out of the tree in turn and reads the row that fires.
   //
-  // 🔸 Splitting the floor by anchor rule would narrow the window to a swap
-  // inside one rule — today's verified set is 4 by tag and 2 by head — but it
-  // narrows rather than closes, and nothing here has measured it against a real
-  // swap, so it is named and not built. ⛔ Nor does raising the fault rule to
-  // reach an unanchored block work: that is precisely the class-2 population the
-  // rule is scoped away from, and it would fault a dozen illustrations to catch
-  // a departure that has not yet happened.
+  // ⛔ Raising the fault rule to reach an unanchored block is the other thing
+  // that does not work: that is precisely the class-2 population the rule is
+  // scoped away from, and it would fault a dozen illustrations to catch a
+  // departure that has not yet happened.
   const derivation = [
     ...(treeFault === null ? [] : [treeFault]),
     ...(asked.fault === null ? [] : [asked.fault]),
@@ -30268,9 +30361,10 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     // already paid for that twice (`CUR09`, `TY12`): a floor in the verdict's
     // boolean with a detail that reads only the fault list makes the FAIL print
     // the sentence saying everything is fine. It happened here on the run this
-    // was written, on `reachable`, which is the one clause the whole gate rests
+    // was written, on the reach clause, which is the one the whole gate rests
     // on — the mutant said RED and the detail said clean.
-    ...([
+    ...floorProbes(
+      [
       [docs.size, 50, `${docs.size} tracked markdown file(s) outside \`gallery/\` were read`],
       [galleryExamples, 5, `${galleryExamples} gallery example(s) gave up their stated commands`],
       [galleryRuns, 14, `${galleryRuns} run(s) of those commands supplied the vocabulary`],
@@ -30287,21 +30381,18 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       // would turn an ordinary edit to a page of prose into a red run carrying
       // a message about an anchor rule — the shape of first action issue #468
       // refused. What has to be caught here is the rule reaching NOTHING; the
-      // block a run IS laid against is held by the `reachable` row below, where
-      // it belongs.
+      // block a run IS laid against is held by that rule's own reach row below,
+      // where it belongs.
       [scan.byRule, 1, `${scan.byRule} of them by a section rule`],
       [sealed.prefixes.length, 1, `${sealed.prefixes.length} sealed-subtree marker(s) were read`],
       [scan.excluded.length, 1, `${scan.excluded.length} block(s) were excluded by one`],
       [scan.verified.length, 1, `${scan.verified.length} block(s) reproduced`],
-      [
-        reachable,
-        6,
-        `${scan.verified.length} block(s) reproduce and ${scan.holes.length} are a HOLE, which is ${reachable} ` +
-          'block(s) this run could reach',
       ],
-    ] as Array<[number, number, string]>).flatMap(([value, floor, said]) =>
-      value >= floor ? [] : [`${said} — the floor is ${floor}, so a step of this derivation came back thinner than it has ever been`],
+      'so a step of this derivation came back thinner than it has ever been',
     ),
+    // The reach, one row per anchor rule. Read `docsQuoteReachFloors` for why
+    // it is a claim about the population and not the number this run produced.
+    ...docsQuoteReachFloors(scan),
   ];
   say(
     'DQ01_THE_DOCS_TRANSCRIPT_SCAN_READ_THE_TREE_THE_COMMANDS_AND_WHAT_IT_COULD_NOT_REACH',
@@ -30322,9 +30413,17 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
         `${scan.byHead} by a record head, ${scan.byRule} by a section rule, ` +
         `${scan.byDeclared} by a declaration alone — of which ` +
         `${scan.verified.length} reproduce, ${scan.declared.length} are declared unreproducible, ` +
-        `${scan.holes.length} are a HOLE and ${scan.unreachable.length} are unreachable:\n          ` +
+        `${scan.holes.length} are a HOLE and ${scan.unreachable.length} are unreachable. ` +
+        `${reachable} block(s) were reached, and the floor on that is one row per anchor rule: ` +
+        `${docsAnchorRules()
+          .map(
+            (rule) =>
+              `${rule} ${scan.verified.filter((entry) => entry.anchor === rule).length}+` +
+              `${scan.holes.filter((entry) => entry.anchor === rule).length}`,
+          )
+          .join(', ')} (reproducing + HOLE):\n          ` +
         [
-          ...scan.holes.map((entry) => `HOLE  ${entry.where} — ${entry.why}`),
+          ...scan.holes.map((entry) => `HOLE  ${entry.where} (by ${entry.anchor}) — ${entry.why}`),
           // The declared set is printed with its reasons for the reason the
           // marker's own rule exists: a declaration nobody reads is a bypass,
           // and one this run could not reach is a marker holding no gate down.
@@ -30345,9 +30444,11 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       'reason its page shows a reader. ⚠️ What this floor is still the ONLY witness of is narrower than it was ' +
       'before issue #482 and it is not nothing: a block that stops reproducing while KEEPING its anchor now ' +
       'faults in `DQ02`, but one whose own first line drifts is compared against nothing, leaves the verified ' +
-      'set silently, and is seen here or nowhere — and seen here only if no other block enters in the same ' +
-      'change, because this clause is a sum. The sealed set is reported for the same reason, and a marker ' +
-      'excluding nothing is a fault rather than a no-op',
+      'set silently, and is seen here or nowhere — and seen here only if no other block enters under the SAME ' +
+      'anchor rule in the same change, because the reach is floored one row per rule rather than on their sum ' +
+      '(issue #510). The floor is a claim about the population and never a figure off this run: the number it ' +
+      'used to be described a tight bound and was three blocks of slack by the time anybody re-took it. The ' +
+      'sealed set is reported for the same reason, and a marker excluding nothing is a fault rather than a no-op',
   );
 
   // --- DQ02: the blocks themselves ------------------------------------------
@@ -30773,6 +30874,117 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       '⚠️ The plant floor is a probe rather than a conjunct, and derived rather than ' +
       'typed: written as a literal it was correct with the corpus on disk and red without it, and written into ' +
       'the verdict\'s boolean alone it made the FAIL print the sentence that says every plant behaved',
+  );
+
+  // --- DQ04: the reach floors, seen firing and seen staying quiet ------------
+  //
+  // 🔒 **The floor `DQ03` keeps handing its silent plants to had never been
+  // watched fire** (issue #510). `DQ01`'s reach clause is the only thing that
+  // sees a block whose first line drifted out of the scan, and while it was one
+  // number over a sum nothing had ever driven it below its bound — the bound
+  // was three blocks under the run by the time anybody re-took it, so the plant
+  // `DQ03` makes on every verified block could never have reached it.
+  //
+  // ⭐ **The plant is the whole of one rule's reach at once**, because that is
+  // what the row claims: not that some number of blocks survives, but that this
+  // ANCHOR RULE still reaches one. Exactly one row has to fire and it has to
+  // name the rule, which is also what says the other rules' blocks were not
+  // taken down with it.
+  //
+  // ⚠️ **And the half that states the cost.** Where a rule reaches more than one
+  // block, unanchoring ONE of them has to leave every row quiet — the floor is
+  // a bound and a bound with spares under it cannot see a single departure.
+  // That is measured here rather than admitted in prose, so the day a tighter
+  // instrument arrives this clause is what it has to contradict. The instrument
+  // it wants is a comparison against another revision, which a suite that runs
+  // from a fresh clone with no arguments cannot have — see the removal check in
+  // `.github/workflows/ci.yml`.
+  const reachProbes: string[] = [];
+  const standing = docsQuoteReachFloors(scan);
+  const reachedBy = (rule: string): string[] => [
+    ...scan.verified.filter((entry) => entry.anchor === rule).map((entry) => entry.where),
+    ...scan.holes.filter((entry) => entry.anchor === rule).map((entry) => entry.where),
+  ];
+  /** Take the anchor off each of these blocks, and say how many it could be taken off. */
+  const unanchored = (wheres: readonly string[]): { edited: Map<string, string>; done: number } => {
+    const edited = new Map(docs);
+    let done = 0;
+    for (const where of wheres) {
+      const file = where.slice(0, where.lastIndexOf(':'));
+      const line = Number(where.slice(where.lastIndexOf(':') + 1));
+      const text = edited.get(file) ?? '';
+      const block = galleryBlocks(text).find((candidate) => candidate.line === line);
+      if (block === undefined) continue;
+      const next = transcriptWithoutItsAnchor(block.lines);
+      if (next === null) continue;
+      edited.set(file, docsQuotePlant(text, block, next));
+      done++;
+    }
+    return { edited, done };
+  };
+  const reachCases: string[] = [];
+  for (const rule of docsAnchorRules()) {
+    const blocks = reachedBy(rule);
+    const whole = unanchored(blocks);
+    // 🔒 Whether the plant EXISTS, bound rather than branched, because it is a
+    // precondition and not the clause that decides the row below it: that row
+    // is decided by what the plant raised and by nothing else. ⚠️ `RB04` reads
+    // every early exit above a row as the row's guard and cannot tell those two
+    // apart — it faulted this case on `blocks.length === 0` while the row was
+    // already asking `raisedBy` — so the shape is worth recording rather than
+    // arguing with: a precondition that answers "is there a plant" belongs in a
+    // name, and the question "did MY plant fire" belongs in the `if`.
+    const plantable = blocks.length > 0 && whole.done === blocks.length;
+    if (!plantable) {
+      reachProbes.push(
+        `${rule}: ${blocks.length} block(s) are reached and the anchor could be taken off ${whole.done} of them, ` +
+          'so this plant was never made',
+      );
+      continue;
+    }
+    // 🔒 Both marks, which is what `raisedBy` asks for from a plant that changes
+    // the POPULATION: the subtraction keeps a row that was already standing from
+    // counting as this plant's, and the attribution keeps another rule's row —
+    // which this plant may not cause and the case would otherwise accept — from
+    // standing in for the one being tested.
+    const raised = raisedBy(docsQuoteReachFloors(rescan(whole.edited)), { was: standing, at: `the ${rule} anchor` });
+    if (raised.length === 0) {
+      reachProbes.push(
+        `${rule}: all ${blocks.length} block(s) it reaches were unanchored and its floor row did not fire`,
+      );
+    }
+    reachCases.push(`${rule} ${blocks.length}->0 fires`);
+    if (blocks.length < 2) continue;
+    const one = unanchored(blocks.slice(0, 1));
+    const early = raisedBy(docsQuoteReachFloors(rescan(one.edited)), { was: standing });
+    if (early.length > 0) {
+      reachProbes.push(
+        `${rule}: one of ${blocks.length} block(s) was unanchored and ${early.length} floor row(s) fired — a bound ` +
+          `with ${blocks.length - 1} block(s) of room under it cannot have seen that, so something else is ` +
+          `deciding this row: ${early[0].slice(0, 120)}`,
+      );
+    }
+    reachCases.push(`${rule} ${blocks.length}->${blocks.length - 1} quiet`);
+  }
+  const reachHeld = reachProbes.length === 0;
+  say(
+    'DQ04_THE_REACH_FLOOR_OF_EVERY_ANCHOR_RULE_FIRES_WHEN_THAT_RULE_REACHES_NOTHING',
+    reachHeld,
+    probeDetail(
+      reachHeld,
+      reachProbes,
+      `${standing.length} floor row(s) stand on the unplanted tree, and over ${docsAnchorRules().length} anchor ` +
+        `rule(s): ${reachCases.join('; ')} — where each rule's whole reach unanchored fires its own row and ` +
+        'nobody else\'s, and one block short of that fires nothing',
+      (count) => `${count} of the reach floors did not answer their plant:`,
+    ),
+    'a floor nothing has driven below its bound is a sentence, not a gate — and this one was exactly that for as ' +
+      'long as it was a number over a sum, because the number sat three blocks under the run and the plants ' +
+      '`DQ03` already makes could never reach it. Stating the bound per anchor rule is what makes it plantable: ' +
+      'the claim is that the rule reaches SOMETHING, so taking its whole reach away is a plant the tree can ' +
+      'actually be put into. ⚠️ The quiet half is not a formality and it is not a boast: it measures what a ' +
+      'bound cannot do, so a rule with spare blocks under it hides a single departure and this case says so in ' +
+      'the same breath as the firing half',
   );
 
   return { failures: bad, holes: scan.holes.length };
