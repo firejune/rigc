@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.1](https://github.com/firejune/rigc/compare/v0.20.0...v0.20.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* ship the guide corrections that landed under a type the release machinery hides ([#515](https://github.com/firejune/rigc/issues/515)) ([ae29869](https://github.com/firejune/rigc/commit/ae29869051b21ff9b02b58524e077cdca16cf019))
+
 ## [0.20.0](https://github.com/firejune/rigc/compare/v0.19.0...v0.20.0) (2026-09-10)
 
 ⚠️ **Read the two generated sections below last.** `release-please` builds them from
