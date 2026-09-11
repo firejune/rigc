@@ -2,6 +2,91 @@
 
 ## [0.20.1](https://github.com/firejune/rigc/compare/v0.20.0...v0.20.1) (2026-09-11)
 
+⚠️ **Read the generated section below last.** `release-please` builds it from commit
+**type**, so `test:`, `docs:` and `ci:` commits never appear in it. In this release that
+is **23 of 24 commits**, and it is all of the work. What follows is the whole cut.
+
+### What this release is about
+
+**The guides an agent authors from stopped saying things the tool contradicts, and the
+gates that would have caught them got built.**
+
+`docs/AUTHORING.md` is a first-class deliverable rather than documentation — it and the
+validator's messages together are the only interface an agent that cannot see the rig
+actually has. It ships in the package. So do `docs/FACE.md`, `docs/INGEST.md` and four
+more. This cut changed about 270 lines across three of them, and every change is a
+correction rather than an addition.
+
+### What an installer gets that is different
+
+- **Five figures the tool contradicts, and two it never printed at all** (#468). One of
+  the two was `26 PASS, 13 SKIP` — rigc prints no tally line, so that was authored
+  arithmetic inside a fence, indistinguishable on the page from output. Another was
+  `14 excluded`, which could not be checked against any line the tool emits. For those
+  the repair was deletion: when nothing holds a number, removing it *is* the fix.
+- **A worked script that demonstrated something other than what its prose claimed**
+  (#471, #472). `docs/FACE.md` §9.2 read a deform by list position, assuming `i % 5` was
+  the column — and a commit had **renumbered the vertex list**, not the triangulation, so
+  the script stayed green for a week while showing a different pair. Repaired to read the
+  rig by coordinate, it reproduces the documented pair **byte-exactly**, and §9.3 —
+  which the same script feeds and which nobody had run — now gives the table's own
+  `0.20 / 0.38` instead of `0.33 / 0.61`.
+- **A transcript nobody could rerun, now saying what it is** (#441), and **two blocks a
+  reader could not otherwise check, now stating the command that produces them** (#485).
+- **Three counts in the measure register that do not close** (#490), each retired for a
+  different reason: one measurable but unreachable by any criterion (nine were tried),
+  one not re-measurable at all because the re-read was never written to disk, and one
+  derivable off the table printed directly above it. ⚠️ The third was wrong twice — the
+  count *and* the characterisation. Five rigs read short, not four, and **none of the
+  five is a size disagreement**: the smaller rig's sizes are wholly contained in the
+  larger's, so what the shortfall names is a region one rig has and the other has not.
+- **A count in a `src/diff.ts` comment** that nothing derived, struck rather than
+  refreshed.
+
+### The gap that hid all of it
+
+`docs` is the one hidden commit type that **still changes the package**. Seven guides
+ship, so a correction to one of them changes what the registry serves under a type the
+release machinery is told to ignore — and 23 commits accumulated with no release opening.
+⛔ Un-hiding `docs` is not the repair: most of `docs/` does not ship, so every note to a
+working document would open a release pull request and the type would stop meaning
+anything. `RELEASING.md` now records what to do instead — **read what changed in the
+`files` allowlist, not the commit types** — and a check that reads the same array
+`npm pack --dry-run` reads is filed.
+
+### Why you can trust the above: 577 → 593 controls
+
+None of this ships, and it is the reason the shipped half is now checkable.
+
+- **Gates over what the tree says about itself.** A doc-script suite that runs the
+  scripts a page states (#477); a docs-transcript suite over what `docs/` quotes the tool
+  as printing, with its coverage published beside it — verified, declared, unreachable
+  and sealed, each with its reason (#468); a third anchor rule reaching fences that open
+  on a section rule, whose first catch is the very block a hand pass had repaired (#489);
+  and a control refusing a line-number citation anywhere in the tree, after nine stood in
+  one file and **eight were wrong** (#487).
+- **Details that stop lying on the run they exist for.** A control whose verdict is a
+  conjunction of terms its detail does not read prints a clean sentence under a FAIL.
+  Twenty-five sites repaired across four tranches, each measured before conversion and
+  seven candidates correctly left alone. The helper that makes the shape hard to write is
+  itself gated, because nothing else could see it break: with its guard removed the whole
+  file runs **green**.
+- **Plants tested by the fault they raise** rather than by the tree being quiet (#491).
+  Fourteen red-first clauses asked whether *anything* faulted; a fault standing anywhere
+  else satisfied them, so each stopped testing its plant on exactly the run it exists for.
+- **A comparison form that cannot be written unmarked** (#506). Two sweeps found the same
+  defect by matching on what a clause looks like and both under-counted, so the answer was
+  not to find every site but to make the bare form a **type error**.
+
+### The mistake in this cut, and its repair
+
+One landing **silently reverted an earlier one** — three controls and two repairs
+disappeared and the run stayed green, because a derived tally reports the smaller number
+just as honestly as the larger. It was found three landings later. ⇒ CI now refuses a
+change that removes a control without naming it, with the permission travelling in the
+same diff so no allow-list exists; replayed over history it refuses the landing that
+removed three and accepts the one that removed one and said so.
+
 
 ### Bug Fixes
 
