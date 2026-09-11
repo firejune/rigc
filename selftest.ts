@@ -21317,7 +21317,20 @@ function runGalleryTranscriptSuite(): number {
       }
       const after = rescan(plantIntoReadme(readme, block, unanchored));
       const scan = scans.get(example);
-      if (scan === undefined || after.found !== scan.found - 1 || after.faults.length !== 0) silenced++;
+      // ⚠️ Against this README's unplanted faults, not against zero — issue
+      // #486, the third of four sites that had the same one line. "Quiet" is a
+      // claim about what THIS EDIT raises; a block elsewhere in the same README
+      // that had already gone stale is not this plant's doing, and the two are
+      // the same number only while the example is green. This rescan is scoped
+      // to one README rather than to the tree, so the standing fault has to be
+      // in the same file — which five clauses in this very loop can put there.
+      // Measured on a doubly-planted run — a copy of `gallery/look/README.md:117`
+      // appended to its own README one interior line short, leaving one standing
+      // fault, and then this plant on top of it: the absolute form counted all
+      // 14 of `look`'s unanchored plants as noisy when every one had gone quiet,
+      // and this form counts none.
+      const raisedByPlant = after.faults.filter((fault) => !(scan?.faults ?? []).includes(fault));
+      if (scan === undefined || after.found !== scan.found - 1 || raisedByPlant.length !== 0) silenced++;
     }
   }
 
@@ -27815,8 +27828,20 @@ function runDocScriptSuite(): number {
     edited.set(script.file, after);
     const again = scanDocScripts(edited, root);
     const left = verifiedDocScripts(again);
+    // ⚠️ Against what the unplanted run already judges, not against zero —
+    // issue #486, the fourth of four sites, and one layer up: the list here is
+    // a JUDGEMENT rather than a scan's `faults`, and the shape is the same
+    // because `faults` above is that same judgement over the unplanted tree.
+    // Taking a label off has to raise nothing NEW; a verdict a page was already
+    // wrong about is not something this plant did. Measured on a doubly-planted
+    // run — every verdict on `docs/FACE.md:1212` flipped, leaving the page
+    // disagreeing with the run, and then this plant on top of it: the absolute
+    // form reported `(and 2 unlabelled script(s) did not drop out cleanly)` on
+    // both scripts when both had dropped out cleanly, and this form reports
+    // neither.
+    const raisedByPlant = judgeDocScripts(left, again.claims, outcomes).filter((fault) => !faults.includes(fault));
     if (
-      judgeDocScripts(left, again.claims, outcomes).length !== 0 ||
+      raisedByPlant.length !== 0 ||
       left.length !== verified.length - 1 ||
       again.scripts.length !== scan.scripts.length
     ) {
@@ -28992,7 +29017,18 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       continue;
     }
     const after = rescan(withText(file, docsQuotePlant(text, block, unanchored)));
-    if (after.found !== scan.found - 1 || after.faults.length !== 0) silenced++;
+    // ⚠️ Against the unplanted scan's faults, not against zero — issue #486,
+    // the same correction the adrift plant above already carries. "Quiet" is a
+    // claim about what THIS EDIT raises, and a fault standing anywhere else in
+    // the tree is not this plant's doing; the two are the same number only
+    // while the whole suite is green, which is the one run this clause is not
+    // for. Measured on a doubly-planted run — a sealed marker planted over the
+    // repository root in `CONTRIBUTING.md` to leave one standing fault, and
+    // then this plant on top of it: the absolute form reported
+    // `6 unanchored block(s) did not drop out of the scan cleanly` when all six
+    // had gone quiet, and this form reports none.
+    const raisedByPlant = after.faults.filter((fault) => !scan.faults.includes(fault));
+    if (after.found !== scan.found - 1 || raisedByPlant.length !== 0) silenced++;
   }
 
   // --- the declaration, taken off the blocks that carry one ------------------
@@ -29090,10 +29126,18 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     removed.splice(at - 1, 1);
     planted++;
     const without = rescan(withText(file, removed.join('\n')));
-    if (without.found !== scan.found + mine || without.faults.length !== 0) {
+    // ⚠️ Against the unplanted scan's faults, not against zero — issue #486,
+    // and here the absolute form printed its own contradiction. On the
+    // doubly-planted run above, with one standing fault in the tree, this
+    // clause filed the real marker as a miss whose own sentence said the plant
+    // had behaved: `taken off, the population moved from 22 to 23 where 23 was
+    // the whole of what it sealed, and 1 fault(s) were raised`. The one fault
+    // was the standing one, which this edit neither raised nor could have.
+    const raisedByRemoval = without.faults.filter((fault) => !scan.faults.includes(fault));
+    if (without.found !== scan.found + mine || raisedByRemoval.length !== 0) {
       sealPlants.push(
         `${entry.where}: taken off, the population moved from ${scan.found} to ${without.found} where ` +
-          `${scan.found + mine} was the whole of what it sealed, and ${without.faults.length} fault(s) were raised`,
+          `${scan.found + mine} was the whole of what it sealed, and ${raisedByRemoval.length} new fault(s) were raised`,
       );
     }
 
