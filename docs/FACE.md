@@ -527,6 +527,7 @@ asked for.** The `MEMBER` block (AUTHORING §4.5.2) is a row per member — the
 emitted value, the `x` it read off the rig, and the depth the spec stated — so the
 nose diagnostic below is now a line you read rather than arithmetic you redo:
 
+**No run reproduces this:** abridged — the five derivation lines the run prints between this record's head and its rows are cut; AUTHORING §4.5.2 quotes them
 ```
   MEMBER  turn  group "features".translatex  t=0.620000  6 member(s)  derive yaw  degrees=12 carried=170  -> the displacement
             eye_l       5.513083  <- -62 at depth 150
