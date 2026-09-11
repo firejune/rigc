@@ -8,6 +8,8 @@ Nothing in here is a rung's verdict. A rung is marked cleared by a person readin
 the measures, and [docs/LADDER.md](../../docs/LADDER.md) is where that judgement is
 written down.
 
+**A sealed subtree:** every measure and reading recorded below this directory is a landed run record, final against editing under [issue #181](https://github.com/firejune/rigc/issues/181), so the selftest's docs-transcript gate leaves the report output those records quote out of its population rather than asking for a repair that ruling forbids. One line, and one line only, because the marker a reader reads is the line the scanner parses.
+
 ⚠️ **Concurrent agents use `git worktree`, never the shared checkout.** A run in
 progress is a working tree with in-flight edits — its own, and sometimes the
 repository's: rung 2's second attempt hit a `SyntaxError` mid-loop from a
