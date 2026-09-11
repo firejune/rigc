@@ -25795,6 +25795,7 @@ function main(): void {
   bad += tally.of('agent-skill', runSkillSurfaceSuite);
   bad += tally.of('currency', runCurrencySuite);
   bad += tally.of('gallery-transcript', runGalleryTranscriptSuite);
+  bad += tally.of('doc-script', runDocScriptSuite);
   bad += tally.of('see-it', runSeeItSuite);
   bad += tally.of('pose', runPoseSuite);
   bad += tally.of('chainfit', runChainFitSuite);
@@ -25985,6 +25986,24 @@ function main(): void {
     'abridged quote faults. The vocabulary a refusal announces itself with is derived from those runs too — ' +
     'the error head at column 0, and the gutter tags a refusal run prints that no green run does — so a block ' +
     'that opens on one and carries no recipe is a fault rather than an escape)';
+  const docScripts =
+    ', + ' + n('doc-script') + ' doc-script controls (issue #477 — the two gates above read what a page QUOTES and ' +
+    'what a page SAYS ABOUT the tool; this one RUNS what a page states. `docs/FACE.md` §9.2 ships two `bun -e` ' +
+    'scripts that write a variant motion spec, and one of them stopped writing an inverted band the day #375 ' +
+    'renumbered the mesh, staying green for a week because a `vertices` run is positional and scattered shifts ' +
+    'are a legal deform. The population is derived from `git ls-files` down to a script whose fence also states ' +
+    'the rigc command that reads its product, and every script that falls out of that carries the reason — ' +
+    'material the repository does not have, no product under a name the page spells, no command beside it — ' +
+    'because 9 scripts with 2 of them runnable is a thin population that has to be visible rather than implied. ' +
+    'The claim is a VERDICT and never a figure: a fence labels a script `(a)`, a table on the page opens a ' +
+    "column on `(a)`, and a row naming one assertion states that assertion's verdict in it, which is compared " +
+    "against the run's own gutter line — with the tool's emit rule under it, read off the exit status and the " +
+    '`--out` together so "refused, and nothing written" is measured rather than repeated. The derivation is ' +
+    'asserted first, since five separate steps stand between a document and a claim and any one of them ' +
+    'emptying would leave a clean tree; and the runner is planted on every script it verifies — each verdict ' +
+    "flipped, each script's write dropped, and the products rotated so each build reads what its neighbour " +
+    "wrote — while taking a script's LABEL off must fault NOTHING and drop it silently, which is the one the " +
+    'floor exists for)';
   // Not one figure below is written out any more (issue #451). The four that
   // were are settled by the ruling *a suite's figure counts every case it
   // prints, its own positive control included*, which is the only reading that
@@ -26254,6 +26273,7 @@ function main(): void {
       skillSurface +
       currency +
       galleryTranscripts +
+      docScripts +
       ', + ' + n('see-it') + ' see-it controls (a rig built from indexed+tRNS art and then RENDERED — issue #226 — its frame series, ' +
       'sidecar-declared frame size, motion between two of the frames, the decoder expanding palettes and greyscale ' +
       'to RGBA while still refusing a colour type that is not one, a preview embedding the skeleton, the atlas and ' +
@@ -27004,6 +27024,827 @@ function runSliderReaderSuite(): number {
       'recomputes the local pose from the world matrix — `atan2Deg` for the angles, `Math.sqrt` for `scaleX`. The ' +
       'producible SET is unbounded either way, so the table stands; what does not is "`local: true` reads the ' +
       'number you authored", which is the repair every one of these refusals wants to name',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// the scripts a document STATES still do what the page says (issue #477)
+// ---------------------------------------------------------------------------
+//
+// ⭐ **Why this suite exists, and why it is not the transcript gate one surface
+// over.** `GT01`–`GT06` hold what a page QUOTES to what the tool prints, and
+// `CUR01`–`CUR11` hold what a page SAYS ABOUT the tool to the tool. Neither of
+// them runs a page's own scripts, and `LS03` — which reads a gallery README's
+// invocations — does not either, because a `bun -e` snippet is not a rigc
+// invocation. So the tree had an instrument for a doc's output and one for a
+// doc's claims, and nothing that ran a doc's commands.
+//
+// 🚨 It cost a week. `docs/FACE.md` §9.2 states three builds of
+// `gallery/portrait`, two of them driven by a `bun -e` script that writes a
+// variant motion spec. Script (a) built its deform run as one row of five shifts
+// repeated five times — the mesh's own column order, correct while the vertex
+// list was row-major. [#375](https://github.com/firejune/rigc/issues/375)
+// renumbered that list along its outline walk on 2026-09-04 and the script went
+// on writing the same five values at the same POSITIONS in a list where a
+// position no longer meant a column. A `vertices` run is positional by format,
+// so scattered shifts are a perfectly legal deform: the build stayed green,
+// nothing on the page moved, and the section spent a week demonstrating
+// something other than what it says (#471).
+//
+// ⭐ **A stale figure shows up at one site; a broken command shows up at every
+// figure it feeds.** That one script fed §9.2's comparison table and §9.3's
+// `check` row, and the two stayed consistent with each other while diverging
+// from the tool — which is why comparing a transcript against one of them is a
+// weak signal and running the command is a strong one.
+//
+// **What this asks, and it is deliberately the cheaper question.** Not *are the
+// figures current* — that is #468's business and #474's clause covers the fenced
+// half of it — but **does the command still do what the page says it does?** The
+// claims it checks are verdicts: `A39_DEFORM_KEEPS_TRIANGLE_WINDING` PASS on one
+// build and FAIL on another, and the emit rule under them, `refused, and nothing
+// written`. Not one figure is read.
+//
+// ⚠️ **The reach of that, measured rather than implied, because the limit is the
+// first thing a later reader will need.** Reproducing the broken script (a)
+// verbatim and running this gate's own comparison: `A35 PASS`, `A39 PASS`, exit
+// 0, artifact written — **exactly what the page states for it**, so this suite
+// does NOT catch the 2026-09-04 defect it was written after. What it does catch
+// is the 2026-09-03 one, which is the same class the other way up: both scripts
+// had gone silent, build (b) came back green where the page says FAIL, and this
+// suite reports that on the same run. ⇒ A verdict claim is falsifiable exactly
+// where the page's own verdict differs from the build the script would produce
+// if it did nothing at all — for (b) it does, for (a) it does not. Closing (a)
+// needs a figure or a render, and both are a different cost class.
+//
+// **How the population is derived, one clause at a time and never a list.** The
+// universe is `git ls-files` filtered to markdown — the repository's own answer
+// to what is in the tree, so no document is left out by a judgement made here.
+// Inside it, a script is a `bun -e '…'` statement of a fenced block. Everything
+// that narrows it from there is a property of the script, and every script that
+// falls out carries the reason it fell, printed by `DS01`:
+//
+//  1. it reads a path the repository does not carry — the boundary #429 and #441
+//     both drew, and the reason `gallery/nod`'s third script is out: it reads
+//     `gallery/nod/build/skeleton.json`, which is generated and gitignored;
+//  2. it writes no file under a name the page spells, which is what a script
+//     that only prints figures looks like, and what a base64 art-writer looks
+//     like too (`Bun.write(p, …)` names nothing);
+//  3. no rigc command in its fence reads what it writes — one fence is one
+//     runnable unit, and a page whose next step is "save this JSON block under
+//     this name" is stating an authoring step rather than a command;
+//  4. its product is not somewhere this runner can redirect, or its command
+//     carries shell quoting this runner does not parse;
+//  5. the fence gives it no `(x)` label, or no table of its own page opens a
+//     column on that label, or that column states no assertion verdict.
+//
+// ⚠️ Measured on this tree: **9 scripts in 8 fences of 5 documents, 2 of them
+// verified.** That is a thin population and it is stated rather than hidden —
+// `DS01`'s floor is what makes it loud if it goes thinner, and the reasons above
+// are what a later reader needs in order to widen it deliberately.
+//
+// **How a claim is read, and why it is a verdict and never a figure.** A fence
+// labels a script `# (a) …`; a table on the same page opens a column on `(a)`;
+// a row of that table whose first cell names exactly one assertion states that
+// assertion's verdict in every column. So the claim is `A39 PASS` for the build
+// script (a) feeds and `A39 FAIL` for script (b)'s, and it is compared against
+// the run's own gutter line — the same `  PASS  A39_…` the tool prints for
+// everybody. 🔒 A row whose cell carries digits contributes nothing: the reader
+// takes `PASS` or `FAIL` and stops, which is what keeps this from drifting into
+// #468 with extra steps.
+//
+// ⚠️ **Every path a document hardcodes under `/tmp/` is redirected into the
+// round's own directory**, and a script that writes anywhere else is out of
+// reach rather than run. §9.2 states `/tmp/swapped.motion.json`: two runs of
+// `bun run selftest` at once would share it and one would read the other's file.
+// Nothing is written into the repository, and nothing survives the round.
+//
+// **What is NOT in scope, stated so the boundary reads as chosen.** §9.2's good
+// build is not run here: its stated command renders 57 frames and writes both
+// its artifacts INTO the repository, and the same build is already gated by
+// `GALLERY_EXAMPLE_IS_GREEN[portrait/spine-html]` — which the page itself says,
+// leaving the tally to the tool. §9.3's `check` row needs
+// `gallery/portrait/render/`, generated and gitignored, and a gate that renders
+// per run is a different cost class. Both of those are the `good` column and the
+// unmapped columns `DS01` counts.
+//
+// ⚠️ **Cost, measured rather than guessed.** One round is every verified script
+// followed by every command that reads one — 4 subprocesses today — and there
+// are four rounds: the tree's own, one per script with its write dropped, and
+// one with the products rotated. **Sixteen runs, 1.6–2.8 s of wall clock** over
+// five measurements, depending on what else the machine is doing. The two cheap
+// plants cost nothing at all: a flipped verdict and a removed label are re-read
+// off the outcomes already taken.
+
+/**
+ * The one prefix this runner can redirect, and therefore the only place a
+ * verified script may write.
+ *
+ * ⚠️ A function and not a `const`, because this suite is appended AFTER `main()`
+ * is called: a module-level binding down here is in its temporal dead zone when
+ * the suite runs, and a function declaration is hoisted. The same reason
+ * `readerProperties` above is one.
+ */
+function docScratchPrefix(): string {
+  return '/tmp/';
+}
+
+/** One statement of a fenced block — a comment, a script, or a command. */
+interface DocStatement {
+  /** 1-based line of its first line. */
+  line: number;
+  text: string;
+  comment: boolean;
+}
+
+/**
+ * The statements of a fenced block.
+ *
+ * A statement runs to the end of its line unless a single quote is still open or
+ * the line ends on a continuation, which is the whole of the shell this needs: a
+ * document states a script as one `bun -e '…'` and nothing here nests.
+ *
+ * ⚠️ Comment lines come off BEFORE the quote count, and that is not tidiness.
+ * §9.2's own label reads `# (a) INVERT ONE BAND: give the two far columns each
+ * other's shift.` — one apostrophe — and a counter that read it would swallow
+ * the script below into the comment and find no script at all.
+ */
+function docStatements(body: readonly string[], first: number): DocStatement[] {
+  const out: DocStatement[] = [];
+  let held: string[] = [];
+  let at = first;
+  let quotes = 0;
+  for (let i = 0; i < body.length; i++) {
+    const line = body[i];
+    if (held.length === 0 && /^\s*#/.test(line)) {
+      out.push({ line: first + i, text: line, comment: true });
+      continue;
+    }
+    if (held.length === 0) at = first + i;
+    held.push(line);
+    quotes += (line.match(/'/g) ?? []).length;
+    if (quotes % 2 !== 0 || /\\$/.test(line)) continue;
+    if (held.join('\n').trim() !== '') out.push({ line: at, text: held.join('\n'), comment: false });
+    held = [];
+  }
+  if (held.length > 0 && held.join('\n').trim() !== '') out.push({ line: at, text: held.join('\n'), comment: false });
+  return out;
+}
+
+/** One fenced block of a document, whatever its info string. */
+interface DocFence {
+  file: string;
+  line: number;
+  body: string[];
+}
+
+/** Every fenced block of one document. */
+function docFences(file: string, text: string): DocFence[] {
+  const out: DocFence[] = [];
+  const lines = text.split('\n');
+  let open: { line: number; body: string[] } | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^```/.test(lines[i])) {
+      if (open !== null) open.body.push(lines[i]);
+      continue;
+    }
+    if (open === null) open = { line: i + 1, body: [] };
+    else {
+      out.push({ file, line: open.line, body: open.body });
+      open = null;
+    }
+  }
+  return out;
+}
+
+/** One `bun -e` script a document states, and everything derived about it. */
+interface DocScript {
+  /** `docs/FACE.md:1149` — what a failure detail has to name. */
+  where: string;
+  file: string;
+  /** The letter its fence labels it with, or null when the fence states none. */
+  label: string | null;
+  /** The line that label sits on, so a plant can take it off. */
+  labelLine: number | null;
+  /** The JS between the quotes, which is what actually runs. */
+  source: string;
+  /** Literal paths it reads and writes. A path built out of a variable is neither. */
+  reads: string[];
+  writes: string[];
+  /** The tool statement in the same fence that reads its product, as the page spells it. */
+  command: string | null;
+  /** That command as argv, with `bun`, `cli.ts` and `rigc` taken off the front. */
+  argv: string[];
+  /** The `--out` it names, which is where "nothing written" is actually read. */
+  out: string | null;
+  /** Why this script is out of this gate's reach, or null when it is inside it. */
+  reason: string | null;
+}
+
+/** One verdict a page states for one script, read off a table of the page's own. */
+interface DocClaim {
+  /** `docs/FACE.md:1213` — the table row it is stated on. */
+  where: string;
+  file: string;
+  label: string;
+  assertion: string;
+  verdict: 'PASS' | 'FAIL';
+}
+
+/** A markdown table, split into cells. */
+interface DocTable {
+  line: number;
+  head: string[];
+  rows: Array<{ line: number; cells: string[] }>;
+}
+
+/** One row of a markdown table, split on its pipes. */
+function docTableCells(row: string): string[] {
+  const trimmed = row.trim();
+  return trimmed.slice(1, trimmed.length - 1).split('|').map((cell) => cell.trim());
+}
+
+/**
+ * A cell with its decoration taken off — emphasis, code ticks, and whatever a
+ * page puts in FRONT of what the cell names (`🆕 `). Everything after that is
+ * content and is read as content.
+ */
+function docPlainCell(cell: string): string {
+  return cell.replace(/\*\*/g, '').replace(/`/g, '').replace(/^[^\p{L}\p{N}(]*/u, '').trim();
+}
+
+/** Every markdown table of one document. */
+function docTables(text: string): DocTable[] {
+  const lines = text.split('\n');
+  const out: DocTable[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\|/.test(lines[i]) || !/^\|[\s:|-]+\|$/.test(lines[i + 1] ?? '')) continue;
+    const rows: DocTable['rows'] = [];
+    for (let j = i + 2; j < lines.length && /^\|/.test(lines[j]); j++) {
+      rows.push({ line: j + 1, cells: docTableCells(lines[j]) });
+    }
+    out.push({ line: i + 1, head: docTableCells(lines[i]), rows });
+  }
+  return out;
+}
+
+/** What one scan of the documents found. */
+interface DocScriptScan {
+  /** Documents read. */
+  files: number;
+  /** Documents that state at least one script. */
+  stating: string[];
+  /** Fenced blocks that state at least one script. */
+  fences: number;
+  scripts: DocScript[];
+  claims: DocClaim[];
+  /** Tables some script's label maps onto. */
+  tables: number;
+  /** Columns of those tables no script's label names — the builds this gate does not run. */
+  unmapped: number;
+  faults: string[];
+}
+
+/**
+ * Everything the documents say about the scripts they state.
+ *
+ * 🔒 The narrowing is the interesting half and every step of it is a property of
+ * the script rather than a name on a list, because a hand-kept population is the
+ * next thing to drift and this repository has a judgement about that. What a
+ * script that falls out carries is the reason, which is what lets `DS01` print
+ * the shape of the population instead of only its size.
+ */
+function scanDocScripts(docs: ReadonlyMap<string, string>, treeRoot: string): DocScriptScan {
+  /** How a document states a script. The only form any page in this tree uses. */
+  const lead = /^bun -e '/;
+  /** How a fence labels one, so a table can open a column on the same thing. */
+  const labelOf = /^#\s*\(([a-z])\)\s/;
+  /** How a document states the tool: as this repository runs it, or as an installed reader does. */
+  const toolStatement = /^(?:bun cli\.ts|rigc)\s+[a-z-]+\b/;
+  const scratch = docScratchPrefix();
+  const scan: DocScriptScan = {
+    files: docs.size,
+    stating: [],
+    fences: 0,
+    scripts: [],
+    claims: [],
+    tables: 0,
+    unmapped: 0,
+    faults: [],
+  };
+  const labelled = new Map<string, DocScript[]>();
+  for (const [file, text] of docs) {
+    let statesOne = false;
+    for (const fence of docFences(file, text)) {
+      const statements = docStatements(fence.body, fence.line + 1);
+      if (!statements.some((one) => !one.comment && lead.test(one.text))) continue;
+      scan.fences++;
+      statesOne = true;
+      for (let i = 0; i < statements.length; i++) {
+        const statement = statements[i];
+        if (statement.comment || !lead.test(statement.text)) continue;
+        let label: string | null = null;
+        let labelLine: number | null = null;
+        for (let k = i - 1; k >= 0 && statements[k].comment; k--) {
+          const found = labelOf.exec(statements[k].text.trim());
+          if (found !== null) {
+            label = found[1];
+            labelLine = statements[k].line;
+          }
+        }
+        const opens = statement.text.indexOf("'");
+        const closes = statement.text.lastIndexOf("'");
+        const source = closes > opens ? statement.text.slice(opens + 1, closes) : '';
+        const reads = [...statement.text.matchAll(/Bun\.file\(\s*"([^"]+)"/g)].map((m) => m[1]);
+        const writes = [...statement.text.matchAll(/Bun\.write\(\s*"([^"]+)"/g)].map((m) => m[1]);
+        const consumer = statements
+          .slice(i + 1)
+          .find((one) => !one.comment && toolStatement.test(one.text) && writes.some((path) => one.text.includes(path)));
+        const command = consumer?.text ?? null;
+        const flat = command === null ? '' : command.replace(/\\\n\s*/g, ' ').replace(/\s+/g, ' ').trim();
+        const argv =
+          flat === '' ? [] : flat.split(' ').filter((token) => token !== 'bun' && token !== 'cli.ts' && token !== 'rigc');
+        const outAt = argv.indexOf('--out');
+        const stray = writes.find((path) => !path.startsWith(scratch));
+        const script: DocScript = {
+          where: `${file}:${statement.line}`,
+          file,
+          label,
+          labelLine,
+          source,
+          reads,
+          writes,
+          command,
+          argv,
+          out: outAt >= 0 ? (argv[outAt + 1] ?? null) : null,
+          reason: null,
+        };
+        const missing = reads.find((path) => !existsSync(join(treeRoot, path)));
+        script.reason =
+          missing !== undefined
+            ? `it reads \`${missing}\`, which the repository does not carry`
+            : writes.length === 0
+              ? 'it writes no file under a name the page spells, so nothing in its fence can read what it made'
+              : writes.length > 1
+                ? `it writes ${writes.length} files under names the page spells, and the rotated-products plant below moves one product per script`
+                : command === null
+                  ? 'no rigc command in its fence reads what it writes'
+                  : /["']/.test(flat)
+                    ? 'the command beside it carries shell quoting this runner does not parse'
+                    : script.out === null
+                      ? 'the command beside it names no `--out`, so there is nowhere to read "nothing written" from'
+                      : stray !== undefined
+                        ? `it writes \`${stray}\`, which is not under \`${scratch}\` and so is not somewhere this runner can redirect`
+                        : /\/tmp(?!\/)/.test(`${statement.text} ${flat}`)
+                          ? `it or its command names \`/tmp\` without a trailing slash, which this runner cannot redirect into a directory of its own`
+                          : label === null
+                            ? 'the fence gives it no `(x)` label, so no column of any table names it'
+                            : null;
+        scan.scripts.push(script);
+        if (script.reason === null && label !== null) {
+          const bucket = labelled.get(file) ?? [];
+          bucket.push(script);
+          labelled.set(file, bucket);
+        }
+      }
+    }
+    if (statesOne) scan.stating.push(file);
+  }
+
+  // The claims. A label maps to a column of a table on its own page, and a row
+  // whose first cell names exactly one assertion states that assertion's verdict
+  // in every column of it.
+  for (const [file, scripts] of labelled) {
+    const tables = docTables(docs.get(file) ?? '');
+    const used = new Set<number>();
+    for (const script of scripts) {
+      const label = script.label ?? '';
+      const opens = (table: DocTable): boolean => table.head.some((cell) => docPlainCell(cell).startsWith(`(${label})`));
+      const hits = tables.filter(opens);
+      if (hits.length === 0) {
+        script.reason = `no table in \`${file}\` opens a column on \`(${label})\`, so its page states no verdict for it`;
+        continue;
+      }
+      if (hits.length > 1) {
+        scan.faults.push(
+          `${script.where}: ${hits.length} tables in \`${file}\` open a column on \`(${label})\` (lines ` +
+            `${hits.map((table) => table.line).join(', ')}), so which of them states this script's verdicts is undecided`,
+        );
+        continue;
+      }
+      const table = hits[0];
+      used.add(table.line);
+      const column = table.head.findIndex((cell) => docPlainCell(cell).startsWith(`(${label})`));
+      let stated = 0;
+      for (const row of table.rows) {
+        const names = [...row.cells[0].matchAll(/`(A\d\d_[A-Z\d_]+)`/g)].map((m) => m[1]);
+        if (names.length !== 1) continue;
+        const verdict = /\b(PASS|FAIL)\b/.exec(row.cells[column] ?? '');
+        if (verdict === null) continue;
+        stated++;
+        scan.claims.push({
+          where: `${file}:${row.line}`,
+          file,
+          label,
+          assertion: names[0],
+          verdict: verdict[1] === 'FAIL' ? 'FAIL' : 'PASS',
+        });
+      }
+      if (stated === 0) {
+        script.reason = `the table at \`${file}:${table.line}\` opens a column on \`(${label})\` and states no assertion verdict in it`;
+      }
+    }
+    scan.tables += used.size;
+    for (const table of tables) {
+      if (!used.has(table.line)) continue;
+      scan.unmapped += table.head.filter(
+        (cell, at) =>
+          at > 0 && cell.trim() !== '' && !scripts.some((one) => docPlainCell(cell).startsWith(`(${one.label ?? ''})`)),
+      ).length;
+    }
+  }
+  return scan;
+}
+
+/** The verified scripts of a scan, in the order the documents state them. */
+function verifiedDocScripts(scan: DocScriptScan): DocScript[] {
+  return scan.scripts.filter((script) => script.reason === null);
+}
+
+/** What one command a document states actually did. */
+interface DocOutcome {
+  /** The exit status of the script that fed it. */
+  scriptStatus: number | null;
+  /** The exit status of the command itself. */
+  status: number | null;
+  /** Assertion → the verdict the run printed for it. A FAIL anywhere wins. */
+  verdicts: Map<string, string>;
+  /** Whether the `--out` the command names is there afterwards. */
+  wrote: boolean;
+  /** What the tool said when it refused, so a detail can quote it. */
+  stderr: string;
+}
+
+/**
+ * Run one round: every verified script, then every command that reads one.
+ *
+ * ⚠️ The scripts go first as a group rather than each before its own command,
+ * and the licence for that is asserted rather than assumed — `DS01` requires
+ * that no script in the population reads another's product, which makes the two
+ * orders the same execution. What it buys is the rotated-products plant: a
+ * script handed its neighbour's path has to be able to write it before the
+ * neighbour's command goes looking, or that plant would only ever measure a
+ * missing file, which is the plant beside it.
+ *
+ * ⚠️ Every `/tmp/` a document hardcodes is redirected into this round's own
+ * directory, which is removed afterwards. Two runs of `bun run selftest` at once
+ * would otherwise share `/tmp/swapped.motion.json` and one would read the
+ * other's; and a script the page points at the repository is refused by
+ * `scanDocScripts` rather than run, so nothing here writes into the tree.
+ */
+function runDocScriptRound(
+  scripts: readonly DocScript[],
+  edits: ReadonlyMap<string, string>,
+  treeRoot: string,
+): Map<string, DocOutcome> {
+  /** The gutter line every verdict of a rigc report is printed on. */
+  const verdictLine = /^ {2}(PASS|FAIL|SKIP) {2}(A\d\d_[A-Z\d_]+)/;
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-doc-script-'));
+  const outcomes = new Map<string, DocOutcome>();
+  try {
+    const here = (text: string): string => text.split(docScratchPrefix()).join(`${dir}/`);
+    const scriptStatus = new Map<string, number | null>();
+    for (const script of scripts) {
+      const run = spawnSync(process.execPath, ['-e', here(edits.get(script.where) ?? script.source)], {
+        cwd: treeRoot,
+        encoding: 'utf8',
+      });
+      scriptStatus.set(script.where, run.status);
+    }
+    for (const script of scripts) {
+      const run = spawnSync(process.execPath, ['cli.ts', ...script.argv.map(here)], {
+        cwd: treeRoot,
+        encoding: 'utf8',
+      });
+      const verdicts = new Map<string, string>();
+      for (const line of `${run.stdout}`.split('\n')) {
+        const found = verdictLine.exec(line);
+        if (found === null) continue;
+        if (found[1] === 'FAIL' || !verdicts.has(found[2])) verdicts.set(found[2], found[1]);
+      }
+      outcomes.set(script.where, {
+        scriptStatus: scriptStatus.get(script.where) ?? null,
+        status: run.status,
+        verdicts,
+        wrote: script.out !== null && existsSync(here(script.out)),
+        stderr: `${run.stderr}`.trim(),
+      });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return outcomes;
+}
+
+/**
+ * Everything the runs disagree with the pages about.
+ *
+ * Three clauses per script and not one of them is a figure: the verdict every
+ * claim states, read off the run's own gutter; the tool's emit rule, read off
+ * two channels that cannot agree by accident — the exit status and whether the
+ * `--out` is there; and the page's own `refused, and nothing written`, taken
+ * from the verdicts the page states and from nothing else.
+ */
+function judgeDocScripts(
+  scripts: readonly DocScript[],
+  claims: readonly DocClaim[],
+  outcomes: ReadonlyMap<string, DocOutcome>,
+): string[] {
+  const faults: string[] = [];
+  for (const script of scripts) {
+    const outcome = outcomes.get(script.where);
+    if (outcome === undefined) {
+      faults.push(`${script.where}: nothing ran it, so nothing here says whether its page is still right about it`);
+      continue;
+    }
+    if (outcome.scriptStatus !== 0) {
+      faults.push(`${script.where}: the script itself exited ${String(outcome.scriptStatus)} rather than running to the end`);
+    }
+    const mine = claims.filter((one) => one.file === script.file && one.label === script.label);
+    for (const claim of mine) {
+      const got = outcome.verdicts.get(claim.assertion) ?? 'nothing at all';
+      if (got !== claim.verdict) {
+        faults.push(
+          `${claim.where}: the page states ${claim.assertion} ${claim.verdict} for the build \`${script.where}\` feeds, ` +
+            `and \`${(script.command ?? '').split('\n')[0].trim()}\` printed ${got}`,
+        );
+      }
+    }
+    if ((outcome.status === 0) !== outcome.wrote) {
+      faults.push(
+        `${script.where}: the build exited ${String(outcome.status)} and ${outcome.wrote ? 'wrote' : 'did not write'} ` +
+          `\`${script.out ?? ''}\`, so its status and its artifact disagree about whether it was refused`,
+      );
+    }
+    const refused = mine.some((claim) => claim.verdict === 'FAIL');
+    if (refused === outcome.wrote) {
+      faults.push(
+        `${script.where}: the page states ` +
+          `${refused ? 'a FAIL, so this build is refused and writes nothing' : 'no FAIL, so this build is green'}, and it ` +
+          `${outcome.wrote ? 'wrote' : 'wrote nothing'} (exit ${String(outcome.status)}` +
+          `${outcome.stderr === '' ? '' : `; ${outcome.stderr}`})`,
+      );
+    }
+  }
+  return faults;
+}
+
+/** A document with one line blanked to a bare `#` — how the label plant is applied. */
+function docWithBlankedLine(text: string, line: number): string {
+  const lines = text.split('\n');
+  lines[line - 1] = '#';
+  return lines.join('\n');
+}
+
+/** A script that stops writing anything: every `Bun.write` line taken off it. */
+function scriptWithoutItsWrite(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !line.includes('Bun.write('))
+    .join('\n');
+}
+
+/** A script that writes somebody else's product instead of its own. */
+function scriptWritingInstead(script: DocScript, path: string): string {
+  return script.source.split(`"${script.writes[0]}"`).join(`"${path}"`);
+}
+
+function runDocScriptSuite(): number {
+  console.log('\n── the scripts a shipped document STATES, run (issue #477) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const root = import.meta.dir;
+  // The universe is the repository's own answer to what is in the tree. A skip
+  // list here would be the hand-kept population this whole suite is arranged to
+  // avoid, and `git ls-files` needs none: what is untracked or ignored — the
+  // corpus, `node_modules`, a private symlink — is simply not in it.
+  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+  const treeFault =
+    listed.error !== undefined || listed.status !== 0
+      ? `git could not list the tracked files (${listed.error?.message ?? `exit ${String(listed.status)}: ${listed.stderr.toString('utf8').trim()}`})`
+      : null;
+  const docs = new Map<string, string>();
+  if (treeFault === null) {
+    for (const path of listed.stdout.toString('utf8').split('\u0000')) {
+      if (path.endsWith('.md') && existsSync(join(root, path))) docs.set(path, readFileSync(join(root, path), 'utf8'));
+    }
+  }
+
+  const scan = scanDocScripts(docs, root);
+  const verified = verifiedDocScripts(scan);
+  const outcomes = runDocScriptRound(verified, new Map(), root);
+  const faults = judgeDocScripts(verified, scan.claims, outcomes);
+
+  // --- DS01: the derivation floor, asserted before anything about content ---
+  //
+  // 🔒 Every end of this can come back empty and none of them goes red on its
+  // own: a document that stops fencing its script, a fence that stops stating
+  // the command beside it, a table renamed or reflowed, a label dropped, an
+  // assertion renamed. Each of those takes a script out of the scan and leaves
+  // `DS02` passing over nothing at all, which is the one failure a runner like
+  // this cannot afford. ⭐ The floors are one per step and never one on their
+  // sum, for `GT01`'s reason: a total that still clears its floor is exactly how
+  // one step that went to zero stays hidden.
+  //
+  // ⚠️ `files >= 50` is a SMOKE floor against an observed 108, not a measured
+  // bound — it is there to catch the listing coming back empty, which is what a
+  // missing `git` looks like. Do not read it as a budget.
+  const assertions = new Set(scan.claims.map((claim) => claim.assertion));
+  const unreached = [...assertions].filter(
+    (name) => ![...outcomes.values()].some((outcome) => outcome.verdicts.has(name)),
+  );
+  const products = new Set(verified.flatMap((script) => script.writes));
+  const chained = verified.filter((script) => script.reads.some((path) => products.has(path)));
+  const derivation = [
+    ...(treeFault === null ? [] : [treeFault]),
+    ...scan.faults,
+    ...unreached.map(
+      (name) =>
+        `a table states a verdict for \`${name}\`, and not one of the runs prints that name — so the row is prose ` +
+        'rather than a claim about this tool',
+    ),
+    ...chained.map(
+      (script) =>
+        `${script.where} reads another verified script's product, so running the scripts of a round before its ` +
+        'commands is no longer the order the page states',
+    ),
+  ];
+  const reasons = scan.scripts.filter((script) => script.reason !== null);
+  say(
+    'DS01_THE_DOC_SCRIPT_SCAN_READ_THE_DOCUMENTS_THE_SCRIPTS_AND_THE_VERDICTS_STATED_FOR_THEM',
+    derivation.length === 0 &&
+      scan.files >= 50 &&
+      scan.stating.length >= 4 &&
+      scan.fences >= 5 &&
+      scan.scripts.length >= 7 &&
+      scan.tables >= 1 &&
+      scan.claims.length >= 4 &&
+      assertions.size >= 2 &&
+      verified.length >= 2,
+    derivation.length > 0
+      ? derivation.join('\n          ')
+      : `${scan.files} tracked markdown file(s) read, ${scan.stating.length} of which state a script ` +
+        `(${scan.stating.join(', ')}); ${scan.fences} fence(s), ${scan.scripts.length} script(s), of which ` +
+        `${verified.length} are run here and ${reasons.length} are out of reach — ` +
+        `${reasons.map((script) => `${script.where} (${script.reason ?? ''})`).join('; ')}. The ${verified.length} ` +
+        `verified: ${verified.map((script) => `${script.where} \`(${script.label ?? ''})\``).join(', ')}, holding ` +
+        `${scan.claims.length} stated verdict(s) over ${assertions.size} assertion(s) ` +
+        `{${[...assertions].sort().join(' ')}} off ${scan.tables} table(s), whose other ${scan.unmapped} column(s) ` +
+        'no script of this population feeds',
+    'a scanner is a vocabulary of shapes and a shape that stops matching goes quiet, not red. Five separate ' +
+      'derivations stand between a document and a claim here — the fence, the script, the command that reads its ' +
+      'product, the label, and the table column that opens on that label — and any one of them emptying leaves ' +
+      'the check below reporting a clean tree over nothing. The out-of-reach set is printed rather than counted ' +
+      'because it is the part a later reader has to widen deliberately: 9 scripts in this tree and 2 of them ' +
+      'runnable is a thin population, and the honest response to that is to say which seven and why, not to ' +
+      'stretch the grammar until the number looks better',
+  );
+
+  // --- DS02: the claims themselves ------------------------------------------
+  //
+  // The positive half is load-bearing exactly as `GT02`'s is: a check that only
+  // reported disagreements would pass a runner that had stopped running
+  // anything, so what each command was and what it printed is named here.
+  say(
+    'DS02_EVERY_SCRIPT_A_DOCUMENT_STATES_STILL_GETS_THE_VERDICT_ITS_PAGE_GIVES_IT',
+    faults.length === 0 && verified.length > 0,
+    faults.length > 0
+      ? `${faults.length} disagreement(s) between a page and a run:\n          ${faults.join('\n          ')}`
+      : verified.length === 0
+        ? 'not one script was verified, so this line would be a pass over nothing at all'
+        : `${verified.length} script(s) ran to the end and the ${verified.length} command(s) they feed reported ` +
+          `${scan.claims.length} stated verdict(s) unchanged — ` +
+          verified
+            .map((script) => {
+              const outcome = outcomes.get(script.where);
+              const mine = scan.claims.filter((claim) => claim.file === script.file && claim.label === script.label);
+              return (
+                `\`(${script.label ?? ''})\` ${mine.map((claim) => `${claim.assertion} ${claim.verdict}`).join(', ')}, ` +
+                `exit ${String(outcome?.status)} and ` +
+                `${outcome?.wrote === true ? `wrote \`${script.out ?? ''}\`` : 'nothing written'}`
+              );
+            })
+            .join('; '),
+    'the two rows of §9.2\'s table this reads are claims the page makes in WORDS — one build passes A39 and one ' +
+      'is refused by it — so no figure is compared and none has to be. That is the whole difference between this ' +
+      'and the transcript gate: a stale figure shows up at one site, and a broken command shows up at every ' +
+      'figure it feeds. Script (a) fed §9.2\'s table AND §9.3\'s `check` row for a week while agreeing with ' +
+      'neither the tool nor itself, and nothing in the tree ran it',
+  );
+
+  // --- DS03: the runner against the ways a stated script stops matching -----
+  //
+  // Red-first, on every verified script rather than on one chosen by hand, and
+  // four-sided. Two plants are free — they are re-read off the outcomes already
+  // taken — and two cost a round each.
+  //
+  // ⭐ The label plant is the one that motivates `DS01`: take a script's label
+  // off and it does not go red, it stops being a script this suite knows about.
+  // That has to fault NOTHING and drop exactly one, which is the shape `GT03`
+  // holds its own anchor plant to.
+  const misses: string[] = [];
+  let planted = 0;
+  let silenced = 0;
+
+  for (let i = 0; i < scan.claims.length; i++) {
+    const flipped = scan.claims.map((claim, at) =>
+      at === i ? { ...claim, verdict: (claim.verdict === 'PASS' ? 'FAIL' : 'PASS') as 'PASS' | 'FAIL' } : claim,
+    );
+    planted++;
+    if (judgeDocScripts(verified, flipped, outcomes).length === 0) {
+      misses.push(`${scan.claims[i].where}: ${scan.claims[i].assertion} for \`(${scan.claims[i].label})\` flipped — not faulted`);
+    }
+  }
+
+  for (const script of verified) {
+    const edited = new Map(docs);
+    const before = docs.get(script.file) ?? '';
+    const after = docWithBlankedLine(before, script.labelLine ?? 0);
+    planted++;
+    if (after === before) {
+      misses.push(`${script.where}: its label line could not be taken off, so the plant changed nothing`);
+      continue;
+    }
+    edited.set(script.file, after);
+    const again = scanDocScripts(edited, root);
+    const left = verifiedDocScripts(again);
+    if (
+      judgeDocScripts(left, again.claims, outcomes).length !== 0 ||
+      left.length !== verified.length - 1 ||
+      again.scripts.length !== scan.scripts.length
+    ) {
+      silenced++;
+    }
+  }
+
+  for (const script of verified) {
+    const edited = scriptWithoutItsWrite(script.source);
+    planted++;
+    if (edited === script.source) {
+      misses.push(`${script.where}: it has no \`Bun.write\` line to take off, so the plant changed nothing`);
+      continue;
+    }
+    const round = runDocScriptRound(verified, new Map([[script.where, edited]]), root);
+    if (judgeDocScripts([script], scan.claims, round).length === 0) {
+      misses.push(`${script.where}: its write dropped — not faulted`);
+    }
+  }
+
+  {
+    const edits = new Map<string, string>();
+    for (let i = 0; i < verified.length; i++) {
+      const mine = verified[i];
+      const theirs = verified[(i + 1) % verified.length].writes[0];
+      const edited = scriptWritingInstead(mine, theirs);
+      planted++;
+      if (edited === mine.source) {
+        misses.push(`${mine.where}: its product could not be rotated to \`${theirs}\`, so the plant changed nothing`);
+        continue;
+      }
+      edits.set(mine.where, edited);
+    }
+    if (edits.size === verified.length) {
+      const round = runDocScriptRound(verified, edits, root);
+      for (const script of verified) {
+        if (judgeDocScripts([script], scan.claims, round).length === 0) {
+          misses.push(`${script.where}: the products rotated — not faulted`);
+        }
+      }
+    }
+  }
+
+  say(
+    'DS03_THE_RUNNER_FAULTS_EVERY_WAY_A_STATED_SCRIPT_STOPS_DOING_WHAT_ITS_PAGE_SAYS',
+    misses.length === 0 && silenced === 0 && planted >= 8 && verified.length > 0,
+    misses.length === 0 && silenced === 0
+      ? `${planted} planted edit(s) over ${verified.length} verified script(s) and ${scan.claims.length} stated ` +
+        'verdict(s) — every verdict flipped in turn, every script\'s write dropped, and the products rotated so ' +
+        'each build reads what its neighbour wrote — each faulted by name; and taking a script\'s LABEL off ' +
+        `faulted nothing on all ${verified.length} of them, dropping each silently out of the verified set while ` +
+        `all ${scan.scripts.length} script(s) are still found, which is what DS01's floor is for`
+      : `${misses.length} of ${planted} planted edit(s) did not fault` +
+        (silenced > 0 ? ` (and ${silenced} unlabelled script(s) did not drop out cleanly)` : '') +
+        `:\n          ${misses.join('\n          ')}`,
+    'a runner that reports clean while running nothing is the failure this whole family is written against, so ' +
+      'the plants are two kinds on purpose. The flipped verdict and the rotated products break the COMPARISON and ' +
+      'the SCRIPT respectively, and both have to be loud. The dropped write is the shape the 2026-09-03 defect ' +
+      'had — a script that quietly stopped producing anything — and the label plant is the opposite requirement: ' +
+      'it must go quiet, because a script that stops being labelled stops being one this suite can hold to ' +
+      'anything, and only a floor can see that',
   );
 
   return bad;
