@@ -8114,14 +8114,29 @@ bun cli.ts build \
 bun cli.ts bench 3 --candidate <dir>
 ```
 
-`bench 3`, verbatim — re-run 2026-08-23, after `bones`/`slots` gained their
-name-agnostic figures (#21) and `region_size_present` became `region_size` (#28):
+`bench 3`, verbatim. ⛔ **No date on it, deliberately.** A hand-written date records
+that somebody was careful once and cannot say whether they were careful last week —
+this block carried *re-run 2026-08-23* and went stale anyway
+([#475](https://github.com/firejune/rigc/issues/475)), which is the case
+[#441](https://github.com/firejune/rigc/issues/441) settled against version stamps.
+What is worth stating is how to check it instead: run the two commands above — after
+`bun run fetch-examples`, because `examples/` is gitignored and absent from a fresh
+clone — and every line of the two blocks below is in that output, verbatim. They are
+excerpts: the `validate` roll-call, the `── diff ──` header, the `check` and
+`bonedist` rows and the closing explanation are left out, and the blank separator
+lines are stripped of the two spaces the tool prints on them. Visible in what is
+quoted: `bones`/`slots`'s name-agnostic figures
+([#21](https://github.com/firejune/rigc/issues/21)), `region_size_present` as
+`region_size` ([#28](https://github.com/firejune/rigc/issues/28)), and the two
+`(reported)` subsections — unobservable from the frames, so reported and folded into
+no mean.
 
 ```
   ── summary ──
   validate   green  (profile spine)
   ess        bones=1.000  slots=1.000  attachments=1.000  constraints=1.000  animations=1.000  events=1.000
              bones 1.000 (name-matched) · 1.000 (name-agnostic)   slots 1.000 (name-matched) · 1.000 (name-agnostic)
+             reported: mesh_edges 1.000 · key_density 1.000 · keys_per_timeline 1.000
 ```
 
 ```
@@ -8168,6 +8183,9 @@ name-agnostic figures (#21) and `region_size_present` became `region_size` (#28)
         1.000  mesh_hull                    0/0         each mesh declares the same hull length  — neither side has any
         1.000  region_size                  2/2         NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)
 
+    attachments (reported) (no mean)   over 1 measure  — unobservable from the frames, so reported and folded into nothing
+        1.000  mesh_edges                   0/0         each mesh declares an edge list, or declares none, alike  — neither side has any
+
     constraints           mean 1.000  over 5 measures
         1.000  count                        0/0         how many constraints  — neither side has any
         1.000  names                        0/0         the constraint names  — neither side has any
@@ -8186,14 +8204,23 @@ name-agnostic figures (#21) and `region_size_present` became `region_size` (#28)
         1.000  draw_order                   2/2         a draw-order timeline is present or absent alike
         1.000  deform                       2/2         a deform timeline is present or absent alike
 
+    animations (reported) (no mean)   over 2 measures  — unobservable from the frames, so reported and folded into nothing
+        1.000  key_density                  9.857/9.857 how hard the shot is keyed, as keys per second  — candidate 9.857 vs reference 9.857 keys/s; the two agree. Convention: every key of every timeline (69 vs 69) over the summed last-key time of every animation (7s vs 7s), compared as min/max at 3 decimal places.
+        1.000  keys_per_timeline            8.625/8.625 how hard each timeline is keyed, as keys per timeline  — candidate 8.625 vs reference 8.625 keys/timeline; the two agree. Convention: every key of every timeline (69 vs 69) over the number of timelines that exist (8 vs 8), compared as min/max at 3 decimal places. Read beside `key_density`: this one alone moving means the same keying spread over a different number of timelines.
+
     events                mean 1.000  over 2 measures
         1.000  names                        0/0         the event names  — neither side has any
         1.000  payloads                     0/0         each event carries the same typed payload  — neither side has any
 ```
 
-Eleven of those measures are **vacuous** and say so (`0/0`, "neither side has
-any"): the four mesh figures and every constraint and event figure. A rung with
-meshes or constraints will not get them for free.
+Thirteen of those measures are **vacuous** and say so — the derivation is a grep of
+the block for `0/0` with "neither side has any" beside it: the five mesh figures
+(four under `attachments`, `mesh_edges` under `attachments (reported)`), every
+constraint figure, and every event figure, which is three and not two because
+`animations.event_keys` counts event firings from inside the `animations` section.
+That last one is why this sentence read *eleven* while the block already held twelve:
+the count was taken off the section headings, and one event figure does not sit under
+`events`. A rung with meshes or constraints will not get them for free.
 
 The two name-agnostic blocks are 1.000 here for the least interesting reason
 available — a transcription has the reference's own names, so there is no gap for
