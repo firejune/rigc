@@ -3866,6 +3866,79 @@ function reportCase(name: string, ok: boolean, detail: string, why: string): num
   return 1;
 }
 
+/**
+ * The detail of a control whose verdict is a PROBE LIST: one list whose
+ * emptiness is the verdict and whose contents are what a FAIL prints. It is the
+ * construction `DQ01`, `DQ03`, `GT03` and `DS03` each re-type, made a thing a
+ * control can call (issue #496). ⚠️ Those four still carry their own copies and
+ * `GT01` and `DS01` are the only callers, so the pattern is not yet gone from
+ * this file — only available.
+ *
+ * 🚨 What it exists to make unwritable is one shape, found four separate times
+ * by accident before anybody counted it and derived in bulk by issue #496: a
+ * verdict decided on a conjunction beside a detail chosen by a selector that
+ * does not read all of it. ⚠️ The consequence is not one thing, and the two are
+ * worth keeping apart: sometimes the branch that prints has the term's value in
+ * it and only its BOUND is missing, which is a poorer line rather than a false
+ * one; sometimes the term is nowhere in that branch and the FAIL prints the
+ * sentence saying everything is fine, on the one run that sentence exists for.
+ * Only the second is a lie, and the first is the commoner.
+ *
+ * 🔸 So this is not the only remedy and should not be reached for as if it
+ * were. Where one bound is missing, `RD02`'s line — bind `over ${n} of 12
+ * row(s)` once, in front of BOTH branches — repairs the reader for a fraction
+ * of the change. What a list buys over that is scale: it names the one row that
+ * fell instead of asking a reader to compare N pairs of figures by eye.
+ *
+ * ⭐ Which is why the first parameter is the verdict itself. `ok` is what the
+ * caller is about to hand `say`, passed in beside the list it is supposed to
+ * have come from, and a FALSE verdict over an EMPTY list is exactly the
+ * defect's signature: this says so by name instead of printing `clean`. The
+ * call site states the verdict once and gives the same value to both slots —
+ *
+ *     const held = probes.length === 0;
+ *     say(NAME, held, probeDetail(held, probes, clean, header), why);
+ *
+ * — so a term added to that one line later cannot reach the clean sentence: it
+ * makes `held` false while the list stays empty, and this function names that.
+ * ⚠️ The other spelling — a term added to `say`'s verdict slot alone, leaving
+ * `held` behind — is invisible here and visible to #496's structural sweep,
+ * which reads whether the detail's selector covers every verdict term. Neither
+ * instrument covers both spellings, and saying so is the point: this is the
+ * half that survives a run, not a proof.
+ */
+function probeDetail(ok: boolean, probes: readonly string[], clean: string, header?: (count: number) => string): string {
+  if (probes.length > 0) {
+    return (header === undefined ? '' : `${header(probes.length)}\n          `) + probes.join('\n          ');
+  }
+  return ok
+    ? clean
+    : 'this control failed on a term its own probe list does not carry, so nothing here can name what fell — the ' +
+        'verdict and the detail were derived from different things, which is the one shape `probeDetail` refuses ' +
+        'to let a green sentence cover';
+}
+
+/**
+ * The rows of a floor table: one row per floor that did not hold, and nothing
+ * at all when every one of them did.
+ *
+ * `[value, floor, said]`, where `said` names what that step of the derivation
+ * produced and `because` is the one sentence saying what a floor falling short
+ * MEANS for the control. `DQ01`'s inline table, lifted (issue #496) — the same
+ * `value >= floor` in the same direction, and the lift drops the
+ * `as Array<[number, number, string]>` that table needed, because a typed
+ * parameter is what gives the literal its tuple shape.
+ *
+ * 🔒 One row per floor and never one on their sum, which is `GT01`'s own rule:
+ * a total that still clears its floor is exactly how one step that went to zero
+ * stays hidden.
+ */
+function floorProbes(rows: ReadonlyArray<readonly [number, number, string]>, because: string): string[] {
+  return rows.flatMap(([value, floor, said]) =>
+    value >= floor ? [] : [`${said} — the floor is ${floor}, ${because}`],
+  );
+}
+
 /** A tiny opaque PNG. Size and colour are arbitrary; only "it is a real file" is load-bearing. */
 function writeProbePng(path: string, width: number, height: number, colour: RGBA): void {
   const plate = new Plate(width, height);
@@ -21174,46 +21247,93 @@ function runGalleryTranscriptSuite(): number {
   // nothing at all, which is the failure that would make rule 2 silently stop
   // anchoring. Do not read it as a budget.
   const headCount = [...headsBy.values()].reduce((n, heads) => n + heads.size, 0);
+  // 🚨 Every floor is a PROBE and not a conjunct — `DQ01`'s clause, applied to
+  // its untouched twin (issue #496). Sixteen terms stood in this verdict and
+  // the detail's ternary read TWO of them, `unstated` and `broken`.
+  //
+  // ⭐ What that cost is worth stating precisely, because it is not what `GT03`
+  // cost and the two get filed together: the paragraph this used to print on a
+  // floor failure is not a false sentence. It interpolates every floored
+  // quantity, so a reader of that FAIL got all thirteen VALUES — and not one
+  // BOUND, so which of them fell was the one thing the line did not carry. A
+  // trace with no bound, rather than a clean sweep reported over a broken one.
+  // The repair is the bound, printed on the row whose floor is the one that
+  // went, and nothing else about the line changes.
+  //
+  // 🔸 One line would have done it for a control with ONE floor: `RD02` binds
+  // `over ${rows.length} of 12 row(s)` in front of both its branches and its
+  // reader is served. That idiom does not scale to thirteen — every green run
+  // would carry thirteen bounds nobody reads, and the FAIL would still make the
+  // reader compare thirteen pairs by eye to find the one that moved.
+  //
+  // ⛔ Nothing here is a new assertion or a relaxed one: the rows below are the
+  // same sixteen terms, with the same thresholds, in one list the detail reads.
+  const derivation = [
+    ...unstated.map(
+      (example) =>
+        `gallery/${example}/README.md no longer states a \`bun cli.ts build --rig gallery/${example}/rig.json\` ` +
+        'line, so this gate has no command to hold its blocks to',
+    ),
+    ...broken.map((one) => `a command a README states did not run: ${one}`),
+    ...(pools.size === examples.length
+      ? []
+      : [
+          `${pools.size} pool(s) of runs came back over ${examples.length} example(s), so an example was read and ` +
+            'then went missing between the two',
+        ]),
+    ...floorProbes(
+      [
+        [examples.length, 5, `${examples.length} gallery example(s) were read`],
+        [runCount, 14, `${runCount} run(s) of the commands their READMEs state supplied the vocabulary`],
+        [vocabulary.size, 5, `${vocabulary.size} gutter tag(s) came out of those runs`],
+        [headCount, 100, `${headCount} record head(s) came out of them`],
+        [found, 25, `${found} quoted transcript(s) were anchored`],
+        [byTag, 14, `${byTag} of them by a gutter tag`],
+        [byHead, 6, `${byHead} of them by a record head`],
+        [byRecipe, 4, `${byRecipe} of them by a refusal recipe`],
+        [recipeRuns.size, 4, `${recipeRuns.size} distinct refusal recipe(s) ran`],
+        [refusalVocab.heads.size, 1, `${refusalVocab.heads.size} name(s) at column 0 came out of those refusal runs`],
+        [
+          refusalVocab.tags.size,
+          1,
+          `${refusalVocab.tags.size} gutter tag(s) are left after subtracting the green vocabulary from them`,
+        ],
+        [verified.length, 18, `${verified.length} block(s) reproduced verbatim`],
+        [covered.length, 6, `${covered.length} example(s) hold at least one block that reproduced`],
+      ],
+      'so one END of this derivation came back thinner than it has ever been, and the scan below would be reading ' +
+        'less than it used to while still reporting a clean tree',
+    ),
+  ];
+  const held = derivation.length === 0;
   say(
     'GT01_THE_TRANSCRIPT_SCAN_READ_THE_GALLERY_THE_TOOL_AND_THE_BLOCKS',
-    unstated.length === 0 &&
-      broken.length === 0 &&
-      examples.length >= 5 &&
-      pools.size === examples.length &&
-      runCount >= 14 &&
-      vocabulary.size >= 5 &&
-      headCount >= 100 &&
-      found >= 25 &&
-      byTag >= 14 &&
-      byHead >= 6 &&
-      byRecipe >= 4 &&
-      recipeRuns.size >= 4 &&
-      refusalVocab.heads.size >= 1 &&
-      refusalVocab.tags.size >= 1 &&
-      verified.length >= 18 &&
-      covered.length >= 6,
-    unstated.length > 0
-      ? `these examples' READMEs no longer state a \`bun cli.ts build --rig gallery/<name>/rig.json\` line, so ` +
-        `this gate has no command to hold their blocks to: ${unstated.join(', ')}`
-      : broken.length > 0
-        ? `a command a README states did not run: ${broken.join('; ')}`
-        : `${examples.length} example(s), ${runCount} stated command run(s), gutter vocabulary ` +
-          `{${[...vocabulary].sort().join(' ')}} and ${headCount} record head(s) the runs print; ` +
-          `${recipeRuns.size} refusal recipe run(s), which name themselves ` +
-          `{${[...refusalVocab.heads].sort().join(' ')}} at column 0 and ` +
-          `{${[...refusalVocab.tags].sort().join(' ')}} at the gutter; ` +
-          `${found} quoted transcript(s) found — ${byTag} by a gutter tag, ${byHead} by a record head, ` +
-          `${byRecipe} by a refusal recipe — ` +
-          `${verified.length} reproduced verbatim across ${covered.length} example(s) (${covered.join(', ')}), ` +
-          `${declared.length} declared unreproducible ` +
-          `(${declared.map((d) => `${d.where} — ${d.reason}`).join('; ') || 'none'})`,
+    held,
+    probeDetail(
+      held,
+      derivation,
+      `${examples.length} example(s), ${runCount} stated command run(s), gutter vocabulary ` +
+        `{${[...vocabulary].sort().join(' ')}} and ${headCount} record head(s) the runs print; ` +
+        `${recipeRuns.size} refusal recipe run(s), which name themselves ` +
+        `{${[...refusalVocab.heads].sort().join(' ')}} at column 0 and ` +
+        `{${[...refusalVocab.tags].sort().join(' ')}} at the gutter; ` +
+        `${found} quoted transcript(s) found — ${byTag} by a gutter tag, ${byHead} by a record head, ` +
+        `${byRecipe} by a refusal recipe — ` +
+        `${verified.length} reproduced verbatim across ${covered.length} example(s) (${covered.join(', ')}), ` +
+        `${declared.length} declared unreproducible ` +
+        `(${declared.map((d) => `${d.where} — ${d.reason}`).join('; ') || 'none'})`,
+      (count) => `${count} check(s) over this derivation did not hold:`,
+    ),
     'every end of this can come back empty: one anchor is a tag the tool prints, one is a record head it prints ' +
       'and one is an edit to a gallery spec, so a renamed tag, a restructured section or a spec that stops ' +
       'refusing takes every block anchored on it out of the scan at once, and the pool is the commands a README ' +
       'states, so a rewritten quickstart takes the whole example out. The refusal vocabulary is derived from the ' +
       'recipe runs the same way, and it is floored on its two halves separately because the tag half is a ' +
       'SUBTRACTION from the green one — if a green run started printing `FAIL` the subtraction would empty and ' +
-      'the trap would stop trapping. The floors are one per rule, never one on their sum',
+      'the trap would stop trapping. The floors are one per rule, never one on their sum — and since issue #496 ' +
+      'each one is a ROW in the list this detail prints rather than a conjunct of the verdict, because the ' +
+      'paragraph above carries every floored VALUE and not one of the bounds, so the run that breached one ' +
+      'printed thirteen numbers and no way to tell which of them had stopped clearing its floor',
   );
 
   // --- GT02: the blocks themselves ------------------------------------------
@@ -25664,14 +25784,31 @@ function runRunTallySuite(live: RunTally): number {
     { suite: 'alpha', key: 'alpha/second', controls: 3 },
   ];
   const alphaFive = [block({ key: 'alpha', controls: 5 })];
+  // 🚨 The two negative controls are BOUND rather than called inline (issue
+  // #496). They were `partFaults(alphaFive, halves).length === 0` and
+  // `partFaults(alphaFive, []).length === 0` in the verdict and nowhere in the
+  // detail, under a sentence opening *"two phases that add up to their suite
+  // fault in no way, and a suite with no phases at all faults in no way"* — the
+  // two this control's own header calls load-bearing twice over, asserted in
+  // prose and measured nowhere.
+  //
+  // ⚠️ This is NOT the shape `GT01` and `DS01` carry, and filing it with them
+  // would be wrong: there is no selector here, the sentence is flat and always
+  // prints, and the terms were absent from it rather than present without their
+  // bound. Which makes it the harsher half of the family — a run failing on
+  // either of them printed a detail CLAIMING both had held. `TY12` is one of
+  // the sites #493 cites as already repaired; the repair passed over these two
+  // because a call bound to no name leaves a detail nothing to read.
+  const adding = partFaults(alphaFive, halves);
+  const phaseless = partFaults(alphaFive, []);
   const short = partFaults(alphaFive, [halves[0], { suite: 'alpha', key: 'alpha/second', controls: 2 }]);
   const doubled = partFaults(alphaFive, [...halves, halves[1]]);
   const orphaned = partFaults([block({ key: 'beta', controls: 5 })], halves);
   const liveParts = partFaults(live.blocks, live.parts);
   say(
     'TY12_THE_PHASES_OF_A_SUITE_ADD_UP_TO_THE_SUITE_OR_THE_SUMMARY_CANNOT_STATE_ONE',
-    partFaults(alphaFive, halves).length === 0 &&
-      partFaults(alphaFive, []).length === 0 &&
+    adding.length === 0 &&
+      phaseless.length === 0 &&
       short.length === 1 &&
       short[0].includes('"alpha"') &&
       short[0].includes('4 case line(s) between them') &&
@@ -25679,8 +25816,11 @@ function runRunTallySuite(live: RunTally): number {
       orphaned.length === 1 &&
       orphaned[0].includes('never wrapped') &&
       liveParts.length === 0,
-    `two phases that add up to their suite fault in no way, and a suite with no phases at all faults in no way; ` +
-      `one case line short faults — ${short[0] ?? 'nothing'} — a phase bracketed twice faults ` +
+    `two phases that add up to their suite fault ` +
+      (adding.length === 0 ? 'in no way' : `in ${adding.length} way(s): ${adding.join('; ')}`) +
+      `, and a suite with no phases at all faults ` +
+      (phaseless.length === 0 ? 'in no way' : `in ${phaseless.length} way(s): ${phaseless.join('; ')}`) +
+      `; one case line short faults — ${short[0] ?? 'nothing'} — a phase bracketed twice faults ` +
       `(${doubled.find((one) => one.includes('two phases')) ?? 'it did not'}), a phase under a suite nobody wrapped ` +
       `faults (${orphaned[0] ?? 'it did not'}), and the ${live.parts.length} phase(s) THIS run has bracketed so far ` +
       `(${live.parts.map((one) => `${one.key}=${one.controls}`).join(', ') || 'none'}) fault ` +
@@ -25688,7 +25828,9 @@ function runRunTallySuite(live: RunTally): number {
     'the negative controls are the load-bearing half twice over: a floor that faulted on a suite with no phases ' +
       'would refuse every suite in this file, and one that faulted on halves that do add up would refuse the only ' +
       'shape it exists to permit. The sum is what makes a half checkable at all — a case line printed inside the ' +
-      'suite and inside no phase is named here, which is `TY05` one level down',
+      'suite and inside no phase is named here, which is `TY05` one level down. ⚠️ Both of those negatives are ' +
+      'MEASURED into the sentence above rather than asserted by it, for issue #493\'s reason: a detail that says ' +
+      '"in no way" without reading the list is the sentence a run failing on that very list would print',
   );
 
   // --- TY13: no figure lives in a constant only the summary reads -----------
@@ -27744,6 +27886,18 @@ function runDocScriptSuite(): number {
   );
   const products = new Set(verified.flatMap((script) => script.writes));
   const chained = verified.filter((script) => script.reads.some((path) => products.has(path)));
+  // 🚨 Every floor is a PROBE and not a conjunct — `DQ01`'s clause, applied to
+  // the second untouched twin (issue #496). Nine terms stood in this verdict
+  // and the detail's ternary read ONE, `derivation`.
+  //
+  // ⭐ As in `GT01`, and worth the same precision: the sentence below is not a
+  // false one. It interpolates all eight floored quantities, so a FAIL carried
+  // every VALUE and no BOUND — the reader was told what the scan found and not
+  // which floor it had stopped clearing. What moves is the bound, onto the row
+  // for the step that went.
+  //
+  // ⛔ Nothing here is a new assertion or a relaxed one: the rows are the same
+  // nine terms with the same thresholds, in one list the detail reads.
   const derivation = [
     ...(treeFault === null ? [] : [treeFault]),
     ...scan.faults,
@@ -27757,22 +27911,30 @@ function runDocScriptSuite(): number {
         `${script.where} reads another verified script's product, so running the scripts of a round before its ` +
         'commands is no longer the order the page states',
     ),
+    ...floorProbes(
+      [
+        [scan.files, 50, `${scan.files} tracked markdown file(s) were read`],
+        [scan.stating.length, 4, `${scan.stating.length} of them state a script`],
+        [scan.fences, 5, `${scan.fences} fence(s) came off those pages`],
+        [scan.scripts.length, 7, `${scan.scripts.length} script(s) came out of those fences`],
+        [scan.tables, 1, `${scan.tables} table(s) of stated verdicts were found`],
+        [scan.claims.length, 4, `${scan.claims.length} stated verdict(s) came off those tables`],
+        [assertions.size, 2, `${assertions.size} distinct assertion(s) are named by them`],
+        [verified.length, 2, `${verified.length} script(s) are verified and run here`],
+      ],
+      'so one STEP of this derivation came back thinner than it has ever been, and `DS02` below would be reporting ' +
+        'a clean tree over less than it used to read',
+    ),
   ];
   const reasons = scan.scripts.filter((script) => script.reason !== null);
+  const held = derivation.length === 0;
   say(
     'DS01_THE_DOC_SCRIPT_SCAN_READ_THE_DOCUMENTS_THE_SCRIPTS_AND_THE_VERDICTS_STATED_FOR_THEM',
-    derivation.length === 0 &&
-      scan.files >= 50 &&
-      scan.stating.length >= 4 &&
-      scan.fences >= 5 &&
-      scan.scripts.length >= 7 &&
-      scan.tables >= 1 &&
-      scan.claims.length >= 4 &&
-      assertions.size >= 2 &&
-      verified.length >= 2,
-    derivation.length > 0
-      ? derivation.join('\n          ')
-      : `${scan.files} tracked markdown file(s) read, ${scan.stating.length} of which state a script ` +
+    held,
+    probeDetail(
+      held,
+      derivation,
+      `${scan.files} tracked markdown file(s) read, ${scan.stating.length} of which state a script ` +
         `(${scan.stating.join(', ')}); ${scan.fences} fence(s), ${scan.scripts.length} script(s), of which ` +
         `${verified.length} are run here and ${reasons.length} are out of reach — ` +
         `${reasons.map((script) => `${script.where} (${script.reason ?? ''})`).join('; ')}. The ${verified.length} ` +
@@ -27780,13 +27942,16 @@ function runDocScriptSuite(): number {
         `${scan.claims.length} stated verdict(s) over ${assertions.size} assertion(s) ` +
         `{${[...assertions].sort().join(' ')}} off ${scan.tables} table(s), whose other ${scan.unmapped} column(s) ` +
         'no script of this population feeds',
+    ),
     'a scanner is a vocabulary of shapes and a shape that stops matching goes quiet, not red. Five separate ' +
       'derivations stand between a document and a claim here — the fence, the script, the command that reads its ' +
       'product, the label, and the table column that opens on that label — and any one of them emptying leaves ' +
       'the check below reporting a clean tree over nothing. The out-of-reach set is printed rather than counted ' +
       'because it is the part a later reader has to widen deliberately: 9 scripts in this tree and 2 of them ' +
       'runnable is a thin population, and the honest response to that is to say which seven and why, not to ' +
-      'stretch the grammar until the number looks better',
+      'stretch the grammar until the number looks better. ⚠️ Every floor here is a row in that same list rather ' +
+      'than a conjunct of the verdict, for issue #493\'s reason: the sentence above is the one a run failing on a ' +
+      'floor used to print, and it carries all eight figures without carrying one of the floors they are held to',
   );
 
   // --- DS02: the claims themselves ------------------------------------------
