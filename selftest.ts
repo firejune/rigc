@@ -3939,6 +3939,74 @@ function floorProbes(rows: ReadonlyArray<readonly [number, number, string]>, bec
   );
 }
 
+// ---------------------------------------------------------------------------
+// the helper the gates call, gated (issue #499)
+// ---------------------------------------------------------------------------
+//
+// `probeDetail`'s guard branch — the one naming a verdict and a detail derived
+// from different things — is the mechanism the whole helper exists for, and it
+// was exercised by two mutants while it was being written and by nothing that
+// runs. By this repository's own rule that is not a gate.
+//
+// ⚠️ It is a gate over a HELPER the gates call, not over the tree, which is why
+// it opens a section of its own instead of sitting inside a suite about
+// something else: a reader meeting these three lines in the middle of the
+// ballot or the atlas-reader section would have no way to tell which of the two
+// they were.
+//
+// 🔸 `PD03` is the whole of it. The other two are here so it means something —
+// a guard that fired on everything would be the same emptiness as one that
+// fires on nothing, and no suite that only ever asked the guard to fire could
+// tell them apart.
+function runProbeDetailSuite(): number {
+  console.log('\n── the probe-detail helper the gates call ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const clean = 'every probe held';
+  const rows = ['the first row fell', 'the second row fell'];
+  const withHeader = probeDetail(false, rows, clean, (count) => `${count} row(s) did not hold:`);
+  const bare = probeDetail(false, rows, clean);
+  say(
+    'PD01_A_NON_EMPTY_LIST_PRINTS_ITS_ROWS_AND_A_HEADER_ONLY_WHEN_ONE_IS_GIVEN',
+    rows.every((row) => withHeader.includes(row) && bare.includes(row)) &&
+      withHeader.startsWith('2 row(s) did not hold:') &&
+      !bare.includes('did not hold:') &&
+      !withHeader.includes(clean) &&
+      !bare.includes(clean),
+    `with a header: ${JSON.stringify(withHeader)}; with none: ${JSON.stringify(bare)}`,
+    'the rows are the detail a FAIL prints and the header states how many there are, so a helper that dropped ' +
+      'either would leave every caller of `floorProbes` printing a FAIL with nothing under it',
+  );
+
+  const held = probeDetail(true, [], clean);
+  const heldWithHeader = probeDetail(true, [], clean, (count) => `${count} row(s) did not hold:`);
+  say(
+    'PD02_CONTROL_AN_EMPTY_LIST_UNDER_A_TRUE_VERDICT_IS_THE_CLEAN_SENTENCE',
+    held === clean && heldWithHeader === clean,
+    `an empty list under a true verdict returns ${JSON.stringify(held)}, and ${JSON.stringify(heldWithHeader)} ` +
+      'when a header is supplied, there being no count for one to state',
+    'the positive control, and the half `PD03` is worthless without: a guard that answered the refusal here ' +
+      'would fire on every green run in this file and would be proving nothing by firing',
+  );
+
+  const refused = probeDetail(false, [], clean);
+  say(
+    'PD03_AN_EMPTY_LIST_UNDER_A_FALSE_VERDICT_IS_THE_REFUSAL_AND_NEVER_THE_CLEAN_SENTENCE',
+    refused !== clean &&
+      !refused.includes(clean) &&
+      refused.includes('the verdict and the detail were derived from different things'),
+    `a false verdict over an empty list returns ${JSON.stringify(refused)}`,
+    'the one branch nobody exercises by accident, because it fires only while a control is being written wrong: ' +
+      'a term added to the line that decides the verdict and not to the list the detail comes from. That is the ' +
+      'defect the helper exists to make unwritable, so a helper printing the clean sentence here would be the ' +
+      'exact shape it was built to refuse — and it would print it under a FAIL',
+  );
+  return bad;
+}
+
 /** A tiny opaque PNG. Size and colour are arbitrary; only "it is a real file" is load-bearing. */
 function writeProbePng(path: string, width: number, height: number, colour: RGBA): void {
   const plate = new Plate(width, height);
@@ -4464,7 +4532,9 @@ function runDrawOrderSuite(): number {
     'CONTROL_A_DRAW_ORDER_TIMELINE_IS_GREEN',
     green.failures.length === 0 && green.passed.includes('A31_DRAW_ORDER_OFFSETS_RESOLVE'),
     green.failures.length === 0
-      ? 'A31 ran and held on a legal swap-and-restore'
+      ? `A31_DRAW_ORDER_OFFSETS_RESOLVE ${
+          green.passed.includes('A31_DRAW_ORDER_OFFSETS_RESOLVE') ? 'ran and held' : 'did NOT run'
+        } on a legal swap-and-restore`
       : `[${green.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'without a positive control a suite of breaks cannot tell a working gate from one that fails everything',
   );
@@ -4683,7 +4753,10 @@ function runKeyTimeSuite(): number {
     'CONTROL_A_KEY_ON_THE_DECLARED_DURATION_IS_GREEN',
     green.failures.length === 0 && green.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
     green.failures.length === 0
-      ? `both tracks key ${SIXTY_EIGHT_TWELFTHS}s, a duration no microsecond lands on — keyTime emits 5.666666`
+      ? `both tracks key ${SIXTY_EIGHT_TWELFTHS}s, a duration no microsecond lands on — keyTime emits 5.666666, and ` +
+        `A09_ANIMATION_DURATION_MATCHES_SPEC ${
+          green.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC') ? 'ran and held' : 'did NOT run'
+        }`
       : `[${green.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'a key the author put ON a duration that is not a round number of microseconds must compile; before #99 it was the epsilon that allowed it, and now it is the grid',
   );
@@ -4720,7 +4793,10 @@ function runKeyTimeSuite(): number {
     'K03_a_last_key_inside_one_frame_of_the_end_is_still_accepted',
     short.failures.length === 0 && short.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
     short.failures.length === 0
-      ? 'declared 1s, last key 0.99s — an animation may hold its final pose, and 1/60 s of slack is R7'
+      ? 'declared 1s, last key 0.99s — an animation may hold its final pose, and 1/60 s of slack is R7; ' +
+        `A09_ANIMATION_DURATION_MATCHES_SPEC ${
+          short.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC') ? 'ran and held' : 'did NOT run'
+        }`
       : `[${short.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'only the OVERSHOOT arm is about the sample grid; tightening both would make R7 a frame-accurate duration rule',
   );
@@ -4744,7 +4820,10 @@ function runKeyTimeSuite(): number {
     'K04_a_long_animation_does_not_fail_for_float32_quantisation',
     far.failures.length === 0 && far.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
     far.failures.length === 0
-      ? `${long}s declared and keyed; the emitted ${long} loads back as ${Math.fround(long)}`
+      ? `${long}s declared and keyed; the emitted ${long} loads back as ${Math.fround(long)}, and ` +
+        `A09_ANIMATION_DURATION_MATCHES_SPEC ${
+          far.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC') ? 'ran and held' : 'did NOT run'
+        }`
       : `[${far.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'the two layers read different grids: 1e-6 s is fixed, a float32 step at 32 s is 3.8e-6 s and at 5 s is 4.8e-7 s',
   );
@@ -6498,7 +6577,9 @@ function runPathAndSliderSuite(): number {
     'PS27_two_ADDITIVE_sliders_on_one_bone_are_green',
     bothAdditive.failures.length === 0 && bothAdditive.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET'),
     bothAdditive.failures.length === 0
-      ? `${bothAdditive.passed.length} assertions ran and A40 is one of them`
+      ? `${bothAdditive.passed.length} assertions ran and A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET ${
+          bothAdditive.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET') ? 'is one of them' : 'is NOT one of them'
+        }`
       : `[${bothAdditive.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'the positive control, and the point of the whole rule: this is the CORRECT two-axis rig — PS25 poses it at 26.25°, ' +
       'the sum — so an assertion that refused it would have taken the feature away rather than gated it',
@@ -6519,7 +6600,8 @@ function runPathAndSliderSuite(): number {
     'PS29_two_sliders_on_DISJOINT_targets_are_green',
     disjoint.failures.length === 0 && disjoint.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET'),
     disjoint.failures.length === 0
-      ? 'two non-additive sliders, one keying bone "flag" and one keying bone "tilt": A40 ran and passed'
+      ? 'two non-additive sliders, one keying bone "flag" and one keying bone "tilt": A40 ' +
+        `${disjoint.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET') ? 'ran and passed' : 'did NOT run'}`
       : `[${disjoint.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'the unit is spine-core\'s own propertyIds, so "two sliders" is never the finding — "two sliders on one property" is. ' +
       'A PASS rather than a SKIP because the comparison was made and answered',
@@ -6547,7 +6629,8 @@ function runPathAndSliderSuite(): number {
     'PS31_two_sliders_a_SKIN_SWITCH_keeps_apart_are_green',
     skinned.failures.length === 0 && skinned.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET'),
     skinned.failures.length === 0
-      ? 'the same two non-additive sliders on bone "flag", each skinRequired and listed by a different skin: A40 ran and passed'
+      ? 'the same two non-additive sliders on bone "flag", each skinRequired and listed by a different skin: A40 ' +
+        `${skinned.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET') ? 'ran and passed' : 'did NOT run'}`
       : `[${skinned.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'updateCache activates a skinRequired constraint only while the CURRENT skin lists it, and a skeleton wears one skin, ' +
       'so these two are never in the same frame — the exemption is structural, and this is the control that it exists',
@@ -9914,25 +9997,63 @@ function runContourMeshSuite(): number {
   // exactly on the silhouette measures. Bounded on both sides so the case fails
   // if the measurement stops being a measurement of that.
   const octagonShare = (2 * Math.SQRT2) / Math.PI;
+  // Bound once so the probe row states the same tolerance the check applies.
+  const octagonTolerance = 0.01;
+  // ⚠️ Only the "is a coverage reported at all" terms picked the branch, so every
+  // other term reached the reader through the sentence written for the run where
+  // they all held — including "still gates green", which a planted gate failure
+  // measurably made this print under its own FAIL (#498).
+  const coverageProbes = [
+    ...(clipsMesh?.kind === 'authored'
+      ? []
+      : [`the rim-${FAN_ART_R} mesh reads kind "${clipsMesh?.kind ?? 'no mesh at all'}" where authored geometry reads ` +
+          '"authored", so the generator rules would be measuring it instead']),
+    ...(coversMesh?.kind === 'authored'
+      ? []
+      : [`the rim-${FAN_RIM_COVERING} mesh reads kind "${coversMesh?.kind ?? 'no mesh at all'}" where authored ` +
+          'geometry reads "authored"']),
+    ...(clipsMesh?.coverage === undefined
+      ? [`the rim-${FAN_ART_R} mesh reports no coverage at all, so there is no share to hold to anything`]
+      : [
+          ...(clipsMesh.coverage < CONTOUR_MIN_COVERAGE
+            ? []
+            : [`rim ${FAN_ART_R} covers ${(clipsMesh.coverage * 100).toFixed(2)}% and a contour of the same art is ` +
+                `refused under ${(CONTOUR_MIN_COVERAGE * 100).toFixed(1)}%, so this is no longer the clipping half ` +
+                'of the pair']),
+          ...(Math.abs(clipsMesh.coverage - octagonShare) < octagonTolerance
+            ? []
+            : [`rim ${FAN_ART_R} covers ${(clipsMesh.coverage * 100).toFixed(2)}% against the octagon share of ` +
+                `${(octagonShare * 100).toFixed(2)}%, further off than the ` +
+                `${(octagonTolerance * 100).toFixed(2)} point(s) this holds it to — the measurement has stopped ` +
+                'being a measurement of that share']),
+        ]),
+    ...(coversMesh?.coverage === undefined
+      ? [`the rim-${FAN_RIM_COVERING} mesh reports no coverage at all`]
+      : coversMesh.coverage >= 0.9999
+        ? []
+        : [`rim ${FAN_RIM_COVERING} covers ${(coversMesh.coverage * 100).toFixed(2)}% where a rim outside the ` +
+            'silhouette covers all of its art']),
+    ...firstFew(
+      clipsGate.failures.map(
+        (f) => `the clipping mesh does NOT gate green: ${f.assertion}: ${f.detail}`,
+      ),
+      'failure(s)',
+    ),
+  ];
+  const coverageHeld = coverageProbes.length === 0;
   say(
     'CT08_AN_AUTHORED_MESH_REPORTS_THE_SHARE_OF_ITS_ART_IT_COVERS',
-    clipsMesh?.kind === 'authored' &&
-      coversMesh?.kind === 'authored' &&
-      clipsMesh.coverage !== undefined &&
-      coversMesh.coverage !== undefined &&
-      clipsMesh.coverage < CONTOUR_MIN_COVERAGE &&
-      Math.abs(clipsMesh.coverage - octagonShare) < 0.01 &&
-      coversMesh.coverage >= 0.9999 &&
-      clipsGate.failures.length === 0,
-    clipsMesh?.coverage === undefined || coversMesh?.coverage === undefined
-      ? `authored mesh coverage is ${clipsMesh?.coverage === undefined ? 'not reported' : 'reported'} for a rim on ` +
-          `the silhouette and ${coversMesh?.coverage === undefined ? 'not reported' : 'reported'} for one outside it`
-      : `rim ${FAN_ART_R} (on the silhouette of a radius-${FAN_ART_R} disc) covers ` +
-          `${(clipsMesh.coverage * 100).toFixed(2)}% of the art against an octagon share of ` +
-          `${(octagonShare * 100).toFixed(2)}%, under the ${(CONTOUR_MIN_COVERAGE * 100).toFixed(1)}% a contour of ` +
-          `the same art is refused at; rim ${FAN_RIM_COVERING} covers ${(coversMesh.coverage * 100).toFixed(2)}% ` +
-          `— and the clipping one still gates green over ${clipsGate.passed.length} assertions, because the figure ` +
-          'is a report and not a bar',
+    coverageHeld,
+    probeDetail(
+      coverageHeld,
+      coverageProbes,
+      `rim ${FAN_ART_R} (on the silhouette of a radius-${FAN_ART_R} disc) covers ` +
+        `${((clipsMesh?.coverage ?? 0) * 100).toFixed(2)}% of the art against an octagon share of ` +
+        `${(octagonShare * 100).toFixed(2)}%, under the ${(CONTOUR_MIN_COVERAGE * 100).toFixed(1)}% a contour of ` +
+        `the same art is refused at; rim ${FAN_RIM_COVERING} covers ${((coversMesh?.coverage ?? 0) * 100).toFixed(2)}% ` +
+        `— and the clipping one still gates green over ${clipsGate.passed.length} assertions, because the figure ` +
+        'is a report and not a bar',
+    ),
     'issue #277: a contour that clipped its art was refused by name and the same geometry authored printed nothing ' +
       'at all — 5.7% of a drawing was not going to be drawn and 18 assertions passed',
   );
@@ -10470,7 +10591,8 @@ function runDeformWindingSuite(): number {
     bandInverted.failures.length === 0 && bandInverted.passed.includes(A39),
     bandInverted.failures.length === 0
       ? `the two far columns swapped shifts (${straight[0]} <-> ${straight[2]} and ${straight[6]} <-> ${straight[8]}) ` +
-          `and ${A39} still PASSED — the winding is intact, the projection is wrong, and only \`rigc check\` ` +
+          `and ${A39} ${bandInverted.passed.includes(A39) ? 'still PASSED' : 'did NOT run'} — the winding is intact, ` +
+          'the projection is wrong, and only `rigc check` ' +
           'against a trusted render can see the difference (docs/FACE.md §9.3)'
       : `[${bandInverted.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'the assertion has to separate the fold from every other wrong deform, or its failures cannot be acted on',
@@ -12084,6 +12206,20 @@ function runDeformWindingSuite(): number {
   );
 
   const agreedBlock = turnDeformBlock(agreedBuild);
+  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Exactly one term of
+  // the verdict below goes unnamed by the selector that picks the detail, and
+  // the three that do not each have a branch of their own already — so a list
+  // here would rewrite three branches that are right in order to repair one
+  // that is not, which is the "a helper adopted where a line would do" the
+  // helper's own doc warns about. What that one term reached the reader as was
+  // a TYPED `0` in the clean sentence: the count this verdict requires to be
+  // zero, written out as the answer it wanted, on the one run that sentence
+  // exists for. Bound once here and printed by EVERY branch below, so a run
+  // that fails on it AND on one of the other three names both rather than
+  // losing one behind the other.
+  const agreedDials = Object.keys(dialStats(agreedGate));
+  const dialReadings =
+    `${agreedDials.length} deformDial… reading(s) on this build's stats line, where a silent rollup wants 0`;
   say(
     'DW35_AN_AGREED_DIAL_ADDS_NO_LINE_TO_THE_ROLLUP',
     // ⚠️ DW31's anti-vacuity anchor, on this surface: the rig carries a
@@ -12096,20 +12232,22 @@ function runDeformWindingSuite(): number {
       // be an improvement — a clause that went red for it would be a clause that
       // fires when the tree gets better.
       !breadcrumbNames(agreedBlock).some((name) => name.startsWith('deformDial')) &&
-      Object.keys(dialStats(agreedGate)).length === 0,
+      agreedDials.length === 0,
     disputeLine(agreedBlock) !== ''
-      ? 'the agreed rig gained a disputed-dial line anyway: "' + disputeLine(agreedBlock).trim() + '"'
+      ? 'the agreed rig gained a disputed-dial line anyway: "' + disputeLine(agreedBlock).trim() + '" — ' +
+          dialReadings
       : breadcrumbNames(agreedBlock).some((name) => name.startsWith('deformDial'))
         ? 'no disputed-dial line, but a breadcrumb still hands the reader [' +
             breadcrumbNames(agreedBlock)
               .filter((name) => name.startsWith('deformDial'))
-              .join(', ') + '] on a rig whose build reports no dial reading at all'
+              .join(', ') + '] on a rig whose rollup carries no disputed-dial line — ' + dialReadings
         : !agreedBlock.some((line) => line.trimStart().startsWith('WORST   turn via dial'))
           ? 'VACUOUS: this rig printed no `WORST   turn via dial` rollup, so its silence is a silence about ' +
-              'nothing — ' + agreedBlock.length + ' line(s): ' + agreedBlock.map((l) => l.trim()).join(' | ')
+              'nothing — ' + agreedBlock.length + ' line(s): ' + agreedBlock.map((l) => l.trim()).join(' | ') +
+              ' — ' + dialReadings
           : 'the same `x` slider with the dial bone\'s parent unturned prints a ' + agreedBlock.length +
               '-line block carrying a rollup and not one disputed-dial line, and no breadcrumb on it names a ' +
-              'deformDial… reading — the build agrees, with 0 deformDial… readings on its stats line',
+              'deformDial… reading — the build agrees: ' + dialReadings,
     '🔒 the loud half alone would pass a rollup that printed a dispute on every rig. This is DW31\'s silence, ' +
       'checked on the surface issue #440 is about rather than on the stats line',
   );
@@ -16124,7 +16262,13 @@ function runAtlasReaderSuite(): number | null {
   // expensive example: a re-serialiser that dropped them would stop `atlasScales`
   // reporting that a pack is coarser than its drawings (issue #171).
   const scaled = atlases.find((p) => readFileSync(p, 'utf8').includes('scale:'));
-  const scaleKept = ((): { onlyNameLines: boolean; scales: string; wanted: string } | null => {
+  const scaleKept = ((): {
+    onlyNameLines: boolean;
+    changed: string;
+    nameLines: string;
+    scales: string;
+    wanted: string;
+  } | null => {
     if (scaled === undefined) return null;
     const text = readFileSync(scaled, 'utf8');
     const parsed = parseAtlasText(text);
@@ -16135,16 +16279,49 @@ function runAtlasReaderSuite(): number | null {
     const nameLines = parsed.pages.map((p) => p.nameLine).sort((a, b) => a - b);
     return {
       onlyNameLines: changed.join(',') === nameLines.join(','),
+      // the two sides of that comparison, kept so the probe below can name what
+      // moved instead of asserting that nothing did
+      changed: changed.join(','),
+      nameLines: nameLines.join(','),
       scales: atlasScales(rewritten).join(','),
       wanted: atlasScales(text).join(','),
     };
   })();
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Three separate
+  // things fail here — which lines moved, what `scale:` reads back, and whether
+  // it reads back at all — so a line carrying all three values would hand a
+  // reader three pairs of figures to compare by eye, and the sentence claiming
+  // "only the page-name line(s) changed" would still be standing next to them.
+  // It WAS standing next to them: a `filter:` line rewritten alongside the page
+  // name printed `1-weight-and-mass.atlas: only the page-name line(s) changed,
+  // scale 0.5 still read back` under a FAIL, which is this assertion's own
+  // title handed back as the evidence for it.
+  const scaleProbes: string[] =
+    scaleKept === null
+      ? ['no corpus atlas carries a `scale:` line, so the emitter was never run over one']
+      : [
+          ...(scaleKept.onlyNameLines
+            ? []
+            : [`line(s) [${scaleKept.changed}] changed, where the page-name line(s) are [${scaleKept.nameLines}]`]),
+          ...(scaleKept.scales === scaleKept.wanted
+            ? []
+            : [
+                `\`scale:\` reads back as [${scaleKept.scales}] off the rewritten atlas, where the file it was ` +
+                  `rewritten from states [${scaleKept.wanted}]`,
+              ]),
+          ...(scaleKept.scales !== '' ? [] : ['no `scale:` value reads back off the rewritten atlas at all']),
+        ];
+  const scaleHeld = scaleProbes.length === 0;
   say(
     'PKR03_REWRITING_PAGE_NAMES_TOUCHES_ONLY_THE_NAME_LINES',
-    scaleKept !== null && scaleKept.onlyNameLines && scaleKept.scales === scaleKept.wanted && scaleKept.scales !== '',
-    scaled === undefined
-      ? 'no corpus atlas carries a `scale:` line'
-      : `${basename(scaled)}: only the page-name line(s) changed, scale ${scaleKept?.scales} still read back`,
+    scaleHeld,
+    probeDetail(
+      scaleHeld,
+      scaleProbes,
+      scaled === undefined || scaleKept === null
+        ? 'no corpus atlas carries a `scale:` line'
+        : `${basename(scaled)}: only the page-name line(s) changed, scale ${scaleKept.scales} still read back`,
+    ),
     '`--atlas-in` emits the imported atlas by rewriting its page paths, and a field this compiler has no reader ' +
       'for must survive the trip — dropping one would change the meaning of a file rigc was asked to pass through',
   );
@@ -22303,14 +22480,50 @@ function runSeeItSuite(): number {
   }
   const plates = files.map((f) => readPlate(join(set, f)));
   const expected = sidecar ? [sidecar.viewport.pixelWidth, sidecar.viewport.pixelHeight] : [0, 0];
-  const sized = plates.length > 0 && plates.every((p) => p.width === expected[0] && p.height === expected[1]);
+  // ⚠️ `expected` is the DECLARED size, so a detail that prints it is printing the
+  // sidecar back rather than the pictures. The probe rows below carry what each
+  // plate measured, which is the half the old sentence could not say (issue #498).
+  let sizeProbes: string[];
+  let sizeClean: string;
+  if (sidecar === null) {
+    sizeProbes = [`no ${FRAMES_SIDECAR} beside the frames, so nothing declares a size to hold a picture to`];
+    sizeClean = 'unreachable while there is no sidecar: the row above names that instead';
+  } else {
+    sizeProbes = [
+      ...floorProbes(
+        [[plates.length, 1, `${plates.length} frame(s) were read off disk and measured`]],
+        'so the comparison below ran over no pictures at all and a set could agree with its own box off nothing',
+      ),
+      ...firstFew(
+        plates.flatMap((plate, i) =>
+          plate.width === expected[0] && plate.height === expected[1]
+            ? []
+            : [`${files[i]} measures ${plate.width}x${plate.height} and the sidecar declares ${expected[0]}x${expected[1]}`],
+        ),
+        'frame(s)',
+      ),
+      ...(sidecar.sets.length === 1
+        ? sidecar.sets[0].sampled === files.length
+          ? []
+          : [`the sidecar declares ${sidecar.sets[0].sampled} frame(s) sampled and ${files.length} are on disk`]
+        : [
+            `the sidecar declares ${sidecar.sets.length} set(s) where this reads one, so the sampled count has no ` +
+              'single set to come off',
+          ]),
+    ];
+    sizeClean =
+      `${files.length} frame(s), every one MEASURED at ${expected[0]}x${expected[1]} — the size the sidecar's one ` +
+      `set declares, whose sampled count is the same ${files.length}`;
+  }
+  const sizeHeld = sizeProbes.length === 0;
   say(
     'R02_EVERY_FRAME_IS_THE_SIZE_THE_SIDECAR_DECLARES',
-    sidecar !== null && sized && sidecar.sets.length === 1 && sidecar.sets[0].sampled === files.length,
-    sidecar === null
-      ? `no ${FRAMES_SIDECAR} beside the frames`
-      : `${files.length} frame(s) at ${expected[0]}x${expected[1]}, sidecar declares ${sidecar.sets[0].sampled} sampled`,
-    'a frame set whose pictures are not the size its own box says is unreadable by `check` and by a human with a ruler',
+    sizeHeld,
+    probeDetail(sizeHeld, sizeProbes, sizeClean),
+    'a frame set whose pictures are not the size its own box says is unreadable by `check` and by a human with a ' +
+      'ruler. ⚠️ The detail is a probe list because the figure it used to print was the sidecar\'s own: measured, a ' +
+      'plate at the wrong size took this FAIL and printed "N frame(s) at WxH" where WxH was the DECLARED size — the ' +
+      'answer the control wanted, handed back with nothing in the sentence having measured a plate (issue #498)',
   );
 
   // Motion, not merely files: 13 identical pictures is what a renderer that never
@@ -22400,27 +22613,78 @@ function runSeeItSuite(): number {
   const imageUris = page.split('data:image/png;base64,').length - 1;
   const carries = (mime: string, body: string): boolean =>
     page.includes(`data:${mime};base64,${Buffer.from(body, 'utf8').toString('base64')}`);
+  // "byte for byte" is a CLAIM, and the old detail made it in the branch a run
+  // that had just refuted it reached: only `preview.status` picked the branch, so
+  // a page missing the atlas printed the sentence saying it was in there (#498).
+  //
+  // The page count is bound rather than written twice: the row states the bound
+  // beside the value found, and a bound spelled once cannot drift from itself.
+  const SPILLED_PAGES = 2;
+  const embedProbes = [
+    ...(preview.status === 0 ? [] : [`preview exit=${String(preview.status)}: ${preview.stderr.split('\n')[0]}`]),
+    ...(skeletonText === ''
+      ? ['no skeleton.json was written beside the candidate, so there is nothing on disk to find in the page']
+      : carries('application/json', skeletonText)
+        ? []
+        : ['the skeleton.json on disk is NOT in the page as an application/json data URI, so what it embeds is not ' +
+            'this artifact byte for byte']),
+    ...(carries('text/plain', atlasText)
+      ? []
+      : ['the skeleton.atlas on disk is NOT in the page as a text/plain data URI, so what it embeds is not this ' +
+          'artifact byte for byte']),
+    ...(imageUris === pageCount
+      ? []
+      : [`${imageUris} image data URI(s) are in the page against ${pageCount} page(s) the atlas names`]),
+    ...(pageCount === SPILLED_PAGES
+      ? []
+      : [`${pageCount} atlas page(s) came off the built candidate where this fixture spills onto ${SPILLED_PAGES}, ` +
+          'so the count above would be agreeing with a number that had itself moved']),
+  ];
+  const embedHeld = embedProbes.length === 0;
   say(
     'P01_PREVIEW_EMBEDS_THE_WHOLE_ARTIFACT',
-    preview.status === 0 &&
-      skeletonText !== '' &&
-      carries('application/json', skeletonText) &&
-      carries('text/plain', atlasText) &&
-      imageUris === pageCount &&
-      pageCount === 2,
-    preview.status === 0
-      ? `skeleton and atlas embedded byte for byte, ${imageUris} image data URI(s) for ${pageCount} atlas page(s)`
-      : `preview exit=${String(preview.status)}: ${preview.stderr.split('\n')[0]}`,
+    embedHeld,
+    probeDetail(
+      embedHeld,
+      embedProbes,
+      `skeleton and atlas embedded byte for byte, ${imageUris} image data URI(s) for ${pageCount} atlas page(s)`,
+    ),
     'a preview missing one page is a file that opens and draws the wrong picture — the failure this command exists to catch',
   );
 
   // The keys are what the player asks for, so they are as load-bearing as the
   // bytes: a page embedded under a name nothing requests is not embedded.
-  const keyed = pageCount > 0 && pageNames.every((name) => page.includes(JSON.stringify(name).slice(1, -1)));
+  // 🚨 This detail had no branch at all, so it printed the same sentence on both
+  // verdicts — and the sentence was the WANTED key list, spelled from the names
+  // the atlas declares rather than from anything found in the page. A run with
+  // the atlas key missing printed `"skeleton.atlas"` as one of the keys (#498).
+  const keyProbes = [
+    ...floorProbes(
+      [[pageCount, 1, `${pageCount} page name(s) came off the atlas to look for`]],
+      'so "every page name is a key" would be true of a page carrying no page keys whatsoever',
+    ),
+    ...firstFew(
+      pageNames
+        .filter((name) => !page.includes(JSON.stringify(name).slice(1, -1)))
+        .map((name) => `the atlas names page "${name}" and the page carries no key spelling it`),
+      'page name(s)',
+    ),
+    ...(page.includes(SKELETON_KEY)
+      ? []
+      : [`the page carries no "${SKELETON_KEY}" key, which is the name the player asks the skeleton for`]),
+    ...(page.includes(ATLAS_KEY)
+      ? []
+      : [`the page carries no "${ATLAS_KEY}" key, which is the name the player asks the atlas for`]),
+  ];
+  const keyHeld = keyProbes.length === 0;
   say(
     'P02_THE_EMBEDDED_KEYS_ARE_THE_NAMES_THE_PLAYER_ASKS_FOR',
-    keyed && page.includes(SKELETON_KEY) && page.includes(ATLAS_KEY),
-    `rawDataURIs keyed by ${JSON.stringify([SKELETON_KEY, ATLAS_KEY, ...pageNames])}`,
+    keyHeld,
+    probeDetail(
+      keyHeld,
+      keyProbes,
+      `the page carries a rawDataURIs key for each of ${JSON.stringify([SKELETON_KEY, ATLAS_KEY, ...pageNames])}`,
+    ),
     "`config.atlas` has no directory part, so the player asks for each page under the name the ATLAS spells — not its basename",
   );
 
@@ -22428,10 +22692,31 @@ function runSeeItSuite(): number {
   // remember: the player is referenced by URL and nothing Esoteric owns is copied
   // into the page. A vendored player would be hundreds of kilobytes of it.
   const referenced = /<script src="https:\/\/unpkg\.com\/@esotericsoftware\/spine-player@[^"]+"><\/script>/.test(page);
+  // ⚠️ The half this control is named for — NEVER VENDORED — was the half the old
+  // detail did not mention, and it had no branch either: a page with a player
+  // copied into it FAILED and printed "player loaded by <script src>" (#498).
+  const playerProbes = [
+    ...(referenced
+      ? []
+      : ['no <script src="https://unpkg.com/@esotericsoftware/spine-player@…"> in the page, so the player is not ' +
+          'referenced by URL']),
+    ...(page.includes('SpinePlayer = class')
+      ? [`the page carries \`SpinePlayer = class\`, so a player is VENDORED into these ${(page.length / 1024).toFixed(1)} KiB`]
+      : []),
+    ...(page.includes('spine-runtimes-license')
+      ? []
+      : ['the page does not name the Spine Runtimes licence']),
+  ];
+  const playerHeld = playerProbes.length === 0;
   say(
     'P03_THE_PLAYER_IS_REFERENCED_AND_NEVER_VENDORED',
-    referenced && !page.includes('SpinePlayer = class') && page.includes('spine-runtimes-license'),
-    `player loaded by <script src>, page is ${(page.length / 1024).toFixed(1)} KiB, and it names the Spine Runtimes licence`,
+    playerHeld,
+    probeDetail(
+      playerHeld,
+      playerProbes,
+      `player loaded by <script src>, page is ${(page.length / 1024).toFixed(1)} KiB with no player copied into it, ` +
+        'and it names the Spine Runtimes licence',
+    ),
     'NOTICE.md: the Spine Runtimes are Esoteric Software\'s and rigc redistributes none of them',
   );
 
@@ -24525,17 +24810,43 @@ function runBallotSuite(): number {
   const carries = (mime: string, body: string): boolean =>
     body !== '' && page.includes(`data:${mime};base64,${Buffer.from(body, 'utf8').toString('base64')}`);
   const imageUris = page.split('data:image/png;base64,').length - 1;
+  // The `every` is what has to become rows: WHICH candidate leaked is the repair,
+  // and the old detail could not say, because only `vote.status` chose its branch.
+  // Measured: a ballot with one skeleton corrupted printed the whole "skeletons
+  // and atlases embedded byte for byte" clause under the FAIL that had just found
+  // otherwise (#498).
+  const candidateProbes = [
+    ...(vote.status === 0 ? [] : [`vote exit=${String(vote.status)}: ${vote.stderr.split('\n')[0]}`]),
+    ...skeletons.flatMap((text, i) =>
+      carries('application/json', text)
+        ? []
+        : [`candidate ${i + 1} of ${skeletons.length}: its skeleton.json is NOT in the ballot as an ` +
+            'application/json data URI'],
+    ),
+    ...atlases.flatMap((text, i) =>
+      carries('text/plain', text)
+        ? []
+        : [`candidate ${i + 1} of ${atlases.length}: its skeleton.atlas is NOT in the ballot as a text/plain data URI`],
+    ),
+    ...(skeletons[0] !== skeletons[1]
+      ? []
+      : ['both candidates emitted the same skeleton.json, so the two panes are one picture and a vote between them ' +
+          'decides nothing']),
+    ...(imageUris === pageNames[0].length + pageNames[1].length
+      ? []
+      : [`${imageUris} image data URI(s) are in the ballot against the ${pageNames[0].length}+${pageNames[1].length} ` +
+          'page(s) the two atlases name']),
+  ];
+  const candidatesHeld = candidateProbes.length === 0;
   say(
     'B01_THE_BALLOT_EMBEDS_EVERY_CANDIDATE',
-    vote.status === 0 &&
-      skeletons.every((text) => carries('application/json', text)) &&
-      atlases.every((text) => carries('text/plain', text)) &&
-      skeletons[0] !== skeletons[1] &&
-      imageUris === pageNames[0].length + pageNames[1].length,
-    vote.status === 0
-      ? `${skeletons.length} skeletons and atlases embedded byte for byte, ${imageUris} image data URI(s) for ` +
-        `${pageNames[0].length}+${pageNames[1].length} atlas page(s)`
-      : `vote exit=${String(vote.status)}: ${vote.stderr.split('\n')[0]}`,
+    candidatesHeld,
+    probeDetail(
+      candidatesHeld,
+      candidateProbes,
+      `${skeletons.length} skeletons and atlases embedded byte for byte, ${imageUris} image data URI(s) for ` +
+        `${pageNames[0].length}+${pageNames[1].length} atlas page(s)`,
+    ),
     'a ballot missing one candidate\'s pages is a comparison against a blank pane, which reads as a defect in that candidate',
   );
 
@@ -24553,16 +24864,41 @@ function runBallotSuite(): number {
   // with that element cut out of it.
   const withoutManifest = manifestText ? page.replace(manifestText[0], '') : page;
   const sources = manifest?.candidates.map((c) => c.source) ?? [];
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). There is no value
+  // for a line to carry here: the clean sentence is four of this verdict's five
+  // terms restated as prose, with no interpolation in it at all. On the run it
+  // exists for it printed `panes labelled A and B; both source paths present in
+  // the manifest and absent from the rest of the file` under a FAIL raised by a
+  // missing pane label — every clause of it a claim the run had just refuted.
+  const pathProbes: string[] =
+    manifest === null
+      ? [`no <script id="${MANIFEST_ELEMENT_ID}"> in the page`]
+      : [
+          ...(sources.length === 2 ? [] : [`the manifest names ${sources.length} candidate source(s) and not 2`]),
+          // the `every` above, one row per offending candidate rather than one
+          // verdict over both: WHICH candidate leaked, and by which of the
+          // three ways, is the repair
+          ...sources.flatMap((source, i) =>
+            source === ''
+              ? [`candidate ${i} declares no source path at all`]
+              : !page.includes(source)
+                ? [`candidate ${i}'s source "${source}" is nowhere in the page, its own manifest included`]
+                : withoutManifest.includes(source)
+                  ? [`candidate ${i}'s source "${source}" is on the page OUTSIDE the manifest, where a voter reads it`]
+                  : [],
+          ),
+          ...(/<h2>A<\/h2>/.test(page) ? [] : ['no <h2>A</h2> pane label on the page']),
+          ...(/<h2>B<\/h2>/.test(page) ? [] : ['no <h2>B</h2> pane label on the page']),
+        ];
+  const pathsHidden = pathProbes.length === 0;
   say(
     'B02_THE_PAGE_SHOWS_NO_CANDIDATE_PATH',
-    manifest !== null &&
-      sources.length === 2 &&
-      sources.every((source) => source !== '' && page.includes(source) && !withoutManifest.includes(source)) &&
-      /<h2>A<\/h2>/.test(page) &&
-      /<h2>B<\/h2>/.test(page),
-    manifest === null
-      ? `no <script id="${MANIFEST_ELEMENT_ID}"> in the page`
-      : `panes labelled A and B; both source paths present in the manifest and absent from the rest of the file`,
+    pathsHidden,
+    probeDetail(
+      pathsHidden,
+      pathProbes,
+      'panes labelled A and B; both source paths present in the manifest and absent from the rest of the file',
+    ),
     'labels are neutral so the vote is about pixels; the mapping still has to be auditable, so it is in the file but never on the screen',
   );
 
@@ -24572,15 +24908,40 @@ function runBallotSuite(): number {
   const digests = manifest?.candidates.map((c) => c.digest) ?? [];
   const derived = manifest === null ? '' : ballotId(manifest.animation, digests);
   const swapped = manifest === null ? '' : ballotId(manifest.animation, [...digests].reverse());
+  // 🚨 `X = hash(N digests)` is an EQUATION, and the old detail printed it under
+  // the FAIL raised by that equation not holding: the branch turned on the
+  // manifest being readable and on nothing else, so an id that no longer derives
+  // from its digests came back stated as if it did (#498).
+  const idProbes =
+    manifest === null
+      ? ['no manifest to read, so there is no id and no digest to derive one from']
+      : [
+          ...(manifest.spec === BALLOT_SPEC
+            ? []
+            : [`the manifest declares spec "${manifest.spec}" where this reads "${BALLOT_SPEC}"`]),
+          ...(derived === manifest.ballot
+            ? []
+            : [`the manifest's id is ${manifest.ballot} and hashing its own animation over ${digests.length} digest(s) ` +
+                `gives ${derived}`]),
+          ...(swapped !== manifest.ballot
+            ? []
+            : [`reversing the digests gives the same id ${swapped}, so which pane a candidate stood on is not in it`]),
+          ...(digests[0] !== digests[1]
+            ? []
+            : [`both candidates digest to ${digests[0]}, so the id has two identical names to tell apart`]),
+          ...(new Set(digests).size === 2
+            ? []
+            : [`${digests.length} digest(s) reduce to ${new Set(digests).size} distinct value(s)`]),
+        ];
+  const idHeld = idProbes.length === 0;
   say(
     'B03_THE_BALLOT_ID_DERIVES_FROM_ITS_CANDIDATE_DIGESTS',
-    manifest !== null &&
-      manifest.spec === BALLOT_SPEC &&
-      derived === manifest.ballot &&
-      swapped !== manifest.ballot &&
-      digests[0] !== digests[1] &&
-      new Set(digests).size === 2,
-    manifest === null ? 'no manifest to read' : `${manifest.ballot} = hash(${digests.length} digests), and reversed = ${swapped}`,
+    idHeld,
+    probeDetail(
+      idHeld,
+      idProbes,
+      `${manifest?.ballot} = hash(${digests.length} digests), and reversed = ${swapped}`,
+    ),
     'a label means nothing outside one ballot and a path means nothing once the directory is rebuilt; the digest is the only stable name',
   );
 
@@ -26262,6 +26623,7 @@ function main(): void {
   bad += tally.of('slider-reader', runSliderReaderSuite);
   bad += tally.of('loop-seam', runLoopSeamSuite);
   bad += tally.of('run-tally', () => runRunTallySuite(tally));
+  bad += tally.of('probe-detail', runProbeDetailSuite);
   const gallery = tally.of('gallery-example', runGallerySuite, (value) => value.examples > 0);
   bad += gallery.failures;
   const cuts = tally.of('registered-cut', runCutsSuite, (value) => value.cuts > 0);
@@ -26350,6 +26712,15 @@ function main(): void {
     'cannot see at all — one held in a constant, which reaches a clause opening through an interpolation and is ' +
     'therefore shaped exactly like a number the run produced — is refused by reading who else in this file reads ' +
     'that constant, a table and a mention in prose deliberately not counting as readers)';
+  const probeDetailGate =
+    ', + ' + n('probe-detail') + ' probe-detail controls (issue #499 — the guard inside the helper a control hands ' +
+    'its verdict and its probe list to: a FALSE verdict over an EMPTY list is the signature of a detail derived ' +
+    'from something other than the verdict, and the helper prints that by name instead of the clean sentence. ' +
+    'The branch was exercised by two mutants while it was being written and by nothing that ran, which is this ' +
+    'repository’s own definition of not a gate. Beside it the two cases that make asserting it mean anything — a ' +
+    'non-empty list printing its rows, with the header only when a caller gives one, and an empty list under a ' +
+    'TRUE verdict printing the clean sentence unchanged, header or no header — because a guard that fired on ' +
+    'everything would be the same emptiness as one that fires on nothing)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
@@ -26839,6 +27210,7 @@ function main(): void {
           'loose drawing beside it)') +
       loopSeam +
       runTally +
+      probeDetailGate +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (launcher.startsWith(',') ? '' : launcher) +
