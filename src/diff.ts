@@ -685,10 +685,20 @@ function diffAttachments(c: Json, r: Json): DiffSection {
     // The issue's diagnosis was that Spine's exporter omits `width`/`height`
     // when they match the atlas region, so a rigc rig — which always states
     // them (AUTHORING R1/R5) — could never agree. That is not what the corpus
-    // says: all twelve reference exports state a size on every one of their 168
-    // regions, so there is nothing for an atlas lookup to resolve and the
-    // `--atlas` plumbing the issue proposed would be dead code against every
-    // rung on the ladder.
+    // says: all twelve reference exports state a size on every one of their
+    // regions, and no region omits either field — so there is nothing for an
+    // atlas lookup to resolve and the `--atlas` plumbing the issue proposed
+    // would be dead code against every rung on the ladder.
+    //
+    // ⛔ No count on that claim, deliberately, and this was the fourth copy of
+    // the one issue #490 struck off `docs/LADDER.md`: nothing derives the
+    // figure — not the plainest reading, every `region` attachment under
+    // `skins` in the twelve `export/*.json` skeletons, and not counting by
+    // skin, by slot, by attachment name, by atlas path or by atlas region. The
+    // claim carries the argument without one, because it is universal and a
+    // single counterexample refutes it: after `bun run fetch-examples`, read
+    // the region attachments of those twelve files and check that each states
+    // both `width` and `height`.
     //
     // What the measure actually reported was the naming gap, a third time. It
     // was keyed by `skin/slot/attachment`, so it could never exceed the name
