@@ -1299,13 +1299,13 @@ area is a *quadratic in the interpolation fraction* — the fold is a root of it
 solved for rather than searched, with no sample spacing anybody would have to
 defend. What that arithmetic names is then posed and measured by the same code
 that measures a key, **alpha read at that same instant**, so the fade a correct
-rig relies on is not refused and the frames it does not cover are:
-
-```
-FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform head/head BETWEEN key 0
-      (t=0s) and key 1 (t=0.5s), at t=0.444089s — 88.8% of the way from one to the other:
-      8 of 32 triangle(s) reverse winding … NO KEY LANDS THERE … at alpha 0.1118
-```
+rig relies on is not refused and the frames it does not cover are. The sentence names
+the two keys the fold lies between rather than one key index, the time it solved for
+and how far along the segment that is, the reversed triangles with their signed areas,
+`NO KEY LANDS THERE` in those words, and the alpha read at that same instant — so what
+it refuses is legible as a frame rather than as a key. AUTHORING §4.11.3 reads it field
+by field and [`src/validate.ts`](../src/validate.ts) builds it; no spec this repository
+ships produces one, the turn probe being `selftest.ts`'s own.
 
 ⇒ The rule this section gave — *fade out over the run up to the angle you cannot
 take, so that every key past the ceiling is one that draws nothing* — is
