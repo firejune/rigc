@@ -2823,8 +2823,12 @@ clothes. The quantity that does move — how much art each drawn pixel now carri
 📘 **[FACE.md](FACE.md) §9.2** is this block on real art, as three builds of
 `gallery/portrait`: the good one, one with a band inverted, and one folded. The
 inverted build is the case worth reading — `A39` passes it (correctly: nothing
-reverses), and the block is what says `x1.362834` where the model's own table
-says `x1.319121`, with no reference render anywhere.
+reverses), and the block is what says `x1.362834` on the band the model's own key
+reports as `x0.637174`, with no reference render anywhere. ⭐ The comparison is
+per **triangle** and that is what makes it a reading: the block names one beside
+every ratio, so the two blocks can be lined up band against band instead of worst
+against worst — which on this build would have paired the inverted band with an
+untouched one and called the difference mild.
 
 📘 **[`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod)'s
 README is a second reading of the same block** (repository material, hence the

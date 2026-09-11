@@ -41,15 +41,18 @@ hold its results.
   below — a wider span at the same 12°, because a face is taller than it is deep.
   Read it after this page, not instead of it
 
-🚨 **Nothing in this toolchain measures what a `deform` key does, and that is the
-one gap you have to author around.** The setup geometry is measured and printed —
-coverage, overshoot, hole. The *deformed* geometry is not. A key that turns a
-mesh inside out gates green — **26 PASS on `--profile spine-html`, the same as
-the good build, and the same coverage line reporting the setup pose at
-100.00%.** §9.2 demonstrates that with three builds and §9.3 gives you the
-differential audit that works today;
-[issue #296](https://github.com/firejune/rigc/issues/296) is the instrument that
-would close it. Reference it, do not wait for it.
+🚨 **A `deform` key's winding is gated; how far it moved the geometry is not, and
+that half is the one you have to author around.** Since 2026-09-03
+`A39_DEFORM_KEEPS_TRIANGLE_WINDING` refuses a key that turns the mesh inside out —
+by name, by key and by triangle — and the build writes nothing. What no assertion
+has an opinion about is **magnitude**: a band that stretches where the projection
+says it should compress keeps every triangle's winding, so it gates green, beside
+the same `MESH` coverage line as the good build, because coverage reports the
+*setup* pose. §9.2 is that pair as three builds of one rig — the good one, one
+wrong and green, one refused. For the half still ungated, `explain`'s `DEFORM`
+block prints each key's area and stretch ratios per triangle with no reference
+render (§9.2, AUTHORING §4.11.2), and §9.3 is the differential audit, the three
+things it cannot do, and the procedure that survives them.
 
 📐 **Where the numbers on this page come from.** Every figure marked **derived**
 is re-computed from the closed form in §1 and reproduces to the digits printed.
@@ -1104,7 +1107,7 @@ problem — two eyes whose upper lash is heaviest at the **inner** corner read a
 angry whatever the brow above them does. Worth knowing before spending a pass on
 the wrong part.
 
-### 9.2 🚨 What nothing measures — three builds, all green
+### 9.2 🚨 The half nothing measures — three builds, one of them refused
 
 **The setup geometry is measured; the deformed geometry was not, and one half of
 it still is not.** Here is that
@@ -1140,14 +1143,21 @@ beside the originals and touch nothing in the repository:
 #     the head reads as turning the other way at its own edge. This one has to
 #     REPLACE the transform with a table: an inverted band is not the closed
 #     form at any angle, and §1.1 refuses a `transform` beside a `vertices` run.
+#     Each vertex takes the shift for THE COLUMN IT IS IN, looked up in the rig:
+#     a `vertices` run is positional, so a script that assumes the list's order
+#     rather than reading it breaks in silence the day the list is renumbered.
 bun -e '
+const r = await Bun.file("gallery/portrait/rig.json").json();
 const m = await Bun.file("gallery/portrait/motion.json").json();
+const v = r.skins.default.head.head.vertices;
 const d = m.animations.turn.deform.find(x => x.slot === "head");
-const row = [-22.414, 0, -7.175, 0, -35.345, 0, -27.658, 0, -14.255, 0];
+const shift = {"-162": -22.414, "-120": -7.175, "0": -35.345, "120": -27.658, "162": -14.255};
+const run = [];
+for (let i = 0; i < v.length / 2; i++) run.push(shift[v[i * 2]], 0);
 for (const k of d.keys) if (k.transform) {
   delete k.transform;
   k.fromVertex = 0;
-  k.vertices = [...row, ...row, ...row, ...row, ...row];
+  k.vertices = run;
 }
 await Bun.write("/tmp/swapped.motion.json", JSON.stringify(m, null, 2));
 '
@@ -1175,11 +1185,29 @@ is a doc command silently passing rather than silently failing, which is the
 worse of the two: build (b) reported `A39 PASS` and the table below said `FAIL`.
 Both are re-run above.
 
+⚠️ **And script (a) broke a second time, the same way, on 2026-09-04.** It wrote
+one row of five shifts and repeated it five times, which was the mesh's own
+column order while the vertex list was row-major.
+[#375](https://github.com/firejune/rigc/issues/375) renumbered both gallery
+grids along their outline walk — perimeter first, then the interior, the order
+Spine's `hull` needs — and the row went on landing at the same *positions* in a
+list that no longer meant columns. The build stayed green and stayed wrong, so
+nothing on the page moved; what it stopped being was **an inverted band**, which
+is the one thing the table below reads it as. The figures in that table were
+right the whole time and the command under them had stopped producing
+them — a stale figure shows up at one site, and a broken command shows up at
+every figure it feeds, which is how the two are told apart: this one also
+contradicted §9.3's `check` row, `0.33 / 0.61` against a table saying
+`0.20 / 0.38`. ⭐ **The repair is the doctrine's own**: the script resolves each
+shift through the vertex's coordinate instead of its index, so the next
+renumbering cannot move it. A `vertices` run is positional by format — that is
+`fromVertex`'s whole job — and a *generator* of one has no reason to be.
+
 **What comes back from both:**
 
 | | good | (a) one band inverted | (b) mesh folded |
 | --- | --- | --- | --- |
-| `--profile spine-html`, **before `A39`** | 26 PASS / 13 SKIP | **26 PASS / 13 SKIP** | **26 PASS / 13 SKIP** |
+| `--profile spine-html`, **before `A39`** | green | **green, and the same counts** | **green, and the same counts** |
 | `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | PASS | **PASS** | **PASS** |
 | the `MESH` coverage line | 100.00%, 95.90px past | **byte-identical** | **byte-identical** |
 | 🆕 `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | PASS | PASS | **FAIL, both keys, 8 of 32 triangles** |
@@ -1196,10 +1224,39 @@ it mean anything.
 
 ⭐ **The two `DEFORM` rows are the ones that separate (a) from the good build**,
 and nothing else in the toolchain does that without a reference render. `A39` is
-right to pass (a) — no triangle reverses — and the block prints **x1.362834**
-where the model's own table says x1.319121, and **x0.765250** where it says
-x0.637174. That is this section's own prose, *"stretches 1.363 where it should
-compress to 0.637"*, as a figure the tool produces.
+right to pass (a) — no triangle reverses — so the whole of the difference is a
+pair of ratios, and the way to read them is to ask the tool rather than to copy
+them down:
+
+```bash
+bun cli.ts explain --rig gallery/portrait/rig.json \
+                   --motion /tmp/swapped.motion.json --out /tmp/explain-swapped
+```
+
+```
+  DEFORM  turn  default/head/head  key 1  t=0.620000  authored table
+          frame      played on a track
+          moved      25 of 25 vertices, worst 35.3450px at v10
+          area       min x0.765250 tri 19   max x1.362834 tri 1   (32 triangles, 0 with no area at the cleared pose, band 0.146694px²)
+          stretch    max x1.362834 tri 1   min x0.765250 tri 26
+          winding    32 of 32 kept, 0 collapsed
+```
+
+🚨 **Read it band by band, because the extremes have swapped ends and comparing
+worst to worst hides that.** The block names the triangle beside every ratio, and
+§4.1's table says what each band should be. `tri 1` spans **−162 → −120**, the
+band §4.1 puts at **0.637** and the good build's own block reports as
+`x0.637174 tri 17` — the same band, and here it comes back at **x1.362834**. That
+is this section's prose, *"stretches 1.363 where it should compress to 0.637"*, as
+a figure the tool produces, and it is the far edge turning the wrong way. `tri 19`
+spans **−120 → 0**, tabled at 0.892 and measured at **x0.765250**: the swapped
+column is the boundary between those two bands, so the compression the far band
+gave up lands next door. ⚠️ Read as min-against-min and max-against-max instead,
+the very same four figures say 1.319 → 1.363 and 0.637 → 0.765 — two comparisons
+across *different* bands, both of them mild, neither of them what happened. Only
+the two bands the swapped columns bound move at all: the 0 → 120 and 120 → 162
+bands still read **1.064** and **1.319**, exactly as §4.1 tables them. `authored table` on the key line is the other half of the diagnosis:
+the model is gone, so nothing is left to check the ratios against but the ratios.
 
 `rigc explain` is the instrument that prints every other timeline's actual values,
 and on a deform it used to print the shape of the run rather than the run: the
@@ -1370,9 +1427,9 @@ to call an audit:**
 
 📌 **`explain`'s `DEFORM` block (§9.2, AUTHORING §4.11.2) takes half of limits 1
 and 2 away, and none of limit 3.** It is reference-free, so it says something
-about a first authoring; and it is *per key*, so the band inversion above reads
-as `x1.362834` beside a model stating x1.319121 rather than as 0.20 of 255 in an
-aggregate. What it still cannot say is whether **12° was the angle the shot
+about a first authoring; and it is *per key and per triangle*, so the band
+inversion above reads as `x1.362834` on `tri 1` where the same band is `x0.637174`
+in the model, rather than as 0.20 of 255 in an aggregate. What it still cannot say is whether **12° was the angle the shot
 wanted** — that needs the picture, which is why the procedure below survives the
 block as it survived `A39`.
 
