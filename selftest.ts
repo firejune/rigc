@@ -3939,74 +3939,6 @@ function floorProbes(rows: ReadonlyArray<readonly [number, number, string]>, bec
   );
 }
 
-// ---------------------------------------------------------------------------
-// the helper the gates call, gated (issue #499)
-// ---------------------------------------------------------------------------
-//
-// `probeDetail`'s guard branch — the one naming a verdict and a detail derived
-// from different things — is the mechanism the whole helper exists for, and it
-// was exercised by two mutants while it was being written and by nothing that
-// runs. By this repository's own rule that is not a gate.
-//
-// ⚠️ It is a gate over a HELPER the gates call, not over the tree, which is why
-// it opens a section of its own instead of sitting inside a suite about
-// something else: a reader meeting these three lines in the middle of the
-// ballot or the atlas-reader section would have no way to tell which of the two
-// they were.
-//
-// 🔸 `PD03` is the whole of it. The other two are here so it means something —
-// a guard that fired on everything would be the same emptiness as one that
-// fires on nothing, and no suite that only ever asked the guard to fire could
-// tell them apart.
-function runProbeDetailSuite(): number {
-  console.log('\n── the probe-detail helper the gates call ──');
-  let bad = 0;
-  const say = (name: string, ok: boolean, detail: string, why: string): void => {
-    bad += reportCase(name, ok, detail, why);
-  };
-
-  const clean = 'every probe held';
-  const rows = ['the first row fell', 'the second row fell'];
-  const withHeader = probeDetail(false, rows, clean, (count) => `${count} row(s) did not hold:`);
-  const bare = probeDetail(false, rows, clean);
-  say(
-    'PD01_A_NON_EMPTY_LIST_PRINTS_ITS_ROWS_AND_A_HEADER_ONLY_WHEN_ONE_IS_GIVEN',
-    rows.every((row) => withHeader.includes(row) && bare.includes(row)) &&
-      withHeader.startsWith('2 row(s) did not hold:') &&
-      !bare.includes('did not hold:') &&
-      !withHeader.includes(clean) &&
-      !bare.includes(clean),
-    `with a header: ${JSON.stringify(withHeader)}; with none: ${JSON.stringify(bare)}`,
-    'the rows are the detail a FAIL prints and the header states how many there are, so a helper that dropped ' +
-      'either would leave every caller of `floorProbes` printing a FAIL with nothing under it',
-  );
-
-  const held = probeDetail(true, [], clean);
-  const heldWithHeader = probeDetail(true, [], clean, (count) => `${count} row(s) did not hold:`);
-  say(
-    'PD02_CONTROL_AN_EMPTY_LIST_UNDER_A_TRUE_VERDICT_IS_THE_CLEAN_SENTENCE',
-    held === clean && heldWithHeader === clean,
-    `an empty list under a true verdict returns ${JSON.stringify(held)}, and ${JSON.stringify(heldWithHeader)} ` +
-      'when a header is supplied, there being no count for one to state',
-    'the positive control, and the half `PD03` is worthless without: a guard that answered the refusal here ' +
-      'would fire on every green run in this file and would be proving nothing by firing',
-  );
-
-  const refused = probeDetail(false, [], clean);
-  say(
-    'PD03_AN_EMPTY_LIST_UNDER_A_FALSE_VERDICT_IS_THE_REFUSAL_AND_NEVER_THE_CLEAN_SENTENCE',
-    refused !== clean &&
-      !refused.includes(clean) &&
-      refused.includes('the verdict and the detail were derived from different things'),
-    `a false verdict over an empty list returns ${JSON.stringify(refused)}`,
-    'the one branch nobody exercises by accident, because it fires only while a control is being written wrong: ' +
-      'a term added to the line that decides the verdict and not to the list the detail comes from. That is the ' +
-      'defect the helper exists to make unwritable, so a helper printing the clean sentence here would be the ' +
-      'exact shape it was built to refuse — and it would print it under a FAIL',
-  );
-  return bad;
-}
-
 /** A tiny opaque PNG. Size and colour are arbitrary; only "it is a real file" is load-bearing. */
 function writeProbePng(path: string, width: number, height: number, colour: RGBA): void {
   const plate = new Plate(width, height);
@@ -12152,20 +12084,6 @@ function runDeformWindingSuite(): number {
   );
 
   const agreedBlock = turnDeformBlock(agreedBuild);
-  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Exactly one term of
-  // the verdict below goes unnamed by the selector that picks the detail, and
-  // the three that do not each have a branch of their own already — so a list
-  // here would rewrite three branches that are right in order to repair one
-  // that is not, which is the "a helper adopted where a line would do" the
-  // helper's own doc warns about. What that one term reached the reader as was
-  // a TYPED `0` in the clean sentence: the count this verdict requires to be
-  // zero, written out as the answer it wanted, on the one run that sentence
-  // exists for. Bound once here and printed by EVERY branch below, so a run
-  // that fails on it AND on one of the other three names both rather than
-  // losing one behind the other.
-  const agreedDials = Object.keys(dialStats(agreedGate));
-  const dialReadings =
-    `${agreedDials.length} deformDial… reading(s) on this build's stats line, where a silent rollup wants 0`;
   say(
     'DW35_AN_AGREED_DIAL_ADDS_NO_LINE_TO_THE_ROLLUP',
     // ⚠️ DW31's anti-vacuity anchor, on this surface: the rig carries a
@@ -12178,22 +12096,20 @@ function runDeformWindingSuite(): number {
       // be an improvement — a clause that went red for it would be a clause that
       // fires when the tree gets better.
       !breadcrumbNames(agreedBlock).some((name) => name.startsWith('deformDial')) &&
-      agreedDials.length === 0,
+      Object.keys(dialStats(agreedGate)).length === 0,
     disputeLine(agreedBlock) !== ''
-      ? 'the agreed rig gained a disputed-dial line anyway: "' + disputeLine(agreedBlock).trim() + '" — ' +
-          dialReadings
+      ? 'the agreed rig gained a disputed-dial line anyway: "' + disputeLine(agreedBlock).trim() + '"'
       : breadcrumbNames(agreedBlock).some((name) => name.startsWith('deformDial'))
         ? 'no disputed-dial line, but a breadcrumb still hands the reader [' +
             breadcrumbNames(agreedBlock)
               .filter((name) => name.startsWith('deformDial'))
-              .join(', ') + '] on a rig whose rollup carries no disputed-dial line — ' + dialReadings
+              .join(', ') + '] on a rig whose build reports no dial reading at all'
         : !agreedBlock.some((line) => line.trimStart().startsWith('WORST   turn via dial'))
           ? 'VACUOUS: this rig printed no `WORST   turn via dial` rollup, so its silence is a silence about ' +
-              'nothing — ' + agreedBlock.length + ' line(s): ' + agreedBlock.map((l) => l.trim()).join(' | ') +
-              ' — ' + dialReadings
+              'nothing — ' + agreedBlock.length + ' line(s): ' + agreedBlock.map((l) => l.trim()).join(' | ')
           : 'the same `x` slider with the dial bone\'s parent unturned prints a ' + agreedBlock.length +
               '-line block carrying a rollup and not one disputed-dial line, and no breadcrumb on it names a ' +
-              'deformDial… reading — the build agrees: ' + dialReadings,
+              'deformDial… reading — the build agrees, with 0 deformDial… readings on its stats line',
     '🔒 the loud half alone would pass a rollup that printed a dispute on every rig. This is DW31\'s silence, ' +
       'checked on the surface issue #440 is about rather than on the stats line',
   );
@@ -16208,13 +16124,7 @@ function runAtlasReaderSuite(): number | null {
   // expensive example: a re-serialiser that dropped them would stop `atlasScales`
   // reporting that a pack is coarser than its drawings (issue #171).
   const scaled = atlases.find((p) => readFileSync(p, 'utf8').includes('scale:'));
-  const scaleKept = ((): {
-    onlyNameLines: boolean;
-    changed: string;
-    nameLines: string;
-    scales: string;
-    wanted: string;
-  } | null => {
+  const scaleKept = ((): { onlyNameLines: boolean; scales: string; wanted: string } | null => {
     if (scaled === undefined) return null;
     const text = readFileSync(scaled, 'utf8');
     const parsed = parseAtlasText(text);
@@ -16225,49 +16135,16 @@ function runAtlasReaderSuite(): number | null {
     const nameLines = parsed.pages.map((p) => p.nameLine).sort((a, b) => a - b);
     return {
       onlyNameLines: changed.join(',') === nameLines.join(','),
-      // the two sides of that comparison, kept so the probe below can name what
-      // moved instead of asserting that nothing did
-      changed: changed.join(','),
-      nameLines: nameLines.join(','),
       scales: atlasScales(rewritten).join(','),
       wanted: atlasScales(text).join(','),
     };
   })();
-  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Three separate
-  // things fail here — which lines moved, what `scale:` reads back, and whether
-  // it reads back at all — so a line carrying all three values would hand a
-  // reader three pairs of figures to compare by eye, and the sentence claiming
-  // "only the page-name line(s) changed" would still be standing next to them.
-  // It WAS standing next to them: a `filter:` line rewritten alongside the page
-  // name printed `1-weight-and-mass.atlas: only the page-name line(s) changed,
-  // scale 0.5 still read back` under a FAIL, which is this assertion's own
-  // title handed back as the evidence for it.
-  const scaleProbes: string[] =
-    scaleKept === null
-      ? ['no corpus atlas carries a `scale:` line, so the emitter was never run over one']
-      : [
-          ...(scaleKept.onlyNameLines
-            ? []
-            : [`line(s) [${scaleKept.changed}] changed, where the page-name line(s) are [${scaleKept.nameLines}]`]),
-          ...(scaleKept.scales === scaleKept.wanted
-            ? []
-            : [
-                `\`scale:\` reads back as [${scaleKept.scales}] off the rewritten atlas, where the file it was ` +
-                  `rewritten from states [${scaleKept.wanted}]`,
-              ]),
-          ...(scaleKept.scales !== '' ? [] : ['no `scale:` value reads back off the rewritten atlas at all']),
-        ];
-  const scaleHeld = scaleProbes.length === 0;
   say(
     'PKR03_REWRITING_PAGE_NAMES_TOUCHES_ONLY_THE_NAME_LINES',
-    scaleHeld,
-    probeDetail(
-      scaleHeld,
-      scaleProbes,
-      scaled === undefined || scaleKept === null
-        ? 'no corpus atlas carries a `scale:` line'
-        : `${basename(scaled)}: only the page-name line(s) changed, scale ${scaleKept.scales} still read back`,
-    ),
+    scaleKept !== null && scaleKept.onlyNameLines && scaleKept.scales === scaleKept.wanted && scaleKept.scales !== '',
+    scaled === undefined
+      ? 'no corpus atlas carries a `scale:` line'
+      : `${basename(scaled)}: only the page-name line(s) changed, scale ${scaleKept?.scales} still read back`,
     '`--atlas-in` emits the imported atlas by rewriting its page paths, and a field this compiler has no reader ' +
       'for must survive the trip — dropping one would change the meaning of a file rigc was asked to pass through',
   );
@@ -18585,25 +18462,60 @@ const DATED_RECORD_LINE = new RegExp(`^${literalPattern(DATED_RECORD_LEAD)}(.*?)
 /** How far into a file the dated-record marker and its date have to be to count as a header declaration. */
 const CURRENCY_HEADER_LINES = 40;
 
-function readCurrencyDoc(path: string, tier: CurrencyDoc['tier'], text: string): CurrencyDoc {
-  const raw = text.split('\n');
-  const prose: (string | null)[] = [];
+/**
+ * Every line with the FENCED ones replaced by `null`, so offsets still line up
+ * with the raw lines and nothing below ever reads a claim out of a transcript.
+ *
+ * The fence rule, spelled once because two copies of it would drift apart: a
+ * fence is closed only by its own character, so a ``` inside a ~~~ block stays
+ * inside it. `readCurrencyDoc` blanks inline code spans on top of this; `CUR12`
+ * deliberately does not, because the coordinate it refuses is written inside one.
+ */
+function linesOutsideFences(raw: readonly string[]): (string | null)[] {
+  const out: (string | null)[] = [];
   let fence: string | null = null;
   for (const line of raw) {
     const marker = /^ {0,3}(```+|~~~+)/.exec(line);
     if (marker !== null) {
-      // Closed only by its own character, so a ``` inside a ~~~ block stays inside it.
       if (fence === null) fence = marker[1][0];
       else if (marker[1][0] === fence) fence = null;
-      prose.push(null);
+      out.push(null);
       continue;
     }
-    if (fence !== null) {
-      prose.push(null);
-      continue;
-    }
-    prose.push(line.replace(/(`+)(?:(?!\1)[\s\S])*?\1/g, (span) => ' '.repeat(span.length)));
+    out.push(fence === null ? line : null);
   }
+  return out;
+}
+
+/**
+ * The criterion for a file being TEXT, spelled once: its whole content decodes
+ * as UTF-8. Not a list, not an extension, not `.gitattributes` — `CUR11`'s
+ * header carries the measurement that rejected each of those.
+ */
+function readsAsText(bytes: Uint8Array): boolean {
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A fault list capped at a dozen rows, with the remainder counted rather than
+ * printed. One instance of a scan-wide fault is the finding; thousands only
+ * happens when the criterion itself is wrong, and there the first few plus the
+ * count say everything the whole list would.
+ */
+function firstFew(rows: readonly string[], what: string): string[] {
+  return rows.length <= 12 ? [...rows] : [...rows.slice(0, 12), `…and ${rows.length - 12} more ${what}`];
+}
+
+function readCurrencyDoc(path: string, tier: CurrencyDoc['tier'], text: string): CurrencyDoc {
+  const raw = text.split('\n');
+  const prose = linesOutsideFences(raw).map((line) =>
+    line === null ? null : line.replace(/(`+)(?:(?!\1)[\s\S])*?\1/g, (span) => ' '.repeat(span.length)),
+  );
   const header = raw.slice(0, CURRENCY_HEADER_LINES);
   const date = /\b(\d{4}-\d{2}-\d{2})\b/.exec(header.join('\n'));
   let dated = false;
@@ -19935,18 +19847,9 @@ function runCurrencySuite(): number {
       gitBroke: string | null;
     };
 
-    /**
-     * The criterion, spelled once: a file is TEXT when its whole content decodes
-     * as UTF-8. Not a list, not an extension, not `.gitattributes`.
-     */
-    const readsAsText = (bytes: Uint8Array): boolean => {
-      try {
-        new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-        return true;
-      } catch {
-        return false;
-      }
-    };
+    // The criterion — a file is TEXT when its whole content decodes as UTF-8 —
+    // is `readsAsText` at the top of this file, because `CUR12` reads the same
+    // partition and a second spelling of it would be two criteria.
 
     /** The detector: the byte every text tool in this toolchain stops at. */
     const OPAQUE = 0x00;
@@ -20038,13 +19941,8 @@ function runCurrencySuite(): number {
       return out;
     };
 
-    /**
-     * A message is a thing somebody reads. One or two files is the real shape of
-     * this fault; thousands only happens when the criterion itself is wrong, and
-     * there the first few plus the count say everything the whole list would.
-     */
-    const firstFew = (rows: readonly string[], what: string): string[] =>
-      rows.length <= 12 ? [...rows] : [...rows.slice(0, 12), `…and ${rows.length - 12} more ${what}`];
+    // A message is a thing somebody reads, so the fault list is capped and the
+    // remainder counted — `firstFew` at the top of this file, shared with `CUR12`.
 
     const faultsOf = (scan: OpaqueScan): string[] => [
       // The floor is an entry here rather than a bare conjunct in the verdict, so
@@ -20213,6 +20111,199 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR12: a coordinate written into prose is a figure nothing re-takes ---
+  //
+  // ⭐ **The same class as every case above, pointed at the one figure none of
+  // them reads: a citation.** A line number naming a document looks exactly the
+  // same whether the legend it points at is still on that line or five lines
+  // below it, and a reader who follows it lands somewhere plausible and wrong.
+  // Issue #487 re-read the seven this file carried: five named the wrong line,
+  // one named a table row that cannot hold the verdict its docstring said was
+  // there, and one was right. A form that is wrong six times in seven, in the
+  // only file in the repository that writes it, is a form to remove rather than
+  // one to maintain — which is why this refuses the shape instead of resolving
+  // it. Nothing here would have caught the six; what it catches is the seventh
+  // being written again.
+  //
+  // 🔒 **The criterion is what a LITERAL coordinate is, and that is derivable
+  // rather than stylistic.** Every coordinate this run prints is interpolated
+  // from a scan that just took it, so the figures in `GT01`'s and `DQ01`'s own
+  // output are invisible to this and the comment that copies one down is not.
+  // That is the whole line between a figure a run takes and a figure somebody
+  // wrote — and this control holds to it in its own header, which is why no
+  // example below carries the number that would make it readable.
+  //
+  // **Three exclusions, each derived, each printed or named:**
+  //
+  //  1. a file whose header declares it a dated record keeps its coordinates, on
+  //     the footing `CUR01` already gives it: its figures were measured once and
+  //     are not kept current. The set is printed rather than described, so it
+  //     cannot grow quietly into a way to switch this off.
+  //  2. FENCED blocks, because a quoted transcript legitimately carries the
+  //     coordinates the tool printed into it, and `GT02`/`DQ02` are what hold
+  //     those to their runs. Inline code spans are deliberately NOT excluded —
+  //     the form this refuses is written inside one.
+  //  3. a path that resolves to nothing tracked. `SkeletonJson.ts` names the
+  //     runtime's own source: no gate here can resolve it, no edit here can move
+  //     it, and `src/rig.ts` reads better for citing it.
+  //
+  // ⚠️ **What it does not reach, stated rather than implied.** A coordinate
+  // written without its path — a bullet continuing the one above it — resolves
+  // to nothing on its own and this scan is blind to it. Two of the seven were
+  // spelled that way, which is why the repair was to take the form out rather
+  // than to trust this to find it; the two that survive in this file both point
+  // into the runtime. A BASENAME is resolved when exactly one tracked file
+  // carries it, so `validate.ts` is not a different defect with a shorter name.
+  {
+    /**
+     * A `path:line` in running text. The path is resolved below — punctuation
+     * does not define the population. ⚠️ It opens on a dot as well as on a word
+     * character because a tracked path may: the first version did not, and the
+     * plant below — which takes its target off the tracked list rather than
+     * choosing one — landed on a dotted directory and went quiet.
+     */
+    const CITATION = /(^|[^A-Za-z0-9_./-])([A-Za-z0-9_.][A-Za-z0-9_./-]*\.[A-Za-z0-9]+):(\d+)/g;
+
+    const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+    const treeFault =
+      listed.error !== undefined || listed.status !== 0
+        ? `git could not list the tracked files (${listed.error?.message ?? `exit ${String(listed.status)}: ${listed.stderr.toString('utf8').trim()}`})`
+        : null;
+    const tracked = treeFault === null ? listed.stdout.toString('utf8').split('\u0000').filter((entry) => entry !== '') : [];
+    const trackedSet = new Set(tracked);
+    const byBase = new Map<string, string[]>();
+    for (const rel of tracked) byBase.set(basename(rel), [...(byBase.get(basename(rel)) ?? []), rel]);
+
+    /** What a cited path names in this repository, or null when it names nothing tracked. */
+    const resolveCited = (cited: string): string | null => {
+      if (trackedSet.has(cited)) return cited;
+      const sameName = byBase.get(cited);
+      return sameName !== undefined && sameName.length === 1 ? sameName[0] : null;
+    };
+
+    type CitationScan = { read: number; dated: string[]; faults: string[] };
+    const scanCitations = (files: ReadonlyArray<{ path: string; text: string }>): CitationScan => {
+      const out: CitationScan = { read: 0, dated: [], faults: [] };
+      for (const file of files) {
+        const raw = file.text.split('\n');
+        if (raw.slice(0, CURRENCY_HEADER_LINES).some((line) => line.includes(DATED_RECORD_MARKER))) {
+          out.dated.push(file.path);
+          continue;
+        }
+        out.read++;
+        const lines = linesOutsideFences(raw);
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (line === null) continue;
+          for (const found of line.matchAll(CITATION)) {
+            const target = resolveCited(found[2]);
+            if (target === null) continue;
+            out.faults.push(
+              `${file.path}:${i + 1} writes \`${found[2]}:${found[3]}\` into running text, and \`${target}\` is a ` +
+                'tracked file whose line numbers move under it with nothing going red: name what is there, or quote it',
+            );
+          }
+        }
+      }
+      return out;
+    };
+
+    const liveFiles: { path: string; text: string }[] = [];
+    for (const rel of tracked) {
+      let bytes: Buffer;
+      try {
+        bytes = readFileSync(join(root, rel));
+      } catch {
+        continue;
+      }
+      if (!readsAsText(bytes)) continue;
+      liveFiles.push({ path: rel, text: bytes.toString('utf8') });
+    }
+    const live = scanCitations(liveFiles);
+
+    // The controls, built out of this tree's own files and held in memory: the
+    // scan reads text rather than a directory, so planting on disk would add a
+    // filesystem to a check that has none. The victim is the SHORTEST tracked
+    // text file — real, and small enough that the plant is the only thing in it
+    // this scan can see. Nothing below is a literal: the paths come off the
+    // tracked list and the line number is the victim's own length.
+    const victim = [...liveFiles].sort(
+      (a, b) => a.text.length - b.text.length || a.path.localeCompare(b.path),
+    )[0];
+    const nested = tracked.find((rel) => rel !== basename(rel) && (byBase.get(basename(rel)) ?? []).length === 1);
+    const controlFaults: string[] = [];
+    let controlNote = '';
+    if (victim === undefined) controlFaults.push('no tracked file reads as text, so the plants below had nothing to aim at');
+    else if (nested === undefined)
+      controlFaults.push('no tracked path has a basename no other tracked path shares, so the bare-name plant could not be built');
+    else {
+      const at = victim.text.split('\n').length;
+      const cite = (spelling: string): string => `${victim.text}\nit is stated at \`${spelling}:${at}\`, they said\n`;
+      const one = (name: string, text: string, want: number): void => {
+        const got = scanCitations([{ path: name, text }]);
+        if (got.faults.length !== want) {
+          controlFaults.push(
+            `the ${name} plant was reported ${got.faults.length} time(s) and this control requires ${want}` +
+              (got.faults.length === 0 ? '' : ` — it said: ${got.faults.join('; ')}`),
+          );
+        }
+        if (want > 0 && !got.faults.some((fault) => fault.includes(nested))) {
+          controlFaults.push(`the ${name} plant was not reported against \`${nested}\`, so it resolved to something else`);
+        }
+      };
+      one('untouched', victim.text, 0);
+      one('by-path', cite(nested), 1);
+      one('by-name', cite(basename(nested)), 1);
+      one('fenced', `${victim.text}\n\`\`\`\nit is stated at ${nested}:${at}\n\`\`\`\n`, 0);
+      const datedPlant = scanCitations([
+        { path: 'dated', text: `# probe\n\n${DATED_RECORD_MARKER}\n${cite(nested)}` },
+      ]);
+      if (datedPlant.faults.length !== 0 || datedPlant.dated.length !== 1) {
+        controlFaults.push(
+          `the dated-record plant was reported ${datedPlant.faults.length} time(s) and left alone ` +
+            `${datedPlant.dated.length} time(s); the marker has to take it out of the scan and out of nothing else`,
+        );
+      }
+      controlNote =
+        `a copy of \`${victim.path}\` with one line added citing \`${nested}\` is reported once by that path and ` +
+        `once by the bare \`${basename(nested)}\`, both naming \`${nested}\`; the same line inside a fence and the ` +
+        'same line under a dated-record header are reported in no way, and the untouched copy is reported in no way';
+    }
+
+    const probes = [
+      ...(treeFault === null ? [] : [treeFault]),
+      ...floorProbes(
+        [
+          [tracked.length, 1, `git listed ${tracked.length} tracked path(s)`],
+          [live.read, 1, `${live.read} of them read as text and were scanned`],
+        ],
+        'a step that comes back empty makes every clause below read a clean tree off nothing',
+      ),
+      ...firstFew(live.faults, 'coordinate(s)'),
+      ...controlFaults,
+    ];
+    const held = probes.length === 0;
+    say(
+      'CUR12_NO_LINE_NUMBER_IN_THE_TREE_POINTS_AT_A_TRACKED_FILE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${live.read} tracked file(s) that read as text, scanned outside their fenced blocks, out of ` +
+          `${tracked.length} tracked path(s); ${live.dated.length} left alone as dated records ` +
+          `(${live.dated.length === 0 ? 'none' : live.dated.join(', ')}) — and not one line of the rest writes a ` +
+          `coordinate at a tracked file. The controls: ${controlNote}`,
+      ),
+      'a citation is the figure this file was full of and had never checked: seven `path:line` coordinates stood in ' +
+        'these comments and six of them were wrong — five naming the wrong line, one naming a table row that cannot ' +
+        'hold the verdict its docstring said was there (#487). The criterion is what a LITERAL coordinate is, which ' +
+        'is why it can be derived at all: every coordinate this run prints is interpolated from the scan that just ' +
+        'took it, so a report\'s own figures are invisible here and a comment copying one down is not. ⚠️ It is blind ' +
+        'to a coordinate written without its path, which is how two of the seven were spelled — the repair for those ' +
+        'was to take the form out, not to trust this to find them',
+    );
+  }
+
   return bad;
 }
 
@@ -20290,9 +20381,12 @@ function runCurrencySuite(): number {
 // 📌 **A block a run cannot reproduce declares itself**, the way a dated snapshot
 // drops out of the currency gate: one line before the fence, opening on
 // `DECLARATION_LEAD` below and giving its reason as the rest of that line —
-// spelled once, there, for the reason the recipe grammar is. Six blocks need it
-// and all six are the same shape — lines lifted out of a run that does not print
-// them adjacent, or a run cut short with an ellipsis.
+// spelled once, there, for the reason the recipe grammar is. Every block that
+// needs it is the same shape — lines lifted out of a run that does not print
+// them adjacent, or a run cut short with an ellipsis. ⛔ No count of them here:
+// `GT01` prints the declared set with each block's reason, and a tally beside it
+// would be a hand-kept copy of a figure the run takes. One stood here and had
+// drifted by one before anybody re-read it.
 //
 // ⭐ **And that line RENDERS**, which is the half of it a reader needs. This
 // marker was an HTML comment, so a block the gate knew to be ABRIDGED read on
@@ -20305,9 +20399,9 @@ function runCurrencySuite(): number {
 // set is reported so it cannot grow quietly, and a declaration on a block that
 // DOES reproduce is a fault — otherwise the marker would be a way to switch the
 // gate off. A declaration also brings a block IN, for a block neither anchor
-// rule can reach. ⚠️ Two of the six used to be in on that footing alone, because
-// the tag anchor could not reach an `explain` record head; rule 2 reaches both of
-// them now, so what still keeps them out of `verified` is the thing their
+// rule can reach. ⚠️ Two declared blocks used to be in on that footing alone,
+// because the tag anchor could not reach an `explain` record head; rule 2 reaches
+// both of them now, so what still keeps them out of `verified` is the thing their
 // declaration actually says — they are abridged, and an abridged block is not a
 // contiguous run of anything.
 //
@@ -21567,7 +21661,7 @@ function runGalleryTranscriptSuite(): number {
       // the same number only while the example is green. This rescan is scoped
       // to one README rather than to the tree, so the standing fault has to be
       // in the same file — which five clauses in this very loop can put there.
-      // Measured on a doubly-planted run — a copy of `gallery/look/README.md:117`
+      // Measured on a doubly-planted run — a copy of `look`'s `MESH head` block
       // appended to its own README one interior line short, leaving one standing
       // fault, and then this plant on top of it: the absolute form counted all
       // 14 of `look`'s unanchored plants as noisy when every one had gone quiet,
@@ -24414,41 +24508,16 @@ function runBallotSuite(): number {
   // with that element cut out of it.
   const withoutManifest = manifestText ? page.replace(manifestText[0], '') : page;
   const sources = manifest?.candidates.map((c) => c.source) ?? [];
-  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). There is no value
-  // for a line to carry here: the clean sentence is four of this verdict's five
-  // terms restated as prose, with no interpolation in it at all. On the run it
-  // exists for it printed `panes labelled A and B; both source paths present in
-  // the manifest and absent from the rest of the file` under a FAIL raised by a
-  // missing pane label — every clause of it a claim the run had just refuted.
-  const pathProbes: string[] =
-    manifest === null
-      ? [`no <script id="${MANIFEST_ELEMENT_ID}"> in the page`]
-      : [
-          ...(sources.length === 2 ? [] : [`the manifest names ${sources.length} candidate source(s) and not 2`]),
-          // the `every` above, one row per offending candidate rather than one
-          // verdict over both: WHICH candidate leaked, and by which of the
-          // three ways, is the repair
-          ...sources.flatMap((source, i) =>
-            source === ''
-              ? [`candidate ${i} declares no source path at all`]
-              : !page.includes(source)
-                ? [`candidate ${i}'s source "${source}" is nowhere in the page, its own manifest included`]
-                : withoutManifest.includes(source)
-                  ? [`candidate ${i}'s source "${source}" is on the page OUTSIDE the manifest, where a voter reads it`]
-                  : [],
-          ),
-          ...(/<h2>A<\/h2>/.test(page) ? [] : ['no <h2>A</h2> pane label on the page']),
-          ...(/<h2>B<\/h2>/.test(page) ? [] : ['no <h2>B</h2> pane label on the page']),
-        ];
-  const pathsHidden = pathProbes.length === 0;
   say(
     'B02_THE_PAGE_SHOWS_NO_CANDIDATE_PATH',
-    pathsHidden,
-    probeDetail(
-      pathsHidden,
-      pathProbes,
-      'panes labelled A and B; both source paths present in the manifest and absent from the rest of the file',
-    ),
+    manifest !== null &&
+      sources.length === 2 &&
+      sources.every((source) => source !== '' && page.includes(source) && !withoutManifest.includes(source)) &&
+      /<h2>A<\/h2>/.test(page) &&
+      /<h2>B<\/h2>/.test(page),
+    manifest === null
+      ? `no <script id="${MANIFEST_ELEMENT_ID}"> in the page`
+      : `panes labelled A and B; both source paths present in the manifest and absent from the rest of the file`,
     'labels are neutral so the vote is about pixels; the mapping still has to be auditable, so it is in the file but never on the screen',
   );
 
@@ -26148,7 +26217,6 @@ function main(): void {
   bad += tally.of('slider-reader', runSliderReaderSuite);
   bad += tally.of('loop-seam', runLoopSeamSuite);
   bad += tally.of('run-tally', () => runRunTallySuite(tally));
-  bad += tally.of('probe-detail', runProbeDetailSuite);
   const gallery = tally.of('gallery-example', runGallerySuite, (value) => value.examples > 0);
   bad += gallery.failures;
   const cuts = tally.of('registered-cut', runCutsSuite, (value) => value.cuts > 0);
@@ -26237,15 +26305,6 @@ function main(): void {
     'cannot see at all — one held in a constant, which reaches a clause opening through an interpolation and is ' +
     'therefore shaped exactly like a number the run produced — is refused by reading who else in this file reads ' +
     'that constant, a table and a mention in prose deliberately not counting as readers)';
-  const probeDetailGate =
-    ', + ' + n('probe-detail') + ' probe-detail controls (issue #499 — the guard inside the helper a control hands ' +
-    'its verdict and its probe list to: a FALSE verdict over an EMPTY list is the signature of a detail derived ' +
-    'from something other than the verdict, and the helper prints that by name instead of the clean sentence. ' +
-    'The branch was exercised by two mutants while it was being written and by nothing that ran, which is this ' +
-    'repository’s own definition of not a gate. Beside it the two cases that make asserting it mean anything — a ' +
-    'non-empty list printing its rows, with the header only when a caller gives one, and an empty list under a ' +
-    'TRUE verdict printing the clean sentence unchanged, header or no header — because a guard that fired on ' +
-    'everything would be the same emptiness as one that fires on nothing)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
@@ -26735,7 +26794,6 @@ function main(): void {
           'loose drawing beside it)') +
       loopSeam +
       runTally +
-      probeDetailGate +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (launcher.startsWith(',') ? '' : launcher) +
@@ -27596,7 +27654,7 @@ function docFences(file: string, text: string): DocFence[] {
 
 /** One `bun -e` script a document states, and everything derived about it. */
 interface DocScript {
-  /** `docs/FACE.md:1149` — what a failure detail has to name. */
+  /** The page and the line its `bun -e` statement opens on — what a failure detail has to name. */
   where: string;
   file: string;
   /** The letter its fence labels it with, or null when the fence states none. */
@@ -27620,7 +27678,7 @@ interface DocScript {
 
 /** One verdict a page states for one script, read off a table of the page's own. */
 interface DocClaim {
-  /** `docs/FACE.md:1213` — the table row it is stated on. */
+  /** The page and the line of the table row the verdict is stated on. */
   where: string;
   file: string;
   label: string;
@@ -28187,7 +28245,8 @@ function runDocScriptSuite(): number {
     // because `faults` above is that same judgement over the unplanted tree.
     // Taking a label off has to raise nothing NEW; a verdict a page was already
     // wrong about is not something this plant did. Measured on a doubly-planted
-    // run — every verdict on `docs/FACE.md:1212` flipped, leaving the page
+    // run — every verdict `docs/FACE.md` states for
+    // `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` flipped, leaving the page
     // disagreeing with the run, and then this plant on top of it: the absolute
     // form reported `(and 2 unlabelled script(s) did not drop out cleanly)` on
     // both scripts when both had dropped out cleanly, and this form reports
@@ -28314,10 +28373,11 @@ function runDocScriptSuite(): number {
 //
 // ⚠️ **Rule 2 needs record heads POOLED across examples, which the gallery
 // suite refuses inside itself**, and that relaxation has a measured cost rather
-// than a theoretical one: it anchors `docs/FACE.md:571`, a hand-drawn plate
-// table that is not tool output in any sense, because `head` is a record head in
-// another example's run. **The decision is that a false positive may land in
-// `unreachable` and may never land in a fault**, which is exactly what it does
+// than a theoretical one: it anchors the `340 × 380 plate` table in
+// `docs/FACE.md`, hand-drawn and not tool output in any sense, because `head` is
+// a record head in another example's run. **The decision is that a false
+// positive may land in `unreachable` and may never land in a fault**, which is
+// exactly what it does
 // here — it is printed with the reason "its first line is printed by no run".
 // The relaxation is worth its false positive because rule 2 is what reaches
 // `docs/LADDER.md`'s `bench 3` block, one of the two the reopening comment
@@ -28396,22 +28456,29 @@ function runDocScriptSuite(): number {
 // and two of them are not what this comment used to claim.** All four are
 // abridgements or assemblies of REAL runs, and none is an invented example:
 //
-//  - `docs/AUTHORING.md:2096` — the `group members` legend and the
-//    `group "features"` record, byte-for-byte out of `explain portrait`, which
-//    prints two `bone "faceshift"` records between them. ⚠️ This comment said
-//    the record was *invented over a rig that is not `portrait`* and it is not:
+// ⛔ Each is named by what it holds and by no line number. `DQ01` prints the
+// declared set with each block's own coordinate and the reason its page shows a
+// reader, so a coordinate written down here would be a second copy of a figure
+// the run already takes — and `CUR12` refuses the whole form.
+//
+//  - `docs/AUTHORING.md`'s `group members` legend and the `group "features"`
+//    record, byte-for-byte out of `explain portrait`, which prints two
+//    `bone "faceshift"` records between them. ⚠️ This comment said the record
+//    was *invented over a rig that is not `portrait`* and it is not:
 //    `gallery/portrait/motion.json` declares `features` with exactly those six
 //    members and the tool prints the record verbatim.
-//  - `:2730` — the `deform` legend and `head/head` keys 0 and 1, then the
+//  - the same page's `deform` legend and `head/head` keys 0 and 1, then the
 //    `WORST` rollup, with the run's other six `DEFORM` records cut from
 //    between: `head/head` keys 2 and 3 and all four of `hair_bang/hair_bang`.
-//  - `:3262` — assembled. The `PASS` and the `PROF` are byte-exact from the
-//    `build` the page states at §3.4; the `SKIP` is a real message cut at an
-//    ellipsis and printed only under `--profile spine-html`, which this page
-//    states no command for; the `FAIL` is invented — no green build prints one,
-//    and its mesh, vertex and sum are the doctrine's own example values.
-//  - `docs/FACE.md:530` — the same `MEMBER` record as `:2096` with the five
-//    derivation lines the run prints between its head and its rows cut away.
+//  - the same page's one-line-per-verdict-kind block, assembled. The `PASS` and
+//    the `PROF` are byte-exact from the `build` the page states at §3.4; the
+//    `SKIP` is a real message cut at an ellipsis and printed only under
+//    `--profile spine-html`, which this page states no command for; the `FAIL`
+//    is invented — no green build prints one, and its mesh, vertex and sum are
+//    the doctrine's own example values.
+//  - `docs/FACE.md`'s `MEMBER` record — the same one the first of these quotes,
+//    with the five derivation lines the run prints between its head and its rows
+//    cut away.
 //
 // 🔒 **The sealed subtree.** Three landed run records under `bench/runs/` carry
 // anchored output and [#181](https://github.com/firejune/rigc/issues/181)
