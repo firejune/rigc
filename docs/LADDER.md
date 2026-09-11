@@ -118,7 +118,35 @@ catches it, and that is why both are printed.
 A run's `bench.json` is that run's own record and is never rewritten. When a
 measure changes, the figures recorded before it stop being comparable with the
 ones after, and the change is recorded here with the recomputed figure for every
-run on this page, so that nothing above is silently stale.
+run on this page.
+
+⚠️ **What that is keyed on is a recorded figure moving, and it is narrower than
+the page.** A measure can be added and move no recorded figure at all:
+[`src/diff.ts`](../src/diff.ts) means a section over its gated measures alone and
+gives `reported` no mean at all, so the three `(reported)` measures of
+[PR #269](https://github.com/firejune/rigc/pull/269) landed with nothing to
+recompute and the silence here was right. What went stale instead was a **quoted
+transcript**. `bench 3` began printing `(reported)` subsections and a summary
+line, the fences quoting it under *B1's proof* below did not follow, and no
+figure in this register moved with them
+([#475](https://github.com/firejune/rigc/issues/475), re-quoted in
+[#480](https://github.com/firejune/rigc/issues/480)). ⇒ A different failure with
+a mechanism of its own, so what belongs here is that mechanism's name rather than
+a wider promise: the selftest's **docs-transcript** gate
+([#468](https://github.com/firejune/rigc/issues/468)) re-runs the commands a page
+states and matches each quoted block against a **contiguous** window of the
+output, so a subsection inserted *inside* a quoted range breaks the match and is
+a `DQ02` fault naming the line it diverged at.
+
+🔒 **And stated as narrowly as it is true, because a gate quoted wider than it
+reaches is the promise this register just dropped.** It covers insertions into
+**what is quoted** and nothing else. A subsection appended *after* a quoted range
+leaves the block contiguous and still verified. Of the two fences under *B1's
+proof*, only the measure table is in the gate's verified set: the summary fence
+above it is anchored by neither of the gate's two rules, so nothing compares it,
+and that is the fence #480 had to catch by hand. And on a clone with no
+`examples/` the measure table is reported as a **HOLE** rather than checked,
+which is why CI fetches the corpus before it runs the selftest.
 
 **2026-08-23 — `attachments.region_size_present` → `attachments.region_size`**
 (issue #28). The old measure asked whether each region *stated* a width and
