@@ -25997,12 +25997,19 @@ function main(): void {
     'share a bucket — verified, declared, a HOLE, or unreachable WITH ITS REASON PRINTED — because the ruling ' +
     'this card was reopened to reverse was a classification that read "currently failing" as "not reachable". ' +
     'The coverage is the finding and it is published rather than implied: a fraction of what `docs/` fences is ' +
-    'reachable, and the floor states how big that fraction is, since this gate cannot fault a block for not ' +
-    'reproducing — four of them are illustrations and abridgements that open on a line a real run prints, and a ' +
-    'gate whose first act is demanding four document repairs buries the evidence it exists to surface. So a ' +
-    "block leaving the verified set goes red at that floor, which is the relationship GT03's anchor plant has " +
-    'to GT01, and every verified block is planted on three ways to make it stale plus two that would turn the ' +
-    'declaration marker into a bypass. The landed run records under `bench/runs/` are excluded by one rendered ' +
+    'reachable, and the floor states how big that fraction is. Issue #482 then closed the rule this gate had to ' +
+    'open without: the four blocks that opened on a line a real run prints and then diverged — an abridged ' +
+    '`MEMBER` record, an abridged `deform` rollup, four verdict lines assembled from two runs and an invented ' +
+    'FAIL, and the same `MEMBER` record with its derivation cut — now declare it in a line that RENDERS, so ' +
+    "GT02's rule crosses: anchored, COMPARED and diverging with nothing declared is a fault. The scope is the " +
+    'measurement, not the wording — a block whose own first line no run prints was never compared against ' +
+    'anything, and a rule reaching those would open by demanding a repair of every illustration in the guide, ' +
+    'so one value decides both the printed reason and the fault and a plant that sends a first line adrift has ' +
+    'to stay silent. ⚠️ What the counted floor is still the only witness of is that silence: a block whose ' +
+    'anchor drifts leaves the verified set with nothing laid against it. Every verified block is planted on ' +
+    'three ways to make it stale — each of which must also FAULT where it left the first line alone — plus two ' +
+    'that would turn the declaration marker into a bypass, and every declared block has its declaration taken ' +
+    'off and must go red by name. The landed run records under `bench/runs/` are excluded by one rendered ' +
     'marker line in that directory\'s own README, in the family the tree already has three of, and it is held ' +
     'two-sidedly: a marker with no reason, one below its header, and one over a subtree holding no anchored ' +
     'block each fault, while taking it off has to bring back exactly what it sealed and fault nothing)' +
@@ -27962,39 +27969,55 @@ function runDocScriptSuite(): number {
 // for each**, and a run that verifies nothing exits non-zero rather than
 // printing green.
 //
-// 🚨 **What this gate deliberately does NOT do, and the measurement behind it.**
-// `GT02` faults a gallery block that is anchored and does not reproduce. That
-// rule cannot cross into `docs/`, and the reason is measured rather than
-// argued: four blocks here are anchored, share a first line with a stated run,
-// and diverge — `docs/AUTHORING.md:2096` (a `MEMBER` record invented over a rig
-// that is not `portrait`), `:2730` (a `deform` rollup abridged over six keys),
-// `:3262` (four verdict lines assembled to show what a report looks like) and
-// `docs/FACE.md:530` (the same `MEMBER` block with its derivation lines cut).
-// None is stale; all four are illustrations or abridgements. Faulting them
-// would mean **the gate's first act is demanding four document repairs**, which
-// buries the evidence it exists to surface. ⇒ A block that stops reproducing
-// leaves the verified set, and **`DQ01`'s floor is what turns that red** — the
-// same relationship `GT03`'s anchor plant has to `GT01`.
+// 🚨 **What this gate does and what it deliberately still does not, and the
+// line between them is one measurement.** `GT02` faults a gallery block that is
+// anchored and does not reproduce. Since issue #482 that rule stands here too,
+// **scoped to the blocks a stated run actually COMPARED**: a block whose first
+// line a command of its own page prints, which then diverges and carries no
+// declaration, is a fault by name.
 //
-// ⭐ **The road out is short, and the tree already has the mechanism, so it is
-// written here rather than left to be re-derived.** It is `DECLARATION_LEAD`,
-// the marker the gallery already carries on six blocks. ⚠️ Two of the four are
-// literally the shape that comment describes — *"lines lifted out of a run that
-// does not print them adjacent, or a run cut short with an ellipsis"* — which is
-// `:2730` abridged and `:3262` assembled. The other two are not: `:2096` and
-// `docs/FACE.md:530` quote a `MEMBER` record over a six-member `features` group
-// that no rig in this repository has, so their reason would read *illustration*
-// rather than *abridged*. The MARKER still covers them exactly, because what it
-// says is `No run reproduces this:` and that is the plain truth of both.
+// ⛔ It reaches no further, and the boundary is not a matter of taste. The
+// anchored population splits in two, and `DQ01` prints which each block is:
 //
-// ⇒ Give the four a declaration and every anchored block in `docs/` is verified
-// or declared; non-reproduction becomes a fault the way it is in the gallery;
-// `GT02`'s rule crosses; and `DQ01`'s counted floor — with the swap it cannot
-// see, described beside it below — is replaced by a per-block rule that has no
-// such hole. ⛔
-// Not done here, and the reason is the same one that shaped everything above: it
-// edits four documents and changes what renders on four pages, and a gate whose
-// first act is editing what it gates buries its own evidence. It is a card.
+//  1. **compared** — a stated run prints the block's first line, so a window of
+//     that run was laid against it line for line and a divergence is a finding
+//     about the BLOCK. Four blocks were in this class with nothing said about
+//     them; all four now carry a declaration and their reasons are below.
+//  2. **never compared** — the first line is the page's own, not the tool's,
+//     and no window was ever laid against it. "It does not reproduce" is then a
+//     statement about the pool rather than about the block, and there are a
+//     dozen of them: mesh rosters over rigs this repository does not carry, a
+//     depth study's `grid` line, a faded-slot `DEFORM` record illustrating a
+//     spec nothing in the tree holds. A rule reaching those would open by
+//     demanding a dozen document repairs, which is the outcome issue #468 spent
+//     a whole card refusing.
+//
+// 🔒 One value in `scanDocsQuotes` decides both which sentence a block's report
+// gets and whether its divergence faults, so the scope cannot drift into class
+// 2 without the printed reason changing with it — and `DQ03` plants both sides:
+// a declaration pulled off a compared block must go red, a first line sent
+// adrift must stay quiet.
+//
+// ⭐ **What the four declarations say, because they were measured one at a time
+// and two of them are not what this comment used to claim.** All four are
+// abridgements or assemblies of REAL runs, and none is an invented example:
+//
+//  - `docs/AUTHORING.md:2096` — the `group members` legend and the
+//    `group "features"` record, byte-for-byte out of `explain portrait`, which
+//    prints two `bone "faceshift"` records between them. ⚠️ This comment said
+//    the record was *invented over a rig that is not `portrait`* and it is not:
+//    `gallery/portrait/motion.json` declares `features` with exactly those six
+//    members and the tool prints the record verbatim.
+//  - `:2730` — the `deform` legend and `head/head` keys 0 and 1, then the
+//    `WORST` rollup, with the run's other six `DEFORM` records cut from
+//    between: `head/head` keys 2 and 3 and all four of `hair_bang/hair_bang`.
+//  - `:3262` — assembled. The `PASS` and the `PROF` are byte-exact from the
+//    `build` the page states at §3.4; the `SKIP` is a real message cut at an
+//    ellipsis and printed only under `--profile spine-html`, which this page
+//    states no command for; the `FAIL` is invented — no green build prints one,
+//    and its mesh, vertex and sum are the doctrine's own example values.
+//  - `docs/FACE.md:530` — the same `MEMBER` record as `:2096` with the five
+//    derivation lines the run prints between its head and its rows cut away.
 //
 // 🔒 **The sealed subtree.** Three landed run records under `bench/runs/` carry
 // anchored output and [#181](https://github.com/firejune/rigc/issues/181)
@@ -28064,9 +28087,27 @@ interface DocsQuoteScan {
   byHead: number;
   byDeclared: number;
   verified: Array<{ where: string; command: string; lines: number; anchor: DocsQuoteBlock['anchor'] }>;
-  declared: Array<{ where: string; reason: string }>;
+  /**
+   * Declared unreproducible, and whether this run actually COMPARED it.
+   *
+   * ⭐ The flag is what makes the declaration-removal plant two-sided rather
+   * than a formality: a declaration on a compared block is load-bearing, and
+   * taking it off has to go red; a declaration on a block nothing here can
+   * reach carries no gate, and taking it off has to change nothing. The pair
+   * only means something if the two are told apart, and they are told apart by
+   * the same value that decides the fault.
+   */
+  declared: Array<{ where: string; reason: string; compared: boolean }>;
   holes: Array<{ where: string; why: string }>;
-  unreachable: Array<{ where: string; why: string }>;
+  /**
+   * Anchored, not verified, not declared — and `compared` says which of the two
+   * very different things that is. `false` is an illustration: its first line is
+   * its own, nothing was measured against it, and the fault rule may never reach
+   * it. `true` is a block a run DID print the first line of, which diverged and
+   * declared nothing — a fault, and it is listed here as well because the fault
+   * says the tree is wrong while this list says what the run measured.
+   */
+  unreachable: Array<{ where: string; why: string; compared: boolean }>;
   /** Blocks a sealed marker took out of the population, by the marker that took them. */
   excluded: Array<{ where: string; sealedBy: string }>;
   faults: string[];
@@ -28409,6 +28450,27 @@ function scanDocsQuotes(
 
       const best = bestTranscriptWindow(body, runs);
       const reproduces = best !== null && best.shared === body.length;
+      // 🔒 **The one value that decides both the printed reason and the fault**,
+      // because the fault rule below may reach exactly the blocks this run
+      // COMPARED and no others. A block whose first line no run prints was never
+      // compared — nothing was measured against it, so "it does not reproduce"
+      // is not a finding about the block, it is a statement about the pool — and
+      // faulting those would demand a repair of twelve illustrations on the
+      // gate's first act, which is the outcome issue #468 spent a whole card
+      // refusing. ⭐ Deriving the reason FROM this object rather than beside it
+      // is what stops the scope drifting: there is no second expression to
+      // disagree with, so a block the report calls "printed by no command" can
+      // never be one the fault list names.
+      const divergence =
+        !reproduces && runs.length > 0 && best !== null && best.shared > 0
+          ? {
+              command: best.command,
+              at: best.shared + 1,
+              of: body.length,
+              page: body[best.shared].trim().slice(0, 64),
+              tool: best.window[best.shared].trim().slice(0, 64),
+            }
+          : null;
       if (block.declared !== null) {
         if (block.declared.length < TRANSCRIPT_REASON_MIN) {
           scan.faults.push(
@@ -28422,7 +28484,7 @@ function scanDocsQuotes(
               'checking one it can',
           );
         } else {
-          scan.declared.push({ where: at, reason: block.declared });
+          scan.declared.push({ where: at, reason: block.declared, compared: divergence !== null });
         }
         continue;
       }
@@ -28443,35 +28505,45 @@ function scanDocsQuotes(
         continue;
       }
       const near = runs.length === 0 ? null : nearestPrintedLine(body[0].trimStart(), runs);
-      scan.unreachable.push({
-        where: at,
-        why:
-          runs.length === 0
+      const why =
+        divergence !== null
+          ? `line ${divergence.at} of ${divergence.of} reads "${divergence.page}" and ` +
+            `\`${divergence.command.slice(0, 44)}\` prints "${divergence.tool}"`
+          : runs.length === 0
             ? `no command \`${file}\` states can be run here, so nothing in this repository prints it`
-            : best === null || best.shared === 0
-              ? `its first line is printed by no command this page states` +
-                (near === null
-                  ? `: "${body[0].trim().slice(0, 96)}"`
-                  : (():
-                      string => {
-                      // 🔒 Where they FIRST differ, not the first 72 characters
-                      // of each. The nearest line usually shares a long prefix
-                      // — `MESH  head  authored 25 vertices …` against the same
-                      // line with one figure moved — so two truncations print
-                      // the same text and name nothing. The first `MESH` plant
-                      // below produced exactly that before this branch existed.
-                      const want = body[0].trim();
-                      let shared = 0;
-                      while (shared < want.length && shared < near.line.length && want[shared] === near.line[shared]) shared++;
-                      return (
-                        `; the closest \`${near.command.slice(0, 44)}\` prints agrees for ${shared} character(s), ` +
-                        `and then the page reads "${want.slice(shared, shared + 60)}" where the tool prints ` +
-                        `"${near.line.slice(shared, shared + 60)}"`
-                      );
-                    })())
-              : `line ${best.shared + 1} of ${body.length} reads "${body[best.shared].trim().slice(0, 64)}" and ` +
-                `\`${best.command.slice(0, 44)}\` prints "${best.window[best.shared].trim().slice(0, 64)}"`,
-      });
+            : `its first line is printed by no command this page states` +
+              (near === null
+                ? `: "${body[0].trim().slice(0, 96)}"`
+                : (():
+                    string => {
+                    // 🔒 Where they FIRST differ, not the first 72 characters
+                    // of each. The nearest line usually shares a long prefix
+                    // — `MESH  head  authored 25 vertices …` against the same
+                    // line with one figure moved — so two truncations print
+                    // the same text and name nothing. The first `MESH` plant
+                    // below produced exactly that before this branch existed.
+                    const want = body[0].trim();
+                    let shared = 0;
+                    while (shared < want.length && shared < near.line.length && want[shared] === near.line[shared]) shared++;
+                    return (
+                      `; the closest \`${near.command.slice(0, 44)}\` prints agrees for ${shared} character(s), ` +
+                      `and then the page reads "${want.slice(shared, shared + 60)}" where the tool prints ` +
+                      `"${near.line.slice(shared, shared + 60)}"`
+                    );
+                  })());
+      // 🔒 **`GT02`'s rule, and the whole of what scopes it is the line above.**
+      // Anchored, compared and diverging, with no declaration ⇒ a fault. The
+      // block still goes into `unreachable` beside it, because the fault says
+      // the tree is wrong and the coverage line says what this run measured, and
+      // those are two different reports of one fact rather than two facts.
+      if (divergence !== null) {
+        scan.faults.push(
+          `${at}  ${why} — and no \`${DECLARATION_LEAD}\` line stands above the fence. A block whose first ` +
+            'line a stated command DOES print was compared, so a divergence in it is either a stale quote to ' +
+            're-take from the run or an abridgement to declare, and it may not be neither',
+        );
+      }
+      scan.unreachable.push({ where: at, why, compared: divergence !== null });
     }
   }
   // 🔒 The seal's own floor, raised here rather than beside the call so a
@@ -28500,6 +28572,38 @@ function scanDocsQuotes(
 function docsQuotePlant(text: string, block: GalleryBlock, edited: string[]): string {
   const raw = text.split('\n');
   return [...raw.slice(0, block.line), ...edited, ...raw.slice(block.line + block.lines.length)].join('\n');
+}
+
+/** The first line of a block that carries anything — the one both anchor rules read. */
+function docsQuoteAnchorLine(lines: readonly string[]): string {
+  return lines.find((line) => line.trim() !== '') ?? '';
+}
+
+/**
+ * Keep the block's ANCHOR and make its first line one no run prints.
+ *
+ * ⛔ The opposite requirement to the declaration-removal plant, and the reason
+ * the fault rule can be said to be scoped rather than merely observed to be:
+ * this leaves the block in the population, in the same anchor class, and takes
+ * away the only thing that makes it comparable. Twelve blocks in `docs/` are in
+ * exactly that state today — illustrations whose first line is theirs and not
+ * the tool's — and if the rule reached them the gate's first act would be
+ * demanding twelve document repairs, which is the outcome issue #468 refused.
+ * So this plant has to leave the block UNREACHABLE and fault NOTHING.
+ *
+ * ⭐ Structural, no literal: the anchor is the first field, whatever it is, and
+ * everything after it becomes a sentence rigc has no printer for. Both rules
+ * read the first field only (`transcriptAnchorField`), and the head rule also
+ * reads the indent of the line below, which this does not touch.
+ */
+function docsQuoteFirstLineAdrift(lines: readonly string[]): string[] | null {
+  const first = lines.findIndex((line) => line.trim() !== '');
+  if (first < 0) return null;
+  const line = lines[first];
+  const keep = transcriptIndent(line) + transcriptAnchorField(line).length;
+  const next = [...lines];
+  next[first] = `${line.slice(0, keep)}  a line this tool has no printer for`;
+  return next;
 }
 
 function runDocsQuoteSuite(): { failures: number; holes: number } {
@@ -28630,31 +28734,34 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   // would flip, the sum would read 8, and this floor would carry two blocks of
   // slack on every corpus-less machine without anything going red.
   //
-  // 🚨 **And the sum has the failure a sum always has, so it is written down
-  // rather than left to be rediscovered.** Every step of the DERIVATION above is
-  // floored on its own — `byTag` and `byHead` never share a number — but the
-  // VERDICT is floored on `verified + hole`, and one number over two columns
-  // cannot see a swap. **If one block leaves the verified set in the same change
-  // that another enters it, the sum holds and the run is green.** That is this
-  // repository's own recorded shape (*a derived gate splits its floor per rule,
-  // because a sum hides a rule that went to zero*) reappearing one level in, at
-  // the verdict rather than at the derivation.
+  // 🚨 **The sum has the failure a sum always has, and issue #482 closed half of
+  // it — so what is written down here is the half that is left.** Every step of
+  // the DERIVATION above is floored on its own (`byTag` and `byHead` never share
+  // a number), but this VERDICT clause is floored on `verified + hole`, and one
+  // number over two columns cannot see a swap: **if one block leaves the
+  // verified set in the same change that another enters it, the sum holds and
+  // the run is green.**
   //
-  // ⚠️ What softens it and what does not. The departure is not invisible: `DQ03`
-  // requires every content plant to leave its block NAMED in `unreachable` with
-  // the line it diverged at, so a swap still PRINTS the block that went. It
-  // simply does not go red, and a printed line in a green run is read by nobody.
-  // Splitting the floor by anchor rule would narrow the window to a swap inside
-  // one rule — today's verified set is 4 by tag and 2 by head — but it narrows
-  // rather than closes, and nothing here has measured it against a real swap, so
-  // it is named and not built.
+  // ✅ **What the fault rule took away.** A block that stops reproducing while
+  // keeping its anchor is now a fault in `DQ02`, by name, with the line it
+  // diverged at — so the ordinary departure, a figure that moved under a quote
+  // nobody re-took, no longer needs this clause at all.
   //
-  // ⇒ **This is the price of the decision above, not an oversight.** A per-block
-  // rule needs non-reproduction to be a fault, a fault needs every anchored
-  // block to be verified or declared, and four of them are not. The one form
-  // that closes this without a hand-kept baseline is therefore the same road out
-  // the header names — and until it is taken, a counted floor is the honest
-  // instrument and this paragraph is what it costs.
+  // ⚠️ **What is left, and it is the sharper half.** A block whose OWN FIRST
+  // LINE drifts loses its anchor: nothing is laid against it, the fault rule
+  // correctly does not reach it, and it leaves the verified set silently — the
+  // failure `GT01`'s header names, *an anchor on a leaf goes silent exactly when
+  // it goes stale*. That departure shows up here, in this sum, or nowhere. And a
+  // sum can be held by a block arriving, so even here it is one coincidence from
+  // invisible.
+  //
+  // 🔸 Splitting the floor by anchor rule would narrow the window to a swap
+  // inside one rule — today's verified set is 4 by tag and 2 by head — but it
+  // narrows rather than closes, and nothing here has measured it against a real
+  // swap, so it is named and not built. ⛔ Nor does raising the fault rule to
+  // reach an unanchored block work: that is precisely the class-2 population the
+  // rule is scoped away from, and it would fault a dozen illustrations to catch
+  // a departure that has not yet happened.
   const derivation = [
     ...(treeFault === null ? [] : [treeFault]),
     ...(asked.fault === null ? [] : [asked.fault]),
@@ -28720,6 +28827,13 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
         `${scan.holes.length} are a HOLE and ${scan.unreachable.length} are unreachable:\n          ` +
         [
           ...scan.holes.map((entry) => `HOLE  ${entry.where} — ${entry.why}`),
+          // The declared set is printed with its reasons for the reason the
+          // marker's own rule exists: a declaration nobody reads is a bypass,
+          // and one this run could not reach is a marker holding no gate down.
+          ...scan.declared.map(
+            (entry) =>
+              `DECL  ${entry.where} — ${entry.reason} [${entry.compared ? 'compared against a run and diverges' : 'never compared here'}]`,
+          ),
           ...scan.unreachable.map((entry) => `      ${entry.where} — ${entry.why}`),
         ].join('\n          ') +
         `\n          ${scan.excluded.length} further block(s) are excluded as sealed records: ` +
@@ -28729,11 +28843,13 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
           : '\n          ⚠️ Those HOLEs are not passes — this run did not check them. `bun run fetch-examples` gets the corpus.'),
     'the coverage IS the finding. This gate reaches a fraction of what `docs/` fences, and a partial scan that ' +
       'publishes its own coverage is not what this family refuses to be — a silent one is, which is why every ' +
-      'unreachable block is printed with its reason rather than counted. It is also the only place a block ' +
-      'leaving the verified set goes red: `DQ02` cannot fault non-reproduction, because four anchored blocks ' +
-      'here are illustrations and abridgements that share a first line with a real run, and a gate whose first ' +
-      'act is demanding four document repairs buries the evidence it exists to surface. The sealed set is ' +
-      'reported for the same reason, and a marker excluding nothing is a fault rather than a no-op',
+      'unreachable block is printed with its reason rather than counted, and every declared one with the ' +
+      'reason its page shows a reader. ⚠️ What this floor is still the ONLY witness of is narrower than it was ' +
+      'before issue #482 and it is not nothing: a block that stops reproducing while KEEPING its anchor now ' +
+      'faults in `DQ02`, but one whose own first line drifts is compared against nothing, leaves the verified ' +
+      'set silently, and is seen here or nowhere — and seen here only if no other block enters in the same ' +
+      'change, because this clause is a sum. The sealed set is reported for the same reason, and a marker ' +
+      'excluding nothing is a fault rather than a no-op',
   );
 
   // --- DQ02: the blocks themselves ------------------------------------------
@@ -28745,12 +28861,20 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       : `${scan.verified.length} block(s) — ${scan.verified.reduce((n, entry) => n + entry.lines, 0)} line(s) — each ` +
         'a contiguous run of the output of a command its own page states: ' +
         `${scan.verified.map((entry) => `${entry.where} (${entry.lines}L, by ${entry.anchor}) <- \`${entry.command.slice(0, 60)}\``).join('; ')}` +
-        `; and ${scan.declared.length} declared block(s) that no such run prints, as declared`,
+        `; and ${scan.declared.length} declared block(s) that no such run prints, as declared, of which ` +
+        `${scan.declared.filter((entry) => entry.compared).length} were compared against a run and diverge — ` +
+        'which is the set this check would fault if their declaration went',
     'the positive half is load-bearing exactly as `GT02`\'s is: a check that only reported failures would pass a ' +
       'runner that had stopped running anything, so each block, its length and the command it came from are ' +
-      'named. The faults this CAN take are the two that would turn the declaration marker into a bypass — a ' +
+      'named. 🔒 Since issue #482 `GT02`\'s own rule stands here too, scoped to what was actually COMPARED: a ' +
+      'block whose first line a stated command does print, which then diverges and carries no declaration, is ' +
+      `a fault. The scope is the whole of the care — ${scan.unreachable.filter((entry) => !entry.compared).length} ` +
+      'blocks in these pages are anchored illustrations whose first line no run prints, they were never ' +
+      'compared against anything, and a rule that reached them would make this gate\'s first act a demand for ' +
+      'that many document repairs, which is what issue #468 spent a card refusing. The other faults are the ' +
+      'two that would turn the declaration marker into a bypass — a ' +
       'reproducing block declared away, and a declaration with no reason — plus a sealed marker that is ' +
-      'mis-placed or unreasoned. Non-reproduction is not among them, by measurement rather than by omission',
+      'mis-placed or unreasoned',
   );
 
   // --- DQ03: the scanner against the ways a quoted transcript goes stale ----
@@ -28760,10 +28884,30 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   // and name where it diverged; two have to FAULT; and the last has to fault
   // NOTHING, because a block that stops being anchored does not go red, it goes
   // quiet — which is the whole of what `DQ01`'s floor is for.
+  //
+  // 🔒 **Since issue #482 the fault rule needs its own pair, and the pair is the
+  // whole of what makes "class B only" a claim rather than a hope.**
+  //
+  //  - **Taking a declaration off a COMPARED block has to go red** — that is the
+  //    rule firing, and it is the one direction a declaration that quietly
+  //    stopped being needed would hide. Taking one off a block this run could
+  //    not reach has to change nothing, and the two are told apart by the flag
+  //    the scan already carries rather than by a list here.
+  //  - **A first line adrift has to stay quiet.** The block keeps its anchor and
+  //    its place in the population and loses only its comparability, which is
+  //    the state twelve `docs/` blocks are in for real. If the rule reached
+  //    them the gate would open by demanding twelve document repairs.
+  //  - And the three content plants get a clause they did not have: **a plant
+  //    that leaves the first line alone cannot have cost the block its anchor**,
+  //    so the scan compared it and the divergence has to be a fault. That test
+  //    reads the plant's own edit rather than the scanner's verdict, which is
+  //    what keeps it from being the check agreeing with itself.
   const misses: string[] = [];
   let planted = 0;
   let silenced = 0;
   let unplantable = 0;
+  let adrift = 0;
+  let pulled = 0;
   const rescan = (edited: Map<string, string>): DocsQuoteScan =>
     scanDocsQuotes(edited, vocabulary, heads, commandsBy, runsBy);
   const withText = (file: string, text: string): Map<string, string> => {
@@ -28792,6 +28936,41 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
           `${entry.where}: ${name} — ${stillVerified ? 'still verified' : 'left the verified set without being named as unreachable'}`,
         );
       }
+      // 🔒 Read off the PLANT rather than off the scan: an edit that did not
+      // touch the first line left both anchor rules exactly as they were, so
+      // this block was compared and the fault rule owes it a fault by name.
+      if (docsQuoteAnchorLine(edited) === docsQuoteAnchorLine(block.lines)) {
+        if (!after.faults.some((fault) => fault.startsWith(`${entry.where}  `))) {
+          misses.push(
+            `${entry.where}: ${name} — the first line was left alone, so the block kept its anchor and was ` +
+              'compared, and the divergence did not fault',
+          );
+        }
+      }
+    }
+    // The anchor is kept and the comparability is taken away: unreachable, and
+    // silent. This is the state the twelve illustrations are in.
+    const wandered = docsQuoteFirstLineAdrift(block.lines);
+    if (wandered === null) {
+      misses.push(`${entry.where}: the block had no line to send its first one adrift`);
+    } else {
+      planted++;
+      adrift++;
+      const after = rescan(withText(file, docsQuotePlant(text, block, wandered)));
+      const named = after.unreachable.find((candidate) => candidate.where === entry.where);
+      // ⚠️ Against the unplanted scan's faults, not against zero. The claim is
+      // about what THIS EDIT raises, and the two are the same number only on a
+      // clean tree: measured on a run where one declaration had been pulled by
+      // hand, an absolute clause reported all six of these plants broken when
+      // every one of them had behaved.
+      const raised = after.faults.filter((fault) => !scan.faults.includes(fault));
+      if (after.found !== scan.found || named === undefined || raised.length !== 0) {
+        misses.push(
+          `${entry.where}: its first line sent adrift — the population went ${scan.found} -> ${after.found}, ` +
+            `the block was ${named === undefined ? 'not named as unreachable' : 'named as unreachable'}, and ` +
+            `${raised.length} new fault(s) were raised where none may be${raised.length === 0 ? '' : `: ${raised[0].slice(0, 120)}`}`,
+        );
+      }
     }
     // The declaration is not a way to switch the gate off.
     for (const [name, marker] of [
@@ -28814,6 +28993,53 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     }
     const after = rescan(withText(file, docsQuotePlant(text, block, unanchored)));
     if (after.found !== scan.found - 1 || after.faults.length !== 0) silenced++;
+  }
+
+  // --- the declaration, taken off the blocks that carry one ------------------
+  //
+  // 🔒 The fault rule's own red-first, from the direction a real regression
+  // comes from: somebody re-takes a quote, the marker above it stops being
+  // true, and nothing in the tree notices. Two-sided on the flag the scan
+  // carries — a declaration over a COMPARED block is holding a fault down and
+  // has to go red when it goes; one over a block this run cannot reach is
+  // holding nothing and has to change nothing.
+  //
+  // ⚠️ Deleting a line moves the fence up one, so the block answers to a
+  // different name in the rescan. Computed rather than assumed: reading the old
+  // name back would find nothing and pass this by reporting a miss it could not
+  // explain.
+  for (const entry of scan.declared) {
+    const file = entry.where.slice(0, entry.where.lastIndexOf(':'));
+    const line = Number(entry.where.slice(entry.where.lastIndexOf(':') + 1));
+    const lines = (docs.get(file) ?? '').split('\n');
+    let marker = -1;
+    for (let k = line - 2; k >= 0 && k >= line - 2 - TRANSCRIPT_DECLARATION_LOOKBACK; k--) {
+      if (TRANSCRIPT_DECLARATION.test(lines[k])) {
+        marker = k;
+        break;
+      }
+    }
+    if (marker < 0) {
+      misses.push(`${entry.where}: the declaration this block is declared by could not be found again to take off`);
+      continue;
+    }
+    planted++;
+    pulled++;
+    const moved = `${file}:${line - 1}`;
+    const after = rescan(withText(file, [...lines.slice(0, marker), ...lines.slice(marker + 1)].join('\n')));
+    const faulted = after.faults.filter((fault) => fault.startsWith(`${moved}  `));
+    if (entry.compared && faulted.length === 0) {
+      misses.push(
+        `${entry.where}: its declaration taken off — the block was compared against a run and diverges, so it ` +
+          `must fault as ${moved}, and ${after.faults.length} fault(s) were raised naming none of it`,
+      );
+    }
+    if (!entry.compared && faulted.length > 0) {
+      misses.push(
+        `${entry.where}: its declaration taken off — nothing here compared this block, so taking the marker off ` +
+          `may change no verdict, and it faulted: ${faulted[0].slice(0, 120)}`,
+      );
+    }
   }
 
   // --- the working-copy bracket, shown firing somewhere it is safe to fire --
@@ -28919,20 +29145,36 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   //
   // Two plants per verified block are unconditional (a figure bumped and a
   // suffix appended — dropping an interior line needs three lines), two more
-  // are the declaration pair, three belong to each sealed marker, and three
-  // stand alone: the empty seal and the working copy's two sides.
-  const floor = scan.verified.length * 4 + sealed.prefixes.length * 3 + 3;
+  // are the declaration pair, one is the first line sent adrift, one belongs to
+  // each declared block, three belong to each sealed marker, and three stand
+  // alone: the empty seal and the working copy's two sides.
+  const floor = scan.verified.length * 5 + scan.declared.length + sealed.prefixes.length * 3 + 3;
   const probes = [
     ...misses,
     ...sealPlants,
     ...(silenced === 0 ? [] : [`${silenced} unanchored block(s) did not drop out of the scan cleanly`]),
     ...(unplantable === 0 ? [] : [`${unplantable} verified block(s) had no anchor letter to take off`]),
+    ...(adrift === scan.verified.length
+      ? []
+      : [
+          `${adrift} of ${scan.verified.length} verified block(s) had their first line sent adrift, so the plant ` +
+            'that has to keep the fault rule off the illustrations was not applied to all of them',
+        ]),
+    // 🔒 Not a floor on the number of declarations — that would go red the day
+    // somebody re-takes a quote and needs one fewer, which is the tree getting
+    // better. What has to hold is that each one that EXISTS was planted on.
+    ...(pulled === scan.declared.length
+      ? []
+      : [
+          `${pulled} of ${scan.declared.length} declared block(s) had their declaration taken off, so a marker ` +
+            'this run trusts was never shown to be holding anything',
+        ]),
     ...(planted >= floor
       ? []
       : [
-          `only ${planted} edit(s) were planted where ${floor} is what ${scan.verified.length} verified block(s) ` +
-            `and ${sealed.prefixes.length} sealed marker(s) owe, so a plant stopped being applied rather than ` +
-            'stopped being caught',
+          `only ${planted} edit(s) were planted where ${floor} is what ${scan.verified.length} verified ` +
+            `block(s), ${scan.declared.length} declared block(s) and ${sealed.prefixes.length} sealed marker(s) ` +
+            'owe, so a plant stopped being applied rather than stopped being caught',
         ]),
     ...(scan.verified.length > 1 ? [] : ['one block or none is verified, which is not a population to plant on']),
   ];
@@ -28940,16 +29182,24 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     'DQ03_THE_SCANNER_FAULTS_EVERY_WAY_A_QUOTED_DOCS_TRANSCRIPT_GOES_STALE',
     probes.length === 0,
     probes.length === 0
-      ? `${planted} planted edit(s) over the ${scan.verified.length} verified block(s) and the ` +
-        `${sealed.prefixes.length} sealed marker(s) — a figure bumped, an interior line dropped, a suffix ` +
-        'appended, each taking its block out of the verified set and naming the line it diverged at; a ' +
-        'reproducing block declared away and a declaration with no reason, each faulted; a marker with its ' +
-        'reason stripped, a marker moved out of its header and a marker over a subtree holding no anchored ' +
-        'block, each faulted; the marker taken off entirely, bringing exactly its ' +
-        `${scan.excluded.length} sealed block(s) back into the population and faulting nothing; the working-copy ` +
-        'bracket shown to see a file a command wrote and to stay quiet over a directory nothing touched, on a ' +
-        `throwaway repository rather than on this one; and taking the ANCHOR off a first line faulted NOTHING on ` +
-        `all ${scan.verified.length}, dropping each silently out of the scan, which is what DQ01's floor is for`
+      ? `${planted} planted edit(s) over the ${scan.verified.length} verified block(s), the ` +
+        `${scan.declared.length} declared block(s) and the ${sealed.prefixes.length} sealed marker(s) — a ` +
+        'figure bumped, an interior line dropped, a suffix appended, each taking its block out of the verified ' +
+        'set and naming the line it diverged at, and each of those that left the first line alone also ' +
+        'FAULTING, because a block that kept its anchor was compared; a reproducing block declared away and a ' +
+        'declaration with no reason, each faulted; the declaration taken off each of the ' +
+        `${scan.declared.filter((entry) => entry.compared).length} compared declared block(s), faulting by ` +
+        `name every time, and off the ${scan.declared.filter((entry) => !entry.compared).length} this run ` +
+        'cannot reach, faulting nothing; a marker with its reason stripped, a marker moved out of its header ' +
+        'and a marker over a subtree holding no anchored block, each faulted; the marker taken off entirely, ' +
+        `bringing exactly its ${scan.excluded.length} sealed block(s) back into the population and faulting ` +
+        'nothing; the working-copy bracket shown to see a file a command wrote and to stay quiet over a ' +
+        'directory nothing touched, on a throwaway repository rather than on this one; the first line sent ' +
+        `ADRIFT on all ${adrift}, leaving each anchored, unreachable and faulting NOTHING, which is the state ` +
+        `the ${scan.unreachable.filter((entry) => !entry.compared).length} illustrations are in and the whole ` +
+        'of what scopes the fault rule; and ' +
+        `taking the ANCHOR off a first line faulted NOTHING on all ${scan.verified.length}, dropping each ` +
+        `silently out of the scan, which is what DQ01's floor is for`
       : `${probes.length} of ${planted} planted edit(s) did not do what they must:\n          ` +
         probes.join('\n          '),
     'a scanner is a vocabulary of shapes and a shape that stops matching goes silent, not red — and this gate ' +
@@ -28958,7 +29208,11 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       'diverged, since "this block is stale" is not a detail anybody can act on; the two declaration plants ' +
       'keep the marker from becoming a bypass; and the seal plants are two-sided in the direction that matters, ' +
       'because a seal that reads too widely silences the gate and one that stops being read makes it demand a ' +
-      'repair issue #181 forbids. ⚠️ The plant floor is a probe rather than a conjunct, and derived rather than ' +
+      'repair issue #181 forbids. ⭐ The fault rule issue #482 added is held by a pair rather than by a ' +
+      'sentence: taking a declaration off a COMPARED block goes red, sending a first line adrift goes quiet, ' +
+      'and it is the second of those that says the rule stops at the blocks a run actually measured against — ' +
+      'a rule that reached the rest would open by demanding a repair of every illustration in the guide. ' +
+      '⚠️ The plant floor is a probe rather than a conjunct, and derived rather than ' +
       'typed: written as a literal it was correct with the corpus on disk and red without it, and written into ' +
       'the verdict\'s boolean alone it made the FAIL print the sentence that says every plant behaved',
   );

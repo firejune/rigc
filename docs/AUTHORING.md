@@ -2093,6 +2093,7 @@ is not the arrangement the format has. Spine keys one bone per timeline, so the
 six numbers of a head turn are eighty lines apart in the artifact and nobody can
 see a wrong sign in them.
 
+**No run reproduces this:** the legend and one group's record lifted out of one `explain` run, which prints the two `bone "faceshift"` records between them
 ```
 group members  (the per-member values of one track, side by side — issue #295)
   ..    a row per member and a block per key, because a wrong sign is visible in a column of six and
@@ -2727,6 +2728,7 @@ triangles. It is a report and it never gates: `explain` takes no `--profile` and
 exits 0 on a rig `build` would refuse, so the figures are readable on the build
 that is failing.
 
+**No run reproduces this:** abridged — the `WORST` rollup follows key 1 here, where the run prints `head/head`'s other two keys and all four of `hair_bang/hair_bang` between them
 ```
 deform  (what each key does to the geometry — figures with names, never a bar; issue #316)
   ..    every key measured at its OWN time against the same pose with the deform CLEARED, so the
@@ -3259,6 +3261,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 
 The report prints one line per assertion:
 
+**No run reproduces this:** assembled — one line of each verdict kind; the `PASS` and the `PROF` are verbatim from a `build` this page states, the `SKIP` is cut at the ellipsis and only `--profile spine-html` prints it, and the `FAIL` is invented, because a green build prints none
 ```
   PASS  A08_REGION_NAMES_MATCH_ATTACHMENTS
   SKIP  A21_MESH_RIM_PINNED: the skeleton has no weighted mesh attachment, …
