@@ -746,8 +746,7 @@ shows the listing beside the order.
 over an oval face has transparent corners, and the line says so:
 
 ```
-MESH  head  authored 25 vertices / 32 triangles  (budget 32)  bones=[head]
-            attachments=[head]  covers 100.00% of the art, reaching 95.90px past it
+  MESH  head         authored 25 vertices / 32 triangles  (budget 32)  bones=[head]  attachments=[head]  covers 100.00% of the art, reaching 95.90px past it
 ```
 
 **`covers 100.00%` is what matters** — nothing of the drawing is outside the
@@ -1123,10 +1122,14 @@ bun cli.ts render --candidate gallery/portrait/build --fps 25 --max 640 \
 ```
 
 ```
-  MESH  head  authored 25 vertices / 32 triangles  (budget 32)  bones=[head]
-              attachments=[head]  covers 100.00% of the art, reaching 95.90px past it
-  …  26 PASS, 13 SKIP
+  MESH  head         authored 25 vertices / 32 triangles  (budget 32)  bones=[head]  attachments=[head]  covers 100.00% of the art, reaching 95.90px past it
 ```
+
+Green, and the tally is left to the tool: `bun run selftest` prints this build's
+live assertion and skip counts on its `GALLERY_EXAMPLE_IS_GREEN[portrait/spine-html]`
+line. One written here would be a figure nothing in the tree compares against a
+run, sitting inside a fence that reads as a transcript — and rigc prints no tally
+line, so it never was one.
 
 Now break the projection two ways. Both scripts write a variant motion spec
 beside the originals and touch nothing in the repository:
@@ -1180,7 +1183,7 @@ Both are re-run above.
 | `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | PASS | **PASS** | **PASS** |
 | the `MESH` coverage line | 100.00%, 95.90px past | **byte-identical** | **byte-identical** |
 | 🆕 `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | PASS | PASS | **FAIL, both keys, 8 of 32 triangles** |
-| `--profile spine-html`, **today** | 27 PASS / 13 SKIP | 27 PASS / 13 SKIP | **26 PASS / 13 SKIP / 2 FAIL** |
+| `--profile spine-html`, **today** | green | green | **refused, and nothing written** |
 | 🆕 the `DEFORM` block, `head` key 1 `area` | x0.637174 … x1.319122 | **x0.765250 … x1.362834** | **x−0.288121 … x1.820211** |
 | 🆕 … and its `winding` | 32 of 32 kept | 32 of 32 kept | **24 of 32 kept** |
 
@@ -1199,15 +1202,10 @@ x0.637174. That is this section's own prose, *"stretches 1.363 where it should
 compress to 0.637"*, as a figure the tool produces.
 
 `rigc explain` is the instrument that prints every other timeline's actual values,
-and on a deform it used to print the shape of the run rather than the run:
-
-```
-    default/head/head.deform  4 key(s)
-      t=0       back to the setup pose                         bezier[4]
-      t=0.62    deform[0..50]  25 pair(s)                      bezier[4]
-      t=1.5     deform[0..50]  25 pair(s)                      bezier[4]
-      t=2.2     back to the setup pose                         linear
-```
+and on a deform it used to print the shape of the run rather than the run: the
+head's four keys came back as four lines, each giving a time, a curve kind, and
+either `back to the setup pose` or `deform[0..50]  25 pair(s)` — the extent of the
+run and how many pairs are in it, and not one of the numbers.
 
 ⇒ **`25 pair(s)` was the whole of what `explain` would tell you about a face
 turn**, against a scalar track two lines up in the same report printing
@@ -1224,6 +1222,7 @@ bun cli.ts explain --rig gallery/portrait/rig.json \
 
 ```
   DEFORM  turn  default/head/head  key 1  t=0.620000  transform yaw  radius=170 degrees=12
+          frame      played on a track
           moved      25 of 25 vertices, worst 35.3450px at v2
           area       min x0.637174 tri 17   max x1.319122 tri 31   (32 triangles, 0 with no area at the cleared pose, band 0.146694px²)
           stretch    max x1.319121 tri 22   min x0.637175 tri 8
@@ -1458,8 +1457,8 @@ with no `build/`, `render/` or `preview.html` in that directory:
 
 | Command | What came back |
 | --- | --- |
-| `build --profile spine` | green — **18 PASS, 7 SKIP**, 14 excluded by profile |
-| `build --profile spine-html` | green — **26 PASS, 13 SKIP**, including `A13_MESH_BUDGET` and `A15_IDLE_NO_MESH_BONE_KEYS` |
+| `build --profile spine` | green, and the report names what the profile leaves out rather than this page counting it: `profile spine — 7 renderer-policy and 8 archetype assertion(s) do not apply` |
+| `build --profile spine-html` | green — `profile spine-html — every assertion applies`, `A13_MESH_BUDGET` and `A15_IDLE_NO_MESH_BONE_KEYS` among the ones the row above excludes |
 | both `MESH` lines | `head` **100.00%** covered, reaching 95.90px past the art; `hair_bang` 100.00%, 55.22px |
 | `render --fps 25 --max 640` | **81 + 39 + 56 frames**, 478×640, three contact sheets |
 | `loop_seam.ts` ×3 | **0 / 255**, **0 of 305 920 pixels** differing, for all three |

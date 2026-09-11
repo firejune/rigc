@@ -773,8 +773,13 @@ between two things it has in front of it: the emitted triangles, and the PNG the
 attachment names with `image`. So any mesh that names one gets the figure on its
 `MESH` line, authored or generated:
 
+```bash
+bun cli.ts build --rig gallery/squash/rig.json \
+                 --motion gallery/squash/motion.json --out /tmp/squash
 ```
-  MESH  ball         authored 9 vertices / 8 triangles  (budget 8)  bones=[ball]  attachments=[ball]  covers 94.31% of the art, reaching 2.50px past it
+
+```
+  MESH  ball         authored 9 vertices / 8 triangles  (budget 8)  bones=[ball]  attachments=[ball]  covers 100.00% of the art, reaching 15.00px past it
 ```
 
 **A number, not a bar.** A `contour` under 99.5% is *refused* because rigc
@@ -782,11 +787,17 @@ generated that geometry as a claim about the art; an authored mesh that sits ins
 its art is a legitimate thing to draw — a soft feather, a trimmed hull, a mesh
 meant to bend a core while its edges stretch — so the figure informs and the
 decision stays with the author. A mesh with no `image` reports nothing, because
-there is nothing to measure it against. The silence was worth closing: the line
-above is a round part meshed as a centre vertex plus 8 rim vertices placed on the
-silhouette, and an octagon's sides pass `R · cos(π/8)` from its centre, so 5.7% of
-the drawing — its whole ink outline, between the spokes — was not going to be
-drawn, and every assertion passed (issue #277).
+there is nothing to measure it against.
+
+**The silence was worth closing, and that example is where it was found.** The
+ball is a centre vertex plus 8 rim vertices, and the first version placed them
+*on* the silhouette — but an octagon's sides pass `R · cos(π/8)` from its centre,
+so its whole ink outline between the spokes was not going to be drawn, and every
+assertion passed (issue #277). That is why the command above prints 100.00%
+rather than the figure it was filed over:
+[`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash)'s
+README carries the inradius arithmetic, both coverage readings, and the rim move
+that settled it.
 
 The generators are `ring`, `ribbon`, `contour` and `grid` (see
 [`src/mesh.ts`](../src/mesh.ts)); the first two encode a deformation model rather
@@ -2661,10 +2672,15 @@ makes against them.
 
 **It is auditable.** `explain` prints the model, the scalars the closed form
 derived from it, and every offset it produced — the emitted ones, not a second
-evaluation:
+evaluation. This is the `t=0.62` key of the spec above, whole:
+
+```bash
+bun cli.ts explain --rig gallery/portrait/rig.json \
+                   --motion gallery/portrait/motion.json --out /tmp/explain
+```
 
 ```
-      t=0.62    deform[0..50]  25 pair(s)                      bezier[4]
+      t=0.62    deform[0..50]  25 pair(s)                      stepped
                transform yaw  radius=170 degrees=12
                dx = (x−about)·(cos t − 1) − z·sin t,   z = √(radius² − (x−about)²)
                  t = 0.20944 rad
@@ -2673,8 +2689,18 @@ evaluation:
                  centre shift = −radius·sin t = -35.344987
                25 vertices, largest offset 35.344987px at vertex 2
                  v  0 (-7.17493, 0)  v  1 (-22.413595, 0)  v  2 (-35.344987, 0)  v  3 (-27.658171, 0)
-                 …five more lines
+                 v  4 (-14.255108, 0)  v  5 (-14.255108, 0)  v  6 (-14.255108, 0)  v  7 (-14.255108, 0)
+                 v  8 (-14.255108, 0)  v  9 (-27.658171, 0)  v 10 (-35.344987, 0)  v 11 (-22.413595, 0)
+                 v 12 (-7.17493, 0)  v 13 (-7.17493, 0)  v 14 (-7.17493, 0)  v 15 (-7.17493, 0)
+                 v 16 (-22.413595, 0)  v 17 (-35.344987, 0)  v 18 (-27.658171, 0)  v 19 (-22.413595, 0)
+                 v 20 (-35.344987, 0)  v 21 (-27.658171, 0)  v 22 (-22.413595, 0)  v 23 (-35.344987, 0)
+                 v 24 (-27.658171, 0)
 ```
+
+The curve reads `stepped` where the spec says `"ease": "swell"`, and that is
+§4.5's hold rule rather than a discrepancy: the next key emits these same 25
+offsets, so the segment between them would draw nothing and is written the way
+the editor writes it.
 
 📌 **Float behaviour, stated.** The closed forms are evaluated in float64 and
 quantised to six decimals like every other emitted number, so the same spec emits
