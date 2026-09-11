@@ -21373,7 +21373,7 @@ function runGalleryTranscriptSuite(): number {
   const lettered = synthetic('v12.5');
   const built = (probe: { scan: TranscriptScan }): boolean =>
     probe.scan.verified.length === 1 && probe.scan.byHead === 1 && probe.scan.faults.length === 0;
-  const probes = [
+  const counterProbes = [
     ...(built(letterless) && built(lettered)
       ? []
       : ['the synthetic probes did not build a verified head-anchored block, so they say nothing about the counter']),
@@ -21385,16 +21385,44 @@ function runGalleryTranscriptSuite(): number {
       : ['the same block with a letter in its anchor field was NOT plantable, so the counter would swallow every block']),
   ];
 
+  // 🚨 Every floor is a PROBE and not a conjunct — `DQ01`'s clause, applied
+  // backwards to the control that predates it (issue #493). Four of the seven
+  // terms of the old verdict were read by the detail's ternary and three were
+  // not: `planted >= 78`, `silenced === 0` and the population floor lived in
+  // the boolean alone, so a run failing on any of those three printed the
+  // sentence saying every plant behaved. ⭐ Note where the old FAIL branch had
+  // a clause for `silenced` and it still could not print: the parenthetical
+  // existed, and the ternary that selects that branch did not read the counter,
+  // so the one run it was written for never reached it. Measured on #486's
+  // doubly-planted run, where which conjunct had failed had to be DERIVED from
+  // the clean sentence's own figures rather than read off the line.
+  //
+  // ⛔ Nothing here is a new assertion or a relaxed one: the rows below are the
+  // same seven terms, with the same thresholds, in a list the detail reads.
+  const probes = [
+    ...misses,
+    ...counterProbes,
+    ...(silenced === 0
+      ? []
+      : [
+          `${silenced} of the unanchored plant(s) did not drop out cleanly — the block stayed in the scan, or ` +
+            'the plant raised a fault its own README was not already carrying',
+        ]),
+    ...(unplantable === 0 ? [] : [`${unplantable} verified block(s) had no anchor letter to take off`]),
+    ...(unrecipe === 0 ? [] : [`${unrecipe} refusal block(s) had no recipe line the plant could find`]),
+    ...(planted >= 78
+      ? []
+      : [
+          `only ${planted} edit(s) were planted over ${verified.length} verified block(s), where 78 is the floor, ` +
+            'so a plant stopped being APPLIED rather than stopped being caught',
+        ]),
+    ...(verified.length > 0 ? [] : ['not one block is verified, which is not a population to plant on']),
+  ];
+
   say(
     'GT03_THE_SCANNER_FAULTS_EVERY_WAY_A_QUOTED_TRANSCRIPT_GOES_STALE',
-    misses.length === 0 &&
-      planted >= 78 &&
-      silenced === 0 &&
-      unplantable === 0 &&
-      unrecipe === 0 &&
-      probes.length === 0 &&
-      verified.length > 0,
-    misses.length === 0 && unplantable === 0 && unrecipe === 0 && probes.length === 0
+    probes.length === 0,
+    probes.length === 0
       ? `${planted} planted edit(s) over the ${verified.length} verified block(s) — a figure bumped, an interior ` +
         'line dropped, a suffix appended, a reproducing block declared away, and a declaration with no reason — ' +
         'each faulted; and taking the anchor off a first line — the gutter tag on ' +
@@ -21406,17 +21434,18 @@ function runGalleryTranscriptSuite(): number {
         'opposite behaviour and the reason the recipe is not an opt-in; and the guard that says every one of them ' +
         'actually RECEIVED that plant is itself shown to fire, on a synthetic record this gallery cannot produce — ' +
         'one named `12.5`, with no letter in it to take off'
-      : `${misses.length} of ${planted} planted edit(s) did not fault` +
-        (silenced > 0 ? ` (and ${silenced} unanchored block(s) did not drop out cleanly)` : '') +
-        (unplantable > 0 ? ` (and ${unplantable} block(s) had no anchor letter to take off)` : '') +
-        (unrecipe > 0 ? ` (and ${unrecipe} refusal block(s) had no recipe line the plant could find)` : '') +
-        `:\n          ${[...misses, ...probes].join('\n          ')}`,
+      : `${planted} edit(s) were planted and ${probes.length} check(s) over them did not hold:\n          ` +
+        probes.join('\n          '),
     'a scanner is a vocabulary of shapes and a shape that stops matching goes silent, not red. #412 was a line ' +
       'and a suffix; a figure moving is the same defect a third way, and the declaration has to be refused on a ' +
       'block that reproduces or it becomes the bypass. #422 added a second anchor rule and this is what holds it ' +
       'to the same bar: the new rule has to go quiet in exactly the way the old one does, never louder and never ' +
       'more forgiving. #429 added a third that must do the opposite — a refusal quote whose recipe is gone is ' +
-      'still recognisably a refusal quote, so the trap has to catch it rather than let it drop',
+      'still recognisably a refusal quote, so the trap has to catch it rather than let it drop. ⚠️ Every floor ' +
+      'here is a row in one list rather than a conjunct of the verdict, for the reason issue #493 names: the ' +
+      'clean sentence below says taking the anchor off faulted NOTHING, and while `silenced` sat in the ' +
+      "boolean alone that was the sentence a run failing on `silenced` printed — the detail lying on precisely " +
+      'the run it exists for',
   );
 
   // --- GT04: the vocabulary the gallery index NAMES, against the derived one --
@@ -27885,24 +27914,40 @@ function runDocScriptSuite(): number {
     }
   }
 
+  // 🚨 The floors are rows in this list and not conjuncts of the verdict, for
+  // `DQ01`'s reason and issue #493's measurement: the clean sentence below says
+  // the label plant "faulted nothing on all N of them", and with `planted >= 8`
+  // in the boolean alone that was the sentence a run short of its plants
+  // printed. ⛔ Same four terms, same thresholds — only the detail changes.
+  const probes = [
+    ...misses,
+    ...(silenced === 0 ? [] : [`${silenced} unlabelled script(s) did not drop out cleanly`]),
+    ...(planted >= 8
+      ? []
+      : [
+          `only ${planted} edit(s) were planted over ${verified.length} verified script(s), where 8 is the floor, ` +
+            'so a plant stopped being APPLIED rather than stopped being caught',
+        ]),
+    ...(verified.length > 0 ? [] : ['not one script is verified, which is not a population to plant on']),
+  ];
   say(
     'DS03_THE_RUNNER_FAULTS_EVERY_WAY_A_STATED_SCRIPT_STOPS_DOING_WHAT_ITS_PAGE_SAYS',
-    misses.length === 0 && silenced === 0 && planted >= 8 && verified.length > 0,
-    misses.length === 0 && silenced === 0
+    probes.length === 0,
+    probes.length === 0
       ? `${planted} planted edit(s) over ${verified.length} verified script(s) and ${scan.claims.length} stated ` +
         'verdict(s) — every verdict flipped in turn, every script\'s write dropped, and the products rotated so ' +
         'each build reads what its neighbour wrote — each faulted by name; and taking a script\'s LABEL off ' +
         `faulted nothing on all ${verified.length} of them, dropping each silently out of the verified set while ` +
         `all ${scan.scripts.length} script(s) are still found, which is what DS01's floor is for`
-      : `${misses.length} of ${planted} planted edit(s) did not fault` +
-        (silenced > 0 ? ` (and ${silenced} unlabelled script(s) did not drop out cleanly)` : '') +
-        `:\n          ${misses.join('\n          ')}`,
+      : `${planted} edit(s) were planted and ${probes.length} check(s) over them did not hold:\n          ` +
+        probes.join('\n          '),
     'a runner that reports clean while running nothing is the failure this whole family is written against, so ' +
       'the plants are two kinds on purpose. The flipped verdict and the rotated products break the COMPARISON and ' +
       'the SCRIPT respectively, and both have to be loud. The dropped write is the shape the 2026-09-03 defect ' +
       'had — a script that quietly stopped producing anything — and the label plant is the opposite requirement: ' +
       'it must go quiet, because a script that stops being labelled stops being one this suite can hold to ' +
-      'anything, and only a floor can see that',
+      'anything, and only a floor can see that — which is why the floor that says the plant RAN is a row here ' +
+      'rather than a conjunct nothing prints',
   );
 
   return bad;
