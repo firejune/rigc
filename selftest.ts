@@ -58,6 +58,15 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
+// The one gate in this file that reads this file as CODE rather than as text,
+// and the reason it is worth a parser: what it has to find is the condition
+// GOVERNING a row, and that condition reaches the row through an `if`, through
+// the branch of a ternary spread into a probe list, and through an early return
+// above it. A window of lines cannot tell those apart, and a gate that guesses
+// at its own population is the shape this repository refuses everywhere else.
+// Dev-only — `selftest.ts` ships in no package, and `bunx tsc` already makes
+// this a first-class dependency of the tree.
+import ts from 'typescript';
 import {
   AnimationState,
   AnimationStateData,
@@ -3939,8 +3948,260 @@ function floorProbes(rows: ReadonlyArray<readonly [number, number, string]>, bec
   );
 }
 
+/**
+ * How a plant's own fault is told apart from every other fault in the list.
+ * At least one of the two is required, which is what makes the bare question
+ * unwritable rather than merely discouraged: `{}` is assignable to neither
+ * member, so `bun run typecheck` is the gate that refuses it.
+ */
+type PlantMark = { was: readonly string[]; at?: string } | { was?: readonly string[]; at: string };
+
+/**
+ * What a plant RAISED, as against what was already standing — the one question
+ * every red-first clause in this file is asking, spelled once (issue #506).
+ *
+ * 🚨 **What it exists to make unwritable is a fault list compared against a
+ * constant.** `rescan(planted).faults.length === 0` asks *did ANYTHING fault*
+ * where the clause means *did MY plant fault*, so a fault standing anywhere
+ * else decides it, and the clause stops testing its plant on exactly the run it
+ * exists for: the one where the suite is not already green. Two sweeps found
+ * that shape by what it LOOKS like and both under-counted — one swept for
+ * `=== 0` while both of its own subjects were `!== 0` (issue #486), the other
+ * named ten quiet sites where there were fourteen (issue #491) — which is the
+ * general failure of defining a population by the token a defect happened to be
+ * written with.
+ *
+ * ⭐ **The two ways of naming a plant's own fault are not interchangeable**, and
+ * which one a site needs is decided by measurement rather than taste:
+ *
+ *  - `was` subtracts a baseline BY STRING. Exact where the plant rewrites in
+ *    place and the judge is scoped to the object planted on; wrong the moment
+ *    the plant MOVES LINES, because every fault below it comes back carrying a
+ *    different line number and a subtraction reads it as newly raised.
+ *  - `at` attributes to a name — the block, marker or page the plant is about,
+ *    computed where the plant left it. Right across a move; wrong on its own
+ *    wherever the object planted on can carry a fault of ITS OWN, because a
+ *    fault already standing at that name satisfies it whatever the plant did.
+ *
+ * ⇒ Both together is what a plant that changes the POPULATION needs: moving a
+ * seal marker UNSEALS its subtree, so every block it was holding out comes back
+ * and may fault on its own account, and those are noise by construction.
+ *
+ * ⚠️ An `at` that is the empty string attributes NOTHING rather than
+ * everything. A prefix every fault starts with is the bare comparison wearing
+ * this helper's name, and the direction matters: returning the whole list there
+ * would make the caller's clause pass, which is the quiet failure again, while
+ * returning none makes it report the miss it is written to report.
+ */
+function raisedBy(after: readonly string[], plant: PlantMark): string[] {
+  const at = plant.at;
+  const was = plant.was;
+  return after.filter(
+    (fault) => (at === undefined || (at !== '' && fault.startsWith(at))) && (was === undefined || !was.includes(fault)),
+  );
+}
+
+/**
+ * What a row says when a plant was not caught. The population of the sweep
+ * below is defined by this and by nothing else, which is a choice with a
+ * measured cost: it is the only one of five rules issue #491's repair tried
+ * that had full recall over the sites it had to find, and it is still a
+ * VOCABULARY — a clause that reports its miss in words nobody has used yet is
+ * invisible here, and that is the blind spot rather than a bound on it.
+ *
+ * 🔸 Each phrase's hit count is printed by the case, so a phrase that has gone
+ * dead is visible instead of sitting in the list looking like coverage.
+ *
+ * ⚠️ Spelled in two pieces each, for the reason `SUMMARY_START` below is: a
+ * file that reads itself finds its own vocabulary first, and four phrases
+ * sitting in a list would have been four rows of a population that has no
+ * clause under them at all.
+ */
+const PLANT_MISS_PHRASES: readonly string[] = ['not ' + 'faulted', 'did not ' + 'fire', 'had to ' + 'fault', 'not ' + 'caught'];
+
+/** One clause that decides a plant-miss row, and what its guards test. */
+type PlantClauseScan = {
+  /** Every string row this scan looked at, whatever it said. */
+  read: number;
+  /** Those of them that say a plant was not caught. */
+  rows: number;
+  /** How many rows each phrase accounted for, in the order the list states them. */
+  hits: number[];
+  faults: string[];
+};
+
+/**
+ * Every plant-miss row in a source file, and whether the condition that decides
+ * it reads a fault list against a constant (issue #506).
+ *
+ * ⭐ **Why this reads code rather than lines.** The condition governing a row
+ * reaches it three different ways in this file — an `if` around it, the branch
+ * of a ternary spread into a probe list, and an early `return` above it — and a
+ * window of source lines cannot tell the third from a coincidence. The early
+ * return is not an edge case either: it is how the one site issue #486's sweep
+ * missed entirely is written.
+ *
+ * 🔒 **A row is an element of a LIST, never a sentence.** That single narrowing
+ * is what makes the population honest rather than an exception table: without
+ * it a detail that merely SAYS an assertion did not fire is dragged in by
+ * whatever `if` happens to enclose the case, and every one of those would have
+ * had to be excused by name. With it the scan reports no such row.
+ */
+function scanPlantClauses(path: string, text: string): PlantClauseScan {
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
+  const out: PlantClauseScan = { read: 0, rows: 0, hits: PLANT_MISS_PHRASES.map(() => 0), faults: [] };
+
+  /** The text of a literal row, or null where the node is not one literal. */
+  const literalOf = (node: ts.Node): string | null => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+    if (ts.isTemplateExpression(node)) return node.head.text + node.templateSpans.map((span) => span.literal.text).join(' ');
+    return null;
+  };
+
+  /** Whether this literal is an element of a list rather than part of a sentence. */
+  const isRow = (node: ts.Node): boolean => {
+    let child: ts.Node = node;
+    let parent: ts.Node | undefined = node.parent;
+    while (parent !== undefined && ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      child = parent;
+      parent = parent.parent;
+    }
+    if (parent === undefined) return false;
+    if (ts.isArrayLiteralExpression(parent)) return true;
+    return (
+      ts.isCallExpression(parent) &&
+      ts.isPropertyAccessExpression(parent.expression) &&
+      parent.expression.name.text === 'push' &&
+      parent.arguments.some((argument) => argument === child)
+    );
+  };
+
+  /** A branch that leaves the block, which is what makes the `if` above it a guard. */
+  const leaves = (node: ts.Statement | undefined): boolean => {
+    if (node === undefined) return false;
+    if (ts.isReturnStatement(node) || ts.isContinueStatement(node) || ts.isBreakStatement(node)) return true;
+    return ts.isBlock(node) && node.statements.some(leaves);
+  };
+
+  /** Every condition that decides whether this node is reached at all. */
+  const guardsOf = (node: ts.Node): ts.Expression[] => {
+    const guards: ts.Expression[] = [];
+    let child: ts.Node = node;
+    let parent: ts.Node | undefined = node.parent;
+    while (parent !== undefined) {
+      if (ts.isIfStatement(parent) && parent.expression !== child) guards.push(parent.expression);
+      if (ts.isConditionalExpression(parent) && parent.condition !== child) guards.push(parent.condition);
+      if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
+        const statements = parent.statements;
+        const at = statements.findIndex((statement) => statement === child);
+        for (let i = 0; i < at; i++) {
+          const statement = statements[i];
+          if (ts.isIfStatement(statement) && leaves(statement.thenStatement)) guards.push(statement.expression);
+        }
+      }
+      child = parent;
+      parent = parent.parent;
+    }
+    return guards;
+  };
+
+  const COMPARISONS = new Set<ts.SyntaxKind>([
+    ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsEqualsToken,
+    ts.SyntaxKind.GreaterThanToken,
+    ts.SyntaxKind.GreaterThanEqualsToken,
+    ts.SyntaxKind.LessThanToken,
+    ts.SyntaxKind.LessThanEqualsToken,
+  ]);
+
+  const statementsOf = (node: ts.Node): readonly ts.Statement[] =>
+    ts.isBlock(node) || ts.isSourceFile(node) || ts.isCaseClause(node) ? node.statements : [];
+
+  /**
+   * Whether a name was bound to what this plant raised, read outward through
+   * the scopes that could have declared it so a shadowing declaration wins.
+   *
+   * 🔒 A BINDING has to count, or this rule would push every caller into an
+   * inline call — and issue #496 measured the opposite: a call bound to a name
+   * is what lets the detail beside a verdict read the same value the verdict
+   * did. ⚠️ The scan resolves a name and not a value, so a binding whose
+   * initializer is reassigned later reads as the call it opened with.
+   */
+  const boundToRaised = (name: string, from: ts.Node): boolean => {
+    let scope: ts.Node | undefined = from;
+    while (scope !== undefined) {
+      for (const statement of statementsOf(scope)) {
+        if (!ts.isVariableStatement(statement)) continue;
+        for (const declaration of statement.declarationList.declarations) {
+          if (!ts.isIdentifier(declaration.name) || declaration.name.text !== name) continue;
+          const initializer = declaration.initializer;
+          return (
+            initializer !== undefined &&
+            ts.isCallExpression(initializer) &&
+            ts.isIdentifier(initializer.expression) &&
+            initializer.expression.text === raisedBy.name
+          );
+        }
+      }
+      scope = scope.parent;
+    }
+    return false;
+  };
+
+  /** `<list>.length <op> <number>` inside a guard, where the list is not one this plant raised. */
+  const againstAConstant = (guard: ts.Node): string[] => {
+    const found: string[] = [];
+    const visit = (node: ts.Node): void => {
+      if (ts.isBinaryExpression(node) && COMPARISONS.has(node.operatorToken.kind)) {
+        const sides: Array<[ts.Expression, ts.Expression]> = [
+          [node.left, node.right],
+          [node.right, node.left],
+        ];
+        for (const [side, other] of sides) {
+          if (!ts.isPropertyAccessExpression(side) || side.name.text !== 'length' || !ts.isNumericLiteral(other)) continue;
+          const list = side.expression;
+          const named =
+            (ts.isCallExpression(list) && ts.isIdentifier(list.expression) && list.expression.text === raisedBy.name) ||
+            (ts.isIdentifier(list) && boundToRaised(list.text, node));
+          if (!named) found.push(node.getText(source).replace(/\s+/g, ' '));
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(guard);
+    return found;
+  };
+
+  const visit = (node: ts.Node): void => {
+    const literal = literalOf(node);
+    if (literal !== null) {
+      out.read++;
+      const said = PLANT_MISS_PHRASES.map((phrase) => literal.toLowerCase().includes(phrase));
+      if (said.some(Boolean) && isRow(node)) {
+        out.rows++;
+        said.forEach((hit, i) => {
+          if (hit) out.hits[i]++;
+        });
+        const against = guardsOf(node).flatMap(againstAConstant);
+        const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+        for (const comparison of against) {
+          out.faults.push(
+            `${path}:${line} decides "${literal.replace(/\s+/g, ' ').trim().slice(0, 72)}" on \`${comparison}\` — a ` +
+              'fault list against a constant answers "did ANYTHING fault" while the row under it reports a plant ' +
+              `that went unreported, so a fault standing anywhere else decides it: state what the plant raised ` +
+              `(\`${raisedBy.name}\`)`,
+          );
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return out;
+}
+
 // ---------------------------------------------------------------------------
-// the helper the gates call, gated (issue #499)
+// the helpers the gates call, gated (issues #499, #506)
 // ---------------------------------------------------------------------------
 //
 // `probeDetail`'s guard branch — the one naming a verdict and a detail derived
@@ -3958,8 +4219,16 @@ function floorProbes(rows: ReadonlyArray<readonly [number, number, string]>, bec
 // a guard that fired on everything would be the same emptiness as one that
 // fires on nothing, and no suite that only ever asked the guard to fire could
 // tell them apart.
-function runProbeDetailSuite(): number {
-  console.log('\n── the probe-detail helper the gates call ──');
+//
+// ⭐ `raisedBy` arrived here for the same reason one layer over (issue #506).
+// It answers *did MY plant fault* where a comparison against a constant answers
+// *did ANYTHING fault*, and the `RB` cases below are in three parts: the three
+// marks measured against the four situations the sites in this file actually
+// present, the one shape that survives both noise sources, and a sweep of this
+// file's own source refusing the bare comparison wherever a plant-miss row
+// hangs off it.
+function runGateHelperSuite(): number {
+  console.log('\n── the helpers the gates call ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -4003,6 +4272,234 @@ function runProbeDetailSuite(): number {
       'a term added to the line that decides the verdict and not to the list the detail comes from. That is the ' +
       'defect the helper exists to make unwritable, so a helper printing the clean sentence here would be the ' +
       'exact shape it was built to refuse — and it would print it under a FAIL',
+  );
+
+  // --- RB01–RB03: the two marks, against the four situations the sites carry -
+  //
+  // ⭐ Every fixture below is the shape a scanner in this file really emits — a
+  // name, two spaces, and what went wrong — because the whole of attribution is
+  // that a fault opens with the name of the thing it is about. Nothing here is
+  // a coordinate anybody could follow: the page and the lines are this
+  // fixture's own and are spelled by it.
+  const said = (page: string, line: number, what: string): string => `${page}.md:${line}  ${what}`;
+
+  // ① the plant rewrites in place and the judge is scoped to one object.
+  const inPlaceWas = [said('probe', 4, 'the block it is anchored at no longer reproduces')];
+  const inPlaceAfter = [...inPlaceWas, said('probe', 4, 'the figure the run prints moved under the quotation')];
+  // ② the plant MOVES LINES: a marker goes in above the fence, so the standing
+  //    fault below it comes back carrying a line number one further down.
+  const movedWas = [said('probe', 7, 'a block that has stopped reproducing')];
+  const movedAfter = [said('probe', 4, 'the marker this plant put in'), said('probe', 8, 'a block that has stopped reproducing')];
+  // ③ + ④ the seal plant, which is both at once: the marker can already fault
+  //    at its own name, and moving it UNSEALS its subtree so the blocks it was
+  //    holding out come back and fault on their own account. This one is the
+  //    plant that raised NOTHING — the run a plant clause exists for.
+  const sealWas = [said('probe', 9, 'seals a subtree with no anchored block in it')];
+  const sealAfter = [...sealWas, said('other', 2, 'a block that came back when the seal moved')];
+
+  const inPlaceSubtracted = raisedBy(inPlaceAfter, { was: inPlaceWas });
+  const movedSubtracted = raisedBy(movedAfter, { was: movedWas });
+  const movedAttributed = raisedBy(movedAfter, { at: said('probe', 4, '') });
+  const sealAttributed = raisedBy(sealAfter, { at: said('probe', 9, '') });
+  const sealSubtracted = raisedBy(sealAfter, { was: sealWas });
+  const sealBoth = raisedBy(sealAfter, { was: sealWas, at: said('probe', 9, '') });
+  say(
+    'RB01_SUBTRACTION_IS_EXACT_IN_PLACE_AND_READS_A_MOVED_FAULT_AS_THIS_PLANTS_DOING',
+    inPlaceSubtracted.length === 1 &&
+      inPlaceSubtracted[0] === inPlaceAfter[1] &&
+      movedSubtracted.length === 2 &&
+      movedAttributed.length === 1 &&
+      movedAttributed[0] === movedAfter[0],
+    `rewritten in place, subtracting the baseline leaves ${inPlaceSubtracted.length} row(s) — ` +
+      `${JSON.stringify(inPlaceSubtracted)}; with one line put in above the fence the SAME subtraction leaves ` +
+      `${movedSubtracted.length} row(s) (${JSON.stringify(movedSubtracted)}), of which one is a standing fault that ` +
+      `only moved, while attributing to the block's computed name leaves ${movedAttributed.length}: ` +
+      JSON.stringify(movedAttributed),
+    'which mark a site needs is decided by whether its plant moves lines, and that is a measurement rather than a ' +
+      'preference: a subtraction by string cannot tell a fault that moved from a fault that is new, because both ' +
+      'are strings the baseline does not carry',
+  );
+  say(
+    'RB02_ATTRIBUTION_ALONE_IS_SATISFIED_BY_A_FAULT_ALREADY_STANDING_AT_THAT_NAME',
+    sealAttributed.length === 1 &&
+      sealAttributed[0] === sealWas[0] &&
+      sealSubtracted.length === 1 &&
+      sealSubtracted[0] === sealAfter[1] &&
+      sealBoth.length === 0,
+    `over a plant that raised nothing: attributing to the marker's own name leaves ${sealAttributed.length} row(s) ` +
+      `— ${JSON.stringify(sealAttributed)}, which was already standing — and subtracting the baseline leaves ` +
+      `${sealSubtracted.length} — ${JSON.stringify(sealSubtracted)}, which is a block the moved seal stopped ` +
+      `holding out. Both marks together leave ${sealBoth.length}, which is what a clause has to see to report the ` +
+      'miss',
+    'the sharpest of the four situations and the reason the helper takes two marks rather than one: each mark ' +
+      'ALONE is satisfied here, by a different piece of noise, and a clause satisfied by either goes on printing ' +
+      'that its plant behaved over a plant that did nothing at all',
+  );
+
+  const raisedSeal = said('probe', 9, 'seals a subtree and gives no reason for it');
+  const caught = raisedBy([...sealAfter, raisedSeal], { was: sealWas, at: said('probe', 9, '') });
+  const blankName = raisedBy(sealAfter, { at: '' });
+  const wholePage = raisedBy(sealAfter, { at: 'probe' });
+  say(
+    'RB03_CONTROL_A_PLANT_THAT_DID_RAISE_ITS_FAULT_IS_NAMED_WITH_BOTH_NOISE_SOURCES_STANDING',
+    caught.length === 1 && caught[0] === raisedSeal && blankName.length === 0 && wholePage.length > 0,
+    `the same list with the plant's own fault in it leaves ${caught.length} row(s) under both marks — ` +
+      `${JSON.stringify(caught)} — so the clause reports nothing; a name that is the empty string attributes ` +
+      `${blankName.length} row(s) rather than all ${sealAfter.length}, while a real prefix attributes ` +
+      `${wholePage.length}`,
+    'the load-bearing negative twice over. A mark that came back empty on a plant that DID fault would make every ' +
+      'red-first clause in this file report a miss, which is the same emptiness as one that never comes back ' +
+      'empty; and an empty name is the bare comparison wearing this helper\'s name, so it has to attribute ' +
+      'nothing rather than everything — the direction that makes the caller report rather than go quiet',
+  );
+
+  // --- RB04/RB05: no plant-miss row in this file hangs off a constant --------
+  //
+  // 🔑 The population is every row in this file that says a plant was not
+  // caught, and the rule over it is one thing: the condition deciding such a
+  // row may not test a fault list against a number. A site that attributes with
+  // `startsWith` carries no such comparison and is left alone — this refuses a
+  // FORM, it does not require a helper where a line does.
+  //
+  // ⚠️ What bounds it is stated rather than implied. The population is a
+  // VOCABULARY (`PLANT_MISS_PHRASES`), so a clause reporting its miss in words
+  // nobody has used yet is invisible to this; and a comparison against a bound
+  // PARAMETER rather than a literal — the shape `CUR12`'s own plant controls
+  // use, where the expected count is passed in — is outside the rule by
+  // construction, because the number there is named by the caller and the scan
+  // does not follow it.
+  const livePlantClauses = scanPlantClauses('selftest.ts', readFileSync(resolve(import.meta.dir, 'selftest.ts'), 'utf8'));
+  const sweepProbes = [
+    ...floorProbes(
+      [
+        [livePlantClauses.read, 1, `${livePlantClauses.read} string row(s) were read out of this file`],
+        [livePlantClauses.rows, 1, `${livePlantClauses.rows} of them report a plant nothing caught`],
+      ],
+      'a step that comes back empty makes this case read a clean file off nothing at all',
+    ),
+    ...firstFew(livePlantClauses.faults, 'plant clause(s)'),
+  ];
+  const sweepHeld = sweepProbes.length === 0;
+  say(
+    'RB04_NO_PLANT_MISS_IN_THIS_FILE_IS_DECIDED_BY_A_FAULT_LIST_AGAINST_A_CONSTANT',
+    sweepHeld,
+    probeDetail(
+      sweepHeld,
+      sweepProbes,
+      `${livePlantClauses.rows} row(s) reporting a plant nothing caught, out of ${livePlantClauses.read} string ` +
+        `row(s) in this file — ${PLANT_MISS_PHRASES.map((phrase, i) => `"${phrase}" ${livePlantClauses.hits[i]}`).join(', ')} — ` +
+        'and not one of them is decided by a fault list compared against a number',
+    ),
+    'two sweeps found this defect by what the comparison LOOKS like and both under-counted: one swept for `=== 0` ' +
+      'while both of its own subjects were `!== 0` (#486), the other named ten quiet sites where there were ' +
+      'fourteen (#491). The repairs were right and the accounting was not, which is where `probeDetail` stood ' +
+      'before #496 — and the answer there was not to find every site but to make the shape unwritable, so the ' +
+      'sweep becomes a check that it has no callers',
+  );
+
+  // The miniatures are held in memory rather than planted into this file, for
+  // `TY11`'s reason: the real file is what the run has to keep reading. Each is
+  // one function, so what the scan is asked is exactly which condition it reads
+  // as the guard of the row.
+  const miniature = (guard: string, setup: string = '', says: string = PLANT_MISS_PHRASES[0]): string =>
+    'function suite(): string[] {\n' +
+    '  const misses: string[] = [];\n' +
+    '  const after = rescan(planted);\n' +
+    setup +
+    `  if (${guard}) misses.push('the figure bumped — ${says}');\n` +
+    '  return misses;\n' +
+    '}\n';
+  const bareForm = scanPlantClauses('bare.ts', miniature('after.faults.length === 0'));
+  const throughHelper = scanPlantClauses('helper.ts', miniature('raisedBy(after.faults, { was: before.faults }).length === 0'));
+  const byName = scanPlantClauses('name.ts', miniature('!after.faults.some((fault) => fault.startsWith(at))'));
+  // A binding of the call counts, and a binding of anything else does not —
+  // the two sides of the one hop this scan follows.
+  const boundCall = scanPlantClauses(
+    'bound.ts',
+    miniature('raised.length === 0', '  const raised = raisedBy(after.faults, { was: before.faults });\n'),
+  );
+  const boundOther = scanPlantClauses(
+    'shadow.ts',
+    miniature('raised.length === 0', "  const raised = after.faults.filter((fault) => fault !== '');\n"),
+  );
+  // The early return is the guard, and it is how the one site neither sweep
+  // reached is written.
+  const earlyReturn = scanPlantClauses(
+    'early.ts',
+    'function probe(): string[] {\n' +
+      '  const spoke = faultsOf(back);\n' +
+      '  if (spoke.length === 1) return [];\n' +
+      "  return ['putting the slash back had to fault that line and only that line'];\n" +
+      '}\n',
+  );
+  // A sentence is not a row: this is a detail SAYING an assertion stayed quiet,
+  // under an `if` that happens to count something.
+  const sentence = scanPlantClauses(
+    'sentence.ts',
+    'function control(): void {\n' +
+      '  if (gate.failures.length === 2) {\n' +
+      "    say('DP05', agreed, `the refusal ${named === null ? 'did not fire' : 'fired'}`, why);\n" +
+      '  }\n' +
+      '}\n',
+  );
+  // And a row with no plant under it: a control counting the shape of its own
+  // fixture, which is a comparison against a constant and correctly so.
+  const unrelated = scanPlantClauses(
+    'unrelated.ts',
+    'function control(): string[] {\n' +
+      '  const probes: string[] = [];\n' +
+      "  if (rows.length === 2) probes.push('the control file did not parse into two hiding lines');\n" +
+      '  return probes;\n' +
+      '}\n',
+  );
+  const miniatures: Array<[string, PlantClauseScan, number, number]> = [
+    ['the bare comparison', bareForm, 1, 1],
+    ['the same clause through the helper', throughHelper, 1, 0],
+    ['the same clause attributing by name', byName, 1, 0],
+    ['the helper bound to a name first', boundCall, 1, 0],
+    ['a name bound to anything else', boundOther, 1, 1],
+    ['an early return as the guard', earlyReturn, 1, 1],
+    ['a detail sentence rather than a row', sentence, 0, 0],
+    ['a row with no plant under it', unrelated, 0, 0],
+  ];
+  // Every phrase in the vocabulary, put under the bare comparison in turn. A
+  // phrase the live file happens to use nowhere still has to be READ here, or
+  // the list beside it would be coverage nobody has seen work.
+  const perPhrase = PLANT_MISS_PHRASES.flatMap((phrase) => {
+    const scan = scanPlantClauses('phrase.ts', miniature('after.faults.length === 0', '', phrase));
+    return scan.rows === 1 && scan.faults.length === 1
+      ? []
+      : [`a row saying "${phrase}" over the bare comparison was read as ${scan.rows} row(s) and ${scan.faults.length} refused clause(s)`];
+  });
+  const miniatureProbes = [
+    ...miniatures.flatMap(([what, scan, rows, faults]) =>
+      scan.rows === rows && scan.faults.length === faults
+        ? []
+        : [
+            `${what} was read as ${scan.rows} row(s) reporting an uncaught plant and ${scan.faults.length} refused ` +
+              `clause(s), and this control requires ${rows} and ${faults}` +
+              (scan.faults.length === 0 ? '' : ` — it said: ${scan.faults.join('; ')}`),
+          ],
+    ),
+    ...perPhrase,
+  ];
+  const miniaturesHeld = miniatureProbes.length === 0;
+  say(
+    'RB05_THE_SWEEP_PLANTED_AND_THE_SHAPES_IT_MUST_NOT_REFUSE',
+    miniaturesHeld,
+    probeDetail(
+      miniaturesHeld,
+      miniatureProbes,
+      miniatures.map(([what, scan]) => `${what}: ${scan.rows} row(s), ${scan.faults.length} refused`).join('; ') +
+        `; and each of the ${PLANT_MISS_PHRASES.length} phrase(s) in the vocabulary is read as a row under that ` +
+        'same bare comparison',
+    ),
+    'the negatives are most of the design. A scan that refused every length comparison in this file would be red ' +
+      'on hundreds of correct controls and would need a table of allowed sites beside it, which is the antipattern ' +
+      'this repository has a settled judgment about — so the population is narrowed twice, to rows of a LIST and ' +
+      'to rows that report an uncaught plant, and both narrowings are measured here rather than asserted. The ' +
+      'attribution spelling is the third negative: it carries no constant and must be left alone, or this would be ' +
+      'a rule requiring a helper where a line already does the work',
   );
   return bad;
 }
@@ -19521,12 +20018,22 @@ function runCurrencySuite(): number {
     mergeScan(stale, scanAssertionTallies(staleDoc, truth));
     mergeScan(stale, scanGateVersion(staleDoc, truth));
     mergeScan(stale, scanWorkedCases(staleDoc, truth, root));
-    if (stale.faults.length === 0) probeFaults.push(`${probe.row}: the stale spelling was NOT faulted`);
     const clean = emptyScan();
     const cleanDoc = readCurrencyDoc('probe.md', 'shipped', probe.clean);
     mergeScan(clean, scanAssertionTallies(cleanDoc, truth));
     mergeScan(clean, scanGateVersion(cleanDoc, truth));
     mergeScan(clean, scanWorkedCases(cleanDoc, truth, root));
+    // ⚠️ Against the REPAIRED spelling's own faults, not against zero (issue
+    // #506). The two documents differ in one row and are read against the same
+    // live truth, so a fault with nothing to do with the stale spelling — a
+    // worked case whose command changed, say — stands in both, and the
+    // absolute form reads it as this probe's doing and stops testing the probe
+    // on exactly the run that matters. The clause below is what pins the
+    // baseline to nothing, which is why the subtraction is the identity today
+    // and changes what this case measures on no green run.
+    if (raisedBy(stale.faults, { was: clean.faults }).length === 0) {
+      probeFaults.push(`${probe.row}: the stale spelling was NOT faulted`);
+    }
     if (clean.faults.length > 0) {
       probeFaults.push(`${probe.row}: the REPAIRED spelling faulted — ${clean.faults.join('; ')}`);
     }
@@ -19919,15 +20426,34 @@ function runCurrencySuite(): number {
 
     // ③ red-first: put the trailing slash back on one entry with a literal path.
     const victim = liveScan.claims.find((c) => c.expect === 'hidden' && !c.text.includes('*'));
+    // ⚠️ What this plant RAISED, not what the file says altogether (issues
+    // #505, #506). Issue #491 filed this clause with the shape that goes
+    // quiet; it is the other one. A count required to be exactly ONE is not
+    // satisfied by a standing fault, it is BROKEN by one — an unreadable
+    // pattern added anywhere in the file stands in this scan too, and the
+    // absolute form then reports the mutant as having faulted more than its
+    // own line while the mutant behaved perfectly.
+    //
+    // 🔸 Measured rather than assumed: on a file with one standing fault this
+    // case is red on that fault whatever this clause does, so what the repair
+    // buys is not a green run — it is a FAIL whose detail stops naming the
+    // plant for something the plant did not do, which is the `CUR09`/`TY12`
+    // judgment one layer over. The plant rewrites one line in place and the
+    // derived path drops a trailing slash, so nothing moves and subtracting by
+    // string is exact. The leak rows are subtracted the same way, by the line
+    // and kinds that make one, because `only` has to mean the leak this plant
+    // raised and not the only leak in the file.
     const revertFault = ((): string[] => {
       if (victim === undefined) return ['no line in the file has a literal path, so the trailing-slash mutant had nothing to aim at'];
       const back = scanIgnoreText(live.split('\n').map((l, i) => (i + 1 === victim.line ? `${l}/` : l)).join('\n'));
-      const said = faultsOf(back);
-      const only = back.leaks.length === 1 ? back.leaks[0] : null;
-      if (said.length === 1 && only !== null && only.claim.line === victim.line && only.kinds.join(', ') === 'a symlink, a file') return [];
+      const raised = raisedBy(faultsOf(back), { was: faultsOf(liveScan) });
+      const stood = new Set(liveScan.leaks.map((row) => `${row.claim.line} ${row.kinds.join(', ')}`));
+      const newLeaks = back.leaks.filter((row) => !stood.has(`${row.claim.line} ${row.kinds.join(', ')}`));
+      const only = newLeaks.length === 1 ? newLeaks[0] : null;
+      if (raised.length === 1 && only !== null && only.claim.line === victim.line && only.kinds.join(', ') === 'a symlink, a file') return [];
       return [
         `putting the trailing slash back on .gitignore:${victim.line} \`${victim.text}\` had to fault that line and only that line, on exactly a symlink and a file; instead ` +
-          (said.length === 0 ? 'nothing faulted at all' : said.join('; ')),
+          (raised.length === 0 ? 'it raised nothing the unplanted file does not' : raised.join('; ')),
       ];
     })();
 
@@ -21826,7 +22352,7 @@ function runGalleryTranscriptSuite(): number {
     // fault this scanner emits opens with the block's own name and two spaces,
     // which is what makes the stronger claim available at all.
     const faultedAt = (text: string, at: number): boolean =>
-      rescan(text).faults.some((fault) => fault.startsWith(`gallery/${example}/README.md:${at}  `));
+      raisedBy(rescan(text).faults, { at: `gallery/${example}/README.md:${at}  ` }).length > 0;
     for (const block of galleryBlocks(readme)) {
       const anchor = verifiedHere.get(`gallery/${example}/README.md:${block.line}`);
       if (anchor === undefined) continue;
@@ -26655,7 +27181,7 @@ function main(): void {
   bad += tally.of('slider-reader', runSliderReaderSuite);
   bad += tally.of('loop-seam', runLoopSeamSuite);
   bad += tally.of('run-tally', () => runRunTallySuite(tally));
-  bad += tally.of('probe-detail', runProbeDetailSuite);
+  bad += tally.of('gate-helper', runGateHelperSuite);
   const gallery = tally.of('gallery-example', runGallerySuite, (value) => value.examples > 0);
   bad += gallery.failures;
   const cuts = tally.of('registered-cut', runCutsSuite, (value) => value.cuts > 0);
@@ -26744,15 +27270,20 @@ function main(): void {
     'cannot see at all — one held in a constant, which reaches a clause opening through an interpolation and is ' +
     'therefore shaped exactly like a number the run produced — is refused by reading who else in this file reads ' +
     'that constant, a table and a mention in prose deliberately not counting as readers)';
-  const probeDetailGate =
-    ', + ' + n('probe-detail') + ' probe-detail controls (issue #499 — the guard inside the helper a control hands ' +
-    'its verdict and its probe list to: a FALSE verdict over an EMPTY list is the signature of a detail derived ' +
-    'from something other than the verdict, and the helper prints that by name instead of the clean sentence. ' +
-    'The branch was exercised by two mutants while it was being written and by nothing that ran, which is this ' +
-    'repository’s own definition of not a gate. Beside it the two cases that make asserting it mean anything — a ' +
-    'non-empty list printing its rows, with the header only when a caller gives one, and an empty list under a ' +
-    'TRUE verdict printing the clean sentence unchanged, header or no header — because a guard that fired on ' +
-    'everything would be the same emptiness as one that fires on nothing)';
+  const gateHelpers =
+    ', + ' + n('gate-helper') + ' controls over the helpers the gates themselves call (issue #499 — the guard ' +
+    'inside the helper a control hands its verdict and its probe list to: a FALSE verdict over an EMPTY list is ' +
+    'the signature of a detail derived from something other than the verdict, and the helper prints that by name ' +
+    'instead of the clean sentence. The branch was exercised by two mutants while it was being written and by ' +
+    'nothing that ran, which is this repository’s own definition of not a gate. Beside it the two cases that make ' +
+    'asserting it mean anything — a non-empty list printing its rows, with the header only when a caller gives ' +
+    'one, and an empty list under a TRUE verdict printing the clean sentence unchanged, header or no header — ' +
+    'because a guard that fired on everything would be the same emptiness as one that fires on nothing. Then ' +
+    'issue #506: what a plant RAISED as against what was already standing, the two marks measured against the ' +
+    'four situations the plant clauses in this file present — subtraction exact in place and blind to a fault ' +
+    'that only moved, attribution blind to a fault already standing at the same name, both of them satisfied ' +
+    'separately over one plant that raised nothing at all — and a sweep of this file\'s own source, read as code, ' +
+    'refusing every plant-miss row decided by comparing a fault list against a number)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
@@ -27242,7 +27773,7 @@ function main(): void {
           'loose drawing beside it)') +
       loopSeam +
       runTally +
-      probeDetailGate +
+      gateHelpers +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (launcher.startsWith(',') ? '' : launcher) +
@@ -28678,8 +29209,10 @@ function runDocScriptSuite(): number {
     // without testing it. Measured with every flip replaced by a no-op and
     // every verdict in the tree flipped to leave one standing disagreement per
     // page: the absolute form printed PASS over four flips that changed
-    // nothing, and this form names all four.
-    if (judgeDocScripts(verified, flipped, outcomes).filter((fault) => !faults.includes(fault)).length === 0) {
+    // nothing, and this form names all four. Spelled through `raisedBy` since
+    // issue #506, which is the same subtraction with the question in front of
+    // it rather than behind.
+    if (raisedBy(judgeDocScripts(verified, flipped, outcomes), { was: faults }).length === 0) {
       misses.push(`${scan.claims[i].where}: ${scan.claims[i].assertion} for \`(${scan.claims[i].label})\` flipped — not faulted`);
     }
   }
@@ -28733,7 +29266,7 @@ function runDocScriptSuite(): number {
     // that same judgement over the whole verified set, and because the judge
     // walks scripts independently, what it holds for this one is exactly the
     // baseline to take off.
-    if (judgeDocScripts([script], scan.claims, round).filter((fault) => !faults.includes(fault)).length === 0) {
+    if (raisedBy(judgeDocScripts([script], scan.claims, round), { was: faults }).length === 0) {
       misses.push(`${script.where}: its write dropped — not faulted`);
     }
   }
@@ -28756,7 +29289,7 @@ function runDocScriptSuite(): number {
       for (const script of verified) {
         // Against the unplanted judgement, for the reason the write plant above
         // gives — issue #491.
-        if (judgeDocScripts([script], scan.claims, round).filter((fault) => !faults.includes(fault)).length === 0) {
+        if (raisedBy(judgeDocScripts([script], scan.claims, round), { was: faults }).length === 0) {
           misses.push(`${script.where}: the products rotated — not faulted`);
         }
       }
@@ -29959,7 +30492,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       // answers to a different line, so a standing fault there comes back as a
       // different string and a subtraction reads it as newly raised. The
       // block's own name moves by exactly the one line inserted.
-      if (!out.faults.some((fault) => fault.startsWith(`${file}:${line + 1}  `))) {
+      if (raisedBy(out.faults, { at: `${file}:${line + 1}  ` }).length === 0) {
         misses.push(`${entry.where}: ${name} — not faulted`);
       }
     }
@@ -30086,7 +30619,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     // had behaved: `taken off, the population moved from 22 to 23 where 23 was
     // the whole of what it sealed, and 1 fault(s) were raised`. The one fault
     // was the standing one, which this edit neither raised nor could have.
-    const raisedByRemoval = without.faults.filter((fault) => !scan.faults.includes(fault));
+    const raisedByRemoval = raisedBy(without.faults, { was: scan.faults });
     if (without.found !== scan.found + mine || raisedByRemoval.length !== 0) {
       sealPlants.push(
         `${entry.where}: taken off, the population moved from ${scan.found} to ${without.found} where ` +
@@ -30108,7 +30641,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     // name satisfies attribution alone whatever this edit did, so a name is not
     // enough where the object being planted on can carry a fault of its own.
     // Nothing moves here, so subtracting by string is exact.
-    if (!bare.faults.some((fault) => fault.startsWith(`${entry.where}  `) && !scan.faults.includes(fault))) {
+    if (raisedBy(bare.faults, { was: scan.faults, at: `${entry.where}  ` }).length === 0) {
       sealPlants.push(`${entry.where}: its reason stripped — not faulted`);
     }
 
@@ -30125,7 +30658,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     // with what this plant is about. The marker is lifted out and pushed onto
     // the end, so it answers to the last line of the page.
     const sunkAt = `${file}:${lines.length}`;
-    if (!sunk.faults.some((fault) => fault.startsWith(`${sunkAt}  `) && !scan.faults.includes(fault))) {
+    if (raisedBy(sunk.faults, { was: scan.faults, at: `${sunkAt}  ` }).length === 0) {
       sealPlants.push(`${entry.where}: moved out of the header — not faulted`);
     }
   }
@@ -30141,9 +30674,19 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       sealPlants.push('no page without an anchored block was found, so the empty-seal clause was never exercised');
     } else {
       const lines = (docs.get(idle) ?? '').split('\n');
-      lines.splice(1, 0, `${sealedSubtreeLead()} a subtree with nothing in it, planted to watch the floor fire.`);
+      // Immediately under the page's first line, which is where the marker's
+      // own name comes from below: nothing standing can move ONTO that line,
+      // because a splice here pushes everything at it downward.
+      const below = 1;
+      lines.splice(below, 0, `${sealedSubtreeLead()} a subtree with nothing in it, planted to watch the floor fire.`);
       const after = rescan(withText(idle, lines.join('\n')));
-      const fired = after.faults.filter((fault) => fault.startsWith(`${idle}:`));
+      // ⚠️ At the MARKER's name and against the unplanted scan (issue #506).
+      // This read `startsWith(idle)` and nothing else, so it asked whether the
+      // page faulted rather than whether the marker did — and a page carrying a
+      // fault of its own answered yes whatever the plant did. The comment
+      // beside the seal plants above already claimed this clause asked the
+      // stronger question; it asked it of the file.
+      const fired = raisedBy(after.faults, { was: scan.faults, at: `${idle}:${below + 1}  ` });
       if (fired.length === 0) sealPlants.push(`${idle}: a marker over a subtree with no anchored block — not faulted`);
     }
   }
