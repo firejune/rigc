@@ -3939,6 +3939,74 @@ function floorProbes(rows: ReadonlyArray<readonly [number, number, string]>, bec
   );
 }
 
+// ---------------------------------------------------------------------------
+// the helper the gates call, gated (issue #499)
+// ---------------------------------------------------------------------------
+//
+// `probeDetail`'s guard branch — the one naming a verdict and a detail derived
+// from different things — is the mechanism the whole helper exists for, and it
+// was exercised by two mutants while it was being written and by nothing that
+// runs. By this repository's own rule that is not a gate.
+//
+// ⚠️ It is a gate over a HELPER the gates call, not over the tree, which is why
+// it opens a section of its own instead of sitting inside a suite about
+// something else: a reader meeting these three lines in the middle of the
+// ballot or the atlas-reader section would have no way to tell which of the two
+// they were.
+//
+// 🔸 `PD03` is the whole of it. The other two are here so it means something —
+// a guard that fired on everything would be the same emptiness as one that
+// fires on nothing, and no suite that only ever asked the guard to fire could
+// tell them apart.
+function runProbeDetailSuite(): number {
+  console.log('\n── the probe-detail helper the gates call ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const clean = 'every probe held';
+  const rows = ['the first row fell', 'the second row fell'];
+  const withHeader = probeDetail(false, rows, clean, (count) => `${count} row(s) did not hold:`);
+  const bare = probeDetail(false, rows, clean);
+  say(
+    'PD01_A_NON_EMPTY_LIST_PRINTS_ITS_ROWS_AND_A_HEADER_ONLY_WHEN_ONE_IS_GIVEN',
+    rows.every((row) => withHeader.includes(row) && bare.includes(row)) &&
+      withHeader.startsWith('2 row(s) did not hold:') &&
+      !bare.includes('did not hold:') &&
+      !withHeader.includes(clean) &&
+      !bare.includes(clean),
+    `with a header: ${JSON.stringify(withHeader)}; with none: ${JSON.stringify(bare)}`,
+    'the rows are the detail a FAIL prints and the header states how many there are, so a helper that dropped ' +
+      'either would leave every caller of `floorProbes` printing a FAIL with nothing under it',
+  );
+
+  const held = probeDetail(true, [], clean);
+  const heldWithHeader = probeDetail(true, [], clean, (count) => `${count} row(s) did not hold:`);
+  say(
+    'PD02_CONTROL_AN_EMPTY_LIST_UNDER_A_TRUE_VERDICT_IS_THE_CLEAN_SENTENCE',
+    held === clean && heldWithHeader === clean,
+    `an empty list under a true verdict returns ${JSON.stringify(held)}, and ${JSON.stringify(heldWithHeader)} ` +
+      'when a header is supplied, there being no count for one to state',
+    'the positive control, and the half `PD03` is worthless without: a guard that answered the refusal here ' +
+      'would fire on every green run in this file and would be proving nothing by firing',
+  );
+
+  const refused = probeDetail(false, [], clean);
+  say(
+    'PD03_AN_EMPTY_LIST_UNDER_A_FALSE_VERDICT_IS_THE_REFUSAL_AND_NEVER_THE_CLEAN_SENTENCE',
+    refused !== clean &&
+      !refused.includes(clean) &&
+      refused.includes('the verdict and the detail were derived from different things'),
+    `a false verdict over an empty list returns ${JSON.stringify(refused)}`,
+    'the one branch nobody exercises by accident, because it fires only while a control is being written wrong: ' +
+      'a term added to the line that decides the verdict and not to the list the detail comes from. That is the ' +
+      'defect the helper exists to make unwritable, so a helper printing the clean sentence here would be the ' +
+      'exact shape it was built to refuse — and it would print it under a FAIL',
+  );
+  return bad;
+}
+
 /** A tiny opaque PNG. Size and colour are arbitrary; only "it is a real file" is load-bearing. */
 function writeProbePng(path: string, width: number, height: number, colour: RGBA): void {
   const plate = new Plate(width, height);
@@ -12084,6 +12152,20 @@ function runDeformWindingSuite(): number {
   );
 
   const agreedBlock = turnDeformBlock(agreedBuild);
+  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Exactly one term of
+  // the verdict below goes unnamed by the selector that picks the detail, and
+  // the three that do not each have a branch of their own already — so a list
+  // here would rewrite three branches that are right in order to repair one
+  // that is not, which is the "a helper adopted where a line would do" the
+  // helper's own doc warns about. What that one term reached the reader as was
+  // a TYPED `0` in the clean sentence: the count this verdict requires to be
+  // zero, written out as the answer it wanted, on the one run that sentence
+  // exists for. Bound once here and printed by EVERY branch below, so a run
+  // that fails on it AND on one of the other three names both rather than
+  // losing one behind the other.
+  const agreedDials = Object.keys(dialStats(agreedGate));
+  const dialReadings =
+    `${agreedDials.length} deformDial… reading(s) on this build's stats line, where a silent rollup wants 0`;
   say(
     'DW35_AN_AGREED_DIAL_ADDS_NO_LINE_TO_THE_ROLLUP',
     // ⚠️ DW31's anti-vacuity anchor, on this surface: the rig carries a
@@ -12096,20 +12178,22 @@ function runDeformWindingSuite(): number {
       // be an improvement — a clause that went red for it would be a clause that
       // fires when the tree gets better.
       !breadcrumbNames(agreedBlock).some((name) => name.startsWith('deformDial')) &&
-      Object.keys(dialStats(agreedGate)).length === 0,
+      agreedDials.length === 0,
     disputeLine(agreedBlock) !== ''
-      ? 'the agreed rig gained a disputed-dial line anyway: "' + disputeLine(agreedBlock).trim() + '"'
+      ? 'the agreed rig gained a disputed-dial line anyway: "' + disputeLine(agreedBlock).trim() + '" — ' +
+          dialReadings
       : breadcrumbNames(agreedBlock).some((name) => name.startsWith('deformDial'))
         ? 'no disputed-dial line, but a breadcrumb still hands the reader [' +
             breadcrumbNames(agreedBlock)
               .filter((name) => name.startsWith('deformDial'))
-              .join(', ') + '] on a rig whose build reports no dial reading at all'
+              .join(', ') + '] on a rig whose rollup carries no disputed-dial line — ' + dialReadings
         : !agreedBlock.some((line) => line.trimStart().startsWith('WORST   turn via dial'))
           ? 'VACUOUS: this rig printed no `WORST   turn via dial` rollup, so its silence is a silence about ' +
-              'nothing — ' + agreedBlock.length + ' line(s): ' + agreedBlock.map((l) => l.trim()).join(' | ')
+              'nothing — ' + agreedBlock.length + ' line(s): ' + agreedBlock.map((l) => l.trim()).join(' | ') +
+              ' — ' + dialReadings
           : 'the same `x` slider with the dial bone\'s parent unturned prints a ' + agreedBlock.length +
               '-line block carrying a rollup and not one disputed-dial line, and no breadcrumb on it names a ' +
-              'deformDial… reading — the build agrees, with 0 deformDial… readings on its stats line',
+              'deformDial… reading — the build agrees: ' + dialReadings,
     '🔒 the loud half alone would pass a rollup that printed a dispute on every rig. This is DW31\'s silence, ' +
       'checked on the surface issue #440 is about rather than on the stats line',
   );
@@ -16124,7 +16208,13 @@ function runAtlasReaderSuite(): number | null {
   // expensive example: a re-serialiser that dropped them would stop `atlasScales`
   // reporting that a pack is coarser than its drawings (issue #171).
   const scaled = atlases.find((p) => readFileSync(p, 'utf8').includes('scale:'));
-  const scaleKept = ((): { onlyNameLines: boolean; scales: string; wanted: string } | null => {
+  const scaleKept = ((): {
+    onlyNameLines: boolean;
+    changed: string;
+    nameLines: string;
+    scales: string;
+    wanted: string;
+  } | null => {
     if (scaled === undefined) return null;
     const text = readFileSync(scaled, 'utf8');
     const parsed = parseAtlasText(text);
@@ -16135,16 +16225,49 @@ function runAtlasReaderSuite(): number | null {
     const nameLines = parsed.pages.map((p) => p.nameLine).sort((a, b) => a - b);
     return {
       onlyNameLines: changed.join(',') === nameLines.join(','),
+      // the two sides of that comparison, kept so the probe below can name what
+      // moved instead of asserting that nothing did
+      changed: changed.join(','),
+      nameLines: nameLines.join(','),
       scales: atlasScales(rewritten).join(','),
       wanted: atlasScales(text).join(','),
     };
   })();
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Three separate
+  // things fail here — which lines moved, what `scale:` reads back, and whether
+  // it reads back at all — so a line carrying all three values would hand a
+  // reader three pairs of figures to compare by eye, and the sentence claiming
+  // "only the page-name line(s) changed" would still be standing next to them.
+  // It WAS standing next to them: a `filter:` line rewritten alongside the page
+  // name printed `1-weight-and-mass.atlas: only the page-name line(s) changed,
+  // scale 0.5 still read back` under a FAIL, which is this assertion's own
+  // title handed back as the evidence for it.
+  const scaleProbes: string[] =
+    scaleKept === null
+      ? ['no corpus atlas carries a `scale:` line, so the emitter was never run over one']
+      : [
+          ...(scaleKept.onlyNameLines
+            ? []
+            : [`line(s) [${scaleKept.changed}] changed, where the page-name line(s) are [${scaleKept.nameLines}]`]),
+          ...(scaleKept.scales === scaleKept.wanted
+            ? []
+            : [
+                `\`scale:\` reads back as [${scaleKept.scales}] off the rewritten atlas, where the file it was ` +
+                  `rewritten from states [${scaleKept.wanted}]`,
+              ]),
+          ...(scaleKept.scales !== '' ? [] : ['no `scale:` value reads back off the rewritten atlas at all']),
+        ];
+  const scaleHeld = scaleProbes.length === 0;
   say(
     'PKR03_REWRITING_PAGE_NAMES_TOUCHES_ONLY_THE_NAME_LINES',
-    scaleKept !== null && scaleKept.onlyNameLines && scaleKept.scales === scaleKept.wanted && scaleKept.scales !== '',
-    scaled === undefined
-      ? 'no corpus atlas carries a `scale:` line'
-      : `${basename(scaled)}: only the page-name line(s) changed, scale ${scaleKept?.scales} still read back`,
+    scaleHeld,
+    probeDetail(
+      scaleHeld,
+      scaleProbes,
+      scaled === undefined || scaleKept === null
+        ? 'no corpus atlas carries a `scale:` line'
+        : `${basename(scaled)}: only the page-name line(s) changed, scale ${scaleKept.scales} still read back`,
+    ),
     '`--atlas-in` emits the imported atlas by rewriting its page paths, and a field this compiler has no reader ' +
       'for must survive the trip — dropping one would change the meaning of a file rigc was asked to pass through',
   );
@@ -24291,16 +24414,41 @@ function runBallotSuite(): number {
   // with that element cut out of it.
   const withoutManifest = manifestText ? page.replace(manifestText[0], '') : page;
   const sources = manifest?.candidates.map((c) => c.source) ?? [];
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). There is no value
+  // for a line to carry here: the clean sentence is four of this verdict's five
+  // terms restated as prose, with no interpolation in it at all. On the run it
+  // exists for it printed `panes labelled A and B; both source paths present in
+  // the manifest and absent from the rest of the file` under a FAIL raised by a
+  // missing pane label — every clause of it a claim the run had just refuted.
+  const pathProbes: string[] =
+    manifest === null
+      ? [`no <script id="${MANIFEST_ELEMENT_ID}"> in the page`]
+      : [
+          ...(sources.length === 2 ? [] : [`the manifest names ${sources.length} candidate source(s) and not 2`]),
+          // the `every` above, one row per offending candidate rather than one
+          // verdict over both: WHICH candidate leaked, and by which of the
+          // three ways, is the repair
+          ...sources.flatMap((source, i) =>
+            source === ''
+              ? [`candidate ${i} declares no source path at all`]
+              : !page.includes(source)
+                ? [`candidate ${i}'s source "${source}" is nowhere in the page, its own manifest included`]
+                : withoutManifest.includes(source)
+                  ? [`candidate ${i}'s source "${source}" is on the page OUTSIDE the manifest, where a voter reads it`]
+                  : [],
+          ),
+          ...(/<h2>A<\/h2>/.test(page) ? [] : ['no <h2>A</h2> pane label on the page']),
+          ...(/<h2>B<\/h2>/.test(page) ? [] : ['no <h2>B</h2> pane label on the page']),
+        ];
+  const pathsHidden = pathProbes.length === 0;
   say(
     'B02_THE_PAGE_SHOWS_NO_CANDIDATE_PATH',
-    manifest !== null &&
-      sources.length === 2 &&
-      sources.every((source) => source !== '' && page.includes(source) && !withoutManifest.includes(source)) &&
-      /<h2>A<\/h2>/.test(page) &&
-      /<h2>B<\/h2>/.test(page),
-    manifest === null
-      ? `no <script id="${MANIFEST_ELEMENT_ID}"> in the page`
-      : `panes labelled A and B; both source paths present in the manifest and absent from the rest of the file`,
+    pathsHidden,
+    probeDetail(
+      pathsHidden,
+      pathProbes,
+      'panes labelled A and B; both source paths present in the manifest and absent from the rest of the file',
+    ),
     'labels are neutral so the vote is about pixels; the mapping still has to be auditable, so it is in the file but never on the screen',
   );
 
@@ -26000,6 +26148,7 @@ function main(): void {
   bad += tally.of('slider-reader', runSliderReaderSuite);
   bad += tally.of('loop-seam', runLoopSeamSuite);
   bad += tally.of('run-tally', () => runRunTallySuite(tally));
+  bad += tally.of('probe-detail', runProbeDetailSuite);
   const gallery = tally.of('gallery-example', runGallerySuite, (value) => value.examples > 0);
   bad += gallery.failures;
   const cuts = tally.of('registered-cut', runCutsSuite, (value) => value.cuts > 0);
@@ -26088,6 +26237,15 @@ function main(): void {
     'cannot see at all — one held in a constant, which reaches a clause opening through an interpolation and is ' +
     'therefore shaped exactly like a number the run produced — is refused by reading who else in this file reads ' +
     'that constant, a table and a mention in prose deliberately not counting as readers)';
+  const probeDetailGate =
+    ', + ' + n('probe-detail') + ' probe-detail controls (issue #499 — the guard inside the helper a control hands ' +
+    'its verdict and its probe list to: a FALSE verdict over an EMPTY list is the signature of a detail derived ' +
+    'from something other than the verdict, and the helper prints that by name instead of the clean sentence. ' +
+    'The branch was exercised by two mutants while it was being written and by nothing that ran, which is this ' +
+    'repository’s own definition of not a gate. Beside it the two cases that make asserting it mean anything — a ' +
+    'non-empty list printing its rows, with the header only when a caller gives one, and an empty list under a ' +
+    'TRUE verdict printing the clean sentence unchanged, header or no header — because a guard that fired on ' +
+    'everything would be the same emptiness as one that fires on nothing)';
   const meshRung =
     meshRungBad === null
       ? '\n  ⚠️ `examples/6-arcs` is absent, so the mesh path was never drawn on real geometry in this run.'
@@ -26577,6 +26735,7 @@ function main(): void {
           'loose drawing beside it)') +
       loopSeam +
       runTally +
+      probeDetailGate +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (launcher.startsWith(',') ? '' : launcher) +
