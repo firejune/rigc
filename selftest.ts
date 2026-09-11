@@ -20650,6 +20650,25 @@ const TRANSCRIPT_REASON_MIN = 12;
 const TRANSCRIPT_GUTTER = /^ {2}([A-Z][A-Z\d_]{1,9}) {2}\S/;
 /** The same tag on a block's first line, where the gutter has already been taken off. */
 const TRANSCRIPT_BLOCK_TAG = /^([A-Z][A-Z\d_]{1,9}) {2}\S/;
+/**
+ * A **section rule** — the third thing a block can open on, and the one printed
+ * structure that carries no data at all: `── summary ──`,
+ * `── heavy — candidate animation "heavy", 12 fps ──`.
+ *
+ * 🔒 The glyph run IS the anchor, deliberately, and not the words between the
+ * rules. That is the strongest form of the qualifier rule 2 is held to — *the
+ * anchor has to be something that does NOT change when the block goes stale* —
+ * because a rule's drawing is the same string whatever the figures beneath it
+ * do. ⚠️ Anchoring instead on the rules the runs are observed to PRINT was
+ * measured and rejected, and the control is what rejected it: it reaches the
+ * same reproducing block and no illustration, which looks tighter, and then the
+ * adrift plant shows why it may not ship — under it the anchor IS the content,
+ * so a first line edited away stops matching and the block leaves the
+ * population silently instead of staying anchored and unreachable. That is the
+ * relaxation rule 2's own header forbids, and the shape-only form is the one
+ * that satisfies it.
+ */
+const TRANSCRIPT_SECTION_RULE = /^\s*─{2,}/;
 
 /** How far in a report line sits — the only structure the tree half of a report has. */
 function transcriptIndent(line: string): number {
@@ -21456,12 +21475,20 @@ const TRANSCRIPT_PLANTS: Array<{ name: string; plant: (lines: string[]) => strin
  *
  * ⛔ This plant is the one that has to fault NOTHING. A block that stops being
  * recognisable does not go red, it goes quiet, and GT01's floor is the only thing
- * that sees it. Both rules anchor on the first field of the first line, so one
- * edit serves both: flip the case of its first letter. `DEFORM` becomes `dEFORM`,
- * which no run prints at the gutter; `t=0.6` becomes `T=0.6`, which no run prints
- * as a record head. Structural, no literal — and it deliberately leaves the rest
- * of the line alone, so what is being demonstrated is the loss of the ANCHOR
- * rather than a content edit that would fault for the ordinary reason.
+ * that sees it. The first two rules anchor on the first field of the first line,
+ * so one edit serves both: flip the case of its first letter. `DEFORM` becomes
+ * `dEFORM`, which no run prints at the gutter; `t=0.6` becomes `T=0.6`, which no
+ * run prints as a record head. Structural, no literal — and it deliberately
+ * leaves the rest of the line alone, so what is being demonstrated is the loss of
+ * the ANCHOR rather than a content edit that would fault for the ordinary reason.
+ *
+ * 🚨 **A section rule needs its own edit, and finding that out is the whole of
+ * what the third rule cost.** Its anchor is the glyph run and not a letter, so
+ * the case flip lands on the WORD between the rules — `── summary ──` becomes
+ * `── Summary ──`, which is still a section rule, still anchored, and the plant
+ * reports a block that would not go quiet. That the existing control caught it
+ * rather than passing over it is the argument for having written the control at
+ * all: breaking the leading glyph is what takes the anchor off here.
  *
  * Returns `null` for a first field with no letter in it, which the caller counts
  * rather than skips: a plant that cannot be made is not a plant that passed.
@@ -21471,6 +21498,11 @@ function transcriptWithoutItsAnchor(lines: string[]): string[] | null {
   if (first < 0) return null;
   const line = lines[first];
   const margin = transcriptIndent(line);
+  if (TRANSCRIPT_SECTION_RULE.test(line)) {
+    const next = [...lines];
+    next[first] = `${line.slice(0, margin)}-${line.slice(margin + 1)}`;
+    return next;
+  }
   const at = transcriptAnchorField(line).search(/[A-Za-z]/);
   if (at < 0) return null;
   const letter = line[margin + at];
@@ -28804,6 +28836,30 @@ function runDocScriptSuite(): number {
 //     functions: a gutter tag in the vocabulary the runs print
 //     (`transcriptBlockTag`), or a **record head** those runs print
 //     (`transcriptHeadAnchored`) — an interior node of the report's own tree.
+//     And a third the gallery has no use for: a **section rule**
+//     (`TRANSCRIPT_SECTION_RULE`), a printed structure that carries no data, so
+//     neither of the first two can see it.
+//
+// ⚠️ **Rule 3 is here because a fence opening on one went stale for a week and
+// a hand pass caught it** — `docs/LADDER.md`'s `bench 3` summary, whose last
+// continuation row had been missing since the day it was written (#475, then
+// repaired by hand in #480), sitting directly above the measure table this gate
+// already watches. It was measured before it was written rather than argued
+// for, and the measurement is the one #468's ruling asks for: **of the fences
+// this rule newly reaches, how many can a run be laid against?** Most of that
+// population is inside the seal and drops out there; of what is left, the
+// summary above reproduces and the rest are illustrations whose first line no
+// stated command prints, so they land in `unreachable` and can never reach a
+// fault. `DQ01` prints both sides of that every run — the rule's own count at
+// the gutter, the sealed set, and each unreachable block with its reason — so
+// no figure of it is written here.
+//
+// 🔸 The risk the rule was checked for and does not run: a hand-drawn box
+// diagram anchoring as if it were output. The tree has one, in `docs/MOTION.md`,
+// and its fence opens on the pipeline line above the box rather than on the
+// rule, so nothing reaches it. Were that to change it would land in
+// `unreachable` beside the illustrations, which is the same containment rule 2's
+// own false positive is held to.
 //
 // ⚠️ **Rule 2 needs record heads POOLED across examples, which the gallery
 // suite refuses inside itself**, and that relaxation has a measured cost rather
@@ -28946,7 +29002,7 @@ interface DocsQuoteBlock {
   /** 1-based line of the opening fence. */
   line: number;
   body: string[];
-  anchor: 'tag' | 'head' | 'declared';
+  anchor: 'tag' | 'head' | 'rule' | 'declared';
   declared: string | null;
 }
 
@@ -28980,6 +29036,7 @@ interface DocsQuoteScan {
   found: number;
   byTag: number;
   byHead: number;
+  byRule: number;
   byDeclared: number;
   verified: Array<{ where: string; command: string; lines: number; anchor: DocsQuoteBlock['anchor'] }>;
   /**
@@ -29306,6 +29363,7 @@ function scanDocsQuotes(
     found: 0,
     byTag: 0,
     byHead: 0,
+    byRule: 0,
     byDeclared: 0,
     verified: [],
     declared: [],
@@ -29330,7 +29388,8 @@ function scanDocsQuotes(
       const tag = TRANSCRIPT_BLOCK_TAG.exec(body[0]);
       const byTag = tag !== null && vocabulary.has(tag[1]);
       const byHead = !byTag && transcriptHeadAnchored(body, heads);
-      if (!byTag && !byHead && block.declared === null) continue;
+      const byRule = !byTag && !byHead && TRANSCRIPT_SECTION_RULE.test(body[0]);
+      if (!byTag && !byHead && !byRule && block.declared === null) continue;
       const at = `${file}:${block.line}`;
       const seal = sealed.prefixes.find((entry) => entry.prefix !== '' && file.startsWith(entry.prefix));
       if (seal !== undefined) {
@@ -29338,9 +29397,10 @@ function scanDocsQuotes(
         continue;
       }
       scan.found++;
-      const anchor: DocsQuoteBlock['anchor'] = byTag ? 'tag' : byHead ? 'head' : 'declared';
+      const anchor: DocsQuoteBlock['anchor'] = byTag ? 'tag' : byHead ? 'head' : byRule ? 'rule' : 'declared';
       if (byTag) scan.byTag++;
       else if (byHead) scan.byHead++;
+      else if (byRule) scan.byRule++;
       else scan.byDeclared++;
 
       const best = bestTranscriptWindow(body, runs);
@@ -29688,6 +29748,15 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       [scan.found, 18, `${scan.found} block(s) were anchored`],
       [scan.byTag, 12, `${scan.byTag} of them by a gutter tag`],
       [scan.byHead, 6, `${scan.byHead} of them by a record head`],
+      // ⚠️ A smoke floor and deliberately not a tight one, which is the
+      // opposite of the row above it. Most of what this rule reaches is
+      // illustrations that can never fault, so holding the tree to their number
+      // would turn an ordinary edit to a page of prose into a red run carrying
+      // a message about an anchor rule — the shape of first action issue #468
+      // refused. What has to be caught here is the rule reaching NOTHING; the
+      // block a run IS laid against is held by the `reachable` row below, where
+      // it belongs.
+      [scan.byRule, 1, `${scan.byRule} of them by a section rule`],
       [sealed.prefixes.length, 1, `${sealed.prefixes.length} sealed-subtree marker(s) were read`],
       [scan.excluded.length, 1, `${scan.excluded.length} block(s) were excluded by one`],
       [scan.verified.length, 1, `${scan.verified.length} block(s) reproduced`],
@@ -29717,7 +29786,8 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
           .map((command) => `      ${command.file}:${command.line} — ${command.reason ?? ''}`)
           .join('\n          ') || '      none') +
         `\n          ${scan.found} anchored block(s) over ${pages.length} page(s) — ${scan.byTag} by a gutter tag, ` +
-        `${scan.byHead} by a record head, ${scan.byDeclared} by a declaration alone — of which ` +
+        `${scan.byHead} by a record head, ${scan.byRule} by a section rule, ` +
+        `${scan.byDeclared} by a declaration alone — of which ` +
         `${scan.verified.length} reproduce, ${scan.declared.length} are declared unreproducible, ` +
         `${scan.holes.length} are a HOLE and ${scan.unreachable.length} are unreachable:\n          ` +
         [
