@@ -20367,6 +20367,28 @@ function transcriptHeadAnchored(body: string[], heads: Set<string>): boolean {
 //     the marker first would leave it looking gated and not be — and now that
 //     the marker renders, looking gated is what it would actually do.
 //
+//     🚨 **And shape 2 is where the damage turned out to be**, which is worth
+//     stating here because this comment is where somebody deciding to widen a
+//     gate will read. Issue #468 swept `docs/` to price exactly that widening
+//     and declined it: the block grammar reaches 2 of the 18 green-anchored
+//     blocks there, and — the deciding measurement — it catches **none** of the
+//     stale ones the same sweep found. Of the defects that day, the two
+//     heaviest were in shape 2 and no anchor rule could have reached either: an
+//     `area` pair quoted at six sites across two files, reproducing at none,
+//     with one of its two comparisons reversed in SIGN rather than merely
+//     stale (#471); and a page's opening callout telling the reader to author
+//     around a gap `A39` had half closed, on the page whose own §9.2 says so
+//     (#472).
+//
+//     ⇒ The rule that falls out is not "widen the grammar" — the grammar is
+//     already at its honest limit, and a quotation inside prose still has
+//     nothing to anchor on. It is that **the fenced surface is the gated one,
+//     so a figure that matters should be written INSIDE a fence, as a quote of
+//     a stated command, or not written as a figure at all.** Both repairs #468
+//     landed took the second road: two tallies were DELETED rather than
+//     refreshed, because rigc prints no tally line and the number was arithmetic
+//     wearing a transcript's clothes.
+//
 // ⚠️ **Cost, measured rather than guessed**, on the same footing as the green
 // half's twenty runs: four recipe runs plus GT05's one deliberately-green probe,
 // and they are cheap because they stop early — 0.29 s for a `CompileError`,
