@@ -10807,6 +10807,16 @@ interface TurnBuild {
   dir: string;
   opts: Options;
   result: CompileResult;
+  /**
+   * The deform run this build wrote into its own motion spec, so a case can
+   * derive a bound from the INPUT instead of typing one beside the output.
+   *
+   * ⭐ The input half specifically. `DW08` compares the report block against the
+   * number of keys that carry no offsets, and both the block and the emitted
+   * skeleton come out of the same compile — so a bound read off either would
+   * move with the defect and agree with itself. This does not.
+   */
+  deformKeys: ReadonlyArray<Record<string, unknown>>;
 }
 
 /**
@@ -11011,7 +11021,7 @@ function buildTurnRig(
     )}\n`,
   );
   const opts: Options = { rigPath, motionPath, outDir: join(dir, 'spine'), imagesDir: dir };
-  return { dir, opts, result: compile(opts) };
+  return { dir, opts, result: compile(opts), deformKeys };
 }
 
 /**
@@ -11365,6 +11375,16 @@ function runDeformWindingSuite(): number {
   const swappedBlock = turnDeformBlock(swappedBuild);
   const swappedSkip = swappedBlock.find((l) => l.includes('skipped')) ?? '';
   const setupPoseLines = swappedBlock.filter((l) => l.includes('IS the setup pose')).length;
+  // The bound, derived from the run this build WROTE rather than typed beside
+  // the block it read back: a deform key that carries neither `vertices` nor a
+  // `transform` is the format's own way of writing "back to the setup pose"
+  // (§4.11), and every other key is a fold. The sentence below used to type the
+  // answer — *"the **two** ... lines left are the **two** keys that really are
+  // it"* — and issue #518 planted it and watched it print that on a run with
+  // three.
+  const restingKeys = swappedBuild.deformKeys.filter(
+    (key) => key.vertices === undefined && key.transform === undefined,
+  ).length;
   say(
     'DW08_A_KEY_WHOSE_SLOT_SHOWS_ANOTHER_ATTACHMENT_IS_NOT_GATED_AND_SAYS_SO',
     swapped.failures.length === 0 &&
@@ -11372,13 +11392,16 @@ function runDeformWindingSuite(): number {
       Number(swapped.stats.deformKeysNotDrawn) === 1 &&
       /notShown/.test(String(swapped.stats.deformNotDrawn)) &&
       /shows attachment "away"/.test(swappedSkip) &&
-      setupPoseLines === 2 &&
+      setupPoseLines === restingKeys &&
       swappedBlock.some((l) => l.includes('no posed geometry to measure')),
     swapped.failures.length === 0
       ? `the same 40° fold with the slot showing "away" over it: ${A39} ` +
           `${swapped.passed.includes(A39) ? 'PASSES' : 'did NOT run'} and reports ` +
-          `deformNotDrawn=${swapped.stats.deformNotDrawn}. The block says "${swappedSkip.trim()}", and the two ` +
-          `"IS the setup pose" lines left are the two keys that really are it — the folding key no longer claims to be`
+          `deformNotDrawn=${swapped.stats.deformNotDrawn}. The block says "${swappedSkip.trim()}", ` +
+          `${swappedBlock.some((l) => l.includes('no posed geometry to measure')) ? 'and says' : 'and does NOT say'} ` +
+          `there is no posed geometry to measure; ${setupPoseLines} of its key line(s) say "IS the setup pose" ` +
+          `against the ${restingKeys} key(s) of the deform run that carry no offsets — equal only once the folding ` +
+          'key has stopped claiming to be the setup pose'
       : `[${swapped.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'the deformed mesh is not on screen at all, which is the cleaner half of the same argument — but a green that ' +
       'comes from a false sentence about the geometry is the failure mode this repository is built against',
@@ -14666,14 +14689,50 @@ function runMeshSuite(): number {
       : `no frame of the fixture posed a mesh on slot "${MESH_SLOT}" — everything below would be vacuous`,
     'a suite that measures mesh pixels on a rig that poses no mesh reports green over nothing',
   );
-  if (!meshPiece || !withMesh) return bad + 3;
+  // ⭐ The three controls below cannot run without this one, and until issue #529
+  // this guard said so with `return bad + 3` — a hand-kept count of names it
+  // never printed. Planted (`MESH_SLOT` aimed at a slot the fixture does not
+  // have) it printed ONE `FAIL` line and the run's own verdict read
+  // `rigc selftest: 4 control(s) failed`: three of the four were invisible, and
+  // nothing could see it, because the per-suite floor only refuses a suite that
+  // printed NOTHING and no clause reconciles a suite's returned tally against
+  // the case lines it printed. A name that could not be measured is a HOLE, and
+  // a hole is a SKIP — never a pass, and never a failure this run did not make.
+  //
+  // ⚠️ This trades a hand-kept COUNT for a hand-kept ROSTER, which is the better
+  // of the two on purpose: the roster is checkable against the three `say` calls
+  // below it, and a fourth control added here leaves the roster short by one
+  // rather than making the run claim a failure it never measured.
+  if (!meshPiece || !withMesh) {
+    for (const skipped of [
+      'MR01_A_POSED_MESH_COVERS_PIXELS',
+      'MR02_A_VERTEX_DEFORM_MOVES_THE_CENTROID',
+      'MR03_SHARED_EDGES_ARE_DRAWN_ONCE',
+    ]) {
+      console.log(`  SKIP  ${skipped}  (nothing was posed on slot "${MESH_SLOT}", so there was nothing to measure)`);
+    }
+    return bad;
+  }
 
   // --- coverage ------------------------------------------------------------
   // `frameGeometry`'s coverage mask and per-slot footprints are what `check`
   // measures a candidate on. A mesh that draws to the plate but not into the mask
   // would read as a part that is simply missing.
   const viewport = framingViewport(posable.data, 256);
-  if (!viewport) return bad + 3 + say('MR01_A_POSED_MESH_COVERS_PIXELS', false, 'the fixture framed to nothing', '');
+  // 👻 Not a control, and issue #529 is why it stopped pretending to be one. It
+  // carried a second name for `MR01` six lines below saying the opposite thing,
+  // an empty `why` where every control here carries its origin line, and a
+  // second hand-kept `3` — none of which any
+  // run could print, because `framingViewport` answers null only when nothing it
+  // sampled had a finite vertex, and `MR00` has just found a posed mesh in the
+  // same skeleton. Measured the way issue #499 measured `probeDetail`'s guard:
+  // with the branch's body replaced by a throw the run was 597 PASS / exit 0,
+  // unchanged. #374's rule is that a branch nothing reaches is not a control.
+  //
+  // 🔒 A throw rather than `viewport!`, for the reason `renderRimProbe` throws:
+  // if the impossible ever becomes possible, this has to stop the run by name
+  // instead of handing `undefined` to the rasteriser and measuring the result.
+  if (!viewport) throw new Error(`the mesh fixture posed a mesh on slot "${MESH_SLOT}" and still framed to nothing`);
   const geometry = frameGeometry(withMesh, posable.pages, viewport);
   const footprint = geometry.footprints.get(MESH_SLOT);
   let covered = 0;
