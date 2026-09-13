@@ -21983,6 +21983,160 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR16: the allowlist is closed under relative import (#527) ----------
+  //
+  // 🔒 `CUR15`'s last clause holds this fact over ONE corner of the graph — the
+  // modules `src/` reaches — because that corner is what its bullet's rule is
+  // about. The fact is a property of the whole package: a shipped module that
+  // imports a module `files` leaves out installs as `Cannot find module` on the
+  // command that needs it, and which directory the importer happens to sit in
+  // has nothing to do with that.
+  //
+  // ⚠️ **The residue was measured before this was written**, because "wider" is
+  // a claim and not a description. On the tree of 2026-09-13: `src/` reached two
+  // modules outside itself, so `CUR15` covered two edges, while the shipped code
+  // set carried 79 relative import edges between 37 files. Those figures are a
+  // record of that day and the case's own detail line is the live one. `cli.ts`
+  // reaching a new `tools/` helper, or `tools/plate.ts` reaching one, is the
+  // same defect with the same consequence and `CUR15` is green on it — driven
+  // below on an importer outside `src/` rather than asserted here.
+  //
+  // ⇒ This is a gate on the FACT, deliberately, and not on the sentence that
+  // described it. `ROADMAP.md` carried a second copy of the claim `CUR15`
+  // falsified — *"nothing in the tree fails when a module is added and not
+  // listed"* — and a scanner over that prose cannot be built. Measured, not
+  // assumed: `CUR15`'s own bullet finder reports nothing on `ROADMAP.md`, so
+  // widening its file set adds a file a scan reads nothing in; and the only
+  // finder that reaches the paragraph is one keyed to the defect's own wording,
+  // which has one site today and none the moment it is repaired. A scan whose
+  // floor can only be zero is what `CUR01`'s floors exist to refuse. So the
+  // sentence is deleted rather than re-scoped, and what it described is held
+  // here, where it is derived from `package.json` and the import graph.
+  //
+  // 🚫 The general form was tried and rejected: *no landing document may assert
+  // that no gate covers X*. The population is 96 such sentences across 19 of the
+  // 22 documents this suite reads, one of which was the defect, and deciding any
+  // of them needs X resolved to a control name — a hand-kept map from prose to
+  // gate, which is the `✅ applied` antipattern this repository already has a
+  // judgment about. Nor does a temporal marker separate them: *"yet"* and
+  // *"still"* appear on 2 of the 96, and the defect carried neither.
+  {
+    const RELATIVE_IMPORT = /(?:from|import|require)\s*\(?\s*['"](\.\.?\/[^'"]+)['"]/g;
+    const shippedCode = [...shipped].filter((file) => /\.(ts|tsx|js|mjs|cjs)$/.test(file)).sort();
+    const onDisk = (path: string): boolean => existsSync(join(root, path)) && statSync(join(root, path)).isFile();
+    const specifiersIn = (text: string): string[] => [...new Set([...text.matchAll(RELATIVE_IMPORT)].map((m) => m[1]))];
+    const targetOf = (file: string, spec: string): string =>
+      relative(root, resolve(join(root, dirname(file)), spec)).split('\\').join('/');
+
+    /**
+     * What one module's relative imports get wrong, given what ships and what
+     * is on disk. The controls below call THIS, rather than a second reading
+     * that would agree with the verdict by construction.
+     */
+    const importFaults = (
+      file: string,
+      text: string,
+      ships: (path: string) => boolean,
+      isFile: (path: string) => boolean,
+    ): string[] => {
+      const out: string[] = [];
+      for (const spec of specifiersIn(text)) {
+        const target = targetOf(file, spec);
+        if (!isFile(target)) {
+          out.push(
+            `${file} imports '${spec}' and ${target} is not a file this resolver can land on — teach it, or the ` +
+              'closure it reads is not the one npm installs',
+          );
+        } else if (!ships(target)) {
+          out.push(
+            `🔒 ${file} imports '${spec}' and \`files\` does not ship ${target} — the installed package throws ` +
+              'Cannot find module on the command that needs it',
+          );
+        }
+      }
+      return out;
+    };
+
+    let edges = 0;
+    let crossing = 0;
+    const closureFaults: string[] = [];
+    for (const file of shippedCode) {
+      const text = readFileSync(join(root, file), 'utf8');
+      const specs = specifiersIn(text);
+      edges += specs.length;
+      crossing += specs.filter((spec) => dirname(targetOf(file, spec)) !== dirname(file)).length;
+      closureFaults.push(...importFaults(file, text, shipsToo, onDisk));
+    }
+
+    // 🌱 Three plants through the same judge. The first two are the verdict's
+    // own two directions; the third is the measurement behind "this is not
+    // `CUR15` in another spelling" — the same defect on an importer outside
+    // `src/`, which `CUR15`'s derivation never opens.
+    const SHIPS_PROBE = 'tools/shipped_probe.ts';
+    const shipsProbe = (path: string): boolean => path === SHIPS_PROBE;
+    const faithful = importFaults('src/probe.ts', `import { drawText } from '../${SHIPS_PROBE}';`, shipsProbe, () => true);
+    const unshipped = raisedBy(
+      importFaults('src/probe.ts', "import { drawText } from '../tools/unshipped_probe.ts';", shipsProbe, () => true),
+      { was: faithful },
+    );
+    const absent = raisedBy(
+      importFaults('src/probe.ts', `import { drawText } from '../${SHIPS_PROBE}';`, shipsProbe, () => false),
+      { was: faithful },
+    );
+    const outsideSrcClean = importFaults('cli.ts', `import { drawText } from './${SHIPS_PROBE}';`, shipsProbe, () => true);
+    const outsideSrc = raisedBy(
+      importFaults('cli.ts', "import { drawText } from './tools/unshipped_probe.ts';", shipsProbe, () => true),
+      { was: outsideSrcClean },
+    );
+    const controlFaults = [
+      ...(unshipped.length === 0 ? ['a shipped module importing a module `files` does not ship was not faulted'] : []),
+      ...(absent.length === 0 ? ['an import landing on no file at all was not faulted'] : []),
+      ...(outsideSrc.length === 0
+        ? ['the same defect on an importer outside `src/` — the half `CUR15` cannot read — was not faulted']
+        : []),
+      ...faithful.map((fault) => `a shipped module importing another shipped module was faulted anyway — ${fault}`),
+      ...outsideSrcClean.map((fault) => `the same, with the importer outside \`src/\` — ${fault}`),
+    ];
+
+    const readOnlyBySrc = modulesSrcReachesOutsideItself(root);
+    const importersOutsideSrc = shippedCode.filter((file) => !file.startsWith('src/'));
+    const probes = [
+      ...floorProbes(
+        [
+          [shippedCode.length, 2, `${shippedCode.length} shipped file(s) are modules this resolver reads`],
+          [edges, 1, `${edges} relative import edge(s) were resolved`],
+          [crossing, 1, `${crossing} of those edges cross a directory, which is the rule's own subject`],
+        ],
+        'and a reader that resolves no import at all pronounces the allowlist closed off nothing',
+      ),
+      ...closureFaults,
+      ...controlFaults,
+    ];
+    const held = probes.length === 0;
+    say(
+      'CUR16_EVERY_RELATIVE_IMPORT_A_SHIPPED_MODULE_MAKES_LANDS_ON_A_SHIPPED_MODULE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `\`files\` ships ${shippedCode.length} module(s) with ${edges} relative import edge(s) between them ` +
+          `(${crossing} of them crossing a directory), and every one lands on a file \`files\` also ships — ` +
+          `including the ${importersOutsideSrc.length} importer(s) outside \`src/\`, whose edges are not in the ` +
+          `${readOnlyBySrc.length} module(s) \`CUR15\` derives`,
+      ),
+      'the installed package is an allowlist and a checkout is not, so the two can disagree, and until #527 the ' +
+        'only thing holding them together was `CUR15`\'s last clause over the modules `src/` reaches — a corner of ' +
+        'the graph, and the detail above prints how small a corner. The rest were held by nobody: `cli.ts` or ' +
+        '`tools/plate.ts` reaching a new helper left out of `files` is the same defect with the same consequence, ' +
+        'and the tree stayed green on it. ' +
+        '⚠️ It is a gate on the FACT rather than on the prose, and that was measured rather than preferred — ' +
+        '`ROADMAP.md` stated the hole in words `CUR15`\'s finder does not see, and a finder written from those ' +
+        'words would have one site today and none after the repair, which is a scan with no floor it can state. ' +
+        '🔒 The resolver reports a target it cannot land on as its own fault rather than as a missing ship, ' +
+        'because those are different repairs and a reader who cannot tell them apart fixes the wrong one',
+    );
+  }
+
   return bad;
 }
 

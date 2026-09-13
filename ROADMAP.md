@@ -180,9 +180,9 @@ themselves are asserted — a scanner that stops matching goes quiet, not red.
 
 ### The published package works on a machine that has never seen this repo
 
-The tree can be green while the installed package throws, because the package
-is an allowlist and the repository is not. Nothing in the tree fails when a
-module is added and not listed.
+The package is an allowlist and the repository is not, so a green checkout and a
+working install are two different facts: everything the tree runs is on disk,
+and only what `files` names reaches the registry.
 
 **Done when** installing from the registry and running a build is checked
 mechanically, every release.
