@@ -8030,6 +8030,98 @@ function runPathAndSliderSuite(): number {
       'ends outside is the one row that moves when the two terms are made an if/else instead of a sum',
   );
 
+  // --- the order `animations` is emitted in, and what a re-sort of it does to
+  //     a slider (issue #535) ------------------------------------------------
+  //
+  // 🔑 A slider names its animation and the emitted JSON carries that name on
+  // both sides — but the same reference is an ORDINAL in the format's binary
+  // half (`SkeletonBinary.js`: `constraint.animation = animations[readInt()]`),
+  // so an editor holding the ordinal writes back whatever stands at that
+  // position when it exports. Measured: `gallery/look` went into a licensed
+  // editor as `turn, tilt, sweep` with `yaw -> "turn"` and came back
+  // `sweep, tilt, turn` with `yaw -> "sweep"`. The compiler now emits in the
+  // editor's own order, so its re-sort moves no index and repoints nothing.
+  //
+  // ⚠️ **This is here and not in `bench`, `check` or `diff` because all three
+  // were measured blind to it**, which is the whole reason the defect could
+  // land: re-ordering every gallery example left `bench 4 --frames` identical
+  // to the byte, `check` reported MAE 0.00 against the frames of the build it
+  // replaced, and all 52 `diff` measures read 1.000 on all seven examples. A
+  // green gate and an unmoved `diff` over a silently repointed reference is
+  // issue #45 again, one collection over.
+  const sortedByCodepoint = (names: string[]): string[] => [...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  /**
+   * What the editor's re-sort would do to every slider in an emitted skeleton:
+   * hold each slider's INDEX into the animation list and read the name back at
+   * that index once the list is sorted. A row means the slider comes back
+   * applying a different animation; no rows means the sort is a no-op.
+   */
+  const repointedByASort = (skeleton: Record<string, unknown>): string[] => {
+    const names = Object.keys(skeleton.animations as Record<string, unknown>);
+    const sorted = sortedByCodepoint(names);
+    const constraints = (skeleton.constraints ?? []) as Array<Record<string, unknown>>;
+    return constraints
+      .filter((c) => c.type === 'slider')
+      .map((c) => {
+        const was = String(c.animation);
+        return { slider: String(c.name), was, becomes: sorted[names.indexOf(was)] };
+      })
+      .filter((r) => r.becomes !== r.was)
+      .map((r) => `${r.slider}: "${r.was}" -> "${r.becomes}"`);
+  };
+  const orderDirs = sliderPairDirs([pairSlider('yaw', 'yaw-pose', 'yaw-dial')]);
+  const orderMotion = sliderPairMotion();
+  const orderMotionPath = join(orderDirs.dir, 'probe.motion.json');
+  writeFileSync(orderMotionPath, `${JSON.stringify(orderMotion, null, 2)}\n`);
+  const orderEmitted = JSON.parse(
+    compile({
+      rigPath: orderDirs.rigPath,
+      motionPath: orderMotionPath,
+      outDir: orderDirs.outDir,
+      imagesDir: orderDirs.dir,
+    }).skeletonText,
+  ) as Record<string, unknown>;
+  const declaredOrder = Object.keys(orderMotion.animations as Record<string, unknown>);
+  const emittedOrder = Object.keys(orderEmitted.animations as Record<string, unknown>);
+  const emittedRepointed = repointedByASort(orderEmitted);
+  say(
+    'PS47_THE_EMITTED_ANIMATION_ORDER_IS_A_FIXED_POINT_OF_THE_EDITORS_SORT',
+    emittedRepointed.length === 0 &&
+      JSON.stringify(emittedOrder) === JSON.stringify(sortedByCodepoint(emittedOrder)) &&
+      JSON.stringify(declaredOrder) !== JSON.stringify(emittedOrder),
+    `the motion spec declares [${declaredOrder.join(', ')}] and the emit is keyed [${emittedOrder.join(', ')}], ` +
+      `which a codepoint sort leaves at [${sortedByCodepoint(emittedOrder).join(', ')}]; ` +
+      `${emittedRepointed.length} slider(s) would be repointed by that sort` +
+      (emittedRepointed.length ? ` — ${emittedRepointed.join('; ')}` : ''),
+    'the claim is not that the keys are sorted but that sorting them moves nothing, which is the property the ' +
+      'editor exercises. The third clause is what stops the case being vacuous: a fixture whose declaration order ' +
+      'already matched would pass without the emitter doing anything at all',
+  );
+
+  // The plant is the emit this repair replaced: the same skeleton re-keyed into
+  // the motion spec's own declaration order, which is what rigc wrote until
+  // #535. It is tested by the fault it raises, and the fault is the measured
+  // one — the slider naming the animation at index 0 comes back naming
+  // whichever animation sorts first.
+  const declaredKeyed: Record<string, unknown> = { ...orderEmitted };
+  const byDeclaration: Record<string, unknown> = {};
+  const emittedAnimations = orderEmitted.animations as Record<string, unknown>;
+  for (const name of declaredOrder) byDeclaration[name] = emittedAnimations[name];
+  declaredKeyed.animations = byDeclaration;
+  const declaredRepointed = repointedByASort(declaredKeyed);
+  const wouldMove = declaredOrder.filter(
+    (name, i) => sortedByCodepoint(declaredOrder)[i] !== name,
+  );
+  say(
+    'PS48_THE_SORT_REPOINTS_A_SLIDER_WHEN_THE_EMIT_IS_IN_DECLARATION_ORDER',
+    declaredRepointed.length > 0 && wouldMove.length > 0 && declaredOrder.length === emittedOrder.length,
+    `keyed [${Object.keys(byDeclaration).join(', ')}] the sort moves ${wouldMove.length} of ` +
+      `${declaredOrder.length} name(s) off their index and reports ${declaredRepointed.length} repointed slider(s)` +
+      (declaredRepointed.length ? `: ${declaredRepointed.join('; ')}` : ''),
+    'a detector that never fires is not a detector, and one that fires on everything is not either — the case above ' +
+      'is the silent half over the same rig and the same reader, so the two together say the reader can tell them apart',
+  );
+
   return bad;
 }
 

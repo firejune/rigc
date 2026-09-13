@@ -1180,13 +1180,38 @@ breaks the moment the two share a target — in the worked example both `turn` a
 `tilt` key `headroll`. §7's paragraph on sliders is the mechanism and
 `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` is the refusal.
 
-⚠️ **What none of this measures: the Spine editor.** No editor export in this
-repository carries a slider, so whether the editor preserves two of them, their
-`additive` and `local` flags, and their order in the constraints array is
-**unknown**. `tools/editor_roundtrip.ts` on a machine with a licensed editor is
-what would answer it, and until somebody runs it the editor half of a parameter
-axis is untested. The runtime half is not: every figure above came back through
-`spine-core`.
+✅ **The editor half, measured.** This paragraph said *unknown* until the round
+trip was taken with `tools/editor_roundtrip.ts` on a licensed editor (data
+version 4.3.26) against a 4.3.13 build of this worked example. What it found:
+
+- **Both sliders come back, and the parameter axis survives.** `additive`,
+  `local`, `bone`, `property`, `from`, `max` and `scale` are identical field for
+  field, and the two keep their places in the `constraints` array. `mix: 1` and
+  `to: 0` are dropped, and those are the format's own defaults (`SkeletonJson`
+  reads `mix` as 1 and `to` as 0 when absent) — an elision, not a loss.
+- ⚠️ **The animation each slider *names* did not come back, until rigc changed
+  what it emits.** The editor re-sorts the `animations` object and a slider's
+  animation is an ordinal in the format, so `yaw -> "turn"` returned as
+  `yaw -> "sweep"` — the first animation of the sorted list
+  ([#535](https://github.com/firejune/rigc/issues/535)). rigc now emits
+  animations codepoint-ascending; on the same rig through the same editor that
+  restored `yaw -> "turn"` and took the re-rendered mean absolute error from
+  10.4655 / 8.4961 / 8.7140 (`sweep` / `tilt` / `turn`) to
+  0.3035 / 0.0769 / 0.0588, worst drift 16.535 px to 3.947 px.
+- 🚨 **The physics constraint on the cowlick comes back driving nothing.**
+  `rotate: 1` is absent from the export, and an absent `rotate` parses as **0**
+  (`SkeletonJson`), so the returned file states *drives nothing* rather than
+  omitting a default — which is why `A23_PHYSICS_CONSTRAINT_EFFECTIVE` refuses it
+  by name. Independent of the ordering defect, and open as
+  [#536](https://github.com/firejune/rigc/issues/536).
+- 🔸 Unexplained: `diff` reports `animations.curve_kinds` moved on **196 of 200**
+  keys in every round trip taken, the clean one included. Visually small once the
+  ordering is fixed — but it is 98% of the keys, and *small* is not *explained*.
+
+⚠️ **What it still does not measure:** a rig carrying more than one skin or more
+than one event, which is where the same shape — an ordinal into an object the
+editor re-keys — could bite next (AUTHORING §10.1). The runtime half was never in
+doubt: every figure above came back through `spine-core`.
 
 ---
 

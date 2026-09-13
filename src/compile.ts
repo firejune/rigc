@@ -136,6 +136,63 @@ export const SPINE_VERSION = '4.3.13';
 
 const FRAME = 1 / 60;
 
+/**
+ * The order the emitted `animations` object is keyed in: **codepoint-ascending
+ * by name**, which is the order the Spine editor writes it back out in.
+ *
+ * ## Why the emitter has an opinion about this at all
+ *
+ * A `slider` constraint names the animation it applies, and in JSON that is a
+ * name on both sides. The **binary** format is where the same reference is an
+ * ordinal — `SkeletonBinary.js`: `constraint.animation = animations[readInt()]`
+ * — and an editor whose own model holds that ordinal reads the name at import
+ * and writes back whatever now stands at that position. Round-tripped through a
+ * licensed editor (data version 4.3.26), `gallery/look` went in as
+ * `turn, tilt, sweep` with `yaw -> "turn"` and came back as `sweep, tilt, turn`
+ * with **`yaw -> "sweep"`** (issue #535). Nothing in the returned file says so;
+ * it parses, it validates, and it applies the wrong animation.
+ *
+ * ⭐ The second slider is the control that names the mechanism rather than a
+ * second victim: `tilt` survived because it sat at index 1 in *both* orderings
+ * and index 1 is called `tilt` in both.
+ *
+ * ⇒ Emitting in the editor's own order makes its re-sort a no-op, so no index
+ * moves and no reference is repointed. Measured on the same rig through the
+ * same editor: mean absolute error over the re-rendered frames fell from
+ * 10.4655 / 8.4961 / 8.7140 to 0.3035 / 0.0769 / 0.0588, and `yaw -> "turn"`
+ * came back intact.
+ *
+ * ## Why codepoint, and what is still unmeasured
+ *
+ * Codepoint order is what every editor-authored file on hand is in: of the 12
+ * skeletons of the Spine example corpus, the 7 carrying more than one animation
+ * are each in it (35 names between them; the other five carry one apiece and
+ * say nothing), as is every name-keyed object the round-trip export rewrote —
+ * 3 animations, a skin's 24 slot keys, two animations' 16 and 2 bone-timeline
+ * keys. Against
+ * that, **every JSON array** the same export carried came back in the order it
+ * went in (30 bones, 24 slots, 3 constraints), which is why arrays are left
+ * alone here. It is also order-INDEPENDENT rather than a permutation of the
+ * input: the same three names went in in two different orders and came out in
+ * one, which is what refutes "the editor reverses" — a reading those three
+ * names admit and this one does not.
+ *
+ * ⚠️ Every one of those names is lowercase ASCII with `-` or `_`, so the
+ * observations cannot separate codepoint order from a case-insensitive or
+ * digit-aware one. Names differing only in case (`Turn` vs `turn`) or carrying
+ * unpadded digits (`turn2` vs `turn10`) are where the comparators disagree, and
+ * **no measurement here reaches them**. Codepoint is chosen because it agrees
+ * with everything measured and is locale-independent, which `A18` requires;
+ * `localeCompare` would make the emitted bytes a property of the machine.
+ */
+function editorAnimationOrder<T>(animations: Record<string, T>): Record<string, T> {
+  const ordered: Record<string, T> = {};
+  for (const name of Object.keys(animations).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    ordered[name] = animations[name];
+  }
+  return ordered;
+}
+
 // ---------------------------------------------------------------------------
 // number formatting — deterministic, and free of "-0"
 // ---------------------------------------------------------------------------
@@ -1810,7 +1867,13 @@ export function compile(opts: CompileOptions): CompileResult {
     // conditional spread rather than an assignment after the literal, so the key
     // lands in that position instead of at the end.
     ...(Object.keys(events).length ? { events } : {}),
-    animations,
+    // Keyed in the editor's own order rather than the motion spec's, because a
+    // slider's reference to an animation is an ordinal in the format and the
+    // editor re-sorts this object — see `editorAnimationOrder`. The sort is
+    // applied HERE and not to the loop above, so what the compiler reads, the
+    // order it reports durations in, and which animation a CompileError names
+    // first are all still the spec's own; only the emitted key order moves.
+    animations: editorAnimationOrder(animations),
   };
   if (constraints.length) skeleton.constraints = constraints;
 
