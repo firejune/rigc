@@ -206,12 +206,13 @@ sincere about it. rigc exists to convert that silence into a named failure.
   the tree and compares, and its sharpest clause is the negative one: nothing
   had ever asserted that `src/compile.ts` does *not* link the runtime.
 - **A new runtime import that crosses a directory has to be added to `files` in
-  `package.json`.** The published package is an allowlist, not the repository:
-  `cli.ts`, `src/`, and the only two modules `src/` reaches outside itself
-  (`tools/plate.ts`, `tools/font5x7.ts`). Nothing in the tree fails if a third is
-  added and not listed — the repository still runs — but the installed package
-  throws `Cannot find module` on the command that needs it. `npm pack --dry-run`
-  lists what would ship; RELEASING.md says what belongs there and why.
+  `package.json`.** The published package is an allowlist, not the repository,
+  and what is in it is deliberately not written out here: `npm pack --dry-run`
+  lists what would ship, and RELEASING.md says what belongs there, why, and why
+  no document keeps that list by hand. The only **two** modules `src/` reaches
+  outside itself are `tools/plate.ts` and `tools/font5x7.ts`. A module added
+  under `tools/` and left out of `files` still runs from a clone — the installed
+  package is where it throws `Cannot find module`, on the command that needs it.
 - Coordinate contract: manifests are in **crop pixels, y down, origin top-left**;
   Spine world is **y up, origin at the bottom-left of the crop**. The whole
   conversion lives in `src/transform.ts` (`cropToSpineY`, `toBoneLocal`,
