@@ -4679,14 +4679,22 @@ function runStaticRigSuite(): number {
     'both of A09’s loops iterate over animations; with none, "ran and held" and "never looked" are the same report',
   );
 
-  const compared = gateProbe(dirs, {
-    ...STATIC_MOTION,
-    animations: { 'ready-to-animate': { duration: 0, loop: false, tracks: [] } },
-  });
+  const A09_DURATION = 'A09_ANIMATION_DURATION_MATCHES_SPEC';
+  // The declared duration is read off the spec this case writes rather than
+  // typed into the sentence beside it: the two `0s` that used to stand there
+  // were the answer the verdict wanted, printed whatever the run found.
+  const emptyAnimation = { duration: 0, loop: false, tracks: [] };
+  const compared = gateProbe(dirs, { ...STATIC_MOTION, animations: { 'ready-to-animate': emptyAnimation } });
+  const comparedSaid =
+    compared.failures.find((f) => f.assertion === A09_DURATION)?.detail ??
+    compared.skipped.find((s) => s.assertion === A09_DURATION)?.reason ??
+    `it is in neither the ${compared.failures.length} failure(s) nor the skips`;
   say(
     'S02_A09_STILL_RUNS_ON_A_NAMED_EMPTY_ANIMATION',
-    compared.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
-    'an animation with no tracks is still an animation: 0s declared against 0s loaded is a real comparison',
+    compared.passed.includes(A09_DURATION),
+    `an animation with no tracks is still an animation, and ${emptyAnimation.duration}s declared against what the ` +
+      `skeleton loads is a real comparison: A09 ` +
+      `${compared.passed.includes(A09_DURATION) ? 'ran and held on it' : `did NOT — ${comparedSaid}`}`,
     'the skip must be keyed on "there is nothing to compare", not on "the durations are zero"',
   );
 
@@ -5804,33 +5812,50 @@ function runConstraintAndDeformSuite(): number {
     'issue #273: the rig-declared value was overwritten by the per-key default for the whole animation, so every ' +
       'knee bent the wrong way with the field still in the file and the gate green',
   );
+  // All three figures the sentence used to state are read off the run instead.
+  // The two flags are bound once and used both in the data and in the clause
+  // that describes it, and the posed direction is the value the verdict
+  // compares — it stood there as a typed `+1`, which is the number the verdict
+  // requires, printed whatever the runtime posed. `T02b` above already prints
+  // its two bendDirections; this is the same line.
+  const timelineStatesBend = true;
+  const rigDeclaresBend = false;
+  const statedFlagBend = (() => {
+    const overrides = timelineMotion({
+      duration: 1,
+      loop: false,
+      tracks: [],
+      ik: [
+        {
+          constraint: 'leg-ik',
+          keys: [
+            { t: 0, mix: 1, softness: 0, bendPositive: timelineStatesBend },
+            { t: 1, mix: 1, softness: 0, bendPositive: timelineStatesBend },
+          ],
+        },
+      ],
+    });
+    const rigSaysFalse = writeProbeRig({
+      ...TIMELINE_RIG,
+      constraints: [
+        {
+          name: 'leg-ik',
+          type: 'ik',
+          bones: ['thigh', 'shin'],
+          target: 'foot-target',
+          mix: 1,
+          bendPositive: rigDeclaresBend,
+        },
+      ],
+    });
+    const posed = poseAtSample(timelinePosable(rigSaysFalse, overrides).data, 'move', 4, 4);
+    return posed.findConstraint('leg-ik', IkConstraint)!.pose.bendDirection;
+  })();
   say(
     'T02c_a_timeline_that_states_the_flag_still_overrides_the_rig',
-    (() => {
-      const overrides = timelineMotion({
-        duration: 1,
-        loop: false,
-        tracks: [],
-        ik: [
-          {
-            constraint: 'leg-ik',
-            keys: [
-              { t: 0, mix: 1, softness: 0, bendPositive: true },
-              { t: 1, mix: 1, softness: 0, bendPositive: true },
-            ],
-          },
-        ],
-      });
-      const rigSaysFalse = writeProbeRig({
-        ...TIMELINE_RIG,
-        constraints: [
-          { name: 'leg-ik', type: 'ik', bones: ['thigh', 'shin'], target: 'foot-target', mix: 1, bendPositive: false },
-        ],
-      });
-      const posed = poseAtSample(timelinePosable(rigSaysFalse, overrides).data, 'move', 4, 4);
-      return posed.findConstraint('leg-ik', IkConstraint)!.pose.bendDirection === 1;
-    })(),
-    'a rig declaring `bendPositive: false` under a timeline that states `true` on every key poses bendDirection +1',
+    statedFlagBend === 1,
+    `a rig declaring \`bendPositive: ${rigDeclaresBend}\` under a timeline that states \`${timelineStatesBend}\` on ` +
+      `every key poses bendDirection ${statedFlagBend >= 0 ? '+' : ''}${statedFlagBend}`,
     'the format keys these per key on purpose and they are stepped by nature, so a bend that flips partway through ' +
       "an animation is a real thing to write — the fix carries the rig's value into SILENCE, it does not overrule a " +
       'stated one. The editor\'s own export restates the flag on every key: spineboy-pro does it six times',
@@ -10554,20 +10579,27 @@ function runContourMeshSuite(): number {
     'issue #277: a contour that clipped its art was refused by name and the same geometry authored printed nothing ' +
       'at all — 5.7% of a drawing was not going to be drawn and 18 assertions passed',
   );
+  // The mesh itself is bound, not the comparison over it: the sentence beside
+  // the verdict used to be the verdict written out in English, so on the run it
+  // exists for it said the mesh reported no coverage while holding a number.
+  const noImageMesh = (() => {
+    const noImage = { ...fanMeshAttachment(FAN_ART_R, FAN_SIZE) };
+    delete noImage.image;
+    const built = buildContourRig(noImage, {
+      art: discArt(FAN_ART_R, FAN_SIZE),
+      width: FAN_SIZE,
+      height: FAN_SIZE,
+      invariants: null,
+    });
+    return built.result.meshes[0];
+  })();
   say(
     'CT09_A_MESH_WITH_NO_IMAGE_TO_MEASURE_AGAINST_REPORTS_NOTHING',
-    (() => {
-      const noImage = { ...fanMeshAttachment(FAN_ART_R, FAN_SIZE) };
-      delete noImage.image;
-      const built = buildContourRig(noImage, {
-        art: discArt(FAN_ART_R, FAN_SIZE),
-        width: FAN_SIZE,
-        height: FAN_SIZE,
-        invariants: null,
-      });
-      return built.result.meshes[0]?.coverage === undefined && built.result.meshes[0]?.kind === 'authored';
-    })(),
-    'the same fan with no `image` reports no coverage at all',
+    noImageMesh?.coverage === undefined && noImageMesh?.kind === 'authored',
+    noImageMesh === undefined
+      ? 'the same fan with no `image` produced no mesh at all, so there is nothing here that could report coverage'
+      : `the same fan with no \`image\` compiles to a mesh of kind "${noImageMesh.kind}" whose coverage reads ` +
+        `${noImageMesh.coverage === undefined ? 'nothing at all' : String(noImageMesh.coverage)}`,
     'coverage is a measurement between the triangles and a named PNG; with no PNG there is nothing to compare, and ' +
       'inventing a denominator would report a percentage of nothing',
   );
@@ -16570,10 +16602,25 @@ function runPackerSuite(): number {
     'offsets: 0, 0, 40, 80\nrotate: 0\n\n' +
     '../parts/head.png\nsize: 24, 24\nfilter: Linear, Linear\npma: false\nhead\nbounds: 0, 0, 24, 24\n' +
     'offsets: 0, 0, 24, 24\nrotate: 0\n';
+  // "Byte for byte" is the claim, so the byte the two part at is the detail.
+  // The sentence used to describe the literal and nothing else, which is true
+  // of the literal on every run including the one where the emit left it.
+  const defaultAtlas = buildAtlasText(oneImage);
+  const partsAtByte = (() => {
+    const shared = Math.min(defaultAtlas.length, expectedDefault.length);
+    for (let i = 0; i < shared; i++) if (defaultAtlas[i] !== expectedDefault[i]) return i;
+    return defaultAtlas.length === expectedDefault.length ? -1 : shared;
+  })();
   say(
     'PK09_THE_UNPACKED_EMIT_IS_BYTE_FOR_BYTE_WHAT_IT_ALWAYS_WAS',
-    buildAtlasText(oneImage) === expectedDefault,
-    'one page per part, one blank line between pages, no indentation, `rotate: 0` — asserted as the literal text',
+    defaultAtlas === expectedDefault,
+    'one page per part, one blank line between pages, no indentation, `rotate: 0`, asserted as the literal text: ' +
+      `${defaultAtlas.length} byte(s) emitted against the literal's ${expectedDefault.length}, ` +
+      (partsAtByte === -1
+        ? 'identical byte for byte'
+        : `parting at byte ${partsAtByte} — the emit reads ` +
+          `${JSON.stringify(defaultAtlas.slice(partsAtByte, partsAtByte + 32))} where the literal reads ` +
+          `${JSON.stringify(expectedDefault.slice(partsAtByte, partsAtByte + 32))}`),
     'the body of the default emit moved into src/atlas.ts so the packer could share it, and "the defaults change ' +
       'nothing" has to be a checked property of that move rather than a claim about two functions that look alike',
   );
