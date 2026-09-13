@@ -835,7 +835,21 @@ export interface SpineSkeletonJson {
   }>;
   /**
    * Event definitions, keyed by name (`SkeletonJson.ts:451-464`). An object, not
-   * an array — the one top-level collection in the format that is.
+   * an array — one of the **two** top-level collections in the format that are,
+   * `animations` being the other.
+   *
+   * ⚠️ This sentence said "the one" until issue #535, and the collection it was
+   * overlooking is where the defect that card is about lived. The distinction is
+   * not cosmetic: the binary format addresses both of these by ORDINAL
+   * (`SkeletonBinary`: `animations[readInt()]` for a slider's animation,
+   * `events[readInt()]` for an event key), and an editor round trip was measured
+   * to re-key every name-keyed object in codepoint order while returning every
+   * ARRAY in the order it was given. So a reference into either of these two is
+   * a reference whose ordinal an editor can move, and a reference into
+   * `bones` / `slots` / `skins` / `constraints` is not. `animations` is emitted
+   * in the editor's order for that reason (`compile.ts`'s
+   * `editorAnimationOrder`); whether `events` needs the same is unmeasured,
+   * because no editor export on hand carries more than one event.
    */
   events?: Record<string, SpineEvent>;
   animations: Record<

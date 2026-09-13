@@ -564,6 +564,17 @@ behind it writes literal `x`/`y` instead.
 
 **R9 — Nothing is written until every assertion is green.**
 
+**R10 — The `animations` object is keyed in the editor's order, not in yours.**
+Declare animations in whatever order reads best; the emit keys them
+codepoint-ascending, which is the order the Spine editor writes them back out in.
+This is the one place rigc reorders anything you wrote, and it is not cosmetic: a
+`slider`'s animation is a **name** in JSON and an **ordinal** in the format's
+binary half, so an editor that re-sorts the object repoints every slider whose
+animation moved index — silently, in a file that still parses and still gates
+green (§3.5.2, [#535](https://github.com/firejune/rigc/issues/535)). Nothing else
+moves: each animation's own body is byte-identical either way, and every other
+collection is emitted in the order you gave it.
+
 ---
 
 ## 3. The rig spec, field by field
@@ -1441,6 +1452,30 @@ is the mirror of `events`, where the rig declares a name the motion spec fires. 
 parser resolves it in a **second pass** over the constraints array, after the
 animations are read, and a miss throws `Slider animation not found`; rigc refuses it
 where the message can name both files.
+
+🔒 **And it is the one field an editor round trip can repoint under you, which is
+why R10 exists.** In JSON the reference is a name on both sides. In the format's
+binary half it is an **ordinal** — `constraint.animation = animations[readInt()]`
+(`SkeletonBinary`) — so an editor holding that ordinal writes back whichever
+animation now stands at the position. `gallery/look` went into a licensed editor
+(data version 4.3.26) as `turn, tilt, sweep` with `yaw -> "turn"` and came back
+`sweep, tilt, turn` with **`yaw -> "sweep"`**: a file that parses, gates green and
+applies the wrong animation. ⭐ Its second slider is what named the mechanism
+rather than a second casualty — `tilt` survived because it sat at index 1 in both
+orderings. rigc now emits animations codepoint-ascending so the editor's re-sort
+moves no index ([#535](https://github.com/firejune/rigc/issues/535)); on the same
+rig through the same editor that restored `yaw -> "turn"` and took the
+re-rendered mean absolute error from 10.4655 / 8.4961 / 8.7140 down to
+0.3035 / 0.0769 / 0.0588.
+
+⚠️ **What that repair does not reach: names a codepoint sort and a friendlier one
+disagree about.** Every animation name in every editor-authored file this
+repository has is lowercase ASCII with `-` or `_`, so nothing measured here
+separates codepoint order from a case-insensitive or digit-aware one. Names
+differing only in case (`Turn` / `turn`) or carrying unpadded digits (`turn2` /
+`turn10`) are where the two could part, and there the hazard returns. Until
+somebody round-trips such a pair, **name animations so that every ordering anyone
+might use agrees** — one case, and digits padded or absent.
 
 ⚠️ **The fields of the model you did not choose are refused, not ignored.** The
 parser reads `time` only in the bone-less branch and `property`/`from`/`to`/`scale`/
@@ -4816,6 +4851,29 @@ low figure as a miss — say in the log that the art did not carry them.
 📗 **Housekeeping the format fixes for you.** The default skin *"always has the name
 `default`"* and *"bones are ordered so that the parent always comes before a child
 bone"* — [JSON format](http://esotericsoftware.com/spine-json-format). §3.4.
+
+🔬 **The editor re-keys every name-keyed OBJECT in codepoint order and leaves
+every ARRAY alone.** Read off its export of a rigc build (Spine 4.3.26,
+`gallery/look`): the `animations` object, a skin's 24 `attachments` slot keys and
+two animations' 16 and 2 bone-timeline keys all came back codepoint-ascending,
+while the 30 `bones`, 24 `slots` and 3 `constraints` — arrays — came back in the
+build's own order, element for element, and each slider kept its place among
+them. The corpus agrees on the animations half: of the 12 editor-authored
+skeletons in `examples/`, **7 carry more than one animation** — 35 names between
+them, the other five one each and so vacuous — and all 7 list them
+codepoint-ascending.
+⇒ in rigc: only `animations` is emitted in that order (R10), because it is the
+one object measured here whose ORDER is also an index space — every reference
+into the re-sorted *other* objects is by name on both sides, so nothing moves
+when they are re-keyed.
+
+⚠️ **`events` is the untested sibling of that rule, not an exception to it.** It
+is a name-keyed object too, and an event timeline's reference to it is an ordinal
+in the binary format exactly as a slider's animation is. No export in this
+repository carries more than one event, so whether the editor re-sorts `events` —
+and whether that repoints an event timeline the way it repointed a slider — is
+**unmeasured**. If you ship events and round-trip through the editor, declare
+them codepoint-ascending until somebody measures it.
 
 ### 10.2 Draw order
 
