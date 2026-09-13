@@ -8122,6 +8122,150 @@ function runPathAndSliderSuite(): number {
       'is the silent half over the same rig and the same reader, so the two together say the reader can tell them apart',
   );
 
+  // --- the names that order IS unambiguous for (issue #539) -----------------
+  //
+  // #537 sorted by codepoint on the stated assumption that codepoint was the
+  // editor's rule, and #539 measured the assumption false. Two rigs, each
+  // varying one axis: `Turn, sweep, wave` came back **`sweep, Turn, wave`**,
+  // and `turn10, turn2, zoom` came back **`turn2, turn10, zoom`**. Natural
+  // order, case-insensitive, is the only hypothesis both leave standing.
+  //
+  // ⇒ rigc still emits codepoint, and refuses every name set that does not
+  // pin the two together. On a set no comparator can order two ways, codepoint
+  // IS the editor's order — whatever the editor's comparator turns out to be —
+  // and the alternative was to write a comparator whose four free choices
+  // (leading zeros, a pure case tie, digits against words, what a separator is
+  // worth) are still unmeasured. That is how #537 landed.
+  const named = (names: string[]): { dirs: ProbeDirs; motion: Record<string, unknown> } => {
+    const base = sliderPairMotion();
+    const body = (base.animations as Record<string, unknown>)['yaw-pose'];
+    const animations: Record<string, unknown> = {};
+    for (const name of names) animations[name] = body;
+    return { dirs: sliderPairDirs([pairSlider('yaw', names[0], 'yaw-dial')]), motion: { ...base, animations } };
+  };
+
+  // Every branch of the predicate, one rig each, and the two names each rig's
+  // message has to carry. The first two rows are the rigs #539 measured.
+  const ambiguous: Array<[string, string[], [string, string], string]> = [
+    ['case folds the other way', ['Turn', 'sweep', 'wave'], ['Turn', 'sweep'], 'case'],
+    ['digit runs of unequal width', ['turn10', 'turn2', 'zoom'], ['turn10', 'turn2'], 'number'],
+    ['one name in two cases', ['Turn', 'turn'], ['Turn', 'turn'], 'case'],
+    ['one number written two ways', ['turn01', 'turn1'], ['turn01', 'turn1'], 'number'],
+    ['a number where the other has a word', ['1turn', 'turn'], ['1turn', 'turn'], 'number'],
+    ['a separator decides', ['wave_x', 'wavea'], ['wave_x', 'wavea'], 'separator'],
+    ['a separator is all that is left', ['wave', 'wave-'], ['wave', 'wave-'], 'separator'],
+  ];
+  const refused = ambiguous.map(([label, names, [x, y], kind]) => {
+    const rig = named(names);
+    const message = refusal(rig.dirs, rig.motion);
+    const missing = [
+      message === null ? 'compiled instead of being refused' : null,
+      message?.includes(`"${x}"`) ? null : `does not name "${x}"`,
+      message?.includes(`"${y}"`) ? null : `does not name "${y}"`,
+      message?.includes(kind) ? null : `does not say which kind (${kind})`,
+      message && /\b(rename|pad)\b/.test(message) ? null : 'says nothing to do about it',
+    ].filter((m): m is string => m !== null);
+    return { label, names, kind, message, missing };
+  });
+  const kindsRaised = [...new Set(refused.filter((r) => !r.missing.length).map((r) => r.kind))].sort();
+  // The kinds are not a list kept here: they are read off the union the compiler
+  // declares, so a fourth one added there with no rig above it is a fault.
+  const kindsDeclared = (
+    readFileSync('src/compile.ts', 'utf8').match(/kind:\s*((?:'[a-z]+'\s*\|\s*)*'[a-z]+')/) ?? ['', '']
+  )[1]
+    .split('|')
+    .map((k) => k.trim().replace(/'/g, ''))
+    .filter(Boolean)
+    .sort();
+  const unraised = kindsDeclared.filter((k) => !kindsRaised.includes(k));
+  const shortfall = refused.filter((r) => r.missing.length);
+  say(
+    'PS49_A_NAME_SET_THE_EDITOR_COULD_KEY_TWO_WAYS_IS_REFUSED_BY_BOTH_NAMES',
+    shortfall.length === 0 && kindsDeclared.length > 0 && unraised.length === 0,
+    shortfall.length === 0
+      ? `${refused.length} rigs refused, each naming both names, its kind and a repair — ` +
+        `${refused.map((r) => `[${r.names.join(', ')}] ${r.kind}`).join('; ')}; the compiler declares ` +
+        `${kindsDeclared.length} kind(s) (${kindsDeclared.join(', ')}) and every one has a rig above that raises it`
+      : shortfall.map((r) => `[${r.names.join(', ')}] ${r.missing.join(', ')}`).join(' | ') +
+        (unraised.length ? ` | kind(s) the compiler declares and no rig raises: ${unraised.join(', ')}` : ''),
+    'the message is the whole interface here: an author who cannot see the rig cannot act on "ambiguous animation ' +
+      'names". Both names, which of the three things decides them, and what to do are each asserted, and the kind ' +
+      'list is read off the compiler rather than kept here, so a fourth kind with no rig is a fault',
+  );
+
+  // The other side, and the one that says the rule refuses AMBIGUITY rather than
+  // refusing capitals and digits: a set carrying both, unambiguous, still builds.
+  const fine = named(['Sweep', 'Turn', 'Wave', 'Zoom02', 'Zoom10']);
+  const fineNames = Object.keys(fine.motion.animations as Record<string, unknown>);
+  const fineRefusal = refusal(fine.dirs, fine.motion);
+  const fineMotionPath = join(fine.dirs.dir, 'probe.motion.json');
+  const fineOrder =
+    fineRefusal === null
+      ? Object.keys(
+          (
+            JSON.parse(
+              compile({
+                rigPath: fine.dirs.rigPath,
+                motionPath: fineMotionPath,
+                outDir: fine.dirs.outDir,
+                imagesDir: fine.dirs.dir,
+              }).skeletonText,
+            ) as Record<string, unknown>
+          ).animations as Record<string, unknown>,
+        )
+      : [];
+  say(
+    'PS50_CAPITALS_AND_DIGITS_ARE_NOT_WHAT_IS_REFUSED',
+    fineRefusal === null &&
+      fineNames.some((n) => /[A-Z]/.test(n)) &&
+      fineNames.some((n) => /\d/.test(n)) &&
+      JSON.stringify(fineOrder) === JSON.stringify(sortedByCodepoint(fineNames)),
+    fineRefusal === null
+      ? `[${fineNames.join(', ')}] compiled and is keyed [${fineOrder.join(', ')}], which is its codepoint order; ` +
+        `${fineNames.filter((n) => /[A-Z]/.test(n)).length} of them carry a capital and ` +
+        `${fineNames.filter((n) => /\d/.test(n)).length} carry digits`
+      : `a set with no ambiguous pair was refused: ${fineRefusal}`,
+    'a rule that refused every capital and every digit would pass the case above and be a far worse tool. The two ' +
+      'properties are tested for rather than read off the spelling, so the case cannot quietly lose them',
+  );
+
+  // 🌱 The plant, and it is the predicate #539 PROPOSED. That card named two
+  // shapes to look for — names differing only in case, and a shared prefix
+  // followed by digit runs of unequal length — and the first rig the editor was
+  // measured on is neither: `Turn` and `sweep` differ in far more than case and
+  // carry no digits. A hazard list is open-ended, which is why the compiler
+  // certifies the deciding position instead.
+  const asProposed = (names: string[]): string[] => {
+    const hits: string[] = [];
+    for (let i = 0; i < names.length; i++) {
+      for (let j = i + 1; j < names.length; j++) {
+        const [a, b] = [names[i], names[j]];
+        const onlyCase = a !== b && a.toLowerCase() === b.toLowerCase();
+        const prefix = a.match(/^(\D*)(\d+)$/);
+        const other = b.match(/^(\D*)(\d+)$/);
+        const digitRuns = prefix !== null && other !== null && prefix[1] === other[1] && prefix[2].length !== other[2].length;
+        if (onlyCase || digitRuns) hits.push(`${a}/${b}`);
+      }
+    }
+    return hits;
+  };
+  const measuredCase = ambiguous[0][1];
+  const measuredDigits = ambiguous[1][1];
+  const proposedOnCase = asProposed(measuredCase);
+  const proposedOnDigits = asProposed(measuredDigits);
+  const shippedOnCase = refused[0].message;
+  say(
+    'PS51_THE_SHAPES_539_PROPOSED_MISS_THE_RIG_539_WAS_MEASURED_ON',
+    proposedOnCase.length === 0 && proposedOnDigits.length > 0 && shippedOnCase !== null,
+    `over [${measuredCase.join(', ')}] — the rig the editor returned as [${[...measuredCase]
+      .sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1))
+      .join(', ')}] — the proposed shapes find ${proposedOnCase.length} pair(s) and the compiler refuses it; over ` +
+      `[${measuredDigits.join(', ')}] the proposed shapes do find ${proposedOnDigits.join(', ')}`,
+    'the second clause is what stops this being vacuous: a predicate that never fires would satisfy the first on its ' +
+      'own. Together they say the proposed rule works and is still strictly weaker than the one that shipped, on the ' +
+      'two rigs the editor was actually measured with',
+  );
+
   return bad;
 }
 

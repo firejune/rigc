@@ -162,35 +162,255 @@ const FRAME = 1 / 60;
  * 10.4655 / 8.4961 / 8.7140 to 0.3035 / 0.0769 / 0.0588, and `yaw -> "turn"`
  * came back intact.
  *
- * ## Why codepoint, and what is still unmeasured
+ * ## Codepoint is NOT the editor's comparator, and this is why it is still what
+ * is emitted
  *
- * Codepoint order is what every editor-authored file on hand is in: of the 12
- * skeletons of the Spine example corpus, the 7 carrying more than one animation
- * are each in it (35 names between them; the other five carry one apiece and
- * say nothing), as is every name-keyed object the round-trip export rewrote —
- * 3 animations, a skin's 24 slot keys, two animations' 16 and 2 bone-timeline
- * keys. Against
- * that, **every JSON array** the same export carried came back in the order it
- * went in (30 bones, 24 slots, 3 constraints), which is why arrays are left
- * alone here. It is also order-INDEPENDENT rather than a permutation of the
- * input: the same three names went in in two different orders and came out in
- * one, which is what refutes "the editor reverses" — a reading those three
- * names admit and this one does not.
+ * ⚠️ This comment used to say that codepoint order "is what every editor-authored
+ * file on hand is in", and that sentence was false when it was written. The
+ * counterexample ships with the tests: `examples/spineboy/export/spineboy-pro.json`
+ * keys `portal-flare9` **before** `portal-flare10` — in its default skin's
+ * attachment map and in two of `portal`'s timeline maps — and no codepoint sort
+ * produces that.
  *
- * ⚠️ Every one of those names is lowercase ASCII with `-` or `_`, so the
- * observations cannot separate codepoint order from a case-insensitive or
- * digit-aware one. Names differing only in case (`Turn` vs `turn`) or carrying
- * unpadded digits (`turn2` vs `turn10`) are where the comparators disagree, and
- * **no measurement here reaches them**. Codepoint is chosen because it agrees
- * with everything measured and is locale-independent, which `A18` requires;
- * `localeCompare` would make the emitted bytes a property of the machine.
+ * 🔢 The survey behind that, stated so it can be re-taken rather than believed:
+ * over the 12 skeletons in `examples/`, take **every object the format keys by a
+ * NAME that carries more than one key** — `animations` and `events`; each skin's
+ * `attachments` map and each per-slot map inside it; each animation's `bones`,
+ * `slots`, `ik`, `transform`, `path`, `physics`, `events`, and its deform
+ * `attachments` at **all three** of its levels (skin, then slot, then attachment
+ * name). Arrays are excluded because the editor leaves them alone. That is
+ * **105** collections, of which **102** are consistent with a codepoint sort and
+ * **3** are not; all 12 natural comparators and all 8 `Intl.Collator`
+ * configurations tried reproduce every one of the 105.
+ *
+ * ⚠️ The deform clause is the whole of what makes it 105 rather than 104, and it
+ * is one collection: `animations.hoverboard.attachments.default` in
+ * `spineboy-pro.json`, whose four keys are slot names. Counting the skin level
+ * of a deform block and stopping there needs an exception the sentence above
+ * cannot state — every level of it is keyed by a name, and the editor re-keys
+ * each one — so the rule is "every level", and that collection is in.
+ *
+ * The editor was then measured directly (issue #539). Two rigs, each varying one
+ * axis: `Turn, sweep, wave` came back `sweep, Turn, wave`, and
+ * `turn10, turn2, zoom` came back `turn2, turn10, zoom`. The intersection leaves
+ * one hypothesis — **natural order, case-insensitive**.
+ *
+ * ⇒ So why not sort that way? Because "natural, case-insensitive" is a family of
+ * comparators rather than one. Leading zeros (`turn01` against `turn1`), a pure
+ * case tie (`Turn` against `turn`), whether a digit run sorts before a word, and
+ * what a separator is worth are each a free choice, and **the editor's answers to
+ * them are not measured**. Writing a comparator means choosing all four, and a
+ * chosen-but-unmeasured comparator is exactly how #537 landed.
+ *
+ * 🔒 It is also the one claim in the emitter that no gate can see. spine-core
+ * reads back everything else rigc writes; it does not sort, so the emitted key
+ * order has no oracle behind it. What rigc *can* check, with no editor and no
+ * comparator, is much smaller and is the whole of what matters: whether the names
+ * in front of it are a set on which every candidate comparator agrees. On such a
+ * set codepoint **is** the editor's order, whatever the editor's comparator turns
+ * out to be — and on every other set the build stops with both names in the
+ * message. See `orderTurnsOnTheComparator`.
+ *
+ * Codepoint also stays locale-independent, which `A18` requires: `localeCompare`
+ * would make the emitted bytes a property of the machine.
  */
 function editorAnimationOrder<T>(animations: Record<string, T>): Record<string, T> {
+  // One definition of "the order rigc emits", shared with the check below, so the
+  // two cannot drift into checking different things.
+  const names = Object.keys(animations).sort(codepoint);
+  refuseNamesTheEditorCouldKeyDifferently(names);
   const ordered: Record<string, T> = {};
-  for (const name of Object.keys(animations).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
-    ordered[name] = animations[name];
-  }
+  for (const name of names) ordered[name] = animations[name];
   return ordered;
+}
+
+/**
+ * The characters whose relative order every candidate comparator agrees on: the
+ * digits and, once case is folded, the lower-case ASCII letters. Everything else
+ * — `-`, `_`, a space, an accented letter — is worth something different to a
+ * collator than to a codepoint compare, so a pair those decide is not settled.
+ */
+const SETTLED_CHARS = /[0-9a-z]/;
+
+/** Maximal runs of digits and of non-digits, which is what "natural" compares. */
+const runsOf = (name: string): string[] => name.match(/\d+|\D+/g) ?? [];
+
+const sign = (n: number): number => (n < 0 ? -1 : n > 0 ? 1 : 0);
+const codepoint = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** What made a pair's order a matter of opinion, and what the author has to do. */
+interface Ambiguity {
+  kind: 'case' | 'number' | 'separator';
+  because: string;
+  repair: string;
+}
+
+/**
+ * Whether these two names can be ordered two ways — `null` when every comparator
+ * the editor could be using puts them in the order rigc emits them in.
+ *
+ * ## The predicate, and why it is a certificate rather than a hazard list
+ *
+ * Issue #539 proposed checking for "two names differing only in case, or sharing
+ * a prefix followed by digit runs of unequal length". **That list misses the rig
+ * that produced the measurement**: `Turn` and `sweep` differ in much more than
+ * case and carry no digits, and they are the pair the editor reordered. A list of
+ * hazards is open-ended — one was missing the day it was written — so what is
+ * implemented is the other direction: a pair is refused unless the position that
+ * decides it is one every candidate comparator must read the same way.
+ *
+ * There are exactly three ways to lose that, and each is a free choice in some
+ * real comparator:
+ *
+ * - **case** — folding reverses them (`Turn` before `sweep` by codepoint, after it
+ *   folded), or they fold together and only a tie-break separates them.
+ * - **number** — a digit run decides, and reading it as text disagrees with
+ *   reading it as a number (`turn10` before `turn2`), or two runs are the same
+ *   number written two ways (`turn01`, `turn1`), or a run meets a word and
+ *   comparators differ on which sorts first.
+ * - **separator** — the deciding character is neither a letter nor a digit. This
+ *   one covers two adversaries at once: a collator that treats `-` or a space as
+ *   ignorable, and the plain fact that `_` sits *between* `Z` and `a`, so
+ *   `x.toUpperCase()` and `x.toLowerCase()` order `wave_x` against `wavea`
+ *   oppositely. Neither name needs a capital in it for that to bite.
+ *
+ * ## What it was tested against
+ *
+ * 22 comparators — 12 hand-rolled naturals (fold up/down × three leading-zero
+ * tie-breaks × digits-before-words/after) , 2 plain case-insensitive ones, and 8
+ * `Intl.Collator`s (`numeric: true`, four sensitivities × `ignorePunctuation`) —
+ * over every pair of names up to 4 characters from `{a B 0 1 2 - _ space}`:
+ * **10,948,860 pairs, zero escapes**, where an escape is a pair some comparator
+ * reorders that this predicate calls safe. Two earlier drafts did have escapes,
+ * and both are why a clause above exists: `ignorePunctuation` found `arc-tracker`
+ * against `arcs`, and a terminal digit run found `a0` against `a00`.
+ *
+ * ⭐ The two-sided result is on real data. Across the same 105 collections the
+ * survey above defines, the ones this predicate refuses are **exactly** the 3
+ * whose own key order a codepoint sort cannot reproduce — no false positive, no
+ * false negative, against names the editor itself wrote.
+ *
+ * ⚠️ It does over-refuse, and the direction is deliberate: `flare1` against
+ * `flare10` is safe under all 22 and refused anyway, because the rule is stated
+ * on digit-run width rather than on a comparison, and the repair that fixes the
+ * genuinely broken sibling (`flare9` against `flare10`) fixes both.
+ */
+function orderTurnsOnTheComparator(a: string, b: string): Ambiguity | null {
+  const caseRepair = 'rename one of them so nothing but case has to be compared';
+  const numberRepair = 'pad the digit runs to the same width, or rename so no number decides the order';
+  const separatorRepair = 'rename so the first character that differs is a letter or a digit';
+  const la = a.toLowerCase();
+  const lb = b.toLowerCase();
+  if (la === lb) {
+    return {
+      kind: 'case',
+      because: `they are one name in two cases, and which of them the editor puts first is not measured`,
+      repair: caseRepair,
+    };
+  }
+  let i = 0;
+  while (i < la.length && i < lb.length && la[i] === lb[i]) i++;
+  if (i === la.length || i === lb.length) {
+    const longer = la.length > lb.length ? a : b;
+    const rest = (la.length > lb.length ? la : lb).slice(i);
+    if (!SETTLED_CHARS.test(rest)) {
+      return {
+        kind: 'separator',
+        because:
+          `"${longer}" is the other name followed by ${JSON.stringify(rest)}, which a comparator that ignores ` +
+          'punctuation reads as the same name',
+        repair: separatorRepair,
+      };
+    }
+  } else if (!SETTLED_CHARS.test(la[i]) || !SETTLED_CHARS.test(lb[i])) {
+    const deciding = SETTLED_CHARS.test(la[i]) ? lb[i] : la[i];
+    return {
+      kind: 'separator',
+      because:
+        `the first character that differs is ${JSON.stringify(deciding)}, which is neither a letter nor a digit, ` +
+        'and what that is worth is a property of the comparator',
+      repair: separatorRepair,
+    };
+  }
+  if (sign(codepoint(a, b)) !== sign(codepoint(la, lb))) {
+    return {
+      kind: 'case',
+      because: `codepoint puts "${a}" first only because of letter case; folded, "${b}" comes first`,
+      repair: caseRepair,
+    };
+  }
+  const ra = runsOf(la);
+  const rb = runsOf(lb);
+  for (let k = 0; k < Math.min(ra.length, rb.length); k++) {
+    const x = ra[k];
+    const y = rb[k];
+    if (x === y) continue;
+    const xIsDigits = /^\d/.test(x);
+    const yIsDigits = /^\d/.test(y);
+    if (xIsDigits && yIsDigits) {
+      if (BigInt(x) === BigInt(y)) {
+        return {
+          kind: 'number',
+          because: `"${x}" and "${y}" are the same number written two ways, so only a tie-break separates them`,
+          repair: numberRepair,
+        };
+      }
+      if (x.length === y.length) return null;
+      return {
+        kind: 'number',
+        because:
+          `"${x}" and "${y}" are runs of digits of different widths, so reading them as text and reading them as ` +
+          `the numbers ${BigInt(x)} and ${BigInt(y)} can disagree`,
+        repair: numberRepair,
+      };
+    }
+    if (xIsDigits !== yIsDigits) {
+      return {
+        kind: 'number',
+        because:
+          `one has the digits "${xIsDigits ? x : y}" where the other has "${xIsDigits ? y : x}", and comparators ` +
+          'differ on whether a number sorts before a word',
+        repair: numberRepair,
+      };
+    }
+    return null;
+  }
+  return null;
+}
+
+/** How many pairs a refusal spells out before it starts counting them instead. */
+const PAIRS_SPELLED_OUT = 8;
+
+/**
+ * Refuse a set of animation names the editor could key in an order rigc did not
+ * emit — the check that lets `editorAnimationOrder` sort by codepoint without
+ * claiming codepoint is the editor's rule.
+ *
+ * It is deliberately **not** conditional on the rig declaring a slider. A slider
+ * is what makes the difference bite today, but the emitted order is a claim about
+ * the editor either way, and a check that only ran when a slider was present would
+ * make the claim hold for some rigs and not others — with nothing saying which.
+ * Adding the slider is then the edit that refuses a rig that built yesterday.
+ */
+function refuseNamesTheEditorCouldKeyDifferently(sorted: readonly string[]): void {
+  const found: string[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    for (let j = i + 1; j < sorted.length; j++) {
+      const pair = orderTurnsOnTheComparator(sorted[i], sorted[j]);
+      if (pair) found.push(`"${sorted[i]}" / "${sorted[j]}" (${pair.kind}) — ${pair.because}; ${pair.repair}`);
+    }
+  }
+  if (!found.length) return;
+  const spelled = found.slice(0, PAIRS_SPELLED_OUT);
+  throw new CompileError(
+    `${found.length} pair(s) of animation names have no one order: rigc keys the emitted "animations" object ` +
+      'codepoint-ascending, which is the Spine editor\'s own order only for names whose order does not turn on ' +
+      'case, on a number, or on a separator. The editor sorts natural and case-insensitive (#539), a slider\'s ' +
+      'animation is an ORDINAL in the format\'s binary half, and an editor that keys these differently repoints ' +
+      'every slider whose animation moves index — silently, in a file that still parses (#535). ' +
+      `${spelled.join('. ')}` +
+      (found.length > spelled.length ? `. …and ${found.length - spelled.length} more pair(s)` : ''),
+  );
 }
 
 // ---------------------------------------------------------------------------
