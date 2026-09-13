@@ -8699,7 +8699,28 @@ function runContourMeshSuite(): number {
       : `[${gate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'the generator used to be a NotImplementedError naming itself; everything below would be vacuous without this',
   );
-  if (gate.failures.length > 0 || !emitted) return bad + 8;
+  if (gate.failures.length > 0 || !emitted) {
+    // ⭐ Everything below reads the mesh this build did not produce. Until issue
+    // #533 this line was `return bad + 8` — a hand-kept count of the controls it
+    // was skipping, standing for the thirty-three case lines that follow it and
+    // wrong by twenty-five, in a branch no green run takes and whose figure
+    // therefore nothing has ever printed. #529 filed that shape as a
+    // hypothetical (*"an `MR04` lands and this is silently wrong"*) and it had
+    // already happened here, in the same file, by a factor of four.
+    //
+    // 🔒 A count is the one thing an early return must not state: it is an
+    // assertion about lines the suite did not print, and the run's verdict is
+    // built out of it. ⚠️ A roster of names, which is what `runMeshSuite`'s
+    // guard carries, is right for three and wrong for thirty-three — nothing
+    // would check it, and the next control added here would leave it short in
+    // exactly the way the count was short. So this says the one thing it knows
+    // and states no number at all.
+    console.log(
+      '  SKIP  CT_EVERY_CONTROL_BELOW_CT00  (the contour rig did not gate green, so nothing below it had a mesh, ' +
+        'a triangulation or an artifact to measure)',
+    );
+    return bad;
+  }
 
   // --- the triangulation, and the checker's own control --------------------
   const { posable, mesh } = loadedContourMesh(build);
@@ -27332,6 +27353,15 @@ function runCutsSuite(): { failures: number; cuts: number } {
  */
 const VERDICT_GUTTER: readonly string[] = ['PASS', 'FAIL'];
 const QUIET_GUTTER: readonly string[] = ['SKIP', 'INFO'];
+/**
+ * The verdict word a FAILING case prints under, of the two in `VERDICT_GUTTER`.
+ *
+ * Named rather than spelled at the one place that needs the distinction, and
+ * `TY01` holds it to the line `reportCase` actually emits — the same two-sided
+ * reason the gutter scan itself is held there: a case line that moved to a
+ * different word would take this count down without going red.
+ */
+const FAIL_GUTTER = 'FAIL';
 
 /** The gutter word a printed line reports under, or null when it is not a case line. */
 function gutterWord(line: string): string | null {
@@ -27356,6 +27386,46 @@ interface SuiteBlock {
   quiet: number;
   /** Section headers the suite opened. Exactly one is a suite. */
   headers: number;
+  /** FAIL lines, of the `controls` above: the failures this suite actually named. */
+  fails: number;
+  /**
+   * The failure count the suite HANDED BACK, or `null` when its return value
+   * states none and no reader was given for one (issue #533).
+   *
+   * The run's verdict is the sum of these, and until #533 nothing compared any
+   * of them to the log.
+   */
+  returned: number | null;
+}
+
+/**
+ * How the run reads what a suite handed back: whether it ran, and how many
+ * failures it is claiming.
+ *
+ * Both live at the CALL SITE, beside the suite they read, rather than in a
+ * table of suite names somewhere else — a table of names to numbers is the
+ * hand-kept map this whole file exists to refuse.
+ */
+interface SuiteReads<T> {
+  /** Whether the suite had something to measure. Absent means it did. */
+  ran?: (value: T) => boolean;
+  /** The failure count the value carries, when the value is not itself one. */
+  failures?: (value: T) => number;
+}
+
+/**
+ * The failure count a suite's return value states on its own.
+ *
+ * A number IS the count. `null` is how the corpus-dependent suites say they did
+ * not run, and a suite that did not run failed nothing. Anything else — the four
+ * suites here that hand back a record — states no count this can read, and
+ * saying so is the point: `returnedFaults` refuses a block whose count is
+ * unreadable rather than assuming zero. Assuming zero is the silence issue #533
+ * is about, one layer further in.
+ */
+function statedFailures(value: unknown): number | null {
+  if (value === null || value === undefined) return 0;
+  return typeof value === 'number' ? value : null;
 }
 
 /**
@@ -27416,6 +27486,50 @@ function partFaults(blocks: readonly SuiteBlock[], parts: readonly SuitePart[]):
         `the phases of the suite "${suite}" count ${summed} case line(s) between them while the suite itself ` +
           `printed ${block.controls}: a summary stating the halves would be ${Math.abs(block.controls - summed)} ` +
           'case line(s) out, in a figure that looks derived',
+      );
+    }
+  }
+  return faults;
+}
+
+/**
+ * Everything wrong with what a suite HANDED BACK, against the FAIL lines it
+ * printed (issue #533).
+ *
+ * ⭐ A suite's returned failure count is an assertion about its own output, and
+ * it was the one assertion in this file nothing checked. The run's verdict is
+ * the sum of those numbers; the log is the other record of the same fact. Both
+ * were true statements about different things and nothing made them meet.
+ * Planting `runMeshSuite`'s guard on the tree of #532 printed ONE `FAIL` line
+ * under the summary `rigc selftest: 4 control(s) failed`, with the three names
+ * the `+ 3` stood for absent from the output entirely.
+ *
+ * 🔒 Two-sided, and the two sides are different defects:
+ *   - returned ABOVE the lines is a run claiming failures it never named. That
+ *     is the `bad + N` shape — a count that BYPASSES the lines, which is what
+ *     #451 established a tally may never do.
+ *   - returned BELOW them is the worse one, because it is green: an early
+ *     return that forgets to count at all prints its FAIL and exits 0.
+ * ⚠️ And a suite that returned nothing and printed nothing must fault in
+ * NEITHER direction, or every green suite in this file goes red — which is
+ * most of what this function is ever asked about.
+ */
+function returnedFaults(blocks: readonly SuiteBlock[]): string[] {
+  const faults: string[] = [];
+  for (const block of blocks) {
+    if (block.returned === null) {
+      faults.push(
+        `the suite "${block.key}" handed back a value that states no failure count, so nothing can hold it to the ` +
+          `${block.fails} FAIL line(s) it printed — the run adds that value to its verdict either way`,
+      );
+      continue;
+    }
+    if (block.returned !== block.fails) {
+      faults.push(
+        `the suite "${block.key}" handed back ${block.returned} failure(s) and printed ${block.fails} FAIL line(s): ` +
+          (block.returned > block.fails
+            ? `${block.returned - block.fails} failure(s) this run counts and never named`
+            : `${block.fails - block.returned} FAIL line(s) this run printed and never counted`),
       );
     }
   }
@@ -27486,6 +27600,7 @@ function tallyFaults(
         'nobody wrapped looks like',
     );
   }
+  faults.push(...returnedFaults(blocks));
   faults.push(...partFaults(blocks, parts));
   return faults;
 }
@@ -27498,6 +27613,7 @@ class RunTally {
   /** Every gutter word this run has printed, and how often. Read by the floor. */
   readonly gutter = new Map<string, number>();
   private controlLines = 0;
+  private failLines = 0;
   private quietLines = 0;
   private headerLines = 0;
 
@@ -27510,29 +27626,43 @@ class RunTally {
     const word = gutterWord(line);
     if (word === null) return;
     this.gutter.set(word, (this.gutter.get(word) ?? 0) + 1);
-    if (VERDICT_GUTTER.includes(word)) this.controlLines++;
-    else if (QUIET_GUTTER.includes(word)) this.quietLines++;
+    if (VERDICT_GUTTER.includes(word)) {
+      this.controlLines++;
+      if (word === FAIL_GUTTER) this.failLines++;
+    } else if (QUIET_GUTTER.includes(word)) this.quietLines++;
   }
 
   /**
-   * Run one suite and record what it printed.
+   * Run one suite, record what it printed, and take the failure count it hands
+   * back — which is what the run's verdict is made of.
    *
-   * `ran` is how a suite says it had something to measure; the default is that
-   * it did. The corpus-dependent suites hand back `null` when their fixtures are
-   * absent and the two registry suites report how many entries they found, so
-   * their callers pass the predicate that reads that rather than declaring it.
+   * `reads.ran` is how a suite says it had something to measure; the default is
+   * that it did. The corpus-dependent suites hand back `null` when their
+   * fixtures are absent and the two registry suites report how many entries they
+   * found, so their callers pass the predicate that reads that rather than
+   * declaring it.
+   *
+   * 🔒 `reads.failures` is the other half, and the reason there is no `bad +=`
+   * at any call site any more (issue #533): a suite the run wraps is a suite the
+   * run counts, so forgetting to add one in is no longer a thing that can be
+   * written. What a caller may still get wrong is the READER — and a reader
+   * that answers the wrong number is exactly what `returnedFaults` holds to the
+   * FAIL lines the suite printed.
    */
-  of<T>(key: string, suite: () => T, ran: (value: T) => boolean = (): boolean => true): T {
+  of<T>(key: string, suite: () => T, reads: SuiteReads<T> = {}): T {
     const controls = this.controlLines;
     const quiet = this.quietLines;
     const headers = this.headerLines;
+    const fails = this.failLines;
     const value = suite();
     this.blocks.push({
       key,
-      ran: ran(value),
+      ran: reads.ran === undefined ? true : reads.ran(value),
       controls: this.controlLines - controls,
       quiet: this.quietLines - quiet,
       headers: this.headerLines - headers,
+      fails: this.failLines - fails,
+      returned: reads.failures === undefined ? statedFailures(value) : reads.failures(value),
     });
     return value;
   }
@@ -27557,6 +27687,17 @@ class RunTally {
   /** Every case in this run that looked at something. */
   get total(): number {
     return this.controlLines;
+  }
+
+  /**
+   * The run's own verdict: every failure its suites handed back.
+   *
+   * 🔒 Off the same blocks `returnedFaults` reconciles against the log, so the
+   * number this run exits on and the number that gets checked are one number.
+   * A block whose value states no count contributes nothing and faults instead.
+   */
+  get failures(): number {
+    return this.blocks.reduce((total, block) => total + (block.returned ?? 0), 0);
   }
 
   /**
@@ -27926,7 +28067,16 @@ function runRunTallySuite(live: RunTally): number {
     return lines;
   };
 
-  const block = (over: Partial<SuiteBlock>): SuiteBlock => ({ key: 'suite', ran: true, controls: 3, quiet: 0, headers: 1, ...over });
+  const block = (over: Partial<SuiteBlock>): SuiteBlock => ({
+    key: 'suite',
+    ran: true,
+    controls: 3,
+    quiet: 0,
+    headers: 1,
+    fails: 0,
+    returned: 0,
+    ...over,
+  });
   const gutterOf = (...words: string[]): Map<string, number> => {
     const counted = new Map<string, number>();
     for (const word of words) counted.set(word, (counted.get(word) ?? 0) + 1);
@@ -27952,9 +28102,9 @@ function runRunTallySuite(live: RunTally): number {
       gutterLines(passLines).length === 1 &&
       gutterLines(failLines).length === 1 &&
       gutterWord(gutterLines(passLines)[0]) === 'PASS' &&
-      gutterWord(gutterLines(failLines)[0]) === 'FAIL' &&
+      gutterWord(gutterLines(failLines)[0]) === FAIL_GUTTER &&
       VERDICT_GUTTER.includes('PASS') &&
-      VERDICT_GUTTER.includes('FAIL'),
+      VERDICT_GUTTER.includes(FAIL_GUTTER),
     `a green case prints ${passLines.length} line(s) and a red one ${failLines.length}, of which exactly one each ` +
       `is a case line — {${gutterLines(passLines).map((line) => gutterWord(line)).join(', ')}} and ` +
       `{${gutterLines(failLines).map((line) => gutterWord(line)).join(', ')}} — and its detail and origin lines ` +
@@ -28084,7 +28234,7 @@ function runRunTallySuite(live: RunTally): number {
 
   // --- TY08: the summary cannot describe a suite this run does not have -----
   const absent = new RunTally();
-  absent.of('never-measured', () => null, () => false);
+  absent.of('never-measured', () => null, { ran: () => false });
   const threw = (read: () => number): string | null => {
     try {
       read();
@@ -28356,11 +28506,136 @@ function runRunTallySuite(live: RunTally): number {
       'behind a note about itself',
   );
 
+  // --- TY15: what a suite RETURNED, against the FAIL lines it printed -------
+  //
+  // ⭐ A suite's returned failure count is an assertion about its own output,
+  // and until issue #533 it was the one assertion in this file nothing checked.
+  // The run's verdict is the sum of those numbers and the log is the other
+  // record of the same fact; both were true statements about different things.
+  // Planting `runMeshSuite`'s guard on the tree of #532 printed ONE `FAIL` line
+  // under `rigc selftest: 4 control(s) failed` — three of the four invisible —
+  // and `bad + 8` at the head of `runContourMeshSuite` had been standing for
+  // thirty-three controls for as long as anybody had counted.
+  //
+  // 🚨 Driven through a REAL `RunTally` rather than over a table of synthetic
+  // blocks, because a table cannot see the wiring: a `returnedFaults` reading
+  // perfectly off a `fails` nothing fills, or off a `returned` nothing records,
+  // is green under every plant a hand-built block can carry. The probe suite
+  // below prints into the tally and nowhere else, so the run's own output does
+  // not move.
+  const driven = <T>(lines: readonly string[], back: T, reads: SuiteReads<T> = {}): SuiteBlock => {
+    const wired = new RunTally();
+    wired.of(
+      'probe',
+      () => {
+        for (const line of lines) wired.observe(line);
+        return back;
+      },
+      reads,
+    );
+    return wired.blocks[0];
+  };
+  const oneFail = ['  FAIL  PROBE_A_PLANTED_FAILURE: one line this probe really printed'];
+  const twoFails = [...oneFail, '  FAIL  PROBE_A_SECOND_PLANTED_FAILURE: and a second'];
+  const counted = driven(oneFail, 1);
+  const agreed = returnedFaults([counted]);
+  const silent = returnedFaults([driven(['  PASS  PROBE_A_GREEN_CASE'], 0)]);
+  const over = returnedFaults([driven(oneFail, 9)]);
+  const under = returnedFaults([driven(twoFails, 0)]);
+  const liveReturns = returnedFaults(live.blocks);
+  const ty15Probes = [
+    ...(counted.fails === 1 && counted.returned === 1
+      ? []
+      : [
+          `a probe that printed one FAIL line and handed back 1 was recorded as ${counted.fails} FAIL line(s) and ` +
+            `${counted.returned ?? 'no'} failure(s), so nothing below reads what this tally actually wired`,
+        ]),
+    ...(agreed.length === 0 ? [] : [`a suite whose count matches its lines faulted: ${agreed.join('; ')}`]),
+    ...(silent.length === 0 ? [] : [`a green suite that returned 0 and named nothing faulted: ${silent.join('; ')}`]),
+    ...(over.length === 1 && over[0].includes('8 failure(s) this run counts and never named')
+      ? []
+      : [`handing back 9 over one FAIL line is not named by the amount it over-counts: ${over.join('; ') || 'nothing'}`]),
+    ...(under.length === 1 && under[0].includes('2 FAIL line(s) this run printed and never counted')
+      ? []
+      : [`handing back 0 over two FAIL lines is not named by the amount it under-counts: ${under.join('; ') || 'nothing'}`]),
+    ...(liveReturns.length === 0 ? [] : [`the suites THIS run has tallied so far do not reconcile: ${liveReturns.join('; ')}`]),
+  ];
+  const ty15Held = ty15Probes.length === 0;
+  say(
+    'TY15_WHAT_A_SUITE_RETURNED_IS_HELD_TO_THE_FAIL_LINES_IT_PRINTED',
+    ty15Held,
+    probeDetail(
+      ty15Held,
+      ty15Probes,
+      `a probe driven through the tally printing ${counted.fails} FAIL line(s) and handing back ` +
+        `${counted.returned ?? 'no'} faults in no way; the same probe handing back 9 faults once — ${over[0] ?? 'nothing'} — ` +
+        `and one printing two FAIL lines while handing back 0 faults once — ${under[0] ?? 'nothing'} — while a green ` +
+        `probe that named nothing faults in no way, and the ${live.blocks.length} suite(s) this run has tallied so ` +
+        'far reconcile with their own logs',
+    ),
+    'both directions are live defects and they are different ones: a count ABOVE the lines is the `bad + N` shape, ' +
+      'a number that bypasses the lines the whole tally is derived from (#451), and a count BELOW them is the early ' +
+      'return that forgets to count at all — which prints its FAIL and exits 0. The green probe is the ' +
+      'load-bearing negative: nearly every suite in this file returns 0 over no FAIL line, and a reconciliation ' +
+      'that faulted on that would refuse every run this gate exists to let through',
+  );
+
+  // --- TY16: a return value that states no count at all ---------------------
+  //
+  // The half `TY15` cannot reach, and the only half of #533 that bites on a
+  // GREEN run. Four suites here hand back a record rather than a number, and a
+  // reader that silently answered 0 for them would reconcile perfectly against
+  // a log they were never held to — the same defect as `bad + N`, wearing a
+  // derivation. So an unreadable value is named, and the reader lives at the
+  // call site beside the suite rather than in a table of suite names.
+  const record = { failures: 1, cases: 12 };
+  const unread = driven(oneFail, record);
+  const readBack = driven(oneFail, record, { failures: (value) => value.failures });
+  const unreadFaults = returnedFaults([unread]);
+  const readFaults = returnedFaults([readBack]);
+  const unstated = live.blocks.filter((one) => one.returned === null);
+  const ty16Probes = [
+    ...(statedFailures(4) === 4 && statedFailures(null) === 0 && statedFailures(record) === null
+      ? []
+      : [
+          `a number, a null and a record state ${String(statedFailures(4))}, ${String(statedFailures(null))} and ` +
+            `${String(statedFailures(record))}: a suite that did not run failed nothing, and a record states nothing`,
+        ]),
+    ...(unread.returned === null && unreadFaults.length === 1 && unreadFaults[0].includes('states no failure count')
+      ? []
+      : [`a suite handing back a record with no reader is not named: ${unreadFaults.join('; ') || 'nothing'}`]),
+    ...(readBack.returned === 1 && readFaults.length === 0
+      ? []
+      : [
+          `the same suite with a reader at its call site was read as ${readBack.returned ?? 'no'} failure(s) and ` +
+            `faulted: ${readFaults.join('; ') || 'nothing'}`,
+        ]),
+    ...(unstated.length === 0
+      ? []
+      : [`${unstated.length} suite(s) this run wrapped state no count of their own: ${unstated.map((one) => one.key).join(', ')}`]),
+  ];
+  const ty16Held = ty16Probes.length === 0;
+  say(
+    'TY16_A_SUITE_WHOSE_VALUE_STATES_NO_COUNT_IS_NAMED_RATHER_THAN_READ_AS_ZERO',
+    ty16Held,
+    probeDetail(
+      ty16Held,
+      ty16Probes,
+      `a probe handing back a record and no reader is named — ${unreadFaults[0] ?? 'nothing'} — while the same ` +
+        `record read by a reader at the call site is ${readBack.returned ?? 'no'} failure(s) against its one FAIL ` +
+        `line and faults in no way; and all ${live.blocks.length} suite(s) this run has tallied so far state a ` +
+        'count of their own',
+    ),
+    'the live clause is the one that is not vacuous on a green run: everything else here reconciles zero against ' +
+      'zero, while this asks whether the run can read what every suite it wrapped handed back — and a value it ' +
+      'cannot read is a suite whose verdict goes into the total unchecked. The negative control is the reader ' +
+      'itself: a floor that faulted on every record would refuse the four suites that legitimately carry one',
+  );
+
   return bad;
 }
 
 function main(): void {
-  let bad = 0;
   let breaks = 0;
   let tolerances = 0;
   // Every case that actually looked at something, counted off the lines the
@@ -28379,75 +28654,67 @@ function main(): void {
     printLine(...args);
   };
   for (const suite of SUITES) {
-    bad += tally.of(suite.name, () => runSuite(suite));
+    tally.of(suite.name, () => runSuite(suite));
     for (const mutant of suite.mutants) {
       if (mutant.expect === null) tolerances++;
       else breaks++;
     }
   }
-  bad += tally.of('rig-spec', runRigSuite);
-  bad += tally.of('static-rig', runStaticRigSuite);
-  bad += tally.of('png-transparency', runPngTransparencySuite);
-  bad += tally.of('draw-order', runDrawOrderSuite);
-  bad += tally.of('key-time', runKeyTimeSuite);
-  bad += tally.of('event', runEventSuite);
-  bad += tally.of('constraint-deform', runConstraintAndDeformSuite);
-  bad += tally.of('hold-curve', runHoldCurveSuite);
-  bad += tally.of('path-slider', runPathAndSliderSuite);
-  bad += tally.of('polygon', runPolygonSuite);
-  bad += tally.of('contour-mesh', runContourMeshSuite);
-  bad += tally.of('deform-winding', runDeformWindingSuite);
-  bad += tally.of('deform-transform', runDeformTransformSuite);
-  bad += tally.of('deform-report', runDeformReportSuite);
-  bad += tally.of('group-member', runGroupMemberSuite);
-  bad += tally.of('mesh-rasteriser', runMeshSuite);
-  bad += tally.of('mesh-outline', runMeshOutlineSuite);
+  tally.of('rig-spec', runRigSuite);
+  tally.of('static-rig', runStaticRigSuite);
+  tally.of('png-transparency', runPngTransparencySuite);
+  tally.of('draw-order', runDrawOrderSuite);
+  tally.of('key-time', runKeyTimeSuite);
+  tally.of('event', runEventSuite);
+  tally.of('constraint-deform', runConstraintAndDeformSuite);
+  tally.of('hold-curve', runHoldCurveSuite);
+  tally.of('path-slider', runPathAndSliderSuite);
+  tally.of('polygon', runPolygonSuite);
+  tally.of('contour-mesh', runContourMeshSuite);
+  tally.of('deform-winding', runDeformWindingSuite);
+  tally.of('deform-transform', runDeformTransformSuite);
+  tally.of('deform-report', runDeformReportSuite);
+  tally.of('group-member', runGroupMemberSuite);
+  tally.of('mesh-rasteriser', runMeshSuite);
+  tally.of('mesh-outline', runMeshOutlineSuite);
   // The corpus-dependent suites hand back `null` when their fixtures are absent,
   // which is how they tell the tally they did not run: the floor then requires
   // that they said so out loud instead of requiring cases they could not take.
   const ranIt = (value: number | null): boolean => value !== null;
-  const meshRungBad = tally.of('mesh-rung', runMeshRungSuite, ranIt);
-  if (meshRungBad !== null) bad += meshRungBad;
-  const meshCheckBad = tally.of('mesh-check', runMeshCheckSuite, ranIt);
-  if (meshCheckBad !== null) bad += meshCheckBad;
-  bad += tally.of('slot-attribution', runSlotSuite);
-  bad += tally.of('error-attribution', runErrorAttributionSuite);
-  const motion = tally.of('motion-parse', runMotionParseSuite);
-  bad += motion.failures;
-  bad += tally.of('cli', runCliSuite);
-  const launcherBad = tally.of('bin-launcher', runLauncherSuite, ranIt);
-  if (launcherBad !== null) bad += launcherBad;
-  bad += tally.of('editor-roundtrip', runEditorRoundtripSuite);
-  bad += tally.of('shipped-doc', runShippedDocSuite);
-  bad += tally.of('agent-skill', runSkillSurfaceSuite);
-  bad += tally.of('currency', runCurrencySuite);
-  bad += tally.of('gallery-transcript', runGalleryTranscriptSuite);
-  const docsQuotes = tally.of('docs-transcript', runDocsQuoteSuite);
-  bad += docsQuotes.failures;
-  bad += tally.of('doc-script', runDocScriptSuite);
-  bad += tally.of('see-it', runSeeItSuite);
-  bad += tally.of('pose', runPoseSuite);
-  bad += tally.of('chainfit', runChainFitSuite);
-  bad += tally.of('ballot', runBallotSuite);
-  bad += tally.of('copy-images', runCopyImagesSuite);
-  bad += tally.of('bilinear-sampling', runSamplingSuite);
-  bad += tally.of('packer', runPackerSuite);
-  const atlasReaderBad = tally.of('atlas-reader', runAtlasReaderSuite, ranIt);
-  if (atlasReaderBad !== null) bad += atlasReaderBad;
-  const diffBad = tally.of('diff', () => runDiffSuite(tally), ranIt);
-  if (diffBad !== null) bad += diffBad;
-  const boneDistBad = tally.of('bonedist', runBoneDistSuite, ranIt);
-  if (boneDistBad !== null) bad += boneDistBad;
-  const checkBad = tally.of('check', runCheckSuite, ranIt);
-  if (checkBad !== null) bad += checkBad;
-  bad += tally.of('slider-reader', runSliderReaderSuite);
-  bad += tally.of('loop-seam', runLoopSeamSuite);
-  bad += tally.of('run-tally', () => runRunTallySuite(tally));
-  bad += tally.of('gate-helper', runGateHelperSuite);
-  const gallery = tally.of('gallery-example', runGallerySuite, (value) => value.examples > 0);
-  bad += gallery.failures;
-  const cuts = tally.of('registered-cut', runCutsSuite, (value) => value.cuts > 0);
-  bad += cuts.failures;
+  const meshRungBad = tally.of('mesh-rung', runMeshRungSuite, { ran: ranIt });
+  const meshCheckBad = tally.of('mesh-check', runMeshCheckSuite, { ran: ranIt });
+  tally.of('slot-attribution', runSlotSuite);
+  tally.of('error-attribution', runErrorAttributionSuite);
+  const motion = tally.of('motion-parse', runMotionParseSuite, { failures: (value) => value.failures });
+  tally.of('cli', runCliSuite);
+  const launcherBad = tally.of('bin-launcher', runLauncherSuite, { ran: ranIt });
+  tally.of('editor-roundtrip', runEditorRoundtripSuite);
+  tally.of('shipped-doc', runShippedDocSuite);
+  tally.of('agent-skill', runSkillSurfaceSuite);
+  tally.of('currency', runCurrencySuite);
+  tally.of('gallery-transcript', runGalleryTranscriptSuite);
+  const docsQuotes = tally.of('docs-transcript', runDocsQuoteSuite, { failures: (value) => value.failures });
+  tally.of('doc-script', runDocScriptSuite);
+  tally.of('see-it', runSeeItSuite);
+  tally.of('pose', runPoseSuite);
+  tally.of('chainfit', runChainFitSuite);
+  tally.of('ballot', runBallotSuite);
+  tally.of('copy-images', runCopyImagesSuite);
+  tally.of('bilinear-sampling', runSamplingSuite);
+  tally.of('packer', runPackerSuite);
+  const atlasReaderBad = tally.of('atlas-reader', runAtlasReaderSuite, { ran: ranIt });
+  const diffBad = tally.of('diff', () => runDiffSuite(tally), { ran: ranIt });
+  const boneDistBad = tally.of('bonedist', runBoneDistSuite, { ran: ranIt });
+  const checkBad = tally.of('check', runCheckSuite, { ran: ranIt });
+  tally.of('slider-reader', runSliderReaderSuite);
+  tally.of('loop-seam', runLoopSeamSuite);
+  tally.of('run-tally', () => runRunTallySuite(tally));
+  tally.of('gate-helper', runGateHelperSuite);
+  const gallery = tally.of('gallery-example', runGallerySuite, {
+    ran: (value) => value.examples > 0,
+    failures: (value) => value.failures,
+  });
+  const cuts = tally.of('registered-cut', runCutsSuite, { ran: (value) => value.cuts > 0, failures: (value) => value.failures });
   console.log = printLine;
 
   console.log('');
@@ -28462,6 +28729,14 @@ function main(): void {
     for (const fault of floorFaults) console.error(`  ${fault}`);
     process.exit(2);
   }
+  // 🔒 The verdict, off the same blocks the floor above just reconciled against
+  // the log (issue #533). There is no second sum to keep in step with this one:
+  // a suite is counted where it is wrapped, or it is not counted at all, and
+  // the number it is counted for has just been held to the FAIL lines it
+  // printed. Before this it was a `bad +=` at every call site — one chance per
+  // suite to drop that suite's failures into a green run, none of them
+  // checkable, because a sum that is too low is a sum that still adds up.
+  const bad = tally.failures;
   if (bad > 0) {
     console.error(`rigc selftest: ${bad} control(s) failed`);
     process.exit(1);
@@ -28531,7 +28806,13 @@ function main(): void {
     'numbers wearing a derivation, which is worse than the number they replaced. And the figure the scan above ' +
     'cannot see at all — one held in a constant, which reaches a clause opening through an interpolation and is ' +
     'therefore shaped exactly like a number the run produced — is refused by reading who else in this file reads ' +
-    'that constant, a table and a mention in prose deliberately not counting as readers)';
+    'that constant, a table and a mention in prose deliberately not counting as readers. Then the assertion issue ' +
+    '#533 found underneath all of them: what a suite RETURNED, held to the FAIL lines it printed. The verdict this ' +
+    'run exits on is the sum of those numbers and nothing had ever made the two records meet, so a guard handing ' +
+    'back a hand-kept count for the controls it was skipping claimed failures the log never named — driven here ' +
+    'both ways, over-counting and under-counting, through a real tally rather than over a table of blocks, since a ' +
+    'table cannot see whether the wiring fills either number; and beside it the half that bites on a green run, ' +
+    'where a suite whose value states no count at all is named rather than read as zero)';
   const gateHelpers =
     ', + ' + n('gate-helper') + ' controls over the helpers the gates themselves call (issue #499 — the guard ' +
     'inside the helper a control hands its verdict and its probe list to: a FALSE verdict over an EMPTY list is ' +
