@@ -1668,6 +1668,13 @@ rather than 1 s. With `loop: false` that is the last frame and harmless, with
 one — pick `to`/`scale` so the endpoint lands **inside** the duration rather than
 exactly on it.
 
+🖼️ **Worked example: [`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look)** — a face
+whose yaw and pitch are two sliders sharing one bone, both `local: true` and both
+`additive: true`, with each range derived from the turn ceiling `build` reports
+for that mesh (§3.4) rather than chosen. [`docs/FACE.md`](FACE.md) §8's *The turn
+as a value rather than a time* states that derivation as a rule, and its §7 is
+what a slider does to a face's channel allocation.
+
 ### 3.6 `events` — names the animation can fire
 
 **When you need one:** something outside the skeleton has to happen on a
