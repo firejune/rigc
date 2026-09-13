@@ -22,8 +22,9 @@ Every push to `main` runs `release.yml`, which hands the new commits to
   array replaces the default rather than extending it, so the whole list is
   written out — dropping a row from it hides that type.
 
-  ⚠️ **`docs` is the one hidden type that can still change the package, and
-  nothing notices.** The published tree is an allowlist and it includes guides:
+  ⚠️ **`docs` is the one hidden type that most often changes the package, and
+  for twenty-two landings nothing noticed.** The published tree is an allowlist
+  and it includes guides:
   `docs/AUTHORING.md`, `docs/FACE.md`, `docs/INGEST.md`, `docs/RIGGING.md`,
   `docs/MOTION.md`, `docs/PROMPTING.md` and `docs/SPEC_COVERAGE.md` all ship, and
   `CLAUDE.md` calls the first of them a first-class deliverable — the guide and
@@ -36,11 +37,34 @@ Every push to `main` runs `release.yml`, which hands the new commits to
   ⛔ The fix is **not** to un-hide `docs`: most of `docs/` does not ship
   (`LADDER.md`, `PILOT.md`, `RELEASING.md` itself), so every note to a working
   document would open a release pull request and the type would stop meaning
-  anything. What is wanted is a check that reads the allowlist — the same
-  `files` array `npm pack --dry-run` reads — and says so when a landing changes
-  a shipped file under a hidden type. Until that exists, the answer is the one
-  this section now records: **look at what changed in `files`, not at the commit
-  types**, and cut the release by hand when the two disagree.
+  anything — **visibility is what makes a type releasable**, and a type that is
+  always visible carries no information.
+
+  ✅ **What does the noticing is the `ships` job in
+  [`.github/workflows/ci.yml`](.github/workflows/ci.yml)**
+  ([#516](https://github.com/firejune/rigc/issues/516)). It runs on
+  every pull request, extracts both ends of the landing and asks **`npm pack
+  --dry-run`** what each one publishes — not the `files` array, because npm adds
+  `package.json`, `README.md` and `LICENSE` on top of it, so a literal reading of
+  the array is blind to the second most edited file in the package. If a path
+  inside the pack changes and the pull request title carries a type
+  release-please hides, the job names the paths and refuses.
+
+  🔒 **Its verdict is not "you used the wrong type".** A doc correction really is
+  a `docs` change; what is missing is that it also ships. Either remedy clears
+  it: land it under a type the changelog shows, or put a `Release-As:` footer in
+  a **commit message on the branch** — the squash body is made of the commits,
+  not of the pull request body.
+
+  🕳️ **What it still cannot see**, and the reason the release-time half of #516
+  is worth keeping on the table: the job reads the pull request TITLE, because
+  that is what the squash writes onto `main`, and GitHub lets that subject be
+  rewritten in the merge box **after** the check has reported. Measured over the
+  newest 100 merged pull requests, 86 subjects are exactly the title plus
+  ` (#N)`, thirteen differ only by issue references the title has since lost, and
+  [#353](https://github.com/firejune/rigc/pull/353) is the one that was genuinely
+  rewritten at merge. So when a cut looks overdue, the old manual reading still
+  settles it: **look at what changed inside `files`, not at the commit types.**
 - **Something releasable** → it opens, or updates, a pull request titled
   `release: vX.Y.Z` containing exactly three generated changes: the
   `package.json` version, `CHANGELOG.md`, and `.release-please-manifest.json`.
@@ -168,14 +192,29 @@ parallel path.
 ### What the tarball contains
 
 `files` in `package.json` is an allowlist, so the published package is the
-runtime and nothing else: `cli.ts`, `src/`, the two `tools/` modules `src/`
-imports (`plate.ts`, `font5x7.ts`), `README.md`, `LICENSE`, `NOTICE.md`, and
-`docs/AUTHORING.md` plus `docs/SPEC_COVERAGE.md` — the first because it is the
-interface an authoring agent reads, the second because two `NotImplementedError`
-messages cite it by part number. The benchmark corpus, the reference frames, the
-selftest, the fixtures and the measuring tools stay in the repository: they are
-the yardstick, not the tool. Check before a publish with `npm pack --dry-run`,
-which prints the file list and the size.
+runtime, the guides an authoring agent reads, and nothing else. The benchmark
+corpus, the reference frames, the selftest, the fixtures and the measuring tools
+stay in the repository: they are the yardstick, not the tool.
+
+⚠️ **The list is not written out here, and that is deliberate.** It was, and it
+drifted for twenty-one days: the paragraph was written on 2026-08-23 with #68 and
+never touched again, while **twelve** entries joined the allowlist under it
+between 2026-08-29 and 2026-09-05 — `bin/rigc.cjs`, four more `tools/` modules,
+five more guides, `.claude-plugin` and `skills`. It went on describing a
+two-guide package. A hand-kept copy of a machine-readable list is the
+`✅ applied` antipattern with a different subject, so **ask the tool** (and
+`git log -S '"<entry>"' -- package.json` for when one arrived):
+
+```sh
+npm pack --dry-run          # the file list and the size
+npm pack --dry-run --json   # the same list, one object per file
+```
+
+⭐ **`npm pack` and the `files` array are not the same answer** — measured on
+`v0.20.0`, npm packs **55** paths where a literal expansion of the array yields
+**52**, because npm always adds `package.json`, `README.md` and `LICENSE`
+whatever the allowlist says. The `ships` job reads the first of those two, for
+that reason.
 
 `publishConfig.provenance` is deliberately **not** set. Provenance can only be
 attested from a run holding an OIDC token, so setting it in `package.json` would
