@@ -11044,7 +11044,8 @@ function runDeformWindingSuite(): number {
   // 🚨 This is docs/FACE.md §9.2's build (b), which gated green before A39
   // existed: 26 PASS / 13 SKIP, `A35` passing, and a byte-identical MESH
   // coverage line, because that line reports the setup pose.
-  const folded = gateTurn(buildTurnRig(turnRow(40)));
+  const FOLDED_TURN = 40;
+  const folded = gateTurn(buildTurnRig(turnRow(FOLDED_TURN)));
   const hits = folded.failures.filter((f) => f.assertion === A39);
   const detail = hits[0]?.detail ?? '';
   // Every flipped triangle must span the pair the closed form NAMES — columns 0
@@ -11053,20 +11054,50 @@ function runDeformWindingSuite(): number {
   const spans = [...detail.matchAll(/triangle \d+ \[(\d+),(\d+),(\d+)\]/g)].map((m) =>
     [m[1], m[2], m[3]].map((v) => turnColumn(Number(v))),
   );
+  const foldedColumns = [...new Set(spans.flat())].sort();
   const onlyTheOuterPair = spans.length > 0 && spans.every((cols) => cols.every((c) => c === 0 || c === 1));
-  say(
-    'DW01_A_TURN_PAST_THE_FOLD_ANGLE_IS_REFUSED_BY_NAME',
+  // ⚠️ Three literals stood in this sentence over figures that could refute
+  // them, and a plant at 70° made all three lie at once (issue #519): the turn
+  // was spelled `40°` while the build read `turnRow(70)`, and "only" and "the
+  // pair" were asserted over a column list the same sentence derived and
+  // printed — *"span only columns 0 and 1 and 2 — the pair the closed form
+  // names"*. The angle is now the constant the build uses, and the cardinality
+  // is counted off the list rather than promised in front of it.
+  const dw01Probes = [
+    ...(hits.length === 1
+      ? []
+      : [
+          `${A39} refused ${hits.length} key(s) rather than the one this probe keys; the report was ` +
+            `[${folded.passed.join(', ')}]`,
+        ]),
     // One failure, because the probe keys the projection ONCE — the two keys
     // either side of it are `{ t }` with no vertices, which is the format's own
     // way of saying "the setup pose" and cannot fold anything.
-    hits.length === 1 &&
-      /8 of 32 triangle\(s\) reverse winding/.test(detail) &&
-      /animation "turn" deform head\/head key 1/.test(detail) &&
-      onlyTheOuterPair,
-    hits.length > 0
-      ? `40° past a ${fold.toFixed(3)}° fold: ${hits.length} key(s) refused, and the triangles named span only ` +
-          `columns ${[...new Set(spans.flat())].sort().join(' and ')} — the pair the closed form names. ${detail}`
-      : `${A39} did NOT fire on a mesh folded at 40°; the report was [${folded.passed.join(', ')}]`,
+    ...(/8 of 32 triangle\(s\) reverse winding/.test(detail)
+      ? []
+      : [`the message does not report 8 of 32 triangles reversing: ${detail || 'it said nothing at all'}`]),
+    ...(/animation "turn" deform head\/head key 1/.test(detail)
+      ? []
+      : ['the message does not name the animation, slot, attachment and key the fold is on']),
+    ...(onlyTheOuterPair
+      ? []
+      : [
+          `the triangles named span ${foldedColumns.length} column(s) — ${foldedColumns.join(', ')} — and the closed ` +
+            'form names the outermost adjacent pair alone, so a span outside columns 0 and 1 is a fold this fixture ' +
+            'cannot have produced',
+        ]),
+  ];
+  const dw01Held = dw01Probes.length === 0;
+  say(
+    'DW01_A_TURN_PAST_THE_FOLD_ANGLE_IS_REFUSED_BY_NAME',
+    dw01Held,
+    probeDetail(
+      dw01Held,
+      dw01Probes,
+      `${FOLDED_TURN}° past a ${fold.toFixed(3)}° fold: ${hits.length} key(s) refused, and the ` +
+        `${foldedColumns.length} column(s) the named triangles span are ${foldedColumns.join(' and ')} — the pair ` +
+        `the closed form names. ${detail}`,
+    ),
     'issue #296: nothing measured what a deform key did to the geometry, so a mesh that folded inside out was ' +
       'green and silent — A35 measures the run\'s LENGTH and stops there',
   );
@@ -14224,12 +14255,43 @@ function runGroupMemberSuite(): number {
     ]),
   );
   const gotScale = emittedMemberValues(scaled, 'scalex', 1);
-  const onAxisShare = gotScale[3] === gotScale[4] && gotScale[3] === round6(Math.cos((DEG * Math.PI) / 180));
+  const cosDeg = round6(Math.cos((DEG * Math.PI) / 180));
+  // ⚠️ "the two members at x=0" and "both come out" were literals, and the
+  // indices under them — `gotScale[3]`, `gotScale[4]` — were literals too. The
+  // members on the axis are a property of `MEMBER_BONES`, so they are read off
+  // it: planted with `axis_b` moved to x=30 the old sentence printed *"the two
+  // members at x=0 both come out 0.978148"* beside its own list ending
+  // `…, 0.978148, 1.015722`, over a fixture that then had one member on the
+  // axis and not two (issue #519).
+  const onAxis = MEMBER_BONES.map((b, i) => ({ ...b, i })).filter((b) => b.x === 0);
+  const onAxisValues = onAxis.map((b) => gotScale[b.i]);
+  const gm01Probes = [
+    ...gotScale.flatMap((v, i) =>
+      v === wantScale[i]
+        ? []
+        : [`member ${MEMBER_BONES[i]?.name ?? i} emits scaleX ${v} where this file's own arithmetic gives ${wantScale[i]}`],
+    ),
+    ...(onAxis.length > 1
+      ? []
+      : [`${onAxis.length} member(s) sit at x=0, and a value shared by the members on the axis needs at least two of them`]),
+    ...(onAxis.length > 1 && !onAxisValues.every((v) => v === cosDeg)
+      ? [
+          `the ${onAxis.length} member(s) at x=0 — ${onAxis.map((b, k) => `${b.name} ${onAxisValues[k]}`).join(', ')} — ` +
+            `do not all come out cos ${DEG}° = ${cosDeg}, which is what the closed form gives at α=0`,
+        ]
+      : []),
+  ];
+  const gm01Held = gm01Probes.length === 0;
   say(
     'GM01_THE_FORESHORTENING_IS_THE_SAME_CLOSED_FORM_AND_A_SHARED_VALUE_FALLS_OUT_OF_IT',
-    gotScale.every((v, i) => v === wantScale[i]) && onAxisShare,
-    `scaleX = cos(α − t)/cos α at ${DEG}°: [${gotScale.join(', ')}] against this file's [${wantScale.join(', ')}]; ` +
-      `the two members at x=0 both come out ${gotScale[3]}, which is cos ${DEG}° = ${round6(Math.cos((DEG * Math.PI) / 180))}`,
+    gm01Held,
+    probeDetail(
+      gm01Held,
+      gm01Probes,
+      `scaleX = cos(α − t)/cos α at ${DEG}°: [${gotScale.join(', ')}] against this file's [${wantScale.join(', ')}]; ` +
+        `the ${onAxis.length} members at x=0 (${onAxis.map((b) => b.name).join(', ')}) all come out ` +
+        `${onAxisValues.join(' and ')}, which is cos ${DEG}° = ${cosDeg}`,
+    ),
     'the worked example spent a `groups` entry on the one pair that shared a value, and a construct that still needed ' +
       'that entry would have bought nothing',
   );
@@ -24906,12 +24968,41 @@ function runChainFitSuite(): number {
       pinned.search.hinge.minDeg === 12 &&
       pinned.search.hinge.maxDeg === 12 &&
       chain.every((p) => p.bone.window.hingeMinDeg === 12 && p.bone.window.hingeMaxDeg === 12);
+    // ⚠️ The parenthetical this replaced said "(the rest were below the
+    // visibility floor and kept the rig's own 0°)" unconditionally, and on the
+    // green run there IS no rest: the line read "4 of 4 … (the rest were …)",
+    // describing an empty set as though it were a population. Planted at
+    // `--hinge 11,13` the same sentence read "0 of 4 … (the rest were below the
+    // visibility floor …)" over four parts that all carried a placement and so
+    // were above that floor by construction — false in both directions, on
+    // green and on red (issue #519). The complement is a subtraction the case
+    // already had, so it is stated rather than asserted.
+    const unsearched = chain.filter((p) => !searched.includes(p));
+    const cf05Probes = [
+      ...(allPinned
+        ? []
+        : [
+            `${unsearched.filter((p) => p.placement?.hingeDeg !== 0).length} chain part(s) report a hinge that is ` +
+              `neither the pinned 12° nor the rig's own 0° — ${unsearched
+                .filter((p) => p.placement?.hingeDeg !== 0)
+                .map((p) => `${p.bone.name} ${(p.placement?.hingeDeg ?? 0).toFixed(4)}°`)
+                .join(', ')} — so something other than the hinge was searched`,
+          ]),
+      ...(searched.length > 0 ? [] : ['not one chain part reported the pinned hinge, so the pin was never exercised']),
+      ...(sameScale ? [] : [`a chain part's scale left the anchor's ${anchorScale.toFixed(5)}, which one degree of freedom cannot move`]),
+      ...(stated ? [] : ['the window the search ran under is not the window the report restates per part']),
+    ];
+    const cf05Held = cf05Probes.length === 0;
     say(
       'CF05_ONLY_THE_HINGE_IS_SEARCHED_AND_THE_WINDOW_IS_A_PROMISE',
-      allPinned && searched.length > 0 && sameScale && stated,
-      `--hinge 12,12: ${searched.length} of ${chain.length} chain part(s) report hinge 12° exactly (the rest were ` +
-        `below the visibility floor and kept the rig's own 0°), every scale equal to the anchor's ${anchorScale.toFixed(5)} ` +
-        `= ${sameScale}, window restated per part = ${stated}`,
+      cf05Held,
+      probeDetail(
+        cf05Held,
+        cf05Probes,
+        `--hinge 12,12: ${searched.length} of ${chain.length} chain part(s) report hinge 12° exactly and ` +
+          `${unsearched.length} kept the rig's own 0°, every scale equal to the anchor's ${anchorScale.toFixed(5)} ` +
+          `= ${sameScale}, window restated per part = ${stated}`,
+      ),
       'the DOF reduction is the reason this instrument is affordable at all; a polish free to leave the window would report an answer nobody searched',
     );
   }
@@ -27113,13 +27204,41 @@ function runRunTallySuite(live: RunTally): number {
   // than the healthy one's and one suite is nevertheless dead.
   const grown = [block({ key: 'alpha', controls: 20 }), block({ key: 'beta', controls: 0 }), healthy[2]];
   const grownFaults = tallyFaults(grown, gutterOf(...Array<string>(20).fill('PASS'), 'SKIP'), 20);
-  const summedFloorHolds = grown.reduce((total, one) => total + one.controls, 0) > healthy.reduce((total, one) => total + one.controls, 0);
+  const controlsIn = (blocks: readonly SuiteBlock[]): number => blocks.reduce((total, one) => total + one.controls, 0);
+  const grownControls = controlsIn(grown);
+  const healthyControls = controlsIn(healthy);
+  // ⚠️ `summedFloorHolds` used to be a term of the verdict that the detail did
+  // not read, and the detail spelled the same comparison out as a LITERAL — "is
+  // higher than" — over two interpolated totals. Planted at `controls: 1` in
+  // place of 20 this line printed *"a set whose total (1) is higher than the
+  // healthy set's (5)"*, asserting on its own red run the comparison the
+  // verdict had just refused (issue #519). The figures were never the problem:
+  // they were interpolated, current and correct, and the words over them were
+  // not derived from anything.
+  const ty04Probes = [
+    ...(grownControls > healthyControls
+      ? []
+      : [
+          `the grown set totals ${grownControls} case line(s) and the healthy set ${healthyControls}: this case ` +
+            'says something only while the grown total is the HIGHER of the two, and here it is not',
+        ]),
+    ...(grownFaults.length === 1
+      ? []
+      : [`the grown set faulted ${grownFaults.length} time(s) rather than once: ${grownFaults.join('; ') || 'nothing'}`]),
+    ...(grownFaults[0]?.includes('"beta"') === true
+      ? []
+      : [`the fault raised does not name the dead suite: ${grownFaults[0] ?? 'nothing'}`]),
+  ];
+  const ty04Held = ty04Probes.length === 0;
   say(
     'TY04_THE_FLOOR_IS_PER_SUITE_SO_A_HIGHER_TOTAL_DOES_NOT_HIDE_A_DEAD_ONE',
-    summedFloorHolds && grownFaults.length === 1 && grownFaults[0].includes('"beta"'),
-    `a set whose total (${grown.reduce((total, one) => total + one.controls, 0)}) is higher than the healthy set's ` +
-      `(${healthy.reduce((total, one) => total + one.controls, 0)}) still faults, because "beta" is dead: ` +
-      `${grownFaults[0] ?? 'nothing'}`,
+    ty04Held,
+    probeDetail(
+      ty04Held,
+      ty04Probes,
+      `a set whose total (${grownControls}) is higher than the healthy set's (${healthyControls}) still faults, ` +
+        `because "beta" is dead: ${grownFaults[0] ?? 'nothing'}`,
+    ),
     'the floor this replaced was one number over the whole run, and a growing suite pays for a dead one under a sum',
   );
 
