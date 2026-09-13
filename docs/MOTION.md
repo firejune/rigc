@@ -80,6 +80,52 @@ and the last hop is the one that matters: a `both-unacceptable` tie means **prop
 again from a different axis** (§4), not *nudge the same candidate*. §5 has the
 detail.
 
+### 0.1 When the axis is not time — an animation a `slider` applies
+
+⛔ **One shape of request does not normalise to the table above, and carrying it
+through §3 anyway produces a defect nothing on this page can measure.** A `slider`
+constraint (AUTHORING §3.5.2) applies an animation as a function of a **value**: it
+reads a driving bone's transform property, maps it with
+`time = to + (value − from) × scale`, and applies the animation at that time on
+every frame. What it applies is an ordinary animation in the motion spec — same
+tracks, same keys, the same `duration` — but **nothing plays it**. It is a lookup
+table, and `t` in it is a coordinate on the axis rather than a moment.
+
+⇒ **So the constructs in §3 that are functions of time are not available to it,
+and each fails in its own way rather than merely reading oddly:**
+
+| §3 construct | On an animation a slider applies |
+| --- | --- |
+| §3.4 slow in and slow out | an easing curve makes the pose a **non-linear** function of the dial. The consumer moves the value at one rate and the face moves at another, and at a value held still the pose is still whatever the curve says there |
+| §3.6 anticipation | places a counter-pose at a dial *position*, so the pose runs backwards while the value runs forwards. Nothing anticipates a number |
+| §3.8 overshoot and settle | there is no settle: at a held value the pose is what the table says at that value, indefinitely. An overshoot keyed past the extreme is just a wrong pose at the top of the dial |
+| §3.7 follow-through and the offset table | wants parts to arrive at different **times**. Here they differ by **amount** at every value, which is §3.7.1's construct and not this one |
+| §3.3 timing | the key times are the axis's own coordinates — one per angle, position or level the table states — so spacing them is choosing where to sample, not choosing a rhythm |
+
+⭐ **What is still this page's job is whatever moves the dial**, and that is an
+ordinary animation with §3 applying to it unchanged. The split is visible in the
+worked example: in
+[`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look) the two
+lookup tables `turn` and `tilt` carry **no easing at all**, and `sweep` — the one
+animation there meant to be played — carries every `ease` in the file.
+
+```bash
+bun -e 'const m = JSON.parse(await Bun.file("gallery/look/motion.json").text());
+for (const [name, a] of Object.entries(m.animations))
+  console.log(name, (JSON.stringify(a).match(/"ease"/g) ?? []).length);'
+```
+
+⚠️ **And two of §4's candidate axes stop being axes.** *Anticipation* and
+*Termination* are both readings of how a movement is placed in time, so a ballot
+spread on either of them over a slider-applied animation is asking a person to
+choose between two wrong answers. The axes that survive are the ones about
+**amount** — *Part amount*, *Path*, *Key density* — because those are still
+readings of the value.
+
+📘 The face case is worked end to end in [FACE.md](FACE.md): its §8 derives the
+slider's range from the turn ceiling `build` reports, which is the one number on
+that axis an author cannot guess.
+
 ---
 
 ## 1. Prompt grammar — what a request is made of
@@ -258,6 +304,12 @@ This is the part with no reference and no possible reference. The pictures are o
 would not exist even if the user had more pictures of the same two poses. Everything
 below is therefore authored knowledge, and it is sourced the way AUTHORING §10 sourced
 the editor's conventions.
+
+⚠️ **All of it assumes the axis is time.** If what you are authoring is an
+animation a `slider` applies — a face angle, a dial, a suspension that compresses
+as the wheel rises — §0.1 is the exception, and it is not a small one: the easing,
+the anticipation and the overshoot below each produce a specific defect there
+rather than merely reading oddly.
 
 ### 3.1 Where these come from, and how each line is marked
 

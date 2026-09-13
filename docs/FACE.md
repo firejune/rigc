@@ -40,6 +40,12 @@ hold its results.
   measures §5's foreshortening at **0.863–1.176** against the yaw's 0.892–1.064
   below — a wider span at the same 12°, because a face is taller than it is deep.
   Read it after this page, not instead of it
+- **The turn driven by a value instead of played as a time** — the same keys, on
+  an axis: §8's *The turn as a value rather than a time* derives the range,
+  **AUTHORING §3.5.2** is the `slider` constraint that does it, and
+  [`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look) is
+  the worked case. Read it when the angle has to follow something outside the
+  animation — a pointer, a gaze target, a game value
 
 🚨 **A `deform` key's winding is gated; how far it moved the geometry is not, and
 that half is the one you have to author around.** Since 2026-09-03
@@ -72,6 +78,7 @@ internal shape:
 | a face that **blinks**, **breathes**, **looks around** | ordinary MOTION.md tracks. A lid, a chest, an iris. Nothing on this page is needed |
 | a face that **turns** | a list of `(x, z)` — every part's position across the screen and its **depth** — plus one line of arithmetic evaluated at each of them |
 | a face that turns **far** (a three-quarter view) | ⛔ a different rig, and §8 says where the line is. Not a format problem: a parts-and-labour problem |
+| a face that turns **by however much something outside it says** — a pointer, a gaze target, a game value | the same list and the same arithmetic, reached by a **value** instead of by a playhead: the turn animation becomes a `slider`'s lookup table (§8's last subsection, AUTHORING §3.5.2). What changes is not the geometry, it is the range — which stops being a choice and becomes a measurement |
 
 ⭐ **The turn is the only part of a face that is not already MOTION.md's job**,
 and it is 90% of this page. A blink is a translating plate (§6); a gaze is
@@ -926,6 +933,22 @@ stack (`headroll_idle` under `headroll_layer`) — but both are runtime or rig
 decisions the motion spec cannot express, so nothing warns an author that two of
 their animations will fight.**
 
+🚨 **A `slider` is a third way for two animations to meet on one property, and it
+is an overwrite rather than a blend — so allocate it in this table too.** An
+animation a slider applies (AUTHORING §3.5.2) is never on a track: the constraint
+applies it every frame, at whatever time its own bone currently points at. At
+`mix: 1` with `additive` left at its default that apply **writes the property
+outright**, which erases both any earlier slider on the same property and the
+**playing** animation on the bones its animation keys — including at its own
+neutral, where it looks switched off. ⇒ Every face axis that shares a target
+declares `"additive": true`, and unlike the two collisions above this one **is**
+gated: `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` names the bone, the property,
+every slider keying it in array order and which one wins today. ⛔ The one case
+`additive` cannot rescue is a **slot colour, an attachment swap, a draw order or
+a sequence**: those timelines ignore the flag entirely, so a fade — §8's way of
+taking a part off the screen before its own ceiling — belongs *inside* the single
+animation one slider applies, never in a second slider beside it.
+
 ⛔ **And the cost is real, so name it rather than discovering it by shipping.** In
 the worked example `idle` keys **nothing** on the iris, on purpose, even though a
 completely still eye reads as a mannequin. The iris is `gaze`'s channel; an
@@ -1059,6 +1082,111 @@ the two reciprocal groups §5 needs. ⭐ **That coincidence has stopped being an
 authoring concept**: the on-axis pair's shared `cos t` now falls out of the same
 closed form as everybody else's value, so `axis` is gone from the spec while
 `look_l`/`look_r` stay — because those two really are one shared number (§5).
+
+### The turn as a value rather than a time
+
+Everything above prices a turn as an animation somebody plays. The same geometry
+also runs on an **axis**: a `slider` constraint reads a driving bone, maps that
+bone's rotation to a time inside the turn animation, and applies the animation
+there (AUTHORING §3.5.2). Nothing in §1–§5 changes — the keys are still §1's line
+evaluated at each angle — but what selects among them is a **value** rather than a
+playhead, so the face follows a number somebody else is holding: a pointer, a gaze
+target, a game state.
+
+⭐ **The object offers a dial and does not decide when it turns.** That is the
+whole of the claim and it is deliberately not a larger one: what the rig
+guarantees is the axis — its range, its arithmetic, and that every angle on it is
+sound — and what moves the dial belongs to whoever is using the face. The
+paragraphs below are the part that is ours.
+
+#### The range stops being a choice and becomes a measurement
+
+This is the half an author has no other way to get right. §4.2's fold angle is not
+a rule of thumb once the angle is a dial position: it is the **top of the dial**,
+because past it a triangle turns inside out and `A39` refuses the build by name.
+`build` prints that angle for every depth mesh it compiles (AUTHORING §3.4), so
+the whole mapping falls out of one reading:
+
+```
+ceiling    the largest turn this depth mesh admits — printed by `build`, not guessed
+range      the largest whole degree strictly INSIDE the ceiling
+from       -range        max  +range        local  true   (AUTHORING §3.5.2's circle)
+scale      seconds per degree — the one number here you choose
+duration   2 x range x scale
+time       to + (degrees - from) x scale    the slider's own mapping
+```
+
+📐 **Worked, on [`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look)**,
+whose face is a 21 × 9 `grid` over one depth sheet:
+
+```bash
+bun cli.ts build --rig gallery/look/rig.json \
+                 --motion gallery/look/motion.json \
+                 --out gallery/look/build
+```
+
+```
+  MESH  head         grid     189 vertices / 320 triangles  (budget 320)  bones=[head]  attachments=[head]
+        depth "face_depth.png" bf156ea0cfc970a3 near=white zScale=194 z=[0, 194]
+        80 of 189 vertices sample a texel the part image does not draw — their z is the sheet's reading of somewhere the part is not
+        turn ceiling  yaw +19.32° / -19.32°   pitch +22.92° / -26.94°
+          1st pct     yaw +19.32° x1.000 of 80 / -19.32° x1.000 of 80   pitch +22.92° x1.000 of 102 / -26.94° x1.000 of 130
+                      first to fold: yaw + at 19.32°, triangle 174 [119,138,139], the sheet steps 28.50 level(s) across it, which is 0.112 of the range this mesh sampled
+```
+
+⇒ the ceiling is **±19.32°**, so the range is **19** — `floor(19.32)`, and
+*strictly inside* is the whole of the rule. At the **0.05 s per degree** that rig
+chooses, `turn` runs `2 × 19 × 0.05` = **1.9 s** and the map is
+`time = 0 + (degrees + 19) × 0.05`, which is the constraint as its rig spec
+declares it: `"from": -19, "to": 0, "scale": 0.05, "max": 19, "local": true,
+"additive": true`. ⭐ **The only two numbers there that anybody chose are `scale`
+and `to`** — and `to: 0` says nothing more than *the bottom of the range is the
+animation's first frame*. `from`, `max` and the duration are all the ceiling.
+
+🔸 **And `scale` is chosen for the endpoint.** rigc rounds every number it emits
+to six decimals, so a `scale` that is not exact there moves the top of the dial:
+`1/60` ships as `0.016667`, and a 60° turn then applies at 1.00002 s rather than
+1 s — the last frame under `loop: false`, the *first* under `loop: true`
+(AUTHORING §3.5.2). `0.05` is exact at six decimals, which is the only reason the
+example can put its endpoint exactly on the duration. Pick a `scale` that is not,
+and land the endpoint inside the duration instead.
+
+⚠️ **The ceiling is per mesh, and the face's is not the smallest one on the
+face.** The same run prints one for every depth mesh, and in this example each
+sidelock reads `yaw +17.04° / -45.80°`: it folds at **17.04°** on one side, which
+is *inside* the ±19° the face itself admits, and not until 45.80° on the other.
+The asymmetry is the sheet's, not a coincidence — each of those sheets is
+steepest at the edge where the strand curves away, and a yaw folds a pair of
+vertices only in the direction their depth is rising.
+
+⇒ **A part whose ceiling is lower than the range has to be gone before the turn
+reaches it.** That is AUTHORING §3.4's third way to live with a ceiling: fade the
+slot to alpha 0 **inside the animation the slider applies**, landing the alpha-0
+key *before* the key that folds rather than on it. §7's paragraph on sliders is
+why that fade cannot be a second slider.
+
+⭐ **A lookup table wants linear keys, and that is not a style note.** The slider
+makes the pose a function of the dial, so an easing curve between two keys makes
+it a **non-linear** function of a number the consumer may be holding perfectly
+still — the face would drift and settle while the value sits where it was put.
+Anticipation and follow-through fail for the same reason, not a weaker one
+(MOTION §3.6, §3.7): both are functions of time, and there is no time on this
+axis. [MOTION §0.1](MOTION.md) is that split written out, and it is also where the
+shaping *does* belong — in whatever animation moves the dial.
+
+⚠️ **Two axes on one face need `"additive": true` on both.** A `pitch` dial
+beside the `yaw` is the ordinary case and it is the one the format's default
+breaks the moment the two share a target — in the worked example both `turn` and
+`tilt` key `headroll`. §7's paragraph on sliders is the mechanism and
+`A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` is the refusal.
+
+⚠️ **What none of this measures: the Spine editor.** No editor export in this
+repository carries a slider, so whether the editor preserves two of them, their
+`additive` and `local` flags, and their order in the constraints array is
+**unknown**. `tools/editor_roundtrip.ts` on a machine with a licensed editor is
+what would answer it, and until somebody runs it the editor half of a parameter
+axis is untested. The runtime half is not: every figure above came back through
+`spine-core`.
 
 ---
 
@@ -1579,6 +1707,22 @@ halves of the transcription cost are now paid — the deform table via
 cost off the keyboard and onto the **parts**: per-eye meshes, a meshed neck, a
 second art layer for the far cheek (§8). Whether to pay *that* is a project's
 decision and this page does not make it.
+
+🚫 **No Live2D file is read or written, and none ever will be — a boundary
+rather than an unbuilt feature, and it runs in both directions.** rigc's inputs
+are a rig spec and a motion spec; its outputs are Spine 4.3 skeleton data and an
+atlas. There is no importer, no exporter and no converter for `.moc3`, `.cmo3`,
+`.model3.json` or anything else in that family, and nothing in this repository
+claims compatibility with that format in either direction
+([#399](https://github.com/firejune/rigc/issues/399) is where that was settled).
+⭐ **What is in scope is an authoring idea, stated on its own terms rather than
+as anybody's feature: that a face angle can be a value rather than a time.**
+§8's *The turn as a value rather than a time* is that idea on Spine's own
+`slider` constraint, and every mechanism under it is Spine's — the arithmetic,
+the flags, the readers and the failure modes are all in AUTHORING §3.5.2 and all
+measured against `spine-core`. ⚠️ Nothing on this page is a statement about how
+any other tool works inside, and nothing above implies one: what this repository
+has measured is its own format.
 
 🚫 **No per-eye mesh recipe.** §8 says the eyes need their own deform meshes past
 about 26°, and nobody has built that here. The column-placement arithmetic in
