@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.2](https://github.com/firejune/rigc/compare/v0.20.1...v0.20.2) (2026-09-13)
+
+
+### Instrument
+
+* two hand-kept enumerations, derived — and the fact one of them describes ([#520](https://github.com/firejune/rigc/issues/520), [#524](https://github.com/firejune/rigc/issues/524)) ([#525](https://github.com/firejune/rigc/issues/525)) ([5e6ef07](https://github.com/firejune/rigc/commit/5e6ef07260c8e3edeba265a077bfbd1e0f2d8461))
+
 ## [0.20.1](https://github.com/firejune/rigc/compare/v0.20.0...v0.20.1) (2026-09-11)
 
 ⚠️ **Read the generated section below last.** `release-please` builds it from commit
