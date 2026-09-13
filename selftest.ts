@@ -20243,6 +20243,177 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   },
 ];
 
+/**
+ * The gallery examples this run compiles and gates, derived once and read twice.
+ *
+ * 🔒 `runGallerySuite` and `CUR13`/`CUR14` below have to answer the same
+ * question — *which examples does this repository have?* — and issue #520 is
+ * what two answers cost. `README.md`'s table was a second, hand-kept copy of
+ * this set and went one row short: `gallery/look`, the only example that stars a
+ * `slider`, was compiled and gated by every run and named by the front page in
+ * no row at all. One function, so the comparison below is against the set rather
+ * than against a paraphrase of it.
+ */
+function galleryExampleNames(galleryRoot: string): string[] {
+  if (!existsSync(galleryRoot)) return [];
+  return readdirSync(galleryRoot)
+    .filter(
+      (name) => existsSync(join(galleryRoot, name, 'rig.json')) && existsSync(join(galleryRoot, name, 'motion.json')),
+    )
+    .sort();
+}
+
+/** The constraint kinds one example's rig spec declares, wherever in it they are declared. */
+function galleryConstraintKinds(galleryRoot: string, example: string): string[] {
+  const kinds = new Set<string>();
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (node === null || typeof node !== 'object') return;
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key === 'constraints' && Array.isArray(value)) {
+        for (const c of value) {
+          const kind = (c as { type?: unknown }).type;
+          if (typeof kind === 'string') kinds.add(kind);
+        }
+      }
+      walk(value);
+    }
+  };
+  walk(JSON.parse(readFileSync(join(galleryRoot, example, 'rig.json'), 'utf8')) as unknown);
+  return [...kinds].sort();
+}
+
+/** One row of a gallery index table: the directory its first cell names, and its `Stars` cell. */
+interface GalleryIndexRow {
+  example: string;
+  /** The cell under the `Stars` column, or null when the table declares no such column. */
+  stars: string | null;
+}
+
+/** A document that indexes the gallery, as that document states it. */
+interface GalleryIndex {
+  path: string;
+  /** The header line, verbatim, or null when the document carries no index table at all. */
+  header: string | null;
+  /** The nearest heading above the table — where a COUNT of the examples gets written. */
+  heading: string | null;
+  rows: GalleryIndexRow[];
+  /** Rows whose first cell names no gallery directory. Reported, never skipped. */
+  unread: string[];
+}
+
+/** Number words, so a count stated in prose can be compared with one the tree produced. */
+const NUMBER_WORDS: readonly string[] = [
+  'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+  'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty',
+];
+
+/**
+ * The gallery index table in one document, read as the document writes it.
+ *
+ * ⚠️ The header is matched on its FIRST column only (`| Example |`), so renaming
+ * `Stars` or `What it is` does not quietly drop the document out of the
+ * population — the `Stars` column is then reported absent by name instead. What
+ * a first column of `Example` cannot survive is being renamed itself, and the
+ * floor in `CUR13` is what makes that loud rather than silent: `README.md` has to
+ * come back carrying an index, so a restructured front page fails the case
+ * rather than narrowing it to nothing.
+ */
+function readGalleryIndex(path: string, text: string): GalleryIndex {
+  const raw = text.split('\n');
+  const cellsOf = (line: string): string[] =>
+    line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((cell) => cell.trim());
+  const at = raw.findIndex((line) => /^\s*\|\s*Example\s*\|/.test(line));
+  if (at < 0) return { path, header: null, heading: null, rows: [], unread: [] };
+  const header = cellsOf(raw[at]);
+  const starsAt = header.findIndex((cell) => cell === 'Stars');
+  let heading: string | null = null;
+  for (let i = at - 1; i >= 0; i--) {
+    if (/^#{1,6}\s/.test(raw[i])) {
+      heading = raw[i];
+      break;
+    }
+  }
+  const rows: GalleryIndexRow[] = [];
+  const unread: string[] = [];
+  for (let i = at + 1; i < raw.length && /^\s*\|/.test(raw[i]); i++) {
+    if (/^\s*\|[\s:|-]+$/.test(raw[i])) continue; // the alignment row under the header
+    const cells = cellsOf(raw[i]);
+    const span = /`([^`]+)`/.exec(cells[0] ?? '');
+    const named = span === null ? null : span[1].replace(/\/+$/, '').replace(/^gallery\//, '');
+    if (named === null || !/^[\w-]+$/.test(named)) {
+      unread.push(`${path}:${i + 1} a row whose first cell names no gallery directory — ${raw[i].trim().slice(0, 72)}`);
+      continue;
+    }
+    rows.push({ example: named, stars: starsAt < 0 ? null : (cells[starsAt] ?? null) });
+  }
+  return { path, header: raw[at], heading, rows, unread };
+}
+
+/**
+ * What one index document gets wrong about the set of examples, by name.
+ *
+ * Set equality in both directions, never a count and never a containment: a
+ * clause reading *at least one row* is green on a table that lost five (#451),
+ * and a clause reading *every row resolves* is green on the table this case was
+ * written for, which lost a row rather than gaining a wrong one.
+ *
+ * 🔸 The heading clause is the third thing #520 found and the reason it is
+ * shaped the way it is: the front page said **six** in the heading over a table
+ * of six rows over a tree of seven examples, so the figure and the list were
+ * wrong together and neither could catch the other. It faults NOTHING when the
+ * heading states no number word — the outcome a document is allowed to reach by
+ * deleting the figure, which is this repository's usual repair for a hand-kept
+ * count and must not be the one outcome that goes red.
+ */
+function galleryIndexFaults(index: GalleryIndex, examples: readonly string[]): string[] {
+  if (index.header === null) {
+    return [`${index.path} carries no gallery index table — no row opens with \`| Example |\``];
+  }
+  const faults = [...index.unread];
+  const stated = [...new Set(index.rows.map((row) => row.example))].sort();
+  for (const name of examples) {
+    if (!stated.includes(name)) {
+      faults.push(`${index.path}: gallery/${name} is compiled and gated by this run and the index names no row for it`);
+    }
+  }
+  for (const name of stated) {
+    if (!examples.includes(name)) {
+      faults.push(`${index.path}: the index names gallery/${name} and the tree holds no example by that name`);
+    }
+  }
+  const said = index.heading === null ? -1 : NUMBER_WORDS.findIndex((word) => new RegExp(`\\b${word}\\b`, 'i').test(index.heading ?? ''));
+  if (said >= 0 && said !== stated.length) {
+    faults.push(
+      `${index.path}: the heading over the table says "${NUMBER_WORDS[said]}" and the table has ${stated.length} row(s) — ` +
+        `"${(index.heading ?? '').trim()}"`,
+    );
+  }
+  return faults;
+}
+
+/**
+ * Every module a file under `src/` imports from outside `src/`, repo-relative.
+ *
+ * This is the set `CLAUDE.md`'s package bullet states, and the rule it states it
+ * for: a module here that is not in `files` installs as a `Cannot find module`
+ * on the command that needs it, while the repository itself goes on running.
+ */
+function modulesSrcReachesOutsideItself(root: string): string[] {
+  const out = new Set<string>();
+  for (const file of readdirSync(join(root, 'src')).filter((name) => name.endsWith('.ts'))) {
+    const text = readFileSync(join(root, 'src', file), 'utf8');
+    for (const m of text.matchAll(/(?:from|import)\s*'(\.\.?\/[^']+)'/g)) {
+      const resolved = relative(root, resolve(join(root, 'src'), m[1])).split('\\').join('/');
+      if (!resolved.startsWith('src/')) out.add(resolved);
+    }
+  }
+  return [...out].sort();
+}
+
 function runCurrencySuite(): number {
   console.log('\n── what a shipped or landing doc STATES about the tool (issue #360) ──');
   let bad = 0;
@@ -21401,6 +21572,367 @@ function runCurrencySuite(): number {
         'took it, so a report\'s own figures are invisible here and a comment copying one down is not. ⚠️ It is blind ' +
         'to a coordinate written without its path, which is how two of the seven were spelled — the repair for those ' +
         'was to take the form out, not to trust this to find them',
+    );
+  }
+
+  // --- CUR13/CUR14: the gallery index tables, against the gallery (#520) ----
+  //
+  // ⭐ The same defect as `CUR07`, on the surface a stranger meets first.
+  // `README.md` carried a table of **six** examples under a heading that said
+  // **six**, and `bun run selftest` compiled and gated **seven** — the missing
+  // one being `gallery/look`, the only example that stars a `slider`, which is
+  // to say the only one demonstrating the parameter axis at all. `grep -c slider
+  // README.md` answered 0.
+  //
+  // 🔒 Why nothing caught it, which is the part worth keeping: three gates cross
+  // this surface and every one of them derives its population from what the page
+  // SAYS. `PKG02` resolves the links that are there. The currency cases above
+  // check the figures a doc states. `GT01`–`GT06` hold each example README's
+  // quoted output and never look upward at the index that should name the
+  // directory. An absent row states nothing, resolves nothing and quotes
+  // nothing, so it is invisible by construction to all three. The population has
+  // to come from the TREE, and `galleryExampleNames` is where it comes from.
+  //
+  // ⚠️ Scope, because the edges decide what this is worth. The documents that
+  // index the gallery are the front page and the gallery's own page — `README.md`
+  // and the `.md` files directly under `gallery/` — and NOT every table in the
+  // tree whose first column says `Example`: `NOTICE.md`, `docs/LADDER.md` and
+  // `docs/INGEST.md` each carry one about the benchmark corpus, which is a
+  // different set entirely. A per-example README is out for the same reason.
+  {
+    const galleryRoot = join(root, 'gallery');
+    const examples = galleryExampleNames(galleryRoot);
+    const candidates = [
+      'README.md',
+      ...(existsSync(galleryRoot)
+        ? readdirSync(galleryRoot)
+            .filter((name) => name.endsWith('.md'))
+            .sort()
+            .map((name) => `gallery/${name}`)
+        : []),
+    ];
+    const indexes = candidates
+      .filter((path) => existsSync(join(root, path)))
+      .map((path) => readGalleryIndex(path, readFileSync(join(root, path), 'utf8')))
+      .filter((index) => index.header !== null);
+
+    const live = indexes.flatMap((index) => galleryIndexFaults(index, examples));
+
+    // 🌱 The two directions, driven through the same reader the verdict uses,
+    // on text this case writes. A control on the TREE would be a control that
+    // goes quiet the day the tree is correct, which is every day after the
+    // repair; these stay.
+    const rowFor = (name: string): string =>
+      `| [\`gallery/${name}\`](gallery/${name}) | **\`ik\` constraints** | what it is |`;
+    const synthetic = (names: readonly string[], heading: string): GalleryIndex =>
+      readGalleryIndex(
+        'probe.md',
+        [heading, '', '| Example | Stars | What it is |', '| --- | --- | --- |', ...names.map(rowFor), ''].join('\n'),
+      );
+    const complete = synthetic(examples, '## probe');
+    const faithful = galleryIndexFaults(complete, examples);
+    const dropped = raisedBy(galleryIndexFaults(synthetic(examples.slice(1), '## probe'), examples), { was: faithful });
+    const invented = raisedBy(
+      galleryIndexFaults(synthetic([...examples, 'a-directory-the-tree-does-not-have'], '## probe'), examples),
+      { was: faithful },
+    );
+    const miscounted = raisedBy(galleryIndexFaults(synthetic(examples, '## probe — zero rigs'), examples), {
+      was: faithful,
+    });
+    const counted = raisedBy(
+      galleryIndexFaults(synthetic(examples, `## probe — ${NUMBER_WORDS[examples.length] ?? 'many'} rigs`), examples),
+      { was: faithful },
+    );
+    const controlFaults = [
+      ...(dropped.length === 0 ? ['an index one row short of the tree was not faulted'] : []),
+      ...(invented.length === 0 ? ['an index naming a directory the tree does not have was not faulted'] : []),
+      ...(miscounted.length === 0 ? ['a heading whose number word contradicts its own table was not faulted'] : []),
+      ...faithful.map((fault) => `an index naming exactly the tree's examples was faulted anyway — ${fault}`),
+      ...counted.map((fault) => `a heading whose number word matches its own table was faulted anyway — ${fault}`),
+      ...(complete.rows.length === examples.length
+        ? []
+        : [`the reader found ${complete.rows.length} row(s) in a table this case wrote ${examples.length} into`]),
+    ];
+
+    const probes = [
+      ...floorProbes(
+        [
+          [examples.length, 1, `${examples.length} example(s) under gallery/ carry both a rig and a motion spec`],
+          [indexes.length, 1, `${indexes.length} of ${candidates.length} candidate document(s) carry an index table`],
+          [indexes.filter((index) => index.path === 'README.md').length, 1, 'README.md carries a gallery index table'],
+          [indexes.reduce((n, index) => n + index.rows.length, 0), 1, 'the reader got a row out of those tables'],
+        ],
+        'and a step that comes back empty makes this case compare two empty sets and print green',
+      ),
+      ...live,
+      ...controlFaults,
+    ];
+    const held = probes.length === 0;
+    say(
+      'CUR13_EVERY_GALLERY_EXAMPLE_THIS_RUN_GATES_IS_A_ROW_IN_EVERY_INDEX_OF_THEM',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${indexes.length} index table(s) — ${indexes.map((index) => index.path).join(', ')} — name exactly the ` +
+          `${examples.length} example(s) this run compiles and gates (${examples.join(', ')}), each heading's own ` +
+          'count word included, with no row left over',
+      ),
+      'the front page is the one surface that SHIPS, and it indexed six of seven examples under a heading that ' +
+        'said six — the missing one being the only rig in the tree that stars a `slider`, so the parameter axis ' +
+        'was unreachable from the door npm puts a reader at. The verdict is set equality in both directions and ' +
+        'deliberately not a count: a table that lost five rows clears any floor written as *at least one*, and a ' +
+        'table that gained a fictional one clears any written as *every example appears*. The heading clause faults ' +
+        'nothing when the heading carries no number word, because deleting a hand-kept figure is the repair this ' +
+        'repository asks for and must not be the outcome that goes red',
+    );
+
+    // --- CUR14: the Stars cell against the rig spec --------------------------
+    //
+    // 🔸 #520 asked whether `Stars` is derivable. Measured: **half of it is, and
+    // the half that is not cannot be rescued by narrowing the match.** Three of
+    // the seven examples star a constraint kind their rig declares (`walk`/`ik`,
+    // `ride`/`path`, `look`/`slider`); the other four star things that are not
+    // constraints at all — a mesh generator, a timeline type, a deform model —
+    // and rigc's vocabulary REUSES the tokens across those namespaces.
+    // `gallery/portrait` writes `` `transform` `` in a code span, meaning the
+    // deform transform kind, and declares no `transform` constraint; so the
+    // reverse direction — *a kind named in a cell is one the example declares* —
+    // reports a defect on a correct row, whether it reads the whole cell or only
+    // its code spans.
+    //
+    // ⇒ What is held is the forward direction alone, and this comment is the
+    // "say so in the control's own words" the card asked for: a cell may say
+    // more than the rig declares, and nothing here objects. What it may not do
+    // is leave a declared constraint kind out — which is exactly what a `look`
+    // row would have done if #520 had been closed by pasting a row in without
+    // the word `slider` in it, leaving the parameter axis as absent from the
+    // front page as it was before.
+    {
+      const declared = new Map(examples.map((name) => [name, galleryConstraintKinds(galleryRoot, name)]));
+      const missing: string[] = [];
+      let measured = 0;
+      let noStars = 0;
+      for (const index of indexes) {
+        for (const row of index.rows) {
+          const kinds = declared.get(row.example) ?? [];
+          if (kinds.length === 0) continue;
+          if (row.stars === null) {
+            noStars++;
+            continue;
+          }
+          for (const kind of kinds) {
+            measured++;
+            if (!new RegExp(`\\b${kind}\\b`).test(row.stars)) {
+              missing.push(
+                `${index.path}: gallery/${row.example}'s rig declares a \`${kind}\` constraint and its Stars cell ` +
+                  `does not say "${kind}" — "${row.stars}"`,
+              );
+            }
+          }
+        }
+      }
+      const starsProbes = [
+        ...floorProbes(
+          [
+            [measured, 1, `${measured} (index row, declared constraint kind) pair(s) were compared`],
+            [[...declared.values()].filter((kinds) => kinds.length > 0).length, 1, 'some example declares a constraint at all'],
+          ],
+          'and a scan that pairs nothing reports a clean gallery off no comparison',
+        ),
+        ...(noStars === 0 ? [] : [`${noStars} row(s) sat in an index table that declares no \`Stars\` column, so their cells were never read`]),
+        ...missing,
+      ];
+      const starsHeld = starsProbes.length === 0;
+      say(
+        'CUR14_A_GALLERY_INDEX_ROW_NAMES_THE_CONSTRAINT_KINDS_ITS_EXAMPLE_DECLARES',
+        starsHeld,
+        probeDetail(
+          starsHeld,
+          starsProbes,
+          `${measured} (row, kind) pair(s) across ${indexes.length} index table(s): every constraint kind a rig spec ` +
+            `declares is a word its own Stars cell says — ` +
+            examples
+              .filter((name) => (declared.get(name) ?? []).length > 0)
+              .map((name) => `${name} ${(declared.get(name) ?? []).join('+')}`)
+              .join(', '),
+        ),
+        'the row alone was not the repair. A `look` row whose Stars cell described a head turn would have satisfied ' +
+          'CUR13 completely and left `grep -c slider README.md` at 0, which is the sentence #520 actually opens with. ' +
+          '⚠️ One direction only, and the reason is a measurement rather than an omission: rigc spells a deform ' +
+          'model, an attachment kind and a constraint kind out of one vocabulary, so `gallery/portrait`\'s correct ' +
+          '`transform` cell is indistinguishable from a false claim about a `transform` constraint. A cell may ' +
+          'therefore say more than its rig declares; it may not say less',
+      );
+    }
+  }
+
+  // --- CUR15: what CLAUDE.md says the package is, against what it is (#524) --
+  //
+  // `CUR07` derives one paragraph of `CLAUDE.md` from the tree. Three bullets
+  // below it stood a second sentence naming a set the tree derives, and nothing
+  // read it: *"The published package is an allowlist, not the repository:
+  // `cli.ts`, `src/`, and the only two modules `src/` reaches outside itself"*.
+  // ⚠️ It named FOUR of the nineteen entries `files` then held — `cli.ts`,
+  // `src`, `tools/plate.ts`, `tools/font5x7.ts` — and issue #524 says three,
+  // which its own arithmetic contradicts fifteen entries later.
+  //
+  // 🔑 **The verdict is deliberately NOT `CUR07`'s.** `CUR07` compares for
+  // equality because the doctrine wants its spine-core exceptions named — "an
+  // unnamed exception is how a rule erodes". The package is the opposite case:
+  // the outcome this repository wants is a document that names NO entry and
+  // cites `npm pack --dry-run`, which is what `RELEASING.md` did with the same
+  // drift (#516). Equality is therefore the one verdict that must not be used
+  // here — it is satisfied by a bullet that writes all nineteen out, which is
+  // the hand-kept copy of a machine-readable list this card exists to refuse.
+  //
+  // ⇒ So the set compared is not the package. It is **the modules `src/` reaches
+  // outside itself**, which is the only set the bullet's RULE is about, and the
+  // clause is that the bullet names that set and nothing else in `files`.
+  // Naming every path fails it by nineteen rows; naming the package's contents
+  // at all fails it; and the two modules stay named, which is what the rule
+  // needs to be read at all.
+  //
+  // 🔒 The clause that had never existed anywhere is the last one: every module
+  // in that derived set is actually covered by `files`. The bullet states the
+  // consequence of getting this wrong — an installed package throwing `Cannot
+  // find module` while the repository goes on running — and until now nothing
+  // in the tree checked the fact, only the sentence.
+  //
+  // ⚠️ What was tried and rejected, because the near miss is the finding. #524
+  // asks for a population of *documents that enumerate the package*, faulting
+  // none when none does. That population is not recognisable from the text: the
+  // one document in this tree that has ALREADY taken the repair — RELEASING.md,
+  // rewritten by #516 — names `bin/rigc.cjs`, `.claude-plugin` and `skills` in
+  // code spans, in one sentence, in the paragraph explaining what the package
+  // holds. Three entries there against four in the defect, so any count-based
+  // rule separating the defect from the model repair is a threshold of exactly
+  // four with nothing but those two documents holding it up. The scope is
+  // therefore `CUR07`'s — one named file, one bullet found by its own rule
+  // sentence — and this comment is where that stands instead of a checker.
+  {
+    const claudeMd = readFileSync(join(root, 'CLAUDE.md'), 'utf8');
+    const bullet = claudeMd
+      .split(/\n- /)
+      .map((text) => text.replace(/\s+/g, ' '))
+      .find((text) => /crosses a directory has to be added to/.test(text));
+    const derived = modulesSrcReachesOutsideItself(root);
+
+    /** The `files` entry a code span names, or null — `src/` excluded, being the bullet's SUBJECT. */
+    const entryNamed = (span: string): string | null => {
+      const path = span.replace(/\/+$/, '');
+      if (path === 'src' || path.startsWith('src/')) return null;
+      for (const entry of allowlist) if (path === entry || path.startsWith(`${entry}/`)) return path;
+      return null;
+    };
+    const claimedIn = (text: string): string[] =>
+      [
+        ...new Set(
+          [...text.matchAll(/`([^`]+)`/g)].map((m) => entryNamed(m[1])).filter((path): path is string => path !== null),
+        ),
+      ].sort();
+
+    /**
+     * What one spelling of the bullet gets wrong, which is the judge the
+     * controls below call rather than a second reading that would agree with
+     * this one by construction.
+     */
+    const bulletFaults = (text: string): string[] => {
+      const claimed = claimedIn(text);
+      const said = text.match(/\*\*(\w+)\*\* modules `src\/` reaches outside itself/)?.[1]?.toLowerCase();
+      const out: string[] = [];
+      if (said !== NUMBER_WORDS[derived.length]) {
+        out.push(
+          `the bullet says "${said ?? '(none)'}" and ${derived.length} module(s) outside src/ are imported from it ` +
+            `(${NUMBER_WORDS[derived.length] ?? String(derived.length)})`,
+        );
+      }
+      for (const module of derived) {
+        if (!claimed.includes(module)) out.push(`src/ imports ${module} from outside itself and the bullet does not name it`);
+      }
+      for (const named of claimed) {
+        if (!derived.includes(named)) {
+          out.push(
+            `the bullet names \`${named}\` — a \`files\` entry that src/ does not reach — so it is describing the ` +
+              "package's contents rather than the rule, which is the enumeration #524 removed",
+          );
+        }
+      }
+      return out;
+    };
+
+    const claimed = bullet === undefined ? [] : claimedIn(bullet);
+    const countWord = bullet?.match(/\*\*(\w+)\*\* modules `src\/` reaches outside itself/)?.[1]?.toLowerCase();
+    const faults = [
+      ...(bullet === undefined
+        ? ['CLAUDE.md has no bullet stating the rule about an import that crosses a directory']
+        : bulletFaults(bullet)),
+      // 🔒 The fact rather than the sentence, and the clause nothing in this
+      // tree had ever checked: a module `src/` reaches that `files` leaves out
+      // installs as `Cannot find module` while the repository goes on running.
+      ...derived
+        .filter((module) => !shipsToo(module))
+        .map((module) => `🔒 src/ imports ${module} and \`files\` does not ship it — the installed package throws Cannot find module`),
+    ];
+
+    // 🌱 The trap both halves of #524 name, driven through the same judge rather
+    // than asserted: a bullet that also writes the WHOLE allowlist out has to
+    // fail, or this is a rule that rewards enumerating; a bullet that names none
+    // of the derived set has to fail too, or the rule loses the names it is
+    // about; and the spelling that states exactly the derived set has to come
+    // back clean, or the case is a rule no document can satisfy.
+    const RULE = 'A new runtime import that crosses a directory has to be added to `files` in `package.json`.';
+    const ideal =
+      `${RULE} The only **${NUMBER_WORDS[derived.length]}** modules \`src/\` reaches outside itself are ` +
+      `${derived.map((module) => `\`${module}\``).join(' and ')}. \`npm pack --dry-run\` lists what would ship.`;
+    const faithful = bulletFaults(ideal);
+    const enumerated = raisedBy(bulletFaults(`${ideal} It holds ${allowlist.map((e) => `\`${e}\``).join(', ')}.`), {
+      was: faithful,
+    });
+    const silent = raisedBy(bulletFaults(`${RULE} What is in it is not written out here.`), { was: faithful });
+    const controlFaults = [
+      ...(enumerated.length === 0 ? ['a bullet that also writes out every `files` entry was not faulted'] : []),
+      ...(silent.length === 0 ? ['a bullet naming none of the modules src/ reaches was not faulted'] : []),
+      ...faithful.map((fault) => `a bullet stating exactly the derived set was faulted anyway — ${fault}`),
+      ...(entryNamed('src/') === null && entryNamed('src/compile.ts') === null
+        ? []
+        : ["the bullet's own subject `src/` was read as one of the entries it enumerates"]),
+      ...(entryNamed('package.json') === null && entryNamed('npm pack --dry-run') === null
+        ? []
+        : ['a code span that is not a `files` entry was read as one']),
+      ...(derived.every((module) => entryNamed(module) === module) ? [] : ['a module src/ reaches was not read as a `files` entry']),
+    ];
+
+    const probes = [
+      ...floorProbes(
+        [
+          [derived.length, 1, `${derived.length} module(s) outside src/ are imported from inside it`],
+          [claimed.length, 1, `${claimed.length} \`files\` entr(ies) are named in the bullet`],
+          [allowlist.length, 2, `\`files\` holds ${allowlist.length} entr(ies)`],
+        ],
+        'and a derivation that comes back empty lets this compare two empty sets and call the doctrine current',
+      ),
+      ...faults,
+      ...controlFaults,
+    ];
+    const held = probes.length === 0;
+    say(
+      'CUR15_THE_MODULES_CLAUDE_MD_SAYS_SRC_REACHES_OUTSIDE_ITSELF_ARE_THE_ONES_IT_DOES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `src/ imports ${derived.length} module(s) from outside itself — ${derived.join(', ')} — the doctrine names ` +
+          `exactly those as "${countWord}" and no other of the ${allowlist.length} \`files\` entr(ies), and \`files\` ` +
+          'ships every one of them',
+      ),
+      'the same sentence-drift `CUR07` was written for, on the bullet three below it: the doctrine defined the ' +
+        'published package by naming four of the entries `files` held and went on doing it while fifteen more ' +
+        'arrived. ⚠️ The verdict is NOT `CUR07`\'s equality against that list, and the difference is the whole ' +
+        'design — equality is satisfied by a bullet that writes every entry out, and a document enumerating the ' +
+        'package is the defect rather than the repair (#516 deleted the identical list from RELEASING.md). The set ' +
+        'held here is the one the rule is about, so naming the package at all fails by every entry named. 🔒 And ' +
+        'the last clause is a fact nothing had ever checked: that `files` actually ships what `src/` reaches',
     );
   }
 
@@ -26369,9 +26901,11 @@ function runGallerySuite(): { failures: number; examples: number } {
     console.log('  INFO  no gallery/ directory, so no example was compiled in this run.');
     return { failures: 0, examples: 0 };
   }
-  const names = readdirSync(root)
-    .filter((name) => existsSync(join(root, name, 'rig.json')) && existsSync(join(root, name, 'motion.json')))
-    .sort();
+  // 🔒 Shared with `CUR13`, which holds every index table in the tree to this
+  // very set. Two copies of the criterion would be two answers to *which
+  // examples does this repository have*, and issue #520 is what the second
+  // answer cost.
+  const names = galleryExampleNames(root);
   if (names.length === 0) {
     console.log('  INFO  gallery/ holds no directory with both a rig.json and a motion.json.');
     return { failures: 0, examples: 0 };
@@ -27802,7 +28336,15 @@ function main(): void {
     "the profile counts in the CLI's own help (#373), which said 20 / 36 / 14 while the tool ran 25 / 40 / 15 " +
     'and are now compared against a LIVE report\'s own PROF lines rather than against the counting function the ' +
     'help itself calls, red-first both on the stale literals replanted and on a reworded line the pattern stops ' +
-    'matching, because a scan that goes silent is the one failure a tally gate cannot afford)';
+    'matching, because a scan that goes silent is the one failure a tally gate cannot afford. Then the two ' +
+    'enumerations of a derived set that no gate reached at all: every index table in the tree against the gallery ' +
+    'the run compiles — set equality in both directions plus the count word in the heading over it, after the front ' +
+    'page indexed one example short and left the only `slider` rig unnamed (#520) — with the constraint kinds a rig ' +
+    'declares held to the `Stars` cell beside it, one direction only and the measurement for why in the case\'s own ' +
+    'words; and the modules `src/` reaches outside itself against `CLAUDE.md`\'s bullet, whose verdict is ' +
+    'deliberately NOT the equality above, because a doctrine naming every `files` entry is the defect rather than ' +
+    'the repair (#524, #516) — carrying the clause nothing had ever checked, that `files` ships every module ' +
+    '`src/` reaches)';
   const skillSurface =
     ', + ' + n('agent-skill') + ' agent-skill controls (issue #366 — the surface an agent discovers rigc through: every `skills/*/SKILL.md` ' +
     'carrying the frontmatter the Agent Skills specification requires (a `name` equal to its directory, a ' +
