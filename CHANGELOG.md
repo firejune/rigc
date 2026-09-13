@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.20.3](https://github.com/firejune/rigc/compare/v0.20.2...v0.20.3) (2026-09-13)
+
+
+### Bug Fixes
+
+* emit animations in the order the editor writes them back ([#535](https://github.com/firejune/rigc/issues/535)) ([#537](https://github.com/firejune/rigc/issues/537)) ([9a35ee2](https://github.com/firejune/rigc/commit/9a35ee2f915f21e34d88cbdddad1d47c928ed971))
+
+
+### Instrument
+
+* the allowlist is closed under relative import, and the sentence that said nothing checked it ([#527](https://github.com/firejune/rigc/issues/527)) ([#530](https://github.com/firejune/rigc/issues/530)) ([24fecdc](https://github.com/firejune/rigc/commit/24fecdc0afd788f8145393bf00529ba91aacdf69))
+
 ## [0.20.2](https://github.com/firejune/rigc/compare/v0.20.1...v0.20.2) (2026-09-13)
 
 
