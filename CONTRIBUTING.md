@@ -78,6 +78,19 @@ next version and what lands in the changelog, so write it for the person reading
 the patch, and everything else is invisible to the release. See
 [RELEASING.md](RELEASING.md).
 
+⚠️ **A landing that changes a file inside the published package has to be
+visible to the release.** The package is the `files` allowlist plus what npm
+always adds — `npm pack --dry-run` prints it — and it contains seven guides under
+`docs/`, so *a correction to a shipped guide changes what `npm install` hands
+somebody*. The `ships` job in CI compares what your branch changed against that
+list and refuses a landing the release cannot see. Its verdict is **not** that
+your type is wrong: a doc correction really is a `docs` change, and what is
+missing is that it also ships. Either remedy clears it — a type the changelog
+shows, or a `Release-As:` footer in a **commit message on the branch**, since the
+squash body is made of the commits and not of the pull request body. A change
+that touches nothing in the package is unaffected whatever its type
+([#516](https://github.com/firejune/rigc/issues/516)).
+
 Keep one unit of work per commit. A body that has to explain two unrelated things
 is two commits.
 
