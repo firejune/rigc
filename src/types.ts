@@ -643,7 +643,21 @@ export interface MotionSpec {
   physics?: Record<string, MotionPhysics>;
   animations: Record<string, MotionAnimation>;
   /** Player-side AnimationStateData config; not emitted into skeleton JSON. */
-  mix?: { default: number; pairs?: Array<[string, string, number]> };
+  mix?: MotionMix;
+}
+
+/**
+ * The player-side mix table — a default crossfade and the pairs that override
+ * it. Never emitted, which is why nothing had ever looked at it before issue
+ * #307's parse.
+ *
+ * ⭐ Named rather than inline so that `MOTION_KEYS` can pair a key set with it:
+ * `CUR17` resolves each set against an interface of the same name, and an
+ * anonymous shape is one the pairing cannot reach.
+ */
+export interface MotionMix {
+  default: number;
+  pairs?: Array<[string, string, number]>;
 }
 
 // ---------------------------------------------------------------------------

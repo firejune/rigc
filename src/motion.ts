@@ -38,17 +38,23 @@
  * `src/trackgen.ts`) are untouched — every one of them reads the group's member
  * list or the property's projection table, neither of which is in this file.
  *
- * ## Unknown keys are NOT refused, because `parseRigSpec` does not refuse them
+ * ## Unknown keys ARE refused — issue #545
  *
- * ⚠️ A misspelled optional field is therefore still silent — `"easing"` for
- * `"ease"` plays linear and says nothing. Refusing by name would be the better
- * behaviour in isolation and this repository usually prefers it; it is not done
- * because the rig parser sets the house rule for what a spec parser is, and one
- * of the two formats refusing a stray key while the other shrugs is a worse
- * surprise than the stray key. (The 37 motion specs in the repository carry no
- * undeclared key at any level, so the option stays open at no migration cost.)
+ * ⚠️ This section said the opposite from 2026-09-03 (#321) until #545: *"a
+ * misspelled optional field is therefore still silent — `easing` for `ease`
+ * plays linear and says nothing"*, declined because `parseRigSpec` did not refuse one
+ * either and one format shrugging while the other refuses is a worse surprise
+ * than the stray key. That argument was sound and its premise is now false —
+ * `parseRigSpec` refuses by name, so the consistent behaviour is this one. The
+ * note's own parenthesis is what made it cheap: the motion specs in this
+ * repository carried no undeclared key at any level then and carry none now, so
+ * the migration cost, measured over all 39, is zero.
+ *
+ * `MOTION_KEYS` below is the key set, and the refusal itself is one helper in
+ * [`keys.ts`](keys.ts) shared with the rig parser.
  */
 import { CompileError } from './errors.ts';
+import { refuseUnknownKeys } from './keys.ts';
 import type { MotionSpec } from './types.ts';
 
 export const MOTION_SPEC_VERSION = 'rigc-motion/1';
@@ -82,6 +88,58 @@ const PHYSICS_NUMBERS = [
 /** The two animation-level constraint families, which share one entry shape. */
 const CONSTRAINT_GROUPS = ['ik', 'transform'] as const;
 
+/**
+ * Every key each shape of this format owns, keyed by the interface that declares
+ * it — the runtime shadow of types TypeScript erases, and the other half of
+ * `RIG_KEYS` in [`rig.ts`](rig.ts).
+ *
+ * 🔒 Held to those interfaces by `KEY01` in `selftest.ts`, which reads the
+ * declaring source and compares. The interfaces are spread over three modules —
+ * `types.ts` for the format, [`trackgen.ts`](trackgen.ts) for a track's `derive`
+ * and [`deformgen.ts`](deformgen.ts) for a deform key's `transform` — and the
+ * table is one table anyway, because what it describes is one file.
+ *
+ * ⚠️ `MotionKey.v` is deliberately not a shape here. On a group track it is a
+ * `MotionMemberValues` map keyed by **member name**, so every key of it is a
+ * name from the rig rather than a field of this format; `resolveMemberTrack`
+ * refuses a member the group does not have, which is the check that fits.
+ */
+export const MOTION_KEYS = {
+  MotionSpec: ['spec', 'archetype', 'cut', 'note', 'easings', 'groups', 'setup', 'physics', 'animations', 'mix'],
+  MotionMix: ['default', 'pairs'],
+  MotionSetupSlot: ['attachment', 'color'],
+  MotionPhysics: [
+    'bone', 'x', 'y', 'rotate', 'scaleX', 'shearX', 'inertia', 'strength', 'damping', 'mass', 'wind', 'gravity',
+    'mix', 'fps', 'limit', 'note',
+  ],
+  MotionAnimation: ['duration', 'loop', 'note', 'tracks', 'ik', 'transform', 'deform', 'drawOrder', 'events'],
+  MotionTrack: ['slot', 'group', 'bone', 'physics', 'path', 'slider', 'property', 'lag', 'stagger', 'keys'],
+  MotionKey: ['t', 'v', 'derive', 'ease', 'curve'],
+  MotionIkTrack: ['constraint', 'keys'],
+  MotionIkKey: ['t', 'mix', 'softness', 'bendPositive', 'compress', 'stretch', 'ease', 'curve'],
+  MotionTransformTrack: ['constraint', 'keys'],
+  MotionTransformKey: ['t', 'mixRotate', 'mixX', 'mixY', 'mixScaleX', 'mixScaleY', 'mixShearY', 'ease', 'curve'],
+  MotionDeformTrack: ['skin', 'slot', 'attachment', 'keys'],
+  MotionDeformKey: ['t', 'offset', 'fromVertex', 'vertices', 'transform', 'ease', 'curve'],
+  MotionDrawOrderKey: ['t', 'offsets'],
+  MotionDrawOrderOffset: ['slot', 'offset'],
+  MotionEventKey: ['t', 'name', 'int', 'float', 'string', 'volume', 'balance'],
+  TrackDeriveTurn: ['kind', 'degrees', 'depth', 'carried', 'about'],
+  DeformTurn: ['kind', 'radius', 'depth', 'degrees', 'about'],
+  DeformAffine: ['kind', 'scale', 'about'],
+  DeformWave: ['kind', 'amplitude', 'wavelength', 'phase', 'along', 'axis'],
+  DeformBend: ['kind', 'amount', 'from', 'to', 'power', 'along', 'axis'],
+} as const satisfies Record<string, readonly string[]>;
+
+/** A deform key's `transform` kinds, and the shape each one's keys come from. */
+const DEFORM_TRANSFORM_SHAPE: Record<string, keyof typeof MOTION_KEYS> = {
+  yaw: 'DeformTurn',
+  pitch: 'DeformTurn',
+  affine: 'DeformAffine',
+  wave: 'DeformWave',
+  bend: 'DeformBend',
+};
+
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
@@ -111,6 +169,16 @@ function describe(v: unknown): string {
  */
 function refuse(where: string, key: string, is: unknown, hint: string): never {
   throw new CompileError(`${where}: \`${key}\` is ${describe(is)}; ${hint}`);
+}
+
+/**
+ * The second refusal shape: **a key this format does not have**, from the one
+ * implementation of it. `at` is the path the messages above already print, so a
+ * reader meets `setup."lid_l"` whether the entry was the wrong type or carried
+ * the wrong field.
+ */
+function known(node: unknown, shape: keyof typeof MOTION_KEYS, where: string, at: string): void {
+  if (isObj(node)) refuseUnknownKeys(node, MOTION_KEYS[shape], where, `\`${at}\``);
 }
 
 // --- the leaf checks, each returning the value it just proved ---------------
@@ -196,6 +264,7 @@ function parseSetup(raw: unknown, where: string): void {
     if (entry.attachment !== undefined && entry.attachment !== null && typeof entry.attachment !== 'string') {
       refuse(where, `${key}.attachment`, entry.attachment, 'it is an attachment name, or null for "show nothing"');
     }
+    known(entry, 'MotionSetupSlot', where, key);
     if (entry.color !== undefined) {
       const hint = 'a setup colour is [r, g, b, a], four finite numbers in 0..1 — a channel that is not one is clamped to `NaN` and written into the slot as the text "NaN"';
       const color = needArray(entry.color, where, `${key}.color`, hint);
@@ -224,6 +293,7 @@ function parsePhysics(raw: unknown, where: string): void {
   for (const [name, entry] of Object.entries(table)) {
     const key = `physics."${name}"`;
     const spec = needObj(entry, where, key, 'a physics constraint is an object naming the bone it drives and the components it drives it in');
+    known(spec, 'MotionPhysics', where, key);
     needString(spec.bone, where, `${key}.bone`, 'a physics constraint drives one bone, named here');
     for (const field of PHYSICS_NUMBERS) {
       optFinite(spec[field], where, `${key}.${field}`, 'every tuning field of a physics constraint is a finite number — a non-number is rounded to `NaN` and emitted as `null`, which the runtime reads as zero');
@@ -242,6 +312,7 @@ function parsePhysics(raw: unknown, where: string): void {
 function parseMix(raw: unknown, where: string): void {
   if (raw === undefined) return;
   const mix = needObj(raw, where, 'mix', 'it is `{ "default": <seconds>, "pairs"?: [["<from>", "<to>", <seconds>], …] }`');
+  known(mix, 'MotionMix', where, 'mix');
   needFinite(mix.default, where, 'mix.default', 'the default mix duration is a finite number of seconds');
   if (mix.pairs === undefined) return;
   const pairs = needArray(mix.pairs, where, 'mix.pairs', 'it is an array of `["<from>", "<to>", <seconds>]` triples');
@@ -273,9 +344,25 @@ function parseKeyEasing(key: Record<string, unknown>, where: string, at: string)
   optString(key.ease, where, `${at}.ease`, 'it names an entry of this spec\'s `easings` table, or is "stepped"');
 }
 
-/** One `{ t, … }` key of any family: an object, with a finite time and a string `ease`. */
-function parseKey(raw: unknown, where: string, at: string, hint: string): Record<string, unknown> {
+/**
+ * One `{ t, … }` key of any family: an object, with a finite time and a string
+ * `ease`.
+ *
+ * `shape` is per caller because the five families' key shapes are five
+ * different sets — an `rgba` key's `v` is not a thing an ik key may carry, and
+ * an ik key's `softness` is not a thing a value track may. One shared shape here
+ * would accept every field of every family on all of them, which is a key set
+ * nothing in the format actually has.
+ */
+function parseKey(
+  raw: unknown,
+  where: string,
+  at: string,
+  hint: string,
+  shape: keyof typeof MOTION_KEYS,
+): Record<string, unknown> {
   const key = needObj(raw, where, at, hint);
+  known(key, shape, where, at);
   parseKeyTime(key, where, at);
   parseKeyEasing(key, where, at);
   return key;
@@ -286,6 +373,7 @@ function parseTracks(raw: unknown, where: string, at: string): void {
   for (const [i, entry] of tracks.entries()) {
     const key = `${at}.tracks[${i}]`;
     const track = needObj(entry, where, key, 'a track is an object naming one target, one property and its keys');
+    known(track, 'MotionTrack', where, key);
     needString(track.property, where, `${key}.property`, 'a track states the property it keys — the table is AUTHORING §4.4');
     for (const field of TARGET_FIELDS) {
       optString(track[field], where, `${key}.${field}`, `a track's "${field}" is the name of the ${field === 'slot' || field === 'bone' ? field : `${field} it targets`}`);
@@ -293,7 +381,16 @@ function parseTracks(raw: unknown, where: string, at: string): void {
     optFinite(track.lag, where, `${key}.lag`, '"lag" is seconds added to every key time of this track, so a finite number — a string is CONCATENATED onto each time and a boolean adds 1');
     optFinite(track.stagger, where, `${key}.stagger`, '"stagger" is the extra per-member delay inside a group, in seconds, so a finite number');
     const keys = needArray(track.keys, where, `${key}.keys`, 'it is an array of `{ t, v }` keys');
-    for (const [j, k] of keys.entries()) parseKey(k, where, `${key}.keys[${j}]`, 'a key is an object of `{ t, v, … }`');
+    for (const [j, k] of keys.entries()) {
+      const at = `${key}.keys[${j}]`;
+      const parsed = parseKey(k, where, at, 'a key is an object of `{ t, v, … }`', 'MotionKey');
+      // `derive` states a generator's parameters rather than a value, and its
+      // shape lives with the evaluator (`src/trackgen.ts`). `yaw` and `pitch`
+      // are one interface — they differ in which coordinate they read, not in
+      // what they carry — so there is no dispatch to do here, and whether the
+      // kind is one of the two stays `evaluateTrackDerive`'s refusal.
+      known(parsed.derive, 'TrackDeriveTurn', where, `${at}.derive`);
+    }
   }
 }
 
@@ -303,9 +400,18 @@ function parseConstraintTracks(raw: unknown, where: string, at: string, group: (
   for (const [i, entry] of entries.entries()) {
     const key = `${at}.${group}[${i}]`;
     const track = needObj(entry, where, key, `${group === 'ik' ? 'an ik' : 'a transform'} timeline is an object of \`{ constraint, keys }\``);
+    known(track, group === 'ik' ? 'MotionIkTrack' : 'MotionTransformTrack', where, key);
     needString(track.constraint, where, `${key}.constraint`, `4.3 writes this group as \`${group}.<constraint>\`, so the constraint name is the only target there is`);
     const keys = needArray(track.keys, where, `${key}.keys`, 'it is an array of keys, each naming the same set of mix fields');
-    for (const [j, k] of keys.entries()) parseKey(k, where, `${key}.keys[${j}]`, `a ${group} key is an object of \`{ t, … }\``);
+    for (const [j, k] of keys.entries()) {
+      parseKey(
+        k,
+        where,
+        `${key}.keys[${j}]`,
+        `a ${group} key is an object of \`{ t, … }\``,
+        group === 'ik' ? 'MotionIkKey' : 'MotionTransformKey',
+      );
+    }
   }
 }
 
@@ -315,18 +421,33 @@ function parseDeform(raw: unknown, where: string, at: string): void {
   for (const [i, entry] of entries.entries()) {
     const key = `${at}.deform[${i}]`;
     const track = needObj(entry, where, key, 'a deform timeline is an object of `{ skin?, slot, attachment, keys }`');
+    known(track, 'MotionDeformTrack', where, key);
     optString(track.skin, where, `${key}.skin`, 'it names the skin the attachment lives in; absent means "default"');
     needString(track.slot, where, `${key}.slot`, 'a deform timeline keys one attachment of one slot, named here');
     needString(track.attachment, where, `${key}.attachment`, "it is the attachment's placeholder name inside that skin and slot");
     const keys = needArray(track.keys, where, `${key}.keys`, 'it is an array of keys, each a sparse edit of the setup geometry');
-    for (const [j, k] of keys.entries()) parseKey(k, where, `${key}.keys[${j}]`, 'a deform key is an object of `{ t, vertices? | transform? }`');
+    for (const [j, k] of keys.entries()) {
+      const at = `${key}.keys[${j}]`;
+      const parsed = parseKey(k, where, at, 'a deform key is an object of `{ t, vertices? | transform? }`', 'MotionDeformKey');
+      // `transform` is five kinds sharing one field name, and they share almost
+      // nothing else: `wave` carries `wavelength` and `bend` carries `power`, so
+      // checking either against the union's flattened keys would accept both on
+      // both. An unrecognised `kind` is `evaluateDeformTransform`'s refusal,
+      // which names the five.
+      if (isObj(parsed.transform)) {
+        const shape = DEFORM_TRANSFORM_SHAPE[String(parsed.transform.kind)];
+        if (shape !== undefined) known(parsed.transform, shape, where, `${at}.transform`);
+      }
+    }
   }
 }
 
 function parseEvents(raw: unknown, where: string, at: string): void {
   if (raw === undefined) return;
   const keys = needArray(raw, where, `${at}.events`, 'it is an array of `{ t, name }` firings — one timeline per animation, naming no target');
-  for (const [i, k] of keys.entries()) parseKey(k, where, `${at}.events[${i}]`, 'an event key is an object of `{ t, name, … }`');
+  for (const [i, k] of keys.entries()) {
+    parseKey(k, where, `${at}.events[${i}]`, 'an event key is an object of `{ t, name, … }`', 'MotionEventKey');
+  }
 }
 
 /**
@@ -343,7 +464,7 @@ function parseDrawOrder(raw: unknown, where: string, at: string): void {
   const keys = needArray(raw, where, `${at}.drawOrder`, 'it is an array of `{ t, offsets? }` keys — one timeline per animation, naming no target');
   for (const [i, entry] of keys.entries()) {
     const key = `${at}.drawOrder[${i}]`;
-    const dk = parseKey(entry, where, key, 'a draw-order key is an object of `{ t, offsets? }`');
+    const dk = parseKey(entry, where, key, 'a draw-order key is an object of `{ t, offsets? }`', 'MotionDrawOrderKey');
     if (dk.offsets === undefined) continue;
     const offsets = needArray(
       dk.offsets,
@@ -354,6 +475,7 @@ function parseDrawOrder(raw: unknown, where: string, at: string): void {
     for (const [j, o] of offsets.entries()) {
       const oat = `${key}.offsets[${j}]`;
       const off = needObj(o, where, oat, 'one moved slot is `{ "slot": "<name>", "offset": <places later> }`');
+      known(off, 'MotionDrawOrderOffset', where, oat);
       needString(off.slot, where, `${oat}.slot`, 'it names the slot this key moves');
       // The TYPE only. Whether it is a whole number, and whether it lands inside
       // the emitted slots array, are `compile`'s — both need the slot table.
@@ -365,6 +487,7 @@ function parseDrawOrder(raw: unknown, where: string, at: string): void {
 function parseAnimation(raw: unknown, where: string, name: string): void {
   const at = `animations."${name}"`;
   const anim = needObj(raw, where, at, 'an animation is an object of `{ duration, tracks, … }`');
+  known(anim, 'MotionAnimation', where, at);
   const duration = needFinite(anim.duration, where, `${at}.duration`, 'an animation declares its duration in seconds, as a finite number — it is checked against the compiled last key (rule R7), and a comparison against a non-number is silently false');
   if (duration < 0) {
     refuse(where, `${at}.duration`, duration, 'a duration is a length of time, so it is not negative');
@@ -398,6 +521,11 @@ export function parseMotionSpec(raw: unknown, where: string): MotionSpec {
   if (raw.spec !== MOTION_SPEC_VERSION) {
     throw new CompileError(`${where}: unknown motion spec version: ${String(raw.spec)}, expected "${MOTION_SPEC_VERSION}"`);
   }
+  // Before the field checks, for the reason `parseRigSpec` puts its own first: a
+  // key nothing reads is often the CAUSE of the field that is missing, and
+  // `"animation"` for `"animations"` should be named as the typo it is rather
+  // than as an absent table.
+  known(raw, 'MotionSpec', where, 'this motion spec');
   needString(raw.archetype, where, 'archetype', "it names the rig this spec was authored against, and must equal that rig spec's own `name`");
   needString(raw.cut, where, 'cut', 'it names the cut these keys were authored for');
   optString(raw.note, where, 'note', 'it is prose for a reader');

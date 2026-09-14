@@ -1377,6 +1377,14 @@ carrying here:
 - A physics constraint's five components all default to 0, so one that names none of
   them parses cleanly and does nothing at all. rigc refuses it up front, and `A23`
   catches it from the other side.
+- An **ik** and a **physics** constraint both carry `ScaleYMode` under the key
+  `scaleY`, spelled `"none"`, `"uniform"` or `"volume"`. It is an enum resolved by
+  `Utils.enumValue`, so only the first letter's case is free and an unrecognised
+  name is assigned as `undefined` with no error; rigc checks it, like the three
+  path modes below. ⚠️ `src/rig.ts` called the physics one **`scaleYMode`** until
+  issue #545 — the runtime's field name rather than the format's key — and nothing
+  read it, so a spec that wrote `scaleYMode` set no mode and said nothing. A rig
+  that still writes it is now refused by name, with `scaleY` beside it.
 
 Every constraint may also carry `skin: true`, which makes it run only under the skin
 that lists it — see §3.4.1, and note that the flag alone does nothing.
@@ -3220,6 +3228,38 @@ compiled, and ask only what the one file in front of them can answer. Every
 one per message. (The rig spec's parser predates the convention and its messages
 are prose, so they sit in the second table with everything else.)
 
+🚨 **A key neither format has is refused by name, in both files.** Not a row in
+the table below, because it is not about one field: every object in a rig spec and
+in a motion spec is checked against the keys its shape actually owns, and a key
+outside that set stops the build. Issue #545 is why — before it, such a key was
+never looked at, never mentioned and never emitted, and the build exited 0 with
+every assertion green. Four keys planted into one physics constraint all vanished,
+and no line of output named any of them.
+
+```
+rigc compile error: rig.json: constraint "ctl" (physics) has 4 keys this compiler
+does not read: "scaleYMode" (did you mean "scaleY", "scaleX"?), "scale" (did you
+mean "scaleX", "scaleY"?), "wobble", "ROTATE" (did you mean "rotate"?). Nothing
+reads such a key, so it would be dropped from the emitted skeleton in silence —
+fix the spelling or remove it. Known here: bone, damping, dampingGlobal, fps, …
+```
+
+Read it as a **repair**, not a rule: every stray key on that object is named at
+once, the closest known spellings come with it (the search is case-insensitive, so
+a real key in the wrong case leads the list), and the shape's whole key set is
+printed after. What it will *not* do is guess — a key four edits from anything gets
+no suggestion, only the set.
+
+⚠️ There is **no forward-compatibility escape**, and no `note` field except where
+one is listed: a rig spec's root, a motion spec's root, an animation, and a
+`physics` tuning entry. Prose anywhere else has to go in a document, because a key
+the compiler tolerates is a key it cannot distinguish from one you meant it to
+read. (The **cut manifest** is deliberately outside this: it is the record of the
+pipeline that produced the art as much as an input, it carries fields the compiler
+states outright that it does not read — `roi` — and the fixtures in this repository
+already give it `note` and `archetype`. It has no shape parse at all, which is the
+same hole issue #307 closed for the motion spec.)
+
 | Key | Refused when it is not | Why the shape matters |
 | --- | --- | --- |
 | the file itself | a JSON object | the version row below would otherwise report a missing `spec` tag in a file that has no fields at all |
@@ -3426,6 +3466,7 @@ says so, because a deferral without its reason is a wall rather than a work item
 | constraint `type` of anything else | `constraint type "X" is not one Spine 4.3 knows. The five are: ik, transform, path, physics, slider.` — all five are emitted, so this is a typo, and a typo is what the parser drops in silence |
 | a path attachment's `lengths` | `"lengths" is not authored — rigc measures the setup arc length of each curve off the geometry` (§3.4). Not a deferral: a second copy of a number the vertices already fix |
 | a `deform` timeline on a path attachment | `a path attachment does have a vertex array, and rigc does not key it yet` — the format allows it and an animated track is a real idiom, but a deformed path invalidates the `lengths` a `constantSpeed: false` traversal reads. Move the curve by posing the bones its vertices are bound to |
+| any key neither format has, anywhere in either file | `<object> has a key this compiler does not read: "x" (did you mean "y"?) … Known here: …` (§5.1). Not a deferral either: a key nothing reads is a value you wrote and the emitted skeleton does not contain |
 
 Two more limits that are not errors but will shape what you can attempt:
 

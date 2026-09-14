@@ -35,6 +35,10 @@ import {
 } from './depth.ts';
 import { CompileError, NotImplementedError } from './errors.ts';
 import { parseJsonWithPosition } from './json-position.ts';
+// The "did you mean" list on a missing atlas region, from the one implementation
+// of it — the same search serves `refuseUnknownKeys`, and a second copy here with
+// a threshold edited is how such a pair drifts apart.
+import { nearMisses } from './keys.ts';
 import { parseMotionSpec } from './motion.ts';
 import {
   parseRigSpec,
@@ -42,6 +46,7 @@ import {
   RIG_PATH_POSITION_MODES,
   RIG_PATH_ROTATE_MODES,
   RIG_PATH_SPACING_MODES,
+  RIG_SCALE_Y_MODES,
   RIG_SKIN_CONSTRAINT_KEYS,
   splitRigSkin,
   type RigAttachment,
@@ -1026,44 +1031,6 @@ function readAtlasIn(path: string): AtlasSource {
   }
   if (byName.size === 0) throw new CompileError(`--atlas-in ${path} declares no regions`);
   return { path, dir: dirname(path), parsed, byName };
-}
-
-/**
- * How far apart two names are, for the "did you mean" list on a missing region.
- *
- * Plain Levenshtein. An atlas has tens of regions and this runs once per
- * refusal, so the O(n*m) table is free and a cheaper heuristic (shared prefix,
- * substring) would miss the commonest real case — a transposition or one wrong
- * character in a hand-typed `image`.
- */
-function nameDistance(a: string, b: string): number {
-  const rows = a.length + 1;
-  const cols = b.length + 1;
-  let previous = new Array<number>(cols);
-  for (let j = 0; j < cols; j++) previous[j] = j;
-  for (let i = 1; i < rows; i++) {
-    const current = new Array<number>(cols);
-    current[0] = i;
-    for (let j = 1; j < cols; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
-    }
-    previous = current;
-  }
-  return previous[cols - 1];
-}
-
-/** Up to five region names closest to the one that was not found. */
-function nearMisses(wanted: string, known: Iterable<string>): string[] {
-  const scored: Array<{ name: string; d: number }> = [];
-  for (const name of known) {
-    const d = nameDistance(wanted.toLowerCase(), name.toLowerCase());
-    // Half the name's length, floored at 2: "leg" must not suggest "arm", and a
-    // long name may still be recognisable through several typos.
-    if (d <= Math.max(2, Math.floor(wanted.length / 2))) scored.push({ name, d });
-  }
-  scored.sort((x, y) => x.d - y.d || (x.name < y.name ? -1 : 1));
-  return scored.slice(0, 5).map((s) => s.name);
 }
 
 /**
@@ -3704,7 +3671,12 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
   if (spec.type === 'ik') {
     out.bones = boneList();
     out.target = needBone(spec.target, 'target');
-    copy(['scaleY', 'mix', 'softness', 'bendPositive', 'compress', 'stretch', 'skin']);
+    // `scaleY` is the `ScaleYMode` enum, not a number or a flag: the parser runs
+    // it through `Utils.enumValue` (`:150`), which resolves an unknown name to
+    // `undefined` and assigns it without a word. Out of `copy` for that reason —
+    // see `RIG_SCALE_Y_MODES`.
+    if (spec.scaleY !== undefined) out.scaleY = needEnum(spec.scaleY, 'scaleY', RIG_SCALE_Y_MODES);
+    copy(['mix', 'softness', 'bendPositive', 'compress', 'stretch', 'skin']);
     return out;
   }
   if (spec.type === 'transform') {
@@ -4090,13 +4062,15 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
   }
   if (spec.type === 'physics') {
     out.bone = needBone(spec.bone, 'bone');
+    // The same `ScaleYMode` enum an ik constraint carries, under the same key
+    // and through the same silent `Utils.enumValue` (`:301`).
+    if (spec.scaleY !== undefined) out.scaleY = needEnum(spec.scaleY, 'scaleY', RIG_SCALE_Y_MODES);
     copy([
       'x',
       'y',
       'rotate',
       'scaleX',
       'shearX',
-      'scaleY',
       'limit',
       'fps',
       'inertia',

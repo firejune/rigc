@@ -60,6 +60,7 @@
  * with no manifest at all declares them here.
  */
 import { CompileError, NotImplementedError } from './errors.ts';
+import { refuseUnknownKeys } from './keys.ts';
 
 export { CompileError, NotImplementedError };
 
@@ -255,19 +256,6 @@ export interface RigSlot {
 // ---------------------------------------------------------------------------
 
 /**
- * Which builder in `src/mesh.ts` makes this mesh's geometry, and its parameters.
- *
- * The builders stay **code** and are invoked by **data**: they encode a
- * deformation model (what is pinned, what may move, how authority falls off),
- * and a model is not a table of numbers.
- *
- * ⚠️ A cut with a manifest does not use this. There the generator is invoked
- * through the manifest's `mesh` block, because everything a generator needs —
- * the mask contour, the aperture centre, the part window — is *measured art*,
- * and measured art lives in the manifest. `generator` is for a skeleton with no
- * manifest behind it.
- */
-/**
  * A greyscale sheet, in a part's own pixel grid, giving each vertex a depth —
  * what `yaw` and `pitch` otherwise derive from one cylinder radius.
  * [`src/depth.ts`](depth.ts) is the model and the order of operations;
@@ -352,104 +340,143 @@ export interface RigSoftRegion {
   mask: string;
 }
 
-export type RigMeshGenerator =
-  | {
-      kind: 'ring';
-      /** The seam contour, in part-local pixels, y down. At least 6 points. */
-      hull: Array<[number, number]>;
-      /** Aperture centre, part-local pixels, y down. */
-      center: [number, number];
-      /** Inner ring position between the centre (0) and the hull (1). */
-      inner: number;
-      /** Part window size, for UVs. */
-      size: [number, number];
-      /** Directional authority across an axis — see `sideWeight` in mesh.ts. */
-      bias?: { axis_deg: number; ramp: [number, number] };
-      /** Control bones, by name. More than one splits the ring by angle. */
-      controls: string[];
-    }
-  | {
-      kind: 'ribbon';
-      /** Part window size in pixels. The strip spans it. */
-      size: [number, number];
-      /** Cross rows, entry first. Triangles = 2 * (rows - 1). */
-      rows: number;
-      /** The bone chain the strip rides, root first. */
-      chain: string[];
-    }
-  | {
-      /**
-       * A mesh cut to the part's own alpha silhouette: trace the mask, simplify
-       * the outline, push it out by a margin, ear-clip it (`buildContourMesh`).
-       *
-       * ⭐ It takes no `size` and no geometry. The shape is MEASURED off the
-       * attachment's own `image` — the same rule a region attachment's
-       * `width`/`height` follow (R5) — so there is no number here that can
-       * disagree with the pixels, and no polygon to keep in step with the art.
-       *
-       * 🚨 It is geometry, not a deformation model: every vertex is pinned to
-       * the slot bone at weight 1, so an undeformed contour mesh draws exactly
-       * what the region drew and no bone can bend it. See the section header in
-       * [`src/mesh.ts`](mesh.ts) for what it buys instead, and reach for `ring`
-       * or authored `weights` when a bone has to move the art.
-       */
-      kind: 'contour';
-      /**
-       * Douglas-Peucker tolerance in part-local pixels. Bigger spends fewer
-       * vertices and cuts more corners; the builder measures how much of the art
-       * the result still covers and refuses a mesh that clips it.
-       */
-      tolerance: number;
-      /**
-       * How far the outline is pushed out past the traced silhouette, in pixels.
-       * Default 1. Simplification may bite `tolerance` pixels INTO the art, so
-       * `margin >= tolerance` is the setting that survives the coverage check.
-       */
-      margin?: number;
-      /** Refuse rather than emit more outline vertices than this. Default 64. */
-      maxVertices?: number;
-      /** Alpha at or above which a pixel counts as art, 1..255. Default 1. */
-      alpha?: number;
-      /** A depth map for this part — see `RigDepthMap`. */
-      depth?: RigDepthMap;
-      /** A soft region carried by its own bone — see `RigSoftRegion`. */
-      soft?: RigSoftRegion;
-    }
-  | {
-      /**
-       * A lattice over the part window — the topology `docs/FACE.md` §4 turns a
-       * plate into so a turn has columns to move.
-       *
-       * ⭐ It takes no `size`: like a `contour`, the window is the attachment's
-       * own `image`, so there is no number here that can disagree with the
-       * pixels. Every vertex is pinned to the slot bone at weight 1, which
-       * makes the lattice geometry to DEFORM rather than an authority split —
-       * reach for `ring` when bones have to move it.
-       */
-      kind: 'grid';
-      /**
-       * Column positions across the window, 0..1, ascending. At least 2.
-       *
-       * ⚠️ Positions, not a count, and that is deliberate: FACE §4.1 places
-       * columns where the drawing needs them, and the worked example's are
-       * dense at the silhouette and sparse across the middle. They need not
-       * reach the window edge — that example's run 0.0235 to 0.9765.
-       */
-      us?: number[];
-      /** Row positions down the window, 0..1, ascending. At least 2. */
-      vs?: number[];
-      /**
-       * Even division instead: `cols` columns and `rows` rows spanning the
-       * whole window. A convenience for a plate with no shape to follow, and
-       * refused beside `us`/`vs`, which say the same thing more precisely.
-       */
-      cols?: number;
-      rows?: number;
-      /** A depth map for this part — see `RigDepthMap`. */
-      depth?: RigDepthMap;
-      /** A soft region carried by its own bone — see `RigSoftRegion`. */
-      soft?: RigSoftRegion;
-    };
+/**
+ * Directional authority across an axis — see `sideWeight` in
+ * [`mesh.ts`](mesh.ts).
+ *
+ * ⭐ It was an inline object type until issue #545. The four generator kinds
+ * were too: the union is spelled as four **named** interfaces now because
+ * `RIG_KEYS` pairs a key set with an interface by name, and a shape with no name
+ * is a shape the pairing cannot reach — so an anonymous corner of this file
+ * would have been a corner whose key set nothing checked.
+ */
+export interface RigMeshBias {
+  /** The axis, in SCREEN degrees, y down — a manifest's own convention. */
+  axis_deg: number;
+  /** Signed distance across that axis over which authority goes 0 -> 1. */
+  ramp: [number, number];
+}
+
+/** A ring: a seam contour, an aperture inside it, and the bones that open it. */
+export interface RigRingGenerator {
+  kind: 'ring';
+  /** The seam contour, in part-local pixels, y down. At least 6 points. */
+  hull: Array<[number, number]>;
+  /** Aperture centre, part-local pixels, y down. */
+  center: [number, number];
+  /** Inner ring position between the centre (0) and the hull (1). */
+  inner: number;
+  /** Part window size, for UVs. */
+  size: [number, number];
+  /** Directional authority across an axis — see `sideWeight` in mesh.ts. */
+  bias?: RigMeshBias;
+  /** Control bones, by name. More than one splits the ring by angle. */
+  controls: string[];
+}
+
+/** A ribbon: a strip of cross rows riding a bone chain. */
+export interface RigRibbonGenerator {
+  kind: 'ribbon';
+  /** Part window size in pixels. The strip spans it. */
+  size: [number, number];
+  /** Cross rows, entry first. Triangles = 2 * (rows - 1). */
+  rows: number;
+  /** The bone chain the strip rides, root first. */
+  chain: string[];
+}
+
+/**
+ * A mesh cut to the part's own alpha silhouette: trace the mask, simplify
+ * the outline, push it out by a margin, ear-clip it (`buildContourMesh`).
+ *
+ * ⭐ It takes no `size` and no geometry. The shape is MEASURED off the
+ * attachment's own `image` — the same rule a region attachment's
+ * `width`/`height` follow (R5) — so there is no number here that can
+ * disagree with the pixels, and no polygon to keep in step with the art.
+ *
+ * 🚨 It is geometry, not a deformation model: every vertex is pinned to
+ * the slot bone at weight 1, so an undeformed contour mesh draws exactly
+ * what the region drew and no bone can bend it. See the section header in
+ * [`src/mesh.ts`](mesh.ts) for what it buys instead, and reach for `ring`
+ * or authored `weights` when a bone has to move the art.
+ */
+export interface RigContourGenerator {
+  kind: 'contour';
+  /**
+   * Douglas-Peucker tolerance in part-local pixels. Bigger spends fewer
+   * vertices and cuts more corners; the builder measures how much of the art
+   * the result still covers and refuses a mesh that clips it.
+   */
+  tolerance: number;
+  /**
+   * How far the outline is pushed out past the traced silhouette, in pixels.
+   * Default 1. Simplification may bite `tolerance` pixels INTO the art, so
+   * `margin >= tolerance` is the setting that survives the coverage check.
+   */
+  margin?: number;
+  /** Refuse rather than emit more outline vertices than this. Default 64. */
+  maxVertices?: number;
+  /** Alpha at or above which a pixel counts as art, 1..255. Default 1. */
+  alpha?: number;
+  /** A depth map for this part — see `RigDepthMap`. */
+  depth?: RigDepthMap;
+  /** A soft region carried by its own bone — see `RigSoftRegion`. */
+  soft?: RigSoftRegion;
+}
+
+/**
+ * A lattice over the part window — the topology `docs/FACE.md` §4 turns a
+ * plate into so a turn has columns to move.
+ *
+ * ⭐ It takes no `size`: like a `contour`, the window is the attachment's
+ * own `image`, so there is no number here that can disagree with the
+ * pixels. Every vertex is pinned to the slot bone at weight 1, which
+ * makes the lattice geometry to DEFORM rather than an authority split —
+ * reach for `ring` when bones have to move it.
+ */
+export interface RigGridGenerator {
+  kind: 'grid';
+  /**
+   * Column positions across the window, 0..1, ascending. At least 2.
+   *
+   * ⚠️ Positions, not a count, and that is deliberate: FACE §4.1 places
+   * columns where the drawing needs them, and the worked example's are
+   * dense at the silhouette and sparse across the middle. They need not
+   * reach the window edge — that example's run 0.0235 to 0.9765.
+   */
+  us?: number[];
+  /** Row positions down the window, 0..1, ascending. At least 2. */
+  vs?: number[];
+  /**
+   * Even division instead: `cols` columns and `rows` rows spanning the
+   * whole window. A convenience for a plate with no shape to follow, and
+   * refused beside `us`/`vs`, which say the same thing more precisely.
+   */
+  cols?: number;
+  rows?: number;
+  /** A depth map for this part — see `RigDepthMap`. */
+  depth?: RigDepthMap;
+  /** A soft region carried by its own bone — see `RigSoftRegion`. */
+  soft?: RigSoftRegion;
+}
+
+/**
+ * Which builder in `src/mesh.ts` makes this mesh's geometry, and its parameters.
+ *
+ * The builders stay **code** and are invoked by **data**: they encode a
+ * deformation model (what is pinned, what may move, how authority falls off),
+ * and a model is not a table of numbers.
+ *
+ * ⚠️ A cut with a manifest does not use this. There the generator is invoked
+ * through the manifest's `mesh` block, because everything a generator needs —
+ * the mask contour, the aperture centre, the part window — is *measured art*,
+ * and measured art lives in the manifest. `generator` is for a skeleton with no
+ * manifest behind it.
+ */
+export type RigMeshGenerator = RigRingGenerator | RigRibbonGenerator | RigContourGenerator | RigGridGenerator;
+
+/** The four `kind` names a generator may carry, and the order `RIG_KEYS` takes them in. */
+export const RIG_GENERATOR_KINDS = ['ring', 'ribbon', 'contour', 'grid'] as const;
 
 /** `SkeletonJson.ts:540-559`. `type` defaults to `region` (`:539`). */
 export interface RigRegionAttachment {
@@ -849,6 +876,19 @@ export interface RigConstraintCommon {
   skin?: boolean;
 }
 
+/**
+ * `ScaleYMode` (`ConstraintData.ts:37-45`), which an **ik** and a **physics**
+ * constraint both carry under the JSON key `scaleY`.
+ *
+ * ⚠️ Resolved by `Utils.enumValue`, so only the first letter's case is free and
+ * an unresolved name is assigned as `undefined` without a word — the hazard
+ * `RIG_PATH_POSITION_MODES` is checked for, at a field that had no check at all.
+ */
+export const RIG_SCALE_Y_MODES = ['None', 'Uniform', 'Volume'] as const;
+
+/** The three names, as a rig spec writes them. */
+export type RigScaleYMode = 'none' | 'uniform' | 'volume' | 'None' | 'Uniform' | 'Volume';
+
 /** `type: "ik"` (`:149-176`). `scaleY` is 4.3's replacement for 4.2's `uniform`. */
 export interface RigIkConstraint extends RigConstraintCommon {
   type: 'ik';
@@ -856,7 +896,7 @@ export interface RigIkConstraint extends RigConstraintCommon {
   bones: string[];
   target: string;
   /** `ConstraintData.ts:50`. Absent → `None`. */
-  scaleY?: 'none' | 'uniform' | 'volume';
+  scaleY?: RigScaleYMode;
   /** Default 1. */
   mix?: number;
   /** Default 0. */
@@ -877,7 +917,14 @@ export interface RigIkConstraint extends RigConstraintCommon {
  */
 export interface RigTransformProperty {
   offset?: number;
-  to: Record<string, { offset?: number; max?: number; scale?: number }>;
+  to: Record<string, RigTransformTo>;
+}
+
+/** One driven property of a `RigTransformProperty.to` map. */
+export interface RigTransformTo {
+  offset?: number;
+  max?: number;
+  scale?: number;
 }
 
 /** `type: "transform"` (`:177-268`) — rebuilt from scratch in 4.3. */
@@ -928,8 +975,27 @@ export interface RigPhysicsConstraint extends RigConstraintCommon {
   rotate?: number;
   scaleX?: number;
   shearX?: number;
-  /** 4.3; absent → `ScaleYMode.None`. */
-  scaleYMode?: 'none' | 'uniform' | 'volume';
+  /**
+   * 4.3; absent → `ScaleYMode.None`. Same field, same enum and same spelling as
+   * `RigIkConstraint.scaleY`.
+   *
+   * 🚨 It was called `scaleYMode` from this file's first commit (c0e9944,
+   * 2026-08-22) until issue #545, and the name was not a synonym — it was the
+   * one key in this file that no code anywhere read.
+   * `SkeletonJson.js:299` is `getValue(constraintMap, "scaleY", null)`, so the
+   * emitter copied `scaleY`, an author writing TypeScript against this interface
+   * got a type error on the key that works and silence on the key that does
+   * nothing, and `scaleYMode` occurred exactly once in the whole tree: here.
+   *
+   * ⭐ The rename rather than teaching the emitter to read `scaleYMode`, and the
+   * argument is not "the format's name wins" in the abstract — the tree had
+   * already answered it four hundred lines above. `RigIkConstraint.scaleY`
+   * carries the *same* `ScaleYMode` enum through the *same* `Utils.enumValue`
+   * call under the *same* JSON key, and spells it `scaleY`. Teaching the emitter
+   * the other name would have left one Spine enum with two rig-spec spellings
+   * chosen by constraint type, which is a worse format than either name alone.
+   */
+  scaleY?: RigScaleYMode;
   /** Default 5000. */
   limit?: number;
   /** Default 60 → `step = 1/fps`. */
@@ -1153,7 +1219,7 @@ export interface RigInvariants {
    */
   massBone?: string;
   /** Parentage that must never happen, with the reason it is tempting (`A25`). */
-  detached?: Array<{ bone: string; notUnder: string; why?: string }>;
+  detached?: RigDetachedRule[];
   /**
    * Mesh slots whose `deform` timelines are allowed to turn a triangle inside
    * out, exempting them from `A39_DEFORM_KEEPS_TRIANGLE_WINDING`.
@@ -1172,7 +1238,21 @@ export interface RigInvariants {
    * in this repository (`gallery/flex`'s leaf) says outright that it is the
    * second kind, and names the issue.
    */
-  deformMayFold?: Array<{ slot: string; why: string }>;
+  deformMayFold?: RigDeformFoldExemption[];
+}
+
+/** One forbidden parentage — `invariants.detached` (`A25`). */
+export interface RigDetachedRule {
+  bone: string;
+  notUnder: string;
+  why?: string;
+}
+
+/** One slot exempted from `A39` — `invariants.deformMayFold`. */
+export interface RigDeformFoldExemption {
+  slot: string;
+  /** Required, and empty is refused by name — see `deformMayFold`. */
+  why: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1227,6 +1307,210 @@ function isObj(v: unknown): v is Record<string, unknown> {
 }
 
 /**
+ * Every key each shape of this format owns, keyed by the interface above that
+ * declares it — the runtime shadow of the types, which TypeScript erases.
+ *
+ * 🔒 **Hand-written and mechanically held to the interfaces.** `KEY01` in
+ * `selftest.ts` reads this file's own source, extracts each named interface's
+ * field list and compares it to the entry here, so the pair cannot drift: adding
+ * a field and forgetting this table is a red run, not a key an author cannot
+ * write. `KEY02` closes the other direction — a key declared here and occurring
+ * nowhere else in the tree is refused, which is exactly what `scaleYMode` was.
+ *
+ * ⚠️ `RigUnimplementedAttachment` is deliberately absent. It carries
+ * `[field: string]: unknown` because its whole job is to let a spec *say* a
+ * `point` or a `linkedmesh` and get a named `NotImplementedError` back; checking
+ * the keys of an attachment rigc is about to refuse by type would name the wrong
+ * fault.
+ */
+export const RIG_KEYS = {
+  RigSpec: ['spec', 'name', 'note', 'skeleton', 'images', 'bones', 'slots', 'skins', 'constraints', 'events', 'invariants'],
+  RigSkeletonHeader: ['x', 'y', 'width', 'height', 'fps', 'referenceScale', 'images'],
+  RigBone: ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inherit', 'skin', 'color', 'icon', 'from'],
+  RigBoneFrom: ['anchor', 'slotWindow', 'meshCenter', 'rotation'],
+  RigSlot: ['name', 'bone', 'attachment', 'color', 'dark', 'blend'],
+  RigEvent: ['int', 'float', 'string', 'audio', 'volume', 'balance'],
+  RigInvariants: ['meshSlots', 'meshTriangles', 'axisBone', 'massBone', 'detached', 'deformMayFold'],
+  RigDetachedRule: ['bone', 'notUnder', 'why'],
+  RigDeformFoldExemption: ['slot', 'why'],
+  // Not retyped: `RIG_SKIN_KEYS` already IS this set, and it is the set
+  // `splitRigSkin` refuses a long-form skin's stray key against. A second
+  // spelling of it here would be two lists that have to agree, which is the
+  // defect this whole table is checked to avoid.
+  RigSkinEntry: RIG_SKIN_KEYS,
+  RigIkConstraint: ['name', 'skin', 'type', 'bones', 'target', 'scaleY', 'mix', 'softness', 'bendPositive', 'compress', 'stretch'],
+  RigTransformConstraint: [
+    'name', 'skin', 'type', 'bones', 'source', 'localSource', 'localTarget', 'additive', 'clamp', 'properties',
+    'rotation', 'x', 'y', 'scaleX', 'scaleY', 'shearY',
+    'mixRotate', 'mixX', 'mixY', 'mixScaleX', 'mixScaleY', 'mixShearY',
+  ],
+  RigPathConstraint: [
+    'name', 'skin', 'type', 'bones', 'slot', 'positionMode', 'spacingMode', 'rotateMode',
+    'rotation', 'position', 'spacing', 'mixRotate', 'mixX', 'mixY',
+  ],
+  RigPhysicsConstraint: [
+    'name', 'skin', 'type', 'bone', 'x', 'y', 'rotate', 'scaleX', 'shearX', 'scaleY', 'limit', 'fps',
+    'inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix',
+    'inertiaGlobal', 'strengthGlobal', 'dampingGlobal', 'massGlobal', 'windGlobal', 'gravityGlobal', 'mixGlobal',
+  ],
+  RigSliderConstraint: [
+    'name', 'skin', 'type', 'animation', 'mix', 'additive', 'loop', 'bone', 'property', 'from', 'to', 'scale',
+    'max', 'local', 'time',
+  ],
+  RigTransformProperty: ['offset', 'to'],
+  RigTransformTo: ['offset', 'max', 'scale'],
+  RigRegionAttachment: ['type', 'path', 'image', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'width', 'height', 'color'],
+  RigMeshAttachment: [
+    'type', 'path', 'image', 'uvs', 'triangles', 'vertices', 'weights', 'boneIndexing', 'hull', 'edges',
+    'width', 'height', 'color', 'generator',
+  ],
+  RigMeshBinding: ['bone', 'x', 'y', 'weight'],
+  RigBoundingBoxAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type'],
+  RigClippingAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type', 'end', 'convex', 'inverse'],
+  RigPathAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type', 'closed', 'constantSpeed', 'lengths'],
+  RigRingGenerator: ['kind', 'hull', 'center', 'inner', 'size', 'bias', 'controls'],
+  RigRibbonGenerator: ['kind', 'size', 'rows', 'chain'],
+  RigContourGenerator: ['kind', 'tolerance', 'margin', 'maxVertices', 'alpha', 'depth', 'soft'],
+  RigGridGenerator: ['kind', 'us', 'vs', 'cols', 'rows', 'depth', 'soft'],
+  RigMeshBias: ['axis_deg', 'ramp'],
+  RigDepthMap: ['image', 'near', 'zScale', 'gamma', 'contrast', 'bias'],
+  RigSoftRegion: ['bone', 'mask'],
+} as const satisfies Record<string, readonly string[]>;
+
+/**
+ * The five constraint `type` names, and the shape each one's keys come from.
+ *
+ * `satisfies` over `RigSkinConstraintKey` is what makes the five exhaustive: a
+ * sixth constraint type added to that union without an entry here is a type
+ * error rather than a shape whose keys go unchecked.
+ */
+const CONSTRAINT_SHAPE: Record<string, keyof typeof RIG_KEYS> = {
+  ik: 'RigIkConstraint',
+  transform: 'RigTransformConstraint',
+  path: 'RigPathConstraint',
+  physics: 'RigPhysicsConstraint',
+  slider: 'RigSliderConstraint',
+} satisfies Record<RigSkinConstraintKey, keyof typeof RIG_KEYS>;
+
+/** The attachment `type` names, and the shape each one's keys come from. */
+const ATTACHMENT_SHAPE: Record<string, keyof typeof RIG_KEYS> = {
+  region: 'RigRegionAttachment',
+  mesh: 'RigMeshAttachment',
+  boundingbox: 'RigBoundingBoxAttachment',
+  clipping: 'RigClippingAttachment',
+  path: 'RigPathAttachment',
+};
+
+/** The generator `kind` names, and the shape each one's keys come from. */
+const GENERATOR_SHAPE: Record<string, keyof typeof RIG_KEYS> = {
+  ring: 'RigRingGenerator',
+  ribbon: 'RigRibbonGenerator',
+  contour: 'RigContourGenerator',
+  grid: 'RigGridGenerator',
+};
+
+/**
+ * Refuse every key of this rig spec that no shape above declares.
+ *
+ * ⭐ It walks the file rather than the emitter's route, and that is the whole
+ * design. `compile` reaches an attachment only through a slot it is going to
+ * draw and a `setup` entry only through a slot that has attachments, so a check
+ * riding along with the emitter inherits its blind spots — which is how issue
+ * #293's refusal sat green for three weeks on exactly the half-finished rigs it
+ * was written for. Every node of the document is visited here, whether or not
+ * anything downstream would have looked at it.
+ *
+ * A node that is not an object is left alone: its shape is somebody else's
+ * refusal, and naming its keys would be a second opinion on a fault already
+ * reported (see the note at the head of `parseMotionSpec`).
+ */
+function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
+  const at = (node: unknown, shape: keyof typeof RIG_KEYS, what: string): void => {
+    if (isObj(node)) refuseUnknownKeys(node, RIG_KEYS[shape], where, what);
+  };
+
+  at(raw, 'RigSpec', 'this rig spec');
+  at(raw.skeleton, 'RigSkeletonHeader', '"skeleton"');
+
+  for (const [i, bone] of (Array.isArray(raw.bones) ? raw.bones : []).entries()) {
+    const who = isObj(bone) && typeof bone.name === 'string' ? `bone "${bone.name}"` : `bones[${i}]`;
+    at(bone, 'RigBone', who);
+    if (isObj(bone)) at(bone.from, 'RigBoneFrom', `${who}'s "from"`);
+  }
+
+  for (const [i, slot] of (Array.isArray(raw.slots) ? raw.slots : []).entries()) {
+    at(slot, 'RigSlot', isObj(slot) && typeof slot.name === 'string' ? `slot "${slot.name}"` : `slots[${i}]`);
+  }
+
+  for (const [i, constraint] of (Array.isArray(raw.constraints) ? raw.constraints : []).entries()) {
+    if (!isObj(constraint)) continue;
+    const named = typeof constraint.name === 'string' ? `constraint "${constraint.name}"` : `constraints[${i}]`;
+    const shape = CONSTRAINT_SHAPE[String(constraint.type)];
+    // An unknown `type` is `buildRigConstraint`'s refusal and names the five
+    // that exist; there is no key set to check it against and no honest one to
+    // guess, so it goes past here to the message that can say something.
+    if (shape === undefined) continue;
+    at(constraint, shape, `${named} (${String(constraint.type)})`);
+    for (const [from, entry] of Object.entries(isObj(constraint.properties) ? constraint.properties : {})) {
+      at(entry, 'RigTransformProperty', `${named} properties."${from}"`);
+      if (!isObj(entry)) continue;
+      for (const [to, driven] of Object.entries(isObj(entry.to) ? entry.to : {})) {
+        at(driven, 'RigTransformTo', `${named} properties."${from}".to."${to}"`);
+      }
+    }
+  }
+
+  for (const [name, event] of Object.entries(isObj(raw.events) ? raw.events : {})) {
+    at(event, 'RigEvent', `event "${name}"`);
+  }
+
+  if (isObj(raw.invariants)) {
+    at(raw.invariants, 'RigInvariants', '"invariants"');
+    for (const [i, rule] of (Array.isArray(raw.invariants.detached) ? raw.invariants.detached : []).entries()) {
+      at(rule, 'RigDetachedRule', `invariants.detached[${i}]`);
+    }
+    for (const [i, rule] of (Array.isArray(raw.invariants.deformMayFold) ? raw.invariants.deformMayFold : []).entries()) {
+      at(rule, 'RigDeformFoldExemption', `invariants.deformMayFold[${i}]`);
+    }
+  }
+
+  for (const [skinName, skin] of Object.entries(isObj(raw.skins) ? raw.skins : {})) {
+    if (!isObj(skin)) continue;
+    // The long form's own key check is `splitRigSkin`'s and it already names the
+    // likeliest cause (a slot left outside `attachments`), so it is reused
+    // rather than restated — one refusal per fault.
+    const parts = splitRigSkin(skin as RigSkin, `${where}: skin "${skinName}"`);
+    for (const [slot, placeholders] of Object.entries(parts.attachments)) {
+      if (!isObj(placeholders)) continue;
+      for (const [placeholder, att] of Object.entries(placeholders)) {
+        if (!isObj(att)) continue;
+        const who = `skin "${skinName}" slot "${slot}" attachment "${placeholder}"`;
+        // `type` absent means `region` — the parser's own default (`:539`).
+        const type = att.type === undefined ? 'region' : String(att.type);
+        const shape = ATTACHMENT_SHAPE[type];
+        if (shape === undefined) continue;
+        at(att, shape, `${who} (${type})`);
+        for (const [i, vertex] of (Array.isArray(att.weights) ? att.weights : []).entries()) {
+          for (const [j, binding] of (Array.isArray(vertex) ? vertex : []).entries()) {
+            at(binding, 'RigMeshBinding', `${who} weights[${i}][${j}]`);
+          }
+        }
+        if (!isObj(att.generator)) continue;
+        const gen = att.generator;
+        const genShape = GENERATOR_SHAPE[String(gen.kind)];
+        // Same rule as an unknown attachment type: an unknown `kind` is the mesh
+        // builder's refusal, which can name the four that exist.
+        if (genShape === undefined) continue;
+        at(gen, genShape, `${who} generator (${String(gen.kind)})`);
+        at(gen.bias, 'RigMeshBias', `${who} generator.bias`);
+        at(gen.depth, 'RigDepthMap', `${who} generator.depth`);
+        at(gen.soft, 'RigSoftRegion', `${who} generator.soft`);
+      }
+    }
+  }
+}
+
+/**
  * Parse and check the envelope, then hand back a typed spec.
  *
  * What is checked here is what makes the REST of the compiler able to assume its
@@ -1250,6 +1534,12 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   if (!Array.isArray(raw.slots)) {
     throw new CompileError(`${where}: a rig spec needs a "slots" array (it may be empty; its ORDER is the draw order)`);
   }
+  // Before anything resolves by name, because a key nothing reads is very often
+  // the CAUSE of the name that does not resolve: `"bones"` typed on a slider is
+  // a slider with no driving bone, and the refusal an author wants names the
+  // typo rather than the consequence.
+  checkRigSpecKeys(raw, where);
+
   const spec = raw as unknown as RigSpec;
 
   const seen = new Set<string>();

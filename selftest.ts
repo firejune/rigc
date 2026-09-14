@@ -101,7 +101,8 @@ import {
   type FramingSource,
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError } from './src/compile.ts';
-import { parseMotionSpec } from './src/motion.ts';
+import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
+import { RIG_KEYS, parseRigSpec } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
   buildGridMesh,
@@ -3791,6 +3792,117 @@ const RIG_MUTANTS: RigMutant[] = [
       (rig as any).constraints = [{ name: 'probe_twist', type: 'twist', bones: ['plunger'], target: 'collar' }];
     },
   },
+
+  // --- issue #545: a key nothing reads, at each shape of the format ---------
+  //
+  // 🚨 Every one of these compiled GREEN before the refusal existed — exit 0,
+  // every assertion passing, the key absent from the emitted skeleton and absent
+  // from the console. Measured on `gallery/look` at `eec8806`, planted one at a
+  // time: 8 rig-spec shapes, 8 clean builds, 0 lines of output mentioning any of
+  // them. That is the input-side twin of the silence this whole tool exists to
+  // convert into a named failure.
+  //
+  // They are separate cases rather than one because they are separate BRANCHES
+  // of the walk: the constraint one is dispatched on `type`, the attachment one
+  // on `type` again with a different table, the generator one on `kind`, and a
+  // walk that reached only the shallow ones would pass a single case aimed at
+  // the root.
+  {
+    name: 'R14_a_root_key_nothing_reads',
+    origin: 'the shallowest case and the one a hand-written spec hits first — `"bone"` for `"bones"` is a rig with no bones and a stray key, and the second of those was invisible',
+    expect: 'this rig spec has a key this compiler does not read: "wobble"',
+    mutate: (rig) => {
+      (rig as any).wobble = 9;
+    },
+  },
+  {
+    name: 'R15_a_bone_key_nothing_reads_is_named_with_its_near_miss',
+    origin: 'a bone carries eight numeric fields whose names differ by one character, so a typo lands on a plausible-looking key rather than an obvious one',
+    expect: 'bone "cam" has a key this compiler does not read: "scaleZ" (did you mean "scaleX", "scaleY"?)',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'cam').scaleZ = 2;
+    },
+  },
+  {
+    name: 'R16_a_bone_from_key_nothing_reads',
+    origin: 'a nested block is where a key check that only walked the top level of each object would stop, and `from` is the rigc extension an author is least likely to have memorised',
+    expect: 'bone "cam"\'s "from" has a key this compiler does not read: "rotaton"',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'cam').from.rotaton = 'axis';
+    },
+  },
+  {
+    name: 'R17_a_slot_key_nothing_reads',
+    origin: '`blendMode` is what the editor calls this field and `blend` is what the format calls it, so the wrong one is a reasonable guess rather than a slip',
+    expect: 'slot "near" has a key this compiler does not read: "blendMode" (did you mean "blend"?)',
+    mutate: (rig) => {
+      (rig as any).slots.find((sl: any) => sl.name === 'near').blendMode = 'additive';
+    },
+  },
+  {
+    name: 'R18_the_physics_key_this_file_documented_and_nothing_ever_read',
+    origin:
+      'issue #545 itself. `src/rig.ts` declared `scaleYMode` and `SkeletonJson.js:299` reads `scaleY`, so the ' +
+      'interface errored on the key that works and was silent on the key that does nothing — and `scaleYMode` ' +
+      'occurred exactly once in the whole tree, in that declaration. It is refused with the working spelling beside it',
+    expect: '"scaleYMode" (did you mean "scaleY"',
+    mutate: (rig) => {
+      (rig as any).constraints = [{ name: 'settle', type: 'physics', bone: 'mass', x: 1, scaleYMode: 'volume' }];
+    },
+  },
+  {
+    name: 'R19_a_real_key_in_the_wrong_case_is_named_with_the_case_that_works',
+    origin:
+      'the near-miss search lower-cases both sides, so a key that is right but for its case comes back at ' +
+      'distance 0 and leads the suggestions. It is the one an author is least likely to spot by re-reading, ' +
+      'because the word is correct',
+    expect: '"ROTATE" (did you mean "rotate"?)',
+    mutate: (rig) => {
+      (rig as any).constraints = [{ name: 'settle', type: 'physics', bone: 'mass', x: 1, ROTATE: 1 }];
+    },
+  },
+  {
+    name: 'R20_an_attachment_key_nothing_reads',
+    origin:
+      'the emitter reaches an attachment only through a slot it is going to draw, so a check riding along with ' +
+      'it would inherit that blind spot — the shape #293 was lost in. This walk visits the skin table itself',
+    expect: 'skin "default" slot "near" attachment "probe_region" (region) has a key this compiler does not read: "imgae"',
+    mutate: (rig) => {
+      (rig as any).slots.find((sl: any) => sl.name === 'near').attachment = 'probe_region';
+      (rig as any).skins = { default: { near: { probe_region: { imgae: 'plates/05_pool.png' } } } };
+    },
+  },
+  {
+    name: 'R21_a_mesh_generator_key_nothing_reads',
+    origin:
+      'two levels below the skin table, and dispatched on `kind` rather than on `type`: a `grid` takes `cols` ' +
+      'and a `ring` takes `controls`, so one flattened key set over the four kinds would accept either on both',
+    expect: 'generator (grid) has a key this compiler does not read: "colls" (did you mean "cols"?)',
+    mutate: (rig) => {
+      (rig as any).slots.find((sl: any) => sl.name === 'near').attachment = 'probe_grid';
+      (rig as any).skins = {
+        default: {
+          near: {
+            probe_grid: {
+              type: 'mesh',
+              image: 'plates/05_pool.png',
+              generator: { kind: 'grid', cols: 2, rows: 2, colls: 3 },
+            },
+          },
+        },
+      };
+    },
+  },
+  {
+    name: 'R22_an_invariants_key_nothing_reads',
+    origin:
+      'the block that turns assertions on and off, where a key nothing reads is a check nobody asked for and ' +
+      'nobody notices the absence of — the same failure mode `deformMayFold`\'s own name check was written for',
+    expect: '"invariants" has a key this compiler does not read: "meshVertices"',
+    mutate: (rig) => {
+      (rig as any).invariants.meshVertices = 400;
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -3841,6 +3953,85 @@ function runRigSuite(): number {
       );
     }
   }
+
+  // --- the other side of the unknown-key refusal (issue #545) ---------------
+  //
+  // 🔒 **A check that refuses everything is not a check.** Nine of the cases
+  // above break a rig by adding a key; these two are what stop the repair from
+  // being "refuse any key you do not immediately recognise". The first plants a
+  // LEGAL optional key at every shape the mutants broke — a `note` at the root,
+  // `color` and `icon` on a bone, `dark` on a slot — and requires the same
+  // bytes out as the untouched rig. The second is the corpus: every rig spec
+  // this repository has, parsed.
+  {
+    const rig = JSON.parse(sourceText) as Record<string, unknown>;
+    const bones = rig.bones as Array<Record<string, unknown>>;
+    const slots = rig.slots as Array<Record<string, unknown>>;
+    rig.note = `${String(rig.note)} (tolerance control)`;
+    bones.find((b) => b.name === 'cam')!.color = '00ff00ff';
+    bones.find((b) => b.name === 'cam')!.icon = 'circle';
+    slots.find((s) => s.name === 'pool')!.dark = '404040';
+    (rig.invariants as Record<string, unknown>).massBone = 'mass';
+    writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+    let message: string | null = null;
+    let moved: string | null = null;
+    try {
+      const built = compile({ ...opts, rigPath });
+      // `dark` and the two bone affordances DO reach the artifact, so the bytes
+      // are allowed to move; what must not move is anything else, and `note` is
+      // emitted nowhere at all. The check is that the compile happened and that
+      // the one added slot field is the only thing the skeleton gained.
+      const before = JSON.parse(pristine.skeletonText) as { slots: Array<Record<string, unknown>>; bones: Array<Record<string, unknown>> };
+      const after = JSON.parse(built.skeletonText) as { slots: Array<Record<string, unknown>>; bones: Array<Record<string, unknown>> };
+      if (JSON.stringify(after.slots.find((s) => s.name === 'pool')?.dark) !== '"404040"') {
+        moved = 'the legal `dark` did not reach the emitted slot';
+      } else if (before.bones.length !== after.bones.length || before.slots.length !== after.slots.length) {
+        moved = 'the tolerance edit changed the bone or slot count';
+      }
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    const ok = message === null && moved === null;
+    if (ok) {
+      console.log('  PASS  CONTROL_A_RIG_THAT_ADDS_ONLY_KNOWN_KEYS_IS_STILL_ACCEPTED');
+      console.log('          a `note` at the root, `color` and `icon` on a bone, `dark` on a slot and a known `invariants` field: compiled, and the emitted slot carries the new `dark`');
+      console.log('          origin: the refusal is a subtraction of the known set from the author\'s, so a wrong known set refuses correct work — and that failure looks exactly like the gate working');
+    } else {
+      bad++;
+      console.log(`  FAIL  CONTROL_A_RIG_THAT_ADDS_ONLY_KNOWN_KEYS_IS_STILL_ACCEPTED: ${message ?? moved}`);
+    }
+  }
+
+  {
+    const specs = everySpec(import.meta.dir, '"rigc-rig/1"');
+    const refused: string[] = [];
+    for (const path of specs) {
+      try {
+        parseRigSpec(JSON.parse(readFileSync(path, 'utf8')), path);
+      } catch (err) {
+        refused.push(`${relative(import.meta.dir, path)}: ${(err as Error).message}`);
+      }
+    }
+    const ok = specs.length > 0 && refused.length === 0;
+    if (ok) {
+      console.log('  PASS  CONTROL_EVERY_RIG_SPEC_IN_THIS_REPOSITORY_PARSES_CLEAN');
+      console.log(`          ${specs.length} spec(s) parsed — the gallery, the transcriptions and every benchmark run, which is the format as it is actually written`);
+      console.log(
+        '          origin: `MP30` is this control for the motion spec and it is what caught the `loop` mistake ' +
+          'there; the rig spec had no equivalent, so issue #545\'s refusal shipped against a corpus nobody had ' +
+          'run it over. Measured before the refusal was written: 0 of these 39 carried a key outside the ' +
+          'declared shapes, which is what made it a change with no migration',
+      );
+    } else {
+      bad++;
+      console.log(
+        `  FAIL  CONTROL_EVERY_RIG_SPEC_IN_THIS_REPOSITORY_PARSES_CLEAN: ${
+          specs.length === 0 ? 'found no rig specs at all, which is not a pass' : `${refused.length} refused — ${refused[0]}`
+        }`,
+      );
+    }
+  }
+
   return bad;
 }
 
@@ -17868,20 +18059,30 @@ function runErrorAttributionSuite(): number {
  * reading (2026-09-04). A link is not a committed file either way, so it is
  * skipped rather than followed.
  */
-function everyMotionSpec(dir: string, out: string[] = []): string[] {
+function everySpec(dir: string, marker: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir).sort()) {
     if (name === 'node_modules' || name === 'examples' || name === 'scratch' || name.startsWith('.')) continue;
     const path = join(dir, name);
     const entry = lstatSync(path);
     if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
-      everyMotionSpec(path, out);
+      everySpec(path, marker, out);
       continue;
     }
     if (!name.endsWith('.json')) continue;
-    if (readFileSync(path, 'utf8').includes('"rigc-motion/1"')) out.push(path);
+    if (readFileSync(path, 'utf8').includes(marker)) out.push(path);
   }
   return out;
+}
+
+/**
+ * The motion half, which is what this walk was written for. The rig half
+ * (`"rigc-rig/1"`) is the corpus control issue #545 added to `runRigSuite`, and
+ * it reads the same walk rather than a second one — the two formats live in one
+ * tree and "committed to this repository" means the same thing for both.
+ */
+function everyMotionSpec(dir: string, out: string[] = []): string[] {
+  return everySpec(dir, '"rigc-motion/1"', out);
 }
 
 /**
@@ -18241,6 +18442,80 @@ function runMotionParseSuite(): { failures: number; cases: number; specs: number
     '`checkMotionGroups` reads `Object.entries`, so an array of member lists compiled green with no group ' +
       'defined at all. Each group\'s member LIST is still that function\'s — an empty group and a repeated ' +
       'member are about what a track naming it would compile, not about JSON shape',
+  );
+
+  // --- a key nothing reads, at each shape of this format (issue #545) -------
+  //
+  // ⚠️ The head of `src/motion.ts` declined this refusal for two months and gave
+  // its reason: `parseRigSpec` did not refuse a stray key either, and one of two
+  // formats shrugging while the other refuses is a worse surprise than the stray
+  // key. The argument was sound; #545 made its premise false. What is left of it
+  // is the note's own parenthesis — the corpus carried no undeclared key at any
+  // level, so `MP30` below was green before this was written and after.
+  //
+  // 🚨 The example that section named is the first case here: `"easing"` for
+  // `"ease"` played LINEAR and said nothing, which is a key an author typed, a
+  // curve they asked for and an animation that quietly does not have it.
+  named(
+    'MP32_A_MISSPELLED_EASE_ON_A_KEY_IS_NO_LONGER_SILENT',
+    dirs,
+    rotate([{ t: 0, v: [0] }, { t: 1, v: [90], easing: 'soft' }]),
+    '"easing" (did you mean "ease"?)',
+    'the case `src/motion.ts` named in the section that declined this check: a key with `easing` for `ease` ' +
+      'played linear and said nothing. The near-miss search is what turns the refusal into the repair — the ' +
+      'author wanted the field, not a lecture about it',
+  );
+  named(
+    'MP33_A_ROOT_KEY_NOTHING_READS_IS_REFUSED',
+    dirs,
+    { ...base, animation: {} },
+    'this motion spec` has a key this compiler does not read: "animation" (did you mean "animations"?)',
+    'the singular of a table name is the commonest root-level slip there is, and it used to leave a spec with ' +
+      'no animations at all — which is a legal spec, so nothing downstream objected either',
+  );
+  named(
+    'MP34_AN_ANIMATION_KEY_NOTHING_READS_IS_REFUSED',
+    dirs,
+    beside({ drawOrders: [] }),
+    '`animations."move"` has a key this compiler does not read: "drawOrders" (did you mean "drawOrder"?)',
+    'the five families beside `tracks` are optional, so a misspelled one is an absent one — the timeline is ' +
+      'simply not there, and an animation with a missing family compiles green by construction',
+  );
+  named(
+    'MP35_A_TRACK_KEY_NOTHING_READS_IS_REFUSED',
+    dirs,
+    rotate([{ t: 0, v: [0] }], { delay: 0.2 }),
+    '`animations."move".tracks[0]` has a key this compiler does not read: "delay". Nothing reads such a key',
+    '`lag` is what this format calls the field every other tool calls `delay` or `offset`, so the wrong name is ' +
+      'a reasonable guess — and it used to mean the keys simply did not move. ⚠️ It is also the negative control ' +
+      'on the near-miss search: `delay` is four edits from `lag` and gets NO suggestion, which is the half that ' +
+      'keeps a suggestion worth reading — the known set is printed instead',
+  );
+  named(
+    'MP36_A_PHYSICS_TUNING_KEY_NOTHING_READS_IS_REFUSED',
+    dirs,
+    withField('physics', { settle: { bone: 'block', x: 1, stiffness: 40 } }),
+    '`physics."settle"` has a key this compiler does not read: "stiffness"',
+    'the tuning table is fifteen numbers whose names come from the runtime rather than from any physics ' +
+      'vocabulary, so a plausible-sounding one that is not among them is the likeliest mistake in the file — ' +
+      'and it left the constraint on its default with nothing said',
+  );
+  named(
+    'MP37_A_DEFORM_TRANSFORM_KEY_NOTHING_READS_IS_REFUSED_AGAINST_ITS_OWN_KIND',
+    setupDirs,
+    beside({
+      deform: [
+        {
+          slot: 'block',
+          attachment: 'block',
+          keys: [{ t: 0, transform: { kind: 'wave', amplitude: 4, wavelength: 40, along: 'x', axis: 'y', power: 2 } }],
+        },
+      ],
+    }),
+    'transform` has a key this compiler does not read: "power"',
+    'the sharpest of these: `power` is a REAL key of a `bend` and means nothing on a `wave`, so a union ' +
+      'checked against its flattened keys would accept it. The dispatch is on `kind`, which is what makes the ' +
+      'refusal say something true',
   );
 
   // --- the walk itself -------------------------------------------------------
@@ -22453,7 +22728,212 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR17: the key sets against the interfaces that declare them ---------
+  //
+  // `RIG_KEYS` and `MOTION_KEYS` are what `parseRigSpec` and `parseMotionSpec`
+  // refuse an unknown key against, and they are hand-written, because TypeScript
+  // erases the interfaces they shadow. A hand-written list beside a declaration
+  // is this repository's own named antipattern, so it is derived from the
+  // declaration here instead of trusted: every entry's field list is read out of
+  // the source of the interface it is named for and compared set to set.
+  //
+  // 🔒 Both directions are faults and they are different ones. A key in the
+  // interface and not the table is a field an author cannot write — loud, the
+  // first time anyone tries. A key in the table and not the interface is the
+  // silent half: it is accepted by the parser and read by nothing, which is
+  // exactly what `scaleYMode` was (CUR18 is the other half of that one).
+  {
+    const sources = ['src/rig.ts', 'src/types.ts', 'src/trackgen.ts', 'src/deformgen.ts'].map((rel) => ({
+      rel,
+      text: readFileSync(join(root, rel), 'utf8'),
+    }));
+    const faults: string[] = [];
+    let compared = 0;
+    const sets: Array<[string, readonly string[]]> = [...Object.entries(RIG_KEYS), ...Object.entries(MOTION_KEYS)];
+    for (const [shape, declared] of sets) {
+      const found = sources.map((s) => ({ rel: s.rel, fields: interfaceFieldsIn(s.text, shape) })).filter((s) => s.fields !== null);
+      if (found.length !== 1) {
+        faults.push(
+          `${shape} is declared as an interface in ${found.length === 0 ? 'none' : found.map((f) => f.rel).join(' and ')} of the ${sources.length} module(s) this reads`,
+        );
+        continue;
+      }
+      compared += 1;
+      const fields = found[0].fields as string[];
+      for (const key of fields) if (!declared.includes(key)) faults.push(`${shape}.${key} is declared and the key set omits it`);
+      for (const key of declared) if (!fields.includes(key)) faults.push(`the key set for ${shape} carries "${key}" and the interface has no such field`);
+    }
+    // The plants. Two synthetic sources standing where a real one would, so the
+    // comparison is driven both ways over a shape whose answer is known — a
+    // check that only ever ran on a tree that agrees has not been seen to fail.
+    const agreeing = 'export interface P {\n  a: number;\n  /** b?: number; */\n  b?: string;\n}\n';
+    const planted = [
+      ...(JSON.stringify(interfaceFieldsIn(agreeing, 'P')) === '["a","b"]'
+        ? []
+        : [`the field reader does not read a two-field interface: ${JSON.stringify(interfaceFieldsIn(agreeing, 'P'))}`]),
+      ...(interfaceFieldsIn(agreeing, 'Q') === null ? [] : ['an interface that is not there was read as one']),
+      ...(JSON.stringify(interfaceFieldsIn('export interface P {\n  a: number;\n}\n', 'P')) === '["a"]'
+        ? []
+        : ['dropping a field from the source did not move what the reader returns']),
+    ];
+    const held = faults.length === 0 && planted.length === 0 && compared === Object.keys(RIG_KEYS).length + Object.keys(MOTION_KEYS).length;
+    say(
+      'CUR17_EVERY_DECLARED_SPEC_KEY_SET_IS_ITS_INTERFACE_S_OWN_FIELD_LIST',
+      held,
+      probeDetail(
+        held,
+        [...faults, ...planted],
+        `${compared} key set(s) — ${Object.keys(RIG_KEYS).length} rig, ${Object.keys(MOTION_KEYS).length} motion — ` +
+          `each paired with exactly one interface across ${sources.length} module(s) and equal to its fields set for ` +
+          'set, with the reader driven over a planted interface it must read, one it must not find, and one field removed',
+      ),
+      'the refusal is only as good as the set it refuses against, and the set is the one thing here TypeScript ' +
+        'cannot hold: the interfaces are erased at runtime. Issue #545 is what a table nothing derives turns into ' +
+        '— `scaleYMode` sat in the interface from the rig spec\'s first commit (c0e9944, 2026-08-22) while the ' +
+        'emitter read `scaleY`, and the type system pointed authors at the key that did nothing',
+    );
+  }
+
+  // --- CUR18: a declared key that occurs nowhere else -----------------------
+  //
+  // ⭐ The check issue #545 could not have been filed against, because the
+  // defect's own signature is the absence of anything: `scaleYMode` occurred
+  // **exactly once in the entire tree**, in the declaration, and there was no
+  // artifact, no error and no test naming it anywhere. So the measurement is the
+  // count itself. A key that no module reads and no shipped document mentions is
+  // a key nothing does anything with.
+  //
+  // ⚠️ It does not claim the emitter reads the key, and must not be read as
+  // claiming it: `note` is prose for a reader and `lengths` exists so a refusal
+  // can name it, and both are legitimate. What it claims is narrower and is the
+  // whole of what was missing — that something outside the declaration knows the
+  // name at all.
+  {
+    /** The modules the interfaces and the key tables live in — where the declaration itself does not count. */
+    const DECLARING = new Set(['src/rig.ts', 'src/motion.ts', 'src/types.ts', 'src/trackgen.ts', 'src/deformgen.ts']);
+    const modules = ['cli.ts']
+      .concat(readdirSync(join(root, 'src')).filter((f) => f.endsWith('.ts')).map((f) => `src/${f}`))
+      .concat(readdirSync(join(root, 'tools')).filter((f) => f.endsWith('.ts') || f.endsWith('.mjs')).map((f) => `tools/${f}`));
+    // ⭐ The declaring modules keep their CODE and lose only their declarations,
+    // rather than being excluded whole. Excluding them entirely was the first
+    // shape of this and it was measurably weaker in both directions:
+    // `DeformWave.wavelength` is read by `deformgen.ts`'s own evaluator and came
+    // back an orphan, and a key defended only by a line of prose — a doc
+    // example, or this very file's account of why `scaleYMode` was renamed —
+    // came back read. Comments go everywhere, because a comment does not read a
+    // key.
+    const code = modules.map((rel) => {
+      const raw = readFileSync(join(root, rel), 'utf8');
+      const body = DECLARING.has(rel)
+        ? cutBracedBlocks(cutBracedBlocks(raw, /export interface \w+(?: extends \w+)? \{/), /export const (?:RIG|MOTION)_KEYS = \{/)
+        : raw;
+      return body.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+    });
+    const reads = (key: string): boolean => {
+      const token = new RegExp(`\\b${key}\\b`);
+      return code.some((text) => token.test(text));
+    };
+    const every = [...new Set([...Object.values(RIG_KEYS), ...Object.values(MOTION_KEYS)].flat())].sort();
+    const orphans = every.filter((key) => !reads(key));
+    // The plants, and the first of them is the defect itself: with the
+    // declarations and the prose gone, `scaleYMode` is a name no line of code in
+    // this repository carries — so a run that reported it read would be a search
+    // matching anything, and the clean verdict above would mean nothing.
+    const planted = [
+      ...(reads('scaleYMode') ? ['`scaleYMode` was reported as read by code, so this search matches prose and the clean run is vacuous'] : []),
+      ...(reads('zzNoSuchSpecKey') ? ['a name no file carries was reported as read'] : []),
+      ...(reads('triangles') ? [] : ['a key every emitted mesh carries was reported as unread, so the search matches nothing']),
+    ];
+    const held = orphans.length === 0 && planted.length === 0;
+    say(
+      'CUR18_EVERY_DECLARED_SPEC_KEY_IS_NAMED_BY_CODE_THAT_IS_NOT_ITS_DECLARATION',
+      held,
+      probeDetail(
+        held,
+        [...orphans.map((key) => `"${key}" is named by no line of code in the ${modules.length} module(s) this reads, only by its own declaration`), ...planted],
+        `all ${every.length} distinct key(s) of the two formats are named by code in the ${modules.length} ` +
+          `module(s) this reads, with the ${DECLARING.size} declaring ones stripped of their interfaces and key ` +
+          'tables and every module stripped of its comments — under which `scaleYMode` reads as unnamed, an ' +
+          'invented key as unnamed, and an emitted one as named',
+      ),
+      'run over the whole tree before it was written, this named exactly one key — ' +
+        '`RigPhysicsConstraint.scaleYMode`, the whole of issue #545 — and nothing else across the 22 rig shapes ' +
+        'and 15 motion ones that existed then. A defect whose signature is an absence needs a check that counts',
+    );
+  }
+
   return bad;
+}
+
+/**
+ * `source` with every brace-matched block whose head matches `opener` removed —
+ * how `CUR18` takes a declaration out of a module without taking the module out.
+ */
+function cutBracedBlocks(source: string, opener: RegExp): string {
+  let out = source;
+  for (;;) {
+    const head = opener.exec(out);
+    if (head === null) return out;
+    let depth = 0;
+    let end = -1;
+    for (let i = head.index + head[0].length - 1; i < out.length; i++) {
+      if (out[i] === '{') depth++;
+      else if (out[i] === '}' && --depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    // An unbalanced head would loop forever on the same match; stop instead.
+    if (end === -1) return out;
+    out = out.slice(0, head.index) + out.slice(end + 1);
+  }
+}
+
+/**
+ * The field names declared at depth 0 of `export interface <name>` in `source`,
+ * or null when the source has no such interface.
+ *
+ * ⚠️ It reads the SOURCE rather than the type, because the type is gone by the
+ * time anything here runs — which is the whole reason `RIG_KEYS` exists. Comments
+ * go first (a `/** b?: number; *\/` inside one is not a field), then a brace
+ * walk keeps nested object types out: only a `name:` or `name?:` sitting at the
+ * interface's own level is a field of it.
+ *
+ * An `extends` clause carries the base's fields in, because the key sets are
+ * about what a JSON object may hold and the base's fields are part of that.
+ */
+function interfaceFieldsIn(source: string, name: string): string[] | null {
+  const head = new RegExp(`export interface ${name}(?: extends (\\w+))? \\{`).exec(source);
+  if (head === null) return null;
+  let depth = 0;
+  let end = -1;
+  for (let i = head.index + head[0].length - 1; i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}' && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  if (end === -1) return null;
+  const body = source
+    .slice(head.index + head[0].length, end)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+  const fields: string[] = [];
+  let level = 0;
+  for (const raw of body.split('\n')) {
+    const line = raw.trim();
+    if (level === 0) {
+      const field = /^(\w+)\??\s*:/.exec(line);
+      if (field !== null) fields.push(field[1]);
+    }
+    for (const ch of line) {
+      if (ch === '{' || ch === '(' || ch === '[') level++;
+      if (ch === '}' || ch === ')' || ch === ']') level--;
+    }
+  }
+  const base = head[1] === undefined ? [] : (interfaceFieldsIn(source, head[1]) ?? []);
+  return [...base, ...fields];
 }
 
 // ---------------------------------------------------------------------------
