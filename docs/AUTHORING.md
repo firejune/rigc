@@ -612,6 +612,33 @@ only repair was *rename* — the one repair a transcription cannot take. Emittin
 member of the family instead moves no byte on any set the old rule accepted; it
 just stops refusing the ones it did.
 
+**R11 — The `skins` array is written with `default` first and the rest in the
+editor's order, and skin names that have no one order are refused.** The same rule
+as R10, in the collection that was believed exempt from it. A skin is a **name** in
+the JSON half of the format and an **ordinal** in the binary half —
+`skins[readInt()]` for an attachment timeline, `skins[skinIndex]` for a linked mesh
+— so an editor that writes the array in another order repoints every such
+reference, silently, in a file that still parses. Measured: a rig built
+`default, zulu, mike, alpha` exported `default, alpha, mike, zulu`
+([#541](https://github.com/firejune/rigc/issues/541)).
+
+⚠️ **The refusal here is wider than R10's, and deliberately.** R10 can be narrow
+because #539 measured two animation-name pairs and thereby *refuted* a codepoint
+sort. The skins measurement refutes nothing — `alpha, mike, zulu` is the answer
+codepoint, folding and natural order all give — so the editor's skin comparator is
+**not established**, and rigc refuses any pair those candidates could disagree
+about. In practice that is R10's four rows plus two more: a pair a case fold
+reverses (`Zulu` against `mike`) and two digit runs of unequal width (`mike10`
+against `mike2`). Both of those *build* as animation names and are refused as skin
+names, and the two refusals say which is which.
+
+**R12 — A placeholder that more than one skin fills gets a per-skin attachment
+`name`.** rigc writes `"name": "<skin>/<placeholder>"` on each of those entries,
+and restates `path` beside it so the texture still resolves where it did. You do
+not author this and there is nothing to do about it — but it is visible in the
+emitted file, so §3.4.2 says what it is and why. A placeholder only one skin fills
+is emitted exactly as before.
+
 ---
 
 ## 3. The rig spec, field by field
@@ -709,7 +736,7 @@ the default `type`:
 | `type` | `"region"`, or omit |
 | `image` | **rigc extension.** A PNG relative to the rig's `images` directory; rigc measures it (R5) |
 | `width`, `height` | required by the format — give them, or give an `image` |
-| `path` | the atlas region to resolve; defaults to the attachment's own name. rigc sets it for you when the PNG basename differs from the placeholder |
+| `path` | the atlas region to resolve; defaults to the attachment's own name. rigc sets it for you when the PNG basename differs from the placeholder, and whenever it composes a `name` because more than one skin fills this placeholder (§3.4.2) |
 | `x`, `y` | offset from the bone, in the bone's local space |
 | `rotation` | degrees; cancels a rotated bone for a plate authored screen-upright |
 | `scaleX`, `scaleY`, `color` | as Spine |
@@ -1371,6 +1398,62 @@ them is the long form and every one of its keys must be one of them. A slot left
 beside them is refused rather than ignored (an ignored slot is an attachment that
 vanishes), and a rig with a *slot* of one of those names is refused too, because
 there the two forms are genuinely ambiguous. Rename the slot.
+
+#### 3.4.2 Two skins, one placeholder — the `name` rigc writes for you
+
+Two skins putting different art under one placeholder is what a skin is *for*, and
+it is the one shape rigc emitted wrongly until
+[#541](https://github.com/firejune/rigc/issues/541). Without a `name` field an
+attachment's name **is** its placeholder (`SkeletonJson.ts:526`), so four skins
+filling `patch` are four different attachments all called `patch`. spine-core never
+notices — its skin table is keyed by placeholder, so the two never meet — and the
+whole gate is green. The Spine editor refuses the import outright:
+
+```
+ERROR: Unable to import skeleton.
+[error] Error reading skeleton: skins
+Cause: [error] Error reading attachment: patch (MOw)
+Cause: [error] Multiple attachments have the same name: patch patch
+```
+
+⇒ rigc now writes each of those entries a name of its own, composed from the two
+names you already gave it:
+
+```json
+"skins": {
+  "default": { "patch": { "patch": { "image": "patch_a.png" } } },
+  "zulu":    { "patch": { "patch": { "image": "patch_a.png", "x": 4 } } }
+}
+```
+
+emits
+
+```json
+{ "name": "default/patch", "path": "patch", "width": 64, "height": 64 }
+{ "name": "zulu/patch",    "path": "patch", "width": 64, "height": 64, "x": 4 }
+```
+
+Three things to know about it and nothing to author:
+
+- **`path` is restated, and it has to be.** `path` defaults to the attachment's
+  **name**, not to its placeholder, so an entry given a name and no path would
+  resolve its texture at `zulu/patch` and find no such region. `A00_ROUNDTRIP_PARSE`
+  says so in the parser's own words if it is ever dropped.
+- **Only contested placeholders are touched.** One skin filling a placeholder, or
+  two skins filling a slot under *different* placeholders, emit exactly what they
+  always did — every rig in this repository is byte-identical across the change.
+- **A composed name that collides is a compile error, not a surprise.** If some
+  other placeholder in the same slot is literally called `zulu/patch`, rigc refuses
+  and names both sites rather than emitting two attachments with one name again.
+  (`/` is the separator because it appears in **0** of the 160 placeholder names and
+  159 atlas region names in `examples/` and `gallery/`, where `-` appears in 85 and
+  `_` in 37.)
+
+⚠️ **The uniqueness scope is the slot, not the skeleton.** `spineboy-pro.json`,
+which the editor wrote, gives the name `head` to a region in slot `head` and to a
+bounding box in slot `head-bb`, and reuses `hoverglow-small` across eight slots. So
+a name shared between slots is normal and rigc leaves it alone; what #541 refused
+was one slot holding two.
 
 ### 3.5 `constraints` — 4.3's single typed array
 
@@ -3426,6 +3509,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A" keys "X" as a path constraint, but the rig declares it as a "slider"` | §4.12 — a timeline group resolves by name AND type; use the field named after the constraint's own type |
 | `animation "A": "position" is a path constraint timeline, and this track names no constraint` | §4.12 — put the name in `"path"` |
 | `N pair(s) of animation names have no one order: … "turn" / "Turn" (case) — they are one name in two cases, and which of them the editor puts first is not measured; rename one of them so they differ by more than letter case` | **R10** — rename until no pair is left. The kind in brackets says which of the editor comparator's four UNMEASURED choices decides the pair: `case` (a pure case tie), `number` (one number written two ways, or a run of digits against a word) or `separator` (make the first character that differs a letter or a digit). rigc keys `animations` in the editor's own comparator — natural and case-insensitive ([#539](https://github.com/firejune/rigc/issues/539), [#543](https://github.com/firejune/rigc/issues/543)) — so a pair that comparator settles is emitted rather than refused, and only the four choices nobody has measured are a compile error; on those, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
+| `N pair(s) of skin names have no one order: … "Zulu" / "mike" (case) — folded to one case "Zulu" and "mike" order the other way round, so whether the editor folds SKIN names decides this pair` | **R11** — rename until no pair is left. The same shape as the row above with a **wider** family: #539 measured the editor's comparator for animation names and thereby ruled codepoint out, and nothing has ruled anything out for skin names, so a pair the candidates could disagree about is refused even where the animation rule would emit it. `Zulu`/`mike` and `mike10`/`mike2` build as animation names and are refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) |
+| `N attachment name collision(s): a placeholder that more than one skin fills is emitted with the name "<skin>/<placeholder>" … slot "patch": skin "default" placeholder "zulu/patch" and skin "zulu" placeholder "patch" would both be named "zulu/patch"` | **R12** — rename the placeholder or the skin. rigc composes an attachment name for every placeholder more than one skin fills (§3.4.2), and this fires when the composed name is one another entry in the same slot already answers to. Both sites are named; either rename ends it |
 
 ### 5.2 Assertions — the gate
 
@@ -4972,12 +5057,17 @@ low figure as a miss — say in the log that the art did not carry them.
 `default`"* and *"bones are ordered so that the parent always comes before a child
 bone"* — [JSON format](http://esotericsoftware.com/spine-json-format). §3.4.
 
-🔬 **The editor re-keys every name-keyed OBJECT and leaves every ARRAY alone.**
-Read off its export of a rigc build (Spine 4.3.26, `gallery/look`): the
-`animations` object, a skin's 24 `attachments` slot keys and two animations' 16
-and 2 bone-timeline keys all came back sorted, while the 30 `bones`, 24 `slots`
-and 3 `constraints` — arrays — came back in the build's own order, element for
-element, and each slider kept its place among them.
+🔬 **The editor re-keys every name-keyed OBJECT, and leaves `bones`, `slots` and
+`constraints` alone.** Read off its export of a rigc build (Spine 4.3.26,
+`gallery/look`): the `animations` object, a skin's 24 `attachments` slot keys and
+two animations' 16 and 2 bone-timeline keys all came back sorted, while the 30
+`bones`, 24 `slots` and 3 `constraints` — arrays — came back in the build's own
+order, element for element, and each slider kept its place among them.
+
+🚨 **Not every array: `skins` it re-sorts.** That sentence read *"leaves every
+ARRAY alone"* for two releases, on those three arrays and nothing else, and
+`skins` is the one it was wrong about — see the paragraph at the end of this
+section.
 
 ⚠️ **The order it sorts them into is natural and case-insensitive, not
 codepoint.** This paragraph said codepoint until
@@ -5008,20 +5098,31 @@ firings still resolved **by name** — `0.3 -> mike`, `0.6 -> alpha`, payloads
 intact (#539). So the editor treats `events` and `animations` differently, and
 rigc emits events in the order you declare them.
 
-⚠️ **Read *"leaves every ARRAY alone"* above as bones, slots and constraints —
-`skins` is the array that round trip was not taken over.** `gallery/look` declares
-one skin, as does every other rig in this repository and all twelve editor exports
-in `examples/`, and a one-element array comes back in order whatever the editor
-does to it — so nothing here is
-evidence about `skins`, and a pull request that once called them *measured
-preserved* was reading a vacuous result ([#544](https://github.com/firejune/rigc/issues/544)).
-It matters because `skins` carries ordinals in the binary half too —
-`skins[readInt()]` for an attachment timeline and a linked mesh's skin index — so
-a re-order there would repoint them the way the `animations` re-key repoints a
-slider. ⛔ And it cannot be measured today: the editor refuses a four-skin rig on
-import without writing a project file or printing a word
-([#541](https://github.com/firejune/rigc/issues/541)). ⇒ **If you author more than
-one skin, nothing on this page says the editor survives it.**
+🚨 **`skins` is re-sorted, with `default` pinned first — measured, and it is the
+first array measured to move.** A four-skin rig built `default, zulu, mike, alpha`
+exported `default, alpha, mike, zulu`
+([#541](https://github.com/firejune/rigc/issues/541)), and the deform timelines
+came back keyed `mike, zulu` rather than `zulu, mike` with it. Note `alpha` sorts
+before `default` under every candidate comparator and still came back second: the
+default skin is **pinned**, not sorted. It matters for the same reason `animations`
+does — `skins` carries ordinals in the binary half, `skins[readInt()]` for an
+attachment timeline and `skins[skinIndex]` for a linked mesh — so this is the
+`animations` defect (#535) in the collection nobody had checked. ⇒ in rigc: R11.
+
+⚠️ **What that measurement does *not* settle is which comparator.** `alpha, mike,
+zulu` is the order codepoint, case-folding and natural order all produce, so unlike
+the animations case nothing here refutes anything, and rigc refuses any skin-name
+pair the candidates could disagree about (R11).
+
+✅ **The two readings this replaces.** A pull request once called `skins` *measured
+preserved*, on the strength of a one-skin rig where a one-element array comes back
+in order whatever the editor does to it;
+[#544](https://github.com/firejune/rigc/issues/544) corrected that to *unmeasured*,
+and added that it could not be measured because the editor refused a four-skin rig
+on import without printing a word. Both readings were the same generalisation — *an
+editor does not move arrays* — off the three arrays that were measured, and the
+"without a word" was rigc's own harness discarding the editor's stderr, which had
+named the cause all along (§3.4.2).
 
 ### 10.2 Draw order
 

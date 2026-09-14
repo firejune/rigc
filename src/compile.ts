@@ -58,6 +58,7 @@ import {
   type RigMeshBinding,
   type RigPathAttachment,
   type RigRegionAttachment,
+  type RigSkinParts,
   type RigSpec,
   type RigVertexGeometry,
   type RigDepthMap,
@@ -248,7 +249,7 @@ function editorAnimationOrder<T>(animations: Record<string, T>): Record<string, 
   // names: the refusal walks every pair and hands back the verdict it certified
   // for each, so "the order rigc emits" and "the order rigc checked" cannot drift
   // into two readings the way a shared comparator still can.
-  const verdicts = refuseNamesTheEditorCouldKeyDifferently(names);
+  const verdicts = refuseNamesTheEditorCouldKeyDifferently(names, ANIMATION_ORDER);
   // Nested rather than keyed on a joined string: any character this could join
   // on is one an animation name is allowed to contain, and two pairs that
   // collided would silently share one verdict.
@@ -256,6 +257,66 @@ function editorAnimationOrder<T>(animations: Record<string, T>): Record<string, 
   const ordered: Record<string, T> = {};
   for (const name of names) ordered[name] = animations[name];
   return ordered;
+}
+
+/** The skin the editor keeps at index 0 whatever its name sorts as. */
+const DEFAULT_SKIN = 'default';
+
+/**
+ * The order the emitted `skins` array is written in: **`default` first, then the
+ * rest in the order the editor was measured returning them** — with every pair
+ * refused on which a comparator consistent with that measurement could disagree.
+ *
+ * ## Why the emitter has an opinion about this at all
+ *
+ * The same reason it has one about `animations` (#535), in the collection nobody
+ * had checked. `SkeletonBinary` addresses skins by ORDINAL — `skins[readInt()]`
+ * for an attachment timeline, `skins[linkedMesh.skinIndex]` for a linked mesh —
+ * so an editor that writes this array in another order repoints every such
+ * reference, silently, in a file that still parses.
+ *
+ * ⚠️ `src/types.ts` said for two releases that `skins` was one of the arrays an
+ * editor leaves alone, and #544 softened that to *unmeasured* rather than
+ * retracting it. Issue #541 measured it: a rig built `default, zulu, mike,
+ * alpha` exported `default, alpha, mike, zulu`. Three arrays — `bones` (30),
+ * `slots` (24), `constraints` (3) — had come back element for element, and the
+ * belief was a generalisation off those three.
+ *
+ * ## What is measured, and it is two separate facts
+ *
+ * - **`default` is pinned, not sorted.** `alpha` sorts before `default` under
+ *   every candidate comparator and came back *after* it. That is the whole
+ *   evidence, and it is decisive: the runtime's own `defaultSkin` is index 0.
+ * - **The rest came back `alpha, mike, zulu`.** ⚠️ Which separates nothing.
+ *   Those three names are lower-case ASCII with no digits and no separators, so
+ *   codepoint, case-folded, natural, and every collator agree on them. The
+ *   editor's skin comparator is **not established**, and a rig with `Zulu`,
+ *   `mike10`, `mike2` in it is what would establish it.
+ *
+ * 🔑 So this deliberately does NOT reuse `measuredOrder` alone. #539 measured
+ * the editor's comparator for `animations` and `events` — natural, and
+ * case-insensitive — and #543 narrowed the animation refusal onto what is left
+ * unmeasured *inside that family*. None of that is a measurement about skins:
+ * it is one program, and the inference that one program sorts two collections
+ * the same way is exactly the shape of the inference that put `skins` on the
+ * safe side of the list in the first place. `measuredSkinOrder` therefore
+ * certifies a pair only where the natural case-insensitive family **and plain
+ * codepoint** agree, which is the pre-#543 rule — correct here for the reason
+ * it was too strong there: for animations, codepoint had been *refuted*; for
+ * skins, nothing has refuted anything.
+ *
+ * ⇒ Every skin name in this tree is lower-case ASCII without digits, so no
+ * emitted byte moves and no rig is refused. What moves is the claim.
+ */
+function editorSkinOrder<T extends { name: string }>(skins: readonly T[]): T[] {
+  const pinned = skins.filter((skin) => skin.name === DEFAULT_SKIN);
+  const rest = skins.filter((skin) => skin.name !== DEFAULT_SKIN);
+  const verdicts = refuseNamesTheEditorCouldKeyDifferently(
+    rest.map((skin) => skin.name),
+    SKIN_ORDER,
+  );
+  rest.sort((a, b) => verdicts.get(a.name)?.get(b.name) ?? 0);
+  return [...pinned, ...rest];
 }
 
 /**
@@ -417,14 +478,112 @@ function measuredOrder(a: string, b: string): number | Ambiguity {
   return ra.length < rb.length ? -1 : 1;
 }
 
+/**
+ * How the editor orders two SKIN names — or what makes the pair a matter of
+ * opinion, under a family wider than `measuredOrder`'s by exactly one member.
+ *
+ * ## The extra member is plain codepoint, and it is here because nothing ruled
+ * it out
+ *
+ * #539 put two name sets through the editor and read them back, and what those
+ * two sets refute is that the editor sorts ANIMATIONS by codepoint: `Turn`
+ * before `sweep` and `turn10` before `turn2` are the codepoint answers, and the
+ * editor gave the other one both times. #543 is built on that refutation — it
+ * sorts by the natural, case-insensitive family and refuses only that family's
+ * four unmeasured choices.
+ *
+ * ⚠️ **The skins measurement refutes nothing.** `alpha, mike, zulu` is the
+ * answer every candidate gives, so codepoint is still standing for this
+ * collection. Carrying #543's narrowing over would be assuming that one editor
+ * sorts two collections by one comparator — plausible, unmeasured, and the same
+ * move that made `skins` "an array the editor leaves alone" for two releases.
+ *
+ * ⇒ A verdict is returned only where `measuredOrder` certifies the pair **and**
+ * codepoint agrees with it. On the pairs where they differ, the disagreement is
+ * itself the explanation: either folding the two reverses them, or reading a
+ * digit run as a number does, and the editor's choice between those readings is
+ * measured for animation names and not for skin names.
+ *
+ * 🔒 It is deliberately a *narrowing of `measuredOrder`* rather than a second
+ * comparator: one certificate, one place a family member is decided, and no way
+ * for the two to come to disagree about what "settled" means.
+ */
+function measuredSkinOrder(a: string, b: string): number | Ambiguity {
+  const verdict = measuredOrder(a, b);
+  if (typeof verdict !== 'number' || codepoint(a, b) === verdict) return verdict;
+  // `measuredOrder` and codepoint can only part company where folding or a digit
+  // run decides the pair — everything else it already refuses. Which of the two
+  // it is, is what the author has to read.
+  const foldingDecides = codepoint(a.toLowerCase(), b.toLowerCase()) !== codepoint(a, b);
+  return foldingDecides
+    ? {
+        kind: 'case',
+        because:
+          `folded to one case "${a}" and "${b}" order the other way round, so whether the editor folds SKIN ` +
+          'names decides this pair — and only its ANIMATION and EVENT names have been measured folded (#539)',
+        repair: 'rename one of them so their order does not turn on letter case',
+      }
+    : {
+        kind: 'number',
+        because:
+          `read as numbers the digit runs in "${a}" and "${b}" order the other way round from the same runs read ` +
+          'as text, so whether the editor sorts SKIN names naturally decides this pair — and only its ANIMATION ' +
+          'and EVENT names have been measured sorted naturally (#539)',
+        repair: 'pad the digit runs to the same width, or rename so no number decides the order',
+      };
+}
+
 /** How many pairs a refusal spells out before it starts counting them instead. */
 const PAIRS_SPELLED_OUT = 8;
 
 /**
- * Refuse a set of animation names the editor could key in an order rigc did not
- * emit, and hand back the verdict for every pair that survived — the check that
- * lets `editorAnimationOrder` sort by the measured family without choosing a
- * member of it.
+ * What one collection's order refusal has to say that the others' do not: what
+ * it is counting pairs of, which comparator family it certified them against,
+ * and what an order rigc got wrong would cost.
+ *
+ * Two collections share the walk below because they share the defect — a
+ * name-keyed collection whose ORDINAL is a reference in the format's binary half
+ * — and they must not share the sentence, because the family and the stakes are
+ * different and a reader acts on both.
+ */
+interface OrderedCollection {
+  /** Plural, for "N pair(s) of …": `animation names`, `skin names`. */
+  noun: string;
+  /** The certificate. A number is an order; an `Ambiguity` stops the build. */
+  order: (a: string, b: string) => number | Ambiguity;
+  /** Why rigc has an opinion, and what the family leaves open. Ends on a space. */
+  why: string;
+}
+
+const ANIMATION_ORDER: OrderedCollection = {
+  noun: 'animation names',
+  order: measuredOrder,
+  why:
+    'rigc keys the emitted "animations" object in ' +
+    "the Spine editor's own comparator, which is natural and case-insensitive (#539) — but four of that " +
+    "comparator's choices have never been measured (a pure case tie, one number written two ways, a run of " +
+    'digits against a word, and what a separator is worth), and each pair below is decided by one of them. A ' +
+    "slider's animation is an ORDINAL in the format's binary half, and an editor that keys these differently " +
+    'repoints every slider whose animation moves index — silently, in a file that still parses (#535). ',
+};
+
+const SKIN_ORDER: OrderedCollection = {
+  noun: 'skin names',
+  order: measuredSkinOrder,
+  why:
+    'rigc writes the emitted "skins" array with "default" first and the rest in the order the editor was ' +
+    'measured returning them (#541) — but that measurement was taken on `alpha, mike, zulu`, which every ' +
+    "candidate comparator orders the same way, so the editor's skin comparator is not established and each " +
+    'pair below is one the candidates disagree about. A skin is an ORDINAL in the format\'s binary half — ' +
+    '`skins[readInt()]` for an attachment timeline, `skins[skinIndex]` for a linked mesh — so an editor that ' +
+    'writes them in another order repoints every such reference, silently, in a file that still parses. ',
+};
+
+/**
+ * Refuse a set of names the editor could write in an order rigc did not emit,
+ * and hand back the verdict for every pair that survived — the check that lets
+ * `editorAnimationOrder` and `editorSkinOrder` sort by a measured family without
+ * choosing a member of it.
  *
  * It is deliberately **not** conditional on anything: not on the rig declaring a
  * slider, and not on the rig declaring the editor as a consumer. A slider is what
@@ -435,8 +594,17 @@ const PAIRS_SPELLED_OUT = 8;
  * slider, or the declaration, would then be the edit that refuses a rig that built
  * yesterday. What issue #543 changed is the size of what is claimed, not who it is
  * claimed for.
+ *
+ * ⚠️ `what` is a parameter and not a second copy of this walk because issue #541
+ * found the same defect in a second collection, and a copied loop is how the two
+ * come to check different things. What may NOT be shared is the family: `skins`
+ * and `animations` have been measured to different depths, and
+ * `OrderedCollection.order` is where each says which.
  */
-function refuseNamesTheEditorCouldKeyDifferently(names: readonly string[]): Map<string, Map<string, number>> {
+function refuseNamesTheEditorCouldKeyDifferently(
+  names: readonly string[],
+  what: OrderedCollection,
+): Map<string, Map<string, number>> {
   const verdicts = new Map<string, Map<string, number>>();
   const put = (x: string, y: string, v: number): void => {
     const row = verdicts.get(x) ?? new Map<string, number>();
@@ -447,7 +615,7 @@ function refuseNamesTheEditorCouldKeyDifferently(names: readonly string[]): Map<
   for (let i = 0; i < names.length; i++) {
     put(names[i], names[i], 0);
     for (let j = i + 1; j < names.length; j++) {
-      const verdict = measuredOrder(names[i], names[j]);
+      const verdict = what.order(names[i], names[j]);
       if (typeof verdict === 'number') {
         put(names[i], names[j], verdict);
         put(names[j], names[i], -verdict);
@@ -459,12 +627,7 @@ function refuseNamesTheEditorCouldKeyDifferently(names: readonly string[]): Map<
   if (!found.length) return verdicts;
   const spelled = found.slice(0, PAIRS_SPELLED_OUT);
   throw new CompileError(
-    `${found.length} pair(s) of animation names have no one order: rigc keys the emitted "animations" object in ` +
-      "the Spine editor's own comparator, which is natural and case-insensitive (#539) — but four of that " +
-      'comparator\'s choices have never been measured (a pure case tie, one number written two ways, a run of ' +
-      'digits against a word, and what a separator is worth), and each pair below is decided by one of them. A ' +
-      "slider's animation is an ORDINAL in the format's binary half, and an editor that keys these differently " +
-      'repoints every slider whose animation moves index — silently, in a file that still parses (#535). ' +
+    `${found.length} pair(s) of ${what.noun} have no one order: ${what.why}` +
       `${spelled.join('. ')}` +
       (found.length > spelled.length ? `. …and ${found.length - spelled.length} more pair(s)` : ''),
   );
@@ -1500,6 +1663,11 @@ export function compile(opts: CompileOptions): CompileResult {
       rigAttachmentNames.set(slotName, names);
     }
   }
+  // Which (slot, placeholder) pairs more than one skin fills — the pairs whose
+  // entries have to carry an attachment `name` of their own. Computed here, off
+  // the normalised skin table, so the slot loop below reads a decision rather
+  // than re-deriving one per attachment.
+  const contested = contestedPlaceholders(skinNames, skinParts);
 
   // -- 2. atlas --------------------------------------------------------------
   //
@@ -1657,9 +1825,10 @@ export function compile(opts: CompileOptions): CompileResult {
       const placeholders = skinParts.get(skinName)!.attachments[rigSlot.name];
       if (!placeholders) continue;
       const perSlot: Record<string, SpineAttachment> = {};
+      const shared = contested.get(rigSlot.name);
       for (const [placeholder, att] of Object.entries(placeholders)) {
         const where = `skin "${skinName}" slot "${rigSlot.name}" attachment "${placeholder}"`;
-        perSlot[placeholder] = buildRigAttachment(att, placeholder, where, {
+        const built = buildRigAttachment(att, placeholder, where, {
           images,
           bones,
           transforms,
@@ -1672,6 +1841,12 @@ export function compile(opts: CompileOptions): CompileResult {
           depths: attachmentDepths,
           slotNames: new Set(rig.slots.map((s) => s.name)),
         });
+        // The name is put on AFTER the builder rather than inside it: five
+        // builders write five shapes, the rule is one rule, and a rule that has
+        // to be remembered in five places is a rule that will be kept in four.
+        perSlot[placeholder] = shared?.has(placeholder)
+          ? nameSkinAttachment(built, skinAttachmentName(skinName, placeholder), placeholder)
+          : built;
       }
       tableFor(skinName)[rigSlot.name] = perSlot;
     }
@@ -2088,20 +2263,28 @@ export function compile(opts: CompileOptions): CompileResult {
     // `readSkeletonData`'s own order (`:372-443`). Every member list is a
     // conditional spread, so a rig that declares none emits the two-key entry it
     // always did, byte for byte.
-    skins: [...skinTables.entries()].map(([name, attachments]) => {
-      const parts = skinParts.get(name);
-      return {
-        name,
-        ...(parts?.bones.length ? { bones: parts.bones } : {}),
-        ...Object.fromEntries(
-          RIG_SKIN_CONSTRAINT_KEYS.filter((key) => parts?.constraints[key].length).map((key) => [
-            key,
-            parts!.constraints[key],
-          ]),
-        ),
-        attachments,
-      };
-    }),
+    //
+    // Ordered the way `animations` is and for the same reason — the editor
+    // rewrites this array and the binary half addresses it by ordinal — with the
+    // sort applied HERE rather than to `skinTables`, so everything upstream (the
+    // path-slot table, every refusal that lists skins) still reads the order the
+    // rig spec declared. See `editorSkinOrder`.
+    skins: editorSkinOrder(
+      [...skinTables.entries()].map(([name, attachments]) => {
+        const parts = skinParts.get(name);
+        return {
+          name,
+          ...(parts?.bones.length ? { bones: parts.bones } : {}),
+          ...Object.fromEntries(
+            RIG_SKIN_CONSTRAINT_KEYS.filter((key) => parts?.constraints[key].length).map((key) => [
+              key,
+              parts!.constraints[key],
+            ]),
+          ),
+          attachments,
+        };
+      }),
+    ),
     // Between `skins` and `animations`, which is where the editor writes it. A
     // conditional spread rather than an assignment after the literal, so the key
     // lands in that position instead of at the end.
@@ -2261,6 +2444,154 @@ function rotationOf(spec: RigBone, ctx: BoneContext): number | null {
     return screenToSpineDegrees(anchor[2]);
   }
   return spec.rotation ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// attachment names, where one placeholder holds several attachments
+// ---------------------------------------------------------------------------
+
+/**
+ * What separates a skin's name from a placeholder's inside an attachment name.
+ *
+ * ⚠️ A separator is the one part of this that could collide with a name somebody
+ * wrote, so it is measured rather than picked: across the **160** distinct
+ * placeholder names and **159** distinct atlas region names in `examples/` and
+ * `gallery/` — every editor-authored name this repository has — `/` occurs in
+ * **0**, while `-` occurs in 85 / 86 and `_` in 37 / 37. It is also the character
+ * the format already has a structure for, since an attachment's name doubles as
+ * its texture path and a path is what `/` separates.
+ *
+ * 🔒 And the choice is not load-bearing anyway, which is the point of stating it
+ * this way: `contestedPlaceholders` refuses the build if the name it composes is
+ * one some other placeholder in the same slot already answers to. A separator
+ * nobody uses makes that refusal rare; the refusal is what makes it safe.
+ */
+const SKIN_ATTACHMENT_SEPARATOR = '/';
+
+function skinAttachmentName(skinName: string, placeholder: string): string {
+  return `${skinName}${SKIN_ATTACHMENT_SEPARATOR}${placeholder}`;
+}
+
+/**
+ * Which `(slot, placeholder)` pairs more than one skin fills — and, on the way,
+ * the refusal that keeps the composed names from colliding with authored ones.
+ *
+ * ## The defect this exists for
+ *
+ * Two skins putting different art under one placeholder is what a skin IS, and
+ * until issue #541 rigc emitted both entries with no `name`, which makes the
+ * placeholder the name of both (`SkeletonJson.ts:526`). spine-core is happy —
+ * its skin table is keyed by placeholder, so the two never meet. The Spine
+ * editor refuses the whole import, and says exactly why:
+ *
+ *     ERROR: Unable to import skeleton.
+ *     [error] Error reading skeleton: skins
+ *     Cause: [error] Error reading attachment: patch (MOw)
+ *     Cause: [error] Multiple attachments have the same name: patch patch
+ *
+ * Bisected on the emitted file: four skins REFUSED, deform timelines removed
+ * REFUSED, `default` + one skin REFUSED, `default` alone IMPORTS, the second skin
+ * given a distinct placeholder IMPORTS, and the same placeholder with **each
+ * entry given its own `name`** IMPORTS — all four skins. So it is neither the
+ * skin count nor the timelines; it is one name over several attachments.
+ *
+ * ## Only the contested pairs are named, and that is the whole rule
+ *
+ * A placeholder one skin fills keeps the emitted shape it has always had: no
+ * `name`, no `path` it did not already carry. Every rig in this tree declares
+ * exactly one skin, so **no emitted byte in the tree moves** — and a
+ * multi-skin rig whose skins use distinct placeholders does not move either,
+ * because nothing there is ambiguous to begin with.
+ *
+ * ⚠️ The scope of the editor's uniqueness rule is **not** skeleton-wide, and the
+ * corpus proves it rather than a hypothesis doing so: `spineboy-pro.json`, which
+ * the editor wrote, gives the name `head` to a region in slot `head` and to a
+ * bounding box in slot `head-bb`, and names one `hoverglow-small` across eight
+ * slots. What #541 refused was one slot. Composing from the skin makes the names
+ * unique within the slot, which satisfies that scope and every narrower one;
+ * nothing here claims to know which of them the editor actually applies, and an
+ * assertion that policed the emitted artifact would have to.
+ *
+ * ## Why a composed name is not the compiler inventing a value
+ *
+ * rigc has always decided this attachment's name — it decided it was the
+ * placeholder, silently, and that decision is the defect. What changes is the
+ * derivation, not who makes it, and the new one is a function of two names the
+ * spec wrote. Nothing is read off the art, and `path` — the field that says
+ * which texture to draw — stays exactly what the spec stated or what the
+ * attachment already resolved to.
+ */
+function contestedPlaceholders(
+  skinNames: readonly string[],
+  skinParts: Map<string, RigSkinParts>,
+): Map<string, Set<string>> {
+  /** slot -> placeholder -> the skins that fill it, in declaration order. */
+  const fillers = new Map<string, Map<string, string[]>>();
+  for (const skinName of skinNames) {
+    for (const [slotName, placeholders] of Object.entries(skinParts.get(skinName)!.attachments)) {
+      const perSlot = fillers.get(slotName) ?? new Map<string, string[]>();
+      for (const placeholder of Object.keys(placeholders)) {
+        perSlot.set(placeholder, [...(perSlot.get(placeholder) ?? []), skinName]);
+      }
+      fillers.set(slotName, perSlot);
+    }
+  }
+  const contested = new Map<string, Set<string>>();
+  const collisions: string[] = [];
+  for (const [slotName, perSlot] of fillers) {
+    const shared = new Set([...perSlot].filter(([, skins]) => skins.length > 1).map(([placeholder]) => placeholder));
+    if (shared.size) contested.set(slotName, shared);
+    /** Emitted attachment name -> the first entry that claimed it. */
+    const claimed = new Map<string, string>();
+    for (const [placeholder, skins] of perSlot) {
+      for (const skinName of skins) {
+        const name = shared.has(placeholder) ? skinAttachmentName(skinName, placeholder) : placeholder;
+        const site = `skin "${skinName}" placeholder "${placeholder}"`;
+        const taken = claimed.get(name);
+        if (taken === undefined) claimed.set(name, site);
+        else collisions.push(`slot "${slotName}": ${taken} and ${site} would both be named "${name}"`);
+      }
+    }
+  }
+  if (collisions.length) {
+    throw new CompileError(
+      `${collisions.length} attachment name collision(s): a placeholder that more than one skin fills is emitted ` +
+        `with the name "<skin>${SKIN_ATTACHMENT_SEPARATOR}<placeholder>", because the Spine editor refuses an import ` +
+        'in which one slot holds two attachments of one name (#541) — and here that composed name is one another ' +
+        'entry in the same slot already answers to. Rename the placeholder or the skin so the two differ. ' +
+        `${collisions.join('. ')}`,
+    );
+  }
+  return contested;
+}
+
+/**
+ * Give one attachment its own `name`, and pin the texture `path` that name would
+ * otherwise have taken with it.
+ *
+ * 🚨 The second half is the whole hazard. `readAttachment` reads
+ * `const name = getValue(map, "name", placeholder)` and then
+ * `const path = getValue(map, "path", name)` (`SkeletonJson.ts:526-529`, and
+ * again at `:559` for a mesh) — so `path` defaults to the NAME, not to the
+ * placeholder. Writing a name and leaving `path` alone silently repoints the
+ * attachment's texture lookup at a region no atlas has. Restating `path` at what
+ * the attachment already resolved to makes the name change invisible to
+ * everything but the editor's own uniqueness rule, which is the only thing it is
+ * for.
+ *
+ * ⚠️ `region` and `mesh` are exactly the two types that read `path`; the polygon
+ * types (`boundingbox`, `clipping`, `path`) have no texture and get the name
+ * alone. The list is the parser's own two `getValue(map, "path", …)` sites
+ * rather than a judgement about which attachments "have art".
+ */
+function nameSkinAttachment(att: SpineAttachment, name: string, placeholder: string): SpineAttachment {
+  const kind = (att as { type?: string }).type ?? 'region';
+  // Key order is the parser's reading order — `name`, then `path`, then the rest
+  // as the builder wrote it — for the same reason every other emitted object
+  // follows it: the file is read by people and diffed against references.
+  if (kind !== 'region' && kind !== 'mesh') return { name, ...att };
+  const { path, ...rest } = att as SpineRegionAttachment | SpineMeshAttachment;
+  return { name, path: path ?? placeholder, ...rest } as SpineAttachment;
 }
 
 // ---------------------------------------------------------------------------

@@ -702,7 +702,24 @@ export interface SpineSlot {
   blend?: string;
 }
 
+/**
+ * The attachment's own name, as distinct from the placeholder it is filed under.
+ *
+ * `readAttachment` reads `const name = getValue(map, "name", placeholder)`
+ * (`SkeletonJson.ts:526`), so an absent field means "the placeholder is also the
+ * name" — which is what rigc emitted for every attachment until issue #541, and
+ * what makes several skins' entries under one placeholder **several attachments
+ * with one name**. spine-core does not care; the Spine editor refuses the import
+ * outright, naming the section, the attachment and the rule.
+ *
+ * 🚨 Writing it moves a second field with it. For the two types that carry
+ * texture art, `path` defaults to **`name`**, not to the placeholder
+ * (`:529`, `:559`), so an attachment given a name and no path resolves its region
+ * at the new name and the atlas lookup misses. `nameSkinAttachment` in
+ * `compile.ts` is the one place that writes either, and it always writes both.
+ */
 export interface SpineRegionAttachment {
+  name?: string;
   path?: string;
   /** Required. Omitting these yields NaN with no error. */
   width: number;
@@ -727,6 +744,8 @@ export interface SpineRegionAttachment {
  */
 export interface SpineMeshAttachment {
   type: 'mesh';
+  /** See `SpineRegionAttachment.name` — and it takes `path` with it. */
+  name?: string;
   path?: string;
   uvs: number[];
   triangles: number[];
@@ -761,6 +780,8 @@ export interface SpineMeshAttachment {
  */
 export interface SpineBoundingBoxAttachment {
   type: 'boundingbox';
+  /** See `SpineRegionAttachment.name`. No `path`: this type reads none. */
+  name?: string;
   vertexCount: number;
   /** Unweighted x/y pairs, or the weighted run — same encoding as a mesh's. */
   vertices: number[];
@@ -769,6 +790,8 @@ export interface SpineBoundingBoxAttachment {
 
 export interface SpineClippingAttachment {
   type: 'clipping';
+  /** See `SpineRegionAttachment.name`. No `path`: this type reads none. */
+  name?: string;
   /** The last slot the clip applies to. Absent = to the bottom of the order. */
   end?: string;
   convex?: boolean;
@@ -790,6 +813,8 @@ export interface SpineClippingAttachment {
  */
 export interface SpinePathAttachment {
   type: 'path';
+  /** See `SpineRegionAttachment.name`. No texture `path`: this type reads none. */
+  name?: string;
   closed?: boolean;
   constantSpeed?: boolean;
   vertexCount: number;
@@ -884,19 +909,29 @@ export interface SpineSkeletonJson {
    *   #543, with the refusal widened to cover every pair codepoint could order
    *   differently; that refused both rigs above, which are the only two anybody
    *   has measured, and it moved no byte to stop doing so.
-   * - **`skins` was on the safe side of this list and has no measurement behind
-   *   it.** The arrays the round trip actually returned element for element were
-   *   `bones` (30), `slots` (24) and `constraints` (3). Every rig in this tree
-   *   declares exactly ONE skin, and a one-element array comes back in order
-   *   whatever the editor does with it — #537's pull request called skins
-   *   "measured preserved" on that evidence, and vacuous is not preserved. Nor
-   *   can it be measured today: the editor refuses a four-skin rig on import
-   *   without a word (#541), so there is no export to read. ⇒ `bones` / `slots`
-   *   / `constraints` are the references an editor was measured not to move;
-   *   `skins` is unmeasured, and `SkeletonBinary` addresses it by ordinal too
-   *   (`skins[readInt()]` for an attachment timeline, `skins[skinIndex]` for a
-   *   linked mesh), so it is the collection to measure first if that ever
-   *   becomes possible.
+   * - 🚨 **`skins` is NOT an array the editor leaves alone. It is the first one
+   *   measured moved** (#541). A four-skin rig built `default, zulu, mike,
+   *   alpha` came back `default, alpha, mike, zulu`: `default` is pinned first
+   *   and the rest are re-sorted, and the deform timelines came back keyed
+   *   `mike, zulu` rather than `zulu, mike` with it. `SkeletonBinary` addresses
+   *   skins by ORDINAL — `skins[readInt()]` for an attachment timeline,
+   *   `skins[skinIndex]` for a linked mesh — so this is #535 in the collection
+   *   nobody had checked. rigc emits `default` first and the rest in that
+   *   order since #541; see `compile.ts`'s `editorSkinOrder`.
+   *
+   *   ⚠️ **The two readings this replaces, kept because the second is the one
+   *   that cost something.** #537's pull request called `skins` "measured
+   *   preserved"; #544 corrected that to *unmeasured*, on the grounds that the
+   *   arrays the round trip actually returned element for element were `bones`
+   *   (30), `slots` (24) and `constraints` (3), that every rig in this tree
+   *   declares exactly ONE skin, and that a one-element array comes back in
+   *   order whatever the editor does with it. Both readings were reached by
+   *   generalising from the three arrays that *were* measured — "an editor does
+   *   not move arrays" — and the generalisation is what was false. #544 also
+   *   said the measurement could not be taken, because the editor refused a
+   *   four-skin rig on import without a word: that refusal was rigc's own
+   *   harness discarding the editor's stderr, and the editor had named the
+   *   cause all along.
    */
   events?: Record<string, SpineEvent>;
   animations: Record<

@@ -2411,8 +2411,14 @@ function cmdExplain(flags: Record<string, string>): void {
   }
 
   console.log('\nslots  (array order IS the draw order)');
+  // The DEFAULT skin's placeholders, resolved by name. It was `skins[0]` until
+  // issue #541, which is the same thing only because rigc pins `default` at
+  // index 0 — a property of the emitter that this report should not be quietly
+  // relying on. Reading it by name means a change to the skins ORDER cannot turn
+  // this line into a report about some other skin.
+  const defaultSkin = result.skeleton.skins.find((skin) => skin.name === 'default');
   for (const s of result.skeleton.slots) {
-    const atts = Object.keys(result.skeleton.skins[0].attachments[s.name] ?? {});
+    const atts = Object.keys(defaultSkin?.attachments[s.name] ?? {});
     console.log(
       `  ${s.name.padEnd(12)} bone=${s.bone.padEnd(12)} setup=${(s.attachment ?? 'null').padEnd(22)} color=${s.color ?? 'ffffffff'}  attachments=[${atts.join(', ')}]`,
     );
