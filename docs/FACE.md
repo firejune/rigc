@@ -1197,7 +1197,11 @@ which declares no constraints at all and so can carry no slider. What it found:
   animation is an ordinal in the format, so `yaw -> "turn"` returned as
   `yaw -> "sweep"` — the first animation of the sorted list
   ([#535](https://github.com/firejune/rigc/issues/535)). rigc now emits
-  animations codepoint-ascending; on the same rig through the same editor that
+  animations in the editor's own order — natural and case-insensitive
+  ([#539](https://github.com/firejune/rigc/issues/539),
+  [#543](https://github.com/firejune/rigc/issues/543)); this rig's names are ones
+  a codepoint sort orders identically, which is what it emitted at the time of
+  the round trip below. On the same rig through the same editor that
   restored `yaw -> "turn"` and took the re-rendered mean absolute error from
   10.4655 / 8.4961 / 8.7140 (`sweep` / `tilt` / `turn`) to
   0.3035 / 0.0769 / 0.0588, worst drift 16.535 px to 3.947 px.

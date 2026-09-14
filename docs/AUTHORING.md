@@ -566,7 +566,8 @@ behind it writes literal `x`/`y` instead.
 
 **R10 — The `animations` object is keyed in the editor's order, not in yours, and
 names that have no one order are refused.** Declare animations in whatever order
-reads best; the emit keys them codepoint-ascending. This is the one place rigc
+reads best; the emit keys them the way the Spine editor does — **natural and
+case-insensitive**. This is the one place rigc
 reorders anything you wrote, and it is not cosmetic: a `slider`'s animation is a
 **name** in JSON and an **ordinal** in the format's binary half, so an editor that
 re-sorts the object repoints every slider whose animation moved index — silently,
@@ -575,25 +576,41 @@ in a file that still parses and still gates green (§3.5.2,
 animation's own body is byte-identical either way, and every other collection is
 emitted in the order you gave it.
 
-⚠️ **Codepoint is not the editor's comparator.** The editor sorts **natural and
-case-insensitive** — measured, two rigs, one axis each:
+⚠️ **What is measured about that comparator, and what is not.** The editor sorts
+natural and case-insensitive — measured, two rigs, one axis each:
 `Turn, sweep, wave` came back `sweep, Turn, wave`, and `turn10, turn2, zoom` came
 back `turn2, turn10, zoom` ([#539](https://github.com/firejune/rigc/issues/539)).
-Codepoint agrees with it on most names and not on all, so rigc emits codepoint and
-**refuses the sets where the two could differ**, naming the pair. The rule you have
-to hold is therefore about *names*, and it is three things:
+But "natural and case-insensitive" is a **family** of comparators, not one, and
+**four** of its choices have never been measured. rigc emits the order every
+member of that family agrees on, and **refuses the sets where one of the four
+would decide**, naming the pair. So the rule you have to hold is about *names*,
+and it is four things:
 
 | Do not let two animation names differ | Because | Instead |
 | --- | --- | --- |
-| by **case** at the character that orders them (`Turn` against `sweep`, or `Turn` against `turn`) | folding the case reverses them, and a pure case tie is settled by a tie-break nobody has measured | pick one case for all of them, or change a letter |
-| by a **number** read two ways (`turn2` against `turn10`, `turn01` against `turn1`, `1turn` against `turn`) | as text `turn10` sorts first and as a number it does not; `01` and `1` are one number written twice | pad the digits to the same width — `turn02` beside `turn10` |
+| by **case alone** (`Turn` against `turn`) | they fold together, so only a tie-break separates them, and nobody has measured which way it breaks | pick one case for all of them, or change a letter |
+| by a **number written two ways** (`turn01` against `turn1`) | `01` and `1` are one number twice; shorter-first, longer-first and lexicographic are all real tie-breaks | write the number one way — with leading zeros or without, but not both |
+| by a **digit run against a word** (`1turn` against `turn`) | comparators differ on whether a number sorts before a word | rename so a run of digits is never compared against a word |
 | by a **separator** — anything that is neither a letter nor a digit (`wave_x` against `wavea`, `wave` against `wave-`) | a collator may treat `-` or a space as ignorable, and `_` sits *between* `Z` and `a`, so folding up and folding down order it oppositely | rename so the first character that differs is a letter or a digit |
 
-⭐ **Capitals and digits are not what is refused** — only pairs whose order turns
-on them. `Sweep, Turn, Wave, Zoom02, Zoom10` builds: every comparator puts those
-five in one order, so codepoint *is* the editor's order for them. A set with no
-such pair is safe under **every** candidate comparator, which is why rigc does not
-have to reproduce the editor's sort to know your rig is safe under it.
+⭐ **Capitals and numbered series are not what is refused** — only pairs one of
+those four decides. `Sweep, Turn, Wave, Zoom02, Zoom10` builds, and so does
+`shot1 … shot12`: every member of the family puts each of those sets in one
+order, and that order is what rigc emits. A numbered series that crosses 9 → 10 is
+keyed **1, 2, … 9, 10, 11, 12**, which is what the editor does with it — and is
+not what a codepoint sort does.
+
+✅ **This list had two more rows before
+[#543](https://github.com/firejune/rigc/issues/543), and both were artefacts of
+the emit rather than facts about the editor.** rigc used to key `animations`
+**codepoint-ascending** and refuse every pair codepoint and the editor could order
+differently — which refused a pair that folds the other way (`Turn` against
+`sweep`) and a pair of digit runs of unequal width (`turn10` against `turn2`).
+Those are the only two name sets anybody has ever put through the editor and read
+back, so the tool was refusing precisely the pairs it knew the most about, and its
+only repair was *rename* — the one repair a transcription cannot take. Emitting a
+member of the family instead moves no byte on any set the old rule accepted; it
+just stops refusing the ones it did.
 
 ---
 
@@ -1490,16 +1507,17 @@ animation now stands at the position. `gallery/look` went into a licensed editor
 `sweep, tilt, turn` with **`yaw -> "sweep"`**: a file that parses, gates green and
 applies the wrong animation. ⭐ Its second slider is what named the mechanism
 rather than a second casualty — `tilt` survived because it sat at index 1 in both
-orderings. rigc now emits animations codepoint-ascending so the editor's re-sort
+orderings. rigc now emits animations in the editor's own order so its re-sort
 moves no index ([#535](https://github.com/firejune/rigc/issues/535)); on the same
 rig through the same editor that restored `yaw -> "turn"` and took the
 re-rendered mean absolute error from 10.4655 / 8.4961 / 8.7140 down to
-0.3035 / 0.0769 / 0.0588.
+0.3035 / 0.0769 / 0.0588. (`look`'s three names are ones a codepoint sort orders
+identically, which is what rigc emitted when that trip was measured.)
 
-⚠️ Codepoint is not the editor's own comparator — it sorts natural and
-case-insensitive ([#539](https://github.com/firejune/rigc/issues/539)) — so the
-emit is only its order for names no comparator can put two ways, and the rest are
-a compile error. **R10** has the three shapes to avoid.
+⚠️ The editor's comparator is natural and case-insensitive
+([#539](https://github.com/firejune/rigc/issues/539)), and four of its choices are
+unmeasured — so the emit is that family's order for names none of the four
+decides, and the rest are a compile error. **R10** has the four shapes to avoid.
 
 ✅ **What that repair does not reach is a compile error now, not a hazard.** This
 paragraph used to say that names a codepoint sort and a friendlier one disagree
@@ -1507,12 +1525,14 @@ about — `Turn` / `turn`, `turn2` / `turn10` — were where *the hazard returns
 that nobody had round-tripped such a pair. Somebody has: `Turn, sweep, wave` came
 back `sweep, Turn, wave` and `turn10, turn2, zoom` came back `turn2, turn10, zoom`
 ([#539](https://github.com/firejune/rigc/issues/539)). ⇒ rigc no longer leaves
-that to naming discipline — **R10 refuses such a set by name**, printing both
-names, which of the three shapes it is, and the rename that settles it. Name
-animations so that every ordering anyone might use agrees — one case, and digits
-padded or absent — and you will never meet the refusal. What changed is the price
-of forgetting: a build that stops, rather than a slider that silently applies the
-wrong animation.
+that to naming discipline — and since
+[#543](https://github.com/firejune/rigc/issues/543) it does better than refusing
+those two, because they are the two sets the editor's answer is **known** for:
+both are emitted in the order it returned. What is still a compile error is the
+set whose order turns on one of the four unmeasured choices, printed with both
+names, which of them decides it, and the rename that settles it. What changed is
+the price of forgetting: a build that stops, rather than a slider that silently
+applies the wrong animation.
 
 ⚠️ **The fields of the model you did not choose are refused, not ignored.** The
 parser reads `time` only in the bone-less branch and `property`/`from`/`to`/`scale`/
@@ -3405,7 +3425,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `skin "S": uses the long form … and also has a key "X"` | §3.4.1 — move the slot inside `attachments` |
 | `animation "A" keys "X" as a path constraint, but the rig declares it as a "slider"` | §4.12 — a timeline group resolves by name AND type; use the field named after the constraint's own type |
 | `animation "A": "position" is a path constraint timeline, and this track names no constraint` | §4.12 — put the name in `"path"` |
-| `N pair(s) of animation names have no one order: … "Turn" / "sweep" (case) — codepoint puts "Turn" first only because of letter case; folded, "sweep" comes first; rename one of them so nothing but case has to be compared` | **R10** — rename until no pair is left. The kind in brackets is which of the three it is: `case`, `number` (pad the digit runs to the same width) or `separator` (make the first character that differs a letter or a digit). rigc keys `animations` codepoint-ascending and the editor sorts natural and case-insensitive ([#539](https://github.com/firejune/rigc/issues/539)); on names where those can disagree, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
+| `N pair(s) of animation names have no one order: … "turn" / "Turn" (case) — they are one name in two cases, and which of them the editor puts first is not measured; rename one of them so they differ by more than letter case` | **R10** — rename until no pair is left. The kind in brackets says which of the editor comparator's four UNMEASURED choices decides the pair: `case` (a pure case tie), `number` (one number written two ways, or a run of digits against a word) or `separator` (make the first character that differs a letter or a digit). rigc keys `animations` in the editor's own comparator — natural and case-insensitive ([#539](https://github.com/firejune/rigc/issues/539), [#543](https://github.com/firejune/rigc/issues/543)) — so a pair that comparator settles is emitted rather than refused, and only the four choices nobody has measured are a compile error; on those, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
 
 ### 5.2 Assertions — the gate
 
@@ -4974,10 +4994,13 @@ one key, deform blocks counted at each of their three levels;
 ⇒ in rigc: only `animations` is emitted sorted (R10), because it is the one
 object measured here whose ORDER is also an index space — every reference into
 the re-sorted *other* objects is by name on both sides, so nothing moves when
-they are re-keyed. rigc emits **codepoint** and refuses the name sets on which
-codepoint and the editor's comparator could differ, rather than reproducing a
-comparator whose leading-zero, case-tie, digit-against-word and separator
-behaviour is still unmeasured.
+they are re-keyed. rigc emits **that comparator's own order** and refuses the name
+sets on which its leading-zero, case-tie, digit-against-word or separator
+behaviour — the four choices still unmeasured — would decide a pair. Sorting the
+105 collections that way reproduces **105 of 105**, the three codepoint cannot
+included, and refuses none of them; the codepoint rule that stood until
+[#543](https://github.com/firejune/rigc/issues/543) reproduced 102 and refused
+those same 3.
 
 ✅ **`events` is re-keyed too, and the references into it survive it.** The same
 session measured it: `zebra, mike, alpha` came back `alpha, mike, zebra`, and the
