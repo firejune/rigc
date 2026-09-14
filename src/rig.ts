@@ -1239,6 +1239,31 @@ export interface RigInvariants {
    * second kind, and names the issue.
    */
   deformMayFold?: RigDeformFoldExemption[];
+  /**
+   * Declare that this rig is authored to come back out of the **Spine editor** —
+   * imported, hand-edited, exported — and gate what that consumer cannot hold
+   * (`A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP`).
+   *
+   * 🔑 **Opt-in, because rigc's output is not wrong.** A physics constraint
+   * driving `rotate` is valid Spine 4.3 and every runtime plays it: a cowlick, a
+   * tail, an ear. What is true is that one consumer discards it — measured, not
+   * inferred (issue #540): the editor's physics model holds `x` and `y` only,
+   * with no cap on how many at once, and a lone `rotate`, `scaleX` or `shearX`
+   * comes back driving nothing at all. Refusing that by default would be rigc
+   * refusing correct data on behalf of a pipeline nobody told it about, which is
+   * the same silence pointed the other way. rigc knows what the object is; only
+   * the rig knows which consumers it is for.
+   *
+   * ⚠️ **Declaring nothing is not the same as being told nothing.** `A41` SKIPs
+   * on a rig that stays quiet — and the SKIP names the constraint and the
+   * component a round trip would drop, because the defect this field exists for
+   * is that nobody finds out. Declaring `true` turns that sentence into a
+   * refusal.
+   *
+   * Only `true` is accepted. A `false` here would be a key nothing reads (issue
+   * #545), and leaving it out says the same thing without the ambiguity.
+   */
+  editorRoundTrip?: boolean;
 }
 
 /** One forbidden parentage — `invariants.detached` (`A25`). */
@@ -1330,7 +1355,7 @@ export const RIG_KEYS = {
   RigBoneFrom: ['anchor', 'slotWindow', 'meshCenter', 'rotation'],
   RigSlot: ['name', 'bone', 'attachment', 'color', 'dark', 'blend'],
   RigEvent: ['int', 'float', 'string', 'audio', 'volume', 'balance'],
-  RigInvariants: ['meshSlots', 'meshTriangles', 'axisBone', 'massBone', 'detached', 'deformMayFold'],
+  RigInvariants: ['meshSlots', 'meshTriangles', 'axisBone', 'massBone', 'detached', 'deformMayFold', 'editorRoundTrip'],
   RigDetachedRule: ['bone', 'notUnder', 'why'],
   RigDeformFoldExemption: ['slot', 'why'],
   // Not retyped: `RIG_SKIN_KEYS` already IS this set, and it is the set
@@ -1639,6 +1664,19 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
         );
       }
     }
+  }
+
+  // `invariants.editorRoundTrip` — the field that turns a check ON, so the only
+  // thing it can be wrong about is saying nothing while looking like it said
+  // something. `false` is refused for exactly that: it reads as a decision and
+  // behaves as an absence, which is the shape issue #545 closed elsewhere.
+  const roundTrip = spec.invariants?.editorRoundTrip;
+  if (roundTrip !== undefined && roundTrip !== true) {
+    throw new CompileError(
+      `${where}: invariants.editorRoundTrip is ${JSON.stringify(roundTrip)}; the only accepted value is \`true\`. ` +
+        'A rig that is not authored for the editor leaves the key out — A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP then ' +
+        'SKIPs and still names anything a round trip would drop, so nothing is lost by saying nothing',
+    );
   }
 
   const constraintNames = new Set<string>();

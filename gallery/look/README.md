@@ -64,6 +64,21 @@ slider — but the answer no longer depends on one. What came back
   example through the editor and the hair below stops moving.** Nothing in the
   returned file says so; the refusal is the only thing that does.
 
+  ✅ **Said before the trip since [#540](https://github.com/firejune/rigc/issues/540),
+  and this example is where you can read it.** Every build of `look` prints
+
+  ```
+  SKIP  A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP: the rig "look" does not declare `invariants.editorRoundTrip`, so nothing here is gated against the Spine editor. What is here: physics "whip" drives rotate, and the editor's physics model holds x and y only, so a round trip returns that constraint driving nothing at all (issue #540)
+  ```
+
+  🚫 **And this rig deliberately does not declare it**, which is a claim about the
+  example rather than a gap: `look` exists to be *played*, and a rotation-driven
+  jiggle is valid Spine 4.3 that every runtime runs correctly. Add
+  `"editorRoundTrip": true` to its `invariants` and that SKIP becomes a **refusal**
+  — a true statement about a rig that would then be promising something it does not
+  keep. A face rig authored for the editor declares it and drives `whip` in `x`/`y`
+  instead ([docs/FACE.md §8](../../docs/FACE.md), AUTHORING §3.7).
+
 ```
 bun install                                     # once
 

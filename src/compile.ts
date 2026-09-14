@@ -4181,6 +4181,7 @@ function buildRigInfo(
     meshKinds,
     meshSoftBones,
     deformMayFold,
+    editorRoundTrip: rig.invariants?.editorRoundTrip === true,
     meshSlotBudget: rig.invariants?.meshSlots ?? null,
     meshTriangleBudget: rig.invariants?.meshTriangles ?? null,
     contactDepth,

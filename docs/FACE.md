@@ -1220,6 +1220,19 @@ which declares no constraints at all and so can carry no slider. What it found:
   ⚠️ Still open on #536: whether the loss happens at import or at export. The
   project file's bytes cannot settle it — it carries derived float32s that no
   input declares — and the answer is invisible to an author either way.
+
+  ✅ **And the gate now says so before the trip, not after.** A face rig that is
+  authored to come back out of the editor declares
+  `"invariants": { "editorRoundTrip": true }` (AUTHORING §3.7) and
+  `A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP` refuses the constraint by name at build
+  time, with the fix in the message: drive it in `x`/`y`, or drop the declaration.
+  ⚠️ A rig that declares nothing is **not** silent either — A41 SKIPs and the skip
+  names the constraint and the component, which is the whole reason the rule is
+  opt-in rather than default-off. rigc's own output was never wrong here: a
+  rotation jiggle is valid Spine 4.3 that every runtime plays, and refusing it for
+  everybody would be refusing correct data on behalf of one consumer. ⇒ A23 and
+  A41 are the same loss from opposite sides of the trip: A41 fires on what goes
+  in, A23 on what comes back.
 - 🔸 Unexplained: `diff` reports `animations.curve_kinds` moved on **196 of 200**
   keys in every round trip taken, the clean one included. Visually small once the
   ordering is fixed — but it is 98% of the keys, and *small* is not *explained*.
