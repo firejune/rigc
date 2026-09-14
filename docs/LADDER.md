@@ -76,12 +76,49 @@ judging a candidate rather than building one.
 #### `bones` and `slots` carry two figures
 
 ⭐ **A candidate is entitled to its own names, so those two sections are reported
-twice** — once name-matched, once name-agnostic (issue #21, 2026-08-23):
+twice** — once name-matched, once name-agnostic (issue #21, 2026-08-23).
+
+⚠️ **A figure on this page is one candidate's, and the candidate has to be named
+beside it.** The rung-3 attempts on disk do not answer alike, so a `bench` line
+standing on its own cannot be re-taken: a reader compares against it, gets a
+different number and reads drift where there is none — which is what happened
+([#538](https://github.com/firejune/rigc/issues/538)). What is quoted below is
+rung 3's **second** attempt, compiled from the specs committed with it
+([`bench/runs/2026-08-23-rung3-2/`](../bench/runs/2026-08-23-rung3-2/)) and
+benched, after `bun run fetch-examples` — `examples/` is gitignored and absent
+from a fresh clone:
+
+```bash
+bun cli.ts build \
+  --rig    bench/runs/2026-08-23-rung3-2/pendulum.rig.json \
+  --motion bench/runs/2026-08-23-rung3-2/pendulum.motion.json \
+  --images examples/3-timing-and-spacing/images \
+  --out    <attempt2> --profile spine
+bun cli.ts bench 3 --candidate <attempt2>
+```
+
+The first five lines of that report, verbatim and uncut — a contiguous window of
+the run, so the selftest's docs-transcript gate
+([#468](https://github.com/firejune/rigc/issues/468)) compares it line for line
+instead of a reader noticing:
 
 ```
-ess        bones=0.567  slots=0.476  attachments=0.926  constraints=1.000  animations=0.936  events=1.000
-           bones 0.567 (name-matched) · 1.000 (name-agnostic)   slots 0.476 (name-matched) · 1.000 (name-agnostic)
+  ── summary ──
+  validate   green  (profile spine)
+  ess        bones=0.567  slots=0.476  attachments=0.926  constraints=1.000  animations=0.936  events=1.000
+             bones 0.567 (name-matched) · 1.000 (name-agnostic)   slots 0.476 (name-matched) · 1.000 (name-agnostic)
+             reported: mesh_edges 1.000 · key_density 0.710 · keys_per_timeline 0.710
 ```
+
+🔸 **Why a rebuild and not `--candidate bench/runs/2026-08-23-rung3-2/spine`**,
+which prints the same five lines. A `bench` that names a committed candidate
+states no corpus path, so the scan reads it as runnable and runs it on a machine
+with no `examples/`, where it fails — that one failed run empties this page's
+HOLE and takes the B1 proof below out of the gate's reach, which is measured
+rather than argued: a corpus-less run goes red on `DQ01`'s reach floor and on
+`DQ04`'s plant. Building through `--images` puts the corpus back in the argv,
+where the scan can see it, and the whole fence falls out together on a clone
+that has not fetched it — which is why *B1's proof* is written the same way.
 
 The reason is arithmetic. Five of `bones`'s eight measures — `names`,
 `parent_by_name`, `order`, `length_present`, `inherit_present` — are gated on the

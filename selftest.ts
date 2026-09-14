@@ -32248,15 +32248,30 @@ function scanDocsQuotes(
       // is what stops the scope drifting: there is no second expression to
       // disagree with, so a block the report calls "printed by no command" can
       // never be one the fault list names.
+      // 🔒 **Sliced from where the two lines FIRST differ, for the reason the
+      // `nearestPrintedLine` branch below already carries and this one did
+      // not.** Two prefixes of a fixed width name the divergence only while it
+      // falls inside them: every `bench` section-mean line in `docs/LADDER.md`
+      // is past a hundred characters, so a one-digit drift in it printed the
+      // SAME sixty-four characters twice and left a reader with a line number
+      // and nothing else (issue #538). Measured on a planted `animations=0.936`
+      // → `0.937` before this was written.
       const divergence =
         !reproduces && runs.length > 0 && best !== null && best.shared > 0
-          ? {
-              command: best.command,
-              at: best.shared + 1,
-              of: body.length,
-              page: body[best.shared].trim().slice(0, 64),
-              tool: best.window[best.shared].trim().slice(0, 64),
-            }
+          ? ((): { command: string; at: number; of: number; agree: number; page: string; tool: string } => {
+              const page = body[best.shared].trim();
+              const tool = best.window[best.shared].trim();
+              let agree = 0;
+              while (agree < page.length && agree < tool.length && page[agree] === tool[agree]) agree++;
+              return {
+                command: best.command,
+                at: best.shared + 1,
+                of: body.length,
+                agree,
+                page: page.slice(agree, agree + 64),
+                tool: tool.slice(agree, agree + 64),
+              };
+            })()
           : null;
       if (block.declared !== null) {
         if (block.declared.length < TRANSCRIPT_REASON_MIN) {
@@ -32295,8 +32310,9 @@ function scanDocsQuotes(
       const near = runs.length === 0 ? null : nearestPrintedLine(body[0].trimStart(), runs);
       const why =
         divergence !== null
-          ? `line ${divergence.at} of ${divergence.of} reads "${divergence.page}" and ` +
-            `\`${divergence.command.slice(0, 44)}\` prints "${divergence.tool}"`
+          ? `line ${divergence.at} of ${divergence.of} agrees for ${divergence.agree} character(s), and then ` +
+            `the page reads "${divergence.page}" where \`${divergence.command.slice(0, 44)}\` prints ` +
+            `"${divergence.tool}"`
           : runs.length === 0
             ? `no command \`${file}\` states can be run here, so nothing in this repository prints it`
             : `its first line is printed by no command this page states` +
