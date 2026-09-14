@@ -8415,12 +8415,18 @@ function runPathAndSliderSuite(): number {
   // and `turn10, turn2, zoom` came back **`turn2, turn10, zoom`**. Natural
   // order, case-insensitive, is the only hypothesis both leave standing.
   //
-  // ⇒ rigc still emits codepoint, and refuses every name set that does not
-  // pin the two together. On a set no comparator can order two ways, codepoint
-  // IS the editor's order — whatever the editor's comparator turns out to be —
-  // and the alternative was to write a comparator whose four free choices
-  // (leading zeros, a pure case tie, digits against words, what a separator is
-  // worth) are still unmeasured. That is how #537 landed.
+  // ⇒ rigc emits a member of that family and refuses every name set on which
+  // the family's four UNMEASURED choices — leading zeros, a pure case tie,
+  // digits against words, what a separator is worth — could decide a pair. On a
+  // set none of the four touches, every member of the family produces one order,
+  // so the emit is the editor's order whatever those four turn out to be.
+  //
+  // ⚠️ It emitted **codepoint** until issue #543, with the refusal widened to
+  // cover every pair codepoint and the family could order differently. That is
+  // sound and it over-refuses by construction, because codepoint is not in the
+  // family — so the two rigs above, the only ones the editor was ever measured
+  // on, were refused rather than emitted in the order it returned. `PS52` is
+  // that correction; the rows left in the table below are the four free choices.
   const named = (names: string[]): { dirs: ProbeDirs; motion: Record<string, unknown> } => {
     const base = sliderPairMotion();
     const body = (base.animations as Record<string, unknown>)['yaw-pose'];
@@ -8430,10 +8436,9 @@ function runPathAndSliderSuite(): number {
   };
 
   // Every branch of the predicate, one rig each, and the two names each rig's
-  // message has to carry. The first two rows are the rigs #539 measured.
+  // message has to carry. One row per unmeasured choice in the editor's
+  // comparator, which is what the refusal is now stated on.
   const ambiguous: Array<[string, string[], [string, string], string]> = [
-    ['case folds the other way', ['Turn', 'sweep', 'wave'], ['Turn', 'sweep'], 'case'],
-    ['digit runs of unequal width', ['turn10', 'turn2', 'zoom'], ['turn10', 'turn2'], 'number'],
     ['one name in two cases', ['Turn', 'turn'], ['Turn', 'turn'], 'case'],
     ['one number written two ways', ['turn01', 'turn1'], ['turn01', 'turn1'], 'number'],
     ['a number where the other has a word', ['1turn', 'turn'], ['1turn', 'turn'], 'number'],
@@ -8478,6 +8483,118 @@ function runPathAndSliderSuite(): number {
       'list is read off the compiler rather than kept here, so a fourth kind with no rig is a fault',
   );
 
+  /** The order a name set is actually keyed in once emitted, or `null` if refused. */
+  const emittedOrderOf = (names: string[]): string[] | null => {
+    const rig = named(names);
+    if (refusal(rig.dirs, rig.motion) !== null) return null;
+    const skeleton = JSON.parse(
+      compile({
+        rigPath: rig.dirs.rigPath,
+        motionPath: join(rig.dirs.dir, 'probe.motion.json'),
+        outDir: rig.dirs.outDir,
+        imagesDir: rig.dirs.dir,
+      }).skeletonText,
+    ) as Record<string, unknown>;
+    return Object.keys(skeleton.animations as Record<string, unknown>);
+  };
+
+  // ⭐ The two rigs the editor was ACTUALLY measured on, and the case that says
+  // rigc now reproduces what it returned rather than refusing to guess. Until
+  // issue #543 both of these were a `CompileError` whose only repair was a
+  // rename — which is the one repair a transcription cannot take, and the whole
+  // of that card.
+  //
+  // 🔒 The second clause is what stops it being vacuous, and it is the reason
+  // the pair is worth a case at all: on both rigs a CODEPOINT sort produces a
+  // different order, so a case that only asserted "it compiled" would pass on
+  // the emit this replaced, and one that only asserted the emitted order would
+  // pass on any rig whose two orders happen to agree.
+  const measuredRigs: Array<[string[], string[]]> = [
+    [['Turn', 'sweep', 'wave'], ['sweep', 'Turn', 'wave']],
+    [['turn10', 'turn2', 'zoom'], ['turn2', 'turn10', 'zoom']],
+  ];
+  const reproduced = measuredRigs.map(([names, editorReturned]) => {
+    const order = emittedOrderOf(names);
+    const codepointOrder = sortedByCodepoint(names);
+    return {
+      names,
+      editorReturned,
+      order,
+      codepointOrder,
+      faults: [
+        order === null ? 'was refused instead of being emitted' : null,
+        order !== null && JSON.stringify(order) !== JSON.stringify(editorReturned)
+          ? `is keyed [${order.join(', ')}] and the editor returned [${editorReturned.join(', ')}]`
+          : null,
+        JSON.stringify(codepointOrder) === JSON.stringify(editorReturned)
+          ? 'a codepoint sort produces the same order, so this rig discriminates nothing'
+          : null,
+      ].filter((f): f is string => f !== null),
+    };
+  });
+  const notReproduced = reproduced.filter((r) => r.faults.length);
+  say(
+    'PS52_THE_TWO_RIGS_THE_EDITOR_WAS_MEASURED_ON_ARE_EMITTED_IN_THE_ORDER_IT_RETURNED',
+    notReproduced.length === 0 && reproduced.length > 0,
+    probeDetail(
+      notReproduced.length === 0,
+      notReproduced.map((r) => `[${r.names.join(', ')}] ${r.faults.join('; ')}`),
+      reproduced
+        .map(
+          (r) =>
+            `[${r.names.join(', ')}] declared, [${(r.order ?? []).join(', ')}] emitted, which is what the editor ` +
+            `returned and is not [${r.codepointOrder.join(', ')}], the codepoint order`,
+        )
+        .join('; '),
+    ),
+    'these are the only two name sets anyone has put through a licensed editor and read the answer back, so they ' +
+      'are the only two where "the emitted order is the editor\'s order" is a measured claim rather than a ' +
+      'quantifier over comparators. A tool that refuses the pairs it knows most about is refusing its own evidence',
+  );
+
+  // 🎯 The shape issue #543 was filed about, and the reason it was a 1.0 blocker
+  // rather than a curiosity: a numbered series that crosses 9 → 10. It is the
+  // commonest naming scheme there is, the editor writes it itself — `spineboy-pro`
+  // keys `portal-flare9` **before** `portal-flare10`, in its default skin's
+  // attachment map and in two of `portal`'s timeline maps — and under the
+  // codepoint rule every such series was a refusal whose only repair was to
+  // rename every member of it. A transcription cannot take that repair without
+  // ceasing to be one, and neither can a name a consumer already calls by string.
+  const series = Array.from({ length: 12 }, (_, i) => `shot${i + 1}`);
+  const seriesOrder = emittedOrderOf(series);
+  const seriesCodepoint = sortedByCodepoint(series);
+  // The rule this replaced, stated here rather than imported, so the case says
+  // what changed rather than asserting the compiler agrees with itself: two digit
+  // runs of unequal width were refused however they compared.
+  const widthsRefused = series.filter((name, i) =>
+    series.some((other, j) => i !== j && name.replace(/\d+$/, '') === other.replace(/\d+$/, '') &&
+      (name.match(/\d+$/) ?? [''])[0].length !== (other.match(/\d+$/) ?? [''])[0].length),
+  );
+  const seriesFaults = [
+    seriesOrder === null ? 'the series was refused' : null,
+    seriesOrder !== null && JSON.stringify(seriesOrder) !== JSON.stringify(series)
+      ? `is keyed [${seriesOrder.join(', ')}] rather than in its own numeric order`
+      : null,
+    JSON.stringify(seriesCodepoint) === JSON.stringify(series)
+      ? 'a codepoint sort produces the same order, so this series discriminates nothing'
+      : null,
+    widthsRefused.length === 0 ? 'no member of this series is one the digit-run-width rule would have refused' : null,
+  ].filter((f): f is string => f !== null);
+  say(
+    'PS53_A_NUMBERED_SERIES_CROSSING_NINE_TO_TEN_BUILDS_IN_ITS_OWN_NUMERIC_ORDER',
+    seriesFaults.length === 0,
+    probeDetail(
+      seriesFaults.length === 0,
+      seriesFaults,
+      `[${series.join(', ')}] is keyed exactly as declared, where a codepoint sort gives ` +
+        `[${seriesCodepoint.join(', ')}]; ${widthsRefused.length} of the ${series.length} name(s) are ones the ` +
+        'digit-run-width rule refused, and the repair it offered was to rename all of them',
+    ),
+    'the last two clauses are the two ways this could be vacuous — a series codepoint already orders correctly ' +
+      'would pass without the emitter doing anything, and a series the old rule never refused would not be ' +
+      'evidence that anything was unblocked',
+  );
+
   // The other side, and the one that says the rule refuses AMBIGUITY rather than
   // refusing capitals and digits: a set carrying both, unambiguous, still builds.
   const fine = named(['Sweep', 'Turn', 'Wave', 'Zoom02', 'Zoom10']);
@@ -8506,7 +8623,8 @@ function runPathAndSliderSuite(): number {
       fineNames.some((n) => /\d/.test(n)) &&
       JSON.stringify(fineOrder) === JSON.stringify(sortedByCodepoint(fineNames)),
     fineRefusal === null
-      ? `[${fineNames.join(', ')}] compiled and is keyed [${fineOrder.join(', ')}], which is its codepoint order; ` +
+      ? `[${fineNames.join(', ')}] compiled and is keyed [${fineOrder.join(', ')}] — a set none of the four ` +
+        'unmeasured choices touches, so the editor\'s comparator and a codepoint sort agree on it; ' +
         `${fineNames.filter((n) => /[A-Z]/.test(n)).length} of them carry a capital and ` +
         `${fineNames.filter((n) => /\d/.test(n)).length} carry digits`
       : `a set with no ambiguous pair was refused: ${fineRefusal}`,
@@ -8534,21 +8652,25 @@ function runPathAndSliderSuite(): number {
     }
     return hits;
   };
-  const measuredCase = ambiguous[0][1];
-  const measuredDigits = ambiguous[1][1];
+  const [measuredCase, caseReturned] = measuredRigs[0];
+  const [measuredDigits] = measuredRigs[1];
   const proposedOnCase = asProposed(measuredCase);
   const proposedOnDigits = asProposed(measuredDigits);
-  const shippedOnCase = refused[0].message;
+  const shippedOnCase = emittedOrderOf(measuredCase);
   say(
     'PS51_THE_SHAPES_539_PROPOSED_MISS_THE_RIG_539_WAS_MEASURED_ON',
-    proposedOnCase.length === 0 && proposedOnDigits.length > 0 && shippedOnCase !== null,
-    `over [${measuredCase.join(', ')}] — the rig the editor returned as [${[...measuredCase]
-      .sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1))
-      .join(', ')}] — the proposed shapes find ${proposedOnCase.length} pair(s) and the compiler refuses it; over ` +
-      `[${measuredDigits.join(', ')}] the proposed shapes do find ${proposedOnDigits.join(', ')}`,
-    'the second clause is what stops this being vacuous: a predicate that never fires would satisfy the first on its ' +
-      'own. Together they say the proposed rule works and is still strictly weaker than the one that shipped, on the ' +
-      'two rigs the editor was actually measured with',
+    proposedOnCase.length === 0 &&
+      proposedOnDigits.length > 0 &&
+      shippedOnCase !== null &&
+      JSON.stringify(shippedOnCase) === JSON.stringify(caseReturned),
+    `over [${measuredCase.join(', ')}] — the rig the editor returned as [${caseReturned.join(', ')}] — the ` +
+      `proposed shapes find ${proposedOnCase.length} pair(s), so under them the rig would have been keyed ` +
+      `[${sortedByCodepoint(measuredCase).join(', ')}] and its slider repointed; the compiler keys it ` +
+      `[${(shippedOnCase ?? []).join(', ')}]. Over [${measuredDigits.join(', ')}] the proposed shapes do find ` +
+      `${proposedOnDigits.join(', ')}`,
+    'the second clause is what stops this being vacuous: a predicate that never fires would satisfy the first on ' +
+      'its own. Together they say the proposed rule is blind to the one rig anybody actually round-tripped, and ' +
+      'that the compiler now emits what the editor returned on it rather than a codepoint order it would re-sort',
   );
 
   return bad;

@@ -876,12 +876,14 @@ export interface SpineSkeletonJson {
    *
    * - **The re-key is not in codepoint order.** It is natural and
    *   case-insensitive: `Turn, sweep, wave` came back `sweep, Turn, wave` and
-   *   `turn10, turn2, zoom` came back `turn2, turn10, zoom` (#539). rigc still
-   *   emits `animations` codepoint-ascending, and refuses by name every name set
-   *   on which codepoint and the editor's comparator could disagree — see
-   *   `compile.ts`'s `refuseNamesTheEditorCouldKeyDifferently`, which is what
-   *   makes "codepoint is the editor's order" true of what rigc emits rather
-   *   than assumed of the editor.
+   *   `turn10, turn2, zoom` came back `turn2, turn10, zoom` (#539). rigc emits
+   *   `animations` in **that** comparator's order since issue #543, and refuses
+   *   by name every name set on which one of its four unmeasured choices could
+   *   decide a pair — see `compile.ts`'s `measuredOrder` and
+   *   `refuseNamesTheEditorCouldKeyDifferently`. It emitted codepoint until
+   *   #543, with the refusal widened to cover every pair codepoint could order
+   *   differently; that refused both rigs above, which are the only two anybody
+   *   has measured, and it moved no byte to stop doing so.
    * - **`skins` was on the safe side of this list and has no measurement behind
    *   it.** The arrays the round trip actually returned element for element were
    *   `bones` (30), `slots` (24) and `constraints` (3). Every rig in this tree
