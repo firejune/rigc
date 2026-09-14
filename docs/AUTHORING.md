@@ -1501,14 +1501,18 @@ case-insensitive ([#539](https://github.com/firejune/rigc/issues/539)) — so th
 emit is only its order for names no comparator can put two ways, and the rest are
 a compile error. **R10** has the three shapes to avoid.
 
-⚠️ **What that repair does not reach: names a codepoint sort and a friendlier one
-disagree about.** Every animation name in every editor-authored file this
-repository has is lowercase ASCII with `-` or `_`, so nothing measured here
-separates codepoint order from a case-insensitive or digit-aware one. Names
-differing only in case (`Turn` / `turn`) or carrying unpadded digits (`turn2` /
-`turn10`) are where the two could part, and there the hazard returns. Until
-somebody round-trips such a pair, **name animations so that every ordering anyone
-might use agrees** — one case, and digits padded or absent.
+✅ **What that repair does not reach is a compile error now, not a hazard.** This
+paragraph used to say that names a codepoint sort and a friendlier one disagree
+about — `Turn` / `turn`, `turn2` / `turn10` — were where *the hazard returns*, and
+that nobody had round-tripped such a pair. Somebody has: `Turn, sweep, wave` came
+back `sweep, Turn, wave` and `turn10, turn2, zoom` came back `turn2, turn10, zoom`
+([#539](https://github.com/firejune/rigc/issues/539)). ⇒ rigc no longer leaves
+that to naming discipline — **R10 refuses such a set by name**, printing both
+names, which of the three shapes it is, and the rename that settles it. Name
+animations so that every ordering anyone might use agrees — one case, and digits
+padded or absent — and you will never meet the refusal. What changed is the price
+of forgetting: a build that stops, rather than a slider that silently applies the
+wrong animation.
 
 ⚠️ **The fields of the model you did not choose are refused, not ignored.** The
 parser reads `time` only in the bone-less branch and `property`/`from`/`to`/`scale`/
@@ -4951,6 +4955,21 @@ session measured it: `zebra, mike, alpha` came back `alpha, mike, zebra`, and th
 firings still resolved **by name** — `0.3 -> mike`, `0.6 -> alpha`, payloads
 intact (#539). So the editor treats `events` and `animations` differently, and
 rigc emits events in the order you declare them.
+
+⚠️ **Read *"leaves every ARRAY alone"* above as bones, slots and constraints —
+`skins` is the array that round trip was not taken over.** `gallery/look` declares
+one skin, as does every other rig in this repository and all twelve editor exports
+in `examples/`, and a one-element array comes back in order whatever the editor
+does to it — so nothing here is
+evidence about `skins`, and a pull request that once called them *measured
+preserved* was reading a vacuous result ([#544](https://github.com/firejune/rigc/issues/544)).
+It matters because `skins` carries ordinals in the binary half too —
+`skins[readInt()]` for an attachment timeline and a linked mesh's skin index — so
+a re-order there would repoint them the way the `animations` re-key repoints a
+slider. ⛔ And it cannot be measured today: the editor refuses a four-skin rig on
+import without writing a project file or printing a word
+([#541](https://github.com/firejune/rigc/issues/541)). ⇒ **If you author more than
+one skin, nothing on this page says the editor survives it.**
 
 ### 10.2 Draw order
 
