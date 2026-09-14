@@ -6954,9 +6954,14 @@ function runPathAndSliderSuite(): number {
       imagesDir: dirs.dir,
     }).skeletonText,
   ) as Record<string, unknown>;
+  // ⚠️ By NAME, not `skins[0]`. `PATH_RIG` declares two skins, and the positional
+  // read was correct only because rigc pins `default` first — so the plant that
+  // takes the pinning away (issue #541) threw HERE, 469 cases before `PS61`, the
+  // row written to catch it. A control placed behind an unrelated positional read
+  // is worse than a missing one: the run still goes red and names the wrong thing.
   const emittedPath = (
-    (emitted.skins as Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }>)[0]
-      .attachments.track.track
+    (emitted.skins as Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }>)
+      .find((skin) => skin.name === 'default')!.attachments.track.track
   );
   say(
     'PS01_the_path_lengths_are_MEASURED_off_the_geometry',
@@ -7288,9 +7293,26 @@ function runPathAndSliderSuite(): number {
     'looping divides by the animation duration, so a zero-length one applies the animation at NaN — and an animation with no timelines applies nothing at all',
   );
 
+  /**
+   * `PATH_RIG`'s DEFAULT skin, by name.
+   *
+   * ⚠️ These mutants said `skins[0]`, which is the same skin only because rigc
+   * pins `default` at index 0 — and `PATH_RIG` declares two. See the note at
+   * `PS01`: a mutant that reaches through a positional read takes the run down
+   * before the case that was written to catch the positional assumption.
+   */
+  const defaultSkinOf = (
+    skeleton: Record<string, unknown>,
+  ): { attachments: Record<string, Record<string, Record<string, unknown>>> } => {
+    const skins = skeleton.skins as Array<{
+      name: string;
+      attachments: Record<string, Record<string, Record<string, unknown>>>;
+    }>;
+    return skins.find((skin) => skin.name === 'default')!;
+  };
+
   const brokenPath = gateProbeArtifacts(dirs, motion, (skeleton) => {
-    const skins = skeleton.skins as Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }>;
-    skins[0].attachments.track.track.type = 'boundingbox';
+    defaultSkinOf(skeleton).attachments.track.track.type = 'boundingbox';
   });
   say(
     'PS21_A36_fires_when_the_constrained_slot_stops_showing_a_path',
@@ -7301,8 +7323,7 @@ function runPathAndSliderSuite(): number {
   );
 
   const brokenLengths = gateProbeArtifacts(dirs, motion, (skeleton) => {
-    const skins = skeleton.skins as Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }>;
-    (skins[0].attachments.track.track.lengths as number[])[1] = 45;
+    (defaultSkinOf(skeleton).attachments.track.track.lengths as number[])[1] = 45;
   });
   say(
     'PS22_A33_fires_on_a_lengths_array_that_does_not_increase',
@@ -8671,6 +8692,288 @@ function runPathAndSliderSuite(): number {
     'the second clause is what stops this being vacuous: a predicate that never fires would satisfy the first on ' +
       'its own. Together they say the proposed rule is blind to the one rig anybody actually round-tripped, and ' +
       'that the compiler now emits what the editor returned on it rather than a codepoint order it would re-sort',
+  );
+
+  // --- skins: one placeholder, several attachments, and the array's order ----
+  //
+  // 🚨 Issue #541, and it is two defects that were one symptom. A four-skin rig
+  // built green, parsed in spine-core, and the Spine editor refused the import
+  // outright — because rigc emitted several structurally distinct attachments
+  // all named `patch`, and a linked mesh resolves its parent BY NAME. spine-core
+  // never notices: its skin table is keyed by placeholder, so the two never
+  // meet, and this is the exact shape of a claim no gate in this repository can
+  // see. With the import unblocked, the export answered the other question the
+  // wrong way: `default, zulu, mike, alpha` came back `default, alpha, mike,
+  // zulu`, which makes `skins` the first array measured NOT preserved.
+  interface EmittedSkin {
+    name: string;
+    attachments: Record<string, Record<string, { name?: string; path?: string }>>;
+  }
+  /** The probe rig with these skins, emitted — or the message it was refused with. */
+  const skinEmit = (skins: Record<string, unknown>): EmittedSkin[] | string => {
+    const probe = writeProbeRig({ skins });
+    const motionPath = join(probe.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    try {
+      const text = compile({
+        rigPath: probe.rigPath,
+        motionPath,
+        outDir: probe.outDir,
+        imagesDir: probe.dir,
+      }).skeletonText;
+      return (JSON.parse(text) as { skins: EmittedSkin[] }).skins;
+    } catch (err) {
+      return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+  };
+  /** `skin/slot/placeholder -> the name the emit gives that attachment`. */
+  const namesOf = (skins: EmittedSkin[]): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const skin of skins) {
+      for (const [slot, table] of Object.entries(skin.attachments)) {
+        for (const [placeholder, att] of Object.entries(table)) {
+          out.set(`${skin.name}/${slot}/${placeholder}`, att.name ?? placeholder);
+        }
+      }
+    }
+    return out;
+  };
+  /** Every attachment name a slot holds more than once — the editor's objection. */
+  const sharedNames = (skins: EmittedSkin[]): string[] => {
+    const perSlot = new Map<string, string[]>();
+    for (const skin of skins) {
+      for (const [slot, table] of Object.entries(skin.attachments)) {
+        for (const [placeholder, att] of Object.entries(table)) {
+          perSlot.set(slot, [...(perSlot.get(slot) ?? []), att.name ?? placeholder]);
+        }
+      }
+    }
+    const shared: string[] = [];
+    for (const [slot, names] of perSlot) {
+      for (const name of new Set(names)) {
+        const held = names.filter((n) => n === name).length;
+        if (held > 1) shared.push(`${slot}: "${name}" x${held}`);
+      }
+    }
+    return shared;
+  };
+  /** One skin filling `marker` with art shifted by `x`, so the entries differ. */
+  const markerSkin = (x: number): Record<string, unknown> => ({ marker: { marker: { image: 'marker.png', x } } });
+  const FOUR_SKINS = {
+    default: { ...PROBE_DEFAULT_SKIN },
+    zulu: markerSkin(1),
+    mike: markerSkin(2),
+    alpha: markerSkin(3),
+  };
+
+  const four = skinEmit(FOUR_SKINS);
+  const fourNames = typeof four === 'string' ? new Map<string, string>() : namesOf(four);
+  const fourShared = typeof four === 'string' ? ['(refused)'] : sharedNames(four);
+  say(
+    'PS54_EVERY_SKIN_FILLING_ONE_PLACEHOLDER_GETS_ITS_OWN_ATTACHMENT_NAME',
+    typeof four !== 'string' &&
+      fourShared.length === 0 &&
+      [...fourNames].filter(([site]) => site.endsWith('/marker/marker')).length === 4 &&
+      fourNames.get('default/marker/marker') === 'default/marker' &&
+      fourNames.get('zulu/marker/marker') === 'zulu/marker' &&
+      // The placeholder `block`, which only `default` fills, is untouched — this
+      // is the clause that keeps every single-skin rig in the tree byte-identical.
+      fourNames.get('default/block/block') === 'block' &&
+      four.every((s) => s.attachments.block === undefined || s.attachments.block.block.name === undefined),
+    typeof four === 'string'
+      ? `the four-skin rig was refused: ${four}`
+      : `slot "marker" holds ${[...fourNames].filter(([s]) => s.endsWith('/marker/marker')).length} attachment(s) ` +
+        `named [${[...fourNames].filter(([s]) => s.endsWith('/marker/marker')).map(([, n]) => n).join(', ')}] and ` +
+        `${fourShared.length} name(s) are held twice in any slot; the uncontested "block" is still named ` +
+        `"${fourNames.get('default/block/block')}" with no \`name\` field`,
+    'the editor refuses an import where one slot holds two attachments of one name, and spine-core cannot see it — ' +
+      'its skin table is keyed by placeholder, so the two attachments never meet. The last clause is the half that ' +
+      'costs nothing: a placeholder one skin fills is emitted exactly as it always was',
+  );
+
+  // 🌱 The plant is the emit this repair replaced — the same four skins with the
+  // `name` field taken back off, which is what rigc wrote until #541. It is
+  // tested by the fault it raises, and the fault is the editor's own sentence:
+  // four attachments, one slot, one name.
+  const stripped: EmittedSkin[] =
+    typeof four === 'string'
+      ? []
+      : four.map((skin) => ({
+          name: skin.name,
+          attachments: Object.fromEntries(
+            Object.entries(skin.attachments).map(([slot, table]) => [
+              slot,
+              Object.fromEntries(
+                Object.entries(table).map(([placeholder, att]) => {
+                  const { name: _dropped, ...rest } = att;
+                  return [placeholder, rest];
+                }),
+              ),
+            ]),
+          ),
+        }));
+  const strippedShared = sharedNames(stripped);
+  say(
+    'PS55_WITHOUT_THE_NAMES_THE_SAME_FOUR_SKINS_ARE_FOUR_ATTACHMENTS_CALLED_ONE_THING',
+    stripped.length === 4 && strippedShared.length === 1 && strippedShared[0] === 'marker: "marker" x4',
+    `with the \`name\` field removed the same skeleton reports ${strippedShared.length} collision(s)` +
+      (strippedShared.length ? `: ${strippedShared.join('; ')}` : '') +
+      `, against ${fourShared.length} for the emit as it ships`,
+    'a detector that never fires is not a detector. This reader is the editor\'s rule stated as arithmetic, and ' +
+      'the two cases together say it can tell the shipped emit from the one that was refused at the door',
+  );
+
+  const distinct = skinEmit({
+    default: { ...PROBE_DEFAULT_SKIN },
+    zulu: { marker: { fancy: { image: 'marker.png', x: 1 } } },
+  });
+  const distinctNames = typeof distinct === 'string' ? new Map<string, string>() : namesOf(distinct);
+  say(
+    'PS56_TWO_SKINS_THAT_SHARE_NO_PLACEHOLDER_ARE_EMITTED_UNCHANGED',
+    typeof distinct !== 'string' &&
+      [...distinctNames.values()].every((name) => !name.includes('/')) &&
+      distinctNames.get('default/marker/marker') === 'marker' &&
+      distinctNames.get('zulu/marker/fancy') === 'fancy' &&
+      sharedNames(distinct).length === 0,
+    typeof distinct === 'string'
+      ? `refused: ${distinct}`
+      : `two skins fill slot "marker" under the placeholders [${[...distinctNames]
+          .filter(([s]) => s.includes('/marker/'))
+          .map(([s]) => s.split('/')[2])
+          .join(', ')}] and the emitted names are [${[...distinctNames].filter(([s]) => s.includes('/marker/')).map(([, n]) => n).join(', ')}]`,
+    'the rule is about a NAME that two attachments answer to, not about a rig having more than one skin — a ' +
+      'multi-skin rig whose skins disagree about the placeholder was never ambiguous and must not be rewritten',
+  );
+
+  const collided = skinEmit({
+    default: { ...PROBE_DEFAULT_SKIN, marker: { marker: { image: 'marker.png' }, 'zulu/marker': { image: 'marker.png', x: 5 } } },
+    zulu: markerSkin(1),
+  });
+  const notCollided = skinEmit({
+    default: { ...PROBE_DEFAULT_SKIN, marker: { marker: { image: 'marker.png' }, 'zulu.marker': { image: 'marker.png', x: 5 } } },
+    zulu: markerSkin(1),
+  });
+  say(
+    'PS57_A_COMPOSED_NAME_A_PLACEHOLDER_ALREADY_ANSWERS_TO_IS_REFUSED_BY_BOTH_SITES',
+    typeof collided === 'string' &&
+      collided.includes('attachment name collision(s)') &&
+      collided.includes('skin "default" placeholder "zulu/marker"') &&
+      collided.includes('skin "zulu" placeholder "marker"') &&
+      collided.includes('would both be named "zulu/marker"') &&
+      typeof notCollided !== 'string',
+    typeof collided !== 'string'
+      ? 'a rig whose composed name is already taken compiled'
+      : `refused with: ${collided.slice(collided.indexOf('slot "marker"'))}` +
+        `; the same rig with the placeholder spelled "zulu.marker" instead ${
+          typeof notCollided === 'string' ? `was ALSO refused: ${notCollided}` : 'compiles'
+        }`,
+    'composing a name out of two names the spec wrote can collide with a third the spec also wrote, and a scheme ' +
+      'that collides in silence is a new defect rather than a fix. The second rig is one character away and must ' +
+      'build, or this would be a rule against slashes in placeholders',
+  );
+
+  // The `path` half, gated on the artifact rather than argued. `path` defaults
+  // to the NAME and not to the placeholder (`SkeletonJson.ts:529`), so an
+  // attachment given a name and no path resolves its region at the new name —
+  // and A00 is what says so, in the parser's own words.
+  const pathless = gateProbeArtifacts(writeProbeRig({ skins: FOUR_SKINS }), STATIC_MOTION, (skeleton) => {
+    const skins = skeleton.skins as EmittedSkin[];
+    for (const skin of skins) delete skin.attachments.marker?.marker.path;
+  });
+  const pathlessGreen = gateProbe(writeProbeRig({ skins: FOUR_SKINS }), STATIC_MOTION);
+  say(
+    'PS58_A_NAMED_ATTACHMENT_THAT_DOES_NOT_RESTATE_ITS_PATH_LOSES_ITS_REGION',
+    pathless.failures.some(
+      (f) => f.assertion === 'A00_ROUNDTRIP_PARSE' && f.detail.includes('Region not found in atlas'),
+    ) && pathlessGreen.failures.length === 0,
+    pathless.failures.length === 0
+      ? 'deleting `path` from every named attachment gated GREEN, so the restatement is decoration'
+      : `${pathless.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')} — and the same rig with its ` +
+        `paths intact gated green (${pathlessGreen.passed.length} assertions ran, ${pathlessGreen.failures.length} failed)`,
+    'this is the one part of the naming change an existing gate CAN see, and it sees it because the parser resolves ' +
+      'a texture by `path` and `path` defaults to `name`. The green half is the control: without it the case would ' +
+      'pass on a rig that was broken before anything was deleted',
+  );
+
+  // --- the order the array is written in ------------------------------------
+  const skinOrderOf = (skins: EmittedSkin[] | string): string[] =>
+    typeof skins === 'string' ? [] : skins.map((s) => s.name);
+  const measuredSkins = skinOrderOf(four);
+  const declaredSkins = Object.keys(FOUR_SKINS);
+  /**
+   * What a re-sort of the skins array does to a reference that holds an INDEX
+   * into it — `skins[readInt()]` for an attachment timeline, `skins[skinIndex]`
+   * for a linked mesh. A row means the reference comes back pointing at another
+   * skin; no rows means the order is a fixed point.
+   */
+  const repointedBySkinSort = (order: string[]): string[] => {
+    const pinned = order.filter((n) => n === 'default');
+    const sorted = [...pinned, ...order.filter((n) => n !== 'default').sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))];
+    return order.map((name, i) => ({ name, becomes: sorted[i] })).filter((r) => r.becomes !== r.name).map((r) => `[${order.indexOf(r.name)}] "${r.name}" -> "${r.becomes}"`);
+  };
+  say(
+    'PS59_THE_EMITTED_SKIN_ORDER_IS_WHAT_THE_EDITOR_RETURNED_AND_A_FIXED_POINT_OF_ITS_SORT',
+    JSON.stringify(measuredSkins) === JSON.stringify(['default', 'alpha', 'mike', 'zulu']) &&
+      repointedBySkinSort(measuredSkins).length === 0 &&
+      JSON.stringify(declaredSkins) !== JSON.stringify(measuredSkins),
+    `the rig declares [${declaredSkins.join(', ')}] and the emit writes [${measuredSkins.join(', ')}]; ` +
+      `${repointedBySkinSort(measuredSkins).length} ordinal(s) would move under the editor's own re-sort`,
+    'these are the four skin names the editor was measured on (#541): built `default, zulu, mike, alpha`, exported ' +
+      '`default, alpha, mike, zulu`. The third clause stops the case being vacuous — a rig declared in the emitted ' +
+      'order would pass it without the emitter doing anything',
+  );
+  say(
+    'PS60_IN_DECLARATION_ORDER_THE_SAME_SORT_REPOINTS_AN_ORDINAL',
+    repointedBySkinSort(declaredSkins).length > 0 && declaredSkins.length === measuredSkins.length,
+    `keyed [${declaredSkins.join(', ')}] — which is what rigc emitted until #541 — the sort moves ` +
+      `${repointedBySkinSort(declaredSkins).length} of ${declaredSkins.length} skin(s) off their index: ` +
+      repointedBySkinSort(declaredSkins).join('; '),
+    'the silent half over the same reader: a detector that fires on everything is no better than one that fires ' +
+      'on nothing, and PS59 is this rig in the order it now ships. ⚠️ The count is read off the fixture rather ' +
+      'than stated — this case named "three of the four" on the way in and the fixture says two, because `mike` ' +
+      'sits at index 2 in both orders and only the ends swap',
+  );
+
+  const pinnedFirst = skinEmit({ default: { ...PROBE_DEFAULT_SKIN }, aardvark: markerSkin(1) });
+  say(
+    'PS61_DEFAULT_IS_PINNED_AND_NOT_SORTED',
+    JSON.stringify(skinOrderOf(pinnedFirst)) === JSON.stringify(['default', 'aardvark']),
+    `[default, aardvark] is emitted [${skinOrderOf(pinnedFirst).join(', ')}], where any comparator that sorted ` +
+      'the whole array would put "aardvark" first',
+    "this is the whole of what the measurement pins down about the editor's skin order, and it is separable only " +
+      'by a name that sorts before "default" — `alpha` in the measured rig did exactly that, and came back second',
+  );
+
+  // ⭐ The sharpest of these: the SAME two name sets, refused as skins and
+  // accepted as animations. #539 measured the editor's comparator for animation
+  // names — natural, case-insensitive — and #543 narrowed the animation refusal
+  // onto what that family leaves open. Nothing has measured it for skins:
+  // `alpha, mike, zulu` is the answer every candidate gives. Carrying the
+  // narrowing across would be the inference that put `skins` on the safe side of
+  // the "arrays an editor cannot move" list for two releases.
+  const skinCase = skinEmit({ default: { ...PROBE_DEFAULT_SKIN }, Zulu: markerSkin(1), mike: markerSkin(2) });
+  const skinDigits = skinEmit({ default: { ...PROBE_DEFAULT_SKIN }, mike10: markerSkin(1), mike2: markerSkin(2) });
+  const animCase = emittedOrderOf(['Turn', 'sweep', 'wave']);
+  const animDigits = emittedOrderOf(['turn10', 'turn2', 'zoom']);
+  say(
+    'PS62_THE_TWO_PAIRS_THE_EDITOR_WAS_MEASURED_ON_FOR_ANIMATIONS_ARE_REFUSED_AS_SKINS',
+    typeof skinCase === 'string' &&
+      skinCase.includes('pair(s) of skin names have no one order') &&
+      skinCase.includes('whether the editor folds SKIN names decides this pair') &&
+      typeof skinDigits === 'string' &&
+      skinDigits.includes('whether the editor sorts SKIN names naturally decides this pair') &&
+      animCase !== null &&
+      JSON.stringify(animCase) === JSON.stringify(['sweep', 'Turn', 'wave']) &&
+      animDigits !== null &&
+      JSON.stringify(animDigits) === JSON.stringify(['turn2', 'turn10', 'zoom']),
+    typeof skinCase !== 'string' || typeof skinDigits !== 'string'
+      ? `a skin pair the candidates disagree about compiled: case=${typeof skinCase}, digits=${typeof skinDigits}`
+      : `as SKIN names, "Zulu"/"mike" and "mike10"/"mike2" are both refused; as ANIMATION names the same two sets ` +
+        `are emitted [${(animCase ?? []).join(', ')}] and [${(animDigits ?? []).join(', ')}], which is what the ` +
+        'editor returned them as',
+    'the two collections have been measured to different depths and the refusals have to say so. An emitter that ' +
+      'reused the animation narrowing here would pass every other case in this suite and be claiming a ' +
+      'measurement nobody took',
   );
 
   return bad;
@@ -19181,6 +19484,96 @@ function runCliSuite(): number {
     );
   }
 
+  // --- CLI13: the two build modes write one skeleton ------------------------
+  //
+  // 🚨 **Nothing in this tree compared the two build modes**, and the hole is
+  // older than the card that exposed it. `A18_DETERMINISTIC_EMIT` re-compiles
+  // with the SAME options and compares byte for byte, which is a statement about
+  // one mode run twice; `--copy-images` is a second set of options, and no
+  // assertion has ever put the two side by side.
+  //
+  // ⭐ It was found the way holes like this are found — by somebody measuring
+  // through the hole and reporting a defect that was not there. A build made
+  // with `--copy-images` was observed carrying no attachment names while the
+  // default build carried all four, which would have meant the flag reached the
+  // skin table. It does not: `copyImages` has exactly one consumer in `src/`
+  // (`skeletonImagesPath`), `cli.ts` compiles once and writes
+  // `result.skeletonText` unchanged in both modes, and the flag's only other
+  // effect rewrites the ATLAS text after the gate (`src/emit.ts`). The reading
+  // was an artifact of measuring a tree while a plant was applied to it.
+  //
+  // ⇒ The claim is therefore not "the flag is safe for skins", it is the whole
+  // invariant, stated once where both halves are visible: **`--copy-images`
+  // moves `skeleton.images` and nothing else.** A control scoped to the naming
+  // would have gone green on a flag that broke something else in the skeleton,
+  // which is how this hole survived the first time.
+  {
+    const skinOf = (x: number): Record<string, unknown> => ({ marker: { marker: { image: 'marker.png', x } } });
+    const dirs = writeProbeRig({
+      skins: {
+        default: { block: { block: { image: 'block.png' } }, marker: { marker: { image: 'marker.png' } } },
+        zulu: skinOf(1),
+        mike: skinOf(2),
+        alpha: skinOf(3),
+      },
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const buildInto = (out: string, extra: string[]): { status: number | null; stdout: string; stderr: string } =>
+      runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', out, ...extra]);
+    const plainDir = join(dirs.dir, 'plain');
+    const copiedDir = join(dirs.dir, 'copied');
+    const plain = buildInto(plainDir, []);
+    const copied = buildInto(copiedDir, ['--copy-images']);
+    const read = (dir: string): Record<string, unknown> | null => {
+      const path = join(dir, 'skeleton.json');
+      return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>) : null;
+    };
+    const a = read(plainDir);
+    const b = read(copiedDir);
+    /** Every field but the one the flag is FOR, so "identical" is a real claim. */
+    const withoutImages = (skeleton: Record<string, unknown> | null): string => {
+      if (skeleton === null) return '(no skeleton written)';
+      const header = { ...(skeleton.skeleton as Record<string, unknown>) };
+      delete header.images;
+      return JSON.stringify({ ...skeleton, skeleton: header });
+    };
+    const imagesOf = (skeleton: Record<string, unknown> | null): unknown =>
+      skeleton === null ? null : (skeleton.skeleton as Record<string, unknown>).images;
+    /** The composed names the four-skin rig must carry, in BOTH builds. */
+    const composed = (skeleton: Record<string, unknown> | null): string[] => {
+      if (skeleton === null) return [];
+      const skins = skeleton.skins as Array<{ attachments: Record<string, Record<string, { name?: string }>> }>;
+      return skins
+        .flatMap((skin) => Object.values(skin.attachments).flatMap((table) => Object.values(table)))
+        .map((att) => att.name)
+        .filter((name): name is string => name !== undefined)
+        .sort();
+    };
+    const sameBody = a !== null && b !== null && withoutImages(a) === withoutImages(b);
+    const movedImages = imagesOf(a) !== imagesOf(b);
+    const names = composed(a);
+    say(
+      'CLI13_COPY_IMAGES_MOVES_SKELETON_IMAGES_AND_NOTHING_ELSE_IN_THE_SKELETON',
+      plain.status === 0 &&
+        copied.status === 0 &&
+        sameBody &&
+        movedImages &&
+        names.length === 4 &&
+        JSON.stringify(names) === JSON.stringify(composed(b)),
+      plain.status !== 0 || copied.status !== 0
+        ? `a build refused: no-flag exit=${String(plain.status)}, --copy-images exit=${String(copied.status)} — ` +
+          `${(copied.stderr || plain.stderr).trim().split('\n').pop() ?? ''}`
+        : `both builds green; skeleton.images ${JSON.stringify(imagesOf(a))} -> ${JSON.stringify(imagesOf(b))} ` +
+          `(${movedImages ? 'moved, as the flag is for' : 'DID NOT MOVE, so this case is vacuous'}), and every ` +
+          `other byte ${sameBody ? 'identical' : 'DIFFERS'}; ${names.length} composed attachment name(s) in both: ` +
+          `[${names.join(', ')}]`,
+      'the second clause is what stops it being vacuous — a flag that moved nothing at all would satisfy "the ' +
+        'skeletons agree" without doing its job. The four-skin rig is deliberate: the fields most recently added ' +
+        'to the emit are the ones least likely to be reached by every path that writes it',
+    );
+  }
+
   return bad;
 }
 
@@ -19319,10 +19712,35 @@ function runRoundtrip(args: string[]): { status: number | null; stdout: string; 
  * refusal that fired only after the process had started would look identical
  * from the outside, and on the real trial that difference is minutes.
  */
-function writeStubEditor(path: string, ran: string, banner: string[]): void {
+function writeStubEditor(path: string, ran: string, banner: string[], extra: string[] = []): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `#!/bin/sh\n: > '${ran}'\n${banner.map((l) => `echo '${l}'`).join('\n')}\nexit 0\n`);
+  writeFileSync(
+    path,
+    `#!/bin/sh\n: > '${ran}'\n${banner.map((l) => `echo '${l}'`).join('\n')}\n${extra.join('\n')}\nexit 0\n`,
+  );
   chmodSync(path, 0o755);
+}
+
+/**
+ * The lines the tool quoted from the editor, under the step heading they were
+ * printed beneath.
+ *
+ * Read off the report by SECTION rather than by searching the whole of stdout,
+ * because "the editor's words reached the report" and "they were attached to the
+ * step that went wrong" are two claims and only the second one is worth
+ * anything: the `--version` banner is already echoed at the top of every run, so
+ * a check that merely found the string somewhere would pass on a tool that
+ * printed nothing new at all.
+ */
+function quotedEditorOutput(stdout: string, heading: string): string[] {
+  const lines = stdout.split('\n');
+  const from = lines.findIndex((l) => l.startsWith(heading));
+  if (from < 0) return [];
+  const quoted: string[] = [];
+  for (let i = from + 1; i < lines.length && !lines[i].startsWith('## '); i++) {
+    if (lines[i].startsWith('    | ')) quoted.push(lines[i].slice(6));
+  }
+  return quoted;
 }
 
 /** An XML `Info.plist` declaring one `CFBundleName`, the way a real .app carries it. */
@@ -19487,6 +19905,97 @@ function runEditorRoundtripSuite(): number {
       `no-editor names --exported = ${mentions(missing)}, trial names --exported = ${mentions(trial)}`,
       "`--exported`'s own usage text says it exists so the measuring half can run on a machine with no editor — " +
         'and the two messages printed in exactly that situation were the two that never mentioned it',
+    );
+  }
+
+  // --- ERT07-09: the editor's own words, on the step that went wrong ---------
+  // 🚨 Issue #541. The editor refused a four-skin import and named the cause —
+  // `Multiple attachments have the same name: patch patch` — and this tool
+  // printed `exit=1` and its own refusal and threw both streams away. The card
+  // was filed as "the editor prints nothing that names a cause", and a day went
+  // into bisecting the emitted file to rediscover a sentence the editor had
+  // already said. A repository whose doctrine is *convert silence into a named
+  // failure* had manufactured the silence.
+  //
+  // ⭐ All three cases use a stub, so none of them needs an editor. What they
+  // separate is the three ways this can be got wrong: not printing it, printing
+  // it where the reader is not looking, and printing it for a step that was fine.
+  {
+    const marker = 'ERROR: Unable to import skeleton. Multiple attachments have the same name: patch patch';
+    const onStderr = '[error] Error reading skeleton: skins';
+    const bundle = join(root, 'Loud', 'Spine.app');
+    const editor = join(bundle, 'Contents', 'MacOS', 'Spine');
+    writeStubEditor(editor, join(root, 'ert07-ran'), ['Spine Launcher 4.3.06 (macOS Apple Silicon)'], [
+      `echo '${marker}'`,
+      `echo '${onStderr}' >&2`,
+    ]);
+    writeBundlePlist(bundle, 'Spine');
+    const out = join(root, 'out-loud');
+    const loud = runRoundtrip(['--build', build, '--out', out, '--editor', editor]);
+    const quoted = quotedEditorOutput(loud.stdout, '## 1 import');
+    const logged = existsSync(join(out, 'roundtrip.log')) ? readFileSync(join(out, 'roundtrip.log'), 'utf8') : '';
+    say(
+      'ERT07_A_FAILED_STEP_QUOTES_THE_EDITOR_UNDER_THAT_STEP_AND_KEEPS_THE_REFUSAL',
+      quoted.includes(marker) &&
+        quoted.includes(onStderr) &&
+        loud.status === 1 &&
+        loud.stderr.includes('the editor wrote no project file; the import did not happen') &&
+        logged.includes(marker) &&
+        logged.includes(onStderr),
+      `exit=${String(loud.status)}, ${quoted.length} line(s) quoted under "## 1 import" ` +
+        `(stdout marker = ${quoted.includes(marker)}, stderr marker = ${quoted.includes(onStderr)}), ` +
+        `refusal unchanged = ${loud.stderr.includes('the editor wrote no project file')}, ` +
+        `in roundtrip.log = ${logged.includes(marker) && logged.includes(onStderr)}`,
+      'the refusal was correct and discarding the reason was not, so this asserts BOTH — and it asserts the log, ' +
+        "because #541's card cites roundtrip.log as where to read the editor's output and a refusing run used to " +
+        'write none at all',
+    );
+
+    // ERT08 — the silent editor. A step that goes wrong while the editor says
+    // nothing has to SAY that, because "nothing printed" and "the harness threw
+    // it away" look identical from the outside, and the second is the defect.
+    const quietBundle = join(root, 'Quiet', 'Spine.app');
+    const quiet = join(quietBundle, 'Contents', 'MacOS', 'Spine');
+    writeStubEditor(quiet, join(root, 'ert08-ran'), []);
+    writeBundlePlist(quietBundle, 'Spine');
+    const hush = runRoundtrip(['--build', build, '--out', join(root, 'out-quiet'), '--editor', quiet]);
+    say(
+      'ERT08_A_FAILED_STEP_ON_A_SILENT_EDITOR_SAYS_SO_RATHER_THAN_PRINTING_NOTHING',
+      hush.status === 1 &&
+        hush.stdout.includes('the editor printed nothing on stdout or stderr') &&
+        quotedEditorOutput(hush.stdout, '## 1 import').length === 0,
+      `exit=${String(hush.status)}, named the silence = ` +
+        `${hush.stdout.includes('the editor printed nothing on stdout or stderr')}, ` +
+        `${quotedEditorOutput(hush.stdout, '## 1 import').length} line(s) quoted`,
+      'an unstated silence is what the tool already did, and it is indistinguishable from the bug — this is the ' +
+        'one case where printing nothing would be the wrong answer even though there is nothing to print',
+    );
+
+    // ERT09 — ⭐ the two-sided half, on ONE run. The stub writes the project on
+    // the import call (which carries `-r`) and nothing on the export call, so
+    // step 1 succeeds and step 2 does not. A tool that quoted the editor
+    // unconditionally would pass ERT07 and fail here.
+    const halfBundle = join(root, 'Half', 'Spine.app');
+    const half = join(halfBundle, 'Contents', 'MacOS', 'Spine');
+    writeStubEditor(half, join(root, 'ert09-ran'), ['Spine Launcher 4.3.06 (macOS Apple Silicon)'], [
+      `echo '${marker}'`,
+      'if [ "$5" = "-r" ]; then : > "$4"; fi',
+    ]);
+    writeBundlePlist(halfBundle, 'Spine');
+    const halfRun = runRoundtrip(['--build', build, '--out', join(root, 'out-half'), '--editor', half]);
+    const underImport = quotedEditorOutput(halfRun.stdout, '## 1 import');
+    const underExport = quotedEditorOutput(halfRun.stdout, '## 2 export');
+    say(
+      'ERT09_A_STEP_THAT_DID_WHAT_IT_WAS_FOR_QUOTES_NOTHING_AND_THE_ONE_AFTER_IT_DOES',
+      halfRun.status === 1 &&
+        underImport.length === 0 &&
+        underExport.includes(marker) &&
+        halfRun.stderr.includes('the editor wrote no json'),
+      `exit=${String(halfRun.status)}, quoted under import = ${underImport.length}, under export = ` +
+        `${underExport.length} (names the editor's line = ${underExport.includes(marker)}), ` +
+        `refusal = ${JSON.stringify(halfRun.stderr.trim().split('\n').pop()?.slice(0, 80) ?? '')}`,
+      'the same stub prints the same line on every call, so a report that quoted it under both headings would be ' +
+        'attaching it to a step that worked — which is how a reader learns to skip the quotation',
     );
   }
 

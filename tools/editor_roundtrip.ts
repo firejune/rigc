@@ -260,6 +260,53 @@ interface Ran {
   timedOut: boolean;
 }
 
+/**
+ * Everything the editor printed on a step that did not do what it was for.
+ *
+ * 🚨 This is the defect issue #541 is half about, and it was this tool's. A
+ * four-skin rig would not import; the report said
+ *
+ *     ## 1 import  (json -> project)
+ *       exit=1
+ *     rigc editor_roundtrip: the editor wrote no project file; the import did not happen
+ *
+ * and the card was filed as *"the editor refuses it without a word"*. The editor
+ * had not been silent at all — it named the section, the attachment and the rule:
+ *
+ *     ERROR: Unable to import skeleton.
+ *     [error] Error reading skeleton: skins
+ *     Cause: [error] Error reading attachment: patch (MOw)
+ *     Cause: [error] Multiple attachments have the same name: patch patch
+ *
+ * `run` captured both streams and the report printed neither. A day of bisecting
+ * the emitted file rediscovered what one of those lines says outright, and the
+ * repository whose whole doctrine is *convert silence into a named failure* had
+ * manufactured the silence.
+ *
+ * ⭐ The refusal is unchanged and stays unchanged: a step that did not produce
+ * its artifact is still a refusal by name, and this adds the reason rather than
+ * softening the verdict. What it prints is the editor's own words, quoted and
+ * attributed to the stream they came off, and never rewritten — a harness that
+ * summarised them would be the same defect with a smaller radius.
+ */
+function editorSaid(ran: Ran): string[] {
+  const lines: string[] = [];
+  for (const [stream, text] of [
+    ['stdout', ran.stdout],
+    ['stderr', ran.stderr],
+  ] as const) {
+    const body = text.replace(/\s+$/, '');
+    if (body === '') continue;
+    lines.push(`  the editor's ${stream}:`);
+    for (const line of body.split('\n')) lines.push(`    | ${line}`);
+  }
+  // Silence is a finding too, and it has to be stated rather than left to look
+  // like a harness that forgot to print. The card above is what an unstated one
+  // costs.
+  if (lines.length === 0) lines.push('  the editor printed nothing on stdout or stderr');
+  return lines;
+}
+
 function run(cmd: string, args: string[], timeoutS: number): Ran {
   const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: timeoutS * 1000 });
   return {
@@ -405,23 +452,46 @@ function shapeDiff(before: Shape, after: Shape): string[] {
 function main(): void {
   const opts = parseArgs(process.argv.slice(2));
   const rigc = rigcCommand();
-  const fail = (message: string): never => {
-    console.error(`rigc editor_roundtrip: ${message}`);
-    process.exit(1);
-  };
 
   const source = join(opts.build, 'skeleton.json');
-  if (!existsSync(source)) fail(`no skeleton.json in the build directory ${opts.build}`);
-
-  rmSync(opts.out, { recursive: true, force: true });
-  mkdirSync(join(opts.out, 'export'), { recursive: true });
-  mkdirSync(join(opts.out, 'export-cand'), { recursive: true });
-
   const log: string[] = [];
   const emit = (line: string): void => {
     console.log(line);
     log.push(line);
   };
+  const logPath = join(opts.out, 'roundtrip.log');
+  /**
+   * Write what the run has said so far, wherever it stops.
+   *
+   * ⚠️ `roundtrip.log` used to be written on the last line of `main`, so a run
+   * that REFUSED wrote none — and issue #541's card cites the log as the place to
+   * read the editor's output, which on a failed import was a file that did not
+   * exist. A record kept only for the runs that went well is not a record.
+   */
+  const keepLog = (): void => {
+    // Nothing said, nothing to keep: the refusals that fire before the first
+    // `emit` (no build directory) would otherwise leave an empty file and a
+    // directory the run never used.
+    if (log.length === 0) return;
+    try {
+      mkdirSync(opts.out, { recursive: true });
+      writeFileSync(logPath, `${log.join('\n')}\n`);
+    } catch {
+      // A log this cannot write is not worth failing a refusal over; the same
+      // lines already went to stdout.
+    }
+  };
+  const fail = (message: string): never => {
+    keepLog();
+    console.error(`rigc editor_roundtrip: ${message}`);
+    process.exit(1);
+  };
+
+  if (!existsSync(source)) fail(`no skeleton.json in the build directory ${opts.build}`);
+
+  rmSync(opts.out, { recursive: true, force: true });
+  mkdirSync(join(opts.out, 'export'), { recursive: true });
+  mkdirSync(join(opts.out, 'export-cand'), { recursive: true });
 
   emit(`## 0 versions`);
   emit(`  rigc     ${rigc.how}`);
@@ -467,16 +537,33 @@ function main(): void {
     const project = join(opts.out, `${opts.name}.spine`);
     const imported = run(opts.editor, [...pin, '-i', source, '-o', project, '-r', opts.name], opts.timeoutS);
     emit(`  exit=${imported.status}${imported.timedOut ? `  TIMED OUT after ${opts.timeoutS}s` : ''}`);
+    // A step "went wrong" if it reported failure OR did not leave the artifact
+    // it exists to leave. Both are cases where the editor's own words are the
+    // next thing anybody needs, and both used to print only `exit=`.
+    const importWrong = imported.status !== 0 || imported.timedOut || !existsSync(project);
+    if (importWrong) for (const line of editorSaid(imported)) emit(line);
     if (imported.timedOut) fail(`the editor did not return within ${opts.timeoutS}s on import — that is a hang, not a result`);
-    if (!existsSync(project)) fail('the editor wrote no project file; the import did not happen');
+    if (!existsSync(project)) {
+      fail(`the editor wrote no project file; the import did not happen — what it printed is above and in ${logPath}`);
+    }
 
     emit('');
     emit('## 2 export  (project -> json, default settings)');
     const exported = run(opts.editor, [...pin, '-i', project, '-o', join(opts.out, 'export'), '-e', 'json'], opts.timeoutS);
     emit(`  exit=${exported.status}${exported.timedOut ? `  TIMED OUT after ${opts.timeoutS}s` : ''}`);
+    const written = existsSync(join(opts.out, 'export'))
+      ? readdirSync(join(opts.out, 'export')).filter((f) => f.endsWith('.json'))
+      : [];
+    if (exported.status !== 0 || exported.timedOut || written.length === 0) {
+      for (const line of editorSaid(exported)) emit(line);
+    }
     if (exported.timedOut) fail(`the editor did not return within ${opts.timeoutS}s on export — that is a hang, not a result`);
-    const written = readdirSync(join(opts.out, 'export')).filter((f) => f.endsWith('.json'));
-    if (written.length === 0) fail('the editor wrote no json; stopping before the re-gate rather than measuring nothing');
+    if (written.length === 0) {
+      fail(
+        'the editor wrote no json; stopping before the re-gate rather than measuring nothing — what it printed ' +
+          `is above and in ${logPath}`,
+      );
+    }
     exportedJson = join(opts.out, 'export', written[0]);
   }
 
@@ -547,9 +634,9 @@ function main(): void {
   if (rows.length === 0) emit('  nothing at this resolution: same version, counts, animations and timeline kinds');
   for (const row of rows) emit(`  ${row}`);
 
-  writeFileSync(join(opts.out, 'roundtrip.log'), `${log.join('\n')}\n`);
+  keepLog();
   emit('');
-  emit(`log: ${join(opts.out, 'roundtrip.log')}`);
+  emit(`log: ${logPath}`);
   // The verdict is the gate's and the check's, not this tool's opinion of them.
   process.exit(gate.status === 0 && check.status === 0 ? 0 : 1);
 }
