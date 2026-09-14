@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/firejune/rigc/compare/v0.21.0...v0.22.0) (2026-09-14)
+
+
+### Features
+
+* **compile:** name a skin's attachment so the editor can hold it, and emit skins in the order it writes them back ([#541](https://github.com/firejune/rigc/issues/541)) ([#552](https://github.com/firejune/rigc/issues/552)) ([6f8a93b](https://github.com/firejune/rigc/commit/6f8a93b0fe82df9e32e3c6afc6f45d5659ffe811))
+
 ## [0.21.0](https://github.com/firejune/rigc/compare/v0.20.3...v0.21.0) (2026-09-14)
 
 
