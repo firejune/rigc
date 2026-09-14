@@ -164,6 +164,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED: 'validity',
   A39_DEFORM_KEEPS_TRIANGLE_WINDING: 'archetype',
   A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET: 'validity',
+  A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP: 'validity',
 };
 
 /**
@@ -290,6 +291,31 @@ function dialTieText(tie: DeformDialTie): string {
 
 const FRAME = 1 / 60;
 const STEP_FRAMES = 120;
+
+/**
+ * Every component a physics constraint can drive (`PhysicsConstraintData`), and
+ * the subset the **Spine editor** models.
+ *
+ * ⭐ One list, read by both A23 and A41, because the relationship between those
+ * two rules is the thing most worth keeping true: A23 fires when the driven set
+ * is EMPTY, A41 when it contains something outside `EDITOR_PHYSICS_COMPONENTS`.
+ * Written against one array those conditions cannot both hold on one constraint,
+ * and a reader can see that they cannot. Two copies of the vocabulary could
+ * drift into overlapping, and a rig refused twice for one fact is a report that
+ * has stopped saying what is wrong with it.
+ *
+ * 📏 The subset is measured rather than read off a document, and it is the whole
+ * of issue #540: three rigs, twelve constraints, predictions recorded before the
+ * round trip and scored by the code that printed them. A lone `y` came back, `x`
+ * and `y` together came back — so the rule is membership and not arity — and a
+ * lone `rotate`, a lone `scaleX` and a lone `shearX` each came back driving no
+ * component at all, with neither `scaleY` mode rescuing `scaleX`. Every
+ * constraint carried a fixed-point `strength` and all twelve returned exactly,
+ * so the rows that reported nothing were reading live data. Measured on Spine
+ * 4.3.26 Professional.
+ */
+const PHYSICS_COMPONENTS = ['x', 'y', 'rotate', 'scaleX', 'shearX'] as const;
+const EDITOR_PHYSICS_COMPONENTS: ReadonlySet<(typeof PHYSICS_COMPONENTS)[number]> = new Set(['x', 'y'] as const);
 
 /**
  * One step of the **float32** grid at `t`, which is the grid a loaded key time
@@ -1965,7 +1991,7 @@ export function validate(input: ValidateInput): ValidateReport {
       for (const constraint of data.constraints) {
         if (!(constraint instanceof PhysicsConstraintData)) continue;
         const where = `physics "${constraint.name}"`;
-        const components = (['x', 'y', 'rotate', 'scaleX', 'shearX'] as const).filter((k) => constraint[k] > 0);
+        const components = PHYSICS_COMPONENTS.filter((k) => constraint[k] > 0);
         if (!components.length) {
           fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} drives no component; it parses and does nothing`);
         }
@@ -1989,6 +2015,85 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
       stats.physicsConstraints = data.constraints.filter((c) => c instanceof PhysicsConstraintData).length;
+    });
+
+    // --- A41: a physics component the Spine editor cannot hold --------------
+    //
+    // 🚨 The silence this converts is not in the artifact — it is one consumer
+    // downstream of it. An author builds a rig whose cowlick jiggles, opens it
+    // in the editor to move an eyebrow, saves, exports, and the hair has stopped
+    // moving. The returned file says nothing: the component is simply absent,
+    // and absent parses as 0. `gallery/look` is exactly that rig.
+    //
+    // 🔑 **rigc's output is correct, so the refusal is opt-in.** `rotate` on a
+    // physics constraint is valid Spine 4.3 that every runtime plays, and
+    // refusing it by default would be refusing correct data on behalf of a
+    // pipeline rigc was never told about. What rigc can see is the object; which
+    // consumers it is for is the rig's to say, and it says it with
+    // `invariants.editorRoundTrip` (`src/rig.ts`).
+    //
+    // ⚠️ **The SKIP is the other half of the product and is not a shrug.** A rig
+    // that declares nothing is not gated — but the reason names the constraint
+    // and the components a round trip would drop, so the one thing that must not
+    // happen (nobody finds out) does not happen either. That is why this reads
+    // the whole skeleton before it reads the declaration, rather than returning
+    // early on a rig that asked for nothing.
+    //
+    // 🔸 **Against A23, on the far side of the same trip.** A23 refuses a
+    // constraint driving NOTHING — which is what the editor hands back, after
+    // the loss — and it is what fires today on a round-tripped `look`. This
+    // refuses a constraint driving something the editor will not keep, before
+    // the trip. They cannot both fire on one constraint: A23's condition is an
+    // empty driven set and this one's is a non-empty one (see
+    // `PHYSICS_COMPONENTS`), so the two are disjoint by construction rather than
+    // by agreement.
+    //
+    // `validity` rather than policy, on A09's precedent: what it measures is the
+    // artifact against a claim the artifact's own spec makes, and a rig that
+    // makes no such claim has nothing to be measured against and SKIPs. Nothing
+    // here is one renderer's taste or one formation's shape, so there is no
+    // profile it should be hidden behind.
+    check('A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP', () => {
+      // Counted here rather than read off `stats.physicsConstraints`: that entry
+      // is written by A23, and a rule whose SKIP depends on another rule having
+      // run is a rule that reports "nothing to measure" when its neighbour threw.
+      const physics = data.constraints.filter((c) => c instanceof PhysicsConstraintData);
+      const dropped: string[] = [];
+      for (const constraint of physics) {
+        const lost = PHYSICS_COMPONENTS.filter((k) => constraint[k] > 0 && !EDITOR_PHYSICS_COMPONENTS.has(k));
+        if (lost.length) dropped.push(`physics "${constraint.name}" drives ${lost.join(', ')}`);
+      }
+      const editorKeeps = [...EDITOR_PHYSICS_COMPONENTS].join(' and ');
+      const found =
+        dropped.length === 0
+          ? 'no physics constraint here drives a component it would discard'
+          : `${dropped.join('; ')}, and the editor's physics model holds ${editorKeeps} only, so a round trip ` +
+            'returns that constraint driving nothing at all (issue #540)';
+      if (input.rig?.editorRoundTrip !== true) {
+        return skip(
+          'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP',
+          `${
+            input.rig
+              ? `the rig "${input.rig.archetype}" does not declare \`invariants.editorRoundTrip\``
+              : 'this is a bare directory, with no rig info to declare `invariants.editorRoundTrip`'
+          }, so nothing here is gated against the Spine editor. What is here: ${found}`,
+        );
+      }
+      if (physics.length === 0) {
+        return skip(
+          'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP',
+          `the rig "${input.rig.archetype}" is declared for the editor, but it carries no physics constraint — ` +
+            'there is nothing here whose components could be lost',
+        );
+      }
+      for (const one of dropped) {
+        fail(
+          'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP',
+          `${one}; the editor's physics model holds ${editorKeeps} only, and this ` +
+            'rig declares `invariants.editorRoundTrip` — drive it in x/y, or drop the declaration if this rig never ' +
+            'goes through the editor (issue #540)',
+        );
+      }
     });
 
     /**

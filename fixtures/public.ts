@@ -208,7 +208,14 @@ export function overlayFixture(): Fixture {
     spec: 'rigc-rig/1',
     name: 'overlay_probe',
     note: 'Synthetic fixture for the selftest. A handle bone re-seats the whole formation; every other bone sits at its part window centre, and `iris_aperture` is the mesh control bone the manifest names.',
-    invariants: { meshSlots: 3, meshTriangles: 80 },
+    // `editorRoundTrip` is what makes this fixture A41's positive control: its
+    // one physics constraint drives `x` and `y`, which the editor keeps, so a
+    // rig that HAS declared the editor a consumer still passes. Without the
+    // declaration A41 would only ever SKIP here, and the break below would have
+    // nothing to break. The articulated and contained probes deliberately leave
+    // it out, so the same run also exercises the SKIP that names a loss nobody
+    // asked to be gated on.
+    invariants: { meshSlots: 3, meshTriangles: 80, editorRoundTrip: true },
     bones: [
       { name: 'root' },
       { name: 'panel', parent: 'root', x: 0, y: 0 },

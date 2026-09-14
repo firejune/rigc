@@ -831,6 +831,37 @@ const MUTANTS: Mutant[] = [
     }),
   },
   {
+    name: 'M24_physics_drives_a_component_the_editor_discards',
+    origin:
+      'the editor imports it, exports it, and the component is simply gone — the returned constraint drives nothing and says nothing (issue #540)',
+    expect: 'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        // Not a value the editor elides: 0.375 is neither 0 nor 1, and the
+        // measurement that named this rule used exactly that kind of value to
+        // kill the elision hypotheses. What is lost is the component, not a
+        // default.
+        (j as any).constraints.find((x: any) => x.type === 'physics').rotate = 0.375;
+      }),
+    }),
+  },
+  {
+    name: 'M25_physics_driving_only_x_is_accepted',
+    origin:
+      'the rule is membership, not arity: `x` and `y` together both came back, so a check that fired on a second component would refuse correct data (issue #540)',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        // The lone-`x` row of the measurement, on a rig that HAS declared the
+        // editor a consumer: dropping to one component must stay green, and so
+        // must the pair the fixture ships.
+        delete (j as any).constraints.find((x: any) => x.type === 'physics').y;
+      }),
+    }),
+  },
+  {
     name: 'M15_premultiplied_alpha_flag',
     origin: 'the renderer does not un-premultiply, so every part gains a black rim',
     expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
@@ -4916,6 +4947,69 @@ function runStaticRigSuite(): number {
     stray.failures.find((f) => f.assertion === 'A09_ANIMATION_DURATION_MATCHES_SPEC')?.detail ??
       'A09 accepted an animation the motion spec never declared',
     'the skip is keyed on BOTH sides being empty; one side alone must still be compared',
+  );
+
+  // A41's three states, and the SKIP is the one that carries the product.
+  //
+  // The rule is opt-in because rigc's output is not wrong: a physics constraint
+  // driving `rotate` is valid Spine that every runtime plays, and only the rig
+  // knows whether the editor is one of its consumers. So the failure mode an
+  // opt-in introduces is that nobody ever opts in and the finding is never seen
+  // — which is why the un-declared report is not a shrug but a named sentence,
+  // and why it is checked here against the text it has to contain rather than
+  // against the fact that some skip occurred.
+  const EDITOR = 'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP';
+  const jiggle = (component: string): Record<string, unknown> => ({
+    ...STATIC_MOTION,
+    physics: { cowlick: { bone: 'block', [component]: 0.375, inertia: 0.5, strength: 100, damping: 0.85, mass: 1, mix: 1 } },
+  });
+  const quiet = gateProbe(dirs, jiggle('rotate'));
+  const quietSaid = quiet.skipped.find((s) => s.assertion === EDITOR)?.reason ?? '';
+  say(
+    'S05_A41_SKIPS_UNDECLARED_AND_STILL_NAMES_WHAT_WOULD_BE_LOST',
+    quiet.failures.length === 0 &&
+      !quiet.passed.includes(EDITOR) &&
+      quietSaid.includes('"cowlick"') &&
+      quietSaid.includes('rotate'),
+    quietSaid === ''
+      ? `A41 did not skip on an un-declaring rig: it is in [${quiet.passed.includes(EDITOR) ? 'passed' : 'neither list'}]`
+      : `built green, and the skip reads: ${quietSaid}`,
+    'a rig that never declares the editor is the common case, so if the un-gated report did not name the constraint ' +
+      'and the component the whole rule would only ever be read by somebody who already knew',
+  );
+
+  const declared = writeProbeRig({ invariants: { editorRoundTrip: true } });
+  const refused = gateProbe(declared, jiggle('rotate'));
+  const refusedSaid = refused.failures.find((f) => f.assertion === EDITOR)?.detail ?? '';
+  say(
+    'S06_A41_REFUSES_A_ROTATION_JIGGLE_ON_A_RIG_DECLARED_FOR_THE_EDITOR',
+    refusedSaid.includes('"cowlick"') && refusedSaid.includes('rotate'),
+    refusedSaid === ''
+      ? `A41 accepted it: [${refused.failures.map((f) => f.assertion).join(', ') || 'nothing fired'}]`
+      : refusedSaid,
+    'the same rig and the same constraint as the case above, with one key added — so what moved the verdict is the ' +
+      'declaration and nothing else',
+  );
+
+  const kept = gateProbe(declared, jiggle('y'));
+  say(
+    'S07_A41_ACCEPTS_THE_COMPONENTS_THE_EDITOR_ACTUALLY_KEEPS',
+    kept.failures.length === 0 && kept.passed.includes(EDITOR),
+    kept.failures.length === 0
+      ? `a lone \`y\` on the declaring rig: A41 ${kept.passed.includes(EDITOR) ? 'ran and held' : 'did NOT run'}`
+      : `[${kept.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    '`y` had never been round-tripped until #540 and it came back; a rule that refused every physics constraint on a ' +
+      'declaring rig would look identical to this one on the case above',
+  );
+
+  const nothingToLose = gateProbe(declared, STATIC_MOTION);
+  const vacuous = nothingToLose.skipped.find((s) => s.assertion === EDITOR);
+  say(
+    'S08_A41_SKIPS_RATHER_THAN_PASSING_A_RIG_WITH_NO_PHYSICS_AT_ALL',
+    vacuous !== undefined && !nothingToLose.passed.includes(EDITOR),
+    vacuous ? `skipped: ${vacuous.reason}` : 'A41 looked at a rig with no physics constraint and called that a pass',
+    'a declaration is not a measurement: "this rig is for the editor" and "this rig has been checked against the ' +
+      'editor" print the same green unless the empty case skips',
   );
   return bad;
 }
@@ -20806,17 +20900,17 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   {
     row: 'README: the benchmark-dossier row (#359)',
     stale: 'the run viewer, the 36 named assertions with their profiles, and the selftest\n',
-    clean: 'the run viewer, the 41 named assertions with their profiles, and the selftest\n',
+    clean: 'the run viewer, the 42 named assertions with their profiles, and the selftest\n',
   },
   {
     row: 'AUTHORING: the `--profile` row (#359)',
     stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
-    clean: '| `--profile` | `spine` = the 26 validity rules (**the default**) · `spine-html` = all 41, opt-in |\n',
+    clean: '| `--profile` | `spine` = the 27 validity rules (**the default**) · `spine-html` = all 42, opt-in |\n',
   },
   {
     row: 'BENCHMARK: the profiles paragraph (#359)',
     stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
-    clean: 'Not all 41 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+    clean: 'Not all 42 rules are about Spine. Some are about **spine-html**, the renderer this\n',
   },
   {
     row: 'BENCHMARK: the profile table\'s own row (#359)',
@@ -20825,7 +20919,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      '| `spine-html` | all 41 — those 26 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
+      '| `spine-html` | all 42 — those 27 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',

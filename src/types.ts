@@ -1037,6 +1037,13 @@ export interface RigInfo {
    * is on.
    */
   deformMayFold: string[];
+  /**
+   * The rig declared `invariants.editorRoundTrip: true` — it is authored to come
+   * back out of the Spine editor, so `A41` gates what that consumer cannot hold.
+   * False is the ordinary case and is not a weaker gate: A41 then SKIPs, and the
+   * SKIP still names anything a round trip would drop.
+   */
+  editorRoundTrip: boolean;
   /** Mesh slots this rig budgets for, or null when it declares no budget. */
   meshSlotBudget: number | null;
   /** Triangles one mesh may carry, or null when the rig declares no budget. */

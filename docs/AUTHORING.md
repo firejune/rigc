@@ -163,7 +163,7 @@ What the flags mean:
 | `--atlas-in` | `build` only: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; the atlas is re-emitted into `--out`, re-anchored — **§0.2** |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order. For `chainfit` it is only where each attachment's image name **resolves**: the candidate decides what the parts are, so extra PNGs are unused and a missing name is refused by name (§12.3) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
-| `--profile` | `spine` = the 26 validity rules (**the default**) · `spine-html` = all 41, opt-in |
+| `--profile` | `spine` = the 27 validity rules (**the default**) · `spine-html` = all 42, opt-in |
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview`, and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote`, so is a name that only *some* candidates have |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
@@ -1782,7 +1782,8 @@ is not an array. Every field is optional and each is the payload a firing
 
 Optional with one exception, and only meaningful for rigc's own formations:
 `meshSlots` and `meshTriangles` (the two halves of the mesh budget `A13` measures
-against), `axisBone`, `massBone`, `detached`, `deformMayFold`. Nothing in skeleton
+against), `axisBone`, `massBone`, `detached`, `deformMayFold`, `editorRoundTrip`.
+Nothing in skeleton
 JSON records that a
 bone carries a cut's axis or that a parentage is forbidden, so the rig spec says it
 and the validator's archetype assertions read it. **An assertion whose field is
@@ -1819,6 +1820,33 @@ and the entry is gone. ⇒ An exemption whose `why` reads *"known defect, see
 #N"* is a legitimate use of the field and an honest one, but it is a loan
 against a fix, not a fix — and the thing that made it repayable was A39
 measuring the ceiling the art could actually take.
+
+🎬 **`editorRoundTrip` is the one field here that names a CONSUMER rather than a
+shape.** Write `"editorRoundTrip": true` when this rig is authored to come back
+out of the Spine editor — imported, hand-edited, exported — and
+`A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP` refuses a physics constraint driving a
+component that editor cannot hold. `true` is the only accepted value; a `false`
+would be a key nothing reads ([#545](https://github.com/firejune/rigc/issues/545)).
+
+⚠️ **Leaving it out is not a weaker gate, and this is the part worth reading.**
+rigc's output is not wrong here: a physics constraint driving `rotate` is valid
+Spine 4.3 that every runtime plays — a cowlick, a tail, an ear — so refusing it by
+default would be refusing correct data on behalf of a pipeline nobody declared.
+What a rig that says nothing gets instead is the **SKIP**, and the SKIP names the
+constraint and the component:
+
+```
+  SKIP  A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP: the rig "look" does not declare `invariants.editorRoundTrip`, so nothing here is gated against the Spine editor. What is here: physics "whip" drives rotate, and the editor's physics model holds x and y only, so a round trip returns that constraint driving nothing at all (issue #540)
+```
+
+📏 **Measured, not inferred** ([#540](https://github.com/firejune/rigc/issues/540)):
+three rigs, twelve constraints, predictions written before the round trip. A lone
+`y` came back and `x` + `y` together came back — the rule is membership, not arity
+— while a lone `rotate`, a lone `scaleX` and a lone `shearX` each came back driving
+**no component at all**, and neither `scaleY` mode rescues `scaleX`. So the fix for
+a refusal is to drive the constraint in `x`/`y`, or to drop the declaration if this
+rig never goes near the editor. ⇒ `A23_PHYSICS_CONSTRAINT_EFFECTIVE` is the same
+loss seen from the far side: it is what fires on the file the editor hands **back**.
 
 🚫 **Do not reach for it to cover a part you have faded out.** A key whose slot
 draws no pixels at that key's own time is already passed over — `A39` measures
@@ -3446,6 +3474,7 @@ The report prints one line per assertion:
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
 | `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. ⚠️ And the **spans between** consecutive keys are scanned too (§4.11.3, issue #403): the runtime interpolates, so a deform inside its fold angle at every key can be past it in between. That refusal is its own sentence — `BETWEEN key 0 (t=0s) and key 1 (t=0.5s), at t=…` — with the time solved for in closed form and then posed and measured like any key, alpha read at that same moment. `deformSpansScanned` says on every green build that the scan ran. ⚠️ And the **frame** it poses in is the one the animation is reached in (§4.11.4, issue #407): on a track when nothing applies it, and otherwise once per **slider**, with that slider's mapping inverted and its bone driven until the runtime selects the key's own time — because a slider picks the time, so the two are one number and posing them independently is a frame that never occurs. The frame is on every `DEFORM` line, on the stats line as `deformFrames`, and in the refusal itself when it is not the track. A key at a time **no dial value selects** is measured in the frame the runtime does land on, left out of `deformKeysMeasured` and named as `deformKeysUnreachable`/`deformUnreachable` — never refused and never silent. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels or is unreachable *and no span between them folds where anything is drawn*, or when there is no rig info at all |
 | `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where a later one is not `additive` — it writes that property outright at `mix: 1` and every earlier slider on it is dead (§3.5.2). Also fires when the shared timeline **cannot** be additive (a slot colour, an attachment swap, a draw order, a sequence), where `"additive": true` is not the fix and one of the two has to go. The detail names the bone or slot and the property, every slider keying it in `constraints` order with its flag, and which one wins today. Three shapes are deliberately not findings: a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, not an overwrite), two `skinRequired` sliders no skin activates together, and two sliders on different properties. **SKIP** when fewer than two sliders are at full authority; a PASS means two were compared |
+| `A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP` | both | a physics constraint driving a component the **Spine editor** cannot hold, on a rig that declared `invariants.editorRoundTrip` (§3.7). The editor's physics model holds `x` and `y` only, with no cap on how many at once, so a constraint driving `rotate`, `scaleX` or `shearX` is imported, exported and handed back driving **nothing** — measured over three rigs and twelve constraints with the predictions written first ([#540](https://github.com/firejune/rigc/issues/540)). The detail names the constraint and each component. ⚠️ rigc's own output is correct — every runtime plays a rotation jiggle — so this is opt-in and the default is *not* silence: on a rig that declares nothing it **SKIPs**, and the SKIP names the constraint and the component anyway, so an author learns without having asked. Fix by driving the constraint in `x`/`y`, or by dropping the declaration if the rig never goes near the editor. Disjoint from `A23_PHYSICS_CONSTRAINT_EFFECTIVE` by construction: A23 refuses an **empty** driven set, which is what comes back from the editor, and this refuses a non-empty one that will not survive going in. **SKIP** also when the rig declares the editor and carries no physics constraint at all |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
