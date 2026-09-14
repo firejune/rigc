@@ -12880,30 +12880,83 @@ function runDeformWindingSuite(): number {
   const landsOnTheKey = drivenSurvey.keys.every(
     (k) => k.dial !== null && !k.dial.unreachable && Math.abs(k.dial.applied - k.time) <= 1e-6,
   );
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). The selector that
+  // used to pick the detail read `driven.failures.length === 0` and nothing
+  // else, so four of the eleven terms below could not reach it — and the two
+  // sharpest, `inversionExact` and `landsOnTheKey`, are asserted outright by the
+  // clean sentence over the very figures that refute them. Measured: building
+  // this rig's slider at `scale: 0.06` while `dialValueFor` keeps the fixture's
+  // 0.03 makes `inversionExact` false ALONE, and the run printed `the inversion
+  // of \`time = 0.25 + (value − -20) × 0.03\` names -24.1667, -15.8333, -7.5000°
+  // for the three keys` — three values that formula does not name, under the
+  // FAIL raised by exactly that. There are four independent readings here and
+  // one bound would name none of them.
+  const DRIVEN_FRAMES = 'turn:slider/dial';
+  const drivenProbes: string[] = [
+    ...firstFew(
+      driven.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+      'failure(s)',
+    ),
+    ...(driven.passed.includes(A39) ? [] : [`${A39} is not in this build's passed list, so it did NOT run`]),
+    ...firstFew(
+      drivenSurvey.keys.flatMap((k, i) =>
+        k.reach.kind === 'slider' && k.reach.slider === 'dial'
+          ? []
+          : [`key ${i} was surveyed through reach ${k.reach.kind}/${k.reach.slider ?? '(none)'} and not slider/dial`],
+      ),
+      'key(s)',
+    ),
+    ...(inversionExact
+      ? []
+      : [
+          `the inversion does not reproduce the slider: the survey reads ` +
+            `[${drivenSurvey.keys.map((k) => k.dial?.value.toFixed(4) ?? '?').join(', ')}]° where ` +
+            `\`time = ${DIAL_TO} + (value − ${DIAL_FROM}) × ${DIAL_SCALE}\` inverted at the key times wants ` +
+            `[${drivenSurvey.keys.map((k) => dialValueFor(k.time).toFixed(4)).join(', ')}]°`,
+        ]),
+    ...(landsOnTheKey
+      ? []
+      : [
+          `driven at its own value the animation is applied at ` +
+            `[${drivenSurvey.keys.map((k) => k.dial?.applied.toFixed(6) ?? '?').join(', ')}]s and the keys are at ` +
+            `[${drivenSurvey.keys.map((k) => k.time.toFixed(6)).join(', ')}]s`,
+        ]),
+    // The oracle: drawn in the old frame, not drawn in the new one, both read
+    // off spine-core by this file.
+    ...(trackAlpha > 0
+      ? []
+      : [`posed on a track at t=${foldTime} the slot's alpha is ${trackAlpha.toFixed(4)}, so the old frame drew nothing either and the two frames cannot be told apart`]),
+    ...(dialAlpha === 0
+      ? []
+      : [`posed at the dial's own value the slot's alpha is ${dialAlpha.toFixed(4)} and not 0, so the new frame is drawn after all`]),
+    ...(Number(driven.stats.deformKeysNotDrawn) === 1
+      ? []
+      : [`deformKeysNotDrawn reads ${driven.stats.deformKeysNotDrawn} where this rig hides exactly 1 key`]),
+    ...(String(driven.stats.deformFrames) === DRIVEN_FRAMES
+      ? []
+      : [`deformFrames reads "${driven.stats.deformFrames}" where the one reach wants "${DRIVEN_FRAMES}"`]),
+    ...(drivenBlock.some((l) => /frame\s+applied by slider "dial" off knob\.rotate \(local\)/.test(l))
+      ? []
+      : ['no line of the rollup names `frame applied by slider "dial" off knob.rotate (local)`']),
+    ...(drivenBlock.some((l) => l.includes(`dial ${dialValueFor(foldTime).toFixed(6)}`))
+      ? []
+      : [`no line of the rollup carries \`dial ${dialValueFor(foldTime).toFixed(6)}\`, the value the mapping puts the fold at`]),
+  ];
+  const drivenHeld = drivenProbes.length === 0;
   say(
     'DW20_A_SLIDER_APPLIED_ANIMATION_IS_POSED_AT_THE_SLIDERS_OWN_MAPPING',
-    driven.failures.length === 0 &&
-      driven.passed.includes(A39) &&
-      drivenSurvey.keys.every((k) => k.reach.kind === 'slider' && k.reach.slider === 'dial') &&
-      inversionExact &&
-      landsOnTheKey &&
-      // The oracle: drawn in the old frame, not drawn in the new one, both read
-      // off spine-core by this file.
-      trackAlpha > 0 &&
-      dialAlpha === 0 &&
-      Number(driven.stats.deformKeysNotDrawn) === 1 &&
-      String(driven.stats.deformFrames) === 'turn:slider/dial' &&
-      drivenBlock.some((l) => /frame\s+applied by slider "dial" off knob\.rotate \(local\)/.test(l)) &&
-      drivenBlock.some((l) => l.includes(`dial ${dialValueFor(foldTime).toFixed(6)}`)),
-    driven.failures.length === 0
-      ? `the same 40° fold, faded out across it, applied by a slider at mix 1: the inversion of ` +
-          `\`time = ${DIAL_TO} + (value − ${DIAL_FROM}) × ${DIAL_SCALE}\` names ` +
-          `${drivenDials.map((d) => d?.value.toFixed(4) ?? '?').join(', ')}° for the three keys, and driven there ` +
-          `spine-core applies the animation at ${drivenDials.map((d) => d?.applied.toFixed(6) ?? '?').join(', ')}s ` +
-          `— the key times themselves. Posed by this file both ways at t=${foldTime}: the slot's alpha is ` +
-          `${trackAlpha.toFixed(4)} on a track with the dial at its neutral, and ${dialAlpha.toFixed(4)} with the ` +
-          `dial where the mapping puts it. ${A39} ${driven.passed.includes(A39) ? 'PASSES' : 'did NOT run'}`
-      : `[${driven.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    drivenHeld,
+    probeDetail(
+      drivenHeld,
+      drivenProbes,
+      `the same 40° fold, faded out across it, applied by a slider at mix 1: the inversion of ` +
+        `\`time = ${DIAL_TO} + (value − ${DIAL_FROM}) × ${DIAL_SCALE}\` names ` +
+        `${drivenDials.map((d) => d?.value.toFixed(4) ?? '?').join(', ')}° for the three keys, and driven there ` +
+        `spine-core applies the animation at ${drivenDials.map((d) => d?.applied.toFixed(6) ?? '?').join(', ')}s ` +
+        `— the key times themselves. Posed by this file both ways at t=${foldTime}: the slot's alpha is ` +
+        `${trackAlpha.toFixed(4)} on a track with the dial at its neutral, and ${dialAlpha.toFixed(4)} with the ` +
+        `dial where the mapping puts it. ${A39} ${driven.passed.includes(A39) ? 'PASSES' : 'did NOT run'}`,
+    ),
     'issue #407: A39 posed the animation on a track while its own slider applied it at the neutral, which is a ' +
       'frame no playthrough contains — and the slot-colour half of that apply is an overwrite, so the alpha-0 key ' +
       'the animation itself set was undone and a correct rig went red',
@@ -13045,23 +13098,67 @@ function runDeformWindingSuite(): number {
   const trackedHits = tracked.failures.filter((f) => f.assertion === A39);
   const onTrack = trackedHits.find((f) => /animation "turn" deform/.test(f.detail));
   const viaSlider = trackedHits.find((f) => /animation "turn_seen" \(applied by slider "dial"/.test(f.detail));
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Five of the seven
+  // terms below go unnamed by the selector that used to pick the detail — it
+  // turned on `trackedHits.length === 2` and on nothing else — and four of the
+  // five are stated as fact in the clean sentence. Measured: renaming this
+  // rig's slider to "dial2" leaves two refusals standing and neither of them
+  // the slider's own, and the run printed `…while "turn_seen" is refused in its
+  // own slider frame and the message says which (deformFrames=turn:track,
+  // turn_seen:slider/dial2)` under the FAIL that had just found otherwise.
+  // `RD02`'s line cannot repair that: there are five independent things to name
+  // here, which is the scale a list buys over one bound.
+  const TRACK_FRAMES = 'turn:track,turn_seen:slider/dial';
+  const trackProbes: string[] = [
+    ...(trackedHits.length === 2
+      ? []
+      : [
+          `${A39} fired ${trackedHits.length} time(s) where this rig has two frames to refuse: ` +
+            `[${trackedHits.map((f) => f.detail.slice(0, 120)).join(' | ')}]`,
+        ]),
+    ...(onTrack === undefined
+      ? ['no refusal names `animation "turn" deform`, so the track frame was not refused at all']
+      : [
+          ...(/applied by slider/.test(onTrack.detail)
+            ? [`the track refusal reads "applied by slider", so it is not the track frame: "${onTrack.detail.slice(0, 160)}"`]
+            : []),
+          ...(/8 of 32 triangle\(s\) reverse winding/.test(onTrack.detail)
+            ? []
+            : [
+                `the track refusal does not read "8 of 32 triangle(s) reverse winding": ` +
+                  `"${onTrack.detail.slice(0, 160)}"`,
+              ]),
+          // No alpha clause on the track refusal: the slider's apply put the slot
+          // back to 1, which is the whole reason that frame refuses.
+          ...(/at alpha /.test(onTrack.detail)
+            ? [
+                `the track refusal carries an \`at alpha \` clause, so the slider's apply did NOT put the slot back ` +
+                  `to 1 and this is no longer the frame that occurs: "${onTrack.detail.slice(0, 160)}"`,
+              ]
+            : []),
+        ]),
+    ...(viaSlider === undefined
+      ? [
+          'no refusal names `animation "turn_seen" (applied by slider "dial"`, so the slider frame was not refused ' +
+            'in its own right',
+        ]
+      : []),
+    ...(String(tracked.stats.deformFrames) === TRACK_FRAMES
+      ? []
+      : [`deformFrames reads "${tracked.stats.deformFrames}" where both reaches want "${TRACK_FRAMES}"`]),
+  ];
+  const trackedHeld = trackProbes.length === 0;
   say(
     'DW22_AN_ANIMATION_NO_SLIDER_APPLIES_KEEPS_THE_TRACK_FRAME_AND_ITS_RED',
-    trackedHits.length === 2 &&
-      onTrack !== undefined &&
-      viaSlider !== undefined &&
-      !/applied by slider/.test(onTrack.detail) &&
-      /8 of 32 triangle\(s\) reverse winding/.test(onTrack.detail) &&
-      // No alpha clause on the track refusal: the slider's apply put the slot
-      // back to 1, which is the whole reason that frame refuses.
-      !/at alpha /.test(onTrack.detail) &&
-      String(tracked.stats.deformFrames) === 'turn:track,turn_seen:slider/dial',
-    trackedHits.length === 2
-      ? `one rig, two animations, two frames: "turn" is played on a track and refused — the slider applying ` +
-          `"turn_seen" holds the slot opaque at its neutral, so the fade the animation wrote is overwritten by a ` +
-          `frame that DOES occur — while "turn_seen" is refused in its own slider frame and the message says which ` +
-          `(deformFrames=${tracked.stats.deformFrames})`
-      : `${A39} fired ${trackedHits.length} time(s): [${trackedHits.map((f) => f.detail.slice(0, 120)).join(' | ')}]`,
+    trackedHeld,
+    probeDetail(
+      trackedHeld,
+      trackProbes,
+      `one rig, two animations, two frames: "turn" is played on a track and refused — the slider applying ` +
+        `"turn_seen" holds the slot opaque at its neutral, so the fade the animation wrote is overwritten by a ` +
+        `frame that DOES occur — while "turn_seen" is refused in its own slider frame and the message says which ` +
+        `(deformFrames=${tracked.stats.deformFrames})`,
+    ),
     '#407 moved the FRAME and nothing else. If the fix had been a looser alpha rule, or "exclude the slider while ' +
       'posing", this rig would be green — and it is a rig where the fold is genuinely on screen',
   );
@@ -13263,27 +13360,91 @@ function runDeformWindingSuite(): number {
     ...wrappedSurvey.keys.map((k) => k.dial?.driven ?? 0),
     ...limitSurvey.keys.map((k) => k.dial?.driven ?? 0),
   ];
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Four of the ten
+  // terms below could not reach the selector, which read
+  // `limitGate.failures.length === 0` and nothing else — and the clean sentence
+  // is a sentence-length assertion of them: *which* keys are inside the bound,
+  // *how many* are outside, and that the outside one was NAMED rather than
+  // driven. Measured: moving `LIMIT_FROM` to 16400000 puts a second key past the
+  // bound, and the run printed `keys 0 and 1 need 16400000 and 16900000, inside
+  // ±16777216, and are measured` — a figure the same clause says is inside a
+  // bound it is 122784 above, with the tool's own "out of bounds" quote for that
+  // very key two clauses later. One bound in front of both branches would have
+  // repaired none of it: there are four separate readings, and the defect is
+  // that the prose picks which ones to describe.
+  const limitProbes: string[] = [
+    ...firstFew(
+      limitGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+      'failure(s)',
+    ),
+    // which keys are out of bounds is arithmetic, not a literal
+    ...(limitOut.length === overTheLimit.length
+      ? []
+      : [
+          `the gate reports ${limitOut.length} key(s) out of bounds and the arithmetic here puts ` +
+            `${overTheLimit.length} past ±${DRIVE_LIMIT}`,
+        ]),
+    ...(limitOut.length === 1
+      ? []
+      : [`${limitOut.length} key(s) are out of bounds where this rig is built so that exactly 1 is`]),
+    ...(limitOut.length < limitSurvey.keys.length
+      ? []
+      : [
+          `all ${limitSurvey.keys.length} surveyed key(s) are out of bounds, so the rig no longer carries a ` +
+            'reachable key to measure beside the one that is not',
+        ]),
+    ...firstFew(
+      limitOut.flatMap((k) =>
+        k.dial?.unreachable === true
+          ? []
+          : [`the key at t=${k.time}s is past the bound and is not reported unreachable, so the bone was put there`],
+      ),
+      'key(s)',
+    ),
+    ...(Number(limitGate.stats.deformKeysUnreachable) === limitOut.length
+      ? []
+      : [
+          `deformKeysUnreachable reads ${limitGate.stats.deformKeysUnreachable} against the ${limitOut.length} ` +
+            'key(s) the survey put out of bounds',
+        ]),
+    ...(Number(limitGate.stats.deformKeysMeasured) === limitSurvey.keys.length - limitOut.length
+      ? []
+      : [
+          `deformKeysMeasured reads ${limitGate.stats.deformKeysMeasured} against the ` +
+            `${limitSurvey.keys.length - limitOut.length} key(s) left after the out-of-bounds one(s)`,
+        ]),
+    // the message carries the bound and the ask, both as numbers
+    ...(limitWhy.includes(`±${DRIVE_LIMIT}`)
+      ? []
+      : [`the refusal does not carry the bound ±${DRIVE_LIMIT}: "${limitWhy.slice(0, 130)}…"`]),
+    ...(limitWhy.includes(limitValueFor(1).toExponential(4))
+      ? []
+      : [
+          `the refusal does not carry the ask ${limitValueFor(1).toExponential(4)}: ` +
+            `"${limitWhy.slice(0, 130)}…"`,
+        ]),
+    // 🚨 and NOTHING anywhere in this suite was driven past it
+    ...firstFew(
+      everyDrive.flatMap((d) =>
+        Number.isFinite(d) && Math.abs(d) <= DRIVE_LIMIT
+          ? []
+          : [`a dial in this suite was driven to ${d}, past ±${DRIVE_LIMIT}`],
+      ),
+      'drive(s)',
+    ),
+  ];
+  const limitHeld = limitProbes.length === 0;
   say(
     'DW26_A_DIAL_PAST_THE_DRIVE_BOUND_IS_NAMED_AND_THE_BONE_IS_NOT_PUT_THERE',
-    limitGate.failures.length === 0 &&
-      // which keys are out of bounds is arithmetic, not a literal
-      limitOut.length === overTheLimit.length &&
-      limitOut.length === 1 &&
-      limitOut.length < limitSurvey.keys.length &&
-      limitOut.every((k) => k.dial?.unreachable === true) &&
-      Number(limitGate.stats.deformKeysUnreachable) === limitOut.length &&
-      Number(limitGate.stats.deformKeysMeasured) === limitSurvey.keys.length - limitOut.length &&
-      // the message carries the bound and the ask, both as numbers
-      limitWhy.includes(`±${DRIVE_LIMIT}`) &&
-      limitWhy.includes(limitValueFor(1).toExponential(4)) &&
-      // 🚨 and NOTHING anywhere in this suite was driven past it
-      everyDrive.every((d) => Number.isFinite(d) && Math.abs(d) <= DRIVE_LIMIT),
-    limitGate.failures.length === 0
-      ? `a dial mapped 1e6 per second off ${LIMIT_FROM}: keys 0 and 1 need ${limitValueFor(0)} and ` +
-          `${limitValueFor(0.5)}, inside ±${DRIVE_LIMIT}, and are measured; key 2 needs ${limitValueFor(1)}, past ` +
-          `it, and is named instead — "${limitWhy.slice(0, 130)}…". Across all ${everyDrive.length} dial(s) this ` +
-          `suite drove, the largest magnitude is ${Math.max(...everyDrive.map(Math.abs)).toFixed(0)}`
-      : `[${limitGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    limitHeld,
+    probeDetail(
+      limitHeld,
+      limitProbes,
+      `a dial mapped 1e6 per second off ${LIMIT_FROM}: keys 0 and 1 need ${limitValueFor(0)} and ` +
+        `${limitValueFor(0.5)}, inside ±${DRIVE_LIMIT}, and are measured; key 2 needs ${limitValueFor(1)}, past ` +
+        `it, and is named instead — "${limitWhy.slice(0, 130)}…". Across all ${everyDrive.length} dial(s) this ` +
+        `suite drove, the largest magnitude is ${Math.max(...everyDrive.map(Math.abs)).toFixed(0)}`,
+    ),
     'issue #419: a drive of 4.9e9 in a report is the visible end of a silent failure, and a fix that only makes it ' +
       'rarer is not one. Past 2^24 a float32 no longer separates consecutive integers, so a figure up there is not ' +
       'a value an author can set and read back — the bone is left where the rig put it and the key is not gated',
@@ -13635,35 +13796,88 @@ function runDeformWindingSuite(): number {
   // `cos θ` exactly. The closed form, against the figure the tool printed.
   const wideExpected = Math.cos((wideDegrees * Math.PI) / 180);
   const wideResponse = responsesIn(wideLine)[0] ?? NaN;
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Four of the eleven
+  // terms below never reached the selector, which turned on
+  // `wideGate.failures.length === 0` alone, and three of the four are the
+  // sentence's subject: that this rig DISAGREES, that it is not a tie, and that
+  // BOTH answers reach. Measured: building the parent at `atan(0.5 × margin)`
+  // instead of `atan(2 × margin)` puts the two responses inside the tool's
+  // margin, and the run printed `the same slider with the parent at 89.88541° —
+  // tan θ twice the tool's own 1000x margin — still disagrees, and both answers
+  // select the whole animation: ""` — a disagreement asserted over an empty
+  // line, with `twice` typed out on a run where it was half and the response
+  // beside it reading `NaN`. Three independent things fell there and one bound
+  // would have named none of them.
+  const wideProbes: string[] = [
+    ...firstFew(
+      wideGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+      'failure(s)',
+    ),
+    // the same class of rig as DW29 — a genuine disagreement, not a tie
+    ...(/The two disagree and both are reported/.test(wideSurvey.keys[0]?.reach.label ?? '')
+      ? []
+      : [`the first key's reach label reads "${wideSurvey.keys[0]?.reach.label ?? '(no key at all)'}"`]),
+    ...(Number(wideStats.deformDialsDisagreed) === 1
+      ? []
+      : [`deformDialsDisagreed reads ${wideStats.deformDialsDisagreed ?? '(absent)'} where this rig has one dial to disagree about`]),
+    ...(wideStats.deformDialTied === undefined
+      ? []
+      : [`the build reports a TIE rather than a disagreement: "${wideStats.deformDialTied}"`]),
+    // …whose two reaches both cover the whole animation
+    ...(wideReaches.length === 2
+      ? []
+      : [`the disputed-dial line carries ${wideReaches.length} reach(es) and not the two it is comparing: "${wideLine}"`]),
+    ...firstFew(
+      wideReaches.flatMap((r, i) =>
+        r.lo === 0 && r.hi === wideSurvey.keys[wideSurvey.keys.length - 1].time
+          ? []
+          : [
+              `reach ${i} covers ${r.lo}..${r.hi}s of a ` +
+                `${wideSurvey.keys[wideSurvey.keys.length - 1].time}s animation, so it does not select all of it`,
+            ],
+      ),
+      'reach(es)',
+    ),
+    // ⭐ so nothing was surveyed past the artifact's answer, and the line SAYS
+    // that rather than omitting the comparison
+    ...(/\|outside:none/.test(wideLine)
+      ? []
+      : [`the line carries no \`|outside:none\`, so it omits the comparison rather than reporting it: "${wideLine}"`]),
+    ...(outsideIn(wideLine).length === 0
+      ? []
+      : [`the line names ${outsideIn(wideLine).length} key time(s) outside the artifact's reach: "${wideLine}"`]),
+    // 🔒 anchored to the closed form, not to itself: the printed response is
+    // `cos θ` to the four digits it is printed with
+    ...(Math.abs(wideResponse - wideExpected) <= 1e-3 * wideExpected
+      ? []
+      : [
+          `the artifact's field responds ${wideResponse.toExponential(3)} against the closed form's cos θ = ` +
+            `${wideExpected.toExponential(3)}, further off than the 1e-3 relative this holds it to`,
+        ]),
+    // 🔒 and the two disagreement cases cannot be read off each other: this one
+    // names no time outside and DW29 names two
+    ...(splitOutside.length > 0
+      ? []
+      : [
+          'DW29\'s rig names no key time outside either, so the two disagreement cases no longer differ in the ' +
+            'thing this one is about',
+        ]),
+  ];
+  const wideHeld = wideProbes.length === 0;
   say(
     'DW30_A_DISAGREEMENT_BOTH_ANSWERS_REACH_THROUGH_SAYS_OUTSIDE_NONE_RATHER_THAN_GOING_QUIET',
-    wideGate.failures.length === 0 &&
-      // the same class of rig as DW29 — a genuine disagreement, not a tie
-      /The two disagree and both are reported/.test(wideSurvey.keys[0]?.reach.label ?? '') &&
-      Number(wideStats.deformDialsDisagreed) === 1 &&
-      wideStats.deformDialTied === undefined &&
-      // …whose two reaches both cover the whole animation
-      wideReaches.length === 2 &&
-      wideReaches.every((r) => r.lo === 0 && r.hi === wideSurvey.keys[wideSurvey.keys.length - 1].time) &&
-      // ⭐ so nothing was surveyed past the artifact's answer, and the line SAYS
-      // that rather than omitting the comparison
-      /\|outside:none/.test(wideLine) &&
-      outsideIn(wideLine).length === 0 &&
-      // 🔒 anchored to the closed form, not to itself: the printed response is
-      // `cos θ` to the four digits it is printed with
-      Math.abs(wideResponse - wideExpected) <= 1e-3 * wideExpected &&
-      // 🔒 and the two disagreement cases cannot be read off each other: this one
-      // names no time outside and DW29 names two
-      splitOutside.length > 0,
-    wideGate.failures.length === 0
-      ? `the same slider with the parent at ${wideDegrees.toFixed(5)}° — tan θ twice the tool's own ${PROBE_MARGIN}x ` +
-          `margin — still disagrees, and both answers select the whole animation: "${wideLine}". The artifact's ` +
-          `field responds ${wideResponse.toExponential(3)} against the closed form's cos θ = ` +
-          `${wideExpected.toExponential(3)}, which at scale ${AXIS_SCALE} reaches ` +
-          `${(2 ** 24 * wideExpected * AXIS_SCALE).toFixed(1)}s of a ` +
-          `${wideSurvey.keys[wideSurvey.keys.length - 1].time}s animation. ⇒ the disagreement changed no frame, ` +
-          'and that is a reading rather than a silence'
-      : `[${wideGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+    wideHeld,
+    probeDetail(
+      wideHeld,
+      wideProbes,
+      `the same slider with the parent at ${wideDegrees.toFixed(5)}° — tan θ twice the tool's own ${PROBE_MARGIN}x ` +
+        `margin — still disagrees, and both answers select the whole animation: "${wideLine}". The artifact's ` +
+        `field responds ${wideResponse.toExponential(3)} against the closed form's cos θ = ` +
+        `${wideExpected.toExponential(3)}, which at scale ${AXIS_SCALE} reaches ` +
+        `${(2 ** 24 * wideExpected * AXIS_SCALE).toFixed(1)}s of a ` +
+        `${wideSurvey.keys[wideSurvey.keys.length - 1].time}s animation. ⇒ the disagreement changed no frame, ` +
+        'and that is a reading rather than a silence',
+    ),
     'issue #427 asked whether a disagreement is a report or a refusal, and narrowed it to whether the two answers ' +
       'pose the same frames. This is the rig where they do — refusing it would be a false red on geometry the ' +
       'runtime poses correctly at every key, so the comparison decides what the line SAYS and never whether it fires',
