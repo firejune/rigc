@@ -857,13 +857,44 @@ export interface SpineSkeletonJson {
    * not cosmetic: the binary format addresses both of these by ORDINAL
    * (`SkeletonBinary`: `animations[readInt()]` for a slider's animation,
    * `events[readInt()]` for an event key), and an editor round trip was measured
-   * to re-key every name-keyed object in codepoint order while returning every
-   * ARRAY in the order it was given. So a reference into either of these two is
-   * a reference whose ordinal an editor can move, and a reference into
-   * `bones` / `slots` / `skins` / `constraints` is not. `animations` is emitted
-   * in the editor's order for that reason (`compile.ts`'s
-   * `editorAnimationOrder`); whether `events` needs the same is unmeasured,
-   * because no editor export on hand carries more than one event.
+   * to re-key every name-keyed object while returning the arrays it was taken
+   * over in the order they were given. So a reference into either of these two
+   * is a reference whose ordinal an editor can move.
+   *
+   * ✅ **`events` does not need what `animations` needed, and that is measured
+   * rather than owed.** This comment said *unmeasured* until issue #539 carried
+   * three of them through the editor on the same session's discriminator rigs:
+   * `zebra, mike, alpha` came back keyed `alpha, mike, zebra`, and every firing
+   * still resolved **by name** — `0.3 -> mike`, `0.6 -> alpha`, payloads intact.
+   * So the editor re-keys `events` and repoints nothing, while the same re-key
+   * of `animations` repoints every slider (#535). `animations` is emitted in the
+   * editor's order for that reason (`compile.ts`'s `editorAnimationOrder`);
+   * `events` is emitted in the order the rig spec declares them.
+   *
+   * ⚠️ Two more of this paragraph's claims were falsified by the same session,
+   * and both stood here for a release because nothing re-read them (#544):
+   *
+   * - **The re-key is not in codepoint order.** It is natural and
+   *   case-insensitive: `Turn, sweep, wave` came back `sweep, Turn, wave` and
+   *   `turn10, turn2, zoom` came back `turn2, turn10, zoom` (#539). rigc still
+   *   emits `animations` codepoint-ascending, and refuses by name every name set
+   *   on which codepoint and the editor's comparator could disagree — see
+   *   `compile.ts`'s `refuseNamesTheEditorCouldKeyDifferently`, which is what
+   *   makes "codepoint is the editor's order" true of what rigc emits rather
+   *   than assumed of the editor.
+   * - **`skins` was on the safe side of this list and has no measurement behind
+   *   it.** The arrays the round trip actually returned element for element were
+   *   `bones` (30), `slots` (24) and `constraints` (3). Every rig in this tree
+   *   declares exactly ONE skin, and a one-element array comes back in order
+   *   whatever the editor does with it — #537's pull request called skins
+   *   "measured preserved" on that evidence, and vacuous is not preserved. Nor
+   *   can it be measured today: the editor refuses a four-skin rig on import
+   *   without a word (#541), so there is no export to read. ⇒ `bones` / `slots`
+   *   / `constraints` are the references an editor was measured not to move;
+   *   `skins` is unmeasured, and `SkeletonBinary` addresses it by ordinal too
+   *   (`skins[readInt()]` for an attachment timeline, `skins[skinIndex]` for a
+   *   linked mesh), so it is the collection to measure first if that ever
+   *   becomes possible.
    */
   events?: Record<string, SpineEvent>;
   animations: Record<

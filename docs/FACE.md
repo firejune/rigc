@@ -1182,7 +1182,10 @@ breaks the moment the two share a target — in the worked example both `turn` a
 
 ✅ **The editor half, measured.** This paragraph said *unknown* until the round
 trip was taken with `tools/editor_roundtrip.ts` on a licensed editor (data
-version 4.3.26) against a 4.3.13 build of this worked example. What it found:
+version 4.3.26) against a 4.3.13 build of
+[`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look) — this
+subsection's worked case, not the `gallery/portrait` this page names at the top,
+which declares no constraints at all and so can carry no slider. What it found:
 
 - **Both sliders come back, and the parameter axis survives.** `additive`,
   `local`, `bone`, `property`, `from`, `max` and `scale` are identical field for
@@ -1202,16 +1205,42 @@ version 4.3.26) against a 4.3.13 build of this worked example. What it found:
   `rotate: 1` is absent from the export, and an absent `rotate` parses as **0**
   (`SkeletonJson`), so the returned file states *drives nothing* rather than
   omitting a default — which is why `A23_PHYSICS_CONSTRAINT_EFFECTIVE` refuses it
-  by name. Independent of the ordering defect, and open as
+  by name. Independent of the ordering defect, and filed as
   [#536](https://github.com/firejune/rigc/issues/536).
+
+  ✅ **Why, measured since.** It is not elision and not a defect in one field:
+  the editor's physics model holds `x` and `y` and nothing else, with no limit on
+  how many at once. Three rigs, twelve constraints, predictions written before the
+  round trip — a lone `y` came back, `x` and `y` together came back, and a lone
+  `rotate`, a lone `scaleX` and a lone `shearX` each came back as **no components
+  at all**, with every constraint's fixed-point `strength` returning exactly so a
+  silent harness failure could not read as a finding
+  ([#540](https://github.com/firejune/rigc/issues/540)). ⇒ **A rotation-driven
+  jiggle does not survive the editor, and no `scaleY` mode substitutes for it.**
+  ⚠️ Still open on #536: whether the loss happens at import or at export. The
+  project file's bytes cannot settle it — it carries derived float32s that no
+  input declares — and the answer is invisible to an author either way.
 - 🔸 Unexplained: `diff` reports `animations.curve_kinds` moved on **196 of 200**
   keys in every round trip taken, the clean one included. Visually small once the
   ordering is fixed — but it is 98% of the keys, and *small* is not *explained*.
 
-⚠️ **What it still does not measure:** a rig carrying more than one skin or more
-than one event, which is where the same shape — an ordinal into an object the
-editor re-keys — could bite next (AUTHORING §10.1). The runtime half was never in
-doubt: every figure above came back through `spine-core`.
+✅ **The two things this paragraph said it still did not measure have since been
+measured, and they came out opposite ways** — [#544](https://github.com/firejune/rigc/issues/544)
+is the card for having left the sentence standing:
+
+- **More than one event is safe.** The editor re-keys `events` the way it re-keys
+  `animations` — `zebra, mike, alpha` came back `alpha, mike, zebra` — but every
+  firing resolved **by name**, `0.3 -> mike` and `0.6 -> alpha`, payloads intact
+  ([#539](https://github.com/firejune/rigc/issues/539)). The ordinal shape does
+  *not* bite here, and rigc emits events in the order you declare them.
+- **More than one skin is worse than unmeasured.** A four-skin rig builds green,
+  parses in `spine-core`, and the editor **refuses to import it** — no project
+  file, no message ([#541](https://github.com/firejune/rigc/issues/541)). So there
+  is no export to read, and every figure on this page was taken on a rig carrying
+  exactly one skin (AUTHORING §10.1).
+
+The runtime half was never in doubt: every figure above came back through
+`spine-core`.
 
 ---
 

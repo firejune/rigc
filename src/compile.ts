@@ -143,7 +143,15 @@ const FRAME = 1 / 60;
 
 /**
  * The order the emitted `animations` object is keyed in: **codepoint-ascending
- * by name**, which is the order the Spine editor writes it back out in.
+ * by name**, which is the order the Spine editor writes back every name set rigc
+ * lets through.
+ *
+ * ⚠️ That is not the same sentence as "codepoint is the editor's order", and this
+ * lede said the shorter thing until issue #544 — thirty lines above the section
+ * of this same comment that corrects it, which had said so since #542. The
+ * editor's comparator is **natural and case-insensitive** (#539, below); what
+ * makes the emit agree with it is the REFUSAL of every set the two could order
+ * differently, not the sort.
  *
  * ## Why the emitter has an opinion about this at all
  *

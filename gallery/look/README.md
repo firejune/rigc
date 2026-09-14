@@ -37,13 +37,32 @@ here, and the three depth sheets are written from a closed form by
 photograph, a painting or a normal-mapped render turns. That question is open
 and this example does not touch it.
 
-⚠️ **The editor round trip is unverified for sliders.** No editor export in this
-repository carries one, so whether the Spine editor preserves two sliders, their
-`additive` and `local` flags and their order in the `constraints` array is
-**unknown**. [`tools/editor_roundtrip.ts`](../../tools/editor_roundtrip.ts) on a
-licensed machine is what would answer it. Until somebody runs it, treat the
-editor half of this example as untested — the runtime half is not: every figure
-below came back through `spine-core`.
+✅ **The editor round trip has been taken, on this example.** This paragraph said
+it was *unverified* and the answer *unknown* until
+[`tools/editor_roundtrip.ts`](../../tools/editor_roundtrip.ts) was run on a
+licensed editor (data version 4.3.26) against a 4.3.13 build of this rig. The
+premise it rested on is still true — no editor export in `examples/` carries a
+slider — but the answer no longer depends on one. What came back
+([FACE §8](../../docs/FACE.md)):
+
+- ✅ **The parameter axis survives.** Both sliders return, `additive`, `local`,
+  `bone`, `property`, `from`, `max` and `scale` identical field for field, and the
+  two keep their places in the `constraints` array. `mix: 1` and `to: 0` are
+  dropped, and those are the format's own defaults — an elision, not a loss.
+- ⚠️ **The animation each slider *names* did not, until rigc changed its emit.**
+  The editor re-keys the `animations` object and a slider's animation is an
+  ordinal in the format's binary half, so `yaw -> "turn"` came back
+  `yaw -> "sweep"` ([#535](https://github.com/firejune/rigc/issues/535)). rigc now
+  emits animations in the editor's order; on the same rig through the same editor
+  that restored `yaw -> "turn"` and took the re-rendered mean absolute error from
+  10.4655 / 8.4961 / 8.7140 to 0.3035 / 0.0769 / 0.0588.
+- 🚨 **The cowlick stops.** Its physics constraint drives `rotate`, and the
+  editor's physics model holds `x` and `y` and nothing else
+  ([#540](https://github.com/firejune/rigc/issues/540)), so the export states
+  *drives nothing* and `A23_PHYSICS_CONSTRAINT_EFFECTIVE` refuses it by name
+  ([#536](https://github.com/firejune/rigc/issues/536)). ⇒ **Round-trip this
+  example through the editor and the hair below stops moving.** Nothing in the
+  returned file says so; the refusal is the only thing that does.
 
 ```
 bun install                                     # once
@@ -621,10 +640,16 @@ carrying either to another size.
 
 ## What was NOT verified
 
-- ⚠️ **The Spine editor round trip.** Stated at the top and repeated here
-  because it is the one thing a reader might assume from the other examples: no
-  editor export in this repository carries a slider, so nothing here says the
-  editor preserves two of them, their flags, or their array order.
+- ⚠️ **Not the Spine editor round trip — that one moved.** This bullet said
+  nothing here showed the editor preserves two sliders, their flags or their array
+  order; the round trip at the top of this page now shows exactly that, and shows
+  the cowlick's physics `rotate` being dropped on the same trip
+  ([#544](https://github.com/firejune/rigc/issues/544) is the card for both
+  statements having stood side by side). What is still unverified is narrower and
+  is not about this rig: no editor export **in this repository** carries a slider
+  at all, so `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET`'s "could correct editor
+  output trip this?" question rests on the runtime's own arithmetic rather than on
+  a counter-example anybody holds. `src/validate.ts` states that beside the rule.
 - ⚠️ **`A34_CONSTRAINT_TIMELINE_TARGETS` SKIPs here** (see above): with the two
   `slider.<name>.mix` tracks gone this rig keys no constraint timeline at all, so
   that rule has nothing to look at on this example.
