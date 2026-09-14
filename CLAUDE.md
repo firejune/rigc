@@ -227,7 +227,7 @@ sincere about it. rigc exists to convert that silence into a named failure.
 | `bun run typecheck` | `bunx tsc --noEmit` over `cli.ts`, `selftest.ts`, `src/`, `bench/`, `tools/`, `fixtures/`. `strict: false` with `strictNullChecks: true` — see the comment in `tsconfig.json` before raising it |
 | `bun run lint` | one rule: `@typescript-eslint/no-explicit-any` as an **error**. `eslint.config.js` says why it is only one |
 | `bun run selftest` | the validator's own negative controls, on fixtures it generates. Add `--cuts <cuts.json>` to gate a project's real cuts as well — see *The selftest and its fixtures* |
-| `bun cli.ts bench 3 --candidate <dir>` | the ladder still reproduces its rung. `docs/LADDER.md` carries the B1 proof to compare against |
+| `bun cli.ts bench 3 --candidate <dir>` | the ladder still reproduces its rung. `docs/LADDER.md` §*B1's proof* carries that proof beneath the two commands that produce it — and every figure on that page is one **named** candidate's, so compare against the run you passed and not against the first `bench` line the page shows |
 | `bun cli.ts check --candidate <dir> --frames <dir>` | the candidate still *looks* like the reference. The gate cannot see a wrong animation — it passed a build with every easing reversed — so a change to timelines, curves or the rasteriser is not verified until this has run |
 
 Neither of the first two existed before 2026-08-22, and both found real defects on
