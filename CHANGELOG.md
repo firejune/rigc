@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.21.0](https://github.com/firejune/rigc/compare/v0.20.3...v0.21.0) (2026-09-14)
+
+
+### Features
+
+* **compile:** emit the order the editor was measured to write, and refuse only what is still unmeasured ([#543](https://github.com/firejune/rigc/issues/543)) ([#551](https://github.com/firejune/rigc/issues/551)) ([d7c7230](https://github.com/firejune/rigc/commit/d7c7230b982dffa17ae7deef9f17f916c4267f16))
+* **validate:** A41 names the physics component the Spine editor discards ([#540](https://github.com/firejune/rigc/issues/540)) ([#550](https://github.com/firejune/rigc/issues/550)) ([f9d081e](https://github.com/firejune/rigc/commit/f9d081e193362dd9b04682135d8d3d465a05de75))
+
+
+### Bug Fixes
+
+* **docs:** ten claims the round trips falsified, corrected where they were written ([#544](https://github.com/firejune/rigc/issues/544)) ([#549](https://github.com/firejune/rigc/issues/549)) ([3f6bcd2](https://github.com/firejune/rigc/commit/3f6bcd280371d54e4a5e7dd643ec2980316688a4))
+* **spec:** refuse a rig or motion key nothing reads, by name ([#545](https://github.com/firejune/rigc/issues/545)) ([#546](https://github.com/firejune/rigc/issues/546)) ([0e7881a](https://github.com/firejune/rigc/commit/0e7881aca91eeab0240b0741f3c6ef66ea407f3b))
+
 ## [0.20.3](https://github.com/firejune/rigc/compare/v0.20.2...v0.20.3) (2026-09-13)
 
 
