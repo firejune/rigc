@@ -919,25 +919,69 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
  * a plate's rows run downwards, so the kept rectangle's top row is
  * `originalHeight - offsetY - height`.
  *
- * ⛔ A rotated region is refused rather than guessed. `TextureAtlas` transposes
- * `u2/v2` at 90 and not at 270, and `RegionAttachment.computeUVs` assigns a
- * different corner order at 90 — there are already three opinions in the runtime
- * about that mapping and this file is not going to be a fourth. rigc's own packer
- * never rotates (`PACK_NO_ROTATE`), so only a foreign atlas can reach this.
+ * ## A rotated region is TRANSCRIBED, not guessed at (issue #570)
+ *
+ * This refused a rotated region until 2026-09-17, on the argument that the
+ * runtime holds "three opinions" about the mapping. Measurement refutes the
+ * argument: the three are not three readings of one mapping, they are one
+ * mapping and two places that do not implement it.
+ *
+ *   * `MeshAttachment.computeUVs` (spine-core 4.3.13,
+ *     `dist/attachments/MeshAttachment.js:126-162`) is the one routine that
+ *     states where a region's texels are for **all four** `degrees`, and it is
+ *     the routine `substituteTexture` in [`src/render.ts`](render.ts) already
+ *     goes through. The loop below is its inverse, term for term;
+ *   * `TextureAtlas`'s `u2`/`v2` (`dist/TextureAtlas.js:164-171`) transpose the
+ *     rectangle at 90 and not at 270, so at 270 they describe a rectangle the
+ *     page does not have — but `MeshAttachment.computeUVs` never reads them for
+ *     an atlas region, and neither does this;
+ *   * `RegionAttachment.computeUVs` (`dist/attachments/RegionAttachment.js:156-167`)
+ *     assigns the turned corner order at 90 and at nothing else, which is a
+ *     region-attachment rendering defect (issue #199) and not a statement about
+ *     where the drawing sits.
+ *
+ * Inverting the runtime's own expression on texel centres puts kept-rectangle
+ * pixel `(x, y)` — `x` from the drawing's left, `y` down from `top` — at page
+ * pixel `(X + x, Y + y)` unturned, `(X + y, Y + width - 1 - x)` at 90,
+ * `(X + width - 1 - x, Y + height - 1 - y)` at 180 and
+ * `(X + height - 1 - y, Y + x)` at 270, writing `X`/`Y` for the region's own
+ * `x`/`y`; the packed footprint is `height x width` for the two quarter turns
+ * and `width x height` for the other two. `repackRotatedTrimmed` in
+ * `selftest.ts` derived the same 270 mapping for issue #199's fixture, and had
+ * been shipping it green, while this comment claimed the mapping was unknowable.
+ *
+ * ⚠️ Any other `degrees` takes the unturned branch, because that is what the
+ * runtime does with it: `regionFields.rotate` (`dist/TextureAtlas.js:87-93`)
+ * `parseInt`s the value without checking it, and `computeUVs` falls to
+ * `default:` for everything that is not 90, 180 or 270. Reading such a region
+ * unturned is not a guess, it is agreement with the thing that will draw it.
+ *
+ * rigc's own packer still never rotates (`PACK_NO_ROTATE`), so only a foreign
+ * atlas reaches any branch but the first.
  */
 export function extractRegion(page: Plate, region: AtlasRegion): Plate {
-  if (region.degrees !== 0) {
-    throw new CompileError(
-      `region "${region.name.trim()}" is packed rotate: ${region.degrees}; reading a drawing back off a rotated ` +
-        'region is not implemented — rigc\'s own packer never rotates, so this is a foreign pack. Supply the loose ' +
-        'PNG instead of --atlas-in for the part that needs measuring.',
-    );
-  }
   const out = new Plate(region.originalWidth, region.originalHeight);
   const top = region.originalHeight - region.offsetY - region.height;
+  const { degrees } = region;
   for (let y = 0; y < region.height; y++) {
     for (let x = 0; x < region.width; x++) {
-      out.set(region.offsetX + x, top + y, page.get(region.x + x, region.y + y));
+      const px =
+        degrees === 90
+          ? region.x + y
+          : degrees === 180
+            ? region.x + region.width - 1 - x
+            : degrees === 270
+              ? region.x + region.height - 1 - y
+              : region.x + x;
+      const py =
+        degrees === 90
+          ? region.y + region.width - 1 - x
+          : degrees === 180
+            ? region.y + region.height - 1 - y
+            : degrees === 270
+              ? region.y + x
+              : region.y + y;
+      out.set(region.offsetX + x, top + y, page.get(px, py));
     }
   }
   return out;

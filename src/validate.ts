@@ -2705,8 +2705,12 @@ export function validate(input: ValidateInput): ValidateReport {
     // overlapping rectangles put one drawing inside another's.
     //
     // ⚠️ Rotation stays refused either way, and that is not the same clause: it
-    // is about rigc's own packer never turning a region, and `extractRegion`
-    // refusing to read one back.
+    // is about rigc's own packer never turning a region, which is a statement
+    // about what rigc WRITES. It stopped being a statement about what rigc can
+    // read in issue #570 — `extractRegion` now lifts a rotated region back off
+    // its page as a transcription of `MeshAttachment.computeUVs` — and the two
+    // must not be re-merged: an artifact under the renderer's own rulebook that
+    // rigc did not pack is still a foreign artifact, whatever rigc can measure.
     const regionsPerPage = new Map<string, TextureAtlasRegion[]>();
     for (const region of atlas.regions) {
       const on = regionsPerPage.get(region.page.name);
