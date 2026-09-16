@@ -5773,6 +5773,175 @@ function runStaticRigSuite(): number {
       'silent for any other reason, or for a reason spelled as a string literal rather than one of the exported ' +
       'constants, is named here rather than absorbed into a total that still adds up',
   );
+
+  // --- issue #608: a rig that needs no page ---------------------------------
+  //
+  // A rig whose skins fill no slot with anything that needs art compiled, and
+  // the compiler wrote `skeleton.atlas` as a single newline, which
+  // `A07_ATLAS_TEXT_SHAPE` then refused with two findings — a red gate on the
+  // compiler's own output, for a rig the compiler had accepted.
+  //
+  // ⭐ The three controls are split along the line a REVERT would fall on, which
+  // is the only split that makes a two-sided repair testable: S63 goes red if
+  // A07 goes back to reading a pageless atlas as a malformed page block, S64
+  // goes red if the emitter goes back to writing the blank line, and S65 is the
+  // negative — what A07 still measures, and where the protection its two
+  // findings looked like it was giving actually lives.
+  const noArt = writeProbeRig({ slots: [{ name: 'block', bone: 'block' }], skins: { default: {} } });
+  const noArtMotion = join(noArt.dir, 'probe.motion.json');
+  writeFileSync(noArtMotion, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+  const noArtBuild = compile({
+    rigPath: noArt.rigPath,
+    motionPath: noArtMotion,
+    outDir: noArt.outDir,
+    imagesDir: noArt.dir,
+  });
+  const noArtGate = gateProbe(noArt, STATIC_MOTION);
+  const noArtPolicy = gateProbe(noArt, STATIC_MOTION, 'spine-html');
+  // Every rule whose only subject is a PAGE. A06 and A17 run under both
+  // profiles; A19 and A27 are renderer rules, so `spine-html` is the profile
+  // that reaches all four — reading them under `spine` would report "no
+  // failure" from two rules that never executed.
+  const PAGE_RULES = [
+    'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+    'A17_ATLAS_PAGE_FILES_EXIST',
+    'A19_OVERLAY_PNGS_HAVE_ALPHA',
+    'A27_REGION_NAME_MATCHES_PAGE_FILENAME',
+  ];
+  const noArtA07 = noArtPolicy.skipped.find((s) => s.assertion === 'A07_ATLAS_TEXT_SHAPE');
+  const pageProbes = [
+    ...(noArtGate.failures.length === 0
+      ? []
+      : [`under spine the gate failed: ${noArtGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+    ...(noArtPolicy.failures.length === 0
+      ? []
+      : [`under spine-html the gate failed: ${noArtPolicy.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+    ...(noArtA07 !== undefined && noArtA07.reason === SKIP_NO_ATLAS_PAGE
+      ? []
+      : [
+          `A07 ${
+            noArtA07 === undefined
+              ? noArtPolicy.passed.includes('A07_ATLAS_TEXT_SHAPE')
+                ? 'reported PASS over a file with no page block in it'
+                : 'neither skipped nor passed'
+              : `skipped for another reason than "${SKIP_NO_ATLAS_PAGE}": ${noArtA07.reason}`
+          }`,
+        ]),
+    ...PAGE_RULES.flatMap((rule) => {
+      const said = noArtPolicy.skipped.find((s) => s.assertion === rule);
+      // A27's subject is the REGION on a single-region page, so its reason
+      // names the region (#580); the other three name the page.
+      const owed = rule === 'A27_REGION_NAME_MATCHES_PAGE_FILENAME' ? SKIP_NO_ATLAS_REGION : SKIP_NO_ATLAS_PAGE;
+      if (said !== undefined && said.reason === owed) return [];
+      return [
+        `${rule} ${
+          said === undefined
+            ? noArtPolicy.passed.includes(rule)
+              ? 'reported PASS over an empty page array'
+              : 'neither skipped nor passed'
+            : `skipped for another reason: ${said.reason}`
+        }`,
+      ];
+    }),
+  ];
+  const pageHeld = pageProbes.length === 0;
+  say(
+    'S63_A_RIG_THAT_NEEDS_NO_PAGE_IS_GREEN_AND_EVERY_PAGE_RULE_SAYS_SO_BY_NAME',
+    pageHeld,
+    probeDetail(
+      pageHeld,
+      pageProbes,
+      `the gate ran ${noArtGate.passed.length} assertion(s) with ${noArtGate.failures.length} failure(s) under spine ` +
+        `and ${noArtPolicy.passed.length} with ${noArtPolicy.failures.length} under spine-html; A07 skipped: ` +
+        `${noArtA07?.reason ?? ''}; and ${PAGE_RULES.length} page rule(s) skipped naming the page or, for A27, the region`,
+    ),
+    'two different wrongs met on this rig. A07 named objects that do not exist — there are no consecutive blank ' +
+      'lines in a file with no lines, and no last page block to declare a region — which is the opposite of a ' +
+      'failure detail naming the object, the value found and the value required. And the four rules whose subject ' +
+      'IS a page walked an empty array and came out of `check()` with the counts untouched, which is how that ' +
+      'function decides an assertion PASSED: the same vacuous pass #568 fixed for the atlas that will not parse, ' +
+      'one level in. It stayed invisible only because A07 refused every pageless atlas before anything else could ' +
+      'report on one',
+  );
+
+  const emptySpellings = ['', '\n', '\n\n'];
+  const spellingReadings = emptySpellings.map((text) => {
+    const parsed = new TextureAtlas(text);
+    return { text, pages: parsed.pages.length, regions: parsed.regions.length };
+  });
+  const emitProbes = [
+    ...(noArtBuild.atlasText === ''
+      ? []
+      : [`compile wrote ${JSON.stringify(noArtBuild.atlasText)} for a rig with no page`]),
+    ...(writeAtlasText([]) === '' ? [] : [`writeAtlasText([]) is ${JSON.stringify(writeAtlasText([]))}`]),
+    ...(buildAtlasText([]) === '' ? [] : [`buildAtlasText([]) is ${JSON.stringify(buildAtlasText([]))}`]),
+    ...spellingReadings.flatMap((r) =>
+      r.pages === 0 && r.regions === 0
+        ? []
+        : [
+            `the runtime read ${JSON.stringify(r.text)} as ${r.pages} page(s) and ${r.regions} region(s), so the ` +
+              'spellings are not interchangeable to it and this control\'s argument has to be re-derived',
+          ],
+    ),
+  ];
+  const emitHeld = emitProbes.length === 0;
+  say(
+    'S64_NO_PAGES_IS_THE_EMPTY_FILE_AND_THE_RUNTIME_CANNOT_TELL_THE_SPELLINGS_APART',
+    emitHeld,
+    probeDetail(
+      emitHeld,
+      emitProbes,
+      `both emitters write ${JSON.stringify('')} for no pages, and spine-core reads ` +
+        `${spellingReadings.map((r) => `${JSON.stringify(r.text)} as ${r.pages} page(s)`).join(', ')}`,
+    ),
+    'the runtime is no help in choosing — its constructor has no `throw` in it, so every whitespace spelling comes ' +
+      'back as the same zero pages — which means the choice is decided by what the TEXT says. A blank line is the ' +
+      'separator that sits between page blocks, so a file consisting of one is a separator with nothing on either ' +
+      'side, and that second reading is exactly the one A07 was built to catch. Zero bytes has one reading. This ' +
+      'is also the half of the repair a green gate can no longer see: with A07 skipping on either spelling, ' +
+      'restoring the trailing newline would compile, gate green and ship the ambiguous file',
+  );
+
+  const wantsRegion = writeProbeRig({
+    slots: [{ name: 'block', bone: 'block', attachment: 'block' }],
+    skins: { default: { block: { block: { width: 12, height: 8 } } } },
+  });
+  const wantsGate = gateProbe(wantsRegion, STATIC_MOTION);
+  const wantsA08 = wantsGate.failures.filter((f) => f.assertion === 'A08_REGION_NAMES_MATCH_ATTACHMENTS');
+  const negativeProbes = [
+    ...(report.passed.includes('A07_ATLAS_TEXT_SHAPE')
+      ? []
+      : ['A07 stopped MEASURING the probe rig this suite is built on, whose two parts are two pages']),
+    ...PAGE_RULES.flatMap((rule) =>
+      policy.passed.includes(rule) ? [] : [`${rule} stopped measuring that same two-page probe`],
+    ),
+    ...(wantsA08.length > 0 && wantsA08.every((f) => f.detail.includes('which this atlas does not have'))
+      ? []
+      : [
+          `an attachment wanting a region no atlas supplies drew ${wantsA08.length} A08 failure(s): ` +
+            `${wantsA08.map((f) => f.detail).join('; ') || 'none at all'}`,
+        ]),
+    ...(wantsGate.skipped.some((s) => s.assertion === 'A07_ATLAS_TEXT_SHAPE')
+      ? []
+      : ['A07 did not skip on that rig, so the noise it used to add to A08\'s refusal is back']),
+  ];
+  const negativeHeld = negativeProbes.length === 0;
+  say(
+    'S65_A07_STILL_MEASURES_A_PAGE_AND_A_WANTED_REGION_IS_STILL_REFUSED_BY_A08',
+    negativeHeld,
+    probeDetail(
+      negativeHeld,
+      negativeProbes,
+      `A07 and the ${PAGE_RULES.length} page rule(s) all MEASURED the two-page probe, and the rig whose attachment ` +
+        `states a size and names no file drew ${wantsA08.length} A08 failure(s) beside an A07 that skipped`,
+    ),
+    'a skip that swallowed the real case would be the repair undoing the gate. It does not, and the reason is that ' +
+      'the two rules never overlapped: A07 reads the atlas ALONE, so all it could ever say about an empty one is ' +
+      'that it is empty, while the case where an empty atlas MATTERS is an attachment that wanted a region — and ' +
+      'that has always been A08\'s failure, by the skin, the slot and the placeholder that wanted it. Measured on ' +
+      'a rig built the way `ingest --art none` writes one: a region attachment stating width and height and naming ' +
+      'no file',
+  );
   return bad;
 }
 

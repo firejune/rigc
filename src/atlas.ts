@@ -469,8 +469,27 @@ export const PACK_NO_ROTATE = 0;
  * The unpacked default goes through here too (`buildAtlasText` builds one page
  * per image and calls this), which is what makes "the defaults change nothing" a
  * property of one function instead of a promise made by two.
+ *
+ * ⭐ **No pages is the empty FILE, not a blank line** (issue #608). A compile that
+ * measured no art — a rig whose skins fill no slot with anything that needs a
+ * page — used to come out of here as `"\n"`, because `[].join('\n')` is `''` and
+ * the trailing newline was appended unconditionally. That one byte contradicts
+ * the paragraph above it: a blank line is the separator that sits BETWEEN page
+ * blocks, so a file consisting of one is a separator with nothing on either side.
+ * `A07_ATLAS_TEXT_SHAPE` then read it as a malformed page block and refused the
+ * compiler's own output, which is how a rig with nothing to draw became a red
+ * gate on a file nobody had written wrong.
+ *
+ * The runtime cannot tell the two apart — `new TextureAtlas('')`,
+ * `new TextureAtlas('\n')` and `new TextureAtlas('\n\n')` all come back with
+ * `pages.length === 0` and `regions.length === 0`, and the constructor
+ * (`TextureAtlas.js:97-174`) has no `throw` in it at all — so the runtime is no
+ * help in choosing, and the choice is made on what the text SAYS. Zero bytes has
+ * exactly one reading; a blank line has two, and the wrong one is the one A07 was
+ * built to catch.
  */
 export function writeAtlasText(pages: EmitPage[]): string {
+  if (pages.length === 0) return '';
   const lines: string[] = [];
   pages.forEach((page, i) => {
     if (i > 0) lines.push(''); // exactly one blank line BETWEEN pages
