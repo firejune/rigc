@@ -717,6 +717,20 @@ export interface SpineSlot {
  * (`:529`, `:559`), so an attachment given a name and no path resolves its region
  * at the new name and the atlas lookup misses. `nameSkinAttachment` in
  * `compile.ts` is the one place that writes either, and it always writes both.
+ *
+ * ⚠️ And the **`default` skin may never be one of the skins sharing that
+ * placeholder** — a fact about the editor rather than about the format (issue
+ * #567, Spine 4.3.26, round trips 7 and 8), and a `CompileError` rather than a
+ * spelling. The editor's named skins hold *skin placeholders*, a key holding a
+ * named attachment, and come back untouched. Its default skin holds no
+ * placeholders: an attachment there hangs on the slot and is known by its name
+ * alone. So writing a name there gets it re-keyed by that name on export and
+ * the slot's setup `attachment` stops resolving (trip 7), and NOT writing one
+ * makes that attachment's name collide with the named skins' placeholder of the
+ * same name, which the editor refuses at import (trip 8). Both spellings are
+ * measured, so there is no third; `refuseDefaultSkinContest` in `compile.ts` is
+ * where that lives, and `composeSkinAttachmentName` beside it decides the name
+ * for the skins that are left.
  */
 export interface SpineRegionAttachment {
   name?: string;

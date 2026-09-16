@@ -642,11 +642,17 @@ against `mike2`). Both of those *build* as animation names and are refused as sk
 names, and the two refusals say which is which.
 
 **R12 — A placeholder that more than one skin fills gets a per-skin attachment
-`name`.** rigc writes `"name": "<skin>/<placeholder>"` on each of those entries,
-and restates `path` beside it so the texture still resolves where it did. You do
-not author this and there is nothing to do about it — but it is visible in the
-emitted file, so §3.4.2 says what it is and why. A placeholder only one skin fills
-is emitted exactly as before.
+`name`, and the `default` skin may not be one of those skins.** rigc writes
+`"name": "<skin>/<placeholder>"` on each of those entries and restates `path`
+beside it so the texture still resolves where it did; you do not author that and
+there is nothing to do about it, but it is visible in the emitted file, so §3.4.2
+says what it is and why. What you *do* author is where the shared art lives: a
+placeholder the `default` skin shares with a named skin is a **compile error**,
+because the Spine editor has no representation for it in either spelling (#567,
+measured on 4.3.26 — named, the export re-keys it and the default skin draws
+nothing; unnamed, the import is refused). Put the shared entry in a named skin —
+`base` — and every filler is a named skin. A placeholder only one skin fills is
+emitted exactly as before, in the default skin or anywhere else.
 
 ---
 
@@ -1430,17 +1436,61 @@ names you already gave it:
 
 ```json
 "skins": {
-  "default": { "patch": { "patch": { "image": "patch_a.png" } } },
+  "default": { "block": { "block": { "image": "block.png" } } },
+  "base":    { "patch": { "patch": { "image": "patch_a.png" } } },
   "zulu":    { "patch": { "patch": { "image": "patch_a.png", "x": 4 } } }
 }
 ```
 
-emits
+emits, for slot `patch`
 
 ```json
-{ "name": "default/patch", "path": "patch", "width": 64, "height": 64 }
-{ "name": "zulu/patch",    "path": "patch", "width": 64, "height": 64, "x": 4 }
+{ "name": "base/patch", "path": "patch", "width": 64, "height": 64 }
+{ "name": "zulu/patch", "path": "patch", "width": 64, "height": 64, "x": 4 }
 ```
+
+🚨 **Every skin that shares a placeholder has to be a named one — the default
+skin may not be among them, and rigc refuses the rig if it is.** That is not a
+style rule; it is the editor's model, and two round trips through Spine
+**4.3.26** established it by ruling out both of the only two spellings there are
+([#567](https://github.com/firejune/rigc/issues/567)):
+
+- **Give the default skin's entry a name of its own** (`"name": "default/patch"`)
+  and the import succeeds — then the export comes back with that name as the
+  JSON **key** (`"default/patch": { … }`, the `name` field gone), because the
+  editor's default skin holds no skin placeholders: an attachment there hangs on
+  the slot and is known by its name alone. The slot's setup `attachment: "patch"`
+  now names a key the default skin does not have, so the default skin **draws
+  nothing** — `diff` read `attachments.names 3/5`, `check` read 98.52 mean MAE
+  with `drewSlots: 0` on that chain, and `validate --profile spine` stayed green
+  throughout.
+- **Leave it as its placeholder** (no `name`, which is the obvious repair) and
+  the editor **refuses the import**:
+
+  ```
+  ERROR: Unable to import skeleton.
+  Cause: [error] Error reading attachment: mike/patch (nSX)
+  Cause: [error] Multiple attachments have the same name:
+  patch
+  patch
+  ```
+
+  In one slot, a default-skin attachment name and a named skin's placeholder name
+  are the same namespace, and both are `patch`.
+
+⇒ **The rule: move the shared art into a named skin.** Call it `base`. Every
+filler of that placeholder is then a named skin, rigc composes all of them, and
+the names are unique within the slot — which is all
+[#541](https://github.com/firejune/rigc/issues/541) needed: `base/patch`,
+`zulu/patch` and `mike/patch` are three names. That shape is the one the editor
+does hold: the same three fillers in named skins imported, exported and measured
+**0.00 mean MAE** with names and paths intact.
+
+📎 **The earlier reading, kept because it was reasonable and wrong.** Between the
+two trips this guide said *compose off the default skin only* — keep the default
+skin's entry as its placeholder and name the others. Trip 7 supported it and trip
+8 refuted it: that is the spelling the editor refuses at the door. There is no
+third spelling, which is why this is a refusal rather than a naming scheme.
 
 Three things to know about it and nothing to author:
 
@@ -1454,6 +1504,9 @@ Three things to know about it and nothing to author:
 - **A composed name that collides is a compile error, not a surprise.** If some
   other placeholder in the same slot is literally called `zulu/patch`, rigc refuses
   and names both sites rather than emitting two attachments with one name again.
+  The walk covers every *uncontested* entry's plain name too, the default skin's
+  included — a name that composed nothing can still be the one another skin
+  composes.
   (`/` is the separator because it appears in **0** of the 160 placeholder names and
   159 atlas region names in `examples/` and `gallery/`, where `-` appears in 85 and
   `_` in 37.)
@@ -3529,7 +3582,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A": "position" is a path constraint timeline, and this track names no constraint` | §4.12 — put the name in `"path"` |
 | `N pair(s) of animation names have no one order: … "turn" / "Turn" (case) — they are one name in two cases, and which of them the editor puts first is not measured; rename one of them so they differ by more than letter case` | **R10** — rename until no pair is left. The kind in brackets says which of the editor comparator's four UNMEASURED choices decides the pair: `case` (a pure case tie), `number` (one number written two ways, or a run of digits against a word) or `separator` (make the first character that differs a letter or a digit). rigc keys `animations` in the editor's own comparator — natural and case-insensitive ([#539](https://github.com/firejune/rigc/issues/539), [#543](https://github.com/firejune/rigc/issues/543)) — so a pair that comparator settles is emitted rather than refused, and only the four choices nobody has measured are a compile error; on those, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
 | `N pair(s) of skin names have no one order: … "Zulu" / "mike" (case) — folded to one case "Zulu" and "mike" order the other way round, so whether the editor folds SKIN names decides this pair` | **R11** — rename until no pair is left. The same shape as the row above with a **wider** family: #539 measured the editor's comparator for animation names and thereby ruled codepoint out, and nothing has ruled anything out for skin names, so a pair the candidates could disagree about is refused even where the animation rule would emit it. `Zulu`/`mike` and `mike10`/`mike2` build as animation names and are refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) |
-| `N attachment name collision(s): a placeholder that more than one skin fills is emitted with the name "<skin>/<placeholder>" … slot "patch": skin "default" placeholder "zulu/patch" and skin "zulu" placeholder "patch" would both be named "zulu/patch"` | **R12** — rename the placeholder or the skin. rigc composes an attachment name for every placeholder more than one skin fills (§3.4.2), and this fires when the composed name is one another entry in the same slot already answers to. Both sites are named; either rename ends it |
+| `slot "patch": placeholder "patch" is filled by the "default" skin AND by skins "zulu", "mike", and the Spine editor has no way to hold that … Move the default skin's entry for this slot into a named skin — call it "base"` | **R12** — do what it says: move that entry out of `default` into a named skin. The editor has no representation for a placeholder the default skin shares with a named one, in either spelling, and §3.4.2 has both measurements. Renaming the placeholder does not help; the shape is what is refused |
+| `N attachment name collision(s): a placeholder that more than one skin fills is emitted with the name "<skin>/<placeholder>" … slot "patch": skin "base" placeholder "zulu/patch" and skin "zulu" placeholder "patch" would both be named "zulu/patch"` | **R12** — rename the placeholder or the skin. rigc composes an attachment name for every placeholder more than one skin fills (§3.4.2), and this fires when a composed name is one another entry in the same slot already answers to — including a plain name in the default skin, which composed nothing. Both sites are named; either rename ends it |
 
 ### 5.2 Assertions — the gate
 
