@@ -540,6 +540,15 @@ in the skeleton and the size in the atlas cannot drift apart. The **region name 
 PNG's basename**; when your placeholder name differs from it, rigc writes a `path`
 so the attachment still joins to the region.
 
+**Every** attachment that names an `image` is measured, whichever skin it sits in.
+The atlas holds **one region per file**, so two skins filling one placeholder from
+two files put two regions in it and each attachment draws its own (§3.4.2), while
+two attachments naming the same file share the one region that file made. What
+cannot be reconciled is two *different* files whose basenames collide — only one of
+them can be region `patch` — so rigc refuses the build and names both paths rather
+than letting one of them silently draw the other's pixels
+([#555](https://github.com/firejune/rigc/issues/555)).
+
 **R6 — A key carries `ease` or `curve`, never both.** A named easing says "this
 shape, wherever it is used" and is the recommended path. `curve` is the escape
 hatch: the absolute `(time, value)` control points, verbatim, for when every key
@@ -1448,6 +1457,14 @@ Three things to know about it and nothing to author:
   (`/` is the separator because it appears in **0** of the 160 placeholder names and
   159 atlas region names in `examples/` and `gallery/`, where `-` appears in 85 and
   `_` in 37.)
+- **Each skin's art is measured and atlased on its own.** The example above points
+  both skins at one PNG, so there is one region; point them at two and there are
+  two, each attachment's `path` resolving to the file that attachment named and its
+  `width`/`height` measured off that file. Until
+  [#555](https://github.com/firejune/rigc/issues/555) only the first skin's PNG was
+  ever opened, and the second skin's art reached neither the atlas nor the
+  measurement — so name the two files **distinctly**, because the region name is
+  the basename and `a/patch.png` beside `b/patch.png` is refused (R5).
 
 ⚠️ **The uniqueness scope is the slot, not the skeleton.** `spineboy-pro.json`,
 which the editor wrote, gives the name `head` to a region in slot `head` and to a
@@ -3448,6 +3465,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `the triangles do not tile the outline: …` / `the triangles' outline is not one closed loop: …` | §3.4 — a doubled triangle, an unused vertex, a pinch or a hole in `triangles` |
 | `image "X.png" is not on disk at …` | fix the name, or point `--images` at the right directory |
 | `duplicate region name "X"` | two PNGs share a basename; one part, one page, one name |
+| `"b/X.png" and the art already atlased as region "X" are two different files — … Rename one of the PNGs.` | R5 — the region name is the basename, so only one of the two can hold it. Rename a file (not a placeholder: the placeholder is free to repeat) |
+| `the image "X.png" was never added to the atlas, so there is no region "X" …` | nothing in the spec — every image an attachment names is measured, so this says rigc skipped one. Report it ([#555](https://github.com/firejune/rigc/issues/555)) |
 | `motion spec names archetype "A" but the rig spec at … is called "B"` | make `archetype` equal the rig's `name` |
 | `animation "A" declares duration Ns but its last key is at Ms` | R7 — fix whichever of the two you meant |
 | `animation "A" slot "X" attachment: key at Ns is Ms past the declared duration Ds` | §4.5 — the key is past the end of the animation and nothing will sample it. Move the key onto `duration`, or raise `duration` |

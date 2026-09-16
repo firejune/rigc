@@ -8707,7 +8707,10 @@ function runPathAndSliderSuite(): number {
   // zulu`, which makes `skins` the first array measured NOT preserved.
   interface EmittedSkin {
     name: string;
-    attachments: Record<string, Record<string, { name?: string; path?: string }>>;
+    // `width`/`height` are here for #555's controls and they are the load-bearing
+    // pair there: they are the size rigc MEASURED off the PNG this attachment
+    // named, so reading them says which file was opened for it.
+    attachments: Record<string, Record<string, { name?: string; path?: string; width?: number; height?: number }>>;
   }
   /** The probe rig with these skins, emitted — or the message it was refused with. */
   const skinEmit = (skins: Record<string, unknown>): EmittedSkin[] | string => {
@@ -8974,6 +8977,302 @@ function runPathAndSliderSuite(): number {
     'the two collections have been measured to different depths and the refusals have to say so. An emitter that ' +
       'reused the animation narrowing here would pass every other case in this suite and be claiming a ' +
       'measurement nobody took',
+  );
+
+  // --- the ART behind a contested placeholder (issue #555) ------------------
+  //
+  // 🚨 The other half of #541's rig, and the half that made that rig unbuildable
+  // whichever way #541 was fixed. The compiler's gather loop deduplicated a
+  // slot's PLACEHOLDER list, and the call that measures a PNG and puts it in the
+  // atlas stood behind that `continue` — so a placeholder two skins fill reached
+  // the atlas with the FIRST skin's art and every later skin's file was never
+  // opened. Every control above is green over it because #552's fixtures make
+  // their four attachments differ in GEOMETRY rather than in art: until these
+  // cases, nothing in this tree had ever pointed two skins at two files.
+
+  interface ArtBuild {
+    skins: EmittedSkin[];
+    /** Every region the emitted atlas declares, by name, with the size it states. */
+    regions: Array<{ name: string; size: string }>;
+    gate: ReturnType<typeof validate> | null;
+    refused: string | null;
+  }
+
+  /**
+   * A probe rig whose two skins fill ONE placeholder, each from the file it
+   * names — written to disk at the size it is given, so a measurement can tell
+   * the two apart.
+   */
+  const artRig = (a: string, b: string, aSize: [number, number], bSize: [number, number]): ProbeDirs => {
+    const dirs = writeProbeRig({
+      skins: {
+        default: { ...PROBE_DEFAULT_SKIN, marker: { marker: { image: a } } },
+        zulu: { marker: { marker: { image: b } } },
+      },
+    });
+    const plates: Array<[string, [number, number], RGBA]> = [
+      [a, aSize, [200, 90, 60, 255]],
+      [b, bSize, [60, 90, 200, 255]],
+    ];
+    for (const [rel, [w, h], colour] of plates) {
+      mkdirSync(dirname(join(dirs.dir, rel)), { recursive: true });
+      writeProbePng(join(dirs.dir, rel), w, h, colour);
+    }
+    return dirs;
+  };
+
+  /** Compile one of those rigs and read back the atlas, the skins and the gate. */
+  const artBuild = (dirs: ProbeDirs): ArtBuild => {
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const opts: Options = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
+    try {
+      const result = compile(opts);
+      return {
+        skins: (JSON.parse(result.skeletonText) as { skins: EmittedSkin[] }).skins,
+        regions: parseAtlasText(result.atlasText).pages.flatMap((page) =>
+          page.regions.map((r) => ({ name: r.name.trim(), size: `${r.width}x${r.height}` })),
+        ),
+        gate: validate({
+          skeletonText: result.skeletonText,
+          atlasText: result.atlasText,
+          atlasDir: opts.outDir,
+          declaredDurations: result.declaredDurations,
+          rig: result.rig,
+          profile: 'spine',
+        }),
+        refused: null,
+      };
+    } catch (err) {
+      return {
+        skins: [],
+        regions: [],
+        gate: null,
+        refused: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`,
+      };
+    }
+  };
+
+  /** `skin/placeholder -> the attachment slot "marker" holds for it`. */
+  const markerAttachments = (build: ArtBuild): Map<string, EmittedSkin['attachments'][string][string]> =>
+    new Map(
+      build.skins.flatMap((skin) =>
+        Object.entries(skin.attachments.marker ?? {}).map(
+          ([placeholder, att]) => [`${skin.name}/${placeholder}`, att] as const,
+        ),
+      ),
+    );
+
+  const twoFiles = artBuild(artRig('art_a.png', 'art_b.png', [14, 9], [22, 11]));
+  const twoFileRegions = new Map(twoFiles.regions.map((r) => [r.name, r.size]));
+  const twoFileAtts = markerAttachments(twoFiles);
+  const twoFileProbes: string[] = [];
+  if (twoFiles.refused !== null) {
+    twoFileProbes.push(`the rig was refused: ${twoFiles.refused}`);
+  } else {
+    // The atlas half: both files measured, each under its own region name.
+    for (const [region, size] of [
+      ['art_a', '14x9'],
+      ['art_b', '22x11'],
+    ] as const) {
+      const held = twoFileRegions.get(region);
+      if (held !== size) {
+        twoFileProbes.push(
+          `the emitted atlas holds region "${region}" as ${held ?? 'NO SUCH REGION'} and it has to hold it as ` +
+            `${size}, the size of the PNG that skin's attachment names`,
+        );
+      }
+    }
+    // The skeleton half: each attachment draws the region it named, at the size
+    // that was measured off ITS file rather than off the other skin's.
+    for (const [key, path, size] of [
+      ['default/marker', 'art_a', '14x9'],
+      ['zulu/marker', 'art_b', '22x11'],
+    ] as const) {
+      const att = twoFileAtts.get(key);
+      const found =
+        att === undefined ? 'no such attachment' : `name="${att.name}" path="${att.path}" ${att.width}x${att.height}`;
+      if (att === undefined || att.name !== key || att.path !== path || `${att.width}x${att.height}` !== size) {
+        twoFileProbes.push(`slot "marker" holds ${found} for ${key}, and it has to hold name="${key}" path="${path}" ${size}`);
+      }
+    }
+    if (twoFiles.gate === null || twoFiles.gate.failures.length > 0) {
+      twoFileProbes.push(
+        `the gate said ${twoFiles.gate?.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ') ?? 'nothing at all'}`,
+      );
+    } else if (!twoFiles.gate.passed.includes('A00_ROUNDTRIP_PARSE')) {
+      twoFileProbes.push('A00_ROUNDTRIP_PARSE did not run, so nothing read the emitted skeleton back through the parser');
+    }
+  }
+  const twoFilesHeld = twoFileProbes.length === 0;
+  say(
+    'PS63_EACH_SKIN_FILLING_ONE_PLACEHOLDER_BRINGS_ITS_OWN_ART_TO_THE_ATLAS',
+    twoFilesHeld,
+    probeDetail(
+      twoFilesHeld,
+      twoFileProbes,
+      `two skins fill slot "marker" under the one placeholder "marker" from two files; the atlas holds ` +
+        `[${twoFiles.regions.map((r) => `${r.name} ${r.size}`).join(', ')}] and the slot holds ` +
+        `default/marker path="${twoFileAtts.get('default/marker')?.path}" ` +
+        `${twoFileAtts.get('default/marker')?.width}x${twoFileAtts.get('default/marker')?.height} beside ` +
+        `zulu/marker path="${twoFileAtts.get('zulu/marker')?.path}" ` +
+        `${twoFileAtts.get('zulu/marker')?.width}x${twoFileAtts.get('zulu/marker')?.height}, with ` +
+        `${twoFiles.gate?.passed.length} assertion(s) green including A00_ROUNDTRIP_PARSE`,
+    ),
+    'this rig could not be built at all before #555, and which of two wrong answers an author met depended only on ' +
+      'whether they had written `width`/`height` by hand: without them the compile refused with `a region needs ' +
+      'width and height — give them, or give an "image" and rigc will measure the PNG`, the sentence telling an ' +
+      'author to give the image they gave; with them it built a skeleton A00 then refused with `Region not found ' +
+      'in atlas`. Both sizes are read off the EMITTED attachments rather than off the spec, so the case cannot ' +
+      'pass on a rig that stated them, and both are read off the atlas too, so it cannot pass on a skeleton whose ' +
+      'numbers no page backs',
+  );
+
+  // The dedup that survives, and the one that was removed, stated together —
+  // because "measure every attachment" and "one region per file" are the two
+  // halves of one rule and a control that watched only the first would go green
+  // on a compiler that atlased the same PNG four times under four names.
+  const oneFile = artBuild(artRig('art_a.png', 'art_a.png', [14, 9], [14, 9]));
+  const fourSkinsOneFile = artBuild(writeProbeRig({ skins: FOUR_SKINS }));
+  const regionsNamed = (build: ArtBuild, name: string): number => build.regions.filter((r) => r.name === name).length;
+  const perFileProbes: string[] = [];
+  for (const [what, build, region, held] of [
+    ['two skins naming one file', oneFile, 'art_a', 1],
+    ['four skins naming one file', fourSkinsOneFile, 'marker', 1],
+    ['two skins naming two files', twoFiles, 'art_a', 1],
+    ['two skins naming two files', twoFiles, 'art_b', 1],
+  ] as const) {
+    if (build.refused !== null) perFileProbes.push(`${what} was refused: ${build.refused}`);
+    else if (regionsNamed(build, region) !== held) {
+      perFileProbes.push(
+        `${what} put region "${region}" in the atlas ${regionsNamed(build, region)} time(s), and one file is one region`,
+      );
+    }
+  }
+  const oneFileAtts = markerAttachments(oneFile);
+  if (
+    oneFile.refused === null &&
+    (oneFileAtts.get('default/marker')?.path !== 'art_a' || oneFileAtts.get('zulu/marker')?.path !== 'art_a')
+  ) {
+    perFileProbes.push(
+      `two skins naming one file resolve to [${[...oneFileAtts].map(([k, a]) => `${k} path="${a.path}"`).join(', ')}] ` +
+        'and both have to resolve to the one region that file made',
+    );
+  }
+  const perFileHeld = perFileProbes.length === 0;
+  say(
+    'PS64_THE_ATLAS_HOLDS_ONE_REGION_PER_FILE_NOT_ONE_PER_PLACEHOLDER',
+    perFileHeld,
+    probeDetail(
+      perFileHeld,
+      perFileProbes,
+      `four skins naming one file make ${regionsNamed(fourSkinsOneFile, 'marker')} region ("marker"), two skins ` +
+        `naming one file make ${regionsNamed(oneFile, 'art_a')} and both resolve to it, and two skins naming two ` +
+        `files make ${regionsNamed(twoFiles, 'art_a') + regionsNamed(twoFiles, 'art_b')} — the atlases are ` +
+        `[${fourSkinsOneFile.regions.map((r) => r.name).join(', ')}] and [${twoFiles.regions.map((r) => r.name).join(', ')}]`,
+    ),
+    'the repair moves the measurement out from behind a `continue` that was deduplicating something else, and the ' +
+      'hazard in doing that is the opposite defect: `addImage` refuses any repeat of a region name, so a compiler ' +
+      'that simply called it per attachment would refuse `PS54`\'s four-skin rig — which is every existing skin ' +
+      'fixture in this file — with `duplicate region name "marker"`. The dedup that had to stay is by FILE, and ' +
+      'these are the two sides of it measured in one place',
+  );
+
+  // Two files, one basename. The region name IS the basename, so one of the two
+  // must lose it — and losing it silently is the same defect wearing a different
+  // hat: measured before the refusal existed, this rig gated GREEN with `zulu`
+  // drawing `default`'s pixels.
+  const sharedBasename = artBuild(artRig('a/patch.png', 'b/patch.png', [14, 9], [22, 11]));
+  const apartBasename = artBuild(artRig('a/patch.png', 'b/patch_b.png', [14, 9], [22, 11]));
+  const collisionProbes: string[] = [];
+  if (sharedBasename.refused === null) {
+    collisionProbes.push(
+      `two files that would both be region "patch" compiled, and slot "marker" came back as ` +
+        `[${[...markerAttachments(sharedBasename)].map(([k, a]) => `${k} path="${a.path}" ${a.width}x${a.height}`).join(', ')}]`,
+    );
+  } else {
+    for (const phrase of [
+      'skin "zulu" slot "marker" attachment "marker"',
+      '"b/patch.png"',
+      'region "patch"',
+      'a/patch.png',
+      'two different files',
+    ]) {
+      if (!sharedBasename.refused.includes(phrase)) {
+        collisionProbes.push(`the refusal does not say ${JSON.stringify(phrase)}: ${sharedBasename.refused}`);
+      }
+    }
+  }
+  if (apartBasename.refused !== null) {
+    collisionProbes.push(`the same two files with different basenames were ALSO refused: ${apartBasename.refused}`);
+  } else if (regionsNamed(apartBasename, 'patch') !== 1 || regionsNamed(apartBasename, 'patch_b') !== 1) {
+    collisionProbes.push(
+      `the same two files with different basenames made [${apartBasename.regions.map((r) => r.name).join(', ')}], ` +
+        'which is not one region each',
+    );
+  }
+  const collisionHeld = collisionProbes.length === 0;
+  say(
+    'PS65_TWO_FILES_THAT_WOULD_BE_ONE_REGION_ARE_REFUSED_AND_BOTH_ARE_NAMED',
+    collisionHeld,
+    probeDetail(
+      collisionHeld,
+      collisionProbes,
+      `"a/patch.png" and "b/patch.png" are refused with: ${sharedBasename.refused} — and the same pair spelled ` +
+        `"a/patch.png" and "b/patch_b.png" compiles to [${apartBasename.regions.map((r) => r.name).join(', ')}]`,
+    ),
+    'a region is named by its PNG\'s basename, so two files in two directories can want one name and only one can ' +
+      'have it. Before the refusal existed this rig GATED GREEN — 15 assertions, no failures — with the second ' +
+      'skin drawing the first\'s pixels at the first\'s size, which is the loudest form of the silence this tool ' +
+      'exists to convert into a named failure. The second half is what stops this being a rule against ' +
+      'directories: one character apart, the same two files build',
+  );
+
+  // The message, held to the one thing it must never do.
+  const noImageAtAll = writeProbeRig({ skins: { default: { ...PROBE_DEFAULT_SKIN, marker: { marker: { x: 3 } } } } });
+  const noImageRefusal = refusal(noImageAtAll, STATIC_MOTION);
+  const notOnDisk = writeProbeRig({ skins: { default: { ...PROBE_DEFAULT_SKIN, marker: { marker: { image: 'gone.png' } } } } });
+  const notOnDiskRefusal = refusal(notOnDisk, STATIC_MOTION);
+  const GAVE_NO_IMAGE = 'give an "image" and rigc will measure the PNG';
+  const messageProbes: string[] = [];
+  for (const [what, message, mustSay] of [
+    ['an attachment that names no image and no size', noImageRefusal, ['a region needs width and height', GAVE_NO_IMAGE]],
+    ['an attachment whose image is not on disk', notOnDiskRefusal, ['"gone.png"', 'is not on disk at']],
+    ['an attachment whose image cannot hold its region name', sharedBasename.refused, ['b/patch.png', 'a/patch.png']],
+  ] as Array<[string, string | null, string[]]>) {
+    if (message === null) {
+      messageProbes.push(`${what} was not refused at all`);
+      continue;
+    }
+    for (const phrase of mustSay) {
+      if (!message.includes(phrase)) messageProbes.push(`${what} was refused without saying ${JSON.stringify(phrase)}: ${message}`);
+    }
+    // The negative: the remedy sentence may only be printed to an author who has
+    // NOT given an image. It is the first row's own text, so the row above is
+    // what stops this from being satisfied by deleting the sentence.
+    if (mustSay.includes(GAVE_NO_IMAGE)) continue;
+    if (message.includes(GAVE_NO_IMAGE)) {
+      messageProbes.push(`${what} was told to give an image it had already given: ${message}`);
+    }
+  }
+  const messageHeld = messageProbes.length === 0;
+  say(
+    'PS66_ONLY_AN_ATTACHMENT_THAT_GAVE_NO_IMAGE_IS_TOLD_TO_GIVE_ONE',
+    messageHeld,
+    probeDetail(
+      messageHeld,
+      messageProbes,
+      `the three refusals an author can reach for art that will not be in the atlas are: "${noImageRefusal}", ` +
+        `"${notOnDiskRefusal}", and the two-files-one-region refusal above — and of those only the first, which ` +
+        'is the one whose attachment named no image, carries the sentence asking for one',
+    ),
+    'this is the defect #555 was filed on, stated as a rule rather than as one case: the compiler dropped a value ' +
+      'the spec had written and then refused the spec for not writing it. The two-sided shape is the whole point — ' +
+      'deleting the remedy sentence would satisfy a one-sided check and make the message worse for the author it ' +
+      'was written for, so the first row requires it exactly where it is true. ⚠️ A fourth refusal exists and no ' +
+      'rig can reach it: an attachment whose image was never atlased at all, which after #555 means rigc skipped a ' +
+      'measurement rather than the spec omitting one. It says so in those words, and the only thing that produces ' +
+      'it is planting the defect back',
   );
 
   return bad;
