@@ -943,10 +943,25 @@ export type SpineConstraint = { name: string; type: string } & Record<string, un
 export interface SpineSkeletonJson {
   skeleton: {
     spine: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
+    /**
+     * The setup-pose bounding box. All four together or none of them: a rig spec
+     * that declares no stage (`skeleton.width`/`height` stated `null` — see
+     * `RigSkeletonHeader`) emits a header without any of them, which is what an
+     * export of a skeleton whose stage was never set carries (issue #578).
+     *
+     * ⚠️ Optional here because the *runtime* leaves them `undefined` when they
+     * are absent, not 0. `SkeletonData` declares `x = 0 … height = 0`
+     * (`SkeletonData.js:55-61`), and `SkeletonJson` then overwrites all four
+     * unconditionally — `skeletonData.x = skeletonMap.x` (`SkeletonJson.js:70-73`,
+     * no `getValue` default) — so an absent field lands as `undefined` on a
+     * `SkeletonData` whose own `.d.ts` types it `number`. Anything reading these
+     * back off a parsed skeleton guards for it; `validate.ts`'s `data.width || 0`
+     * is why A14 and A19 were already right about a stage-less file.
+     */
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
     fps?: number;
     referenceScale?: number;
     images?: string;

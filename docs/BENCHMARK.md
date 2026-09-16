@@ -87,8 +87,16 @@ three different comparisons and none is a part of another; `sections[].ratio` is
 the mean of the **first** column only, which is what every stored `bench.json`
 quotes.
 
-| Section | Name-matched measures | Name-agnostic | Reported |
+Beside the six, the file's own `skeleton` header block is compared and reported —
+`header` in the JSON, printed first because that is where it sits in the file. It
+is **not** a seventh section, and the reason is the one thing a section must have:
+a `ratio`. These measures cannot be in a mean (below), so a `skeleton` section
+would carry either a vacuous `mean 1.000 over 0 measures` or a nullable figure
+every reader of every other section would then have to handle.
+
+| Block | Name-matched measures | Name-agnostic | Reported |
 | --- | --- | --- | --- |
+| `skeleton` (the header) | — | — | **`stage_present`** · **`stage_box`** |
 | `bones` | `count` · `names` · `parent_by_name` · `order` · `length_present` · `inherit_present` · `depth_histogram` · `degree_sequence` | `count` · `depth_histogram` · `degree_sequence` · `shape_histogram` · `order_shape` | — |
 | `slots` | `count` · `names` · `order` · `bone` · `attachment` · `blend` · `color_present` | `count` · `attachment_types_by_position` · `bone_binding_shape` · `order_shape` | — |
 | `attachments` | `skins` · `count` · `names` · `type_counts` · `mesh_vertices` · `mesh_triangles` · `mesh_weighted` · `mesh_hull` · `region_size` | — | **`mesh_edges`** |
@@ -100,7 +108,7 @@ quotes.
 
 `docs/GATE.md`'s *What never gates* seals off "anything unobservable by
 construction", and its test is not *is this measure hard?* but **could any
-reading of the frames have decided it?** For the three measures in the last
+reading of the frames have decided it?** For the five measures in the last
 column the answer is no, whatever the frames are:
 
 - **`attachments.mesh_edges`** — *each mesh declares an edge list, or declares
@@ -109,15 +117,51 @@ column the answer is no, whatever the frames are:
 - **`animations.key_density`** and **`animations.keys_per_timeline`** — two
   keyings of one curve render the same pictures at every rate, which is measured
   under *Key density* below.
+- **`skeleton.stage_present`** and **`skeleton.stage_box`** — the setup-pose
+  bounding box draws no pixel; `render` frames from the posed bounds and never
+  reads it. Unwinnable a second way too: every brief on the ladder says in its own
+  honesty-rule check that it carries *"no stage size"*, so an author is not told
+  it and cannot be scored on it.
 
 They are still findings against the reference export, so they are printed — and
 they are printed in a block of their own, with **no mean**, for two reasons. The
 first is arithmetic: a presence share and a keys-per-second agreement have unlike
 units, so an average over them is a number with no referent. The second is that
 `sections[].ratio` is the one figure a stored ladder row quotes, and keeping a
-non-gating measure out of it is what let all three be added without moving a
-recorded figure — verified over the whole committed transcription corpus, every
-section mean and every existing measure identical to the digit.
+non-gating measure out of it is what let the three section-level ones be added
+without moving a recorded figure — verified over the whole committed
+transcription corpus, every section mean and every existing measure identical to
+the digit. The header's two moved nothing for a stronger version of the same
+reason: they are not in a section at all.
+
+##### `skeleton.stage_present` / `skeleton.stage_box` — the value that was required and unmeasured
+
+[Issue #578](https://github.com/firejune/rigc/issues/578). `build` refused a rig
+spec without a `skeleton.width`/`height`, and **no instrument in this repository
+read one**: `validate`, `check` and `render` all ignore the stage, and `diff` had
+no header measure at all. A sweep that handed a deliberately absurd unit stage
+`0,0,1,1` to 37 real exports found **32 of them still reading 1.000 on all 52
+measures**. Required and unmeasured is the worst combination a field can have —
+the only way to satisfy it was to invent a number, and nothing would ever
+contradict the invention.
+
+**`stage_present` is counted `1/1` or `0/1` and never `0/0`.** Both sides always
+have a presence to compare, *including* when both declare nothing: that is
+agreement, not an absence of data, and scoring it vacuous would put the one shape
+the measure exists for back into silence. **`stage_box` is the one that goes
+vacuous**, at `0/0`, when there are not two boxes to compare — and it compares the
+four numbers **exactly**. There is nothing here to be within a tolerance of: a
+stage is a box an exporter wrote down rather than a pose anybody measured, and
+`src/diff.ts` holds exactly one tolerance (`FRAME`, for `animations.duration`) and
+no spatial one anywhere, because it compares no position at all — that is
+`bonedist.ts`.
+
+What a skeleton "declares a stage" means here is its **extent**: a numeric
+`width` and `height`. An `x`/`y` with no extent is an origin for a box that is
+not there — no export carries that shape and rigc refuses to emit it — so it does
+not make a stage on its own. That is also what the compiler requires and what
+`A14_NO_FULL_FRAME_MESH` and `A19_OVERLAY_PNGS_HAVE_ALPHA` measure against, so
+the three agree on the word by construction rather than by memory.
 
 ##### `attachments.mesh_edges` — the third of rung 6's three features
 
@@ -867,7 +911,7 @@ the renderer policy*.
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | no clipping attachments (the renderer skips them silently) |
 | `A12_NO_DARK_COLOR` | renderer | no dark / two-colour tint on slots or timelines — parsed, then ignored |
 | `A13_MESH_BUDGET` | renderer | no more mesh slots than the rig's `invariants.meshSlots`, and no mesh past its `invariants.meshTriangles`. SKIPs when the rig declares neither |
-| `A14_NO_FULL_FRAME_MESH` | renderer | no mesh spans the whole stage (a full-frame mesh is a full-frame canvas that can never dirty-skip) |
+| `A14_NO_FULL_FRAME_MESH` | renderer | no mesh spans the whole stage (a full-frame mesh is a full-frame canvas that can never dirty-skip). SKIPs when the skeleton declares no stage |
 | `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | `idle` keys no bone that drives a mesh, directly or as its control bone |
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` version label is on the 4.3 line (the parser never checks it) |
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | every page the atlas declares is a file on disk |

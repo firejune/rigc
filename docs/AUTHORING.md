@@ -689,8 +689,8 @@ is recorded in `bench/runs/README.md`, *What a run may read*.)
 
 | Field | Spine meaning | Default |
 | --- | --- | --- |
-| `x`, `y` | setup-pose bounding box origin | `0` |
-| `width`, `height` | setup-pose bounding box size | falls back to the manifest's crop; **with neither, the compile fails** |
+| `x`, `y` | setup-pose bounding box origin | `0` — and refused outright beside a stated absence, below |
+| `width`, `height` | setup-pose bounding box size, **or both `null` for "this skeleton declares no stage"** | falls back to the manifest's crop; **with neither the number nor the `null`, the compile fails** |
 | `fps` | nonessential editor hint | `SkeletonData.fps` stays 30 |
 | `referenceScale` | 4.2+ physics/scale reference | parser default 100 |
 | `images` | where the editor's import looks for the part PNGs, as a path from the skeleton file | **written for you**: under `--copy-images` the `--out` directory itself, spelled `../<its basename>/` (a literal `./` is dropped by the editor on import; a named directory is kept and every part is found — measured on 4.3.23); otherwise the relative path from `--out` to the one directory the spec names every part PNG in (the rig's images directory, or the manifest's plates). A declared value is carried through verbatim — and overridden by `--copy-images`, which moved the parts. Parts spread over several directories have no single true path, so nothing is written (issue #370) |
@@ -705,6 +705,40 @@ links, not the editor that will open the file, and the warning is harmless
 
 `width`/`height` are what `A14` and `A19` measure against, so a guessed stage is a
 gate measuring against a number nobody wrote down.
+
+⭐ **A skeleton may declare no stage, and saying so is not the same as saying
+nothing** (issue #578). Write the pair as `null`:
+
+```json
+"skeleton": { "width": null, "height": null }
+```
+
+and the emitted header carries **none** of `x`/`y`/`width`/`height` — which is
+what an export of a skeleton whose stage was never set looks like, and the shape a
+transcriber of one now has something to write. `null` is this spec's spelling for
+a stated absence wherever it has one (`slots[].attachment` is `null` for "show
+nothing"), so nothing new is introduced here but a third value of a field that
+already existed.
+
+Three readings stay apart, and the middle one is the point of the other two:
+
+| What the spec says | What happens |
+| --- | --- |
+| a number for each | the stage, as before; a manifest `crop` is the fallback |
+| `"width": null, "height": null` | builds, and emits a header with no stage at all — and this **beats** a manifest's `crop`, because a rig spec is where a claim about the skeleton is made |
+| neither | **refused**, exactly as before: `no stage size: …` |
+| one `null`, one number | refused — a stage has both extents or neither, and which half was meant is not derivable |
+| the pair `null` **and** an `x` or `y` | refused — an origin for a box that is not there |
+
+⚠️ A stage-less skeleton is **unmeasured, not certified**: `A14_NO_FULL_FRAME_MESH`
+reports **SKIP** on one, because there is no full frame for a mesh to span. And
+`rigc diff` reports it — `skeleton.stage_present` and `skeleton.stage_box`, in the
+header block at the top of the report — so a stage somebody invented now reads
+below 1.000 against a source that has none. Both are reported and gate nothing, for
+the reason every reported measure is: no reading of the rendered frames could have
+decided a setup-pose bounding box. The measure inventory that says so lives in
+[BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md), which
+is repository material and not in the published package.
 
 ### 3.2 `bones` — Spine's bone list
 
@@ -3632,7 +3666,9 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A" group "G" P (t=…): derive <kind> projects onto "scaleX" and member "M" states depth −z` | §4.5.1 — a foreshortening needs the part in front of the axis; a part behind it takes the displacement projection |
 | `animation "A" group "G" P (t=…): derive <kind> states carried=… on a "scalex" track` | §4.5.1 — the foreshortening reads no depth difference, so `carried` belongs on the displacement track |
 | `animation "A" group "G" P (t=…): derive <kind> turns member "M" … past its own edge` | §4.5.1 — `cos(α − t) ≤ 0` would mirror the drawing; the turn is past what this construction carries (FACE §8) |
-| `no stage size: give the rig spec a \`skeleton.width\`/\`skeleton.height\`` | §3.1 |
+| `no stage size: give the rig spec a \`skeleton.width\`/\`skeleton.height\`` | §3.1 — or state `"width": null, "height": null` if the skeleton you are transcribing declares no stage |
+| `"skeleton" states width: null and a height of N` / `states height: null and a width of N` | §3.1 — a stage has both extents or neither |
+| `"skeleton" declares no stage (width: null, height: null) and still states x` | §3.1 — an origin for a box that is not there |
 | `N mesh slot(s) emitted but the rig "X" allows 0 — a mesh rigc GENERATED counts against \`invariants.meshSlots\`…` | §3.4 / §3.7 — a rig that invokes a mesh generator declares the budget; undeclared is zero. Add `"invariants": { "meshSlots": N, "meshTriangles": M }` |
 | `drawOrder at t=…: slot "X" is not one this rig emits` / `is offset twice in one key` / `puts it at N, outside the … emitted slots` | §4.7 |
 | `events at t=…: event "X" is not declared in the rig spec's "events" block` | declare it in the rig spec (§3.6), or fix the name |
@@ -3737,7 +3773,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | a clipping attachment; the target renderer skips them silently |
 | `A12_NO_DARK_COLOR` | renderer | a slot `dark` colour or an `rgba2`/`rgb2` timeline; parsed, then ignored |
 | `A13_MESH_BUDGET` | renderer | more mesh slots than the rig's `invariants.meshSlots`, or a mesh over its `invariants.meshTriangles`. Thin the mesh, or raise the budget in the rig spec. **SKIP** when the rig declares neither — which means *unmeasured*, not that the budget is inert: the same `meshSlots` is a **compile-time** refusal for rigc's own generators, before the gate (§3.7, issue #274) |
-| `A14_NO_FULL_FRAME_MESH` | renderer | a mesh spans the whole stage — a full-frame canvas that can never dirty-skip |
+| `A14_NO_FULL_FRAME_MESH` | renderer | a mesh spans the whole stage — a full-frame canvas that can never dirty-skip. **SKIP** when the skeleton declares no stage (§3.1): there is no full frame to span, and *unmeasured* must not print the same green as *measured and clear* |
 | `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | the `idle` animation keys a bone that drives a mesh, directly or as a control bone. **SKIP** when there is no `idle` animation, or when the one there is carries no bone timeline — a rule whose subject does not exist is unmeasured and not satisfied ([#568](https://github.com/firejune/rigc/issues/568)) |
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` label is not on the 4.3 line (`4.3`, `4.3.N`, `4.3.N-suffix`) |
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | a page the atlas declares is not a file. Check `--images` and `--out` |
