@@ -863,6 +863,24 @@ export interface CheckReport {
   candidate: { skeleton: string; atlas: string };
   framesDir: string;
   framesRoot: string;
+  /**
+   * The skin the CANDIDATE was posed under, or `null` for no skin at all.
+   *
+   * ⭐ In the report rather than only in the run's arguments because a figure is
+   * only readable beside what produced it: on a multi-skin rig the same
+   * candidate and the same frames give a different number per skin, and a
+   * `check.json` that did not say which one it was is a number with no subject
+   * (issue #571).
+   */
+  skin: string | null;
+  /**
+   * The skin `frames.json` records for the reference frames, or `null`.
+   *
+   * `null` covers two facts that are the same on disk — the frames set no skin,
+   * and the frames were rendered before the field existed — which is why a
+   * mismatch against it is refused and an absence is only noted. See `notes`.
+   */
+  referenceSkin: string | null;
   /** One framing per set, or one across every set — see `FramingScope`. */
   framingScope: FramingScope;
   /**
@@ -948,6 +966,17 @@ export interface CheckOptions {
   /** Play this candidate animation against the frames, when the names differ. */
   as?: string;
   /**
+   * Pose the candidate under this skin — see `PoseOptions.skin` (issue #571).
+   *
+   * Absent sets no skin, which resolves every slot through the default skin
+   * alone: on a multi-skin rig that draws none of the art the named skins carry,
+   * and a `check` of it compares blank against blank and reads 0.0000. A name
+   * the candidate does not declare is refused with the ones it does, and the
+   * reference frames' own recorded skin is checked against this — see the
+   * `referenceSkin` field of `CheckReport` for what an absent record means.
+   */
+  skin?: string;
+  /**
    * Fit one framing per frame set, or one across every set compared.
    *
    * Defaults to `per-shot`. See `FramingScope` for what the choice costs and why
@@ -1026,7 +1055,20 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   const substitution = options.textureFrom
     ? textureSubstitutionFromText(options.textureFrom.atlasText, options.textureFrom.atlasDir)
     : null;
-  const poseOptions: PoseOptions | undefined = substitution ? { texture: true } : undefined;
+  // The skin is refused here rather than deeper in the sampler, for the reason
+  // every miss in this project is refused where the names are: the skeleton is
+  // open on this line and the alternatives can be listed.
+  if (options.skin !== undefined && !posable.data.skins.some((s) => s.name === options.skin)) {
+    throw new CheckError(
+      `the candidate declares no skin ${JSON.stringify(options.skin)}; it declares [${
+        posable.data.skins.map((s) => s.name).join(', ') || 'none'
+      }]`,
+    );
+  }
+  const poseOptions: PoseOptions | undefined =
+    substitution || options.skin !== undefined
+      ? { ...(substitution ? { texture: true } : {}), ...(options.skin === undefined ? {} : { skin: options.skin }) }
+      : undefined;
   let background: RGBA;
   let sets: FrameSet[];
   let pixelWidth: number;
@@ -1085,6 +1127,35 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   }
 
   if (sets.length === 0) throw new CheckError(`no frame set to compare in ${options.framesDir}`);
+
+  // --- the skin the frames were rendered under, against the one asked for ----
+  //
+  // ⭐ The asymmetry is the honest part (issue #571). A sidecar that RECORDS a
+  // skin is a claim, and a claim that disagrees is refused by name; a sidecar
+  // that records none is making no claim at all — it either set no skin or was
+  // written before the field existed, and those are the same bytes — so the run
+  // proceeds and says out loud that nothing checked it. Inventing a refusal out
+  // of an absent field would refuse every frame set in this repository.
+  const referenceSkin = located.sidecar?.skin ?? null;
+  if (referenceSkin !== null && referenceSkin !== options.skin) {
+    throw new CheckError(
+      `${FRAMES_SIDECAR} records that these frames were rendered under skin ${JSON.stringify(referenceSkin)}, and ` +
+        `this run poses the candidate ${
+          options.skin === undefined
+            ? 'under no skin at all (the default skin alone)'
+            : `under skin ${JSON.stringify(options.skin)}`
+        }. Two skins are two different pictures of one rig, so the comparison would be a number about the ` +
+        `difference between them. Pass --skin ${JSON.stringify(referenceSkin)}, or render the reference frames ` +
+        `${options.skin === undefined ? 'with no --skin' : `with --skin ${JSON.stringify(options.skin)}`}.`,
+    );
+  }
+  if (referenceSkin === null && options.skin !== undefined) {
+    notes.push(
+      `the candidate is posed under skin ${JSON.stringify(options.skin)} and the reference frames record no skin ` +
+        `at all, so nothing here could check that they are the same picture. A frame set rendered by \`rigc ` +
+        `render --skin\` since #571 carries the name in ${FRAMES_SIDECAR} and this run would have compared it.`,
+    );
+  }
 
   // Pose every set once. Its frames are wanted twice — to frame the candidate and
   // to compare it — and posing twice is both slower and a chance for the framing
@@ -1347,6 +1418,8 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     },
     framesDir: resolve(options.framesDir),
     framesRoot: located.root,
+    skin: options.skin ?? null,
+    referenceSkin,
     framingScope: scope,
     framing: topHow,
     viewport: topViewport === null ? null : framingOfViewport(topViewport),
@@ -3117,6 +3190,15 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   lines.push(`  candidate  ${report.candidate.skeleton}`);
   lines.push(`  atlas      ${report.candidate.atlas}`);
   lines.push(`  frames     ${report.framesDir}`);
+  // Always printed, on both sides, because the reading a reader has to be able
+  // to make is "which picture of this rig is this" — and a line that appears
+  // only when a skin was named cannot say that the run used none (issue #571).
+  lines.push(
+    `  skin       candidate ${report.skin === null ? 'no skin set (the default skin alone)' : report.skin}   ` +
+      `frames ${
+        report.referenceSkin === null ? `no skin recorded in ${FRAMES_SIDECAR}` : report.referenceSkin
+      }`,
+  );
   lines.push(
     `  scope      ${
       report.framingScope === 'per-shot'

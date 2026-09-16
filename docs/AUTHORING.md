@@ -361,9 +361,9 @@ The other commands:
 bun cli.ts explain  --rig … --motion … --out …   # the compiled rig as a table
 bun cli.ts validate path/to/spine                # re-gate artifacts already on disk
 bun cli.ts diff     candidate.json reference.json
-bun cli.ts check    --candidate path/to/spine --frames path/to/frames
+bun cli.ts check    --candidate path/to/spine --frames path/to/frames [--skin …]
 bun cli.ts bench    3 --candidate path/to/spine [--frames path/to/frames]
-bun cli.ts render   --candidate path/to/spine [--animation …] [--fps 12] [--max 256]
+bun cli.ts render   --candidate path/to/spine [--animation …] [--skin …] [--fps 12] [--max 256]
 bun cli.ts preview  --candidate path/to/spine [--animation …] [--out preview.html]
 bun cli.ts vote     --candidate path/to/a --candidate path/to/b [--out ballot.html]
 bun cli.ts vote     --record vote-<id>.json [--ballot ballot.html] [--ledger votes.jsonl]
@@ -385,6 +385,9 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   for opposite fixes. A measure with nothing to compare says `0/0` and says so.
 - **`check`** renders your candidate into the reference frames' own pixel grid and
   compares pixels — the only thing here that can see a wrong animation. **§9.**
+  🚨 What it certifies is the **default skin** unless you pass `--skin <name>`:
+  on a rig with named skins, a run with no skin draws none of their art on either
+  side and reports a perfect `0.0000` about it (**§9**).
 - **`bench <rung>`** runs one rung of [the benchmark ladder](https://github.com/firejune/rigc/blob/main/docs/LADDER.md): validate
   under `--profile spine`, then diff against that rung's reference export, and with
   `--frames` the `check` table as well. Unlike the three above it is a **finish
@@ -1537,6 +1540,15 @@ which the editor wrote, gives the name `head` to a region in slot `head` and to 
 bounding box in slot `head-bb`, and reuses `hoverglow-small` across eight slots. So
 a name shared between slots is normal and rigc leaves it alone; what #541 refused
 was one slot holding two.
+
+🚨 **Once a rig has named skins, no instrument here can see them until you say
+which one** ([#571](https://github.com/firejune/rigc/issues/571)). `render` and
+`check` set no skin unless told to, so every slot resolves through the *default*
+skin alone and the art you just moved into `base`, `zulu` and `mike` draws
+nothing at all. `check` then compares blank against blank and reports a perfect
+`0.0000` — about the very placeholder this subsection is about. Pass
+`--skin <name>` to both, once per skin (**§9**); `tools/editor_roundtrip.ts`
+loops over every skin the build declares for the same reason.
 
 ### 3.5 `constraints` — 4.3's single typed array
 
@@ -4238,9 +4250,47 @@ your animation is called something the frame directory is not, `--framing shared
 to fit one framing across every set instead of one each,
 `--texture-from <atlas>` to attribute how much of the MAE is texture resampling
 rather than the rig (**§9.2**'s atlas floor — and note that it is *not* `--atlas`,
-which re-seats your geometry on that atlas's packing), `--all-frames` to list
+which re-seats your geometry on that atlas's packing), `--skin <name>` to pose
+your candidate under one of its skins (below), `--all-frames` to list
 every frame instead of the worst by MAE, `--json <out>` for the whole per-frame,
 per-slot report.
+
+🚨 **What `check` certifies is the DEFAULT skin, unless you pass `--skin`**
+(issue #571). With no `--skin` no skin is set at all, which is `spine-core`'s own
+initial state: every slot resolves through `SkeletonData.defaultSkin` alone, and a
+slot whose art lives only in a named skin draws **nothing** — on both sides, since
+the reference frames came out of the same renderer. A multi-skin rig checked that
+way compares blank against blank and reports `MAE mean 0.00`, which reads like the
+best possible answer and is a measurement of no art at all. On a single-skin rig
+this is the whole rig and there is nothing to pass.
+
+So a multi-skin rig is checked **once per skin**, and both sides are rendered
+under the same one:
+
+```bash
+bun cli.ts render --candidate path/to/spine --skin patch --out frames/patch
+bun cli.ts check  --candidate path/to/spine --frames frames/patch --skin patch
+```
+
+Three things keep that honest, and none of them is a convention you have to
+remember:
+
+- `render --skin` writes the name into `frames.json`, so a frame set says which
+  picture of the rig it is. A set rendered with **no** `--skin` records nothing,
+  because "no skin was set" and "this file predates the field" are the same bytes
+  on disk and neither is a claim.
+- `check` reads that back. A candidate posed under a **different** skin from the
+  one the frames record — or under none, where the frames name one — is
+  **refused by name** rather than scored, because the number would be about the
+  difference between two skins. Frames that record nothing cannot be checked, and
+  the report says so in a `⚠️` note instead of implying agreement.
+- The report header names the skin on both sides on every run, `--skin` or not:
+  `skin  candidate patch   frames patch`, or `candidate no skin set (the default
+  skin alone)`. `check.json` carries the same two under `skin` and
+  `referenceSkin`.
+
+A skin name the candidate does not declare is refused with the ones it does —
+`the candidate declares no skin "path"; it declares [default, patch, torn]`.
 
 ⭐ **A frame set may ship a contact sheet instead of every frame, and the sheet is
 compared too.** A long shot does not commit 311 near-duplicate PNGs: rung 2's sets

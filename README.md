@@ -352,6 +352,16 @@ directories makes the result a frame set like any other — the world box every
 frame is a picture of. `--animation <name>` narrows it to one, `--fps` and
 `--max` change the rate and the frame size.
 
+> 🚨 **`--skin <name>` if your rig has more than one.** With no `--skin` no skin
+> is set at all, so every slot resolves through the **default** skin alone — and
+> a slot whose art lives only in a named skin draws *nothing*. That is not a
+> quirk of `render`: `check` compares `render`'s frames, so a multi-skin rig
+> checked with no skin compares blank against blank and reports a perfect
+> `0.0000` about art nobody drew. `render --skin` records the name in
+> `frames.json`, `check --skin` poses the candidate under it, and a candidate
+> scored against frames rendered under a *different* skin is refused by name
+> rather than measured.
+
 **`preview`** writes a single self-contained `.html`: your skeleton, your atlas
 and every page's PNG bytes are embedded in it as data URIs, and it plays them in
 the **official [Spine Web Player](https://esotericsoftware.com/spine-player)**.
@@ -534,7 +544,10 @@ bun tools/editor_roundtrip.ts --build build/ --editor /Applications/Spine.app/Co
 
 It prints the import and export exit codes, the validator's verdict on the
 export, every `diff` measure that moved, `check`'s mean MAE and worst drift per
-animation, and a field-by-field list of what the editor rewrote. On its first
+animation **for each skin the build declares** — one render-and-check block per
+skin, with a per-skin roll-up under them, because a rig's contested art lives in
+its named skins and a single un-skinned check draws none of it — and a
+field-by-field list of what the editor rewrote. On its first
 run it found three emitter defects — [#368](https://github.com/firejune/rigc/issues/368),
 [#369](https://github.com/firejune/rigc/issues/369),
 [#370](https://github.com/firejune/rigc/issues/370) — and then showed that a
