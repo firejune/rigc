@@ -114,13 +114,19 @@ export const CLI_DEFAULT_PROFILE: ValidateProfile = 'spine';
  *   archetype — a structural rule about rigc's own formations, meaningless to a
  *               skeleton rigc did not compile.
  *
- * Three assertions are MIXED and are marked `validity` here because their
+ * Two assertions are MIXED and are marked `validity` here because their
  * validity half must never stop running; their policy clauses are gated inside
  * the assertion body against `profile`, and each such clause says so where it
  * lives. They are A06 (size-vs-PNG is validity; pma / rotation / full-page
- * coverage are policy), A08 (the attachment→region join is validity; requiring
- * the two names to be identical is policy) and A20 (weight coherence is
- * validity; requiring a mesh to be weighted at all is policy).
+ * coverage are policy) and A20 (weight coherence is validity; requiring a mesh
+ * to be weighted at all is policy).
+ *
+ * A08 was the third until issue #574 retired its policy clause. It required a
+ * skin entry's placeholder to be spelled like the region it resolves to, under
+ * a renderer that resolves art by `path` and has never read a placeholder — so
+ * restating it as the renderer's own join made it a tautology over the validity
+ * half. The argument, with the renderer lines it is measured against, sits above
+ * `check('A08_…')`.
  */
 const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A00_ROUNDTRIP_PARSE: 'validity',
@@ -131,7 +137,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A05_CURVE_ARRAY_LENGTH: 'validity',
   A06_ATLAS_PAGE_SIZE_MATCHES_PNG: 'validity', // mixed — see above
   A07_ATLAS_TEXT_SHAPE: 'validity',
-  A08_REGION_NAMES_MATCH_ATTACHMENTS: 'validity', // mixed — see above
+  A08_REGION_NAMES_MATCH_ATTACHMENTS: 'validity', // no longer mixed — see above (#574)
   A09_ANIMATION_DURATION_MATCHES_SPEC: 'validity',
   A10_NO_NAN_AFTER_STEPPING: 'validity',
   A11_NO_CLIPPING_ATTACHMENTS: 'renderer',
@@ -2513,7 +2519,46 @@ export function validate(input: ValidateInput): ValidateReport {
       stats.skinMembers = listed;
     });
 
-    // --- A08: region names exact-match attachment names --------------------
+    // --- A08: every attachment's path resolves to a region the atlas has ---
+    //
+    // 🗑️ A08 used to be MIXED: the join above is validity, and a second clause
+    // gated on `spine-html` required the skin entry's PLACEHOLDER to be spelled
+    // exactly like the region it resolves to ("v0 requires them identical").
+    // That clause is retired (issue #574), and the reason is that the renderer
+    // it was profiled under never performed the join it described.
+    //
+    // `spine-html@0.4.1` resolves art in two steps and the placeholder is in
+    // neither. `DomTexture.js:78,102` builds the image map with
+    // `put(atlasRegion.name, …)` over every region of the atlas, and
+    // `SpineHtmlRenderer.js:172` reads it back as
+    // `const regionImage = region && this.regionImages.get(region.name)`, where
+    // `region` came off the attachment — which `AtlasAttachmentLoader` resolved
+    // through `path`. Every published version of that renderer keys the same way
+    // (checked 0.1.0 through 0.4.1, the whole series). Nothing in it reads an
+    // attachment's name, let alone its placeholder.
+    //
+    // ⇒ Restated as the join the renderer actually performs, the clause compares
+    // `path` against the region `path` resolved — a tautology, and the same
+    // string the validity check above already requires the atlas to hold. An
+    // assertion that cannot fail is not a gate, so it is removed rather than
+    // kept as a duplicate.
+    //
+    // ⚠️ It was not merely inert, either: it refused rigs on both sides of the
+    // convention it was written for. `path` exists precisely so a placeholder
+    // may differ from the PNG basename (R5), and since issue #567 a placeholder
+    // two named skins share is emitted as `<skin>/<placeholder>` with `path`
+    // restated to the basename — the only spelling the Spine editor holds. Under
+    // the old clause that shape, and any rig that merely named a part something
+    // other than its placeholder, was red under `spine-html` while the editor
+    // imported it and the renderer drew it.
+    //
+    // 📏 What is left, measured rather than assumed: only the LAST loop can
+    // fire. Both attachment-join clauses are preempted by the loader —
+    // `AtlasAttachmentLoader.findRegion` throws
+    // `Region not found in atlas: <path> (attachment: <name>)` for a path that
+    // names no region and for one padded with whitespace alike, so A00 reports
+    // it and A08 never runs. `PS90` is the mutant for the loop that does fire,
+    // and it is the first mutant this assertion has ever had.
     check('A08_REGION_NAMES_MATCH_ATTACHMENTS', () => {
       const regionNames = new Set(atlas!.regions.map((r) => r.name));
       for (const skin of data.skins) {
@@ -2526,16 +2571,6 @@ export function validate(input: ValidateInput): ValidateReport {
           }
           if (!regionNames.has(lookup)) {
             fail('A08_REGION_NAMES_MATCH_ATTACHMENTS', `attachment "${entry.placeholder}" wants region "${lookup}", which the atlas does not have`);
-          }
-          // 📐 PROFILE. That the join RESOLVES is validity — an attachment
-          // pointing at a region the atlas does not have is a hole in the rig
-          // whoever loads it. That the two names are IDENTICAL is rigc's v0
-          // policy: it holds because a region name IS the PNG basename here, and
-          // rigc's own packer keeps it that way (issue #4), while a foreign
-          // packer renames regions by design (spineboy's `path` differs from its
-          // placeholder in 26 attachments).
-          if (policy && entry.placeholder !== lookup) {
-            fail('A08_REGION_NAMES_MATCH_ATTACHMENTS', `attachment "${entry.placeholder}" resolves to region "${lookup}"; v0 requires them identical`);
           }
         }
       }
