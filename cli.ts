@@ -2435,7 +2435,15 @@ function cmdExplain(flags: Record<string, string>): void {
   // last one in the repository and issue #307 was about exactly that.
   const motion = parseMotionSpec(readJsonFile(opts.motionPath), opts.motionPath);
 
-  console.log(`\nstage  ${result.skeleton.skeleton.width} x ${result.skeleton.skeleton.height}  (spine ${result.skeleton.skeleton.spine})`);
+  // A rig may state that it has no stage at all (issue #578), and the two must
+  // not print alike: `undefined x undefined` is what a template does with an
+  // absence, and it reads like a defect in the tool rather than a claim in the
+  // spec.
+  const stage =
+    result.skeleton.skeleton.width === undefined || result.skeleton.skeleton.height === undefined
+      ? 'none declared'
+      : `${result.skeleton.skeleton.width} x ${result.skeleton.skeleton.height}`;
+  console.log(`\nstage  ${stage}  (spine ${result.skeleton.skeleton.spine})`);
 
   // The crop note describes where the numbers CAME from, and without a manifest
   // they came from the rig spec's own literals — there is no crop to be relative

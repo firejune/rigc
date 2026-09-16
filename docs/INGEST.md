@@ -212,9 +212,11 @@ Spine runtime plays it, whatever rigc's own rasteriser or validator thinks.
 
 ### 1.3 `diff` — and the two things it cannot see
 
-`diff` takes two compiled skeletons and reports 49 measures in eight groups. Both
-sides may be foreign; the interesting pairing during ingest is **your transcription
-against the export it came from**:
+`diff` takes two compiled skeletons and reports 49 measures in eight groups, plus two
+blocks that report and gate nothing: the `(reported)` measures beside `attachments`
+and `animations`, and the `skeleton` header block at the top, which measures the stage
+(issue #578). Both sides may be foreign; the interesting pairing during ingest is
+**your transcription against the export it came from**:
 
 ```bash
 rigc diff work/t3/skeleton.json \
@@ -226,6 +228,10 @@ rigc diff
   candidate  …/work/t3/skeleton.json
   reference  …/examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json
   ..         bones=3/3  slots=2/2  skins=1/1  attachments=2/2  constraints=0/0  animations=2/2  events=0/0   (candidate/reference)
+
+  skeleton (reported)   (no mean)   over 2 measures  — the stage, which no reading of the frames could decide
+      1.000  stage_present                1/1         both sides declare a setup-pose stage, or neither does  — …
+      1.000  stage_box                    4/4         the stage is the same box (x, y, width, height, exactly as stated)  — …
 
   bones                 mean 1.000  over 8 measures
       1.000  count                        3/3         how many bones
@@ -253,11 +259,18 @@ Each pair is **matched / total**, where the total is the larger of the two sides
 count of `2/3` means one side has three of something and only two were matched — and
 it does not say *which* side has three. The `..` line above is where you read that.
 
-⛔ **`diff` is blind to every coordinate.** No measure reads a bone's
-`x`/`y`/`rotation`, an attachment's offset, or a key's value — only *presence*,
-*names*, *counts*, *order* and *kinds*. §4.1 moves a pivot 236.5 units and every one
-of the 49 measures still reads **1.000**. ⇒ Never take a green `diff` as evidence that
-a geometric edit did not land, and never take it as evidence that one did.
+⛔ **`diff` is blind to every coordinate a bone, an attachment or a key carries.** No
+measure reads a bone's `x`/`y`/`rotation`, an attachment's offset, or a key's value —
+only *presence*, *names*, *counts*, *order* and *kinds*. §4.1 moves a pivot 236.5
+units and every one of the 49 measures still reads **1.000**. ⇒ Never take a green
+`diff` as evidence that a geometric edit did not land, and never take it as evidence
+that one did.
+
+⚠️ **The one exception is the skeleton's own declared box**, and it is an exception to
+the sentence and not to the rule: `skeleton.stage_box` compares four world numbers,
+but they are numbers an exporter *wrote into the header* rather than a pose anything
+measured, and the block they sit in gates nothing. Moving a pivot does not move them
+either.
 
 ⛔ **And its ratios are not a score.** [`src/diff.ts`](../src/diff.ts) says so in the
 type itself (*"Unweighted mean of the measures below. NOT a quality score"*), and the
@@ -424,6 +437,17 @@ before it was a hand-edit of emitted JSON with nothing checking it.
    *do* carry is the neighbouring shape — a slot a skin DOES fill whose setup pose
    shows nothing (34 of `spineboy-pro`'s 52 slots). Both are written the same way in
    the file: `attachment` simply absent.
+
+   ⚠️ **If the export's `skeleton` block carries no `x`/`y`/`width`/`height`, write
+   `"width": null, "height": null` and do not invent one** (issue #578). That shape is
+   common — the twelve exports in `examples/` all carry the four, and 37 of 37 exports
+   in one production corpus carry none of them — and until the `null` pair existed the
+   only two moves were a made-up stage or a file that could not be transcribed. The
+   made-up stage was the worse one: it is a number nothing in this toolchain could
+   contradict, so it survived every gate and every `diff` in silence. Now it does not —
+   `diff`'s header block reports `skeleton.stage_present` and `skeleton.stage_box`
+   against the source you are copying. Copy the four numbers when they are there;
+   state the absence when they are not.
 4. **`explain`, then `build`.** `explain` first, because it prints what you wrote in a
    shape you can compare against the export by eye (§1.5) and it never gates. Then
    `build` under `--profile spine`.

@@ -80,6 +80,25 @@ export const RIG_SPEC_VERSION = 'rigc-rig/1';
  * `A19_OVERLAY_PNGS_HAVE_ALPHA` measure against, and a guessed stage is a gate
  * that measures against a number nobody wrote down.
  *
+ * ⭐ **`width: null, height: null` is the third state: this skeleton declares no
+ * stage** (issue #578). Omitting them is silence and stays a refusal by name;
+ * stating them `null` is a claim, and the emitted header then carries none of
+ * `x`/`y`/`width`/`height` — which is what an editor export of a skeleton whose
+ * stage was never set looks like, and what a transcriber of one has to be able
+ * to write down. `null` is this spec's spelling for a stated absence everywhere
+ * else it has one (`RigSlot.attachment` = "show nothing", the cut manifest's
+ * `image` = "this cut does not carry the part"), so it is the spelling here too
+ * and no new key is introduced: the pair already exists, and only a third value
+ * of it is new.
+ *
+ * Two shapes are refused rather than interpreted, both in `parseRigSpec`:
+ * stating one of the pair `null` and the other a number (a stage with one
+ * extent is not a stage, and guessing which half was meant is inventing), and
+ * stating `x` or `y` alongside the absence (an origin for a box that is not
+ * there). ⚠️ A stated absence also beats a cut manifest's `crop`, for the reason
+ * a stated `width` already does: the rig spec is where a claim about the
+ * skeleton is made, and the manifest is a record of what the art measured.
+ *
  * `spine` is not here: rigc emits its own version label and `A16` re-checks it.
  * `hash` is not here either — it is the editor's change-detection token and
  * inventing one would be claiming an export this file did not come from.
@@ -87,8 +106,10 @@ export const RIG_SPEC_VERSION = 'rigc-rig/1';
 export interface RigSkeletonHeader {
   x?: number;
   y?: number;
-  width?: number;
-  height?: number;
+  /** A number, or `null` with `height` for "this skeleton declares no stage". */
+  width?: number | null;
+  /** A number, or `null` with `width` for "this skeleton declares no stage". */
+  height?: number | null;
   /** Nonessential; `SkeletonData.fps` stays 30 when absent. */
   fps?: number;
   /** 4.2+; the runtime's physics/scale reference. Parser default 100. */
@@ -105,6 +126,18 @@ export interface RigSkeletonHeader {
    * written (issue #370).
    */
   images?: string;
+}
+
+/**
+ * Does this header state that the skeleton has no stage?
+ *
+ * One reading of the spelling, exported so that the compiler, the emitter and
+ * anything that grows a third opinion later read it the same way. `parseRigSpec`
+ * has already refused the half-stated shapes by the time this is asked, so the
+ * two `null`s travel together.
+ */
+export function declaresNoStage(header: RigSkeletonHeader | undefined): boolean {
+  return header !== undefined && header.width === null && header.height === null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1597,6 +1630,32 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   checkRigSpecKeys(raw, where);
 
   const spec = raw as unknown as RigSpec;
+
+  // The stage, stated or stated absent. Half a statement is refused here rather
+  // than resolved in `compile`, because which half was meant is not derivable
+  // and a compiler that picks one is inventing a number (issue #578).
+  const header = spec.skeleton;
+  if (header !== undefined) {
+    const noWidth = header.width === null;
+    const noHeight = header.height === null;
+    if (noWidth !== noHeight) {
+      const stated = noWidth ? 'height' : 'width';
+      const absent = noWidth ? 'width' : 'height';
+      throw new CompileError(
+        `${where}: "skeleton" states ${absent}: null and a ${stated} of ` +
+          `${JSON.stringify(noWidth ? header.height : header.width)}. A stage has both extents or neither: ` +
+          'write both as null for "this skeleton declares no stage", or give both a number',
+      );
+    }
+    if (noWidth && noHeight && (header.x !== undefined || header.y !== undefined)) {
+      const origin = [header.x !== undefined ? 'x' : null, header.y !== undefined ? 'y' : null].filter((k) => k !== null);
+      throw new CompileError(
+        `${where}: "skeleton" declares no stage (width: null, height: null) and still states ${origin.join(' and ')}. ` +
+          `${origin.length === 1 ? 'That is an origin' : 'Those are an origin'} for a box that is not there: ` +
+          'drop them, or state a width and a height',
+      );
+    }
+  }
 
   const seen = new Set<string>();
   for (const bone of spec.bones) {

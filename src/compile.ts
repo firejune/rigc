@@ -41,6 +41,7 @@ import { parseJsonWithPosition } from './json-position.ts';
 import { nearMisses } from './keys.ts';
 import { parseMotionSpec } from './motion.ts';
 import {
+  declaresNoStage,
   parseRigSpec,
   RIG_FROM_PROPERTIES,
   RIG_PATH_POSITION_MODES,
@@ -1440,15 +1441,34 @@ export function compile(opts: CompileOptions): CompileResult {
   // The stage. The rig may state it outright (a foreign skeleton has no crop);
   // otherwise the manifest's crop is it. With neither there is nothing to
   // measure a full-frame mesh against, so the compile stops rather than guess.
-  const stageWidth = rig.skeleton?.width ?? manifest?.crop.w;
-  const stageHeight = rig.skeleton?.height ?? manifest?.crop.h;
-  if (stageWidth === undefined || stageHeight === undefined) {
+  //
+  // ⭐ The third state is the rig saying there is no stage at all — `width` and
+  // `height` stated `null` (issue #578). That is a claim rather than a silence,
+  // so it beats the manifest's crop the way a stated number already does, and
+  // the header below emits none of the four fields. Omitting them is still the
+  // refusal underneath: a transcriber who has no stage to copy can now say so,
+  // and one who simply has not looked still cannot.
+  const noStage = declaresNoStage(rig.skeleton);
+  const stageWidth = noStage ? undefined : (rig.skeleton?.width ?? manifest?.crop.w);
+  const stageHeight = noStage ? undefined : (rig.skeleton?.height ?? manifest?.crop.h);
+  if (!noStage && (stageWidth === undefined || stageHeight === undefined)) {
     throw new CompileError(
-      'no stage size: give the rig spec a `skeleton.width`/`skeleton.height`, or compile against a cut manifest whose `crop` states them',
+      'no stage size: give the rig spec a `skeleton.width`/`skeleton.height`, or compile against a cut manifest whose `crop` states them, ' +
+        'or state `"width": null, "height": null` for a skeleton that declares no stage',
     );
   }
-  /** Crop height, for the y-down -> y-up flip. Only manifest data uses it. */
-  const cropH = manifest?.crop.h ?? stageHeight;
+  /**
+   * Crop height, for the y-down -> y-up flip. Only manifest data uses it, and
+   * `cropPointOf` refuses every bone that asks for manifest data when there is
+   * no manifest — so the two states that can be read here both have one, or a
+   * stage.
+   *
+   * ⚠️ `NaN` for the third, unreachable state (no manifest and a rig that
+   * declares no stage) rather than 0. A plausible number is the failure this
+   * compiler exists to refuse; if the guard above it ever moved, a NaN
+   * coordinate is a named failure and an origin-flipped bone is not.
+   */
+  const cropH = manifest?.crop.h ?? stageHeight ?? Number.NaN;
   const imagesDir = opts.imagesDir !== undefined ? resolve(opts.imagesDir) : resolve(dirname(rigPath), rig.images ?? '.');
 
   // -- 1. gather images ------------------------------------------------------
@@ -2322,13 +2342,19 @@ export function compile(opts: CompileOptions): CompileResult {
   });
 
   // -- 6. assemble -----------------------------------------------------------
-  const header: SpineSkeletonJson['skeleton'] = {
-    spine: SPINE_VERSION,
-    x: rig.skeleton?.x ?? 0,
-    y: rig.skeleton?.y ?? 0,
-    width: stageWidth,
-    height: stageHeight,
-  };
+  //
+  // The stage is four fields or none of them. `x`/`y` are the origin of the box
+  // `width`/`height` give an extent to, so a header carrying an origin for a box
+  // it does not declare would be a shape no export has — and the key ORDER here
+  // is the editor's own, which is what keeps a staged build byte-identical to
+  // what it emitted before the stage could be declared absent (issue #578).
+  const header: SpineSkeletonJson['skeleton'] = { spine: SPINE_VERSION };
+  if (stageWidth !== undefined && stageHeight !== undefined) {
+    header.x = rig.skeleton?.x ?? 0;
+    header.y = rig.skeleton?.y ?? 0;
+    header.width = stageWidth;
+    header.height = stageHeight;
+  }
   if (rig.skeleton?.fps !== undefined) header.fps = rig.skeleton.fps;
   if (rig.skeleton?.referenceScale !== undefined) header.referenceScale = rig.skeleton.referenceScale;
   const imagesPath = skeletonImagesPath(rig.skeleton?.images, opts, outDir, partDirs);

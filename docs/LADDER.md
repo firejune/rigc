@@ -107,8 +107,17 @@ instead of a reader noticing:
   validate   green  (profile spine)
   ess        bones=0.567  slots=0.476  attachments=0.926  constraints=1.000  animations=0.936  events=1.000
              bones 0.567 (name-matched) · 1.000 (name-agnostic)   slots 0.476 (name-matched) · 1.000 (name-agnostic)
-             reported: mesh_edges 1.000 · key_density 0.710 · keys_per_timeline 0.710
+             reported: mesh_edges 1.000 · key_density 0.710 · keys_per_timeline 0.710 · stage_present 1.000 · stage_box 0.000
 ```
+
+⭐ **`stage_box 0.000` is this rung's oldest invisible finding, and it is one line
+old** ([#578](https://github.com/firejune/rigc/issues/578)). `build` required a
+`skeleton.width`/`height` and nothing in the tree measured it, so this
+transcription's stage is a number its author had to invent — and the reference's
+is a different one. Neither the gate, nor `check`, nor the frames could say so:
+the two measures above are reported and gate nothing, which is what the rest of
+this page's *unobservable by construction* table means. The finding is that it
+was there all along.
 
 🔸 **Why a rebuild and not `--candidate bench/runs/2026-08-23-rung3-2/spine`**,
 which prints the same five lines. A `bench` that names a committed candidate
@@ -763,6 +772,7 @@ finding this ladder already recorded, not a new claim:
 | `animations.timeline_kinds` | Separate-versus-combined is a checkbox, not a picture: `translate` with a flat y channel and `translatex` alone render identically. The cleared `pendulum` posts **0.625** here |
 | `animations.event_keys`, `events.names`, `events.payloads` | a firing is not a pixel, and the briefs decline to spell the names. spineboy has paid `events` 0.500 for that refusal twice, deliberately |
 | every name-keyed measure — `bones.names`, `parent_by_name`, `order`, `slots.names`, `slots.bone`, `attachments.names` | unwinnable by design: the brief grants the author its own names. This is what the name-agnostic pair exists for, and it is why no *section mean* is gated |
+| `skeleton.stage_present`, `skeleton.stage_box` | the setup-pose bounding box is a number in a header: it draws no pixel, `render` frames from the posed bounds instead, and no reading of the frames recovers it. Unwinnable a second way as well — every brief on this ladder states in its own honesty-rule check that it carries *"no stage size"*, so the author is not told it and could not be scored on it. Both measures arrived with [#578](https://github.com/firejune/rigc/issues/578), which is also when this ladder could first see that rung 3's attempt-2 transcription reads `stage_box` **0.000** against its reference |
 | any measure reading 1.000 at `0/0` | vacuous, and the document has said so since B1's proof. A gate that counted these would pass a rung for having nothing |
 
 ⚠️ **`attachments.region_size_present` must not be cited as the unwinnable measure it
@@ -8220,16 +8230,18 @@ excerpts: the `validate` roll-call, the `── diff ──` header, the `check`
 lines are stripped of the two spaces the tool prints on them. Visible in what is
 quoted: `bones`/`slots`'s name-agnostic figures
 ([#21](https://github.com/firejune/rigc/issues/21)), `region_size_present` as
-`region_size` ([#28](https://github.com/firejune/rigc/issues/28)), and the two
+`region_size` ([#28](https://github.com/firejune/rigc/issues/28)), the two
 `(reported)` subsections — unobservable from the frames, so reported and folded into
-no mean.
+no mean — and, on the summary line, the `skeleton` header block's two stage measures
+([#578](https://github.com/firejune/rigc/issues/578)), which are reported for the same
+reason and gate for neither.
 
 ```
   ── summary ──
   validate   green  (profile spine)
   ess        bones=1.000  slots=1.000  attachments=1.000  constraints=1.000  animations=1.000  events=1.000
              bones 1.000 (name-matched) · 1.000 (name-agnostic)   slots 1.000 (name-matched) · 1.000 (name-agnostic)
-             reported: mesh_edges 1.000 · key_density 1.000 · keys_per_timeline 1.000
+             reported: mesh_edges 1.000 · key_density 1.000 · keys_per_timeline 1.000 · stage_present 1.000 · stage_box 1.000
 ```
 
 ```

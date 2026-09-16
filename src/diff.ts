@@ -160,6 +160,25 @@ export interface DiffSection {
 
 export interface DiffReport {
   sections: DiffSection[];
+  /**
+   * The `skeleton` block itself — measured, and reported beside the sections
+   * rather than inside one (issue #578).
+   *
+   * ⭐ It is a `DiffReported` and not a seventh `DiffSection`, and the reason is
+   * the one thing a section must have: a `ratio`. A section's mean is the figure
+   * a stored `bench.json` row quotes, and these measures cannot be in one —
+   * `docs/GATE.md`'s *What never gates* covers them twice over, so a `skeleton`
+   * section would carry either a vacuous `mean 1.000 over 0 measures` (the false
+   * green this file exists to refuse) or a nullable `ratio` every reader of every
+   * other section would then have to handle. `DiffReported` already models
+   * exactly "measures with no mean over them", which is what the header is.
+   *
+   * ⚠️ Not optional, deliberately: a block that may be absent is a block that can
+   * silently stop being emitted, and `movedReportedMeasures` over an absent one
+   * is the empty list — indistinguishable from one that is all 1.000. The
+   * selftest asserts its COUNT for the same reason it does for the others.
+   */
+  header: DiffReported;
   /** Raw counts either side, for orientation. Never combined into anything. */
   candidate: Record<string, number>;
   reference: Record<string, number>;
@@ -979,6 +998,94 @@ function diffEvents(c: Json, r: Json): DiffSection {
 }
 
 // ---------------------------------------------------------------------------
+// the skeleton header
+// ---------------------------------------------------------------------------
+
+/**
+ * The stage: `x`, `y`, `width`, `height` of the setup-pose bounding box, or the
+ * absence of all four.
+ *
+ * 🔍 **Why this measure exists at all** (issue #578). The stage was the one value
+ * `build` required and no instrument in this tree could see: `validate`, `check`
+ * and `render` all ignore it — `render` frames from the posed bounds — and `diff`
+ * had no header measure, so a sweep that handed a deliberately absurd unit stage
+ * `0,0,1,1` to 37 real exports read **1.000 on every measure** for 32 of them. A
+ * required-and-unmeasured field is the worst combination a field can have: the
+ * only way to satisfy it was to invent a number, and nothing would ever say so.
+ *
+ * ⭐ **`stage_present` is 1/1 or 0/1 and never `0/0`.** Both sides always have a
+ * presence to compare, including when both say "none" — that is agreement, not
+ * an absence of data, and `total: 0` here would be the vacuous 1.000 this file
+ * refuses. `stage_box` is the one that goes vacuous, and only when there are not
+ * two boxes to compare.
+ */
+interface StageFacts {
+  present: boolean;
+  /** The four fields as stated, `null` where the header omits one. */
+  box: Array<number | null>;
+}
+
+const STAGE_FIELDS = ['x', 'y', 'width', 'height'] as const;
+
+/**
+ * A stage is declared by its EXTENT: a numeric `width` and `height`.
+ *
+ * `x`/`y` alone are an origin for a box that is not there — no export carries
+ * that shape, and rigc refuses to emit it — so they do not make a stage on their
+ * own. It is also what the compiler requires and what `A14_NO_FULL_FRAME_MESH`
+ * and `A19_OVERLAY_PNGS_HAVE_ALPHA` measure against, so the three agree on the
+ * word by construction rather than by memory.
+ */
+function stageFacts(root: Json): StageFacts {
+  const header = isObj(root.skeleton) ? root.skeleton : {};
+  const box = STAGE_FIELDS.map((k) => num(header[k]));
+  return { present: num(header.width) !== null && num(header.height) !== null, box };
+}
+
+/**
+ * The two header measures.
+ *
+ * ⚠️ **The box is compared EXACTLY, and that is a measurement rather than a
+ * choice.** The brief this was built from asked for "the tolerance the other
+ * measures use"; `src/diff.ts` has exactly one tolerance in it — `FRAME`, one
+ * sixtieth of a second, used once, for `animations.duration` — and no spatial
+ * one anywhere, because this file compares no position at all (that is
+ * `bonedist.ts`). A stage is a box an exporter *wrote down*, not a pose anybody
+ * measured, so there is nothing for it to be within a tolerance *of*; inventing
+ * a spatial epsilon here would be a number nobody measured, in the file whose
+ * whole job is to report measured ones.
+ */
+function diffHeader(c: Json, r: Json): DiffReported {
+  const a = stageFacts(c);
+  const b = stageFacts(r);
+  const both = a.present && b.present;
+  const agreed = both ? a.box.filter((v, i) => v === b.box[i]).length : 0;
+  const side = (f: StageFacts): string => (f.present ? `${f.box[2]}x${f.box[3]} at ${f.box[0]},${f.box[1]}` : 'none');
+  return {
+    measures: [
+      measure(
+        'skeleton.stage_present',
+        'both sides declare a setup-pose stage, or neither does',
+        a.present === b.present ? 1 : 0,
+        1,
+        `candidate ${side(a)}; reference ${side(b)}. A skeleton declares a stage by stating a width and a height`,
+      ),
+      measure(
+        'skeleton.stage_box',
+        'the stage is the same box (x, y, width, height, exactly as stated)',
+        agreed,
+        both ? STAGE_FIELDS.length : 0,
+        both
+          ? `candidate ${side(a)}; reference ${side(b)}`
+          : a.present === b.present
+            ? 'neither side declares a stage, so there is no box to compare — `stage_present` carries that'
+            : 'only one side declares a stage, so there is no second box to compare — `stage_present` carries that',
+      ),
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // the report
 // ---------------------------------------------------------------------------
 
@@ -1000,6 +1107,7 @@ export function diffSkeletons(candidate: unknown, reference: unknown): DiffRepor
   const r = isObj(reference) ? reference : {};
   return {
     sections: [diffBones(c, r), diffSlots(c, r), diffAttachments(c, r), diffConstraints(c, r), diffAnimations(c, r), diffEvents(c, r)],
+    header: diffHeader(c, r),
     candidate: orientation(c),
     reference: orientation(r),
   };
@@ -1035,7 +1143,9 @@ export function movedAgnosticMeasures(report: DiffReport): string[] {
  * would notice.
  */
 export function movedReportedMeasures(report: DiffReport): string[] {
-  return report.sections.flatMap((s) => (s.reported?.measures ?? []).filter((m) => m.ratio < 1).map((m) => m.id));
+  return [...report.sections.flatMap((s) => s.reported?.measures ?? []), ...report.header.measures]
+    .filter((m) => m.ratio < 1)
+    .map((m) => m.id);
 }
 
 const fmt = (n: number): string => n.toFixed(3);
@@ -1049,7 +1159,7 @@ const fmt = (n: number): string => n.toFixed(3);
  * the report and the line is a summary.
  */
 export function reportedFigures(report: DiffReport): string | null {
-  const measures = report.sections.flatMap((s) => s.reported?.measures ?? []);
+  const measures = [...report.sections.flatMap((s) => s.reported?.measures ?? []), ...report.header.measures];
   if (measures.length === 0) return null;
   return measures.map((m) => `${m.id.slice(m.id.indexOf('.') + 1)} ${fmt(m.ratio)}`).join(' · ');
 }
@@ -1075,6 +1185,14 @@ export function diffLines(report: DiffReport, labels: { candidate: string; refer
   lines.push(`  reference  ${labels.reference}`);
   const keys = Object.keys(report.reference);
   lines.push(`  ..         ${keys.map((k) => `${k}=${report.candidate[k]}/${report.reference[k]}`).join('  ')}   (candidate/reference)`);
+  lines.push('');
+  // The `skeleton` block, first because that is where it sits in the file, and
+  // with `(no mean)` for the same reason a section's `(reported)` block has one.
+  lines.push(
+    `  ${'skeleton (reported)'.padEnd(21)} (no mean)   over ${report.header.measures.length} measures` +
+      '  — the stage, which no reading of the frames could decide',
+  );
+  lines.push(...measureLines(report.header.measures, 'skeleton.'.length));
   lines.push('');
   // Wide enough for `<longest section> (name-agnostic)`, so that a section's two
   // headings line their figures up under each other and read as a pair.
@@ -1115,6 +1233,11 @@ export function diffLines(report: DiffReport, labels: { candidate: string; refer
   lines.push('  keyed on names, and a candidate is entitled to its own. They are two');
   lines.push('  comparisons, not two halves of one: name-agnostic 1.000 beside a low');
   lines.push('  name-matched figure means the shape is right and the vocabulary differs.');
+  lines.push('');
+  lines.push('  `skeleton` is the file\'s own header block and reports two measures for the stage.');
+  lines.push('  It has no mean for the reason a `(reported)` block never does, and it never');
+  lines.push('  gates for two: no reading of the frames recovers a setup-pose bounding box, and');
+  lines.push('  the ladder\'s briefs withhold the stage size outright.');
   lines.push('');
   lines.push('  A `(reported)` block has no mean because its measures have unlike units, and');
   lines.push('  it stays out of the section mean above it for the same reason no clause may');

@@ -1485,15 +1485,61 @@ const DIFF_CASES: DiffCase[] = [
       (j as any).animations.heavy.bones.bone.rotate = [keys[0], ...inserted, ...keys.slice(1)];
     },
   },
+  {
+    name: 'D37_take_the_stage_off_the_candidate',
+    why:
+      'issue #578, and the finding the corpus sweep could not make: a deliberately absurd unit stage `0,0,1,1` was ' +
+      'handed to 37 real exports and 32 of them still read 1.000 on every measure, because no measure read the ' +
+      'header at all. `stage_present` is the one that has to move here — and `stage_box` must NOT, because with one ' +
+      'side declaring nothing there is no second box to compare and a figure invented for it would be the vacuous ' +
+      '1.000 this file refuses, wearing a red coat. Nothing name-matched or name-agnostic moves: the stage is not a ' +
+      'bone, a slot or an attachment, and a report that smeared it over them would say the rig changed when the ' +
+      'header did',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: ['skeleton.stage_present'],
+    mutate: (j) => {
+      const header = (j as any).skeleton;
+      if (typeof header?.width !== 'number' || typeof header?.height !== 'number') {
+        throw new Error('fixture declares no stage — the case would prove nothing');
+      }
+      for (const k of ['x', 'y', 'width', 'height']) delete header[k];
+    },
+  },
+  {
+    name: 'D38_move_the_stage_box_by_one_unit',
+    why:
+      'the other half of D37 and the reason `stage_present` is not the whole measure: two files that both declare a ' +
+      'stage agree on the QUESTION and can still disagree on the box. One unit on `x` is the smallest edit that ' +
+      'says so — a transcriber who invented a stage would land here rather than on D37 — and it must leave ' +
+      '`stage_present` at 1.000, or "no stage at all" and "a stage somewhere else" would read the same',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: ['skeleton.stage_box'],
+    mutate: (j) => {
+      const header = (j as any).skeleton;
+      if (typeof header?.x !== 'number') throw new Error('fixture declares no stage origin — the case would prove nothing');
+      header.x += 1;
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 /** How many name-agnostic measures the two split sections carry between them. */
 const DIFF_AGNOSTIC_MEASURES = 9;
-/** How many `(reported)` measures the report carries in total. */
-const DIFF_REPORTED_MEASURES = 3;
+/**
+ * How many `(reported)` measures the report carries in total — the section
+ * blocks and the `skeleton` header block together.
+ *
+ * ⚠️ One figure over both, not one each. The header's two measures (issue #578)
+ * are reported for the same reason the others are and are reached through the
+ * same `movedReportedMeasures`, so a second constant would be a second place to
+ * forget, and a block that stopped being emitted is exactly what this number is
+ * here to catch.
+ */
+const DIFF_REPORTED_MEASURES = 5;
 
-/** The three identity controls, over one fixture. Returns the failure count. */
+/** The four identity controls, over one fixture. Returns the failure count. */
 function runDiffIdentityControls(label: string, text: string): number {
   let bad = 0;
   const reference: Record<string, unknown> = JSON.parse(text);
@@ -1535,22 +1581,66 @@ function runDiffIdentityControls(label: string, text: string): number {
   // `movedReportedMeasures` on a report that emits no reported block at all is
   // the empty list, which is indistinguishable from a block that is all 1.000.
   // So the COUNT is asserted as well as the drift.
+  // ⭐ The `skeleton` header block is counted here rather than beside this, for
+  // the reason the count exists at all: it reports and never gates, it is
+  // reached through the same `movedReportedMeasures`, and a second tally would
+  // be a second place for one to go missing from (issue #578).
   const reportedSections = identity.sections.filter((s) => s.reported !== undefined);
   const reportedDrift = movedReportedMeasures(identity);
-  const reportedCount = reportedSections.reduce((n, s) => n + (s.reported?.measures.length ?? 0), 0);
-  const noMean = reportedSections.every((s) => !('ratio' in (s.reported ?? {})));
+  const reportedCount =
+    reportedSections.reduce((n, s) => n + (s.reported?.measures.length ?? 0), 0) + identity.header.measures.length;
+  const reportedBlocks = [...reportedSections.map((s) => s.name), 'skeleton (header)'];
+  const noMean = reportedSections.every((s) => !('ratio' in (s.reported ?? {}))) && !('ratio' in identity.header);
   if (reportedCount === DIFF_REPORTED_MEASURES && reportedDrift.length === 0 && noMean) {
     console.log(
       `  PASS  CONTROL_REPORTED_MEASURES_EXIST_ARE_ONE_AND_CARRY_NO_MEAN [${label}]  ` +
-        `(${reportedSections.map((s) => s.name).join(', ')}; ${reportedCount} measures, all 1.000, no mean over them)`,
+        `(${reportedBlocks.join(', ')}; ${reportedCount} measures, all 1.000, no mean over them)`,
     );
   } else {
     bad++;
     console.log(
-      `  FAIL  CONTROL_REPORTED_MEASURES_EXIST_ARE_ONE_AND_CARRY_NO_MEAN [${label}]: sections ` +
-        `[${reportedSections.map((s) => s.name).join(', ')}] carrying ${reportedCount} measure(s); below 1.000: ` +
+      `  FAIL  CONTROL_REPORTED_MEASURES_EXIST_ARE_ONE_AND_CARRY_NO_MEAN [${label}]: blocks ` +
+        `[${reportedBlocks.join(', ')}] carrying ${reportedCount} measure(s); below 1.000: ` +
         `[${reportedDrift.join(', ')}]; a mean over them: ${!noMean}  (want: ${DIFF_REPORTED_MEASURES} measures, ` +
         'none below 1.000, and no mean anywhere)',
+    );
+  }
+
+  // Fourth, the half every control above it is blind to: `diff X X` on a file
+  // that declares NO stage (issue #578). `stage_present` has to read 1/1 there
+  // and not `0/0` — two sides that both say "none" have agreed about something,
+  // and scoring that as vacuous would put the one shape this measure was built
+  // for back into the silence it came out of. `stage_box` is the one that is
+  // rightly vacuous, because there are no two boxes.
+  const barePair = [JSON.parse(text), JSON.parse(text)] as Array<Record<string, unknown>>;
+  for (const one of barePair) {
+    const bare = one.skeleton as Record<string, unknown>;
+    for (const k of ['x', 'y', 'width', 'height']) delete bare[k];
+  }
+  const bareReport = diffSkeletons(barePair[0], barePair[1]);
+  const bareDrift = movedMeasures(bareReport);
+  const bareReported = movedReportedMeasures(bareReport);
+  const present = bareReport.header.measures.find((m) => m.id === 'skeleton.stage_present');
+  const box = bareReport.header.measures.find((m) => m.id === 'skeleton.stage_box');
+  if (
+    bareDrift.length === 0 &&
+    bareReported.length === 0 &&
+    present !== undefined &&
+    present.total === 1 &&
+    box !== undefined &&
+    box.total === 0
+  ) {
+    console.log(
+      `  PASS  CONTROL_A_STAGE_LESS_FILE_AGAINST_ITSELF_IS_ONE_AND_ITS_AGREEMENT_IS_NOT_VACUOUS [${label}]  ` +
+        `(stage_present ${present.matched}/${present.total}, stage_box ${box.matched}/${box.total} — ${box.note ?? 'no note'})`,
+    );
+  } else {
+    bad++;
+    console.log(
+      `  FAIL  CONTROL_A_STAGE_LESS_FILE_AGAINST_ITSELF_IS_ONE_AND_ITS_AGREEMENT_IS_NOT_VACUOUS [${label}]: ` +
+        `below 1.000: [${[...bareDrift, ...bareReported].join(', ')}]; stage_present ` +
+        `${present ? `${present.matched}/${present.total}` : 'absent'}, stage_box ${box ? `${box.matched}/${box.total}` : 'absent'}  ` +
+        '(want: nothing below 1.000, stage_present counted 1/1 rather than 0/0, and stage_box vacuous at 0/0)',
     );
   }
   return bad;
@@ -5284,6 +5374,107 @@ function runStaticRigSuite(): number {
     'a summary is the one line a reader trusts without counting, so a figure in it that no row produces is worth ' +
       'less than no figure at all — and the count that matters here is of ASSERTIONS, while `fail()` is called once ' +
       'per finding and prints a row each time',
+  );
+
+  // --- the stage a rig may state it does not have (issue #578) --------------
+  //
+  // Measured first, and it is the whole reason this exists: 12 of 12 editor
+  // exports in `examples/` carry all four of `x`/`y`/`width`/`height`, and 37 of
+  // 37 production exports carry none of them. `build` required the value anyway,
+  // so a transcriber of the second kind had two moves — invent a number, which
+  // nothing in this tree could then contradict, or refuse the file. `null` is
+  // this spec's spelling for a stated absence wherever it has one, so the pair
+  // states it here too, and the three cases below are the three readings that
+  // have to stay apart: stated absent (builds, and emits a header with none of
+  // the four), silent (refused, as before), and half-stated (refused by name).
+  const stageless = writeProbeRig({ skeleton: { width: null, height: null } });
+  // A14 is renderer policy, so it does not run at all under `spine` — a case
+  // that read `skipped` under that profile would report a confident green for an
+  // assertion nothing executed. Reaching it means gating under `spine-html`,
+  // which also runs A19, so the art has to be able to draw a transparent pixel:
+  // one corner of each part is cleared. That is the same fixture either way, so
+  // the two gates below are two readings of one build rather than two builds.
+  for (const part of ['block.png', 'marker.png']) {
+    const plate = new Plate(6, 6);
+    for (let y = 0; y < 6; y++) for (let x = 0; x < 6; x++) plate.set(x, y, x === 0 && y === 0 ? [0, 0, 0, 0] : [40, 60, 90, 255]);
+    plate.writePng(join(stageless.dir, part));
+  }
+  const stagelessMotion = join(stageless.dir, 'probe.motion.json');
+  writeFileSync(stagelessMotion, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+  const stagelessOpts: Options = {
+    rigPath: stageless.rigPath,
+    motionPath: stagelessMotion,
+    outDir: stageless.outDir,
+    imagesDir: stageless.dir,
+  };
+  const stagelessBuild = compile(stagelessOpts);
+  const stagelessGate = validate({
+    skeletonText: stagelessBuild.skeletonText,
+    atlasText: stagelessBuild.atlasText,
+    atlasDir: stagelessOpts.outDir,
+    declaredDurations: stagelessBuild.declaredDurations,
+    rig: stagelessBuild.rig,
+    profile: 'spine',
+  });
+  const stagelessPolicy = validate({
+    skeletonText: stagelessBuild.skeletonText,
+    atlasText: stagelessBuild.atlasText,
+    atlasDir: stagelessOpts.outDir,
+    declaredDurations: stagelessBuild.declaredDurations,
+    rig: stagelessBuild.rig,
+    profile: 'spine-html',
+  });
+  const stagelessHeader = (JSON.parse(stagelessBuild.skeletonText) as { skeleton: Record<string, unknown> }).skeleton;
+  const stageKeys = ['x', 'y', 'width', 'height'].filter((k) => k in stagelessHeader);
+  const stagelessA14 = stagelessPolicy.skipped.find((s) => s.assertion === 'A14_NO_FULL_FRAME_MESH');
+  // `render` frames from the posed bounds and never reads the stage — the claim
+  // the whole repair rests on, so it is measured rather than repeated. A
+  // viewport at all means the box came from somewhere other than the header.
+  const stagelessFrame = framingViewport(
+    posableFromText(stagelessBuild.skeletonText, stagelessBuild.atlasText, stagelessOpts.outDir).data,
+    256,
+  );
+  say(
+    'S36_A_RIG_MAY_STATE_IT_HAS_NO_STAGE_AND_THE_HEADER_THEN_CARRIES_NONE_OF_IT',
+    stagelessGate.failures.length === 0 &&
+      stagelessPolicy.failures.length === 0 &&
+      stagelessGate.passed.includes('A00_ROUNDTRIP_PARSE') &&
+      stageKeys.length === 0 &&
+      stagelessA14 !== undefined &&
+      !stagelessPolicy.passed.includes('A14_NO_FULL_FRAME_MESH') &&
+      stagelessFrame !== null,
+    `the emitted header is {${Object.keys(stagelessHeader).join(', ')}}, so ${stageKeys.length === 0 ? 'no stage field survived' : `[${stageKeys.join(', ')}] survived`}; ` +
+      `the gate ran ${stagelessGate.passed.length} assertion(s) with ${stagelessGate.failures.length} failure(s) under spine and ` +
+      `${stagelessPolicy.passed.length} with ${stagelessPolicy.failures.length} under spine-html; ` +
+      `A14 ${stagelessA14 ? `skipped: ${stagelessA14.reason}` : 'did not skip — it counted a 0x0 stage no mesh can span as a pass'}; ` +
+      `render framed it at ${stagelessFrame ? `${stagelessFrame.width}x${stagelessFrame.height}px` : 'nothing at all'}`,
+    'the compiler never invents a value that is not in the spec, and until now "there is no stage" was a thing the ' +
+      'spec could not say — so the only two moves were a made-up number nothing measures or a file that cannot be ' +
+      'transcribed. A14 has to SKIP rather than pass, or a rig with no stage would print the same green as one ' +
+      'whose meshes were measured against a real box',
+  );
+
+  const silent = writeProbeRig({ skeleton: { fps: 30 } });
+  const silentRefusal = refusal(silent, STATIC_MOTION);
+  say(
+    'S37_OMITTING_THE_STAGE_IS_STILL_REFUSED_BY_NAME',
+    silentRefusal !== null && silentRefusal.includes('no stage size'),
+    silentRefusal === null ? 'the compile went through with no stage stated anywhere' : silentRefusal,
+    'silence and a statement must not compile alike: the whole value of `width: null` is that it is a CLAIM, and a ' +
+      'spec that simply never mentioned a stage has made no claim at all',
+  );
+
+  const halfStated = refusal(writeProbeRig({ skeleton: { width: null, height: 64 } }), STATIC_MOTION);
+  const originOnly = refusal(writeProbeRig({ skeleton: { x: 5, width: null, height: null } }), STATIC_MOTION);
+  say(
+    'S38_HALF_A_STAGE_STATEMENT_IS_REFUSED_RATHER_THAN_READ',
+    halfStated !== null &&
+      halfStated.includes('both extents or neither') &&
+      originOnly !== null &&
+      originOnly.includes('declares no stage'),
+    `one extent null and the other a number: ${halfStated ?? 'compiled'}; an origin beside the absence: ${originOnly ?? 'compiled'}`,
+    'which half was meant is not derivable from either shape, so reading one would be the compiler inventing the ' +
+      'other — and an origin for a box that is not there is a header no export carries',
   );
   return bad;
 }
