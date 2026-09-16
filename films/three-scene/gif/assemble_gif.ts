@@ -22,6 +22,7 @@
  * `explain`'s own MEMBER rows.
  */
 import { mkdirSync, rmSync, readdirSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 import {
   GIF_W, GIF_H, BAND_H, STAGE_H, PANE_W, COL_X, COL_W, TEXT_X, TEXT_W,
@@ -29,7 +30,7 @@ import {
   TEAL, HEAD, BODY, LABEL, CMD, DIM, PANEL, PANEL_EDGE,
 } from './layout';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const WORK = `${ROOT}gif/frames/`;
 const BITS = `${ROOT}gif/bits/`;
 const OUT = `${ROOT}rigc-scene.gif`;

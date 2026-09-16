@@ -24,10 +24,11 @@
  * which is MOTION.md §2.2's `cropToSpineY` run backwards, applied ONCE, plus
  * `screenToSpineDegrees(d) = −d` for the rotation.
  */
+import { fileURLToPath } from 'node:url';
 import { POSE_A, POSE_B, partPlacements } from './poses';
 import { PLATE_H } from '../art/layout';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
 interface Report {
   frame: { path: string; width: number; height: number };

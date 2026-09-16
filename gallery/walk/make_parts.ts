@@ -31,6 +31,7 @@
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { FUR, FUR_DK, legSegments, rasterise, rigbyParts, stagePlatePart } from '../rigby.ts';
 import { readStage } from '../stage.ts';
@@ -38,7 +39,7 @@ import { readStage } from '../stage.ts';
 /** Rasterisation scale for every part in this example — see the header. */
 const ART_SCALE = 1;
 
-const HERE = new URL('.', import.meta.url).pathname;
+const HERE = fileURLToPath(new URL('.', import.meta.url));
 const OUT = join(HERE, 'parts');
 mkdirSync(OUT, { recursive: true });
 

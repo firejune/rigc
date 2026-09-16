@@ -9,10 +9,11 @@
  * bottom band — and (4) splice the sets into one loop.
  */
 import { mkdirSync, rmSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 import { PLATE_W, PLATE_H } from '../art/layout';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const RENDER = `${ROOT}render/`;
 const WORK = `${ROOT}gif/frames/`;
 const OUT = `${ROOT}rigc-demo.gif`;

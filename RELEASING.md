@@ -271,7 +271,11 @@ pack. Beside them is the other direction: a *correct* tarball installed at an
 absolute path with spaces and non-ASCII in it has to pass. It found a real defect
 the first time it ran — `new URL('.', import.meta.url).pathname` is
 percent-encoded, so a generator written the way the gallery's `make_parts.ts`
-scripts are writes into a directory called `install%20smoke`.
+scripts were then written writes into a directory called `install%20smoke`. The
+25 sites that were written that way were repaired in
+[#558](https://github.com/firejune/rigc/issues/558) and `CUR32` now refuses a new
+one; the fixture keeps the correct spelling, and the comment beside it, because
+this case is what found the defect in the first place.
 
 Run it locally the way CI does, or narrow it:
 

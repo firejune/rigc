@@ -44,6 +44,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { encodePng } from '../../tools/plate.ts';
 import { FUR_LT, GROUND, INK, METAL, METAL_DK, SUN, SW, TEAL_DK, part, rasterise } from '../rigby.ts';
@@ -426,7 +427,7 @@ interface SliderRow {
 }
 
 if (import.meta.main) {
-  const HERE = new URL('.', import.meta.url).pathname;
+  const HERE = fileURLToPath(new URL('.', import.meta.url));
   const OUT = join(HERE, 'parts');
   mkdirSync(OUT, { recursive: true });
 

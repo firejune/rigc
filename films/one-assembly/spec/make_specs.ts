@@ -12,10 +12,11 @@
  * this task who is the one doing the judging).
  */
 import { mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { PLATE_W, PLATE_H, BAND_H } from '../art/layout';
 import { BONES, SLOTS, solve, rot, type Delta, type Placement } from './skeleton';
 
-const HERE = new URL('./', import.meta.url).pathname;
+const HERE = fileURLToPath(new URL('./', import.meta.url));
 mkdirSync(HERE, { recursive: true });
 
 const NAME = 'rigby';

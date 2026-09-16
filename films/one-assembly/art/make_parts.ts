@@ -6,10 +6,11 @@
  * can be downsampled once at the end and every rotated edge lands clean.
  */
 import { mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 
-const OUT = new URL('./parts/', import.meta.url).pathname;
-const SVG = new URL('./svg/', import.meta.url).pathname;
+const OUT = fileURLToPath(new URL('./parts/', import.meta.url));
+const SVG = fileURLToPath(new URL('./svg/', import.meta.url));
 mkdirSync(OUT, { recursive: true });
 mkdirSync(SVG, { recursive: true });
 

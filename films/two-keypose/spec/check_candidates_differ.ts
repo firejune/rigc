@@ -23,9 +23,10 @@
  *     person is being asked to compare is smaller than the motion they are
  *     watching.
  */
+import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
 /** The pane crop and scale the film uses, so the number is at viewing size. */
 const CROP = '640x720+391+0';
 const PANE = '240x270!';

@@ -68,12 +68,17 @@ README.
 
 ## Preserved verbatim, and adapted
 
-Preserved from the session that made the film, byte for byte and with no adaptation at
-all: `run.sh`, `art/layout.ts`, `art/make_parts.ts`, `art/mock.ts`, `spec/make_specs.ts`,
-`spec/skeleton.ts`, `spec/check_framing.ts`, `gif/assemble_gif.ts`, `package.json`,
-`tsconfig.json`. Every script already addressed its files through
-`new URL('…', import.meta.url)`, so **nothing in this film needed a path changed** —
-including `run.sh`, which is identical to the one that cut the film.
+Preserved from the session that made the film, byte for byte: `run.sh`, `art/layout.ts`,
+`spec/skeleton.ts`, `package.json`, `tsconfig.json`. Every script already addressed its
+files *relatively*, through `new URL('…', import.meta.url)`, so **no path in this film
+was ever re-aimed** — including `run.sh`, which is identical to the one that cut the
+film.
+
+One adaptation, and it is mechanical:
+
+| File | Adapted | Why |
+| --- | --- | --- |
+| `art/make_parts.ts`, `art/mock.ts`, `spec/make_specs.ts`, `spec/check_framing.ts`, `gif/assemble_gif.ts` | each resolves its own directory with `fileURLToPath(new URL('…', import.meta.url))` where it used to read `new URL('…', import.meta.url).pathname` | `URL.pathname` is percent-encoded. Under a checkout whose path holds a space or a non-ASCII character these scripts created a sibling directory literally named `My%20Rigs`, wrote the parts into it, and then failed with `ENOENT` on a directory that exists — so the film could not be re-run from such a checkout at all ([#558](https://github.com/firejune/rigc/issues/558)). The URL each script builds is untouched; only its conversion to a path is. On an ASCII path the two spellings return the same string, trailing slash included, so no value any script computes moves and no output changes. |
 
 One preserved oddity worth naming rather than tidying: the motion spec's `cut` field is
 `'gif-demo'`, the name of the scratchpad directory the film was made in. It is left as

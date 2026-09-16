@@ -18,10 +18,11 @@
  * rotated plate can push the box without drawing anything there. Scanning the
  * rendered PNGs for stray ink finds nothing and proves nothing.
  */
+import { fileURLToPath } from 'node:url';
 import { loadPosable, sampleAnimation, unionBounds, FRAMING_FPS } from 'spine-rigc/src/render';
 import { PLATE_W, PLATE_H } from '../art/layout';
 
-const build = new URL('../build/', import.meta.url).pathname;
+const build = fileURLToPath(new URL('../build/', import.meta.url));
 const posable = loadPosable(`${build}skeleton.json`, `${build}skeleton.atlas`, build);
 const data = posable.data;
 

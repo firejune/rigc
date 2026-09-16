@@ -15,7 +15,7 @@
  * embedded as data URIs by `rigc vote` itself.
  */
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { readFileSync, existsSync, statSync, writeFileSync } from 'node:fs';
 
 /**
@@ -56,7 +56,7 @@ const outDir = process.argv[3];
 const choice = process.argv[4] ?? 'B';
 const reason = process.argv[5] ?? 'preferred';
 
-const LOCAL_PLAYER = process.env.SPINE_PLAYER_JS ?? new URL('./spine-player.js', import.meta.url).pathname;
+const LOCAL_PLAYER = process.env.SPINE_PLAYER_JS ?? fileURLToPath(new URL('./spine-player.js', import.meta.url));
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1180, height: 900 }, deviceScaleFactor: 2 });
