@@ -45,6 +45,7 @@ import {
 // A19 needs the DECODED page, not its header, to measure one region's own
 // rectangle on a shared page.
 import { readPlate } from '../tools/plate.ts';
+import { pageFootprint } from './atlas.ts';
 import {
   surveyDeformKeys,
   unreachableWhy,
@@ -2768,16 +2769,16 @@ export function validate(input: ValidateInput): ValidateReport {
       const onePartPerPage =
         on.length === 1 && on[0].u === 0 && on[0].v === 0 && on[0].u2 === 1 && on[0].v2 === 1;
       if (onePartPerPage) continue;
-      const rects = on.map((region) => ({
-        name: region.name,
-        x: region.x,
-        y: region.y,
-        // spine-core transposes a region's extent at 90 and not at 270 when it
-        // derives the UVs, so the rectangle ON THE PAGE follows the same rule.
-        width: region.degrees === 90 ? region.height : region.width,
-        height: region.degrees === 90 ? region.width : region.height,
-        page: region.page,
-      }));
+      // The rectangle a region occupies on its page is `pageFootprint`'s and
+      // nobody else's here (issue #579). What `TextureAtlas` transposes at 90 and
+      // not at 270 is `u2`/`v2` — a UV pair `MeshAttachment.computeUVs` never
+      // reads for an atlas region — and the page rectangle is a different
+      // quantity, transposed at BOTH quarter turns. See that function for the
+      // runtime lines.
+      const rects = on.map((region) => {
+        const foot = pageFootprint(region);
+        return { name: region.name, x: region.x, y: region.y, width: foot.width, height: foot.height, page: region.page };
+      });
       for (const rect of rects) {
         if (rect.x < 0 || rect.y < 0 || rect.x + rect.width > rect.page.width || rect.y + rect.height > rect.page.height) {
           fail(
@@ -2880,15 +2881,20 @@ export function validate(input: ValidateInput): ValidateReport {
       if (!existsSync(abs)) continue;
       const on = sharedPages.get(page.name) ?? [];
       if (on.length > 1) {
-        // A rotated region is refused by A06 under this profile, so the
-        // rectangle read here is the region's own extent either way; the
-        // transpose is applied so the reading is right even while A06 is
-        // reporting the rotation.
+        // 🚨 A rotated region is refused by A06 under this profile, so this
+        // reading was assumed to be cosmetic — a rectangle printed beside a
+        // failure already standing. It is not: the loop below OPENS the
+        // rectangle and stops at the first transparent texel, so a rectangle
+        // wider than the drawing runs into the transparent gutter, finds its
+        // texel there and names nothing. With the transpose applied at 90 only,
+        // two fully opaque parts on one page were measured green at
+        // `rotate: 270` and red at 0, 90 and 180 — this assertion's own verdict,
+        // flipped by the rotation it does not judge (issue #579). The footprint
+        // is `pageFootprint`'s, which every other reader of it now calls.
         const plate = readPlate(abs);
         for (const region of on) {
           if (baseRegions.has(region.name)) continue;
-          const width = region.degrees === 90 ? region.height : region.width;
-          const height = region.degrees === 90 ? region.width : region.height;
+          const { width, height } = pageFootprint(region);
           let transparent = false;
           for (let y = region.y; y < region.y + height && !transparent; y++) {
             for (let x = region.x; x < region.x + width; x++) {

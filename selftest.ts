@@ -82,6 +82,7 @@ import {
   Skeleton,
   Slider,
   TextureAtlas,
+  type TextureAtlasRegion,
   TransformConstraint,
   type SkeletonData,
 } from '@esotericsoftware/spine-core';
@@ -128,6 +129,7 @@ import {
   DEFAULT_PAGE_SIZE,
   extractRegion,
   packAtlas,
+  pageFootprint,
   parseAtlasText,
   rewritePageNames,
   writeAtlasText,
@@ -19330,6 +19332,53 @@ function packInputsOf(images: CompiledImage[]): Array<{ region: string; absPath:
   return images.map((img) => ({ region: img.region, absPath: img.absPath, width: img.width, height: img.height }));
 }
 
+/**
+ * The rectangle of page texels the RUNTIME samples for a region, read off
+ * `MeshAttachment.computeUVs` (issue #579).
+ *
+ * The kept rectangle's four corner texel centres are expressed in the drawing's
+ * own normalised coordinates — what a mesh vertex over that corner carries — and
+ * handed to the routine that decides where a region's texels are. The page
+ * texels that come back bound the region's footprint. Four corners rather than
+ * every texel because the mapping is a rotation of a rectangle; `PKR02` walks
+ * every texel of the same population for a different claim.
+ *
+ * 🔒 **It exists so that the controls below do not take their expectation from
+ * `pageFootprint`, which is the function they are measuring.** That is not a
+ * hypothetical: `PK56`'s first draft did exactly that, and under the 90-only
+ * mutant it printed a clean list of rectangles — "each the footprint its
+ * region's bounds and rotation give" — because the control's own "want" had
+ * moved with the defect. Under the never-transpose mutant it went further and
+ * reported PASS. An oracle inside the subject is not an oracle.
+ */
+function runtimePageRect(region: TextureAtlasRegion): { x: number; y: number; width: number; height: number } {
+  const top = region.originalHeight - region.offsetY - region.height;
+  const uvIn: number[] = [];
+  for (const [x, y] of [
+    [region.offsetX, top],
+    [region.offsetX + region.width - 1, top],
+    [region.offsetX + region.width - 1, top + region.height - 1],
+    [region.offsetX, top + region.height - 1],
+  ]) {
+    uvIn.push((x + 0.5) / region.originalWidth, (y + 0.5) / region.originalHeight);
+  }
+  const uvOut = new Array<number>(uvIn.length).fill(0);
+  MeshAttachment.computeUVs(region, uvIn, uvOut);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let k = 0; k < uvOut.length; k += 2) {
+    const px = Math.floor(uvOut[k] * region.page.width);
+    const py = Math.floor(uvOut[k + 1] * region.page.height);
+    minX = Math.min(minX, px);
+    maxX = Math.max(maxX, px);
+    minY = Math.min(minY, py);
+    maxY = Math.max(maxY, py);
+  }
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
 /** Pack a fixture's parts and write the pages, so the atlas can be loaded from disk. */
 function packFixture(
   fixture: Fixture,
@@ -20886,6 +20935,188 @@ function runPackerSuite(): number {
       'one byte of the artifact — rather than a tolerance on the traced outline',
   );
 
+  // --- PK56-PK57: the rectangle a turned region occupies ON ITS PAGE (#579) ---
+  //
+  // `bounds:` states the kept rectangle in the DRAWING's orientation, so a region
+  // a packer turned a quarter covers `height x width` of the page. Two readers in
+  // `src/validate.ts` transposed at 90 and NOT at 270, under a comment reading
+  // "spine-core transposes a region's extent at 90 and not at 270 when it derives
+  // the UVs, so the rectangle ON THE PAGE follows the same rule". The premise is
+  // about `u2`/`v2`, which `MeshAttachment.computeUVs` never reads for an atlas
+  // region; the page rectangle is a different quantity and is transposed at both
+  // quarter turns. All four readers of it now call `pageFootprint`.
+  //
+  // ⭐ The two cases are the two things that rectangle is USED for, and only one
+  // of them is what the card assumed. PK56 is the rectangle A06 PRINTS beside a
+  // failure. PK57 is the rectangle A19 OPENS — a scan that walks past the drawing
+  // into the transparent gutter finds its texel there and names nothing, so this
+  // one is an assertion's own verdict and not a diagnostic.
+  //
+  // The population is `turnedPack`'s and not the corpus's, and that is measured
+  // rather than assumed: see `PKR39`, where the only corpus region packed at 270
+  // is square and therefore cannot tell the two rules apart.
+  const footRectIn = (detail: string): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const m of detail.matchAll(/"([^"]+)" \((\d+,\d+ \d+x\d+)\)/g)) out.set(m[1], m[2]);
+    return out;
+  };
+  const footWrong: string[] = [];
+  const footByTurn = new Map<number, Map<string, string>>();
+  let footNamed = 0;
+  let footDiscriminating = 0;
+  for (const degrees of TURNS) {
+    const pack = turnedPack(turnParts, degrees);
+    const text = readFileSync(pack.atlasPath, 'utf8');
+    const regions = new TextureAtlas(text).regions;
+    // PK20's structural move, so the overlap clause fires and PRINTS both
+    // rectangles: the second region onto the first's origin. No measured
+    // literal — the origin is read off the region it is moved onto, and the
+    // sizes off the region being moved.
+    const overlapped = withBounds(
+      text,
+      regions[1].name.trim(),
+      regions[0].x,
+      regions[0].y,
+      regions[1].width,
+      regions[1].height,
+    );
+    const report = gatePacked(pack.dir, overlapped, overlayCompile);
+    const printed = new Map<string, string>();
+    for (const f of report.failures) {
+      if (f.assertion !== 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG' || !f.detail.includes('overlap on page')) continue;
+      for (const [name, rect] of footRectIn(f.detail)) printed.set(name, rect);
+    }
+    footByTurn.set(degrees, printed);
+    // Re-parsed from the atlas A06 was handed, so the oracle reads the same
+    // geometry the assertion did — and it is the RUNTIME's answer, never
+    // `pageFootprint`'s. See `runtimePageRect`.
+    for (const region of new TextureAtlas(overlapped).regions) {
+      const name = region.name.trim();
+      const rect = printed.get(name);
+      if (rect === undefined) continue;
+      footNamed++;
+      const at = runtimePageRect(region);
+      const want = `${at.x},${at.y} ${at.width}x${at.height}`;
+      // A square region occupies the same rectangle under either rule, so it is
+      // counted but cannot carry the claim.
+      const turned = degrees === 90 || degrees === 270;
+      if (turned && region.width !== region.height) footDiscriminating++;
+      if (rect !== want) {
+        footWrong.push(
+          `rotate ${degrees}: A06 names "${name}" at ${rect} where the runtime samples ${want} for its ` +
+            `${region.width}x${region.height} drawing`,
+        );
+      }
+    }
+  }
+  // The same parts at the two quarter turns occupy the same page rectangle, so
+  // the two readings have to be the same reading. This is the clause the 90-only
+  // transposition fails while every other one still holds.
+  const quarterApart = [...(footByTurn.get(90) ?? new Map<string, string>())].flatMap(([name, rect]) => {
+    const other = footByTurn.get(270)?.get(name);
+    return other === rect ? [] : [`"${name}" is ${rect} at rotate 90 and ${other ?? 'unnamed'} at rotate 270`];
+  });
+  const footProbes = [
+    ...firstFew(footWrong, 'rectangle(s)'),
+    ...firstFew(quarterApart, 'region(s)'),
+    ...floorProbes(
+      [
+        [footNamed, TURNS.length * 2, `A06 printed ${footNamed} rectangle(s) in all`],
+        [footDiscriminating, 1, `${footDiscriminating} of them are a quarter turn of a non-square drawing`],
+      ],
+      'a rectangle nobody printed, or one that is square at a quarter turn, cannot tell the two rules apart',
+    ),
+  ];
+  const footHeld = footProbes.length === 0;
+  say(
+    'PK56_THE_PAGE_RECTANGLE_A06_NAMES_FOR_A_TURNED_REGION_IS_THE_ONE_THE_PAGE_HOLDS',
+    footHeld,
+    probeDetail(
+      footHeld,
+      footProbes,
+      `${footNamed} rectangle(s) printed across rotate: ${TURNS.join(', ')}, each one the page rectangle ` +
+        `MeshAttachment.computeUVs samples for that region — ${footDiscriminating} of them a quarter turn of a ` +
+        'non-square drawing, and every region named at both quarter turns named with the same rectangle',
+    ),
+    'the message is the UI, so a rectangle in it is a measurement and not decoration: a reader repairing an ' +
+      'overlapping pack moves a region by the numbers this line gives. The 90-against-270 clause is what makes ' +
+      'the case two-sided — the transposition was there and applied to one turn, so a control that only asked ' +
+      '"is it transposed" would have been green on the defect',
+  );
+
+  // PK57 is the same rectangle on the other site, and the reason this card was
+  // not the cosmetic one it was filed as. A19 opens the rectangle and stops at
+  // the first transparent texel it finds.
+  const turnedOpaqueDirs = writeProbeRig();
+  writeFileSync(join(turnedOpaqueDirs.dir, 'probe.motion.json'), `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+  const turnedOpaqueResult = compile({
+    rigPath: turnedOpaqueDirs.rigPath,
+    motionPath: join(turnedOpaqueDirs.dir, 'probe.motion.json'),
+    outDir: turnedOpaqueDirs.outDir,
+    imagesDir: turnedOpaqueDirs.dir,
+  });
+  const opaqueNames = turnedOpaqueResult.images.map((img) => img.region);
+  const scanWrong: string[] = [];
+  let scanNamed = 0;
+  let scanDiscriminating = 0;
+  for (const degrees of TURNS) {
+    const pack = turnedPack(packInputsOf(turnedOpaqueResult.images), degrees);
+    const text = readFileSync(pack.atlasPath, 'utf8');
+    const report = gatePacked(pack.dir, text, turnedOpaqueResult);
+    const named = new Map<string, string>();
+    for (const f of report.failures) {
+      if (f.assertion !== 'A19_OVERLAY_PNGS_HAVE_ALPHA') continue;
+      const m = /part "([^"]+)" is opaque in every one of its (\d+x\d+) texels/.exec(f.detail);
+      if (m) named.set(m[1], m[2]);
+    }
+    for (const region of new TextureAtlas(text).regions) {
+      const name = region.name.trim();
+      if (!opaqueNames.includes(name)) continue;
+      // The runtime's answer, not `pageFootprint`'s — see `runtimePageRect`.
+      const at = runtimePageRect(region);
+      const want = `${at.width}x${at.height}`;
+      if ((degrees === 90 || degrees === 270) && region.width !== region.height) scanDiscriminating++;
+      const rect = named.get(name);
+      if (rect === undefined) {
+        scanWrong.push(
+          `rotate ${degrees}: A19 said nothing about "${name}", which is opaque in every one of the ${want} ` +
+            'texels it covers — the scan walked off the drawing into the gutter and found its transparent texel there',
+        );
+        continue;
+      }
+      scanNamed++;
+      if (rect !== want) scanWrong.push(`rotate ${degrees}: A19 names "${name}" over ${rect} texels where it covers ${want}`);
+    }
+  }
+  const scanProbes = [
+    ...firstFew(scanWrong, 'part(s)'),
+    ...floorProbes(
+      [
+        [scanNamed, TURNS.length * opaqueNames.length, `A19 named ${scanNamed} opaque part(s)`],
+        [scanDiscriminating, 1, `${scanDiscriminating} region(s) are a quarter turn of a non-square drawing`],
+      ],
+      'a part A19 never named, or a square one at a quarter turn, cannot tell the two rules apart',
+    ),
+  ];
+  const scanHeld = scanProbes.length === 0;
+  say(
+    'PK57_A19_OPENS_THE_RECTANGLE_THE_PAGE_HOLDS_SO_A_TURNED_OPAQUE_PART_IS_STILL_NAMED',
+    scanHeld,
+    probeDetail(
+      scanHeld,
+      scanProbes,
+      `${opaqueNames.length} fully opaque part(s) — ${opaqueNames.join(', ')} — on one shared page at each of ` +
+        `rotate: ${TURNS.join(', ')}: A19 named every one of the ${scanNamed}, over exactly the texels ` +
+        `MeshAttachment.computeUVs samples for its region, ${scanDiscriminating} of those readings a quarter ` +
+        'turn of a non-square drawing',
+    ),
+    'the card this came from reasoned that a wrong rectangle here could only degrade a diagnostic printed beside ' +
+      'A06\'s rotation refusal, which already fails any turned region under this profile. Measurement refutes it: ' +
+      'the scan walks the rectangle, so one wider than the drawing reaches the transparent gutter, takes that ' +
+      'texel for the part\'s own and returns. Two solid rectangles on one page were measured GREEN by A19 at ' +
+      'rotate: 270 and red at 0, 90 and 180 — the same pixels, the same assertion, opposite verdicts',
+  );
+
   return bad;
 }
 
@@ -21250,6 +21481,90 @@ function runAtlasReaderSuite(): number | null {
       'that declare a `scale:` halved every attachment — green, and with nothing in the report saying so',
   );
   if (recovery.length > 0) console.log(`          ${recovery.slice(0, 5).join('; ')}`);
+
+  // PKR39: the rectangle a region occupies on its page, against the runtime that
+  // will sample it (issue #579).
+  //
+  // Four readers derived this rectangle inline and two of them had it wrong at
+  // 270. They call one function now — so a control comparing the four with each
+  // other would be four copies of one opinion agreeing, which is this file's
+  // oldest failure shape. The oracle is therefore outside rigc
+  // (`runtimePageRect`): `MeshAttachment.computeUVs` maps the drawing's own
+  // coordinates onto the page, so the page texels it hands back for the region's
+  // kept rectangle span exactly `x .. x + footprint.width` by
+  // `y .. y + footprint.height`.
+  //
+  // 🚨 **And the corpus cannot gate the case this card was filed about.** It
+  // carries three turned regions; the two that are non-square are both at 90, and
+  // the only one at 270 is square — so `u2`/`v2`, the numbers the false comment
+  // reasoned from, agree with the footprint on all 132 and a reader transposing
+  // at 90 only would be green here. That is derived below rather than asserted,
+  // and it is why the discriminating controls are `PK56`/`PK57` over a synthetic
+  // pack. A control is worth having anyway: this population is foreign art, and
+  // it does discriminate the transposition at 90.
+  const footAudit = (() => {
+    const wrong: string[] = [];
+    const turned: string[] = [];
+    let compared = 0;
+    let discriminating = 0;
+    let blind270 = 0;
+    for (const path of atlases) {
+      const text = readFileSync(path, 'utf8');
+      const mine = parseAtlasText(text);
+      const theirs = new TextureAtlas(text);
+      if (mine.regions.length !== theirs.regions.length) continue;
+      for (let i = 0; i < mine.regions.length; i++) {
+        const region = mine.regions[i];
+        const runtime = theirs.regions[i];
+        compared++;
+        const foot = pageFootprint(region);
+        const where = `${basename(path)}/${region.name.trim()}@${region.degrees}`;
+        const quarter = region.degrees === 90 || region.degrees === 270;
+        if (region.degrees !== 0) turned.push(where);
+        if (quarter && region.width !== region.height) discriminating++;
+        if (region.degrees === 270 && region.width === region.height) blind270++;
+        const at = runtimePageRect(runtime);
+        if (
+          (at.x !== region.x || at.y !== region.y || at.width !== foot.width || at.height !== foot.height) &&
+          wrong.length < 5
+        ) {
+          wrong.push(
+            `${where}: the runtime samples ${at.x},${at.y} ${at.width}x${at.height} of the page, and the footprint ` +
+              `says ${region.x},${region.y} ${foot.width}x${foot.height}`,
+          );
+        }
+      }
+    }
+    return { wrong, turned, compared, discriminating, blind270 };
+  })();
+  const footCorpusProbes = [
+    ...firstFew(footAudit.wrong, 'region(s)'),
+    ...floorProbes(
+      [
+        [footAudit.compared, 1, `${footAudit.compared} corpus region(s) were measured against the runtime`],
+        [footAudit.discriminating, 1, `${footAudit.discriminating} of them are a quarter turn of a non-square drawing`],
+      ],
+      'a corpus with no turned non-square region proves nothing about the transpose',
+    ),
+  ];
+  const footCorpusHeld = footCorpusProbes.length === 0;
+  say(
+    'PKR39_THE_PAGE_FOOTPRINT_IS_THE_EXTENT_THE_RUNTIME_SAMPLES_ON_EVERY_CORPUS_REGION',
+    footCorpusHeld,
+    probeDetail(
+      footCorpusHeld,
+      footCorpusProbes,
+      `${footAudit.compared} region(s) over ${atlases.length} foreign atlas(es), each occupying exactly the page ` +
+        `rectangle MeshAttachment.computeUVs samples for it; ${footAudit.turned.length} are turned ` +
+        `(${footAudit.turned.join(', ')}) and ${footAudit.discriminating} of those are a quarter turn of a ` +
+        `non-square drawing. ⚠️ ${footAudit.blind270} region(s) packed at 270 are square, so this corpus is BLIND ` +
+        'to the 270 half of the rule — PK56 and PK57 carry it on a synthetic pack',
+    ),
+    'the four readers of this rectangle are one function now, so any control comparing them with each other would ' +
+      'agree by construction. The oracle has to be the routine that decides where the texels are, and the corpus ' +
+      'is the only foreign art here. The blindness figure is printed rather than left implicit because the card ' +
+      'this closes cited this very population as the proof of the mapping, and on the 270 case it is not one',
+  );
 
   return bad;
 }
@@ -35546,7 +35861,10 @@ function main(): void {
       'drawing back byte for byte off a synthetic turned page, with no fixture part its own rotation; the authored ' +
       'mesh of issue #570 printing the loose build\'s fit figure at each of them while three packs whose `rotate:` ' +
       'line contradicts their own pixels print a different one; and a contour generator emitting a byte-identical ' +
-      'skeleton whether it traced the loose PNG or the turned pack)' +
+      'skeleton whether it traced the loose PNG or the turned pack — and beside them the page RECTANGLE such a ' +
+      'region occupies, which A06 has to print and A19 has to open: the same reading at both quarter turns, and ' +
+      'every one of a page of solid parts still named at each rotation, where the transposition applied at 90 ' +
+      'alone had A19 measuring two opaque rectangles green at 270)' +
       ', + ' + n('slider-reader') + ' slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +
       'and compared to what the doc states, two-sided — nothing left a stated bound AND every stated end is ' +
       'reached, so neither a loosened nor a tightened cell survives — with the parse itself asserted first, the ' +
@@ -35563,8 +35881,10 @@ function main(): void {
         : ', + ' + n('atlas-reader') + ' atlas-reader controls (every field of every corpus region against the runtime\'s own parse, ' +
           "every corpus region LIFTED to the texels `MeshAttachment.computeUVs` samples for it — the turned ones " +
           'included, each of which lifts differently when the turn is ignored — page-name rewriting that touches ' +
-          'only the name lines, the two readers of `scale:` held to one answer, and every descaled corpus region ' +
-          'measured against the loose drawing beside it)') +
+          'only the name lines, the two readers of `scale:` held to one answer, every descaled corpus region ' +
+          'measured against the loose drawing beside it, and the page rectangle each region occupies read back ' +
+          'off the extent the runtime samples for it — with the count of corpus regions this population is BLIND ' +
+          'to, the ones packed at 270 whose drawing is square, printed beside it)') +
       ingestRoundTrips +
       loopSeam +
       runTally +

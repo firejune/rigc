@@ -92,6 +92,7 @@ import {
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Plate, readPlate, type RGBA } from '../tools/plate.ts';
+import { pageFootprint } from './atlas.ts';
 
 /** Opaque, and light: both of rung 3's parts are dark slate, so is every ground. */
 export const BACKGROUND: RGBA = [232, 232, 232, 255];
@@ -808,19 +809,20 @@ export function atlasScales(atlasText: string): number[] {
  * (The same gap is why `RegionAttachment.computeUVs` draws a 270-packed region
  * wrong, which is what `--atlas` was measuring on rung 7 — issue #199.)
  * `region.u/v` are always `x/pageWidth, y/pageHeight` and are used as they are; the
- * size is the region's own, transposed for a quarter turn, which is what the atlas
- * format means by `bounds` on a rotated region.
+ * size is `pageFootprint`'s, which is the region's own transposed for a quarter
+ * turn — what the atlas format means by `bounds` on a rotated region. That
+ * derivation was written out here, and in three other places that wanted the same
+ * rectangle; two of them had it wrong at 270 (issue #579), so it is one function
+ * now and this is one of its callers.
  */
 function windowOf(region: TextureAtlasRegion): UvWindow {
-  const turned = region.degrees === 90 || region.degrees === 270;
-  const rectWidth = turned ? region.height : region.width;
-  const rectHeight = turned ? region.width : region.height;
+  const rect = pageFootprint(region);
   const page = region.page;
   return {
     u0: region.x / page.width,
     v0: region.y / page.height,
-    u1: (region.x + rectWidth) / page.width,
-    v1: (region.y + rectHeight) / page.height,
+    u1: (region.x + rect.width) / page.width,
+    v1: (region.y + rect.height) / page.height,
   };
 }
 
