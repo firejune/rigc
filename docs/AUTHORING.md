@@ -767,7 +767,7 @@ the default `type`:
 | `type` | `"region"`, or omit |
 | `image` | **rigc extension.** A PNG relative to the rig's `images` directory; rigc measures it (R5) |
 | `width`, `height` | required by the format — give them, or give an `image` |
-| `path` | the atlas region to resolve; defaults to the attachment's own name. rigc sets it for you when the PNG basename differs from the placeholder, and whenever it composes a `name` because more than one skin fills this placeholder (§3.4.2) |
+| `path` | the atlas region to resolve; defaults to the attachment's own name. rigc sets it for you when the PNG basename differs from the placeholder, and whenever it composes a `name` because more than one skin fills this placeholder (§3.4.2). **One rule, both kinds** — see the note under *Mesh attachment* |
 | `x`, `y` | offset from the bone, in the bone's local space |
 | `rotation` | degrees; cancels a rotated bone for a plate authored screen-upright |
 | `scaleX`, `scaleY`, `color` | as Spine |
@@ -776,7 +776,19 @@ the default `type`:
 either authored geometry (`uvs` + `triangles` + geometry) **or** a `generator`,
 never both. `hull`, `edges`, `width` and `height` may be stated; whichever is
 omitted, rigc derives — `hull` and `edges` from the triangles, the size from the
-PNG — and the rules are a few paragraphs down.
+PNG — and the rules are a few paragraphs down. `type`, `image`, `path` and `color`
+mean exactly what they mean on a region.
+
+🔑 **`path` is one rule for both kinds.** A mesh derives it from `image` the way a
+region does: stated wins, otherwise the PNG's basename when that differs from the
+placeholder, otherwise nothing. The parser reads `path` off both with the same line
+(`getValue(map, "path", name)`, `SkeletonJson.ts:541` and `:570`), and `path`
+defaults to the attachment's **name** rather than to the placeholder — so a mesh
+with `image: hair_short.png` under a placeholder called `hair` resolves the region
+`hair`, which no atlas has. Until
+[#577](https://github.com/firejune/rigc/issues/577) a region derived it and an
+authored mesh did not, so that rig **built** and then failed
+`A00_ROUNDTRIP_PARSE: threw: Region not found in atlas: hair`.
 
 Geometry comes in one of two fields:
 
@@ -3553,6 +3565,9 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `no setup pose for slot "X": give the motion spec a \`setup\` entry or the rig slot an \`attachment\`` | R3 — pick one file and declare it there |
 | `a region needs width and height — give them, or give an "image" and rigc will measure the PNG` | add `image`, or both sizes |
 | `a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG` | §3.4 — the same rule for a mesh |
+| `"type" is null, which is not a name. An attachment's type is one of region, mesh, linkedmesh, … or the key is absent and reads as "region"` | §6 — **remove the key**. Absent is the format's own default; present-and-null matches no parser case and the attachment is dropped in silence |
+| `attachment type "X" is not one of the 7 the Spine 4.3 format defines (…)` | §6 — a name the format does not have. Not a deferral, and not something rigc will grow: fix the spelling (`sequence` is a key on a region or a mesh, not a type) |
+| `this attachment is a "linkedmesh"` / `"point"` … `rigc does not emit it yet` | §6 — a construct the format has and rigc does not write. The message says what it would carry; SPEC_COVERAGE part 1-6 is the row it reads from |
 | `hull N disagrees with the triangles, whose outline has K vertices (0 → …)` | §3.4 — delete `hull`, or state K |
 | `hull vertices must come first; vertex i is on the boundary and vertex j is not. The triangles' outline runs …: list those K vertices first, in that order, then the M interior vertices` | §3.4 — renumber the vertices: the printed walk first, then the interior |
 | `hull vertices must trace the outline in order; the triangles' outline runs …, so vertex a has to follow vertex b in the list, and vertex c does` | §3.4 — renumber along the printed walk |
@@ -3724,19 +3739,30 @@ clauses are gated by profile.
 
 ## 6. What rigc will refuse — do not spend a loop on these
 
-These are in the Spine 4.3 format, and the emitter does not write them. Each one is
-a **`NotImplementedError` naming the field**, because the parser's own behaviour is
-worse: an unknown attachment `type` returns `null` and the attachment disappears,
-and a constraint entry with an unrecognised `type` matches no case and vanishes.
+Most of these are in the Spine 4.3 format and the emitter does not write them. Each
+of *those* is a **`NotImplementedError` naming the construct**, because the parser's
+own behaviour is worse: an unknown attachment `type` returns `null` and the
+attachment disappears, and a constraint entry with an unrecognised `type` matches no
+case and vanishes.
 
-Each is deferred for a stated reason, and the reason is the same one in every row:
-**neither of these types appears anywhere in the benchmark corpus** (SPEC_COVERAGE
+A deferral carries its reason, and the reason is the same one in every deferred row:
+**neither of those types appears anywhere in the benchmark corpus** (SPEC_COVERAGE
 parts 3-1 and 4-2), so neither is on the ladder's critical path. The message
 says so, because a deferral without its reason is a wall rather than a work item.
 
+⚠️ **A spelling the format does not have is a different refusal and says so.**
+`sequence` is not an attachment type, and a `"type"` that is `null` is not an absent
+one — telling either author that "rigc does not emit it yet" promises work that will
+never be done, on a map the parser would have dropped in silence. Those rows below
+are `CompileError`s, and they name what the format actually defines
+([#577](https://github.com/firejune/rigc/issues/577)).
+
 | You wrote | You get |
 | --- | --- |
-| attachment `type` of `point` or `linkedmesh` | `attachment type "X" is in the Spine 4.3 format and rigc does not emit it yet. Implemented: region, mesh, boundingbox, clipping, path. point and linkedmesh are deliberately deferred: neither appears anywhere in the benchmark corpus …` |
+| attachment `type` of `point` or `linkedmesh` | `this attachment is a "linkedmesh" — a mesh that takes its geometry from another mesh instead of stating any — a region/mesh head, then "source" …. rigc does not emit it yet, deliberately: it emits region, mesh, boundingbox, clipping, path, and neither a point nor a linked mesh appears anywhere in the benchmark corpus …` — the message names the **construct**, not just its type string, and part 1-6 is where the sentence comes from |
+| a mesh carrying `source` (`type: "mesh"` **or** `type: "linkedmesh"`) | the same refusal, prefixed `(a mesh carrying "source" is one)`. The two spellings share one parser branch and `source` is what decides between them (SPEC_COVERAGE part 1-6), so `source` on a mesh is a linked mesh whatever `type` says. It used to be refused as *2 keys this compiler does not read: "source", "skin" … fix the spelling or remove it*, whose remedy destroys the construct ([#577](https://github.com/firejune/rigc/issues/577)) |
+| attachment `type` of anything else — `sequence`, a typo | `attachment type "X" is not one of the 7 the Spine 4.3 format defines (region, mesh, linkedmesh, boundingbox, path, point, clipping). … the attachment is dropped from the skeleton without a word` — a **`CompileError`**, not a deferral: rigc is not going to implement a name the format does not have. (`sequence` is a key on a region or a mesh, not a type of its own.) |
+| `"type": null` | `"type" is null, which is not a name. … PRESENT-and-null is not absent: getValue(map, "type", "region") takes the default only when the key is missing, so this map matches no case, readAttachment returns null, and the attachment is dropped from the skeleton without a word. Remove the key, or name a type.` Leaving the key **out** is legal and reads as `region`; writing it as `null` is not the same thing ([#577](https://github.com/firejune/rigc/issues/577)) |
 | constraint `type` of anything else | `constraint type "X" is not one Spine 4.3 knows. The five are: ik, transform, path, physics, slider.` — all five are emitted, so this is a typo, and a typo is what the parser drops in silence |
 | a path attachment's `lengths` | `"lengths" is not authored — rigc measures the setup arc length of each curve off the geometry` (§3.4). Not a deferral: a second copy of a number the vertices already fix |
 | a `deform` timeline on a path attachment | `a path attachment does have a vertex array, and rigc does not key it yet` — the format allows it and an animated track is a real idiom, but a deformed path invalidates the `lengths` a `constantSpeed: false` traversal reads. Move the curve by posing the bones its vertices are bound to |

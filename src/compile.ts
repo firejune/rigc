@@ -2804,6 +2804,39 @@ interface AttachmentContext {
 }
 
 /**
+ * The seven `type` values `readAttachment` has a branch for (`:540-651`), and
+ * the five rigc emits.
+ *
+ * ⚠️ The lists are separate because the refusals are separate. A `point` is a
+ * name the format HAS and rigc has not built; `sequence` is not a type at all —
+ * it is a key on a region or a mesh (SPEC_COVERAGE part 1-6) — and telling an
+ * author that it "is in the Spine 4.3 format and rigc does not emit it yet"
+ * promises work that will never be done, on a spelling that is simply wrong.
+ * One message said exactly that about every string it did not recognise.
+ */
+const SPINE_ATTACHMENT_TYPES = ['region', 'mesh', 'linkedmesh', 'boundingbox', 'path', 'point', 'clipping'] as const;
+const EMITTED_ATTACHMENT_TYPES = ['region', 'mesh', 'boundingbox', 'clipping', 'path'] as const;
+
+/**
+ * What each deferred type is and what it would carry — `docs/SPEC_COVERAGE.md`
+ * part 1-6's two rows, restated where the refusal can print them.
+ *
+ * ⭐ The construct, not just its name. "attachment type X is in the Spine 4.3
+ * format and rigc does not emit it yet" tells an author who already knows what a
+ * linked mesh is that rigc will not do it, and tells an author who does not know
+ * nothing at all — and the second is the reader this repository writes for.
+ */
+const DEFERRED_ATTACHMENTS: Record<string, string> = {
+  linkedmesh:
+    'a mesh that takes its geometry from another mesh instead of stating any — a region/mesh head, then ' +
+    '"source" (the attachment it links to, and the key that MAKES it linked), "slot" and "skin" naming where ' +
+    'that source lives, and "timelines" (default true) for whether it follows the source\'s deform keys',
+  point:
+    'a position and an angle with no geometry at all — "x", "y", "rotation" and "color", posed by its bone and ' +
+    'drawn by nothing; what reads it is game code asking where a muzzle or a hand is',
+};
+
+/**
  * Build one attachment a rig spec authored, as opposed to one a manifest part
  * produced.
  *
@@ -2811,6 +2844,18 @@ interface AttachmentContext {
  * attachment type it does not know is to return null and drop it
  * (`SkeletonJson.ts:653`), so passing an unimplemented type through would produce
  * a skeleton missing an attachment nobody was told about.
+ *
+ * 🚨 **`?? 'region'` is not the parser's default, and that gap was the one real
+ * fall-through here** (issue #577). `getValue(map, "type", "region")` returns the
+ * default only when the key is **missing** (`SkeletonJson.ts:527`, `getValue` at
+ * `:1390`), so `"type": null` is a type the parser HAS and matches no case: the
+ * switch falls off the end, `readAttachment` returns null, and the attachment
+ * disappears. `att.type ?? 'region'` read that same map as a region and compiled
+ * one, which is the compiler inventing a value the spec did not state. Measured
+ * before the repair: `{"type": null, "image": "marker.png"}` compiled and gated
+ * green; `{"type": null}` was refused as *a region needs width and height*, which
+ * is the message the card for this issue quoted and the reason it read as a
+ * `linkedmesh` fault. `"type": "linkedmesh"` itself was always refused by name.
  */
 function buildRigAttachment(
   att: RigAttachment,
@@ -2818,18 +2863,55 @@ function buildRigAttachment(
   where: string,
   ctx: AttachmentContext,
 ): SpineAttachment {
-  const type = att.type ?? 'region';
+  const stated = (att as { type?: unknown }).type;
+  if (stated !== undefined && typeof stated !== 'string') {
+    throw new CompileError(
+      `${where}: "type" is ${JSON.stringify(stated) ?? String(stated)}, which is not a name. An attachment's type ` +
+        `is one of ${SPINE_ATTACHMENT_TYPES.join(', ')}, or the key is absent and reads as "region". ` +
+        'PRESENT-and-null is not absent: `getValue(map, "type", "region")` takes the default only when the key is ' +
+        'missing (`SkeletonJson.ts:527`), so this map matches no case, `readAttachment` returns null (`:653`), and ' +
+        'the attachment is dropped from the skeleton without a word. Remove the key, or name a type.',
+    );
+  }
+  const type = stated ?? 'region';
+  // A linked mesh in the format's OTHER spelling. `type: "mesh"` and `type:
+  // "linkedmesh"` share one branch and the `source` key is what decides between
+  // them (`:568-569`, `:582`; SPEC_COVERAGE part 1-6) — so a mesh carrying
+  // `source` is a linked mesh whatever its `type` says, and refusing it as "two
+  // keys this compiler does not read: source, skin" sent the author to delete
+  // the one key that made it linked.
+  if (type === 'mesh' && (att as { source?: unknown }).source !== undefined) {
+    throw new NotImplementedError(deferredAttachmentRefusal('linkedmesh', where, ' (a mesh carrying "source" is one)'));
+  }
   if (type === 'region') return buildRigRegion(att as RigRegionAttachment, placeholder, where, ctx);
   if (type === 'mesh') return buildRigMesh(att as RigMeshAttachment, placeholder, where, ctx);
   if (type === 'boundingbox') return buildRigBoundingBox(att as RigBoundingBoxAttachment, where, ctx);
   if (type === 'clipping') return buildRigClipping(att as RigClippingAttachment, where, ctx);
   if (type === 'path') return buildRigPath(att as RigPathAttachment, where, ctx);
-  throw new NotImplementedError(
-    `${where}: attachment type "${String(type)}" is in the Spine 4.3 format and rigc does not emit it yet. ` +
-      'Implemented: region, mesh, boundingbox, clipping, path. ' +
-      'point and linkedmesh are deliberately deferred: neither appears anywhere in the benchmark ' +
-      'corpus (docs/SPEC_COVERAGE.md parts 3-1 and 4-2), so neither is on the ladder\'s critical path. ' +
-      'docs/SPEC_COVERAGE.md part 1-6 lists what each type would have to carry.',
+  if (DEFERRED_ATTACHMENTS[type] !== undefined) throw new NotImplementedError(deferredAttachmentRefusal(type, where, ''));
+  const near = nearMisses(type, SPINE_ATTACHMENT_TYPES);
+  throw new CompileError(
+    `${where}: attachment type "${type}" is not one of the ${SPINE_ATTACHMENT_TYPES.length} the Spine 4.3 format ` +
+      `defines (${SPINE_ATTACHMENT_TYPES.join(', ')}). ` +
+      (near.length ? `Did you mean ${near.map((n) => JSON.stringify(n)).join(' or ')}? ` : '') +
+      'The parser matches no case for it, `readAttachment` returns null (`SkeletonJson.ts:653`), and the ' +
+      'attachment is dropped from the skeleton without a word.' +
+      // The one near-miss worth naming outright, because it is a real word in
+      // this format standing one level up from where it was written.
+      (type === 'sequence'
+        ? ' "sequence" is a KEY on a region or a mesh rather than a type of its own (docs/SPEC_COVERAGE.md part 1-6).'
+        : ''),
+  );
+}
+
+/** The refusal for a type the format has and rigc has not built. */
+function deferredAttachmentRefusal(type: string, where: string, how: string): string {
+  return (
+    `${where}: this attachment is a "${type}"${how} — ${DEFERRED_ATTACHMENTS[type]}. ` +
+    `rigc does not emit it yet, deliberately: it emits ${EMITTED_ATTACHMENT_TYPES.join(', ')}, and neither a ` +
+    'point nor a linked mesh appears anywhere in the benchmark corpus (docs/SPEC_COVERAGE.md parts 3-1 and 4-2), ' +
+    'so neither is on the ladder\'s critical path. docs/SPEC_COVERAGE.md part 1-6 is the row this sentence reads ' +
+    'from, and it is what an implementation would have to carry.'
   );
 }
 
@@ -3198,6 +3280,45 @@ function atlasedImage(image: string, where: string, ctx: AttachmentContext): Com
   );
 }
 
+/**
+ * The atlas region this attachment resolves its art from — **one rule for every
+ * attachment kind that has art**, which is region and mesh (the parser's own two
+ * `getValue(map, "path", name)` sites, `:541` and `:570`).
+ *
+ * `path` defaults to the attachment's NAME, not to the placeholder, so a
+ * placeholder called anything other than its PNG's basename resolves a region no
+ * atlas has. Stating it is therefore not decoration: without it the loader
+ * throws `Region not found in atlas`, which `A00_ROUNDTRIP_PARSE` reports in the
+ * parser's own words.
+ *
+ * 🚨 The tree answered this in three different ways until issue #577, and
+ * `docs/AUTHORING.md` §3.4 documented only one of them — *"rigc sets it for you
+ * when the PNG basename differs from the placeholder"*. A region derived it, the
+ * `contour` and `grid` generators derived it (one of them with a comment reading
+ * "Same rule a region attachment follows"), and an authored mesh and the
+ * `ring`/`ribbon` generators wrote `path` only when the spec stated one.
+ * Measured on the probe rig: a region with `image: hair_short.png` under
+ * placeholder `hair` gated green with `"path": "hair_short"`; the same image on
+ * an authored mesh emitted no `path` and failed `A00_ROUNDTRIP_PARSE: threw:
+ * Region not found in atlas: hair (attachment: hair)`. The asymmetry had already
+ * been paid for by hand — `selftest.ts`'s own `TIMELINE_RIG` restates
+ * `path: "block"` and `path: "marker"` on two authored meshes for no other
+ * reason.
+ *
+ * ⭐ Deriving is the reading that was already written down, in the doc and in
+ * two of the five emit sites. The alternative — document the asymmetry and
+ * refuse a mesh whose basename differs without a `path` — was rejected because
+ * it makes a hand-kept exception out of a rule the format applies to both kinds
+ * through one line of parser, and it would have had to contradict §3.4 rather
+ * than satisfy it.
+ */
+function attachmentPath(att: { path?: string; image?: string }, placeholder: string): string | undefined {
+  if (att.path !== undefined) return att.path;
+  if (att.image === undefined) return undefined;
+  const region = basename(att.image, '.png');
+  return region === placeholder ? undefined : region;
+}
+
 function buildRigRegion(
   att: RigRegionAttachment,
   placeholder: string,
@@ -3244,9 +3365,8 @@ function buildRigRegion(
     );
   }
   const out: SpineRegionAttachment = { width: r6(width), height: r6(height) };
-  const region = att.image === undefined ? undefined : basename(att.image, '.png');
-  if (att.path !== undefined) out.path = att.path;
-  else if (region !== undefined && region !== placeholder) out.path = region;
+  const path = attachmentPath(att, placeholder);
+  if (path !== undefined) out.path = path;
   if (att.x !== undefined) out.x = r6(att.x);
   if (att.y !== undefined) out.y = r6(att.y);
   if (att.rotation !== undefined) out.rotation = r6(att.rotation);
@@ -3483,7 +3603,8 @@ function buildRigMesh(
     width: r6(width),
     height: r6(height),
   };
-  if (att.path !== undefined) out.path = att.path;
+  const path = attachmentPath(att, placeholder);
+  if (path !== undefined) out.path = path;
   if (att.color !== undefined) out.color = att.color;
   // Register it as `authored`: geometry rigc did not build and whose topology it
   // therefore gets to assume nothing about. The generator-topology assertions
@@ -3574,7 +3695,8 @@ function buildGeneratedMesh(
     width: r6(w),
     height: r6(h),
   };
-  if (att.path !== undefined) out.path = att.path;
+  const path = attachmentPath(att, placeholder);
+  if (path !== undefined) out.path = path;
   if (att.color !== undefined) out.color = att.color;
   return out;
 }
@@ -4052,8 +4174,8 @@ function buildGridAttachment(
     width: r6(w),
     height: r6(h),
   };
-  if (att.path !== undefined) out.path = att.path;
-  else if (img.region !== placeholder) out.path = img.region;
+  const path = attachmentPath(att, placeholder);
+  if (path !== undefined) out.path = path;
   if (att.color !== undefined) out.color = att.color;
   return out;
 }
@@ -4191,9 +4313,11 @@ function buildContourAttachment(
   };
   // Same rule a region attachment follows: the atlas region is the PNG's
   // basename, so a placeholder named anything else needs `path` written down or
-  // the loader resolves nothing.
-  if (att.path !== undefined) out.path = att.path;
-  else if (img.region !== placeholder) out.path = img.region;
+  // the loader resolves nothing. Stated once in `attachmentPath` since #577 —
+  // this comment used to be the rule's only statement, beside four emit sites
+  // that disagreed with it.
+  const path = attachmentPath(att, placeholder);
+  if (path !== undefined) out.path = path;
   if (att.color !== undefined) out.color = att.color;
   return out;
 }
