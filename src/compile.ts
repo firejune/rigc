@@ -1900,9 +1900,12 @@ export function compile(opts: CompileOptions): CompileResult {
         // The name is put on AFTER the builder rather than inside it: five
         // builders write five shapes, the rule is one rule, and a rule that has
         // to be remembered in five places is a rule that will be kept in four.
-        perSlot[placeholder] = shared?.has(placeholder)
-          ? nameSkinAttachment(built, skinAttachmentName(skinName, placeholder), placeholder)
-          : built;
+        // `null` is an entry that carries no `name` field, which is every
+        // uncontested placeholder. A contested one the DEFAULT skin fills never
+        // reaches here: it is refused above (issue #567), because the editor
+        // holds no such shape in either spelling.
+        const composed = composeSkinAttachmentName(skinName, placeholder, shared?.has(placeholder) === true);
+        perSlot[placeholder] = composed === null ? built : nameSkinAttachment(built, composed, placeholder);
       }
       tableFor(skinName)[rigSlot.name] = perSlot;
     }
@@ -2529,6 +2532,92 @@ function skinAttachmentName(skinName: string, placeholder: string): string {
 }
 
 /**
+ * The `name` one skin's entry for a placeholder is emitted with, or `null` for
+ * the entries that carry no `name` field at all.
+ *
+ * Stated once, and called by both the emit and `contestedPlaceholders`'
+ * collision walk, because two readings of one rule is how issue #567 happened.
+ * By the time either caller runs, a contested placeholder the **default** skin
+ * fills has already been refused — see `refuseDefaultSkinContest` — so every
+ * entry this composes for is a named skin's.
+ */
+function composeSkinAttachmentName(skinName: string, placeholder: string, contested: boolean): string | null {
+  return contested ? skinAttachmentName(skinName, placeholder) : null;
+}
+
+/**
+ * Refuse a placeholder that the **default** skin and a named skin both fill.
+ *
+ * 🚨 This is issue #567 and it is not a naming problem, which took two editor
+ * round trips to establish because each of them looked like one.
+ *
+ * ## What the editor's model is, bracketed by two trips
+ *
+ * Both on Spine **4.3.26**, on a rig whose three skins fill one placeholder
+ * `patch` from three PNGs of three sizes, with a second slot `block` that one
+ * skin fills as the fixed point.
+ *
+ * **Trip 7 — the default skin's attachment given a name of its own**
+ * (`"name": "default/patch"`, as issue #552 emitted it). The editor IMPORTS it,
+ * and exports the default skin's entry re-keyed by that name:
+ *
+ *     built     "default": { "patch": { "patch":         { "name": "default/patch", … } } }
+ *     exported  "default": { "patch": { "default/patch": {                          … } } }
+ *
+ * The editor's default skin holds no skin placeholders — an attachment there
+ * hangs on the slot and is known by its name alone — so the name becomes the
+ * key. The slot's setup `attachment: "patch"` then resolves in no default-skin
+ * key and the default skin draws NOTHING: `check` read mean MAE 98.52 with
+ * `drewSlots: 0` on the `patch` chain while `validate --profile spine` stayed
+ * green, because the file is well-formed and only the editor's model says what
+ * a key means.
+ *
+ * **Trip 8 — the default skin's attachment left as its placeholder** (no `name`,
+ * the obvious repair). The editor REFUSES the import:
+ *
+ *     ERROR: Unable to import skeleton.
+ *     Cause: [error] Error reading attachment: mike/patch (nSX)
+ *     Cause: [error] Multiple attachments have the same name:
+ *     patch
+ *     patch
+ *
+ * The default skin's attachment `patch` hangs on the slot; the named skins'
+ * placeholder `patch` is that slot's other child. **In one slot, a default-skin
+ * attachment name and a named skin's placeholder name are the same namespace.**
+ *
+ * ⇒ The two trips close the case: name it and the setup attachment resolves
+ * nowhere, do not name it and the import is refused. **The editor has no
+ * representation for a placeholder the default skin and a named skin both
+ * fill** — its own convention is shared art in the default skin, per-skin art in
+ * placeholders, and a slot's one setup `attachment` string naming one or the
+ * other. There is no third spelling to find, so this is a `CompileError` and not
+ * a scheme, in the shape issue #543 used: refuse by name and say what to do.
+ *
+ * ⚠️ What this does NOT touch, and the trips measured that half too: a
+ * placeholder that two or more NAMED skins fill keeps #552's composition
+ * exactly. Trip 8's second rig — two named skins filling `patch`, the default
+ * skin holding `block` only — imported, exported and measured **0.0000 mean
+ * MAE**, names and paths intact. The remedy this refusal states is that rig:
+ * move the default skin's entry into a named skin.
+ */
+function refuseDefaultSkinContest(slotName: string, placeholder: string, skins: readonly string[]): never {
+  const named = skins.filter((skin) => skin !== DEFAULT_SKIN);
+  throw new CompileError(
+    `slot "${slotName}": placeholder "${placeholder}" is filled by the "${DEFAULT_SKIN}" skin AND by ` +
+      `${named.length === 1 ? 'skin' : 'skins'} ${named.map((skin) => `"${skin}"`).join(', ')}, and the Spine ` +
+      'editor has no way to hold that. Measured on 4.3.26 in both spellings: give the default skin\'s attachment a ' +
+      `name of its own ("${DEFAULT_SKIN}${SKIN_ATTACHMENT_SEPARATOR}${placeholder}") and the editor re-keys it by ` +
+      `that name on export, so the slot's setup attachment "${placeholder}" resolves in no default-skin key and the ` +
+      'default skin draws nothing; leave it as the placeholder and the import is refused outright with ' +
+      `"Multiple attachments have the same name: ${placeholder} ${placeholder}", because a default-skin attachment ` +
+      "hangs on the slot beside the named skins' placeholder of that name. Move the default skin's entry for this " +
+      `slot into a named skin — call it "base" — so every skin filling "${placeholder}" is a named one. Two or more ` +
+      'named skins sharing a placeholder is the shape the editor does hold, and rigc composes their names for them ' +
+      '(#541, #552).',
+  );
+}
+
+/**
  * Which `(slot, placeholder)` pairs more than one skin fills — and, on the way,
  * the refusal that keeps the composed names from colliding with authored ones.
  *
@@ -2551,13 +2640,21 @@ function skinAttachmentName(skinName: string, placeholder: string): string {
  * entry given its own `name`** IMPORTS — all four skins. So it is neither the
  * skin count nor the timelines; it is one name over several attachments.
  *
- * ## Only the contested pairs are named, and that is the whole rule
+ * ## Only the contested pairs are named, and the default skin may not contest
  *
  * A placeholder one skin fills keeps the emitted shape it has always had: no
  * `name`, no `path` it did not already carry. Every rig in this tree declares
  * exactly one skin, so **no emitted byte in the tree moves** — and a
  * multi-skin rig whose skins use distinct placeholders does not move either,
  * because nothing there is ambiguous to begin with.
+ *
+ * ⚠️ A contested placeholder the **default** skin fills is refused before any
+ * of this runs — `refuseDefaultSkinContest`, issue #567 — because two editor
+ * round trips showed the editor holds no such shape in either spelling. So
+ * every entry the walk below composes for belongs to a named skin, and the
+ * emitted name comes off `composeSkinAttachmentName`, which this function calls
+ * rather than restates: the emit and the refusal disagreeing about one name is
+ * the defect both of them exist to prevent.
  *
  * ⚠️ The scope of the editor's uniqueness rule is **not** skeleton-wide, and the
  * corpus proves it rather than a hypothesis doing so: `spineboy-pro.json`, which
@@ -2596,12 +2693,26 @@ function contestedPlaceholders(
   const collisions: string[] = [];
   for (const [slotName, perSlot] of fillers) {
     const shared = new Set([...perSlot].filter(([, skins]) => skins.length > 1).map(([placeholder]) => placeholder));
+    // 🚨 Before anything is composed: a contested placeholder the DEFAULT skin
+    // fills has no representation in the editor at all, in either spelling
+    // (issue #567, round trips 7 and 8). It is refused here rather than emitted,
+    // and the refusal comes first because renaming cannot repair it — the
+    // remedy is a different rig, not a different string.
+    for (const placeholder of shared) {
+      const skins = perSlot.get(placeholder)!;
+      if (skins.includes(DEFAULT_SKIN)) refuseDefaultSkinContest(slotName, placeholder, skins);
+    }
     if (shared.size) contested.set(slotName, shared);
     /** Emitted attachment name -> the first entry that claimed it. */
     const claimed = new Map<string, string>();
     for (const [placeholder, skins] of perSlot) {
       for (const skinName of skins) {
-        const name = shared.has(placeholder) ? skinAttachmentName(skinName, placeholder) : placeholder;
+        // The emitted name, read off the one function that decides it — so the
+        // refusal and the emit cannot drift into two readings. An UNCONTESTED
+        // entry is claimed under its bare placeholder, the default skin's
+        // included: a named skin whose composed name equals it is a collision,
+        // and one this walk sees for the same reason it sees every other.
+        const name = composeSkinAttachmentName(skinName, placeholder, shared.has(placeholder)) ?? placeholder;
         const site = `skin "${skinName}" placeholder "${placeholder}"`;
         const taken = claimed.get(name);
         if (taken === undefined) claimed.set(name, site);

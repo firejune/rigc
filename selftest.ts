@@ -6878,6 +6878,18 @@ const PROBE_DEFAULT_SKIN = {
   marker: { marker: { image: 'marker.png' } },
 };
 
+/**
+ * The same default skin with slot `marker` left EMPTY, for every control whose
+ * named skins fill that slot.
+ *
+ * 🚨 Issue #567: a placeholder the default skin and a named skin both fill is
+ * refused, because two editor round trips showed the editor holds no such shape.
+ * So a control about per-skin art puts the shared entry in a NAMED skin (`base`)
+ * or leaves it out — which is what the refusal's own remedy tells an author to
+ * do, and a fixture that could not follow its own message would be a poor one.
+ */
+const PROBE_BLOCK_ONLY_SKIN = { block: { block: { image: 'block.png' } } };
+
 /** One slider on one dial, with whatever flags the case is about. */
 function pairSlider(name: string, animation: string, bone: string, patch: Record<string, unknown> = {}): Record<string, unknown> {
   return { name, type: 'slider', animation, bone, property: 'rotate', scale: 0.011111, ...patch };
@@ -9022,36 +9034,68 @@ function runPathAndSliderSuite(): number {
   };
   /** One skin filling `marker` with art shifted by `x`, so the entries differ. */
   const markerSkin = (x: number): Record<string, unknown> => ({ marker: { marker: { image: 'marker.png', x } } });
+  // ⚠️ The default skin holds `block` only, and that is a change issue #567 made
+  // to a fixture rather than a change of what it measures. It used to fill
+  // `marker` beside the other three, which is now REFUSED: the editor holds no
+  // placeholder that the default skin and a named skin both fill. The four skin
+  // NAMES are kept exactly, because `PS59`-`PS62` measure the editor's skin
+  // ORDER on these four and a fifth skin would retire that measurement; what the
+  // fixture loses is a default-skin filler, and `PS70` is where that shape lives
+  // now — as a refusal.
   const FOUR_SKINS = {
-    default: { ...PROBE_DEFAULT_SKIN },
+    default: { ...PROBE_BLOCK_ONLY_SKIN },
     zulu: markerSkin(1),
     mike: markerSkin(2),
     alpha: markerSkin(3),
   };
+  /** How many skins of that table fill `marker` — derived, never counted by hand. */
+  const markerFillers = Object.values(FOUR_SKINS).filter((skin) => 'marker' in skin).length;
 
   const four = skinEmit(FOUR_SKINS);
   const fourNames = typeof four === 'string' ? new Map<string, string>() : namesOf(four);
   const fourShared = typeof four === 'string' ? ['(refused)'] : sharedNames(four);
+  /** The `name` FIELD, as emitted — `undefined` where none was written at all. */
+  const nameFieldsOf = (skins: EmittedSkin[]): Map<string, string | undefined> => {
+    const out = new Map<string, string | undefined>();
+    for (const skin of skins) {
+      for (const [slot, table] of Object.entries(skin.attachments)) {
+        for (const [placeholder, att] of Object.entries(table)) out.set(`${skin.name}/${slot}/${placeholder}`, att.name);
+      }
+    }
+    return out;
+  };
+  const fourFields = typeof four === 'string' ? new Map<string, string | undefined>() : nameFieldsOf(four);
   say(
     'PS54_EVERY_SKIN_FILLING_ONE_PLACEHOLDER_GETS_ITS_OWN_ATTACHMENT_NAME',
     typeof four !== 'string' &&
       fourShared.length === 0 &&
-      [...fourNames].filter(([site]) => site.endsWith('/marker/marker')).length === 4 &&
-      fourNames.get('default/marker/marker') === 'default/marker' &&
+      [...fourNames].filter(([site]) => site.endsWith('/marker/marker')).length === markerFillers &&
       fourNames.get('zulu/marker/marker') === 'zulu/marker' &&
+      fourNames.get('mike/marker/marker') === 'mike/marker' &&
+      fourNames.get('alpha/marker/marker') === 'alpha/marker' &&
+      // The default skin fills nothing in that slot, which is what makes this rig
+      // legal at all after #567 — see `PS70` for the shape it replaced.
+      fourFields.get('default/marker/marker') === undefined &&
+      fourNames.get('default/marker/marker') === undefined &&
       // The placeholder `block`, which only `default` fills, is untouched — this
       // is the clause that keeps every single-skin rig in the tree byte-identical.
       fourNames.get('default/block/block') === 'block' &&
       four.every((s) => s.attachments.block === undefined || s.attachments.block.block.name === undefined),
     typeof four === 'string'
       ? `the four-skin rig was refused: ${four}`
-      : `slot "marker" holds ${[...fourNames].filter(([s]) => s.endsWith('/marker/marker')).length} attachment(s) ` +
-        `named [${[...fourNames].filter(([s]) => s.endsWith('/marker/marker')).map(([, n]) => n).join(', ')}] and ` +
-        `${fourShared.length} name(s) are held twice in any slot; the uncontested "block" is still named ` +
-        `"${fourNames.get('default/block/block')}" with no \`name\` field`,
+      : `${markerFillers} skin(s) of the ${Object.keys(FOUR_SKINS).length} declared fill slot "marker", which ` +
+        `holds ${[...fourNames].filter(([s]) => s.endsWith('/marker/marker')).length} attachment(s) named ` +
+        `[${[...fourNames].filter(([s]) => s.endsWith('/marker/marker')).map(([, n]) => n).join(', ')}]; ` +
+        `${fourShared.length} name(s) are held twice in any slot, the default skin holds ` +
+        `${fourNames.get('default/marker/marker') === undefined ? 'nothing' : 'something'} there, and the ` +
+        `uncontested "block" is still named "${fourNames.get('default/block/block')}" with no \`name\` field`,
     'the editor refuses an import where one slot holds two attachments of one name, and spine-core cannot see it — ' +
       'its skin table is keyed by placeholder, so the two attachments never meet. The last clause is the half that ' +
-      'costs nothing: a placeholder one skin fills is emitted exactly as it always was',
+      'costs nothing: a placeholder one skin fills is emitted exactly as it always was. ⚠️ The default skin used ' +
+      'to be one of the fillers here and is not any more: issue #567 measured that the editor holds no placeholder ' +
+      'the default skin and a named skin share, in either spelling, so that rig is now a refusal (`PS70`) rather ' +
+      'than an emit. The four skin NAMES are unchanged because `PS59`-`PS62` measure the editor\'s skin order on ' +
+      'exactly them',
   );
 
   // 🌱 The plant is the emit this repair replaced — the same four skins with the
@@ -9077,13 +9121,18 @@ function runPathAndSliderSuite(): number {
         }));
   const strippedShared = sharedNames(stripped);
   say(
-    'PS55_WITHOUT_THE_NAMES_THE_SAME_FOUR_SKINS_ARE_FOUR_ATTACHMENTS_CALLED_ONE_THING',
-    stripped.length === 4 && strippedShared.length === 1 && strippedShared[0] === 'marker: "marker" x4',
+    'PS55_WITHOUT_THE_NAMES_THE_SAME_SKINS_ARE_SEVERAL_ATTACHMENTS_CALLED_ONE_THING',
+    stripped.length === Object.keys(FOUR_SKINS).length &&
+      strippedShared.length === 1 &&
+      strippedShared[0] === `marker: "marker" x${markerFillers}`,
     `with the \`name\` field removed the same skeleton reports ${strippedShared.length} collision(s)` +
       (strippedShared.length ? `: ${strippedShared.join('; ')}` : '') +
-      `, against ${fourShared.length} for the emit as it ships`,
+      `, against ${fourShared.length} for the emit as it ships — over ${markerFillers} filler(s) of "marker" read ` +
+      'off the fixture rather than counted',
     'a detector that never fires is not a detector. This reader is the editor\'s rule stated as arithmetic, and ' +
-      'the two cases together say it can tell the shipped emit from the one that was refused at the door',
+      'the two cases together say it can tell the shipped emit from the one that was refused at the door. ' +
+      '⚠️ The multiplicity is derived: it was the literal `x4` until #567 took the default skin out of the ' +
+      'fillers, which is the only thing about this case that moved',
   );
 
   const distinct = skinEmit({
@@ -9108,19 +9157,27 @@ function runPathAndSliderSuite(): number {
       'multi-skin rig whose skins disagree about the placeholder was never ambiguous and must not be rewritten',
   );
 
+  // ⚠️ The entry that collides sits in a NAMED skin `base` rather than in the
+  // default skin, which is where this fixture had it until issue #567. It is the
+  // same collision — a composed name against a placeholder somebody wrote — and
+  // it had to move for the reason the refusal states: a placeholder the default
+  // skin shares with a named skin is refused before any name is composed, so the
+  // old spelling would have measured that refusal instead of this one.
   const collided = skinEmit({
-    default: { ...PROBE_DEFAULT_SKIN, marker: { marker: { image: 'marker.png' }, 'zulu/marker': { image: 'marker.png', x: 5 } } },
+    default: { ...PROBE_BLOCK_ONLY_SKIN },
+    base: { marker: { marker: { image: 'marker.png' }, 'zulu/marker': { image: 'marker.png', x: 5 } } },
     zulu: markerSkin(1),
   });
   const notCollided = skinEmit({
-    default: { ...PROBE_DEFAULT_SKIN, marker: { marker: { image: 'marker.png' }, 'zulu.marker': { image: 'marker.png', x: 5 } } },
+    default: { ...PROBE_BLOCK_ONLY_SKIN },
+    base: { marker: { marker: { image: 'marker.png' }, 'zulu.marker': { image: 'marker.png', x: 5 } } },
     zulu: markerSkin(1),
   });
   say(
     'PS57_A_COMPOSED_NAME_A_PLACEHOLDER_ALREADY_ANSWERS_TO_IS_REFUSED_BY_BOTH_SITES',
     typeof collided === 'string' &&
       collided.includes('attachment name collision(s)') &&
-      collided.includes('skin "default" placeholder "zulu/marker"') &&
+      collided.includes('skin "base" placeholder "zulu/marker"') &&
       collided.includes('skin "zulu" placeholder "marker"') &&
       collided.includes('would both be named "zulu/marker"') &&
       typeof notCollided !== 'string',
@@ -9132,7 +9189,9 @@ function runPathAndSliderSuite(): number {
         }`,
     'composing a name out of two names the spec wrote can collide with a third the spec also wrote, and a scheme ' +
       'that collides in silence is a new defect rather than a fix. The second rig is one character away and must ' +
-      'build, or this would be a rule against slashes in placeholders',
+      'build, or this would be a rule against slashes in placeholders. ⚠️ Both rigs put the shared art in a named ' +
+      'skin, which is exactly what #567\'s refusal tells an author to do — a fixture that could not follow its own ' +
+      'message would be measuring the wrong refusal',
   );
 
   // The `path` half, gated on the artifact rather than argued. `path` defaults
@@ -9197,7 +9256,7 @@ function runPathAndSliderSuite(): number {
       'sits at index 2 in both orders and only the ends swap',
   );
 
-  const pinnedFirst = skinEmit({ default: { ...PROBE_DEFAULT_SKIN }, aardvark: markerSkin(1) });
+  const pinnedFirst = skinEmit({ default: { ...PROBE_BLOCK_ONLY_SKIN }, aardvark: markerSkin(1) });
   say(
     'PS61_DEFAULT_IS_PINNED_AND_NOT_SORTED',
     JSON.stringify(skinOrderOf(pinnedFirst)) === JSON.stringify(['default', 'aardvark']),
@@ -9214,8 +9273,8 @@ function runPathAndSliderSuite(): number {
   // `alpha, mike, zulu` is the answer every candidate gives. Carrying the
   // narrowing across would be the inference that put `skins` on the safe side of
   // the "arrays an editor cannot move" list for two releases.
-  const skinCase = skinEmit({ default: { ...PROBE_DEFAULT_SKIN }, Zulu: markerSkin(1), mike: markerSkin(2) });
-  const skinDigits = skinEmit({ default: { ...PROBE_DEFAULT_SKIN }, mike10: markerSkin(1), mike2: markerSkin(2) });
+  const skinCase = skinEmit({ default: { ...PROBE_BLOCK_ONLY_SKIN }, Zulu: markerSkin(1), mike: markerSkin(2) });
+  const skinDigits = skinEmit({ default: { ...PROBE_BLOCK_ONLY_SKIN }, mike10: markerSkin(1), mike2: markerSkin(2) });
   const animCase = emittedOrderOf(['Turn', 'sweep', 'wave']);
   const animDigits = emittedOrderOf(['turn10', 'turn2', 'zoom']);
   say(
@@ -9262,11 +9321,18 @@ function runPathAndSliderSuite(): number {
    * A probe rig whose two skins fill ONE placeholder, each from the file it
    * names — written to disk at the size it is given, so a measurement can tell
    * the two apart.
+   *
+   * ⚠️ Both fillers are NAMED skins (`base` and `zulu`). The first of them was
+   * the default skin until issue #567, which refuses a placeholder the default
+   * skin shares with a named one; moving that entry into a named skin is the
+   * refusal's own remedy and changes nothing this helper measures — two skins,
+   * two files, two regions, each attachment drawing its own.
    */
   const artRig = (a: string, b: string, aSize: [number, number], bSize: [number, number]): ProbeDirs => {
     const dirs = writeProbeRig({
       skins: {
-        default: { ...PROBE_DEFAULT_SKIN, marker: { marker: { image: a } } },
+        default: { ...PROBE_BLOCK_ONLY_SKIN },
+        base: { marker: { marker: { image: a } } },
         zulu: { marker: { marker: { image: b } } },
       },
     });
@@ -9345,15 +9411,26 @@ function runPathAndSliderSuite(): number {
     }
     // The skeleton half: each attachment draws the region it named, at the size
     // that was measured off ITS file rather than off the other skin's.
-    for (const [key, path, size] of [
-      ['default/marker', 'art_a', '14x9'],
-      ['zulu/marker', 'art_b', '22x11'],
+    //
+    // ⚠️ The `name` column is stated per row rather than reusing the key, which
+    // is `skin/placeholder` and only LOOKS like the composed name. Here the two
+    // strings do coincide, because both fillers are named skins — which is
+    // exactly why reusing the key would be a coincidence rather than a
+    // measurement, and the column says so out loud.
+    for (const [key, name, path, size] of [
+      ['base/marker', 'base/marker', 'art_a', '14x9'],
+      ['zulu/marker', 'zulu/marker', 'art_b', '22x11'],
     ] as const) {
       const att = twoFileAtts.get(key);
       const found =
-        att === undefined ? 'no such attachment' : `name="${att.name}" path="${att.path}" ${att.width}x${att.height}`;
-      if (att === undefined || att.name !== key || att.path !== path || `${att.width}x${att.height}` !== size) {
-        twoFileProbes.push(`slot "marker" holds ${found} for ${key}, and it has to hold name="${key}" path="${path}" ${size}`);
+        att === undefined
+          ? 'no such attachment'
+          : `name=${JSON.stringify(att.name ?? null)} path="${att.path}" ${att.width}x${att.height}`;
+      if (att === undefined || att.name !== name || att.path !== path || `${att.width}x${att.height}` !== size) {
+        twoFileProbes.push(
+          `slot "marker" holds ${found} for ${key}, and it has to hold name=${JSON.stringify(name ?? null)} ` +
+            `path="${path}" ${size}`,
+        );
       }
     }
     if (twoFiles.gate === null || twoFiles.gate.failures.length > 0) {
@@ -9373,8 +9450,8 @@ function runPathAndSliderSuite(): number {
       twoFileProbes,
       `two skins fill slot "marker" under the one placeholder "marker" from two files; the atlas holds ` +
         `[${twoFiles.regions.map((r) => `${r.name} ${r.size}`).join(', ')}] and the slot holds ` +
-        `default/marker path="${twoFileAtts.get('default/marker')?.path}" ` +
-        `${twoFileAtts.get('default/marker')?.width}x${twoFileAtts.get('default/marker')?.height} beside ` +
+        `base/marker path="${twoFileAtts.get('base/marker')?.path}" ` +
+        `${twoFileAtts.get('base/marker')?.width}x${twoFileAtts.get('base/marker')?.height} beside ` +
         `zulu/marker path="${twoFileAtts.get('zulu/marker')?.path}" ` +
         `${twoFileAtts.get('zulu/marker')?.width}x${twoFileAtts.get('zulu/marker')?.height}, with ` +
         `${twoFiles.gate?.passed.length} assertion(s) green including A00_ROUNDTRIP_PARSE`,
@@ -9412,7 +9489,7 @@ function runPathAndSliderSuite(): number {
   const oneFileAtts = markerAttachments(oneFile);
   if (
     oneFile.refused === null &&
-    (oneFileAtts.get('default/marker')?.path !== 'art_a' || oneFileAtts.get('zulu/marker')?.path !== 'art_a')
+    (oneFileAtts.get('base/marker')?.path !== 'art_a' || oneFileAtts.get('zulu/marker')?.path !== 'art_a')
   ) {
     perFileProbes.push(
       `two skins naming one file resolve to [${[...oneFileAtts].map(([k, a]) => `${k} path="${a.path}"`).join(', ')}] ` +
@@ -9671,6 +9748,284 @@ function runPathAndSliderSuite(): number {
       '? 1 : 2)]`. So rigc\'s array covers exactly what is read and the editor\'s trailing entry is read by nothing. ' +
       '⚠️ The clause that matters is the one going the other way: one entry SHORT and the traversal divides by an ' +
       'undefined length, which is silent in the parser and NaN in the pose',
+  );
+
+  // --- the default skin may not share a placeholder (issue #567) ------------
+  //
+  // 🚨 Two editor round trips, both Spine 4.3.26, on a rig whose three skins
+  // fill one placeholder `patch` from three PNGs — and between them they close
+  // the case, because each ruled out one of the only two spellings there are.
+  //
+  // **Trip 7**, the default skin's entry given a name of its own (`#552`):
+  //
+  //     built     "default": { "patch": { "patch":         { "name": "default/patch", … } } }
+  //     exported  "default": { "patch": { "default/patch": {                          … } } }
+  //
+  // The editor IMPORTS it and re-keys the default skin's attachment by its own
+  // name, because the editor's default skin holds no skin placeholders: an
+  // attachment there hangs on the slot and is known by its name alone. The
+  // slot's setup `attachment: "patch"` then resolves in no default-skin key and
+  // the default skin draws NOTHING — `check` mean MAE 98.52, `drewSlots: 0` on
+  // the `patch` chain, `validate --profile spine` green.
+  //
+  // **Trip 8**, the same rig with that entry left as its placeholder (no
+  // `name`, the obvious repair, and what this suite asserted for one day). The
+  // editor REFUSES the import:
+  //
+  //     ERROR: Unable to import skeleton.
+  //     Cause: [error] Error reading attachment: mike/patch (nSX)
+  //     Cause: [error] Multiple attachments have the same name:
+  //     patch
+  //     patch
+  //
+  // ⇒ **The editor has no representation for a placeholder the default skin and
+  // a named skin both fill.** In one slot, a default-skin attachment name and a
+  // named skin's placeholder name are the same namespace. So this is a refusal
+  // and not a scheme — #543's shape: refuse by name and say what to do.
+  //
+  // ⚠️ The other half of trip 8 is the positive control below: two NAMED skins
+  // filling one placeholder, the default skin holding `block` only, imported and
+  // exported at **0.0000 mean MAE** with names and paths intact. #552's
+  // composition is correct for that shape and is untouched.
+  const threeSkinDirs = (defaultSkinFills: boolean): ProbeDirs => {
+    const shared = { marker: { marker: { image: 'art_a.png' } } };
+    const dirs = writeProbeRig({
+      skins: {
+        // The contested entry sits in `default` or in a named `base`, which is
+        // the difference the refusal is about and the only difference between
+        // these two rigs.
+        default: defaultSkinFills ? { ...PROBE_BLOCK_ONLY_SKIN, ...shared } : { ...PROBE_BLOCK_ONLY_SKIN },
+        ...(defaultSkinFills ? {} : { base: shared }),
+        zulu: { marker: { marker: { image: 'art_b.png' } } },
+        mike: { marker: { marker: { image: 'art_c.png' } } },
+      },
+    });
+    for (const [rel, size] of [
+      ['art_a.png', [14, 9]],
+      ['art_b.png', [22, 11]],
+      ['art_c.png', [18, 18]],
+    ] as Array<[string, [number, number]]>) {
+      writeProbePng(join(dirs.dir, rel), size[0], size[1], [200, 90, 60, 255]);
+    }
+    return dirs;
+  };
+  interface SkinTexts {
+    skins: EmittedSkin[];
+    atlasRegions: string[];
+    gate: ReturnType<typeof validate> | null;
+    refused: string | null;
+  }
+  const buildSkinTexts = (dirs: ProbeDirs): SkinTexts => {
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const opts: Options = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
+    try {
+      const built = compile(opts);
+      return {
+        skins: (JSON.parse(built.skeletonText) as { skins: EmittedSkin[] }).skins,
+        atlasRegions: parseAtlasText(built.atlasText).pages.flatMap((page) => page.regions.map((r) => r.name.trim())),
+        gate: validate({
+          skeletonText: built.skeletonText,
+          atlasText: built.atlasText,
+          atlasDir: opts.outDir,
+          declaredDurations: built.declaredDurations,
+          rig: built.rig,
+          profile: 'spine',
+        }),
+        refused: null,
+      };
+    } catch (err) {
+      return {
+        skins: [],
+        atlasRegions: [],
+        gate: null,
+        refused: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`,
+      };
+    }
+  };
+  /** `skin -> the attachment slot "marker" holds for it under placeholder "marker"`. */
+  const markerOf = (build: SkinTexts, skin: string): { name?: string; path?: string } | undefined =>
+    build.skins.find((s) => s.name === skin)?.attachments.marker?.marker;
+
+  const defaultContests = buildSkinTexts(threeSkinDirs(true));
+  const contestProbes: string[] = [];
+  if (defaultContests.refused === null) {
+    contestProbes.push(
+      'a rig whose default skin shares placeholder "marker" with two named skins COMPILED, emitting ' +
+        `[${defaultContests.skins
+          .map((s) => `${s.name}:${JSON.stringify(markerOf(defaultContests, s.name)?.name ?? null)}`)
+          .join(', ')}] — the editor holds neither spelling of that rig`,
+    );
+  } else {
+    // The message is the UI, so every part an author has to act on is required
+    // by name: which slot, which placeholder, which skins, both measured
+    // outcomes, and the remedy.
+    for (const phrase of [
+      'slot "marker"',
+      'placeholder "marker"',
+      'filled by the "default" skin',
+      '"zulu", "mike"',
+      'Multiple attachments have the same name: marker marker',
+      'default/marker',
+      'resolves in no default-skin key',
+      'Move the default skin\'s entry for this slot into a named skin',
+      '"base"',
+    ]) {
+      if (!defaultContests.refused.includes(phrase)) {
+        contestProbes.push(`the refusal does not say ${JSON.stringify(phrase)}: ${defaultContests.refused}`);
+      }
+    }
+  }
+  const contestHeld = contestProbes.length === 0;
+  say(
+    'PS70_A_PLACEHOLDER_THE_DEFAULT_SKIN_SHARES_WITH_A_NAMED_SKIN_IS_REFUSED_BY_NAME',
+    contestHeld,
+    probeDetail(
+      contestHeld,
+      contestProbes,
+      `refused with: ${defaultContests.refused ?? '(not refused)'}`,
+    ),
+    'this is the one shape the Spine editor cannot hold, and it took two round trips to establish because each ' +
+      'spelling fails differently: NAME the default skin\'s attachment and the editor re-keys it by that name on ' +
+      'export, so the slot\'s setup attachment resolves in no default-skin key and the default skin draws nothing ' +
+      '(trip 7, mean MAE 98.52 with the gate green); leave it as the placeholder and the import is refused with ' +
+      '`Multiple attachments have the same name: patch patch`, because a default-skin attachment hangs on the slot ' +
+      'beside the named skins\' placeholder of that name (trip 8). ⭐ With both spellings measured there is no ' +
+      'third to find, which is what makes a refusal the repair rather than a scheme — and the message carries both ' +
+      'readings, because an author who has only seen one of them will otherwise go looking for the other',
+  );
+
+  const baseVariant = buildSkinTexts(threeSkinDirs(false));
+  const baseProbes: string[] = [];
+  if (baseVariant.refused !== null) {
+    baseProbes.push(`the same three fillers in named skins were refused: ${baseVariant.refused}`);
+  } else {
+    for (const [skin, name, path] of [
+      ['base', 'base/marker', 'art_a'],
+      ['zulu', 'zulu/marker', 'art_b'],
+      ['mike', 'mike/marker', 'art_c'],
+    ] as const) {
+      const att = markerOf(baseVariant, skin);
+      if (att?.name !== name || att.path !== path) {
+        baseProbes.push(
+          `skin "${skin}" holds name=${JSON.stringify(att?.name ?? null)} path=${JSON.stringify(att?.path ?? null)} ` +
+            `and it has to hold name="${name}" path="${path}"`,
+        );
+      }
+    }
+    if (markerOf(baseVariant, 'default') !== undefined) {
+      baseProbes.push('the default skin holds an attachment under "marker", and this rig is the one where it must not');
+    }
+    if (baseVariant.skins.find((s) => s.name === 'default')?.attachments.block?.block.name !== undefined) {
+      baseProbes.push('the default skin\'s uncontested "block" carries a `name`, and an uncontested attachment carries none');
+    }
+    if (sharedNames(baseVariant.skins).length) {
+      baseProbes.push(`slot "marker" holds ${sharedNames(baseVariant.skins).join('; ')} — the editor refuses that import`);
+    }
+    if (baseVariant.gate === null || baseVariant.gate.failures.length > 0) {
+      baseProbes.push(
+        `the gate said ${baseVariant.gate?.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ') ?? 'nothing at all'}`,
+      );
+    }
+  }
+  const baseHeld = baseProbes.length === 0;
+  say(
+    'PS71_THE_SAME_THREE_FILLERS_IN_NAMED_SKINS_BUILD_GREEN_WITH_THREE_COMPOSED_NAMES',
+    baseHeld,
+    probeDetail(
+      baseHeld,
+      baseProbes,
+      `moving the default skin's entry into a named "base" — the remedy PS70's message states — builds: slot ` +
+        `"marker" holds [${baseVariant.skins
+          .flatMap((s) => (s.attachments.marker ? [`${markerOf(baseVariant, s.name)?.name} path="${markerOf(baseVariant, s.name)?.path}"`] : []))
+          .join(', ')}], the default skin holds "block" only with no \`name\`, the atlas holds ` +
+        `[${baseVariant.atlasRegions.join(', ')}], and ${baseVariant.gate?.passed.length} assertion(s) are green`,
+    ),
+    'a refusal whose remedy does not build is a dead end rather than a message, so the two cases are one pair: ' +
+      'PS70 is the rig the editor cannot hold and this is the same art in the shape it can. It is also the whole ' +
+      'of what #552 got right — a placeholder two or more NAMED skins fill is composed exactly as it landed, and ' +
+      'round trip 8 measured that half at 0.0000 mean MAE with names and paths intact',
+  );
+
+  const twoNonDefault = buildSkinTexts(
+    (() => {
+      const dirs = writeProbeRig({
+        skins: {
+          default: { ...PROBE_BLOCK_ONLY_SKIN },
+          zulu: { marker: { marker: { image: 'art_b.png' } } },
+          mike: { marker: { marker: { image: 'art_c.png' } } },
+        },
+      });
+      for (const [rel, size] of [
+        ['art_b.png', [22, 11]],
+        ['art_c.png', [18, 18]],
+      ] as Array<[string, [number, number]]>) {
+        writeProbePng(join(dirs.dir, rel), size[0], size[1], [60, 90, 200, 255]);
+      }
+      return dirs;
+    })(),
+  );
+  const twoNonDefaultHeld =
+    twoNonDefault.refused === null &&
+    markerOf(twoNonDefault, 'zulu')?.name === 'zulu/marker' &&
+    markerOf(twoNonDefault, 'mike')?.name === 'mike/marker' &&
+    markerOf(twoNonDefault, 'default') === undefined &&
+    twoNonDefault.skins.find((s) => s.name === 'default')?.attachments.marker === undefined &&
+    sharedNames(twoNonDefault.skins).length === 0;
+  say(
+    'PS72_WITH_NOTHING_IN_THE_DEFAULT_SKINS_SLOT_BOTH_FILLERS_STILL_COMPOSE',
+    twoNonDefaultHeld,
+    twoNonDefault.refused !== null
+      ? `refused: ${twoNonDefault.refused}`
+      : `the default skin holds ${twoNonDefault.skins.find((s) => s.name === 'default')?.attachments.marker === undefined ? 'nothing' : 'something'} ` +
+        `in slot "marker" and the two skins that do fill it write \`name\` ` +
+        `${JSON.stringify(markerOf(twoNonDefault, 'zulu')?.name ?? null)} and ` +
+        `${JSON.stringify(markerOf(twoNonDefault, 'mike')?.name ?? null)}, with ` +
+        `${sharedNames(twoNonDefault.skins).length} name(s) held twice in any slot`,
+    'this is the rig round trip 8 measured at **0.0000 mean MAE** through Spine 4.3.26, names and paths back ' +
+      'intact — so it is the one shape in this family with an editor measurement behind it rather than a ' +
+      'derivation. It also separates the rule from a near miss: written as "the first filler keeps the ' +
+      'placeholder" instead of "the default skin may not be a filler", a compiler would pass PS70 and PS71 and ' +
+      'emit two attachments of one name here',
+  );
+
+  /**
+   * The collision the composition can still make, now that a default-skin filler
+   * is refused outright: an UNCONTESTED entry — the default skin's included —
+   * whose plain name is a name some named skin composes. `PS57` is the same
+   * refusal with the uncontested entry in a named skin; this is the default-skin
+   * half, which is legal to author and has to be caught by the same walk.
+   */
+  const defaultPlainCollides = skinEmit({
+    default: { ...PROBE_BLOCK_ONLY_SKIN, marker: { 'zulu/marker': { image: 'marker.png', x: 5 } } },
+    zulu: markerSkin(1),
+    mike: markerSkin(2),
+  });
+  const defaultPlainApart = skinEmit({
+    default: { ...PROBE_BLOCK_ONLY_SKIN, marker: { 'zulu.marker': { image: 'marker.png', x: 5 } } },
+    zulu: markerSkin(1),
+    mike: markerSkin(2),
+  });
+  say(
+    'PS73_AN_UNCONTESTED_DEFAULT_SKIN_NAME_IS_CLAIMED_IN_THE_SAME_WALK_AS_EVERY_COMPOSED_ONE',
+    typeof defaultPlainCollides === 'string' &&
+      defaultPlainCollides.includes('attachment name collision(s)') &&
+      defaultPlainCollides.includes('skin "default" placeholder "zulu/marker"') &&
+      defaultPlainCollides.includes('skin "zulu" placeholder "marker"') &&
+      defaultPlainCollides.includes('would both be named "zulu/marker"') &&
+      typeof defaultPlainApart !== 'string',
+    typeof defaultPlainCollides !== 'string'
+      ? "a rig whose default-skin placeholder is another skin's composed name compiled"
+      : `refused with: ${defaultPlainCollides.slice(defaultPlainCollides.indexOf('slot "marker"'))}` +
+        `; the same rig with that placeholder spelled "zulu.marker" instead ${
+          typeof defaultPlainApart === 'string' ? `was ALSO refused: ${defaultPlainApart}` : 'compiles'
+        }`,
+    'the default skin may not SHARE a placeholder (PS70), and it may still hold one of its own in the same slot — ' +
+      'so its plain name is a name the slot carries that composed nothing, and a walk that only claimed the ' +
+      'composed ones would not see this. The refusal walks `composeSkinAttachmentName` for every ' +
+      '(placeholder, skin) pair in the slot, which is the same call the emit makes, so it claims whatever the ' +
+      'emit would write. The second rig is one character away and must build, or this would be a rule against ' +
+      'slashes in placeholders',
   );
 
   return bad;
@@ -20420,12 +20775,22 @@ function runCliSuite(): number {
   // which is how this hole survived the first time.
   {
     const skinOf = (x: number): Record<string, unknown> => ({ marker: { marker: { image: 'marker.png', x } } });
+    /**
+     * The non-default skins, named once so the expected names are DERIVED from
+     * the fixture rather than counted by hand. `default` fills the same
+     * placeholder and composes nothing (#567), so it is deliberately not in here
+     * — a count would have been one literal to retune when that rule changed,
+     * and it was.
+     */
+    const contestingSkins = { zulu: 1, mike: 2, alpha: 3 };
     const dirs = writeProbeRig({
       skins: {
-        default: { block: { block: { image: 'block.png' } }, marker: { marker: { image: 'marker.png' } } },
-        zulu: skinOf(1),
-        mike: skinOf(2),
-        alpha: skinOf(3),
+        // ⚠️ The default skin holds `block` only. It filled `marker` beside the
+        // three until issue #567, which refuses a placeholder the default skin
+        // shares with a named skin — so the fixture follows the refusal's own
+        // remedy rather than asserting a shape the editor cannot hold.
+        default: { block: { block: { image: 'block.png' } } },
+        ...Object.fromEntries(Object.entries(contestingSkins).map(([name, x]) => [name, skinOf(x)])),
       },
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
@@ -20464,24 +20829,29 @@ function runCliSuite(): number {
     const sameBody = a !== null && b !== null && withoutImages(a) === withoutImages(b);
     const movedImages = imagesOf(a) !== imagesOf(b);
     const names = composed(a);
+    const wantNames = Object.keys(contestingSkins)
+      .map((skin) => `${skin}/marker`)
+      .sort();
     say(
       'CLI13_COPY_IMAGES_MOVES_SKELETON_IMAGES_AND_NOTHING_ELSE_IN_THE_SKELETON',
       plain.status === 0 &&
         copied.status === 0 &&
         sameBody &&
         movedImages &&
-        names.length === 4 &&
+        JSON.stringify(names) === JSON.stringify(wantNames) &&
         JSON.stringify(names) === JSON.stringify(composed(b)),
       plain.status !== 0 || copied.status !== 0
         ? `a build refused: no-flag exit=${String(plain.status)}, --copy-images exit=${String(copied.status)} — ` +
           `${(copied.stderr || plain.stderr).trim().split('\n').pop() ?? ''}`
         : `both builds green; skeleton.images ${JSON.stringify(imagesOf(a))} -> ${JSON.stringify(imagesOf(b))} ` +
           `(${movedImages ? 'moved, as the flag is for' : 'DID NOT MOVE, so this case is vacuous'}), and every ` +
-          `other byte ${sameBody ? 'identical' : 'DIFFERS'}; ${names.length} composed attachment name(s) in both: ` +
-          `[${names.join(', ')}]`,
+          `other byte ${sameBody ? 'identical' : 'DIFFERS'}; the composed attachment names are [${names.join(', ')}] ` +
+          `in both, against [${wantNames.join(', ')}] derived from the fixture's non-default skins`,
       'the second clause is what stops it being vacuous — a flag that moved nothing at all would satisfy "the ' +
         'skeletons agree" without doing its job. The four-skin rig is deliberate: the fields most recently added ' +
-        'to the emit are the ones least likely to be reached by every path that writes it',
+        'to the emit are the ones least likely to be reached by every path that writes it. ⚠️ The expected names ' +
+        'are derived from the skin table rather than counted: this case said `4` until #567 stopped the DEFAULT ' +
+        "skin composing, and a count cannot tell \"the flag dropped a name\" from \"the emitter's rule moved\"",
     );
   }
 
@@ -34897,8 +35267,26 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   // page it is planted on is picked off the run rather than named here: the
   // longest tracked page with no anchored block in it.
   {
+    // ⚠️ The candidate is chosen by the marker's own reach — the DIRECTORY the
+    // page sits in — and not by the page (issue #567). A marker seals
+    // `dirname(path)` and everything below it, so the fault it has to raise is
+    // "this PREFIX holds no anchored block"; picking the longest page that holds
+    // none put the plant on `docs/SPEC_COVERAGE.md`, whose directory holds
+    // several, and a legitimate marker faults nothing. The clause then reported
+    // the plant as a miss — which is the honest direction, but it only reported
+    // it because one page in another directory grew past it that day. A plant
+    // whose validity depends on a length comparison is a plant that can stop
+    // being one in silence.
+    const sealsNothing = (file: string): boolean => {
+      const dir = dirname(file);
+      const prefix = dir === '.' ? '' : `${dir}/`;
+      // The root is its own fault (a marker may not seal the whole tree), so a
+      // page at the root can never be this plant's page.
+      if (prefix === '') return false;
+      return ![...pages, ...scan.excluded.map((block) => block.where)].some((where) => where.startsWith(prefix));
+    };
     const idle = [...docs.keys()]
-      .filter((file) => !pages.includes(file) && !scan.excluded.some((block) => block.where.startsWith(`${file}:`)))
+      .filter(sealsNothing)
       .sort((a, b) => (docs.get(b)?.length ?? 0) - (docs.get(a)?.length ?? 0))[0];
     planted++;
     if (idle === undefined) {
