@@ -109,7 +109,12 @@ the commit that introduces these files, and is not maintained afterwards.
    for why the branch name is not worth memorising.
 5. **Merge it.** That is the cut.
 6. Watch the second `release` run: it tags `vX.Y.Z`, creates the GitHub release,
-   and publishes.
+   and publishes. Its last step confirms the published package installs and
+   builds, waiting up to 15 minutes for the registry to serve it — if that step
+   ends saying the confirmation was NOT taken, the registry was still
+   processing and nothing is wrong with the cut: re-run the confirmation
+   (Actions → release → Run workflow, with the version) rather than re-cutting
+   anything. *Whether the tarball runs*, below, has the window and the codes.
 7. Confirm: `npm view spine-rigc version`, and the npm page shows the provenance
    attestation linking the tarball to the workflow run.
 
@@ -285,6 +290,7 @@ bun run smoke -- --case clean                  # just the green one
 bun run smoke -- --case drop-plate             # just one plant
 bun run smoke -- --installer bun               # `bun add` instead of `npm install`
 bun run smoke -- --source registry --version 0.21.0
+bun run smoke -- --source registry --version 0.21.0 --wait 15   # …and wait for it
 bun run smoke -- --keep                        # leave the install directories to look at
 ```
 
@@ -312,6 +318,48 @@ against the published `spine-rigc@0.21.0` and came back green, so the
 `--source registry` path has been seen both to pass on a good package and to go
 red on three broken ones. A red there does not un-publish anything; it says the
 cut needs a follow-up.
+
+#### How long the registry takes, and what a red there means
+
+⏳ **A publish returns before the registry serves what it published.** npm says
+so on the way out — *"Your package is being processed and may take a few minutes
+to become available."* — and that notice, which states no upper bound, is the
+only statement of the window there is. **[observed]**, from the publish step's
+own log line to the moment the version appears in the registry's packument
+(`time[version]` at `https://registry.npmjs.org/spine-rigc`), all on 2026-09-16:
+
+| cut | release run | publish step returned | registry served it | delay |
+| --- | --- | --- | --- | --- |
+| v0.22.0 | `35104574039` | 13:52:57.549Z | 13:57:08.543Z | 4 min 11 s |
+| v0.22.1 | `35112124244` | 15:00:05.473Z | 15:02:12.422Z | 2 min 07 s |
+| v0.22.2 | `35124107989` | 16:49:18.964Z | 16:51:56.700Z | 2 min 38 s |
+
+There is no constant in that and nobody has promised one, so the step passes
+`--wait 15` and the script backs off — 5 s, 10 s, 20 s, then every 30 s —
+printing how long it has been asking. The job's `timeout-minutes` is above the
+wait, deliberately: a job cancelled mid-wait reports neither outcome.
+
+🚨 **The two outcomes are different facts and they no longer print the same
+red** (issue #563). The confirmation went red on all three cuts above and all
+three packages were fine: the wait was 60 s, and it ended in a trailing
+`npm view`'s raw `E404`.
+
+| exit | what it means | what to do |
+| --- | --- | --- |
+| `0` | the published package installs and builds | nothing |
+| `1` | **the published artifact does not build** — the registry served it and a case went red on it | read the named fault; the cut needs a follow-up |
+| `2` | no case ran, so the run measured nothing | a broken invocation, not a verdict |
+| `3` | **the registry did not serve the version inside `--wait`** — the confirmation was NOT taken, and nothing about the package is known | re-run the confirmation |
+
+**Re-running a confirmation costs nothing and publishes nothing.** Actions →
+**release** → **Run workflow**, with the version (no leading `v`). That dispatch
+runs the `confirm` job only: the `release` job carrying release-please, the tag,
+the GitHub release and `npm publish` is held to `if: github.event_name ==
+'push'`, so a dispatch skips it whole. By hand, from a checkout of the tag:
+
+```sh
+bun run smoke -- --source registry --version <version> --case clean
+```
 
 ### If the automation is unavailable
 
