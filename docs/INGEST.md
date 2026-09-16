@@ -656,12 +656,22 @@ other one is this project's own renderer and archetype policy.
 | **renderer policy** (7) | `A11_NO_CLIPPING_ATTACHMENTS`, `A12_NO_DARK_COLOR`, `A13_MESH_BUDGET`, `A14_NO_FULL_FRAME_MESH`, `A15_IDLE_NO_MESH_BONE_KEYS`, `A19_OVERLAY_PNGS_HAVE_ALPHA`, `A27_REGION_NAME_MATCHES_PAGE_FILENAME` |
 | **archetype policy** (8) | `A21_MESH_RIM_PINNED`, `A24_AXIS_SPACE_STROKE`, `A25_DETACHED_BONE_PARENTAGE`, `A26_SLOT_DRAW_ORDER`, `A28_RIBBON_ROWS_SHARE_WEIGHTS`, `A29_STROKE_WITHIN_CONTACT_DEPTH`, `A30_STROKE_WITHIN_CAP_CONTAINMENT`, `A39_DEFORM_KEEPS_TRIANGLE_WINDING` |
 
-Three further rules — **`A06`**, **`A08`** and **`A20`** — are *mixed*: their validity
-clauses run in both profiles and their policy clauses only under `spine-html`. `A06`'s
+Two further rules — **`A06`** and **`A20`** — are *mixed*: their validity clauses run
+in both profiles and their policy clauses only under `spine-html`. `A06`'s
 size-vs-PNG check is validity; one-part-per-page coverage, rotation and premultiplied
-alpha are policy. `A08`'s attachment→region join is validity; requiring the two names
-to be *identical* is policy. `A20`'s weight coherence is validity; requiring a mesh to
-be weighted at all is policy.
+alpha are policy. `A20`'s weight coherence is validity; requiring a mesh to be
+weighted at all is policy.
+
+**`A08` was the third until [#574](https://github.com/firejune/rigc/issues/574).** Its
+policy clause required a skin entry's placeholder to be spelled exactly like the region
+it resolves to — a rule the renderer it was gated under never performed, since
+`spine-html` keys its images on the atlas region name reached through the attachment's
+`path` and reads no placeholder at all. Measured before retiring it: the clause fired
+on **0** attachments across the whole example corpus (no export in `examples/` carries
+a `path` field), and on every rigc rig whose placeholder is not its PNG's basename —
+which is what `path` exists for (AUTHORING §2, R5) and what a placeholder two named
+skins share is emitted as. So it was policy that only ever refused this compiler's own
+correct output.
 
 ⚠️ **`--profile spine-html` on foreign data produces a wall of failures that mean
 nothing about the file.** Same `spineboy-pro.json`, same atlas, one flag changed — the
@@ -918,10 +928,14 @@ Three things to read out of that, in order:
 something is invisible to every measure in that report. Pair it with a `check` against
 frames rendered from the original.
 
-⚠️ **Do not rename toward what a rule seems to want.** `A08`'s name-identity clause and
-`A27`'s region-name-matches-page-filename are both `spine-html` policy (§3.3): under
-the default profile they do not fire, and renaming somebody's attachments to satisfy a
-policy they never opted into is a change with no benefit to them.
+⚠️ **Do not rename toward what a rule seems to want.** `A27`'s
+region-name-matches-page-filename is `spine-html` policy (§3.3): under the default
+profile it does not fire, and renaming somebody's attachments to satisfy a policy they
+never opted into is a change with no benefit to them. `A08` carried a name-identity
+clause of the same kind until
+[#574](https://github.com/firejune/rigc/issues/574) retired it, and that one is the
+argument's own case study — the rename it seemed to want was one no renderer had ever
+asked for.
 
 ### 4.3 Extending a foreign skeleton with a new animation
 

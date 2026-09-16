@@ -10293,6 +10293,213 @@ function runPathAndSliderSuite(): number {
       'slashes in placeholders',
   );
 
+  // --- A08 is one assertion again, under both profiles (issue #574) ---------
+  //
+  // 🚨 `PS71` above builds the very rig #574 was filed on — three fillers of one
+  // placeholder, in named skins — and gates it under `spine`. That is the
+  // profile A08's retired policy clause was invisible under, which is how the
+  // defect reached a consumer with this file green. The clause required a skin
+  // entry's PLACEHOLDER to be spelled exactly like the region it resolves to,
+  // and #567 made `<skin>/<placeholder>` over a restated `path` the ONLY
+  // spelling the Spine editor holds for a shared placeholder. Between #567 and
+  // #574, the editor-valid shape and a green `--profile spine-html` were
+  // mutually exclusive — and so was any rig that merely named a part something
+  // other than its placeholder, which `path` exists to allow (R5).
+  //
+  // The renderer that profile stands for never performed that join.
+  // `spine-html@0.4.1` builds its image map as `put(atlasRegion.name, …)` over
+  // the atlas (`DomTexture.js:78,102`) and reads it back at
+  // `SpineHtmlRenderer.js:172` as `this.regionImages.get(region.name)`, where
+  // `region` came off the attachment — resolved by `AtlasAttachmentLoader`
+  // through `path`. No published version of that renderer reads a placeholder.
+  //
+  // ⇒ These three ask what `PS70`–`PS73` do not: is A08 the same assertion
+  // under both profiles now? The middle one is also the first mutant A08 has
+  // ever had — it shipped its whole life with no case in this file that made it
+  // fire, which is the gate this repository says is not a gate.
+  const a08 = 'A08_REGION_NAMES_MATCH_ATTACHMENTS';
+  /** A08's whole say about one artifact, as one comparable string. */
+  const a08Verdict = (report: ReturnType<typeof validate>): string => {
+    const failed = report.failures.filter((f) => f.assertion === a08).map((f) => f.detail);
+    if (failed.length > 0) return `FAIL ${[...failed].sort().join(' | ')}`;
+    if (report.passed.includes(a08)) return 'PASS';
+    const held = report.skipped.find((s) => s.assertion === a08);
+    if (held) return `SKIP ${held.reason}`;
+    const out = report.profileSkipped.find((s) => s.assertion === a08);
+    return out ? `PROF ${out.kind}` : 'did not run at all';
+  };
+  const a08Compile = (probe: ProbeDirs): ReturnType<typeof compile> => {
+    const motionPath = join(probe.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const opts: Options = { rigPath: probe.rigPath, motionPath, outDir: probe.outDir, imagesDir: probe.dir };
+    return compile(opts);
+  };
+  /**
+   * The same texts judged by EVERY profile there is, read off `VALIDATE_PROFILES`
+   * so a third profile is covered the day it exists rather than the day somebody
+   * remembers this line.
+   */
+  const a08PerProfile = (
+    probe: ProbeDirs,
+    built: ReturnType<typeof compile>,
+    texts: { skeletonText?: string; atlasText?: string } = {},
+  ): Array<[ValidateProfile, string]> =>
+    VALIDATE_PROFILES.map((profile): [ValidateProfile, string] => [
+      profile,
+      a08Verdict(
+        validate({
+          skeletonText: texts.skeletonText ?? built.skeletonText,
+          atlasText: texts.atlasText ?? built.atlasText,
+          atlasDir: probe.outDir,
+          declaredDurations: built.declaredDurations,
+          rig: built.rig,
+          profile,
+        }),
+      ),
+    ]);
+
+  const a08SharedProbe = threeSkinDirs(false);
+  const a08SharedBuilt = a08Compile(a08SharedProbe);
+  // Every (skin, placeholder, attachment) triple slot "marker" carries, so the
+  // control states the SHAPE it is judging rather than trusting the fixture.
+  const a08Fillers = (JSON.parse(a08SharedBuilt.skeletonText) as { skins: EmittedSkin[] }).skins.flatMap((skin) =>
+    Object.entries(skin.attachments.marker ?? {}).map(
+      ([placeholder, att]): [string, string, { name?: string; path?: string }] => [skin.name, placeholder, att],
+    ),
+  );
+  const a08SharedVerdicts = a08PerProfile(a08SharedProbe, a08SharedBuilt);
+  const a08SharedProbes = [
+    ...a08SharedVerdicts.flatMap(([profile, verdict]) => (verdict === 'PASS' ? [] : [`--profile ${profile} said ${verdict}`])),
+    ...(a08Fillers.length >= 2
+      ? []
+      : [`slot "marker" holds ${a08Fillers.length} filler(s), and a contested placeholder needs at least two`]),
+    ...a08Fillers.flatMap(([skin, placeholder, att]) =>
+      att.name === `${skin}/${placeholder}` && att.path !== undefined && att.path !== placeholder
+        ? []
+        : [
+            `skin "${skin}" fills "${placeholder}" with name=${JSON.stringify(att.name ?? null)} ` +
+              `path=${JSON.stringify(att.path ?? null)}, which is not a composed name over a path that differs from ` +
+              'the placeholder — the shape this control exists to judge',
+          ],
+    ),
+  ];
+  const a08SharedHeld = a08SharedProbes.length === 0;
+  say(
+    'PS89_A_PLACEHOLDER_TWO_NAMED_SKINS_SHARE_IS_GREEN_ON_A08_UNDER_EVERY_PROFILE',
+    a08SharedHeld,
+    probeDetail(
+      a08SharedHeld,
+      a08SharedProbes,
+      `slot "marker" holds [${a08Fillers
+        .map(([skin, placeholder, att]) => `${skin}: name="${att.name}" path="${att.path}" under placeholder "${placeholder}"`)
+        .join(', ')}] and A08 says ${a08SharedVerdicts.map(([p, v]) => `${v} under ${p}`).join(', ')}`,
+    ),
+    'the consumer in #574 measured the same shape drawn correctly by `spine-html` — three skins, one placeholder, ' +
+      'three PNGs, 39 <img> for 3 copies x 13 slots and no console error — while `--profile spine-html` failed it ' +
+      'three times on A08. Before the retirement this case reads `FAIL attachment "marker" resolves to region ' +
+      '"art_a"; v0 requires them identical` and two more like it. ⚠️ The shape probes are the load-bearing half: ' +
+      'a green here over a rig whose paths happened to equal their placeholders would be this control passing on ' +
+      'the one input that could never have failed',
+  );
+
+  // A08's last loop is the only clause of it a rig can still reach. The two
+  // above it — a `path` with stray whitespace, and a `path` naming no region —
+  // are preempted by the loader: `AtlasAttachmentLoader.findRegion` throws
+  // `Region not found in atlas: <path>` before `readSkeletonData` returns, so
+  // A00 reports it and A08 never runs at all (measured both ways under both
+  // profiles, #574). ⇒ The mutant is an UNREFERENCED region: nothing joins to
+  // it, the loader never looks for it, and A08's walk over `atlas.regions` is
+  // the only thing in the gate that sees its name.
+  const a08Blocks = a08SharedBuilt.atlasText.trimEnd().split('\n\n');
+  const a08Spare = a08Blocks[a08Blocks.length - 1].split('\n');
+  // Every header line in this format is `key: value` and a region name is not,
+  // so the name is found rather than counted to.
+  const a08NameAt = a08Spare.findIndex((line, i) => i > 0 && !line.includes(': '));
+  const a08StrayText =
+    a08NameAt < 0
+      ? null
+      : `${a08SharedBuilt.atlasText.trimEnd()}\n\n${a08Spare
+          .map((line, i) => (i === a08NameAt ? ` ${line}_unreferenced ` : line))
+          .join('\n')}\n`;
+  const a08StrayVerdicts =
+    a08StrayText === null ? [] : a08PerProfile(a08SharedProbe, a08SharedBuilt, { atlasText: a08StrayText });
+  const a08StrayProbes = [
+    ...(a08NameAt < 0 ? ['no region-name line was found in the last atlas page block, so nothing was mutated'] : []),
+    ...a08StrayVerdicts.flatMap(([profile, verdict]) =>
+      verdict.startsWith('FAIL') && verdict.includes('has stray whitespace')
+        ? []
+        : [`--profile ${profile} said ${verdict}, and a region name padded on both sides has to be named by A08`],
+    ),
+  ];
+  const a08StrayHeld = a08StrayProbes.length === 0;
+  say(
+    'PS90_A_REGION_NAME_WITH_STRAY_WHITESPACE_STILL_MAKES_A08_FIRE_UNDER_EVERY_PROFILE',
+    a08StrayHeld,
+    probeDetail(
+      a08StrayHeld,
+      a08StrayProbes,
+      a08StrayVerdicts.map(([p, v]) => `${p}: ${v}`).join('; '),
+    ),
+    'retiring a clause is only honest if what is left can still fail, and A08 had no mutant in this file at all ' +
+      'before #574 — it was a gate nobody had seen fire. ⭐ The case also records which clause survived: the ' +
+      'attachment-join clauses are unreachable because the loader refuses first, so this is the one A08 still ' +
+      'answers for. That A07 names the same defect with a line number is worth knowing and is not this case\'s ' +
+      'business — these read A08\'s own failures and nothing else',
+  );
+
+  // A rig whose placeholder is simply not its PNG's basename: one skin, no
+  // contest, `path` written because R5 says the region name is the basename.
+  // This is the shape that shows the retired clause was never about named skins
+  // — it refused this too, and this is a spelling §3.4 tells authors to use.
+  const a08RenamedProbe = writeProbeRig({
+    skins: { default: { ...PROBE_BLOCK_ONLY_SKIN, marker: { marker: { image: 'art_a.png' } } } },
+  });
+  writeProbePng(join(a08RenamedProbe.dir, 'art_a.png'), 14, 9, [200, 90, 60, 255]);
+  const a08RenamedBuilt = a08Compile(a08RenamedProbe);
+  const a08RenamedVerdicts = a08PerProfile(a08RenamedProbe, a08RenamedBuilt);
+  const a08Family: Array<[string, Array<[ValidateProfile, string]>]> = [
+    ['a placeholder two named skins share', a08SharedVerdicts],
+    ['a placeholder that is not its PNG basename', a08RenamedVerdicts],
+    ['an atlas region name padded with whitespace', a08StrayVerdicts],
+  ];
+  // ⚠️ The outcome probe is not decoration and it was added because the case
+  // failed its own claim: with A08's surviving clause deleted, every artifact
+  // here read PASS under every profile and agreement was unanimous, so a case
+  // that only compared profiles printed green over a validator that had stopped
+  // checking anything. Agreement is worth measuring across a PASS **and** a
+  // FAIL, or it is agreement about nothing.
+  const a08Outcomes = new Set(a08Family.map(([, verdicts]) => (verdicts[0]?.[1] ?? '(nothing)').split(' ')[0]));
+  const a08BlindProbes = [
+    ...(a08Outcomes.has('PASS') && a08Outcomes.has('FAIL')
+      ? []
+      : [
+          `the three artifacts produced [${[...a08Outcomes].join(', ')}], and profile agreement is only worth ` +
+            'measuring when one of them passes and another fails',
+        ]),
+    ...a08Family.flatMap(([what, verdicts]) => {
+      if (verdicts.length !== VALIDATE_PROFILES.length) {
+        return [`${what} was judged by ${verdicts.length} profile(s) and there are ${VALIDATE_PROFILES.length}`];
+      }
+      const distinct = new Set(verdicts.map(([, verdict]) => verdict));
+      return distinct.size === 1 ? [] : [`${what}: ${verdicts.map(([p, v]) => `${p} said ${v}`).join(', but ')}`];
+    }),
+  ];
+  const a08BlindHeld = a08BlindProbes.length === 0;
+  say(
+    'PS91_A08_SAYS_THE_SAME_THING_UNDER_EVERY_PROFILE_ON_A_RIG_THAT_PASSES_AND_ONE_THAT_FAILS',
+    a08BlindHeld,
+    probeDetail(
+      a08BlindHeld,
+      a08BlindProbes,
+      a08Family.map(([what, verdicts]) => `${what}: ${verdicts[0]?.[1] ?? '(nothing)'} under all of them`).join('; '),
+    ),
+    'this is the retirement stated as a property rather than as an absence, and it is two-sided on purpose: one ' +
+      'of the three artifacts FAILS A08 and it has to fail identically everywhere, so a clause re-gated on ' +
+      '`profile` cannot hide in either direction. ⚠️ The second half was learned the hard way rather than ' +
+      'designed: stated as profile agreement ALONE it printed green under a validator whose A08 body had been ' +
+      'emptied, because unanimous silence is unanimous. So the outcomes are asserted before the agreement is',
+  );
+
   return bad;
 }
 

@@ -1508,8 +1508,24 @@ skin's entry as its placeholder and name the others. Trip 7 supported it and tri
 8 refuted it: that is the spelling the editor refuses at the door. There is no
 third spelling, which is why this is a refusal rather than a naming scheme.
 
-Three things to know about it and nothing to author:
+What to know about it, and nothing to author:
 
+- **The renderer accepts this shape too, and that is measured rather than
+  assumed.** `spine-html@0.4.1` resolves a part in two steps and neither one
+  reads a placeholder or an attachment name: `DomTexture.js:78,102` builds its
+  image map with `put(atlasRegion.name, …)` over every region of the atlas, and
+  `SpineHtmlRenderer.js:172` reads it back as
+  `const regionImage = region && this.regionImages.get(region.name)`, where
+  `region` came off the attachment — which `AtlasAttachmentLoader` resolved
+  through `path`. Every published version of that renderer keys the same way.
+  ⚠️ `A08` used to carry a `--profile spine-html` clause requiring a
+  placeholder to be spelled exactly like the region it resolves to, which made
+  this shape and a green `spine-html` **mutually exclusive** from
+  [#567](https://github.com/firejune/rigc/issues/567) onwards; the first
+  production rig with named skins hit it three times. That clause is retired —
+  restated as the join the renderer actually performs it was a tautology over
+  the resolve check beside it
+  ([#574](https://github.com/firejune/rigc/issues/574)).
 - **`path` is restated, and it has to be.** `path` defaults to the attachment's
   **name**, not to its placeholder, so an entry given a name and no path would
   resolve its texture at `zulu/patch` and find no such region. `A00_ROUNDTRIP_PARSE`
@@ -3666,7 +3682,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A05_CURVE_ARRAY_LENGTH` | both | a raw `curve` with the wrong number of values, a non-finite number in one, or a curve on a timeline that cannot take one. Four numbers **per value channel** |
 | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | the atlas `size:` disagrees with the PNG on disk. Under `spine-html` also: `pma`, rotation, and a page that is neither **one part covering it exactly** (the unpacked convention) nor a **tiling** — a page whose regions all sit inside it and none of which overlap ([#266](https://github.com/firejune/rigc/issues/266)). A packed atlas therefore gates under this profile; what the message names is the region that runs off its page, or the pair that shares texels |
 | `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file |
-| `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both ◑ | an attachment resolves to a region the atlas does not have — usually a `path`/`image` basename mismatch. Under `spine-html` the placeholder and the region name must also be *identical* |
+| `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both | an atlas region name carrying stray whitespace. rigc writes the atlas, so this means a hand-edited file, and `A07` names the same line with its line number. ⚠️ A `path` that resolves to **no** region never reaches here: `AtlasAttachmentLoader` throws `Region not found in atlas: <path> (attachment: <name>)` while the skeleton is still loading, so it arrives as `A00_ROUNDTRIP_PARSE`. There is no `spine-html` clause here any more — a placeholder is free to differ from the region its `path` names ([#574](https://github.com/firejune/rigc/issues/574)) |
 | `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the loaded duration ≠ the declared one, or the two sides disagree about which animations exist (R7). Asymmetric by design: a frame of slack for an animation that ends early, and none worth the name for a key *past* the declared end, which is the same rule §4.5 states at compile time — held here against a skeleton the compiler never saw. **SKIP** when neither side has an animation at all — a static rig has no duration |
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping the animation produced a `NaN` pose. Look for a degenerate curve or a zero scale |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | a clipping attachment; the target renderer skips them silently |
@@ -3749,6 +3765,12 @@ Two more limits that are not errors but will shape what you can attempt:
 1. `build --profile <the one you meant>` exits 0 and the report has **no FAIL**.
    Saying nothing means `spine`, so "the one you meant" is a decision either way —
    the report's first line names the profile that judged it.
+   📎 The two profiles judge attachment **naming** identically since
+   [#574](https://github.com/firejune/rigc/issues/574): `spine-html` adds the
+   renderer and archetype rules and has no opinion about how an attachment is
+   spelled, so a rig whose named skins share a placeholder (§3.4.2) is green
+   under either. Before that it was green under exactly one of them, and which
+   one was not a property of the rig.
 2. Read the `SKIP` lines. Each one is a check that did *not* run — make sure none of
    them is a check you were relying on. The summary's *measured* figure is the
    shortest version of this step: it is how many of the rules actually looked at

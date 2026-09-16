@@ -12,7 +12,7 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 
 > 🔼 **This note is dated and does not move; the measurements below are the corpus as it
 > stood on 2026-08-22 and stay as written. Its statements about what rigc *does* have gone
-> stale in six places, and the live ledger is [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md):**
+> stale in the places listed here, and the live ledger is [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md):**
 >
 > - **B2 is fixed** — A16 accepts `4.3`, `4.3.N` and `4.3.N-<suffix>`, so all twelve example
 >   exports pass it.
@@ -48,6 +48,18 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 >   `length`/`scale`/`shear`/`inherit`/`skin`/`color` setup fields, slot `dark`/`blend`, region
 >   `path`/`scaleX`/`scaleY`/`color`, mesh `path`/`edges`/`color`, and the header's `fps` /
 >   `referenceScale` / `images`. Part 2's coverage tables predate all of it.
+> - **A08's name-identity clause is retired (issue #574, 2026-09-17)** — so every line below
+>   that calls A08 *mixed* or names it as policy describes a rule that no longer exists:
+>   §2.1's `region` row ("the region name == attachment name == PNG basename convention
+>   **A08** + **A27** enforce" — A27 still enforces its half, A08 enforces none of it),
+>   §2.2's classification row and its "Nine assertions are renderer-profile or
+>   profile-mixed" paragraph, §4.1's row (c), and §4.3's item 2. A08 is plain **validity**
+>   now and identical under both profiles. The measurement behind it: `spine-html` resolves
+>   art through the attachment's `path` and keys its images on the atlas region name, in
+>   every published version of it, so the clause was a rule no renderer performed — and it
+>   fired on **0** attachments in this corpus, because no export in `examples/` carries a
+>   `path` field at all. The executive summary's item 8 is the one A08 line here that was
+>   already right and has only got more so: A08 is a Spine-validity rule.
 >
 > **The measurements of the CORPUS (Part 3) have not moved and stay as written.**
 >

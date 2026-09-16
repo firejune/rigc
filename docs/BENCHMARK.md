@@ -845,8 +845,9 @@ rig arriving from anywhere else has no stake in them. Ask for them with
 The **Profile** column below says which is which — `both` = validity, `renderer` and
 `archetype` = `spine-html` only, and **`both ◑`** = a mixed assertion whose validity
 half always runs while its policy clauses are gated (A06's `pma`/rotation/full-page
-clauses, A08's "the two names must be identical", A20's "a mesh must be weighted at
-all"). A report always names the profile it ran and lists what that profile left
+clauses and A20's "a mesh must be weighted at all"; A08 carried "the two names must be
+identical" until [#574](https://github.com/firejune/rigc/issues/574) retired it as a
+rule no renderer performed). A report always names the profile it ran and lists what that profile left
 out, on `PROF` lines: a `--profile spine` green means *valid Spine*, never *passes
 the renderer policy*.
 
@@ -860,7 +861,7 @@ the renderer policy*.
 | `A05_CURVE_ARRAY_LENGTH` | both | curve arrays carry 4 numbers per value channel and hold no non-finite value; timelines that cannot take a curve do not carry one. Covers all eleven 4.3 timeline groups — bone, slot, ik, transform, path, physics, slider, deform, drawOrder, drawOrderFolder, events |
 | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | each page's declared `size:` matches the PNG on disk, and its region covers the whole page |
 | `A07_ATLAS_TEXT_SHAPE` | both | the atlas text obeys the parser's whitespace rules — no stray indentation on region names, no blank line splitting a page block |
-| `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both ◑ | every attachment name resolves to a region of exactly that name |
+| `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both | every attachment resolves to a region the atlas holds, and no region name carries stray whitespace. It has no opinion about how the attachment is *spelled*: a placeholder may differ from the region its `path` names, which is what `path` is for |
 | `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the compiled duration equals the duration the spec declared (skeleton JSON has no duration field — the last key *is* the duration). Two tolerances: a frame of slack for a duration declared long, but a key landing *past* the declared end is held to the grid the times are stored on, because nothing playing the animation ever reaches it. SKIPs without a motion spec |
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping every animation frame by frame produces no NaN anywhere in the pose |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | no clipping attachments (the renderer skips them silently) |
