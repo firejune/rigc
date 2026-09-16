@@ -14093,6 +14093,28 @@ function buildTurnRig(
      */
     sliders?: Array<Record<string, unknown>>;
     /**
+     * Put the slot's attachments in a NAMED skin of this name instead of in the
+     * default one, and key the deform timeline on it (issue #583).
+     *
+     * ⭐ One option rather than two, because the format does not let them come
+     * apart: a deform timeline is keyed on a `skin / slot / attachment` triple,
+     * so moving the mesh moves the timeline with it. The default skin is then
+     * left EMPTY, which is what makes the case sharp — a pose that wears nothing
+     * resolves the slot through `defaultSkin` alone and finds no attachment at
+     * all, which is exactly the SKIP #583 is about.
+     */
+    meshSkin?: string;
+    /**
+     * `"skin": true` on every dial bone and on every slider in `sliders`, with
+     * `meshSkin` activating them (issue #583).
+     *
+     * The other two thirds of what `Skeleton.setSkin` does: `updateCache` leaves
+     * a `skinRequired` bone inactive and a `skinRequired` constraint out of the
+     * cache under any skin that does not list them, so a pose that wears nothing
+     * has the slider switched off rather than merely undressed.
+     */
+    skinRequiredDials?: boolean;
+    /**
      * A rotation on `root`, which every dial above hangs off (issue #419).
      *
      * ⭐ The only way to reach a case where the field that drives a slider is not
@@ -14144,7 +14166,24 @@ function buildTurnRig(
   // and nothing else (issue #407).
   const dials = [
     ...new Set((extra.sliders ?? []).map((s) => String(s.bone ?? '')).filter((name) => name.length > 0)),
-  ].map((name) => ({ name, parent: 'root', x: 400, y: 400 }));
+  ].map((name) => ({ name, parent: 'root', x: 400, y: 400, ...(extra.skinRequiredDials ? { skin: true } : {}) }));
+  // The skin table. `meshSkin` moves the whole attachment table into a named
+  // skin and leaves the default one empty; `skinRequiredDials` adds the member
+  // lists that switch the dial bones and their sliders on under it, which is the
+  // long form (`{ attachments, bones, slider }`) rather than the short one.
+  const skinTable: Record<string, unknown> =
+    extra.meshSkin === undefined
+      ? { default: { head: attachments } }
+      : {
+          default: {},
+          [extra.meshSkin]: extra.skinRequiredDials
+            ? {
+                attachments: { head: attachments },
+                bones: dials.map((d) => d.name),
+                slider: (extra.sliders ?? []).map((s) => String(s.name)),
+              }
+            : { head: attachments },
+        };
   writeFileSync(
     rigPath,
     `${JSON.stringify(
@@ -14159,8 +14198,16 @@ function buildTurnRig(
           ...dials,
         ],
         slots: extra.slots ?? [{ name: 'head', bone: 'head', attachment: 'head' }],
-        ...(extra.sliders ? { constraints: extra.sliders.map((s) => ({ type: 'slider', ...s })) } : {}),
-        skins: extra.skins ?? { default: { head: attachments } },
+        ...(extra.sliders
+          ? {
+              constraints: extra.sliders.map((s) => ({
+                type: 'slider',
+                ...s,
+                ...(extra.skinRequiredDials ? { skin: true } : {}),
+              })),
+            }
+          : {}),
+        skins: extra.skins ?? skinTable,
       },
       null,
       2,
@@ -14202,6 +14249,7 @@ function buildTurnRig(
             tracks: extra.tracks ?? [],
             deform: [
               {
+                ...(extra.meshSkin === undefined ? {} : { skin: extra.meshSkin }),
                 slot: 'head',
                 attachment: 'head',
                 keys: deformKeys,
@@ -14217,7 +14265,14 @@ function buildTurnRig(
                   duration: 1,
                   loop: false,
                   tracks: extra.also.tracks ?? [],
-                  deform: [{ slot: 'head', attachment: 'head', keys: deformKeys }],
+                  deform: [
+                    {
+                      ...(extra.meshSkin === undefined ? {} : { skin: extra.meshSkin }),
+                      slot: 'head',
+                      attachment: 'head',
+                      keys: deformKeys,
+                    },
+                  ],
                 },
               }
             : {}),
@@ -16518,6 +16573,244 @@ function runDeformWindingSuite(): number {
     'issue #403 added this line so "the scan ran and found nothing" could not be read as "the scan never ran". A ' +
       'filter that matched nothing turned it back into the second, on every rig, with a green gate — and the ' +
       'transcript in docs/AUTHORING.md went on quoting it, because docs/ is outside GT01–GT06',
+  );
+
+  // --- the skin the timeline is keyed on, WORN for the pose (issue #583) ----
+  //
+  // Every pose above this line is taken on a skeleton wearing nothing, which is
+  // `Skeleton.skin === null` and resolves every slot through `defaultSkin`
+  // alone. Move a deformed mesh into a named skin — which the format not only
+  // allows but keys the timeline on, `skin / slot / attachment` — and the slot
+  // resolved to no attachment at all, so `A39` went PASS → SKIP and the sentence
+  // it printed blamed the rig for what the measurement was doing.
+  const DRESSED_SKIN = 'suit';
+  /** Inside the closed form's own fold angle, so the winding survives. */
+  const DRESSED_ANGLE = 12;
+  const bareBuild = buildTurnRig(turnRow(DRESSED_ANGLE));
+  const dressedBuild = buildTurnRig(turnRow(DRESSED_ANGLE), { meshSkin: DRESSED_SKIN });
+  const bare = gateTurn(bareBuild);
+  const dressed = gateTurn(dressedBuild);
+  const bareBlock = turnDeformBlock(bareBuild);
+  const dressedBlock = turnDeformBlock(dressedBuild);
+  // ⭐ The comparison, and why it is against another BUILD rather than against a
+  // table written here: "A39 passed" is a verdict a measurement of nothing also
+  // produces, and the figures are what say something was measured. The two rigs
+  // differ in one thing — which skin the mesh sits in — so every printed figure
+  // has to be identical and exactly one token is allowed to move: the skin in
+  // the `skin/slot/attachment` triple each `DEFORM` line opens with.
+  const undressed = dressedBlock.map((line) => line.replaceAll(`${DRESSED_SKIN}/head/head`, 'default/head/head'));
+  const namesTheSkin = dressedBlock.filter((line) => line.includes(`${DRESSED_SKIN}/head/head`)).length;
+  const blockDrift = undressed
+    .map((line, i) => (line === bareBlock[i] ? null : `line ${i}: dressed "${line.trim()}" vs bare "${(bareBlock[i] ?? '(missing)').trim()}"`))
+    .filter((row): row is string => row !== null);
+  const dressedProbes = [
+    ...firstFew(
+      dressed.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+      'failure(s)',
+    ),
+    ...(dressed.passed.includes(A39) ? [] : [`${A39} is not in the dressed build's passed list, so it did NOT run`]),
+    ...(bare.passed.includes(A39) ? [] : [`${A39} did not run on the BARE build either, so this pair compares nothing`]),
+    ...(namesTheSkin > 0
+      ? []
+      : [`no DEFORM line names "${DRESSED_SKIN}/head/head", so the normalisation below replaced nothing and the two blocks are equal for the wrong reason`]),
+    ...(undressed.length === bareBlock.length
+      ? []
+      : [`the dressed block prints ${undressed.length} line(s) and the bare one ${bareBlock.length}`]),
+    ...firstFew(blockDrift, 'differing line(s)'),
+    ...(Number(dressed.stats.deformKeysMeasured) > 0
+      ? []
+      : [`deformKeysMeasured reads ${dressed.stats.deformKeysMeasured} on the dressed build — nothing was measured`]),
+    ...(Number(dressed.stats.deformKeysMeasured) === Number(bare.stats.deformKeysMeasured)
+      ? []
+      : [`deformKeysMeasured reads ${dressed.stats.deformKeysMeasured} dressed and ${bare.stats.deformKeysMeasured} bare`]),
+    ...(dressed.stats.deformKeysNotDrawn === undefined
+      ? []
+      : [`deformKeysNotDrawn reads ${dressed.stats.deformKeysNotDrawn} on the dressed build, so the pose still fails to show the mesh`]),
+  ];
+  const dressedHeld = dressedProbes.length === 0;
+  say(
+    'DW74_A_MESH_MOVED_INTO_A_NAMED_SKIN_IS_MEASURED_IN_IT_AND_READS_WHAT_THE_DEFAULT_SKIN_DOES',
+    dressedHeld,
+    probeDetail(
+      dressedHeld,
+      dressedProbes,
+      `the same ${DRESSED_ANGLE}° turn built twice — mesh in the default skin, and mesh in a named skin "${DRESSED_SKIN}" ` +
+        `with the deform timeline keyed on it. ${A39} PASSES both, ${dressed.stats.deformKeysMeasured} key(s) ` +
+        `measured each, and the ${dressedBlock.length} line(s) of the DEFORM block are identical once the ` +
+        `${namesTheSkin} triple(s) naming the skin are read back to "default" — every area, stretch, moved and ` +
+        'winding figure to the last digit',
+      (n) => `${n} probe(s) held against the dressed build:`,
+    ),
+    'the pose wore no skin, so a mesh an author had moved into one resolved to nothing and the whole rig came back ' +
+      'unmeasured — a SKIP that reads as "your rig cannot be gated" when what it meant was "this instrument got ' +
+      'dressed wrong". Equality against the default-skin build is the only form that catches a pose which shows ' +
+      'the mesh and then measures it in some other frame',
+  );
+
+  // --- and the SKIP it must not turn into a pass ----------------------------
+  //
+  // 🚨 Wearing the skin is not a licence to gate a key nothing draws. The mesh
+  // is in "suit", the pose wears "suit", and the slot's setup attachment is a
+  // region — so the runtime applies no deform to it at any time and the 40°
+  // fold below is never on screen. That is still a SKIP, and the sentence now
+  // says which dress the verdict was taken in, which is the half #583 added:
+  // "the slot shows nothing" and "the slot shows nothing in the skin this mesh
+  // lives in" are different claims and only the second is measurable.
+  //
+  // ⚠️ The literal shape the card asked for — an attachment in NO skin — is not
+  // reachable through the parser: `SkeletonJson` resolves a deform timeline's
+  // attachment out of a skin before it can build the timeline, so a timeline
+  // whose attachment no skin holds cannot be loaded. This is its reachable
+  // equivalent: in a skin, and nothing in the rig ever shows it.
+  const hiddenBuild = buildTurnRig(turnRow(40), {
+    meshSkin: DRESSED_SKIN,
+    swapTo: 'away',
+    slots: [{ name: 'head', bone: 'head', attachment: 'away' }],
+  });
+  const hidden = gateTurn(hiddenBuild);
+  const hiddenReason = hidden.skipped.find((s) => s.assertion === A39)?.reason ?? '';
+  const hiddenProbes = [
+    ...firstFew(
+      hidden.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+      'failure(s)',
+    ),
+    ...(hidden.passed.includes(A39)
+      ? [`${A39} PASSED on a rig whose every key draws nothing — wearing the skin turned a SKIP into a vacuous pass`]
+      : []),
+    ...(hiddenReason === '' ? [`${A39} reported neither a pass nor a SKIP with a reason`] : []),
+    ...(/shows attachment "away"/.test(hiddenReason)
+      ? []
+      : [`the SKIP reason does not name the attachment the slot really shows: "${hiddenReason}"`]),
+    ...(hiddenReason.includes(`with skin "${DRESSED_SKIN}" worn`)
+      ? []
+      : [`the SKIP reason does not say which skin the pose wore, so it reads as a verdict on the rig: "${hiddenReason}"`]),
+  ];
+  const hiddenHeld = hiddenProbes.length === 0;
+  say(
+    'DW75_A_KEY_NOTHING_EVER_SHOWS_STILL_SKIPS_AND_THE_REASON_NAMES_THE_SKIN_THE_POSE_WORE',
+    hiddenHeld,
+    probeDetail(
+      hiddenHeld,
+      hiddenProbes,
+      `a 40° fold on a mesh in skin "${DRESSED_SKIN}" whose slot shows a region instead at every time: ${A39} ` +
+        `reports SKIP, not a pass — "${hiddenReason.slice(0, 190)}…" — and the sentence carries both the ` +
+        'attachment the slot really shows and the skin the pose was taken in',
+      (n) => `${n} probe(s) held against the hidden build:`,
+    ),
+    'the repair sets a skin before every pose, and the failure mode of a repair like that is that it greens ' +
+      'everything: an assertion whose every key was passed over has measured nothing, and folding that into the ' +
+      'pass count is how a gate comes to look kept while checking nothing (the rule DW10 holds for a slot faded ' +
+      'to zero). The skin clause is the other half — a reader who cannot see the rig has to be told which dress ' +
+      'the "nothing is drawn" was measured in, or the sentence is a guess about the rig',
+  );
+
+  // --- what the skin switches OFF, which is the half the card did not name --
+  //
+  // ⭐ `Skeleton.setSkin` does not only re-attach art. `updateCache`
+  // (`Skeleton.js:142-187`) leaves a `skinRequired` bone inactive and a
+  // `skinRequired` constraint out of the update cache under every skin that does
+  // not list them — so a slider dressed into the same skin as the mesh was
+  // switched OFF for every pose this file took, and failed in two different
+  // silences depending on how its property reads:
+  //
+  //  - `local: false` reads through the world transform, which an inactive bone
+  //    never updates, so `planDial` found no responding field, returned null,
+  //    and the animation was reported as **"played on a track"** — an animation
+  //    a slider is the only way into;
+  //  - `local: true` reads straight off the bone's pose, so the plan survived,
+  //    but the constraint itself was out of the cache and `SliderPose.time`
+  //    never left 0 — every key came back **"at a time no dial selects"**.
+  //
+  // Both spellings are built here, because a repair that fixed one and not the
+  // other would look identical from the outside.
+  const SKINNED_DIALS: ReadonlyArray<{ tag: string; slider: Record<string, unknown> }> = [
+    {
+      tag: 'local',
+      slider: {
+        name: 'dial',
+        animation: 'turn',
+        bone: 'knob',
+        property: 'rotate',
+        from: DIAL_FROM,
+        to: DIAL_TO,
+        scale: DIAL_SCALE,
+        local: true,
+        additive: true,
+      },
+    },
+    {
+      tag: 'world',
+      slider: {
+        name: 'dial',
+        animation: 'turn',
+        bone: 'knob',
+        property: 'x',
+        from: 0,
+        to: 0,
+        scale: 1,
+        local: false,
+        additive: true,
+      },
+    },
+  ];
+  const skinnedProbes: string[] = [];
+  const skinnedSaid: string[] = [];
+  for (const { tag, slider } of SKINNED_DIALS) {
+    const build = buildTurnRig(turnRow(DRESSED_ANGLE), {
+      meshSkin: DRESSED_SKIN,
+      skinRequiredDials: true,
+      sliders: [slider],
+    });
+    const gate = gateTurn(build);
+    const survey = surveyDeformKeys(skeletonDataFromText(build.result.skeletonText, build.result.atlasText));
+    const offTheTrack = survey.keys.filter((k) => k.reach.kind !== 'slider' || k.reach.slider !== 'dial');
+    const unreached = survey.keys.filter((k) => k.dial?.unreachable === true);
+    // The runtime's own answer, not the survey's belief about it: `applied` is
+    // read off `SliderPose.time` after the drive, so a key whose animation was
+    // applied somewhere else says so here.
+    const landed = survey.keys.filter((k) => Math.abs((k.dial?.applied ?? Number.NaN) - k.time) <= 1e-6);
+    skinnedProbes.push(
+      ...firstFew(
+        gate.failures.map((f) => `${tag}: ${f.assertion}: ${f.detail.slice(0, 160)}`),
+        'failure(s)',
+      ),
+      ...(gate.passed.includes(A39) ? [] : [`${tag}: ${A39} is not in the passed list, so it did NOT run`]),
+      ...(survey.keys.length > 0 ? [] : [`${tag}: the survey measured no key at all`]),
+      ...(offTheTrack.length === 0
+        ? []
+        : [
+            `${tag}: ${offTheTrack.length} of ${survey.keys.length} key(s) were reached as ` +
+              `${offTheTrack.map((k) => `${k.reach.kind}/${k.reach.slider ?? '(none)'}`).join(', ')} and not through the slider`,
+          ]),
+      ...(unreached.length === 0
+        ? []
+        : [`${tag}: ${unreached.length} of ${survey.keys.length} key(s) sit at a time no dial value selects`]),
+      ...(landed.length === survey.keys.length
+        ? []
+        : [
+            `${tag}: the runtime applied the animation at ` +
+              `[${survey.keys.map((k) => k.dial?.applied.toFixed(6) ?? '?').join(', ')}]s for keys at ` +
+              `[${survey.keys.map((k) => k.time.toFixed(6)).join(', ')}]s`,
+          ]),
+    );
+    skinnedSaid.push(`${tag}: ${survey.keys.length} key(s), all through slider "dial", all landing on their own time`);
+  }
+  const skinnedHeld = skinnedProbes.length === 0;
+  say(
+    'DW76_A_SKIN_REQUIRED_SLIDER_REACHES_ITS_OWN_ANIMATIONS_KEYS_ONCE_THE_POSE_WEARS_THE_SKIN',
+    skinnedHeld,
+    probeDetail(
+      skinnedHeld,
+      skinnedProbes,
+      `a slider and its driving bone both declared \`"skin": true\` and activated by "${DRESSED_SKIN}", the skin ` +
+        `the deformed mesh lives in — ${skinnedSaid.join('; ')}. Undressed, the world spelling was reported as ` +
+        '"played on a track" and every key of the local one as sitting at a time no dial selects',
+      (n) => `${n} probe(s) held across the two dial spellings:`,
+    ),
+    'this is the half of `Skeleton.setSkin` that is not about art. A rig spec may put a bone or a constraint in a ' +
+      'skin, `updateCache` switches them off under any other, and the survey planned and drove its dials on a ' +
+      'skeleton wearing none — so the frame a key was posed in was decided by an instrument the rig had switched ' +
+      'off. Neither silence names a skin in its own message, which is why neither was found by reading one',
   );
 
   return bad;
