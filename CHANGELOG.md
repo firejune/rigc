@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.2](https://github.com/firejune/rigc/compare/v0.22.1...v0.22.2) (2026-09-16)
+
+
+### Bug Fixes
+
+* **compile:** refuse a placeholder the default skin shares with a named skin, because the Spine editor has no way to hold it ([#567](https://github.com/firejune/rigc/issues/567)) ([#572](https://github.com/firejune/rigc/issues/572)) ([a7fd896](https://github.com/firejune/rigc/commit/a7fd8961793ad806127b060a969ed1959c758526))
+
 ## [0.22.1](https://github.com/firejune/rigc/compare/v0.22.0...v0.22.1) (2026-09-16)
 
 
