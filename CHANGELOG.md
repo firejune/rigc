@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.22.0](https://github.com/firejune/rigc/compare/v0.21.0...v0.22.0) (2026-09-16)
+
+
+### Features
+
+* **compile:** name a skin's attachment so the editor can hold it, and emit skins in the order it writes them back ([#541](https://github.com/firejune/rigc/issues/541)) ([#552](https://github.com/firejune/rigc/issues/552)) ([6f8a93b](https://github.com/firejune/rigc/commit/6f8a93b0fe82df9e32e3c6afc6f45d5659ffe811))
+
+
+### Bug Fixes
+
+* **compile:** measure every skin attachment's art, and refuse two files that would be one region ([#555](https://github.com/firejune/rigc/issues/555)) ([#557](https://github.com/firejune/rigc/issues/557)) ([a47e2a3](https://github.com/firejune/rigc/commit/a47e2a3c9c06ca672d087ef06f0b0158693f9ba3))
+
+
+### Instrument
+
+* install the package into an empty directory and build a rig from it, on every pull request and after every publish ([#556](https://github.com/firejune/rigc/issues/556)) ([#559](https://github.com/firejune/rigc/issues/559)) ([38e60f2](https://github.com/firejune/rigc/commit/38e60f2c69907946f73349305170f21c79786687))
+
 ## [0.21.0](https://github.com/firejune/rigc/compare/v0.20.3...v0.21.0) (2026-09-14)
 
 
