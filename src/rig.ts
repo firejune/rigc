@@ -1520,6 +1520,15 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
         const type = att.type === undefined ? 'region' : String(att.type);
         const shape = ATTACHMENT_SHAPE[type];
         if (shape === undefined) continue;
+        // A mesh carrying `source` is a LINKED mesh — `type: "mesh"` and
+        // `type: "linkedmesh"` share one parser branch and the `source` key is
+        // what decides (`:568-569`, `:582`; SPEC_COVERAGE part 1-6). It has no
+        // key set here because `RigUnimplementedAttachment` deliberately has
+        // none, and checking it against a MESH's keys named the wrong fault:
+        // *2 keys this compiler does not read: "source", "skin" … fix the
+        // spelling or remove it*, where removing `source` is what unmakes the
+        // linked mesh. `buildRigAttachment` refuses it as the construct it is.
+        if (type === 'mesh' && att.source !== undefined) continue;
         at(att, shape, `${who} (${type})`);
         for (const [i, vertex] of (Array.isArray(att.weights) ? att.weights : []).entries()) {
           for (const [j, binding] of (Array.isArray(vertex) ? vertex : []).entries()) {

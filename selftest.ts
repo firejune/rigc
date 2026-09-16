@@ -10500,6 +10500,185 @@ function runPathAndSliderSuite(): number {
       'emptied, because unanimous silence is unanimous. So the outcomes are asserted before the agreement is',
   );
 
+  // --- issue #577: the attachment `type` a spec may say, and the `path` it gets
+  //
+  // Both halves of that card are the same shape — a refusal that names somebody
+  // else's fault — and neither was the shape the card predicted, so the two
+  // cases below measure what the tree does rather than what it was said to do.
+  //
+  // 🚨 The fixture uses `marker.png` under a placeholder called `plate`, so
+  // "the PNG's basename differs from the placeholder" needs no third PNG: the
+  // region is `marker` and the placeholder is not.
+  const OFF_NAME = 'plate';
+  const SQUARE = {
+    uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+    triangles: [0, 1, 2, 0, 2, 3],
+    vertices: [0, 0, 6, 0, 6, 6, 0, 6],
+    hull: 4,
+  };
+  interface AttachmentBuild {
+    /** The `path` the emit wrote for that attachment — `undefined` where it wrote none. */
+    path: string | undefined;
+    failures: string[];
+    passed: string[];
+  }
+  /**
+   * The probe rig with ONE attachment under `placeholder` on slot `marker`,
+   * compiled and gated: what it emitted, or the message it was refused with.
+   *
+   * The slot's setup attachment is rewritten to the placeholder, because the
+   * base probe's is `marker` and a setup pose naming an attachment the slot does
+   * not have is a different refusal that would arrive first.
+   */
+  const attachmentBuild = (placeholder: string, att: Record<string, unknown>): AttachmentBuild | string => {
+    const probe = writeProbeRig({
+      slots: [
+        { name: 'block', bone: 'block', attachment: 'block' },
+        { name: 'marker', bone: 'block', attachment: placeholder },
+      ],
+      skins: { default: { block: { block: { image: 'block.png' } }, marker: { [placeholder]: att } } },
+    });
+    const motionPath = join(probe.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    try {
+      const built = compile({
+        rigPath: probe.rigPath,
+        motionPath,
+        outDir: probe.outDir,
+        imagesDir: probe.dir,
+      });
+      const report = validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: probe.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      });
+      const skins = (JSON.parse(built.skeletonText) as { skins: EmittedSkin[] }).skins;
+      return {
+        path: skins[0].attachments.marker[placeholder].path,
+        failures: report.failures.map((f) => `${f.assertion}: ${f.detail}`),
+        passed: report.passed,
+      };
+    } catch (err) {
+      return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+  };
+  /** The same, reduced to the refusal — or the word for "it went through". */
+  const typeRefusal = (type: unknown): string => {
+    const out = attachmentBuild('marker', { type, image: 'marker.png' });
+    return typeof out === 'string' ? out : '(compiled)';
+  };
+  /**
+   * A refusal with its `where` prefix off and a bound on its length.
+   *
+   * ⚠️ It is a prefix rather than a slice between two markers, because a marker
+   * the message does not carry slices to nothing — which is what these two cases
+   * printed on the run that proved they fire: `("", "")`, a detail saying only
+   * that the clause it reports failed.
+   */
+  const gist = (message: string): string => {
+    const body = message.replace(/^.*?attachment "[^"]*": /, '');
+    return body.length > 160 ? `${body.slice(0, 160)}…` : body;
+  };
+
+  const linkedByType = typeRefusal('linkedmesh');
+  const pointByType = typeRefusal('point');
+  const notAType = typeRefusal('sequence');
+  const nulledType = typeRefusal(null);
+  // `undefined` does not survive `JSON.stringify`, so this is the key ABSENT —
+  // the parser's own default, and the clause that keeps the case from being a
+  // rule against writing attachments at all.
+  const absentType = typeRefusal(undefined);
+  const deferred = [linkedByType, pointByType];
+  say(
+    'PS98_EACH_ATTACHMENT_TYPE_A_SPEC_CAN_SAY_IS_REFUSED_UNDER_ITS_OWN_NAME',
+    deferred.every((m) => m.includes('rigc does not emit it yet') && m.includes('docs/SPEC_COVERAGE.md part 1-6')) &&
+      linkedByType.includes('"source" (the attachment it links to') &&
+      pointByType.includes('"x", "y", "rotation"') &&
+      notAType.includes('is not one of the 7 the Spine 4.3 format defines') &&
+      // The false promise, and the reason the two refusals are two: `sequence`
+      // is not a name the format has, so "rigc does not emit it yet" would be
+      // promising work on a spelling that is simply wrong.
+      !notAType.includes('rigc does not emit it yet') &&
+      nulledType.includes('is not a name') &&
+      nulledType.includes('dropped from the skeleton without a word') &&
+      absentType === '(compiled)',
+    `linkedmesh — ${gist(linkedByType)}; point — ${gist(pointByType)}; sequence — ${gist(notAType)}; ` +
+      `\`"type": null\` — ${gist(nulledType)}; and with the key left out, ` +
+      `${absentType === '(compiled)' ? 'the attachment still reads as a region and builds' : `it was refused: ${gist(absentType)}`}`,
+    'the parser has no default branch — an unrecognised `type` returns null and the attachment vanishes ' +
+      '(`SkeletonJson.ts:653`) — so every spelling has to be refused HERE. ⚠️ `"type": null` was the one real ' +
+      'fall-through: `att.type ?? "region"` read it as a region and compiled one, while `getValue(map, "type", ' +
+      '"region")` takes the default only when the key is MISSING, so the parser would have dropped it. Measured ' +
+      'before the repair: `{"type": null, "image": "marker.png"}` gated green, and the same map with no size was ' +
+      'refused as *a region needs width and height* — which is the message issue #577 quoted and read as a ' +
+      '`linkedmesh` fault. `"type": "linkedmesh"` was refused by that name throughout',
+  );
+
+  const meshOffName = attachmentBuild(OFF_NAME, { type: 'mesh', image: 'marker.png', ...SQUARE });
+  const regionOffName = attachmentBuild(OFF_NAME, { image: 'marker.png' });
+  const meshOnName = attachmentBuild('marker', { type: 'mesh', image: 'marker.png', ...SQUARE });
+  const regionOnName = attachmentBuild('marker', { image: 'marker.png' });
+  const pathCases: Array<[string, AttachmentBuild | string]> = [
+    [`mesh under "${OFF_NAME}"`, meshOffName],
+    [`region under "${OFF_NAME}"`, regionOffName],
+    ['mesh under "marker"', meshOnName],
+    ['region under "marker"', regionOnName],
+  ];
+  const offName = [meshOffName, regionOffName];
+  const onName = [meshOnName, regionOnName];
+  const built = pathCases.filter(([, b]) => typeof b !== 'string');
+  say(
+    'PS99_A_MESH_AND_A_REGION_DERIVE_PATH_FROM_IMAGE_BY_ONE_RULE',
+    built.length === pathCases.length &&
+      offName.every((b) => typeof b !== 'string' && b.path === 'marker') &&
+      // The half that keeps this from being "always write a path": the same two
+      // attachments under the placeholder their PNG is named after write none.
+      onName.every((b) => typeof b !== 'string' && b.path === undefined) &&
+      pathCases.every(([, b]) => typeof b !== 'string' && b.failures.length === 0 && b.passed.includes('A00_ROUNDTRIP_PARSE')),
+    pathCases
+      .map(([what, b]) =>
+        typeof b === 'string'
+          ? `${what} was REFUSED: ${b}`
+          : `${what} emits path ${JSON.stringify(b.path)} and gates ${b.failures.length === 0 ? 'green' : `RED: ${b.failures.join('; ')}`}` +
+            `${b.passed.includes('A00_ROUNDTRIP_PARSE') ? '' : ' (A00_ROUNDTRIP_PARSE did not run)'}`,
+      )
+      .join('; ') + ` — the PNG is marker.png in all four, so "marker" is the region and "${OFF_NAME}" is not`,
+    'the parser resolves a texture by `path` and `path` defaults to the NAME, not to the placeholder ' +
+      '(`SkeletonJson.ts:541` for a region, `:570` for a mesh — one line each, the same rule). Until #577 a ' +
+      'region derived it and an authored mesh did not, so `image: hair_short.png` under placeholder `hair` built ' +
+      'and then failed `A00_ROUNDTRIP_PARSE: threw: Region not found in atlas: hair`. `docs/AUTHORING.md` §3.4 ' +
+      'had documented the derivation for both kinds the whole time, and two of the five emit sites — the ' +
+      '`contour` and `grid` generators — already did it, one of them under a comment reading "Same rule a region ' +
+      'attachment follows". So this is the tree agreeing with itself, not a new convention',
+  );
+
+  const sourcedMesh = attachmentBuild('marker', { type: 'mesh', image: 'marker.png', source: 'block', skin: 'default', ...SQUARE });
+  const plainMesh = attachmentBuild('marker', { type: 'mesh', image: 'marker.png', ...SQUARE });
+  say(
+    'PS100_A_MESH_CARRYING_SOURCE_IS_REFUSED_AS_THE_LINKED_MESH_IT_IS',
+    typeof sourcedMesh === 'string' &&
+      sourcedMesh.includes('this attachment is a "linkedmesh" (a mesh carrying "source" is one)') &&
+      sourcedMesh.includes('rigc does not emit it yet') &&
+      // The message it must NOT be any more: an unknown-key fault whose remedy
+      // is to delete `source`, which is the key that makes it a linked mesh.
+      !sourcedMesh.includes('keys this compiler does not read') &&
+      typeof plainMesh !== 'string' &&
+      plainMesh.failures.length === 0,
+    typeof sourcedMesh !== 'string'
+      ? 'a mesh carrying `source` compiled as an ordinary mesh, which drops the link in silence'
+      : `refused with: ${gist(sourcedMesh)}` +
+        `; the same mesh with \`source\` removed ${typeof plainMesh === 'string' ? `was ALSO refused: ${gist(plainMesh)}` : 'builds and gates green'}`,
+    '`type: "mesh"` and `type: "linkedmesh"` share ONE parser branch and the `source` key is what decides between ' +
+      'them (`SkeletonJson.ts:568-569`, `:582`; docs/SPEC_COVERAGE.md part 1-6 says so outright). So a mesh ' +
+      'carrying `source` is a linked mesh whatever its `type` says. It was refused as *2 keys this compiler does ' +
+      'not read: "source", "skin" … fix the spelling or remove it* — and removing `source` is precisely what ' +
+      'unmakes the linked mesh, so the remedy sentence destroyed the construct. The second half is the positive ' +
+      'control: without it this would be a rule against meshes',
+  );
+
   return bad;
 }
 
