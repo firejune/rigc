@@ -2759,7 +2759,7 @@ Per key:
 
 | Field | Meaning |
 | --- | --- |
-| `vertices` | the run: `x, y` offset pairs. **Absent** = back to the setup pose |
+| `vertices` | the run: consecutive numbers copied into the deform array from the start index on, `x, y` per vertex or influence — an **odd** count is legal and ends on a lone x (§ the 📌 below). **Absent** = back to the setup pose |
 | `transform` | the run stated as a **model** instead, evaluated over the attachment's own geometry — §4.11.1. Never with `vertices`, `fromVertex` or `offset` |
 | `fromVertex` | which VERTEX the run starts at — rigc translates it |
 | `offset` | the same start as a raw index into the deform array. Never with `fromVertex` |
@@ -2809,14 +2809,12 @@ geometry to the next one's. So a named `ease` behaves as it does anywhere, and a
 raw `curve` is 4 numbers whose value axis runs 0..1, not the range of your vertex
 offsets.
 
-rigc refuses six things here, and the first is the quietest defect in the whole
-animation half of the format:
+rigc refuses these, and the first is the quietest defect in the whole animation
+half of the format:
 
 | You wrote | You get |
 | --- | --- |
 | a run that ends past the array | `the run starts at deform index 4 and is 6 long, which ends at 10; this attachment's deform array is 8 long (4 vertices)` |
-| an odd `offset` | `offset 3 is odd. The deform array is x, y pairs, so an odd start puts every x of this run on a y` |
-| an odd number of `vertices` | `"vertices" holds 3 numbers; the deform array is x, y PAIRS` |
 | `fromVertex` on a multi-bone vertex | `"fromVertex" counts VERTICES, and this attachment is weighted … vertex 2 has 2 of them` |
 | an attachment that is not there | `slot "flat" in skin "default" has no attachment "flatt" (it has: flat)` |
 | a deform on a region attachment | `a deform timeline keys the vertices of an attachment, and this one is a "region"` |
@@ -2834,15 +2832,30 @@ tail and deforms the rest of the mesh correctly, which looks nearly right, and
 emitted file, measuring the array's length from the attachment rather than assuming
 an encoding.
 
-📌 **The two parity rows above are an AUTHORING rule and not a validity one, and
-the distinction is deliberate** (issue #262). Nothing in the runtime aligns a run
-to a pair — `arrayCopy` copies at the raw index and the `deform[i] += vertices[i]`
-after it walks the whole array — so a run may legitimately begin and end mid-pair,
-which is what an editor's trimmed delta run looks like. In *this* spec an odd
-`offset` is a typo with a better spelling (`fromVertex`), so it is refused here,
-where the remedy is a line you own. `A35` does **not** refuse it: it is pointed at
-other people's files, and a rule stricter than the runtime tells its reader to go
-and break correct data.
+📌 **A run is not required to be an even number of numbers, and it is not required
+to start on an even index.** Two rows stood here saying otherwise until issue
+#576. Nothing in either reader aligns a run to a pair: `SkeletonJson` does
+`Utils.arrayCopy(vertices, 0, deform, offset, vertices.length)` — a raw copy, at
+the raw index the key gives — and `SkeletonBinary` reads a count and a start and
+fills `for (let v = start; v < end; v++)`. So a run may begin and end mid-pair,
+which is exactly what an editor's trimmed delta run looks like: `spineboy-pro`'s
+`hoverboard-board` key starts at 1 and carries 147 numbers of a 148-long array,
+the whole delta minus one leading zero.
+
+⭐ **An odd run's last number is an x with no y beside it, and that is a
+statement, not an accident.** It moves that vertex in x and leaves its y at the
+setup value, because the parser copies your numbers and touches nothing else. It
+is also the reason the rule could not stay as an authoring convenience: padding a
+`0` to make the run even *changes what plays* wherever that setup y is non-zero,
+so there is no second spelling of such a key — refusing it would mean no
+transcription of that file can be written in this spec at all. `A35` reached the
+same conclusion from the other side in issue #262, and between that fix and this
+one the two halves of rigc disagreed about what the format holds.
+
+⚠️ What you lose with those rows is a typo filter: `offset: 3` written where
+`fromVertex: 3` was meant now compiles. It always half-did — `offset: 4` meant as
+vertex 4 lands on vertex 2 and was never refused — so read the field name twice.
+`offset` is an index into the deform array; `fromVertex` is a vertex.
 
 🖼️ **Worked examples, and they use a deform for four different things** — all
 four are repository material rather than part of the published package, so the
@@ -3612,7 +3625,6 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `ik constraint "X": key 0 names "softness" and key 1 (t=…) does not` | §4.9 — every key is read with its own default, so state the field on every key or on none |
 | `ik constraint "X" (t=…): mix is 1.5, outside 0..1` | §4.9 — an IK mix is a percentage; a transform mix is unbounded |
 | `deform …: the run starts at deform index 4 and is 6 long, which ends at 10; this attachment's deform array is 8 long` | §4.11 — shorten the run or move its start; the parser would drop the tail in silence |
-| `deform … (t=…): offset 3 is odd` | §4.11 — in **this spec** a run starts on an even index, or names its vertex with `fromVertex`. Not a validity rule; the runtime allows either (issue #262) |
 | `deform …: "fromVertex" counts VERTICES, and this attachment is weighted … vertex 2 has 2 of them` | §4.11 — key the control bone, or write bind-space pairs and start with `offset` |
 | `deform …: slot "X" in skin "default" has no attachment "Y" (it has: …)` | §4.11 — fix the placeholder name |
 | `deform … (t=…): the key carries both a "transform" and a "vertices" run` | §4.11.1 — a model and a table are two answers to one question; drop one |

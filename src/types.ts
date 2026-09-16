@@ -515,13 +515,30 @@ export interface MotionTransformTrack {
 export interface MotionDeformKey {
   /** Time in seconds. */
   t: number;
-  /** Where the run starts in the attachment's own deform array. Default 0. */
+  /**
+   * Where the run starts in the attachment's own deform array. Default 0.
+   *
+   * Any index the array holds, **odd ones included** (issue #576): the parser
+   * copies at this index and does no pair arithmetic, so an odd start is what an
+   * editor writes when it trims the leading numbers off a delta run.
+   */
   offset?: number;
   /** The same start, given as a vertex index. Never together with `offset`. */
   fromVertex?: number;
   /**
-   * The run: `x, y` offsets, two numbers per array slot. Absent or `null` is the
-   * parser's own encoding for "back to the setup pose" — the key with no edit.
+   * The run: consecutive numbers written into the deform array from `offset` on,
+   * `x, y` per array slot. Absent or `null` is the parser's own encoding for
+   * "back to the setup pose" — the key with no edit.
+   *
+   * ⚠️ **An ODD count is legal and means something** (issue #576). Both readers
+   * copy the run verbatim — `Utils.arrayCopy(vertices, 0, deform, offset,
+   * vertices.length)` in `SkeletonJson`, a `for (let v = start; v < end; v++)`
+   * fill in `SkeletonBinary` — so a run of three numbers moves one vertex in x
+   * and y and the next in x alone, leaving that y at its setup value. Padding a
+   * `0` to even it out is a different animation whenever that setup y is
+   * non-zero, which is why the even-length rule that stood here could not be kept
+   * as a convenience: it left one production export with no spelling in this
+   * spec at all.
    */
   vertices?: number[] | null;
   /**

@@ -5788,11 +5788,14 @@ function deformGeometryOf(
  *      pair too long, or aimed at the wrong attachment, loses its tail and
  *      deforms part of the mesh correctly. That is the worst possible failure
  *      shape: it looks almost right.
- *   2. **An odd `offset`, or an odd run length.** The array is `x, y` pairs; an
- *      odd index puts every x of the run on a y and vice versa. It loads.
- *   3. **`fromVertex` where a vertex is not one pair.** See below.
- *   4. **A key that carries both a run and no room for one**, or a non-finite
+ *   2. **`fromVertex` where a vertex is not one pair.** See below.
+ *   3. **A key that carries both a run and no room for one**, or a non-finite
  *      offset — a NaN in the deform array propagates into world vertices.
+ *
+ * ⛔ What is **not** refused, and was until issue #576: an odd `offset` or an odd
+ * run length. Both are raw copies at raw indices in both readers, both are what a
+ * trimmed editor delta looks like, and neither has a second spelling — see the
+ * clause in the loop below and the one in `deformStart`.
  *
  * `fromVertex` is rigc's own field and the reason it exists is issue #89's
  * observation: a deform key is the only key in the format whose meaning depends
@@ -5952,11 +5955,31 @@ function compileDeformTrack(
           'or omit it entirely for "back to the setup pose"',
       );
     }
-    if (run.length % 2 !== 0) {
-      throw new CompileError(
-        `${where} (t=${key.t}): "vertices" holds ${run.length} numbers; the deform array is x, y PAIRS, so a run has an even length`,
-      );
-    }
+    // ⛔ No parity clause here, and its absence is the rule (issue #576).
+    //
+    // A run is copied, not decoded. `SkeletonJson`'s deform branch does
+    // `Utils.arrayCopy(verticesValue, 0, deform, start, verticesValue.length)`
+    // with `start` the key's own `offset`, and `SkeletonBinary` reads a count and
+    // a start and fills `for (let v = start; v < end; v++) deform[v] = ...`.
+    // Neither has any pair arithmetic to be misaligned against, so an ODD run is
+    // legal, deterministic data: it writes the x and y of one vertex and the x of
+    // the next, and that next y stays at its setup value.
+    //
+    // 🔒 The reason this cannot be "refused in THIS spec anyway" is that there is
+    // no other spelling of it. Padding a `0` to make the run even is a different
+    // animation wherever the setup y it lands on is non-zero, so a spec that
+    // refuses an odd run is a spec no transcription of such a file can be written
+    // in — and one is in this repository's own example corpus (`spineboy-pro`,
+    // `hoverboard` / `hoverboard-board`: `offset: 1` and 147 numbers into a
+    // 148-long array, the whole delta minus the leading zero the editor trimmed).
+    //
+    // What replaces it is the bound the runtime really has, below: the run has to
+    // FIT. That one is the quiet defect — a copy past the end of a `Float32Array`
+    // is a no-op in JavaScript — and it is unaffected by where a run starts or
+    // how long it is. `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` measures the same
+    // bound on the emitted file and has had no parity clause since issue #262;
+    // until this was removed the two halves of rigc disagreed about what the
+    // format holds, and the half that refused was the authoring half.
     for (const n of run) {
       if (typeof n !== 'number' || !Number.isFinite(n)) {
         throw new CompileError(`${where} (t=${key.t}): "vertices" holds a non-finite value ${JSON.stringify(n)}`);
@@ -6025,10 +6048,10 @@ function expandDeformToInfluences(displacements: number[], geometry: DeformGeome
 /**
  * Where in the deform array this key's run begins.
  *
- * `offset` is that index outright. `fromVertex` is a vertex index, and turning
- * one into the other is exact only where a vertex occupies exactly one pair —
- * which is every vertex of an unweighted attachment and only the single-bone
- * vertices of a weighted one.
+ * `offset` is that index outright — any index the array holds, odd ones included
+ * (issue #576). `fromVertex` is a vertex index, and turning one into the other is
+ * exact only where a vertex occupies exactly one pair — which is every vertex of
+ * an unweighted attachment and only the single-bone vertices of a weighted one.
  */
 function deformStart(
   key: MotionDeformTrack['keys'][number],
@@ -6042,12 +6065,16 @@ function deformStart(
         `${where} (t=${key.t}): offset is ${JSON.stringify(key.offset)}; it is an index into the deform array, so a whole number ≥ 0`,
       );
     }
-    if (key.offset % 2 !== 0) {
-      throw new CompileError(
-        `${where} (t=${key.t}): offset ${key.offset} is odd. The deform array is x, y pairs, so an odd start puts ` +
-          "every x of this run on a y — it loads, and the mesh tears. Use an even index, or say which vertex you meant with \"fromVertex\".",
-      );
-    }
+    // ⛔ An odd `offset` is not refused either, and it went the same way as the
+    // run's own length (issue #576). The refusal that stood here read an odd
+    // start as a `fromVertex` typed into the wrong field — a real mistake, but
+    // this caught exactly the half of it whose index happens to be odd:
+    // `offset: 4` meant as vertex 4 is the same mistake, lands on vertex 2, and
+    // was always accepted. What it did refuse was every faithful transcription of
+    // a trimmed editor run, one of which ships in `examples/` — `spineboy-pro`'s
+    // `hoverboard-board` starts at 1. A rule that filters one parity of a
+    // confusion it cannot see, at the price of a construct the format holds, is
+    // the wrong instrument; `A35` dropped the same clause in issue #262.
     return key.offset;
   }
   if (key.fromVertex === undefined) return 0;
@@ -6055,7 +6082,12 @@ function deformStart(
   if (!Number.isInteger(from) || from < 0) {
     throw new CompileError(`${where} (t=${key.t}): fromVertex is ${JSON.stringify(from)}; it is a vertex index, so a whole number ≥ 0`);
   }
-  const covered = runLength / 2;
+  // ⌈⌉ rather than ÷, because an odd run REACHES a last vertex without covering
+  // it: its final number is that vertex's x and the y beside it stays at setup
+  // (issue #576). The bound below is about which vertices the run reaches, so the
+  // half-reached one counts — and on a weighted attachment its influence count is
+  // checked with the rest.
+  const covered = Math.ceil(runLength / 2);
   if (from + covered > geometry.vertexCount) {
     throw new CompileError(
       `${where} (t=${key.t}): fromVertex ${from} plus ${covered} vertex offset(s) runs to vertex ${from + covered}, ` +
