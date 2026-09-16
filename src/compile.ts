@@ -1813,16 +1813,29 @@ export function compile(opts: CompileOptions): CompileResult {
   for (const rigSlot of rig.slots) {
     const part = partBySlot.get(rigSlot.name);
     const names = slotAttachments.get(rigSlot.name) ?? rigAttachmentNames.get(rigSlot.name) ?? [];
-    if (!names.length) continue;
+    // 🔑 A slot nothing fills is EMITTED, empty — it is not dropped (issue #575).
+    // A `continue` stood here instead, and what it bought was the format's own
+    // silence: the emitted array came back a slot short with no line saying
+    // which, and every slot after it moved down one. That index is what a
+    // `drawOrder` key's offsets are counted against and what an index-keyed
+    // consumer splits on, so the drop is not a smaller file, it is a different
+    // rig. Two production exports declaring 53 and 61 slots built green at 51
+    // and 57 and read 0.962 / 0.934 against the file they were transcribed from.
+    //
+    // The shape emitted here is the editor's own: `SkeletonJson`'s slot reader
+    // takes `attachment` with a `null` default, so a slot with no `attachment`
+    // key is a slot that shows nothing — 34 of the 52 slots in the official
+    // `spineboy-pro` export omit the key.
+    const empty = names.length === 0;
 
     const setup = motion.setup?.[rigSlot.name];
     // ⚠️ The entry's SHAPE is `parseMotionSpec`'s now (issue #307), and it had to
-    // move: this loop walks the RIG's slots and `continue`s past one with no
-    // attachments a few lines above, so the #293 shapes — `"lid_l": null` and,
-    // far worse, `"lid_l": "plate"`, which reads `.attachment` off a string as
-    // `undefined` and hides the slot in silence — stayed GREEN for exactly the
-    // slots a reader is most likely to be halfway through wiring up. Everything
-    // from here down is the half that needs the rig in front of it.
+    // move: this loop used to `continue` past a slot with no attachments before
+    // reaching here, so the #293 shapes — `"lid_l": null` and, far worse,
+    // `"lid_l": "plate"`, which reads `.attachment` off a string as `undefined`
+    // and hides the slot in silence — stayed GREEN for exactly the slots a
+    // reader is most likely to be halfway through wiring up. Everything from
+    // here down is the half that needs the rig in front of it.
     if (setup !== undefined && rigSlot.attachment !== undefined) {
       throw new CompileError(
         `slot "${rigSlot.name}" has a setup attachment in the rig spec AND in the motion spec; the setup pose has one author`,
@@ -1831,6 +1844,11 @@ export function compile(opts: CompileOptions): CompileResult {
     let setupAttachment: string | null;
     if (setup !== undefined) setupAttachment = setup.attachment ?? null;
     else if (rigSlot.attachment !== undefined) setupAttachment = rigSlot.attachment;
+    // Nothing fills the slot, so there is nothing to choose between and nothing
+    // to guess: the setup pose of an empty slot is "show nothing", which is the
+    // one value the format can express for it. The refusal below stays exactly
+    // where it was for a slot that HAS attachments and states no setup pose.
+    else if (empty) setupAttachment = null;
     else {
       throw new CompileError(
         `no setup pose for slot "${rigSlot.name}": give the motion spec a \`setup\` entry or the rig slot an \`attachment\` — the compiler will not guess one`,
@@ -1838,7 +1856,11 @@ export function compile(opts: CompileOptions): CompileResult {
     }
     if (setupAttachment !== null && !names.includes(setupAttachment)) {
       throw new CompileError(
-        `setup attachment "${setupAttachment}" for slot "${rigSlot.name}" is not one of [${names.join(', ')}]`,
+        empty
+          ? `the setup pose shows attachment "${setupAttachment}" on slot "${rigSlot.name}", which no skin and no ` +
+            'manifest part fills — the slot is emitted empty, so there is no such attachment to show. Give the ' +
+            'slot an attachment, or state the setup pose as null'
+          : `setup attachment "${setupAttachment}" for slot "${rigSlot.name}" is not one of [${names.join(', ')}]`,
       );
     }
     if (setup?.color && rigSlot.color !== undefined) {
@@ -1851,6 +1873,11 @@ export function compile(opts: CompileOptions): CompileResult {
     if (rigSlot.dark !== undefined) slot.dark = rigSlot.dark;
     if (rigSlot.blend !== undefined) slot.blend = rigSlot.blend;
     slots.push(slot);
+    // ...and nothing below this line has anything to build. An empty entry in a
+    // skin's attachment table would be rigc writing a key the editor does not,
+    // so the skins array is left exactly as it was before #575 for every slot
+    // that IS filled, and gains nothing for one that is not.
+    if (empty) continue;
 
     if (part) {
       const perSlot: Record<string, SpineAttachment> = {};
