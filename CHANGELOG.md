@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.1](https://github.com/firejune/rigc/compare/v0.22.0...v0.22.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* **compile:** emit a path's lengths as PathConstraint computes them, transcribed from the runtime rather than sampled toward it ([#560](https://github.com/firejune/rigc/issues/560)) ([#566](https://github.com/firejune/rigc/issues/566)) ([7ffc077](https://github.com/firejune/rigc/commit/7ffc077be54bf2f8477b122f9f17183e1a46b8c1))
+* **tools:** the round-trip summary counts constraints from the 4.3 array and refuses an unresolvable images path before the editor starts; the ledgers record what round trip 6 measured ([#561](https://github.com/firejune/rigc/issues/561), [#562](https://github.com/firejune/rigc/issues/562)) ([#564](https://github.com/firejune/rigc/issues/564)) ([28814ed](https://github.com/firejune/rigc/commit/28814ed1f417f3a3754f78c24b78cc04a5324acc))
+
 ## [0.22.0](https://github.com/firejune/rigc/compare/v0.21.0...v0.22.0) (2026-09-16)
 
 
