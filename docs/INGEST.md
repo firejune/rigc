@@ -50,12 +50,22 @@ invent one.
 Two facts decide everything below, and they pull in opposite directions:
 
 1. **rigc reads compiled skeleton JSON in more places than you would guess.**
-   `validate`, `render`, `preview`, `vote`, `check` and `diff` all take a
-   `skeleton.json` path directly, and none of them needs a rig spec to do it.
-2. **rigc cannot write one back.** There is no command that edits a skeleton, no
-   importer, and no route from skeleton JSON to specs. The only thing that produces a
-   skeleton is `build`, and `build`'s input is a rig spec plus a motion spec.
-   ⇒ **Every route that ends in a changed file goes through transcription** (§2).
+   `validate`, `render`, `preview`, `vote`, `check`, `diff` and — since #569 —
+   `ingest` all take a `skeleton.json` path directly, and none of them needs a rig
+   spec to do it.
+2. **rigc still cannot EDIT one.** There is no command that opens a skeleton and
+   changes it. The only thing that produces a skeleton is `build`, and `build`'s
+   input is a rig spec plus a motion spec.
+   ⇒ **Every route that ends in a changed file goes through the specs** — and
+   since #569 there are two ways to get them: write them (§2, transcription) or
+   have `ingest` write them for you from the file itself (§2.0).
+
+   ⚠️ This clause read *"rigc cannot write one back… no route from skeleton JSON
+   to specs"* until 2026-09-17, and the half that was wrong is the second half.
+   The route exists now and its contract is an equality — `build(ingest(x))` is
+   `x`, byte for byte — which is a stronger statement than anything transcription
+   could make. What survives is the first half: nothing **edits** a skeleton, and
+   the specs remain the only thing a change is expressed in.
 
 ### 0.1 The table
 
@@ -71,6 +81,7 @@ an upstream `license.txt` (Appendix, and [NOTICE.md](../NOTICE.md)).
 | **`vote --candidate <a> --candidate <b>`** | ✅ **yes, on either side** | a ballot page. Pairing a foreign export against your own transcription is a legitimate ballot, and the panes carry no paths |
 | **`check --candidate <skeleton.json> --frames <dir>`** | ✅ **yes** | ⭐ it reads **frames and never a reference skeleton**, so a foreign export enters this one *twice over*: as the candidate, or — via `render` — as the source of the frames. §1.4 |
 | **`diff <candidate.json> <reference.json>`** | ✅ **yes, both sides** | 49 structural measures over bones, slots, attachments, constraints, animations and events. ⛔ **Blind to every coordinate** — §1.3 |
+| **`ingest <skeleton.json> --out <dir>`** | ✅ **yes — and it is the only reader that WRITES specs** | the `.json` alone; no atlas, no art, no project file. Out come `rig.json`, `motion.json` and a findings report, such that `build`ing them reproduces the skeleton it read **byte for byte**. The seventh reader, and the one that ends §2's hand work — §2.0 and §5 |
 | **`pose --images <dir> --frame <png>`** | ⛔ **not the skeleton** | loose part PNGs and one picture. A packed atlas page is not loose parts, and pointing it at one produces a confident answer about nothing — §5 |
 | **`explain --rig … --motion … --out …`** | ⛔ **no** | rig spec + motion spec. It explains **what you wrote**, which makes it a transcription instrument rather than a reading one — §1.5 |
 | **`build --rig … --motion … --images …`** | ⛔ **no** | specs in, skeleton out. The only writer in the toolchain, and the reason §2 exists |
@@ -390,17 +401,70 @@ is fine — it is not created.
 
 ---
 
-## 2. Transcription — the route that makes a foreign skeleton yours
+## 2. Getting specs out of a skeleton
 
-Everything in §1 reads. To **change** anything you need specs, and getting specs out
-of a skeleton is a job rigc does not do for you: the numbers come out of the JSON by
-hand, into a rig spec and a motion spec, and `build` emits a new skeleton from those.
+Everything in §1 reads. To **change** anything you need specs. There are two routes
+to them and you should almost always take the first.
 
-⚠️ **Say this to the user before starting, because it is the part that surprises.**
-Transcription is not a conversion step you run; it *is* the work. What you get for it
-is that the file becomes editable by declaration — after transcription a pivot move is
-two numbers in a spec (§4.1) and a new animation is an added block (§4.3), where
-before it was a hand-edit of emitted JSON with nothing checking it.
+### 2.0 `ingest` — let the tool write them
+
+```bash
+rigc ingest examples/spineboy/export/spineboy-ess.json --out specs/ --art none
+rigc build --rig specs/rig.json --motion specs/motion.json --atlas-in examples/spineboy/export/spineboy.atlas --out spine
+rigc diff spine/skeleton.json examples/spineboy/export/spineboy-ess.json
+```
+
+`ingest` reads the skeleton — **only** the skeleton — and writes `rig.json`,
+`motion.json` and `findings.json`. The contract is an equality rather than a
+rulebook: `build(ingest(x))` is `x`, byte for byte on `skeleton.json`, and the
+atlas comes back with the same region blocks (as a multiset — the page order is in
+no field of the file). `bun run selftest` holds every rig this repository builds to
+that on every run, which is the one gate here that compares an emitted file against
+a file rigc did not write.
+
+**What it will not do is invent.** Everything the spec format cannot hold is a
+finding with a code — `BLOCK` for a construct the rebuild will be missing, `JUDGE`
+for the two values a skeleton does not carry, `LOSS` for the one number rigc
+re-derives on purpose. A blocker exits non-zero and still writes both files.
+
+**Two values are not in a skeleton**, so `ingest` asks rather than guesses:
+
+- **the stage** (`skeleton.width`/`height`) — an editor export carries none, and
+  `--stage x,y,w,h` is how you supply it. Posing the rig would give the *animated*
+  extent, which is a different number from the setup box, so it is not derived. It
+  is also the value that costs least to get wrong: no measure `diff` reports reads
+  the skeleton header at all, so an absurd box is green everywhere;
+- **each animation's duration** — the format has no such field. The largest key time
+  is used, stated in the motion spec's `note`, and recorded as a finding per
+  animation. Edit it if you know the real number.
+
+And one flag for what the skeleton also does not encode: `--art loose` (the default)
+names an `image` per attachment for `build --images`, `--art none` states
+`width`/`height` for `build --atlas-in`. [AUTHORING §0.3](AUTHORING.md) is the loop
+in full.
+
+📝 Both written specs carry a `note` saying they are decompiled and naming the file
+they came from. Leave it there — §2.4 is why.
+
+### Transcription — the route that made a foreign skeleton yours
+
+⚠️ **The rest of §2 is the route that existed before #569, and it is kept because
+the reading it produces is still the right one** — it is what an author does *after*
+`ingest`, and it is what to fall back on for the constructs `ingest` reports as
+blockers. The numbers come out of the JSON into a rig spec and a motion spec by hand,
+and `build` emits a new skeleton from those.
+
+What you get for it is that the file becomes editable by declaration — a pivot move
+is two numbers in a spec (§4.1) and a new animation is an added block (§4.3), where
+before it was a hand-edit of emitted JSON with nothing checking it. That is now what
+`ingest` hands you in one command; the sections below are how to read and change what
+it hands you, and every rule in them applies to a spec `ingest` wrote.
+
+📌 **The cost this section used to warn about is measured, and it is why §5 changed.**
+The smallest skeleton of the corpus behind [#569](https://github.com/firejune/rigc/issues/569)
+transcribed to a **257,422-byte** rig spec, of which 91.8 % is the six geometry
+arrays — numbers, not decisions. A 558-line prototype decompiler reproduced 100 % of
+it, and the only differing paths were the name and the `note`.
 
 ### 2.1 The workflow
 
@@ -1063,12 +1127,36 @@ dependency *can* read it and rigc *does not*:
 that already has the reader, not a parser to write. But it is not there, and nothing on
 this page works on a `.skel` today. Re-export as JSON.
 
-🚫 **No skeleton-to-spec decompiler.** Nothing turns skeleton JSON back into a rig spec
-and a motion spec. §2 is hand work, and that is the current state rather than a
-temporary one: a decompiler would have to invent the things the spec format exists to
-make explicit — which pivot, which generator, which invariant — and the compiler's own
-rule is that it never invents a value that is not in the spec. ⚠️ Not to be confused
-with the *atlas* importer below, which is a different direction and does exist.
+✅ **A skeleton-to-spec decompiler exists: `rigc ingest` (§2.0). This entry used to
+refuse one, and all three of its reasons were measured and refuted** — issue
+[#569](https://github.com/firejune/rigc/issues/569), 2026-09-17. The paragraph is
+kept below rather than deleted, because what it got wrong is more useful than a
+clean page:
+
+> 🚫 ~~**No skeleton-to-spec decompiler.** Nothing turns skeleton JSON back into a rig
+> spec and a motion spec. §2 is hand work, and that is the current state rather than a
+> temporary one: a decompiler would have to invent the things the spec format exists to
+> make explicit — **which pivot, which generator, which invariant** — and the compiler's
+> own rule is that it never invents a value that is not in the spec.~~
+
+| clause | what the measurement said |
+| --- | --- |
+| *which pivot* | ⛔ **refuted.** A bone's setup transform is in the skeleton, in full. 3,951 bones across 37 production exports and 15 rigs built from this tree were transcribed with **zero** decisions, and `diff`'s six bone measures — count, names, `parent_by_name`, order, `length_present`, `inherit_present` — read **1.000** on every file that built |
+| *which generator* | ⛔ **refuted, and the premise is the error.** A decompiler must choose **no** generator. A generator is a *model* (`src/rig.ts`: *"they encode a deformation model … and a model is not a table of numbers"*); the skeleton holds geometry, and geometry is what the rig spec's authored form takes. Inferring a model would be the invention this clause feared; writing the numbers is its opposite. `gallery/look`'s four generator-built meshes came back as authored geometry and the rebuild is **byte-identical** — so a generator can always be flattened, and that is the direction the information flows |
+| *which invariant* | ⛔ **refuted by omission, and this page already said how.** §2.1 step 3: *"Leave `invariants` out entirely — an absent field makes an archetype assertion SKIP, never pass."* `ingest` writes none. A decompiled spec is 91.8 % geometry, 8.2 % structure and **0 % intent**, and it says so instead of certifying something nobody measured |
+
+⇒ **What survives is the stage, and one value is not "the things the spec format
+exists to make explicit".** The clause was not wrong that a decompiler meets an
+invention — it was wrong about *which*, and wrong that it is unavoidable: a refusal
+naming the field is what this repository does with a missing number everywhere else,
+and it is what `ingest` does here (§2.0). ⚠️ Not to be confused with the *atlas*
+importer below, which is a different direction and also exists.
+
+⚠️ **What `ingest` is still not.** It reads skeleton JSON and writes two spec files.
+It does not read a `.spine` project or a binary `.skel` (the two entries above stand
+unchanged), it does not read the atlas or the art, it does not **edit** a skeleton,
+and it makes no claim about whether an agent could have *produced* the numbers it
+copied — only that the spec can carry them and `build` reproduces the file from them.
 
 ✅ **A packer and an importer both exist now, so do not report them as gaps.** This
 non-goal used to read *"rigc emits one region per page and cannot do otherwise"*, and

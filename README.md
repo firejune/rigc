@@ -503,6 +503,7 @@ commands take it and what its default is.
 | `build … --pack` | the same build with every part arranged onto **shared** atlas pages, written into `--out` — losslessly, and gated a second time as the pair that ships. `--page-size` and `--padding` tune it |
 | `build … --atlas-in <file.atlas>` | the same build with every part resolved to a **region of an existing pack** instead of a loose PNG; a name the atlas lacks, a size the spec disagrees with or a rectangle off its page is refused by name |
 | `validate <dir>` | re-gates artifacts already on disk |
+| `ingest <skeleton.json> --out <dir>` | `build` run backwards: reads a Spine 4.3 skeleton and writes the rig spec and motion spec that **rebuild it**, plus a findings report naming everything it could not carry. `--stage x,y,w,h` supplies the one value a skeleton does not hold |
 | `explain --rig … --motion …` | the compiled rig as a table — every bone with its resolved parent, the slots in draw order, every timeline key by key. Writes nothing. What to reach for when a rig compiles and still looks wrong |
 | `render --candidate <dir>` | PNG frames plus a contact sheet, in `render/` |
 | `preview --candidate <dir>` | one self-contained `.html` that plays it |
@@ -530,6 +531,55 @@ Several cuts can also be registered in a `cuts.json` and built by name
 relative to the `cuts.json` file itself, so the table lives with the project that owns
 the art. Its shape is under
 [Usage](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md#usage).
+
+### Starting from a skeleton you already have
+
+`rigc ingest` reads a Spine 4.3 `skeleton.json` and writes the two spec files that
+rebuild it. It is the only command that runs against `build`'s direction, and the
+only one whose contract is an equality rather than a rulebook:
+
+```bash
+rigc ingest hero.json --out specs/ --stage 0,0,1024,768
+rigc build --rig specs/rig.json --motion specs/motion.json --images parts/ --out build/
+rigc diff build/skeleton.json hero.json
+```
+
+**`build(ingest(x))` is `x`.** Over the eleven rigs this repository builds — the seven
+gallery examples, the three generated probes and a coverage probe written for the
+purpose — the rebuilt `skeleton.json` is byte for byte the file the decompiler read,
+and `bun run selftest` holds it there on every run. The atlas is held to a weaker
+claim on purpose, and the weakening is measured rather than assumed: it comes back
+equal as a **multiset of region blocks**, because the order the pages are collected in
+is in no field of the skeleton.
+
+**What it reads is skeleton JSON and nothing else** — no `.spine` project, no binary
+`.skel`, no atlas, no art. So it never invents, and the things it cannot get out of
+the file are **findings** with codes rather than plausible values: a construct the
+spec format cannot hold (`linkedmesh`, `point`, a `sequence` block, an unknown field
+on a bone, slot or constraint) is a blocker, the command exits non-zero, and both
+specs are still written — a spec plus a list of what is missing from it beats no spec.
+One thing it drops on purpose and says so: a path attachment's `lengths`, which is
+`PathConstraint`'s own measurement and which rigc re-measures.
+
+⚠️ **Two values are not in a skeleton at all.**
+
+- **The stage.** `skeleton.width`/`height`: rigc always writes one and an editor
+  export carries none, so without `--stage x,y,w,h` the missing box is refused by
+  name. It is not derivable — posing the rig gives the *animated* extent, which is a
+  different number from the setup box — and it is the value that costs nothing to get
+  wrong, because no measure `diff` reports reads the skeleton header at all.
+- **An animation's duration.** The format has no such field. The largest key time is
+  the only derivable answer and it is what a runtime plays to; it is wrong for an
+  animation that holds its last pose past its last key, so it is recorded as a finding
+  on every animation rather than chosen quietly.
+
+Both specs carry a `note` that `ingest` writes itself, saying the file is decompiled
+and naming the skeleton it came from — because a decompiled spec is indistinguishable
+from an authored one by inspection, every gate here calls it green (it *is* green),
+and no gate can catch a missing note.
+
+[docs/INGEST.md](docs/INGEST.md) is the whole page on working from a file you were
+handed; [docs/AUTHORING.md](docs/AUTHORING.md) §0.3 is the loop.
 
 ### The editor round trip — for a licence holder, never in CI
 

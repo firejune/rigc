@@ -355,6 +355,84 @@ region.
 `--pack` and `--atlas-in` are opposite directions through the same door and are
 refused together.
 
+### 0.3 Starting from a skeleton somebody else made — `ingest`
+
+Everything above starts from two spec files you wrote. `rigc ingest` starts from a
+**Spine 4.3 `skeleton.json` you were handed** and writes those two files for you, so
+an existing rig is a starting point instead of 250 KB of arrays to retype.
+
+```bash
+bun cli.ts ingest hero.json --out specs/ --stage 0,0,1024,768
+#   ..    out  /abs/path/specs
+#   ..    art  loose
+#   JUDGE DURATION: animation "idle" — skeleton JSON carries no duration; the largest key time (2.667) is used …
+#   LOSS  PATH_LENGTHS: skin "default" slot "track" attachment "track" — the source states `lengths`; rigc RE-MEASURES it …
+# rigc: wrote /abs/path/specs/rig.json
+# rigc: wrote /abs/path/specs/motion.json
+# rigc: wrote /abs/path/specs/findings.json
+
+bun cli.ts build --rig specs/rig.json --motion specs/motion.json --images parts/ --out spine
+bun cli.ts diff spine/skeleton.json hero.json      # 1.000 on every measure
+```
+
+**The loop it belongs in is the one above, with a different first step.** `ingest`
+writes the specs; you *edit* them the way you would edit specs you wrote; `build`
+gates; `explain`, `render`, `preview` and `check` read the result. Nothing
+downstream knows or cares that the file started somewhere else — which is the point,
+and also the hazard the `note` below exists for.
+
+**The contract is an equality, not a rulebook.** `build(ingest(x))` is `x`: the
+rebuilt `skeleton.json` is byte for byte the file `ingest` read, and the rebuilt
+atlas holds the same **region blocks** — as a multiset, because the order the pages
+come out in is in no field of the skeleton and a decompiled spec cannot know it.
+That is a gate rather than a claim: `bun run selftest` round-trips every rig this
+repository builds on every run.
+
+**Two flags, for the two things a skeleton does not encode.**
+
+| flag | what it decides |
+| --- | --- |
+| `--art loose` (default) | name an `image` per attachment — `<path or placeholder>.png` — so the rebuild is `build --images <dir>` and rigc measures the PNGs |
+| `--art none` | state `width`/`height` only, so the rebuild is `build --atlas-in <pack.atlas>` and every part resolves out of the pack |
+| `--stage x,y,w,h` | the setup bounding box. **Required for an editor export**, which carries none |
+| `--name <n>` | the rig spec's `name`, which the motion spec's `archetype` must equal (default: the file's basename) |
+
+🚨 **The stage is the one value `ingest` will not guess.** rigc always emits
+`skeleton.width`/`height` and an editor export never does, so a foreign file needs
+`--stage`; without it the missing box is a **blocker**, named. It is not derivable —
+posing the rig gives the *animated* extent, which is a different number from the
+editor's setup box — and it is the value that costs least to get wrong, because no
+measure `diff` reports reads the skeleton header at all. Supply it from the project
+the file came from, or from the editor's own canvas.
+
+⚠️ **The duration is a convention, and it is recorded as one.** Skeleton JSON has no
+duration field. The largest key time is the only derivable answer and it is what a
+runtime plays to — but it is wrong for an animation that holds its last pose past its
+last key, and nothing in the file can tell the two apart. `ingest` writes the largest
+key time, states the convention in the motion spec's `note`, and records a finding per
+animation. If you know the real number, edit it: the declared duration is checked
+against the compiled keys, so an honest one costs you nothing.
+
+**Read the findings; they are the product.** Three kinds, and the exit code turns on
+the first:
+
+| gutter | meaning |
+| --- | --- |
+| `BLOCK` | the spec format cannot say it, so the rebuild will **not** be the file that was read — `linkedmesh`, `point`, an attachment `sequence`, an unknown field on a bone, slot or constraint, a timeline family the motion spec has no track for. The command exits non-zero **and still writes both specs**, because a spec plus a list of what is missing from it beats no spec |
+| `JUDGE` | the skeleton cannot answer and somebody has to: the stage, and each animation's duration |
+| `LOSS` | the skeleton says it and rigc re-derives it, on purpose. A path attachment's `lengths` is the one that matters — it is `PathConstraint`'s own four-sample measurement rather than an arc length (#560), so a transcribed one would freeze whatever produced the source |
+
+📝 **Do not delete the `note`.** Both written specs carry one saying the file is
+decompiled and naming the skeleton it came from. A decompiled spec is
+indistinguishable from an authored one by inspection, every gate here calls it green —
+because it *is* green — and no gate can catch the note's absence. It carries no
+timestamp, deliberately: `A18_DETERMINISTIC_EMIT` compares two independent compiles
+byte for byte, and a dated note would break the first rebuild from the spec.
+
+⛔ **It reads skeleton JSON and nothing else** — not a `.spine` project, not a binary
+`.skel`, not the atlas, not the art. A path that is not a `.json` is refused by name.
+[INGEST.md](INGEST.md) is the whole page on working from a file you were handed.
+
 The other commands:
 
 ```bash
@@ -2694,6 +2772,18 @@ here was measured off a real rig. Copy the shape, not the values.
   runtime. **Stating a flag on every key still overrides the rig** — the format
   keys them per key on purpose, a bend that flips partway through is a real thing
   to write, and it is what the editor's own export does.
+- 🔁 **A spec that came out of `ingest` (§0.3) states all three on every key, and
+  that is not noise.** The stamping above reads a silent key as *"the rig's
+  value"*, which is right for a spec somebody wrote; in a **decompiled** spec a
+  silent key means *"the parser's default"*, because that is what the export the
+  spec came from actually plays. The two readings differ exactly when the rig
+  declares a non-default flag and the export's keys omit it — measured: an ik
+  timeline keying only `mix` under a constraint declaring `bendPositive: false`
+  rebuilds with `bendPositive: false` on every key if the flag is left silent,
+  and with `true` — what the source plays — when `ingest` writes it out. So
+  `ingest` restates every field any key of a track names, at the parser's default
+  where the source omits one, and records a `CONSTRAINT_KEY_RESTATED` finding. On
+  rigc's own output the two agree and the round trip is byte-identical.
 - `mix` outside `0..1` is a compile error: `IkConstraintPose.mix` is documented as
   a percentage. A **transform** mix is documented *unbounded*, which is why §4.10
   has no such rule — the asymmetry is the runtime's, not ours.
