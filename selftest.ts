@@ -101,6 +101,7 @@ import {
   type FramingSource,
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError } from './src/compile.ts';
+import { ingest, INGEST_VOCABULARY, type IngestFinding } from './src/ingest.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
 import { RIG_KEYS, parseRigSpec } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
@@ -32817,6 +32818,688 @@ function runCutsSuite(): { failures: number; cuts: number } {
 }
 
 // ---------------------------------------------------------------------------
+// ingest — build(ingest(build(spec))) is the file it was read from (issue #569)
+// ---------------------------------------------------------------------------
+//
+// ⭐ **A different instrument from every other suite in this file.** Everything
+// else here compares rigc to rigc: the compiler against the validator, one
+// compile against a second (`A18`), an emitted number against an assertion
+// somebody wrote. This compares an emitted file against **the file it was read
+// from**, which is the only reference of that kind the tree has — and the memo
+// behind #569 is decisive that the contract finds things nothing else does: two
+// `build` defects that 42 assertions, this suite and an editor round trip had
+// all passed over.
+//
+// The claim, stated so it can be wrong: for every rig this repository builds,
+// `build(ingest(A))` writes a `skeleton.json` **byte for byte identical** to `A`,
+// and a `skeleton.atlas` equal to `A`'s **as a multiset of region blocks**. The
+// second half is weaker than the first on purpose and the reason is measured
+// below: the ORDER the pages come out in is not in the skeleton.
+//
+// 🚨 Both halves are run, because they are two different code paths and the
+// weaker-looking one covers what the stronger one cannot. `--atlas-in` re-emits
+// the pack it was handed, so the atlas comes back identical for free and the
+// texture side of `ingest` is never exercised; the loose rebuild resolves every
+// attachment against a PNG by the name `ingest` derived for it, which is where
+// the `path`/`image` inversion either works or quietly points somewhere else.
+
+/** One rig this suite round-trips: its two specs, and where its art comes from. */
+interface IngestCandidate {
+  name: string;
+  rigPath: string;
+  motionPath: string;
+  manifestPath?: string;
+  imagesDir?: string;
+}
+
+/** What one round trip produced, and everything a case reads off it. */
+interface IngestTrip {
+  a: CompileResult;
+  b: CompileResult;
+  findings: IngestFinding[];
+  rig: Record<string, unknown>;
+  motion: Record<string, unknown>;
+  /** The directories the FIRST build drew its part PNGs from. */
+  artDirs: string[];
+  /** How many edits the planted defect made, or 0 when there was none. */
+  mutations: number;
+}
+
+/** `typeof x === 'object'` narrowed to a JSON object, for the path walk below. */
+function isIngestObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Where two parsed skeletons differ, as field paths.
+ *
+ * ⭐ A byte comparison says *whether*; this says *what*, which is what makes a
+ * mutant's case able to name the field it planted rather than assert that
+ * something somewhere moved. Capped, because a defect at the head of an array
+ * would otherwise print every element after it.
+ */
+function differingJsonPaths(a: unknown, b: unknown, at = '', out: string[] = [], cap = 12): string[] {
+  if (out.length >= cap) return out;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) {
+      out.push(`${at}: ${JSON.stringify(a)?.slice(0, 40)} vs ${JSON.stringify(b)?.slice(0, 40)}`);
+      return out;
+    }
+    if (a.length !== b.length) out.push(`${at}: ${a.length} entries vs ${b.length}`);
+    for (let i = 0; i < Math.max(a.length, b.length) && out.length < cap; i++) {
+      differingJsonPaths(a[i], b[i], `${at}[${i}]`, out, cap);
+    }
+    return out;
+  }
+  if (isIngestObject(a) && isIngestObject(b)) {
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      if (out.length >= cap) break;
+      differingJsonPaths(a[key], b[key], at === '' ? key : `${at}.${key}`, out, cap);
+    }
+    return out;
+  }
+  if (JSON.stringify(a) !== JSON.stringify(b)) out.push(`${at}: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`);
+  return out;
+}
+
+/**
+ * The atlas as a multiset of its blank-line-separated blocks.
+ *
+ * One block is a page and the regions on it, which for a one-part-per-page build
+ * — every rig in this run — is one region with its page. Sorting is the whole
+ * point: it is what makes the comparison blind to the order the pages were
+ * collected in, and that order is the one thing a decompiled spec cannot know.
+ */
+function atlasRegionBlocks(text: string): string[] {
+  return text
+    .split('\n\n')
+    .map((block) => block.trim())
+    .filter((block) => block.length > 0)
+    .sort();
+}
+
+/**
+ * The bones, slots, skins and constraints of the coverage probe.
+ *
+ * ⭐ It exists because the tree's own rigs do not reach every branch `ingest`
+ * has, and a branch no rig reaches is a branch nobody has seen work. Measured
+ * before it was written: over the seven gallery examples and the three generated
+ * probes, the emitted skeletons carry `region`/`mesh`/`path` attachments,
+ * `ik`/`path`/`physics`/`slider` constraints and the `bones`/`slots`/`ik`/`path`/
+ * `attachments` timeline groups — and **nothing** with a bounding box, a clipping
+ * polygon, a transform constraint, a second skin, a `drawOrder` or an `events`
+ * timeline, a `shear` of any axis, or a physics, slider or path-`mix` timeline.
+ * This probe carries exactly that remainder, so `IG00` can be a two-sided
+ * coverage gate instead of a list somebody keeps by hand.
+ *
+ * 🚫 Its art is `writeProbeRig`'s two flat colour blocks and no claim about
+ * appearance comes from it. Nothing here is measured from anything — the
+ * geometry is chosen, and only "it compiles and gates green" is load-bearing.
+ */
+const INGEST_PROBE_RIG: Record<string, unknown> = {
+  name: 'ingest_probe',
+  bones: [
+    { name: 'root' },
+    { name: 'block', parent: 'root', length: 12 },
+    { name: 'aim', parent: 'root', x: 20 },
+    { name: 'cart', parent: 'root' },
+    { name: 'dial', parent: 'root', x: -20 },
+    { name: 'spring', parent: 'block', y: 10 },
+  ],
+  slots: [
+    { name: 'block', bone: 'block', attachment: 'block' },
+    { name: 'marker', bone: 'block', attachment: 'marker' },
+    // A slot some skin fills and the setup pose shows nothing in: the `null` the
+    // rig spec spells and `ingest` has to read back out of an ABSENT field.
+    { name: 'badge', bone: 'root', attachment: null },
+    { name: 'box', bone: 'root', attachment: 'box' },
+    { name: 'clip', bone: 'root', attachment: 'clip' },
+    { name: 'track', bone: 'root', attachment: 'track' },
+  ],
+  events: { ping: { int: 1 } },
+  constraints: [
+    {
+      name: 'aimer',
+      type: 'transform',
+      bones: ['block'],
+      source: 'aim',
+      rotation: 10,
+      mixRotate: 1,
+      mixX: 1,
+      mixY: 1,
+      mixScaleX: 1,
+      mixScaleY: 1,
+      mixShearY: 1,
+    },
+    {
+      name: 'rail',
+      type: 'path',
+      bones: ['cart'],
+      slot: 'track',
+      positionMode: 'percent',
+      spacingMode: 'percent',
+      rotateMode: 'tangent',
+      position: 0,
+      spacing: 0,
+      mixRotate: 1,
+      mixX: 1,
+      mixY: 1,
+    },
+    {
+      name: 'knob',
+      type: 'slider',
+      animation: 'dialled',
+      bone: 'dial',
+      property: 'rotate',
+      from: 0,
+      to: 90,
+      scale: 0.01,
+      max: 90,
+      local: true,
+      additive: true,
+      mix: 1,
+    },
+  ],
+  skins: {
+    default: {
+      block: { block: { image: 'block.png' } },
+      marker: { marker: { image: 'marker.png' } },
+      box: { box: { type: 'boundingbox', vertexCount: 4, vertices: [0, 0, 12, 0, 12, 8, 0, 8] } },
+      clip: { clip: { type: 'clipping', vertexCount: 4, vertices: [0, 0, 20, 0, 20, 20, 0, 20], end: 'marker' } },
+      track: {
+        track: { type: 'path', vertexCount: 6, vertices: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10] },
+      },
+    },
+    // A second skin, filling a placeholder the default skin does not: two skins
+    // in the emitted array, which is the only shape that exercises the skin
+    // ordering and the deform timeline's own `skin` key. It fills a placeholder
+    // of its own rather than contesting one, because a contested placeholder the
+    // DEFAULT skin also fills is refused outright (#567).
+    alt: { badge: { badge: { image: 'marker.png' } } },
+  },
+};
+
+const INGEST_PROBE_MOTION: Record<string, unknown> = {
+  spec: 'rigc-motion/1',
+  archetype: 'ingest_probe',
+  cut: 'ingest_probe',
+  easings: { ease: [0.4, 0, 0.6, 1] },
+  physics: { wobble: { bone: 'spring', rotate: 1, mix: 1 } },
+  animations: {
+    // The slider's lookup table, not an animation anybody plays.
+    dialled: {
+      duration: 0.9,
+      tracks: [{ bone: 'dial', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.9, v: [90] }] }],
+    },
+    everything: {
+      duration: 1,
+      tracks: [
+        { bone: 'block', property: 'shear', keys: [{ t: 0, v: [0, 0], ease: 'ease' }, { t: 1, v: [4, 2] }] },
+        { bone: 'aim', property: 'shearx', keys: [{ t: 0, v: [0] }, { t: 1, v: [3] }] },
+        { bone: 'aim', property: 'sheary', keys: [{ t: 0, v: [0] }, { t: 1, v: [2] }] },
+        { path: 'rail', property: 'position', keys: [{ t: 0, v: [0] }, { t: 1, v: [1] }] },
+        { path: 'rail', property: 'spacing', keys: [{ t: 0, v: [0] }, { t: 1, v: [0.5] }] },
+        { path: 'rail', property: 'mix', keys: [{ t: 0, v: [1, 1, 1] }, { t: 1, v: [0.5, 1, 1] }] },
+        { physics: 'wobble', property: 'mix', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.25] }] },
+        { physics: 'wobble', property: 'reset', keys: [{ t: 0, v: null }] },
+        { slider: 'knob', property: 'time', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.5] }] },
+        { slider: 'knob', property: 'mix', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.75] }] },
+      ],
+      transform: [
+        {
+          constraint: 'aimer',
+          keys: [
+            { t: 0, mixRotate: 1, mixX: 1, mixY: 1, mixScaleX: 1, mixScaleY: 1, mixShearY: 1 },
+            { t: 1, mixRotate: 0, mixX: 1, mixY: 1, mixScaleX: 1, mixScaleY: 1, mixShearY: 1 },
+          ],
+        },
+      ],
+      drawOrder: [{ t: 0, offsets: [{ slot: 'marker', offset: 1 }] }, { t: 0.5 }],
+      events: [{ t: 0.25, name: 'ping' }],
+    },
+  },
+};
+
+/** The coverage probe on disk, over `writeProbeRig`'s own two PNGs. */
+function writeIngestProbe(): IngestCandidate {
+  const dirs = writeProbeRig(INGEST_PROBE_RIG);
+  const motionPath = join(dirs.dir, 'ingest_probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(INGEST_PROBE_MOTION, null, 2)}\n`);
+  return { name: 'ingest_probe', rigPath: dirs.rigPath, motionPath, imagesDir: dirs.dir };
+}
+
+/** Every rig this run can round-trip: the gallery, the three probes, the coverage probe. */
+function ingestCandidates(): IngestCandidate[] {
+  const out: IngestCandidate[] = [];
+  // Shared with `runGallerySuite` and `CUR13`: one criterion for *which examples
+  // does this repository have*, because issue #520 is what a second one cost.
+  const galleryRoot = resolve(import.meta.dir, 'gallery');
+  for (const name of galleryExampleNames(galleryRoot)) {
+    out.push({ name, rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json') });
+  }
+  for (const [name, fixture] of [
+    ['overlay_probe', OVERLAY],
+    ['articulated_probe', ARTICULATED],
+    ['contained_probe', CONTAINED],
+  ] as const) {
+    out.push({ name, rigPath: fixture.rigPath, motionPath: fixture.motionPath, manifestPath: fixture.manifestPath });
+  }
+  out.push(writeIngestProbe());
+  return out;
+}
+
+/**
+ * `build` it, `ingest` that, `build` the result — optionally with a defect
+ * planted in the decompiler's output on the way through.
+ *
+ * ⚠️ `A` and `B` are siblings of the same depth on purpose. `skeleton.images` and
+ * every atlas page name are written `relative(outDir, …)`, so two output
+ * directories at different depths produce two different — and both correct —
+ * strings for the same art. That is a property of the harness, not of the round
+ * trip, and putting them side by side is how it is kept out of the measurement.
+ *
+ * `art: 'loose'` returns null when the first build drew its parts from more than
+ * one directory: `skeleton.images` is then absent by construction (there is no
+ * single path that is true of all of them), and a rebuild that resolves them out
+ * of one directory would write the field the original had no way to. Derived
+ * from the build rather than listed, and `IG00` names what it left out.
+ */
+function ingestRoundTrip(
+  candidate: IngestCandidate,
+  art: 'loose' | 'none',
+  mutate?: (rig: Record<string, unknown>, motion: Record<string, unknown>) => number,
+): IngestTrip | null {
+  const root = mkdtempSync(join(tmpdir(), `rigc-ingest-${candidate.name}-`));
+  const aDir = join(root, 'A');
+  const bDir = join(root, 'B');
+  const specDir = join(root, 'S');
+  for (const dir of [aDir, bDir, specDir]) mkdirSync(dir, { recursive: true });
+  const a = compile({
+    rigPath: candidate.rigPath,
+    motionPath: candidate.motionPath,
+    outDir: aDir,
+    manifestPath: candidate.manifestPath,
+    imagesDir: candidate.imagesDir,
+  });
+  const artDirs = [...new Set(a.images.map((img) => dirname(img.absPath)))].sort();
+  if (art === 'loose' && artDirs.length !== 1) return null;
+  writeFileSync(join(aDir, 'skeleton.atlas'), a.atlasText);
+
+  const rigName = (JSON.parse(readFileSync(candidate.rigPath, 'utf8')) as { name: string }).name;
+  const result = ingest(JSON.parse(a.skeletonText), {
+    name: rigName,
+    art,
+    source: 'skeleton.json',
+    version: packageVersion(),
+  });
+  const rig = result.rig as unknown as Record<string, unknown>;
+  const motion = result.motion as unknown as Record<string, unknown>;
+  const mutations = mutate === undefined ? 0 : mutate(rig, motion);
+  writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+  writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(motion, null, 2)}\n`);
+
+  const b = compile({
+    rigPath: join(specDir, 'rig.json'),
+    motionPath: join(specDir, 'motion.json'),
+    outDir: bDir,
+    imagesDir: art === 'loose' ? artDirs[0] : undefined,
+    atlasInPath: art === 'none' ? join(aDir, 'skeleton.atlas') : undefined,
+  });
+  return { a, b, findings: result.findings, rig, motion, artDirs, mutations };
+}
+
+/** `package.json`'s version, which is what `cli.ts` writes into the provenance note. */
+function packageVersion(): string {
+  return (JSON.parse(readFileSync(join(import.meta.dir, 'package.json'), 'utf8')) as { version: string }).version;
+}
+
+/** Every construct one emitted skeleton carries, in `INGEST_VOCABULARY`'s own vocabulary. */
+function ingestCensus(skeleton: Record<string, unknown>, into: Map<string, Set<string>>): void {
+  const add = (family: string, value: string): void => {
+    const seen = into.get(family) ?? new Set<string>();
+    seen.add(value);
+    into.set(family, seen);
+  };
+  const objectsOf = (node: unknown): Array<[string, Record<string, unknown>]> =>
+    Object.entries(isIngestObject(node) ? node : {}).filter(
+      (entry): entry is [string, Record<string, unknown>] => isIngestObject(entry[1]),
+    );
+  for (const skin of Array.isArray(skeleton.skins) ? skeleton.skins : []) {
+    for (const [, perSlot] of objectsOf(isIngestObject(skin) ? skin.attachments : {})) {
+      for (const [, att] of objectsOf(perSlot)) add('attachments', att.type === undefined ? 'region' : String(att.type));
+    }
+  }
+  for (const constraint of Array.isArray(skeleton.constraints) ? skeleton.constraints : []) {
+    if (isIngestObject(constraint)) add('constraints', String(constraint.type));
+  }
+  for (const [, animation] of objectsOf(skeleton.animations)) {
+    for (const group of Object.keys(animation)) add('animationGroups', group);
+    for (const [, timelines] of objectsOf(animation.bones)) for (const p of Object.keys(timelines)) add('boneTracks', p);
+    for (const [, timelines] of objectsOf(animation.slots)) for (const p of Object.keys(timelines)) add('slotTracks', p);
+    for (const family of ['path', 'physics', 'slider']) {
+      for (const [, timelines] of objectsOf(animation[family])) for (const p of Object.keys(timelines)) add(family, p);
+    }
+  }
+}
+
+function runIngestSuite(): number {
+  console.log('\n── ingest: build(ingest(build(spec))) is the file it was read from ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const candidates = ingestCandidates();
+  const trips = new Map<string, IngestTrip>();
+  const census = new Map<string, Set<string>>();
+
+  // --- the two halves, one line per rig per half ----------------------------
+  const looseSkipped: string[] = [];
+  for (const candidate of candidates) {
+    const trip = ingestRoundTrip(candidate, 'none');
+    if (trip === null) throw new Error(`internal: the atlas-in round trip is never skipped (${candidate.name})`);
+    trips.set(candidate.name, trip);
+    ingestCensus(JSON.parse(trip.a.skeletonText) as Record<string, unknown>, census);
+    const paths = differingJsonPaths(JSON.parse(trip.a.skeletonText), JSON.parse(trip.b.skeletonText));
+    const identical = trip.a.skeletonText === trip.b.skeletonText;
+    const atlasIdentical = trip.a.atlasText === trip.b.atlasText;
+    const blockers = trip.findings.filter((f) => f.kind === 'blocker');
+    say(
+      `IG00_THE_REBUILT_SKELETON_IS_THE_FILE_IT_WAS_READ_FROM[${candidate.name}]`,
+      identical && atlasIdentical && blockers.length === 0,
+      identical && atlasIdentical
+        ? `skeleton.json ${trip.a.skeletonText.length} B identical, skeleton.atlas identical, 0 differing field ` +
+            `paths; ${trip.findings.length} finding(s), ${blockers.length} blocker(s)`
+        : `${paths.length} differing field path(s)${atlasIdentical ? '' : ', and the atlas differs'}` +
+            (blockers.length > 0 ? `, ${blockers.length} blocker(s): ${blockers.map((f) => f.code).join(', ')}` : '') +
+            (paths.length > 0 ? `\n          ${paths.join('\n          ')}` : ''),
+      'the contract, and the only reference in this repository that rigc did not write: the second build is held ' +
+        'to the FILE the decompiler read, not to an assertion about it. `--art none` + `--atlas-in` here, so the ' +
+        'rebuild resolves every attachment against the very pack the first build emitted',
+    );
+  }
+  const looseTrips = new Map<string, IngestTrip>();
+  for (const candidate of candidates) {
+    const trip = ingestRoundTrip(candidate, 'loose');
+    if (trip === null) {
+      looseSkipped.push(candidate.name);
+      continue;
+    }
+    looseTrips.set(candidate.name, trip);
+    const identical = trip.a.skeletonText === trip.b.skeletonText;
+    const blocks = { a: atlasRegionBlocks(trip.a.atlasText), b: atlasRegionBlocks(trip.b.atlasText) };
+    const sameRegions = JSON.stringify(blocks.a) === JSON.stringify(blocks.b);
+    const paths = differingJsonPaths(JSON.parse(trip.a.skeletonText), JSON.parse(trip.b.skeletonText));
+    say(
+      `IG01_A_LOOSE_REBUILD_REPRODUCES_THE_SKELETON_AND_THE_ATLASES_REGIONS[${candidate.name}]`,
+      identical && sameRegions,
+      identical && sameRegions
+        ? `skeleton.json identical; ${blocks.a.length} atlas region block(s) equal as a multiset` +
+            `${trip.a.atlasText === trip.b.atlasText ? ' (and in the same order)' : ' (in a different order — see IG02)'}`
+        : `skeleton ${identical ? 'identical' : `differs at ${paths.join('; ')}`}; atlas regions ` +
+            `${sameRegions ? 'equal' : `NOT equal (${blocks.a.length} vs ${blocks.b.length} block(s))`}`,
+      'the other code path, and the one `--atlas-in` cannot reach: here the atlas is rebuilt from PNGs found by ' +
+        'the name `ingest` derived for each attachment, so a wrong `path`/`image` inversion points at a region ' +
+        'that is not there instead of being handed the right one',
+    );
+  }
+
+  // --- IG02: page order, which is the one thing the skeleton does not hold ---
+  const measured = [...looseTrips.entries()];
+  const permuted = measured.filter(([, trip]) => trip.a.atlasText !== trip.b.atlasText);
+  const multisetEqual = measured.every(
+    ([, trip]) => JSON.stringify(atlasRegionBlocks(trip.a.atlasText)) === JSON.stringify(atlasRegionBlocks(trip.b.atlasText)),
+  );
+  say(
+    'IG02_THE_ATLASES_PAGE_ORDER_IS_THE_ONE_THING_A_DECOMPILED_SPEC_CANNOT_KNOW',
+    measured.length > 0 && multisetEqual && permuted.length > 0,
+    `${measured.length} loose rebuild(s): every one equal as a multiset of region blocks, ` +
+      `${permuted.length} of them in a DIFFERENT page order (${permuted.map(([name]) => name).join(', ')})`,
+    'this is why the contract says "as a multiset" for the atlas and "byte for byte" for the skeleton, and the ' +
+      'asymmetry is measured rather than assumed: `build` collects images in the order the rig spec\'s skins table ' +
+      'names slots, a decompiled spec names them in the order the EMITTED skeleton does, and that order is in no ' +
+      'field of the file. The permuted count is the positive control — if every rebuild happened to come back in ' +
+      'the same order, "equal as a multiset" would be an untested weakening',
+  );
+
+  // --- IG03: is every branch `ingest` has exercised by a rig somebody builds --
+  const uncovered: string[] = [];
+  for (const [family, vocabulary] of Object.entries(INGEST_VOCABULARY)) {
+    const seen = census.get(family) ?? new Set<string>();
+    for (const word of vocabulary) if (!seen.has(word)) uncovered.push(`${family}.${word}`);
+  }
+  const covered = [...census.values()].reduce((total, set) => total + set.size, 0);
+  say(
+    'IG03_EVERY_CONSTRUCT_INGEST_HAS_A_BRANCH_FOR_IS_EXERCISED_BY_A_RIG_IN_THIS_RUN',
+    candidates.length > 0 && covered > 0 && uncovered.length === 0,
+    `${candidates.length} rig(s) round-tripped, ${covered} construct(s) of ${Object.values(INGEST_VOCABULARY).flat().length} ` +
+      `in the module's own vocabulary exercised` +
+      (uncovered.length === 0 ? '' : `; NOT reached: ${uncovered.join(', ')}`) +
+      (looseSkipped.length === 0
+        ? ''
+        : `. The loose half left out ${looseSkipped.join(', ')}: their parts come from more than one directory, ` +
+          'so the original wrote no `skeleton.images` and a single-directory rebuild would write one'),
+    'a decompiler branch no rig reaches is a branch nobody has seen work, which is this file\'s own definition of ' +
+      'not a gate. The vocabulary comes from `src/ingest.ts` and the census from the emitted skeletons, so neither ' +
+      'side is a list kept by hand — and the coverage probe exists because the measurement said the tree\'s own ' +
+      'rigs reach neither a bounding box, a clipping polygon, a transform constraint, a second skin, a drawOrder ' +
+      'or events timeline, a shear on any axis, nor a physics, slider or path-mix timeline',
+  );
+
+  // --- IG04 / IG05: the mutants — a decompiler that drops something ----------
+  const probe = candidates.find((c) => c.name === 'ingest_probe')!;
+  const droppedField = ingestRoundTrip(probe, 'none', (rig) => {
+    let dropped = 0;
+    for (const bone of (rig.bones as Array<Record<string, unknown>>) ?? []) {
+      if (bone.length === undefined) continue;
+      delete bone.length;
+      dropped++;
+    }
+    return dropped;
+  })!;
+  const fieldPaths = differingJsonPaths(JSON.parse(droppedField.a.skeletonText), JSON.parse(droppedField.b.skeletonText));
+  say(
+    'IG04_A_DECOMPILER_THAT_DROPS_A_BONE_FIELD_IS_CAUGHT_AND_THE_FIELD_IS_NAMED',
+    droppedField.mutations > 0 &&
+      droppedField.a.skeletonText !== droppedField.b.skeletonText &&
+      fieldPaths.some((path) => path.includes('length')),
+    `${droppedField.mutations} bone "length" field(s) removed from the decompiled rig spec; the rebuild differs at ` +
+      `${fieldPaths.length} path(s): ${fieldPaths.join('; ')}`,
+    'red-first, and the mutation count is half the case: a plant with nothing to delete passes while checking ' +
+      'nothing. ⚠️ The brief for this suite proposed dropping `inherit`, and that mutant is VACUOUS on this tree — ' +
+      'no rig in it declares one, so the plant would have removed 0 fields and the round trip would have come ' +
+      'back identical, green. `length` is a field the probe actually carries',
+  );
+  const droppedFamily = ingestRoundTrip(probe, 'none', (_rig, motion) => {
+    let dropped = 0;
+    for (const animation of Object.values((motion.animations as Record<string, Record<string, unknown>>) ?? {})) {
+      if (animation.transform === undefined) continue;
+      delete animation.transform;
+      dropped++;
+    }
+    return dropped;
+  })!;
+  const familyA = JSON.parse(droppedFamily.a.skeletonText) as Record<string, unknown>;
+  const familyB = JSON.parse(droppedFamily.b.skeletonText) as Record<string, unknown>;
+  const lostGroups = Object.entries((familyA.animations ?? {}) as Record<string, Record<string, unknown>>).filter(
+    ([name, animation]) =>
+      animation.transform !== undefined &&
+      ((familyB.animations as Record<string, Record<string, unknown>>)[name]?.transform === undefined),
+  );
+  say(
+    'IG05_A_DECOMPILER_THAT_DROPS_A_TIMELINE_FAMILY_IS_CAUGHT',
+    droppedFamily.mutations > 0 && lostGroups.length === droppedFamily.mutations,
+    `${droppedFamily.mutations} transform timeline group(s) removed from the decompiled motion spec; the rebuilt ` +
+      `skeleton is missing ${lostGroups.length} of them (${lostGroups.map(([name]) => name).join(', ')})`,
+    'the other shape a decompiler fails in, and the one a field-by-field walk finds hardest to shout about: not a ' +
+      'wrong value but a whole group that is simply not there. It is caught here for the same reason the parser ' +
+      'cannot catch it — an animation with one fewer timeline loads perfectly',
+  );
+
+  // --- IG06: the stage, which is the one value that is not in a skeleton -----
+  const stripped = JSON.parse(trips.get('ingest_probe')!.a.skeletonText) as Record<string, unknown>;
+  const header = stripped.skeleton as Record<string, unknown>;
+  delete header.width;
+  delete header.height;
+  const withoutStage = ingest(stripped, { name: 'p', art: 'none', source: 's.json', version: '0' });
+  const supplied = { x: 1, y: 2, width: 64, height: 48 };
+  const withStage = ingest(stripped, { name: 'p', art: 'none', source: 's.json', version: '0', stage: supplied });
+  const blockerless = trips.get('ingest_probe')!.findings.filter((f) => f.code === 'NO_STAGE');
+  const refused = withoutStage.findings.filter((f) => f.code === 'NO_STAGE' && f.kind === 'blocker');
+  const judged = withStage.findings.filter((f) => f.code === 'NO_STAGE' && f.kind === 'judgement');
+  const wrote = withStage.rig.skeleton as Record<string, unknown> | undefined;
+  say(
+    'IG06_A_SKELETON_WITH_NO_STAGE_IS_A_BLOCKER_AND_A_SUPPLIED_ONE_IS_A_JUDGEMENT',
+    refused.length === 1 &&
+      (withoutStage.rig.skeleton as Record<string, unknown> | undefined)?.width === undefined &&
+      judged.length === 1 &&
+      withStage.findings.every((f) => f.kind !== 'blocker') &&
+      wrote?.width === supplied.width &&
+      wrote?.x === supplied.x &&
+      blockerless.length === 0,
+    `no --stage: ${refused.length} NO_STAGE blocker and no width written. --stage ${JSON.stringify(supplied)}: ` +
+      `${judged.length} NO_STAGE judgement, header ${JSON.stringify(wrote)}. A skeleton that HAS a stage: ` +
+      `${blockerless.length} NO_STAGE finding(s)`,
+    'the one value a decompiler cannot read out of a skeleton, and the one that costs nothing to get wrong — ' +
+      '`diff` has no skeleton-header measure at all, so an absurd box reads 1.000 on every measure there is. ' +
+      'Three-sided because the middle state is the trap: recording it as a JUDGEMENT rather than silently ' +
+      'accepting the caller\'s number is the whole difference between a transcription and an invention',
+  );
+
+  // --- IG07: the other judgement, and the one thing rigc re-derives ----------
+  const probeTrip = trips.get('ingest_probe')!;
+  const durations = probeTrip.findings.filter((f) => f.code === 'DURATION');
+  const probeAnimations = Object.keys(
+    ((JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>).animations ?? {}) as Record<string, unknown>,
+  );
+  const declared = Object.entries((probeTrip.motion.animations ?? {}) as Record<string, { duration: number }>);
+  const largestKeyTime = (animation: unknown): number => {
+    let max = 0;
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        for (const item of node) walk(item);
+        return;
+      }
+      if (!isIngestObject(node)) return;
+      if (typeof node.time === 'number' && node.time > max) max = node.time;
+      for (const value of Object.values(node)) walk(value);
+    };
+    walk(animation);
+    return max;
+  };
+  const sourceAnimations = ((JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>).animations ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const wrongDuration = declared.filter(([name, animation]) => animation.duration !== largestKeyTime(sourceAnimations[name]));
+  const pathRig = trips.get('ride') ?? probeTrip;
+  const noPathRig = trips.get('articulated_probe')!;
+  const reportsLengths = pathRig.findings.some((f) => f.code === 'PATH_LENGTHS');
+  const staysQuiet = noPathRig.findings.every((f) => f.code !== 'PATH_LENGTHS');
+  say(
+    'IG07_THE_DURATION_IS_THE_LARGEST_KEY_TIME_AND_SAYS_SO_AND_A_PATHS_LENGTHS_ARE_RE_MEASURED',
+    durations.length === probeAnimations.length &&
+      durations.every((f) => f.kind === 'judgement') &&
+      wrongDuration.length === 0 &&
+      reportsLengths &&
+      staysQuiet,
+    `${durations.length} DURATION judgement(s) over ${probeAnimations.length} animation(s), all equal to the ` +
+      `largest key time; PATH_LENGTHS reported on a rig with a path attachment and on ${staysQuiet ? 'no' : 'the wrong'} ` +
+      'rig without one',
+    'skeleton JSON has no duration field at all, so the largest key time is the only derivable answer AND it is ' +
+      'wrong for an animation that holds past its last key — which is exactly the shape of thing that has to be ' +
+      'reported rather than chosen. `lengths` is the mirror image: the file HAS it and rigc drops it on purpose, ' +
+      'because the field is `PathConstraint`\'s own four-sample forward difference (#560) and a transcribed one ' +
+      'would freeze whatever produced the source. Two-sided, or "reports it" would be satisfied by reporting it ' +
+      'everywhere',
+  );
+
+  // --- IG08: constructs the spec cannot hold, refused BY NAME ----------------
+  const planted = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+  const skins = planted.skins as Array<Record<string, unknown>>;
+  const blockAttachments = (skins[0].attachments as Record<string, Record<string, unknown>>).block;
+  blockAttachments.linked = { type: 'linkedmesh', parent: 'block', skin: 'default' };
+  blockAttachments.tip = { type: 'point', x: 1, y: 2 };
+  (blockAttachments.block as Record<string, unknown>).sequence = { count: 2, start: 1 };
+  // An attachment `name` on a placeholder only ONE skin fills: rigc composes a
+  // name exactly where a placeholder is contested, so this one it will not
+  // re-derive. Lossy rather than a blocker — the rebuild resolves, it is simply
+  // called something else.
+  (blockAttachments.block as Record<string, unknown>).name = 'renamed_block';
+  // The two header fields the editor writes and the rig spec has no room for.
+  const plantedHeader = planted.skeleton as Record<string, unknown>;
+  plantedHeader.hash = 'Kx9plantedhash';
+  plantedHeader.audio = 'audio/';
+  (planted.bones as Array<Record<string, unknown>>)[0].transform = 'onlyTranslation';
+  (planted.slots as Array<Record<string, unknown>>)[0].attachment2 = 'block';
+  const plantedConstraints = planted.constraints as Array<Record<string, unknown>>;
+  plantedConstraints[0].uniform = true;
+  plantedConstraints.push({ name: 'gravity_well', type: 'gravity' });
+  const plantedAnimation = (planted.animations as Record<string, Record<string, unknown>>).everything;
+  plantedAnimation.audio = {};
+  ((plantedAnimation.slots ??= {}) as Record<string, Record<string, unknown>>).block = { rgb: [{ time: 0, color: 'ffffff' }] };
+  (plantedAnimation.bones as Record<string, Record<string, unknown>>).block.translatez = [{ time: 0, value: 1 }];
+  const plantedResult = ingest(planted, { name: 'p', art: 'none', source: 's.json', version: '0' });
+  // Code AND kind, because the kind is what the exit code turns on: a construct
+  // the rebuild will be missing has to be a `blocker`, and one the skeleton
+  // states that rigc re-derives has to be `lossy`. Reporting the second as the
+  // first would make every editor export exit non-zero for nothing.
+  const expected: Array<[string, IngestFinding['kind']]> = [
+    ['ATTACHMENT_LINKEDMESH', 'blocker'],
+    ['ATTACHMENT_POINT', 'blocker'],
+    ['ATTACHMENT_SEQUENCE', 'blocker'],
+    ['BONE_FIELD', 'blocker'],
+    ['SLOT_FIELD', 'blocker'],
+    ['CONSTRAINT_FIELD', 'blocker'],
+    ['CONSTRAINT_TYPE', 'blocker'],
+    ['ANIMATION_GROUP', 'blocker'],
+    ['SLOT_TIMELINE', 'blocker'],
+    ['BONE_TIMELINE', 'blocker'],
+    ['HEADER_BOOKKEEPING', 'lossy'],
+    ['ATTACHMENT_NAME', 'lossy'],
+  ];
+  const missed = expected.filter(([code, kind]) => !plantedResult.findings.some((f) => f.code === code && f.kind === kind));
+  const cleanCodes = new Set(probeTrip.findings.map((f) => f.code));
+  const spurious = expected.filter(([code]) => cleanCodes.has(code));
+  say(
+    'IG08_A_CONSTRUCT_THE_SPEC_CANNOT_HOLD_IS_A_FINDING_WITH_A_CODE_A_KIND_AND_A_SENTENCE',
+    missed.length === 0 &&
+      spurious.length === 0 &&
+      plantedResult.findings.every((f) => f.detail.length > 30 && f.where.length > 0),
+    `${expected.length} construct(s) planted in a real skeleton, ${expected.length - missed.length} reported under ` +
+      'the code and kind they are owed' +
+      (missed.length === 0 ? '' : ` — MISSED ${missed.map(([code, kind]) => `${code}/${kind}`).join(', ')}`) +
+      `; the unplanted skeleton raises ${spurious.length} of them`,
+    'the product of a decompiler is its refusals: a construct approximated is a rig that gates green and is not ' +
+      'the one that was read. Each is planted into an emitted skeleton rather than a hand-written stub, so the ' +
+      'finding has to survive a file that is correct in every other respect — and the clean run is the other ' +
+      'side, because a decompiler that reported all twelve on everything would pass the first clause alone',
+  );
+
+  // --- IG09: the note, which is the only thing no gate can catch -------------
+  const noteRig = String((probeTrip.rig as { note?: unknown }).note ?? '');
+  const noteMotion = String((probeTrip.motion as { note?: unknown }).note ?? '');
+  const clock = /\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}:\d{2}|GMT|UTC/;
+  const twice = [0, 1].map(() =>
+    JSON.stringify(ingest(JSON.parse(probeTrip.a.skeletonText), { name: 'p', art: 'none', source: 's.json', version: '9.9.9' })),
+  );
+  say(
+    'IG09_THE_PROVENANCE_NOTE_SAYS_DECOMPILED_NAMES_ITS_SOURCE_AND_CARRIES_NO_CLOCK',
+    [noteRig, noteMotion].every(
+      (note) => note.includes('DECOMPILED') && note.includes('skeleton.json') && note.includes(packageVersion()) && !clock.test(note),
+    ) && twice[0] === twice[1],
+    `rig note ${noteRig.length} B, motion note ${noteMotion.length} B, both naming the source and ${packageVersion()}, ` +
+      `neither matching ${String(clock)}; two ingests of one skeleton are ${twice[0] === twice[1] ? 'byte-identical' : 'DIFFERENT'}`,
+    'a decompiled spec is indistinguishable from an authored one by inspection and every gate in this tree calls ' +
+      'it green, because it IS green — so the note is the one statement nothing can check for you, which is why ' +
+      '`ingest` writes it rather than leaving it to the caller. The clock clause is not tidiness: `A18` compares ' +
+      'two independent compiles byte for byte, and a dated note would break the first rebuild from the spec',
+  );
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // the run's own tally of itself (issue #439)
 // ---------------------------------------------------------------------------
 //
@@ -34226,6 +34909,7 @@ function main(): void {
   const boneDistBad = tally.of('bonedist', runBoneDistSuite, { ran: ranIt });
   const checkBad = tally.of('check', runCheckSuite, { ran: ranIt });
   tally.of('slider-reader', runSliderReaderSuite);
+  tally.of('ingest', runIngestSuite);
   tally.of('loop-seam', runLoopSeamSuite);
   tally.of('run-tally', () => runRunTallySuite(tally));
   tally.of('gate-helper', runGateHelperSuite);
@@ -34302,6 +34986,30 @@ function main(): void {
         'leaf bone that moves position and nothing else, the same bone turned 30° that reads 30° and moves the ' +
         'matrix but not the scale, and a renamed bone that is named as unmatched under `identity` and returns to ' +
         'exactly zero under a supplied correspondence)';
+  const ingestRoundTrips =
+    ', + ' + n('ingest') + ' ingest round-trip controls (issue #569 — the only gate here that compares an emitted file ' +
+    'against a file rigc did not write: every rig this run builds is decompiled back into a rig spec and a motion ' +
+    'spec and rebuilt, and the result has to be the skeleton it was read from, byte for byte. Twice per rig, ' +
+    'because the two rebuilds are different code paths — through the pack the first build emitted, where the ' +
+    'atlas comes back identical for free and the texture side is never touched; and through loose PNGs found by ' +
+    'the name the decompiler derived for each attachment, where the atlas is rebuilt and the `path`/`image` ' +
+    'inversion either lands on the right region or quietly does not. The atlas is held to a MULTISET of region ' +
+    'blocks rather than to bytes, and the weakening is measured rather than assumed: the page ORDER is in no ' +
+    'field of the skeleton, and the rebuilds that come back permuted are the positive control for saying so. ' +
+    'Then the coverage question a list kept by hand cannot answer — every construct `src/ingest.ts` has a branch ' +
+    'for, against the census of what the run actually built, which is why a coverage probe carries the bounding ' +
+    'box, clipping polygon, transform constraint, second skin, drawOrder, events, shear and physics/slider/path-' +
+    'mix timelines the tree\'s own rigs reach none of. Two mutants — a bone field dropped, a timeline family ' +
+    'dropped — each with its own mutation count beside it, because a plant with nothing to delete passes while ' +
+    'checking nothing, and the `inherit` this suite was first asked to drop is exactly that plant on this tree. ' +
+    'Then the two values that are not in a skeleton at all: the stage, refused by name without one and recorded ' +
+    'as a JUDGEMENT with one, three-sided so that accepting the caller\'s number silently is the state that ' +
+    'fails; and the duration, checked against the largest key time in the source, beside the one number rigc ' +
+    're-measures on purpose (`lengths`, #560) reported on a path rig and on no other. Ten constructs the spec ' +
+    'format cannot hold planted into a correct skeleton and each required back as a named blocker, with the ' +
+    'unplanted run as the other side. And the note, which is the one statement no gate can check for you — it ' +
+    'says DECOMPILED, names its source and version, matches no clock, and two ingests of one skeleton are ' +
+    'byte-identical)';
   const loopSeam =
     ', + ' + n('loop-seam') + ' loop-seam controls (issue #337 — the four rows of that issue’s own table, two of which land on ' +
     'the duration and two of which do not; the landing rates named as the multiples of the duration’s reduced ' +
@@ -34857,6 +35565,7 @@ function main(): void {
           'included, each of which lifts differently when the turn is ignored — page-name rewriting that touches ' +
           'only the name lines, the two readers of `scale:` held to one answer, and every descaled corpus region ' +
           'measured against the loose drawing beside it)') +
+      ingestRoundTrips +
       loopSeam +
       runTally +
       gateHelpers +

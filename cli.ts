@@ -67,6 +67,7 @@ import {
   type DeformSpan,
 } from './src/deformmeasure.ts';
 import { diffLines, diffSkeletons, reportedFigures, sectionFigures, type DiffReport } from './src/diff.ts';
+import { ingest, type IngestFindingKind, type IngestStage } from './src/ingest.ts';
 import { copyAtlasImages } from './src/emit.ts';
 import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
@@ -2727,6 +2728,100 @@ function cmdExplain(flags: Record<string, string>): void {
   console.log(`  default=${motion.mix?.default ?? 0} pairs=${JSON.stringify(motion.mix?.pairs ?? [])}`);
 }
 
+/**
+ * ingest — a skeleton back into the two specs that rebuild it.
+ *
+ * The only command that runs against `build`'s direction, and the contract is an
+ * equality rather than a rulebook: `build(ingest(A))` is `A`. Everything it
+ * cannot carry is a **finding** printed here with its code, because those lines
+ * are what tells an author what the rebuilt rig will not have — they are this
+ * command's whole UI, exactly as the validator's messages are `build`'s.
+ *
+ * ⚠️ It writes both specs even when a blocker was found, and then exits
+ * non-zero: a blocker means the rebuild will not be the file that was read, and
+ * the useful thing at that point is the spec plus the list of what is missing
+ * from it. `build`'s "nothing written" rule is not this rule — that one is about
+ * a **gated artifact** on disk, and these two files are inputs to the gate
+ * rather than output of it.
+ */
+function cmdIngest(flags: Record<string, string>, positional: string[]): void {
+  const [source] = positional;
+  if (!source) throw new UsageError('ingest takes one path: <skeleton.json>');
+  const skeletonPath = resolve(source);
+  if (!existsSync(skeletonPath)) throw new UsageError(`nothing at ${skeletonPath}`);
+  // The same sentence `resolveArtifacts` refuses a `.spine` with, for the same
+  // reason (docs/INGEST.md §5): this reads Spine 4.3 skeleton JSON and nothing
+  // else — not a project file, not a binary `.skel`, not the atlas.
+  if (!skeletonPath.endsWith('.json')) {
+    throw new UsageError(
+      `${skeletonPath} is not a .json skeleton — ingest reads Spine 4.3 skeleton JSON and nothing else: not a ` +
+        '.spine project, not a binary .skel, not an atlas. Re-export as JSON',
+    );
+  }
+  if (flags.out === undefined) throw new UsageError('ingest needs --out <dir> — the directory to write rig.json and motion.json into');
+  const art = flags.art ?? 'loose';
+  if (art !== 'loose' && art !== 'none') {
+    throw new UsageError(
+      `--art is ${JSON.stringify(art)}; it is "loose" (name an image per attachment, for \`build --images <dir>\`) ` +
+        'or "none" (state width/height only, for `build --atlas-in <pack>`). A skeleton encodes neither, which is ' +
+        'why this is a flag',
+    );
+  }
+  let stage: IngestStage | undefined;
+  if (flags.stage !== undefined) {
+    const parts = flags.stage.split(',').map(Number);
+    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+      throw new UsageError(`--stage is ${JSON.stringify(flags.stage)}; give four numbers, x,y,width,height`);
+    }
+    stage = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+  }
+  const outDir = resolve(flags.out);
+  console.log(`rigc ingest ${skeletonPath}`);
+  console.log(`  ..    out  ${outDir}`);
+  console.log(`  ..    art  ${art}`);
+
+  const result = ingest(readJsonFile(skeletonPath), {
+    name: flags.name ?? basename(skeletonPath, '.json'),
+    art,
+    stage,
+    source: basename(skeletonPath),
+    version: readVersion(),
+  });
+
+  mkdirSync(outDir, { recursive: true });
+  // Indent 2, which is what `compile` writes the skeleton with. One emitter
+  // convention, so a spec and the skeleton it came from read the same way.
+  writeFileSync(join(outDir, 'rig.json'), `${JSON.stringify(result.rig, null, 2)}\n`);
+  writeFileSync(join(outDir, 'motion.json'), `${JSON.stringify(result.motion, null, 2)}\n`);
+  writeFileSync(join(outDir, 'findings.json'), `${JSON.stringify(result.findings, null, 2)}\n`);
+
+  // Grouped by kind rather than printed in discovery order: a blocker is what
+  // decides the exit code, and a reader scanning for one should not have to
+  // read past a hundred DURATION lines to find it.
+  const GUTTER: Record<IngestFindingKind, string> = { blocker: 'BLOCK', judgement: 'JUDGE', lossy: 'LOSS ' };
+  for (const kind of ['blocker', 'judgement', 'lossy'] as const) {
+    for (const finding of result.findings.filter((f) => f.kind === kind)) {
+      console.log(`  ${GUTTER[kind]} ${finding.code}: ${finding.where} — ${finding.detail}`);
+    }
+  }
+  console.log(`rigc: wrote ${join(outDir, 'rig.json')}`);
+  console.log(`rigc: wrote ${join(outDir, 'motion.json')}`);
+  console.log(`rigc: wrote ${join(outDir, 'findings.json')}`);
+  console.log(
+    `rigc: build it with  rigc build --rig ${join(outDir, 'rig.json')} --motion ${join(outDir, 'motion.json')} ` +
+      `${art === 'loose' ? '--images <dir>' : '--atlas-in <pack.atlas>'} --out <dir>`,
+  );
+
+  const blockers = result.findings.filter((f) => f.kind === 'blocker');
+  if (blockers.length > 0) {
+    console.error(
+      `rigc: ${blockers.length} blocker(s) — both specs were written, and a build from them will NOT be the ` +
+        `skeleton that was read (${[...new Set(blockers.map((f) => f.code))].join(', ')})`,
+    );
+    process.exit(1);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // usage / per-command help
 // ---------------------------------------------------------------------------
@@ -2825,6 +2920,14 @@ const FLAG_MEANINGS: Record<string, string> = {
   ballot: `the ballot the --record'd vote answers (default \`${DEFAULT_BALLOT}\`); its embedded manifest is what the vote is checked against`,
   ledger: `the append-only JSONL the vote lands in (default \`${DEFAULT_LEDGER}\`)`,
   again: 'record a second vote on a ballot the ledger already has; without it, a repeat is refused rather than doubled',
+  name: "the rig spec's own name, which the motion spec's archetype must match (default: the skeleton file's basename)",
+  art: 'how the written spec reaches the art, which a skeleton does not encode: `loose` names an image per ' +
+    'attachment for `build --images <dir>` to measure, `none` states width/height only for `build --atlas-in ' +
+    '<pack>` to resolve (default: loose)',
+  stage:
+    "the setup bounding box — `skeleton.x,y,width,height`. An editor export carries none and rigc refuses a " +
+    'compile without one; posing the rig gives the ANIMATED extent, which is a different number, so this is the ' +
+    "caller's value and is never derived. Without it the missing stage is reported as a blocker",
   help: "show this command's flags and exit",
 };
 
@@ -2870,6 +2973,9 @@ const FLAG_VALUES: Record<string, string> = {
   record: '<result.json>',
   ballot: '<ballot.html>',
   ledger: '<votes.jsonl>',
+  name: '<n>',
+  art: 'loose|none',
+  stage: '<x,y,w,h>',
 };
 
 interface CommandDoc {
@@ -2883,7 +2989,8 @@ interface CommandDoc {
    *
    * ⚠️ The default above it — one meaning per flag name, everywhere — is the rule
    * and this is the named exception to it, not a second table. Three flags earn it:
-   * `--out` is a directory of artifacts to `build`, a directory of pictures to
+   * `--out` is a directory of artifacts to `build`, a directory of specs to
+   * `ingest`, a directory of pictures to
    * `render` and one file to `preview` and `vote`; `--fps` is the rate a frame set
    * was RECORDED at to `check`, which reads it off a sidecar, and the rate to
    * SAMPLE at to `render`, which is choosing it; `--candidate` is one artifact
@@ -2931,6 +3038,17 @@ const COMMANDS: CommandDoc[] = [
       'rigc validate --cut <name> --cuts <cuts.json>   (also re-derives declared durations)',
     ],
     flags: ['atlas', 'profile', 'cut', 'cuts', 'rig', 'motion', 'out', 'manifest', 'images'],
+  },
+  {
+    name: 'ingest',
+    usage: ['rigc ingest <skeleton.json> --out <dir> [--name <n>] [--art loose|none] [--stage x,y,w,h]'],
+    flags: ['out', 'name', 'art', 'stage'],
+    overrides: {
+      out: {
+        value: '<dir>',
+        meaning: 'directory to write rig.json, motion.json and findings.json into — the two specs that rebuild this skeleton',
+      },
+    },
   },
   {
     name: 'diff',
@@ -3133,6 +3251,18 @@ const USAGE = [
   'draws with rigc\'s own rasteriser; preview embeds the artifact in a page that plays',
   'it in the official Spine Web Player, which is also the interop proof.',
   '',
+  'ingest runs build backwards: it reads a Spine 4.3 skeleton.json and writes the rig',
+  'spec and motion spec that rebuild it, so an existing skeleton becomes a starting',
+  'point instead of something to retype:',
+  '  rigc ingest hero.json --out specs/ --stage 0,0,1024,768   rig.json + motion.json',
+  'The contract is an equality, not a rulebook: build(ingest(x)) is x, byte for byte.',
+  'It reads the skeleton and nothing else — no .spine project, no binary .skel, no',
+  'atlas — so two things are the caller\'s and are refused rather than guessed: the',
+  'setup stage (--stage; an export carries none) and how the spec reaches the art',
+  '(--art). Everything the spec format cannot hold is printed as a named finding and',
+  'exits non-zero, with both files still written, because a spec plus a list of what',
+  'is missing from it beats no spec at all.',
+  '',
   'pose runs the other way round from everything above: it reads a picture you already',
   'have — one key pose — and reports where each loose part PNG sits in it (x, y, rotation,',
   'scale) so an agent can state those poses in a spec by construction:',
@@ -3193,6 +3323,7 @@ try {
     process.exit(0);
   }
   if (command === 'build') cmdBuild(flags);
+  else if (command === 'ingest') cmdIngest(flags, positional);
   else if (command === 'validate') cmdValidate(flags, positional);
   else if (command === 'explain') cmdExplain(flags);
   else if (command === 'diff') cmdDiff(flags, positional);
