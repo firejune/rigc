@@ -331,29 +331,89 @@ function rigcCommand(): { cmd: string; prefix: string[]; how: string } {
 }
 
 /**
- * Every `diff` measure that is not a perfect match — what the editor changed,
- * named by the measure that saw it.
+ * What `diff` reported about the export, read out of its own JSON: every
+ * measure that is not a perfect match, named by the measure that saw it and by
+ * the block it sits in.
  *
  * A round trip through a correct editor moves nothing, so an empty list is the
  * result and a populated one is the finding. Silence is not reported as a
  * match: a report that could not be read says so.
+ *
+ * 🚨 **Every block, and that is the whole of issue #597.** This walked
+ * `sections[].measures` alone, so it read the measures that go into a section
+ * mean and nothing else — while a `diff` report also carries each section's
+ * `nameAgnostic` comparison, its `reported` block, and since #578 a top-level
+ * `header` block holding the two stage measures. A round trip that changed or
+ * dropped the stage therefore printed *"every one a perfect match"*, which is
+ * the strongest sentence this file can print, about a question it had not
+ * asked. The stage is the sharpest case because a header field is exactly the
+ * kind of thing an editor rewrites on import and export, but it was never only
+ * the stage: `attachments.mesh_edges`, `animations.key_density` and
+ * `animations.curve_kinds` predate #578 in the same silence.
+ *
+ * ⭐ The headings carry `diff`'s own words rather than a paraphrase, because
+ * these measures gate nothing and a summary that let them read as failures
+ * would be inventing a verdict `diff` refuses to state. `ERT63` asserts the
+ * distinguishing clause of each heading against what `diffLines` actually
+ * prints, so a re-wording there cannot leave two documents disagreeing here.
+ *
+ * ⚠️ An absent `header` is a finding and not a perfect match. `DiffReport`
+ * declares that block non-optional for exactly this reason — over an absent
+ * one the empty list is indistinguishable from one that is all 1.000 — and
+ * this tool can reach one anyway: `rigcCommand()` falls back to the INSTALLED
+ * `rigc` when the file is not running inside the repository, and an install
+ * predating #578 writes a report with no header in it.
  */
-function movedMeasures(reportPath: string): string[] {
+export function diffSummaryLines(reportPath: string): string[] {
   if (!existsSync(reportPath)) return ['(no diff report was written, so nothing was read from one)'];
   interface Measure { id: string; what: string; matched: number; total: number; ratio: number }
-  interface Report { sections?: Array<{ name: string; measures?: Measure[] }> }
+  interface Block { measures?: Measure[] }
+  interface Section { name?: string; measures?: Measure[]; nameAgnostic?: Block; reported?: Block }
+  interface Report { sections?: Section[]; header?: Block }
   const report = JSON.parse(readFileSync(reportPath, 'utf8')) as Report;
-  const moved: string[] = [];
-  let measured = 0;
-  for (const section of report.sections ?? []) {
-    for (const m of section.measures ?? []) {
-      measured++;
-      if (m.ratio === 1) continue;
-      moved.push(`  moved  ${m.id}  ${m.matched}/${m.total} (${(m.ratio * 100).toFixed(2)}%) — ${m.what}`);
+  const sections = report.sections ?? [];
+  const headerMeasures = report.header?.measures ?? [];
+  // Read in the order `diff` prints them, so a row here can be found in the
+  // report it came from without translating between two orderings.
+  const blocks: Array<{ heading: string | null; measures: Measure[] }> = [
+    { heading: null, measures: sections.flatMap((s) => s.measures ?? []) },
+    {
+      heading: '  name-agnostic — the same two skeletons compared with names thrown away',
+      measures: sections.flatMap((s) => s.nameAgnostic?.measures ?? []),
+    },
+    {
+      heading: '  reported — unobservable from the frames, so reported and folded into nothing',
+      measures: [...sections.flatMap((s) => s.reported?.measures ?? []), ...headerMeasures],
+    },
+  ];
+  const measured = blocks.reduce((n, block) => n + block.measures.length, 0);
+  if (measured === 0) return ['(the diff report carried no measures — read it before believing this run)'];
+
+  const lines: string[] = [];
+  for (const block of blocks) {
+    const moved = block.measures.filter((m) => m.ratio !== 1);
+    if (moved.length === 0) continue;
+    if (block.heading !== null) lines.push(block.heading);
+    const indent = block.heading === null ? '  ' : '    ';
+    for (const m of moved) {
+      lines.push(`${indent}moved  ${m.id}  ${m.matched}/${m.total} (${(m.ratio * 100).toFixed(2)}%) — ${m.what}`);
     }
   }
-  if (measured === 0) return ['(the diff report carried no measures — read it before believing this run)'];
-  return moved.length === 0 ? [`  ${measured} measure(s), every one a perfect match`] : moved;
+  if (headerMeasures.length === 0) {
+    lines.push(
+      '  the report carries no `skeleton` header block, so the stage was never compared — the `rigc` that wrote ' +
+        'it predates the header measures (issue #578), and an absent block must not read here like one that is ' +
+        'all 1.000',
+    );
+  }
+  if (lines.length > 0) return lines;
+  // The counts are derived from the same three walks the rows come from, so the
+  // one sentence that claims everything held names how much everything was.
+  const [gating, agnostic, reported] = blocks.map((block) => block.measures.length);
+  return [
+    `  ${measured} measure(s) — ${gating} in the sections, ${agnostic} name-agnostic, ${reported} reported ` +
+      'and never gating — every one a perfect match',
+  ];
 }
 
 /**
@@ -835,7 +895,7 @@ function main(): void {
   // Read the numbers out of the REPORT rather than off stdout: the measures
   // that moved are the answer to "what did the editor change", and scraping a
   // console layout for them would break the first time that layout is tidied.
-  for (const line of movedMeasures(diffJson)) emit(`  ${line}`);
+  for (const line of diffSummaryLines(diffJson)) emit(`  ${line}`);
 
   // 🔒 The skins come off the BUILD, which is the side under test: a skin the
   // export dropped altogether then reads as a block whose check fails by name,
