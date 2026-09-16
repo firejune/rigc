@@ -1450,6 +1450,16 @@ export function compile(opts: CompileOptions): CompileResult {
   const droppedStates: CompileResult['droppedStates'] = [];
   const seenRegions = new Set<string>();
   /**
+   * Region name -> the absolute path of the file whose pixels that region holds.
+   *
+   * ⭐ A region is named by its PNG's **basename**, so two files in two
+   * directories can want one name, and the loser draws the winner's art with
+   * nothing said (issue #555). `seenRegions` answers "is this name taken"; this
+   * answers "by what", which is the half a refusal has to name — and it is the
+   * same record that lets one PNG legitimately serve two skins.
+   */
+  const regionSource = new Map<string, string>();
+  /**
    * Every directory the spec names a part PNG in — `skeletonImagesPath` reads it.
    * Recorded from the spec's own path whether or not the pixels came from there:
    * `--atlas-in` changes the pixel source, not where the rig says its parts are,
@@ -1471,9 +1481,51 @@ export function compile(opts: CompileOptions): CompileResult {
         ? fromLoosePng(relPath, loosePath, region, isBase, outDir)
         : resolveFromAtlas(relPath, region, isBase, outDir, atlasIn);
     seenRegions.add(region);
+    regionSource.set(region, loosePath);
     partDirs.add(dirname(loosePath));
     images.push(img);
     return img;
+  };
+
+  /**
+   * Measure and atlas the art ONE skin attachment names — once per file, not
+   * once per placeholder (issue #555).
+   *
+   * 🚨 The defect this replaces. The gather loop below deduplicated the slot's
+   * attachment NAMES, and the call to `addImage` stood behind that `continue`,
+   * so a placeholder two skins fill reached the atlas with the FIRST skin's art
+   * and every later skin's PNG was never opened. Measured on a two-skin rig
+   * before the repair: without stated sizes the compile refused with *a region
+   * needs width and height — give them, or give an "image" and rigc will measure
+   * the PNG*, which is the message telling the author to give the image they
+   * gave; with sizes stated it built and `A00_ROUNDTRIP_PARSE` refused the
+   * skeleton with *Region not found in atlas: patch_b*. Neither names the cause,
+   * and both are the doctrine's own second bullet inverted — a miss refused
+   * under somebody else's name.
+   *
+   * ⚠️ Two skins may legitimately share one PNG, which is why this is not simply
+   * `addImage` unguarded: `addImage` refuses any repeat of a region name, and a
+   * placeholder both skins point at the SAME file is one region on purpose. The
+   * distinction is the FILE, so that is what is compared — and two different
+   * files whose basenames collide are refused here by name rather than aliased,
+   * because the loser silently draws the winner's pixels at the winner's size
+   * and the whole gate stays green (measured: 15 assertions passed on exactly
+   * that rig).
+   */
+  const addSkinImage = (relPath: string, where: string): void => {
+    const region = basename(relPath, '.png');
+    const already = regionSource.get(region);
+    if (already === undefined) {
+      addImage(relPath, imagesDir, false);
+      return;
+    }
+    const wanted = resolve(imagesDir, relPath);
+    if (already === wanted) return; // one file, two attachments: one region, deliberately
+    throw new CompileError(
+      `${where}: "${relPath}" and the art already atlased as region "${region}" are two different files — ` +
+        `${wanted} and ${already}. An atlas region is named by its PNG's basename, so only one of the two can ` +
+        'hold that name and this attachment would draw the other file\'s pixels. Rename one of the PNGs.',
+    );
   };
 
   // A manifest may name a part the cut does not carry. A formation can declare
@@ -1653,11 +1705,15 @@ export function compile(opts: CompileOptions): CompileResult {
       }
       const names = rigAttachmentNames.get(slotName) ?? [];
       for (const [placeholder, att] of Object.entries(placeholders)) {
-        if (names.includes(placeholder)) continue;
-        names.push(placeholder);
+        // Two concerns, two conditions. The list is the slot's PLACEHOLDER list
+        // and a placeholder several skins fill belongs in it once; the art is
+        // per ATTACHMENT, and there are as many of those as there are skins
+        // filling it. Standing behind one `continue`, the second was the first's
+        // arithmetic (issue #555).
+        if (!names.includes(placeholder)) names.push(placeholder);
         const image = (att as RigRegionAttachment).image;
-        if (typeof image === 'string' && !seenRegions.has(basename(image, '.png'))) {
-          addImage(image, imagesDir, false);
+        if (typeof image === 'string') {
+          addSkinImage(image, `skin "${skinName}" slot "${slotName}" attachment "${placeholder}"`);
         }
       }
       rigAttachmentNames.set(slotName, names);
@@ -2963,13 +3019,50 @@ function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentCont
   };
 }
 
+/**
+ * The compiled image an attachment's `image` names — or a refusal that names the
+ * file and says what is actually wrong with it.
+ *
+ * 🚨 This exists because of what the four call sites used to do instead, which
+ * was nothing (issue #555). `ctx.images.find(...)` returning `undefined` fell
+ * through to the size branch, so an attachment that named a PNG rigc had not
+ * atlased was refused with *a region needs width and height — give them, or give
+ * an "image" and rigc will measure the PNG*: the remedy sentence handed to the
+ * one author who had already done both halves of it. The two mesh generators
+ * said `no compiled image for "x.png"`, which names the file and not the fault.
+ *
+ * ⭐ What the message may not do is guess at the spec. Every image a skin
+ * attachment names is measured and atlased, one per file, so an attachment
+ * standing in front of a region that does not exist is rigc having skipped a
+ * measurement — the author cannot repair it by writing anything. Saying so is
+ * the whole difference between a message that ends a session and one that starts
+ * a bug report, and it is why this refusal reads as an invariant rather than as
+ * advice. The near-miss list is `resolveFromAtlas`'s, for the case where the
+ * spec did misspell a name in a way something upstream let through.
+ */
+function atlasedImage(image: string, where: string, ctx: AttachmentContext): CompiledImage {
+  const region = basename(image, '.png');
+  const img = ctx.images.find((im) => im.region === region);
+  if (img) return img;
+  const near = nearMisses(region, ctx.images.map((im) => im.region));
+  const built = ctx.images.map((im) => im.region).sort();
+  throw new CompileError(
+    `${where}: the image "${image}" was never added to the atlas, so there is no region "${region}" for this ` +
+      'attachment to draw and no measurement of it to take a size from. Every image an attachment names is ' +
+      'measured and atlased — one per file, whichever skin names it (issue #555) — so reaching this means rigc ' +
+      'skipped one, not that the spec left anything out. ' +
+      (near.length ? `The nearest region(s) built are ${near.map((n) => JSON.stringify(n)).join(', ')}. ` : '') +
+      `The atlas holds ${built.length} region(s): ${built.join(', ')}`,
+  );
+}
+
 function buildRigRegion(
   att: RigRegionAttachment,
   placeholder: string,
   where: string,
   ctx: AttachmentContext,
 ): SpineRegionAttachment {
-  const img = att.image === undefined ? null : ctx.images.find((im) => im.region === basename(att.image!, '.png'));
+  const img = att.image === undefined ? null : atlasedImage(att.image, where, ctx);
   // ⭐ An IMPORTED region's size is not a default the spec may override. On the
   // loose path `att.width` and the PNG's width are two legitimate numbers — "draw
   // this drawing at this size" is a scale, and the region covers its page either
@@ -3220,7 +3313,7 @@ function buildRigMesh(
   // nor measurable it is a refusal, as it is for a region: 0 is not a size the
   // spec stated, and the editor shows whatever is written here as the image's
   // dimensions (it showed 32x32, its missing-image placeholder, for a 0x0 mesh).
-  const img = att.image === undefined ? undefined : ctx.images.find((im) => im.region === basename(att.image!, '.png'));
+  const img = att.image === undefined ? undefined : atlasedImage(att.image, where, ctx);
   const width = att.width ?? img?.width;
   const height = att.height ?? img?.height;
   if (width === undefined || height === undefined) {
@@ -3727,9 +3820,7 @@ function buildGridAttachment(
     );
   }
 
-  const region = basename(att.image, '.png');
-  const img = ctx.images.find((im) => im.region === region);
-  if (!img) throw new CompileError(`${where}: no compiled image for "${att.image}"`);
+  const img = atlasedImage(att.image, where, ctx);
   const plate = partPlate(img);
 
   let geometry;
@@ -3810,7 +3901,7 @@ function buildGridAttachment(
     height: r6(h),
   };
   if (att.path !== undefined) out.path = att.path;
-  else if (region !== placeholder) out.path = region;
+  else if (img.region !== placeholder) out.path = img.region;
   if (att.color !== undefined) out.color = att.color;
   return out;
 }
@@ -3853,9 +3944,7 @@ function buildContourAttachment(
         'there is nothing else here that says which pixels to measure',
     );
   }
-  const region = basename(att.image, '.png');
-  const img = ctx.images.find((im) => im.region === region);
-  if (!img) throw new CompileError(`${where}: no compiled image for "${att.image}"`);
+  const img = atlasedImage(att.image, where, ctx);
   // ⚠️ Nothing here reads the PNG's colour type. `hasAlpha` answers "where does
   // this file keep its alpha", not "is any pixel of it transparent" — a tRNS
   // chunk is real transparency (issue #215) and an all-255 alpha channel is
@@ -3952,7 +4041,7 @@ function buildContourAttachment(
   // basename, so a placeholder named anything else needs `path` written down or
   // the loader resolves nothing.
   if (att.path !== undefined) out.path = att.path;
-  else if (region !== placeholder) out.path = region;
+  else if (img.region !== placeholder) out.path = img.region;
   if (att.color !== undefined) out.color = att.color;
   return out;
 }
