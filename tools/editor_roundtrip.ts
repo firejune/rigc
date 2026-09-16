@@ -2,8 +2,9 @@
  * The editor round trip, as a tool (issue #374).
  *
  * `build` → import into the Spine editor → export back to JSON → gate, `diff`,
- * `render` and `check` the export against the build it came from. It is the one
- * measurement that answers *"does the editor accept what rigc wrote, and does
+ * `render` and `check` the export against the build it came from — the last two
+ * **once per skin the build declares** (issue #571; see `skinBlocks`). It is the
+ * one measurement that answers *"does the editor accept what rigc wrote, and does
  * what comes back still play the same"*, and on its first run it found three
  * emitter defects (#368 `hull`/`edges`, #369 hold curves, #370
  * `skeleton.images`) before proving that a human edit survives the trip.
@@ -383,6 +384,123 @@ function checkFigures(reportPath: string): string[] {
   );
 }
 
+/**
+ * The largest per-animation `meanMae` in one check report, or `null` when there
+ * is no report to read one from.
+ *
+ * ⚠️ `check`'s exit code is not a verdict — there is no pass mark in it, by
+ * design, any more than there is one in `diff` — so a per-skin roll-up built on
+ * exit codes alone reports every skin as fine and reports it in the column a
+ * reader looks at. This is the figure that actually moves when one skin's art
+ * comes back wrong, which is what makes the roll-up a roll-up (issue #571).
+ */
+function worstMeanMae(reportPath: string): number | null {
+  if (!existsSync(reportPath)) return null;
+  const report = JSON.parse(readFileSync(reportPath, 'utf8')) as { animations?: Array<{ meanMae?: number }> };
+  const values = (report.animations ?? []).map((a) => a.meanMae).filter((v): v is number => typeof v === 'number');
+  return values.length === 0 ? null : Math.max(...values);
+}
+
+// ---------------------------------------------------------------------------
+// step 5's per-skin plan (issue #571)
+// ---------------------------------------------------------------------------
+//
+// 🚨 Step 5 used to render and check ONCE, with no skin, which draws the default
+// skin and nothing else. On a rig whose named skins carry the contested art that
+// is a comparison of blank against blank: the ninth round trip read `check`
+// 0.0000 on a rig where the construct under test lives in a named skin, and the
+// zero was true and empty at once. So the plan below is one block PER DECLARED
+// SKIN, and a skin whose art the editor moved is a red row with its own name on
+// it rather than a figure nobody rendered.
+//
+// ⭐ Split out as pure functions for the reason `shapeOf`/`shapeDiff` are: the
+// `ERT` suite has no editor and never will, and a loop that can only be read by
+// driving one is a loop nobody has seen work.
+
+/**
+ * The skins a skeleton file declares, in the order the file lists them.
+ *
+ * ⚠️ Off the FILE rather than off `spine-core`: this is the build's own
+ * `skeleton.json`, read before any of it is loaded, and the tool's other summary
+ * (`shapeOf`) reads the same file the same way. A skeleton with no `skins` array
+ * at all comes back empty, which is a different fact from `["default"]` and is
+ * carried as one — see `skinBlocks`.
+ */
+export function skinsDeclaredBy(path: string): string[] {
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as { skins?: Array<{ name?: unknown }> };
+  const out: string[] = [];
+  for (const skin of parsed.skins ?? []) {
+    // A skin with no usable name is counted under one rather than dropped: a
+    // block that vanished would be a skin nobody rendered and nobody missed.
+    out.push(typeof skin?.name === 'string' && skin.name !== '' ? skin.name : '(unnamed)');
+  }
+  return out;
+}
+
+/** One render-and-check block of step 5: which skin, where its frames go. */
+export interface SkinBlock {
+  /** The skin this block poses under — `null` when the skeleton declares none. */
+  skin: string | null;
+  /** The heading printed above the block, which is where the skin's name is read. */
+  heading: string;
+  /** `--skin <name>`, or nothing at all when there is no skin to name. */
+  args: string[];
+  buildFrames: string;
+  exportFrames: string;
+  checkJson: string;
+}
+
+/**
+ * A directory name for one skin's frames: its index, then what of its name is a
+ * filename.
+ *
+ * The index leads because **a skin name is not a path**. The Spine editor writes
+ * folders into skin names with `/`, so `goblins/green` would land two levels
+ * down or collide with a sibling, and any scheme that replaces the offending
+ * characters can map two distinct skins onto one directory. The index cannot
+ * collide, and it is the skeleton's own ordering rather than a number invented
+ * here.
+ */
+function skinDirName(name: string, index: number): string {
+  return `${index}-${name.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
+}
+
+/**
+ * Step 5's plan: one block per declared skin, or exactly one block when the
+ * skeleton declares no skin at all.
+ *
+ * ⭐ The no-skin case keeps the old paths (`render-build`, `render-export`,
+ * `check.json`) because for such a skeleton there is nothing to distinguish, and
+ * a run whose output moved would be a run whose ledgers all have to be re-read
+ * for no measurement gained. A skinned skeleton files each block under its own
+ * directory, so the frames of two skins can never overwrite each other — which
+ * is the failure that would turn "one block per skin" back into one block.
+ */
+export function skinBlocks(skins: string[], out: string, fps: number): SkinBlock[] {
+  if (skins.length === 0) {
+    return [
+      {
+        skin: null,
+        heading: `## 5 render both @${fps}fps, check the export against the build's own frames (no skin declared)`,
+        args: [],
+        buildFrames: join(out, 'render-build'),
+        exportFrames: join(out, 'render-export'),
+        checkJson: join(out, 'check.json'),
+      },
+    ];
+  }
+  return skins.map((skin, i) => ({
+    skin,
+    heading:
+      `## 5.${i + 1}/${skins.length} skin "${skin}" — render both @${fps}fps, check the export against the ` +
+      "build's own frames",
+    args: ['--skin', skin],
+    buildFrames: join(out, 'render-build', skinDirName(skin, i)),
+    exportFrames: join(out, 'render-export', skinDirName(skin, i)),
+    checkJson: join(out, `check-${skinDirName(skin, i)}.json`),
+  }));
+}
+
 /** The shape of a skeleton file, for the field-by-field comparison. */
 export interface Shape {
   spine: string;
@@ -719,18 +837,48 @@ function main(): void {
   // console layout for them would break the first time that layout is tidied.
   for (const line of movedMeasures(diffJson)) emit(`  ${line}`);
 
-  emit('');
-  emit(`## 5 render both @${opts.fps}fps, check the export against the build's own frames`);
-  run(rigc.cmd, [...rigc.prefix, 'render', '--candidate', opts.build, '--fps', String(opts.fps), '--out', join(opts.out, 'render-build')], 900);
-  run(rigc.cmd, [...rigc.prefix, 'render', '--candidate', cand, '--fps', String(opts.fps), '--out', join(opts.out, 'render-export')], 900);
-  const check = run(
-    rigc.cmd,
-    [...rigc.prefix, 'check', '--candidate', cand, '--frames', join(opts.out, 'render-build'), '--json', join(opts.out, 'check.json')],
-    900,
-  );
-  emit(`  exit=${check.status}`);
-  for (const line of verdictLines(check.stdout)) emit(`  ${line}`);
-  for (const line of checkFigures(join(opts.out, 'check.json'))) emit(`  ${line}`);
+  // 🔒 The skins come off the BUILD, which is the side under test: a skin the
+  // export dropped altogether then reads as a block whose check fails by name,
+  // where enumerating the export's own skins would quietly stop looking for it.
+  const blocks = skinBlocks(skinsDeclaredBy(source), opts.out, opts.fps);
+  const checks: Array<{ skin: string | null; status: number | null; mae: number | null }> = [];
+  for (const block of blocks) {
+    emit('');
+    emit(block.heading);
+    run(rigc.cmd, [...rigc.prefix, 'render', '--candidate', opts.build, '--fps', String(opts.fps), ...block.args, '--out', block.buildFrames], 900);
+    run(rigc.cmd, [...rigc.prefix, 'render', '--candidate', cand, '--fps', String(opts.fps), ...block.args, '--out', block.exportFrames], 900);
+    const check = run(
+      rigc.cmd,
+      [...rigc.prefix, 'check', '--candidate', cand, '--frames', block.buildFrames, ...block.args, '--json', block.checkJson],
+      900,
+    );
+    emit(`  exit=${check.status}`);
+    for (const line of verdictLines(check.stdout)) emit(`  ${line}`);
+    for (const line of checkFigures(block.checkJson)) emit(`  ${line}`);
+    checks.push({ skin: block.skin, status: check.status, mae: worstMeanMae(block.checkJson) });
+  }
+  // The roll-up, so a loss in one skin of many is a line somebody reads rather
+  // than a row buried in the block above it. The mark is on the LARGEST figure
+  // and only where the skins disagree: `check` has no pass mark to compare
+  // against and this tool does not get to invent one, but "these skins did not
+  // come back the same" is a fact the run itself produced.
+  if (blocks.length > 1) {
+    const figures = checks.map((c) => c.mae).filter((v): v is number => v !== null);
+    const worst = figures.length === 0 ? null : Math.max(...figures);
+    const agreed = figures.length === checks.length && new Set(figures).size === 1;
+    emit('');
+    emit(`  per skin  ${checks.length} block(s)`);
+    for (const { skin, status, mae } of checks) {
+      emit(
+        `    ${String(skin).padEnd(20)} check exit=${status}  worst mean MAE ` +
+          `${mae === null ? '(no report)' : mae.toFixed(4)}` +
+          `${status === 0 ? '' : '   ⚠️ this skin did not come back'}` +
+          `${!agreed && mae !== null && mae === worst ? `   ⚠️ the worst of the ${checks.length} skins` : ''}`,
+      );
+    }
+    if (agreed) emit(`    ⤷ every skin came back at the same figure, so no skin is carrying a difference the others are not.`);
+  }
+  const checksClean = checks.every((c) => c.status === 0);
 
   emit('');
   emit('## 6 what the editor rewrote');
@@ -741,15 +889,18 @@ function main(): void {
   keepLog();
   emit('');
   emit(`log: ${logPath}`);
-  // The verdict is the gate's and the check's, not this tool's opinion of them.
-  process.exit(gate.status === 0 && check.status === 0 ? 0 : 1);
+  // The verdict is the gate's and EVERY skin's check, not this tool's opinion of
+  // them: one skin coming back wrong is the whole run coming back wrong, which
+  // is the half a single un-skinned check could not say.
+  process.exit(gate.status === 0 && checksClean ? 0 : 1);
 }
 
-// ⭐ Guarded so `shapeOf` and `shapeDiff` can be READ by a control that has no
-// editor (issue #561). Every other `ERT` case drives this file as a subprocess,
-// which is the right shape for a refusal; step 6's summary is a pure function of
-// two skeleton files, and driving an editor — or four rigc subcommands — to
-// reach it would be paying for a round trip to test arithmetic. Run as a
+// ⭐ Guarded so `shapeOf`, `shapeDiff`, `skinsDeclaredBy` and `skinBlocks` can be
+// READ by a control that has no editor (issues #561, #571). Every other `ERT`
+// case drives this file as a subprocess, which is the right shape for a refusal;
+// step 6's summary is a pure function of two skeleton files and step 5's plan is
+// a pure function of one, and driving an editor — or four rigc subcommands — to
+// reach either would be paying for a round trip to test arithmetic. Run as a
 // program this is unchanged: `bun tools/editor_roundtrip.ts …` makes this module
 // the entry, so `import.meta.main` is true.
 if (import.meta.main) main();

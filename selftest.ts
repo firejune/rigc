@@ -218,7 +218,7 @@ import {
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
-import { shapeDiff, shapeOf } from './tools/editor_roundtrip.ts';
+import { shapeDiff, shapeOf, skinBlocks, skinsDeclaredBy } from './tools/editor_roundtrip.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
 interface CutEntry {
@@ -22175,6 +22175,117 @@ function runEditorRoundtripSuite(): number {
     );
   }
 
+  // --- ERT18: step 5 renders and checks every skin — issue #571 --------------
+  //
+  // 🚨 Step 5 rendered and checked ONCE, with no skin, which draws the default
+  // skin alone. On the ninth round trip that read `check` 0.0000 on a rig whose
+  // named skins carry all of the contested art: blank against blank. So the
+  // plan is one block per declared skin, and this reads the plan rather than a
+  // round trip — the same reason `ERT10`/`ERT11` read `shapeDiff` directly.
+  //
+  // 🔒 Both directions are here and the second is the load-bearing one. A plan
+  // that produced one block per skin but filed them all in ONE directory would
+  // have every block overwrite the last, so "one block per skin" would be a
+  // count with one measurement under it; the distinctness clause is what stops
+  // that passing. And a skeleton declaring no skin at all must still get its one
+  // block, with the paths it has always had, or every single-skin round trip in
+  // the ledgers becomes unreadable against the next one.
+  {
+    const planDir = join(root, 'plan');
+    mkdirSync(planDir, { recursive: true });
+    // ⚠️ Numbered, not named after its own skins: one of them carries a `/` on
+    // purpose, and a filename built out of it lands in a directory that is not
+    // there. That is this control's own subject, met the first time it ran.
+    let written = 0;
+    const skelWith = (skins: string[]): string => {
+      const p = join(planDir, `skel${written++}.json`);
+      writeFileSync(
+        p,
+        `${JSON.stringify(
+          {
+            skeleton: { spine: '4.3.13', images: './' },
+            bones: [{ name: 'root' }],
+            slots: [{ name: 'patch', bone: 'root' }],
+            skins: skins.map((name) => ({ name, attachments: {} })),
+            animations: { travel: {} },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      return p;
+    };
+    // Three skins, one of them carrying the editor's own folder separator — the
+    // case a directory named straight off the skin would file two levels down.
+    const DECLARED = ['default', 'goblins/green', 'patched'];
+    const read = skinsDeclaredBy(skelWith(DECLARED));
+    const OUT = join(root, 'rt-out');
+    const FPS = 12;
+    const blocks = skinBlocks(read, OUT, FPS);
+    const bare = skinBlocks(skinsDeclaredBy(skelWith([])), OUT, FPS);
+    const dirs = blocks.flatMap((b) => [b.buildFrames, b.exportFrames, b.checkJson]);
+    const planProbes = [
+      ...(JSON.stringify(read) === JSON.stringify(DECLARED)
+        ? []
+        : [`the skeleton declares ${JSON.stringify(DECLARED)} and the tool read ${JSON.stringify(read)}`]),
+      ...(blocks.length === DECLARED.length
+        ? []
+        : [`${DECLARED.length} skin(s) declared and the plan has ${blocks.length} block(s)`]),
+      ...blocks.flatMap((b, i) =>
+        b.skin === DECLARED[i] && b.heading.includes(`"${DECLARED[i]}"`) && JSON.stringify(b.args) === JSON.stringify(['--skin', DECLARED[i]])
+          ? []
+          : [
+              `block ${i} is for skin ${JSON.stringify(b.skin)} with args ${JSON.stringify(b.args)} and a heading ` +
+                `that ${b.heading.includes(`"${DECLARED[i]}"`) ? 'does' : 'does NOT'} name ${JSON.stringify(DECLARED[i])}`,
+            ],
+      ),
+      ...(new Set(dirs).size === dirs.length
+        ? []
+        : [
+            `the ${blocks.length} block(s) name ${new Set(dirs).size} distinct path(s) out of ${dirs.length}, so at ` +
+              'least two of them write over each other and one skin\'s frames are another skin\'s',
+          ]),
+      // Derived from the fixture rather than from the name it happens to carry:
+      // any skin whose own name has a path separator in it must not appear
+      // verbatim in a path, or its frames land in a tree named by the skin —
+      // where a sibling skin can collide with it and `rmSync` reaches further
+      // than the block that owns it.
+      ...blocks.flatMap((b, i) =>
+        b.skin !== null &&
+        /[/\\]/.test(b.skin) &&
+        [b.buildFrames, b.exportFrames, b.checkJson].some((d) => d.includes(b.skin as string))
+          ? [
+              `block ${i} carries the skin name ${JSON.stringify(b.skin)} verbatim in its paths and that name has a ` +
+                'path separator in it, so its frames would be filed in a directory tree named by the skin',
+            ]
+          : [],
+      ),
+      ...dirs.flatMap((d) => (d.startsWith(`${OUT}/`) ? [] : [`${d} is not under ${OUT}`])),
+      ...(bare.length === 1 && bare[0].skin === null && bare[0].args.length === 0 && bare[0].buildFrames === join(OUT, 'render-build')
+        ? []
+        : [
+            `a skeleton declaring no skin gives ${bare.length} block(s), the first for skin ` +
+              `${JSON.stringify(bare[0]?.skin ?? '(none)')} with args ${JSON.stringify(bare[0]?.args ?? null)} into ` +
+              `${bare[0]?.buildFrames ?? '(nowhere)'}`,
+          ]),
+    ];
+    const planHeld = planProbes.length === 0;
+    say(
+      'ERT18_STEP_5_PLANS_ONE_RENDER_AND_CHECK_BLOCK_PER_DECLARED_SKIN',
+      planHeld,
+      probeDetail(
+        planHeld,
+        planProbes,
+        `${read.length} declared skin(s) [${read.join(', ')}] give ${blocks.length} block(s), each naming its own ` +
+          `skin in its heading and its \`--skin\` args, writing to ${new Set(dirs).size} distinct path(s); a ` +
+          `skeleton declaring none gives ${bare.length} block with no --skin at all, into ${bare[0].buildFrames}`,
+      ),
+      'a round trip that renders one skin certifies one skin. The construct #552 and #567 are about lives in the ' +
+        'NAMED skins, so the one measurement the trip exists to make was being taken where it could not see it — ' +
+        'and the report said 0.0000, which reads like the best possible answer',
+    );
+  }
+
   rmSync(root, { recursive: true, force: true });
   return bad;
 }
@@ -28775,6 +28886,226 @@ function runSeeItSuite(): number {
     wrong.status === 2 && /no animation "nope"/.test(wrong.stderr) && /slide/.test(wrong.stderr),
     `exit=${String(wrong.status)} stderr=${JSON.stringify(wrong.stderr.split('\n')[0])}`,
     'silently rendering every animation because one name was misspelled is a report about the wrong shot',
+  );
+
+  // --- R10-R12: which skin is being looked at — issue #571 -------------------
+  //
+  // 🚨 `render` posed a skeleton and never set a skin, so it drew the DEFAULT
+  // skin and nothing else — and `check`, which compares `render`'s frames, drew
+  // the default skin on both sides. On a rig whose named skins carry the
+  // contested art that is a comparison of blank against blank, and the ninth
+  // editor round trip read exactly that: `check` 0.0000 on a rig where the whole
+  // construct under test lives in the named skins. The zero was true and empty
+  // at once, which is the shape this repository exists to convert into a name.
+  //
+  // ⭐ The fixture is two named skins filling ONE slot with the same art at two
+  // places, plus a slot the DEFAULT skin fills that neither of them touches. It
+  // is built that way so both halves of the claim are measurable on it and
+  // neither is a number written here: what the skins disagree about must differ
+  // between the two renders, and what they share must not. (#567 is why the
+  // shared entry is in the default skin rather than in both named ones: a
+  // placeholder the default skin and a named skin both fill is refused.)
+  const SKIN_PROBE_SKINS: Record<string, Record<string, Record<string, Record<string, unknown>>>> = {
+    default: { block: { block: { image: 'block.png' } } },
+    left: { marker: { marker: { image: 'marker.png', x: -20 } } },
+    right: { marker: { marker: { image: 'marker.png', x: 20 } } },
+  };
+  /** Everything below is derived off the table above, never off the names in it. */
+  const namedSkins = Object.keys(SKIN_PROBE_SKINS).filter((name) => name !== 'default');
+  const slotsOfSkin = (name: string): string[] => Object.keys(SKIN_PROBE_SKINS[name] ?? {});
+  /** Slots more than one NAMED skin fills — what two renders must disagree about. */
+  const contestedSlots = [...new Set(namedSkins.flatMap(slotsOfSkin))].filter(
+    (slot) => namedSkins.filter((name) => slotsOfSkin(name).includes(slot)).length > 1,
+  );
+  /** Slots only the DEFAULT skin fills — what two renders must agree about. */
+  const sharedSlots = slotsOfSkin('default').filter((slot) => !namedSkins.some((n) => slotsOfSkin(n).includes(slot)));
+
+  const skinDirs = writeProbeRig({ skins: SKIN_PROBE_SKINS });
+  const skinMotion = join(skinDirs.dir, 'probe.motion.json');
+  writeFileSync(skinMotion, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+  const skinBuild = runCli([
+    'build',
+    '--rig', skinDirs.rigPath,
+    '--motion', skinMotion,
+    '--images', skinDirs.dir,
+    '--out', skinDirs.outDir,
+    '--copy-images',
+  ]);
+  const skinPosable =
+    skinBuild.status === 0 && existsSync(join(skinDirs.outDir, 'skeleton.json'))
+      ? loadPosable(join(skinDirs.outDir, 'skeleton.json'), join(skinDirs.outDir, 'skeleton.atlas'), skinDirs.outDir)
+      : null;
+  /** `slot -> its posed world vertices`, for one skin or for no skin at all. */
+  const posedUnder = (skin: string | undefined): Map<string, string> => {
+    const out = new Map<string, string>();
+    if (skinPosable === null) return out;
+    for (const piece of sampleSetupPose(skinPosable.data, skin === undefined ? undefined : { skin })[0].pieces) {
+      out.set(piece.slot, piece.world.map((n) => n.toFixed(4)).join(','));
+    }
+    return out;
+  };
+  const noSkin = posedUnder(undefined);
+  const perSkin = new Map(namedSkins.map((name) => [name, posedUnder(name)]));
+  const [skinA, skinB] = namedSkins;
+  const geometryProbes = [
+    ...(skinBuild.status === 0 && skinPosable !== null
+      ? []
+      : [`the two-skin fixture did not build: exit=${String(skinBuild.status)} ${skinBuild.stderr.split('\n')[0]}`]),
+    ...floorProbes(
+      [
+        [contestedSlots.length, 1, `${contestedSlots.length} slot(s) are filled by more than one named skin`],
+        [sharedSlots.length, 1, `${sharedSlots.length} slot(s) are filled by the default skin alone`],
+        [namedSkins.length, 2, `${namedSkins.length} named skin(s) are in the fixture`],
+      ],
+      'so the comparison below would be true of a fixture that cannot tell the two skins apart at all',
+    ),
+    // The reproduction, pinned: with no skin the contested slot draws NOTHING.
+    // Not a defect — it is what the default skin honestly holds — but it is the
+    // reason the flag has to exist, so it is measured rather than remembered.
+    ...contestedSlots.flatMap((slot) =>
+      noSkin.has(slot)
+        ? [`slot "${slot}" draws with no skin set, and the fixture puts its art in named skins only`]
+        : [],
+    ),
+    // What the skins disagree about has to differ.
+    ...contestedSlots.flatMap((slot) => {
+      const a = perSkin.get(skinA)?.get(slot);
+      const b = perSkin.get(skinB)?.get(slot);
+      if (a === undefined || b === undefined) {
+        return [`slot "${slot}" draws under ${a === undefined ? skinA : skinB} not at all, so the two cannot differ`];
+      }
+      return a === b ? [`slot "${slot}" poses identically under "${skinA}" and "${skinB}" — no skin was applied`] : [];
+    }),
+    // And what they share must not.
+    ...sharedSlots.flatMap((slot) => {
+      const a = perSkin.get(skinA)?.get(slot);
+      const b = perSkin.get(skinB)?.get(slot);
+      if (a === undefined || b === undefined) {
+        return [`slot "${slot}" is the default skin's and vanished under ${a === undefined ? skinA : skinB}`];
+      }
+      return a === b ? [] : [`slot "${slot}" is filled by the default skin alone and yet poses differently under the two skins`];
+    }),
+  ];
+  const geometryHeld = geometryProbes.length === 0;
+  say(
+    'R10_A_SKIN_CHANGES_WHAT_IT_FILLS_AND_LEAVES_WHAT_IT_SHARES_ALONE',
+    geometryHeld,
+    probeDetail(
+      geometryHeld,
+      geometryProbes,
+      `with no skin set ${noSkin.size} of the fixture's ${skinPosable?.data.slots.length ?? 0} slot(s) draw; under ` +
+        `each of [${namedSkins.join(', ')}] ${perSkin.get(skinA)?.size ?? 0} do. The ${contestedSlots.length} ` +
+        `contested slot([${contestedSlots.join(', ')}]) draws nothing without a skin and poses differently under ` +
+        `the two; the ${sharedSlots.length} shared slot([${sharedSlots.join(', ')}]) poses identically under both`,
+    ),
+    'the skin is the difference between a picture of this rig and a picture of a different one, and until #571 ' +
+      'nothing in this tool could ask for either. Both halves are needed: a "skin" that redrew everything would ' +
+      'satisfy the first clause and be a different bug',
+  );
+
+  // The CLI path, and the metadata that stops a silent mis-comparison. `check`
+  // reads the skin back off frames.json, so a candidate posed under one skin and
+  // frames rendered under another is a REFUSAL rather than a number.
+  const framesA = join(skinDirs.dir, 'frames-a');
+  const renderA = runCli(['render', '--candidate', skinDirs.outDir, '--skin', skinA, '--out', framesA]);
+  const sidecarA: FramesSidecar | null = existsSync(join(framesA, FRAMES_SIDECAR))
+    ? (JSON.parse(readFileSync(join(framesA, FRAMES_SIDECAR), 'utf8')) as FramesSidecar)
+    : null;
+  const checkJson = join(skinDirs.dir, 'check-a.json');
+  const checkA = runCli([
+    'check', '--candidate', skinDirs.outDir, '--frames', framesA, '--skin', skinA, '--json', checkJson,
+  ]);
+  const checkReport: { skin?: unknown; referenceSkin?: unknown } | null =
+    existsSync(checkJson) ? (JSON.parse(readFileSync(checkJson, 'utf8')) as { skin?: unknown }) : null;
+  const crossed = runCli(['check', '--candidate', skinDirs.outDir, '--frames', framesA, '--skin', skinB]);
+  const silent = runCli(['check', '--candidate', skinDirs.outDir, '--frames', framesA]);
+  const carriedProbes = [
+    ...(renderA.status === 0 ? [] : [`render --skin ${skinA} exited ${String(renderA.status)}: ${renderA.stderr.split('\n')[0]}`]),
+    ...(sidecarA?.skin === skinA
+      ? []
+      : [`${FRAMES_SIDECAR} records skin ${JSON.stringify(sidecarA?.skin ?? null)} where the render asked for ${JSON.stringify(skinA)}`]),
+    ...(checkA.status === 0 ? [] : [`check --skin ${skinA} exited ${String(checkA.status)}: ${checkA.stderr.split('\n')[0]}`]),
+    ...(new RegExp(`skin\\s+candidate ${skinA}\\s+frames ${skinA}`).test(checkA.stdout)
+      ? []
+      : ['the check report header does not name the skin on both sides']),
+    ...(checkReport?.skin === skinA && checkReport?.referenceSkin === skinA
+      ? []
+      : [
+          `check.json says skin=${JSON.stringify(checkReport?.skin ?? null)} referenceSkin=` +
+            `${JSON.stringify(checkReport?.referenceSkin ?? null)}, and both should be ${JSON.stringify(skinA)}`,
+        ]),
+    ...(crossed.status === 1 && crossed.stderr.includes(skinA) && crossed.stderr.includes(skinB)
+      ? []
+      : [
+          `a ${skinB} candidate against ${skinA} frames exited ${String(crossed.status)} and its message names ` +
+            `${[skinA, skinB].filter((n) => crossed.stderr.includes(n)).length}/2 of the two skins`,
+        ]),
+    ...(silent.status === 1 && silent.stderr.includes(skinA)
+      ? []
+      : [`a candidate posed under NO skin against ${skinA} frames exited ${String(silent.status)} instead of refusing`]),
+  ];
+  const carriedHeld = carriedProbes.length === 0;
+  say(
+    'R11_CHECK_CARRIES_THE_SKIN_AND_REFUSES_A_COMPARISON_ACROSS_TWO',
+    carriedHeld,
+    probeDetail(
+      carriedHeld,
+      carriedProbes,
+      `render --skin ${skinA} wrote "${sidecarA?.skin}" into ${FRAMES_SIDECAR}; check --skin ${skinA} agreed ` +
+        `(exit=${String(checkA.status)}, report skin=${JSON.stringify(checkReport?.skin)} referenceSkin=` +
+        `${JSON.stringify(checkReport?.referenceSkin)}); --skin ${skinB} against those frames exited ` +
+        `${String(crossed.status)} naming both, and no --skin at all exited ${String(silent.status)}`,
+    ),
+    'a figure whose subject is unstated is not a figure. The refusals are the half that cannot be got by reading ' +
+      'the report: a skin-A candidate scored against skin-B frames produces a perfectly well-formed MAE about the ' +
+      'difference between two skins, and nothing in it looks wrong',
+  );
+
+  // A skin the skeleton does not declare is a typo, and a typo that renders is a
+  // report about a rig nobody asked for. Both commands refuse by name, and both
+  // list what would have worked — `render` as a usage error, `check` as a check
+  // error, which is the exit each of them already uses for its own kind of miss.
+  const declaredNames = Object.keys(SKIN_PROBE_SKINS);
+  const badRender = runCli(['render', '--candidate', skinDirs.outDir, '--skin', 'nope', '--out', join(skinDirs.dir, 'frames-nope')]);
+  const badCheck = runCli(['check', '--candidate', skinDirs.outDir, '--frames', framesA, '--skin', 'nope']);
+  const namesIn = (text: string): string[] => declaredNames.filter((name) => new RegExp(`\\b${name}\\b`).test(text));
+  const refusalProbes = [
+    ...(badRender.status === 2 && /no skin "nope"/.test(badRender.stderr)
+      ? []
+      : [`render --skin nope exited ${String(badRender.status)} saying ${JSON.stringify(badRender.stderr.split('\n')[0].slice(0, 120))}`]),
+    ...(namesIn(badRender.stderr).length === declaredNames.length
+      ? []
+      : [
+          `render's refusal names ${namesIn(badRender.stderr).length} of the ${declaredNames.length} declared ` +
+            `skin(s) — [${namesIn(badRender.stderr).join(', ')}]`,
+        ]),
+    ...(badCheck.status === 1 && /no skin "nope"/.test(badCheck.stderr)
+      ? []
+      : [`check --skin nope exited ${String(badCheck.status)} saying ${JSON.stringify(badCheck.stderr.split('\n')[0].slice(0, 120))}`]),
+    ...(namesIn(badCheck.stderr).length === declaredNames.length
+      ? []
+      : [
+          `check's refusal names ${namesIn(badCheck.stderr).length} of the ${declaredNames.length} declared ` +
+            `skin(s) — [${namesIn(badCheck.stderr).join(', ')}]`,
+        ]),
+    ...(existsSync(join(skinDirs.dir, 'frames-nope'))
+      ? ['render wrote a frame directory for a skin the skeleton does not declare']
+      : []),
+  ];
+  const refusalHeld = refusalProbes.length === 0;
+  say(
+    'R12_AN_UNDECLARED_SKIN_IS_REFUSED_BY_NAME_WITH_THE_DECLARED_ONES',
+    refusalHeld,
+    probeDetail(
+      refusalHeld,
+      refusalProbes,
+      `render exit=${String(badRender.status)} and check exit=${String(badCheck.status)} on --skin nope, each ` +
+        `naming all ${declaredNames.length} declared skin(s) [${declaredNames.join(', ')}], and no frame directory ` +
+        'was written',
+    ),
+    "everything in a rig spec resolves by name and a miss is refused by name. spine-core's own by-name setter " +
+      'throws `Skin not found: <name>` and lists nothing, which tells an author their name is wrong and not one ' +
+      'that would have worked',
   );
 
   return bad;

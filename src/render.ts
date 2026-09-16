@@ -184,6 +184,19 @@ export interface FramesSidecar {
   example?: string;
   rung?: string;
   skeleton?: string;
+  /**
+   * The skin these frames were posed under, when one was asked for (issue #571).
+   *
+   * ⭐ **Absent is not `"default"`.** A render with no skin sets none — every
+   * slot resolves through `SkeletonData.defaultSkin` alone — and a frame set
+   * written before this field existed says nothing either, so the two are the
+   * same fact on disk and the field is omitted for both. That is what keeps
+   * every frame set in this repository byte-identical across this change, and it
+   * is why `check` can refuse a mismatch it can SEE (`skin` present and
+   * different, or present where the run asked for none) and can only NOTE the
+   * one it cannot (`skin` absent while the run asked for one).
+   */
+  skin?: string;
   /** The colour the frames were cleared to, straight RGBA 0..255. */
   background: RGBA;
   viewport: {
@@ -281,6 +294,71 @@ export interface PoseOptions {
    * one instrument that does (`bonedist.ts`) needs it on every frame.
    */
   bones?: boolean;
+  /**
+   * Pose under this skin, by the name the skeleton declares for it.
+   *
+   * ⭐ Absent means **no skin is set at all**, which is spine-core's own initial
+   * state (`Skeleton.skin` is null) and resolves every slot through
+   * `SkeletonData.defaultSkin` alone. That is not the same claim as "the default
+   * skin was chosen": it is the absence of a choice, and the two are spelled
+   * differently everywhere this travels — the frames sidecar omits the field
+   * rather than writing `"default"` into it (issue #571).
+   *
+   * ⚠️ Read by the SAMPLERS, never by `piecesOf`, which is handed a skeleton
+   * somebody else already posed; handing it one is refused by name rather than
+   * ignored, because a skin quietly dropped here is exactly the silence this
+   * whole flag exists to remove.
+   */
+  skin?: string;
+}
+
+/**
+ * A fresh skeleton with `skin` applied, or refused by name.
+ *
+ * ## Why the skin goes on before `setupPose`, and why nothing else is needed
+ *
+ * `Skeleton.setSkin` (spine-core 4.3.13 `Skeleton.js:279-311`) attaches the new
+ * skin's art into each slot's pose and calls `updateCache`, which is what turns
+ * on a `skinRequired` bone or constraint the skin names. Every sampler below
+ * then calls `skeleton.setupPose()`, and `setupPose` → `setupPoseSlots`
+ * (`Skeleton.js:231-249`) re-resolves each slot's setup attachment through
+ * `Slot.setupPose` → `Skeleton.getAttachment`, which checks `this.skin` first
+ * and `SkeletonData.defaultSkin` second (`Skeleton.js:335-346`). So the setup
+ * pose of a skinned skeleton is already the skin's, and the extra
+ * `setSlotsToSetupPose()` a 4.1-era recipe prescribes has no 4.3 spelling to
+ * call: the method is named `setupPoseSlots` here, and `setupPose()` runs it.
+ *
+ * `setSkin(string)` exists too, but its by-name half throws
+ * `Skin not found: <name>` (`Skeleton.js:286-291`) — a message that names the
+ * miss and not the alternatives. Everything in a rig resolves by name and a miss
+ * is refused **by name, with the names that would have worked**, so the lookup
+ * happens here and the runtime is handed a `Skin` it cannot fail on.
+ */
+function skeletonUnderSkin(data: SkeletonData, skin: string | undefined): Skeleton {
+  const skeleton = new Skeleton(data);
+  if (skin === undefined) return skeleton;
+  const found = data.findSkin(skin);
+  if (!found) {
+    throw new Error(
+      `no skin ${JSON.stringify(skin)} in this skeleton; it declares [${
+        data.skins.map((s) => s.name).join(', ') || 'none'
+      }]`,
+    );
+  }
+  skeleton.setSkin(found);
+  return skeleton;
+}
+
+/**
+ * The same options with the skin taken off — what the samplers hand `piecesOf`.
+ *
+ * Spelled once, so the one function that must not see a `skin` cannot come to
+ * see one because a second call site forgot.
+ */
+function piecesOptions(opts: PoseOptions | undefined): PoseOptions | undefined {
+  if (opts === undefined || opts.skin === undefined) return opts;
+  const { skin: _applied, ...rest } = opts;
+  return rest;
 }
 
 /**
@@ -460,7 +538,8 @@ export function sampleAnimation(data: SkeletonData, name: string, fps: number, o
       `no animation "${name}" in this skeleton; it has [${data.animations.map((a) => a.name).join(', ') || 'none'}]`,
     );
   }
-  const skeleton = new Skeleton(data);
+  const skeleton = skeletonUnderSkin(data, opts?.skin);
+  const pieceOpts = piecesOptions(opts);
   const state = new AnimationState(new AnimationStateData(data));
   // Not looping: the last frame sits at the animation's duration, and a looping
   // entry would wrap it back onto the first pose.
@@ -484,7 +563,7 @@ export function sampleAnimation(data: SkeletonData, name: string, fps: number, o
     frames.push({
       index: i,
       time: i * step,
-      pieces: piecesOf(skeleton, opts),
+      pieces: piecesOf(skeleton, pieceOpts),
       ...(opts?.bones ? { bones: boneSnapshots(skeleton) } : {}),
     });
   }
@@ -500,7 +579,7 @@ export function sampleAnimation(data: SkeletonData, name: string, fps: number, o
  * whole content is the setup pose.
  */
 export function sampleSetupPose(data: SkeletonData, opts?: PoseOptions): Frame[] {
-  const skeleton = new Skeleton(data);
+  const skeleton = skeletonUnderSkin(data, opts?.skin);
   skeleton.setupPose();
   skeleton.update(0);
   skeleton.updateWorldTransform(Physics.reset);
@@ -508,7 +587,7 @@ export function sampleSetupPose(data: SkeletonData, opts?: PoseOptions): Frame[]
     {
       index: 0,
       time: 0,
-      pieces: piecesOf(skeleton, opts),
+      pieces: piecesOf(skeleton, piecesOptions(opts)),
       ...(opts?.bones ? { bones: boneSnapshots(skeleton) } : {}),
     },
   ];
@@ -519,10 +598,10 @@ export function sampleSetupPose(data: SkeletonData, opts?: PoseOptions): Frame[]
  * filed under. A skeleton with no animation at all contributes its setup pose
  * under `SETUP_POSE_DIR`.
  */
-export function sampleAll(data: SkeletonData, fps: number): Map<string, Frame[]> {
+export function sampleAll(data: SkeletonData, fps: number, opts?: PoseOptions): Map<string, Frame[]> {
   const out = new Map<string, Frame[]>();
-  if (data.animations.length === 0) out.set(SETUP_POSE_DIR, sampleSetupPose(data));
-  else for (const animation of data.animations) out.set(animation.name, sampleAnimation(data, animation.name, fps));
+  if (data.animations.length === 0) out.set(SETUP_POSE_DIR, sampleSetupPose(data, opts));
+  else for (const animation of data.animations) out.set(animation.name, sampleAnimation(data, animation.name, fps, opts));
   return out;
 }
 
@@ -537,6 +616,17 @@ export function sampleAll(data: SkeletonData, fps: number): Map<string, Frame[]>
  * of them draws a pixel.
  */
 export function piecesOf(skeleton: Skeleton, opts?: PoseOptions): Piece[] {
+  // A skin is chosen before a skeleton is posed, and this one is already posed —
+  // so there is nothing honest to do with the name except say so. Silently
+  // ignoring it is the shape of defect #571 itself: a skin asked for, no skin
+  // applied, and a picture that looks like an answer.
+  if (opts?.skin !== undefined) {
+    throw new Error(
+      `piecesOf was asked for skin ${JSON.stringify(opts.skin)}, and it reads a skeleton that is already posed. ` +
+        'Ask a sampler for it — sampleSetupPose/sampleAnimation/sampleAll take { skin } — or call ' +
+        'skeleton.setSkin(...) and skeleton.setupPose() before this.',
+    );
+  }
   const pieces: Piece[] = [];
   for (const slot of skeleton.drawOrder.appliedPose) {
     const pose = slot.appliedPose;
@@ -970,11 +1060,15 @@ export function trimmedUnionBounds(
  * Measuring the box densely and once makes the framing a property of the SHOT,
  * so every rate of one skeleton lands on the same pixels.
  */
-export function framingViewport(data: SkeletonData, maxSide: number): Viewport | null {
+export function framingViewport(data: SkeletonData, maxSide: number, opts?: PoseOptions): Viewport | null {
+  // The skin belongs here as much as in the frames: the union box is over the
+  // attachments that POSE, and two skins fill a slot with art of different sizes
+  // in different places. Framing one skin's shot with another skin's box would
+  // put the difference between two skins into every measurement taken in it.
   const sets =
     data.animations.length === 0
-      ? [sampleSetupPose(data)]
-      : data.animations.map((a) => sampleAnimation(data, a.name, FRAMING_FPS));
+      ? [sampleSetupPose(data, opts)]
+      : data.animations.map((a) => sampleAnimation(data, a.name, FRAMING_FPS, opts));
   const box = unionBounds(sets);
   if (!Number.isFinite(box.minX)) return null;
   const pad = Math.max(box.maxX - box.minX, box.maxY - box.minY) * PAD;

@@ -1415,8 +1415,8 @@ function cmdDiff(flags: Record<string, string>, positional: string[]): void {
  */
 function readCheckFlags(
   flags: Record<string, string>,
-): Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing' | 'textureFrom'> {
-  const out: Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing' | 'textureFrom'> = {};
+): Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing' | 'textureFrom' | 'skin'> {
+  const out: Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing' | 'textureFrom' | 'skin'> = {};
   if (flags.framing !== undefined) {
     if (flags.framing !== 'per-shot' && flags.framing !== 'shared') {
       throw new UsageError('--framing takes per-shot (the default) or shared');
@@ -1437,6 +1437,10 @@ function readCheckFlags(
     out.viewport = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
   }
   if (flags.as !== undefined) out.as = flags.as;
+  // The name is not checked against the candidate here: `check` owns that
+  // refusal, because it is the side that has the skeleton open and can list the
+  // skins it declares. `render` checks its own for the same reason.
+  if (flags.skin !== undefined) out.skin = flags.skin;
   if (flags['texture-from'] !== undefined) {
     const path = resolve(flags['texture-from']);
     if (!existsSync(path)) {
@@ -1528,6 +1532,29 @@ function readAnimationFlag(flags: Record<string, string>, available: string[]): 
   return name;
 }
 
+/**
+ * `--skin`, checked against what the skeleton actually declares.
+ *
+ * ⭐ Absent is not `default`: it is "set no skin at all", which is what every
+ * render did before issue #571 and what `spine-core` starts a skeleton in. The
+ * distinction is the whole of the default path's byte-identity — see
+ * `FramesSidecar.skin`.
+ *
+ * The miss is refused by name with the declared names beside it, the way
+ * `--animation` is: a skin name is the one place a typo draws a whole rig's
+ * worth of the wrong art and reports a number about it.
+ */
+function readSkinFlag(flags: Record<string, string>, declared: string[]): string | undefined {
+  const name = flags.skin;
+  if (name === undefined) return undefined;
+  if (!declared.includes(name)) {
+    throw new UsageError(
+      `no skin ${JSON.stringify(name)} in this skeleton; it declares [${declared.join(', ') || 'none'}]`,
+    );
+  }
+  return name;
+}
+
 function readPositiveNumber(flags: Record<string, string>, key: string, fallback: number, least: number): number {
   const raw = flags[key];
   if (raw === undefined) return fallback;
@@ -1555,11 +1582,20 @@ function cmdRender(flags: Record<string, string>): void {
   console.log(`  ..    atlas    ${atlasPath}`);
   const { data, pages } = loadPosable(skeletonPath, atlasPath, atlasDir);
   const only = readAnimationFlag(flags, data.animations.map((a) => a.name));
+  const skin = readSkinFlag(flags, data.skins.map((s) => s.name));
+  // One object, so the framing and the frames cannot be posed under two
+  // different skins — which would frame one shot with another shot's box.
+  // Not annotated `PoseOptions`: that name is `src/pose.ts`'s in this file, and
+  // `src/render.ts` has one of its own. The inferred shape is the render one.
+  const pose = skin === undefined ? undefined : { skin };
+  if (skin !== undefined) console.log(`  ..    skin     ${skin}`);
 
-  const viewport = framingViewport(data, maxSide);
+  const viewport = framingViewport(data, maxSide, pose);
   if (!viewport) {
     throw new UsageError(
-      `${skeletonPath} posed no drawable attachment in any animation or in its setup pose — there is nothing to draw`,
+      `${skeletonPath} posed no drawable attachment in any animation or in its setup pose${
+        skin === undefined ? '' : ` under skin ${JSON.stringify(skin)}`
+      } — there is nothing to draw`,
     );
   }
 
@@ -1567,7 +1603,7 @@ function cmdRender(flags: Record<string, string>): void {
   // setup-pose frame under the reserved name. Narrowing to one animation reuses
   // the same sampler rather than a second path through it.
   const sampled: Map<string, Frame[]> =
-    only === undefined ? sampleAll(data, fps) : new Map([[only, sampleAnimation(data, only, fps)]]);
+    only === undefined ? sampleAll(data, fps, pose) : new Map([[only, sampleAnimation(data, only, fps, pose)]]);
   console.log(`  ..    ${viewport.width}x${viewport.height}px at ${fps} fps, ${sampled.size} set(s) -> ${outRoot}`);
 
   mkdirSync(outRoot, { recursive: true });
@@ -1609,6 +1645,10 @@ function cmdRender(flags: Record<string, string>): void {
   // render something else into the same grid later.
   const sidecar: FramesSidecar = {
     spec: FRAMES_SPEC,
+    // Written only when a skin was asked for: absent says "no skin was set",
+    // which is both what this run did and what every frame set written before
+    // #571 did. See `FramesSidecar.skin`.
+    ...(skin === undefined ? {} : { skin }),
     background: BACKGROUND,
     viewport: {
       x: viewport.minX,
@@ -2767,6 +2807,11 @@ const FLAG_MEANINGS: Record<string, string> = {
     `printed (default ${DEFAULT_MIN_LEVER_PX}); below it the bone is refused \`no-bracket\` naming the measured ` +
     'lever, because an angle read across a short lever turns a half-pixel anchor error into several degrees',
   animation: 'which animation to show; the default is every one for `render` and the first for `preview`',
+  skin:
+    'pose under this skin, by the name the skeleton declares. Without it NO skin is set — every slot resolves ' +
+    'through the default skin alone, so a slot whose art lives only in a named skin draws nothing. A name the ' +
+    'skeleton does not declare is refused with the ones it does. `render` records the skin in frames.json and ' +
+    '`check` reads it back, so a skin-A candidate is not scored against skin-B frames in silence',
   max: 'longest side of a rendered frame, in pixels (default 256)',
   record: 'a saved vote to check against its ballot and append to the ledger, instead of writing a ballot',
   ballot: `the ballot the --record'd vote answers (default \`${DEFAULT_BALLOT}\`); its embedded manifest is what the vote is checked against`,
@@ -2812,6 +2857,7 @@ const FLAG_VALUES: Record<string, string> = {
   'anchor-residual': '<0..1>',
   'inward-lever': '<px>',
   animation: '<name>',
+  skin: '<name>',
   max: '<px>',
   record: '<result.json>',
   ballot: '<ballot.html>',
@@ -2886,7 +2932,16 @@ const COMMANDS: CommandDoc[] = [
   {
     name: 'check',
     usage: ['rigc check --candidate <dir | skeleton.json> --frames <dir> [flags]'],
-    flags: ['candidate', 'frames', 'atlas', 'texture-from', 'fps', 'viewport', 'framing', 'as', 'all-frames', 'json'],
+    flags: ['candidate', 'frames', 'atlas', 'texture-from', 'fps', 'viewport', 'framing', 'as', 'skin', 'all-frames', 'json'],
+    overrides: {
+      skin: {
+        meaning:
+          'pose the CANDIDATE under this skin, by the name it declares. Without it no skin is set and the ' +
+          'default skin alone is compared, which for a multi-skin rig is a comparison that can see none of the ' +
+          'contested art. The frames are checked back: a set whose frames.json records a different skin is ' +
+          'REFUSED by name, and one that records none says so in the report rather than pretending to agree',
+      },
+    },
   },
   {
     name: 'bench',
@@ -2914,9 +2969,9 @@ const COMMANDS: CommandDoc[] = [
   {
     name: 'render',
     usage: [
-      'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--fps 12] [--max 256] [--out render/]',
+      'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--out render/]',
     ],
-    flags: ['candidate', 'atlas', 'animation', 'fps', 'max', 'out'],
+    flags: ['candidate', 'atlas', 'animation', 'skin', 'fps', 'max', 'out'],
     overrides: {
       out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
       fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },
