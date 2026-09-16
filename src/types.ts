@@ -810,6 +810,40 @@ export interface SpineClippingAttachment {
  * dereferences `map.lengths.length` unconditionally, so an absent array is one of
  * the format's few loud failures; rigc measures the numbers off the geometry
  * rather than letting a spec restate them.
+ *
+ * ⚠️ **The EDITOR writes `vertexCount / 3` entries on BOTH — measured**
+ * (round trip 6, 2026-09-16, Spine 4.3.26). It computes the wrap-around curve
+ * even for an open path: `gallery/ride`'s 12-vertex open path came back with
+ * **four** entries on 2026-09-04 (4.3.23) and the fourth, `2136.228`, is the
+ * *closed*-chain cumulative. ⚠️ Neither array is wrong, and this is not a case
+ * of the editor knowing something rigc does not. `SkeletonJson.js:601` allocates
+ * `Utils.newArray(vertexCount / 3, 0)` and copies whatever is there, while
+ * `PathConstraint` reads at most `lengths[curveCount]` with
+ * `curveCount = verticesLength / 6 − (closed ? 1 : 2)` — index 2 on that path.
+ * The trailing entry the editor adds to an open path is never read by anything.
+ *
+ * 🚨 **What the editor writes INTO those entries is its own measurement, and it
+ * is the runtime's, not calculus'** (issue #560, measured on the same trip).
+ * `PathConstraint`'s `constantSpeed` re-measure is a four-sample forward
+ * difference per curve — its constants are `0.1875 = 3t²`, `0.09375 = 6t³` and
+ * `(cx1 − x1) · 0.75 = 3t` at **t = 1/4**, accumulating four `Math.sqrt` terms —
+ * and the editor's stored `lengths` are that same computation. A 4-sample chord
+ * sum over the same control points reproduces the editor to every digit it
+ * prints, on two rigs and two editor builds: `pathmodes` (closed, 4.3.26) came
+ * back `[152.7006, 305.4012, 458.1019, 610.8025]` and `ride` (open, 4.3.23)
+ * `[430.8389, 838.0142, 1127.736, …]`. It is a recomputation at **export** — the
+ * inflated `.spine` project holds the imported numbers verbatim — so a path rig
+ * is re-parameterised by the trip rather than corrupted by it.
+ *
+ * ⇒ The question this leaves is how finely rigc samples, which is
+ * `PATH_LENGTH_SAMPLES` in [`compile.ts`](compile.ts) and is stated there rather
+ * than restated here. 📌 For the record of what the disagreement cost when it was
+ * found: the build rigc **0.21.0** emitted for `pathmodes` sat a uniform
+ * **0.70 %** above the editor's four numbers, and because `lengths[curveCount]`
+ * is the divisor `PathConstraint` spaces bones with, that moved the drawing —
+ * `check` read **4.9612 mean MAE** against 0.0000 on the seven rigs of that run
+ * without a path. `A33_VERTEX_ATTACHMENT_GEOMETRY` asks only that the array
+ * strictly increase, which both arrays do, and `diff` does not compare it at all.
  */
 export interface SpinePathAttachment {
   type: 'path';
@@ -932,6 +966,28 @@ export interface SpineSkeletonJson {
    *   four-skin rig on import without a word: that refusal was rigc's own
    *   harness discarding the editor's stderr, and the editor had named the
    *   cause all along.
+   *
+   * - ✅ **What round trip 6 added to the `constraints` line is TYPES, not
+   *   order** (2026-09-16, Spine 4.3.26, eight rigs). The three that stood here
+   *   were `gallery/look`'s, and they are two types: `yaw` and `tilt`
+   *   (**slider**) and `whip` (**physics**). The trip carried a `transform`
+   *   with its whole 4.3 `source` + `properties` map, a `path` with three
+   *   non-default modes, another `physics` and another `slider`, and every one
+   *   came back field for field — so the array is now measured over **four**
+   *   of the format's types. `ik` is in none of the rigs anybody has
+   *   round-tripped, which is why the count is four and not five.
+   *
+   *   ⚠️ **None of round 6's own constraint arrays can tell order preserved
+   *   from a name sort, and reading them as if they could would be #537's
+   *   mistake in a second collection.** The three rigs that carry constraints
+   *   hold `aim, hold` (xform), `hold, knob` (physlider) and `ride` alone
+   *   (pathmodes). All three came back in the order they were given — and all
+   *   three were *already* in name order, so a re-sort and a preservation are
+   *   the same picture there, exactly as a one-element array is for `skins`
+   *   above. ⇒ The order claim still rests entirely on `gallery/look`, whose
+   *   build order `yaw, tilt, whip` is **not** name order (`tilt < whip < yaw`)
+   *   and which #539 read back unchanged. That one rig is load-bearing and
+   *   nothing in this tree re-takes it.
    */
   events?: Record<string, SpineEvent>;
   animations: Record<

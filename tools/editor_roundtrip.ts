@@ -384,7 +384,7 @@ function checkFigures(reportPath: string): string[] {
 }
 
 /** The shape of a skeleton file, for the field-by-field comparison. */
-interface Shape {
+export interface Shape {
   spine: string;
   bones: number;
   slots: number;
@@ -395,16 +395,43 @@ interface Shape {
   images: string | null;
 }
 
-function shapeOf(path: string): Shape {
+/**
+ * How many constraints of each `type`, read out of 4.3's single array.
+ *
+ * 🚨 This used to count four FIXED keys off the 4.1-era top-level arrays —
+ * `d.ik`, `d.transform`, `d.path`, `d.physics` — none of which a 4.3 file has
+ * (issue #561). Every row therefore read `0 -> 0` on every trip this tool has
+ * ever run, so the summary's answer to *"did the editor drop a constraint"* was
+ * a constant, printed with the same confidence as the rows that measure
+ * something. Measured on `round6/out/pathmodes/build/skeleton.json`, whose
+ * top-level keys are `skeleton, bones, slots, skins, animations, constraints`:
+ * the old reads returned `{ik: 0, transform: 0, path: 0, physics: 0}` beside one
+ * path constraint named `ride`.
+ *
+ * ⭐ The keys are now the types actually **present**, which is why `shapeDiff`
+ * unions them: a type that vanishes has a key on one side only, and a fixed key
+ * list would have to be kept by hand against a format that added `slider` in
+ * 4.3 and can add another.
+ */
+function constraintsByType(list: ReadonlyArray<{ type?: unknown }>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const c of list) {
+    // A constraint with no usable `type` is what `A01` exists to catch, so it is
+    // counted under a name rather than dropped — a row nobody can read beats a
+    // row nobody gets.
+    const type = typeof c?.type === 'string' && c.type !== '' ? c.type : '(no type)';
+    counts[type] = (counts[type] ?? 0) + 1;
+  }
+  return counts;
+}
+
+export function shapeOf(path: string): Shape {
   interface Skel {
     skeleton?: { spine?: string; images?: string };
     bones?: unknown[];
     slots?: unknown[];
     skins?: Array<{ attachments?: Record<string, Record<string, unknown>> }>;
-    ik?: unknown[];
-    transform?: unknown[];
-    path?: unknown[];
-    physics?: unknown[];
+    constraints?: Array<{ type?: unknown }>;
     animations?: Record<string, Record<string, unknown>>;
   }
   const d = JSON.parse(readFileSync(path, 'utf8')) as Skel;
@@ -418,12 +445,7 @@ function shapeOf(path: string): Shape {
       (n, s) => n + Object.values(s.attachments ?? {}).reduce((m, v) => m + Object.keys(v).length, 0),
       0,
     ),
-    constraints: {
-      ik: (d.ik ?? []).length,
-      transform: (d.transform ?? []).length,
-      path: (d.path ?? []).length,
-      physics: (d.physics ?? []).length,
-    },
+    constraints: constraintsByType(d.constraints ?? []),
     animations: Object.keys(d.animations ?? {}).sort(),
     timelineKinds: [...kinds].sort(),
     images: d.skeleton?.images ?? null,
@@ -431,7 +453,7 @@ function shapeOf(path: string): Shape {
 }
 
 /** The rows where the two shapes disagree — what the editor rewrote. */
-function shapeDiff(before: Shape, after: Shape): string[] {
+export function shapeDiff(before: Shape, after: Shape): string[] {
   const rows: string[] = [];
   const cmp = (field: string, a: unknown, b: unknown): void => {
     const x = JSON.stringify(a);
@@ -443,7 +465,13 @@ function shapeDiff(before: Shape, after: Shape): string[] {
   cmp('bones', before.bones, after.bones);
   cmp('slots', before.slots, after.slots);
   cmp('attachments', before.attachments, after.attachments);
-  for (const k of Object.keys(before.constraints)) cmp(`${k} constraints`, before.constraints[k], after.constraints[k]);
+  // The UNION of both sides' types, not the build's: a constraint type the build
+  // has and the export does not is the case this row exists for, and iterating
+  // one side's keys would also miss a type only the export carries. Absent reads
+  // as 0 so the row says `build 1 -> export 0` rather than naming `undefined`.
+  for (const k of [...new Set([...Object.keys(before.constraints), ...Object.keys(after.constraints)])].sort()) {
+    cmp(`${k} constraints`, before.constraints[k] ?? 0, after.constraints[k] ?? 0);
+  }
   cmp('animations', before.animations, after.animations);
   cmp('timeline kinds', before.timelineKinds, after.timelineKinds);
   return rows;
@@ -488,6 +516,82 @@ function main(): void {
   };
 
   if (!existsSync(source)) fail(`no skeleton.json in the build directory ${opts.build}`);
+
+  // 🚨 The art the EDITOR will look for, checked before the editor is started —
+  // issue #562. The editor's JSON import reads `skeleton.images` and finds each
+  // attachment's file by name under it; it never reads an atlas (#370, measured
+  // at the MISSING wall). So a build whose `images` no longer resolves imports
+  // as a skeleton with no pixels, and the run goes on to gate, `diff`, render
+  // and `check` a candidate whose every region is blank — a green-looking
+  // measurement of nothing, or a red one blaming the editor.
+  //
+  // ⚠️ This is a `--pack` build's ordinary shape, not a corner case. `--pack`
+  // writes ONE shared page into `--out` and no loose parts at all (measured:
+  // `round6/out/packed/build/` holds `skeleton.json`, `skeleton.atlas`,
+  // `skeleton.png` and nothing else), so `skeletonImagesPath` falls through to
+  // the loose parts directory and `images` necessarily points OUT of the build
+  // — `"../../../rigs/packed/parts/"` on that run. The build is self-contained
+  // for a runtime and is not for the editor, and the two directories go their
+  // separate ways the moment anybody moves either.
+  //
+  // 🔒 Why this refuses rather than pointing `images` inside `--out`: there is
+  // nothing in there to point AT. The editor would look for `crown.png` beside
+  // the skeleton and find one packed page, so the "fix" turns a path that
+  // resolves while the parts are in place into one that can never resolve at
+  // all. What the editor needs is loose files, which is what `--copy-images`
+  // makes — and `--pack --copy-images` is refused by `cli.ts`, correctly,
+  // because a packed atlas does not reference loose parts.
+  //
+  // ⛔ It is checked HERE, before step 1, rather than beside the atlas check
+  // further down, because each precondition sits before the step it protects:
+  // the atlas's page names matter to the harness's own copy in step 3, and this
+  // matters to the editor's import in step 1.
+  {
+    interface ImagesProbe {
+      skeleton?: { images?: string };
+      skins?: Array<{ attachments?: Record<string, Record<string, { type?: string; path?: string }>> }>;
+    }
+    const probe = JSON.parse(readFileSync(source, 'utf8')) as ImagesProbe;
+    const declared = probe.skeleton?.images;
+    if (declared !== undefined && declared !== '') {
+      const imagesDir = resolve(opts.build, declared);
+      // Only the two attachment types that read a texture. A boundingbox,
+      // clipping or path attachment names no image and would be a false
+      // refusal — `src/types.ts` says so for each of them.
+      const wanted = new Set<string>();
+      for (const skin of probe.skins ?? []) {
+        for (const slot of Object.values(skin.attachments ?? {})) {
+          for (const [placeholder, att] of Object.entries(slot)) {
+            if (att.type !== undefined && att.type !== 'mesh') continue;
+            wanted.add(att.path ?? placeholder);
+          }
+        }
+      }
+      const EXTENSIONS = ['.png', '.jpg', '.jpeg'];
+      const missing = [...wanted]
+        .sort()
+        .filter((name) => !EXTENSIONS.some((ext) => existsSync(join(imagesDir, `${name}${ext}`))));
+      if (!existsSync(imagesDir)) {
+        fail(
+          `the build's skeleton.images is "${declared}", which resolves to ${imagesDir} — and there is no ` +
+            'directory there. The editor finds a JSON import\'s art by that path and never by the atlas, so the ' +
+            'import would produce a skeleton with no pixels and every measurement after it would be of nothing. ' +
+            'A `--pack` build is a runtime artifact: its pages are in --out and its `images` names the loose parts ' +
+            'it was packed from, so it round-trips only while those parts are where they were at build time. ' +
+            'Rebuild with `--copy-images` (which puts the parts beside the skeleton), or put that directory back.',
+        );
+      }
+      if (missing.length > 0) {
+        fail(
+          `the build's skeleton.images is "${declared}" (${imagesDir}) and ${missing.length} of ${wanted.size} ` +
+            `attachment image(s) are not under it — the first is "${missing[0]}". The editor resolves each ` +
+            'attachment by name against that directory and never through the atlas, so those attachments would ' +
+            'import with no pixels. If this is a `--pack` build, its one packed page is in --out and its parts are ' +
+            'not: rebuild with `--copy-images`, which is the shape whose art travels with the skeleton.',
+        );
+      }
+    }
+  }
 
   rmSync(opts.out, { recursive: true, force: true });
   mkdirSync(join(opts.out, 'export'), { recursive: true });
@@ -641,4 +745,11 @@ function main(): void {
   process.exit(gate.status === 0 && check.status === 0 ? 0 : 1);
 }
 
-main();
+// ⭐ Guarded so `shapeOf` and `shapeDiff` can be READ by a control that has no
+// editor (issue #561). Every other `ERT` case drives this file as a subprocess,
+// which is the right shape for a refusal; step 6's summary is a pure function of
+// two skeleton files, and driving an editor — or four rigc subcommands — to
+// reach it would be paying for a round trip to test arithmetic. Run as a
+// program this is unchanged: `bun tools/editor_roundtrip.ts …` makes this module
+// the entry, so `import.meta.main` is true.
+if (import.meta.main) main();
