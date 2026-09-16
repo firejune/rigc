@@ -92,14 +92,15 @@ bottom and a flat crest rather than a corner.
 
 ## `lengths` is measured, and `position` is a fraction of it
 
-`lengths` is not yours to write — rigc measures the setup arc length of each
-curve off the vertices and refuses an authored array. `explain` prints what it
-measured:
+`lengths` is not yours to write — rigc measures it off the vertices and refuses
+an authored array. What it measures is the cumulative length at the end of each
+curve **as `PathConstraint` measures it**, a four-sample forward difference per
+curve, which is also what the Spine editor writes back. `explain` prints it:
 
 ```
 path constraints  (position is a fraction of the measured length under positionMode "percent")
   ride         slot=track        bones=[cart] position=0 percent/percent/tangent
-               curve: 3 curve(s), 1133.420353 long, open, constantSpeed=true
+               curve: 3 curve(s), 1127.735815 long, open, constantSpeed=true
 ```
 
 Three things about that number turned out to matter in practice, and all three
@@ -108,16 +109,23 @@ are checkable from a `coast` frame:
 **1. `position` is arc length, not the curve parameter.** Stepping `coast` and
 reading the trolley's world position back out of the posed skeleton:
 
-| `coast` at | trolley world x, y | arc length reached | ÷ 1133.42 |
+| `coast` at | trolley world x, y | arc length reached | ÷ 1133.444048 |
 | --- | --- | --- | --- |
 | 0.0 s | (150.000, 360.000) | 0.000 | 0.000000 |
 | 1.0 s | (642.680, 197.574) | 566.954 | **0.500204** |
 | 2.0 s | (1150.000, 230.000) | 1133.444 | 1.000000 |
 
 The 0.0002 is the resolution of the independent polyline used to measure the
-arc, not slack in the traversal: that polyline totals 1133.444048 where rigc
-measured 1133.420353, a 0.002 % disagreement between two ways of integrating
-the same curve. What this rules out is the plausible wrong answer — the
+arc, not slack in the traversal. What the two numbers beside it are is worth
+being exact about, because they are **not** two integrations of one curve: that
+polyline totals 1133.444048, and rigc writes 1127.735815 — 0.50 % less — because
+`lengths` is not an arc length at all. It is what `PathConstraint` computes for
+itself on a `constantSpeed` path, a four-sample forward difference per curve, and
+rigc reproduces that computation rather than approximating the curve (issue #560;
+before it, rigc integrated with 64 chords, wrote 1133.420353 here, and came back
+from the Spine editor 0.70 % apart). So the traversal is stated against the
+runtime's own parameterisation and the ÷ column above divides by the measured
+arc. What this rules out is the plausible wrong answer — the
 **composite parameter** at 0.5 lands at (700.000, 239.250), which is **71 px**
 from where the constraint actually puts the trolley. On a curve whose three
 segments are not the same length, those two are different places, and only one
@@ -132,7 +140,7 @@ knot-3 tangent of **−1.273°**. No fudge factor, no offset — which is why th
 **3. The loaded `lengths` array is one longer than the number of curves, and
 the extra entry is 0.** `SkeletonJson` sizes it `vertexCount / 3` = 4 and rigc
 writes one length per curve, so the parse comes back
-`[433.330194, 842.822858, 1133.420353, 0]`. That is not a defect: for an open
+`[430.838932, 838.014216, 1127.735815, 0]`. That is not a defect: for an open
 path `PathConstraint` reads `lengths[verticesLength / 6 - 2]` = `lengths[2]`,
 and it never reaches index 3. Worth knowing before you read the array yourself
 and take the last element for the total, which is wrong by the whole path.
@@ -143,16 +151,22 @@ The wheels are not decorated with a plausible spin — they roll. Rolling withou
 slip over the whole path turns a wheel of radius 34 by
 
 ```
-1133.420353 / 34 radians = 1910.006 degrees   (5.31 turns)
+1133.444048 / 34 radians = 1910.046 degrees   (5.31 turns)
 ```
 
-and that is the number in `motion.json`, negative because rolling to the right
-is clockwise. It stays in sync with the traversal for a structural reason
-rather than a lucky one: both tracks are linear in `position`, share the same
-key times, and carry the same named easing, so any re-timing moves them
-together. Measured on the build, `wheel_f`'s local rotation goes 0 → −1910.006
-over `coast`, against −1910.046 required by the independently measured arc — 
-0.04° of disagreement across five and a third turns.
+and `motion.json` carries **−1910.006**, negative because rolling to the right
+is clockwise — 0.04° of disagreement across five and a third turns. It stays in
+sync with the traversal for a structural reason rather than a lucky one: both
+tracks are linear in `position`, share the same key times, and carry the same
+named easing, so any re-timing moves them together.
+
+⚠️ **The rolling figure is the arc, not `lengths`.** It divides the arc
+[`curve.ts`](curve.ts)'s own polyline measures, because how far a wheel turns is
+a fact about the curve. The artifact's `lengths` answers a different question —
+where along the path a `position` lands, in the runtime's own parameterisation —
+and since [#560](https://github.com/firejune/rigc/issues/560) it is 0.50 % below
+the arc by construction. Deriving this number from it instead would put the
+wheels 9.6° out over one traversal.
 
 Both wheels are keyed by **one** track through a `groups` entry, because they
 turn together:

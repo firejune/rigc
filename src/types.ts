@@ -804,12 +804,22 @@ export interface SpineClippingAttachment {
 /**
  * A composite cubic Bezier, for a path constraint to slide bones along.
  *
- * `lengths` is the cumulative arc length at the end of each curve in the setup
- * pose — one entry per curve, so `vertexCount / 3 - 1` of them on an open path
- * and `vertexCount / 3` on a closed one. It has no parser default and the parser
+ * `lengths` is the cumulative length at the end of each curve in the setup pose,
+ * measured **the way `PathConstraint` measures it** — a four-sample forward
+ * difference per curve (`PathConstraint.js:301-320`), which is also what the
+ * Spine editor exports and which reads about **0.5 % below the true arc**. One
+ * entry per curve, so `vertexCount / 3 - 1` of them on an open path and
+ * `vertexCount / 3` on a closed one. It has no parser default and the parser
  * dereferences `map.lengths.length` unconditionally, so an absent array is one of
  * the format's few loud failures; rigc measures the numbers off the geometry
  * rather than letting a spec restate them.
+ *
+ * ⚠️ That sentence read *"the cumulative **arc** length"* until issue #560, and
+ * the word was load-bearing in the wrong direction: this is not an arc length,
+ * and no refinement of the integral converges on it. It is the number the
+ * field's own consumer computes when it is not given one. ⇒ Do not derive a
+ * physical quantity from it — how far a wheel rolls, how long a ribbon is.
+ * `position` is stated against it; arc length is not it.
  *
  * ⚠️ **The EDITOR writes `vertexCount / 3` entries on BOTH — measured**
  * (round trip 6, 2026-09-16, Spine 4.3.26). It computes the wrap-around curve
@@ -835,15 +845,39 @@ export interface SpineClippingAttachment {
  * inflated `.spine` project holds the imported numbers verbatim — so a path rig
  * is re-parameterised by the trip rather than corrupted by it.
  *
- * ⇒ The question this leaves is how finely rigc samples, which is
- * `PATH_LENGTH_SAMPLES` in [`compile.ts`](compile.ts) and is stated there rather
- * than restated here. 📌 For the record of what the disagreement cost when it was
- * found: the build rigc **0.21.0** emitted for `pathmodes` sat a uniform
- * **0.70 %** above the editor's four numbers, and because `lengths[curveCount]`
- * is the divisor `PathConstraint` spaces bones with, that moved the drawing —
- * `check` read **4.9612 mean MAE** against 0.0000 on the seven rigs of that run
- * without a path. `A33_VERTEX_ATTACHMENT_GEOMETRY` asks only that the array
- * strictly increase, which both arrays do, and `diff` does not compare it at all.
+ * ⇒ **rigc emits that computation, not a sampler aimed at it** (issue #560).
+ * `pathCurveLengths` in [`compile.ts`](compile.ts) is `PathConstraint.js:301-320`
+ * transcribed, down to `Math.sqrt(dx * dx + dy * dy)` rather than `Math.hypot`
+ * and `0.16666667` rather than `1 / 6`; `PS67`–`PS69` in `selftest.ts` hold it
+ * there by requiring it to reproduce a real `PathConstraint.curves` array **bit
+ * for bit** on the runtime's own posed chain. Measured after the change, all
+ * seven entries of both editor exports above come back at the precision the
+ * editor prints them.
+ *
+ * ⚠️ This paragraph used to point at a constant — `PATH_LENGTH_SAMPLES` — and ask
+ * *how finely rigc should sample*. There is no such constant now, and the
+ * question was the wrong one. The chord-sum reading above is true and it is not
+ * sufficient: a 4-sample chord sum agrees with the forward difference to about
+ * **nine significant digits**, which is *below* what float32 can hold — so no
+ * editor export can tell the two apart, and that reading can only settle the
+ * MODEL — and *above* rigc's six-decimal rounding, so the emitted file can. On
+ * both rigs above the two spellings round apart on the **last** curve, where the
+ * running total has accumulated most: `610.802519` against `610.802520`, and
+ * `1127.735817` against `1127.735818`. So the editor is the evidence for what is
+ * being computed and only the runtime is evidence for how.
+ *
+ * 📌 For the record of what the disagreement cost when it was found: the build
+ * rigc **0.21.0** emitted for `pathmodes` sat a uniform **0.70 %** above the
+ * editor's four numbers, and `check` read **4.9612 mean MAE** against 0.0000 on
+ * the seven rigs of that run without a path. ⚠️ What decides whether that moves a
+ * pixel is the POSITION mode, not the spacing mode: `pathmodes` is
+ * `positionMode: fixed`, where an absolute `position` is compared against a total
+ * that scaled, so the bone slides. Under `positionMode: percent` a uniform scale
+ * cancels out of both the position and the spacing — `gallery/ride` is
+ * percent/percent and every one of its 74 rendered frames came back **byte
+ * identical** across this change, on an emitted array all three of whose numbers
+ * moved. `A33_VERTEX_ATTACHMENT_GEOMETRY` asks only that the array strictly
+ * increase, which both arrays do, and `diff` does not compare it at all.
  */
 export interface SpinePathAttachment {
   type: 'path';

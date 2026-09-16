@@ -105,11 +105,16 @@ export function pointOn(i: number, t: number): [number, number] {
 /**
  * A dense polyline through the whole composite, for **drawing only**.
  *
- * ⚠️ Not a measurement of the path. rigc measures the setup arc length off the
- * same vertices and writes it into the artifact's `lengths` (AUTHORING.md §3.4,
- * and it refuses an authored one) — that is the number a traversal is stated
- * against. This is here so the rail's sleepers can be spaced evenly along a
- * curve, and its resolution is chosen for that and nothing else.
+ * ⚠️ Not the number a traversal is stated against. rigc measures the setup
+ * geometry off the same vertices and writes `lengths` into the artifact
+ * (AUTHORING.md §3.4, and it refuses an authored one) — and that is
+ * `PathConstraint`'s own four-sample forward difference, not the arc: it reads
+ * about 0.5 % **below** this polyline by construction (issue #560). This is here
+ * so the rail's sleepers can be spaced evenly along a curve, and its resolution
+ * is chosen for that and nothing else.
+ *
+ * ⇒ So this IS the arc, and it is the right source for a physical quantity —
+ * README.md's wheel rotation divides it, having once divided `lengths`.
  */
 export function polyline(perCurve = 160): Array<[number, number]> {
   const out: Array<[number, number]> = [];

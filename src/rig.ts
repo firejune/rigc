@@ -676,12 +676,18 @@ export interface RigClippingAttachment extends RigVertexGeometry {
  * six then straddle the knots, and the constraint slides bones along a curve
  * nobody drew.
  *
- * ⚠️ `lengths` is NOT authored here. It is the cumulative arc length at the end
- * of each curve in the SETUP pose, in world units — a measurement of the
- * geometry above, and the same relationship `image` has to `width`/`height`: a
- * restated number can disagree with the vertices, and when it does, a
+ * ⚠️ `lengths` is NOT authored here. It is the cumulative length at the end of
+ * each curve in the SETUP pose, in world units — a measurement of the geometry
+ * above, and the same relationship `image` has to `width`/`height`: a restated
+ * number can disagree with the vertices, and when it does, a
  * `constantSpeed: false` path traverses a length that is not the length of the
  * curve, silently. So rigc measures it and refuses an authored one by name.
+ *
+ * 🔸 *Which* length, exactly, is `SpinePathAttachment`'s subject in
+ * [`types.ts`](types.ts) and it is not the arc: it is `PathConstraint`'s own
+ * four-sample forward difference, about 0.5 % below the arc, which is what the
+ * Spine editor writes back too (issue #560). This comment said "arc length"
+ * until then.
  */
 export interface RigPathAttachment extends RigVertexGeometry {
   type: 'path';
