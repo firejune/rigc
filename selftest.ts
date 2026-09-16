@@ -6619,15 +6619,40 @@ function runConstraintAndDeformSuite(): number {
     'the parser throws `Timeline attachment not found`, which names the attachment and not the ones that were there instead',
   );
 
-  const oddOffset = refusal(dirs, timelineMotion({
-    duration: 1, loop: false, tracks: [],
-    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, offset: 3, vertices: [1, 1] }] }],
-  }));
+  // ⭐ This probe used to assert the opposite — that an odd `offset` is refused —
+  // and issue #576 flipped it on the same input. The refusal read an odd start as
+  // a `fromVertex` typed into the wrong field, which it caught for exactly the
+  // half of that mistake whose index happens to be odd: `offset: 4` meant as
+  // vertex 4 was always accepted and always lands on vertex 2. What it did refuse
+  // was every faithful transcription of a trimmed editor run, one of which is in
+  // this repository's own example corpus (`spineboy-pro`'s `hoverboard-board`
+  // starts at 1). So the probe is kept and its expectation is reversed: an odd
+  // start compiles, and the emitted key carries the index that was written.
+  // Captured, not mutated: the gate runs on the file the compiler wrote. An array
+  // rather than a `let` because a `let` assigned inside a callback narrows to
+  // `never` on every read after it (the defect `bun run typecheck` was turned on
+  // for).
+  const oddOffsetEmitted: Array<Record<string, unknown>> = [];
+  const oddOffset = gateProbeOrRefusal(
+    dirs,
+    timelineMotion({
+      duration: 1, loop: false, tracks: [],
+      deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, offset: 3, vertices: [1, 1] }] }],
+    }),
+    oddOffsetEmitted,
+  );
+  const oddOffsetKey = emittedDeformKey(oddOffsetEmitted[0], 'flat', 1);
   say(
-    'T15_an_odd_deform_offset_is_refused',
-    oddOffset !== null && oddOffset.includes('is odd'),
-    oddOffset === null ? 'the compile went through' : `refused with: ${oddOffset}`,
-    'the deform array is x, y pairs and nothing in the format says so, so an odd start silently puts every x of the run on a y',
+    'T15_AN_ODD_DEFORM_OFFSET_IS_EMITTED_VERBATIM_RATHER_THAN_REFUSED',
+    oddOffset.report?.failures.length === 0 && oddOffsetKey?.offset === 3 && JSON.stringify(oddOffsetKey?.vertices) === '[1,1]',
+    oddOffset.refused !== null
+      ? `refused with: ${oddOffset.refused}`
+      : oddOffsetKey === undefined
+        ? `no deform key was emitted; failures [${(oddOffset.report?.failures ?? []).map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`
+        : `emitted offset ${JSON.stringify(oddOffsetKey.offset)}, vertices ${JSON.stringify(oddOffsetKey.vertices)}, ` +
+          `${oddOffset.report?.failures.length ?? 0} gate failures`,
+    'the runtime copies at a RAW index — `arrayCopy(run, 0, deform, offset, run.length)` — so an odd start is data the ' +
+      'format holds and an editor writes, and a compiler that refuses it cannot state a file every Spine runtime plays',
   );
 
   // --- the gate's own mutants: A34 and A35 have to be reachable -------------
@@ -6723,6 +6748,116 @@ function runConstraintAndDeformSuite(): number {
       'copied past the end of the Float32Array and vanishes, which is the silence A35 was built for',
   );
 
+  // --- the compiler's side of the same clause (issue #576) -------------------
+  //
+  // T19 and T19B measure a trimmed run the gate is handed. These three measure
+  // the one an AUTHOR writes, which is where the parity clause actually lived:
+  // `A35` dropped it in #262 and `compileDeformTrack` kept it, so between those
+  // two fixes rigc validated a construct it could not compile. The runtime reads
+  // a run as a raw copy at a raw index — `SkeletonJson`'s deform branch does
+  // `Utils.arrayCopy(verticesValue, 0, deform, start, verticesValue.length)` and
+  // `SkeletonBinary` fills `for (let v = start; v < end; v++)` — so an ODD run
+  // writes the x and y of one vertex and the x of the next, leaving that next y
+  // at its setup value.
+  const oddRunEmitted: Array<Record<string, unknown>> = [];
+  const oddRun = gateProbeOrRefusal(
+    dirs,
+    timelineMotion({
+      duration: 1, loop: false, tracks: [],
+      // Three numbers at an even start: the card's own shape. The values are
+      // exact in binary so that "byte for byte the spec's" is a comparison of
+      // the emitted text and not of a rounding tolerance.
+      deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, offset: 2, vertices: [1.5, -2.25, 0.125] }] }],
+    }),
+    oddRunEmitted,
+  );
+  const oddRunKey = emittedDeformKey(oddRunEmitted[0], 'flat', 1);
+  const oddRunA35 = oddRun.report?.passed.includes('A35_DEFORM_KEYS_FIT_THE_ATTACHMENT') ?? false;
+  // The same run through rigc's own spelling of the start. `fromVertex` counts
+  // VERTICES, and an odd run reaches one it does not cover — so the bound it
+  // checks is `ceil(length / 2)`, and the half-reached vertex counts. Two
+  // spellings of one start have to emit one file, which is also the only place
+  // that rounding is visible.
+  const byVertexEmitted: Array<Record<string, unknown>> = [];
+  const byVertex = gateProbeOrRefusal(
+    dirs,
+    timelineMotion({
+      duration: 1, loop: false, tracks: [],
+      deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, fromVertex: 1, vertices: [1.5, -2.25, 0.125] }] }],
+    }),
+    byVertexEmitted,
+  );
+  const byVertexKey = emittedDeformKey(byVertexEmitted[0], 'flat', 1);
+  say(
+    'T41_AN_ODD_LENGTH_DEFORM_RUN_THAT_FITS_COMPILES_AND_BOTH_SPELLINGS_OF_ITS_START_EMIT_ONE_FILE',
+    oddRun.report?.failures.length === 0 &&
+      oddRunA35 &&
+      oddRunKey?.offset === 2 &&
+      JSON.stringify(oddRunKey?.vertices) === '[1.5,-2.25,0.125]' &&
+      byVertex.report?.failures.length === 0 &&
+      JSON.stringify(byVertexKey) === JSON.stringify(oddRunKey),
+    oddRun.refused !== null || byVertex.refused !== null
+      ? `refused with: ${oddRun.refused ?? byVertex.refused}`
+      : oddRunKey === undefined
+        ? `no deform key was emitted; failures [${(oddRun.report?.failures ?? []).map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`
+        : `emitted offset ${JSON.stringify(oddRunKey.offset)}, vertices ${JSON.stringify(oddRunKey.vertices)}; A35 ` +
+          `${oddRunA35 ? 'ran and passed' : 'did NOT pass'}, ${oddRun.report?.failures.length ?? 0} gate failures; ` +
+          `"fromVertex": 1 emitted ${JSON.stringify(byVertexKey)}`,
+    'padding the run to an even length would be a different animation wherever the setup y it covers is non-zero, so ' +
+      'there is no transcription of such a key that both compiles and plays what the file played',
+  );
+
+  // The bound that has to survive the removal, on the compiler's side of it: one
+  // number more than T41's run ends at 9 in an 8-long array. The assertion names
+  // the extent rather than the parity on purpose — before #576 this same input
+  // was refused, and refused for the wrong reason, which is a red this control
+  // can tell apart from a green.
+  const oddRunTooLong = refusal(dirs, timelineMotion({
+    duration: 1, loop: false, tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, offset: 6, vertices: [1.5, -2.25, 0.125] }] }],
+  }));
+  say(
+    'T42_AN_ODD_RUN_ONE_NUMBER_PAST_THE_END_IS_STILL_REFUSED_BY_EXTENT',
+    oddRunTooLong !== null && oddRunTooLong.includes('ends at 9') && oddRunTooLong.includes('deform array is 8 long'),
+    oddRunTooLong === null ? 'the compile went through' : `refused with: ${oddRunTooLong}`,
+    'the refusal that is gone caught this one too, on a reason the runtime does not have; the reason it does have is ' +
+      'that `arrayCopy` into a `Float32Array` drops the ninth number without a word',
+  );
+
+  // The corpus shape, posed: `spineboy-pro`'s `hoverboard-board` keys `offset: 1`
+  // with 147 of 148 floats — odd at BOTH ends, covering the whole array minus the
+  // leading zero the editor trimmed. `flat` is 8 floats, so 7 from index 1 is
+  // that key's shape on this array — every number but the leading one — and it is
+  // measured through spine-core rather than read off the JSON: the claim is about
+  // what plays.
+  const trimmedRun = [1, 2, 3, 4, 5, 6, 7];
+  const trimmedMotion = timelineMotion({
+    duration: 1, loop: false, tracks: [],
+    deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, offset: 1, vertices: trimmedRun }] }],
+  });
+  const trimmedPoses: number[][] = [];
+  const trimmedRefused = refusal(dirs, trimmedMotion);
+  if (trimmedRefused === null) {
+    const trimmedData = timelinePosable(dirs, trimmedMotion).data;
+    for (const sample of [0, 4]) {
+      trimmedPoses.push(Array.from(poseAtSample(trimmedData, 'move', 4, sample).slots.find((s) => s.data.name === 'flat')!.pose.deform));
+    }
+  }
+  const [trimmedSetup, trimmedPosed] = trimmedPoses;
+  say(
+    'T43_A_RUN_ODD_AT_BOTH_ENDS_LANDS_WHERE_THE_RAW_COPY_PUTS_IT_AND_LEAVES_THE_REST_AT_SETUP',
+    trimmedPosed?.length === 8 &&
+      trimmedSetup?.length === 8 &&
+      near(trimmedPosed[0] - trimmedSetup[0], 0, 1e-3) &&
+      trimmedRun.every((n, i) => near(trimmedPosed[i + 1] - trimmedSetup[i + 1], n, 1e-3)),
+    trimmedRefused !== null
+      ? `refused with: ${trimmedRefused}`
+      : `posed deform − setup = [${trimmedPosed.map((n, i) => (n - trimmedSetup[i]).toFixed(3)).join(', ')}], written run ` +
+        `[${trimmedRun.join(', ')}] from index 1`,
+    'index 0 is the leading number an editor trims off a delta run and index 7 is a lone x — if either moved, the ' +
+      'compiler had aligned the run to something, and nothing in the parser is aligned to anything',
+  );
+
   return bad;
 }
 
@@ -6730,6 +6865,49 @@ function runConstraintAndDeformSuite(): number {
 function deformKeysOf(animation: Record<string, unknown>, slot: string): Array<Record<string, unknown>> {
   const attachments = animation.attachments as Record<string, Record<string, Record<string, Record<string, unknown>>>>;
   return attachments.default[slot][slot].deform as Array<Record<string, unknown>>;
+}
+
+/**
+ * `gateProbeArtifacts`, but a refusal comes back as a string instead of taking
+ * the run down.
+ *
+ * The four controls that use it are positive ones — they assert that a legal
+ * construct compiles — and a positive control whose compile throws would abort
+ * the suite at the first one, hiding the state of the other three. The message is
+ * what a reader needs either way, so it is returned rather than raised.
+ */
+function gateProbeOrRefusal(
+  dirs: ProbeDirs,
+  motion: Record<string, unknown>,
+  capture: Array<Record<string, unknown>>,
+): { report: ReturnType<typeof validate> | null; refused: string | null } {
+  try {
+    const report = gateProbeArtifacts(dirs, motion, (skeleton) => {
+      capture.push(skeleton);
+    });
+    return { report, refused: null };
+  } catch (err) {
+    return { report: null, refused: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}` };
+  }
+}
+
+/**
+ * One emitted deform key of the `move` animation, or undefined if the skeleton
+ * carries none.
+ *
+ * Undefined rather than a throw because the callers are controls: a compile that
+ * emitted no key at all has to reach `say` as a red line that prints why, not as
+ * an exception that takes the suite with it.
+ */
+function emittedDeformKey(
+  skeleton: Record<string, unknown> | undefined,
+  slot: string,
+  index: number,
+): Record<string, unknown> | undefined {
+  if (skeleton === undefined) return undefined;
+  const animations = skeleton.animations as Record<string, Record<string, unknown>> | undefined;
+  if (animations?.move === undefined) return undefined;
+  return deformKeysOf(animations.move, slot)[index];
 }
 
 // ---------------------------------------------------------------------------
@@ -33982,8 +34160,9 @@ function main(): void {
       '+ ' + n('key-time') + ' key-time controls, + ' + n('event') + ' event controls (2 of them a spine-core round trip of the firings), ' +
       '+ ' + n('constraint-deform') + ' constraint- and deform-timeline controls (10 of them a spine-core round trip that reads the ik and ' +
       'transform mixes off the posed constraints, the world position of a deformed vertex, and a weighted ' +
-      "attachment's per-influence deform array, 2 of them the two sides of a TRIMMED deform run — a run that " +
-      'starts and ends mid-pair accepted, the same run one float longer still refused, and 2 of them the knee an ik ' +
+      "attachment's per-influence deform array, with the two sides of a TRIMMED deform run measured on the gate and " +
+      'on the compiler alike — a run that starts and ends mid-pair accepted and posed, the same run one float ' +
+      'longer still refused by extent — and 2 of them the knee an ik ' +
       "timeline reverted: the rig's own `bendPositive` reaching a timeline that states none, and a timeline that " +
       'states one still overriding it), ' +
       '+ ' + n('hold-curve') + ' hold-curve controls (a named easing on a hold emitted stepped with the same easing on the moving segment ' +
