@@ -3307,6 +3307,13 @@ keys were passed over and how many reversed triangles nothing gated:
                 8 reversed triangle(s) nothing gates  <- A39 counts them as deformKeysNotDrawn
 ```
 
+⭐ **On the "shows another attachment" half, that sentence also names the skin the
+pose was taken in** — `the slot shows attachment "away" at this time, with skin
+"suit" worn, not this mesh …` — because what a slot shows is resolved through the
+worn skin first and `defaultSkin` second, so the reading is only meaningful beside
+the dress it was taken in (§4.11.5). The alpha half carries no such clause: an
+alpha is read off the pose and no skin is in it.
+
 🚫 **What it does not print, and why — `coverage`.** A deform **cannot move
 coverage.** That figure is rasterised from the attachment's **uvs** against the
 part's alpha, and a deform moves positions and never uvs, so it is identical at
@@ -3579,6 +3586,70 @@ declares.
 ⚠️ **What the artifact cannot say, and rigc therefore does not:** whether a
 slider's animation is *also* played on a track somewhere. Nothing in skeleton data
 records that, so a slider-applied animation is measured in its slider frames only.
+
+---
+
+### 4.11.5 Which skin a deform key is measured in — the one it is keyed on
+
+§4.11 opens on the triple: a deform timeline is the only one keyed on
+**skin / slot / attachment**. So the skin is not context around the key, it is a
+third of the key's own address — and every pose `A39` and the `DEFORM` block take
+is now taken with **that skin worn**
+([#583](https://github.com/firejune/rigc/issues/583)). You do not ask for it and
+there is no flag: the skin comes out of the timeline.
+
+🚨 **It used to wear nothing at all**, which is `spine-core`'s own initial state
+and the same one `check` reports as `no skin set (the default skin alone)`
+(§9) — every slot resolved through `SkeletonData.defaultSkin` and nothing else.
+Move a deformed mesh into a named skin, which the format not only allows but keys
+the timeline on, and the slot showed **no attachment**. This is what
+`gallery/squash`'s ball printed with its one mesh moved into a skin `suit`, on
+every one of its five keys, before #583:
+
+```
+  DEFORM  bounce  suit/ball/ball  key 1  t=0.340000  transform affine  scale=[0.88, 1.16]
+          skipped    A39 reads no winding off this key: the slot shows no attachment at all at this
+                     time, not this mesh, so the runtime applies no deform to it here and draws
+                     none of it — a triangle that draws no pixels cannot draw them backwards
+```
+
+— `A39` went **PASS → SKIP** on a rig whose only edit was which skin one mesh sat
+in, in a sentence that reads as a verdict on that rig. Worn, the same build
+reports every figure the default-skin one does, to the last digit, and `A39` gates
+it: the two `DEFORM` blocks differ in the skin of the triple and in nothing else.
+
+**Two things follow, and one of them is not about art:**
+
+- ⚠️ **A "nothing is drawn" sentence now names the skin it was measured in** —
+  `the slot shows attachment "away" at this time, with skin "suit" worn, not this
+  mesh …`. It is on the *shows-something-else* branch only, because that is the
+  branch a skin decides; an alpha is read off the pose and has no skin in it. The
+  clause is what separates "this slot is empty" from "this slot is empty in the
+  dress this mesh lives in", and only the second is a measurement.
+- ⭐ **A `skin: true` bone or constraint (§3.4.1) is switched on too.**
+  `Skeleton.setSkin` calls `updateCache`, which leaves a `skinRequired` bone
+  inactive and a `skinRequired` constraint out of the update cache under any skin
+  that does not list it. So a **slider** dressed into the same skin as the mesh
+  it drives used to be measured with itself switched off, and failed in two ways
+  depending on its `local` flag: a world-read property never moved, so the frame
+  was reported as *"played on a track"* — an animation a slider is the only way
+  into (§4.11.4) — while a local-read one kept its mapping but never left
+  `SliderPose.time` 0, so every key came back as *"at a time no dial selects"*.
+  Both now reach their own key times.
+
+⛔ **What it does not do is try every skin.** `Attachment.timelineSlots` lets one
+deform reach a second slot — a linked mesh with `inheritTimelines` — and that copy
+may live in a skin of its own; `setSkin` dresses the whole skeleton at once, so
+under the timeline's own skin that copy resolves to nothing and is reported as
+drawing nothing, which is exactly what the runtime does with that same skin on.
+Posing the key again under some other skin would be rigc choosing which dress the
+character is wearing, and which skin is worn is yours. What it owes you instead is
+the skin in the sentence, so the reading is never mistaken for a verdict.
+
+📌 **`check` is the other half of the same question and it is not automatic**:
+a rig whose art lives in named skins is rendered and checked **once per skin**,
+with `--skin` on both sides (§9). The difference is where the name comes from —
+a deform timeline carries its own skin and a frame set does not.
 
 ---
 
@@ -3888,7 +3959,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying its `mix` (§3.5.1). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. **SKIP** when the skeleton declares no path constraint |
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
-| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. ⚠️ And the **spans between** consecutive keys are scanned too (§4.11.3, issue #403): the runtime interpolates, so a deform inside its fold angle at every key can be past it in between. That refusal is its own sentence — `BETWEEN key 0 (t=0s) and key 1 (t=0.5s), at t=…` — with the time solved for in closed form and then posed and measured like any key, alpha read at that same moment. `deformSpansScanned` says on every green build that the scan ran. ⚠️ And the **frame** it poses in is the one the animation is reached in (§4.11.4, issue #407): on a track when nothing applies it, and otherwise once per **slider**, with that slider's mapping inverted and its bone driven until the runtime selects the key's own time — because a slider picks the time, so the two are one number and posing them independently is a frame that never occurs. The frame is on every `DEFORM` line, on the stats line as `deformFrames`, and in the refusal itself when it is not the track. A key at a time **no dial value selects** is measured in the frame the runtime does land on, left out of `deformKeysMeasured` and named as `deformKeysUnreachable`/`deformUnreachable` — never refused and never silent. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels or is unreachable *and no span between them folds where anything is drawn*, or when there is no rig info at all |
+| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. ⚠️ And the **spans between** consecutive keys are scanned too (§4.11.3, issue #403): the runtime interpolates, so a deform inside its fold angle at every key can be past it in between. That refusal is its own sentence — `BETWEEN key 0 (t=0s) and key 1 (t=0.5s), at t=…` — with the time solved for in closed form and then posed and measured like any key, alpha read at that same moment. `deformSpansScanned` says on every green build that the scan ran. ⚠️ And the **frame** it poses in is the one the animation is reached in (§4.11.4, issue #407): on a track when nothing applies it, and otherwise once per **slider**, with that slider's mapping inverted and its bone driven until the runtime selects the key's own time — because a slider picks the time, so the two are one number and posing them independently is a frame that never occurs. The frame is on every `DEFORM` line, on the stats line as `deformFrames`, and in the refusal itself when it is not the track. A key at a time **no dial value selects** is measured in the frame the runtime does land on, left out of `deformKeysMeasured` and named as `deformKeysUnreachable`/`deformUnreachable` — never refused and never silent. ⚠️ And the **skin** it poses in is the one the timeline is keyed on (§4.11.5, issue #583), since a deform's address is a `skin / slot / attachment` triple: the pose wears that skin, which also switches on any `skin: true` bone or constraint it activates, and the "nothing is drawn" sentence names the skin it was read under. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels or is unreachable *and no span between them folds where anything is drawn*, or when there is no rig info at all |
 | `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where a later one is not `additive` — it writes that property outright at `mix: 1` and every earlier slider on it is dead (§3.5.2). Also fires when the shared timeline **cannot** be additive (a slot colour, an attachment swap, a draw order, a sequence), where `"additive": true` is not the fix and one of the two has to go. The detail names the bone or slot and the property, every slider keying it in `constraints` order with its flag, and which one wins today. Three shapes are deliberately not findings: a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, not an overwrite), two `skinRequired` sliders no skin activates together, and two sliders on different properties. **SKIP** when fewer than two sliders are at full authority; a PASS means two were compared |
 | `A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP` | both | a physics constraint driving a component the **Spine editor** cannot hold, on a rig that declared `invariants.editorRoundTrip` (§3.7). The editor's physics model holds `x` and `y` only, with no cap on how many at once, so a constraint driving `rotate`, `scaleX` or `shearX` is imported, exported and handed back driving **nothing** — measured over three rigs and twelve constraints with the predictions written first ([#540](https://github.com/firejune/rigc/issues/540)). The detail names the constraint and each component. ⚠️ rigc's own output is correct — every runtime plays a rotation jiggle — so this is opt-in and the default is *not* silence: on a rig that declares nothing it **SKIPs**, and the SKIP names the constraint and the component anyway, so an author learns without having asked. Fix by driving the constraint in `x`/`y`, or by dropping the declaration if the rig never goes near the editor. Disjoint from `A23_PHYSICS_CONSTRAINT_EFFECTIVE` by construction: A23 refuses an **empty** driven set, which is what comes back from the editor, and this refuses a non-empty one that will not survive going in. **SKIP** also when the rig declares the editor and carries no physics constraint at all |
 
@@ -4502,6 +4573,14 @@ remember:
 
 A skin name the candidate does not declare is refused with the ones it does —
 `the candidate declares no skin "path"; it declares [default, patch, torn]`.
+
+📌 **Deform measurement needs no such flag, because the timeline carries the
+name.** `A39` and the `DEFORM` block pose each key with the skin that key is keyed
+on — a deform timeline's address is a `skin / slot / attachment` triple — so a
+mesh in a named skin is measured in that skin without anything being passed on the
+command line (§4.11.5, issue #583). The difference is where the name comes from,
+not which command cares: `check` compares two picture sets and neither of them
+records a skin unless you say so, while a deform key knows its own.
 
 ⭐ **A frame set may ship a contact sheet instead of every frame, and the sheet is
 compared too.** A long shot does not commit 311 near-duplicate PNGs: rung 2's sets

@@ -107,6 +107,7 @@ import {
   Skeleton,
   type SkeletonData,
   SkeletonJson,
+  type Skin,
   Slider,
   SliderData,
   TextureAtlas,
@@ -277,6 +278,18 @@ export interface DeformKeyDraw {
    * none of this mesh is drawn.
    */
   alpha: number;
+  /**
+   * The skin the skeleton was **wearing** when all of the above was read, off
+   * `Skeleton.skin` itself — the skin that holds this timeline's attachment
+   * (issue #583) — or `null` when it wore none.
+   *
+   * ⭐ Read off the posed skeleton rather than passed in beside it, so it cannot
+   * disagree with what was actually set. It is what makes `blank` a statement
+   * about a pose instead of a verdict on the rig: "the slot shows nothing" and
+   * "the slot shows nothing in the dress this mesh lives in" are different
+   * claims, and only the second is measurable.
+   */
+  under: string | null;
   /**
    * Why this mesh puts no pixels on the screen at that time, in the words the
    * `DEFORM` block and A39's stats line both print — or `null` when it puts some
@@ -794,147 +807,211 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
   let spansNotScanned = 0;
   const dialTies: DeformDialTie[] = [];
   const dialDisputes: DeformDialDispute[] = [];
-  const reaches = reachesOf(data);
+  /**
+   * `reachesOf` under one skin, computed once per skin the survey reaches.
+   *
+   * ⚠️ Keyed on the `Skin` OBJECT, which is what `placementOf` recovered. A map
+   * keyed on the name would fold two same-named skins into one entry and hand
+   * the second one the first's plans (#583).
+   */
+  const reachCache = new Map<Skin | null, Map<string, Array<DialPlan | null>>>();
+  const reachesUnder = (skin: Skin | null): Map<string, Array<DialPlan | null>> => {
+    const already = reachCache.get(skin);
+    if (already !== undefined) return already;
+    const built = reachesOf(data, skin);
+    reachCache.set(skin, built);
+    return built;
+  };
+  /**
+   * Sliders whose tie or dispute is already in the rollup, by name.
+   *
+   * A slider used to be planned once per animation and therefore reported once.
+   * It is now planned once per (animation, skin) — so the guard keeps the rollup
+   * at one line per slider, and it loses nothing: a slider the skins do not
+   * touch (`skinRequired` false, and a driving bone that is active under every
+   * skin) probes identically under all of them, and one they do touch is
+   * `active` under exactly the one skin that lists it, because a rig spec is
+   * refused for putting a constraint or a bone in two skins.
+   */
+  const dialsReported = new Set<string>();
   for (const anim of data.animations) {
-    // One pass per way in (issue #407). The animations nothing applies get the
-    // single track pass this loop has always been.
-    for (const dials of reaches.get(anim.name) ?? [null]) {
-      const poseFrame = (time: number): PoseOfFrame =>
-        dials === null ? { posed: poseAt(data, anim.name, time), dial: null } : poseDial(data, dials, time);
-      const reach = dials === null ? TRACK_REACH : dials.reach;
-      /**
-       * The key times this plan actually **reached**, for the reach comparison
-       * below (#427).
-       *
-       * ⚠️ A key the drive itself could not select is not in here. It is already
-       * named on the stats line as `deformKeysUnreachable`, with the ask and the
-       * bound, and the artifact's answer cannot reach it either — so listing it
-       * as something the artifact's answer missed would count one defect twice
-       * and inflate a disagreement with a frame the disagreement did not cost.
-       */
-      const posedTimes = new Set<number>();
-      for (const timeline of anim.timelines) {
-        if (!(timeline instanceof DeformTimeline)) continue;
-        timelines++;
-        const attachment = timeline.attachment;
-        const slotName = data.slots[timeline.slotIndex]?.name ?? `#${timeline.slotIndex}`;
-        // A bounding box, a clipping polygon and a path all have a vertex array
-        // and NO triangles, so they have no winding to keep and no area to take a
-        // ratio of. Saying nothing about them beats inventing a measurement.
-        if (!(attachment instanceof MeshAttachment)) {
-          notAMesh.add(`"${slotName}"`);
-          continue;
-        }
-        if (exempt.has(slotName)) {
-          exempted.add(`"${slotName}"`);
-          continue;
-        }
-        const triangles = attachment.triangles;
-        if (!triangles || triangles.length < 3) continue; // A04 owns a mesh with no triangles
-        const placement = placementOf(data, timeline.slotIndex, attachment);
-        const named = {
-          animation: anim.name,
-          skin: placement.skin,
-          slot: slotName,
-          attachment: attachment.name,
-          placeholder: placement.placeholder,
-        };
-        /** The previous key's posed frame, kept so the span between them can be scanned. */
-        let previous: PosedFrame | null = null;
-        for (let frame = 0; frame < timeline.frames.length; frame++) {
-          const time = timeline.frames[frame];
-          const at = poseFrame(time);
-          const frameMeasure = measurePosed(at.posed, time, timeline.slotIndex, attachment, triangles, reach, at.dial);
-          // A key that draws no pixels — or one at a time no dial can select —
-          // is measured and then left out of the totals, because those totals
-          // are "what the gate ran on": A39 reads them onto its stats line and
-          // the report's rollup has to match them.
-          if (at.dial?.unreachable === true) {
-            notReachable++;
-            notReachableReversed += frameMeasure.measure.reversed.length;
-          } else if (frameMeasure.measure.draw.blank === null) {
-            trianglesMeasured += frameMeasure.measure.triangles;
-            collapsedTotal += frameMeasure.measure.collapsed;
-          } else {
-            notDrawn++;
-            notDrawnReversed += frameMeasure.measure.reversed.length;
-          }
-          keys.push({ ...named, key: frame, time, ...frameMeasure.measure });
-          if (at.dial?.unreachable !== true) posedTimes.add(time);
-          if (previous !== null) {
-            // ⚠️ A span whose end is a frame the runtime cannot reach has no
-            // interpolation to scan: the anchors it would solve the quadratic
-            // over are two poses of some other time. Counted, never silent.
-            if (at.dial?.unreachable === true || previous.measure.dial?.unreachable === true) {
-              spansNotScanned++;
-            } else {
-              spans.push(
-                scanDeformSpan(
-                  anim,
-                  timeline,
-                  attachment,
-                  triangles,
-                  named,
-                  frame - 1,
-                  previous,
-                  frameMeasure,
-                  poseFrame,
-                ),
-              );
-            }
-          }
-          previous = frameMeasure;
-        }
+    /**
+     * What each of this animation's deform timelines is, and which skin holds
+     * its attachment — settled in one pass, BEFORE the frames loop (issue #583).
+     *
+     * 🚨 Once per timeline, not once per (timeline, skin, way-in). `timelines`,
+     * `notAMesh` and `exempted` are counts of the animation's own contents, and
+     * a skeleton with meshes in two skins would report each of them twice if the
+     * tally sat inside the loops below.
+     */
+    const placed: Array<{
+      timeline: DeformTimeline;
+      attachment: MeshAttachment;
+      triangles: ArrayLike<number>;
+      slotName: string;
+      placement: ReturnType<typeof placementOf>;
+    }> = [];
+    for (const timeline of anim.timelines) {
+      if (!(timeline instanceof DeformTimeline)) continue;
+      timelines++;
+      const attachment = timeline.attachment;
+      const slotName = data.slots[timeline.slotIndex]?.name ?? `#${timeline.slotIndex}`;
+      // A bounding box, a clipping polygon and a path all have a vertex array
+      // and NO triangles, so they have no winding to keep and no area to take a
+      // ratio of. Saying nothing about them beats inventing a measurement.
+      if (!(attachment instanceof MeshAttachment)) {
+        notAMesh.add(`"${slotName}"`);
+        continue;
       }
-      // --- what the artifact's own answer could NOT have posed (issue #427) ---
-      //
-      // ⭐ Posed, not predicted. The survey builds a second plan out of the field
-      // the SKELETON names and runs it through the same `poseDial` every real
-      // frame goes through, so each entry is spine-core saying "no settable value
-      // of this field lands me on that time" rather than this file inferring it
-      // off an interval. Measured (#427): the list is empty whenever the two
-      // answers reach the same span, and empty is the reading that says the
-      // disagreement changed nothing about which frames were measured.
-      //
-      // 🚨 And nothing is reported at all about a dial that posed NOTHING — a
-      // slider whose animation carries no deform timeline. `outside` would be
-      // empty there for the one reason that must never print as agreement:
-      // there were no frames to disagree about. A comparison of nothing and a
-      // comparison that came out equal are the vacuous pass this file exists
-      // to keep apart.
-      if (posedTimes.size === 0) continue;
-      // A plan is visited exactly once — a slider names one animation — so the
-      // two lists need no de-duplication and come out in the skeleton's own
-      // constraint order.
-      if (dials?.tie) dialTies.push(dials.tie);
-      if (dials?.dispute) dialDisputes.push(dials.dispute);
-      if (dials?.dispute && dials.statedMap !== null) {
-        const shadow: DialPlan = {
-          ...dials,
-          field: dials.statedMap.field,
-          u0: dials.statedMap.u0,
-          v0: dials.statedMap.v0,
-          u1: dials.statedMap.u1,
-          v1: dials.statedMap.v1,
-        };
-        // ⚠️ The one time posing cannot answer: a field that moves the reading by
-        // NOTHING has no map to invert, so `poseDial` divides by zero and calls
-        // every time out of bounds — including the setup time, which that field
-        // reaches by being left alone. The reach says which one that is, and it
-        // is a single point. Nothing in spine-core 4.3 has been measured getting
-        // here (a parent at exactly 90° still moves a world x reading by 2.3e-8),
-        // and a report that over-stated a disagreement by one key would be the
-        // false red this file has paid for twice.
-        const flat = dials.statedMap.v1 === dials.statedMap.v0;
-        const only = dials.dispute.statedReach;
-        const outside = [...posedTimes]
-          .filter((time) =>
-            flat
-              ? only === null || Math.abs(time - only.lo) > DIAL_TIME_EPSILON
-              : poseDial(data, shadow, time).dial?.unreachable === true,
-          )
-          .sort((a, b) => a - b);
-        dials.dispute.outside.push(...outside);
+      if (exempt.has(slotName)) {
+        exempted.add(`"${slotName}"`);
+        continue;
+      }
+      const triangles = attachment.triangles;
+      if (!triangles || triangles.length < 3) continue; // A04 owns a mesh with no triangles
+      placed.push({
+        timeline,
+        attachment,
+        triangles,
+        slotName,
+        placement: placementOf(data, timeline.slotIndex, attachment),
+      });
+    }
+    if (placed.length === 0) continue;
+    // One pass per skin the animation's meshes live in, in the order its
+    // timelines name them. Every rig rigc compiles today has exactly one, and
+    // then this loop runs once and the keys come out in timeline order as they
+    // always have.
+    for (const skin of new Set(placed.map((p) => p.placement.holder))) {
+      // One pass per way in (issue #407). The animations nothing applies get the
+      // single track pass this loop has always been.
+      for (const dials of reachesUnder(skin).get(anim.name) ?? [null]) {
+        const poseFrame = (time: number): PoseOfFrame =>
+          dials === null
+            ? { posed: poseAt(data, skin, anim.name, time), dial: null }
+            : poseDial(data, skin, dials, time);
+        const reach = dials === null ? TRACK_REACH : dials.reach;
+        /**
+         * The key times this plan actually **reached**, for the reach comparison
+         * below (#427).
+         *
+         * ⚠️ A key the drive itself could not select is not in here. It is already
+         * named on the stats line as `deformKeysUnreachable`, with the ask and the
+         * bound, and the artifact's answer cannot reach it either — so listing it
+         * as something the artifact's answer missed would count one defect twice
+         * and inflate a disagreement with a frame the disagreement did not cost.
+         */
+        const posedTimes = new Set<number>();
+        for (const { timeline, attachment, triangles, slotName, placement } of placed) {
+          // Measured in the dress the format keys this timeline on, and only
+          // there: a mesh in another skin is another skin's pose (issue #583).
+          if (placement.holder !== skin) continue;
+          const named = {
+            animation: anim.name,
+            skin: placement.skin,
+            slot: slotName,
+            attachment: attachment.name,
+            placeholder: placement.placeholder,
+          };
+          /** The previous key's posed frame, kept so the span between them can be scanned. */
+          let previous: PosedFrame | null = null;
+          for (let frame = 0; frame < timeline.frames.length; frame++) {
+            const time = timeline.frames[frame];
+            const at = poseFrame(time);
+            const frameMeasure = measurePosed(at.posed, time, timeline.slotIndex, attachment, triangles, reach, at.dial);
+            // A key that draws no pixels — or one at a time no dial can select —
+            // is measured and then left out of the totals, because those totals
+            // are "what the gate ran on": A39 reads them onto its stats line and
+            // the report's rollup has to match them.
+            if (at.dial?.unreachable === true) {
+              notReachable++;
+              notReachableReversed += frameMeasure.measure.reversed.length;
+            } else if (frameMeasure.measure.draw.blank === null) {
+              trianglesMeasured += frameMeasure.measure.triangles;
+              collapsedTotal += frameMeasure.measure.collapsed;
+            } else {
+              notDrawn++;
+              notDrawnReversed += frameMeasure.measure.reversed.length;
+            }
+            keys.push({ ...named, key: frame, time, ...frameMeasure.measure });
+            if (at.dial?.unreachable !== true) posedTimes.add(time);
+            if (previous !== null) {
+              // ⚠️ A span whose end is a frame the runtime cannot reach has no
+              // interpolation to scan: the anchors it would solve the quadratic
+              // over are two poses of some other time. Counted, never silent.
+              if (at.dial?.unreachable === true || previous.measure.dial?.unreachable === true) {
+                spansNotScanned++;
+              } else {
+                spans.push(
+                  scanDeformSpan(
+                    anim,
+                    timeline,
+                    attachment,
+                    triangles,
+                    named,
+                    frame - 1,
+                    previous,
+                    frameMeasure,
+                    poseFrame,
+                  ),
+                );
+              }
+            }
+            previous = frameMeasure;
+          }
+        }
+        // --- what the artifact's own answer could NOT have posed (issue #427) ---
+        //
+        // ⭐ Posed, not predicted. The survey builds a second plan out of the field
+        // the SKELETON names and runs it through the same `poseDial` every real
+        // frame goes through, so each entry is spine-core saying "no settable value
+        // of this field lands me on that time" rather than this file inferring it
+        // off an interval. Measured (#427): the list is empty whenever the two
+        // answers reach the same span, and empty is the reading that says the
+        // disagreement changed nothing about which frames were measured.
+        //
+        // 🚨 And nothing is reported at all about a dial that posed NOTHING — a
+        // slider whose animation carries no deform timeline. `outside` would be
+        // empty there for the one reason that must never print as agreement:
+        // there were no frames to disagree about. A comparison of nothing and a
+        // comparison that came out equal are the vacuous pass this file exists
+        // to keep apart.
+        if (posedTimes.size === 0) continue;
+        // A plan is visited once per (animation, skin) — see `dialsReported` for
+        // why one line per slider is the whole of it — so the two lists come out
+        // in the skeleton's own constraint order.
+        const alreadyReported = dials !== null && dialsReported.has(dials.slider.name);
+        if (dials !== null) dialsReported.add(dials.slider.name);
+        if (dials?.tie && !alreadyReported) dialTies.push(dials.tie);
+        if (dials?.dispute && !alreadyReported) dialDisputes.push(dials.dispute);
+        if (dials?.dispute && dials.statedMap !== null) {
+          const shadow: DialPlan = {
+            ...dials,
+            field: dials.statedMap.field,
+            u0: dials.statedMap.u0,
+            v0: dials.statedMap.v0,
+            u1: dials.statedMap.u1,
+            v1: dials.statedMap.v1,
+          };
+          // ⚠️ The one time posing cannot answer: a field that moves the reading by
+          // NOTHING has no map to invert, so `poseDial` divides by zero and calls
+          // every time out of bounds — including the setup time, which that field
+          // reaches by being left alone. The reach says which one that is, and it
+          // is a single point. Nothing in spine-core 4.3 has been measured getting
+          // here (a parent at exactly 90° still moves a world x reading by 2.3e-8),
+          // and a report that over-stated a disagreement by one key would be the
+          // false red this file has paid for twice.
+          const flat = dials.statedMap.v1 === dials.statedMap.v0;
+          const only = dials.dispute.statedReach;
+          const outside = [...posedTimes]
+            .filter((time) =>
+              flat
+                ? only === null || Math.abs(time - only.lo) > DIAL_TIME_EPSILON
+                : poseDial(data, skin, shadow, time).dial?.unreachable === true,
+            )
+            .sort((a, b) => a - b);
+          dials.dispute.outside.push(...outside);
+        }
       }
     }
   }
@@ -1182,6 +1259,57 @@ const DIAL_PROBE_MARGIN = 1e3;
 const DIAL_DRIVE_LIMIT = 2 ** 24;
 
 /**
+ * A fresh skeleton with `skin` worn, which is what every pose below starts from.
+ *
+ * ## Why a skin, and why this one
+ *
+ * A deform timeline is keyed on a `skin / slot / attachment` triple, so the mesh
+ * it deforms belongs to exactly one skin — and a skeleton nobody dressed shows
+ * only what `SkeletonData.defaultSkin` holds. Posing with no skin therefore read
+ * a slot that showed **nothing** for every mesh an author had moved into a named
+ * skin, and the whole survey then reported the rig as undrawn: `A39` went from
+ * PASS to SKIP with a sentence that blamed the rig for what the measurement was
+ * doing (issue #583). `placementOf` already recovers which skin holds a
+ * timeline's attachment, so the pose can wear it.
+ *
+ * ## What `setSkin` changes, off the runtime rather than from memory
+ *
+ * `Skeleton.setSkinBySkin` (spine-core 4.3.13 `Skeleton.js:292-313`) puts the
+ * skin's art into each slot's pose and calls `updateCache`, and `updateCache`
+ * (`Skeleton.js:142-187`) is where the other two thirds live: a `skinRequired`
+ * bone is `active` only if the worn skin lists it, and a `skinRequired`
+ * constraint only if `skin.constraints` includes it. Both were measured on this
+ * fixture before the repair and both were silent in their own way —
+ *
+ *  - a slider whose driving bone is skin-required reads a world property that
+ *    **nothing moves** while the bone is inactive, so `planDial` found no
+ *    responding field, returned `null`, and the animation was reported as
+ *    *"played on a track"* — an animation only a slider ever applies;
+ *  - a skin-required slider **constraint** is left out of the update cache, so
+ *    `SliderPose.time` never leaves its setup value and every key came back as
+ *    *"at a time no dial selects"*.
+ *
+ * Each pose below then calls `setupPose()`, which re-resolves every slot's setup
+ * attachment through `Skeleton.getAttachment` — the worn skin first, then
+ * `defaultSkin` (`Skeleton.js:335-346`) — so wearing the skin before the pose is
+ * the whole of what is needed and nothing has to be re-attached afterwards.
+ *
+ * ⭐ It takes the `Skin` **object**, not its name. `placementOf` found it by
+ * identity, and `findSkin` resolves a name to the FIRST skin that carries it —
+ * so a round trip through the name would hand the runtime a different skin on a
+ * skeleton that declares two of one name, and there would be nothing in the
+ * output to say so. `src/render.ts`'s `skeletonUnderSkin` takes a name because
+ * its name came from `--skin` on the command line and refusing an unknown one
+ * **by name, with the names that would have worked** is the whole of its job;
+ * here there is no name to refuse and no lookup that can fail.
+ */
+function skeletonUnderSkin(data: SkeletonData, skin: Skin | null): Skeleton {
+  const skeleton = new Skeleton(data);
+  if (skin !== null) skeleton.setSkin(skin);
+  return skeleton;
+}
+
+/**
  * Every way each animation is reached, keyed by animation name.
  *
  * A `null` entry in the returned list is the track — the frame every animation
@@ -1197,8 +1325,15 @@ const DIAL_DRIVE_LIMIT = 2 ** 24;
  * `slider.<name>.mix` from a playing animation, where the frame the deform keys
  * actually occur in is that playing animation's, and rigc has no way to know
  * which one that is.
+ *
+ * ⚠️ **Per skin, because whether a slider runs at all is per skin** (#583). A
+ * `skinRequired` slider is out of the update cache under every skin that does
+ * not list it, and a slider on a `skinRequired` bone reads a world property that
+ * nothing moves there — so the same constraint plans differently depending on
+ * what the skeleton is wearing, and the answer that matters is the one under the
+ * skin holding the mesh being measured.
  */
-function reachesOf(data: SkeletonData): Map<string, Array<DialPlan | null>> {
+function reachesOf(data: SkeletonData, skin: Skin | null): Map<string, Array<DialPlan | null>> {
   const out = new Map<string, Array<DialPlan | null>>();
   for (const anim of data.animations) out.set(anim.name, []);
   for (const constraint of data.constraints) {
@@ -1206,7 +1341,7 @@ function reachesOf(data: SkeletonData): Map<string, Array<DialPlan | null>> {
     if (constraint.setupPose.mix === 0) continue;
     const list = out.get(constraint.animation?.name ?? '');
     if (list === undefined) continue;
-    const plan = planDial(data, constraint);
+    const plan = planDial(data, skin, constraint);
     if (plan !== null) list.push(plan);
   }
   for (const list of out.values()) if (list.length === 0) list.push(null);
@@ -1254,7 +1389,7 @@ function sliderOn(skeleton: Skeleton, data: SliderData): Slider | null {
  * ⛔ Nothing here falls back to `rotation`, or to any field, when the search does
  * not settle. Two answers that disagree are two answers, printed.
  */
-function planDial(data: SkeletonData, slider: SliderData): DialPlan | null {
+function planDial(data: SkeletonData, skin: Skin | null, slider: SliderData): DialPlan | null {
   const boneName = slider.bone?.name ?? '?';
   const where = slider.local ? ' (local)' : ' (world)';
   const reach = (discovery: DialDiscovery | null): DeformReach => {
@@ -1290,7 +1425,7 @@ function planDial(data: SkeletonData, slider: SliderData): DialPlan | null {
   if (slider.bone === null) {
     return { slider, reach: reach(null), tie: null, dispute: null, field: null, u0: 0, v0: 0, u1: 1, v1: 1, statedMap: null };
   }
-  const skeleton = new Skeleton(data);
+  const skeleton = skeletonUnderSkin(data, skin);
   const instance = sliderOn(skeleton, slider);
   const bone = instance?.bone ?? null;
   if (instance === null || bone === null) return null;
@@ -1497,14 +1632,14 @@ function sliderTimeFor(slider: SliderData, time: number): number {
  *     against `sliderTimeFor` — spine-core's answer, not this function's. A time
  *     no dial value selects is reported and never guessed at.
  */
-function poseDial(data: SkeletonData, plan: DialPlan, time: number): PoseOfFrame {
+function poseDial(data: SkeletonData, skin: Skin | null, plan: DialPlan, time: number): PoseOfFrame {
   const slider = plan.slider;
   const wanted = sliderTimeFor(slider, time);
   const value = plan.field === null ? time : slider.property.offset + (time - slider.offset) / slider.scale;
-  const posed = new Skeleton(data);
+  const posed = skeletonUnderSkin(data, skin);
   const instance = sliderOn(posed, slider);
   const bone = instance?.bone ?? null;
-  if (instance === null) return { posed: poseAt(data, slider.animation.name, time), dial: null };
+  if (instance === null) return { posed: poseAt(data, skin, slider.animation.name, time), dial: null };
   /** Pose with the driving field at `candidate`, and read both sides back. */
   const at = (candidate: number): { read: number; applied: number } => {
     posed.setupPose();
@@ -1586,8 +1721,8 @@ function poseDial(data: SkeletonData, plan: DialPlan, time: number): PoseOfFrame
  * that is what lands the sample exactly ON `time` rather than one update short of
  * it, and it is why a probe between two keys is as trustworthy as a key.
  */
-function poseAt(data: SkeletonData, animation: string, time: number): Skeleton {
-  const posed = new Skeleton(data);
+function poseAt(data: SkeletonData, skin: Skin | null, animation: string, time: number): Skeleton {
+  const posed = skeletonUnderSkin(data, skin);
   const state = new AnimationState(new AnimationStateData(data));
   state.setAnimation(0, animation, false);
   posed.setupPose();
@@ -2266,10 +2401,34 @@ function shownAt(
  * `timelineSlots` of its own, so on a rigc-compiled skeleton the list is empty
  * and this loop runs zero times; it is here because a foreign skeleton reaching
  * `explain` is exactly where a silent false green would be unnoticeable.
+ *
+ * 🚨 **Every sentence here is about ONE skin — the one the skeleton is wearing**
+ * (issue #583), which `under` names off `Skeleton.skin` rather than off whatever
+ * the caller believes it set. That matters most in the loop below: a slot the
+ * deform reaches through `timelineSlots` carries a LINKED mesh, a separate
+ * attachment object that lives in a skin of its own, and `setSkin` dresses the
+ * whole skeleton at once — so a linked copy whose skin is not the one worn here
+ * resolves to nothing and `shownAt` reports alpha 0 for it, exactly as the
+ * runtime would with that same skin on.
+ *
+ * ⛔ Not a reason to pose the key again under each of those other skins. Which
+ * skin is worn is the consumer's, and a measurement taken under a skin the
+ * timeline is not keyed on would be rigc composing a scene to make its own gate
+ * green. What it must not do is leave the reader guessing which dress the
+ * verdict was taken in, so the skin is in the sentence.
  */
 function drawOfKey(posed: Skeleton, slotIndex: number, attachment: MeshAttachment): DeformKeyDraw {
   const own = shownAt(posed, slotIndex, attachment);
-  const draw = { shown: own.shown?.name ?? null, showsThisMesh: own.showsThisMesh, alpha: own.alpha };
+  const under = posed.skin?.name ?? null;
+  const draw = { shown: own.shown?.name ?? null, showsThisMesh: own.showsThisMesh, alpha: own.alpha, under };
+  // 🔒 On the "shows something else" branch ONLY, because that is the one branch
+  // the skin decides: what a slot shows is resolved through the worn skin and
+  // then `defaultSkin`, while an alpha is read off the pose and has no skin in
+  // it. Before #583 the pose wore no skin at all, so a mesh in a named skin was
+  // reported as a slot showing nothing — a true sentence about a pose nobody
+  // would ever play, read as a claim about the rig. A clause on every branch
+  // would be noise on the branch it cannot explain.
+  const dress = under === null ? ', with no skin worn' : `, with skin "${under}" worn`;
   for (const other of attachment.timelineSlots) {
     if (other === slotIndex) continue;
     const there = shownAt(posed, other, attachment);
@@ -2285,8 +2444,8 @@ function drawOfKey(posed: Skeleton, slotIndex: number, attachment: MeshAttachmen
     return {
       ...draw,
       blank:
-        `the slot shows ${instead} at this time, not this mesh, so the runtime applies no deform to it here ` +
-        'and draws none of it',
+        `the slot shows ${instead} at this time${dress}, not this mesh, so the runtime applies no deform to it ` +
+        'here and draws none of it',
     };
   }
   if (own.alpha === 0) {
@@ -2311,19 +2470,31 @@ function drawOfKey(posed: Skeleton, slotIndex: number, attachment: MeshAttachmen
  * general: a skin puts its own attachment behind a shared placeholder, which is
  * the whole point of skins. So the scan compares the attachment object, and the
  * placeholder printed is the one the spec wrote.
+ *
+ * ⭐ The `Skin` it found comes back with the name, because that object is what
+ * the pose wears (`skeletonUnderSkin`, issue #583). Handing the pose the name
+ * instead would resolve it again through `SkeletonData.findSkin`, which returns
+ * the FIRST skin of that name — a second resolution that can land somewhere else
+ * on a skeleton declaring two, and land there silently.
+ *
+ * `holder` is `null` only when no skin carries this attachment at all. Nothing
+ * reaches that through `SkeletonJson`, which resolves a deform timeline's
+ * attachment out of a skin before it can build the timeline, so it is the
+ * defensive branch and not a case: the pose then wears nothing and behaves
+ * exactly as every pose here did before #583.
  */
 function placementOf(
   data: SkeletonData,
   slotIndex: number,
   attachment: MeshAttachment,
-): { skin: string; placeholder: string } {
+): { skin: string; holder: Skin | null; placeholder: string } {
   for (const skin of [data.defaultSkin, ...data.skins]) {
     if (!skin) continue;
     const entries: Array<{ placeholder: string; attachment: unknown }> = [];
     skin.getAttachmentsForSlot(slotIndex, entries as Parameters<typeof skin.getAttachmentsForSlot>[1]);
     for (const entry of entries) {
-      if (entry.attachment === attachment) return { skin: skin.name, placeholder: entry.placeholder };
+      if (entry.attachment === attachment) return { skin: skin.name, holder: skin, placeholder: entry.placeholder };
     }
   }
-  return { skin: 'default', placeholder: attachment.name };
+  return { skin: 'default', holder: null, placeholder: attachment.name };
 }
