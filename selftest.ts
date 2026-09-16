@@ -18581,6 +18581,121 @@ const PACK_FIXTURES: ReadonlyArray<readonly [string, Fixture]> = [
   ['contained', CONTAINED],
 ];
 
+/**
+ * The four `degrees` values `MeshAttachment.computeUVs` gives their own branch.
+ *
+ * Every other integer the atlas parser accepts — and it accepts any, `rotate:`
+ * is a bare `parseInt` — falls to the same `default:` as 0 in the runtime, so
+ * there is no fifth case to cover and no fifth case to refuse.
+ */
+const TURNS = [0, 90, 180, 270] as const;
+
+/**
+ * The same loose parts on ONE page, each trimmed to its own bounds and turned by
+ * `degrees` — the shape a foreign pack routinely has and rigc's own packer never
+ * writes (issue #570).
+ *
+ * 🔒 It lives HERE and not in `src/atlas.ts`, because `PACK_NO_ROTATE` is a
+ * promise about what rigc emits and this file must not be able to weaken it. The
+ * product packer still cannot turn a region; this is a fixture that arranges
+ * bytes the way somebody else's packer would, so that the reader has something
+ * foreign to be measured against without a foreign file in the repository.
+ *
+ * The trim is the part's own non-zero bounds, and *non-zero* rather than
+ * *opaque*: a plate can carry colour under `alpha: 0`, and trimming on alpha
+ * alone threw those bytes away and then reported the lift that recovered them as
+ * a mismatch — 4 of 5 fixture parts, at `rotate: 0`, where nothing had turned at
+ * all.
+ *
+ * `label` writes a `rotate:` line that may LIE about the turn the pixels
+ * actually took. That is PK30's negative leg and nothing else: it is how a
+ * control shows that the figure it prints depends on reading the turn right,
+ * rather than asserting that it does.
+ */
+function turnedPack(
+  parts: ReadonlyArray<{ region: string; absPath: string }>,
+  degrees: number,
+  label: number = degrees,
+): { dir: string; atlasPath: string; pageName: string } {
+  const gap = DEFAULT_PADDING * 2;
+  const laid = parts.map((part) => {
+    const plate = readPlate(part.absPath);
+    let left = plate.width;
+    let top = plate.height;
+    let right = -1;
+    let bottom = -1;
+    for (let y = 0; y < plate.height; y++) {
+      for (let x = 0; x < plate.width; x++) {
+        if (plate.get(x, y).every((c) => c === 0)) continue;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+    if (right < left || bottom < top) {
+      left = 0;
+      top = 0;
+      right = plate.width - 1;
+      bottom = plate.height - 1;
+    }
+    const w = right - left + 1;
+    const h = bottom - top + 1;
+    const turned = degrees === 90 || degrees === 270;
+    return { region: part.region, plate, left, top, w, h, footW: turned ? h : w, footH: turned ? w : h };
+  });
+  const pageWidth = Math.max(...laid.map((p) => p.footW)) + gap * 2;
+  const pageHeight = laid.reduce((sum, p) => sum + p.footH + gap, gap);
+  const page = new Plate(pageWidth, pageHeight);
+  const lines = ['turned.png', `\tsize: ${pageWidth}, ${pageHeight}`, '\tfilter: Linear, Linear'];
+  let at = gap;
+  for (const p of laid) {
+    for (let y = 0; y < p.h; y++) {
+      for (let x = 0; x < p.w; x++) {
+        const texel = p.plate.get(p.left + x, p.top + y);
+        if (degrees === 90) page.set(gap + y, at + p.w - 1 - x, texel);
+        else if (degrees === 180) page.set(gap + p.w - 1 - x, at + p.h - 1 - y, texel);
+        else if (degrees === 270) page.set(gap + p.h - 1 - y, at + x, texel);
+        else page.set(gap + x, at + y, texel);
+      }
+    }
+    lines.push(
+      p.region,
+      // `bounds` is the kept rectangle in the DRAWING's orientation and
+      // `offsets` is the trim from its left and its BOTTOM, then the untrimmed
+      // size — the format's own meanings, which is why the page footprint above
+      // is the transpose at a quarter turn and this line is not.
+      `\tbounds: ${gap}, ${at}, ${p.w}, ${p.h}`,
+      `\toffsets: ${p.left}, ${p.plate.height - (p.top + p.h)}, ${p.plate.width}, ${p.plate.height}`,
+      `\trotate: ${label}`,
+    );
+    at += p.footH + gap;
+  }
+  const dir = mkdtempSync(join(tmpdir(), `rigc-turned${degrees}-`));
+  page.writePng(join(dir, 'turned.png'));
+  const atlasPath = join(dir, 'turned.atlas');
+  writeFileSync(atlasPath, `${lines.join('\n')}\n`);
+  return { dir, atlasPath, pageName: 'turned.png' };
+}
+
+/** The same plate turned by a quarter, a half or three quarters — the asymmetry probe. */
+function plateTurned(plate: Plate, degrees: number): Plate {
+  const out = degrees === 180 ? new Plate(plate.width, plate.height) : new Plate(plate.height, plate.width);
+  for (let y = 0; y < plate.height; y++) {
+    for (let x = 0; x < plate.width; x++) {
+      if (degrees === 90) out.set(y, plate.width - 1 - x, plate.get(x, y));
+      else if (degrees === 180) out.set(plate.width - 1 - x, plate.height - 1 - y, plate.get(x, y));
+      else out.set(plate.height - 1 - y, x, plate.get(x, y));
+    }
+  }
+  return out;
+}
+
+/** Whether two plates are the same size and the same bytes. */
+function samePlate(a: Plate, b: Plate): boolean {
+  return a.width === b.width && a.height === b.height && a.data.every((v, k) => v === b.data[k]);
+}
+
 // ---------------------------------------------------------------------------
 // sampling: what a bilinear tap does where art meets transparency (issue #292)
 // ---------------------------------------------------------------------------
@@ -19626,6 +19741,223 @@ function runPackerSuite(): number {
       'count is what stops one name standing in for both',
   );
 
+  // --- PK29-PK31: a pack that TURNS a region (issue #570) ---------------------
+  //
+  // `extractRegion` refused a rotated region until this issue, on the argument
+  // that spine-core holds three irreconcilable opinions about where such a
+  // region's texels are. It holds one — `MeshAttachment.computeUVs`, which is
+  // also the routine `substituteTexture` already goes through — and two places
+  // that do not implement it for every rotation. So the reader transcribes that
+  // one, and these three controls are the measurement the argument was standing
+  // in for: the bytes come back, the generator that reads them is unmoved, and
+  // the figure the card was filed about gets printed instead of raising a
+  // refusal inside a measurement.
+  const turnParts = packInputsOf(overlayCompile.images);
+  const symmetric = turnParts
+    .map((part) => ({
+      region: part.region,
+      plate: readPlate(part.absPath),
+    }))
+    .map((p) => ({ region: p.region, under: [90, 180, 270].filter((d) => samePlate(plateTurned(p.plate, d), p.plate)) }))
+    .filter((p) => p.under.length > 0);
+  const liftWrong: string[] = [];
+  let liftRegions = 0;
+  for (const degrees of TURNS) {
+    const pack = turnedPack(turnParts, degrees);
+    const parsed = parseAtlasText(readFileSync(pack.atlasPath, 'utf8'));
+    const page = readPlate(join(pack.dir, pack.pageName));
+    for (const region of parsed.regions) {
+      const part = turnParts.find((p) => p.region === region.name.trim());
+      if (!part) {
+        liftWrong.push(`rotate ${degrees}: "${region.name.trim()}" is on the page and not in the fixture`);
+        continue;
+      }
+      liftRegions++;
+      const source = readPlate(part.absPath);
+      // A reader that hands back a refusal instead of a drawing is this
+      // control's other failure mode and not a crash: it is what the reader did
+      // until issue #570, and a run that aborted here would report the reason
+      // in a stack trace rather than on the case line.
+      let lifted: Plate;
+      try {
+        lifted = extractRegion(page, region);
+      } catch (err) {
+        liftWrong.push(`rotate ${degrees}: "${region.name.trim()}" was not lifted at all — ${(err as Error).message}`);
+        continue;
+      }
+      if (lifted.width !== source.width || lifted.height !== source.height) {
+        liftWrong.push(
+          `rotate ${degrees}: "${region.name.trim()}" lifted ${lifted.width}x${lifted.height} against the ` +
+            `${source.width}x${source.height} drawing`,
+        );
+        continue;
+      }
+      const at = source.data.findIndex((v, k) => v !== lifted.data[k]);
+      if (at >= 0) {
+        liftWrong.push(`rotate ${degrees}: "${region.name.trim()}" byte ${at} is ${lifted.data[at]}, the drawing's is ${source.data[at]}`);
+      }
+    }
+  }
+  const liftProbes = [
+    ...firstFew(liftWrong, 'lift(s)'),
+    ...(symmetric.length === 0
+      ? []
+      : [
+          `${symmetric.map((p) => `"${p.region}" is unchanged by a turn of ${p.under.join('/')}`).join('; ')} — a ` +
+            'part that survives its own rotation cannot tell a right lift from a wrong one, so the byte comparison ' +
+            'above would pass on a reader that turned it the other way',
+        ]),
+    ...floorProbes(
+      [[liftRegions, turnParts.length * TURNS.length, `${liftRegions} region(s) were lifted`]],
+      'a run that lifted nothing compared nothing',
+    ),
+  ];
+  const liftHeld = liftProbes.length === 0;
+  say(
+    'PK29_EVERY_TURN_THE_RUNTIME_DISTINGUISHES_LIFTS_THE_DRAWING_BACK_BYTE_FOR_BYTE',
+    liftHeld,
+    probeDetail(
+      liftHeld,
+      liftProbes,
+      `${turnParts.length} trimmed part(s) laid out at each of rotate: ${TURNS.join(', ')} — ${liftRegions} lift(s) ` +
+        'in all, every one byte-identical to the loose PNG, and no part is its own rotation at any of the three turns',
+    ),
+    'the claim the refusal was standing in for. `MeshAttachment.computeUVs` states where a region\'s texels are ' +
+      'for all four rotations and `extractRegion` is now its inverse, so the proof is byte-identity and not a ' +
+      'tolerance. The asymmetry clause is what stops it being vacuous: a checkerboard that happened to be its own ' +
+      'half-turn would pass the comparison under a reader that read the turn backwards',
+  );
+
+  // PK30 is the card's own case. An authored mesh naming an `image` is MEASURED
+  // against that art and never refused (issue #277), and the measurement went
+  // through `extractRegion` — so on a pack that turned the region, a function
+  // whose doc comment opens "a measurement, never a refusal" ended the build.
+  const authoredQuad: Record<string, unknown> = {
+    type: 'mesh',
+    image: 'blob.png',
+    // The left 55% of the window, so the figure is strictly inside 0..1 and the
+    // blob's bitten right side is outside the triangles: a quad over all of it
+    // would read 100% at every rotation and measure nothing.
+    uvs: [0, 0, 0.55, 0, 0.55, 1, 0, 1],
+    vertices: [
+      -CONTOUR_W / 2,
+      CONTOUR_H / 2,
+      -CONTOUR_W / 2 + 0.55 * CONTOUR_W,
+      CONTOUR_H / 2,
+      -CONTOUR_W / 2 + 0.55 * CONTOUR_W,
+      -CONTOUR_H / 2,
+      -CONTOUR_W / 2,
+      -CONTOUR_H / 2,
+    ],
+    triangles: [0, 3, 2, 0, 2, 1],
+  };
+  const authored = buildContourRig(authoredQuad);
+  const authoredParts = [{ region: 'blob', absPath: authored.artPath }];
+  const looseFit = authored.result.meshes.find((m) => m.slot === 'blob');
+  const fitAt = (degrees: number, label: number): { coverage?: number; overshoot?: number } | string => {
+    const pack = turnedPack(authoredParts, degrees, label);
+    try {
+      const built = compile({
+        ...authored.opts,
+        outDir: join(authored.dir, `spine_a${degrees}_${label}`),
+        atlasInPath: pack.atlasPath,
+      });
+      const mesh = built.meshes.find((m) => m.slot === 'blob');
+      return mesh === undefined ? 'the build emitted no mesh for "blob"' : { coverage: mesh.coverage, overshoot: mesh.overshoot };
+    } catch (err) {
+      return `REFUSED: ${(err as Error).message}`;
+    }
+  };
+  const fitRead = TURNS.map((degrees) => [degrees, fitAt(degrees, degrees)] as const);
+  // The negative leg: pixels turned one way, `rotate:` claiming another. A reader
+  // that ignored the line would print the same figure for these as for the
+  // honest packs above, and the control could not tell the two apart.
+  const misread = ([[90, 270], [270, 90], [0, 180]] as const).map(([turn, label]) => [turn, label, fitAt(turn, label)] as const);
+  const figureOf = (r: { coverage?: number; overshoot?: number } | string): string =>
+    typeof r === 'string' ? r : `covers ${((r.coverage ?? 0) * 100).toFixed(2)}%, reaching ${r.overshoot?.toFixed(4) ?? '?'}px past it`;
+  const agrees = (r: { coverage?: number; overshoot?: number } | string): boolean =>
+    typeof r !== 'string' && r.coverage === looseFit?.coverage && r.overshoot === looseFit?.overshoot;
+  const fitProbes = [
+    ...(looseFit?.coverage === undefined
+      ? ['the loose build reported no fit figure at all, so there is nothing for the turned builds to reproduce']
+      : looseFit.coverage <= 0 || looseFit.coverage >= 1
+        ? [`the loose build covers ${(looseFit.coverage * 100).toFixed(2)}% — a figure at either end cannot discriminate`]
+        : []),
+    ...firstFew(
+      fitRead.filter(([, r]) => !agrees(r)).map(([degrees, r]) => `rotate ${degrees} read ${figureOf(r)} where the loose build reads ${figureOf({ coverage: looseFit?.coverage, overshoot: looseFit?.overshoot })}`),
+      'turn(s)',
+    ),
+    ...firstFew(
+      misread.filter(([, , r]) => agrees(r)).map(([turn, label]) => `a pack turned ${turn} and labelled rotate: ${label} read the loose figure, so the label was not read`),
+      'mislabelled pack(s)',
+    ),
+  ];
+  const fitHeld = fitProbes.length === 0;
+  say(
+    'PK30_AN_AUTHORED_MESH_OVER_A_TURNED_REGION_IS_MEASURED_RATHER_THAN_REFUSED',
+    fitHeld,
+    probeDetail(
+      fitHeld,
+      fitProbes,
+      `the loose build ${figureOf({ coverage: looseFit?.coverage, overshoot: looseFit?.overshoot })}, and so does the ` +
+        `same rig through --atlas-in at each of rotate: ${TURNS.join(', ')}; the three packs whose rotate: line ` +
+        `disagrees with their own pixels read ${misread.map(([t, l, r]) => `${t}→${l} ${figureOf(r)}`).join(', ')}`,
+    ),
+    'the defect issue #570 was filed on: `measureAuthoredFit` promises a figure and never a refusal, and three ' +
+      'frames down it called a reader that refused a turned region — so on a foreign pack, where turning is the ' +
+      'norm, the promise ended the build. Reproducing the loose figure EXACTLY is the assertion; the mislabelled ' +
+      'packs are what make it one, since a figure that ignored the turn would be equally exact and equally wrong',
+  );
+
+  // PK31 is the other caller — the one whose refusal was correct where it lived.
+  // A `contour` traces the art's alpha, so it is the case where a wrong lift
+  // would move real geometry rather than one printed number.
+  const contourLoose = buildContourRig(CONTOUR_ATTACHMENT);
+  const contourParts = [{ region: 'blob', absPath: contourLoose.artPath }];
+  const contourApart: string[] = [];
+  for (const degrees of TURNS) {
+    const pack = turnedPack(contourParts, degrees);
+    let turnedText: string;
+    try {
+      turnedText = compile({
+        ...contourLoose.opts,
+        outDir: join(contourLoose.dir, `spine_c${degrees}`),
+        atlasInPath: pack.atlasPath,
+      }).skeletonText;
+    } catch (err) {
+      contourApart.push(`rotate ${degrees}: REFUSED ${(err as Error).message}`);
+      continue;
+    }
+    if (turnedText === contourLoose.result.skeletonText) continue;
+    const mine = turnedText.split('\n');
+    const theirs = contourLoose.result.skeletonText.split('\n');
+    const at = mine.findIndex((line, i) => line !== theirs[i]);
+    contourApart.push(`rotate ${degrees}: the skeleton differs first at line ${at + 1}: ${JSON.stringify(mine[at] ?? '')} against ${JSON.stringify(theirs[at] ?? '')}`);
+  }
+  const contourMesh = emittedMeshes(contourLoose.result.skeletonText).find((m) => m.slot === 'blob');
+  const contourProbes = [
+    ...firstFew(contourApart, 'turn(s)'),
+    ...floorProbes(
+      [[contourMesh?.vertexCount ?? 0, 4, `the traced contour has ${contourMesh?.vertexCount ?? 0} vertices`]],
+      'a contour of three vertices or fewer is not a silhouette anybody traced',
+    ),
+  ];
+  const contourHeld = contourProbes.length === 0;
+  say(
+    'PK31_A_GENERATOR_THAT_MEASURES_PIXELS_TRACES_THE_SAME_ART_THROUGH_A_TURNED_PACK',
+    contourHeld,
+    probeDetail(
+      contourHeld,
+      contourProbes,
+      `the ${contourMesh?.vertexCount ?? 0}-vertex contour traced off the loose PNG is emitted byte for byte by a ` +
+        `build through --atlas-in at each of rotate: ${TURNS.join(', ')} — the whole skeleton, not the mesh alone`,
+    ),
+    'the refusal was right for THIS caller and that is what made it plausible: a contour is geometry rigc asserts ' +
+      'about somebody\'s art, so a lift that turned the drawing the wrong way would emit a wrong silhouette under ' +
+      'a green gate. The claim is therefore the strongest available one — how the art was delivered changes not ' +
+      'one byte of the artifact — rather than a tolerance on the traced outline',
+  );
+
   return bad;
 }
 
@@ -19735,24 +20067,114 @@ function runAtlasReaderSuite(): number | null {
   );
   if (mismatches.length > 0) console.log(`          ${mismatches.slice(0, 5).join('; ')}`);
 
-  // A rotated region is the one shape `extractRegion` will not guess at.
-  const rotatedRegion = (() => {
+  // A rotated region used to be the one shape `extractRegion` refused to read,
+  // and this control used to assert the refusal (issue #570). What replaces it
+  // is the measurement the refusal was standing in for, on the only rotated
+  // packs here nobody in this repository wrote: for every region of every corpus
+  // atlas, the plate the reader lifts has to hold, at every pixel, the texel
+  // `MeshAttachment.computeUVs` says the runtime will sample for it.
+  //
+  // ⭐ The oracle is the runtime rather than arithmetic written here, which is
+  // what makes this a check and not two copies of one opinion — and it is the
+  // same routine `substituteTexture` in `src/render.ts` already goes through, so
+  // the reader and the renderer cannot come to disagree about a foreign pack.
+  //
+  // ⚠️ The second leg is the one that keeps it honest. A lift that IGNORES the
+  // `rotate:` line — the alternative to refusing, and the reader somebody would
+  // write by leaving the turn out — must DISAGREE on every rotated region.
+  // Without it, a corpus whose rotated drawings happened to be their own
+  // rotation would report a green agreement no wrong reader could fail.
+  const liftAudit = (() => {
+    const wrong: string[] = [];
+    const blind: string[] = [];
+    const turned: string[] = [];
+    let compared = 0;
+    let texels = 0;
     for (const path of atlases) {
-      for (const region of parseAtlasText(readFileSync(path, 'utf8')).regions) {
-        if (region.degrees !== 0) return region;
+      const text = readFileSync(path, 'utf8');
+      const mine = parseAtlasText(text);
+      const theirs = new TextureAtlas(text);
+      if (mine.regions.length !== theirs.regions.length) continue;
+      for (let i = 0; i < mine.regions.length; i++) {
+        const region = mine.regions[i];
+        const runtime = theirs.regions[i];
+        const pagePath = join(dirname(path), runtime.page.name);
+        if (!existsSync(pagePath)) continue;
+        const page = readPlate(pagePath);
+        let lifted: Plate;
+        let unturned: Plate;
+        try {
+          lifted = extractRegion(page, region);
+          // The same region read as though its `rotate:` line were not there.
+          unturned = extractRegion(page, { ...region, degrees: 0 });
+        } catch (err) {
+          // A refusal is a failure of this control and not a crash — see PK29.
+          wrong.push(`${basename(path)} "${region.name.trim()}" was not lifted at all — ${(err as Error).message}`);
+          continue;
+        }
+        compared++;
+        if (region.degrees !== 0) turned.push(`${basename(path)}/${region.name.trim()}@${region.degrees}`);
+        const top = region.originalHeight - region.offsetY - region.height;
+        const uvIn: number[] = [];
+        const want: Array<[number, number]> = [];
+        for (let y = top; y < top + region.height; y++) {
+          for (let x = region.offsetX; x < region.offsetX + region.width; x++) {
+            uvIn.push((x + 0.5) / region.originalWidth, (y + 0.5) / region.originalHeight);
+            want.push([x, y]);
+          }
+        }
+        const uvOut = new Array<number>(uvIn.length).fill(0);
+        MeshAttachment.computeUVs(runtime, uvIn, uvOut);
+        let blindHere = 0;
+        for (let k = 0; k < want.length; k++) {
+          const px = Math.floor(uvOut[2 * k] * runtime.page.width);
+          const py = Math.floor(uvOut[2 * k + 1] * runtime.page.height);
+          const runtimeTexel = page.get(px, py).join();
+          texels++;
+          if (runtimeTexel !== lifted.get(want[k][0], want[k][1]).join() && wrong.length < 5) {
+            wrong.push(
+              `${basename(path)} "${region.name.trim()}" (rotate: ${region.degrees}) at ${want[k][0]},${want[k][1]}: ` +
+                `the lift says [${lifted.get(want[k][0], want[k][1])}] and the runtime samples page ${px},${py} = [${page.get(px, py)}]`,
+            );
+          }
+          if (runtimeTexel !== unturned.get(want[k][0], want[k][1]).join()) blindHere++;
+        }
+        if (region.degrees !== 0 && blindHere === 0) {
+          blind.push(
+            `${basename(path)} "${region.name.trim()}" (rotate: ${region.degrees}) lifts identically with the turn ` +
+              'ignored, so this region cannot tell the two readers apart',
+          );
+        }
       }
     }
-    return null;
+    return { wrong, blind, turned, compared, texels };
   })();
-  const rotationRefusal = rotatedRegion === null ? null : refusalOf(() => extractRegion(new Plate(4, 4), rotatedRegion));
+  const liftCorpusProbes = [
+    ...firstFew(liftAudit.wrong, 'texel(s)'),
+    ...firstFew(liftAudit.blind, 'region(s)'),
+    ...floorProbes(
+      [
+        [liftAudit.compared, 1, `${liftAudit.compared} corpus region(s) were lifted and compared`],
+        [liftAudit.turned.length, 1, `${liftAudit.turned.length} of them are packed rotated`],
+      ],
+      'a corpus with no rotated region proves nothing about reading one',
+    ),
+  ];
+  const liftCorpusHeld = liftCorpusProbes.length === 0;
   say(
-    'PKR02_A_ROTATED_REGION_IS_REFUSED_RATHER_THAN_GUESSED',
-    rotatedRegion !== null && rotationRefusal !== null && rotationRefusal.includes(`rotate: ${rotatedRegion.degrees}`),
-    rotatedRegion === null
-      ? 'the corpus carries no rotated region, so this control had nothing to refuse'
-      : `"${rotatedRegion.name.trim()}" at rotate: ${rotatedRegion.degrees}: ${(rotationRefusal ?? '').slice(0, 120)}`,
-    'the runtime transposes u2/v2 at 90 and not at 270, and computeUVs assigns a different corner order at 90 — ' +
-      'there are already three opinions about that mapping and a fourth guess would be silent',
+    'PKR02_A_ROTATED_REGION_IS_LIFTED_BY_THE_RUNTIMES_OWN_MAPPING',
+    liftCorpusHeld,
+    probeDetail(
+      liftCorpusHeld,
+      liftCorpusProbes,
+      `${liftAudit.compared} region(s) over ${liftAudit.texels} texel(s), every one the texel ` +
+        `MeshAttachment.computeUVs samples for it; ${liftAudit.turned.length} are turned ` +
+        `(${liftAudit.turned.join(', ')}) and every one of those lifts differently when the turn is ignored`,
+    ),
+    'the reader and the runtime have to agree about a pack neither of them wrote, and the corpus is the only ' +
+      'collection here that qualifies. Byte agreement with `MeshAttachment.computeUVs` is the whole claim — the ' +
+      'refusal this control used to assert was an argument about the runtime standing where a measurement of it ' +
+      'belonged',
   );
 
   // `rewritePageNames` is the importer's whole emitter, so what it does NOT
@@ -32831,7 +33253,12 @@ function main(): void {
       'that round-trips rigc\'s own pack, lands the runtime\'s UVs on the drawing, refuses a missing region, a ' +
       'size conflict, an absent page and a rectangle off its page, names the ATLAS rather than a file when an ' +
       "optional state is not in the pack, and divides an imported size by the page's `scale:` while leaving a pack " +
-      'that declares none byte-identical to the loose build)' +
+      'that declares none byte-identical to the loose build, ' +
+      'plus the three that read a pack which TURNS a region — every rotation the runtime distinguishes lifting the ' +
+      'drawing back byte for byte off a synthetic turned page, with no fixture part its own rotation; the authored ' +
+      'mesh of issue #570 printing the loose build\'s fit figure at each of them while three packs whose `rotate:` ' +
+      'line contradicts their own pixels print a different one; and a contour generator emitting a byte-identical ' +
+      'skeleton whether it traced the loose PNG or the turned pack)' +
       ', + ' + n('slider-reader') + ' slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +
       'and compared to what the doc states, two-sided — nothing left a stated bound AND every stated end is ' +
       'reached, so neither a loosened nor a tightened cell survives — with the parse itself asserted first, the ' +
@@ -32845,10 +33272,11 @@ function main(): void {
       (atlasReaderBad === null
         ? '\n  ⚠️ The example corpus is absent, so the atlas READER was never compared against spine-core in this ' +
           'run — `src/atlas.ts` holds a second parser for the format and this run does not cover it.'
-        : ', + ' + n('atlas-reader') + ' atlas-reader controls (every field of every corpus region against the runtime\'s own parse, a ' +
-          'rotated region refused rather than guessed, page-name rewriting that touches only the name lines, the ' +
-          'two readers of `scale:` held to one answer, and every descaled corpus region measured against the ' +
-          'loose drawing beside it)') +
+        : ', + ' + n('atlas-reader') + ' atlas-reader controls (every field of every corpus region against the runtime\'s own parse, ' +
+          "every corpus region LIFTED to the texels `MeshAttachment.computeUVs` samples for it — the turned ones " +
+          'included, each of which lifts differently when the turn is ignored — page-name rewriting that touches ' +
+          'only the name lines, the two readers of `scale:` held to one answer, and every descaled corpus region ' +
+          'measured against the loose drawing beside it)') +
       loopSeam +
       runTally +
       gateHelpers +

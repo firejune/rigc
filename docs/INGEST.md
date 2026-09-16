@@ -1090,9 +1090,12 @@ something is drawn over them are readable through its own draw order and hierarc
 
 📎 To be exact about what is missing: rigc *can* lift a region's drawing back off a
 page — `extractRegion` does it, and the contour mesh generator uses it under
-`--atlas-in` — so what is absent is a **command**, not the capability. It refuses by
-name on a region packed `rotate: 90` (AUTHORING §0.2), which a foreign pack can be and
-rigc's own never is.
+`--atlas-in` — so what is absent is a **command**, not the capability. Since issue
+#570 that includes a region the pack **turned** (`rotate: 90`, `180`, `270`, or the
+older `rotate: true`), which a foreign pack routinely is and rigc's own never is: the
+lift transcribes `MeshAttachment.computeUVs`, the one routine in spine-core that
+states where a turned region's texels are, so what a generator measures does not
+depend on how the art was delivered (AUTHORING §0.2).
 
 🚫 **No `validate --fix`, and no normalisation pass.** Every recipe in §4 is a change
 you state in a spec and rebuild. A tool that rewrote somebody's export in place would

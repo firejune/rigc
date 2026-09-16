@@ -1363,6 +1363,13 @@ function resolveFromAtlas(
  * own, only a rectangle of somebody's page. `extractRegion` lifts the drawing
  * back out, so the generator sees the same grid either way and its output does
  * not depend on how the art was delivered.
+ *
+ * ⭐ *Either way* was not true for a pack that turns a region until issue #570:
+ * `extractRegion` refused a `rotate: 90`, so how the art was delivered decided
+ * whether a measurement could be taken at all — on a foreign pack, where turning
+ * is the norm rather than the exception. It now transcribes the runtime's own
+ * mapping for all four rotations, which is what makes the sentence above a
+ * description rather than an aspiration.
  */
 function partPlate(img: CompiledImage): Plate {
   const page = readPlate(img.absPath);
@@ -3300,6 +3307,16 @@ function encodeNamedWeights(weights: RigMeshBinding[][], where: string, ctx: Att
  * a part with no art at all (0 of 0 pixels is not a percentage). Neither is an
  * error here — a mesh with no image is ordinary data, and an all-transparent part
  * is somebody else's assertion to make.
+ *
+ * 🚨 The asymmetry was a promise this function could not keep, and nothing here
+ * said so (issue #570). `partPlate` three frames down called `extractRegion`,
+ * which refused a region a foreign pack had turned — so an authored mesh naming
+ * an `image` under `--atlas-in` ENDED the build, by a refusal raised inside a
+ * measurement, on 36 of 42 atlases of the pack the card was filed from. The
+ * repair was to make the refusal unnecessary rather than to catch it: reading a
+ * turned region is a transcription of `MeshAttachment.computeUVs` and is now
+ * what `extractRegion` does, so there is no unmeasurable case left for this
+ * function to report and no catch here to keep reachable.
  */
 function measureAuthoredFit(att: RigMeshAttachment, ctx: AttachmentContext): MeshFitReport | null {
   if (att.image === undefined || att.uvs === undefined || att.triangles === undefined) return null;

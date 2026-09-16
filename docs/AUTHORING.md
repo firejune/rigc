@@ -329,15 +329,28 @@ Four things are refused rather than warned about, because each of them otherwise
 | a page the atlas names and the disk lacks | nothing to sample; caught on the way in, so the message names the atlas rather than the artifact rigc wrote from it |
 | a rectangle that runs off its page | `x + width` past the page width makes `u2 > 1`, which samples whatever the wrap mode does |
 
-Two limits, stated rather than discovered:
+One limit, stated rather than discovered:
 
 - an **optional state** (a manifest `states:` entry) whose region is not in the
   pack is a `DROP`, not a refusal — the same documented absence a missing PNG has
-  always been, and the line names the atlas rather than a file nobody opened;
-- a generator that **measures a part's pixels** — the `contour` mesh — lifts the
-  drawing back off the page, and refuses by name on a region packed `rotate: 90`.
-  Supply the loose PNG for that part instead. rigc's own packs never rotate, so
-  only a foreign pack reaches it.
+  always been, and the line names the atlas rather than a file nobody opened.
+
+A **turned** region is not one of them, and used to be (issue #570). A pack made
+by somebody else routinely rotates a region to save space — `rotate: 90`,
+`rotate: 180`, `rotate: 270`, or the format's older `rotate: true` — and rigc
+reads all of them: anything that measures a part's pixels sees the same grid it
+would have seen from the loose PNG, so a `contour` mesh traces the same
+silhouette and an authored mesh's fit figure is the same number. The one thing
+that does not change is what rigc **writes**: its own packer never turns a
+region.
+
+⚠️ Two limits here are real and neither is about rotation:
+
+- `--atlas-in` cannot recover what a `scale:` quantised away (above), turned or not;
+- the **renderer** profile still refuses a turned region outright
+  (`A06`, `--profile spine-html`), because that profile is about artifacts rigc
+  itself emits and it never packs one turned. Reading a foreign pack and gating
+  one under somebody else's renderer policy are different questions.
 
 `--pack` and `--atlas-in` are opposite directions through the same door and are
 refused together.
