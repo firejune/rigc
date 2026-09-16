@@ -37,6 +37,23 @@ bun run selftest     # the validator's own negative controls
 fixtures. If you have not run `bun run fetch-examples`, two of its suites will
 report a hole rather than a result; fetch the corpus before trusting a green.
 
+There is a fourth. It is fast — the whole battery was 9.4s on the machine it was
+written on — but it is out of the list above because it is not offline: it
+installs packages, so it needs a network:
+
+```bash
+bun run smoke        # pack, install into an empty directory, build a rig from the install
+```
+
+CI runs it too, in its own job. Reach for it before pushing anything that touches
+`files` in `package.json`, `bin/`, a runtime `import` that crosses a directory,
+or the dependency — those are the changes a green checkout cannot see, because
+everything the tree runs is on disk and only what `files` names reaches the
+registry. It needs `npm`, `bun` and `tar` on PATH and the network for exactly one
+package, and its own three planted failures run beside the green case, so a run
+that passes has watched the check fail three times first. RELEASING.md's *Whether
+the tarball runs* is the argument.
+
 ## What a change has to clear
 
 - **No `any`, no `as any`, in `src/` or `cli.ts`.** `selftest.ts` is the one
