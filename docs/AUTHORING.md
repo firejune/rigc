@@ -1523,7 +1523,7 @@ curve instead of in the keys.
 | --- | --- |
 | `bones` | at least one, in the order they ride the path |
 | `slot` | **required.** The slot whose path attachment they follow (§3.4) |
-| `positionMode` | default `"Percent"`: `position` is a fraction of the arc length. `"Fixed"` makes it world units |
+| `positionMode` | default `"Percent"`: `position` is a fraction of the measured `lengths` total — **not** of the arc, see §10.6. `"Fixed"` makes it world units, which is the mode a wrong total is visible in |
 | `spacingMode` | default `"Length"` — `Length`, `Fixed`, `Percent` or `Proportional` |
 | `rotateMode` | default `"Tangent"`: each bone turns to the curve's tangent where it sits. `"Chain"`, `"ChainScale"` |
 | `rotation` | default 0. Degrees added after the path's own rotation |
@@ -3344,7 +3344,7 @@ tell a working traversal from a plausible one.
 
 | Group | `property` | Channels | Note |
 | --- | --- | --- | --- |
-| `path` | `position` | 1 | a fraction of the arc length, or world units under `positionMode: "fixed"` |
+| `path` | `position` | 1 | a fraction of the measured `lengths` total (§10.6 — not the arc), or world units under `positionMode: "fixed"` |
 | `path` | `spacing` | 1 | in the unit `spacingMode` chose |
 | `path` | `mix` | **3** | `[mixRotate, mixX, mixY]` in one key, so a raw `curve` is 12 numbers |
 | `slider` | `time` | 1 | the bone-less slider's own time. A slider WITH a bone takes its time from the bone and this timeline is not what drives it |
@@ -5020,10 +5020,14 @@ frames. Every line is marked with where it comes from:
   #285](https://github.com/firejune/rigc/issues/285) (Spine 4.3.23) and the
   eight-rig trip of 2026-09-16 (Spine **4.3.26**), whose findings are collected in
   §10.6. ⚠️ This legend said *"used only where rigc now emits the same thing"*,
-  which was true while every observation had already been adopted; §10.6 carries
-  one that has **not** been — the path `lengths` disagreement — so an observation
-  is now marked by where it was read, and each says for itself whether rigc
-  agrees with it.
+  which was true while every observation had already been adopted; §10.6 then
+  carried one that had **not** been — the path `lengths` disagreement — so an
+  observation is now marked by where it was read, and each says for itself
+  whether rigc agrees with it. ⭐ That outstanding one has since been adopted
+  ([#560](https://github.com/firejune/rigc/issues/560)) and the legend is kept in
+  this shape anyway: the reason to mark an observation by its source rather than
+  by whether rigc follows it is that the second fact goes stale and the first
+  does not.
 
 ### 10.1 Structure
 
@@ -5696,7 +5700,9 @@ evidence that the format will carry what you write.
 - 🔬 **A path attachment's `closed: true` and `constantSpeed: false` survive**, and
   so do its `position`, `spacing` and three-channel `mix` timelines — all three
   channels of every `mix` key, and all twelve curve numbers on each key that
-  carries a curve. ⚠️ Its `lengths` do **not** — see the last bullet.
+  carries a curve. ⚠️ Its `lengths` did **not**, which is the last bullet — and
+  since [#560](https://github.com/firejune/rigc/issues/560) they do, because rigc
+  now emits the numbers the editor recomputes rather than numbers near them.
 - 🔬 **`physics.mix` and `physics.reset` timelines survive**, the `reset` key
   included — a key that carries a time and no value at all — and so does the
   physics constraint's setup `mix`.
@@ -5712,8 +5718,8 @@ evidence that the format will carry what you write.
   [#552](https://github.com/firejune/rigc/issues/552)) all survive. A `--pack`
   build round-trips too.
 
-🚨 **The one thing that does not come back is a path attachment's `lengths`, and
-it moves the drawing.** The editor recomputes them at export from the geometry —
+🚨 **The one thing that did not come back is a path attachment's `lengths`, and it
+moved the drawing.** The editor recomputes them at export from the geometry —
 the imported project holds the numbers it was given — and it measures each curve
 with the **runtime's own four-sample forward difference**, not with an arbitrarily
 fine one. `PathConstraint`'s `constantSpeed` re-measure is that same computation:
@@ -5723,6 +5729,27 @@ control points reproduces the editor to every digit it prints, on a closed path
 under 4.3.26 (`[152.7006, 305.4012, 458.1019, 610.8025]`) and on an open one under
 4.3.23 (`[430.8389, 838.0142, 1127.736, …]`).
 
+⚠️ **That last reading settles the model and cannot settle the spelling.** A
+4-sample chord sum agrees with the runtime's forward difference to about **nine
+significant digits** — *below* what float32 can hold, which is why both spellings
+reproduce both exports exactly, and *above* the six decimals rigc emits, which is
+why the file can tell them apart. On both rigs above they round apart on the
+**last** curve, where the running total has accumulated most: `610.802519` against
+`610.802520`, `1127.735817` against `1127.735818`. So the editor is the evidence
+for *what* is computed, and only `PathConstraint` itself is evidence for *how*.
+
+⭐ **rigc emits the forward difference itself** since
+[#560](https://github.com/firejune/rigc/issues/560) — `pathCurveLengths` in
+[`src/compile.ts`](../src/compile.ts) is those runtime lines transcribed, down to
+`Math.sqrt(dx * dx + dy * dy)` rather than `Math.hypot` and `0.16666667` rather
+than `1 / 6`, both of which change the emitted file. All seven entries of the two
+exports above now come back at the precision the editor prints them, so a path rig
+built here and one authored in the editor parameterise identically. ⚠️ The
+consequence for you is a vocabulary one: `lengths` is **not** an arc length. It
+sits about 0.5 % below the arc by construction, so a physical quantity — how far a
+wheel rolls, how long a ribbon is — has to be measured off the curve and not read
+out of the artifact.
+
 🔬 **And the editor always writes `vertexCount / 3` entries, computing the
 wrap-around curve even on an open path** — that open path's fourth entry,
 `2136.228`, is the closed-chain cumulative. ⚠️ Neither array is wrong: the parser
@@ -5731,14 +5758,23 @@ reads at most `lengths[curveCount]`, so the trailing entry is never read.
 
 ⇒ **What this means for you.** `lengths` is the one number in a path rig you
 cannot check by looking: `diff` does not compare it, and `A33` asks only that it
-strictly increase, which any plausible array does. But `lengths[curveCount]` is
-the total the constraint divides by under `spacingMode: proportional`, so a total
-that is a fraction of a percent out moves every constrained bone — measured at
-**4.9612 mean MAE** on the one rig of that run with a path constraint, against
-**0.0000** on the other seven. If you are comparing a path rig against an editor
-reference and everything structural agrees while the picture does not, this is the
-first place to look. See [#560](https://github.com/firejune/rigc/issues/560) for
-what rigc does about it.
+strictly increase, which any plausible array does. A total that is a fraction of a
+percent out was measured at **4.9612 mean MAE** on the one rig of that run with a
+path constraint, against **0.0000** on the other seven. If you are comparing a
+path rig against an editor reference and everything structural agrees while the
+picture does not, this is the first place to look.
+
+⚠️ **What decides whether it moves a pixel is the POSITION mode**, and an earlier
+reading of this paragraph put it on `spacingMode: proportional`, which is the one
+mode it cannot be: proportional spacing scales *with* the total, and that is
+exactly what cancels. The rig that drifted is `positionMode: fixed`, where an
+absolute `position` is compared against a total that moved. Under
+`positionMode: percent` the position scales with the total too, so a uniform
+change cancels out of both — measured across #560, `gallery/ride` is
+percent/percent and every one of its 74 rendered frames came back **byte
+identical** on an emitted array all three of whose numbers moved. ⇒ Read a
+`lengths` disagreement as *certainly wrong data, and visible only under
+`positionMode: fixed`*.
 
 ### 10.7 What this section does not claim
 

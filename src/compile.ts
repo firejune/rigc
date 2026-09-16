@@ -2889,19 +2889,6 @@ function setupWorldVertices(
 }
 
 /**
- * How many samples per curve the arc-length measurement takes.
- *
- * 64 is a choice about accuracy, and the accuracy that matters is against the
- * runtime rather than against calculus: `PathConstraint` re-measures a
- * `constantSpeed` path with a **4-sample** forward difference per curve, so the
- * number here only has to be fine enough that the two agree to well inside the
- * tolerance anything downstream compares at. It is a constant rather than a
- * parameter because a per-call sample count would make `lengths` depend on the
- * caller, and A18 compares two emits byte for byte.
- */
-const PATH_LENGTH_SAMPLES = 64;
-
-/**
  * The knot-and-handle chain a path attachment's vertices actually form, in the
  * runtime's own order (`PathConstraint.computeWorldPositions`).
  *
@@ -2919,11 +2906,43 @@ function pathChain(points: Array<[number, number]>, closed: boolean): Array<[num
 }
 
 /**
- * Cumulative arc length at the end of each curve of the chain, in world units.
+ * Cumulative arc length at the end of each curve of the chain, in world units —
+ * **the runtime's own measurement, restated line for line**.
  *
  * One entry per curve, which is what `lengths[curve]` indexes: the parser walks
  * curves with `if (p > lengths[curve]) continue`, and reads `lengths[curveCount]`
  * — where `curveCount` is the LAST curve's index — as the total path length.
+ *
+ * ⭐ **What this is not: an approximation of the arc length.** `lengths` is not a
+ * fact about the Bezier, it is the number the consumer of the field computes for
+ * itself when it is not given one. `PathConstraint.computeWorldPositions`
+ * (`PathConstraint.js:289-324` in `@esotericsoftware/spine-core` 4.3.13) measures
+ * a `constantSpeed` path with a cubic **forward difference** taken at `t = 1/4`
+ * — `0.1875 = 3t²`, `0.09375 = 6t³`, `0.75 = 3t`, `0.16666667` standing in for
+ * 1/6 — accumulating four `Math.sqrt` terms per curve into a running
+ * `pathLength`, and writing the running value into `curves[i]` at each curve's
+ * end. The Spine editor's exported `lengths` are that same computation: measured
+ * against two editor exports, one open path from 4.3.23 and one closed path from
+ * 4.3.26, this reproduces every digit the editor printed. So the loop below is a
+ * transcription, not a sampler that happens to agree — and the two are not the
+ * same thing, which is the reason the transcription is here.
+ *
+ * ⚠️ rigc measured this with a 64-chord sum until issue #560, and the comment
+ * that stood here argued the difference was inside anything's tolerance. It was
+ * not: 0.70 % high, uniformly, worth **4.96 px mean MAE** on the round trip of a
+ * rig whose path constraint reads the field. A 4-chord sum is *also* not the
+ * repair — it agrees with the forward difference only to about nine significant
+ * digits, which is below what float32 can hold (so no editor export can tell the
+ * two apart) and above rigc's own six-decimal rounding (so the emitted file can):
+ * on both measured rigs the two spellings differ in `r6` on the LAST curve, where
+ * the accumulated difference is largest. `PS67`–`PS69` in `selftest.ts` compare
+ * this against `PathConstraint`'s own `curves` array read off a posed skeleton,
+ * which is the only oracle that can see that gap.
+ *
+ * 🔒 The transcription is deliberate down to the spelling: `Math.sqrt(dx * dx +
+ * dy * dy)` rather than `Math.hypot`, `0.16666667` rather than `1 / 6`, and the
+ * running total carried across curves rather than restarted. Each of those is a
+ * place where a more accurate line would emit a different file.
  */
 function pathCurveLengths(chain: Array<[number, number]>): number[] {
   const out: number[] = [];
@@ -2933,21 +2952,26 @@ function pathCurveLengths(chain: Array<[number, number]>): number[] {
     const [cx1, cy1] = chain[c + 1];
     const [cx2, cy2] = chain[c + 2];
     const [x2, y2] = chain[c + 3];
-    let px = x1;
-    let py = y1;
-    for (let s = 1; s <= PATH_LENGTH_SAMPLES; s++) {
-      const t = s / PATH_LENGTH_SAMPLES;
-      const u = 1 - t;
-      const a = u * u * u;
-      const b = 3 * u * u * t;
-      const d = 3 * u * t * t;
-      const e = t * t * t;
-      const x = a * x1 + b * cx1 + d * cx2 + e * x2;
-      const y = a * y1 + b * cy1 + d * cy2 + e * y2;
-      total += Math.hypot(x - px, y - py);
-      px = x;
-      py = y;
-    }
+    const tmpx = (x1 - cx1 * 2 + cx2) * 0.1875;
+    const tmpy = (y1 - cy1 * 2 + cy2) * 0.1875;
+    const dddfx = ((cx1 - cx2) * 3 - x1 + x2) * 0.09375;
+    const dddfy = ((cy1 - cy2) * 3 - y1 + y2) * 0.09375;
+    let ddfx = tmpx * 2 + dddfx;
+    let ddfy = tmpy * 2 + dddfy;
+    let dfx = (cx1 - x1) * 0.75 + tmpx + dddfx * 0.16666667;
+    let dfy = (cy1 - y1) * 0.75 + tmpy + dddfy * 0.16666667;
+    total += Math.sqrt(dfx * dfx + dfy * dfy);
+    dfx += ddfx;
+    dfy += ddfy;
+    ddfx += dddfx;
+    ddfy += dddfy;
+    total += Math.sqrt(dfx * dfx + dfy * dfy);
+    dfx += ddfx;
+    dfy += ddfy;
+    total += Math.sqrt(dfx * dfx + dfy * dfy);
+    dfx += ddfx + dddfx;
+    dfy += ddfy + dddfy;
+    total += Math.sqrt(dfx * dfx + dfy * dfy);
     out.push(total);
   }
   return out;

@@ -6916,6 +6916,265 @@ function sliderPairMotion(extra: Record<string, unknown> = {}): Record<string, u
   };
 }
 
+// ---------------------------------------------------------------------------
+// what `lengths` actually is, and the fixture that can tell two answers apart
+// ---------------------------------------------------------------------------
+//
+// ⭐ `lengths` is **not** a fact about the Bezier. It is the number the field's
+// own consumer computes for itself when it is not given one, and that consumer
+// is `PathConstraint.computeWorldPositions`: on a `constantSpeed` path it
+// measures each curve with a cubic forward difference at `t = 1/4`
+// (`PathConstraint.js:301-320`, the constants `0.1875 = 3t²`, `0.09375 = 6t³`,
+// `0.75 = 3t` and `0.16666667` for 1/6), accumulating four `Math.sqrt` terms into
+// a running total it writes into `curves[i]`. The Spine editor's exported
+// `lengths` are that same computation — which is how issue #560 was found: rigc
+// measured a 64-chord sum instead, came back from the editor 0.70 % apart and
+// drifted 4.96 px.
+//
+// 🔒 **The fixture is large on purpose.** A 4-chord sum and the forward
+// difference agree to about nine significant digits, which is below what float32
+// can hold — so no editor export can tell them apart — and *above* the six
+// decimals rigc emits, so a big enough curve can. `PS67` and `PS68` require at
+// least one curve to separate the two in the emitted file, because a fixture on
+// which every spelling rounds alike would let these controls pass while checking
+// nothing. That is also why the vertices below are four times the size a probe
+// path would otherwise be.
+//
+// ⚠️ And the oracle has a floor the fixture cannot lift: the runtime's own posed
+// world vertices carry a shear of ~2e-8 on a bone with no rotation at all, so
+// `PathConstraint.curves` sits about 1e-8 relative away from what the compiler's
+// exact arithmetic sees. That is LARGER than the gap between the two spellings,
+// which is why the runtime is used to anchor the **form** — the transcription is
+// required to reproduce `curves` bit for bit on the runtime's own chain — while
+// the **values** are compared on the chain the compiler actually measured.
+
+/** An open path of three curves, in the 3(K + 1) point encoding. */
+const PATH_LENGTH_OPEN_VERTICES = [
+  -80, 0, 0, 0, 80, 160, 240, 160, 320, 0, 400, -160,
+  560, -160, 640, 0, 720, 160, 880, 160, 960, 0, 1040, 0,
+];
+
+/** A closed path of four curves, in the 3K point encoding, deliberately asymmetric. */
+const PATH_LENGTH_CLOSED_VERTICES = [
+  -200, -40, -200, 40, -200, 120,
+  -40, 240, 40, 240, 120, 240,
+  280, 80, 280, 0, 280, -80,
+  80, -200, 0, -200, -120, -200,
+];
+
+/** The probe rig one of those two paths makes, with a path constraint that poses it. */
+function pathLengthRig(closed: boolean): Record<string, unknown> {
+  return {
+    bones: [
+      { name: 'root' },
+      { name: 'rider', parent: 'root', x: 0, y: 0, length: 20 },
+    ],
+    slots: [
+      { name: 'track', bone: 'root', attachment: 'track' },
+      { name: 'block', bone: 'rider', attachment: 'block' },
+    ],
+    skins: {
+      default: {
+        track: {
+          track: {
+            type: 'path',
+            ...(closed ? { closed: true } : {}),
+            vertexCount: 12,
+            vertices: closed ? PATH_LENGTH_CLOSED_VERTICES : PATH_LENGTH_OPEN_VERTICES,
+          },
+        },
+        block: { block: { image: 'block.png' } },
+      },
+    },
+    constraints: [
+      {
+        name: 'ride',
+        type: 'path',
+        bones: ['rider'],
+        slot: 'track',
+        positionMode: 'percent',
+        spacingMode: 'percent',
+        rotateMode: 'tangent',
+        position: 0.25,
+      },
+    ],
+  };
+}
+
+/** A motion spec whose only track drives that constraint's position. */
+const PATH_LENGTH_MOTION = {
+  spec: 'rigc-motion/1',
+  archetype: 'static_probe',
+  cut: 'static_probe',
+  easings: {},
+  animations: {
+    move: {
+      duration: 1,
+      loop: false,
+      tracks: [{ path: 'ride', property: 'position', keys: [{ t: 0, v: [0] }, { t: 1, v: [0.5] }] }],
+    },
+  },
+};
+
+/** The compiler's six-decimal quantiser, restated — `src/compile.ts`'s `r6`, which is not exported. */
+function pathR6(n: number): number {
+  const v = Math.round(n * 1e6) / 1e6;
+  return v === 0 ? 0 : v;
+}
+
+/**
+ * The knot-and-handle chain, in the runtime's order — `PathConstraint.js:275-288`.
+ *
+ * Restated here rather than imported because the compiler's copy is what is on
+ * trial: a control that shared it would agree with the compiler about the one
+ * thing it exists to check.
+ */
+function pathChainOf(points: number[], closed: boolean): number[] {
+  if (!closed) return points.slice(2, points.length - 2);
+  return [...points.slice(2), points[0], points[1], points[2], points[3]];
+}
+
+/**
+ * `PathConstraint.js:289-324`, transcribed: the cumulative forward difference the
+ * runtime measures a `constantSpeed` path with, four `Math.sqrt` terms per curve.
+ *
+ * Nothing about this is asserted on faith — `PS67` and `PS68` require it to
+ * reproduce a real `PathConstraint.curves` array bit for bit on the runtime's own
+ * posed chain before they read anything off it.
+ */
+function runtimeCurveLengths(chain: number[]): number[] {
+  const out: number[] = [];
+  let total = 0;
+  for (let c = 0; c + 6 < chain.length - 1; c += 6) {
+    const x1 = chain[c];
+    const y1 = chain[c + 1];
+    const cx1 = chain[c + 2];
+    const cy1 = chain[c + 3];
+    const cx2 = chain[c + 4];
+    const cy2 = chain[c + 5];
+    const x2 = chain[c + 6];
+    const y2 = chain[c + 7];
+    const tmpx = (x1 - cx1 * 2 + cx2) * 0.1875;
+    const tmpy = (y1 - cy1 * 2 + cy2) * 0.1875;
+    const dddfx = ((cx1 - cx2) * 3 - x1 + x2) * 0.09375;
+    const dddfy = ((cy1 - cy2) * 3 - y1 + y2) * 0.09375;
+    let ddfx = tmpx * 2 + dddfx;
+    let ddfy = tmpy * 2 + dddfy;
+    let dfx = (cx1 - x1) * 0.75 + tmpx + dddfx * 0.16666667;
+    let dfy = (cy1 - y1) * 0.75 + tmpy + dddfy * 0.16666667;
+    total += Math.sqrt(dfx * dfx + dfy * dfy);
+    dfx += ddfx;
+    dfy += ddfy;
+    ddfx += dddfx;
+    ddfy += dddfy;
+    total += Math.sqrt(dfx * dfx + dfy * dfy);
+    dfx += ddfx;
+    dfy += ddfy;
+    total += Math.sqrt(dfx * dfx + dfy * dfy);
+    dfx += ddfx + dddfx;
+    dfy += ddfy + dddfy;
+    total += Math.sqrt(dfx * dfx + dfy * dfy);
+    out.push(total);
+  }
+  return out;
+}
+
+/** The sampler rigc ran until #560, kept as the thing the controls must NOT read back. */
+function chordCurveLengths(chain: number[], samples: number): number[] {
+  const out: number[] = [];
+  let total = 0;
+  for (let c = 0; c + 6 < chain.length - 1; c += 6) {
+    const x1 = chain[c];
+    const y1 = chain[c + 1];
+    const cx1 = chain[c + 2];
+    const cy1 = chain[c + 3];
+    const cx2 = chain[c + 4];
+    const cy2 = chain[c + 5];
+    const x2 = chain[c + 6];
+    const y2 = chain[c + 7];
+    let px = x1;
+    let py = y1;
+    for (let s = 1; s <= samples; s++) {
+      const t = s / samples;
+      const u = 1 - t;
+      const a = u * u * u;
+      const b = 3 * u * u * t;
+      const d = 3 * u * t * t;
+      const e = t * t * t;
+      const x = a * x1 + b * cx1 + d * cx2 + e * x2;
+      const y = a * y1 + b * cy1 + d * cy2 + e * y2;
+      total += Math.hypot(x - px, y - py);
+      px = x;
+      py = y;
+    }
+    out.push(total);
+  }
+  return out;
+}
+
+/** What one path fixture gives a control: what rigc wrote, and what the runtime says. */
+interface PathLengthReading {
+  /** The `lengths` array rigc emitted. */
+  emitted: number[];
+  /** The path attachment's own `vertexCount`, as the emitted file states it. */
+  vertexCount: number;
+  /**
+   * The emitted vertices. The fixture's path slot hangs off `root` at the origin
+   * with no rotation, so these ARE the world points the compiler measured — which
+   * is what lets a control recompute the emitted figure exactly rather than to a
+   * tolerance the runtime's own posed shear would set.
+   */
+  vertices: number[];
+  /** `PathConstraint.curves` off a posed skeleton with `constantSpeed` forced on. */
+  curves: number[];
+  /** The world chain the runtime measured those `curves` from. */
+  world: number[];
+  /** `PathAttachment.worldVerticesLength`, read off the loaded attachment. */
+  worldVerticesLength: number;
+}
+
+/**
+ * Compile one path fixture and read both sides of the comparison off it.
+ *
+ * `constantSpeed` is forced ON after the parse, because the two branches of
+ * `computeWorldPositions` are exactly "read the stored `lengths`" and "measure
+ * them", and only the second one leaves the runtime's own arithmetic somewhere a
+ * control can see it.
+ */
+function readPathLengths(closed: boolean): PathLengthReading {
+  const dirs = writeProbeRig(pathLengthRig(closed));
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(PATH_LENGTH_MOTION, null, 2)}\n`);
+  const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+  const skeleton = JSON.parse(built.skeletonText) as {
+    skins: Array<{
+      name: string;
+      attachments: Record<string, Record<string, { lengths?: number[]; vertexCount?: number; vertices?: number[] }>>;
+    }>;
+  };
+  const attachment = skeleton.skins.find((skin) => skin.name === 'default')!.attachments.track.track;
+  const data = posableFromText(built.skeletonText, built.atlasText, dirs.outDir).data;
+  for (const skin of data.skins) {
+    for (const entry of skin.getAttachments()) {
+      if (entry.attachment instanceof PathAttachment) entry.attachment.constantSpeed = true;
+    }
+  }
+  const posed = new Skeleton(data);
+  posed.setupPose();
+  posed.update(0);
+  posed.updateWorldTransform(Physics.reset);
+  const constraint = posed.findConstraint('ride', PathConstraint)!;
+  const loaded = constraint.slot.appliedPose.attachment as PathAttachment;
+  return {
+    emitted: attachment.lengths ?? [],
+    vertexCount: attachment.vertexCount ?? 0,
+    vertices: attachment.vertices ?? [],
+    curves: constraint.curves.slice(),
+    world: constraint.world.slice(),
+    worldVerticesLength: loaded.worldVerticesLength,
+  };
+}
+
 function runPathAndSliderSuite(): number {
   const dirs = writeProbeRig(PATH_RIG);
   let bad = 0;
@@ -9274,6 +9533,144 @@ function runPathAndSliderSuite(): number {
       'rig can reach it: an attachment whose image was never atlased at all, which after #555 means rigc skipped a ' +
       'measurement rather than the spec omitting one. It says so in those words, and the only thing that produces ' +
       'it is planting the defect back',
+  );
+
+  // --- the arc lengths ARE the runtime's own measurement (issue #560) --------
+  //
+  // Two shapes, one control each, both built the same way: anchor the
+  // transcription to the real `PathConstraint` on the runtime's own chain, then
+  // read the emitted figure off the chain the COMPILER measured — which for this
+  // fixture is the emitted vertices themselves, because its path slot hangs off
+  // `root` at the origin.
+  const arcLengthProbes = (what: string, closed: boolean): string[] => {
+    const read = readPathLengths(closed);
+    const probes: string[] = [];
+    // 1. The transcription is the runtime's, proved against the runtime.
+    const onRuntimeChain = runtimeCurveLengths(read.world);
+    if (onRuntimeChain.length !== read.curves.length) {
+      probes.push(
+        `${what}: the transcription measured ${onRuntimeChain.length} curve(s) on the chain PathConstraint ` +
+          `measured ${read.curves.length} on, so nothing below is comparing the same curves`,
+      );
+    }
+    for (let i = 0; i < Math.min(onRuntimeChain.length, read.curves.length); i++) {
+      if (!Object.is(onRuntimeChain[i], read.curves[i])) {
+        probes.push(
+          `${what}: on PathConstraint's OWN world chain the transcription gives curve ${i} = ` +
+            `${onRuntimeChain[i].toPrecision(17)} where PathConstraint.curves holds ` +
+            `${read.curves[i].toPrecision(17)} — the two are not the same computation`,
+        );
+      }
+    }
+    // 2. The emitted figure is that computation on the compiler's own chain.
+    const chain = pathChainOf(read.vertices, closed);
+    const want = runtimeCurveLengths(chain);
+    const chord4 = chordCurveLengths(chain, 4);
+    const chord64 = chordCurveLengths(chain, 64);
+    if (read.emitted.length !== want.length) {
+      probes.push(`${what}: rigc emitted ${read.emitted.length} length(s) for ${want.length} curve(s)`);
+    }
+    let separated = 0;
+    for (let i = 0; i < Math.min(read.emitted.length, want.length); i++) {
+      if (read.emitted[i] !== pathR6(want[i])) {
+        probes.push(
+          `${what}: curve ${i} was emitted as ${read.emitted[i]} where PathConstraint's forward difference ` +
+            `measures ${pathR6(want[i])} (${want[i].toPrecision(17)}) — a 4-chord sum would give ${pathR6(chord4[i])} ` +
+            `and a 64-chord sum ${pathR6(chord64[i])}`,
+        );
+      }
+      if (pathR6(want[i]) !== pathR6(chord4[i])) separated++;
+    }
+    // 3. The fixture still discriminates: a control that cannot tell the two
+    //    spellings apart in the emitted six decimals is checking nothing.
+    if (separated === 0) {
+      probes.push(
+        `${what}: no curve of this fixture separates the forward difference from a 4-chord sum in the emitted six ` +
+          'decimals, so the comparison above would pass on a sampler as well — the fixture has stopped discriminating',
+      );
+    }
+    return probes;
+  };
+  const ARC_LENGTH_ORIGIN =
+    'issue #560. `lengths` is not a measurement of the Bezier, it is the number the field\'s consumer computes when ' +
+    'it is not given one, and the consumer is `PathConstraint`. rigc ran a 64-chord sum instead — closer to ' +
+    'calculus, 0.70 % away from the runtime, and worth 4.96 px mean MAE on the round trip of a rig with a path ' +
+    'constraint on it. ⭐ The negative half is the point: a 4-chord sum agrees with the forward difference to ' +
+    'about nine significant digits, which no editor export can resolve because float32 cannot hold it — so this ' +
+    'is asserted against the runtime, and on a fixture large enough that the emitted six decimals can';
+  const ARC_LENGTH_CLEAN =
+    'the transcription of PathConstraint.js:301-320 reproduces PathConstraint.curves bit for bit on the runtime\'s ' +
+    'own posed chain, and every emitted length is that same computation on the compiler\'s chain rounded to six ' +
+    'decimals — with at least one curve where a 4-chord sum would have rounded somewhere else';
+  const openArc = arcLengthProbes('open path', false);
+  const openArcHeld = openArc.length === 0;
+  say(
+    'PS67_AN_OPEN_PATHS_ARC_LENGTHS_ARE_THE_RUNTIMES_OWN_FORWARD_DIFFERENCE_NOT_A_SAMPLER_THAT_AGREES',
+    openArcHeld,
+    probeDetail(openArcHeld, openArc, ARC_LENGTH_CLEAN),
+    ARC_LENGTH_ORIGIN,
+  );
+  const closedArc = arcLengthProbes('closed path', true);
+  const closedArcHeld = closedArc.length === 0;
+  say(
+    'PS68_A_CLOSED_PATHS_ARC_LENGTHS_ARE_THE_SAME_COMPUTATION_OVER_THE_WRAPPED_CHAIN',
+    closedArcHeld,
+    probeDetail(closedArcHeld, closedArc, ARC_LENGTH_CLEAN),
+    `${ARC_LENGTH_ORIGIN}. The closed shape is a separate case because the chain it measures is a different one — ` +
+      'the runtime rotates the points by one and repeats the first knot at the end, so a compiler that got the ' +
+      'wrap-around curve wrong would still reproduce every open path it was ever shown',
+  );
+
+  // The second reading is about SHAPE rather than value: how many entries the
+  // field has, which is a different question for an open path and a closed one
+  // and which the editor answers differently from rigc.
+  const countProbes: string[] = [];
+  const countSaid: string[] = [];
+  for (const [what, closed] of [['open path', false], ['closed path', true]] as Array<[string, boolean]>) {
+    const read = readPathLengths(closed);
+    // `PathConstraint.computeWorldPositions:203-204`: `curveCount = verticesLength / 6`,
+    // then `curveCount -= closed ? 1 : 2`, and `lengths[curveCount]` is read as the
+    // whole path length — so the highest index the constraint reads is that, and an
+    // array one shorter divides a traversal by `undefined`.
+    const highestRead = read.worldVerticesLength / 6 - (closed ? 1 : 2);
+    // The editor's own allocation, `SkeletonJson.js:601`.
+    const editorEntries = read.vertexCount / 3;
+    if (read.emitted.length !== highestRead + 1) {
+      countProbes.push(
+        `${what}: rigc emitted ${read.emitted.length} entry(ies) but PathConstraint reads lengths[${highestRead}] ` +
+          `as the whole path length, which needs ${highestRead + 1}`,
+      );
+    }
+    if (read.emitted.length !== read.curves.length) {
+      countProbes.push(
+        `${what}: rigc emitted ${read.emitted.length} entry(ies) where the same runtime measures ` +
+          `${read.curves.length} curve(s) on the same geometry`,
+      );
+    }
+    const expectedEditorSurplus = closed ? 0 : 1;
+    if (editorEntries - read.emitted.length !== expectedEditorSurplus) {
+      countProbes.push(
+        `${what}: the editor allocates vertexCount / 3 = ${editorEntries} entry(ies) against rigc's ` +
+          `${read.emitted.length}, a surplus of ${editorEntries - read.emitted.length} where ${expectedEditorSurplus} ` +
+          'was measured on its exports',
+      );
+    }
+    countSaid.push(
+      `${what}: ${read.emitted.length} emitted = ${read.curves.length} the runtime measures = lengths[${highestRead}] ` +
+        `the constraint reads, against the editor's vertexCount / 3 = ${editorEntries}`,
+    );
+  }
+  const countHeld = countProbes.length === 0;
+  say(
+    'PS69_ONE_ENTRY_PER_CURVE_THE_CONSTRAINT_READS_AND_THE_EDITOR_WRITES_ONE_MORE_ON_AN_OPEN_PATH',
+    countHeld,
+    probeDetail(countHeld, countProbes, countSaid.join('; ')),
+    'issue #560\'s side finding, and it is the reason a shorter array is not a defect. The editor always writes ' +
+      '`vertexCount / 3` entries and computes the wrap-around curve even for an open path — its `ride` export ends ' +
+      'on the closed-chain cumulative — while `PathConstraint` reads at most `lengths[verticesLength / 6 - (closed ' +
+      '? 1 : 2)]`. So rigc\'s array covers exactly what is read and the editor\'s trailing entry is read by nothing. ' +
+      '⚠️ The clause that matters is the one going the other way: one entry SHORT and the traversal divides by an ' +
+      'undefined length, which is silent in the parser and NaN in the pose',
   );
 
   return bad;
@@ -31171,8 +31568,11 @@ function main(): void {
       'on the effective channels, a deform hold read off the expanded run so two spellings of one run are one ' +
       'geometry, a raw curve over a hold left verbatim, the named easing and an explicit stepped emitting one file, ' +
       'and the hold posed through spine-core identically whether stepped or linear), ' +
-      '+ ' + n('path-slider') + ' path / slider / per-skin controls (10 of them a spine-core round trip that reads the world position a ' +
-      'path constraint puts a bone at, the arc lengths measured off the curve, the animation a slider applies, ' +
+      '+ ' + n('path-slider') + ' path / slider / per-skin controls, with a spine-core round trip under them that reads the world position a ' +
+      'path constraint puts a bone at, the arc lengths `PathConstraint` measures for ITSELF — its own four-sample ' +
+      'forward difference per curve, reproduced bit for bit on the runtime\'s own chain and then required of the ' +
+      'emitted file on an open path and a closed one, against a fixture large enough that a 4-chord sum rounds ' +
+      'somewhere else in the emitted six decimals — the animation a slider applies, ' +
       'which bones a skin switches on, and what TWO sliders on one bone do to it: 7.50 or 18.75 or their sum ' +
       '26.25 degrees, decided only by which of them is later in the constraints array and whether that one is ' +
       'additive — the arithmetic A40 refuses on, with the three shapes it has to stay silent about beside it (a ' +
