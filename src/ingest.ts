@@ -246,8 +246,28 @@ const BONE_TRACKS: Record<string, TrackShape> = {
   rotate: [['value', 0]],
 };
 
-/** `reset` carries no value at all — `compileValueTrack`'s zero-field branch. */
-const PHYSICS_TRACKS: Record<string, TrackShape> = { mix: [['value', 1]], reset: [] };
+/**
+ * The eight physics timelines — `PHYSICS_TRACKS` in `compile.ts`, same order.
+ * `reset` carries no value at all — `compileValueTrack`'s zero-field branch.
+ *
+ * 🚨 The defaults are the parser's per-key ones and they are **0 on six of the
+ * eight**, which is not where a reader looks for them: the constraint's own
+ * defaults (`inertia` 0.5, `strength` 100, `damping` 0.85, `mass` 1) sit in the
+ * same file at `:306-312` and belong to the constraint, not to a key. A
+ * decompiler that filled an omitted `damping` key with 0.85 would write a spec
+ * that plays a different animation from the one it read, and every gate would
+ * call it green. Copied off `SkeletonJson.js:1062` and `:1090`, not assumed.
+ */
+const PHYSICS_TRACKS: Record<string, TrackShape> = {
+  inertia: [['value', 0]],
+  strength: [['value', 0]],
+  damping: [['value', 0]],
+  mass: [['value', 0]],
+  wind: [['value', 0]],
+  gravity: [['value', 0]],
+  mix: [['value', 1]],
+  reset: [],
+};
 
 /** `mix` is three values in ONE key — `PATH_TRACKS` in `compile.ts`. */
 const PATH_TRACKS: Record<string, TrackShape> = {
@@ -822,7 +842,19 @@ function ingestAnimation(animName: string, anim: JsonObject, root: JsonObject, n
     tracks.push({ ...target, property, keys: out });
   };
 
-  /** One family of constraint timelines: `<family>.<constraint>.<timeline>`. */
+  /**
+   * One family of constraint timelines: `<family>.<constraint>.<timeline>`.
+   *
+   * ⭐ All three tables are now COMPLETE against `SkeletonJson`'s switch for
+   * their group, so the blocker below no longer fires on anything the runtime
+   * plays — it is reachable only for a timeline name the parser itself falls
+   * through (`:1094` for physics, and neither the path nor the slider switch
+   * has a default either). It is kept rather than deleted because `ingest`'s
+   * contract is byte identity and not equivalence: a name nothing reads is
+   * still a name the rebuild does not write. The alternative — demoting it to
+   * `lossy`, on the argument that the rebuilt skeleton plays identically — is
+   * a decision about all three families and is not made here.
+   */
   const family = (group: 'path' | 'physics' | 'slider', shapes: Record<string, TrackShape>): void => {
     for (const [name, timelines] of objEntries(anim[group])) {
       for (const [property, keys] of arrEntries(timelines)) {

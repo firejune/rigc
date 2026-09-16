@@ -316,6 +316,18 @@ const FRAME = 1 / 60;
 const STEP_FRAMES = 120;
 
 /**
+ * The constraint groups that spell `group.<constraint>.<timeline>` — a
+ * constraint name, then named timelines under it (A34's second shape).
+ *
+ * A constant rather than a literal in the loop because the same three names
+ * have to pick the timeline vocabulary out of `CHANNELS_BY_KIND` for A34's
+ * message, and a group listed in one place and not the other is a group whose
+ * constraint nobody resolves. `ik` and `transform` are the other shape — one
+ * unnamed timeline per constraint — and are enumerated separately there.
+ */
+const NAMED_TIMELINE_GROUPS = ['path', 'physics', 'slider'] as const;
+
+/**
  * Every component a physics constraint can drive (`PhysicsConstraintData`), and
  * the subset the **Spine editor** models.
  *
@@ -894,10 +906,10 @@ export function validate(input: ValidateInput): ValidateReport {
 
   // --- A34: a constraint timeline aims at a constraint of that type ---------
   //
-  // Four groups, in two shapes. `ik` and `transform` are ONE unnamed timeline
-  // per constraint (`animations.<a>.ik.<name>` is the key array itself); `path`
-  // and `slider` put named timelines under the constraint
-  // (`animations.<a>.path.<name>.position`), which is the physics shape. Both
+  // Five groups, in two shapes. `ik` and `transform` are ONE unnamed timeline
+  // per constraint (`animations.<a>.ik.<name>` is the key array itself); `path`,
+  // `physics` and `slider` put named timelines under the constraint
+  // (`animations.<a>.path.<name>.position`). Both
   // shapes resolve the constraint by name AND by type —
   // `findConstraint(name, IkConstraintData)` returns null for a transform
   // constraint that happens to share the name, and `readAnimation` then throws
@@ -908,12 +920,21 @@ export function validate(input: ValidateInput): ValidateReport {
   //   **An empty key array.** `let keyMap = constraintMap[0]; if (!keyMap)
   //   continue;` — the group is read, the timeline is skipped, and nothing is
   //   said. `"ik": { "leg-ik": [] }` is a timeline that does not exist, written
-  //   by a generator that thought it wrote one. Every one of the four groups has
+  //   by a generator that thought it wrote one. Every one of the five groups has
   //   that line.
   //
   // Reporting both from here also means a candidate with a misspelled constraint
   // gets told which constraints it does have, rather than being handed the
   // loader's own sentence.
+  //
+  // ⚠️ `physics` was NOT in the named-timeline loop until issue #593, and the
+  // comment above it named the shape after the group it left out. It cost
+  // nothing while the motion spec could state two physics timelines and both
+  // came from `compileValueTrack`; a spec that can state six more is a spec
+  // that can aim them at a constraint that is not there. The group list is a
+  // constant now, and the message that names the timelines a group takes reads
+  // them off `CHANNELS_BY_KIND` — it used to be a ternary over two groups,
+  // which is a sentence that cannot be extended without being rewritten.
   check('A34_CONSTRAINT_TIMELINE_TARGETS', () => {
     if (!raw) return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'the skeleton JSON did not parse (A00 owns that failure)');
     if (!isObj(raw.animations)) return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'the skeleton declares no animations');
@@ -969,7 +990,7 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
       // group.<constraint>.<timeline> = keys[]
-      for (const group of ['path', 'slider'] as const) {
+      for (const group of NAMED_TIMELINE_GROUPS) {
         if (!isObj(anim[group])) continue;
         for (const [name, timelines] of Object.entries(anim[group] as Json)) {
           const at = `animation "${animName}" ${group} constraint "${name}"`;
@@ -977,8 +998,9 @@ export function validate(input: ValidateInput): ValidateReport {
             sawATimeline = true;
             fail(
               'A34_CONSTRAINT_TIMELINE_TARGETS',
-              `${at}: this group maps a constraint to NAMED timelines (${group === 'path' ? 'position/spacing/mix' : 'time/mix'}), ` +
-                `and this one holds ${JSON.stringify(timelines)} — a bare key array here is the ik/transform shape and is walked as an object`,
+              `${at}: this group maps a constraint to NAMED timelines ` +
+                `(${Object.keys(CHANNELS_BY_KIND[group]).join('/')}), and this one holds ${JSON.stringify(timelines)} — ` +
+                'a bare key array here is the ik/transform shape and is walked as an object',
             );
             continue;
           }
