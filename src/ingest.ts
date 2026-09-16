@@ -94,6 +94,24 @@ export interface IngestOptions {
    * why this is a flag rather than a derivation.
    */
   art: 'loose' | 'none';
+  /**
+   * The rig spec's own `images` — the directory every `image` written below
+   * resolves against — ALREADY spelled relative to the directory the spec will
+   * be written into (issue #595).
+   *
+   * Absent leaves the field out, and an absent `images` resolves against the
+   * spec's own directory: a caller who extracted the parts anywhere else then
+   * carries `build --images <dir>` on every rebuild forever, and a spec that
+   * needs a flag to build is a spec whose `note` would have to say so.
+   *
+   * ⚠️ Spelled by the CALLER, not here. Turning a directory somebody typed into
+   * an absolute path reads a working directory, and this module reads nothing;
+   * `cli.ts` resolves it and spells it with `relativeImagesPath`, which is the
+   * same function `build` spells `skeleton.images` with, so the two cannot
+   * drift. Meaningless under `art: 'none'`, which writes no `image` at all —
+   * `cli.ts` refuses that pair rather than writing a field nothing reads.
+   */
+  images?: string;
   /** Supplied stage. Used ONLY when the skeleton carries no width/height. */
   stage?: IngestStage;
   /** The source file's basename, for the provenance note. No path: no leak. */
@@ -495,6 +513,9 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
     note: provenanceNote(opts, 'rig'),
   };
   if (Object.keys(rigHeader).length) rig.skeleton = rigHeader;
+  // Between `skeleton` and `bones`, which is where `RIG_KEYS.RigSpec` puts it —
+  // this file's key order is the spec's declared order and nothing sorts it.
+  if (opts.images !== undefined) rig.images = opts.images;
   rig.bones = bones;
   rig.slots = slots;
   if (Object.keys(skins).length) rig.skins = skins;

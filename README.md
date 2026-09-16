@@ -503,7 +503,7 @@ commands take it and what its default is.
 | `build … --pack` | the same build with every part arranged onto **shared** atlas pages, written into `--out` — losslessly, and gated a second time as the pair that ships. `--page-size` and `--padding` tune it |
 | `build … --atlas-in <file.atlas>` | the same build with every part resolved to a **region of an existing pack** instead of a loose PNG; a name the atlas lacks, a size the spec disagrees with or a rectangle off its page is refused by name |
 | `validate <dir>` | re-gates artifacts already on disk |
-| `ingest <skeleton.json> --out <dir>` | `build` run backwards: reads a Spine 4.3 skeleton and writes the rig spec and motion spec that **rebuild it**, plus a findings report naming everything it could not carry. `--stage x,y,w,h` supplies the one value a skeleton does not hold |
+| `ingest <skeleton.json> --out <dir>` | `build` run backwards: reads a Spine 4.3 skeleton and writes the rig spec and motion spec that **rebuild it**, plus a findings report naming everything it could not carry. `--stage x,y,w,h` supplies the one value a skeleton does not hold, and `--images <dir>` writes the spec's own images directory — the opposite direction from `build --images`, which overrides it — so the rebuild carries no flag at all |
 | `explain --rig … --motion …` | the compiled rig as a table — every bone with its resolved parent, the slots in draw order, every timeline key by key. Writes nothing. What to reach for when a rig compiles and still looks wrong |
 | `render --candidate <dir>` | PNG frames plus a contact sheet, in `render/` |
 | `preview --candidate <dir>` | one self-contained `.html` that plays it |
@@ -539,10 +539,15 @@ rebuild it. It is the only command that runs against `build`'s direction, and th
 only one whose contract is an equality rather than a rulebook:
 
 ```bash
-rigc ingest hero.json --out specs/ --stage 0,0,1024,768
-rigc build --rig specs/rig.json --motion specs/motion.json --images parts/ --out build/
+rigc ingest hero.json --out specs/ --stage 0,0,1024,768 --images parts/
+rigc build --rig specs/rig.json --motion specs/motion.json --out build/
 rigc diff build/skeleton.json hero.json
 ```
+
+`--images parts/` is what makes the second line carry no flag: it writes the spec's
+own `images` directory, spelled from `--out`, so the specs are self-contained from
+there on. Leave it off and the `image` names resolve against `specs/` itself, which
+holds no art — every rebuild then has to repeat `build --images parts/`.
 
 **`build(ingest(x))` is `x`.** Over the eleven rigs this repository builds — the seven
 gallery examples, the three generated probes and a coverage probe written for the

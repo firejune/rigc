@@ -57,7 +57,7 @@ import {
   type BoneDistReport,
 } from './src/bonedist.ts';
 import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type CheckReport } from './src/check.ts';
-import { compile, CompileError, type CompileOptions } from './src/compile.ts';
+import { compile, CompileError, relativeImagesPath, type CompileOptions } from './src/compile.ts';
 import {
   skeletonDataFromText,
   surveyDeformKeys,
@@ -2776,13 +2776,44 @@ function cmdIngest(flags: Record<string, string>, positional: string[]): void {
     stage = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
   }
   const outDir = resolve(flags.out);
+  /**
+   * The rig spec's own `images`, spelled from `--out` the way `build` spells
+   * `skeleton.images` from its own output directory — the SAME function, so the
+   * two conventions cannot drift (issue #595). Without it the field is left out,
+   * an `image` name resolves against the spec's own directory, and every rebuild
+   * of the spec has to carry `build --images <dir>`.
+   */
+  let specImages: string | undefined;
+  if (flags.images !== undefined) {
+    // Refused rather than ignored, for the reason `chainfit` refuses `--atlas`:
+    // a flag that silently does nothing is worse than one that says why it
+    // cannot. Measured — an `--art none` spec rebuilt with `--images` naming a
+    // directory that does not exist is byte-identical to one rebuilt without
+    // it, because no attachment carries an `image` for that directory to be the
+    // base of.
+    if (art === 'none') {
+      throw new UsageError(
+        '--images <dir> and --art none contradict: `none` writes width/height and no `image` at all, so the rig ' +
+          "spec's `images` directory would be the base of nothing and no rebuild would read it. Use --art loose to " +
+          'name an image per attachment, or drop --images — an `--art none` spec rebuilds with `build --atlas-in ' +
+          '<pack.atlas>`',
+      );
+    }
+    // Not checked for existence, deliberately: `ingest` reads the skeleton and
+    // nothing else, so the parts may well be extracted AFTER the specs are
+    // written, and refusing a directory this command never opens would refuse a
+    // legitimate order of work. `build` is where a missing PNG is named.
+    specImages = relativeImagesPath(outDir, resolve(flags.images));
+  }
   console.log(`rigc ingest ${skeletonPath}`);
   console.log(`  ..    out  ${outDir}`);
   console.log(`  ..    art  ${art}`);
+  if (specImages !== undefined) console.log(`  ..    images ${specImages}  (the rig spec's own, from ${outDir})`);
 
   const result = ingest(readJsonFile(skeletonPath), {
     name: flags.name ?? basename(skeletonPath, '.json'),
     art,
+    images: specImages,
     stage,
     source: basename(skeletonPath),
     version: readVersion(),
@@ -2807,9 +2838,13 @@ function cmdIngest(flags: Record<string, string>, positional: string[]): void {
   console.log(`rigc: wrote ${join(outDir, 'rig.json')}`);
   console.log(`rigc: wrote ${join(outDir, 'motion.json')}`);
   console.log(`rigc: wrote ${join(outDir, 'findings.json')}`);
+  // The hint is the command the caller will actually run, so it drops `--images`
+  // exactly when the spec now carries the directory itself — a hint that asks for
+  // a flag the spec made unnecessary is the defect issue #595 is about, printed.
+  const artFlag = art === 'none' ? ' --atlas-in <pack.atlas>' : specImages === undefined ? ' --images <dir>' : '';
   console.log(
-    `rigc: build it with  rigc build --rig ${join(outDir, 'rig.json')} --motion ${join(outDir, 'motion.json')} ` +
-      `${art === 'loose' ? '--images <dir>' : '--atlas-in <pack.atlas>'} --out <dir>`,
+    `rigc: build it with  rigc build --rig ${join(outDir, 'rig.json')} --motion ${join(outDir, 'motion.json')}` +
+      `${artFlag} --out <dir>`,
   );
 
   const blockers = result.findings.filter((f) => f.kind === 'blocker');
@@ -2922,8 +2957,9 @@ const FLAG_MEANINGS: Record<string, string> = {
   again: 'record a second vote on a ballot the ledger already has; without it, a repeat is refused rather than doubled',
   name: "the rig spec's own name, which the motion spec's archetype must match (default: the skeleton file's basename)",
   art: 'how the written spec reaches the art, which a skeleton does not encode: `loose` names an image per ' +
-    'attachment for `build --images <dir>` to measure, `none` states width/height only for `build --atlas-in ' +
-    '<pack>` to resolve (default: loose)',
+    "attachment, measured out of the rig spec's own images directory (--images writes it; without it, `build " +
+    '--images <dir>` on every rebuild), `none` states width/height only for `build --atlas-in <pack>` to ' +
+    'resolve (default: loose)',
   stage:
     "the setup bounding box — `skeleton.x,y,width,height`. An editor export carries none and rigc refuses a " +
     'compile without one; posing the rig gives the ANIMATED extent, which is a different number, so this is the ' +
@@ -3041,12 +3077,20 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'ingest',
-    usage: ['rigc ingest <skeleton.json> --out <dir> [--name <n>] [--art loose|none] [--stage x,y,w,h]'],
-    flags: ['out', 'name', 'art', 'stage'],
+    usage: ['rigc ingest <skeleton.json> --out <dir> [--name <n>] [--art loose|none] [--images <dir>] [--stage x,y,w,h]'],
+    flags: ['out', 'name', 'art', 'images', 'stage'],
     overrides: {
       out: {
         value: '<dir>',
         meaning: 'directory to write rig.json, motion.json and findings.json into — the two specs that rebuild this skeleton',
+      },
+      images: {
+        value: '<dir>',
+        meaning:
+          "WRITE the rig spec's own images directory, spelled relative to --out, so the rebuild is a plain `build " +
+          '--rig … --motion … --out …` with no flag. ⚠️ The opposite direction from `build --images`, which ' +
+          'OVERRIDES that field: this one fills it in. Without it the field is left out and every `image` resolves ' +
+          'against --out itself. Refused together with --art none, which writes no `image` for it to be the base of',
       },
     },
   },
@@ -3259,7 +3303,9 @@ const USAGE = [
   'It reads the skeleton and nothing else — no .spine project, no binary .skel, no',
   'atlas — so two things are the caller\'s and are refused rather than guessed: the',
   'setup stage (--stage; an export carries none) and how the spec reaches the art',
-  '(--art). Everything the spec format cannot hold is printed as a named finding and',
+  '(--art). --images <dir> is the third and the only optional one: it WRITES the rig',
+  'spec\'s own images directory, relative to --out, so the rebuild needs no flag.',
+  'Everything the spec format cannot hold is printed as a named finding and',
   'exits non-zero, with both files still written, because a spec plus a list of what',
   'is missing from it beats no spec at all.',
   '',

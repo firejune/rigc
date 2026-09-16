@@ -101,7 +101,7 @@ import {
   type FramingHow,
   type FramingSource,
 } from './src/check.ts';
-import { buildAtlasText, compile, CompileError } from './src/compile.ts';
+import { buildAtlasText, compile, CompileError, relativeImagesPath } from './src/compile.ts';
 import { ingest, INGEST_VOCABULARY, type IngestFinding } from './src/ingest.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
 import { RIG_KEYS, parseRigSpec } from './src/rig.ts';
@@ -34331,6 +34331,150 @@ function runIngestSuite(): number {
       'two independent compiles byte for byte, and a dated note would break the first rebuild from the spec',
   );
 
+  // --- IG13–IG15: the images directory a decompiled spec carries itself ------
+  //
+  // 🚨 The claim is an EQUALITY between two rebuilds, not "it builds". A spec
+  // whose `images` pointed somewhere else would still build wherever a PNG of
+  // the right name happened to sit, so green is not the measurement — the
+  // measurement is that dropping `--images` from the command line changes
+  // nothing about the file that comes out.
+  //
+  // ⚠️ One rig rather than all eleven, on purpose: the field is a property of
+  // the spec's header and not of its contents, so a second rig re-measures the
+  // same line of code with a bigger bill. `IG00`/`IG01` are where breadth lives.
+  {
+    const probeCandidate = candidates.find((c) => c.name === 'ingest_probe')!;
+    /**
+     * build → ingest → build it twice: once handed NO images directory, which
+     * is the thing `images` is supposed to make unnecessary, and once handed the
+     * directory on the command line, which is the reference the first is held to.
+     *
+     * `writeImages` is the whole subject. False is the state before issue #595
+     * and the red half of the pair — and because BOTH rebuilds run off the same
+     * spec directory, a red run that fails while its flagged twin succeeds
+     * names the field as the only difference, rather than a missing PNG.
+     */
+    const imagesTrip = (
+      writeImages: boolean,
+    ): { specDir: string; artDir: string; images?: string; unflagged?: CompileResult; refusal?: string; flagged: CompileResult } => {
+      const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-images-'));
+      const [aDir, bDir, fDir, specDir] = ['A', 'B', 'F', 'S'].map((leaf) => join(root, leaf));
+      // Every output directory a sibling of every other, for the reason
+      // `ingestRoundTrip` says: a path written `relative(outDir, …)` is a
+      // property of the depth it was written at.
+      for (const dir of [aDir, bDir, fDir, specDir]) mkdirSync(dir, { recursive: true });
+      const a = compile({
+        rigPath: probeCandidate.rigPath,
+        motionPath: probeCandidate.motionPath,
+        outDir: aDir,
+        manifestPath: probeCandidate.manifestPath,
+        imagesDir: probeCandidate.imagesDir,
+      });
+      const artDirs = [...new Set(a.images.map((img) => dirname(img.absPath)))];
+      if (artDirs.length !== 1) {
+        throw new Error(`internal: the coverage probe draws its parts from ${artDirs.length} directories, not one`);
+      }
+      // Spelled exactly as `cli.ts` spells it, by calling the same function.
+      const images = writeImages ? relativeImagesPath(specDir, artDirs[0]) : undefined;
+      const result = ingest(JSON.parse(a.skeletonText), {
+        name: (JSON.parse(readFileSync(probeCandidate.rigPath, 'utf8')) as { name: string }).name,
+        art: 'loose',
+        images,
+        source: 'skeleton.json',
+        version: packageVersion(),
+      });
+      writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(result.rig, null, 2)}\n`);
+      writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(result.motion, null, 2)}\n`);
+      const specs = { rigPath: join(specDir, 'rig.json'), motionPath: join(specDir, 'motion.json') };
+      const flagged = compile({ ...specs, outDir: fDir, imagesDir: artDirs[0] });
+      try {
+        return { specDir, artDir: artDirs[0], images, unflagged: compile({ ...specs, outDir: bDir }), flagged };
+      } catch (err) {
+        return { specDir, artDir: artDirs[0], images, refusal: err instanceof Error ? err.message : String(err), flagged };
+      }
+    };
+
+    const carried = imagesTrip(true);
+    const sameSkeleton = carried.unflagged?.skeletonText === carried.flagged.skeletonText;
+    const sameAtlas = carried.unflagged?.atlasText === carried.flagged.atlasText;
+    const pointsAtTheArt = carried.images !== undefined && resolve(carried.specDir, carried.images) === carried.artDir;
+    say(
+      'IG13_A_SPEC_THAT_CARRIES_ITS_IMAGES_DIRECTORY_REBUILDS_WITH_NO_FLAG_AND_IS_THE_SAME_FILE',
+      sameSkeleton && sameAtlas && pointsAtTheArt,
+      carried.unflagged === undefined
+        ? `the rebuild with no --images was REFUSED: ${carried.refusal}`
+        : `\`images\` = ${JSON.stringify(carried.images)}, resolving to ${pointsAtTheArt ? 'the art directory' : 'SOMEWHERE ELSE'}; ` +
+            `rebuilt with no --images: skeleton.json ${carried.unflagged.skeletonText.length} B ` +
+            `${sameSkeleton ? 'identical to' : 'DIFFERS from'} the rebuild given --images, atlas ` +
+            `${sameAtlas ? 'identical' : 'DIFFERS'}`,
+      'issue #595: a decompiled spec that needs a flag on every build is a spec whose `note` has to say so. The ' +
+        'field is written with `relativeImagesPath`, the same function `build` spells `skeleton.images` with, so ' +
+        'the two conventions cannot drift — and the verdict is the equality rather than a green build, because a ' +
+        'spelling that pointed at a different directory of PNGs by the same names would build and be wrong',
+    );
+
+    // The red half. It is the state this repository shipped until #595, so it
+    // is not a hypothetical mutant — it is the behaviour, kept as a control.
+    const bare = imagesTrip(false);
+    const namesTheSpecDir = bare.refusal !== undefined && bare.refusal.includes(bare.specDir);
+    say(
+      'IG14_WITHOUT_THE_FIELD_THE_SAME_SPEC_RESOLVES_ITS_PARTS_AGAINST_ITS_OWN_DIRECTORY_AND_IS_REFUSED_BY_NAME',
+      bare.unflagged === undefined && namesTheSpecDir && bare.flagged.skeletonText.length > 0,
+      bare.unflagged !== undefined
+        ? `the rebuild given no --images SUCCEEDED (${bare.unflagged.skeletonText.length} B) with \`images\` = ` +
+            `${JSON.stringify(bare.images)} — so this is not the field-absent trip it has to be, and the case ` +
+            'measured something else'
+        : `refused: ${bare.refusal}; the same spec built from the same directory WITH --images, ` +
+            `${bare.flagged.skeletonText.length} B — so the field is the only difference`,
+      'the negative control for IG13, and the measurement behind the card: with the field absent an `image` name ' +
+        'resolves against the spec\'s OWN directory — `--out`, which holds rig.json, motion.json and findings.json ' +
+        'and no art — so the parts are looked for in the one place they are certainly not. The flagged twin is the ' +
+        'other side: without it a run that failed because the PNGs had moved would read as this one',
+    );
+
+    // --- IG15: the same flag as the CLI presents it ---------------------------
+    //
+    // The library takes a spelled string; `cli.ts` is what turns a directory
+    // somebody typed into it, and that half is reachable only through a real
+    // invocation. Three clauses, because a refusal with no positive control
+    // beside it is satisfied by refusing everything.
+    const cliRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-images-cli-'));
+    const cliSkeleton = join(cliRoot, 'skeleton.json');
+    writeFileSync(cliSkeleton, trips.get('ingest_probe')!.a.skeletonText);
+    const artDir = resolve(dirname(probeCandidate.rigPath));
+    const outOf = (leaf: string): string => join(cliRoot, leaf);
+    const refusedPair = runCli(['ingest', cliSkeleton, '--out', outOf('none'), '--art', 'none', '--images', artDir]);
+    const accepted = runCli(['ingest', cliSkeleton, '--out', outOf('loose'), '--art', 'loose', '--images', artDir]);
+    const unflagged = runCli(['ingest', cliSkeleton, '--out', outOf('plain'), '--art', 'loose']);
+    const written = existsSync(join(outOf('loose'), 'rig.json'))
+      ? (JSON.parse(readFileSync(join(outOf('loose'), 'rig.json'), 'utf8')) as { images?: string }).images
+      : undefined;
+    const cliFaults: string[] = [];
+    if (refusedPair.status !== 2 || !refusedPair.stderr.includes('--images') || !refusedPair.stderr.includes('--art none')) {
+      cliFaults.push(`--art none + --images exited ${String(refusedPair.status)} saying ${JSON.stringify(refusedPair.stderr.slice(0, 120))}`);
+    }
+    if (accepted.status !== 0) cliFaults.push(`--art loose + --images exited ${String(accepted.status)}`);
+    if (written === undefined || resolve(outOf('loose'), written) !== artDir) {
+      cliFaults.push(`the written \`images\` is ${JSON.stringify(written)}, which does not resolve to ${artDir}`);
+    }
+    if (accepted.stdout.includes('--images <dir>')) cliFaults.push('the build hint still asks for --images after writing the field');
+    if (!unflagged.stdout.includes('--images <dir>')) cliFaults.push('the build hint omits --images even with no field written');
+    say(
+      'IG15_THE_CLI_WRITES_THE_DIRECTORY_IT_WAS_GIVEN_REFUSES_THE_PAIR_THAT_MEANS_NOTHING_AND_STOPS_ASKING',
+      cliFaults.length === 0,
+      cliFaults.length === 0
+        ? `\`--art none --images\` refused (exit ${String(refusedPair.status)}), \`--art loose --images\` wrote ` +
+            `${JSON.stringify(written)} resolving to the directory given, and the build hint asks for --images only ` +
+            'when the spec does not carry it'
+        : cliFaults.join('; '),
+      '`--art none` writes no `image` at all, so an images directory under it would be the base of nothing — ' +
+        'measured: an `--art none` spec rebuilt with `--images /nonexistent` is byte-identical to one rebuilt ' +
+        'without it. Refused rather than ignored, the way `chainfit` refuses `--atlas`. The hint clause is the ' +
+        'same rule pointed at the output: the command prints the build line a caller will run, and a line asking ' +
+        'for a flag the spec just made unnecessary is the defect #595 is about, printed',
+    );
+  }
+
   return bad;
 }
 
@@ -35844,7 +35988,13 @@ function main(): void {
     'format cannot hold planted into a correct skeleton and each required back as a named blocker, with the ' +
     'unplanted run as the other side. And the note, which is the one statement no gate can check for you — it ' +
     'says DECOMPILED, names its source and version, matches no clock, and two ingests of one skeleton are ' +
-    'byte-identical)';
+    'byte-identical. Last, the images directory a decompiled spec can carry itself (#595): a spec that carries ' +
+    'it rebuilds with no --images on the command line and is byte-identical to the rebuild that was given one — ' +
+    'an equality rather than a green build, because a path spelled at the wrong directory would build too — with ' +
+    'the field-absent trip beside it refused by name at the spec\'s own directory, and the CLI half measured ' +
+    'through a real invocation: the directory it was handed is where the written field resolves, `--art none` ' +
+    'plus `--images` is refused rather than ignored, and the build hint it prints stops asking for the flag it ' +
+    'just made unnecessary)';
   const loopSeam =
     ', + ' + n('loop-seam') + ' loop-seam controls (issue #337 — the four rows of that issue’s own table, two of which land on ' +
     'the duration and two of which do not; the landing rates named as the multiples of the duration’s reduced ' +

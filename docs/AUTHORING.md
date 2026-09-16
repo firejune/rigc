@@ -362,16 +362,18 @@ Everything above starts from two spec files you wrote. `rigc ingest` starts from
 an existing rig is a starting point instead of 250 KB of arrays to retype.
 
 ```bash
-bun cli.ts ingest hero.json --out specs/ --stage 0,0,1024,768
+bun cli.ts ingest hero.json --out specs/ --stage 0,0,1024,768 --images parts/
 #   ..    out  /abs/path/specs
 #   ..    art  loose
+#   ..    images ../parts/  (the rig spec's own, from /abs/path/specs)
 #   JUDGE DURATION: animation "idle" — skeleton JSON carries no duration; the largest key time (2.667) is used …
 #   LOSS  PATH_LENGTHS: skin "default" slot "track" attachment "track" — the source states `lengths`; rigc RE-MEASURES it …
 # rigc: wrote /abs/path/specs/rig.json
 # rigc: wrote /abs/path/specs/motion.json
 # rigc: wrote /abs/path/specs/findings.json
+# rigc: build it with  rigc build --rig /abs/path/specs/rig.json --motion /abs/path/specs/motion.json --out <dir>
 
-bun cli.ts build --rig specs/rig.json --motion specs/motion.json --images parts/ --out spine
+bun cli.ts build --rig specs/rig.json --motion specs/motion.json --out spine
 bun cli.ts diff spine/skeleton.json hero.json      # 1.000 on every measure
 ```
 
@@ -388,14 +390,22 @@ come out in is in no field of the skeleton and a decompiled spec cannot know it.
 That is a gate rather than a claim: `bun run selftest` round-trips every rig this
 repository builds on every run.
 
-**Two flags, for the two things a skeleton does not encode.**
+**The flags are for what a skeleton does not encode**, and nothing else is a flag.
 
 | flag | what it decides |
 | --- | --- |
-| `--art loose` (default) | name an `image` per attachment — `<path or placeholder>.png` — so the rebuild is `build --images <dir>` and rigc measures the PNGs |
+| `--art loose` (default) | name an `image` per attachment — `<path or placeholder>.png` — so the rebuild resolves loose PNGs and rigc measures them |
 | `--art none` | state `width`/`height` only, so the rebuild is `build --atlas-in <pack.atlas>` and every part resolves out of the pack |
+| `--images <dir>` | **write** the rig spec's own `images` directory, spelled relative to `--out`, so the rebuild is a plain `build --rig … --motion … --out …`. Without it the field is left out and every `image` resolves against `--out` itself, which holds the specs and no art — so every rebuild has to repeat `build --images <dir>`. Refused together with `--art none`, which writes no `image` for it to be the base of |
 | `--stage x,y,w,h` | the setup bounding box. **Required for an editor export**, which carries none |
 | `--name <n>` | the rig spec's `name`, which the motion spec's `archetype` must equal (default: the file's basename) |
+
+⚠️ **`ingest --images` and `build --images` point opposite ways.** `build --images`
+*overrides* the rig spec's own directory for one invocation; `ingest --images`
+*writes* it, once, so no invocation needs the override. They share a name because
+they name the same field — and `ingest` spells the value with the same function
+`build` spells `skeleton.images` with, so a spec and the skeleton it came from say
+where the parts are in one convention.
 
 🚨 **The stage is the one value `ingest` will not guess.** rigc always emits
 `skeleton.width`/`height` and an editor export never does, so a foreign file needs
