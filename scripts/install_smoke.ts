@@ -6,6 +6,12 @@
  *     bun run smoke -- --case clean      just the green one
  *     bun run smoke -- --source registry --version 0.21.0
  *
+ * Four exit codes, because a caller has to be able to tell the outcomes apart
+ * without reading prose: **0** every case passed, **1** a case went red —
+ * against `--source registry`, the published artifact does not build — **2**
+ * nothing ran at all, and **3** the registry never served the version inside
+ * `--wait`, which says nothing about the package. See *The wait* below.
+ *
  * Nothing else in this repository asks that question. `prepublishOnly` gates the
  * SOURCE TREE, the `ships` job in `ci.yml` reads packed PATH LISTS, `CUR16` reads
  * the relative imports of shipped modules, and `release.yml` publishes and never
@@ -30,11 +36,39 @@
  * missing. The worktree is never patched; the patch is applied to the extraction
  * and packed from there, and a plant that removed nothing is itself a fault.
  *
+ * ## The wait, and the two outcomes it separates (issue #563)
+ *
+ * ⏳ A publish returns before the registry serves what it published, and npm
+ * says so on the way out: *"Your package is being processed and may take a few
+ * minutes to become available."* That notice is the only statement of the
+ * window anybody has, and it has no upper bound in it, so `--wait <minutes>`
+ * keeps asking — 5 s, 10 s, 20 s, then every 30 s — and prints how long it has
+ * been asking. The default is 15 minutes against three cuts measured between a
+ * publish step returning and the version entering the registry's own packument
+ * (`time[version]`): 4 min 11 s, 2 min 07 s and 2 min 38 s, all on 2026-09-16.
+ * RELEASING.md carries those figures and their sources.
+ *
+ * 🚨 **Not-yet-served and served-and-broken are different facts and they do not
+ * print the same red.** A version the registry has not finished processing says
+ * nothing at all about the package: that is exit **3** and a message saying the
+ * confirmation was not taken. Only a case going red on an artifact the registry
+ * did serve is exit **1** and *the published artifact does not build*. The first
+ * real run of the confirmation step went red on a cut that was fine, because a
+ * 60-second wait ended in `npm view`'s raw `E404` and nothing said which of the
+ * two had happened.
+ *
  * What it cannot see, stated so nothing reads more into a green run than is
  * there: it does not run the published artifact unless `--source registry` asks
  * it to (the tarball this tree packs is not the tarball npm serves until a
  * publish makes it one), it says nothing about how the rig LOOKS — `rigc check`
- * is that instrument — and it is one platform's answer, the runner's.
+ * is that instrument — and it is one platform's answer, the runner's. ⚠️ The
+ * wait's probe is `npm view <spec> version`, which is the registry answering
+ * about its packument and not about the tarball: a version whose metadata is
+ * served before its tarball is would be read here as an artifact that does not
+ * build rather than as one still arriving. The probe is `--prefer-online` for
+ * the neighbouring reason — npm caches a packument, a negative answer
+ * included, and a poll reading its own earlier 404 back would wait out the
+ * whole ceiling on a package that had already arrived.
  *
  * ## Why `scripts/` and not `tools/`
  *
@@ -275,6 +309,89 @@ function pngHeader(path: string): { width: number; height: number; colourType: n
 }
 
 // ---------------------------------------------------------------------------
+// The wait for the registry
+// ---------------------------------------------------------------------------
+
+/**
+ * What this script exits with. They are the only machine-readable thing a
+ * caller gets, and two of them exist because one number cannot carry two
+ * facts — see *The wait* at the top of this file.
+ */
+const EXIT_GREEN = 0;
+const EXIT_RED = 1;
+const EXIT_NOTHING_RAN = 2;
+const EXIT_NOT_SERVED = 3;
+
+/** Minutes the registry is given to serve a version, when no `--wait` says otherwise. */
+const DEFAULT_WAIT_MINUTES = 15;
+
+/**
+ * Sleep on this thread.
+ *
+ * The script is synchronous end to end — one case after another, each one a
+ * `spawnSync` — and a poll is no reason to make it otherwise. `Atomics.wait` is
+ * the sleep that needs no child process and no event loop.
+ */
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** `2m 37s`, so an elapsed time reads against the table in RELEASING.md without arithmetic. */
+function elapsedText(ms: number): string {
+  const whole = Math.round(ms / 1000);
+  return `${Math.floor(whole / 60)}m ${String(whole % 60).padStart(2, '0')}s`;
+}
+
+/** How long to wait before the attempt after this one: 5 s, 10 s, 20 s, then 30 s for the rest of the wait. */
+function backoffMs(attempt: number): number {
+  return Math.min(5000 * 2 ** (attempt - 1), 30000);
+}
+
+interface RegistryWait {
+  served: boolean;
+  attempts: number;
+  ms: number;
+  /** The last thing npm said, so a network that is down is not reported as a version that is late. */
+  last: string;
+}
+
+/**
+ * Ask the registry for a version until it answers or the wait runs out.
+ *
+ * ⚠️ Every attempt is announced with its elapsed time. The step this replaced
+ * printed six identical lines and then somebody else's `E404`, so a reader had
+ * no way to tell a 60-second wait from a 6-minute one without reading the
+ * timestamps in the log gutter.
+ */
+function waitForRegistry(spec: string, minutes: number, cwd: string): RegistryWait {
+  const started = Date.now();
+  const deadline = started + Math.round(minutes * 60_000);
+  let attempts = 0;
+  let last = '';
+  for (;;) {
+    attempts += 1;
+    const asked = run('npm', ['view', spec, 'version', '--prefer-online'], cwd);
+    if (asked.status === 0) return { served: true, attempts, ms: Date.now() - started, last: asked.out.trim() };
+    // The line npm names the failure on, and not the last line it printed: the
+    // last one is the path to a debug log, which says nothing about whether
+    // this was a 404 or a network that is down.
+    const said = asked.out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !/A complete log of this run/.test(line));
+    last = said.find((line) => /\berror code\b/.test(line)) ?? said[0] ?? '';
+    const left = deadline - Date.now();
+    if (left <= 0) return { served: false, attempts, ms: Date.now() - started, last };
+    const nap = Math.min(backoffMs(attempts), left);
+    console.log(
+      `  the registry is not serving ${spec} yet — attempt ${attempts}, ${elapsedText(Date.now() - started)} into a ` +
+        `${minutes} min wait; asking again in ${Math.round(nap / 1000)}s`,
+    );
+    sleepMs(nap);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The tarball, and the plants that patch a COPY of it
 // ---------------------------------------------------------------------------
 
@@ -316,7 +433,13 @@ function tarballFor(
   const packDir = join(work, 'pack');
   mkdirSync(packDir, { recursive: true });
 
-  const packed = source.kind === 'tree' ? run('npm', ['pack', ROOT, '--pack-destination', packDir, '--silent'], work) : run('npm', ['pack', source.spec, '--pack-destination', packDir, '--silent'], work);
+  // `--prefer-online` on the registry arm for the wait's reason: the poll above
+  // has just refreshed this packument, and a pack reading a cached copy of the
+  // 404 it was polling through would fail on a version the registry is serving.
+  const packed =
+    source.kind === 'tree'
+      ? run('npm', ['pack', ROOT, '--pack-destination', packDir, '--silent'], work)
+      : run('npm', ['pack', source.spec, '--pack-destination', packDir, '--silent', '--prefer-online'], work);
   const tarballs = existsSync(packDir) ? readdirSync(packDir).filter((f) => f.endsWith('.tgz')) : [];
   if (packed.status !== 0 || tarballs.length !== 1) {
     faults.push(
@@ -652,8 +775,20 @@ usage:
   bun run smoke                          every case below, on a tarball packed from this tree
   bun run smoke -- --case clean          one case by name
   bun run smoke -- --source registry --version 0.21.0
+  bun run smoke -- --source registry --version 0.21.0 --wait 15
   bun run smoke -- --installer bun       install the tarball with \`bun add\` instead of \`npm install\`
   bun run smoke -- --keep                leave the install directories where they are
+
+--wait <minutes> is for \`--source registry\` and nothing else: a publish returns
+before the registry serves what it published, so this is how long to keep asking
+before giving up. Default ${DEFAULT_WAIT_MINUTES}; \`--wait 0\` asks once and does not sleep.
+
+exit codes:
+  0  every case passed
+  1  a case went red — against \`--source registry\`, the published artifact does not build
+  2  no case ran, so this run measured nothing
+  3  the registry did not serve the version within --wait, so the confirmation was NOT taken;
+     nothing here says the package is broken
 
 cases:
   clean          a correct package installs and builds, and the bin shim names Bun when bun is absent
@@ -682,16 +817,60 @@ function main(): number {
   const sourceKind = flag('source') === 'registry' ? 'registry' : 'tree';
   const version = flag('version');
   const pkgVersion = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version?: string }).version ?? '';
+  const wanted = version ?? pkgVersion;
   const source: { kind: 'tree' } | { kind: 'registry'; spec: string } =
-    sourceKind === 'registry' ? { kind: 'registry', spec: `spine-rigc@${version ?? pkgVersion}` } : { kind: 'tree' };
+    sourceKind === 'registry' ? { kind: 'registry', spec: `spine-rigc@${wanted}` } : { kind: 'tree' };
+
+  // A flag that quietly does nothing is worse than one that is refused: a
+  // `--wait` on a tarball this tree packs would read as a wait that was taken.
+  const waitFlag = flag('wait');
+  const waitMinutes = waitFlag === null ? DEFAULT_WAIT_MINUTES : Number(waitFlag);
+  if (waitFlag !== null && sourceKind !== 'registry') {
+    console.log(
+      '  FAIL  SMOKE_WAIT_IS_MINUTES_ON_THE_REGISTRY_PATH: --wait is for `--source registry`. A tarball packed from ' +
+        'this tree is on disk the moment `npm pack` returns, so there is nothing here to wait for',
+    );
+    return EXIT_RED;
+  }
+  if (!Number.isFinite(waitMinutes) || waitMinutes < 0) {
+    console.log(`  FAIL  SMOKE_WAIT_IS_MINUTES_ON_THE_REGISTRY_PATH: --wait ${JSON.stringify(waitFlag)} is not a number of minutes`);
+    return EXIT_RED;
+  }
 
   console.log(`rigc install smoke — ${source.kind === 'tree' ? `a tarball packed from ${ROOT}` : `${source.spec} from the registry`}, installed with ${installer}`);
 
   for (const tool of ['npm', 'bun', 'tar']) {
     if (onPath(tool) === null) {
       console.log(`  FAIL  SMOKE_PREREQ_TOOLS_ON_PATH: \`${tool}\` is not on PATH, and this smoke installs and runs a package that needs it`);
-      return 1;
+      return EXIT_RED;
     }
+  }
+
+  // ⏳ The first of the two outcomes issue #563 separates. A version the
+  // registry has not finished processing is not a package that fails to build,
+  // and the two must not end in the same red — so this returns its own exit
+  // code, names what was not taken, and says how to take it later.
+  const registrySpec = source.kind === 'registry' ? source.spec : null;
+  let served: RegistryWait | null = null;
+  if (registrySpec !== null) {
+    served = waitForRegistry(registrySpec, waitMinutes, ROOT);
+    const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean`;
+    if (!served.served) {
+      console.log(
+        `  FAIL  SMOKE_REGISTRY_SERVED_THE_VERSION: the registry did not serve ${registrySpec} within ${waitMinutes} min ` +
+          `(${served.attempts} attempt(s), ${elapsedText(served.ms)}) — the confirmation was NOT taken, and nothing here ` +
+          'says the package is broken. npm\'s own notice on publish is "Your package is being processed and may take a ' +
+          'few minutes to become available". Re-run the confirmation (Actions -> release -> Run workflow, version ' +
+          `${wanted}) or take it by hand once the registry answers: ${byHand}` +
+          (served.last === '' ? '' : `. The last thing npm said was: ${served.last}`),
+      );
+      console.log(`rigc install smoke: the registry did not serve ${registrySpec} — confirmation NOT taken`);
+      return EXIT_NOT_SERVED;
+    }
+    console.log(
+      `  the registry served ${registrySpec} on attempt ${served.attempts}, ${elapsedText(served.ms)} after this run ` +
+        'started asking',
+    );
   }
 
   const battery: CaseSpec[] = [
@@ -707,7 +886,7 @@ function main(): number {
   const chosen = only === null ? battery : battery.filter((c) => c.name === only);
   if (chosen.length === 0) {
     console.log(`  FAIL  SMOKE_PREREQ_TOOLS_ON_PATH: no case is named "${only}" — ${battery.map((c) => c.name).join(', ')}`);
-    return 1;
+    return EXIT_RED;
   }
 
   let bad = 0;
@@ -758,10 +937,23 @@ function main(): number {
   // shape of false green this whole repository is written against.
   if (ran === 0) {
     console.log('  FAIL  SMOKE_PREREQ_TOOLS_ON_PATH: no case ran, so this run measured nothing');
-    return 2;
+    return EXIT_NOTHING_RAN;
   }
   console.log(bad === 0 ? `rigc install smoke: green — ${ran} case(s)` : `rigc install smoke: ${bad} of ${ran} case(s) failed`);
-  return bad === 0 ? 0 : 1;
+  if (bad === 0) return EXIT_GREEN;
+  // 🚨 The second of the two outcomes, said out loud. Reaching here on a
+  // registry source means the wait above ENDED — the registry answered for this
+  // version — so what went red went red on the artifact people receive, and
+  // calling that a propagation delay would be the #563 defect pointed the other
+  // way.
+  if (served !== null) {
+    console.log(
+      `the published artifact does not build: the registry served ${registrySpec} ${elapsedText(served.ms)} after this ` +
+        `run started asking, and ${bad} of ${ran} case(s) above went red on it. ` +
+        'This is a fault in what was published, not a wait that was too short',
+    );
+  }
+  return EXIT_RED;
 }
 
 process.exit(main());

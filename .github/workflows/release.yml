@@ -18,17 +18,42 @@ name: release
 on:
   push:
     branches: [main]
+  # Re-run a confirmation that ran out of wait, without publishing anything.
+  # Issue #563: the confirmation is the last step of a cut and the registry can
+  # take minutes to serve what was just published, so the outcome "not confirmed
+  # yet" has to be repairable by itself. What makes that safe is structural
+  # rather than careful: the `release` job below runs only on a push, so a
+  # dispatch cannot reach release-please, the tag, the GitHub release or the
+  # publish — it reaches the `confirm` job and nothing else.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The published version to confirm, without the leading v (e.g. 0.22.2)
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: release-${{ github.ref }}
+  # The event name is in the group so a dispatched confirmation does not queue
+  # behind a release run for the same ref, and two pushes still serialise the
+  # way they always have.
+  group: release-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
   release:
+    # 🔒 The publish, the tag and the GitHub release live in this job and this
+    # job runs on a push to main. A `workflow_dispatch` run skips it entirely,
+    # which is what lets the confirmation be re-run by hand with no chance of
+    # re-cutting anything.
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The confirmation waits up to 15 minutes for the registry (see the step
+    # below), on top of release-please, the gates `prepublishOnly` runs and the
+    # publish itself — measured at about 3 minutes over the v0.22.x cuts. A
+    # ceiling under the wait would report a late registry as a cancelled job.
+    timeout-minutes: 30
     permissions:
       contents: write # release commit, tag, GitHub release
       pull-requests: write # open and update the release PR
@@ -103,10 +128,19 @@ jobs:
       # gate. A red here does not un-publish anything; it says the cut needs a
       # follow-up, which is a true and useful thing to be told.
       #
-      # ⏳ The wait is for propagation and nothing else. `npm view` is asked
-      # whether the version is being served yet, and only then does the smoke
-      # run, ONCE — so a real failure is reported as a failure instead of being
-      # retried five times and reported as a timeout.
+      # ⏳ The wait is for propagation and nothing else, and it belongs to the
+      # script rather than to this file (issue #563). Two reasons, both
+      # measured: the sixty seconds this body used to sleep were shorter than
+      # the registry took on all three of the cuts that ran it — 4 min 11 s,
+      # 2 min 07 s, 2 min 38 s — and a `run:` body cannot be red-firsted
+      # anywhere, while `--wait` inside the script is driven by three selftest
+      # controls against a fake registry on `PATH`.
+      #
+      # 🚨 What the script separates, and what this step used to print the same
+      # red for: a version the registry has not served yet says NOTHING about
+      # the package (exit 3, "confirmation NOT taken"), and a case going red on
+      # an artifact the registry did serve says the published artifact does not
+      # build (exit 1). The old body ended both in `npm view`'s raw `E404`.
       - name: Confirm the published package installs and builds
         if: ${{ steps.release.outputs.release_created == 'true' }}
         # Through the environment rather than interpolated into the script, the
@@ -118,10 +152,37 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG_NAME#v}"
-          for attempt in 1 2 3 4 5 6; do
-            if npm view "spine-rigc@$version" version > /dev/null 2>&1; then break; fi
-            echo "the registry is not serving spine-rigc@$version yet (attempt $attempt)"
-            sleep 10
-          done
-          npm view "spine-rigc@$version" version
-          bun run smoke -- --source registry --version "$version" --case clean
+          bun run smoke -- --source registry --version "$version" --wait 15 --case clean
+
+  # The same confirmation, on demand, for a cut whose wait ran out. It publishes
+  # nothing and can publish nothing: `npm publish` exists only in the job above,
+  # which a dispatch skips.
+  confirm:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    # Above the 15-minute wait, with the install and the build under it.
+    timeout-minutes: 25
+    permissions:
+      contents: read # the tree that published this version, to run its smoke from
+    steps:
+      # The tag, rather than whatever `main` holds now: the confirmation asks
+      # whether the artifact THAT cut published installs and builds, so the
+      # script asking it should be that cut's.
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+
+      - uses: oven-sh/setup-bun@v2
+
+      # npm packs and installs, and the `bin` shim is a Node script — the
+      # runner's node is half of what the smoke is measuring, as in ci.yml.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Confirm the published package installs and builds
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          bun run smoke -- --source registry --version "$VERSION" --wait 15 --case clean

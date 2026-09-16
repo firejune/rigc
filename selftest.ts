@@ -25763,6 +25763,321 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR29/30/31: the post-publish confirmation (issue #563) ---------------
+  //
+  // 🚨 **The defect printed a good cut as a broken one.** `release.yml`'s
+  // confirmation step waited sixty seconds for a registry whose own notice on
+  // publish says *"Your package is being processed and may take a few minutes
+  // to become available"*, and then ended in a trailing `npm view`'s raw
+  // `E404`. So two different facts left the same red — *the registry has not
+  // served this version yet*, which says nothing at all about the package, and
+  // *the artifact is there and does not build*, which is the only thing the
+  // step exists to find. All three cuts that ran that step went red and all
+  // three packages were fine; RELEASING.md carries the figures and their
+  // sources.
+  //
+  // ⭐ **Why these three can exist at all.** The card that designed the step
+  // (#556) said its own firing could not be observed without a real publish,
+  // and for a `run:` body that is simply true. The repair moves the wait into
+  // `scripts/install_smoke.ts`, and a script is a subprocess with a PATH in
+  // front of it: an `npm` that answers E404 drives the first outcome and one
+  // that serves the version and cannot hand over its tarball drives the second,
+  // offline, in seconds. `CUR31` then holds the workflow and the document to
+  // what those two runs printed. ⚠️ What none of them reaches is a real
+  // publish — that is still the confirmation's own ground, and it is why the
+  // GATE is `ci.yml`'s `installs` job and this is a confirmation beside it.
+  {
+    interface WfStep {
+      name?: string;
+      uses?: string;
+      run?: string;
+      if?: string;
+    }
+    interface WfJob {
+      if?: string;
+      'timeout-minutes'?: number;
+      steps?: WfStep[];
+    }
+    interface Workflow {
+      on?: { workflow_dispatch?: { inputs?: Record<string, { required?: boolean }> } };
+      jobs?: Record<string, WfJob>;
+    }
+
+    /** A directory holding an `npm` that answers instead of the registry, to go first on PATH. */
+    const fakeRegistry = (body: string): string => {
+      const dir = mkdtempSync(join(tmpdir(), 'rigc-fake-npm-'));
+      writeFileSync(join(dir, 'npm'), body);
+      chmodSync(join(dir, 'npm'), 0o755);
+      return dir;
+    };
+    /** The smoke, run the way a caller runs it, with that fake registry in front of the real one. */
+    const smokeWith = (dir: string | null, argv: readonly string[]): { status: number; out: string } => {
+      const ran = spawnSync(process.execPath, ['scripts/install_smoke.ts', ...argv], {
+        cwd: root,
+        encoding: 'utf8',
+        env: dir === null ? process.env : { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH ?? ''}` },
+      });
+      return { status: ran.status ?? -1, out: `${ran.stdout ?? ''}${ran.stderr ?? ''}` };
+    };
+    const FAKE = '0.0.0-fake-registry';
+    const SPEC = `spine-rigc@${FAKE}`;
+
+    // --- CUR29: a version nobody is serving is a confirmation not taken ------
+    const nothingServed = fakeRegistry(
+      '#!/bin/sh\n' +
+        '# A registry that has finished processing nothing: every version is a 404.\n' +
+        'if [ "$1" = "view" ]; then\n' +
+        '  echo "npm error code E404" >&2\n' +
+        '  echo "npm error 404 No match found for version ${2#spine-rigc@}" >&2\n' +
+        '  exit 1\n' +
+        'fi\n' +
+        'echo "npm error this fake registry answers nothing but view" >&2\n' +
+        'exit 1\n',
+    );
+    // 0.05 min = 3 s, which is one step of the backoff: the first ask, a sleep
+    // capped by what is left of the wait, and a second ask that runs out of it.
+    // Short enough to sit in a suite, long enough that the elapsed line below
+    // is printed rather than skipped.
+    const late = smokeWith(nothingServed, ['--source', 'registry', '--version', FAKE, '--case', 'clean', '--wait', '0.05']);
+    rmSync(nothingServed, { recursive: true, force: true });
+    const byHandPrinted = /take it by hand once the registry answers: ([^\n]*?)(?:\. |$)/m.exec(late.out)?.[1]?.trim() ?? '';
+    const lateAttempts = Number(/\((\d+) attempt\(s\)/.exec(late.out)?.[1] ?? '0');
+    const lateProbes = [
+      ...(late.status === 3
+        ? []
+        : [`a registry serving nothing ended the smoke at exit ${late.status}, and 3 — the code that means the confirmation was not taken — was required`]),
+      ...(late.out.includes('SMOKE_REGISTRY_SERVED_THE_VERSION') ? [] : ['the run named no SMOKE_REGISTRY_SERVED_THE_VERSION, so the wait ended with nothing anybody can grep for']),
+      ...(late.out.includes('the confirmation was NOT taken') ? [] : ['the run does not say the confirmation was NOT taken, which is the whole of what a wait that ran out knows']),
+      ...(byHandPrinted === `bun run smoke -- --source registry --version ${FAKE} --case clean`
+        ? []
+        : [`the run offers ${byHandPrinted === '' ? 'no by-hand command' : `\`${byHandPrinted}\``}, and a cut whose wait ran out has nothing else to act on`]),
+      ...(late.out.includes('npm error code E404')
+        ? []
+        : ['the message does not name what npm actually said, so a network that is down and a version that is late would read the same']),
+      ...(lateAttempts >= 2 ? [] : [`the wait made ${lateAttempts} attempt(s) inside 3 s, so nothing here measured a second ask`]),
+      ...(/attempt 1, \dm \d\ds into a 0\.05 min wait/.test(late.out) ? [] : ['no attempt announced its own elapsed time, which is what the sixty-second step could not be read for']),
+      ...(late.out.includes('does not build') ? ['the run ALSO printed the served-and-broken message, so the two outcomes are still one message'] : []),
+      ...(/PASS {2}SMOKE_CASE/.test(late.out) ? ['a case ran and passed against a registry that is serving nothing'] : []),
+    ];
+    const lateHeld = lateProbes.length === 0;
+    say(
+      'CUR29_A_VERSION_THE_REGISTRY_HAS_NOT_SERVED_IS_A_CONFIRMATION_NOT_TAKEN_AND_SAYS_SO',
+      lateHeld,
+      probeDetail(
+        lateHeld,
+        lateProbes,
+        'an `npm` on PATH that answers every version with E404 ends `--source registry --wait 0.05` at exit ' +
+          `${late.status} after ${lateAttempts} attempt(s), naming SMOKE_REGISTRY_SERVED_THE_VERSION, the ` +
+          "confirmation NOT taken, npm's own E404 and the by-hand command — and printing nothing about an " +
+          'artifact that does not build, because none was fetched',
+      ),
+      'the first real run of the confirmation step, on v0.22.0, went red 63 s after a publish the registry served ' +
+        '4 min 11 s later — and the package was fine. What was wrong was the clock and the message, so the wait is ' +
+        "now the script's and the two outcomes carry different exit codes",
+    );
+
+    // --- CUR30: a version that IS served is the artifact, and its red says so -
+    const servesThenBreaks = fakeRegistry(
+      '#!/bin/sh\n' +
+        '# The version is served; the tarball behind it cannot be had.\n' +
+        'if [ "$1" = "view" ]; then\n' +
+        `  echo "${FAKE}"\n` +
+        '  exit 0\n' +
+        'fi\n' +
+        'if [ "$1" = "pack" ]; then\n' +
+        '  echo "npm error code E500" >&2\n' +
+        '  echo "npm error 500 the tarball this version names is not there" >&2\n' +
+        '  exit 1\n' +
+        'fi\n' +
+        'exit 1\n',
+    );
+    const broken = smokeWith(servesThenBreaks, ['--source', 'registry', '--version', FAKE, '--case', 'clean', '--wait', '0.05']);
+    rmSync(servesThenBreaks, { recursive: true, force: true });
+    const brokenProbes = [
+      ...(broken.status === 1 ? [] : [`a served version whose artifact fails ended the smoke at exit ${broken.status}, and 1 was required`]),
+      ...(broken.status === late.status ? [`both outcomes exited ${broken.status}, which is the defect this pair is written against`] : []),
+      ...(broken.out.includes('the published artifact does not build') ? [] : ['the run never says the published artifact does not build, so a red cut still reads as a slow registry']),
+      ...(broken.out.includes(`the registry served ${SPEC}`) ? [] : ["the run does not record that the registry answered, which is what makes this red the artifact's rather than the wait's"]),
+      ...(broken.out.includes('SMOKE_REGISTRY_SERVED_THE_VERSION') ? ['the run ALSO printed the not-served message on a version the registry served'] : []),
+      ...(broken.out.includes('confirmation was NOT taken') ? ['the run says the confirmation was not taken, and it was: the artifact was asked for and went red'] : []),
+      ...(broken.out.includes('SMOKE_PACK_WROTE_A_TARBALL') ? [] : ['no fault named the step that went red, so this case cannot say what it measured']),
+    ];
+    const brokenHeld = brokenProbes.length === 0;
+    say(
+      'CUR30_A_VERSION_THE_REGISTRY_DOES_SERVE_IS_THE_ARTIFACT_AND_A_RED_ON_IT_SAYS_SO',
+      brokenHeld,
+      probeDetail(
+        brokenHeld,
+        brokenProbes,
+        `an \`npm\` that serves ${SPEC} and cannot hand over its tarball ends the same command at exit ` +
+          `${broken.status} — the published artifact does not build — where the registry serving nothing ends it ` +
+          `at exit ${late.status}. Two fake registries, two codes, and neither message reaches the other run`,
+      ),
+      'these two are one control in two halves. One red for both facts was the whole of issue #563, so the half ' +
+        'that proves the repair is not "the wait is named" but "the wait is named and a broken artifact is still ' +
+        'named something else"',
+    );
+
+    // --- CUR31: the workflow and the document, against those two runs --------
+    const help = smokeWith(null, ['--help']);
+    const confirmationFaults = (yml: string, doc: string, helpText: string): string[] => {
+      const faults: string[] = [];
+      let parsed: Workflow;
+      try {
+        parsed = Bun.YAML.parse(yml) as Workflow;
+      } catch (error) {
+        return [`release.yml does not parse as YAML: ${error instanceof Error ? error.message : String(error)}`];
+      }
+      const jobs = Object.entries(parsed.jobs ?? {});
+      if (jobs.length === 0) return ['release.yml declares no jobs at all, so every clause below would be reading nothing'];
+      const bodyOf = (job: WfJob): string => (job.steps ?? []).map((step) => step.run ?? '').join('\n');
+      const usesOf = (job: WfJob): string => (job.steps ?? []).map((step) => step.uses ?? '').join('\n');
+
+      // 1. A dispatch exists, and it takes the version it is asked to confirm.
+      const dispatch = parsed.on?.workflow_dispatch;
+      const input = dispatch?.inputs?.version;
+      if (dispatch === undefined) {
+        faults.push('release.yml declares no `workflow_dispatch`, so a confirmation whose wait ran out can only be re-taken by publishing again');
+      } else if (input === undefined) {
+        faults.push('`workflow_dispatch` declares no `version` input, so a re-run has nothing to say which cut it is confirming');
+      } else if (input.required !== true) {
+        faults.push('the `version` input is not required, so a dispatch with that field left empty would confirm whatever the checked-out package.json last said');
+      }
+
+      // 2. What a dispatch can reach. The guard is structural — a job that
+      //    publishes has to be held to the push event — rather than a list of
+      //    step names, because a step added tomorrow is exactly what a name
+      //    list cannot see.
+      const publishers = jobs.filter(([, job]) => /npm publish/.test(bodyOf(job)));
+      if (publishers.length !== 1) {
+        faults.push(`${publishers.length} job(s) run \`npm publish\` where exactly one does today — this clause is reading something other than the publish`);
+      }
+      for (const [name, job] of jobs) {
+        const cuts = /npm publish/.test(bodyOf(job)) || /release-please/.test(usesOf(job));
+        const heldToAPush = job.if !== undefined && /github\.event_name\s*==\s*'push'/.test(job.if);
+        if (cuts && !heldToAPush) {
+          faults.push(
+            `job "${name}" publishes or cuts a release and its \`if\` is ${JSON.stringify(job.if ?? null)}, which does not hold it to a push — a workflow_dispatch would reach it`,
+          );
+        }
+      }
+
+      // 3. Every call of the confirmation, and the flags the document states.
+      const calls: Array<{ job: string; argv: string[]; timeout: number | undefined }> = [];
+      for (const [name, job] of jobs) {
+        for (const step of job.steps ?? []) {
+          const line = (step.run ?? '').split('\n').map((one) => one.trim()).find((one) => one.startsWith('bun run smoke'));
+          if (line === undefined) continue;
+          calls.push({ job: name, argv: line.split(/\s+/).slice(4), timeout: job['timeout-minutes'] });
+        }
+      }
+      if (calls.length < 2) {
+        faults.push(`${calls.length} step(s) call \`bun run smoke\`, and the cut's own path and the re-run path are two — a confirmation on one path only is the one that cannot be re-taken`);
+      }
+      const after = (argv: readonly string[], name: string): string | null => {
+        const at = argv.indexOf(name);
+        return at === -1 || at === argv.length - 1 ? null : argv[at + 1];
+      };
+      const waits = new Set<string>();
+      for (const call of calls) {
+        if (after(call.argv, '--source') !== 'registry') faults.push(`the smoke call in job "${call.job}" does not pass \`--source registry\`, so it confirms a tarball this tree packed rather than the published one`);
+        if (after(call.argv, '--version') === null) faults.push(`the smoke call in job "${call.job}" passes no \`--version\``);
+        if (after(call.argv, '--case') !== 'clean') faults.push(`the smoke call in job "${call.job}" does not pass \`--case clean\`, so a cut would run the plants against the published package`);
+        const wait = after(call.argv, '--wait');
+        if (wait === null) {
+          faults.push(`the smoke call in job "${call.job}" passes no \`--wait\`, so how long a cut waits for the registry is not readable in the file whose own timeout has to cover it`);
+          continue;
+        }
+        waits.add(wait);
+        const minutes = Number(wait);
+        if (!Number.isFinite(minutes) || minutes <= 0) {
+          faults.push(`the smoke call in job "${call.job}" waits ${JSON.stringify(wait)}, which is not a number of minutes`);
+        } else if (call.timeout === undefined || call.timeout <= minutes) {
+          faults.push(
+            `job "${call.job}" waits ${wait} min for the registry under a timeout-minutes of ${String(call.timeout)}, so the job is cancelled before its own wait can end — and a cancelled job is neither of the two outcomes`,
+          );
+        }
+      }
+      if (waits.size > 1) faults.push(`the confirmation is called with ${[...waits].join(' and ')} minute(s) of wait on different paths, so a re-run does not wait the way the cut did`);
+
+      // 4. The document, against the workflow and against the script's own
+      //    `--help`, and never against a figure written here.
+      for (const wait of waits) {
+        if (!doc.includes(`--wait ${wait}`)) faults.push(`the workflow waits ${wait} min for the registry and RELEASING.md states no \`--wait ${wait}\``);
+      }
+      const codes = [...helpText.matchAll(/^ {2}(\d)\s{2}\S/gm)].map((found) => found[1]);
+      if (codes.length < 4) {
+        faults.push(`\`--help\` lists ${codes.length} exit code(s) where the script distinguishes four — this clause is reading the wrong block`);
+      }
+      for (const code of codes) {
+        if (!new RegExp(`^\\|\\s*\`${code}\`\\s*\\|`, 'm').test(doc)) faults.push(`the script's \`--help\` lists exit code ${code} and RELEASING.md has no row for it`);
+      }
+      for (const found of doc.matchAll(/^\|\s*`(\d)`\s*\|/gm)) {
+        if (!codes.includes(found[1])) faults.push(`RELEASING.md states an exit code ${found[1]} that the script's \`--help\` does not list`);
+      }
+      // 5. The by-hand command, taken from what the run above PRINTED rather
+      //    than written out here a second time: somebody whose cut timed out is
+      //    sent to this document, and the document has to carry the command the
+      //    tool is offering them.
+      if (byHandPrinted !== '' && !doc.includes(byHandPrinted.split(FAKE).join('<version>'))) {
+        faults.push(`the run whose wait ended offers \`${byHandPrinted}\` and RELEASING.md carries no such line with \`<version>\` in it`);
+      }
+      return faults;
+    };
+
+    const ymlText = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+    const docText = readFileSync(join(root, 'RELEASING.md'), 'utf8');
+    const standing = confirmationFaults(ymlText, docText, help.out);
+    const jobCount = Object.keys((Bun.YAML.parse(ymlText) as Workflow).jobs ?? {}).length;
+    /** An edit that has to change the text it is given — a plant that planted nothing is a fault of its own. */
+    const plantInto = (text: string, from: string, to: string): string | null => (text.includes(from) ? text.split(from).join(to) : null);
+    const plants: Array<{ what: string; yml: [string, string] | null; doc: [string, string] | null; quiet?: boolean }> = [
+      { what: 'the publishing job stops being held to a push', yml: ["    if: ${{ github.event_name == 'push' }}\n", ''], doc: null },
+      { what: 'the workflow stops taking a dispatch', yml: ['  workflow_dispatch:\n', '  workflow_call:\n'], doc: null },
+      { what: 'the re-run path waits three times as long as the cut did', yml: ['--version "$VERSION" --wait 15', '--version "$VERSION" --wait 45'], doc: null },
+      { what: 'the cut stops passing a wait at all', yml: ['--version "$version" --wait 15 --case clean', '--version "$version" --case clean'], doc: null },
+      { what: 'the re-run stops naming the case', yml: ['--version "$VERSION" --wait 15 --case clean', '--version "$VERSION" --wait 15'], doc: null },
+      { what: 'the publishing job is given a timeout under its own wait', yml: ['    timeout-minutes: 30\n', '    timeout-minutes: 10\n'], doc: null },
+      { what: 'the document states a wait the workflow does not pass', yml: null, doc: ['--wait 15', '--wait 5'] },
+      { what: 'the document drops the row for the not-served exit code', yml: null, doc: ['| `3` |', '| `9` |'] },
+      { what: 'the confirmation job is renamed', yml: ['\n  confirm:\n', '\n  reconfirm:\n'], doc: null, quiet: true },
+    ];
+    const plantProbes: string[] = [];
+    const plantCases: string[] = [];
+    for (const plant of plants) {
+      const yml = plant.yml === null ? ymlText : plantInto(ymlText, plant.yml[0], plant.yml[1]);
+      const doc = plant.doc === null ? docText : plantInto(docText, plant.doc[0], plant.doc[1]);
+      if (yml === null || doc === null) {
+        plantProbes.push(`"${plant.what}": the edit found nothing to change, so this plant was never made`);
+        continue;
+      }
+      const raised = raisedBy(confirmationFaults(yml, doc, help.out), { was: standing });
+      if (plant.quiet === true) {
+        if (raised.length > 0) plantProbes.push(`"${plant.what}" changes nothing this gate is about and ${raised.length} fault(s) fired: ${raised[0].slice(0, 160)}`);
+        plantCases.push(`${plant.what} -> quiet`);
+        continue;
+      }
+      if (raised.length === 0) plantProbes.push(`"${plant.what}" was planted and this gate did not fire`);
+      plantCases.push(`${plant.what} -> ${raised.length}`);
+    }
+    const confirmationHeld = standing.length === 0 && plantProbes.length === 0;
+    say(
+      'CUR31_THE_RELEASE_WORKFLOW_CALLS_THE_CONFIRMATION_AS_ITS_DOCUMENT_STATES_AND_A_DISPATCH_REACHES_NOTHING_ELSE',
+      confirmationHeld,
+      probeDetail(
+        confirmationHeld,
+        [...standing, ...plantProbes],
+        `release.yml's ${jobCount} job(s) read as a workflow whose publish is held to a push and whose dispatch ` +
+          'takes a required `version`, with every `bun run smoke` call passing the same wait under a timeout that ' +
+          'covers it, and RELEASING.md carrying that wait, a row for each exit code `--help` lists, and the ' +
+          `by-hand command the run above printed — over ${plants.length} plant(s): ${plantCases.join('; ')}`,
+      ),
+      'a `run:` body cannot be red-firsted anywhere, so the wait moved into a script and what stayed in the ' +
+        'workflow is a call. This is what keeps the call honest — and the quiet plant is what says the scan is ' +
+        'structural rather than a search for the job that happens to be named `confirm`',
+    );
+  }
+
   // --- CUR32–CUR34: a filesystem path derived from `URL.pathname` (#558) ----
   //
   // `URL.pathname` is percent-encoded. A checkout at `/Users/x/My Rigs/rigc`
@@ -32831,7 +33146,13 @@ function main(): void {
     'words; and the modules `src/` reaches outside itself against `CLAUDE.md`\'s bullet, whose verdict is ' +
     'deliberately NOT the equality above, because a doctrine naming every `files` entry is the defect rather than ' +
     'the repair (#524, #516) — carrying the clause nothing had ever checked, that `files` ships every module ' +
-    '`src/` reaches)';
+    '`src/` reaches. Then the post-publish confirmation (#563), which is the same question about a surface that ' +
+    'had none: the wait that used to sit in a `release.yml` `run:` body, where nothing could ever fire it, driven ' +
+    'here against fake registries on `PATH` — one serving nothing, one serving the version and unable to hand ' +
+    'over its tarball — because a version the registry has not finished processing says nothing about the ' +
+    'package and must not leave the red a broken artifact leaves; and the workflow and RELEASING.md held to what ' +
+    'those two runs printed, the publish job read structurally rather than by step name, so a dispatched re-run ' +
+    'of a confirmation cannot reach it)';
   const skillSurface =
     ', + ' + n('agent-skill') + ' agent-skill controls (issue #366 — the surface an agent discovers rigc through: every `skills/*/SKILL.md` ' +
     'carrying the frontmatter the Agent Skills specification requires (a `name` equal to its directory, a ' +
