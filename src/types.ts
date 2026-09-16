@@ -197,6 +197,8 @@ export interface MotionKey {
    *   scale      -> [x, y] as multipliers (1 = setup)
    *   rotate     -> [degrees]
    *   mix        -> [0..1] physics authority
+   *   inertia / strength / damping / mass / wind / gravity
+   *              -> [value]; the physics constraint's own setting, over time
    *   reset      -> null; the key is the event
    *
    * ⭐ On a track that names a `group`, this may instead be a **map keyed by
@@ -259,8 +261,30 @@ export type BoneProperty =
   | 'sheary'
   | 'rotate';
 
-/** Physics timelines the compiler emits. `reset` carries no value at all. */
-export type PhysicsProperty = 'mix' | 'reset';
+/**
+ * Physics timelines the compiler emits — all eight `SkeletonJson`'s physics
+ * branch reads, in the order it reads them (`SkeletonJson.js:1063-1094`).
+ *
+ * Six of them are one number that overrides the constraint's own setting for
+ * the length of an animation: `[inertia]`, `[strength]`, `[damping]`, `[mass]`,
+ * `[wind]`, `[gravity]`. `mix` is the constraint's authority and `reset`
+ * carries no value at all.
+ *
+ * ⚠️ A key that omits its value reads **0** on all six, and 1 on `mix` — the
+ * per-key default, which is NOT the constraint default (`inertia` 0.5,
+ * `strength` 100, `damping` 0.85, `mass` 1). rigc never omits a channel, so the
+ * distinction only bites a reader comparing an emitted file with an editor
+ * export; `PHYSICS_TRACKS` in `compile.ts` carries the argument.
+ */
+export type PhysicsProperty =
+  | 'inertia'
+  | 'strength'
+  | 'damping'
+  | 'mass'
+  | 'wind'
+  | 'gravity'
+  | 'mix'
+  | 'reset';
 
 /**
  * Path constraint timelines. `mix` is three values in one key —

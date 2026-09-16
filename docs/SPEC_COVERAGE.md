@@ -658,8 +658,7 @@ editor-made meshes — those arrive as authored `uvs`/`triangles`/`weights`.
 | `slots.rgba` | ✅ |
 | `slots.rgb`, `alpha` | ❌ emitted (validator knows the channel counts) |
 | `slots.rgba2`, `rgb2` | 🚫 **A12_NO_DARK_COLOR** (`validate.ts:257-261`) |
-| `physics.mix`, `physics.reset` | ✅ (`PHYSICS_TRACKS`, `compile.ts:87-90`) |
-| `physics.inertia/strength/damping/mass/wind/gravity` | ❌ |
+| `physics.inertia/strength/damping/mass/wind/gravity`, `physics.mix`, `physics.reset` | ✅ — all eight (`PHYSICS_TRACKS` in `compile.ts`), authored as `tracks` entries naming `physics`. ⚠️ Their per-key defaults are the parser's, and part 1-8 above is the source: 0 on the six, 1 on `mix`. Not the constraint defaults at `:306-312` |
 | `ik`, `transform` | ✅ — one unnamed timeline per constraint, keyed by the motion spec's `ik` / `transform` arrays |
 | `path.position/spacing/mix`, `slider.time/mix` | ✅ (`PATH_TRACKS` / `SLIDER_TRACKS`) — authored as `tracks` entries naming `path` or `slider`, the same shape as `physics`, since both groups put named timelines under a constraint name. `path.mix` is one timeline of three channels |
 | `attachments.<skin>.…deform` | ❌ (validator knows it: 1 channel, `validate.ts:104-107`) |

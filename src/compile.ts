@@ -754,12 +754,38 @@ const BONE_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
 };
 
 /**
- * Physics timelines. `mix` is the constraint's authority; `reset` is an event
- * with no value — one key at the entry frame stops the constraint from flying
- * in from whatever pose the previous animation left — solved in DATA rather
- * than in caller glue.
+ * Physics timelines — the eight `SkeletonJson`'s physics branch reads
+ * (`SkeletonJson.js:1063-1094`), in the order it reads them. `mix` is the
+ * constraint's authority; `reset` is an event with no value — one key at the
+ * entry frame stops the constraint from flying in from whatever pose the
+ * previous animation left — solved in DATA rather than in caller glue.
+ *
+ * 🚨 **`identity` here is the PER-KEY default, and for six of the eight it is
+ * not the constraint's own default.** The parser sets `defaultValue = 0` at
+ * `:1062` and only `mix` reassigns it (`:1090`), so an `inertia` key that omits
+ * `value` reads **0** — not the 0.5 that `:306` gives a constraint that states
+ * no `inertia`. Two different tables of defaults sit forty lines apart in one
+ * file (`PHYSICS_PARAMS` above holds the other one), and reading the setup
+ * column into this one would emit a `damping` timeline whose omitted keys mean
+ * 0.85 to the author and 0 to the runtime. Nothing here depends on the number,
+ * because `compileValueTrack` writes every field explicitly — it is recorded
+ * because a reader checking rigc against the parser will trip over it.
+ *
+ * ⚠️ `mass` is the one whose keyed value is not what the runtime stores:
+ * `PhysicsConstraintMassTimeline.set` is `pose.massInverse = 1 / value`
+ * (`Animation.js:2132-2145`, "The timeline values are not inverted"), so the
+ * key states a mass and the pose holds its reciprocal. A `mass` key of 0 is an
+ * infinite `massInverse`, which is the setup-pose failure `A23` names — and
+ * A23 reads the setup pose only, so a timeline that keys it there is not
+ * covered by anything.
  */
 const PHYSICS_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
+  inertia: { fields: ['value'], identity: [0] },
+  strength: { fields: ['value'], identity: [0] },
+  damping: { fields: ['value'], identity: [0] },
+  mass: { fields: ['value'], identity: [0] },
+  wind: { fields: ['value'], identity: [0] },
+  gravity: { fields: ['value'], identity: [0] },
   mix: { fields: ['value'], identity: [1] },
   reset: { fields: [], identity: [] },
 };

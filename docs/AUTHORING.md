@@ -2334,6 +2334,7 @@ a deform). Folding them in would make `v` mean four different things depending o
 | `bone` | `translatex`, `translatey`, `scalex`, `scaley`, `shearx`, `sheary`, `rotate` | `[value]` |
 | `slot` | `rgba` | `[r, g, b, a]` in 0..1 |
 | `slot` | `attachment` | the attachment name, or `null` for "show nothing" |
+| `physics` | `inertia`, `strength`, `damping`, `mass`, `wind`, `gravity` | `[value]` — the constraint's own tuning, keyed over time |
 | `physics` | `mix` | `[mix]`, 0..1 — the constraint's authority |
 | `physics` | `reset` | `null` — the key *is* the event |
 | `path` | `position`, `spacing` | `[value]` — see §4.12 |
@@ -2343,6 +2344,29 @@ a deform). Folding them in would make `v` mean four different things depending o
 
 Translate values are **relative to the bone's setup position**; scale values are
 multipliers where `1` is setup; rotation is in degrees.
+
+**A physics constraint's six tuning timelines override §4.6's table for the
+length of an animation.** `{ "physics": "hair", "property": "wind", "keys": […] }`
+is a wind that rises and falls; `damping` is how fast the jiggle settles,
+`strength` how hard it is pulled back, `inertia` how much of the bone's motion it
+carries, `mass` the weight it swings with, `gravity` the constant pull. They are
+the same field names §4.6 uses at rest, and one key states the whole value — not
+a delta from the constraint's own setting.
+
+- ⚠️ **The per-key default is 0 on all six, and 1 on `mix` — not the
+  constraint's default.** The parser opens every physics key at 0 and only
+  `mix` reassigns it, so a key that omits its number reads 0 for `damping`, not
+  the 0.85 §4.6 gives a constraint that states none. rigc never omits a channel,
+  so this bites only when you compare an emitted file against an editor export,
+  or when you read an export by hand: a `damping` key with no `value` in
+  somebody else's file means **0**.
+- ⚠️ `mass` is the one whose keyed number is not what the runtime stores. The
+  key states a mass and the pose holds `1 / mass`, so a `mass` key of `0` is an
+  infinite inverse mass — the constraint stops moving. `A23` refuses that in the
+  §4.6 table and does **not** look at timeline keys, so this one is on you.
+- `A23_PHYSICS_CONSTRAINT_EFFECTIVE` likewise judges the constraint at rest. A
+  `mix` timeline that sits at 0 for a whole animation, or a `damping` timeline
+  outside `(0, 1)`, is valid Spine that no gate here names.
 
 On a track that names a `group`, one key's `v` may instead be a **map keyed by
 member name**, whose entries are each exactly the `v` above — or a `derive`
@@ -2629,7 +2653,9 @@ key times. One lag, one place.
 
 `name → { bone, x?, y?, rotate?, scaleX?, shearX?, inertia?, strength?, damping?,
 mass?, wind?, gravity?, mix?, fps?, limit? }`. These are emitted into the 4.3
-`constraints` array. `mass: 0` becomes an infinite inverse mass and `damping ≥ 1`
+`constraints` array. Seven of them — the six tuning numbers and `mix` — can also
+be **keyed over time** as `tracks` entries naming this constraint (§4.4); this
+table is the value at rest, and a timeline overrides it while it plays. `mass: 0` becomes an infinite inverse mass and `damping ≥ 1`
 never settles — both are `A23`. Every field but `bone` and `note` must be a finite
 number: a non-number is rounded to `NaN` and emitted as `null`, which the runtime
 reads as **zero**, so `"mass": "heavy"` used to ship a constraint that never
@@ -3971,7 +3997,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | a draw-order key names a slot the skeleton does not have, offsets one slot twice, puts a slot outside the slots array, or lists its offsets out of slot order (§4.7). The only assertion that runs **before** `A00` — the last of those shapes makes the loader spin rather than return, so the round trip is refused instead of attempted |
 | `A32_EVENT_KEYS_RESOLVE` | both | an event key fires a name the skeleton's `events` block does not declare, sits earlier in time than the key before it, or sets `volume`/`balance` on an event with no `audio` (§4.8). **SKIP** when no animation carries an event timeline |
 | `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | a bounding box, clipping polygon or path whose `vertexCount` is missing or disagrees with its vertex array, a weighted run that decodes to the wrong number of vertices or an out-of-range bone index, a clipping `end` naming a slot the skeleton does not have, a path whose vertex count is not a multiple of 3, or a path `lengths` array that does not strictly increase (§3.4). **SKIP** when the skeleton carries none of the three |
-| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | an `ik`, `transform`, `path` or `slider` timeline names a constraint the skeleton does not declare, names one of another type, or carries no keys at all (§4.9, §4.10, §4.12). The last is silent: the parser reads key 0, finds nothing, and skips the timeline. **SKIP** when no animation carries one |
+| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | an `ik`, `transform`, `path`, `physics` or `slider` timeline names a constraint the skeleton does not declare, names one of another type, or carries no keys at all (§4.4, §4.9, §4.10, §4.12). The last is silent: the parser reads key 0, finds nothing, and skips the timeline. **SKIP** when no animation carries one |
 | `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | both | a deform key's run runs past the end of the attachment's deform array, holds a non-finite number, has an empty key array, or names a skin/slot/attachment triple that does not resolve (§4.11). The overrun is the quiet one — the parser copies into a `Float32Array` and drops the tail. ⛔ It does **not** require pair alignment: the runtime has no such rule and a trimmed editor run legitimately starts and ends mid-pair (§4.11, issue #262). **SKIP** when no animation carries a deform timeline |
 | `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying its `mix` (§3.5.1). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. **SKIP** when the skeleton declares no path constraint |
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |

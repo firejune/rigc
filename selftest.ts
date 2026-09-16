@@ -80,6 +80,7 @@ import {
   PathAttachment,
   PathConstraint,
   Physics,
+  PhysicsConstraint,
   Sequence,
   Skeleton,
   SkeletonJson,
@@ -7221,7 +7222,248 @@ function runConstraintAndDeformSuite(): number {
       'compiler had aligned the run to something, and nothing in the parser is aligned to anything',
   );
 
+  // --- the six physics value timelines (issue #593) -------------------------
+  //
+  // `PHYSICS_TRACKS` carried `mix` and `reset` only, so a motion spec could say
+  // how much authority a physics constraint had and nothing about what it was
+  // — no wind that rises, no mass that changes, no damping that settles faster
+  // in one animation than another. Six timelines the parser reads had no field
+  // in the format, and the corpus found it rather than a reading of the parser:
+  // one of the twelve public example exports keys five of them, 69 timelines
+  // deep, and `ingest` refused the whole file by name.
+  //
+  // Three controls, because three different things can be right in isolation
+  // and wrong together: the compiler can write the numbers it was given into a
+  // timeline the parser never reads; the parser can read a timeline into a
+  // property nothing plays; and the table's per-key defaults can be the wrong
+  // ones and stay invisible for as long as rigc never omits a channel.
+  //
+  // ⚠️ Every one of them goes through `gateProbeOrRefusal` and poses only once
+  // the compile has come back, for the reason that helper exists: these are
+  // POSITIVE controls, and the red-first state for any of them is a table with
+  // a track missing, which is a `CompileError`. Posing first would take the
+  // suite down at the first one and hide the state of the other two.
+  const physicsDirs = writeProbeRig(PHYSICS_TIMELINE_RIG);
+  const physicsEmitted: Array<Record<string, unknown>> = [];
+  const physicsGate = gateProbeOrRefusal(physicsDirs, physicsTimelineMotion(), physicsEmitted);
+  const physicsData = physicsGate.refused === null ? timelinePosable(physicsDirs, physicsTimelineMotion()).data : null;
+  const physicsTimelines = emittedPhysicsTimelines(physicsEmitted[0]);
+  const wrongKeys = PHYSICS_TRACK_KEYS.flatMap(([property, from, to]) => {
+    const keys = physicsTimelines[property];
+    if (!Array.isArray(keys) || keys.length !== 2) return [`${property}: ${keys === undefined ? 'no timeline' : `${keys?.length} key(s)`}`];
+    const got = keys.map((key) => (key as Record<string, unknown>).value);
+    return got[0] === from && got[1] === to ? [] : [`${property}: [${String(got[0])}, ${String(got[1])}] not [${from}, ${to}]`];
+  });
+  const resetKeys = physicsTimelines.reset as Array<Record<string, unknown>> | undefined;
+  const resetIsAnEvent = resetKeys?.length === 1 && resetKeys[0].value === undefined;
+  // The mutant for A34's new arm. Renaming the constraint under `physics` and
+  // nowhere else leaves a group that names a constraint the skeleton has not
+  // got — the silent half of A34, since `findConstraint` misses and the loader
+  // throws in the CONSUMER's process. Before #593 this same skeleton reached a
+  // SKIP: the rig keys physics timelines and nothing else, and the loop A34
+  // walked enumerated `path` and `slider` only, so it saw no timeline at all.
+  const ghosted =
+    physicsGate.refused === null
+      ? gateProbeArtifacts(physicsDirs, physicsTimelineMotion(), (skeleton) => {
+          const physics = ((skeleton.animations as Record<string, Record<string, unknown>>).jig.physics ?? {}) as Record<string, unknown>;
+          physics.ghost = physics.jiggle;
+          delete physics.jiggle;
+        })
+      : null;
+  const ghostFailures = (ghosted?.failures ?? []).filter((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS');
+  const ghostSkipped = (ghosted?.skipped ?? []).some((s) => s.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS');
+  say(
+    'T62_ALL_EIGHT_PHYSICS_TIMELINES_COMPILE_GREEN_WITH_THE_SPECS_OWN_NUMBERS_AND_A34_REFUSES_A_TARGET_THAT_IS_NOT_THERE',
+    physicsGate.refused === null &&
+      physicsGate.report?.failures.length === 0 &&
+      (physicsGate.report?.passed.includes('A34_CONSTRAINT_TIMELINE_TARGETS') ?? false) &&
+      wrongKeys.length === 0 &&
+      resetIsAnEvent &&
+      ghosted !== null &&
+      !ghostSkipped &&
+      ghostFailures.length === 1 &&
+      ghostFailures[0].detail.includes('"ghost"') &&
+      ghostFailures[0].detail.includes('jiggle'),
+    physicsGate.refused !== null
+      ? `refused with: ${physicsGate.refused}`
+      : `${Object.keys(physicsTimelines).length} timeline(s) emitted under physics "jiggle" ` +
+        `(${Object.keys(physicsTimelines).join(', ')}); ${PHYSICS_TRACK_KEYS.length} value track(s) ` +
+        `${wrongKeys.length === 0 ? 'hold the spec\'s numbers' : `WRONG: ${wrongKeys.join('; ')}`}; reset ` +
+        `${resetIsAnEvent ? 'is one valueless key' : JSON.stringify(resetKeys)}; A34 ` +
+        `${physicsGate.report?.passed.includes('A34_CONSTRAINT_TIMELINE_TARGETS') ? 'ran and passed' : 'did NOT pass'}, ` +
+        `${physicsGate.report?.failures.length ?? 0} gate failure(s). Retargeted at a constraint that is not there: ` +
+        (ghostSkipped
+          ? 'A34 SKIPPED — it saw no constraint timeline in this skeleton at all'
+          : `${ghostFailures.length} A34 failure(s)${ghostFailures.length ? ` — ${ghostFailures.map((f) => f.detail).join('; ')}` : ''}`),
+    'the compiler half and the gate\'s, and A34 is named rather than counted because it did not walk the physics ' +
+      'group at all until this issue — it enumerated `path` and `slider` under a comment calling that "the physics ' +
+      'shape". The mutant is what makes that measurable rather than asserted: the SKIP clause is the state this ' +
+      'skeleton was in before, and a green here that came from an assertion which never ran is exactly the false ' +
+      'green this file exists to refuse',
+  );
+
+  const physicsPoseAt = (data: SkeletonData, sample: number): Record<string, number> => {
+    const constraint = poseAtSample(data, 'jig', 4, sample).findConstraint('jiggle', PhysicsConstraint)!;
+    return {
+      inertia: constraint.pose.inertia,
+      strength: constraint.pose.strength,
+      damping: constraint.pose.damping,
+      mass: 1 / constraint.pose.massInverse,
+      wind: constraint.pose.wind,
+      gravity: constraint.pose.gravity,
+      mix: constraint.pose.mix,
+    };
+  };
+  const posedStart = physicsData === null ? {} : physicsPoseAt(physicsData, 0);
+  const posedEnd = physicsData === null ? {} : physicsPoseAt(physicsData, 4);
+  const posedWrong = PHYSICS_TRACK_KEYS.filter(([property, from, to]) => !near(posedStart[property], from) || !near(posedEnd[property], to));
+  say(
+    'T63_POSED_THROUGH_SPINE_CORE_EACH_PHYSICS_PROPERTY_READS_THE_VALUE_ITS_TIMELINE_KEYED',
+    physicsData !== null && posedWrong.length === 0,
+    physicsData === null
+      ? `nothing was posed — the compile was refused with: ${physicsGate.refused}`
+      : PHYSICS_TRACK_KEYS.map(([property, from, to]) => `${property} ${posedStart[property]}→${posedEnd[property]} (keyed ${from}→${to})`).join(', '),
+    'the runtime half, and it is not the emitted file read twice: a timeline name the parser does not know is ' +
+      '`continue`d without a word (`SkeletonJson.js:1094`), so a misspelling emits, gates, diffs clean and plays ' +
+      'nothing. ⚠️ `mass` is read back as `1 / massInverse` because the key states a mass and the pose holds its ' +
+      'reciprocal (`Animation.js:2132-2145`) — a timeline that wrote the reciprocal would be off by 1/x² here and ' +
+      'by nothing at all in the file',
+  );
+
+  // The one number in `PHYSICS_TRACKS` that rigc's own output can never show is
+  // wrong, because `compileValueTrack` writes every channel: the value the
+  // PARSER reads where a key omits one. It is measured rather than read off the
+  // source, by deleting the field from an emitted key and posing what comes
+  // back — which is the same question `TIMELINE_KEY_RESTATED` answers for
+  // `ingest`, asked of the runtime instead of of a table.
+  let strippedFields = 0;
+  let strippedRead: Record<string, number> = {};
+  if (physicsGate.refused === null) {
+    const strippedMotion = join(physicsDirs.dir, 'stripped.motion.json');
+    writeFileSync(strippedMotion, `${JSON.stringify(physicsTimelineMotion(), null, 2)}\n`);
+    const strippedBuild = compile({
+      rigPath: physicsDirs.rigPath,
+      motionPath: strippedMotion,
+      outDir: physicsDirs.outDir,
+      imagesDir: physicsDirs.dir,
+    });
+    const strippedSkeleton = JSON.parse(strippedBuild.skeletonText) as Record<string, unknown>;
+    for (const keys of Object.values(emittedPhysicsTimelines(strippedSkeleton))) {
+      for (const key of (keys ?? []) as Array<Record<string, unknown>>) {
+        if (key.value === undefined) continue;
+        delete key.value;
+        strippedFields++;
+      }
+    }
+    const strippedData = posableFromText(
+      `${JSON.stringify(strippedSkeleton, null, 2)}\n`,
+      strippedBuild.atlasText,
+      physicsDirs.outDir,
+    ).data;
+    strippedRead = physicsPoseAt(strippedData, 4);
+  }
+  const defaultWrong = PHYSICS_TRACK_KEYS.filter(([property]) => !near(strippedRead[property], property === 'mix' ? 1 : 0));
+  say(
+    'T64_A_PHYSICS_KEY_THAT_OMITS_ITS_VALUE_READS_ZERO_ON_SIX_TRACKS_AND_ONE_ON_MIX',
+    strippedFields === PHYSICS_TRACK_KEYS.length * 2 && defaultWrong.length === 0,
+    physicsGate.refused !== null
+      ? `nothing was stripped — the compile was refused with: ${physicsGate.refused}`
+      : `${strippedFields} emitted "value" field(s) deleted; posed back as ` +
+        `${PHYSICS_TRACK_KEYS.map(([property]) => `${property}=${strippedRead[property]}`).join(', ')}` +
+        (defaultWrong.length === 0 ? '' : ` — WRONG on ${defaultWrong.map(([property]) => property).join(', ')}`),
+    'the per-key default is NOT the constraint default, and the two tables sit forty lines apart in one parser: ' +
+      '`:1062` opens at 0 and only `mix` reassigns it (`:1090`), while `:306-312` gives a constraint that states ' +
+      'no inertia 0.5, no strength 100, no damping 0.85 and no mass 1. Reading the second column into ' +
+      '`PHYSICS_TRACKS.identity` would be invisible in every rigc build — it writes every channel — and would ' +
+      'make `ingest` transcribe an editor export into a spec that plays a different animation. The deletion count ' +
+      'is half the control: a strip with nothing to strip reads the setup pose and calls it a default',
+  );
+
   return bad;
+}
+
+/**
+ * A physics constraint on a bone of its own, added to the two-slot probe rig.
+ *
+ * It drives `x` and `y` rather than `rotate` so that nothing here depends on
+ * `A41`'s opinion of what the Spine editor can hold, and it sits on `tip`
+ * rather than on `block` so the art bone is not moved by two things at once.
+ * Every tuning field is stated at the parser's own constraint default, which is
+ * what makes the timelines below measurable: a property that came back at its
+ * default would have come back at that number whether the timeline was read or
+ * not, so the keys move each one AWAY from it.
+ */
+const PHYSICS_TIMELINE_RIG = {
+  bones: [
+    { name: 'root' },
+    { name: 'block', parent: 'root', x: 0, y: 0, length: 12 },
+    { name: 'tip', parent: 'block', x: 12, y: 0 },
+  ],
+  constraints: [
+    {
+      name: 'jiggle',
+      type: 'physics',
+      bone: 'tip',
+      x: 1,
+      y: 1,
+      inertia: 0.5,
+      strength: 100,
+      damping: 0.85,
+      mass: 1,
+      wind: 0,
+      gravity: 0,
+      mix: 1,
+    },
+  ],
+};
+
+/**
+ * The seven physics value timelines and the two values each one keys.
+ *
+ * ⚠️ Every `to` differs from both the constraint's setup value and the parser's
+ * per-key default (0, or 1 for `mix`), so no control below can pass on a number
+ * that was already there. `wind` and `gravity` start at 0 because that IS their
+ * setup value and their end is what carries the claim.
+ */
+const PHYSICS_TRACK_KEYS: Array<[property: string, from: number, to: number]> = [
+  ['inertia', 0.5, 0.15],
+  ['strength', 100, 35],
+  ['damping', 0.85, 0.45],
+  ['mass', 1, 3],
+  ['wind', 0, 24],
+  ['gravity', 0, -40],
+  ['mix', 1, 0.3],
+];
+
+/** The motion spec the three physics controls share: all eight timelines, one animation. */
+function physicsTimelineMotion(): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      jig: {
+        duration: 1,
+        loop: false,
+        tracks: [
+          ...PHYSICS_TRACK_KEYS.map(([property, from, to]) => ({
+            physics: 'jiggle',
+            property,
+            keys: [{ t: 0, v: [from] }, { t: 1, v: [to] }],
+          })),
+          { physics: 'jiggle', property: 'reset', keys: [{ t: 0, v: null }] },
+        ],
+      },
+    },
+  };
+}
+
+/** `animations.jig.physics.jiggle` of an emitted skeleton, or an empty table. */
+function emittedPhysicsTimelines(skeleton: Record<string, unknown> | undefined): Record<string, unknown[] | undefined> {
+  const animations = (skeleton?.animations ?? {}) as Record<string, Record<string, unknown>>;
+  const physics = (animations.jig?.physics ?? {}) as Record<string, Record<string, unknown[]>>;
+  return physics.jiggle ?? {};
 }
 
 /** The `deform` key array of one slot in an emitted animation, for a mutant to edit. */
@@ -34222,6 +34464,20 @@ const INGEST_PROBE_MOTION: Record<string, unknown> = {
         { path: 'rail', property: 'position', keys: [{ t: 0, v: [0] }, { t: 1, v: [1] }] },
         { path: 'rail', property: 'spacing', keys: [{ t: 0, v: [0] }, { t: 1, v: [0.5] }] },
         { path: 'rail', property: 'mix', keys: [{ t: 0, v: [1, 1, 1] }, { t: 1, v: [0.5, 1, 1] }] },
+        // All eight physics timelines on one constraint (#593). Six of them are
+        // the constraint's own tuning keyed over time, and they are here rather
+        // than on a rig of their own because `IG03` asks whether every word of
+        // `INGEST_VOCABULARY` is exercised by a rig somebody builds — adding the
+        // words to the module and not to a rig would move the hole rather than
+        // close it. The values are chosen, not measured, and each differs from
+        // both the constraint's default and the parser's per-key default so a
+        // decompiler that filled either in would be visible in the rebuild.
+        { physics: 'wobble', property: 'inertia', keys: [{ t: 0, v: [0.5] }, { t: 1, v: [0.2] }] },
+        { physics: 'wobble', property: 'strength', keys: [{ t: 0, v: [100] }, { t: 1, v: [40] }] },
+        { physics: 'wobble', property: 'damping', keys: [{ t: 0, v: [0.85] }, { t: 1, v: [0.6] }] },
+        { physics: 'wobble', property: 'mass', keys: [{ t: 0, v: [1] }, { t: 1, v: [2.5] }] },
+        { physics: 'wobble', property: 'wind', keys: [{ t: 0, v: [0] }, { t: 1, v: [12] }] },
+        { physics: 'wobble', property: 'gravity', keys: [{ t: 0, v: [0] }, { t: 1, v: [-9] }] },
         { physics: 'wobble', property: 'mix', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.25] }] },
         { physics: 'wobble', property: 'reset', keys: [{ t: 0, v: null }] },
         { slider: 'knob', property: 'time', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.5] }] },
@@ -34678,6 +34934,114 @@ function runIngestSuite(): number {
       'two independent compiles byte for byte, and a dated note would break the first rebuild from the spec',
   );
 
+  // --- IG10: the six physics timelines, both ways (issue #593) ---------------
+  //
+  // `IG00` already holds `ingest_probe` to byte identity and the probe now keys
+  // all eight physics timelines, so a decompiler that dropped one would be red
+  // there. This names the half that identity cannot: WHICH timelines came back,
+  // and with which numbers. The distinction is the one `IG03` is built on — a
+  // rebuild is identical either when the inversion worked or when both sides
+  // are missing the same thing, and only reading the motion spec tells them
+  // apart.
+  const probeEmitted = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+  const probeWobble = (((probeEmitted.animations as Record<string, Record<string, unknown>>).everything?.physics ??
+    {}) as Record<string, Record<string, Array<Record<string, unknown>>>>).wobble ?? {};
+  const probePhysicsTracks = (
+    ((probeTrip.motion.animations ?? {}) as Record<string, { tracks?: Array<Record<string, unknown>> }>).everything?.tracks ?? []
+  ).filter((track) => track.physics === 'wobble');
+  const decompiledValues = new Map(probePhysicsTracks.map((track) => [String(track.property), track.keys]));
+  const physicsRoundTripWrong = Object.entries(probeWobble).flatMap(([property, keys]) => {
+    const decompiled = decompiledValues.get(property) as Array<{ v?: unknown }> | undefined;
+    if (decompiled === undefined) return [`${property}: no track in the decompiled motion spec`];
+    if (decompiled.length !== keys.length) return [`${property}: ${decompiled.length} key(s) against ${keys.length}`];
+    const mismatch = keys.filter((key, i) => JSON.stringify(decompiled[i].v) !== JSON.stringify(key.value === undefined ? null : [key.value]));
+    return mismatch.length === 0 ? [] : [`${property}: ${mismatch.length} key(s) differ`];
+  });
+  const physicsBlockers = probeTrip.findings.filter((f) => f.kind === 'blocker');
+  say(
+    'IG10_EVERY_PHYSICS_TIMELINE_THE_PROBE_KEYS_COMES_BACK_AS_A_TRACK_WITH_ITS_OWN_VALUES',
+    Object.keys(probeWobble).length === INGEST_VOCABULARY.physics.length &&
+      physicsRoundTripWrong.length === 0 &&
+      physicsBlockers.length === 0 &&
+      probeTrip.a.skeletonText === probeTrip.b.skeletonText,
+    `${Object.keys(probeWobble).length} emitted physics timeline(s) (${Object.keys(probeWobble).join(', ')}) against ` +
+      `${INGEST_VOCABULARY.physics.length} in the module's vocabulary; ${probePhysicsTracks.length} decompiled track(s)` +
+      (physicsRoundTripWrong.length === 0 ? ', every key equal' : `; WRONG: ${physicsRoundTripWrong.join('; ')}`) +
+      `; ${physicsBlockers.length} blocker(s); the rebuild is ` +
+      `${probeTrip.a.skeletonText === probeTrip.b.skeletonText ? 'byte-identical' : 'DIFFERENT'}`,
+    'the inversion of a value track is positional — the spec\'s `v` is an array in field order — so a table that ' +
+      'gained the six names and not their shapes would decompile `wind` into a track with an empty `v` and rebuild ' +
+      'a file that differs only where the numbers were. Read off the EMITTED skeleton rather than off a list here, ' +
+      'so a timeline the probe stops keying takes the vocabulary count with it instead of passing',
+  );
+
+  // --- IG11: the corpus export that made the card (issue #593) ---------------
+  //
+  // Not a gate — `examples/` is fetched, so this is a HOLE and never a pass
+  // when it is absent. It is here because it is the only measurement in this
+  // file made against a skeleton nobody in this repository wrote: six physics
+  // timeline names across six animations, five of which the motion spec could
+  // not state at all — 69 refusals in one file — which is a shape no probe
+  // would have been built to carry.
+  if (!existsSync(PHYSICS_CORPUS_EXPORT)) {
+    console.log(`  SKIP  IG11 did not run: ${PHYSICS_CORPUS_EXPORT} is not on disk.`);
+    console.log('          run `bun run fetch-examples` and re-run this suite.');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — no editor export was ingested here.');
+  } else {
+    const corpus = ingest(JSON.parse(readFileSync(PHYSICS_CORPUS_EXPORT, 'utf8')) as Record<string, unknown>, {
+      name: 'corpus',
+      art: 'none',
+      source: PHYSICS_CORPUS_EXPORT,
+      version: packageVersion(),
+    });
+    const corpusBlockers = corpus.findings.filter((f) => f.kind === 'blocker');
+    const corpusPhysics = corpus.findings.filter((f) => f.code === 'PHYSICS_TIMELINE');
+    const keyed = new Set<string>();
+    for (const animation of Object.values(
+      ((JSON.parse(readFileSync(PHYSICS_CORPUS_EXPORT, 'utf8')) as Record<string, unknown>).animations ?? {}) as Record<
+        string,
+        Record<string, unknown>
+      >,
+    )) {
+      for (const timelines of Object.values((animation.physics ?? {}) as Record<string, Record<string, unknown>>)) {
+        for (const name of Object.keys(timelines)) keyed.add(name);
+      }
+    }
+    say(
+      'IG11_THE_EDITOR_EXPORT_THAT_KEYS_SIX_PHYSICS_TIMELINES_INGESTS_WITH_NO_BLOCKER',
+      corpusBlockers.length === 0 && corpusPhysics.length === 0 && keyed.size >= 6,
+      `${keyed.size} distinct physics timeline name(s) keyed in the source (${[...keyed].sort().join(', ')}); ` +
+        `${corpus.findings.length} finding(s), ${corpusBlockers.length} blocker(s), ` +
+        `${corpusPhysics.length} PHYSICS_TIMELINE` +
+        (corpusBlockers.length === 0 ? '' : `: ${corpusBlockers.map((f) => `${f.code} at ${f.where}`).join('; ')}`),
+      'the card was opened by this file refusing to transcribe, and a repair that did not move this number would ' +
+        'be a table that grew and a decompiler that did not. The keyed-name count is the other side: a corpus ' +
+        'that stopped keying physics at all would satisfy "no blocker" while measuring nothing',
+    );
+  }
+
+  // --- IG12: the blocker that is left, and that it is still reachable --------
+  const plantedTimeline = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+  const plantedPhysics = ((plantedTimeline.animations as Record<string, Record<string, unknown>>).everything.physics ??
+    {}) as Record<string, Record<string, unknown>>;
+  plantedPhysics.wobble.stiffness = [{ time: 0, value: 1 }];
+  const plantedResult2 = ingest(plantedTimeline, { name: 'p', art: 'none', source: 's.json', version: '0' });
+  const stillBlocked = plantedResult2.findings.filter((f) => f.code === 'PHYSICS_TIMELINE' && f.kind === 'blocker');
+  say(
+    'IG12_A_PHYSICS_TIMELINE_NAME_THE_PARSER_ITSELF_DROPS_IS_STILL_A_BLOCKER_BY_NAME',
+    stillBlocked.length === 1 &&
+      stillBlocked[0].where.includes('stiffness') &&
+      probeTrip.findings.every((f) => f.code !== 'PHYSICS_TIMELINE'),
+    `a "stiffness" timeline planted under physics "wobble": ${stillBlocked.length} PHYSICS_TIMELINE blocker` +
+      (stillBlocked.length === 1 ? ` at ${stillBlocked[0].where}` : '') +
+      `; the unplanted probe raises ${probeTrip.findings.filter((f) => f.code === 'PHYSICS_TIMELINE').length}`,
+    'with the table complete against `SkeletonJson`\'s switch, this code path is reachable only for a name the ' +
+      'PARSER falls through too (`:1094`) — so the question the repair had to answer is whether it had become an ' +
+      'unreachable branch, which this file calls not a gate. It has not: `ingest`\'s contract is byte identity, ' +
+      'and a name nothing reads is still a name the rebuild does not write. Two-sided, because a decompiler that ' +
+      'reported the blocker on every physics timeline would pass the first clause alone',
+  );
+
   // --- IG13–IG15: the images directory a decompiled spec carries itself ------
   //
   // 🚨 The claim is an EQUALITY between two rebuilds, not "it builds". A spec
@@ -34824,6 +35188,16 @@ function runIngestSuite(): number {
 
   return bad;
 }
+
+/**
+ * The one public example export that keys physics timelines — five of the six
+ * value tracks, over six animations (`docs/SPEC_COVERAGE.md` §3.2).
+ *
+ * Fetched, not tracked, which is why `IG11` reports a HOLE rather than a pass
+ * when it is absent: it is the only skeleton this file measures against that
+ * nobody in this repository wrote.
+ */
+const PHYSICS_CORPUS_EXPORT = resolve(import.meta.dir, 'examples/7-anticipation/export/sack-pro.json');
 
 // ---------------------------------------------------------------------------
 // the run's own tally of itself (issue #439)
@@ -36331,7 +36705,12 @@ function main(): void {
     'Then the two values that are not in a skeleton at all: the stage, refused by name without one and recorded ' +
     'as a JUDGEMENT with one, three-sided so that accepting the caller\'s number silently is the state that ' +
     'fails; and the duration, checked against the largest key time in the source, beside the one number rigc ' +
-    're-measures on purpose (`lengths`, #560) reported on a path rig and on no other. Ten constructs the spec ' +
+    're-measures on purpose (`lengths`, #560) reported on a path rig and on no other. Then the physics group ' +
+    'both ways, because the motion spec gained six of its timelines here (#593): every one the coverage probe ' +
+    'keys comes back as a track carrying its own numbers and rebuilds byte for byte, the one public export that ' +
+    'keys them ingests with no blocker at all — a HOLE rather than a pass when the corpus is not on disk — and a ' +
+    'timeline name the PARSER itself falls through is still refused by name, which is what keeps the branch that ' +
+    'is left from being one nobody has seen work. Ten constructs the spec ' +
     'format cannot hold planted into a correct skeleton and each required back as a named blocker, with the ' +
     'unplanted run as the other side. And the note, which is the one statement no gate can check for you — it ' +
     'says DECOMPILED, names its source and version, matches no clock, and two ingests of one skeleton are ' +
@@ -36561,9 +36940,11 @@ function main(): void {
       'refusal), + ' + n('slot-attribution') + ' slot-attribution ' +
       'controls (a blob one part dominates, and two parts that are two blobs), + ' + n('draw-order') + ' draw-order controls, ' +
       '+ ' + n('key-time') + ' key-time controls, + ' + n('event') + ' event controls (2 of them a spine-core round trip of the firings), ' +
-      '+ ' + n('constraint-deform') + ' constraint- and deform-timeline controls (10 of them a spine-core round trip that reads the ik and ' +
-      'transform mixes off the posed constraints, the world position of a deformed vertex, and a weighted ' +
-      "attachment's per-influence deform array, with the two sides of a TRIMMED deform run measured on the gate and " +
+      '+ ' + n('constraint-deform') + ' constraint- and deform-timeline controls (12 of them a spine-core round trip that reads the ik and ' +
+      'transform mixes off the posed constraints, the world position of a deformed vertex, a weighted ' +
+      "attachment's per-influence deform array, and every keyable property of a physics constraint — that last one " +
+      'including the number the parser reads where a key omits its value, measured by deleting it rather than by ' +
+      'reading a table — with the two sides of a TRIMMED deform run measured on the gate and ' +
       'on the compiler alike — a run that starts and ends mid-pair accepted and posed, the same run one float ' +
       'longer still refused by extent — and 2 of them the knee an ik ' +
       "timeline reverted: the rig's own `bendPositive` reaching a timeline that states none, and a timeline that " +
