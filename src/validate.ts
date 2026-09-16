@@ -3022,14 +3022,24 @@ export function validate(input: ValidateInput): ValidateReport {
     }
   });
 
-  // --- A26: draw order matches the rig's slot table ------------------------
+  // --- A26: the slots array IS the rig's slot table ------------------------
   //
   // The slots array IS the draw order (z-index = array index), so a formation
   // whose illusion depends on one part occluding another depends on one
   // adjacency in that array — and nothing in the file objects to the wrong
   // order. On a still frame it can even look plausible. The rig's own slot list
-  // is the canonical table; a cut that fills only some of those slots emits a
-  // SUBSEQUENCE of it, which is what this checks.
+  // is the canonical table, and this checks the emitted array against it in
+  // both directions: nothing out of order, and nothing missing.
+  //
+  // ⚠️ The second half is new with issue #575 and the first half is why it had
+  // to be. This clause used to accept any SUBSEQUENCE of the table, because the
+  // compiler dropped a slot no skin filled and the gate was written around that
+  // — so the defect #575 filed was licensed by the assertion that was supposed
+  // to catch it: two production exports declaring 53 and 61 slots built green
+  // at 51 and 57. `compile` now emits every declared slot, empty if nothing
+  // fills it, so a shorter array is a loss and is named as one here. A slot
+  // missing from the array moves every slot below it up one index, which is
+  // what a `drawOrder` key's offsets are counted against.
   check('A26_SLOT_DRAW_ORDER', () => {
     if (!input.rig) return skip('A26_SLOT_DRAW_ORDER', 'no rig info (validating a bare directory)');
     const order = input.rig.slotOrder;
@@ -3056,6 +3066,17 @@ export function validate(input: ValidateInput): ValidateReport {
         return;
       }
       at = found + 1;
+    }
+    const emitted = new Set(names);
+    const missing = order.filter((name) => !emitted.has(name));
+    if (missing.length > 0) {
+      fail(
+        'A26_SLOT_DRAW_ORDER',
+        `the rig "${input.rig.archetype}" declares ${order.length} slot(s) and the skeleton has ${names.length}: ` +
+          `${missing.map((name) => `"${name}"`).join(', ')} ${missing.length === 1 ? 'is' : 'are'} declared and ` +
+          'not emitted. A slot nothing fills is emitted with no setup attachment, not dropped — dropping one ' +
+          'moves every slot below it up one index',
+      );
     }
   });
 

@@ -736,17 +736,38 @@ and the inheritance silently falls back to Normal — assertion `A02` refuses it
 | --- | --- | --- |
 | `name` | required, unique | — |
 | `bone` | required; must be a bone this rig declares | — |
-| `attachment` | the **setup pose** attachment name, or `null` for "show nothing" | must come from here or from `motion.setup` (R3) |
+| `attachment` | the **setup pose** attachment name, or `null` for "show nothing" | must come from here or from `motion.setup` (R3) — **except** on a slot nothing fills, where it can only be `null` and may be left out |
 | `color` | `rrggbbaa` tint | opaque white |
 | `dark` | two-colour tint, `rrggbb` | — (🚫 `A12` under `spine-html`) |
 | `blend` | `normal` · `additive` · `multiply` · `screen` | `normal` |
 
-⚠️ **A slot with no attachments is not emitted.** If nothing fills it — no skin
-entry, no manifest part — it is dropped from the skeleton without an error, and the
-emitted slots array is a *subsequence* of the rig's. That is deliberate: the rig's
-slot list is the canonical table and declaring a slot no cut fills is legitimate,
-because it fixes where that slot will sit when one does. It also means a typo in a
-skin's slot key can cost you a slot quietly, so check `explain`'s slot table.
+✅ **Every slot you declare is emitted, in this order.** A slot nothing fills — no
+skin entry, no manifest part — is emitted **empty**: `name` and `bone`, and no
+`attachment` key at all, which is how the format spells "shows nothing"
+(`SkeletonJson`'s slot reader takes `attachment` with a `null` default; 34 of the 52 slots of the
+official `spineboy-pro` export omit the key, though those are slots a skin fills
+whose setup pose shows nothing). So the emitted slots array
+**is** the rig's slot table, and `A26_SLOT_DRAW_ORDER` checks it in both directions:
+nothing out of order, and nothing missing.
+
+Declaring a slot no cut fills is therefore normal — it fixes where that slot sits
+whether or not this cut has art for it — and transcribing a foreign skeleton that
+carries an empty slot reproduces it exactly.
+
+⚠️ **This changed with issue #575.** Such a slot used to be *dropped*, with no message, and
+the gate allowed the emitted array to be any subsequence of the rig's. What it cost
+is the index: every slot below the dropped one moved up one place, which is what a
+`drawOrder` key's offsets are counted against and what an index-keyed consumer
+splits on. Two production exports declaring 53 and 61 slots built green at 51 and 57
+and read 0.962 and 0.934 under `diff` against the file they were transcribed from.
+If you have a rig that leaned on the drop, the emitted array simply grows; nothing
+else about it moves.
+
+🚫 **Naming an attachment on a slot nothing fills is refused by name**: `the setup
+pose shows attachment "x" on slot "y", which no skin and no manifest part fills`.
+That is the half-finished wiring-up the old silence hid — the slot is emitted empty
+and the name resolves to nothing, so either give the slot an attachment or state the
+setup pose as `null`.
 
 ### 3.4 `skins` — placeholder → attachment maps
 
@@ -3575,7 +3596,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `bone "X" names parent "Y", which is not declared before it` | move `Y` earlier in `bones` |
 | `two bones are called "X"` | bone names are the join key; rename one |
 | `slot "X" names bone "Y", which this rig does not declare` | add the bone, or fix the slot's `bone` |
-| `no setup pose for slot "X": give the motion spec a \`setup\` entry or the rig slot an \`attachment\`` | R3 — pick one file and declare it there |
+| `no setup pose for slot "X": give the motion spec a \`setup\` entry or the rig slot an \`attachment\`` | R3 — pick one file and declare it there. A slot **nothing** fills is exempt: its setup pose can only be "show nothing" and is not asked for |
+| `the setup pose shows attachment "A" on slot "X", which no skin and no manifest part fills` | §3.3 — the slot is emitted empty, so `A` resolves to nothing. Give the slot an attachment (a skin entry or a manifest part), or state the setup pose as `null` |
 | `a region needs width and height — give them, or give an "image" and rigc will measure the PNG` | add `image`, or both sizes |
 | `a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG` | §3.4 — the same rule for a mesh |
 | `"type" is null, which is not a name. An attachment's type is one of region, mesh, linkedmesh, … or the key is absent and reads as "region"` | §6 — **remove the key**. Absent is the format's own default; present-and-null matches no parser case and the attachment is dropped in silence |
@@ -3727,7 +3749,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | a physics constraint that drives no component, is muted by `mix: 0`, has `mass: 0`, has `strength: 0`, or has `damping` outside `(0, 1)` so it never settles |
 | `A24_AXIS_SPACE_STROKE` | archetype | a bone under the rig's `axisBone` was keyed with a screen-space Y component, or the axis bone itself was keyed |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | a bone the rig declares `detached` is a descendant of the bone it must never hang under |
-| `A26_SLOT_DRAW_ORDER` | archetype | the emitted slots are not a subsequence of the rig's slot table — a slot is out of order, or is not in the table at all |
+| `A26_SLOT_DRAW_ORDER` | archetype | the emitted slots are not the rig's slot table — a slot is out of order, is not in the table at all, or is in the table and missing from the skeleton (§3.3) |
 | `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | renderer | a single-region page whose region name is not the PNG's basename |
 | `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | the two vertices of a ribbon row carry different weights, so the strip would change width. **SKIPs** on authored geometry and on a contour mesh — neither has rows rigc paired |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the animation drives deeper than the manifest's measured contact depth |
@@ -3827,8 +3849,11 @@ Two more limits that are not errors but will shape what you can attempt:
    gets answered for everything the profile left out — the renderer policy *and*
    the archetype rules. A green under `spine` has been held to neither; a green
    under `spine-html` has been held to both.
-4. Run `explain` and read the slots table: every slot you declared should be there
-   (§3.3), in the order you meant, showing the setup attachment you meant.
+4. Run `explain` and read the slots table: every slot you declared **is** there
+   (§3.3 — `A26_SLOT_DRAW_ORDER` holds that, and a slot nothing fills reads
+   `setup=null attachments=[]`), so what this step is for is the two things the
+   gate cannot check — that the order is the one you meant, and that each slot
+   shows the setup attachment you meant.
 5. If you were given **frames**, run `check` and read the table (§9). Steps 1–4 are
    all about validity and structure; none of them can tell you the animation is
    wrong, and this is the step that can. Do it before step 6, not after — `bench`

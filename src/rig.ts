@@ -223,12 +223,22 @@ export const RIG_SLOT_BLEND: readonly RigSlotBlend[] = ['normal', 'additive', 'm
  * One slot. **The array order IS the draw order** — there is no separate setup
  * draw-order field anywhere in the format.
  *
- * The rig's slot list is the CANONICAL table, which is a slightly stronger claim
- * than "the slots this cut emits". A cut whose manifest carries no part for a
- * slot does not emit it, and the emitted array is then a *subsequence* of this
- * one; that is what `A26_SLOT_DRAW_ORDER` checks. Declaring a slot no cut fills
- * is therefore legitimate — it fixes where that slot will sit when a cut does
- * fill it.
+ * The rig's slot list is the CANONICAL table and **every slot in it is emitted**,
+ * in this order, whether or not anything fills it. A slot no skin and no manifest
+ * part fills is emitted with no setup attachment — the shape an editor export
+ * carries for a slot that shows nothing (the slot reader above takes `attachment`
+ * with a `null` default) — so the emitted array and this one are the same array.
+ * `A26_SLOT_DRAW_ORDER` checks both halves of that: nothing out of order, and
+ * nothing missing. Declaring a slot no cut fills is therefore legitimate, and it
+ * fixes where that slot sits whether or not this cut has art for it.
+ *
+ * ⚠️ Until issue #575 such a slot was **dropped**, and the gate licensed it: the
+ * emitted array was allowed to be any *subsequence* of this one. What that
+ * bought was the format's own silence. Nothing said which slot had gone, and
+ * every slot below it moved up one index — the index a `drawOrder` key's offsets
+ * are counted against, and the one an index-keyed consumer splits on. Two
+ * production exports declaring 53 and 61 slots built green at 51 and 57 and read
+ * 0.962 and 0.934 under `diff` against the file they were transcribed from.
  */
 export interface RigSlot {
   name: string;
@@ -241,6 +251,12 @@ export interface RigSlot {
    * comes from: `motion.setup` owns it, because which of the two overlay
    * mechanisms a slot uses (attachment + alpha 0, or attachment swapping) is a
    * decision about time. Declaring it in both is a compile error.
+   *
+   * Required for a slot something fills — the compiler will not guess which of
+   * the slot's attachments the setup pose shows — and **optional for a slot
+   * nothing fills**, where it can only be `null` and saying so changes no
+   * emitted byte. Naming an attachment on a slot nothing fills is refused: the
+   * name resolves to nothing, which is the shape of a half-finished wiring-up.
    */
   attachment?: string | null;
   /** `rrggbbaa`. Default opaque white. */

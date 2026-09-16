@@ -203,7 +203,7 @@ import {
 } from './src/ballot.ts';
 import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
 import { readPngInfo } from './src/png.ts';
-import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson } from './src/types.ts';
+import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
 import { skeletonDataFromText, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
 import {
   ASSERTION_NAMES,
@@ -4811,11 +4811,19 @@ function gateProbe(
   });
 }
 
-/** Compile the probe, then break the emitted skeleton and gate THAT. */
+/**
+ * Compile the probe, then break the emitted skeleton and gate THAT.
+ *
+ * ⚠️ The profile is a parameter for the same reason `gateProbe`'s is, and the
+ * arm it opens is the other one: the ARCHETYPE assertions — A21, A24-A26, A28-A30,
+ * A39 — do not run under `spine` either, so a control aimed at one of them under
+ * the default profile reads "no failure" from an assertion that never executed.
+ */
 function gateProbeArtifacts(
   dirs: ProbeDirs,
   motion: Record<string, unknown>,
   mutate: (skeleton: Record<string, unknown>) => void,
+  profile: ValidateProfile = 'spine',
 ): ReturnType<typeof validate> {
   const motionPath = join(dirs.dir, 'probe.motion.json');
   writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
@@ -4829,7 +4837,7 @@ function gateProbeArtifacts(
     atlasDir: opts.outDir,
     declaredDurations: result.declaredDurations,
     rig: result.rig,
-    profile: 'spine',
+    profile,
   });
 }
 
@@ -5667,6 +5675,163 @@ function runDrawOrderSuite(): number {
     curved.failures.find((f) => f.assertion === 'A05_CURVE_ARRAY_LENGTH')?.detail ??
       'A05 did not walk the drawOrder group — its curve arrays are unchecked',
     'a draw order is stepped by nature; the parser ignores a stray curve rather than rejecting it',
+  );
+
+  // --- the slot nothing fills, and the index it holds (issue #575) ----------
+  //
+  // Everything above this line is about an offset counted against the slot
+  // array. #575 is about the array itself: a slot no skin filled was DROPPED
+  // rather than emitted, so the array a `drawOrder` key counts against was a
+  // slot shorter than the rig's own table, and nothing said so. Two production
+  // exports declaring 53 and 61 slots built green at 51 and 57.
+  //
+  // The probe gets a third slot between the two it already has, filled by
+  // nothing, which is the smallest rig in which the drop can be seen: it moves
+  // `marker` from index 2 to index 1 and takes `offset: 2` — a move to the
+  // bottom of the rig's own three-slot table — out of range on the way.
+  const wide = writeProbeRig({
+    slots: [
+      { name: 'block', bone: 'block', attachment: 'block' },
+      { name: 'ghost', bone: 'block', attachment: null },
+      { name: 'marker', bone: 'block', attachment: 'marker' },
+    ],
+  });
+  /** Compile one motion against a probe rig and hand back what was emitted. */
+  const buildProbe = (at: ProbeDirs, motion: Record<string, unknown>): CompileResult => {
+    const motionPath = join(at.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+    return compile({ rigPath: at.rigPath, motionPath, outDir: at.outDir, imagesDir: at.dir });
+  };
+  // Read back rather than restated: the declared table is the rig file's own,
+  // so the comparison below is between two derivations of one list and there is
+  // no third copy here for the tree to drift away from.
+  const declaredSlots = (
+    JSON.parse(readFileSync(wide.rigPath, 'utf8')) as { slots: Array<{ name: string }> }
+  ).slots.map((s) => s.name);
+  const wideBuild = buildProbe(wide, LEGAL_SWAP);
+  const wideSlots = (JSON.parse(wideBuild.skeletonText) as SpineSkeletonJson).slots;
+  const wideGate = gateProbe(wide, LEGAL_SWAP);
+  const emptySlot = wideSlots.find((s) => s.name === 'ghost');
+  // The drop, re-planted: the array the compiler used to emit for this very rig.
+  const replanted = wideSlots.filter((s) => s.name !== 'ghost');
+  const indexIn = (slots: SpineSlot[], name: string): number => slots.findIndex((s) => s.name === name);
+  const emission = [
+    ...(wideSlots.map((s) => s.name).join(', ') === declaredSlots.join(', ')
+      ? []
+      : [
+          `the rig declares [${declaredSlots.join(', ')}] and the build emitted ` +
+            `[${wideSlots.map((s) => s.name).join(', ')}]`,
+        ]),
+    ...(emptySlot !== undefined && emptySlot.attachment === undefined
+      ? []
+      : [
+          emptySlot === undefined
+            ? 'the slot no skin fills is not in the emitted array at all'
+            : `the slot no skin fills carries attachment ${JSON.stringify(emptySlot.attachment)}; an empty slot is ` +
+              'written with no `attachment` key at all, which is how `SkeletonJson` spells "shows nothing"',
+        ]),
+    ...(wideGate.failures.length === 0 && wideGate.passed.includes('A00_ROUNDTRIP_PARSE')
+      ? []
+      : [
+          wideGate.failures.length === 0
+            ? 'A00_ROUNDTRIP_PARSE did not run, so nothing read the empty slot back through the official parser'
+            : `the gate went red on it: [${wideGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+        ]),
+    // The plant. A control that only measured the build would read the same on
+    // a compiler that had never stopped dropping the slot, because it would be
+    // comparing the drop against a table it also derived from the drop.
+    ...(indexIn(replanted, 'marker') < indexIn(wideSlots, 'marker')
+      ? []
+      : [
+          `re-planting the drop leaves "marker" at index ${indexIn(replanted, 'marker')}, which is where the ` +
+            `emitted array already puts it (${indexIn(wideSlots, 'marker')}) — this probe cannot tell the two apart`,
+        ]),
+  ];
+  say(
+    'O25_A_SLOT_NO_SKIN_FILLS_IS_EMITTED_IN_ITS_DECLARED_PLACE',
+    emission.length === 0,
+    probeDetail(
+      emission.length === 0,
+      emission,
+      `the rig's ${declaredSlots.length} declared slot(s) came back as ${wideSlots.length}, in order, with "ghost" ` +
+        'carrying no `attachment` key and the gate green through A00_ROUNDTRIP_PARSE; with the drop re-planted the ' +
+        `array is [${replanted.map((s) => s.name).join(', ')}] and "marker" moves from index ` +
+        `${indexIn(wideSlots, 'marker')} to ${indexIn(replanted, 'marker')}`,
+    ),
+    "an empty slot is legal Spine data — `SkeletonJson`'s slot reader takes `attachment` with a null default, and " +
+      '34 of the 52 slots of the official spineboy-pro export omit the key — so dropping one is not a smaller ' +
+      'file, it is a different rig: every slot below it moves up one index, which is what a `drawOrder` key\'s ' +
+      'offsets and an index-keyed consumer both count against',
+  );
+
+  // ⚠️ `spine-html` and not the default: A26 is an ARCHETYPE assertion, so under
+  // `spine` it does not execute at all and a control reading "no A26 failure"
+  // off that run would be reading an assertion that never ran.
+  const dropped = gateProbeArtifacts(
+    wide,
+    LEGAL_SWAP,
+    (skeleton) => {
+      const slots = skeleton.slots as Array<{ name: string }>;
+      slots.splice(
+        slots.findIndex((s) => s.name === 'ghost'),
+        1,
+      );
+    },
+    'spine-html',
+  );
+  const droppedDetail = dropped.failures.find((f) => f.assertion === 'A26_SLOT_DRAW_ORDER')?.detail ?? null;
+  say(
+    'O26_A26_NAMES_A_SLOT_THE_RIG_DECLARES_AND_THE_SKELETON_DROPS',
+    droppedDetail !== null && droppedDetail.includes('"ghost"'),
+    droppedDetail === null
+      ? 'A26_SLOT_DRAW_ORDER accepted a skeleton a slot shorter than the table it is checked against'
+      : `A26_SLOT_DRAW_ORDER: ${droppedDetail}`,
+    'A26 accepted any SUBSEQUENCE of the rig\'s table until #575, which is why the drop it was meant to catch ' +
+      'passed through it: the gate had been written around the compiler\'s own behaviour, so a build 2 slots short ' +
+      'of its spec was green by construction. A licence this wide is not a gate, and the half that closes it has ' +
+      'to be seen firing',
+  );
+
+  const reordered = gateProbeArtifacts(
+    wide,
+    LEGAL_SWAP,
+    (skeleton) => {
+      const slots = skeleton.slots as Array<{ name: string }>;
+      const from = slots.findIndex((s) => s.name === 'marker');
+      slots.splice(slots.findIndex((s) => s.name === 'ghost'), 0, slots.splice(from, 1)[0]);
+    },
+    'spine-html',
+  );
+  const reorderedDetail = reordered.failures.find((f) => f.assertion === 'A26_SLOT_DRAW_ORDER')?.detail ?? null;
+  const frames = stepProbe(wide, LEGAL_SWAP, 'swap', PROTOCOL_FPS);
+  const drawn = [...new Set(frames.flatMap((frame) => frame.pieces.map((piece) => piece.slot)))].sort();
+  const filled = wideSlots.filter((s) => s.attachment !== undefined).map((s) => s.name).sort();
+  const standing = [
+    ...(reorderedDetail !== null && /out of order/.test(reorderedDetail)
+      ? []
+      : [
+          reorderedDetail === null
+            ? 'A26_SLOT_DRAW_ORDER let a reordered slot array through — the completeness half has swallowed the ' +
+              'order half, which is the whole of what this assertion used to be'
+            : `A26_SLOT_DRAW_ORDER reported "${reorderedDetail}" on a reordered array, which is the missing-slot ` +
+              'half answering for the order half',
+        ]),
+    ...(drawn.join(', ') === filled.join(', ')
+      ? []
+      : [`the posed frames drew [${drawn.join(', ')}] where the filled slots are [${filled.join(', ')}]`]),
+  ];
+  say(
+    'O27_THE_ORDER_HALF_STILL_FIRES_AND_THE_EMPTY_SLOT_DRAWS_NOTHING',
+    standing.length === 0,
+    probeDetail(
+      standing.length === 0,
+      standing,
+      `moving "marker" above "ghost" is refused as an ORDER fault — "${reorderedDetail}" — and stepping the ` +
+        `animation through spine-core draws [${drawn.join(', ')}], which is exactly the slot(s) something fills`,
+    ),
+    'two halves of one assertion are two ways for one to answer for the other, and an empty slot that raised an ' +
+      'error in the renderer would make "emit it rather than drop it" a repair that moved the failure downstream ' +
+      'instead of removing it',
   );
   return bad;
 }
@@ -14074,10 +14239,17 @@ function runDeformWindingSuite(): number {
   const noWhy = turnRefusal({
     invariants: { meshSlots: 1, meshTriangles: 40, deformMayFold: [{ slot: 'head', why: '   ' }] },
   });
+  // ⚠️ `plate` shows NOTHING — `attachment: null` — and it says so since #575.
+  // It said `attachment: "plate"` before, with no skin filling it, and that
+  // was a slot whose setup pose named an attachment that did not exist: the
+  // compiler dropped the whole slot rather than saying so, and this case went
+  // on being refused for the reason it wanted by a check further down. Now the
+  // missing attachment is refused first and by name, so the fixture has to
+  // state what it actually meant, which is a slot that draws nothing at all.
   const noMesh = turnRefusal({
     invariants: { meshSlots: 1, meshTriangles: 40, deformMayFold: [{ slot: 'plate', why: 'a slot with no mesh' }] },
     slots: [
-      { name: 'plate', bone: 'head', attachment: 'plate' },
+      { name: 'plate', bone: 'head', attachment: null },
       { name: 'head', bone: 'head', attachment: 'head' },
     ],
   });

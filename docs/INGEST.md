@@ -409,6 +409,21 @@ before it was a hand-edit of emitted JSON with nothing checking it.
    copying and not a detail. Leave `invariants` out entirely — it describes rigc's own
    formations, and an absent field makes an archetype assertion `SKIP`, never pass
    (AUTHORING §3.7).
+
+   📌 **Transcribe the export's empty slots too** — the ones no skin fills anywhere.
+   Such a slot still holds an index in the array, and everything below it is counted
+   from that index. Write it as `{ "name": …, "bone": … }` with no `attachment`, or
+   with `"attachment": null` if you prefer to say it out loud; either way it comes
+   back. Before issue #575 it did not: `build` dropped it in silence, so two exports
+   declaring 53 and 61 slots came back at 51 and 57 with a green gate, and `diff`
+   read 0.962 and 0.934 against the file they had been read from. If a
+   transcription's `slots.count` is under 1.000, this is the first thing to check.
+
+   ⚠️ **No skeleton in `examples/` has one**, which is why the corpus never showed
+   this: all twelve exports fill every slot they declare from some skin. What they
+   *do* carry is the neighbouring shape — a slot a skin DOES fill whose setup pose
+   shows nothing (34 of `spineboy-pro`'s 52 slots). Both are written the same way in
+   the file: `attachment` simply absent.
 4. **`explain`, then `build`.** `explain` first, because it prints what you wrote in a
    shape you can compare against the export by eye (§1.5) and it never gates. Then
    `build` under `--profile spine`.
