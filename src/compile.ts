@@ -1152,8 +1152,38 @@ function skeletonImagesPath(
   if (declared !== undefined) return declared;
   if (partDirs.size !== 1) return undefined;
   const [partsDir] = partDirs;
-  const rel = relative(outDir, partsDir).split('\\').join('/');
-  if (rel === '') return self;
+  const spelled = relativeImagesPath(outDir, partsDir);
+  // `./` is the one spelling the editor collapses to nothing (see above), so
+  // "the parts are in this very directory" is said the way the editor keeps.
+  // That substitution is the ONLY thing this path does that a rig spec's own
+  // `images` does not, which is why the rest of the spelling is one function.
+  return spelled === './' ? self : spelled;
+}
+
+/**
+ * An images directory spelled as a path from the directory of the file that
+ * names it — the one convention this repository has for saying where the parts
+ * are, in one function rather than in each of its callers (issue #595).
+ *
+ * Three rules, and each is load-bearing: POSIX separators, so two checkouts of
+ * one tree emit one file and `A18` holds; a trailing `/`, as the format page's
+ * own example (`"./images/"`) spells it; and `./` on a descendant, so the value
+ * reads as a relative path rather than as a bare name.
+ *
+ * ⚠️ `./` for "the very directory the file is in" is returned rather than
+ * decided here, because who reads the field differs. `skeletonImagesPath`
+ * replaces it — the editor was measured collapsing a literal `./` to no path at
+ * all (issue #370) — while a rig spec's own `images` is read by rigc, which
+ * resolves `./` against the spec's own directory and finds the parts.
+ *
+ * Both callers pass two ABSOLUTE directories, and `relative` reads neither of
+ * them off disk — which is what lets `cli.ts` spell a rig spec's `images` for
+ * `ingest` here, rather than `src/ingest.ts` growing a notion of an output
+ * directory it otherwise has none of.
+ */
+export function relativeImagesPath(from: string, to: string): string {
+  const rel = relative(from, to).split('\\').join('/');
+  if (rel === '') return './';
   return rel.startsWith('..') ? `${rel}/` : `./${rel}/`;
 }
 

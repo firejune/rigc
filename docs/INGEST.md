@@ -438,10 +438,13 @@ re-derives on purpose. A blocker exits non-zero and still writes both files.
   is used, stated in the motion spec's `note`, and recorded as a finding per
   animation. Edit it if you know the real number.
 
-And one flag for what the skeleton also does not encode: `--art loose` (the default)
-names an `image` per attachment for `build --images`, `--art none` states
-`width`/`height` for `build --atlas-in`. [AUTHORING §0.3](AUTHORING.md) is the loop
-in full.
+And two flags for what the skeleton also does not encode: `--art loose` (the default)
+names an `image` per attachment resolved against loose PNGs, `--art none` states
+`width`/`height` for `build --atlas-in`; and under `loose`, `--images <dir>` writes
+the rig spec's own images directory relative to `--out`, so the rebuild is a plain
+`build --rig … --motion … --out …` rather than one carrying `--images` forever. It is
+refused together with `--art none`, which writes no `image` for a directory to be the
+base of. [AUTHORING §0.3](AUTHORING.md) is the loop in full.
 
 📝 Both written specs carry a `note` saying they are decompiled and naming the file
 they came from. Leave it there — §2.4 is why.
