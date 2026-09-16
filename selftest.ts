@@ -208,6 +208,9 @@ import { skeletonDataFromText, surveyDeformKeys, unreachableWhy } from './src/de
 import {
   ASSERTION_NAMES,
   assertionCountForProfile,
+  reportLines,
+  SKIP_NO_ATLAS,
+  SKIP_NO_SKELETON,
   validate,
   VALIDATE_PROFILES,
   type ValidateProfile,
@@ -4831,6 +4834,142 @@ function gateProbeArtifacts(
 }
 
 /**
+ * Compile the probe, then break the emitted ATLAS and gate that.
+ *
+ * The sibling of `gateProbeArtifacts`, which breaks the skeleton instead, and it
+ * exists because only the atlas can reach one particular state: a skeleton that
+ * is perfectly well-formed JSON beside an atlas the loader refuses, so that
+ * `A00_ROUNDTRIP_PARSE` throws and every rule downstream of it is handed
+ * nothing. That is the state issue #568 records, and it cannot be produced by
+ * editing the skeleton — a skeleton broken enough to throw is also broken enough
+ * for several other assertions to have a real opinion about.
+ */
+function gateProbeAtlas(
+  dirs: ProbeDirs,
+  motion: Record<string, unknown>,
+  mutate: (atlasText: string) => string,
+  profile: ValidateProfile = 'spine',
+): ReturnType<typeof validate> {
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+  const opts: Options = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
+  const result = compile(opts);
+  return validate({
+    skeletonText: result.skeletonText,
+    atlasText: mutate(result.atlasText),
+    atlasDir: opts.outDir,
+    declaredDurations: result.declaredDurations,
+    rig: result.rig,
+    profile,
+  });
+}
+
+/**
+ * Remove the atlas's first page block — a page header and the region on it.
+ *
+ * Structural, and deliberately not "the region called X": a block is the run of
+ * lines up to the first blank one, which is the format's own separator, so this
+ * says nothing about what the probe rig happens to be called. The skeleton still
+ * names an attachment for the region that left, which is what makes the loader
+ * throw.
+ *
+ * ⚠️ A whole block rather than the region line alone, and that is not tidiness:
+ * `A07_ATLAS_TEXT_SHAPE` refuses a page block with no region in it, so stripping
+ * just the region would put a second, unrelated failure in the report and the
+ * cases below would no longer be about the round trip.
+ */
+function dropFirstAtlasPage(atlasText: string): string {
+  const lines = atlasText.replace(/\n$/, '').split('\n');
+  let end = 0;
+  while (end < lines.length && lines[end].trim() !== '') end++;
+  return `${lines.slice(end + 1).join('\n')}\n`;
+}
+
+/**
+ * Double the first page's declared `size:`, reading both numbers off the line.
+ *
+ * The defect `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` exists for, planted without a
+ * literal: the page still names a real PNG, and what it claims about that PNG is
+ * now false by a factor the line itself supplied.
+ */
+function doubleFirstAtlasPageSize(atlasText: string): string {
+  const lines = atlasText.replace(/\n$/, '').split('\n');
+  const at = lines.findIndex((line) => line.startsWith('size:'));
+  const [width, height] = lines[at].slice('size:'.length).split(',').map((n) => Number(n.trim()));
+  lines[at] = `size: ${width * 2}, ${height * 2}`;
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * The assertions whose bodies sit behind the round trip, read off
+ * `src/validate.ts` itself.
+ *
+ * ⭐ **Derived, because a roster kept here would be the defect again.** #568 is
+ * an inventory nobody was keeping: twenty rules moved behind a guard and the
+ * report stopped mentioning them, and no list anywhere said which twenty. So
+ * this reads the file for the two shapes the guard takes —
+ *
+ *   * a `check()` call INDENTED past the top level of `validate()`, which in
+ *     this file means nested inside the `if (skeletonData)` block;
+ *   * a body that opens by testing `!atlas`.
+ *
+ * ⚠️ The second shape is matched on the GUARD and never on what the guard does,
+ * and that is the difference between a control and a tautology. Reading the
+ * roster off `skip(…, SKIP_NO_ATLAS)` would name exactly the sites already
+ * repaired, so re-planting the defect would shrink the roster to match and the
+ * case would go green over the bug it exists to catch — measured: the first
+ * spelling of this function found 24 sites on the repaired tree and 20 on the
+ * re-planted one, silently dropping the four the repair was about. `if
+ * (!atlas)` is written in both spellings and in neither is it optional.
+ *
+ * A derivation that came back empty would make the cases below vacuous, so the
+ * emptiness is itself a probe at the call site.
+ */
+function assertionsBehindTheRoundTrip(source: string): string[] {
+  const names = new Set<string>();
+  let current: string | null = null;
+  for (const line of source.split('\n')) {
+    // Comment lines are prose about the code, and this file's prose quotes the
+    // very guard being matched — the paragraph above A17 spells `if (!atlas)
+    // return;` to say what it used to be, which would otherwise attribute the
+    // guard to whichever assertion was declared last.
+    const body = line.trim();
+    if (body.startsWith('//') || body.startsWith('*') || body.startsWith('/*')) continue;
+    const opened = /^( +)check\('(A\d\d_[A-Z0-9_]+)'/.exec(line);
+    if (opened !== null) {
+      current = opened[2];
+      if (opened[1].length > 2) names.add(current);
+      continue;
+    }
+    if (current !== null && /if \(!atlas\)/.test(line)) names.add(current);
+  }
+  return [...names].sort();
+}
+
+/** Every verdict row `reportLines` printed, by kind, counted as the reader counts them. */
+function verdictRows(report: ReturnType<typeof validate>): {
+  pass: number;
+  skip: number;
+  prof: number;
+  failedAssertions: number;
+  summary: string | undefined;
+} {
+  const lines = reportLines(report);
+  const failed = new Set<string>();
+  for (const line of lines) {
+    const row = /^ {2}FAIL {2}(A\d\d_[A-Z0-9_]+):/.exec(line);
+    if (row) failed.add(row[1]);
+  }
+  return {
+    pass: lines.filter((line) => line.startsWith('  PASS  ')).length,
+    skip: lines.filter((line) => line.startsWith('  SKIP  ')).length,
+    prof: lines.filter((line) => line.startsWith('  PROF  ')).length,
+    failedAssertions: failed.size,
+    summary: lines.find((line) => / assertions: /.test(line)),
+  };
+}
+
+/**
  * Compile the probe and STEP it through spine-core at one rate, as a player does.
  *
  * The gate cannot answer "is this key on the sample it was written for": it reads
@@ -5011,6 +5150,132 @@ function runStaticRigSuite(): number {
     vacuous ? `skipped: ${vacuous.reason}` : 'A41 looked at a rig with no physics constraint and called that a pass',
     'a declaration is not a measurement: "this rig is for the editor" and "this rig has been checked against the ' +
       'editor" print the same green unless the empty case skips',
+  );
+
+  // --- S09-S11: the report when the round trip throws (issue #568) ----------
+  //
+  // 🚨 Every case above asks whether ONE rule skips instead of passing. These
+  // three ask the question one ring out: whether the REPORT does, when the
+  // parse that everything downstream reads has failed. Measured on `main` at
+  // 39850b2, over a candidate whose atlas was missing a page the skeleton
+  // names: 13 of the 42 assertions printed a verdict, 9 more printed `PROF`,
+  // and the remaining 20 printed nothing at all — and two of the seven passes
+  // were rules whose only subject is the atlas that had not loaded.
+  //
+  // ⚠️ The profile is `spine-html` deliberately. Under `spine` fourteen of the
+  // rules are excluded before their bodies run, so a vacuous pass among them is
+  // invisible — which is how two of the four atlas guards went unnoticed.
+  const behind = assertionsBehindTheRoundTrip(readFileSync(join(import.meta.dir, 'src/validate.ts'), 'utf8'));
+  const torn = gateProbeAtlas(dirs, STATIC_MOTION, dropFirstAtlasPage, 'spine-html');
+  const rowOf = (report: ReturnType<typeof validate>, name: string): string[] => {
+    const where: string[] = [];
+    if (report.passed.includes(name)) where.push('PASS');
+    if (report.failures.some((f) => f.assertion === name)) where.push('FAIL');
+    if (report.skipped.some((s) => s.assertion === name)) where.push('SKIP');
+    if (report.profileSkipped.some((p) => p.assertion === name)) where.push('PROF');
+    return where;
+  };
+  const tornProbes = [
+    ...(behind.length === 0
+      ? ['the roster read off `src/validate.ts` is EMPTY, so this case measured nothing at all']
+      : []),
+    ...ASSERTION_NAMES.flatMap((name) => {
+      const where = rowOf(torn, name);
+      if (where.length === 1) return [];
+      return [`${name} has ${where.length === 0 ? 'no row at all' : `${where.length} rows (${where.join(', ')})`}`];
+    }),
+    ...behind.filter((name) => torn.passed.includes(name)).map((name) => `${name} reports PASS behind a parse that threw`),
+  ];
+  const tornHeld = tornProbes.length === 0;
+  say(
+    'S09_A_THROWN_ROUND_TRIP_LEAVES_EVERY_ASSERTION_A_ROW_AND_NONE_OF_THEM_A_PASS',
+    tornHeld,
+    probeDetail(
+      tornHeld,
+      tornProbes,
+      `A00 ${torn.failures.some((f) => f.assertion === 'A00_ROUNDTRIP_PARSE') ? 'failed' : 'did NOT fail'} and all ` +
+        `${ASSERTION_NAMES.length} assertions carry exactly one row; none of the ${behind.length} behind the round ` +
+        'trip passed',
+      (count) => `${count} assertion(s) the report cannot account for:`,
+    ),
+    'a `return` inside `check()` leaves the failure and skip counts untouched, which is how that function decides ' +
+      'an assertion passed — so a guard written as a bare return reports green over data nothing read, and a rule ' +
+      'never reached at all reports nothing and reads as fine',
+  );
+
+  // The half that says the missing row was hiding something, rather than merely
+  // being missing. Same `size:` defect in both runs; the only difference is
+  // whether the loader got far enough to have an opinion.
+  const sized = gateProbeAtlas(dirs, STATIC_MOTION, doubleFirstAtlasPageSize, 'spine-html');
+  const sizedAndTorn = gateProbeAtlas(
+    dirs,
+    STATIC_MOTION,
+    (text) => dropFirstAtlasPage(doubleFirstAtlasPageSize(text)),
+    'spine-html',
+  );
+  const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+  const refusedWhenRead = sized.failures.find((f) => f.assertion === A06);
+  const coveredUp = sizedAndTorn.passed.includes(A06);
+  say(
+    'S10_A06_DOES_NOT_PASS_A_PAGE_SIZE_IT_REFUSES_WHEN_THE_PARSE_SUCCEEDS',
+    refusedWhenRead !== undefined && !coveredUp,
+    refusedWhenRead === undefined
+      ? `the control half did not fire: A06 was ${rowOf(sized, A06).join(', ') || 'in no list'} on a page whose ` +
+        'declared size is twice its PNG, so the case below proves nothing'
+      : `with the atlas readable A06 refuses it — ${refusedWhenRead.detail} — and with the same atlas missing a ` +
+        `page it reports ${rowOf(sizedAndTorn, A06).join(', ')}`,
+    'the reason a vacuous pass is worse than a missing row: this is one candidate and one defect, and the verdict ' +
+      'that is printed depends on whether an unrelated rule failed first',
+  );
+
+  // Clause (c) of the same issue, and the positive control for both above: the
+  // figures the summary states are the rows a reader can count, on a candidate
+  // whose round trip is fine and on one whose is not.
+  const whole = gateProbeAtlas(dirs, STATIC_MOTION, (text) => text, 'spine-html');
+  const summaryProbes = [torn, whole].flatMap((report) => {
+    const rows = verdictRows(report);
+    const label = report.failures.length === 0 ? 'the intact candidate' : 'the torn candidate';
+    const stated = / {2}\.\. {4}(\d+) assertions: (\d+) measured \((\d+) passed, (\d+) failed\), (\d+) skipped, (\d+) not in profile/.exec(
+      rows.summary ?? '',
+    );
+    if (stated === null) return [`${label}: no summary line in the report — found ${JSON.stringify(rows.summary)}`];
+    const [, total, measured, pass, fail, skips, prof] = stated.map(Number);
+    const out: string[] = [];
+    if (pass !== rows.pass) out.push(`${label}: the summary says ${pass} passed and the report prints ${rows.pass} PASS rows`);
+    if (fail !== rows.failedAssertions) {
+      out.push(`${label}: the summary says ${fail} failed and ${rows.failedAssertions} assertion(s) carry a FAIL row`);
+    }
+    if (skips !== rows.skip) out.push(`${label}: the summary says ${skips} skipped and the report prints ${rows.skip} SKIP rows`);
+    if (prof !== rows.prof) out.push(`${label}: the summary says ${prof} out of profile and the report prints ${rows.prof} PROF rows`);
+    if (measured !== rows.pass + rows.failedAssertions) {
+      out.push(`${label}: the summary calls ${measured} measured, and ${rows.pass} + ${rows.failedAssertions} rows were`);
+    }
+    if (total !== ASSERTION_NAMES.length) {
+      out.push(`${label}: the summary totals ${total} and the registry holds ${ASSERTION_NAMES.length}`);
+    }
+    const parseSkips = report.skipped.filter((s) => s.reason === SKIP_NO_SKELETON || s.reason === SKIP_NO_ATLAS).length;
+    if (report.failures.length === 0 && parseSkips > 0) {
+      out.push(`${label}: ${parseSkips} assertion(s) skipped for a round trip that succeeded`);
+    }
+    if (report.failures.length > 0 && parseSkips === 0) {
+      out.push(`${label}: the round trip threw and no assertion says it was denied the result`);
+    }
+    return out;
+  });
+  const summaryHeld = summaryProbes.length === 0;
+  say(
+    'S11_THE_SUMMARY_FIGURES_ARE_THE_ROWS_THE_REPORT_PRINTED',
+    summaryHeld,
+    probeDetail(
+      summaryHeld,
+      summaryProbes,
+      `both reports reconcile: the torn one states ${verdictRows(torn).summary?.trim()}, and the intact one ` +
+        `${verdictRows(whole).summary?.trim()} with no assertion denied a result`,
+      (count) => `${count} figure(s) the rows contradict:`,
+    ),
+    'a summary is the one line a reader trusts without counting, so a figure in it that no row produces is worth ' +
+      'less than no figure at all — and the count that matters here is of ASSERTIONS, while `fail()` is called once ' +
+      'per finding and prints a row each time',
   );
   return bad;
 }

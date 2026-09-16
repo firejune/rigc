@@ -3609,9 +3609,31 @@ The report prints one line per assertion:
 - **FAIL** — the detail names the object, the value found and the value required.
   That detail is the instruction; the table below says which file to change.
 
+**Every assertion leaves exactly one row, on every run.** The four kinds partition
+the registry, so the rows you can see are the whole of what was asked — there is
+no fifth state in which a rule quietly did not come up. The last line of the
+report states that partition, and every figure in it is a count of *assertions*
+you can reproduce by counting rows:
+
+```
+  ..    <N> assertions: <M> measured (<P> passed, <F> failed), <S> skipped, <X> not in profile "<profile>"
+```
+
+`<M>` is `<P> + <F>`, and `<N>` is all four added together. ⚠️ `<F>` counts
+assertions and not `FAIL` lines: one assertion that finds six wrong vertices
+prints six rows and is one failure here.
+
+🚨 **When `A00_ROUNDTRIP_PARSE` fails, read the report as a report about A00 and
+nothing else.** Most of the rules read the skeleton or the atlas that A00 loads,
+and with no parse there is nothing for them to look at — so they report `SKIP`
+naming that, *the round trip did not produce a skeleton to measure* or *…an atlas
+to measure*, and the summary's `<S>` goes up while `<M>` collapses. A run in that
+state is not a rig that nearly passed; it is a rig that was measured on one rule.
+Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
+
 | Assertion | Profile | What tripped it, and where to fix it |
 | --- | --- | --- |
-| `A00_ROUNDTRIP_PARSE` | both | `spine-core` could not parse the skeleton or the atlas. Everything else in the report is downstream of this one — fix it first |
+| `A00_ROUNDTRIP_PARSE` | both | `spine-core` could not parse the skeleton or the atlas. Everything else in the report is downstream of this one — fix it first. When it fails, every rule that reads the loaded skeleton or the loaded atlas reports **SKIP** saying so by name, so the row count stays at the full registry and the summary's *measured* figure tells you how little was actually asked ([#568](https://github.com/firejune/rigc/issues/568)) |
 | `A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS` | both | a 4.1/4.2-shaped `ik`/`transform`/`path`/`physics`/`slider` array. rigc emits the 4.3 `constraints` array, so this normally means hand-edited JSON |
 | `A02_NO_BONE_TRANSFORM_KEY` | both | a bone uses 4.2's `transform`; rename it `inherit` in the rig spec |
 | `A03_REGION_WIDTH_HEIGHT_FINITE` | both | a region loaded `NaN` or a non-positive size — the attachment has no `image` and no `width`/`height` |
@@ -3626,7 +3648,7 @@ The report prints one line per assertion:
 | `A12_NO_DARK_COLOR` | renderer | a slot `dark` colour or an `rgba2`/`rgb2` timeline; parsed, then ignored |
 | `A13_MESH_BUDGET` | renderer | more mesh slots than the rig's `invariants.meshSlots`, or a mesh over its `invariants.meshTriangles`. Thin the mesh, or raise the budget in the rig spec. **SKIP** when the rig declares neither — which means *unmeasured*, not that the budget is inert: the same `meshSlots` is a **compile-time** refusal for rigc's own generators, before the gate (§3.7, issue #274) |
 | `A14_NO_FULL_FRAME_MESH` | renderer | a mesh spans the whole stage — a full-frame canvas that can never dirty-skip |
-| `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | the `idle` animation keys a bone that drives a mesh, directly or as a control bone |
+| `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | the `idle` animation keys a bone that drives a mesh, directly or as a control bone. **SKIP** when there is no `idle` animation, or when the one there is carries no bone timeline — a rule whose subject does not exist is unmeasured and not satisfied ([#568](https://github.com/firejune/rigc/issues/568)) |
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` label is not on the 4.3 line (`4.3`, `4.3.N`, `4.3.N-suffix`) |
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | a page the atlas declares is not a file. Check `--images` and `--out` |
 | `A18_DETERMINISTIC_EMIT` | both | a second compile of the same inputs differed. That is a compiler bug, not a spec bug — report it |
@@ -3703,12 +3725,19 @@ Two more limits that are not errors but will shape what you can attempt:
    Saying nothing means `spine`, so "the one you meant" is a decision either way —
    the report's first line names the profile that judged it.
 2. Read the `SKIP` lines. Each one is a check that did *not* run — make sure none of
-   them is a check you were relying on.
+   them is a check you were relying on. The summary's *measured* figure is the
+   shortest version of this step: it is how many of the rules actually looked at
+   anything, and it is the number to quote when you say a rig gated green.
    ⚠️ Under `--profile spine` a foreign skeleton usually produces **no SKIP lines
    at all**, and that is not a clean bill of health. The archetype assertions are
    excluded by the profile before the missing `invariants` block could make them
    skip, so they come back `PROF` instead. Do not go looking for a SKIP that the
    profile already accounted for; read step 3 instead.
+   ⚠️ And a **red** report is where this step matters most, which is the opposite
+   of how it reads: if `A00` failed, most of the SKIP lines say the round trip
+   denied them a result, and the handful of `PASS` rows beside them were measured
+   on the raw text alone. Step 1 already sent you back; do not take anything from
+   the rest of that report on the way ([#568](https://github.com/firejune/rigc/issues/568)).
 3. Read the `PROF` lines. They are where "was this rig held to that rule at all"
    gets answered for everything the profile left out — the renderer policy *and*
    the archetype rules. A green under `spine` has been held to neither; a green

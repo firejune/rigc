@@ -183,6 +183,22 @@ export function assertionCountForProfile(profile: ValidateProfile): number {
   return ASSERTION_NAMES.filter((name) => ASSERTION_KIND[name] === 'validity').length;
 }
 
+/**
+ * What a SKIP says when `A00_ROUNDTRIP_PARSE` handed an assertion nothing to
+ * look at.
+ *
+ * Two of them rather than one, because what an assertion was denied is the whole
+ * content of its SKIP: `A20` wanted the loaded skeleton and `A06` wanted the
+ * loaded atlas, and a reader who is told which can tell a rule that is waiting
+ * on the parse from one that is waiting on the art. Both point at A00 instead of
+ * restating its detail, which the FAIL row prints in full.
+ *
+ * Exported so a control compares against them rather than quoting them — the
+ * same reason `ASSERTION_NAMES` is exported.
+ */
+export const SKIP_NO_SKELETON = 'the round trip did not produce a skeleton to measure (A00 owns that failure)';
+export const SKIP_NO_ATLAS = 'the round trip did not produce an atlas to measure (A00 owns that failure)';
+
 export interface ValidateInput {
   skeletonText: string;
   atlasText: string;
@@ -1307,8 +1323,19 @@ export function validate(input: ValidateInput): ValidateReport {
           }
         }
       }
+      // The same shape as A06's and A17's guards, found by auditing for it
+      // (#568): a rig with no `idle` at all has nothing here to be wrong, and a
+      // rule that reports "held" over a subject that does not exist is the
+      // vacuous pass this file's own doctrine refuses. The two states get their
+      // own sentences because they are different absences — no such animation,
+      // versus one that keys no bone.
       const idle = isObj(raw?.animations) ? (raw.animations as Json).idle : undefined;
-      if (!isObj(idle) || !isObj(idle.bones)) return;
+      if (!isObj(idle)) {
+        return skip('A15_IDLE_NO_MESH_BONE_KEYS', 'the skeleton declares no "idle" animation, so nothing here can key a mesh-driving bone');
+      }
+      if (!isObj(idle.bones)) {
+        return skip('A15_IDLE_NO_MESH_BONE_KEYS', '"idle" carries no bone timeline at all, so there is no key to hold against the mesh-driving bones');
+      }
       for (const boneName of Object.keys(idle.bones as Json)) {
         if (meshBoneNames.has(boneName)) {
           fail('A15_IDLE_NO_MESH_BONE_KEYS', `idle keys bone "${boneName}", which drives a mesh — meshes never idle-skip`);
@@ -2620,15 +2647,26 @@ export function validate(input: ValidateInput): ValidateReport {
   // --- A06 / A17 / A19: the atlas against the PNGs on disk ------------------
   // Case 6h: a `size:` that disagrees with the file loads fine and collapses
   // every UV — rigid stays correct, meshes sample a corner scrap.
+  //
+  // 🚨 The guard is a SKIP and never a bare `return` (issue #568). A `return`
+  // inside `check()` leaves the failure count and the skip count where they
+  // were, which is precisely how that function decides an assertion PASSED — so
+  // for as long as this line read `if (!atlas) return;` a candidate whose atlas
+  // the round trip could not load was reported green by the two rules whose only
+  // subject IS the atlas. It was measured on a fixture carrying a page that
+  // declares twice the size of its PNG, the exact defect A06 names when the
+  // parse succeeds: with a region also removed so the round trip threw, A06
+  // printed `PASS`. Everything below reads `atlas.pages`, so a report of "held"
+  // here is a report about zero pages.
   check('A17_ATLAS_PAGE_FILES_EXIST', () => {
-    if (!atlas) return;
+    if (!atlas) return skip('A17_ATLAS_PAGE_FILES_EXIST', SKIP_NO_ATLAS);
     for (const page of atlas.pages) {
       const abs = resolve(input.atlasDir, page.name);
       if (!existsSync(abs)) fail('A17_ATLAS_PAGE_FILES_EXIST', `page "${page.name}" is not on disk at ${abs}`);
     }
   });
   check('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', () => {
-    if (!atlas) return;
+    if (!atlas) return skip('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', SKIP_NO_ATLAS);
     for (const page of atlas.pages) {
       const abs = resolve(input.atlasDir, page.name);
       if (!existsSync(abs)) continue; // A17 owns this
@@ -2745,7 +2783,11 @@ export function validate(input: ValidateInput): ValidateReport {
   // that does not ask — the reader opted in, and the message is where they find
   // out what they opted into.
   check('A19_OVERLAY_PNGS_HAVE_ALPHA', () => {
-    if (!atlas) return;
+    // A SKIP for the same reason A06's is (#568). This one is invisible under
+    // `spine`, where the profile excludes the rule before its body runs — and
+    // that is exactly why it was worth finding: `--profile spine-html` reported
+    // it, and A27 below, green on an atlas nothing had read.
+    if (!atlas) return skip('A19_OVERLAY_PNGS_HAVE_ALPHA', SKIP_NO_ATLAS);
     const stageW = skeletonData?.width ?? 0;
     const stageH = skeletonData?.height ?? 0;
     const basePages = new Set<string>();
@@ -2987,7 +3029,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // would load with the wrong pixels under the right name. One part per page (A06
   // forces it) makes the check exact.
   check('A27_REGION_NAME_MATCHES_PAGE_FILENAME', () => {
-    if (!atlas) return;
+    if (!atlas) return skip('A27_REGION_NAME_MATCHES_PAGE_FILENAME', SKIP_NO_ATLAS);
     const perPage = new Map<string, number>();
     for (const region of atlas.regions) perPage.set(region.page.name, (perPage.get(region.page.name) ?? 0) + 1);
     for (const region of atlas.regions) {
@@ -3173,6 +3215,52 @@ export function validate(input: ValidateInput): ValidateReport {
     }
   });
 
+  // --- every assertion leaves a row ----------------------------------------
+  //
+  // 🔒 **A missing row is the vacuous pass one level up** (issue #568). Twenty
+  // assertions live inside `if (skeletonData) {` above, so a round trip that
+  // throws does not skip them — it never reaches them, and they appear in none
+  // of the four lists. Measured on a fixture whose atlas was missing a region
+  // the skeleton names: 13 of 42 printed a verdict, 9 more printed `PROF`, and
+  // 20 printed nothing at all. The run exits 1 and the reader is right to fix
+  // A00 first, which is exactly why the silence survives — nobody counts the
+  // rows on a red run. A report that names 22 of 42 and says nothing about the
+  // rest is telling a reader that those rules are fine, in the only way a
+  // report can: by not mentioning them.
+  //
+  // ⚠️ The sweep DERIVES its list rather than keeping one, because a hand-kept
+  // roster of "assertions behind the round trip" is a second place to update
+  // and would be wrong the first time somebody moved a `check` call. Anything
+  // `ASSERTION_NAMES` knows that reached here with no row did not run, and what
+  // it is honest to say about it is decided by the state:
+  //
+  //   * the profile does not carry that kind of rule — `PROF`, the same verdict
+  //     `check()`'s own guard would have recorded had the call been reached;
+  //   * the round trip produced nothing — `SKIP`, naming that;
+  //   * anything else — a FAIL, **by name**. An assertion that vanished while
+  //     the skeleton was loaded is a defect in this file, and inventing a SKIP
+  //     for it would be the same silence one ring further out. The one state
+  //     the sweep is allowed to explain is the one it can prove.
+  const reported = new Set<string>([
+    ...passed,
+    ...failures.map((f) => f.assertion),
+    ...skipped.map((s) => s.assertion),
+    ...profileSkipped.map((p) => p.assertion),
+  ]);
+  for (const name of ASSERTION_NAMES) {
+    if (reported.has(name)) continue;
+    const kind = ASSERTION_KIND[name];
+    if (kind !== 'validity' && !policy) profileSkipped.push({ assertion: name, kind });
+    else if (!roundTrip) skip(name, SKIP_NO_SKELETON);
+    else {
+      fail(
+        name,
+        'the assertion left no row: its body was never reached, and the round trip that would explain that ' +
+          'succeeded. A guard above returned before the call — find it and make it a SKIP naming what was absent',
+      );
+    }
+  }
+
   return { failures, passed, skipped, profileSkipped, profile, stats };
 }
 
@@ -3273,6 +3361,24 @@ export function reportLines(report: ValidateReport): string[] {
   for (const s of report.skipped) lines.push(`  SKIP  ${s.assertion}: ${s.reason}`);
   for (const p of report.profileSkipped) lines.push(`  PROF  ${p.assertion}: ${p.kind} rule, not in profile "${report.profile}"`);
   for (const f of report.failures) lines.push(`  FAIL  ${f.assertion}: ${f.detail}`);
+  // How many of them MEASURED anything, which is the figure the rows above do
+  // not hand a reader (issue #568). Counting `PASS` lines answers a different
+  // question — before the sweep that closed #568 a run could print seven of
+  // them over a candidate on which five rules had not executed at all.
+  //
+  // ⚠️ Every figure here is a count of ASSERTIONS and not of rows, which is why
+  // the failed side is a Set: `fail()` is called once per finding, so one
+  // assertion can print six `FAIL` lines, and a line-count would report 47 of
+  // 42. The four buckets partition `ASSERTION_NAMES`, so the total is derived
+  // by adding them rather than stated — a `42` written here would be the one
+  // number in the report that no run could contradict.
+  const failed = new Set(report.failures.map((f) => f.assertion));
+  const measured = report.passed.length + failed.size;
+  const total = measured + report.skipped.length + report.profileSkipped.length;
+  lines.push(
+    `  ..    ${total} assertions: ${measured} measured (${report.passed.length} passed, ${failed.size} failed), ` +
+      `${report.skipped.length} skipped, ${report.profileSkipped.length} not in profile "${report.profile}"`,
+  );
   return lines;
 }
 
