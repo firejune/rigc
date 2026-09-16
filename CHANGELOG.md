@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.23.0](https://github.com/firejune/rigc/compare/v0.22.2...v0.23.0) (2026-09-16)
+
+
+### Features
+
+* **atlas:** lift a rotated region by transcribing the runtime's own mapping, so a measurement over an imported pack stops raising a refusal ([#570](https://github.com/firejune/rigc/issues/570)) ([#587](https://github.com/firejune/rigc/issues/587)) ([d97641e](https://github.com/firejune/rigc/commit/d97641e0fc98d290a753069335654f050d6d1857))
+* **compile:** a rig spec can state that its skeleton declares no stage, and diff measures the stage for the first time ([#578](https://github.com/firejune/rigc/issues/578)) ([#599](https://github.com/firejune/rigc/issues/599)) ([ef431e6](https://github.com/firejune/rigc/commit/ef431e68ed955b13fdc7d04766b62174cc04003d))
+* **ingest:** decompile a Spine 4.3 skeleton into the two specs that rebuild it, gated by build(ingest(x)) = x ([#569](https://github.com/firejune/rigc/issues/569)) ([#600](https://github.com/firejune/rigc/issues/600)) ([2309130](https://github.com/firejune/rigc/commit/2309130b7b4094f862d17cb4a9bff9fa60d1faa6))
+* **render:** render and check pose under a named skin, and the editor round trip measures every skin the build declares ([#571](https://github.com/firejune/rigc/issues/571)) ([#590](https://github.com/firejune/rigc/issues/590)) ([3dcda0c](https://github.com/firejune/rigc/commit/3dcda0c55925bcea38f2ad793af8c4fe615c9319))
+
+
+### Bug Fixes
+
+* **compile:** a deform run is copied at a raw index, so an odd length and an odd start compile and are emitted verbatim ([#576](https://github.com/firejune/rigc/issues/576)) ([#596](https://github.com/firejune/rigc/issues/596)) ([7fe7f1d](https://github.com/firejune/rigc/commit/7fe7f1d598f8e0a328ceaf011909ab90053d7fc8))
+* **compile:** emit a slot no skin fills instead of dropping it, and make A26 check the table in both directions ([#575](https://github.com/firejune/rigc/issues/575)) ([#598](https://github.com/firejune/rigc/issues/598)) ([f5674b6](https://github.com/firejune/rigc/commit/f5674b687a4562f0fb20412221cdb474bc2da418))
+* **compile:** refuse an attachment by the construct it is, and derive a mesh's path from its image the way a region does ([#577](https://github.com/firejune/rigc/issues/577)) ([#592](https://github.com/firejune/rigc/issues/592)) ([8d90183](https://github.com/firejune/rigc/commit/8d90183af7b40ddd6a6ee2561b8210b3c90af2c9))
+* **release:** the confirmation waits as long as the registry says it may take, and its two outcomes stop printing the same red ([#563](https://github.com/firejune/rigc/issues/563)) ([#588](https://github.com/firejune/rigc/issues/588)) ([fef7609](https://github.com/firejune/rigc/commit/fef76097e066183f009977777aaea58713d59692))
+* **validate:** every assertion leaves a row, and a guard on absent data reports SKIP rather than the pass check() records for a bare return ([#568](https://github.com/firejune/rigc/issues/568)) ([#585](https://github.com/firejune/rigc/issues/585)) ([683a4a6](https://github.com/firejune/rigc/commit/683a4a6d0e0af466f1c5125bdbd464c0bcbf870a))
+* **validate:** retire A08's name-identity clause, which the renderer it was gated under has never performed ([#574](https://github.com/firejune/rigc/issues/574)) ([#591](https://github.com/firejune/rigc/issues/591)) ([7ca4ee2](https://github.com/firejune/rigc/commit/7ca4ee29f4410161c06c1bd584afc5c01d47632d))
+
 ## [0.22.2](https://github.com/firejune/rigc/compare/v0.22.1...v0.22.2) (2026-09-16)
 
 
