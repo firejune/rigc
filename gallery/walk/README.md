@@ -189,8 +189,8 @@ it asserts 0 and interpolates down to it.
 
 | | |
 | --- | --- |
-| `rigc build --profile spine` | green — **18 assertions ran, 7 skipped**, `A34_CONSTRAINT_TIMELINE_TARGETS` among the 18 |
-| `rigc build --profile spine-html` | green as well — 25 ran, 12 skipped. Nothing here needs the default profile to pass |
+| `rigc build --profile spine` | green — **14 assertions ran, 13 skipped**, `A34_CONSTRAINT_TIMELINE_TARGETS` among the 14 |
+| `rigc build --profile spine-html` | green as well — 20 ran, 22 skipped. Nothing here needs the default profile to pass |
 | `rigc render` | 19 frames at 20 fps, contact sheet **looked at** twice — the first pass caught a 56-unit foot lift that splayed the knees, and a far arm swung out far enough to read as a plank |
 | loop seam | **at `--max 288`**, which is 230×288 here: **0 / 255** max channel difference, 0 pixels differing of 66 240, at both 20 fps (19 frames) and 30 fps (28 frames) — both rates land on the 0.9 s duration (18 and 27 samples), so both are seam readings and not comparisons against some other time ([#337](https://github.com/firejune/rigc/issues/337)). The last frame is the first frame to the byte. 📏 The `--max` is part of the figure: a seam reading is scale-relative and a zero at one size is not a zero at every size ([#336](https://github.com/firejune/rigc/issues/336)) |
 | the bone series | `t = 0.900` is identical to `t = 0.000` on every bone, so the seam is closed in the pose and not only in the pixels |

@@ -217,8 +217,17 @@ import {
   assertionCountForProfile,
   attachmentRegionJoins,
   reportLines,
+  SKIP_NO_ANIMATION,
   SKIP_NO_ATLAS,
+  SKIP_NO_ATLAS_PAGE,
+  SKIP_NO_ATLAS_REGION,
+  SKIP_NO_ATTACHMENT_REGION_JOIN,
+  SKIP_NO_DECLARED_DURATION,
+  SKIP_NO_MESH_ATTACHMENT,
+  SKIP_NO_PHYSICS_CONSTRAINT,
+  SKIP_NO_REGION_ATTACHMENT,
   SKIP_NO_SKELETON,
+  SKIP_NO_TIMELINE,
   validate,
   VALIDATE_PROFILES,
   type ValidateProfile,
@@ -5052,6 +5061,64 @@ function assertionsBehindTheRoundTrip(source: string): string[] {
   return [...names].sort();
 }
 
+/**
+ * Every assertion that QUANTIFIES OVER A SUBJECT, read off `src/validate.ts` and
+ * its own name — the population that must not report PASS when the artifact
+ * carries no member of that subject (issue #580).
+ *
+ * ⭐ **Neither half may be the repair.** #568's lesson is that a roster taken off
+ * what the repair wrote names exactly the sites already repaired, so re-planting
+ * one shrinks the roster to match and the case goes green over the bug: reading
+ * this off `skip(…, SKIP_NO_MESH_ATTACHMENT)` would do precisely that. So the
+ * two halves are both things a re-plant cannot touch:
+ *
+ *   * **the body iterates at all** — `for`, `forEach` or `walkTimelines`. A rule
+ *     with no iteration measures the artifact itself and has no subject list to
+ *     be empty (`A00`, `A16`, `A11`, `A18`). Deleting a guard does not delete
+ *     the loop it guarded, and neither does turning its `skip` back into a bare
+ *     `return`, which is #568's own defect shape.
+ *   * **the name is not the ¬∃ form** — the criterion in `src/validate.ts`'s
+ *     header, applied to the name rather than to the code. `NO_⟨construct⟩` and
+ *     nothing else is a rule whose pass is the count zero; a name that also
+ *     carries a locus — `IDLE_NO_…` before the construct, `…_AFTER_STEPPING`
+ *     after it — names a subject as well, and its absence is a SKIP.
+ *
+ * ⚠️ The second half is a reading of English and the preposition list is its
+ * weak point: a future `NO_` rule whose locus is spelled with a word not in it
+ * would be classified as pure ¬∃ and let through. That is a smaller hole than
+ * the alternative — a table of assertion names with their verdicts beside them,
+ * which is the "✅ applied" antipattern this repository has a judgment about —
+ * and it is stated here rather than discovered later.
+ */
+function subjectQuantifiedAssertions(source: string): string[] {
+  const iterates = new Set<string>();
+  let current: string | null = null;
+  let depth = 0;
+  for (const line of source.split('\n')) {
+    const body = line.trim();
+    if (body.startsWith('//') || body.startsWith('*') || body.startsWith('/*')) continue;
+    const opened = /^( +)check\('(A\d\d_[A-Z0-9_]+)'/.exec(line);
+    if (opened !== null) {
+      current = opened[2];
+      depth = opened[1].length;
+      continue;
+    }
+    if (current === null) continue;
+    // ⚠️ The close matters and the first spelling of this got it wrong: without
+    // it, `A18_DETERMINISTIC_EMIT` — whose body is two string comparisons —
+    // collected the `for (const name of ASSERTION_NAMES)` of the sweep that
+    // follows it at the same indent, and was reported as iterating.
+    if (line === `${' '.repeat(depth)}});`) {
+      current = null;
+      continue;
+    }
+    if (/\bfor \(|\.forEach\(|walkTimelines\(/.test(line)) iterates.add(current);
+  }
+  const noneOf = (name: string): boolean =>
+    /^A\d\d_NO_/.test(name) && !/_(AFTER|BEFORE|DURING|UNDER|WITHIN)_/.test(name);
+  return ASSERTION_NAMES.filter((name) => iterates.has(name) && !noneOf(name)).sort();
+}
+
 /** Every verdict row `reportLines` printed, by kind, counted as the reader counts them. */
 function verdictRows(report: ReturnType<typeof validate>): {
   pass: number;
@@ -5483,6 +5550,228 @@ function runStaticRigSuite(): number {
     `one extent null and the other a number: ${halfStated ?? 'compiled'}; an origin beside the absence: ${originOnly ?? 'compiled'}`,
     'which half was meant is not derivable from either shape, so reading one would be the compiler inventing the ' +
       'other — and an origin for a box that is not there is a header no export carries',
+  );
+
+  // --- S48-S50: the loop that ran zero times (issue #580) -------------------
+  //
+  // 🚨 S09-S11 above ask what the report says when the ROUND TRIP produced
+  // nothing. These three ask it one ring further in, of a round trip that
+  // succeeded and handed every rule a perfectly good skeleton with nothing in it
+  // to measure. `check()` records a pass when a body runs to its end without a
+  // `fail()` or a `skip()`, so a body whose main construct is a loop over an
+  // EMPTY list passes having looked at nothing — measured on `main` before this
+  // change, on the fixture below: 15 of the 42 assertions reported PASS over a
+  // subject the artifact does not carry, while their siblings over the same
+  // shape (`A31`, `A33`, `A36`, `A37`) reported SKIP.
+  //
+  // ⚠️ The profile is `spine-html` for S09's reason: under `spine` the archetype
+  // and renderer rules are excluded before their bodies run, and four of the
+  // rules these cases are about (`A13`, `A19`, `A24`, `A26`) live there.
+  //
+  // ⚠️ The fixture is NOT green and that is a property of the tree rather than
+  // of this case: a rig with no attachment compiles to an atlas of one blank
+  // line, which `A07_ATLAS_TEXT_SHAPE` refuses by name. So these cases are
+  // stated over ROWS, never over greenness — `A07` is measured here, and being
+  // measured is what the criterion asks of it.
+  const NO_SUBJECT = {
+    // One declared slot, taken back out of the EMITTED skeleton below, so that
+    // the artifact carries no slot at all — and #575 is why it takes an edit to
+    // the emitted file to get there. `compile` used to drop a slot no skin
+    // filled and now emits every declared one, so no rig compiles to a
+    // slot-less artifact any more; the state is reachable only where the
+    // skeleton handed to `validate` is not the one that rig produced (a foreign
+    // export gated against a rig spec, artifacts re-gated from disk). Declaring
+    // `slots: []` instead would not reach it either: `compile.ts` writes
+    // `slotOrder: null` when the rig declares none, so `A26` skips one guard
+    // earlier on *the rig declares no table* — a different sentence, and not the
+    // one these cases are about. Both halves measured.
+    slots: [{ name: 'block', bone: 'block' }],
+    skins: { default: {} },
+    // Two invariants with no subject under them, so the two archetype rules
+    // whose subject can vanish are reached at all: `A13`'s triangle-budget-only
+    // branch and `A24`'s stroke. Without these the rig declares nothing and both
+    // skip one clause earlier, for a reason that is not what these cases measure.
+    invariants: { meshTriangles: 8, axisBone: 'block' },
+  };
+  const SUBJECT_BEARING = {
+    ...STATIC_MOTION,
+    animations: {
+      hold: {
+        duration: 0.5,
+        loop: false,
+        tracks: [{ slot: 'block', property: 'rgba', keys: [{ t: 0, v: [1, 1, 1, 1] }, { t: 0.5, v: [1, 1, 1, 1] }] }],
+      },
+    },
+    physics: { cowlick: { bone: 'block', y: 0.375, inertia: 0.5, strength: 100, damping: 0.85, mass: 1, mix: 1 } },
+  };
+  // The edit is STRUCTURAL and names no assertion: the whole `slots` key goes,
+  // so the artifact carries no slot at all.
+  //
+  // ⭐ It is also the evidence for a rule NOT converted. `A26_SLOT_DRAW_ORDER`
+  // looks like the rest of this family — a loop over the emitted slots that runs
+  // zero times — and it is the one rule the criterion's answer is *no* for,
+  // because #575 gave it a completeness clause: zero emitted slots against a
+  // declared table is every slot lost, and it is named as such. So this fixture
+  // carries **two deliberate FAIL rows**, `A07_ATLAS_TEXT_SHAPE` on the blank
+  // atlas and `A26` on the slot taken away, and both are measurements. The cases
+  // below are stated over rows and never over greenness for exactly that reason.
+  const bare = gateProbeArtifacts(
+    writeProbeRig(NO_SUBJECT),
+    STATIC_MOTION,
+    (skeleton) => {
+      delete skeleton.slots;
+    },
+    'spine-html',
+  );
+  const borne = gateProbe(dirs, SUBJECT_BEARING, 'spine-html');
+  const quantified = subjectQuantifiedAssertions(readFileSync(join(import.meta.dir, 'src/validate.ts'), 'utf8'));
+  /** The reasons a SKIP gives when the SUBJECT is what was missing (#580). */
+  const subjectReasons = new Set([
+    SKIP_NO_REGION_ATTACHMENT,
+    SKIP_NO_MESH_ATTACHMENT,
+    SKIP_NO_ANIMATION,
+    SKIP_NO_TIMELINE,
+    SKIP_NO_PHYSICS_CONSTRAINT,
+    SKIP_NO_ATLAS_PAGE,
+    SKIP_NO_ATLAS_REGION,
+    SKIP_NO_ATTACHMENT_REGION_JOIN,
+    SKIP_NO_DECLARED_DURATION,
+  ]);
+  const measuredIn = (report: ReturnType<typeof validate>, name: string): boolean =>
+    report.passed.includes(name) || report.failures.some((f) => f.assertion === name);
+
+  const vacuousProbes = [
+    ...(quantified.length === 0
+      ? ['the roster read off `src/validate.ts` is EMPTY, so this case measured nothing at all']
+      : []),
+    ...ASSERTION_NAMES.flatMap((name) => {
+      const where = rowOf(bare, name);
+      return where.length === 1 ? [] : [`${name} has ${where.length === 0 ? 'no row at all' : `${where.length} rows (${where.join(', ')})`}`];
+    }),
+    ...quantified
+      .filter((name) => bare.passed.includes(name))
+      .map((name) => `${name} quantifies over a subject and reports PASS on an artifact that carries none of it`),
+  ];
+  const vacuousHeld = vacuousProbes.length === 0;
+  say(
+    'S48_A_LOOP_THAT_RAN_ZERO_TIMES_IS_A_SKIP_AND_NOT_A_PASS',
+    vacuousHeld,
+    probeDetail(
+      vacuousHeld,
+      vacuousProbes,
+      `none of the ${quantified.length} assertion(s) that quantify over a subject passed on an artifact that ` +
+        `carries no attachment, animation, constraint or slot; the ${bare.passed.length} that did pass are the ` +
+        `rules whose finding is a count of zero (${bare.passed.join(', ')})`,
+      (count) => `${count} row(s) the criterion refuses:`,
+    ),
+    'the roster is read off the assertion NAMES and off whether each body iterates at all, never off the skip the ' +
+      'repair wrote — a roster taken from `skip(…, SKIP_NO_MESH_ATTACHMENT)` would name exactly the sites already ' +
+      'repaired, so re-planting one would shrink the roster to match and this case would go green over the defect ' +
+      '(#568 measured that at 24 sites against 20). Both re-plants survive it: a guard deleted outright and a ' +
+      '`skip` turned back into a bare `return` each leave the loop where it is and the name unchanged',
+  );
+
+  const bornAgain = quantified.filter(
+    (name) => bare.skipped.some((s) => s.assertion === name && subjectReasons.has(s.reason)) && measuredIn(borne, name),
+  );
+  /**
+   * Which `stats` entry counts each subject — the report's own census, so that a
+   * rule saying a subject is absent can be held against the number beside it.
+   *
+   * 🔒 This is a table of SUBJECTS and not of verdicts: it says which figure
+   * answers "how many of these does the artifact carry", and nothing about what
+   * any assertion should report. Two of the constants have no census entry —
+   * a timeline and the attachment-to-region join are not counted anywhere — and
+   * they are simply not held to one rather than being given a figure to match.
+   */
+  const subjectCensus: ReadonlyArray<readonly [string, string]> = [
+    [SKIP_NO_REGION_ATTACHMENT, 'regionAttachments'],
+    [SKIP_NO_MESH_ATTACHMENT, 'meshAttachments'],
+    [SKIP_NO_ANIMATION, 'animations'],
+    [SKIP_NO_DECLARED_DURATION, 'animations'],
+    [SKIP_NO_PHYSICS_CONSTRAINT, 'physicsConstraints'],
+    [SKIP_NO_ATLAS_PAGE, 'pages'],
+    [SKIP_NO_ATLAS_REGION, 'regions'],
+  ];
+  const censusProbes = [bare, borne].flatMap((report) =>
+    subjectCensus.flatMap(([reason, key]) => {
+      const counted = report.stats[key];
+      if (typeof counted !== 'number' || counted === 0) return [];
+      return report.skipped
+        .filter((s) => s.reason === reason)
+        .map((s) => `${s.assertion} says ${JSON.stringify(reason)} while the same report's stats count ${counted}`);
+    }),
+  );
+  const suppliedProbes = [
+    ...(bornAgain.length === 0
+      ? ['no assertion was measured on the subject-bearing rig after skipping on the bare one, so this control is vacuous']
+      : []),
+    ...bornAgain.filter((name) => !borne.passed.includes(name)).map((name) => `${name} is measured but does not hold on a correct rig`),
+    ...censusProbes,
+  ];
+  const suppliedHeld = suppliedProbes.length === 0;
+  say(
+    'S49_THE_SAME_RULES_MEASURE_AGAIN_AS_SOON_AS_THE_SUBJECT_IS_THERE',
+    suppliedHeld,
+    probeDetail(
+      suppliedHeld,
+      suppliedProbes,
+      `${bornAgain.length} rule(s) skipped for want of a subject on the bare rig and passed on the same rig with ` +
+        `its two regions, its animation and its physics constraint back: ${bornAgain.join(', ')}. On neither report ` +
+        `does any rule name one of the ${subjectCensus.length} counted subjects the stats beside it say is there`,
+      (count) => `${count} rule(s) the supplied subject did not revive:`,
+    ),
+    'the other half of S48, and the one that says the skip is keyed on the subject rather than on the rig: a guard ' +
+      'written against the wrong condition — on the archetype, on the profile, on the rig having declared something ' +
+      "— would skip here too and would look identical above. The census clause is what sees it: the report's own " +
+      'stats line counts the subject, so a rule reporting that a counted subject is absent contradicts the report it ' +
+      'is printed in',
+  );
+
+  const bareRows = verdictRows(bare);
+  const borneRows = verdictRows(borne);
+  const stated = (rows: ReturnType<typeof verdictRows>): number | null => {
+    const m = / {2}\.\. {4}\d+ assertions: (\d+) measured/.exec(rows.summary ?? '');
+    return m === null ? null : Number(m[1]);
+  };
+  const bareMeasured = stated(bareRows);
+  const borneMeasured = stated(borneRows);
+  const unexplained = ASSERTION_NAMES.filter(
+    (name) =>
+      measuredIn(borne, name) &&
+      !measuredIn(bare, name) &&
+      !bare.skipped.some((s) => s.assertion === name && subjectReasons.has(s.reason)),
+  );
+  const arithmeticProbes = [
+    ...(bareMeasured === null ? ['the bare report states no measured figure'] : []),
+    ...(borneMeasured === null ? ['the subject-bearing report states no measured figure'] : []),
+    ...unexplained.map(
+      (name) =>
+        `${name} is measured on the subject-bearing rig and not on the bare one, and its row there names no subject ` +
+        `— it says ${JSON.stringify(bare.skipped.find((s) => s.assertion === name)?.reason ?? rowOf(bare, name).join(', '))}`,
+    ),
+    ...(bareMeasured !== null && borneMeasured !== null && borneMeasured - bareMeasured !== bornAgain.length
+      ? [
+          `the measured figure falls by ${borneMeasured - bareMeasured} from ${borneMeasured} to ${bareMeasured}, and ` +
+            `${bornAgain.length} rule(s) name a missing subject`,
+        ]
+      : []),
+  ];
+  const arithmeticHeld = arithmeticProbes.length === 0;
+  say(
+    'S50_THE_MEASURED_FIGURE_FALLS_BY_EXACTLY_THE_RULES_THAT_NAME_A_MISSING_SUBJECT',
+    arithmeticHeld,
+    probeDetail(
+      arithmeticHeld,
+      arithmeticProbes,
+      `${borneMeasured} measured with the subjects there and ${bareMeasured} without them, a fall of ` +
+        `${(borneMeasured ?? 0) - (bareMeasured ?? 0)}, and every one of those rows is a rule whose SKIP names the ` +
+        'subject it was denied — nothing else went quiet',
+      (count) => `${count} figure(s) the rows contradict:`,
+    ),
+    'the arithmetic is what makes "converted" checkable without a list of what was converted: a rule that went ' +
+      'silent for any other reason, or for a reason spelled as a string literal rather than one of the exported ' +
+      'constants, is named here rather than absorbed into a total that still adds up',
   );
   return bad;
 }

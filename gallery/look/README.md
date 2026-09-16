@@ -630,8 +630,8 @@ gauge read backwards while both files stayed self-consistent.
 
 | Claim | How | Reading |
 | --- | --- | --- |
-| builds green under the default `spine` profile | `rigc build` | 20 assertions ran, 6 skipped |
-| builds green under `spine-html` too | `--profile spine-html` | 30 ran, 11 skipped — `A13`, `A14`, `A15`, `A21`, `A39` among them |
+| builds green under the default `spine` profile | `rigc build` | 20 assertions ran, 7 skipped |
+| builds green under `spine-html` too | `--profile spine-html` | 29 ran, 13 skipped — `A13`, `A14`, `A15`, `A21`, `A39` among them |
 | the selftest's gallery suite gates it under **both** | `bun run selftest` | `GALLERY_EXAMPLE_IS_GREEN[look/spine]`, `[look/spine-html]` |
 | deterministic | `A18`, plus the suite compiling it three times | byte-identical |
 | the far lock folds and draws nothing when it does | `A39` + the stats line | 4 keys not drawn, 8 reversed triangles among them, 17 keys still measured |

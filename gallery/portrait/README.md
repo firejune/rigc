@@ -538,8 +538,8 @@ of the two profiles the gallery bar asks for.
 
 | | |
 | --- | --- |
-| `rigc build --profile spine` | green — **18 assertions ran, 7 skipped**, 14 excluded by profile |
-| `rigc build --profile spine-html` | green — **26 ran, 13 skipped**, including `A13_MESH_BUDGET` against `invariants.meshTriangles: 32` and `A15_IDLE_NO_MESH_BONE_KEYS` against an `idle` that keys `headroll` rather than `head` |
+| `rigc build --profile spine` | green — **17 assertions ran, 10 skipped**, 15 excluded by profile |
+| `rigc build --profile spine-html` | green — **26 ran, 16 skipped**, including `A13_MESH_BUDGET` against `invariants.meshTriangles: 32` and `A15_IDLE_NO_MESH_BONE_KEYS` against an `idle` that keys `headroll` rather than `head` |
 | mesh coverage | **100.00%** on both meshes, measured against the PNGs they name (`head` reaching 95.90px past the art at its grid corners, `hair_bang` 55.22px) |
 | **the yaw model, on the artifact** | every mesh column, every feature bone and every `scalex` posed by `spine-core` at `t = 1.0` and compared against `dx = x(cos t − 1) − z sin t` composed with the 1.6° roll: **agreement to under 0.001 px** on all 10 mesh columns and all 6 feature bones, and to 4 decimal places on all 6 scale values |
 | the parallax | fringe centre travels **5.406px** further than the face centre; predicted `(196 − 170)·sin 12° = 5.406` |

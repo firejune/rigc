@@ -162,7 +162,11 @@ rigc validate …/examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.
   SKIP  A32_EVENT_KEYS_RESOLVE: no animation carries an event timeline
   SKIP  A34_CONSTRAINT_TIMELINE_TARGETS: no animation carries a constraint timeline
   SKIP  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: no animation carries a deform timeline
+  SKIP  A04_MESH_TRIANGLES_AND_ENCODING: the skeleton carries no mesh attachment
   SKIP  A33_VERTEX_ATTACHMENT_GEOMETRY: the skeleton carries no bounding box, clipping attachment or path
+  SKIP  A20_MESH_WEIGHTS_COHERENT: the skeleton carries no mesh attachment
+  SKIP  A22_MESH_UVS_IN_UNIT_RANGE: the skeleton carries no mesh attachment
+  SKIP  A23_PHYSICS_CONSTRAINT_EFFECTIVE: the skeleton declares no physics constraint
   …
   PROF  A12_NO_DARK_COLOR: renderer rule, not in profile "spine"
   PROF  A21_MESH_RIM_PINNED: archetype rule, not in profile "spine"
@@ -175,10 +179,17 @@ Read it as three separate statements, because they answer three different questi
 - **`PASS` / `FAIL`** — the rule ran, and this is its verdict.
 - **`SKIP`** — the rule ran and had nothing to measure, and the line says what was
   absent. A `SKIP` is never a pass, and on foreign data the `SKIP` list is also a
-  **free inventory of what the skeleton does not contain**. The five lines above tell
+  **free inventory of what the skeleton does not contain**. The nine lines above tell
   you, without your having opened the JSON, that this export has no draw-order
-  timeline, no event timeline, no constraint timeline, no deform timeline, and no
-  bounding box, clipping attachment or path.
+  timeline, no event timeline, no constraint timeline, no deform timeline, no mesh
+  attachment, no physics constraint, and no bounding box, clipping attachment or
+  path. ⭐ Four of those lines used to read `PASS`
+  ([#580](https://github.com/firejune/rigc/issues/580)): a rule that walks the
+  meshes, or the physics constraints, and finds none has measured nothing, and
+  reporting that as held both overstated the gate and cost you the inventory line.
+  What still passes over an empty list is the other kind of rule — `A01`, `A02`,
+  `A11`, `A12`, `A14` ask *how many of this does the file carry*, and **zero is the
+  answer**.
 - **`PROF`** — the rule was excluded by the profile before its body ran. §3.3.
 
 ⚠️ **A green here is a statement about validity and nothing else.** It does not say
