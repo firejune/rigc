@@ -60,6 +60,62 @@ jobs:
       - run: bun run lint
       - run: bun run selftest
 
+  # Whether the PACKAGE runs, which no other instrument here asks (issue #556).
+  #
+  # ROADMAP.md's fourth condition for 1.0 is that the published package works on
+  # a machine that has never seen this repository, "checked mechanically, every
+  # release". Everything that existed reads a LIST: `prepublishOnly` gates the
+  # source tree, the `ships` job below reads `npm pack --dry-run` path lists at
+  # both ends of a landing, and `CUR16` resolves the relative imports of shipped
+  # modules. None of them runs the thing. Two smokes had been taken by hand after
+  # the fact, on v0.20.0 and v0.20.2, and the tree records neither — a check
+  # somebody remembers to do is the `✅ applied` antipattern this repository
+  # already has a judgment about.
+  #
+  # ⭐ **It is a separate job on purpose, with no `bun install` in it.** The
+  # question is whether a stranger's machine can run the package, and a job that
+  # had first installed this repository's dev dependencies would be answering it
+  # with the repository's own tooling on hand. `scripts/install_smoke.ts` imports
+  # nothing but node builtins for the same reason, so this job needs bun to run
+  # the script, node and npm to install, and the network to reach the registry
+  # for `@esotericsoftware/spine-core` — the one package the install fetches.
+  #
+  # 🌱 **The plants run here too, and that is the point of running them.** The
+  # battery is five cases: a correct tarball builds, the same tarball installed
+  # at a path with spaces and non-ASCII in it builds, and three packages broken
+  # on purpose — `tools/plate.ts` out of `files`, `src/validate.ts` out of the
+  # packed tree, `@esotericsoftware/spine-core` out of `dependencies` — each of
+  # which has to make the smoke RED naming what went missing. A plant is patched
+  # into an extraction of the tarball and packed again from there, so nothing in
+  # the checkout is modified and no restore can be forgotten. Without them this
+  # job is a gate nobody has seen fail; with them every run has seen it fail
+  # three times.
+  #
+  # 🕳️ **What it cannot see**, stated rather than left to be assumed: it runs the
+  # tarball this tree packs, which is not the tarball npm serves until a publish
+  # makes it one. That half is `release.yml`'s confirmation step, which runs the
+  # same script with `--source registry` after the publish — and the reason it is
+  # a confirmation rather than the gate is that its own firing cannot be observed
+  # without publishing something broken, while this one's can, three times a run.
+  installs:
+    runs-on: ubuntu-latest
+    # Five cases — five packs and five installs — measured at 9.4s on the machine
+    # this was written on. The ceiling is for a slow registry, not for the work.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      # npm is what packs and installs, and the `bin` shim is a Node script, so
+      # the runner's own node is not incidental here — it is half of what is
+      # under test.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: The package installs into an empty directory and builds a rig
+        run: bun run smoke
+
   # What a control leaving the tree looks like, which is nothing (issue #508).
   #
   # 🚨 **The incident.** Pull request #503 removed three controls and two

@@ -59,6 +59,7 @@
     "validate": "bun cli.ts validate",
     "explain": "bun cli.ts explain",
     "selftest": "bun selftest.ts",
+    "smoke": "bun scripts/install_smoke.ts",
     "typecheck": "bunx tsc --noEmit",
     "typecheck:runs": "bunx tsc --noEmit -p tsconfig.runs.json",
     "lint": "bunx eslint .",

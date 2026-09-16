@@ -224,9 +224,10 @@ sincere about it. rigc exists to convert that silence into a named failure.
 
 | Command | Checks |
 | --- | --- |
-| `bun run typecheck` | `bunx tsc --noEmit` over `cli.ts`, `selftest.ts`, `src/`, `bench/`, `tools/`, `fixtures/`. `strict: false` with `strictNullChecks: true` — see the comment in `tsconfig.json` before raising it |
+| `bun run typecheck` | `bunx tsc --noEmit` over the paths `tsconfig.json`'s `include` names — read it there rather than from a copy here, which is how this cell came to be missing two of them. `strict: false` with `strictNullChecks: true` — see the comment in that file before raising it |
 | `bun run lint` | one rule: `@typescript-eslint/no-explicit-any` as an **error**. `eslint.config.js` says why it is only one |
 | `bun run selftest` | the validator's own negative controls, on fixtures it generates. Add `--cuts <cuts.json>` to gate a project's real cuts as well — see *The selftest and its fixtures* |
+| `bun run smoke` | the **package**, rather than the tree: pack, install into an empty directory, build a rig from the install. Needed when a change touches `files`, `bin/`, a runtime import that crosses a directory, or the dependency — a green checkout cannot see any of those. It installs packages, so unlike the three above it needs a network; RELEASING.md *Whether the tarball runs* says what it proves and what it cannot |
 | `bun cli.ts bench 3 --candidate <dir>` | the ladder still reproduces its rung. `docs/LADDER.md` §*B1's proof* carries that proof beneath the two commands that produce it — and every figure on that page is one **named** candidate's, so compare against the run you passed and not against the first `bench` line the page shows |
 | `bun cli.ts check --candidate <dir> --frames <dir>` | the candidate still *looks* like the reference. The gate cannot see a wrong animation — it passed a build with every easing reversed — so a change to timelines, curves or the rasteriser is not verified until this has run |
 

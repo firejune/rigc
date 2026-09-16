@@ -87,3 +87,41 @@ jobs:
       - name: Publish to npm
         if: ${{ steps.release.outputs.release_created == 'true' }}
         run: npm publish --provenance --access public
+
+      # ROADMAP.md's fourth condition for 1.0 says "installing FROM THE REGISTRY
+      # and running a build is checked mechanically, every release" — this is
+      # that sentence, and it is deliberately the smaller half of issue #556.
+      #
+      # ⚖️ The GATE is the `installs` job in ci.yml, which runs the same script
+      # over a tarball packed from the branch, on every pull request, with three
+      # planted packages that have to make it red. This step cannot be the gate,
+      # and the reason is the one this repository applies to every check: its own
+      # firing cannot be observed without publishing something broken, and a
+      # check nobody can see fail is not a check. What it adds is the one thing
+      # the gate cannot reach — the artifact the registry actually serves, rather
+      # than the one this tree packs — so it runs as a confirmation beside the
+      # gate. A red here does not un-publish anything; it says the cut needs a
+      # follow-up, which is a true and useful thing to be told.
+      #
+      # ⏳ The wait is for propagation and nothing else. `npm view` is asked
+      # whether the version is being served yet, and only then does the smoke
+      # run, ONCE — so a real failure is reported as a failure instead of being
+      # retried five times and reported as a timeout.
+      - name: Confirm the published package installs and builds
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        # Through the environment rather than interpolated into the script, the
+        # same rule ci.yml's jobs state: `${{ }}` inside `run:` is text becoming
+        # code, and the habit is worth keeping even where the text is a tag this
+        # workflow made a moment ago.
+        env:
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG_NAME#v}"
+          for attempt in 1 2 3 4 5 6; do
+            if npm view "spine-rigc@$version" version > /dev/null 2>&1; then break; fi
+            echo "the registry is not serving spine-rigc@$version yet (attempt $attempt)"
+            sleep 10
+          done
+          npm view "spine-rigc@$version" version
+          bun run smoke -- --source registry --version "$version" --case clean

@@ -221,6 +221,94 @@ attested from a run holding an OIDC token, so setting it in `package.json` would
 fail the manual fallback below; the workflow passes `--provenance` on the
 command line instead, where it applies to the automated publish only.
 
+### Whether the tarball runs
+
+What the package *holds* and whether it *works* are two different facts, and
+until [#556](https://github.com/firejune/rigc/issues/556) only the first was
+checked. `prepublishOnly` gates the source tree; the `ships` job reads packed
+path lists; `CUR16` resolves the relative imports of shipped modules. None of
+them starts the program. The two smokes that had been taken — v0.20.0 and
+v0.20.2 — were taken **by hand, after the cut**, and the tree recorded neither,
+which is the `✅ applied` antipattern with a release attached to it.
+
+**The gate is the `installs` job in
+[`ci.yml`](.github/workflows/ci.yml)**, on every pull request and every push to
+`main`. It runs `bun run smoke` — [`scripts/install_smoke.ts`](scripts/install_smoke.ts) —
+which packs a tarball out of the branch, installs it into an **empty** directory
+that has a `package.json` of its own, and builds a rig from there: compile, the
+round trip through `spine-core`, and files on disk. What that proves, and none of
+it was proven before:
+
+- the `bin` shim resolves and hands off, and the installed `rigc` is what runs;
+- `files` is closed under what the commands actually need at run time, not just
+  under the imports a scanner can see;
+- `@esotericsoftware/spine-core` comes down with the package, and the round trip
+  runs against the version the installed `package.json` asks for — the emitted
+  `skeleton.spine` is compared against it rather than against a number written
+  into the smoke;
+- `skeleton.json`, `skeleton.atlas` and the packed page PNG are on disk, the
+  named assertions the fixture reaches are in the output, and the installed CLI
+  reads its own output back with `rigc validate`;
+- with `bun` off PATH the shim says so in one sentence instead of dying as
+  `env: bun: No such file or directory`.
+
+The package carries no art and no spec — `gallery/`, `fixtures/` and `examples/`
+are outside the allowlist — so the fixture is authored into the install
+directory: a four-deep bone chain, three region attachments, one contour mesh,
+one animation with two rotate timelines. Its plates come from the package's own
+`tools/plate.ts`, imported as a **bare specifier**, and the run refuses a
+resolution that lands anywhere but inside the install. Nothing under this
+repository is on the fixture's path; the tarball is the only thing that crosses.
+
+🌱 **The plants are in the tool, so every run has seen it fail.** Three packages
+are broken on purpose — `tools/plate.ts` out of `files`, `src/validate.ts` out of
+the packed tree, `@esotericsoftware/spine-core` out of `dependencies` — each
+patched into an **extraction** of the tarball and packed again from there, so the
+checkout is never modified and there is no restore to forget. A plant case is
+green only when the smoke went red at the step it was supposed to, naming what
+went missing, and the plant itself is refused if it removed nothing from the
+pack. Beside them is the other direction: a *correct* tarball installed at an
+absolute path with spaces and non-ASCII in it has to pass. It found a real defect
+the first time it ran — `new URL('.', import.meta.url).pathname` is
+percent-encoded, so a generator written the way the gallery's `make_parts.ts`
+scripts are writes into a directory called `install%20smoke`.
+
+Run it locally the way CI does, or narrow it:
+
+```sh
+bun run smoke                                  # every case
+bun run smoke -- --case clean                  # just the green one
+bun run smoke -- --case drop-plate             # just one plant
+bun run smoke -- --installer bun               # `bun add` instead of `npm install`
+bun run smoke -- --source registry --version 0.21.0
+bun run smoke -- --keep                        # leave the install directories to look at
+```
+
+It needs `npm`, `bun` and `tar` on PATH and the network for exactly one package,
+the dependency. It deliberately does **not** need this repository's dev
+dependencies, and the CI job deliberately does not install them — a job holding
+the repository's own tooling would be answering a different question. `npm pack`
+does not run `prepublishOnly` (measured: the pack returns in under a second,
+where the gates it would run take minutes), so the smoke's pack is not a second
+gate run wearing a disguise.
+
+🕳️ **What it cannot see.** The tarball a branch packs is not the tarball npm
+serves until a publish makes it one; how the rig *looks* is `rigc check`'s
+question and not this one; and a green run is one platform's answer, the runner's.
+
+⚖️ **The registry half is a confirmation, not the gate**, and it is the last step
+of [`release.yml`](.github/workflows/release.yml): after the publish it waits for
+the registry to serve the new version and runs the same script with
+`--source registry`. It answers the one thing the gate cannot reach — the
+artifact people actually receive — and it is not the gate for the reason this
+repository applies to every check: its own firing cannot be observed without
+publishing something broken. What *is* observable, and was measured before the
+step was written, is the mechanism: the whole battery, plants included, was run
+against the published `spine-rigc@0.21.0` and came back green, so the
+`--source registry` path has been seen both to pass on a good package and to go
+red on three broken ones. A red there does not un-publish anything; it says the
+cut needs a follow-up.
+
 ### If the automation is unavailable
 
 The old path still works and needs nothing from the workflow. Publish from the
