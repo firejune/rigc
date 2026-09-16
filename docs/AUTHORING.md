@@ -931,7 +931,11 @@ with `image: hair_short.png` under a placeholder called `hair` resolves the regi
 `hair`, which no atlas has. Until
 [#577](https://github.com/firejune/rigc/issues/577) a region derived it and an
 authored mesh did not, so that rig **built** and then failed
-`A00_ROUNDTRIP_PARSE: threw: Region not found in atlas: hair`.
+`A00_ROUNDTRIP_PARSE: threw: Region not found in atlas: hair` — which is the
+loader's sentence and all the report had. Since
+[#589](https://github.com/firejune/rigc/issues/589) the same miss is named by
+`A08_REGION_NAMES_MATCH_ATTACHMENTS`, with the skin, the slot, the placeholder
+and the attachment's own name beside the path.
 
 Geometry comes in one of two fields:
 
@@ -1683,8 +1687,11 @@ What to know about it, and nothing to author:
   ([#574](https://github.com/firejune/rigc/issues/574)).
 - **`path` is restated, and it has to be.** `path` defaults to the attachment's
   **name**, not to its placeholder, so an entry given a name and no path would
-  resolve its texture at `zulu/patch` and find no such region. `A00_ROUNDTRIP_PARSE`
-  says so in the parser's own words if it is ever dropped.
+  resolve its texture at `zulu/patch` and find no such region.
+  `A08_REGION_NAMES_MATCH_ATTACHMENTS` says so if it is ever dropped, naming the
+  skin, the slot, the placeholder and the path
+  ([#589](https://github.com/firejune/rigc/issues/589)); `A00_ROUNDTRIP_PARSE`
+  reported it in the parser's own words until then, and now defers to A08.
 - **Only contested placeholders are touched.** One skin filling a placeholder, or
   two skins filling a slot under *different* placeholders, emit exactly what they
   always did — every rig in this repository is byte-identical across the change.
@@ -3930,7 +3937,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 
 | Assertion | Profile | What tripped it, and where to fix it |
 | --- | --- | --- |
-| `A00_ROUNDTRIP_PARSE` | both | `spine-core` could not parse the skeleton or the atlas. Everything else in the report is downstream of this one — fix it first. When it fails, every rule that reads the loaded skeleton or the loaded atlas reports **SKIP** saying so by name, so the row count stays at the full registry and the summary's *measured* figure tells you how little was actually asked ([#568](https://github.com/firejune/rigc/issues/568)) |
+| `A00_ROUNDTRIP_PARSE` | both | `spine-core` could not parse the skeleton or the atlas. Almost everything else in the report is downstream of this one — fix it first. When it fails, every rule that reads the loaded skeleton or the loaded atlas reports **SKIP** saying so by name, so the row count stays at the full registry and the summary's *measured* figure tells you how little was actually asked ([#568](https://github.com/firejune/rigc/issues/568)). ⚠️ **Two rules run before it and can be upstream of it**: `A31_DRAW_ORDER_OFFSETS_RESOLVE`, because a bad draw-order key makes the loader spin rather than return, and `A08_REGION_NAMES_MATCH_ATTACHMENTS`, because a `path` naming no region makes it throw. The round trip is still attempted either way; when the loader refuses a path A08 has already refused, this row **defers** to A08 by name instead of restating the miss in the parser's poorer words ([#589](https://github.com/firejune/rigc/issues/589)) |
 | `A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS` | both | a 4.1/4.2-shaped `ik`/`transform`/`path`/`physics`/`slider` array. rigc emits the 4.3 `constraints` array, so this normally means hand-edited JSON |
 | `A02_NO_BONE_TRANSFORM_KEY` | both | a bone uses 4.2's `transform`; rename it `inherit` in the rig spec |
 | `A03_REGION_WIDTH_HEIGHT_FINITE` | both | a region loaded `NaN` or a non-positive size — the attachment has no `image` and no `width`/`height` |
@@ -3938,7 +3945,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A05_CURVE_ARRAY_LENGTH` | both | a raw `curve` with the wrong number of values, a non-finite number in one, or a curve on a timeline that cannot take one. Four numbers **per value channel** |
 | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | the atlas `size:` disagrees with the PNG on disk. Under `spine-html` also: `pma`, rotation, and a page that is neither **one part covering it exactly** (the unpacked convention) nor a **tiling** — a page whose regions all sit inside it and none of which overlap ([#266](https://github.com/firejune/rigc/issues/266)). A packed atlas therefore gates under this profile; what the message names is the region that runs off its page, or the pair that shares texels |
 | `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file |
-| `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both | an atlas region name carrying stray whitespace. rigc writes the atlas, so this means a hand-edited file, and `A07` names the same line with its line number. ⚠️ A `path` that resolves to **no** region never reaches here: `AtlasAttachmentLoader` throws `Region not found in atlas: <path> (attachment: <name>)` while the skeleton is still loading, so it arrives as `A00_ROUNDTRIP_PARSE`. There is no `spine-html` clause here any more — a placeholder is free to differ from the region its `path` names ([#574](https://github.com/firejune/rigc/issues/574)) |
+| `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both | three things, and the message says which: an attachment whose `path` names **no region** of this atlas; a `path` carrying **stray whitespace**, printed quoted so you can see it; an **atlas region name** carrying stray whitespace (`A07` names that same line with its line number). The first two are read off the raw file **before** the loader is asked, so the miss is named here with the skin, the slot, the placeholder and the attachment's own name — the four things `AtlasAttachmentLoader`'s own `Region not found in atlas: <path> (attachment: <name>)` does not carry. Until [#589](https://github.com/firejune/rigc/issues/589) they were unreachable: the loader threw first and the miss arrived as `A00_ROUNDTRIP_PARSE`. There is no `spine-html` clause here any more — a placeholder is free to differ from the region its `path` names ([#574](https://github.com/firejune/rigc/issues/574)) |
 | `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the loaded duration ≠ the declared one, or the two sides disagree about which animations exist (R7). Asymmetric by design: a frame of slack for an animation that ends early, and none worth the name for a key *past* the declared end, which is the same rule §4.5 states at compile time — held here against a skeleton the compiler never saw. **SKIP** when neither side has an animation at all — a static rig has no duration |
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping the animation produced a `NaN` pose. Look for a degenerate curve or a zero scale |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | a clipping attachment; the target renderer skips them silently |

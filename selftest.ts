@@ -70,6 +70,7 @@ import ts from 'typescript';
 import {
   AnimationState,
   AnimationStateData,
+  AtlasAttachmentLoader,
   BoundingBoxAttachment,
   ClippingAttachment,
   DeformTimeline,
@@ -79,7 +80,9 @@ import {
   PathAttachment,
   PathConstraint,
   Physics,
+  Sequence,
   Skeleton,
+  SkeletonJson,
   Slider,
   TextureAtlas,
   type TextureAtlasRegion,
@@ -211,6 +214,7 @@ import { skeletonDataFromText, surveyDeformKeys, unreachableWhy } from './src/de
 import {
   ASSERTION_NAMES,
   assertionCountForProfile,
+  attachmentRegionJoins,
   reportLines,
   SKIP_NO_ATLAS,
   SKIP_NO_SKELETON,
@@ -9998,18 +10002,33 @@ function runPathAndSliderSuite(): number {
 
   // The `path` half, gated on the artifact rather than argued. `path` defaults
   // to the NAME and not to the placeholder (`SkeletonJson.ts:529`), so an
-  // attachment given a name and no path resolves its region at the new name —
-  // and A00 is what says so, in the parser's own words.
+  // attachment given a name and no path resolves its region at the new name.
+  //
+  // ⚠️ Which assertion says so MOVED, and this case recorded the old answer:
+  // until issue #589 the loader threw first and `A00_ROUNDTRIP_PARSE` reported
+  // it in the parser's own words — words that name the attachment's `name` and
+  // neither the placeholder nor the skin. A08 now performs the join on the raw
+  // file, before the loader is asked, so the miss is named by the assertion
+  // whose subject it is and A00 defers to it rather than restating it. Both
+  // halves are asserted here, because "A08 names it" and "A00 stopped naming
+  // it" are two facts and a case that checked one of them would have passed
+  // over a report that printed the miss twice.
   const pathless = gateProbeArtifacts(writeProbeRig({ skins: FOUR_SKINS }), STATIC_MOTION, (skeleton) => {
     const skins = skeleton.skins as EmittedSkin[];
     for (const skin of skins) delete skin.attachments.marker?.marker.path;
   });
   const pathlessGreen = gateProbe(writeProbeRig({ skins: FOUR_SKINS }), STATIC_MOTION);
+  const pathlessDetail = (assertion: string): string[] =>
+    pathless.failures.filter((f) => f.assertion === assertion).map((f) => f.detail);
   say(
     'PS58_A_NAMED_ATTACHMENT_THAT_DOES_NOT_RESTATE_ITS_PATH_LOSES_ITS_REGION',
-    pathless.failures.some(
-      (f) => f.assertion === 'A00_ROUNDTRIP_PARSE' && f.detail.includes('Region not found in atlas'),
-    ) && pathlessGreen.failures.length === 0,
+    pathlessDetail('A08_REGION_NAMES_MATCH_ATTACHMENTS').some(
+      (detail) => detail.includes('wants region') && detail.includes('placeholder "marker"'),
+    ) &&
+      pathlessDetail('A00_ROUNDTRIP_PARSE').some(
+        (detail) => detail.includes('A08_REGION_NAMES_MATCH_ATTACHMENTS') && !detail.includes('Region not found in atlas'),
+      ) &&
+      pathlessGreen.failures.length === 0,
     pathless.failures.length === 0
       ? 'deleting `path` from every named attachment gated GREEN, so the restatement is decoration'
       : `${pathless.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')} — and the same rig with its ` +
@@ -11035,6 +11054,334 @@ function runPathAndSliderSuite(): number {
       '`profile` cannot hide in either direction. ⚠️ The second half was learned the hard way rather than ' +
       'designed: stated as profile agreement ALONE it printed green under a validator whose A08 body had been ' +
       'emptied, because unanimous silence is unanimous. So the outcomes are asserted before the agreement is',
+  );
+
+  // --- issue #589: the two clauses no input could reach ---------------------
+  //
+  // 🚨 The comment `PS90` stands on was a measurement and it was also a defect
+  // report: two of A08's three clauses were preempted by the loader, so *the
+  // assertion named after the join could only ever fire when the join was
+  // fine*. Reproduced on `examples/spineboy`, three weakenings × both profiles,
+  // before the repair — every one printed `A00 FAIL threw: Region not found in
+  // atlas: …` and `A08 SKIP the round trip did not produce a skeleton to
+  // measure`. ⚠️ The card predicted `A08 = did not run`; #568's sweep had
+  // already turned that absence into a SKIP row, which is the same body not
+  // running and a different thing to read.
+  //
+  // A08 now performs the join on the RAW file, so the three cases below are the
+  // two clauses firing by name plus the agreement that makes them safe. What
+  // they are worth turns on one thing the loader cannot do: its message is
+  // `Region not found in atlas: <path> (attachment: <name>)`, where `<name>` is
+  // the attachment's name and never the placeholder or the skin, and where a
+  // padded path prints unquoted — `…atlas:  marker  (attachment: marker)` — so
+  // the defect is invisible in the only sentence that mentioned it.
+  const a08A00 = 'A00_ROUNDTRIP_PARSE';
+  /** The same four texts judged by every profile, as whole reports. */
+  const a08ReportsFor = (
+    texts: { skeletonText?: string; atlasText?: string },
+  ): Array<[ValidateProfile, ReturnType<typeof validate>]> =>
+    VALIDATE_PROFILES.map((profile): [ValidateProfile, ReturnType<typeof validate>] => [
+      profile,
+      validate({
+        skeletonText: texts.skeletonText ?? a08SharedBuilt.skeletonText,
+        atlasText: texts.atlasText ?? a08SharedBuilt.atlasText,
+        atlasDir: a08SharedProbe.outDir,
+        declaredDurations: a08SharedBuilt.declaredDurations,
+        rig: a08SharedBuilt.rig,
+        profile,
+      }),
+    ]);
+  /** Which of the four lists an assertion appears in — #568's row, read back. */
+  const a08RowsOf = (report: ReturnType<typeof validate>, name: string): string[] => {
+    const where: string[] = [];
+    if (report.passed.includes(name)) where.push('PASS');
+    if (report.failures.some((f) => f.assertion === name)) where.push('FAIL');
+    if (report.skipped.some((s) => s.assertion === name)) where.push('SKIP');
+    if (report.profileSkipped.some((p) => p.assertion === name)) where.push('PROF');
+    return where;
+  };
+  const a08Said = (report: ReturnType<typeof validate>, name: string): string[] =>
+    report.failures.filter((f) => f.assertion === name).map((f) => f.detail);
+  /**
+   * The entry to weaken, found by its SHAPE rather than by its name: an emitted
+   * attachment whose placeholder, whose `name` and whose `path` are three
+   * DIFFERENT strings. A fixture where any two of them coincide would let a
+   * message naming one of them pass for a message naming all three, which is
+   * the defect the card names beside the reachability one.
+   */
+  const a08Target = ((): { skin: string; slot: string; placeholder: string; name: string; path: string } | null => {
+    const skel = JSON.parse(a08SharedBuilt.skeletonText) as { skins: EmittedSkin[] };
+    for (const skin of skel.skins) {
+      for (const [slot, entries] of Object.entries(skin.attachments)) {
+        for (const [placeholder, att] of Object.entries(entries)) {
+          const { name, path } = att;
+          if (typeof name !== 'string' || typeof path !== 'string') continue;
+          if (name === placeholder || path === placeholder || path === name) continue;
+          return { skin: skin.name, slot, placeholder, name, path };
+        }
+      }
+    }
+    return null;
+  })();
+  /** That one entry's `path` rewritten, and nothing else in the file touched. */
+  const a08Repath = (path: string): string => {
+    const skel = JSON.parse(a08SharedBuilt.skeletonText) as { skins: EmittedSkin[] };
+    for (const skin of skel.skins) {
+      if (a08Target === null || skin.name !== a08Target.skin) continue;
+      skin.attachments[a08Target.slot][a08Target.placeholder].path = path;
+    }
+    return `${JSON.stringify(skel, null, 2)}\n`;
+  };
+  /** The atlas with one region name padded on both sides — `PS90`'s edit, aimed. */
+  const a08PadRegion = (region: string): string =>
+    `${a08SharedBuilt.atlasText
+      .trimEnd()
+      .split('\n')
+      .map((line) => (line === region ? ` ${line} ` : line))
+      .join('\n')}\n`;
+
+  const a08MissPath = a08Target === null ? '' : `${a08Target.path}_no_such_region`;
+  const a08MissReports = a08Target === null ? [] : a08ReportsFor({ skeletonText: a08Repath(a08MissPath) });
+  const a08MissProbes = [
+    ...(a08Target === null
+      ? ['no emitted attachment has a placeholder, a name and a path that are three different strings']
+      : []),
+    ...a08MissReports.flatMap(([profile, report]) => {
+      const out: string[] = [];
+      const said = a08Said(report, a08);
+      const whole = said.filter(
+        (detail) =>
+          detail.includes(`skin "${a08Target?.skin}"`) &&
+          detail.includes(`placeholder "${a08Target?.placeholder}"`) &&
+          detail.includes(`attachment "${a08Target?.name}"`) &&
+          detail.includes(`"${a08MissPath}"`),
+      );
+      if (whole.length !== 1) {
+        out.push(
+          `--profile ${profile}: A08 is [${a08RowsOf(report, a08).join(', ') || 'in no list'}] and says [${
+            said.join(' | ') || 'nothing'
+          }] — one sentence naming the skin, the placeholder, the attachment and the path is what this asks for`,
+        );
+      }
+      const parse = a08Said(report, a08A00);
+      if (a08RowsOf(report, a08A00).join(',') !== 'FAIL') {
+        out.push(`--profile ${profile}: A00 is [${a08RowsOf(report, a08A00).join(', ') || 'in no list'}]`);
+      } else if (!parse.every((detail) => detail.includes(a08) && !detail.includes(a08MissPath))) {
+        out.push(`--profile ${profile}: A00 says [${parse.join(' | ')}], which restates the miss instead of deferring`);
+      }
+      const rowless = ASSERTION_NAMES.filter((name) => a08RowsOf(report, name).length !== 1);
+      if (rowless.length > 0) out.push(`--profile ${profile}: ${rowless.length} assertion(s) without exactly one row`);
+      return out;
+    }),
+  ];
+  const a08MissHeld = a08MissProbes.length === 0;
+  say(
+    'PS125_A_PATH_NAMING_NO_REGION_IS_REFUSED_BY_A08_AND_A00_DEFERS_TO_IT',
+    a08MissHeld,
+    probeDetail(
+      a08MissHeld,
+      a08MissProbes,
+      a08MissReports.length === 0
+        ? 'nothing was weakened'
+        : `${a08Said(a08MissReports[0][1], a08).join(' | ')} — and A00 says ${
+            a08Said(a08MissReports[0][1], a08A00).join(' | ') || 'nothing'
+          }`,
+    ),
+    'this clause was unreachable for A08\'s whole life: the loader threw first and the report named the file that ' +
+      'did not load rather than the attachment that broke it. ⚠️ The A00 half is the one that can rot — if A00 ' +
+      'went back to restating the throw, the first probe would still be green and a reader would meet one fact ' +
+      'twice, in the weaker words second. The row count is the third side: deferring must not cost any assertion ' +
+      'its row (issue #568)',
+  );
+
+  // The other unreachable clause, and it is the one that can be measured with
+  // the round trip GREEN — which is why the second half below exists. A padded
+  // path against a padded region resolves, so nothing throws, and A08 is then
+  // the only thing in the gate with an opinion about it.
+  const a08PadPath = a08Target === null ? '' : ` ${a08Target.path} `;
+  const a08StrayPathReports = a08Target === null ? [] : a08ReportsFor({ skeletonText: a08Repath(a08PadPath) });
+  const a08BothPaddedReports =
+    a08Target === null
+      ? []
+      : a08ReportsFor({ skeletonText: a08Repath(a08PadPath), atlasText: a08PadRegion(a08Target.path) });
+  const a08StrayPathProbes = [
+    ...(a08Target === null ? ['there is no attachment to pad'] : []),
+    ...a08StrayPathReports.flatMap(([profile, report]) => {
+      const said = a08Said(report, a08);
+      const out: string[] = [];
+      if (!said.some((detail) => detail.includes('stray whitespace') && detail.includes(JSON.stringify(a08PadPath)))) {
+        out.push(
+          `--profile ${profile}: A08 is [${a08RowsOf(report, a08).join(', ') || 'in no list'}] and says [${
+            said.join(' | ') || 'nothing'
+          }] — the padding has to be QUOTED or the message hides what it is reporting`,
+        );
+      }
+      if (!a08Said(report, a08A00).every((detail) => detail.includes(a08) && !detail.includes(a08PadPath))) {
+        out.push(`--profile ${profile}: A00 says [${a08Said(report, a08A00).join(' | ')}]`);
+      }
+      return out;
+    }),
+    ...a08BothPaddedReports.flatMap(([profile, report]) => {
+      const out: string[] = [];
+      if (!report.passed.includes(a08A00)) {
+        out.push(
+          `--profile ${profile}: with the region padded to match, the round trip is [${
+            a08RowsOf(report, a08A00).join(', ') || 'in no list'
+          }] — this half is only worth anything while it LOADS`,
+        );
+      }
+      if (!a08Said(report, a08).some((detail) => detail.includes('stray whitespace'))) {
+        out.push(`--profile ${profile}: the file loads and A08 is [${a08RowsOf(report, a08).join(', ')}] about it`);
+      }
+      return out;
+    }),
+  ];
+  const a08StrayPathHeld = a08StrayPathProbes.length === 0;
+  say(
+    'PS126_A_PATH_WITH_STRAY_WHITESPACE_IS_NAMED_BY_A08_WITH_THE_PADDING_SHOWN',
+    a08StrayPathHeld,
+    probeDetail(
+      a08StrayPathHeld,
+      a08StrayPathProbes,
+      a08StrayPathReports.length === 0
+        ? 'nothing was padded'
+        : `padded alone: ${a08Said(a08StrayPathReports[0][1], a08).join(' | ')}; padded on both sides of the join, ` +
+          `A00 ${a08BothPaddedReports[0]?.[1].passed.includes(a08A00) ? 'PASSES' : 'does not pass'} and A08 still fires`,
+    ),
+    'the loader prints a path unquoted, so ` marker ` and `marker` read the same in the only sentence that used to ' +
+      'mention either — a defect a reader cannot see is the silence this tool converts. ⭐ The second half is the ' +
+      'load-bearing one: with the atlas region padded to match, nothing throws at all, and an A08 that had merely ' +
+      'been moved in front of a failure it did not understand would have nothing to say here',
+  );
+
+  // --- the join is the loader's own join, measured against it ---------------
+  //
+  // 🚨 A08 now holds a SECOND implementation of a resolution `spine-core`
+  // performs, and this tree's standing judgment about a second opinion on
+  // somebody else's format is `PKR01`'s: measure it against the runtime that
+  // owns it. The cost of being wrong here is worse than the silence #589
+  // removed — a mis-derived lookup would refuse correct foreign data BY NAME,
+  // which is the one thing an authoring agent has no way to argue with.
+  class RecordingAtlasLoader extends AtlasAttachmentLoader {
+    readonly asked: string[] = [];
+    protected findRegion(name: string, path: string): TextureAtlasRegion | null {
+      this.asked.push(path);
+      return super.findRegion(name, path);
+    }
+  }
+  /** Every candidate here whose round trip succeeds, so the recording is complete. */
+  const a08JoinCandidates: Array<[string, string, string]> = [
+    ['the shared-placeholder probe', a08SharedBuilt.skeletonText, a08SharedBuilt.atlasText],
+    ['the renamed-placeholder probe', a08RenamedBuilt.skeletonText, a08RenamedBuilt.atlasText],
+  ];
+  const a08CorpusDir = resolve(import.meta.dir, 'examples');
+  if (existsSync(a08CorpusDir)) {
+    for (const example of readdirSync(a08CorpusDir).sort()) {
+      const exportDir = join(a08CorpusDir, example, 'export');
+      if (!existsSync(exportDir)) continue;
+      const files = readdirSync(exportDir).sort();
+      // Every (skeleton, atlas) pair in the directory, because no naming
+      // convention pairs them and a wrong pair simply does not load — which is
+      // the filter below, rather than a guess written here.
+      for (const skeleton of files.filter((f) => f.endsWith('.json'))) {
+        for (const atlas of files.filter((f) => f.endsWith('.atlas'))) {
+          a08JoinCandidates.push([
+            `${example}/${skeleton} × ${atlas}`,
+            readFileSync(join(exportDir, skeleton), 'utf8'),
+            readFileSync(join(exportDir, atlas), 'utf8'),
+          ]);
+        }
+      }
+    }
+  }
+  let a08JoinsMeasured = 0;
+  let a08LookupsMeasured = 0;
+  const a08JoinProbes = a08JoinCandidates.flatMap(([label, skeletonText, atlasText]) => {
+    const loader = new RecordingAtlasLoader(new TextureAtlas(atlasText));
+    try {
+      new SkeletonJson(loader).readSkeletonData(JSON.parse(skeletonText));
+    } catch {
+      return []; // not a pair; the recording stops at the first miss and proves nothing
+    }
+    const joins = attachmentRegionJoins(JSON.parse(skeletonText));
+    const unguessed = joins.filter((j) => j.lookups === null);
+    const predicted = joins.flatMap((j) => j.lookups ?? []);
+    a08JoinsMeasured++;
+    a08LookupsMeasured += predicted.length;
+    if (unguessed.length > 0) {
+      return [`${label}: ${unguessed.length} entr(ies) the walk declined to predict, so the lists cannot be compared`];
+    }
+    if (JSON.stringify(predicted) === JSON.stringify(loader.asked)) return [];
+    const first = predicted.findIndex((p, i) => p !== loader.asked[i]);
+    return [
+      `${label}: A08 predicts ${predicted.length} lookup(s) and the loader asked for ${loader.asked.length}` +
+        (first < 0 ? '' : `, first differing at ${first}: ${JSON.stringify(predicted[first])} vs ${JSON.stringify(loader.asked[first])}`),
+    ];
+  });
+  // The `sequence` arithmetic against the class that owns it. Nothing in
+  // `examples/` declares a sequence (measured: 0 occurrences in all twelve
+  // exports), so without this the branch that keeps A08 off sequence data would
+  // ship unmeasured — and a wrong one refuses a correct editor export by name.
+  interface SequenceDecl {
+    count?: number;
+    start?: number;
+    digits?: number;
+  }
+  const a08SequenceTable: Array<[SequenceDecl | undefined, string, string[]]> = [
+    [undefined, 'art', ['art']],
+    [{ count: 3 }, 'art', ['art1', 'art2', 'art3']],
+    [{ count: 2, start: 0 }, 'art', ['art0', 'art1']],
+    [{ count: 2, start: 9, digits: 3 }, 'art', ['art009', 'art010']],
+    [{}, 'art', []],
+  ];
+  const a08SequenceProbes = a08SequenceTable.flatMap(([sequence, base, expected]) => {
+    const raw = {
+      skins: [{ name: 'default', attachments: { slot: { placeholder: { path: base, ...(sequence ? { sequence } : {}) } } } }],
+    };
+    const predicted = attachmentRegionJoins(raw)[0]?.lookups ?? null;
+    // What the runtime does with the same declaration, read off `Sequence`
+    // rather than restated: `readSequence` turns an absent map into
+    // `new Sequence(1, false)` and a present one into `new Sequence(count ?? 0,
+    // true)` with `start`/`digits` assigned after.
+    const runtime = ((): string[] => {
+      if (sequence === undefined) return [base];
+      const seq = new Sequence(sequence.count ?? 0, true);
+      seq.start = sequence.start ?? 1;
+      seq.digits = sequence.digits ?? 0;
+      // ⚠️ `new Sequence(n, …)` allocates `new Array(n)`, whose holes `.map`
+      // skips — the first spelling of this line read back `[null, null, null]`
+      // and the stated row is what caught it. Index the length instead.
+      return Array.from({ length: seq.regions.length }, (_, i) => seq.getPath(base, i));
+    })();
+    const out: string[] = [];
+    if (JSON.stringify(runtime) !== JSON.stringify(expected)) {
+      out.push(`${JSON.stringify(sequence)}: the runtime produced ${JSON.stringify(runtime)}, and this row states ${JSON.stringify(expected)}`);
+    }
+    if (JSON.stringify(predicted) !== JSON.stringify(runtime)) {
+      out.push(`${JSON.stringify(sequence)}: A08 predicts ${JSON.stringify(predicted)} and the runtime asks ${JSON.stringify(runtime)}`);
+    }
+    return out;
+  });
+  const a08JoinHeld = a08JoinProbes.length === 0 && a08SequenceProbes.length === 0 && a08JoinsMeasured >= 2;
+  say(
+    'PS127_THE_JOIN_A08_DERIVES_IS_THE_ONE_THE_LOADER_PERFORMS',
+    a08JoinHeld,
+    probeDetail(
+      a08JoinHeld,
+      [
+        ...a08JoinProbes,
+        ...a08SequenceProbes,
+        ...(a08JoinsMeasured >= 2 ? [] : [`only ${a08JoinsMeasured} candidate(s) loaded, so this compared almost nothing`]),
+      ],
+      `${a08LookupsMeasured} lookup(s) over ${a08JoinsMeasured} candidate(s) that load — the paths A08 derives from ` +
+        'the raw file are the paths `AtlasAttachmentLoader.findRegion` asked for, in order; and five sequence ' +
+        'declarations agree with `Sequence.getPath` itself',
+    ),
+    'A08 refuses foreign data by name now, so its walk has to BE the parser\'s and not merely resemble it — ' +
+      '`findRegion` is overridden to record what it was asked for, which is the one reading neither side can fake. ' +
+      '⚠️ A pair whose round trip throws is dropped rather than counted: the recording stops at the first miss, so ' +
+      'a truncated list would agree with a truncated prediction for the wrong reason, and the floor on how many ' +
+      'candidates loaded is what stops that dropping everything',
   );
 
   // --- issue #577: the attachment `type` a spec may say, and the `path` it gets

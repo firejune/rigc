@@ -379,6 +379,98 @@ function isObj(v: unknown): v is Json {
 }
 
 /**
+ * The atlas region names one raw skin entry will make the loader look up — or
+ * `null` when the file states a sequence this walk cannot predict.
+ *
+ * ⚠️ Transcribed from the loader rather than reasoned out, because a join that
+ * merely looks right is the thing A08 exists to refuse. `readSequence`
+ * (`dist/SkeletonJson.js:641-649`) turns an absent or null `sequence` into
+ * `new Sequence(1, false)` — one lookup, at the bare path — and a present one
+ * into `new Sequence(count ?? 0, true)`, so a sequence map with no `count`
+ * looks up nothing at all. `Sequence.getPath` (`dist/Sequence.js:124-132`)
+ * appends `start + i`, left-padded with zeros to `digits`.
+ *
+ * Nothing in `examples/` carries a `sequence` (measured: 0 occurrences across
+ * all twelve editor exports), so without this the assertion would have read a
+ * sequence's base path as a region name and refused correct foreign data —
+ * `A21_MESH_RIM_PINNED`'s old `|| 'ring'` default, one file over.
+ */
+function attachmentRegionLookups(sequence: unknown, path: string): string[] | null {
+  if (sequence === undefined || sequence === null) return [path];
+  if (!isObj(sequence)) return null;
+  const whole = (value: unknown, fallback: number): number | null => {
+    if (value === undefined) return fallback;
+    return typeof value === 'number' && Number.isInteger(value) ? value : null;
+  };
+  const count = whole(sequence.count, 0);
+  const start = whole(sequence.start, 1);
+  const digits = whole(sequence.digits, 0);
+  if (count === null || start === null || digits === null || count < 0) return null;
+  const lookups: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const frame = String(start + i);
+    lookups.push(`${path}${'0'.repeat(Math.max(0, digits - frame.length))}${frame}`);
+  }
+  return lookups;
+}
+
+/** One skin entry's join onto the atlas, as the loader will perform it. */
+export interface AttachmentRegionJoin {
+  skin: string;
+  slot: string;
+  placeholder: string;
+  /** The attachment's own name — the entry's `name` when it states one, else the placeholder. */
+  name: string;
+  /**
+   * Every atlas region name the loader will ask this atlas for, in the order it
+   * asks. Empty for a `sequence` with no `count`, and `null` for a sequence map
+   * this walk will not guess at.
+   */
+  lookups: string[] | null;
+}
+
+/**
+ * Every atlas-region lookup `AtlasAttachmentLoader` will perform, read off the
+ * RAW skeleton JSON — before the loader is asked, which is the whole point.
+ *
+ * 🚨 This is a SECOND implementation of a join `spine-core` already performs,
+ * and the tree's standing judgment about a second opinion on somebody else's
+ * format is that it is measured rather than asserted: `PS127` runs the loader
+ * with its `findRegion` recording what it asked for, and compares. A wrong walk
+ * here would refuse correct foreign data by name, which is the one failure that
+ * would be worse than the silence #589 removed.
+ *
+ * Which entries resolve a region is the parser's list, not a guess:
+ * `SkeletonJson.readAttachment` (`dist/SkeletonJson.js:524-575`) calls the
+ * loader with a path for `region`, `mesh` and `linkedmesh` — a linked mesh
+ * resolves its own region before the `source` branch — and for nothing else.
+ * `type` defaults to `region` (`:527`), `name` to the placeholder (`:526`) and
+ * `path` to the name (`:529`, `:560`): three names that default into one
+ * another, which is why a report printing only the last of them cannot say
+ * what to change.
+ */
+export function attachmentRegionJoins(raw: unknown): AttachmentRegionJoin[] {
+  const joins: AttachmentRegionJoin[] = [];
+  if (!isObj(raw) || !Array.isArray(raw.skins)) return joins;
+  for (const skin of raw.skins as unknown[]) {
+    if (!isObj(skin) || !isObj(skin.attachments)) continue;
+    const skinName = typeof skin.name === 'string' ? skin.name : '(unnamed)';
+    for (const [slot, entries] of Object.entries(skin.attachments)) {
+      if (!isObj(entries)) continue;
+      for (const [placeholder, entry] of Object.entries(entries)) {
+        if (!isObj(entry)) continue;
+        const type = entry.type === undefined ? 'region' : entry.type;
+        if (type !== 'region' && type !== 'mesh' && type !== 'linkedmesh') continue;
+        const name = typeof entry.name === 'string' ? entry.name : placeholder;
+        const path = typeof entry.path === 'string' ? entry.path : name;
+        joins.push({ skin: skinName, slot, placeholder, name, lookups: attachmentRegionLookups(entry.sequence, path) });
+      }
+    }
+  }
+  return joins;
+}
+
+/**
  * How long the array a deform key edits is, read off one raw attachment — or
  * `null` when the file does not say.
  *
@@ -526,10 +618,137 @@ export function validate(input: ValidateInput): ValidateReport {
     }
   });
 
+  // --- A08: every attachment path resolves to a region the atlas has -------
+  //
+  // 🚨 This runs on the RAW file, before the round trip, and that placement is
+  // the whole of issue #589. Two of the three clauses below used to sit behind
+  // A00 and could not be reached by any input: `lookup` was the path spine-core
+  // had already resolved, and `AtlasAttachmentLoader.findRegion`
+  // (`dist/AtlasAttachmentLoader.js:55-59`) throws
+  // `Region not found in atlas: <path> (attachment: <name>)` for a path naming
+  // no region and for one padded with whitespace alike, so the skeleton never
+  // finished loading and A08's body never ran. Measured on three weakenings of
+  // `examples/spineboy` × both profiles: every one printed A00 FAIL and A08
+  // SKIP. An assertion that names the defect only when the defect is absent is
+  // the silence this tool exists to convert.
+  //
+  // ⇒ The join is re-derived here from the raw JSON, where it is visible before
+  // the loader is asked, so the miss is refused by its own sentence naming the
+  // attachment, the placeholder and the path as THREE THINGS. The loader's
+  // message names none of them: `(attachment: crosshair)` is the attachment's
+  // `name`, never the placeholder or the skin, it never says which of the two
+  // files moved, and for a padded path it prints the string unquoted —
+  // `Region not found in atlas:  crosshair  (attachment: crosshair)` — where the
+  // defect is literally invisible. `JSON.stringify` below is why A08 can show it.
+  //
+  // 🔒 The round trip is NOT suppressed by any of this, and that is deliberate:
+  // it is the oracle, and gating it on rigc's own re-derivation would mean a
+  // wrong join here could silence the parser rigc did not write. Because it
+  // still runs, the two are a permanent two-sided cross-check — A08 refusing a
+  // path A00 then loads, or A00 throwing `Region not found` over a green A08,
+  // is a visible contradiction in one report. What A00 does instead of throwing
+  // twice about one fact is defer: see its own body.
+  //
+  // 🗑️ A08 used to be MIXED: the join is validity, and a second clause gated on
+  // `spine-html` required the skin entry's PLACEHOLDER to be spelled exactly
+  // like the region it resolves to ("v0 requires them identical"). That clause
+  // is retired (issue #574), and the reason is that the renderer it was profiled
+  // under never performed the join it described.
+  //
+  // `spine-html@0.4.1` resolves art in two steps and the placeholder is in
+  // neither. `DomTexture.js:78,102` builds the image map with
+  // `put(atlasRegion.name, …)` over every region of the atlas, and
+  // `SpineHtmlRenderer.js:172` reads it back as
+  // `const regionImage = region && this.regionImages.get(region.name)`, where
+  // `region` came off the attachment — which `AtlasAttachmentLoader` resolved
+  // through `path`. Every published version of that renderer keys the same way
+  // (checked 0.1.0 through 0.4.1, the whole series). Nothing in it reads an
+  // attachment's name, let alone its placeholder.
+  //
+  // ⚠️ It was not merely inert, either: it refused rigs on both sides of the
+  // convention it was written for. `path` exists precisely so a placeholder
+  // may differ from the PNG basename (R5), and since issue #567 a placeholder
+  // two named skins share is emitted as `<skin>/<placeholder>` with `path`
+  // restated to the basename — the only spelling the Spine editor holds. Under
+  // the old clause that shape, and any rig that merely named a part something
+  // other than its placeholder, was red under `spine-html` while the editor
+  // imported it and the renderer drew it.
+  /**
+   * Every attachment path A08 refused because the atlas holds no region of that
+   * name — which is exactly the set `AtlasAttachmentLoader.findRegion` throws
+   * on. A00 reads it so that its own row can point at A08 rather than restate
+   * the miss in the loader's poorer words.
+   */
+  const pathsWithNoRegion = new Set<string>();
+  check('A08_REGION_NAMES_MATCH_ATTACHMENTS', () => {
+    let regionNames: Set<string>;
+    try {
+      regionNames = new Set(new TextureAtlas(input.atlasText).regions.map((r) => r.name));
+    } catch {
+      return skip(
+        'A08_REGION_NAMES_MATCH_ATTACHMENTS',
+        'the atlas text does not parse, so there are no region names to join against (A00 owns that failure)',
+      );
+    }
+    if (!raw) {
+      return skip('A08_REGION_NAMES_MATCH_ATTACHMENTS', 'the skeleton JSON did not parse (A00 owns that failure)');
+    }
+    let joined = 0;
+    for (const join of attachmentRegionJoins(raw)) {
+      // A `sequence` the walk will not guess at: say nothing rather than invent
+      // a region name. A00 still has the last word on it.
+      if (join.lookups === null) continue;
+      for (const lookup of join.lookups) {
+        joined++;
+        const at = `skin "${join.skin}" slot "${join.slot}" placeholder "${join.placeholder}"`;
+        const present = regionNames.has(lookup);
+        if (!present) pathsWithNoRegion.add(lookup);
+        if (lookup !== lookup.trim()) {
+          fail(
+            'A08_REGION_NAMES_MATCH_ATTACHMENTS',
+            `${at}: attachment "${join.name}" resolves through path ${JSON.stringify(lookup)}, which has stray ` +
+              `whitespace — the atlas is matched on the exact string, and ${
+                present
+                  ? 'the region it finds carries the same padding'
+                  : regionNames.has(lookup.trim())
+                    ? `the region this atlas has is ${JSON.stringify(lookup.trim())}, without it`
+                    : 'no region of this atlas carries it'
+              }`,
+          );
+        } else if (!present) {
+          // Not a guess and not a repair — a region the atlas DOES hold that
+          // differs from the wanted name only by case or padding. It is
+          // reported because it was measured, and where there is none the
+          // sentence says nothing at all.
+          const near = [...regionNames].find((r) => r.trim().toLowerCase() === lookup.toLowerCase());
+          fail(
+            'A08_REGION_NAMES_MATCH_ATTACHMENTS',
+            `${at}: attachment "${join.name}" wants region "${lookup}", which this atlas does not have${
+              near === undefined ? '' : ` — it does have ${JSON.stringify(near)}`
+            }. Either the skeleton's "path" or the atlas region name is the one that moved`,
+          );
+        }
+      }
+    }
+    for (const region of regionNames) {
+      if (region !== region.trim()) {
+        fail('A08_REGION_NAMES_MATCH_ATTACHMENTS', `atlas region ${JSON.stringify(region)} has stray whitespace`);
+      }
+    }
+    if (joined === 0 && regionNames.size === 0) {
+      return skip(
+        'A08_REGION_NAMES_MATCH_ATTACHMENTS',
+        'this atlas declares no region and the skeleton names no attachment that resolves through one',
+      );
+    }
+  });
+
   // --- A31: every draw-order offset lands on a real place -------------------
   //
-  // 🚨 This one runs BEFORE the round trip, and it is the only assertion that
-  // does so for a reason other than "the parser is happy about it". A draw-order
+  // 🚨 This one runs BEFORE the round trip, and with A08 above it that is now
+  // two assertions that do so for a reason other than "the parser is happy
+  // about it" — A08 because the loader refuses the file before it can name what
+  // is wrong with it, this one because the loader does not come back. A draw-order
   // key whose offsets are not in ascending slot order does not load wrong — it
   // does not load at all. `readDrawOrder` (SkeletonJson.ts:1336-1374) walks a
   // forward-only cursor:
@@ -925,7 +1144,30 @@ export function validate(input: ValidateInput): ValidateReport {
     }
     const parsedAtlas = new TextureAtlas(input.atlasText);
     const json = new SkeletonJson(new AtlasAttachmentLoader(parsedAtlas));
-    return { atlas: parsedAtlas, data: json.readSkeletonData(JSON.parse(input.skeletonText)) };
+    try {
+      return { atlas: parsedAtlas, data: json.readSkeletonData(JSON.parse(input.skeletonText)) };
+    } catch (err) {
+      // 📌 The round trip is still ATTEMPTED — always, and A08 above cannot
+      // stop it (issue #589). What changes here is only what A00 SAYS when the
+      // loader refuses a region A08 has already refused by name: it defers
+      // instead of printing the same fact a second time, in words that name
+      // neither the placeholder nor the skin and that cannot show whitespace.
+      //
+      // ⚠️ The deference is conditional on the two agreeing about the exact
+      // path, so the case A08 is wrong about stays loud: a `Region not found`
+      // throw over a path A08 did NOT refuse prints verbatim, and A08 refusing
+      // a path the loader then resolves leaves a FAIL beside a green A00. This
+      // is the one clause that would hide either, and it is written so it
+      // cannot.
+      const wanted = /^Region not found in atlas: (.*) \(attachment: .+\)$/.exec((err as Error).message);
+      if (wanted !== null && pathsWithNoRegion.has(wanted[1])) {
+        throw new Error(
+          'the loader refused the file at the first attachment path this atlas has no region for — ' +
+            'A08_REGION_NAMES_MATCH_ATTACHMENTS names it, with the skin, the slot and the placeholder that wanted it',
+        );
+      }
+      throw err;
+    }
   });
   const atlas: TextureAtlas | null = roundTrip?.atlas ?? null;
   const skeletonData: ReturnType<SkeletonJson['readSkeletonData']> | null = roundTrip?.data ?? null;
@@ -2530,68 +2772,6 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
       stats.skinMembers = listed;
-    });
-
-    // --- A08: every attachment's path resolves to a region the atlas has ---
-    //
-    // 🗑️ A08 used to be MIXED: the join above is validity, and a second clause
-    // gated on `spine-html` required the skin entry's PLACEHOLDER to be spelled
-    // exactly like the region it resolves to ("v0 requires them identical").
-    // That clause is retired (issue #574), and the reason is that the renderer
-    // it was profiled under never performed the join it described.
-    //
-    // `spine-html@0.4.1` resolves art in two steps and the placeholder is in
-    // neither. `DomTexture.js:78,102` builds the image map with
-    // `put(atlasRegion.name, …)` over every region of the atlas, and
-    // `SpineHtmlRenderer.js:172` reads it back as
-    // `const regionImage = region && this.regionImages.get(region.name)`, where
-    // `region` came off the attachment — which `AtlasAttachmentLoader` resolved
-    // through `path`. Every published version of that renderer keys the same way
-    // (checked 0.1.0 through 0.4.1, the whole series). Nothing in it reads an
-    // attachment's name, let alone its placeholder.
-    //
-    // ⇒ Restated as the join the renderer actually performs, the clause compares
-    // `path` against the region `path` resolved — a tautology, and the same
-    // string the validity check above already requires the atlas to hold. An
-    // assertion that cannot fail is not a gate, so it is removed rather than
-    // kept as a duplicate.
-    //
-    // ⚠️ It was not merely inert, either: it refused rigs on both sides of the
-    // convention it was written for. `path` exists precisely so a placeholder
-    // may differ from the PNG basename (R5), and since issue #567 a placeholder
-    // two named skins share is emitted as `<skin>/<placeholder>` with `path`
-    // restated to the basename — the only spelling the Spine editor holds. Under
-    // the old clause that shape, and any rig that merely named a part something
-    // other than its placeholder, was red under `spine-html` while the editor
-    // imported it and the renderer drew it.
-    //
-    // 📏 What is left, measured rather than assumed: only the LAST loop can
-    // fire. Both attachment-join clauses are preempted by the loader —
-    // `AtlasAttachmentLoader.findRegion` throws
-    // `Region not found in atlas: <path> (attachment: <name>)` for a path that
-    // names no region and for one padded with whitespace alike, so A00 reports
-    // it and A08 never runs. `PS90` is the mutant for the loop that does fire,
-    // and it is the first mutant this assertion has ever had.
-    check('A08_REGION_NAMES_MATCH_ATTACHMENTS', () => {
-      const regionNames = new Set(atlas!.regions.map((r) => r.name));
-      for (const skin of data.skins) {
-        for (const entry of skin.getAttachments()) {
-          const att = entry.attachment;
-          const lookup = att instanceof RegionAttachment || att instanceof MeshAttachment ? att.path || att.name : null;
-          if (lookup === null) continue;
-          if (lookup !== lookup.trim()) {
-            fail('A08_REGION_NAMES_MATCH_ATTACHMENTS', `attachment path ${JSON.stringify(lookup)} has stray whitespace`);
-          }
-          if (!regionNames.has(lookup)) {
-            fail('A08_REGION_NAMES_MATCH_ATTACHMENTS', `attachment "${entry.placeholder}" wants region "${lookup}", which the atlas does not have`);
-          }
-        }
-      }
-      for (const region of atlas!.regions) {
-        if (region.name !== region.name.trim()) {
-          fail('A08_REGION_NAMES_MATCH_ATTACHMENTS', `atlas region ${JSON.stringify(region.name)} has stray whitespace`);
-        }
-      }
     });
 
     // --- A09: compiled duration == declared duration (rule 4) --------------
