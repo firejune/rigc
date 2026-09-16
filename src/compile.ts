@@ -85,6 +85,7 @@ import {
 import { Plate, readPlate } from '../tools/plate.ts';
 import {
   extractRegion,
+  pageFootprint,
   parseAtlasText,
   rewritePageNames,
   writeAtlasText,
@@ -1322,9 +1323,9 @@ function resolveFromAtlas(
       `region "${region}" sits on page "${found.page.name}" of ${atlas.path}, which is not on disk at ${absPath}`,
     );
   }
-  const turned = found.region.degrees === 90 || found.region.degrees === 270;
-  const rectW = turned ? found.region.height : found.region.width;
-  const rectH = turned ? found.region.width : found.region.height;
+  // The rectangle ON THE PAGE, which at a quarter turn is not the one `bounds:`
+  // states — `pageFootprint` owns that derivation for every reader of it.
+  const { width: rectW, height: rectH } = pageFootprint(found.region);
   if (
     found.region.x < 0 ||
     found.region.y < 0 ||

@@ -115,9 +115,10 @@ export interface AtlasRegion {
    *
    * ⚠️ Not the page footprint. At `rotate: 90` / `270` the rectangle on the page
    * is `height x width`; `TextureAtlas` transposes for `u2/v2` at 90 and not at
-   * 270, which is a bug in the runtime and the reason `windowOf` in
-   * [`src/render.ts`](render.ts) derives the rectangle rather than reading those
-   * two numbers. This field is the atlas's own meaning of `bounds`, untouched.
+   * 270, which is a bug in the runtime and the reason every reader here derives
+   * the rectangle rather than reading those two numbers. `pageFootprint` below
+   * is that derivation, spelled once. This field is the atlas's own meaning of
+   * `bounds`, untouched.
    */
   width: number;
   height: number;
@@ -172,6 +173,61 @@ export interface ParsedAtlas {
   regions: AtlasRegion[];
   /** The text split the way `TextureAtlas` splits it, for `rewritePageNames`. */
   lines: string[];
+}
+
+/**
+ * The rectangle a region occupies **on its page** — which is not the rectangle
+ * its `bounds:` line states.
+ *
+ * `bounds:` is the kept rectangle in the DRAWING's orientation, so a packer that
+ * turned the drawing a quarter turn to fit it wrote `width x height` for a
+ * region that covers `height x width` of the page. 180 turns nothing: the
+ * footprint is the drawing's own way round at 0 and at 180, and transposed at 90
+ * and at 270.
+ *
+ * ## Why this is one function and was four (issue #579)
+ *
+ * Four readers in this tree want exactly this rectangle — `windowOf` in
+ * [`src/render.ts`](render.ts) fences a substituted piece with it,
+ * `resolveFromAtlas` in [`src/compile.ts`](compile.ts) refuses a region that
+ * runs off its page by it, and `A06` and `A19` in [`src/validate.ts`](validate.ts)
+ * measure a shared page's tiling and open one region's own texels with it — and
+ * two of the four transposed at 90 **only**, under a comment that read *"spine-core
+ * transposes a region's extent at 90 and not at 270 when it derives the UVs, so
+ * the rectangle ON THE PAGE follows the same rule"*.
+ *
+ * The premise is true and the conclusion does not follow, because the two are
+ * different quantities:
+ *
+ *   * what `TextureAtlas` transposes at 90 and not at 270 is `u2`/`v2`
+ *     (spine-core 4.3.13, `dist/TextureAtlas.js:162-171`) — so at 270 those two
+ *     numbers do describe a rectangle the page does not have;
+ *   * but `MeshAttachment.computeUVs` (`dist/attachments/MeshAttachment.js:118-162`)
+ *     never reads `u2`/`v2` for an atlas region. It branches on `degrees` and
+ *     derives the span from `originalWidth`/`originalHeight`, transposed at 90
+ *     **and** at 270 alike. That is the routine that says where a region's texels
+ *     are, and `extractRegion` below is its inverse.
+ *
+ * ⚠️ The consequence was not confined to a printed number, which is what the
+ * card assumed. A19 opens a shared page and scans one region's own rectangle for
+ * a transparent texel: at 270 it scanned `width x height` where the drawing
+ * occupies `height x width`, ran off the part into the transparent gutter, found
+ * its texel there and **named nothing**. Two fully opaque parts on one turned
+ * page — the exact defect A19 exists for — were measured green at `rotate: 270`
+ * and red at 0, 90 and 180.
+ *
+ * Structurally typed rather than taking `AtlasRegion`, because two of the four
+ * callers hold spine-core's `TextureAtlasRegion` instead and this file
+ * deliberately does not link the runtime.
+ */
+export function pageFootprint(region: { width: number; height: number; degrees: number }): {
+  width: number;
+  height: number;
+} {
+  const turned = region.degrees === 90 || region.degrees === 270;
+  return turned
+    ? { width: region.height, height: region.width }
+    : { width: region.width, height: region.height };
 }
 
 /**
