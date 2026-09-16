@@ -51,6 +51,7 @@
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { BLUSH, FUR, FUR_DK, FUR_LT, GROUND, INK, SUN, SW, TEAL, TEAL_DK, part, rasterise } from '../rigby.ts';
 import type { Part } from '../rigby.ts';
@@ -316,7 +317,7 @@ export function lepusParts(): Part[] {
 }
 
 if (import.meta.main) {
-  const HERE = new URL('.', import.meta.url).pathname;
+  const HERE = fileURLToPath(new URL('.', import.meta.url));
   const OUT = join(HERE, 'parts');
   mkdirSync(OUT, { recursive: true });
 

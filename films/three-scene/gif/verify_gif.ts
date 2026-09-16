@@ -20,10 +20,11 @@
  * WIDER at the peak. That is measurable in the delivered file.
  */
 import { mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 import { PANE_W, STAGE_H } from './layout';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const GIF = `${ROOT}rigc-scene.gif`;
 const WORK = `${ROOT}gif/verify/`;
 

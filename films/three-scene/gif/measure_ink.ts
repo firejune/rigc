@@ -12,10 +12,11 @@
  * It prints, and the film's `layout.ts` quotes the printed numbers.
  */
 import { mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 import { WIN_Y0, WIN_Y1 } from './layout';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SCALE = 1.875;
 
 interface Sidecar {

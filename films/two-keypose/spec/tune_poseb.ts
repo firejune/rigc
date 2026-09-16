@@ -16,9 +16,10 @@
  *     error like this except looking.
  */
 import { mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { POSE_B, POSED_BONES, val, type Delta } from './poses';
 
-const HERE = new URL('./', import.meta.url).pathname;
+const HERE = fileURLToPath(new URL('./', import.meta.url));
 mkdirSync(HERE, { recursive: true });
 
 const VARIANTS: Record<string, Partial<Record<string, Delta>>> = {

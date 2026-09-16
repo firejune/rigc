@@ -16,10 +16,11 @@
  * 1200x810 in the frame and the downsample to 600 is exactly 0.5.
  */
 import { mkdirSync, rmSync, readdirSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 import { PLATE_W, PLATE_H, BAND_H, TEAL } from '../art/layout';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const WORK = `${ROOT}gif/frames/`;
 const BITS = `${ROOT}gif/bits/`;
 const OUT = `${ROOT}rigc-keypose.gif`;

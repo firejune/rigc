@@ -27,6 +27,7 @@
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   INK,
   LEAF,
@@ -44,7 +45,7 @@ import {
   type Part,
 } from '../rigby.ts';
 
-const HERE = new URL('.', import.meta.url).pathname;
+const HERE = fileURLToPath(new URL('.', import.meta.url));
 const OUT = join(HERE, 'parts');
 mkdirSync(OUT, { recursive: true });
 

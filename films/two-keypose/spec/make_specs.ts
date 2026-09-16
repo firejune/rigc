@@ -26,9 +26,10 @@
  *   frame rate        ⛔ not adopted. `render --fps` samples; specs carry seconds
  */
 import { mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { POSE_A, POSE_B, POSED_BONES, val, type Delta } from './poses';
 
-const HERE = new URL('./', import.meta.url).pathname;
+const HERE = fileURLToPath(new URL('./', import.meta.url));
 mkdirSync(HERE, { recursive: true });
 
 /** §3.3, proposed: the middle of the 0.3–0.8 s band for a movement figures do. */

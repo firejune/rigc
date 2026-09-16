@@ -19,10 +19,11 @@
  * poses; candidate B's anticipation and overshoot put every part a little
  * outside both of them, at times no pose contains.
  */
+import { fileURLToPath } from 'node:url';
 import { loadPosable, sampleAnimation, unionBounds, FRAMING_FPS } from 'spine-rigc/src/render';
 import { PLATE_W, PLATE_H } from '../art/layout';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const BUILDS = ['poses', 'cheer-a', 'cheer-b'];
 
 let bad = false;

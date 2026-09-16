@@ -25076,7 +25076,336 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR32–CUR34: a filesystem path derived from `URL.pathname` (#558) ----
+  //
+  // `URL.pathname` is percent-encoded. A checkout at `/Users/x/My Rigs/rigc`
+  // makes `new URL('.', import.meta.url).pathname` say `/Users/x/My%20Rigs/…`,
+  // which is not a path on disk — so every `readFileSync` built from it throws
+  // `ENOENT` on a directory that exists, and every `mkdirSync` creates a
+  // freshly-invented `My%20Rigs` sibling and writes the art into it. 25 sites
+  // across 23 files were written that way: all seven gallery `make_parts.ts`
+  // scripts the gallery READMEs tell a reader to run, and every art, spec, gif
+  // and vote script of all three films.
+  //
+  // 🔒 **The scan is syntactic on purpose, and that is the whole argument for
+  // it being a scan at all.** The honest measurement is to run a generator from
+  // a path with a space in it — which is what found this (`bun run smoke`'s
+  // unusual-path case, RELEASING.md *The plants are in the tool*) and what was
+  // re-run by hand on `gallery/squash` when the repair landed. But that costs a
+  // full art regeneration per script per run, and the property does not need
+  // running to be decided: a `.pathname` read off a URL built from
+  // `import.meta.url` is wrong wherever it appears, because that URL is always
+  // a `file:` URL and its path component is always percent-encoded.
+  //
+  // ⚠️ **Two-sided, and the measurement changed what that had to mean.** The
+  // card asked for a scan that does not fire on `new URL(...)` used as a URL,
+  // "there is at least one legitimate use to look for" — and there is not one
+  // in this tree: every `new URL(` outside these sites is either the repair
+  // itself or prose about it. So the live population cannot demonstrate the
+  // negative half and `CUR34` plants it instead, alongside the two shapes that
+  // DO occur live and would fault a naive scan: `new URL(...).pathname` written
+  // inside a comment, and written inside a template literal that carries source
+  // for another file (`scripts/install_smoke.ts` has both, and its comment is
+  // there precisely to warn the next author off this defect).
+  //
+  // 🔑 **The exclusion is derived, not typed.** Two of the 25 sites are in
+  // landed run records under `bench/runs/`, which `bench/runs/README.md` seals
+  // — final against editing under #181, repairable only as a labelled amendment
+  // commit whose repair is verified by reproducing the run's own figures. A
+  // hand-typed `bench/runs/` here would be a second copy of that ruling, free
+  // to drift from it; `sealedSubtrees` reads the marker line the README shows
+  // its reader, so the gate and the ruling are one object. `CUR33` requires the
+  // exclusion to exclude something, which is what stops a marker becoming a way
+  // to switch this off.
+  {
+    const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+    const treeFault =
+      listed.error !== undefined || listed.status !== 0
+        ? `git could not list the tracked files (${listed.error?.message ?? `exit ${String(listed.status)}: ${listed.stderr.toString('utf8').trim()}`})`
+        : null;
+    const tracked = treeFault === null ? listed.stdout.toString('utf8').split('\u0000').filter((entry) => entry !== '') : [];
+
+    // The sealing markers, read off the tree's own markdown — the same parser
+    // `runDocsQuoteSuite` reads them with, so a change to the rule reaches here.
+    const markdown = new Map<string, string>();
+    for (const rel of tracked) if (rel.endsWith('.md') && existsSync(join(root, rel))) markdown.set(rel, readFileSync(join(root, rel), 'utf8'));
+    const sealed = sealedSubtrees(markdown);
+    const sealedBy = (rel: string): { where: string; prefix: string; reason: string } | undefined =>
+      sealed.prefixes.find((seal) => seal.prefix !== '' && rel.startsWith(seal.prefix));
+
+    const scanned: string[] = [];
+    const heldOut = new Map<string, string[]>();
+    const sites: string[] = [];
+    const blankFaults: string[] = [];
+    for (const rel of tracked) {
+      if (!/\.(?:ts|mjs|js)$/.test(rel) || !existsSync(join(root, rel))) continue;
+      const seal = sealedBy(rel);
+      if (seal !== undefined) {
+        heldOut.set(seal.where, [...(heldOut.get(seal.where) ?? []), rel]);
+        continue;
+      }
+      const text = readFileSync(join(root, rel), 'utf8');
+      // The blanker has to be length- and line-preserving or every coordinate
+      // it reports is a lie. Checked on the live population rather than argued.
+      const code = blankCommentsAndStrings(text);
+      if (code.length !== text.length || code.split('\n').length !== text.split('\n').length) {
+        blankFaults.push(`${rel}: blanking changed the file's shape (${text.length}b/${text.split('\n').length}L became ${code.length}b/${code.split('\n').length}L), so every line number below it is wrong`);
+      }
+      scanned.push(rel);
+      sites.push(...fileUrlPathSites(rel, text));
+    }
+
+    // --- CUR32: the scan ----------------------------------------------------
+    {
+      const probes = [
+        ...(treeFault === null ? [] : [treeFault]),
+        ...sealed.faults,
+        ...blankFaults,
+        ...firstFew(
+          sites.map((site) => `${site} — \`URL.pathname\` is percent-encoded, so this is not a path on any checkout whose directory holds a space or a non-ASCII character; write \`fileURLToPath(new URL(…, import.meta.url))\`, or bun's \`import.meta.dir\` where no trailing slash is wanted`),
+          'site(s)',
+        ),
+      ];
+      const held = probes.length === 0;
+      say(
+        'CUR32_NO_SCRIPT_OUTSIDE_A_SEALED_SUBTREE_DERIVES_A_FILESYSTEM_PATH_FROM_URL_PATHNAME',
+        held && scanned.length > 0,
+        probeDetail(
+          held && scanned.length > 0,
+          probes,
+          `${scanned.length} tracked .ts/.mjs/.js file(s), comments and string literals blanked, read for two forms — ` +
+            '`new URL(…, import.meta.url).pathname`, and a binding of that URL whose `.pathname` is read later — and ' +
+            `not one of them carries either. ${[...heldOut.values()].flat().length} file(s) held out by ` +
+            `${sealed.prefixes.length} sealing marker(s): ${sealed.prefixes.map((seal) => `${seal.prefix} (${seal.where})`).join(', ')}`,
+        ),
+        'the gallery and film scripts read their own directory out of `URL.pathname` for 25 sites across 23 files, ' +
+          'and a checkout under a directory with a space in it could not regenerate any of it — `bun run smoke`\'s ' +
+          'unusual-path case found the shape in a generated fixture (#556) before anything looked for it in the ' +
+          'tree. Running every generator from a hostile path is the honest measurement and costs a full art ' +
+          'regeneration each time; the property is syntactic, so this reads it instead',
+      );
+    }
+
+    // --- CUR33: that the scan reached the files it was written for ----------
+    //
+    // 🔒 `CUR01`'s argument. Every step above can come back empty — git listing
+    // nothing, an extension filter that stops matching, a seal that swallows the
+    // tree — and each of those makes `CUR32` pass over nothing while saying so
+    // in a sentence nobody reads. The subjects are derived from the directory
+    // listing, never from a count typed here, because a literal would be a
+    // second copy of the population free to drift from the first.
+    {
+      const galleryRoot = join(root, 'gallery');
+      const makers = existsSync(galleryRoot)
+        ? readdirSync(galleryRoot)
+            .filter((name) => existsSync(join(galleryRoot, name, 'make_parts.ts')))
+            .sort()
+            .map((name) => `gallery/${name}/make_parts.ts`)
+        : [];
+      const filmScripts = tracked.filter((rel) => rel.startsWith('films/') && /\.(?:ts|mjs|js)$/.test(rel));
+      const seen = new Set(scanned);
+      const missed = [...makers, ...filmScripts].filter((rel) => !seen.has(rel));
+      const emptySeals = sealed.prefixes.filter((seal) => (heldOut.get(seal.where) ?? []).length === 0);
+      const probes = [
+        ...firstFew(missed.map((rel) => `${rel} is in the tree and CUR32 did not read it`), 'file(s)'),
+        ...emptySeals.map(
+          (seal) =>
+            `${seal.where} seals \`${seal.prefix}\` and CUR32 held no file out for it — a marker that excludes ` +
+            'nothing is a marker that could be pointed anywhere, which is how an exclusion becomes a switch',
+        ),
+        ...floorProbes(
+          [
+            [tracked.length, 1, `git listed ${tracked.length} tracked path(s)`],
+            [scanned.length, 1, `${scanned.length} of them are .ts/.mjs/.js outside a sealed subtree and were scanned`],
+            [makers.length, 1, `${makers.length} gallery example(s) carry a make_parts.ts`],
+            [filmScripts.length, 1, `${filmScripts.length} script(s) live under films/`],
+            [sealed.prefixes.length, 1, `${sealed.prefixes.length} sealing marker(s) were read off the tree's markdown`],
+          ],
+          'a step that comes back empty makes CUR32 read a clean tree off nothing',
+        ),
+      ];
+      const held = probes.length === 0;
+      say(
+        'CUR33_THE_PATHNAME_SCAN_READ_EVERY_GALLERY_MAKER_AND_EVERY_FILM_SCRIPT',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `CUR32 read all ${makers.length} gallery generator(s) — ${makers.join(', ')} — and all ` +
+            `${filmScripts.length} script(s) under films/, out of ${scanned.length} file(s) scanned; and each of the ` +
+            `${sealed.prefixes.length} sealing marker(s) held at least one file out ` +
+            `(${sealed.prefixes.map((seal) => `${seal.prefix} ${(heldOut.get(seal.where) ?? []).length}`).join(', ')})`,
+        ),
+        'these are the files the defect was in, so a scan that stops reaching them is the one failure that looks ' +
+          'exactly like the repair holding',
+      );
+    }
+
+    // --- CUR34: both sides of it, planted --------------------------------
+    //
+    // ⭐ The live site is re-planted rather than imagined: the victim is the
+    // first gallery generator CUR32 scanned, and the plant is its own repaired
+    // line put back the way #558 found it. Nothing here is a literal path.
+    {
+      const victim = scanned.find((rel) => /^gallery\/[^/]+\/make_parts\.ts$/.test(rel));
+      const faults: string[] = [];
+      let note = '';
+      if (victim === undefined) faults.push('no gallery generator was scanned, so the re-plant below had nothing to aim at');
+      else {
+        const clean = readFileSync(join(root, victim), 'utf8');
+        const REPAIRED = /fileURLToPath\(new URL\((.*?), import\.meta\.url\)\)/;
+        const found = REPAIRED.exec(clean);
+        if (found === null) {
+          faults.push(`${victim} no longer spells its own directory with \`fileURLToPath(new URL(…, import.meta.url))\`, so the re-plant cannot be derived from it`);
+        } else {
+          const replanted = clean.replace(REPAIRED, `new URL(${found[1]}, import.meta.url).pathname`);
+          const one = (name: string, path: string, text: string, want: number): void => {
+            const got = fileUrlPathSites(path, text);
+            if (got.length !== want) {
+              faults.push(
+                `the ${name} probe was reported ${got.length} time(s) and this control requires ${want}` +
+                  (got.length === 0 ? '' : ` — it said: ${got.join('; ')}`),
+              );
+            }
+          };
+          one('untouched live file', victim, clean, 0);
+          one('re-planted live file', victim, replanted, 1);
+          // The negative half, which the live tree cannot supply: after the
+          // repair nothing in it reads `.pathname` at all, legitimately or not.
+          one('direct defect', 'probe.ts', "const HERE = new URL('.', import.meta.url).pathname;", 1);
+          one('bound defect', 'probe.ts', "const here = new URL('.', import.meta.url);\nconst HERE = here.pathname;", 1);
+          one('the repair', 'probe.ts', "const HERE = fileURLToPath(new URL('.', import.meta.url));", 0);
+          one('bun\'s own spelling', 'probe.ts', 'const HERE = import.meta.dir;', 0);
+          one('a URL used as a URL', 'probe.ts', 'const route = new URL(request.url).pathname;', 0);
+          one('a URL bound and used as a URL', 'probe.ts', 'const u = new URL(request.url);\nconst route = u.pathname;', 0);
+          one('the defect in a line comment', 'probe.ts', "// never `new URL('.', import.meta.url).pathname`\nconst HERE = import.meta.dir;", 0);
+          one('the defect in a block comment', 'probe.ts', "/* new URL('.', import.meta.url).pathname */\nconst HERE = import.meta.dir;", 0);
+          one('the defect inside a template literal', 'probe.ts', 'const SRC = `const H = new URL(".", import.meta.url).pathname;`;', 0);
+          // A regex holding a lone quote used to open a string that swallowed
+          // the rest of the file, and a scan that has gone quiet looks green.
+          one('a defect after a regex holding a quote', 'probe.ts', "const q = /'/;\nconst HERE = new URL('.', import.meta.url).pathname;", 1);
+          const at = replanted.split('\n').findIndex((line) => /new URL\(.*import\.meta\.url\)\.pathname/.test(line)) + 1;
+          note =
+            `\`${victim}\` reads clean, and the same file with its one repaired line put back the way #558 found ` +
+            `it is reported once, at line ${at}; a bound URL is reported too, while the repair, \`import.meta.dir\`, ` +
+            'a URL genuinely used as a URL (bound or not), the defect written inside a line comment, a block ' +
+            'comment or a template literal, are each reported in no way — and a defect following a regex that ' +
+            'holds a lone quote is still reported, which is the blanker not swallowing the file';
+        }
+      }
+      const held = faults.length === 0;
+      say(
+        'CUR34_THE_PATHNAME_SCAN_FIRES_ON_THE_DEFECT_AND_ON_NOTHING_THAT_MERELY_LOOKS_LIKE_IT',
+        held,
+        probeDetail(held, faults, `the controls: ${note}`),
+        'a scan is a vocabulary of forms, and both directions fail silently: a form that stops matching the defect ' +
+          'goes quiet rather than red (`CUR06`), and a form loose enough to fault a comment, a template of ' +
+          'generated source, or a URL doing a URL\'s job is one every author learns to work around',
+      );
+    }
+  }
+
   return bad;
+}
+
+/**
+ * `source` with every comment and every string literal — single-quoted,
+ * double-quoted and template — blanked to spaces, leaving newlines alone.
+ *
+ * Length- and line-preserving on purpose: the scan reports coordinates, and a
+ * blanker that shortens the text reports them at the wrong lines. `CUR32`
+ * checks that on the live population rather than trusting this sentence.
+ *
+ * ⚠️ Regex literals are recognised, and they have to be: `/'/` is a regex
+ * holding a lone quote, and without the rule below it opens a string that runs
+ * to the end of the file — which does not go red, it goes QUIET, taking every
+ * site after it out of the scan. The heuristic is the ordinary one — a `/` is a
+ * regex when what precedes it cannot end an expression — and `CUR34` plants
+ * exactly that shape.
+ *
+ * 🔸 A template literal is blanked WHOLE, substitutions included, so source
+ * written for another file to run is not scanned as if it were this file's.
+ * That is a deliberate blind spot with an instrument behind it: the generated
+ * fixture in `scripts/install_smoke.ts` is covered by `bun run smoke`'s
+ * unusual-path case, which RUNS it from a path with a space in it rather than
+ * reading it.
+ */
+function blankCommentsAndStrings(source: string): string {
+  const out = source.split('');
+  const blank = (from: number, to: number): void => {
+    for (let k = from; k < to && k < out.length; k++) if (out[k] !== '\n') out[k] = ' ';
+  };
+  /** What a `/` may follow and still open a regex rather than be division. */
+  const BEFORE_REGEX = /[([{,;:!&|?+\-*/%~^=<>]$|\b(?:return|typeof|instanceof|in|of|new|delete|void|case|do|else|yield|await)$/;
+  let i = 0;
+  while (i < source.length) {
+    const c = source[i];
+    if (c === '/' && source[i + 1] === '/') {
+      let j = i + 2;
+      while (j < source.length && source[j] !== '\n') j++;
+      blank(i, j);
+      i = j;
+    } else if (c === '/' && source[i + 1] === '*') {
+      let j = i + 2;
+      while (j < source.length && !(source[j] === '*' && source[j + 1] === '/')) j++;
+      blank(i, Math.min(j + 2, source.length));
+      i = j + 2;
+    } else if (c === '/' && BEFORE_REGEX.test(source.slice(0, i).replace(/[ \t]+$/, ''))) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < source.length && source[j] !== '\n' && (inClass || source[j] !== '/')) {
+        if (source[j] === '\\') j++;
+        else if (source[j] === '[') inClass = true;
+        else if (source[j] === ']') inClass = false;
+        j++;
+      }
+      blank(i + 1, j);
+      i = j + 1;
+    } else if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1;
+      while (j < source.length && source[j] !== c) {
+        if (source[j] === '\\') j++;
+        j++;
+      }
+      blank(i + 1, j);
+      i = j + 1;
+    } else i++;
+  }
+  return out.join('');
+}
+
+/** A URL built from `import.meta.url`, read directly for its `.pathname`. */
+const FILE_URL_PATHNAME_DIRECT = /new\s+URL\s*\([^()]*\bimport\.meta\.url\b[^()]*\)\s*\.pathname/g;
+/** The same URL bound to a name first, whose `.pathname` is read further down. */
+const FILE_URL_PATHNAME_BOUND = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+URL\s*\([^()]*\bimport\.meta\.url\b[^()]*\)/g;
+
+/**
+ * Every place in one module that turns a `file:` URL into a string by reading
+ * its `.pathname` — the defect of issue #558, in the two forms it can take.
+ *
+ * ⭐ The criterion is `import.meta.url` and not `new URL`, which is what makes
+ * this two-sided by construction rather than by a list of exceptions: a URL
+ * built from `import.meta.url` is always a `file:` URL, so its percent-encoded
+ * path is never what the caller wants, while `new URL(request.url).pathname` is
+ * a URL doing a URL's job and is left alone.
+ */
+function fileUrlPathSites(path: string, text: string): string[] {
+  const code = blankCommentsAndStrings(text);
+  const lineAt = (at: number): number => code.slice(0, at).split('\n').length;
+  const out: string[] = [];
+  for (const hit of code.matchAll(FILE_URL_PATHNAME_DIRECT)) {
+    out.push(`${path}:${lineAt(hit.index)} reads \`.pathname\` off a URL built from \`import.meta.url\``);
+  }
+  for (const bound of code.matchAll(FILE_URL_PATHNAME_BOUND)) {
+    const name = bound[1];
+    for (const hit of code.matchAll(new RegExp(`\\b${name}\\s*\\.pathname\\b`, 'g'))) {
+      out.push(
+        `${path}:${lineAt(hit.index)} reads \`${name}.pathname\`, and \`${name}\` is a URL built from ` +
+          `\`import.meta.url\` at line ${lineAt(bound.index)}`,
+      );
+    }
+  }
+  return out;
 }
 
 /**

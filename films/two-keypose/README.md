@@ -84,18 +84,17 @@ ballot step needs a local copy of the official Spine Web Player named by
 
 ## Preserved verbatim, and adapted
 
-Preserved byte for byte: `spec/make_specs.ts`, `spec/poses.ts`, `spec/tune_poseb.ts`,
-`spec/check_framing.ts`, `spec/check_face_clear.ts`, `spec/check_pose_reading.ts`,
-`spec/check_candidates_differ.ts`, `gif/assemble_gif.ts`, `package.json`,
-`tsconfig.json`. Every one of those already addressed its files through
-`new URL('…', import.meta.url)`, so **no path inside any of them needed changing.**
+Preserved byte for byte: `spec/poses.ts`, `package.json`, `tsconfig.json`. Every script
+in this film already addressed its files *relatively*, through
+`new URL('…', import.meta.url)`, so **no path inside any of them was ever re-aimed.**
 
-Two files were adapted:
+Adapted:
 
 | File | Adapted | Why |
 | --- | --- | --- |
 | `run.sh` | gained a step `0b` that copies film one's `art/layout.ts` and `art/parts/`, and its `spec/skeleton.ts` and `spec/rigby.rig.json`, from `../one-assembly` | In the scratchpad those four had simply been copied in beside this film's own files. Taking them from film one keeps the art referenced rather than duplicated into `films/`. Two of the four are film one's steps 1–2 *output*, so `0b` runs those two steps to make them; neither needs film one's `bun add`. Nothing else in `run.sh` changed — the version pin, the nine step comments and their arguments are as run. |
 | `vote/drive.mjs` | its two absolute paths are now resolved | As run it imported playwright-core by absolute path out of another project's `node_modules`, and named a Spine Web Player copy by absolute path in the session scratchpad. Neither survives being moved. Both now come from an environment variable if one is set, else node's own resolution; the file's own header note about the offline fallback was updated to point at the variable instead of the old location. Everything else in it — every measurement, every screenshot, every assertion — is unchanged. |
+| `spec/make_specs.ts`, `spec/tune_poseb.ts`, `spec/check_framing.ts`, `spec/check_face_clear.ts`, `spec/check_pose_reading.ts`, `spec/check_candidates_differ.ts`, `gif/assemble_gif.ts`, and `vote/drive.mjs` a second time | each resolves its own directory with `fileURLToPath(new URL('…', import.meta.url))` where it used to read `new URL('…', import.meta.url).pathname` | `URL.pathname` is percent-encoded. Under a checkout whose path holds a space or a non-ASCII character these scripts created a sibling directory literally named `My%20Rigs`, wrote into it, and then failed with `ENOENT` on a directory that exists — so the film could not be re-run from such a checkout at all ([#558](https://github.com/firejune/rigc/issues/558)). The URL each script builds is untouched; only its conversion to a path is. On an ASCII path the two spellings return the same string, trailing slash included, so no value any script computes moves and no output changes. `vote/drive.mjs` is the one file here `run.sh` runs under **node** rather than bun, which is why the portable spelling and not bun's `import.meta.dir` is the one used throughout. |
 
 ## What re-ran, and what did not
 

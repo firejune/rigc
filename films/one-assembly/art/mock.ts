@@ -6,12 +6,13 @@
  * the numbers, a disagreement between this picture and `rigc render`'s setup
  * pose is a real bug in one of the two.
  */
+import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 import { PLATE_H } from './layout';
 import { SLOTS, solve, rot } from '../spec/skeleton';
 
-const OUT = new URL('./', import.meta.url).pathname;
-const PARTS = new URL('./parts/', import.meta.url).pathname;
+const OUT = fileURLToPath(new URL('./', import.meta.url));
+const PARTS = fileURLToPath(new URL('./parts/', import.meta.url));
 
 const world = solve();
 

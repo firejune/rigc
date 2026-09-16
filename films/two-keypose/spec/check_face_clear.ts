@@ -21,9 +21,10 @@
  * makes the test STRICTER than the eye, so the margin is trimmed off the
  * comparison by insetting each quad to the part's own ink box.
  */
+import { fileURLToPath } from 'node:url';
 import { loadPosable, sampleAnimation } from 'spine-rigc/src/render';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const BUILDS = ['poses', 'cheer-a', 'cheer-b'];
 const FPS = 60;
 

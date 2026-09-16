@@ -20,6 +20,7 @@
 import { mkdirSync } from 'node:fs';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   GROUND,
   INK,
@@ -35,7 +36,7 @@ import {
 } from '../rigby.ts';
 import { ART_SCALE, POINTS, STAGE_H, STAGE_W, WHEEL_RADIUS, polyline, svgPath, vertices } from './curve.ts';
 
-const HERE = new URL('.', import.meta.url).pathname;
+const HERE = fileURLToPath(new URL('.', import.meta.url));
 const OUT = join(HERE, 'parts');
 mkdirSync(OUT, { recursive: true });
 
