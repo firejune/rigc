@@ -122,7 +122,7 @@ import {
   type BoneDistReport,
   type BoneQuantity,
 } from './src/bonedist.ts';
-import { diffSkeletons, movedAgnosticMeasures, movedMeasures, movedReportedMeasures } from './src/diff.ts';
+import { diffLines, diffSkeletons, movedAgnosticMeasures, movedMeasures, movedReportedMeasures, type DiffReport } from './src/diff.ts';
 import { copyAtlasImages } from './src/emit.ts';
 import {
   DEFAULT_PADDING,
@@ -221,7 +221,7 @@ import {
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
-import { shapeDiff, shapeOf, skinBlocks, skinsDeclaredBy } from './tools/editor_roundtrip.ts';
+import { diffSummaryLines, shapeDiff, shapeOf, skinBlocks, skinsDeclaredBy } from './tools/editor_roundtrip.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
 interface CutEntry {
@@ -23819,6 +23819,233 @@ function runEditorRoundtripSuite(): number {
       'a round trip that renders one skin certifies one skin. The construct #552 and #567 are about lives in the ' +
         'NAMED skins, so the one measurement the trip exists to make was being taken where it could not see it — ' +
         'and the report said 0.0000, which reads like the best possible answer',
+    );
+  }
+
+  // --- ERT63-65: step 4 reads every block of `diff`'s report — issue #597 ---
+  //
+  // 🚨 The step-4 summary walked `sections[].measures` and nothing else, so it
+  // read the measures that go into a section mean and skipped three kinds that
+  // deliberately do not: each section's `nameAgnostic` comparison, its
+  // `reported` block, and — since #578 — the top-level `header` carrying the two
+  // stage measures. A round trip in which the only thing that moved was the
+  // STAGE therefore printed *"every one a perfect match"*, which is the
+  // strongest sentence this tool has, about a question it had not asked. The
+  // stage is the sharpest case because a header field is exactly what an editor
+  // is in a position to rewrite on import and export, but it was never only the
+  // stage: `attachments.mesh_edges` has been in the same silence since #46.
+  //
+  // ⭐ The fixtures are REAL reports — two stub skeletons through
+  // `diffSkeletons`, written out as JSON and read back off disk the way the tool
+  // reads what `rigc diff --json` left beside it. A hand-forged report would be
+  // a second, private opinion about `DiffReport`'s shape, and a block one walk
+  // knows about and another does not is this control's entire subject.
+  //
+  // ⚠️ The two headings are not quoted from memory. `diff` prints its own words
+  // for each of these blocks and the probes below require the distinguishing
+  // clause of each to appear in what `diffLines` actually prints, so a rewording
+  // there cannot leave two files describing one block differently — the "✅
+  // applied" shape, in the one place a reader would never think to check.
+  //
+  // 🔒 ERT64 is the negative control and it is what makes ERT63 worth anything:
+  // a walk that dropped the perfect-match line whenever it was unsure would pass
+  // ERT63 and fail here. Its count is the other half — a summary still reading
+  // the sections alone prints 40 measures where the report carries 54, and the
+  // sentence would be true of the 40 it read and false of the report it claims.
+  //
+  // 🕳️ ERT65 is the case the tool can reach without anybody breaking anything:
+  // `rigcCommand()` falls back to the INSTALLED `rigc` when this file is not
+  // running inside the repository, and an install predating #578 writes a report
+  // with no `header` in it at all. `DiffReport` declares that block
+  // non-optional for exactly this reason — over an absent one every "did it
+  // move" walk returns the empty list, which is indistinguishable from a block
+  // that is all 1.000 — so the summary has to say the stage was never compared
+  // rather than say everything matched.
+  {
+    const dr = join(root, 'diff-report');
+    mkdirSync(dr, { recursive: true });
+    // A mesh, so the fixture reaches `attachments.mesh_edges` — the reported
+    // measure that predates the header and was in the same silence.
+    const MESH = {
+      type: 'mesh',
+      width: 32,
+      height: 16,
+      uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+      triangles: [0, 1, 2, 0, 2, 3],
+      vertices: [0, 0, 32, 0, 32, 16, 0, 16],
+      hull: 4,
+    };
+    const skelOf = (o: { width?: number; edges?: boolean; fan?: boolean } = {}): unknown => ({
+      skeleton: { spine: '4.3.13', x: 0, y: 0, width: o.width ?? 100, height: 200, images: './' },
+      // `b` hangs off `a` in a chain, or off `root` in a fan — the same three
+      // NAMES either way, so the tree difference is what the name-agnostic
+      // comparison is for.
+      bones: [{ name: 'root' }, { name: 'a', parent: 'root' }, { name: 'b', parent: o.fan === true ? 'root' : 'a' }],
+      slots: [{ name: 'panel', bone: 'a', attachment: 'panel' }],
+      skins: [{ name: 'default', attachments: { panel: { panel: o.edges === true ? { ...MESH, edges: [0, 2] } : MESH } } }],
+      animations: { travel: { bones: { a: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 10 }] } } } },
+    });
+    const reportAt = (name: string, candidate: unknown, reference: unknown): { path: string; report: DiffReport } => {
+      const report = diffSkeletons(candidate, reference);
+      const path = join(dr, `${name}.json`);
+      writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`);
+      return { path, report };
+    };
+
+    const PERFECT = 'every one a perfect match';
+    const REPORTED_CLAUSE = 'unobservable from the frames, so reported and folded into nothing';
+    const AGNOSTIC_CLAUSE = 'the same two skeletons compared with names thrown away';
+
+    // The card's own fixture: every section at 1.000 and the stage box below it.
+    const stage = reportAt('stage', skelOf({ width: 120 }), skelOf());
+    // The same shape one block over, and the half that predates #578.
+    const edges = reportAt('edges', skelOf({ edges: true }), skelOf());
+    // A tree the editor could have reshaped without renaming anything.
+    const tree = reportAt('tree', skelOf({ fan: true }), skelOf());
+
+    const stageLines = diffSummaryLines(stage.path).join('\n');
+    const edgesLines = diffSummaryLines(edges.path).join('\n');
+    const treeLines = diffSummaryLines(tree.path).join('\n');
+    const printed = diffLines(stage.report, { candidate: 'candidate.json', reference: 'reference.json' }).join('\n');
+
+    /** What one fixture gets wrong: the id has to be named and the sentence must not be printed. */
+    const blockFaults = (what: string, lines: string, report: DiffReport, heading: string): string[] => {
+      const moved = [...movedMeasures(report), ...movedAgnosticMeasures(report), ...movedReportedMeasures(report)];
+      return [
+        ...moved.flatMap((id) => (lines.includes(id) ? [] : [`${what}: \`${id}\` moved in the report and the summary does not name it`])),
+        ...(lines.includes(heading) ? [] : [`${what}: no heading carrying "${heading}" was printed over the rows`]),
+        ...(lines.includes(PERFECT) ? [`${what}: the summary printed "${PERFECT}" over a report in which ${moved.length} measure(s) moved`] : []),
+      ];
+    };
+
+    const probes = [
+      // The fixtures first, through `src/diff.ts`'s own three walks: this case
+      // is worth nothing if the stage report is not the report the card
+      // describes, and "every section at 1.000" is a property of the fixture
+      // that nothing else here would notice going away.
+      ...(movedMeasures(stage.report).length === 0 && movedAgnosticMeasures(stage.report).length === 0
+        ? []
+        : [
+            'the stage fixture moved something in a section or in a name-agnostic block — ' +
+              `${JSON.stringify([...movedMeasures(stage.report), ...movedAgnosticMeasures(stage.report)])} — so it is ` +
+              'no longer the report whose ONLY moved measure is the header one',
+          ]),
+      ...(JSON.stringify(movedReportedMeasures(stage.report)) === JSON.stringify(['skeleton.stage_box'])
+        ? []
+        : [`the stage fixture's reported measures moved ${JSON.stringify(movedReportedMeasures(stage.report))}, and \`skeleton.stage_box\` alone was the fixture`]),
+      ...(movedMeasures(edges.report).length === 0 && JSON.stringify(movedReportedMeasures(edges.report)) === JSON.stringify(['attachments.mesh_edges'])
+        ? []
+        : [
+            `the edges fixture moved ${JSON.stringify(movedMeasures(edges.report))} in its sections and ` +
+              `${JSON.stringify(movedReportedMeasures(edges.report))} among the reported, where a section-clean report ` +
+              'moving `attachments.mesh_edges` alone was the fixture',
+          ]),
+      ...(movedAgnosticMeasures(tree.report).length > 0
+        ? []
+        : ['the tree fixture moved no name-agnostic measure, so the third block is not under test here']),
+      // Then the summary, on each of the two blocks it could not see.
+      ...blockFaults('the stage moved', stageLines, stage.report, REPORTED_CLAUSE),
+      ...blockFaults('a reported measure moved', edgesLines, edges.report, REPORTED_CLAUSE),
+      ...blockFaults('the tree was reshaped', treeLines, tree.report, AGNOSTIC_CLAUSE),
+      // And the headings against `diff`'s own, rather than against a copy kept
+      // here: what the tool prints over these rows has to be what `diff` says
+      // about the same block.
+      ...(printed.includes(REPORTED_CLAUSE) ? [] : [`\`diffLines\` does not print "${REPORTED_CLAUSE}", so the summary's reported heading is quoting something that is no longer there`]),
+      ...(printed.includes(AGNOSTIC_CLAUSE) ? [] : [`\`diffLines\` does not print "${AGNOSTIC_CLAUSE}", so the summary's name-agnostic heading is quoting something that is no longer there`]),
+    ];
+    const blocksHeld = probes.length === 0;
+    say(
+      'ERT63_A_MEASURE_OUTSIDE_THE_SECTIONS_IS_A_NAMED_ROW_AND_NOT_A_PERFECT_MATCH',
+      blocksHeld,
+      probeDetail(
+        blocksHeld,
+        probes,
+        `three reports whose sections are clean of ${JSON.stringify(movedReportedMeasures(stage.report))}, ` +
+          `${JSON.stringify(movedReportedMeasures(edges.report))} and ` +
+          `${movedAgnosticMeasures(tree.report).length} name-agnostic measure(s) each print their moved rows under a ` +
+          "heading carrying `diff`'s own words for that block, and none of the three prints the perfect-match line",
+      ),
+      'the summary read `sections[].measures` alone, so a stage the editor rewrote — the one header field a round ' +
+        'trip exists to ask about — came back as *"every one a perfect match"*. The fixtures are real reports out ' +
+        'of `diffSkeletons` rather than forged JSON, because a block one walk knows about and another does not is ' +
+        'the whole defect, and the headings are checked against what `diffLines` prints so the two files cannot ' +
+        'drift into describing one block two ways',
+    );
+
+    // ERT64 — the other direction, and the count. A walk that suppressed the
+    // sentence whenever it was unsure would pass ERT63 and fail here; a walk
+    // still reading the sections alone would print the sentence with 40 in it
+    // where the report carries every one of its measures.
+    const same = reportAt('same', skelOf(), skelOf());
+    const sameLines = diffSummaryLines(same.path);
+    const inSections = same.report.sections.reduce((n, s) => n + s.measures.length, 0);
+    const inAgnostic = same.report.sections.reduce((n, s) => n + (s.nameAgnostic?.measures.length ?? 0), 0);
+    const inReported =
+      same.report.sections.reduce((n, s) => n + (s.reported?.measures.length ?? 0), 0) + same.report.header.measures.length;
+    const total = inSections + inAgnostic + inReported;
+    const perfectProbes = [
+      ...floorProbes(
+        [
+          [inSections, 1, `${inSections} measure(s) sit in the report's sections`],
+          [inAgnostic, 1, `${inAgnostic} measure(s) sit in a name-agnostic block`],
+          [inReported, 1, `${inReported} measure(s) are reported and never gate`],
+        ],
+        'and a count over a block that is empty is a claim about nothing',
+      ),
+      ...(sameLines.length === 1 ? [] : [`a report with nothing moved printed ${sameLines.length} line(s): ${JSON.stringify(sameLines)}`]),
+      ...(sameLines.join('\n').includes(PERFECT) ? [] : ['a report with every measure at 1.000 did not print the perfect-match line at all']),
+      ...([`${total} measure(s)`, `${inSections} in the sections`, `${inAgnostic} name-agnostic`, `${inReported} reported`].flatMap((said) =>
+        sameLines.join('\n').includes(said) ? [] : [`the perfect-match line does not say "${said}", so it claims more than it counted`],
+      )),
+    ];
+    const perfectHeld = perfectProbes.length === 0;
+    say(
+      'ERT64_A_REPORT_WITH_EVERY_BLOCK_AT_A_PERFECT_MATCH_STILL_SAYS_SO_AND_SAYS_HOW_MANY',
+      perfectHeld,
+      probeDetail(
+        perfectHeld,
+        perfectProbes,
+        `a skeleton against itself gives ${total} measure(s) — ${inSections} in the sections, ${inAgnostic} ` +
+          `name-agnostic, ${inReported} reported — and one line, which names all four figures and calls every ` +
+          'one of them a perfect match',
+      ),
+      'ERT63 alone is passed by a tool that never prints the sentence again, which would throw away the answer a ' +
+        'green round trip exists to give. The four figures are here because the defect ERT63 names is a sentence ' +
+        'that claimed more than it had read: a summary still walking the sections alone can print this line, and ' +
+        'it prints the wrong number in it',
+    );
+
+    // ERT65 — the block that is not there. Modelled by REMOVING `header` from a
+    // real report rather than by writing a report without one, so the fixture is
+    // the artifact a pre-#578 `rigc` leaves and not a guess at its shape.
+    const noHeader = JSON.parse(readFileSync(same.path, 'utf8')) as Record<string, unknown>;
+    delete noHeader.header;
+    const noHeaderPath = join(dr, 'no-header.json');
+    writeFileSync(noHeaderPath, `${JSON.stringify(noHeader, null, 2)}\n`);
+    const noHeaderLines = diffSummaryLines(noHeaderPath).join('\n');
+    const SAID = 'the stage was never compared';
+    const absentProbes = [
+      ...('header' in noHeader ? ['the fixture still carries a `header` block, so nothing was removed and this case measures a report that has one'] : []),
+      ...(noHeaderLines.includes(SAID) ? [] : [`a report with no \`header\` block did not say "${SAID}" — it printed ${JSON.stringify(noHeaderLines)}`]),
+      ...(noHeaderLines.includes(PERFECT) ? [`a report that never compared the stage printed "${PERFECT}"`] : []),
+      // The pair, on the fixture it was cut from: a tool that said this on every
+      // run would be a sentence nobody can act on.
+      ...(sameLines.join('\n').includes(SAID) ? [`the same report WITH its \`header\` block also says "${SAID}"`] : []),
+    ];
+    const absentHeld = absentProbes.length === 0;
+    say(
+      'ERT65_A_DIFF_REPORT_WITH_NO_HEADER_BLOCK_IS_NOT_REPORTED_AS_A_PERFECT_MATCH',
+      absentHeld,
+      probeDetail(
+        absentHeld,
+        absentProbes,
+        `the same report with its \`header\` block removed says "${SAID}" and does not call the run a perfect ` +
+          'match, and with the block present it says neither',
+      ),
+      '`DiffReport` declares `header` non-optional because over an absent block every "did it move" walk returns ' +
+        'the empty list, which reads exactly like a block that is all 1.000 — and this tool can be handed one ' +
+        'without anybody breaking anything: `rigcCommand()` falls back to the INSTALLED `rigc` outside a ' +
+        'checkout, and an install predating #578 writes no header at all',
     );
   }
 

@@ -185,7 +185,11 @@ working install are two different facts: everything the tree runs is on disk,
 and only what `files` names reaches the registry.
 
 **Done when** installing from the registry and running a build is checked
-mechanically, every release.
+mechanically on every release — and where the registry has not served the new
+version by the time that check runs, the confirmation is NOT taken and is
+re-run until it is, because a confirmation nobody took says nothing about the
+package either way ([RELEASING.md](RELEASING.md), *Whether the tarball runs*,
+has the wait, the exit codes and how a re-run is dispatched).
 
 ## Not in 1.0
 
