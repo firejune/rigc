@@ -5015,9 +5015,15 @@ frames. Every line is marked with where it comes from:
 
 - 📗 **stated** — quoted or paraphrased from the page linked in the line.
 - 🧩 **inferred** — this guide's reading of those pages. Spine does not say it.
-- 🔬 **observed** — read off the editor's own export of a rigc build in the round
-  trip of [issue #285](https://github.com/firejune/rigc/issues/285) (Spine 4.3.23),
-  not from a page. Used only where rigc now emits the same thing.
+- 🔬 **observed** — read off the editor's own export of a rigc build, not from a
+  page. Two round trips stand behind these: [issue
+  #285](https://github.com/firejune/rigc/issues/285) (Spine 4.3.23) and the
+  eight-rig trip of 2026-09-16 (Spine **4.3.26**), whose findings are collected in
+  §10.6. ⚠️ This legend said *"used only where rigc now emits the same thing"*,
+  which was true while every observation had already been adopted; §10.6 carries
+  one that has **not** been — the path `lengths` disagreement — so an observation
+  is now marked by where it was read, and each says for itself whether rigc
+  agrees with it.
 
 ### 10.1 Structure
 
@@ -5596,6 +5602,37 @@ never write any of them by hand — and rigc's own output always carries all
 three, because the editor's *import* treats their absence as an export made
 without the box and rebuilds the hull on its own.
 
+🔬 🚨 **And the CLI's default export has that box ON, so for anything driven from
+the command line the ⇒ above is the exception rather than the case.** The
+sentence is still true of an export made without the box; what is measured is
+that `-e json` with no export-settings file does not make one. Every field on the
+nonessential list came back present, unchanged and not zero on round trip 6
+(2026-09-16, Spine 4.3.26): the header's `fps` (24 on `fields`, the one rig that
+declares it) and `images`; a mesh's `width`/`height` (64/48) and `edges`
+(16 entries, identical); the editor colours of a **bounding box** (`3cff6bff`), a
+**clipping** polygon (`ff3c6bff`) and a **path** (`ff6b3cff`); and a bone's
+`icon` (`circle`) with its `color`. All eight exports also carry
+`"audio": "./audio"` — a field rigc never wrote and none of those rigs has any
+use for — which is the list's own last member arriving unasked. The runtime says
+the same thing from the other side: `PathAttachment.js`'s doc comment on `color`
+reads *"Available only when nonessential data was exported"*, and the colour is
+there.
+
+📗 The CLI page documents the form but not the setting: *"If `json` or `binary` is
+specified instead of a path to an export settings JSON file, then a JSON or
+binary export is performed using default settings"* —
+[Command line interface](https://esotericsoftware.com/spine-command-line-interface).
+❓ **Neither that page nor the Export page states whether nonessential is on in
+those defaults**, so the answer above is measured here and documented nowhere.
+⇒ In practice: do not plan around fields being dropped. An export you did not
+personally make without the box is an export that has them, and the round trip is
+therefore **richer** than the build rather than poorer — which is why #368's
+hull-and-edges degradation does not return on a second trip (no import warning in
+any of the eight `roundtrip.log`s, and a five-vertex mesh's `hull: 4` came back
+`4` rather than recomputed to `5`). A nonessential-**off** trip would need an
+export-settings JSON, and ❓ the key name inside that file is not documented
+either.
+
 ⚠️ **A region's `width`/`height` are not on that list.** They are documented with no
 *"assume … if omitted"* default — the same fact R5 states from the parser's side:
 omit them in raw JSON and every UV collapses, in silence. Name an `image`.
@@ -5606,7 +5643,104 @@ omitted"* — and **rigc deliberately does the opposite** (R1, §2). Writing `x:
 legitimate here. The habit worth carrying over is not *omit defaults*, it is
 *declare only what the shot needs*.
 
-### 10.6 What this section does not claim
+### 10.6 What a round trip gives back
+
+Everything above is what the editor **does**. This is what it **returns** — which
+matters to you for one reason: a construct nobody has carried through the editor
+is a construct that might vanish there, and an agent cannot see that it did.
+
+🔬 The source is one run: eight discriminator rigs, each built to isolate a group
+of fields, compiled by rigc **0.21.0** (emitting 4.3.13), imported into a licensed
+Spine **4.3.26** through the documented CLI and exported back on 2026-09-16, with
+the predictions written down before anything was opened. **Seven of the eight came
+back differing from their build in three header fields and nothing else** —
+`hash` and `audio`, which the editor adds, and `spine`, which it stamps with its
+own version. The eighth is the path rig, and it is the last bullet here.
+
+⚠️ *"Nothing else"* is under two normalisations, both of which are the exporter
+being ordinary rather than the editor changing anything: **float spelling** (`48`
+comes back `48.0`) and **omitted defaults** — the export drops any field equal to
+its parser default, so the header loses `x: 0` and `y: 0`, a bone loses `x: 0`, and
+a key at t=0 loses its `"time": 0`. Every name-keyed object is also re-sorted, per
+§10.1. None of those is a loss of information, and each is worth knowing before
+you read a `diff`.
+
+⚠️ Read every line below as *this construct survived*, never as *this construct is
+recommended*. §10.1–§10.5 are the recommendations; this subsection is only the
+evidence that the format will carry what you write.
+
+- 🔬 **A transform constraint survives whole.** 4.3's `source` plus its
+  `properties` map — including a nested `to` with `offset`, `max` and `scale` —
+  came back field for field, with `localSource`, `localTarget`, `additive`,
+  `clamp`, `mixRotate` and `mixY` beside it.
+- 🔬 **The `transform` timeline survives** — the group shape that maps a
+  constraint name straight to a key array (§4.10), with its per-key mixes and
+  curves intact.
+- 🔬 **`shear`, `shearx` and `sheary` bone timelines survive**, paired and
+  single-axis, with both channels of a paired key and all their curve control
+  points.
+- 🔬 **A bone's setup `scaleX`, `scaleY`, `shearX`, `shearY` and `inherit`
+  survive**, a non-default `inherit` included — `noScale`, `onlyTranslation` and
+  `noRotationOrReflection` were all carried on one rig.
+- 🔬 ⭐ **A bone's `color` and `icon` survive** — 4.3's bone icons round-trip
+  (`circle`, `ff7f00ff`). They are nonessential data, so this is also a reading of
+  §10.5's caveat.
+- 🔬 **The `drawOrder` timeline survives, offsets and all — including the empty
+  key.** A key with no `offsets` restores the setup order (§4.7), and it came back
+  **empty** rather than spelled out as an identity permutation, which is the
+  spelling that would have made every later diff read as a change.
+- 🔬 **Slot `color`, `dark` and `blend` survive**, `blend: multiply` and
+  `blend: additive` included.
+- 🔬 **A path constraint's non-default modes survive**: `positionMode: fixed`,
+  `spacingMode: proportional`, `rotateMode: chainScale`.
+- 🔬 **A path attachment's `closed: true` and `constantSpeed: false` survive**, and
+  so do its `position`, `spacing` and three-channel `mix` timelines — all three
+  channels of every `mix` key, and all twelve curve numbers on each key that
+  carries a curve. ⚠️ Its `lengths` do **not** — see the last bullet.
+- 🔬 **`physics.mix` and `physics.reset` timelines survive**, the `reset` key
+  included — a key that carries a time and no value at all — and so does the
+  physics constraint's setup `mix`.
+- 🔬 **A time-driven slider survives** — one with no `bone`, carrying `loop`, a
+  setup `time` and a setup `mix`, with both its `time` and `mix` timelines.
+- 🔬 **`boundingbox` and `clipping` attachments survive whole**: `vertexCount`,
+  `vertices`, the clipping `end` slot, `convex`, and both editor colours.
+- 🔬 **An unweighted mesh survives and its `hull` is kept, not recomputed** — a
+  five-vertex mesh declaring `hull: 4` came back `4`, with its `edges`, `color`,
+  `uvs` and `triangles` unchanged. Beside it, on the same rig: the header's
+  `referenceScale`, a region's `rotation` / `scaleX` / `scaleY` / `color`, and an
+  attachment whose `path` differs from its placeholder (the mechanism of
+  [#552](https://github.com/firejune/rigc/issues/552)) all survive. A `--pack`
+  build round-trips too.
+
+🚨 **The one thing that does not come back is a path attachment's `lengths`, and
+it moves the drawing.** The editor recomputes them at export from the geometry —
+the imported project holds the numbers it was given — and it measures each curve
+with the **runtime's own four-sample forward difference**, not with an arbitrarily
+fine one. `PathConstraint`'s `constantSpeed` re-measure is that same computation:
+its constants are `0.1875 = 3t²`, `0.09375 = 6t³` and `(cx1 − x1) · 0.75 = 3t` at
+**t = 1/4**, four `Math.sqrt` terms per curve. A 4-sample chord sum over the same
+control points reproduces the editor to every digit it prints, on a closed path
+under 4.3.26 (`[152.7006, 305.4012, 458.1019, 610.8025]`) and on an open one under
+4.3.23 (`[430.8389, 838.0142, 1127.736, …]`).
+
+🔬 **And the editor always writes `vertexCount / 3` entries, computing the
+wrap-around curve even on an open path** — that open path's fourth entry,
+`2136.228`, is the closed-chain cumulative. ⚠️ Neither array is wrong: the parser
+allocates `vertexCount / 3` and copies whatever is there, and `PathConstraint`
+reads at most `lengths[curveCount]`, so the trailing entry is never read.
+
+⇒ **What this means for you.** `lengths` is the one number in a path rig you
+cannot check by looking: `diff` does not compare it, and `A33` asks only that it
+strictly increase, which any plausible array does. But `lengths[curveCount]` is
+the total the constraint divides by under `spacingMode: proportional`, so a total
+that is a fraction of a percent out moves every constrained bone — measured at
+**4.9612 mean MAE** on the one rig of that run with a path constraint, against
+**0.0000** on the other seven. If you are comparing a path rig against an editor
+reference and everything structural agrees while the picture does not, this is the
+first place to look. See [#560](https://github.com/firejune/rigc/issues/560) for
+what rigc does about it.
+
+### 10.7 What this section does not claim
 
 Conventions that are visible in reference exports but that **no public Spine page
 states** are deliberately absent. A guide that asserted them would be handing you an
@@ -5614,7 +5748,10 @@ answer read off the exports:
 
 - any figure for keys per second, or for how key density scales with frame rate;
 - which curve type any particular example project or studio actually shipped;
-- whether a given export was made with Nonessential data checked;
+- whether a **corpus** export — one somebody else made, out of the editor's own
+  dialog — was made with Nonessential data checked. ⚠️ §10.5 now answers this for
+  the **CLI's** `-e json`, where it is measured; that measurement says nothing
+  about an export you were handed, and the two must not be read as one;
 - how many bones, slots or timelines a rig of a given size ought to have;
 - whether a shipped rig prefers automatic Bezier handles or hand-placed ones.
 

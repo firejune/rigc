@@ -215,6 +215,7 @@ import {
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
+import { shapeDiff, shapeOf } from './tools/editor_roundtrip.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
 interface CutEntry {
@@ -20509,6 +20510,214 @@ function runEditorRoundtripSuite(): number {
         `refusal = ${JSON.stringify(halfRun.stderr.trim().split('\n').pop()?.slice(0, 80) ?? '')}`,
       'the same stub prints the same line on every call, so a report that quoted it under both headings would be ' +
         'attaching it to a step that worked — which is how a reader learns to skip the quotation',
+    );
+  }
+
+  // --- ERT10-11: step 6 can see a constraint at all — issue #561 -------------
+  //
+  // 🚨 `shapeOf` counted constraints out of the 4.1-era top-level arrays
+  // (`d.ik`, `d.transform`, `d.path`, `d.physics`), and 4.3 puts every
+  // constraint in ONE `constraints[]` array keyed by `type` — which is `A01`'s
+  // subject and the first thing `src/types.ts` says. So those four rows read
+  // `0 -> 0` on every trip the tool has ever run, and if the editor had dropped
+  // a constraint whole the line a reader looks at first would have said
+  // *"nothing at this resolution"*.
+  //
+  // ⭐ These two are the only `ERT` cases that do not spawn the tool, because
+  // step 6 is a pure function of two skeleton files: it needs no editor AND no
+  // rigc subcommand. Reaching it through a real run would mean driving `validate`,
+  // `diff`, two `render`s and `check` first — paying for a round trip to test
+  // arithmetic.
+  //
+  // 🔒 ERT11 is the negative one and it is the case that makes ERT10 worth
+  // anything. Both stubs carry a **decoy** 4.1-era array, so a summary that
+  // still read the old keys fails ERT10 (the decoys are equal, so it emits no
+  // row at all) and a summary that read BOTH places fails ERT11 (the decoys
+  // differ, so it emits a row for a difference that is not there). A repair that
+  // only moved the read would pass one of these and not the other.
+  {
+    const skel = (constraints: unknown[], decoy: Record<string, unknown> = {}): string =>
+      `${JSON.stringify(
+        {
+          skeleton: { spine: '4.3.13', x: 0, y: 0, width: 100, height: 100, images: './' },
+          bones: [{ name: 'root' }, { name: 'rail', parent: 'root' }],
+          slots: [{ name: 'track', bone: 'rail' }],
+          ...decoy,
+          constraints,
+          skins: [{ name: 'default', attachments: {} }],
+          animations: { travel: {} },
+        },
+        null,
+        2,
+      )}\n`;
+
+    const RIDE = { name: 'ride', type: 'path', bones: ['rail'], slot: 'track' };
+    const shapeDir = join(root, 'shape');
+    mkdirSync(shapeDir, { recursive: true });
+    const at = (name: string, text: string): string => {
+      const p = join(shapeDir, name);
+      writeFileSync(p, text);
+      return p;
+    };
+
+    // The decoy both sides carry: a 4.1-era `path: [...]` of the SAME length, so
+    // no difference can reach a row through it.
+    const decoyBoth = { path: [{ name: 'legacy' }] };
+    const withIt = at('with.json', skel([RIDE], decoyBoth));
+    const without = at('without.json', skel([], decoyBoth));
+
+    const dropped = shapeDiff(shapeOf(withIt), shapeOf(without));
+    const constraintRows = dropped.filter((r) => r.includes('constraints'));
+    const same = shapeDiff(shapeOf(withIt), shapeOf(at('same.json', skel([RIDE], decoyBoth))));
+
+    say(
+      'ERT10_A_CONSTRAINT_THE_EXPORT_LOST_IS_A_ROW_IN_THE_SUMMARY_NAMED_BY_ITS_TYPE',
+      constraintRows.length === 1 &&
+        constraintRows[0] === 'path constraints: build 1 -> export 0' &&
+        shapeOf(withIt).constraints.path === 1 &&
+        Object.keys(shapeOf(without).constraints).length === 0 &&
+        same.length === 0,
+      `two stubs differing only in \`constraints\` give ${constraintRows.length} constraint row(s) — ` +
+        `${JSON.stringify(constraintRows)} — and the identical pair gives ${same.length} row(s) of any kind`,
+      'the summary is the line this tool exists to print, and for every trip it has ever run its answer to ' +
+        '"did the editor drop a constraint" was a constant: four fixed keys read off arrays a 4.3 file does not ' +
+        'have. The identical pair is beside it because a row that always fires would pass the first half alone',
+    );
+
+    // ERT11 — the other direction. The two files differ ONLY in the 4.1-era
+    // array; their real `constraints` are identical, so the summary must be
+    // silent. This is the clause that re-planting `(d.path ?? []).length` fails.
+    const decoyOnly = shapeDiff(
+      shapeOf(at('decoy-a.json', skel([RIDE], { path: [{ name: 'legacy' }] }))),
+      shapeOf(at('decoy-b.json', skel([RIDE], { path: [{ name: 'legacy' }, { name: 'legacy2' }] }))),
+    );
+    say(
+      'ERT11_A_4_1_ERA_TOP_LEVEL_ARRAY_IS_NOT_WHAT_THE_SUMMARY_READS',
+      decoyOnly.length === 0,
+      `two stubs whose only difference is a 4.1-era top-level \`path: [...]\` give ${decoyOnly.length} row(s)` +
+        `${decoyOnly.length === 0 ? '' : ` — ${JSON.stringify(decoyOnly)}`}`,
+      '4.3 does not read those arrays at all — the constraint vanishes with no error, which is A01 — so a summary ' +
+        'that counted them would be reporting a difference the runtime cannot see, and reporting it in the same ' +
+        'column as the differences it can',
+    );
+  }
+
+  // --- ERT12-14: the art the editor will look for — issue #562 --------------
+  //
+  // 🚨 The editor's JSON import finds art by `skeleton.images` plus the
+  // attachment's own name and never through an atlas (#370). A `--pack` build
+  // writes ONE shared page into `--out` and no loose parts — measured on
+  // `round6/out/packed/build/`, which holds `skeleton.json`, `skeleton.atlas`,
+  // `skeleton.png` and nothing else — so its `images` necessarily names the
+  // loose parts directory it was packed FROM (`"../../../rigs/packed/parts/"`
+  // on that run). Round 6 came back green on it only because those parts were
+  // still there; move them and the import produces a skeleton with no pixels,
+  // and steps 3-5 then gate, `diff` and `check` a candidate whose every region
+  // is blank.
+  //
+  // 🔒 ERT14 is the load-bearing one, the `ERT05` shape one surface over: a
+  // precondition that refuses everything would "pass" both cases above while
+  // making the tool useless. It also holds the clause that keeps the refusal
+  // honest about the format — a boundingbox attachment names no image, so
+  // demanding a file for it would refuse a correct build.
+  {
+    const pk = join(root, 'pk');
+    const parts = join(pk, 'parts');
+    mkdirSync(parts, { recursive: true });
+    // The bytes are never read: the refusal asks whether the editor would FIND
+    // a file, which is `existsSync`, not whether rigc could decode one.
+    writeFileSync(join(parts, 'wide.png'), 'not a png, and nothing here decodes it\n');
+    const packSkeleton = (images: string): string =>
+      `${JSON.stringify(
+        {
+          skeleton: { spine: '4.3.13', x: 0, y: 0, width: 100, height: 100, images },
+          bones: [{ name: 'root' }],
+          slots: [{ name: 'wide', bone: 'root' }, { name: 'panel', bone: 'root' }, { name: 'hit', bone: 'root' }],
+          skins: [
+            {
+              name: 'default',
+              attachments: {
+                wide: { wide: { width: 120, height: 40 } },
+                panel: { panel: { type: 'mesh', width: 64, height: 48 } },
+                // Names no image, and must not be demanded as one.
+                hit: { hit: { type: 'boundingbox', vertexCount: 3, vertices: [0, 0, 1, 0, 0, 1] } },
+              },
+            },
+          ],
+          animations: { turn: {} },
+        },
+        null,
+        2,
+      )}\n`;
+    const buildAt = (name: string, images: string): string => {
+      const dir = join(pk, name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'skeleton.json'), packSkeleton(images));
+      writeFileSync(join(dir, 'skeleton.atlas'), 'skeleton.png\nsize: 64, 64\n');
+      return dir;
+    };
+
+    // A stub editor with a sentinel, so "refused" and "refused before the editor
+    // was started" stay two different claims — the distinction ERT02/ERT03 were
+    // written for, and the one that decides whether a wrong build costs minutes.
+    const pkBundle = join(root, 'PkEditor', 'Spine.app');
+    const pkEditor = join(pkBundle, 'Contents', 'MacOS', 'Spine');
+    writeBundlePlist(pkBundle, 'Spine');
+
+    const runWithStub = (build: string, sentinel: string): { status: number | null; stderr: string; ran: boolean } => {
+      const ran = join(root, sentinel);
+      writeStubEditor(pkEditor, ran, ['Spine Launcher 4.3.06 (macOS Apple Silicon)']);
+      const r = runRoundtrip(['--build', build, '--out', join(root, `out-${sentinel}`), '--editor', pkEditor]);
+      return { status: r.status, stderr: r.stderr, ran: existsSync(ran) };
+    };
+
+    const gone = runWithStub(buildAt('gone', '../gone-parts/'), 'ert12-ran');
+    say(
+      'ERT12_A_BUILD_WHOSE_IMAGES_DIRECTORY_IS_NOT_THERE_IS_REFUSED_BEFORE_THE_EDITOR_STARTS',
+      gone.status === 1 &&
+        gone.stderr.includes('skeleton.images is "../gone-parts/"') &&
+        gone.stderr.includes('there is no directory there') &&
+        gone.stderr.includes('--copy-images') &&
+        !gone.ran,
+      `exit=${String(gone.status)}, names the declared path = ${gone.stderr.includes('skeleton.images is "../gone-parts/"')}, ` +
+        `names the remedy = ${gone.stderr.includes('--copy-images')}, editor started = ${gone.ran}`,
+      'a `--pack` build carries its pages and not its parts, so this is the state it reaches the moment either ' +
+        'directory moves — and without the refusal the run imports a skeleton with no pixels and measures it all ' +
+        'the way to a MAE, which is the one outcome worse than a red',
+    );
+
+    const short = runWithStub(buildAt('short', '../parts/'), 'ert13-ran');
+    say(
+      'ERT13_A_BUILD_MISSING_ONE_ATTACHMENTS_IMAGE_IS_REFUSED_BY_THAT_ATTACHMENTS_NAME',
+      short.status === 1 &&
+        short.stderr.includes('1 of 2 attachment image(s) are not under it') &&
+        short.stderr.includes('the first is "panel"') &&
+        !short.ran,
+      `exit=${String(short.status)}, counts and names it = ` +
+        `${short.stderr.includes('1 of 2 attachment image(s) are not under it') && short.stderr.includes('the first is "panel"')}, ` +
+        `editor started = ${short.ran}`,
+      'the directory being there is not the question the editor asks — it asks for one file per attachment, by ' +
+        'name — so a check that stopped at the directory would pass a build the editor imports half-blank',
+    );
+
+    // ERT14 — the negative control. Every image the editor would ask for is
+    // there, so this build must get PAST the images precondition; it then fails
+    // for the ordinary reason, which is the assertion.
+    writeFileSync(join(parts, 'panel.png'), 'not a png either\n');
+    const whole = buildAt('whole', '../parts/');
+    const missingEditor = join(root, 'nowhere-at-all', 'Spine');
+    const past = runRoundtrip(['--build', whole, '--out', join(root, 'out-ert14'), '--editor', missingEditor]);
+    say(
+      'ERT14_A_BUILD_WHOSE_ART_IS_ALL_THERE_IS_NOT_REFUSED_AND_THE_BOUNDING_BOX_IS_NOT_DEMANDED',
+      past.status === 1 &&
+        !past.stderr.includes('skeleton.images') &&
+        past.stderr.includes(`Spine editor not found at ${missingEditor}`),
+      `exit=${String(past.status)}, images refusal fired = ${past.stderr.includes('skeleton.images')}, ` +
+        `stopped instead at the editor = ${past.stderr.includes('Spine editor not found')} ` +
+        '(no hit.png exists and the boundingbox attachment names no image)',
+      'a precondition that refuses everything is indistinguishable from one that works, and this build differs ' +
+        'from ERT13\'s by exactly one file — plus the clause the format decides: a boundingbox reads no texture, ' +
+        'so asking for one would refuse correct data',
     );
   }
 
