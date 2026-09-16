@@ -605,8 +605,8 @@ feature.
 
 | Check | Result |
 | --- | --- |
-| `build --profile spine` | green, 18 assertions ran, 7 skipped, 2 animations |
-| `build --profile spine-html` | green, 27 assertions ran, 13 skipped — including `A39_DEFORM_KEEPS_TRIANGLE_WINDING` and `A15_IDLE_NO_MESH_BONE_KEYS`, both PASS |
+| `build --profile spine` | green, 17 assertions ran, 10 skipped, 2 animations |
+| `build --profile spine-html` | green, 26 assertions ran, 16 skipped — including `A39_DEFORM_KEEPS_TRIANGLE_WINDING` and `A15_IDLE_NO_MESH_BONE_KEYS`, both PASS |
 | `A18_DETERMINISTIC_EMIT` | green on a second independent compile; the selftest's gallery suite compiles it three times |
 | mesh coverage | **100.00 %** on all three meshes: nothing of any drawing is outside its triangles |
 | `render --fps 12 --max 640` | 25 + 23 frames, looked at as contact sheets three times, plus 1:1 frames at the nod extreme, the anticipation and both ripple phases |

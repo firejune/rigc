@@ -206,6 +206,77 @@ export function assertionCountForProfile(profile: ValidateProfile): number {
 export const SKIP_NO_SKELETON = 'the round trip did not produce a skeleton to measure (A00 owns that failure)';
 export const SKIP_NO_ATLAS = 'the round trip did not produce an atlas to measure (A00 owns that failure)';
 
+/*
+ * **An empty subject list: SKIP or PASS, and which one is derived (issue #580).**
+ *
+ * `check()` records a pass when a body runs to its end without a `fail()` or a
+ * `skip()`, so a body whose main construct is a loop over a list that is EMPTY
+ * passes having measured nothing — the vacuous green one ring out from the bare
+ * `return` guards issue #568 converted. Two different things can be true of such
+ * a loop, and the criterion decides between them by reading the rule's own name
+ * and its `fail()` sentences rather than by preference:
+ *
+ *   * A name of the form ⟨subject⟩_⟨property⟩ — `REGION_WIDTH_HEIGHT_FINITE`,
+ *     `MESH_TRIANGLES_AND_ENCODING`, `PHYSICS_CONSTRAINT_EFFECTIVE`,
+ *     `ATLAS_PAGE_SIZE_MATCHES_PNG` — quantifies over the subject it names, and
+ *     its `fail()` names a member of that subject, the value found and the value
+ *     required. With no member, nothing was measured: it **SKIPs**, and the
+ *     reason names the subject that was absent.
+ *   * A name of the form NO_⟨construct⟩ — `NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS`,
+ *     `NO_BONE_TRANSFORM_KEY`, `NO_CLIPPING_ATTACHMENTS`, `NO_DARK_COLOR`,
+ *     `NO_FULL_FRAME_MESH` — quantifies over occurrences of something a correct
+ *     artifact has NONE of, and its `fail()` reports that the construct is
+ *     present rather than measuring a value on it. Zero occurrences IS the
+ *     measurement, so it **PASSes**: the loop is a search of the artifact, and
+ *     the artifact is what it measured.
+ *   * A name carrying both halves takes each at its word.
+ *     `A15_IDLE_NO_MESH_BONE_KEYS` is the pattern and already reads this way: no
+ *     `idle` animation, or an `idle` with no bone timeline, is the named subject
+ *     absent and SKIPs; no mesh-driving bone among the bones `idle` does key is
+ *     the construct absent and passes. `A10_NO_NAN_AFTER_STEPPING` is the same
+ *     shape — the stepping is per animation, so a skeleton with none has not
+ *     been stepped.
+ *   * An assertion with more than one clause SKIPs only when EVERY clause had
+ *     nothing to measure, which is the shape `A09`, `A33` and `A38` already
+ *     carry (`polygons.length === 0 && endsChecked === 0`). `A13_MESH_BUDGET` is
+ *     why the clause is stated: a declared slot budget is measured against a
+ *     count of mesh slots, and zero is a count, so that half passes on a rig
+ *     with no mesh — while a rig that declares only a TRIANGLE budget has
+ *     nothing left to measure and skips.
+ *
+ * ⚠️ What the criterion is not allowed to become is a table of assertions with
+ * their verdicts written beside them. Every row above is decided by reading the
+ * name and the sentences the assertion already prints, so a rule added tomorrow
+ * is decided by the same reading and nobody re-opens this question.
+ */
+
+/**
+ * What a SKIP says when the artifact carries no member of the subject a rule
+ * quantifies over (issue #580), by subject.
+ *
+ * One constant per SUBJECT rather than one per assertion, for the reason the two
+ * above are two: what the rule was denied is the whole content of its SKIP, and
+ * three rules denied the same thing should say so in the same words. Exported so
+ * a control compares against them rather than quoting them.
+ */
+export const SKIP_NO_REGION_ATTACHMENT = 'the skeleton carries no region attachment';
+export const SKIP_NO_MESH_ATTACHMENT = 'the skeleton carries no mesh attachment';
+export const SKIP_NO_ANIMATION = 'the skeleton carries no animation';
+export const SKIP_NO_TIMELINE = 'no animation here carries a timeline';
+export const SKIP_NO_PHYSICS_CONSTRAINT = 'the skeleton declares no physics constraint';
+export const SKIP_NO_ATLAS_PAGE = 'the atlas declares no page';
+export const SKIP_NO_ATLAS_REGION = 'the atlas declares no region';
+export const SKIP_NO_ATTACHMENT_REGION_JOIN =
+  'no attachment names a region and the atlas declares none, so there is no attachment-to-region join to hold';
+/**
+ * A09's, which predates this list and joins it rather than being rewritten: it
+ * is the same fact about the same subject, and a control that compares against
+ * eight constants and quotes the ninth is a control with a hand-kept exception
+ * in it.
+ */
+export const SKIP_NO_DECLARED_DURATION =
+  'the motion spec declares no animations and the skeleton has none — a static rig has no duration to compare';
+
 export interface ValidateInput {
   skeletonText: string;
   atlasText: string;
@@ -748,10 +819,7 @@ export function validate(input: ValidateInput): ValidateReport {
       }
     }
     if (joined === 0 && regionNames.size === 0) {
-      return skip(
-        'A08_REGION_NAMES_MATCH_ATTACHMENTS',
-        'this atlas declares no region and the skeleton names no attachment that resolves through one',
-      );
+      return skip('A08_REGION_NAMES_MATCH_ATTACHMENTS', SKIP_NO_ATTACHMENT_REGION_JOIN);
     }
   });
 
@@ -1271,7 +1339,14 @@ export function validate(input: ValidateInput): ValidateReport {
 
   // --- A05: curve arrays are 4 numbers per value channel --------------------
   check('A05_CURVE_ARRAY_LENGTH', () => {
+    // Two clauses, so the SKIP needs both to be empty (#580). The vocabulary
+    // clause below measures every timeline it is handed — an unchecked name is a
+    // finding whether or not any key on it carries a curve — so a skeleton with
+    // timelines and no curve at all has still been measured. What measures
+    // nothing is a skeleton `walkTimelines` never calls back on.
+    let timelines = 0;
     walkTimelines(raw, (path, kind, name, keys) => {
+      timelines++;
       const table = CHANNELS_BY_KIND[kind];
       if (!(name in table)) {
         fail('A05_CURVE_ARRAY_LENGTH', `${path}: unchecked ${kind} timeline "${name}" — extend the validator`);
@@ -1303,6 +1378,7 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
     });
+    if (timelines === 0) return skip('A05_CURVE_ARRAY_LENGTH', SKIP_NO_TIMELINE);
   });
 
   // -------------------------------------------------------------------------
@@ -1331,6 +1407,9 @@ export function validate(input: ValidateInput): ValidateReport {
 
     // --- A03: every region has finite width/height (case 6c) ---------------
     check('A03_REGION_WIDTH_HEIGHT_FINITE', () => {
+      // ⟨subject⟩_⟨property⟩: with no region there is no size to find non-finite,
+      // and a loop over nothing used to report that as held (#580).
+      if (regionAttachments.length === 0) return skip('A03_REGION_WIDTH_HEIGHT_FINITE', SKIP_NO_REGION_ATTACHMENT);
       for (const att of regionAttachments) {
         if (!Number.isFinite(att.width) || !Number.isFinite(att.height)) {
           fail('A03_REGION_WIDTH_HEIGHT_FINITE', `region "${att.name}" loaded w=${att.width} h=${att.height}`);
@@ -1343,6 +1422,7 @@ export function validate(input: ValidateInput): ValidateReport {
 
     // --- A04: mesh triangles + encoding coherence (case 6f) ----------------
     check('A04_MESH_TRIANGLES_AND_ENCODING', () => {
+      if (meshAttachments.length === 0) return skip('A04_MESH_TRIANGLES_AND_ENCODING', SKIP_NO_MESH_ATTACHMENT);
       for (const mesh of meshAttachments) {
         if (!mesh.triangles || mesh.triangles.length === 0) {
           fail('A04_MESH_TRIANGLES_AND_ENCODING', `mesh "${mesh.name}" has no triangles`);
@@ -1555,6 +1635,18 @@ export function validate(input: ValidateInput): ValidateReport {
             : 'no rig info (validating a bare directory), so no budget is declared',
         );
       }
+      // Two clauses and only one of them has a subject that can vanish (#580).
+      // A slot budget is a ceiling on a COUNT, and zero is a count — "this rig
+      // uses 0 of its 3 mesh slots" is a measurement — so that half holds on a
+      // skeleton with no mesh. A triangle budget is a ceiling on each mesh, so a
+      // rig that declares only that one and carries no mesh has measured
+      // nothing at all.
+      if (slotBudget === null && meshAttachments.length === 0) {
+        return skip(
+          'A13_MESH_BUDGET',
+          `the rig "${input.rig?.archetype}" budgets mesh triangles and nothing else, and ${SKIP_NO_MESH_ATTACHMENT}`,
+        );
+      }
       if (slotBudget !== null && meshSlots.size > slotBudget) {
         fail('A13_MESH_BUDGET', `${meshSlots.size} mesh slots, the rig budgets ${slotBudget}`);
       }
@@ -1663,6 +1755,7 @@ export function validate(input: ValidateInput): ValidateReport {
       list.filter((m) => kindOf(m) === 'authored').map((m) => `"${m.name}"`);
 
     check('A20_MESH_WEIGHTS_COHERENT', () => {
+      if (meshAttachments.length === 0) return skip('A20_MESH_WEIGHTS_COHERENT', SKIP_NO_MESH_ATTACHMENT);
       for (const mesh of meshAttachments) {
         // 🚨 Authored geometry is not rigc's to have opinions about. The two
         // policy branches in this assertion are both statements about what a
@@ -1905,6 +1998,7 @@ export function validate(input: ValidateInput): ValidateReport {
     });
 
     check('A22_MESH_UVS_IN_UNIT_RANGE', () => {
+      if (meshAttachments.length === 0) return skip('A22_MESH_UVS_IN_UNIT_RANGE', SKIP_NO_MESH_ATTACHMENT);
       for (const mesh of meshAttachments) {
         // `regionUVs` is what the JSON authored; `uvs` is the page-space result
         // and stays EMPTY until a renderer calls computeUVs, so asserting on it
@@ -2286,6 +2380,13 @@ export function validate(input: ValidateInput): ValidateReport {
     // becomes an infinite massInverse; and `damping` >= 1 never settles, which
     // on a mesh-driving bone means the canvas re-rasterises forever.
     check('A23_PHYSICS_CONSTRAINT_EFFECTIVE', () => {
+      // ⟨subject⟩_⟨property⟩, and its two siblings already read this way: A36
+      // skips on "the skeleton declares no path constraint" and A37 on "no
+      // slider constraint", while this one passed over an empty filter (#580).
+      // The stat is written before the guard so a reader of a SKIP still sees
+      // the count that produced it.
+      stats.physicsConstraints = data.constraints.filter((c) => c instanceof PhysicsConstraintData).length;
+      if (stats.physicsConstraints === 0) return skip('A23_PHYSICS_CONSTRAINT_EFFECTIVE', SKIP_NO_PHYSICS_CONSTRAINT);
       const meshBoneNames = new Set<string>();
       for (const slotIndex of meshSlots) meshBoneNames.add(data.slots[slotIndex].boneData.name);
       for (const mesh of meshAttachments) {
@@ -2324,7 +2425,6 @@ export function validate(input: ValidateInput): ValidateReport {
           fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} has step ${constraint.step} (fps must be > 0)`);
         }
       }
-      stats.physicsConstraints = data.constraints.filter((c) => c instanceof PhysicsConstraintData).length;
     });
 
     // --- A41: a physics component the Spine editor cannot hold --------------
@@ -2811,10 +2911,7 @@ export function validate(input: ValidateInput): ValidateReport {
       // reported PASS. That is the vacuous green this report is built to refuse:
       // there is no duration here, and saying so is the honest answer.
       if (Object.keys(input.declaredDurations).length === 0 && data.animations.length === 0) {
-        return skip(
-          'A09_ANIMATION_DURATION_MATCHES_SPEC',
-          'the motion spec declares no animations and the skeleton has none — a static rig has no duration to compare',
-        );
+        return skip('A09_ANIMATION_DURATION_MATCHES_SPEC', SKIP_NO_DECLARED_DURATION);
       }
       for (const [name, declared] of Object.entries(input.declaredDurations)) {
         const anim = data.findAnimation(name);
@@ -2862,6 +2959,13 @@ export function validate(input: ValidateInput): ValidateReport {
 
     // --- A10: step every animation and look for NaN ------------------------
     check('A10_NO_NAN_AFTER_STEPPING', () => {
+      // The name carries a subject as well as a construct, and A15 is the
+      // pattern (#580): the NaN is produced by STEPPING, which happens once per
+      // animation, so a skeleton with none has not been stepped and has no pose
+      // to find non-finite. A09 already reads the same subject this way — a
+      // static rig has no duration to compare — and the two must not print
+      // different verdicts over one skeleton's empty animation list.
+      if (data.animations.length === 0) return skip('A10_NO_NAN_AFTER_STEPPING', SKIP_NO_ANIMATION);
       for (const anim of data.animations) {
         const skeleton = new Skeleton(data);
         const state = new AnimationState(new AnimationStateData(data));
@@ -2910,6 +3014,10 @@ export function validate(input: ValidateInput): ValidateReport {
   // here is a report about zero pages.
   check('A17_ATLAS_PAGE_FILES_EXIST', () => {
     if (!atlas) return skip('A17_ATLAS_PAGE_FILES_EXIST', SKIP_NO_ATLAS);
+    // The other absence, one ring in (#580): the atlas LOADED and declares no
+    // page, so there is no file to find missing. `!atlas` and "zero pages" print
+    // different reasons because they are different facts about the artifact.
+    if (atlas.pages.length === 0) return skip('A17_ATLAS_PAGE_FILES_EXIST', SKIP_NO_ATLAS_PAGE);
     for (const page of atlas.pages) {
       const abs = resolve(input.atlasDir, page.name);
       if (!existsSync(abs)) fail('A17_ATLAS_PAGE_FILES_EXIST', `page "${page.name}" is not on disk at ${abs}`);
@@ -2917,6 +3025,7 @@ export function validate(input: ValidateInput): ValidateReport {
   });
   check('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', () => {
     if (!atlas) return skip('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', SKIP_NO_ATLAS);
+    if (atlas.pages.length === 0) return skip('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', SKIP_NO_ATLAS_PAGE);
     for (const page of atlas.pages) {
       const abs = resolve(input.atlasDir, page.name);
       if (!existsSync(abs)) continue; // A17 owns this
@@ -3042,6 +3151,7 @@ export function validate(input: ValidateInput): ValidateReport {
     // that is exactly why it was worth finding: `--profile spine-html` reported
     // it, and A27 below, green on an atlas nothing had read.
     if (!atlas) return skip('A19_OVERLAY_PNGS_HAVE_ALPHA', SKIP_NO_ATLAS);
+    if (atlas.pages.length === 0) return skip('A19_OVERLAY_PNGS_HAVE_ALPHA', SKIP_NO_ATLAS_PAGE);
     const stageW = skeletonData?.width ?? 0;
     const stageH = skeletonData?.height ?? 0;
     const basePages = new Set<string>();
@@ -3169,16 +3279,23 @@ export function validate(input: ValidateInput): ValidateReport {
     }
     const subtree = new Set(rig.axisSubtree);
     const anims = isObj(raw?.animations) ? (raw.animations as Json) : {};
+    // The stroke is the subject and its keys are where it lives (#580). A rig
+    // that names an axis bone and then keys neither it nor anything under it has
+    // no stroke for this rule to find out of axis space, and a loop over nothing
+    // used to report that as held.
+    let keyed = 0;
     for (const [animName, anim] of Object.entries(anims)) {
       if (!isObj(anim) || !isObj(anim.bones)) continue;
       for (const [boneName, timelines] of Object.entries(anim.bones as Json)) {
         if (boneName === rig.axisBone) {
+          keyed++;
           fail(
             'A24_AXIS_SPACE_STROKE',
             `"${animName}" keys the axis bone "${boneName}"; the axis angle is a per-cut SETUP value, not animation`,
           );
           continue;
         }
+        if (subtree.has(boneName)) keyed++;
         if (!subtree.has(boneName) || !isObj(timelines)) continue;
         if ('translatey' in timelines) {
           fail(
@@ -3199,6 +3316,13 @@ export function validate(input: ValidateInput): ValidateReport {
           }
         }
       }
+    }
+    if (keyed === 0) {
+      return skip(
+        'A24_AXIS_SPACE_STROKE',
+        `no animation keys the axis bone "${rig.axisBone}" or any of the ${rig.axisSubtree.length} bone(s) under ` +
+          'it, so this rig has no stroke to hold in axis space',
+      );
     }
   });
 
@@ -3272,6 +3396,17 @@ export function validate(input: ValidateInput): ValidateReport {
     const names = (Array.isArray(raw?.slots) ? (raw.slots as unknown[]) : [])
       .filter(isObj)
       .map((s) => String(s.name));
+    // ⛔ **No empty-subject SKIP here, and #575 is the whole reason** (#580). The
+    // empty sequence is a subsequence of every table, so before #575 a skeleton
+    // with no slot reported its draw order held and this rule wanted the same
+    // guard its neighbours got. It no longer does: the completeness clause below
+    // reads zero emitted slots against a declared table as EVERY slot lost,
+    // which is the maximal case of exactly the defect #575 filed — so the honest
+    // verdict is a FAIL naming them, and a SKIP here would suppress it. Measured:
+    // with the guard in place a rig declaring one slot beside an artifact
+    // carrying none reported SKIP; with it gone, `"block" is declared and not
+    // emitted`. A26 therefore has no vacuous pass left to convert, the way
+    // `A07_ATLAS_TEXT_SHAPE` has none.
     let at = 0;
     for (const name of names) {
       const found = order.indexOf(name, at);
@@ -3310,6 +3445,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // forces it) makes the check exact.
   check('A27_REGION_NAME_MATCHES_PAGE_FILENAME', () => {
     if (!atlas) return skip('A27_REGION_NAME_MATCHES_PAGE_FILENAME', SKIP_NO_ATLAS);
+    if (atlas.regions.length === 0) return skip('A27_REGION_NAME_MATCHES_PAGE_FILENAME', SKIP_NO_ATLAS_REGION);
     const perPage = new Map<string, number>();
     for (const region of atlas.regions) perPage.set(region.page.name, (perPage.get(region.page.name) ?? 0) + 1);
     for (const region of atlas.regions) {

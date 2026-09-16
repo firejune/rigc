@@ -244,8 +244,8 @@ At `0.4` the blink would have missed frame 10, which is the impact frame.
 
 | | |
 | --- | --- |
-| `rigc build --profile spine` | green — **18 assertions ran, 7 skipped**, `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` among the 18 |
-| `rigc build --profile spine-html` | green as well — 26 ran, 11 skipped, including `A13_MESH_BUDGET` against this rig's declared `invariants.meshTriangles: 8` |
+| `rigc build --profile spine` | green — **17 assertions ran, 10 skipped**, `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` among the 17 |
+| `rigc build --profile spine-html` | green as well — 25 ran, 17 skipped, including `A13_MESH_BUDGET` against this rig's declared `invariants.meshTriangles: 8` |
 | the deformed geometry, measured | the mesh's rim box is **220.0 × 220.0** at the apex and **264.0 × 162.8** at the impact — exactly `1.20 × 220` and `0.74 × 220`, so the affine transform in the spec is the one that reaches the screen |
 | the transform against the table it replaced | all **54** emitted deform numbers of the three keyed shapes compared against the hand-written run this example shipped: worst difference **0.0004 px**, i.e. identical at three decimals ([#294](https://github.com/firejune/rigc/issues/294)) |
 | the contact point | rim vertex 6 sits at world y **44.0** at the impact and 44.0 in the setup pose — unmoved, as its `(0, 0)` offset says |
