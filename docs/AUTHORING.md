@@ -902,6 +902,33 @@ A skin can also say which bones and constraints it **switches on**, and that nee
 one more level, so a skin entry has a second spelling — see §3.4.1. The short one
 above is unchanged and is what almost every rig wants.
 
+🔸 **A skin may fill no slot with anything that needs art, and that build is
+green.** The atlas is built out of what the skins reference, so a rig whose skins
+name no `image` — an empty `default`, or one carrying only a `boundingbox`, a
+`clipping` polygon or a `path`, none of which has a page — compiles to an atlas
+with **no pages**, and rigc writes `skeleton.atlas` as an **empty file** (zero
+bytes). Four rules then report SKIP by name rather than a pass, because a page is
+their whole subject: `A07_ATLAS_TEXT_SHAPE`, `A06_ATLAS_PAGE_SIZE_MATCHES_PNG`,
+`A17_ATLAS_PAGE_FILES_EXIST` and — under `spine-html` —
+`A19_OVERLAY_PNGS_HAVE_ALPHA` and `A27_REGION_NAME_MATCHES_PAGE_FILENAME`. Until
+[#608](https://github.com/firejune/rigc/issues/608) the same compile wrote one
+newline instead and `A07` refused it with two findings, so a hit-box skeleton — a
+correct rig, whose geometry `A33_VERTEX_ATTACHMENT_GEOMETRY` passes — could not be
+built at all.
+
+⚠️ **This is not the case where an attachment WANTS a region.** A region or mesh
+attachment that states `width`/`height` and names no `image` still resolves a
+region by `path`, and with no atlas to supply it that is
+`A08_REGION_NAMES_MATCH_ATTACHMENTS` naming the skin, the slot, the placeholder
+and the path — which is what a spec written by `ingest --art none` does when it is
+built without `--atlas-in` (§0.2, §0.3). The empty atlas is legal; an attachment
+pointing into it is not.
+
+⚠️ **`rigc render` still refuses such a build**, by name and before it draws
+anything: `… posed no drawable attachment in any animation or in its setup pose —
+there is nothing to draw`. That is the honest division — the rig is valid Spine
+data, and there is no picture of it.
+
 **Region attachment** ([Spine: region attachments](http://esotericsoftware.com/spine-regions)),
 the default `type`:
 
@@ -3982,7 +4009,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A04_MESH_TRIANGLES_AND_ENCODING` | both | authored mesh geometry: triangle count not a multiple of 3, an index out of range, or a `vertices` length that disagrees with `uvs` (the weighted/unweighted trap) **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A05_CURVE_ARRAY_LENGTH` | both | a raw `curve` with the wrong number of values, a non-finite number in one, or a curve on a timeline that cannot take one. Four numbers **per value channel**. **SKIP** when no animation carries a timeline at all ([#580](https://github.com/firejune/rigc/issues/580)). Timelines with no `curve` on any key still PASS: every timeline name is checked against the channel table whether or not a curve sits on one |
 | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | the atlas `size:` disagrees with the PNG on disk. Under `spine-html` also: `pma`, rotation, and a page that is neither **one part covering it exactly** (the unpacked convention) nor a **tiling** — a page whose regions all sit inside it and none of which overlap ([#266](https://github.com/firejune/rigc/issues/266)). A packed atlas therefore gates under this profile; what the message names is the region that runs off its page, or the pair that shares texels. **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) |
-| `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file |
+| `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file. ⚠️ An atlas with **no page block at all** — no non-blank line — is not one of those: its subject is absent, so this reports **SKIP** naming the byte count it read, and so do the four rules below whose subject is a page ([#608](https://github.com/firejune/rigc/issues/608)). A rig whose skins need no art writes exactly that file (§3.4), and before #608 this row refused it with two findings naming a page block that was not there. What an empty atlas does **not** excuse is an attachment that wants a region out of it — that is `A08` |
 | `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both | three things, and the message says which: an attachment whose `path` names **no region** of this atlas; a `path` carrying **stray whitespace**, printed quoted so you can see it; an **atlas region name** carrying stray whitespace (`A07` names that same line with its line number). The first two are read off the raw file **before** the loader is asked, so the miss is named here with the skin, the slot, the placeholder and the attachment's own name — the four things `AtlasAttachmentLoader`'s own `Region not found in atlas: <path> (attachment: <name>)` does not carry. Until [#589](https://github.com/firejune/rigc/issues/589) they were unreachable: the loader threw first and the miss arrived as `A00_ROUNDTRIP_PARSE`. There is no `spine-html` clause here any more — a placeholder is free to differ from the region its `path` names ([#574](https://github.com/firejune/rigc/issues/574)) **SKIP** when no attachment names a region *and* the atlas declares none — both of its subjects at once ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the loaded duration ≠ the declared one, or the two sides disagree about which animations exist (R7). Asymmetric by design: a frame of slack for an animation that ends early, and none worth the name for a key *past* the declared end, which is the same rule §4.5 states at compile time — held here against a skeleton the compiler never saw. **SKIP** when neither side has an animation at all — a static rig has no duration |
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping the animation produced a `NaN` pose. Look for a degenerate curve or a zero scale. **SKIP** when the skeleton carries no animation ([#580](https://github.com/firejune/rigc/issues/580)): the NaN is produced by stepping, and a static rig is never stepped — the same subject `A09` skips on |
@@ -3992,7 +4019,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A14_NO_FULL_FRAME_MESH` | renderer | a mesh spans the whole stage — a full-frame canvas that can never dirty-skip. **SKIP** when the skeleton declares no stage (§3.1): there is no full frame to span, and *unmeasured* must not print the same green as *measured and clear* |
 | `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | the `idle` animation keys a bone that drives a mesh, directly or as a control bone. **SKIP** when there is no `idle` animation, or when the one there is carries no bone timeline — a rule whose subject does not exist is unmeasured and not satisfied ([#568](https://github.com/firejune/rigc/issues/568)) |
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` label is not on the 4.3 line (`4.3`, `4.3.N`, `4.3.N-suffix`) |
-| `A17_ATLAS_PAGE_FILES_EXIST` | both | a page the atlas declares is not a file. Check `--images` and `--out`. **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) |
+| `A17_ATLAS_PAGE_FILES_EXIST` | both | a page the atlas declares is not a file. Check `--images` and `--out`. **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) — as it is for `A06`, `A19` and `A27`; see `A07` ([#608](https://github.com/firejune/rigc/issues/608)) |
 | `A18_DETERMINISTIC_EMIT` | both | a second compile of the same inputs differed. That is a compiler bug, not a spec bug — report it |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | an overlay part image can never be transparent: no alpha channel (colour type 4 or 6) and no `tRNS` chunk either, so it would paint a solid rectangle over what is behind it. Re-export it as RGBA, or as an indexed / greyscale PNG that keeps its `tRNS`. Only the full-stage base plate may be opaque. Indexed-with-`tRNS` — the usual output of ImageMagick, "Export as PNG-8", GIMP's indexed mode, aseprite and pngquant — **passes**: it is transparent art. On a **shared** page the question is asked per REGION over the decoded page rather than per file, because a packed page's own file all but always declares transparency — its gutter is transparent — and the file-level question would then be answered by the packing rather than by the art ([#266](https://github.com/firejune/rigc/issues/266)) **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, or a binding at weight 0. **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |

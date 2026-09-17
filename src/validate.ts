@@ -205,7 +205,12 @@ export function assertionCountForProfile(profile: ValidateProfile): number {
  */
 export const SKIP_NO_SKELETON = 'the round trip did not produce a skeleton to measure (A00 owns that failure)';
 export const SKIP_NO_ATLAS = 'the round trip did not produce an atlas to measure (A00 owns that failure)';
-
+/**
+ * The third of them, and it is NOT waiting on A00 (issue #608): the atlas parsed
+ * and it has no pages, which is what a compile that measured no art writes. The
+ * four rules whose only subject is a page — A06, A17, A19, A27 — have nothing to
+ * look at, and an empty loop walking out of `check()` is reported as a PASS.
+ */
 /*
  * **An empty subject list: SKIP or PASS, and which one is derived (issue #580).**
  *
@@ -670,8 +675,35 @@ export function validate(input: ValidateInput): ValidateReport {
   // line (only the page name is trimmed), and a blank line closes the page
   // block, so a blank line between a page header and its regions turns the
   // regions into pages.
+  //
+  // 🚨 Both traps are about a page BLOCK, and an atlas can honestly have none
+  // (issue #608). A rig whose skins fill no slot with anything that needs art —
+  // a hit-box skeleton carrying only a `boundingbox`, a clipping polygon, a
+  // path — measures no pages, and `writeAtlasText` now spells that as the empty
+  // file. Before this skip existed the walk below read it as one malformed page
+  // block and printed two findings whose SUBJECTS DO NOT EXIST: there are no
+  // consecutive blank lines in a file with no lines, and no last page block to
+  // declare a region. `''.split('\n')` is `['']` rather than `[]`, so a
+  // zero-byte atlas and a one-newline atlas both arrived here as a single blank
+  // line, and the compiler's own output was refused by name for a shape nobody
+  // had written.
+  //
+  // ⇒ Nothing to measure is a SKIP, and the sibling rule already settled this
+  // for the same file: A08 skips with "this atlas declares no region and the
+  // skeleton names no attachment that resolves through one". The protection is
+  // not lost, because the case where an empty atlas MATTERS is an attachment
+  // that wanted a region, and that is A08's failure by name (measured: a spec
+  // built with `ingest --art none` and no `--atlas-in` fails A08 twice and A00
+  // once, each naming the skin, the slot and the placeholder).
   const atlasLines = input.atlasText.replace(/\n$/, '').split('\n');
+  const atlasPageLines = atlasLines.filter((line) => line.trim().length > 0).length;
   check('A07_ATLAS_TEXT_SHAPE', () => {
+    if (atlasPageLines === 0) {
+      // One of the exported reason constants, not a sentence of its own: the
+      // static-rig suite's arithmetic (S50, #580) counts a rule as skipped
+      // for want of a SUBJECT only when its reason is one of those constants.
+      return skip('A07_ATLAS_TEXT_SHAPE', SKIP_NO_ATLAS_PAGE);
+    }
     let expectPage = true;
     let sawRegionForPage = false;
     for (let i = 0; i < atlasLines.length; i++) {
@@ -3012,6 +3044,15 @@ export function validate(input: ValidateInput): ValidateReport {
   // parse succeeds: with a region also removed so the round trip threw, A06
   // printed `PASS`. Everything below reads `atlas.pages`, so a report of "held"
   // here is a report about zero pages.
+  //
+  // ⚠️ That last sentence was the whole of the next defect (issue #608). The
+  // guard caught the atlas that would not PARSE and left the one that parses to
+  // NO PAGES, which reaches these four loops as an empty array and walks out of
+  // them with the failure and skip counts untouched — a PASS. It stayed
+  // invisible only because a zero-page atlas was itself refused by A07, so no
+  // green build had ever contained one; making that state legal is exactly what
+  // #608 does, so the same state has to stop printing four passes about nothing.
+  // `SKIP_NO_ATLAS_PAGE` is one string for all four because it is one condition.
   check('A17_ATLAS_PAGE_FILES_EXIST', () => {
     if (!atlas) return skip('A17_ATLAS_PAGE_FILES_EXIST', SKIP_NO_ATLAS);
     // The other absence, one ring in (#580): the atlas LOADED and declares no
