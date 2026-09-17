@@ -1273,17 +1273,30 @@ on this page that multiplies rather than adds. ⚠️ **It only works downward t
 the `constraints` array.** A slider reads its own authority when its turn comes
 and the array is the update order, so a dial that keys the `mix` of a slider
 *earlier* than itself writes a number that slider has already read past: the
-driven axis is dead at every position, every frame, with a green gate over it. And
-the gate is green for a reason worth knowing — a slider whose `mix` is keyed at
-all leaves `A40`'s comparison, so nothing in the tool is looking at that pair.
-⇒ put the driving slider **first**.
+driven axis is dead at every position, every frame. ✅ **The gate names that pair
+now** — `A42_DRIVEN_SLIDERS_UPDATE_AFTER_THEIR_DRIVER` refuses it with both
+sliders, the property and both array indices, and says which way to move them
+([#658](https://github.com/firejune/rigc/issues/658)). Until then it was green,
+for a reason worth knowing: a slider whose `mix` is keyed at all leaves `A40`'s
+comparison, so nothing in the tool was looking at that pair. ⇒ put the driving
+slider **first**, which is what the refusal tells you to do.
+
+🚨 **And a dial cannot turn itself on.** `Slider.update` reads its own `mix` as
+the alpha it applies the animation with, before that animation runs, so a slider
+whose *own* animation keys its `mix` writes after the only read of it — the same
+refusal with the two array indices equal. The shape to watch for is an axis
+muted at setup that means to raise itself: it never applies anything at all,
+because `update` returns on `mix` 0 before reaching the key that would raise it,
+and `A37` reports green because it asks whether *an* animation keys the mix and
+never which one.
 
 🔸 **The bone-less slider is the same story one field over.** A slider with no
 `bone` takes its time from `slider.<name>.time`, which any animation can key — and
 two dials keying it *add*, so a time-driven axis composes like everything else
 here, and since [#655](https://github.com/firejune/rigc/issues/655) the gate
 agrees: it used to refuse exactly this rig. The same array rule applies, for the
-same reason. ⚠️ Two things the bone
+same reason — and `A42` refuses it there too, naming `time` instead of `mix`.
+⚠️ Two things the bone
 form does and this one does not: there is no `Math.max(0, time)` and no wrap, so a
 driven time below zero does not pose the first frame — it leaves the pose exactly
 as it found it, which is a different picture whenever the animation's first frame

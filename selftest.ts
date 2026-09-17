@@ -16400,6 +16400,251 @@ function runPathAndSliderSuite(): number {
       'silence would go red on it',
   );
 
+  // =========================================================================
+  // 6. the array is the UPDATE order too, and now something says so (#658)
+  // =========================================================================
+  //
+  // 🚨 `PS139` and `PS140` above measured a dead axis under a green gate: with
+  // the two `constraints` entries swapped, a dial that drives another slider's
+  // `mix` or `time` writes into a pose whose only reader has already run, and
+  // the driven axis does not move at any reading of either dial. Nothing
+  // refused it, and `A40` could not — a slider whose `mix` is keyed leaves its
+  // population by construction, which is why the hole is exactly the shape of
+  // that exclusion. `A42` is the refusal and this holds it to those two grids.
+  //
+  // ⭐ **The plant is the data.** The refused rig and the accepted one are the
+  // same two sliders, the same animations, the same keys, in the other array
+  // order — so a rule reading anything but the two constraint indices could not
+  // turn with them, and neither could one that read the flags, the mapping or
+  // the animation names.
+  //
+  // 🔒 The three states are all asserted, because the failure mode here is a
+  // rule that reports green where it has nothing to compare: the downward pair
+  // is a measured PASS, the upward pair a FAIL by name, and a pair with no
+  // driving key at all a SKIP that names the absence.
+  const DRIVEN_RULE = 'A42_DRIVEN_SLIDERS_UPDATE_AFTER_THEIR_DRIVER';
+  const drivenRefusal = (report: ReturnType<typeof validate>): string | null =>
+    report.failures.find((one) => one.assertion === DRIVEN_RULE)?.detail ?? null;
+  /** How far the DRIVEN dial moves the shared bone, per reading of the driving dial — the axis the card calls dead. */
+  const drivenTravel = (cells: ReturnType<typeof authorityCells>): number[] => {
+    const byDriver = new Map<number, number[]>();
+    for (const cell of cells) byDriver.set(cell.at[0], [...(byDriver.get(cell.at[0]) ?? []), cell.rotate]);
+    return [...byDriver.values()].map((row) => Math.max(...row) - Math.min(...row));
+  };
+  const declaredTravel = drivenTravel(authorityDeclared);
+  const swappedTravel = drivenTravel(authoritySwapped);
+  const unkeyedPair = s644Gate(AUTHORITY_DIALS);
+  const unkeyedSkip = unkeyedPair.skipped.find((one) => one.assertion === DRIVEN_RULE);
+  const timeStored = Math.max(...timeAsDead.map((cell) => Math.abs(cell.time)));
+  const orderProbes: string[] = [
+    ...(drivenRefusal(swapped.report) === null
+      ? [`with the \`mix\` pair swapped A42 did not refuse this rig by that name — it said: ${swapped.report.failures.map((one) => one.assertion).join(', ') || 'nothing at all'}`]
+      : []),
+    ...[AUTHORITY_DRIVER.name, AUTHORITY_DRIVEN.name, '`mix`', 'constraints[0]', 'constraints[1]'].flatMap((term) =>
+      (drivenRefusal(swapped.report) ?? '').includes(term) ? [] : [`the \`mix\` refusal does not name ${term}`],
+    ),
+    ...(declared.report.failures.length === 0 ? [] : [`the declared order does not gate green: ${declared.report.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+    ...(declared.report.passed.includes(DRIVEN_RULE) ? [] : ['A42 did not MEASURE the declared order — a rule that only ever refuses or skips has no positive control here']),
+    ...(Math.max(...swappedTravel) > authorityFloor
+      ? [`with the array swapped the driven dial still moves the bone by ${Math.max(...swappedTravel).toExponential(3)}, so "dead" is not what this fixture poses`]
+      : []),
+    ...(Math.max(...declaredTravel) > authorityFloor
+      ? []
+      : ['the driven dial moves the bone on NEITHER order, so the travel comparison cannot see which one the refusal is about']),
+    ...(drivenRefusal(timeBefore.report) === null
+      ? ['with the carried slider FIRST in the array A42 did not refuse the `time` rig by that name']
+      : []),
+    ...[...(drivenRefusal(timeBefore.report) === null ? [] : ['carried', '`time`'])].flatMap((term) =>
+      (drivenRefusal(timeBefore.report) ?? '').includes(term) ? [] : [`the \`time\` refusal does not name ${term}`],
+    ),
+    ...(drivenRefusal(timeAfter.report) === null ? [] : ['A42 refuses the `time` pair in the order that WORKS, which PS140 poses as the sum']),
+    ...(timeStored > 0
+      ? []
+      : ['the carried slider holds time 0 at every cell of the dead order, so this fixture cannot tell a value written and unread from one never written']),
+    ...(unkeyedSkip === undefined
+      ? [`two dials that key no slider at all left A42 ${unkeyedPair.passed.includes(DRIVEN_RULE) ? 'PASSING over nothing' : 'with no row of its own'}`]
+      : []),
+    ...(unkeyedSkip !== undefined && !unkeyedSkip.reason.includes('drives another') ? [`the empty-population skip does not say what is absent: ${unkeyedSkip.reason}`] : []),
+  ];
+  const orderHeld = orderProbes.length === 0;
+  say(
+    'PS156_A_DIAL_THAT_DRIVES_A_SLIDER_THE_ARRAY_HAS_ALREADY_RUN_IS_REFUSED_BY_NAME_AND_THE_SAME_PAIR_REORDERED_IS_NOT',
+    orderHeld,
+    probeDetail(
+      orderHeld,
+      orderProbes,
+      `the two dials of PS139, in both array orders and with nothing else changed: declared, A42 MEASURES the pair and ` +
+        `passes, and the driven dial moves the shared bone by up to ${Math.max(...declaredTravel).toFixed(6)}° across the ` +
+        `${declaredTravel.length} readings of the driver; swapped, A42 refuses by name and that same travel is ` +
+        `${Math.max(...swappedTravel).toExponential(3)} against a float64 floor of ${authorityFloor.toExponential(3)} — dead at ` +
+        `every one of the ${authorityRows.length} cells. The \`time\` pair of PS140 answers the same way round: refused with the ` +
+        `carried slider first, accepted with it last, and in the refused order its pose still holds up to ` +
+        `${timeStored.toFixed(6)} of driven time that nothing reads. A pair whose animations key no slider at all is a SKIP ` +
+        `naming the absence, never a pass: "${unkeyedSkip?.reason ?? 'no skip'}"`,
+      (count) => `${count} clause(s) of the update-order rule did not hold:`,
+    ),
+    'issue #658. The refusal had to be keyed on the two constraint INDICES and on nothing else, which is why both halves ' +
+      'are the same rig: the fixture the rule refuses and the fixture it accepts differ only in the order of two array ' +
+      'entries, so a rule reading the flags, the mapping, the animation names or the arithmetic would be green on both or ' +
+      'red on both. The travel clause is two-sided for the reason the doctrine gives: "the axis is dead" is only a ' +
+      'measurement if the same grid shows it alive in the other order, and the stored-time clause is what separates a ' +
+      'value written and never read from one that was never written — the pose holds the number either way, and only the ' +
+      'bone says which',
+  );
+
+  // =========================================================================
+  // 7. the same rule with the two indices equal — a slider driving itself
+  // =========================================================================
+  //
+  // 🚨 `Slider.update` reads `appliedPose.mix` as the alpha it hands
+  // `animation.apply`, and `appliedPose.time` as the time it applies at, BEFORE
+  // that animation runs. So a slider keying its own `mix` or `time` is the
+  // upward case with the indices equal, and the mix shape is the one `A37`
+  // cannot see: `keyedBy` asks whether ANY animation keys the slider's `mix`,
+  // and the slider's own animation is one of them — so a slider muted at setup
+  // that keys its own `mix` up reports green and never runs at all.
+  //
+  // ⚠️ What A37 says about the self-keying rig is PRINTED and not asserted. A
+  // repaired A37 that saw through `keyedBy` would refuse it too, and a clause
+  // requiring today's silence would go red on that improvement. What IS
+  // asserted is A37's own case — the same rig with no such key anywhere — which
+  // this change does not touch.
+  const selfRun = (
+    order: ComposedDial[],
+    motion: Record<string, unknown>,
+    patch: Record<string, unknown>,
+    patched: ComposedDial,
+  ): { data: SkeletonData; report: ReturnType<typeof validate> } => {
+    const dirs = writeProbeRig({
+      bones: RESIDUAL_BONES,
+      constraints: order.map((dial) => s644Slider(dial, dial === patched ? patch : {})),
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return {
+      data: posableFromText(built.skeletonText, built.atlasText, dirs.outDir).data,
+      report: validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: dirs.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      }),
+    };
+  };
+  /** The same pair, with the `mix` key moved onto the muted slider's OWN animation. */
+  const selfKeyMotion = (extra: Array<Record<string, unknown>>): Record<string, unknown> => ({
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      [`${AUTHORITY_DRIVER.name}-pose`]: rampCarrying(AUTHORITY_DRIVER.rotate, AUTHORITY_DRIVER.x, []),
+      [`${AUTHORITY_DRIVEN.name}-pose`]: rampCarrying(AUTHORITY_DRIVEN.rotate, AUTHORITY_DRIVEN.x, extra),
+    },
+  });
+  const selfKeyed = selfRun(
+    AUTHORITY_DIALS,
+    selfKeyMotion([{ slider: AUTHORITY_DRIVEN.name, property: 'mix', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [AUTHORITY_TOP] }] }]),
+    { mix: 0 },
+    AUTHORITY_DRIVEN,
+  );
+  // A37's own case: the same rig with that key nowhere at all.
+  const noKeyAtAll = selfRun(AUTHORITY_DIALS, selfKeyMotion([]), { mix: 0 }, AUTHORITY_DRIVEN);
+  const selfTravel = drivenTravel(authorityCells(selfKeyed.data, () => 0));
+  const selfMix = Math.max(...authorityCells(selfKeyed.data, () => 0).map((cell) => cell.mix));
+  const a37On = (report: ReturnType<typeof validate>): string | null =>
+    report.failures.find((one) => one.assertion === 'A37_SLIDER_CONSTRAINT_EFFECTIVE')?.detail ?? null;
+  // The bone-less half: a carried slider whose own animation keys its own `time`.
+  const selfTime = (() => {
+    const dirs = writeProbeRig({ bones: RESIDUAL_BONES, constraints: [carriedSlider] });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-motion/1',
+          archetype: 'static_probe',
+          cut: 'static_probe',
+          easings: {},
+          animations: {
+            'carried-pose': {
+              duration: GRID_DURATION,
+              loop: false,
+              tracks: [
+                { bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [TIME_DRIVEN_ROTATE] }] },
+                { slider: 'carried', property: 'time', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [TIME_DRIVEN_TO[0]] }] },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return validate({
+      skeletonText: built.skeletonText,
+      atlasText: built.atlasText,
+      atlasDir: dirs.outDir,
+      declaredDurations: built.declaredDurations,
+      rig: built.rig,
+      profile: 'spine',
+    });
+  })();
+  const selfProbes: string[] = [
+    ...(drivenRefusal(selfKeyed.report) === null
+      ? [`a slider keying its OWN \`mix\` was not refused by name — A42 reported ${selfKeyed.report.passed.includes(DRIVEN_RULE) ? 'PASS' : 'nothing'}`]
+      : []),
+    ...['its own', AUTHORITY_DRIVEN.name, '`mix`'].flatMap((term) =>
+      (drivenRefusal(selfKeyed.report) ?? '').includes(term) ? [] : [`the self-drive refusal does not name ${term}`],
+    ),
+    ...(Math.max(...selfTravel) > authorityFloor
+      ? [`the self-keyed slider still moves the bone by ${Math.max(...selfTravel).toExponential(3)}, so the rig it refuses is not dead`]
+      : []),
+    ...(selfMix > authorityFloor
+      ? [`the self-keyed slider's own \`mix\` reaches ${selfMix.toExponential(3)}, so the key it writes is being read after all`]
+      : []),
+    ...(a37On(noKeyAtAll.report) === null
+      ? ['A37 no longer refuses a slider muted at setup with nothing keying its mix — its own case has moved, and this change did not touch it']
+      : []),
+    ...(drivenRefusal(noKeyAtAll.report) === null ? [] : ['A42 fires on a rig where no slider keys a slider at all, so it is not reading the key it says it is']),
+    ...(drivenRefusal(selfTime) === null ? ['a bone-less slider keying its OWN `time` was not refused by name'] : []),
+    ...(declared.report.passed.includes(DRIVEN_RULE) && declared.report.failures.length === 0
+      ? []
+      : ['the repair the message names — key it from a slider earlier in the array — is not green on the same two dials, so the refusal names an advice this file cannot show works']),
+    ...(Math.max(...declaredTravel) > authorityFloor
+      ? []
+      : ['and the repaired rig poses no travel either, so nothing here distinguishes the repair from the defect']),
+  ];
+  const selfHeld = selfProbes.length === 0;
+  say(
+    'PS157_A_SLIDER_THAT_KEYS_ITS_OWN_MIX_OR_TIME_IS_THE_SAME_REFUSAL_WITH_THE_TWO_INDICES_EQUAL',
+    selfHeld,
+    probeDetail(
+      selfHeld,
+      selfProbes,
+      `a slider muted at setup whose OWN animation keys its \`mix\` from 0 to ${AUTHORITY_TOP}: A42 refuses it by name, and ` +
+        `the rig it refuses poses ${Math.max(...selfTravel).toExponential(3)} of travel on that axis over ` +
+        `${authorityRows.length} cells while the slider's own \`mix\` never leaves ${selfMix.toExponential(3)} — \`update\` ` +
+        `returns on mix 0 before the animation that would raise it is applied. The bone-less \`time\` spelling is refused the ` +
+        `same way. ⚠️ A37 says ${a37On(selfKeyed.report) === null ? 'NOTHING about that rig' : `"${a37On(selfKeyed.report)}"`} — ` +
+        `reported and not gated, because its \`keyedBy\` asks whether any animation keys the mix and the slider's own is one ` +
+        `of them; its own case is unmoved, and the same rig with no such key anywhere is still refused: "` +
+        `${a37On(noKeyAtAll.report)}". The repair the message names is the pair of PS139 in declared order, which passes here ` +
+        `with up to ${Math.max(...declaredTravel).toFixed(6)}° of travel on the axis the refused rig leaves dead`,
+      (count) => `${count} clause(s) of the self-drive rule did not hold:`,
+    ),
+    'issue #658 asks what A37 says about a slider keying its own `mix`, and the answer is the reason this shape is A42\'s ' +
+      'and not A37\'s: A37 would have to ask WHICH animation carries the key, and the clause it has asks only whether one ' +
+      'exists — so the rig reports green and the slider never runs. Putting it here keeps one rule for one mechanism (a ' +
+      'write the update order puts after its only read) rather than splitting it across two assertions by whether the two ' +
+      'indices happen to be equal, and it leaves A37 exactly as it was, which the unkeyed half asserts. The travel and the ' +
+      "slider's own `mix` are both required, because a dead axis with a live `mix` would mean the key IS read and this " +
+      'refusal is wrong',
+  );
   return bad;
 }
 
@@ -31796,17 +32041,17 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   {
     row: 'README: the benchmark-dossier row (#359)',
     stale: 'the run viewer, the 36 named assertions with their profiles, and the selftest\n',
-    clean: 'the run viewer, the 42 named assertions with their profiles, and the selftest\n',
+    clean: 'the run viewer, the 43 named assertions with their profiles, and the selftest\n',
   },
   {
     row: 'AUTHORING: the `--profile` row (#359)',
     stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
-    clean: '| `--profile` | `spine` = the 27 validity rules (**the default**) · `spine-html` = all 42, opt-in |\n',
+    clean: '| `--profile` | `spine` = the 28 validity rules (**the default**) · `spine-html` = all 43, opt-in |\n',
   },
   {
     row: 'BENCHMARK: the profiles paragraph (#359)',
     stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
-    clean: 'Not all 42 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+    clean: 'Not all 43 rules are about Spine. Some are about **spine-html**, the renderer this\n',
   },
   {
     row: 'BENCHMARK: the profile table\'s own row (#359)',
@@ -31815,7 +32060,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      '| `spine-html` | all 42 — those 27 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
+      '| `spine-html` | all 43 — those 28 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
