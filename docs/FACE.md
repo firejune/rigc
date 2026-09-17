@@ -1205,6 +1205,43 @@ green. ⇒ write `"additive": true` on **every** slider that shares a target and
 not only on the later one, which is what the paragraph above already asks for and
 this is the second reason for.
 
+🚨 **A second dial on a slot colour, an attachment swap or a draw order is not a
+second dial at all.** Those timelines ignore `additive`, so the flag is not the
+repair and writing it on both changes nothing: the slider **later in the
+`constraints` array** owns that property outright and the earlier one contributes
+nothing, at every position of its dial. An **ik constraint's mix** behaves the
+same way. What does compose is the rest of what a face keys — a bone transform, a
+mesh deform, a transform constraint's mix, a physics `wind` — and those are the
+same sum as the two axes above, over each target's own setup value. ⇒ if a blink
+fades a slot and the yaw dial also fades it, one of the two has to stop: key that
+property from **one** slider, or move both edits into the animation a single
+slider applies. `A40` refuses the rest by name, and AUTHORING §3.5.2 is the
+mechanism.
+
+⭐ **Three dials are the same sum as two — as long as every one of them is
+additive.** The case worth knowing is a non-additive dial in the *middle* of
+three, because it is neither of the two failures you would expect: it erases every
+dial **before** it and is then added to by every dial **after** it, so the face is
+neither the sum nor the last dial alone, and no reading of a two-dial rig has that
+shape.
+
+⚠️ **`"loop": true` puts the animation's FIRST frame at the top of the dial.** A
+looping slider wraps its time as a positive modulo rather than holding the last
+frame, so the axis is a sawtooth: the two ends of the range are the same pose and
+every position past the top repeats the range from its bottom. That is right for a
+parameter that genuinely cycles — a wheel, a breath — and wrong for a yaw, where
+the range's top has to *stay* at the extreme of the turn. Leave `loop` off for a
+face axis; the default is the one you want.
+
+🔸 **And a `local: false` dial never reads back the number you set.** The world
+reader goes through the bone's matrix, where the reference runtime's float32 π
+leaves a fraction of a degree behind, and it has a period: a bone one whole turn
+from its position reads *identically*, so the dial cannot tell the two apart. The
+composition is unchanged — two world dials add exactly as two local ones do — but
+`local: true` is what makes the number on the dial the number the rig reads, which
+is the same repair §3.5.2's circle already asks for. Every one of the six
+`property` readings composes by that one arithmetic under `local: true`.
+
 ✅ **The editor half, measured.** This paragraph said *unknown* until the round
 trip was taken with `tools/editor_roundtrip.ts` on a licensed editor (data
 version 4.3.26) against a 4.3.13 build of

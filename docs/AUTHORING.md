@@ -2006,13 +2006,27 @@ it, on every frame, with the gate green — the second reason to write
 later one. `PS130` in `selftest.ts` poses both models rather than quoting the
 runtime, and [`docs/FACE.md`](FACE.md) §8 is the same rule on a face's two axes.
 
-⚠️ **And `"additive": true` is not always available.** Only some timelines support
-additive application at all: bone, deform, transform-constraint, path `position`,
-physics `wind`/`gravity`, and a slider's own `mix`. A **slot colour, an attachment
-swap, a draw order or a sequence ignores the flag entirely**, so two sliders
-sharing one of those overwrite each other whatever you write. A40 names that case
-separately, because the fix is different: key such a property from one slider
-only, or move both edits into the single animation one slider applies.
+⚠️ **And `"additive": true` is not always available.** The list that supports
+additive application at all is the closed one: bone, deform, transform-constraint,
+path `position`, physics `wind`/`gravity`, and a slider's own `mix`. **Everything
+else ignores the flag** — a slot colour, an attachment swap, a draw order and a
+sequence, and also an **ik constraint's mix**, a path's `spacing`, and every
+physics timeline except those two — so two sliders sharing one of those overwrite
+each other whatever you write. ⚠️ The four spelled out here used to read as the
+whole of the complement and they are examples of it; `A40` was never reading a
+list, it reads the runtime's own `Timeline.additive`, which is why it refuses the
+ik case this sentence did not name.
+
+⇒ **And "overwrite each other" has a direction, measured**: the slider **later in
+the `constraints` array** puts its own animation's value there and the earlier one
+contributes nothing at all, at every reading of either dial, with both flags set
+to `true`. Swap the two array entries and the answer swaps with them — it is the
+array that decides, not the flags and not which animation the file names first
+(`PS135` in `selftest.ts` poses four such targets both ways; `PS136` poses the
+three that do compose, and they are the same sum §3.5.2 states, over each target's
+own setup value). A40 names this case separately, because the fix is different:
+key such a property from one slider only, or move both edits into the single
+animation one slider applies.
 
 #### 3.5.2.1 What each `property` can actually be read AS
 
