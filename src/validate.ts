@@ -3952,3 +3952,271 @@ export function reportLines(report: ValidateReport): string[] {
 export function atlasDirOf(atlasPath: string): string {
   return dirname(resolve(atlasPath));
 }
+
+// ---------------------------------------------------------------------------
+// skeletonValues — the round trip read as VALUES rather than as assertions
+// ---------------------------------------------------------------------------
+
+/**
+ * One value the parser read out of a skeleton file, at a path that names it.
+ *
+ * `bones/hip/setup/rotation`, `skins/default/head/head/regionUVs/12`,
+ * `animations/walk/RotateTimeline/bone:hip/key/3/v1`. Numbers stay numbers so
+ * that a comparison can state a tolerance; everything else — a blend mode the
+ * runtime holds as an enum, an attachment name, a boolean, an absent object —
+ * is a string, and is compared exactly.
+ */
+export interface SkeletonValue {
+  /** Stable, name-keyed, and never an index into an emitted array (issue #45). */
+  path: string;
+  value: number | string;
+}
+
+/**
+ * Keys the walk below does not read, each with the reason it is not a value the
+ * file carries. It is a SKIP list rather than an include list on purpose: the
+ * field names come from the parser, so a field spine-core starts reading is
+ * compared the day it starts reading it, and the only hand-kept part is the
+ * short list of things that are demonstrably not in the file.
+ *
+ * ⚠️ `id` is the sharp one. `VertexAttachment.id` is a process-wide counter, so
+ * two parses in one process disagree about it by construction — and it reaches
+ * `DeformTimeline.getPropertyIds()`, which is why the timeline key below is
+ * built from the resolved owner rather than from the property ids.
+ */
+const NOT_A_VALUE_IN_THE_FILE: Record<string, string> = {
+  a: 'the derived world matrix',
+  b: 'the derived world matrix',
+  c: 'the derived world matrix',
+  d: 'the derived world matrix',
+  world: 'derived by the runtime',
+  local: 'derived by the runtime',
+  worldX: 'derived by the runtime',
+  worldY: 'derived by the runtime',
+  region: 'the atlas, which is not the skeleton',
+  regions: 'the atlas, which is not the skeleton',
+  uvs: 'computed from the region',
+  offsets: 'computed from the region',
+  tempColor: 'runtime scratch',
+  deform: 'runtime scratch on the setup pose',
+  id: 'a process-wide counter, not a value in the file',
+  index: 'the array position this walk already iterates by name',
+  timelineIds: 'derived from the timelines',
+  timelineSlots: 'derived from the skin',
+  properties: 'derived from the constraint',
+  propertyIds: 'carries an attachment id, which is a counter (see above)',
+};
+
+/** How deep a chain of unnamed objects may go before the walk says so and stops. */
+const VALUE_WALK_DEPTH = 10;
+
+/**
+ * Reflection over the parsed form: numbers and strings as they are, arrays by
+ * index, objects by their own keys in **sorted** order, and any nested object
+ * that carries a `name` by that name rather than by expansion — which is what
+ * makes a cross-reference (`parent`, `boneData`, `endSlot`, a constraint's
+ * `bones`) a name and terminates every cycle the runtime's back-references
+ * would otherwise walk forever.
+ *
+ * Sorted rather than insertion-ordered because `A18_DETERMINISTIC_EMIT`'s rule
+ * applies here too: nothing whose order is the runtime's business may decide
+ * what this function emits.
+ */
+function pushValue(value: unknown, path: string, out: SkeletonValue[], depth: number): void {
+  if (value === null || value === undefined) {
+    out.push({ path, value: '(none)' });
+    return;
+  }
+  if (typeof value === 'number' || typeof value === 'string') {
+    out.push({ path, value });
+    return;
+  }
+  if (typeof value === 'boolean') {
+    out.push({ path, value: value ? 'true' : 'false' });
+    return;
+  }
+  if (typeof value === 'function') return;
+  if (ArrayBuffer.isView(value) || Array.isArray(value)) {
+    const list = value as ArrayLike<unknown>;
+    for (let i = 0; i < list.length; i++) pushValue(list[i], `${path}/${i}`, out, depth + 1);
+    return;
+  }
+  if (typeof value !== 'object') return;
+  const obj = value as Record<string, unknown>;
+  if (depth > 0 && typeof obj.name === 'string') {
+    out.push({ path, value: obj.name });
+    return;
+  }
+  if (depth > VALUE_WALK_DEPTH) {
+    out.push({ path, value: '(deeper than the walk goes)' });
+    return;
+  }
+  for (const key of Object.keys(obj).sort()) {
+    if (key in NOT_A_VALUE_IN_THE_FILE) continue;
+    pushValue(obj[key], `${path}/${key}`, out, depth + 1);
+  }
+}
+
+/**
+ * Which timeline this is, in words that both sides of a comparison can reach.
+ *
+ * The class name and the OWNER'S NAME — never the property ids, which carry
+ * array indices and, for a deform timeline, a counter. A rig that reorders its
+ * bones is a structural finding `diff` already makes; it must not also arrive
+ * here as a timeline nobody can pair.
+ */
+function timelineKey(timeline: Timeline, data: ReturnType<SkeletonJson['readSkeletonData']>): string {
+  const kind = timeline.constructor?.name ?? 'Timeline';
+  const asBone = timeline as Timeline & Partial<{ boneIndex: number }>;
+  if (isBoneTimeline(asBone)) return `${kind}/bone:${data.bones[asBone.boneIndex]?.name ?? `#${asBone.boneIndex}`}`;
+  const asSlot = timeline as Timeline & Partial<{ slotIndex: number }>;
+  if (isSlotTimeline(asSlot)) {
+    const slot = data.slots[asSlot.slotIndex]?.name ?? `#${asSlot.slotIndex}`;
+    const attachment = (timeline as Timeline & Partial<{ attachment: { name: string } }>).attachment;
+    return `${kind}/slot:${slot}${attachment === undefined ? '' : `:${attachment.name}`}`;
+  }
+  const asConstraint = timeline as Timeline & Partial<{ constraintIndex: number }>;
+  if (isConstraintTimeline(asConstraint)) {
+    return `${kind}/constraint:${data.constraints[asConstraint.constraintIndex]?.name ?? `#${asConstraint.constraintIndex}`}`;
+  }
+  return `${kind}/skeleton`;
+}
+
+/**
+ * Every value a skeleton file carries, as the **parser** understands it.
+ *
+ * ## Why this is here and not in `diff.ts`
+ *
+ * `diff` compares structure over raw JSON and says so in its own header:
+ * *"Pure JSON reading — no spine-core, no filesystem."* Comparing the values
+ * inside that structure needs the format's per-field defaults — `time` absent
+ * is 0, `scaleX` absent is 1, a physics key's `value` absent is 0 but its `mix`
+ * is 1 — and a second spelling of those inside the gate is exactly what this
+ * repository refuses (CLAUDE.md, *The compiler never invents a value*). So the
+ * defaults are taken from the one reader that owns them, which means the
+ * runtime, which means this file: `CLAUDE.md`'s *Conventions* names the three
+ * modules allowed to link spine-core and `src/validate.ts` is the one that
+ * "owns the round trip". `src/bonedist.ts` is the precedent for the other half
+ * — an instrument that needs the runtime and reaches it through `render.ts`
+ * rather than linking it itself. `diff.ts` compares what this returns.
+ *
+ * ## What it covers
+ *
+ * Everything on `SkeletonData` that is not on the skip list above: the header
+ * and stage, every bone's setup pose and `length`, every slot's colours, blend
+ * and setup attachment, every attachment in every skin (a region's offsets,
+ * rotation, scale and size; a mesh's vertices, weights, `regionUVs`,
+ * triangles, hull and edges; a bounding box's, path's and clipping shape's
+ * vertices), every constraint's pose and flags, every event's payload, and for
+ * every timeline every frame — time and values, from the runtime's own
+ * `getFrameEntries()` — its curve type and Bezier samples, and its deform
+ * vertices, attachment names, draw orders and event payloads.
+ *
+ * ## What it does not
+ *
+ * - **`version` and `hash`.** The rig spec has no field for either; `ingest`
+ *   reports them as `HEADER_REDERIVED` and `HEADER_BOOKKEEPING` findings, and
+ *   a rebuild restating the runtime rigc links is the whole reason the corpus
+ *   gate is `diff` at 1.000 rather than a byte comparison (`docs/INGEST.md`
+ *   §2.3). They are named here so that skipping them is a decision a reader
+ *   can see rather than an omission.
+ * - **Anything below one float32 step.** `spine-core` stores frames, curves and
+ *   vertices in `Float32Array`, so two values that round to the same float32
+ *   are equal to this walk whatever the file says. The comparison's tolerance
+ *   states that bound rather than hiding it.
+ * - **A Bezier's control points as such.** The parser samples them into
+ *   `curves` (`setBezier`), so what is compared is the sampled curve; a moved
+ *   handle moves the samples, but by a different amount than it moved the
+ *   handle.
+ */
+export function skeletonValues(skeletonText: string, atlasText: string): SkeletonValue[] {
+  const data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(
+    JSON.parse(skeletonText),
+  );
+  const out: SkeletonValue[] = [];
+  const header = data as unknown as Record<string, unknown>;
+  for (const field of ['x', 'y', 'width', 'height', 'referenceScale', 'fps', 'imagesPath', 'audioPath', 'name']) {
+    pushValue(header[field], `skeleton/${field}`, out, 1);
+  }
+  for (const bone of data.bones) {
+    const at = `bones/${bone.name}`;
+    const rec = bone as unknown as Record<string, unknown>;
+    for (const key of Object.keys(rec).sort()) {
+      if (key in NOT_A_VALUE_IN_THE_FILE || key === 'name') continue;
+      pushValue(rec[key], `${at}/${key === 'setupPose' ? 'setup' : key}`, out, 1);
+    }
+  }
+  for (const slot of data.slots) {
+    const at = `slots/${slot.name}`;
+    const rec = slot as unknown as Record<string, unknown>;
+    for (const key of Object.keys(rec).sort()) {
+      if (key in NOT_A_VALUE_IN_THE_FILE || key === 'name') continue;
+      pushValue(rec[key], `${at}/${key === 'setupPose' ? 'setup' : key}`, out, 1);
+    }
+  }
+  for (const skin of data.skins) {
+    const at = `skins/${skin.name}`;
+    pushValue(skin.color, `${at}/color`, out, 1);
+    pushValue(skin.bones, `${at}/bones`, out, 1);
+    pushValue(skin.constraints, `${at}/constraints`, out, 1);
+    for (const [slotIndex, held] of skin.attachments.entries()) {
+      if (held === undefined || held === null) continue;
+      const slot = data.slots[slotIndex]?.name ?? `#${slotIndex}`;
+      const byName = held as unknown as Record<string, unknown>;
+      for (const placeholder of Object.keys(byName).sort()) {
+        const attachment = byName[placeholder] as Record<string, unknown>;
+        const where = `${at}/${slot}/${placeholder}`;
+        // The attachment's TYPE, which is the one thing reflection cannot see:
+        // a region and a mesh differ in their fields, and a walk that only read
+        // the fields would call a swap a pile of unpaired paths rather than a
+        // kind that changed.
+        pushValue(attachment.constructor?.name ?? '(unknown)', `${where}/kind`, out, 1);
+        pushValue(attachment, where, out, 0);
+      }
+    }
+  }
+  for (const constraint of data.constraints) {
+    const at = `constraints/${constraint.name}`;
+    pushValue(constraint.constructor?.name ?? '(unknown)', `${at}/kind`, out, 1);
+    pushValue(constraint, at, out, 0);
+  }
+  for (const event of data.events) pushValue(event, `events/${event.name}`, out, 0);
+  for (const animation of data.animations) {
+    const at = `animations/${animation.name}`;
+    pushValue(animation.duration, `${at}/duration`, out, 1);
+    // Timelines are grouped by their key and numbered within the group, so that
+    // two timelines a runtime distinguishes by object identity — one deform per
+    // skin over the same slot and attachment — still pair up in file order
+    // rather than colliding on one path.
+    const grouped = new Map<string, Timeline[]>();
+    for (const timeline of animation.timelines) {
+      const key = timelineKey(timeline, data);
+      const held = grouped.get(key);
+      if (held === undefined) grouped.set(key, [timeline]);
+      else held.push(timeline);
+    }
+    for (const key of [...grouped.keys()].sort()) {
+      const group = grouped.get(key) ?? [];
+      for (const [n, timeline] of group.entries()) {
+        const where = `${at}/${key}${group.length > 1 ? `#${n}` : ''}`;
+        // The frames, split into time and values by the runtime's own count of
+        // entries per frame rather than by a table of what each timeline kind
+        // keys. Entry 0 is the time for every timeline spine-core defines.
+        const entries = timeline.getFrameEntries();
+        for (let i = 0; i < timeline.frames.length; i++) {
+          const slot = i % entries;
+          pushValue(timeline.frames[i], `${where}/key/${Math.floor(i / entries)}/${slot === 0 ? 'time' : `v${slot}`}`, out, 1);
+        }
+        const rec = timeline as unknown as Record<string, unknown>;
+        for (const field of Object.keys(rec).sort()) {
+          if (field in NOT_A_VALUE_IN_THE_FILE || field === 'frames') continue;
+          // The owner is in the path already; comparing the index as well would
+          // report one reordering twice, in a measure that is not about order.
+          if (field === 'boneIndex' || field === 'slotIndex' || field === 'constraintIndex') continue;
+          pushValue(rec[field], `${where}/${field}`, out, 1);
+        }
+      }
+    }
+  }
+  return out;
+}

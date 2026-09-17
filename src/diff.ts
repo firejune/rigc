@@ -66,6 +66,11 @@
  * instrument — [`bonedist.ts`](bonedist.ts), the ladder's stage 3.
  */
 import { walkTimelines } from './timelines.ts';
+// Type only, and erased: the values themselves are read by `skeletonValues` in
+// `src/validate.ts`, which is one of the three modules CLAUDE.md allows to link
+// spine-core. This file stays what its header says it is — see
+// `diffSkeletonValues` for why the reading and the comparing are split there.
+import type { SkeletonValue } from './validate.ts';
 
 type Json = Record<string, unknown>;
 
@@ -1088,13 +1093,20 @@ function stageFacts(root: Json): StageFacts {
  *
  * ⚠️ **The box is compared EXACTLY, and that is a measurement rather than a
  * choice.** The brief this was built from asked for "the tolerance the other
- * measures use"; `src/diff.ts` has exactly one tolerance in it — `FRAME`, one
- * sixtieth of a second, used once, for `animations.duration` — and no spatial
- * one anywhere, because this file compares no position at all (that is
+ * measures use"; the structural measures in this file have exactly one —
+ * `FRAME`, one sixtieth of a second, used once, for `animations.duration` — and
+ * no spatial one anywhere, because they compare no position at all (that is
  * `bonedist.ts`). A stage is a box an exporter *wrote down*, not a pose anybody
  * measured, so there is nothing for it to be within a tolerance *of*; inventing
  * a spatial epsilon here would be a number nobody measured, in the file whose
  * whole job is to report measured ones.
+ *
+ * ⭐ `diffSkeletonValues` (issue #615) is the second tolerance in the file and
+ * it does not weaken this one. It compares positions, so it needs one; both its
+ * terms are read off other code — rigc's own 1e-6 quantiser and the parser's
+ * float32 storage — rather than chosen here; and the four numbers above are the
+ * one place the two overlap, where `stage_box` stays the stricter reading and
+ * says so by staying exact.
  */
 function diffHeader(c: Json, r: Json): DiffReported {
   const a = stageFacts(c);
@@ -1187,6 +1199,212 @@ export function movedReportedMeasures(report: DiffReport): string[] {
   return [...report.sections.flatMap((s) => s.reported?.measures ?? []), ...report.header.measures]
     .filter((m) => m.ratio < 1)
     .map((m) => m.id);
+}
+
+// ---------------------------------------------------------------------------
+// The value level — what the structural measures above are blind to
+// ---------------------------------------------------------------------------
+
+/**
+ * rigc's own emitted grid. `r6` in [`compile.ts`](compile.ts) rounds every
+ * emitted number to 1e-6 and `keyTime` rounds a key time DOWN over the same
+ * step, so a rebuild of a file written with more decimals than that may sit up
+ * to one whole step from where it started — through no fault of anything this
+ * measure is looking for.
+ */
+export const VALUE_EMITTED_GRID = 1e-6;
+
+/**
+ * One float32 ULP, relative. `spine-core` holds every frame, curve sample and
+ * vertex in a `Float32Array` (`Utils.newFloatArray`), so two decimals that
+ * differ by the grid above can land on adjacent float32s, and the difference
+ * the walk sees is the decimal gap plus that step.
+ *
+ * ⚠️ It is also the floor of what this measure can see AT ALL: a difference
+ * smaller than one float32 step is invisible to the parser and therefore to
+ * this. The tolerance states that rather than hiding it.
+ */
+export const VALUE_PARSED_ULP = 2 ** -23;
+
+/**
+ * What two readings of one number are allowed to differ by, and nothing more.
+ *
+ * Both terms are derived rather than fitted: the first is rigc's own quantiser,
+ * the second is the parser's storage. Measured over the twelve editor exports
+ * in `examples/`, the widest gap between a rebuild and the file it was read
+ * from reaches **0.81** of this — so the corpus sits inside a bound that was
+ * not drawn around it.
+ */
+export function valueTolerance(magnitude: number): number {
+  return VALUE_EMITTED_GRID + VALUE_PARSED_ULP * magnitude;
+}
+
+/** Whether two readings of one path agree. `NaN` on both sides is agreement: neither file states it. */
+function valuesAgree(a: number | string, b: number | string): boolean {
+  if (typeof a !== 'number' || typeof b !== 'number') return a === b;
+  if (Number.isNaN(a) && Number.isNaN(b)) return true;
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return a === b;
+  return Math.abs(a - b) <= valueTolerance(Math.max(Math.abs(a), Math.abs(b)));
+}
+
+/**
+ * The measures `diffSkeletonValues` defines, in the order it prints them, and
+ * what each one is. The set is fixed rather than derived from the paths in
+ * front of it, so that a run can say a measure compared NOTHING — the same
+ * distinction `DiffMeasure.total` draws everywhere else in this file.
+ */
+const VALUE_MEASURES: ReadonlyArray<{ id: string; what: string; prefix: string }> = [
+  { id: 'values.skeleton', what: 'the header and the setup-pose stage', prefix: 'skeleton/' },
+  { id: 'values.bones', what: 'every bone setup pose, its length and its colour', prefix: 'bones/' },
+  { id: 'values.slots', what: 'every slot colour, dark colour, blend mode and setup attachment', prefix: 'slots/' },
+  { id: 'values.attachments', what: 'every attachment offset, size, vertex, weight, uv and triangle', prefix: 'skins/' },
+  { id: 'values.constraints', what: 'every constraint pose field and flag', prefix: 'constraints/' },
+  { id: 'values.events', what: 'every event payload in the setup pose', prefix: 'events/' },
+  { id: 'values.key_times', what: 'every key time, and each animation\'s duration', prefix: 'animations/' },
+  { id: 'values.key_values', what: 'every keyed value: poses, deform vertices, draw orders, event payloads', prefix: 'animations/' },
+  { id: 'values.curves', what: 'every curve type and the Bezier samples the parser built from its handles', prefix: 'animations/' },
+];
+
+/**
+ * Which measure a path belongs to. The first path segment decides it, except
+ * under `animations/`, where the three arms are the three questions that fail
+ * differently: a timing that moved, a value that moved, and an easing that
+ * moved. A segment nothing here names becomes a measure of its own rather than
+ * disappearing into one of these — a walk that grows a top-level kind should
+ * arrive as a new line, not as a silently wider denominator.
+ */
+function valueMeasureFor(path: string): string {
+  const head = path.slice(0, path.indexOf('/') + 1);
+  if (head === 'animations/') {
+    if (path.endsWith('/duration') || /\/key\/\d+\/time$/.test(path)) return 'values.key_times';
+    if (/\/curves\/\d+$/.test(path)) return 'values.curves';
+    return 'values.key_values';
+  }
+  const known = VALUE_MEASURES.find((m) => m.prefix === head);
+  return known === undefined ? `values.${head.slice(0, -1) || path}` : known.id;
+}
+
+/** How many offending paths a note spells out before it counts the rest. */
+const VALUE_OFFENDERS_SPELLED_OUT = 3;
+
+/**
+ * The value-level comparison: are the numbers inside the structure the same
+ * numbers?
+ *
+ * ## Why it is a separate call rather than a section of `diffSkeletons`
+ *
+ * Because its inputs are not JSON. Every default in the format — `time` absent
+ * is 0, `scaleX` absent is 1, a physics key's `value` absent is 0 while its
+ * `mix` is 1 — has to be applied before two files can be compared value by
+ * value, and writing that table here would be a second spelling of the format
+ * inside the gate. So the defaults come from the parser, through
+ * `skeletonValues` in [`validate.ts`](validate.ts), and this function compares
+ * what it returns: an ordered list of `path → value` with every default already
+ * applied by the one reader that owns them.
+ *
+ * ⚠️ **It reports; it does not gate the ladder.** A rung's brief withholds
+ * coordinates on purpose, so no reading of the reference frames could decide
+ * these — `docs/GATE.md`'s *What never gates* applies word for word. The corpus
+ * gate is the one place they DO decide a verdict, and for the reason `IG16`
+ * already gives about `mesh_edges`: there the reference is the very file the
+ * specs were read from, so a value that moved is a decompiler loss rather than
+ * a candidate's entitlement.
+ *
+ * ## What a difference means, and what it cannot mean
+ *
+ * A path missing on one side is counted as unmatched and named as such: it is a
+ * structural finding too, and the measures above it are where that is
+ * diagnosed. A number present on both sides is compared under
+ * `valueTolerance`, which is derived from rigc's quantiser and the parser's
+ * float32 storage — never from the corpus.
+ */
+export function diffSkeletonValues(candidate: SkeletonValue[], reference: SkeletonValue[]): DiffMeasure[] {
+  const left = new Map<string, number | string>();
+  for (const v of candidate) left.set(v.path, v.value);
+  const right = new Map<string, number | string>();
+  for (const v of reference) right.set(v.path, v.value);
+
+  interface Tally {
+    matched: number;
+    total: number;
+    offenders: string[];
+    unpaired: number;
+  }
+  const tallies = new Map<string, Tally>();
+  const order: string[] = VALUE_MEASURES.map((m) => m.id);
+  const tallyFor = (id: string): Tally => {
+    const held = tallies.get(id);
+    if (held !== undefined) return held;
+    const fresh: Tally = { matched: 0, total: 0, offenders: [], unpaired: 0 };
+    tallies.set(id, fresh);
+    if (!order.includes(id)) order.push(id);
+    return fresh;
+  };
+  for (const id of order) tallyFor(id);
+
+  // The candidate's paths in the candidate's own order, then whatever the
+  // reference has that the candidate does not — an iteration over the two
+  // lists as they were built, never over a set.
+  for (const { path, value } of candidate) {
+    const tally = tallyFor(valueMeasureFor(path));
+    tally.total++;
+    const other = right.get(path);
+    if (other === undefined) {
+      tally.unpaired++;
+      if (tally.offenders.length < VALUE_OFFENDERS_SPELLED_OUT) tally.offenders.push(`${path} (candidate only)`);
+      continue;
+    }
+    if (valuesAgree(value, other)) {
+      tally.matched++;
+      continue;
+    }
+    if (tally.offenders.length < VALUE_OFFENDERS_SPELLED_OUT) {
+      const gap =
+        typeof value === 'number' && typeof other === 'number'
+          ? `, off by ${Math.abs(value - other).toExponential(3)} against ${valueTolerance(
+              Math.max(Math.abs(value), Math.abs(other)),
+            ).toExponential(3)} allowed`
+          : '';
+      tally.offenders.push(`${path} ${JSON.stringify(value)} vs ${JSON.stringify(other)}${gap}`);
+    }
+  }
+  for (const { path } of reference) {
+    if (left.has(path)) continue;
+    const tally = tallyFor(valueMeasureFor(path));
+    tally.total++;
+    tally.unpaired++;
+    if (tally.offenders.length < VALUE_OFFENDERS_SPELLED_OUT) tally.offenders.push(`${path} (reference only)`);
+  }
+
+  return order.map((id) => {
+    const tally = tallyFor(id);
+    const defined = VALUE_MEASURES.find((m) => m.id === id);
+    const missed = tally.total - tally.matched;
+    const note =
+      tally.total === 0
+        ? 'neither side carries one'
+        : missed === 0
+          ? undefined
+          : `${missed} moved` +
+            (tally.unpaired === 0 ? '' : `, ${tally.unpaired} of them on one side only`) +
+            `: ${tally.offenders.join('; ')}` +
+            (missed > tally.offenders.length ? `; …and ${missed - tally.offenders.length} more` : '');
+    return measure(id, defined?.what ?? 'values under a path kind this report does not define', tally.matched, tally.total, note);
+  });
+}
+
+/** Every value measure that is not a perfect match, by id. What a test asserts on. */
+export function movedValueMeasures(measures: DiffMeasure[]): string[] {
+  return measures.filter((m) => m.ratio < 1).map((m) => m.id);
+}
+
+/**
+ * `skeleton 1.000 · bones 1.000 · …`, the same one-line shape `reportedFigures`
+ * has, and with no roll-up for the same reason: a mean over "did the times move"
+ * and "did the vertices move" is a number with no referent.
+ */
+export function valueFigures(measures: DiffMeasure[]): string {
+  return measures.map((m) => `${m.id.slice(m.id.indexOf('.') + 1)} ${fmt(m.ratio)}`).join(' · ');
 }
 
 const fmt = (n: number): string => n.toFixed(3);

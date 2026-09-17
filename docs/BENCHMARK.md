@@ -134,6 +134,58 @@ transcription corpus, every section mean and every existing measure identical to
 the digit. The header's two moved nothing for a stronger version of the same
 reason: they are not in a section at all.
 
+##### The nine value measures, and why they are not in the inventory above
+
+Every measure in that table reads *presence*, *names*, *counts*, *order* and
+*kinds* — never the numbers inside them. So a decompiler that halved every
+rotation, dropped every bone's `length` or mirrored every vertex reads **1.000 on
+all 49 measures**, which is what [issue #615](https://github.com/firejune/rigc/issues/615)
+was opened about. `diffSkeletonValues` is the answer and it is a **separate call**
+with a report of its own:
+
+| Measure | Compares |
+| --- | --- |
+| `values.skeleton` | the header and the setup-pose stage |
+| `values.bones` | every bone setup pose, its `length` and its colour |
+| `values.slots` | every slot colour, dark colour, blend mode and setup attachment |
+| `values.attachments` | every attachment offset, size, vertex, weight, uv and triangle |
+| `values.constraints` | every constraint pose field and flag |
+| `values.events` | every event payload in the setup pose |
+| `values.key_times` | every key time, and each animation's duration |
+| `values.key_values` | every keyed value: poses, deform vertices, draw orders, event payloads |
+| `values.curves` | every curve type and the Bezier samples the parser built from its handles |
+
+Three properties, and each is the reason for the one after it:
+
+- **Its defaults come from the parser, not from a table.** Telling `undefined vs
+  0` apart from a difference needs the format's per-field defaults — `time`
+  absent is 0, `scaleX` absent is 1, a physics key's `value` absent is 0 while
+  its `mix` is 1 — and a second spelling of those inside a gate is what this
+  repository refuses. So both files are read through `spine-core`'s
+  `SkeletonJson` (`skeletonValues` in [`src/validate.ts`](../src/validate.ts),
+  one of the three modules allowed to link the runtime) and this compares what
+  comes back.
+- **It therefore needs both skeletons *and* both atlases**, which is why it is
+  not part of `rigc diff`'s 49 and why `bench.json` is unchanged by it. A
+  skeleton whose attachments carry a `sequence` cannot be parsed without the
+  pack that resolves it, and half the corpus does.
+- **Its tolerance is derived, never fitted.** `valueTolerance(m) = 1e-6 +
+  2⁻²³·m`: the first term is rigc's own quantiser (`r6` in `src/compile.ts`, and
+  `keyTime`, which rounds a key time *down* over the same step), the second is
+  one float32 ULP, because `spine-core` stores frames, curves and vertices in a
+  `Float32Array`. Over the twelve editor exports in `examples/` the widest gap
+  between a rebuild and the file it was read from reaches **0.81** of that bound.
+  ⛔ It is also the floor of what the measure can see at all: a difference
+  smaller than one float32 step is invisible to the parser and so to this.
+
+⚠️ **It reports; it gates in exactly one place.** No reading of a rung's frames
+could decide a bone `length` or a constraint `mix` at rest, so *What never gates*
+applies to it word for word on the ladder. The corpus round trip is the case that
+rule does not cover — there the reference **is** the file the specs were read
+from, so a value that moved is a decompiler loss and there is nothing for a
+candidate to be entitled to — and `IG16` in `selftest.ts` gates it for that
+reason, the same one that makes it gate `mesh_edges` there.
+
 ##### `skeleton.stage_present` / `skeleton.stage_box` — the value that was required and unmeasured
 
 [Issue #578](https://github.com/firejune/rigc/issues/578). `build` refused a rig
@@ -151,10 +203,11 @@ agreement, not an absence of data, and scoring it vacuous would put the one shap
 the measure exists for back into silence. **`stage_box` is the one that goes
 vacuous**, at `0/0`, when there are not two boxes to compare — and it compares the
 four numbers **exactly**. There is nothing here to be within a tolerance of: a
-stage is a box an exporter wrote down rather than a pose anybody measured, and
-`src/diff.ts` holds exactly one tolerance (`FRAME`, for `animations.duration`) and
-no spatial one anywhere, because it compares no position at all — that is
-`bonedist.ts`.
+stage is a box an exporter wrote down rather than a pose anybody measured, and the
+**structural** measures in `src/diff.ts` hold exactly one tolerance (`FRAME`, for
+`animations.duration`) and no spatial one anywhere, because they compare no
+position at all — that is `bonedist.ts`, and, for two files rather than two poses,
+the value comparison below.
 
 What a skeleton "declares a stage" means here is its **extent**: a numeric
 `width` and `height`. An `x`/`y` with no extent is an origin for a box that is

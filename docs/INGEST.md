@@ -288,6 +288,14 @@ units and every one of the 49 measures still reads **1.000**. ⇒ Never take a g
 `diff` as evidence that a geometric edit did not land, and never take it as evidence
 that one did.
 
+⚠️ **The corpus gate has a value-level measure and this command does not expose it**
+(§2.3, and `docs/BENCHMARK.md`'s *The nine value measures*). The reason is an input
+rather than a policy: comparing values means reading both files through `spine-core`,
+and a skeleton whose attachments carry a `sequence` cannot be parsed without the atlas
+that resolves it — so the measure takes two skeletons **and two packs**, which
+`rigc diff <a.json> <b.json>` does not have. The sentence above is about this command
+and stays true of it.
+
 ⚠️ **The one exception is the skeleton's own declared box**, and it is an exception to
 the sentence and not to the rule: `skeleton.stage_box` compares four world numbers,
 but they are numbers an exporter *declared in the header* rather than a pose anything
@@ -448,9 +456,12 @@ a file rigc did not write.
 them** ([#594](https://github.com/firejune/rigc/issues/594)). Every
 `examples/*/export/*.json` is ingested with `--art none`, rebuilt through the pack
 beside it, and `diff`ed against the file it was read from: **12 of 12 come back with 0
-blockers and 1.000 on all 49 ratio-bearing measures and all 5 reported ones.** Byte
+blockers and 1.000 on all 49 ratio-bearing measures and all 5 reported ones** — and,
+since [#615](https://github.com/firejune/rigc/issues/615), on all **nine value
+measures** too, over **193,927** compared values. Byte
 identity is not the claim there and the reason is the input, not the round trip — §2.3
-has the three kinds of difference, measured. ⚠️ Which pack is "the one beside it" is
+has the three kinds of difference, measured, and what the value measures do and do not
+reach. ⚠️ Which pack is "the one beside it" is
 resolved rather than guessed, for §0.2's reason: `spineboy/export` holds two, and
 `spineboy-run.atlas` covers neither skeleton in it.
 
@@ -616,8 +627,39 @@ rebuild against its source produces differences of exactly three kinds, in every
 worth being exact about what that does and does not cover. `diff` compares structure —
 counts, names, parentage, order, timeline kinds, key counts, curve kinds — and **not
 the values inside the keys**, which is why the precision row above is invisible to it.
-On rigc's own rigs byte identity covers both; on a foreign export the values are held
-by `check` (pixels) or by nothing, depending on what you render.
+On rigc's own rigs byte identity covers both; on a foreign export it used to be
+`check` (pixels) or nothing, depending on what you render.
+
+⭐ **The values are gated now, and by a second measure rather than by `diff`**
+([issue #615](https://github.com/firejune/rigc/issues/615)). Structure at 1.000 is
+silent about the numbers inside it: a decompiler that halved every rotation, dropped
+every bone's `length` or mirrored every vertex would read 1.000 on all 49 measures and
+on every `(reported)` one. So the corpus round trip also compares **value by value**,
+with the format's defaults taken from the parser rather than from a table — both files
+are read through `spine-core` and the parsed forms are compared path by path, under a
+tolerance that is the sum of rigc's own 1e-6 emitted grid and one float32 step of the
+runtime's storage. Nine measures, printed on `IG16`'s own line and gated there — here
+is the `6-arcs` export's, wrapped to fit this page:
+
+```
+values: 9/9 measure(s) at 1.000 over 13865 compared value(s); skeleton 1.000 ·
+bones 1.000 · slots 1.000 · attachments 1.000 · constraints 1.000 · events 1.000 ·
+key_times 1.000 · key_values 1.000 · curves 1.000
+```
+
+Over the whole corpus that is **193,927 values** compared, and the twelve read 1.000
+on all nine.
+
+`docs/BENCHMARK.md`'s *The nine value measures* is the full statement. What it still
+does **not** cover, in the same breath:
+
+| Still uncovered | Why |
+| --- | --- |
+| `version` and `hash` | the rig spec has no field for either, and `ingest` reports both as findings — the header row above, unchanged |
+| anything below one float32 step | the parser stores frames, curves and vertices in a `Float32Array`, so a difference it cannot represent is invisible to any reading of the parsed form |
+| a Bezier's handles *as written* | the parser samples them into the curve, so a moved handle arrives as moved samples rather than as the handle it was |
+| how the file is **spelled** | field order, an omitted default written out, six decimals against eight — the second and third rows of the table above are values that agree, and this measure says so |
+| how it **looks** | that is `check`, and `--texture-from` is how its figure is attributed |
 
 The geometric row needs a real number, because a naive reading of `check` makes an
 exact transcription look wrong. Here is the 3-timing transcription against frames
