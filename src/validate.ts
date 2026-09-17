@@ -31,6 +31,8 @@ import {
   PathConstraintData,
   Physics,
   PhysicsConstraintData,
+  PhysicsConstraintPose,
+  PhysicsConstraintTimeline,
   Property,
   RegionAttachment,
   Skeleton,
@@ -55,7 +57,14 @@ import {
   type DialSpan,
 } from './deformmeasure.ts';
 import { colourTypeName, readPngInfo } from './png.ts';
-import { CHANNELS_BY_KIND, KEY_TIME_EPSILON, walkTimelines } from './timelines.ts';
+import {
+  CHANNELS_BY_KIND,
+  KEY_TIME_EPSILON,
+  PHYSICS_POSE_RULES,
+  physicsKeyRefusal,
+  physicsRuleFor,
+  walkTimelines,
+} from './timelines.ts';
 import type { RigInfo } from './types.ts';
 
 export interface Failure {
@@ -427,6 +436,46 @@ const NAMED_TIMELINE_GROUPS = ['path', 'physics', 'slider'] as const;
  */
 const PHYSICS_COMPONENTS = ['x', 'y', 'rotate', 'scaleX', 'shearX'] as const;
 const EDITOR_PHYSICS_COMPONENTS: ReadonlySet<(typeof PHYSICS_COMPONENTS)[number]> = new Set(['x', 'y'] as const);
+
+/**
+ * What A23 says about a SETUP pose outside its bound, per property.
+ *
+ * The predicate lives in `PHYSICS_POSE_RULES` and the sentence lives here, and
+ * the split is deliberate: the predicate is the thing the compiler and this file
+ * must not disagree about, while the sentence names what happens to THIS rig —
+ * "it is muted", "nothing pulls it back" — which is what the author acts on and
+ * is worth nothing to a compiler refusing a key. `PHYSICS_POSE_RULES` is the
+ * index, so a rule added there with no sentence here fails to type-check rather
+ * than printing `undefined`.
+ */
+const SETUP_POSE_SAYS: Record<string, (pose: PhysicsConstraintPose) => string> = {
+  mix: (pose) => `has mix ${pose.mix}; it is muted`,
+  mass: (pose) => `has massInverse ${pose.massInverse} (mass must be > 0)`,
+  strength: (pose) => `has strength ${pose.strength}; nothing pulls it back`,
+  damping: (pose) => `has damping ${pose.damping}; outside (0,1) it never settles`,
+};
+
+/**
+ * The skeleton-JSON name of each physics timeline, keyed by the runtime's own
+ * `Property` id.
+ *
+ * ⚠️ Derived from the enum rather than from `timeline instanceof
+ * PhysicsConstraintMassTimeline` and rather than from a list of digits: the ids
+ * are what `ConstraintTimeline1` puts in its propertyId (`<Property>|<index>`),
+ * and a renumbering of the enum moves both sides of this map at once. The names
+ * on the right are the ones `SkeletonJson`'s physics branch reads
+ * (`SkeletonJson.js:1063-1094`), which is also what a motion spec's `property`
+ * says.
+ */
+export const PHYSICS_TIMELINE_NAMES: Record<number, string> = {
+  [Property.physicsConstraintInertia]: 'inertia',
+  [Property.physicsConstraintStrength]: 'strength',
+  [Property.physicsConstraintDamping]: 'damping',
+  [Property.physicsConstraintMass]: 'mass',
+  [Property.physicsConstraintWind]: 'wind',
+  [Property.physicsConstraintGravity]: 'gravity',
+  [Property.physicsConstraintMix]: 'mix',
+};
 
 /**
  * One step of the **float32** grid at `t`, which is the grid a loaded key time
@@ -2411,6 +2460,12 @@ export function validate(input: ValidateInput): ValidateReport {
     // 0, so a constraint can drive nothing at all; `mix` 0 mutes it; `mass` 0
     // becomes an infinite massInverse; and `damping` >= 1 never settles, which
     // on a mesh-driving bone means the canvas re-rasterises forever.
+    //
+    // 🔑 **Two arms, one criterion.** The second arm below reads every physics
+    // TIMELINE key, and it is written against `PHYSICS_POSE_RULES` — the table
+    // this one is also written against, and the table `compileValueTrack`
+    // refuses a spec's own out-of-range number with. Three readings of one rule
+    // is how two of them come to disagree, so there is one (issue #610).
     check('A23_PHYSICS_CONSTRAINT_EFFECTIVE', () => {
       // ⟨subject⟩_⟨property⟩, and its two siblings already read this way: A36
       // skips on "the skeleton declares no path constraint" and A37 on "no
@@ -2439,24 +2494,79 @@ export function validate(input: ValidateInput): ValidateReport {
           fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} drives no component; it parses and does nothing`);
         }
         const pose = constraint.setupPose;
-        if (!(pose.mix > 0)) fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} has mix ${pose.mix}; it is muted`);
-        if (!Number.isFinite(pose.massInverse) || pose.massInverse <= 0) {
-          fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} has massInverse ${pose.massInverse} (mass must be > 0)`);
-        }
-        if (!(pose.strength > 0)) {
-          fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} has strength ${pose.strength}; nothing pulls it back`);
-        }
-        if (!(pose.damping > 0 && pose.damping < 1)) {
+        // The four bounded fields, each judged by its `PHYSICS_POSE_RULES` row.
+        // The wording is per-field and stays so: "it is muted" and "nothing
+        // pulls it back" say what happens to THIS rig, which is what the author
+        // needs, and the shared table supplies the predicate rather than the
+        // sentence.
+        for (const rule of PHYSICS_POSE_RULES) {
+          if (rule.poseOk(pose[rule.field])) continue;
+          const drivesAMesh = rule.timeline === 'damping' && meshBoneNames.has(constraint.bone.name);
           fail(
             'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
-            `${where} has damping ${pose.damping}; outside (0,1) it never settles` +
-              (meshBoneNames.has(constraint.bone.name) ? ' — and this bone drives a mesh, so the canvas never rests' : ''),
+            `${where} ${SETUP_POSE_SAYS[rule.timeline](pose)}` +
+              (drivesAMesh ? ' — and this bone drives a mesh, so the canvas never rests' : ''),
           );
         }
         if (constraint.step <= 0 || !Number.isFinite(constraint.step)) {
           fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} has step ${constraint.step} (fps must be > 0)`);
         }
       }
+
+      // --- the same criterion, on every physics timeline key (issue #610) ----
+      //
+      // The arm above reads the setup pose and, until this one existed, nothing
+      // else — complete while a motion spec could key `mix` and `reset` only,
+      // and incomplete from #593 on, when it became able to key all seven.
+      //
+      // 📏 Measured on the tree before this landed, one keyed value at a time on
+      // a generated physics rig, 24 steps at 60 fps: `mass: 0` reached
+      // `massInverse` Infinity and every offset NaN — named by
+      // `A10_NO_NAN_AFTER_STEPPING`, from the BONE, with no word about the
+      // animation, the constraint, the timeline or the key; `damping: 2` ran the
+      // x offset to −26,634 and the velocity to −1.55e6 and still climbing, with
+      // **zero** gate failures; `strength: 0` drifted monotonically with zero gate
+      // failures; `mix: 1.5` produced zero gate failures and an integration
+      // identical to `mix: 1`, because mix multiplies the finished offset onto
+      // the bone and never enters the solve.
+      //
+      // ⭐ The value is judged where the runtime keeps it, not where the file
+      // writes it: `timeline.set` is the runtime's own accessor, so a `mass` key
+      // lands in the probe as its reciprocal and is then held to exactly the
+      // predicate the setup arm holds `setupPose.massInverse` to.
+      const probe = new PhysicsConstraintPose();
+      let keysRead = 0;
+      for (const animation of data.animations) {
+        for (const timeline of animation.timelines) {
+          if (!(timeline instanceof PhysicsConstraintTimeline)) continue;
+          // `ConstraintTimeline1` encodes its propertyId as `<Property>|<index>`,
+          // so the name comes from the runtime's own enum rather than from a
+          // table of strings this file would have to keep in step.
+          const name = PHYSICS_TIMELINE_NAMES[Number(timeline.getPropertyIds()[0].split('|')[0])];
+          if (name === undefined) continue;
+          const rule = physicsRuleFor(name);
+          // -1 is the global form: the timeline drives every physics constraint
+          // whose matching `…Global` flag is set, so there is no one name to give.
+          const target =
+            timeline.constraintIndex === -1
+              ? 'every physics constraint'
+              : `physics "${data.constraints[timeline.constraintIndex]?.name ?? `#${timeline.constraintIndex}`}"`;
+          const entries = timeline.getFrameEntries();
+          for (let i = 0; i < timeline.frames.length; i += entries) {
+            keysRead++;
+            if (rule === undefined) continue;
+            const value = timeline.frames[i + 1];
+            timeline.set(probe, value);
+            const refusal = physicsKeyRefusal(rule, value, probe[rule.field]);
+            if (refusal === null) continue;
+            fail(
+              'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+              `animation "${animation.name}" ${target} ${name} key at t=${timeline.frames[i].toFixed(6)}s is ${refusal}`,
+            );
+          }
+        }
+      }
+      stats.physicsTimelineKeys = keysRead;
     });
 
     // --- A41: a physics component the Spine editor cannot hold --------------

@@ -81,6 +81,8 @@ import {
   PathConstraint,
   Physics,
   PhysicsConstraint,
+  PhysicsConstraintPose,
+  PhysicsConstraintTimeline,
   Sequence,
   Skeleton,
   SkeletonJson,
@@ -209,6 +211,7 @@ import {
   type LedgerLine,
 } from './src/ballot.ts';
 import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
+import { PHYSICS_POSE_RULES } from './src/timelines.ts';
 import { readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
 import { skeletonDataFromText, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
@@ -216,6 +219,7 @@ import {
   ASSERTION_NAMES,
   assertionCountForProfile,
   attachmentRegionJoins,
+  PHYSICS_TIMELINE_NAMES,
   reportLines,
   SKIP_NO_ANIMATION,
   SKIP_NO_ATLAS,
@@ -991,6 +995,42 @@ const MUTANTS: Mutant[] = [
         (j as any).animations.shut_once.drawOrderFolder = [
           { slots: ['lens_l', 'lens_r'], keys: [{ time: 0, curve: 'stepped' }] },
         ];
+      }),
+    }),
+  },
+  // ─── a physics TIMELINE key the runtime cannot use (issue #610) ──────────
+  //
+  // A23's second arm. `iris_settle` drives `iris_aperture`, which is the mesh
+  // control bone, so this is the shape the assertion was written for: the
+  // constraint's setup pose is correct and an animation keys it into a state the
+  // integrator cannot use. The pair is two-sided on purpose — widening A23 to
+  // read timeline keys moves the risk from "it never fires" to "it fires on
+  // correct data", and the editor's own corpus keys the accepted value.
+  {
+    name: 'M47_physics_timeline_keys_zero_mass',
+    origin:
+      'the pose holds 1/mass, so a keyed 0 is an infinite massInverse and every velocity goes NaN. Before this ' +
+      'arm the only thing that said anything was A10, from the BONE, naming no animation, constraint or key (issue #610)',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const name = (j as any).constraints.find((x: any) => x.type === 'physics').name;
+        (j as any).animations.shut_once.physics = { [name]: { mass: [{ time: 0, value: 0 }] } };
+      }),
+    }),
+  },
+  {
+    name: 'M48_physics_timeline_mutes_the_constraint_and_is_accepted',
+    origin:
+      'the runtime opens `update` with `if (mix === 0) return;` and the editor\'s `sack-pro` export keys mix to 0 on ' +
+      '24 of its 36 mix keys — carrying the setup pose\'s `mix > 0` onto keys would refuse correct data 24 times (issue #610)',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const name = (j as any).constraints.find((x: any) => x.type === 'physics').name;
+        (j as any).animations.shut_once.physics = { [name]: { mix: [{ time: 0, value: 0 }] } };
       }),
     }),
   },
@@ -7835,6 +7875,168 @@ function runConstraintAndDeformSuite(): number {
       '`PHYSICS_TRACKS.identity` would be invisible in every rigc build — it writes every channel — and would ' +
       'make `ingest` transcribe an editor export into a spec that plays a different animation. The deletion count ' +
       'is half the control: a strip with nothing to strip reads the setup pose and calls it a default',
+  );
+
+
+  // --- a keyed physics value the runtime cannot use (issue #610) -------------
+  //
+  // `A23` read the setup pose and nothing else, which was complete while a
+  // motion spec could key `mix` and `reset` only and stopped being complete at
+  // #593. What the three controls below split is the tool's own division of
+  // labour: the COMPILER refuses the number in a spec somebody wrote, because
+  // the key is the thing to change and by gate time the spec is gone; the
+  // ASSERTION names it in a file rigc did not write; and the third measures
+  // that those two are one criterion rather than two readings of one.
+  //
+  // 📏 The bounds are read off the runtime and the corpus, never guessed. On
+  // this tree before the fix, one keyed value at a time over 24 steps at 60 fps:
+  // `mass: 0` → massInverse Infinity and every offset NaN, named ONLY by
+  // `A10_NO_NAN_AFTER_STEPPING` at the bone; `damping: 2` → x offset −26,634 and
+  // velocity −1.55e6 still climbing, **zero** gate failures; `strength: 0` →
+  // monotonic drift, zero gate failures; `mix: 1.5` → zero gate failures and an
+  // integration byte-identical to `mix: 1`.
+  const physicsKeyed = (property: string, value: number): Record<string, unknown> => ({
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      jig: {
+        duration: 1,
+        loop: false,
+        tracks: [{ physics: 'jiggle', property, keys: [{ t: 0, v: [value] }, { t: 1, v: [value] }] }],
+      },
+    },
+  });
+
+  // ⚠️ The ACCEPTED column is not a convenience: every value in it is one the
+  // editor's own `sack-pro` export keys, so a bound tightened past them would be
+  // refusing correct data rather than catching anything. Across that file's 169
+  // physics timeline keys, `mix` is exactly 0 on 24 of its 36, `wind` is negative
+  // on all 48 of its, and one `inertia` key omits its value, which the parser
+  // reads as 0 (`SkeletonJson.js:1062`).
+  const physicsRefused: Array<[property: string, value: number, bound: string]> = [
+    ['mass', 0, '> 0'],
+    ['mass', -1, '> 0'],
+    ['damping', 2, 'inside (0, 1)'],
+    ['damping', 1, 'inside (0, 1)'],
+    ['strength', 0, '> 0'],
+    ['mix', -0.5, '>= 0'],
+  ];
+  const physicsAccepted: Array<[property: string, value: number]> = [
+    ['mass', 1],
+    ['mix', 0],
+    ['mix', 1.5],
+    ['wind', -27.4],
+    ['gravity', -40],
+    ['inertia', 0],
+    ['damping', 0.15],
+  ];
+  const notRefused = physicsRefused.filter(([property, value, bound]) => {
+    const message = refusal(physicsDirs, physicsKeyed(property, value));
+    return message === null || !message.includes(`${property} key at t=0 is ${value}`) || !message.includes(`must be ${bound}`);
+  });
+  const notAccepted = physicsAccepted.flatMap(([property, value]) => {
+    const emitted: Array<Record<string, unknown>> = [];
+    const gate = gateProbeOrRefusal(physicsDirs, physicsKeyed(property, value), emitted);
+    const report = gate.report;
+    if (gate.refused !== null || report === null) return [`${property} ${value}: refused — ${gate.refused}`];
+    if (!report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE')) return [`${property} ${value}: A23 did not pass`];
+    return report.failures.length === 0 ? [] : [`${property} ${value}: ${report.failures.map((f) => f.assertion).join(', ')}`];
+  });
+  say(
+    'T83_A_PHYSICS_VALUE_THE_RUNTIME_CANNOT_USE_IS_REFUSED_AT_COMPILE_AND_EVERY_VALUE_IT_CAN_STILL_BUILDS',
+    notRefused.length === 0 && notAccepted.length === 0,
+    `${physicsRefused.length} out-of-range key(s) ` +
+      `${notRefused.length === 0 ? 'each refused naming the property, the value and the bound' : `NOT refused by name: ${notRefused.map(([p, v]) => `${p} ${v}`).join(', ')}`}` +
+      `; ${physicsAccepted.length} in-range key(s) ` +
+      `${notAccepted.length === 0 ? 'each compiled and gated green with A23 passing' : `NOT accepted: ${notAccepted.join('; ')}`}`,
+    'the accepted column is the load-bearing one and it is the corpus\'s own numbers: `sack-pro` keys `mix` to 0 on ' +
+      '24 of its 36 mix keys and `wind` negative on all 48 of its, so the setup pose\'s `mix > 0` applied verbatim to ' +
+      'keys would refuse an editor export 24 times. A mix timeline muting a constraint for a stretch is what the ' +
+      'runtime\'s own `if (mix === 0) return;` (`PhysicsConstraint.js:109-111`) is written for',
+  );
+
+  // The other half of the division: a file rigc never compiled. The values are
+  // planted into the EMITTED skeleton, where no `CompileError` can reach them
+  // and the only thing left is the assertion.
+  const plantPhysicsKey = (property: string, value: number): ReturnType<typeof validate> =>
+    gateProbeArtifacts(physicsDirs, physicsTimelineMotion(), (skeleton) => {
+      const physics = (skeleton.animations as Record<string, Record<string, unknown>>).jig.physics as Record<
+        string,
+        Record<string, Array<Record<string, unknown>>>
+      >;
+      for (const key of physics.jiggle[property]) key.value = value;
+    });
+  const plantedNamed = physicsRefused.flatMap(([property, value, bound]) => {
+    const hits = plantPhysicsKey(property, value).failures.filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE');
+    // Named with all four: the animation, the constraint, the key time and the
+    // value — plus the bound, because a detail that says a value is wrong and
+    // not what would be right sends the author back to the runtime source.
+    const named = hits.filter(
+      (f) =>
+        f.detail.includes('animation "jig"') &&
+        f.detail.includes('physics "jiggle"') &&
+        f.detail.includes(`${property} key at t=`) &&
+        f.detail.includes(`is ${value}`) &&
+        f.detail.includes(`must be ${bound}`),
+    );
+    return named.length === 2 ? [] : [`${property} ${value}: ${hits.length} A23 failure(s), ${named.length} fully named`];
+  });
+  const plantedMixZero = plantPhysicsKey('mix', 0);
+  const mixZeroAccepted = plantedMixZero.failures.length === 0 && plantedMixZero.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE');
+  say(
+    'T84_A_PLANTED_PHYSICS_KEY_IS_NAMED_BY_A23_WITH_ITS_ANIMATION_CONSTRAINT_TIME_AND_VALUE',
+    plantedNamed.length === 0 && mixZeroAccepted,
+    plantedNamed.length === 0
+      ? `${physicsRefused.length} planted value(s), both keys of each named by A23 with animation, constraint, key time, ` +
+        `value and bound; a planted mix of 0 ${mixZeroAccepted ? 'is accepted, as the corpus requires' : `is NOT accepted: ${plantedMixZero.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`}`
+      : `not named: ${plantedNamed.join('; ')}`,
+    'a spec somebody wrote never reaches this arm — the compiler refused it — so the only file that can is one rigc ' +
+      'did not write, which is the case the assertion exists for. ⚠️ `mass: 0` is the one value here that something ' +
+      'already said SOMETHING about: `A10_NO_NAN_AFTER_STEPPING` fires on the bone it takes to NaN. That is the ' +
+      'consequence and not the cause — it names no animation, no constraint, no timeline and no key — which is why ' +
+      'this control reads A23\'s failures rather than the report\'s length',
+  );
+
+  // The third side, and the one that makes the phrase "the same criterion" a
+  // property of the code: the compiler cannot link spine-core (CLAUDE.md), so it
+  // converts a keyed `mass` to the pose's `massInverse` with `toPose` while the
+  // validator hands over what the RUNTIME's own `set` wrote. Two paths to one
+  // number, measured here rather than assumed.
+  const rulePose = new PhysicsConstraintPose();
+  const sample = (property: string): number => (property === 'mass' ? 4 : property === 'mix' ? 0.75 : 0.35);
+  const ruleTimelines = new Map<string, PhysicsConstraintTimeline>();
+  for (const timeline of physicsData?.findAnimation('jig')?.timelines ?? []) {
+    if (!(timeline instanceof PhysicsConstraintTimeline)) continue;
+    // Named through the validator's OWN map rather than off the emitted order,
+    // which would pass on a tree where both had been renumbered together.
+    const name = PHYSICS_TIMELINE_NAMES[Number(timeline.getPropertyIds()[0].split('|')[0])];
+    if (name !== undefined) ruleTimelines.set(name, timeline);
+  }
+  const transformDisagrees = PHYSICS_POSE_RULES.flatMap((rule) => {
+    const timeline = ruleTimelines.get(rule.timeline);
+    if (timeline === undefined) return [`${rule.timeline}: no emitted timeline to measure against`];
+    const value = sample(rule.timeline);
+    timeline.set(rulePose, value);
+    const runtime = rulePose[rule.field];
+    const compiler = rule.toPose(value);
+    return runtime === compiler ? [] : [`${rule.timeline}: runtime ${runtime} vs compiler ${compiler}`];
+  });
+  const massMoves = PHYSICS_POSE_RULES.some((rule) => rule.toPose(sample(rule.timeline)) !== sample(rule.timeline));
+  say(
+    'T85_THE_COMPILERS_READING_OF_A_KEYED_PHYSICS_VALUE_IS_THE_RUNTIMES_OWN',
+    transformDisagrees.length === 0 && massMoves && ruleTimelines.size === PHYSICS_TRACK_KEYS.length,
+    physicsData === null
+      ? `nothing was posed — the compile was refused with: ${physicsGate.refused}`
+      : `${PHYSICS_POSE_RULES.length} bounded propert(ies) measured through the runtime's own ` +
+        `\`PhysicsConstraint*Timeline.set\` on ${ruleTimelines.size} emitted timeline(s); ` +
+        `${transformDisagrees.length === 0 ? 'every one agrees with the compiler\'s `toPose`' : `DISAGREE: ${transformDisagrees.join('; ')}`}` +
+        `; at least one sample moves under the transform: ${massMoves}`,
+    'without this the extra `posedBy` argument on `physicsKeyRefusal` would be the silent second opinion the shared ' +
+      'table exists to remove — the validator judging one number and the compiler another, agreeing on every value ' +
+      'either of them happens to be handed except `mass`. The "at least one sample moves" clause is what stops the ' +
+      'control passing on samples where the transform is the identity, which is every property but that one',
   );
 
   return bad;
@@ -38094,7 +38296,14 @@ function main(): void {
       'on the compiler alike — a run that starts and ends mid-pair accepted and posed, the same run one float ' +
       'longer still refused by extent — and 2 of them the knee an ik ' +
       "timeline reverted: the rig's own `bendPositive` reaching a timeline that states none, and a timeline that " +
-      'states one still overriding it), ' +
+      'states one still overriding it, and 3 of them a keyed physics value the runtime cannot use: the bound '  +
+      'refused at compile where a spec somebody wrote is the thing to change, the same bound named by A23 on a ' +
+      'file rigc did not write — with its animation, constraint, key time, value and bound — and the compiler\'s ' +
+      'reading of a keyed `mass` measured against what the runtime\'s own `set` writes into a pose, because the ' +
+      'compiler links no runtime and a second reading of one number is what the shared table exists to remove. ' +
+      'The ACCEPTED column is the load-bearing half: `mix` keyed to 0, an over-mix of 1.5, a negative wind and a ' +
+      'zero inertia all still build, which is the corpus\'s own vocabulary — `sack-pro` keys mix to 0 on 24 of ' +
+      'its 36 mix keys and wind negative on all 48 of its), ' +
       '+ ' + n('hold-curve') + ' hold-curve controls (a named easing on a hold emitted stepped with the same easing on the moving segment ' +
       'beside it still a bezier, a two-channel key holding on one channel only kept as a bezier and one holding on ' +
       'both rewritten, the hold read off the emitted six decimals, an rgba hold read off the emitted hex, an ik hold ' +

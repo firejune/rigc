@@ -92,7 +92,7 @@ import {
   type AtlasRegion,
   type ParsedAtlas,
 } from './atlas.ts';
-import { KEY_TIME_EPSILON } from './timelines.ts';
+import { KEY_TIME_EPSILON, physicsKeyRefusal, physicsRuleFor, type PhysicsPoseRule } from './timelines.ts';
 import { evaluateDeformTransform } from './deformgen.ts';
 import { evaluateTrackDerive, TRACK_DERIVE_PROJECTIONS, type TrackDeriveMember } from './trackgen.ts';
 import {
@@ -734,13 +734,35 @@ function rgbaHex(v: number[]): string {
 }
 
 /**
+ * One timeline a `MotionValueTrack` can name: the JSON fields a key carries, the
+ * per-key default the parser uses for each, and — where the runtime has one — the
+ * bound each field is held to.
+ *
+ * ⚠️ `bounds` is parallel to `fields`, not keyed by name, because a shape's
+ * channels are positional everywhere else in this file (a curve array indexes by
+ * channel) and a second addressing scheme for one table is how the two go out of
+ * step. `null` in a slot is "the runtime bounds this field nowhere", which is the
+ * value for every field of every shape but four of `PHYSICS_TRACKS`'.
+ *
+ * This is the `compileValueTrack` equivalent of `ConstraintTimelineShape.range`,
+ * and the reason it took a change rather than a table entry is that the
+ * ik/transform pair never shared this type: they carry named fields per key and
+ * go through `compileConstraintTrack`, where `range` already lived (issue #610).
+ */
+interface ValueTrackShape {
+  fields: string[];
+  identity: number[];
+  bounds?: Array<PhysicsPoseRule | null>;
+}
+
+/**
  * Bone timeline shapes: which JSON fields a key carries, and their defaults.
  *
  * The defaults matter more than they look: Spine omits a field that equals the
  * setup value, and `scale` defaults to 1 while `translate` defaults to 0. Emit
  * `x: 0` on a scale key and the bone collapses to nothing, silently.
  */
-const BONE_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
+const BONE_TRACKS: Record<string, ValueTrackShape> = {
   translate: { fields: ['x', 'y'], identity: [0, 0] },
   translatex: { fields: ['value'], identity: [0] },
   translatey: { fields: ['value'], identity: [0] },
@@ -775,18 +797,24 @@ const BONE_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
  * `PhysicsConstraintMassTimeline.set` is `pose.massInverse = 1 / value`
  * (`Animation.js:2132-2145`, "The timeline values are not inverted"), so the
  * key states a mass and the pose holds its reciprocal. A `mass` key of 0 is an
- * infinite `massInverse`, which is the setup-pose failure `A23` names — and
- * A23 reads the setup pose only, so a timeline that keys it there is not
- * covered by anything.
+ * infinite `massInverse`, and `bounds` below is what refuses it here.
+ *
+ * ⭐ **`bounds` is not a second opinion about the same numbers.** Each entry is
+ * a `PHYSICS_POSE_RULES` row — the one table `A23` judges a setup pose with —
+ * and the rule is applied to the POSE FIELD the key becomes rather than to the
+ * key, so `mass` is judged as `1 / value` on both sides of the tool. Four of the
+ * seven have a rule and three deliberately do not: the runtime bounds `inertia`,
+ * `wind` and `gravity` nowhere, and inventing one would refuse correct data
+ * (issue #610 — the corpus keys `wind` negative on all 48 of its wind keys).
  */
-const PHYSICS_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
-  inertia: { fields: ['value'], identity: [0] },
-  strength: { fields: ['value'], identity: [0] },
-  damping: { fields: ['value'], identity: [0] },
-  mass: { fields: ['value'], identity: [0] },
-  wind: { fields: ['value'], identity: [0] },
-  gravity: { fields: ['value'], identity: [0] },
-  mix: { fields: ['value'], identity: [1] },
+const PHYSICS_TRACKS: Record<string, ValueTrackShape> = {
+  inertia: { fields: ['value'], identity: [0], bounds: [physicsRuleFor('inertia') ?? null] },
+  strength: { fields: ['value'], identity: [0], bounds: [physicsRuleFor('strength') ?? null] },
+  damping: { fields: ['value'], identity: [0], bounds: [physicsRuleFor('damping') ?? null] },
+  mass: { fields: ['value'], identity: [0], bounds: [physicsRuleFor('mass') ?? null] },
+  wind: { fields: ['value'], identity: [0], bounds: [physicsRuleFor('wind') ?? null] },
+  gravity: { fields: ['value'], identity: [0], bounds: [physicsRuleFor('gravity') ?? null] },
+  mix: { fields: ['value'], identity: [1], bounds: [physicsRuleFor('mix') ?? null] },
   reset: { fields: [], identity: [] },
 };
 
@@ -804,7 +832,7 @@ const PHYSICS_TRACKS: Record<string, { fields: string[]; identity: number[] }> =
  * out — `compileValueTrack` never omits a field, which is what keeps "the author
  * wrote mixY" and "mixY happened to equal mixX" from emitting the same file.
  */
-const PATH_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
+const PATH_TRACKS: Record<string, ValueTrackShape> = {
   position: { fields: ['value'], identity: [0] },
   spacing: { fields: ['value'], identity: [0] },
   mix: { fields: ['mixRotate', 'mixX', 'mixY'], identity: [1, 1, 1] },
@@ -820,7 +848,7 @@ const PATH_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
  * a copy of a neighbour, and a reader checking rigc against the parser will trip
  * over it.
  */
-const SLIDER_TRACKS: Record<string, { fields: string[]; identity: number[] }> = {
+const SLIDER_TRACKS: Record<string, ValueTrackShape> = {
   time: { fields: ['value'], identity: [1] },
   mix: { fields: ['value'], identity: [1] },
 };
@@ -5241,7 +5269,7 @@ function compileValueTrack(
   duration: number,
   target: string,
   shift: number,
-  shapes: Record<string, { fields: string[]; identity: number[] }>,
+  shapes: Record<string, ValueTrackShape>,
   kind: string,
 ): SpineTimelineKey[] {
   const shape = shapes[track.property];
@@ -5273,6 +5301,23 @@ function compileValueTrack(
     shape.fields.forEach((field, c) => {
       const v = key.v as number[];
       if (!Number.isFinite(v[c])) throw new CompileError(`${where}: non-finite value ${String(v[c])}`);
+      // The bound, where the runtime has one. Refused here rather than left to
+      // `A23` because this is a spec somebody wrote and the key is the thing to
+      // change — the same division `compileConstraintTrack`'s `range` makes for
+      // an ik mix, and the same criterion `A23` applies to a file rigc did not
+      // write (issue #610). Note the value is judged BEFORE `r6`: a number
+      // rounding onto a bound would be refused for the rounding rather than for
+      // what the author wrote.
+      const bound = shape.bounds?.[c];
+      if (bound) {
+        const refusal = physicsKeyRefusal(bound, v[c]);
+        // `where` already ends in the property, so the JSON field is named only
+        // on a shape that has more than one of them — otherwise the message
+        // reads "… mass: value is 0", which says the property twice and the
+        // second time under the wrong name.
+        const at = shape.fields.length > 1 ? `${field} at t=${key.t}` : `key at t=${key.t}`;
+        if (refusal !== null) throw new CompileError(`${where} ${at} is ${refusal}`);
+      }
       entry[field] = r6(v[c]);
     });
     if (key.ease !== undefined && key.curve !== undefined) {

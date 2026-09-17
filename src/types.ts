@@ -275,6 +275,15 @@ export type BoneProperty =
  * `strength` 100, `damping` 0.85, `mass` 1). rigc never omits a channel, so the
  * distinction only bites a reader comparing an emitted file with an editor
  * export; `PHYSICS_TRACKS` in `compile.ts` carries the argument.
+ *
+ * 🔒 **Four of them have a compile-time range** (issue #610): `mass` and
+ * `strength` must be `> 0`, `damping` strictly inside `(0, 1)`, and `mix` `0` or
+ * more. The bounds are `PHYSICS_POSE_RULES` in `src/timelines.ts` and they are
+ * the runtime's, not a policy — `inertia`, `wind`, `gravity` and the top of
+ * `mix` are bounded nowhere, because the runtime documents nothing for the first
+ * three and documents `mix` as "a percentage (0+)". The same four rows are what
+ * `A23_PHYSICS_CONSTRAINT_EFFECTIVE` judges a setup pose and a foreign file's
+ * timeline keys with, which is why they are not stated here as numbers.
  */
 export type PhysicsProperty =
   | 'inertia'

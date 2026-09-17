@@ -9,6 +9,11 @@
  * have had to restate it — and a second copy of a catalogue is a second copy
  * that goes stale silently.
  *
+ * `PHYSICS_POSE_RULES` at the bottom is here for that reason and no other: the
+ * compiler refuses an out-of-range physics value a spec states, `A23` names one
+ * in a file rigc did not write, and the two have to be the same criterion rather
+ * than two readings of one (issue #610).
+ *
  * Pure JSON reading. No spine-core, no filesystem. The line numbers cited are
  * into `SkeletonJson.ts` on branch 4.3; the field-by-field survey is in
  * `docs/SPEC_COVERAGE.md` part 1-8.
@@ -255,3 +260,161 @@ export function walkTimelines(
   }
 }
 
+
+/**
+ * A physics constraint's pose, as the four fields `A23` judges.
+ *
+ * Structural rather than spine-core's `PhysicsConstraintPose`, because this
+ * module links no runtime (see the header) — the runtime's class satisfies it,
+ * and so does the probe `validate.ts` hands the runtime's own timeline `set` to
+ * fill.
+ */
+export interface PhysicsJudgedPose {
+  mix: number;
+  massInverse: number;
+  strength: number;
+  damping: number;
+}
+
+/**
+ * One physics property `A23` has an opinion about, stated once for the two
+ * layers that hold it.
+ *
+ * ⚠️ **The keyed number and the pose field are not always the same number.**
+ * `mass` is the one: `PhysicsConstraintMassTimeline.set` is
+ * `pose.massInverse = 1 / value` (`Animation.js:2132-2145`) and the parser does
+ * the same to a constraint's own `mass` (`SkeletonJson.js:309`), so a key states
+ * a mass and the integrator reads its reciprocal. `toPose` IS that transform, and
+ * every predicate here is written against the pose field rather than against the
+ * keyed number — which is what makes "the compiler and the assertion apply the
+ * same criterion" a property of the code and not a claim about it.
+ */
+export interface PhysicsPoseRule {
+  /** The timeline name in skeleton JSON, and the motion spec's `property`. */
+  timeline: string;
+  /** The pose field the integrator reads. */
+  field: keyof PhysicsJudgedPose;
+  /** The pose field, from the number a key or the rig's tuning table states. */
+  toPose: (value: number) => number;
+  /** True when the integrator can use that pose field. */
+  poseOk: (poseValue: number) => boolean;
+  /**
+   * The same question asked of a KEY, where it differs — `null` means it does
+   * not. Only `mix` has one, and the runtime is the reason: `update` opens with
+   * `if (mix === 0) return;` (`PhysicsConstraint.js:109-111`) and
+   * `PhysicsConstraintPose` documents the field as "a percentage (0+)", so a
+   * mix of exactly 0 is a state the runtime has a branch for. A setup pose at 0
+   * is a constraint that does nothing unless an animation rescues it; a KEY at 0
+   * is an animation muting it for a stretch, which is what a mix timeline is for
+   * — measured, not assumed: the editor's own `sack-pro` example keys mix to 0 on
+   * 24 of its 36 mix keys, and applying the setup rule to keys would refuse all
+   * 24 (issue #610).
+   */
+  keyOk: ((poseValue: number) => boolean) | null;
+  /** The bound in words, for a message: what the value has to be. */
+  states: string;
+  /** The bound a KEY is held to, where `keyOk` widens it. */
+  statesKeyed: string;
+  /** What the runtime does outside the bound, with the lines that say so. */
+  why: string;
+}
+
+/**
+ * Every physics property with a bound the runtime supports, and **only** those.
+ *
+ * 🚫 `inertia`, `wind` and `gravity` are absent on purpose. The runtime
+ * documents no range for any of them and the integrator diverges on none:
+ * `inertia` scales how much bone movement is converted (`PhysicsConstraint.js:137,143`)
+ * so 0 is an inert frame and nothing worse, and `wind`/`gravity` are forces along
+ * the skeleton's own vectors (`:151-153, :214-215`) where a negative number is the
+ * other direction — the corpus keys `wind` at −27.4 through −12.6 on all 48 of its
+ * wind keys. Inventing a bound for them would refuse correct data, which is the
+ * failure this repository has already paid for twice (issues #44, #262).
+ *
+ * 🚫 There is no UPPER bound on `mix` either, for the same reason and a stronger
+ * one: `PhysicsConstraintPose` documents it as "a percentage (0+)", and a keyed
+ * mix of 1.5 changes nothing inside the integration at all — it multiplies the
+ * finished offset onto the bone (`:172,174,251,256,287`), so it is an over-mix and
+ * an over-mix is a real idiom (the same argument `CONSTRAINT_TIMELINES` makes for
+ * a transform mix).
+ */
+export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
+  {
+    timeline: 'mix',
+    field: 'mix',
+    toPose: (v) => v,
+    poseOk: (v) => v > 0,
+    keyOk: (v) => v >= 0,
+    states: '> 0',
+    statesKeyed: '>= 0',
+    why: 'the runtime documents it as a percentage (0+) and `update` returns immediately at 0 (`PhysicsConstraint.js:109-111`)',
+  },
+  {
+    timeline: 'mass',
+    field: 'massInverse',
+    toPose: (v) => 1 / v,
+    poseOk: (v) => Number.isFinite(v) && v > 0,
+    keyOk: null,
+    states: '> 0',
+    statesKeyed: '> 0',
+    why:
+      'the pose holds 1/mass, so 0 is an infinite massInverse and `m = t * massInverse` ' +
+      '(`PhysicsConstraint.js:149,211`) takes every velocity to NaN, while a negative mass ' +
+      'injects energy instead of resisting it',
+  },
+  {
+    timeline: 'strength',
+    field: 'strength',
+    toPose: (v) => v,
+    poseOk: (v) => v > 0,
+    keyOk: null,
+    states: '> 0',
+    statesKeyed: '> 0',
+    why:
+      'it is the restoring force — `velocity += (a - offset * strength) * m` ' +
+      '(`PhysicsConstraint.js:150,156,212,220`) — so at 0 nothing pulls the offset back and it drifts',
+  },
+  {
+    timeline: 'damping',
+    field: 'damping',
+    toPose: (v) => v,
+    poseOk: (v) => v > 0 && v < 1,
+    keyOk: null,
+    states: 'inside (0, 1)',
+    statesKeyed: 'inside (0, 1)',
+    why:
+      'the per-step decay is `damping ** (60 * step)` and every velocity is multiplied by it ' +
+      '(`PhysicsConstraint.js:148,158,163,210,222,227`), so 1 never decays, above 1 diverges, and ' +
+      'at or below 0 the velocity is killed outright or raised to a fractional power',
+  },
+];
+
+/** The rule for one timeline name, or `undefined` where the runtime bounds nothing. */
+export function physicsRuleFor(timeline: string): PhysicsPoseRule | undefined {
+  return PHYSICS_POSE_RULES.find((rule) => rule.timeline === timeline);
+}
+
+/**
+ * Whether the number a KEY states is one the runtime can use, judged on the pose
+ * field it becomes rather than on itself.
+ *
+ * `null` when it is. The string is the tail of a message and names the bound and
+ * the reason, never just "invalid".
+ */
+export function physicsKeyRefusal(rule: PhysicsPoseRule, value: number, posedBy?: number): string | null {
+  // ⚠️ `posedBy` exists so the VALIDATOR can hand over the number the runtime's
+  // own `PhysicsConstraint*Timeline.set` wrote, rather than rigc's reading of
+  // what that call does. The compiler cannot: it links no runtime, by the rule in
+  // CLAUDE.md, so it passes nothing and `toPose` answers. Those are two paths to
+  // one number and a selftest control measures that they agree — without it this
+  // parameter would be exactly the silent second opinion this table exists to
+  // remove.
+  const posed = posedBy ?? rule.toPose(value);
+  const ok = rule.keyOk ?? rule.poseOk;
+  if (ok(posed)) return null;
+  // The pose field only when it is a different number from the keyed one, which
+  // is derived rather than declared: it is exactly `mass`, and only where the
+  // reciprocal has moved.
+  const shown = posed === value ? '' : ` (${rule.field} ${posed})`;
+  return `${value}${shown}; must be ${rule.statesKeyed} — ${rule.why}`;
+}
