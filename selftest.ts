@@ -1338,6 +1338,18 @@ interface DiffCase {
   /** Which skeleton to mutate — `DIFF_FIXTURE` unless a case says otherwise. */
   fixture?: DiffFixture;
   mutate: (skeleton: Record<string, unknown>) => void;
+  /**
+   * The same edit, on the REFERENCE side, for the one class of case a one-sided
+   * mutation cannot state (issue #620).
+   *
+   * Every case above this line asks *what does an edit to one file do to the
+   * report*, and the untouched fixture is the answer's baseline. An omitted
+   * `x`/`y` against a stage **at the origin** is a different question — it needs
+   * a reference whose origin is `0`, and no fixture in the corpus has one: all
+   * twelve exports under `examples/` state `x` and `y`, and all twelve are
+   * nonzero. Optional, so the cases that do not name it are unchanged.
+   */
+  mutateReference?: (skeleton: Record<string, unknown>) => void;
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -1579,6 +1591,78 @@ const DIFF_CASES: DiffCase[] = [
       header.x += 1;
     },
   },
+  {
+    name: 'D39_an_omitted_origin_against_a_stage_stated_at_the_origin',
+    why:
+      'issue #620, and the case D37 and D38 between them could not reach: neither of those has a reference whose ' +
+      'origin is `0`, because no export in the corpus does — all twelve state `x` and `y` and all twelve are ' +
+      'nonzero. The editor omits a header field at its default, so a stage sitting at `0,0` exports as ' +
+      '`width`/`height` and NO `x`/`y`, and reading that as two absent numbers made a rigc build and its own ' +
+      'export read `stage_box` 2/4 — the same box, reported half moved. Nothing may move here: an origin the ' +
+      'writer could not have spelled is not a box that travelled',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const header = (j as any).skeleton;
+      if (typeof header?.width !== 'number' || typeof header?.height !== 'number') {
+        throw new Error('fixture declares no stage — the case would prove nothing');
+      }
+      delete header.x;
+      delete header.y;
+    },
+    mutateReference: (j) => {
+      const header = (j as any).skeleton;
+      header.x = 0;
+      header.y = 0;
+    },
+  },
+  {
+    name: 'D40_an_omitted_origin_against_a_stage_stated_somewhere_else',
+    why:
+      'the other side of D39, and the reason it is a READING of the omission rather than a hole in the comparison. ' +
+      'The cheap way to make D39 green is to compare only the fields both headers state, which would score this ' +
+      'pair 2/2 and call a stage ten units away the same box. So the omitted origin has to be the VALUE `0` and ' +
+      'read as moved against `10,0` — one unit of the four, exactly as D38 counts its own',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: ['skeleton.stage_box'],
+    mutate: (j) => {
+      const header = (j as any).skeleton;
+      if (typeof header?.width !== 'number' || typeof header?.height !== 'number') {
+        throw new Error('fixture declares no stage — the case would prove nothing');
+      }
+      delete header.x;
+      delete header.y;
+    },
+    mutateReference: (j) => {
+      const header = (j as any).skeleton;
+      header.x = 10;
+      header.y = 0;
+    },
+  },
+  {
+    name: 'D41_an_origin_with_no_extent_is_still_not_a_stage',
+    why:
+      'the fence around D39: the default belongs to the ORIGIN and must not reach the extent. `stageFacts` has ' +
+      'said since #578 that a stage is declared by its `width` and `height` and that an `x`/`y` alone is an origin ' +
+      'for a box that is not there, and nothing had ever made that clause fire — D37 deletes all four at once, so ' +
+      'it cannot tell the rule from a rule about any header field. Here the origin stays and only the extent goes: ' +
+      '`stage_present` has to move and `stage_box` has to stay vacuous. An extent defaulted to `0` the way the ' +
+      'origin now is would read as a `0x0` stage at `0,0`, leave `stage_present` still, and move `stage_box` ' +
+      'instead — which is this case failing rather than this case passing differently',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: ['skeleton.stage_present'],
+    mutate: (j) => {
+      const header = (j as any).skeleton;
+      if (typeof header?.x !== 'number' || typeof header?.y !== 'number') {
+        throw new Error('fixture declares no stage origin — the case would prove nothing');
+      }
+      delete header.width;
+      delete header.height;
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -1711,6 +1795,7 @@ function runDiffMeasureControls(texts: Record<DiffFixture, string>): number {
     const reference: Record<string, unknown> = JSON.parse(text);
     const candidate: Record<string, unknown> = JSON.parse(text);
     c.mutate(candidate);
+    if (c.mutateReference !== undefined) c.mutateReference(reference);
     const report = diffSkeletons(candidate, reference);
     const moved = movedMeasures(report);
     const movedAgnostic = movedAgnosticMeasures(report);

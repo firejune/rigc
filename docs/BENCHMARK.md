@@ -163,6 +163,23 @@ not make a stage on its own. That is also what the compiler requires and what
 `A14_NO_FULL_FRAME_MESH` and `A19_OVERLAY_PNGS_HAVE_ALPHA` measure against, so
 the three agree on the word by construction rather than by memory.
 
+**Inside a declared stage, an omitted `x`/`y` is read as `0`**
+([#620](https://github.com/firejune/rigc/issues/620)) — *exactly* is about the
+comparison, not about the spelling. The editor's writer omits a header field at
+its default, so a stage at the origin exports with a `width` and a `height` and
+no origin at all, and three rigc builds sitting at `0,0` each read their own
+editor export as `stage_box` **2/4** with the note `candidate 64x64 at
+null,null; reference 64x64 at 0,0` — the same box, reported half moved. The
+reading is derived rather than assumed: all twelve exports under `examples/`
+omit `referenceScale`, whose default the parser spells as `100`, and none of the
+389 bone origin, rotation and shear values those files write is an explicit `0`;
+`SkeletonBinary.js:69-72` reads the four as four unconditional floats, so one
+skeleton's origin is `0` in a `.skel` and absent in a `.json`; and
+`SkeletonJson.js:70-73` is a raw `skeletonData.x = skeletonMap.x` that does the
+same to `fps`, which every one of the twelve omits. The default stops at the
+origin: defaulting the extent would turn a stage-less header into a `0x0` stage
+and answer the question `stage_present` exists to ask.
+
 ##### `attachments.mesh_edges` — the third of rung 6's three features
 
 `docs/LADDER.md` gates rung 6 on transform constraints, weighted meshes from

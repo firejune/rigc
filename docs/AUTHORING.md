@@ -822,7 +822,17 @@ Three readings stay apart, and the middle one is the point of the other two:
 reports **SKIP** on one, because there is no full frame for a mesh to span. And
 `rigc diff` reports it — `skeleton.stage_present` and `skeleton.stage_box`, in the
 header block at the top of the report — so a stage somebody invented now reads
-below 1.000 against a source that has none. Both are reported and gate nothing, for
+below 1.000 against a source that has none.
+
+⭐ **A stage at `0,0` is not a stage-less one, and an editor export spells it by
+saying nothing.** The editor omits a header field that is at its default, so a
+skeleton whose box sits at the origin exports as a `width` and a `height` with no
+`x`/`y`; `stage_box` reads that omission as the `0` it means, and its line says so
+— *the extent as stated, an omitted origin as the 0 it means*. So `4/4` on a build
+of yours against an export of that same build is the right answer rather than a
+tolerance, and an origin that really did move still reads below 1.000. The extent
+is the half that is read exactly as stated: omit a `width` and you have declared no
+stage, which `stage_present` is the measure of. Both are reported and gate nothing, for
 the reason every reported measure is: no reading of the rendered frames could have
 decided a setup-pose bounding box. The measure inventory that says so lives in
 [BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md), which
