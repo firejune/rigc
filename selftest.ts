@@ -16041,6 +16041,365 @@ function runPathAndSliderSuite(): number {
       'gives, on all thirty spellings, in both directions. The disagreement count is PRINTED rather than gated, because a ' +
       'runtime that repaired its own flags would otherwise turn this red for improving',
   );
+
+  // =========================================================================
+  // the world `scale` readers fold below 0, and the range that walks into it
+  // =========================================================================
+  //
+  // ⭐ `PS138` measured that `sqrt(a² + c²)` with the driven field in both terms
+  // is `|value|`, and #652's landing wrote that onto §3.5.2.1 — and then nothing
+  // refused the range. A `rotate` dial leaving its circle is refused at both
+  // ends; a `scaleX` dial dipping below 0 compiled, gated green and posed its
+  // lower half as its upper half in reverse.
+  //
+  // 🚨 The two failures are not the same failure, which is why the rule below is
+  // a second clause rather than the circle with another property name in it: a
+  // reading the range cannot reach pins one frame, a reading it reaches TWICE
+  // poses two dial positions the same. So the fold is posed here on a dial the
+  // rule still ACCEPTS — the reader folds whatever range is written over it, and
+  // the refusal is about the range — which is also what keeps this measurement
+  // alive after the rule landed.
+  const SCALE_DIAL = { from: 0, to: 0.5, scale: 0.25 };
+  const SCALE_SWEEP_STEPS = 8;
+  /** One `local: false` world-scale dial over `yaw-pose` (0s..1s); `to` places the window and `scale` sizes it. */
+  const worldScaleDial = (patch: Record<string, unknown> = {}): Array<Record<string, unknown>> => [
+    pairSlider('squash', 'yaw-pose', 'yaw-dial', { property: 'scaleX', local: false, ...SCALE_DIAL, ...patch }),
+  ];
+  /** A sweep of the dial bone's own scale — what a consumer turns, in the units the slider reads. */
+  const scaleSweep = (a: number, b: number): Record<string, unknown> => ({
+    duration: 1,
+    loop: false,
+    tracks: [{ bone: 'yaw-dial', property: 'scalex', keys: [{ t: 0, v: [a] }, { t: 1, v: [b] }] }],
+  });
+  /** The slider's applied time and the pose behind it, at one cell of that sweep. */
+  const scaleCell = (data: SkeletonData, sample: number): { time: number; flag: number } => {
+    const skeleton = poseAtSample(data, 'swing', SCALE_SWEEP_STEPS, sample);
+    return { time: skeleton.findConstraint('squash', Slider)!.appliedPose.time, flag: boneOf(skeleton, 'flag').rotation };
+  };
+  const scaleCells = (constraints: Array<Record<string, unknown>>, a: number, b: number): Array<{ time: number; flag: number }> => {
+    const data = timelinePosable(sliderPairDirs(constraints), sliderPairMotion({ swing: scaleSweep(a, b) })).data;
+    return Array.from({ length: SCALE_SWEEP_STEPS + 1 }, (_, i) => scaleCell(data, i));
+  };
+  /** The value the sweep parks the dial bone at, at cell `i` of `a`..`b`. */
+  const drivenAt = (i: number, a: number, b: number): number => a + ((b - a) * i) / SCALE_SWEEP_STEPS;
+  /**
+   * float64 noise on these times, and nothing else.
+   *
+   * ⭐ The fold is not a near-miss to be tolerated: `sqrt(a² + c²)` squares the
+   * driven field, so `±v` reach the reader as the same float64, and the two
+   * halves land on the same time to the bit. The floor is here so a run can say
+   * how far from that it actually was rather than assert an exact equality it
+   * would not be able to report on.
+   */
+  const SCALE_FOLD_FLOOR = 16 * Number.EPSILON;
+
+  // The dial whose bottom is exactly 0 — legal, and still folded by its reader
+  // wherever a consumer turns the bone below 0.
+  const foldCells = scaleCells(worldScaleDial({ to: 0 }), -2, 2);
+  const foldTwin = scaleCells(worldScaleDial({ to: 0, local: true }), -2, 2);
+  const foldRows: string[] = [];
+  let foldWorst = 0;
+  let foldTwinGap = Infinity;
+  for (let i = 0; i < SCALE_SWEEP_STEPS / 2; i++) {
+    const mirror = SCALE_SWEEP_STEPS - i;
+    const driven = drivenAt(i, -2, 2);
+    const gap = Math.abs(foldCells[i].time - foldCells[mirror].time);
+    const posed = Math.abs(foldCells[i].flag - foldCells[mirror].flag);
+    foldWorst = Math.max(foldWorst, gap, posed);
+    if (gap > SCALE_FOLD_FLOOR || posed > SCALE_FOLD_FLOOR) {
+      foldRows.push(
+        `the world dial at ${driven.toFixed(3)} applies ${foldCells[i].time.toFixed(6)}s and poses ${foldCells[i].flag.toFixed(4)}°, ` +
+          `while at ${(-driven).toFixed(3)} it applies ${foldCells[mirror].time.toFixed(6)}s and poses ${foldCells[mirror].flag.toFixed(4)}° — ` +
+          `${Math.max(gap, posed).toExponential(3)} apart, so this pair is not the mirror the refusal names`,
+      );
+    }
+    // The negative control, and it is a closed form rather than "they differ":
+    // read `local: true` the same dial takes the driven value SIGNED, so every
+    // position below 0 maps to a time below the animation and `Math.max(0, …)`
+    // pins it to 0.000s while the half above 0 ramps.
+    for (const cell of [i, mirror]) {
+      const at = drivenAt(cell, -2, 2);
+      const want = Math.max(0, 0 + (at - SCALE_DIAL.from) * SCALE_DIAL.scale);
+      if (Math.abs(foldTwin[cell].time - want) > SCALE_FOLD_FLOOR) {
+        foldRows.push(
+          `the same dial read \`local: true\` at ${at.toFixed(3)} applies ${foldTwin[cell].time.toFixed(6)}s, and its own ` +
+            `mapping asks for ${want.toFixed(6)}s — so the equality above is this fixture's rather than the reader's`,
+        );
+      }
+    }
+    foldTwinGap = Math.min(foldTwinGap, Math.abs(foldTwin[i].time - foldTwin[mirror].time));
+    // 🚨 …and the dial has to MOVE, or every clause above is satisfied by a
+    // fixture where nothing does: two halves of a dead sweep are equal, and so
+    // are two halves of one clamped flat to 0.000s. The step is required
+    // strictly, walking the lower half in toward the neutral.
+    if (!(foldCells[i].time > foldCells[i + 1].time)) {
+      foldRows.push(
+        `the world dial applies ${foldCells[i].time.toFixed(6)}s at ${driven.toFixed(3)} and ${foldCells[i + 1].time.toFixed(6)}s at ` +
+          `${drivenAt(i + 1, -2, 2).toFixed(3)} — it does not move between them, so the mirror above compares two cells of a dead dial`,
+      );
+    }
+  }
+  const foldHeld = foldRows.length === 0;
+  say(
+    'PS151_A_WORLD_SCALE_READING_IS_A_MAGNITUDE_SO_THE_DIAL_BELOW_0_POSES_AS_THE_DIAL_ABOVE_IT',
+    foldHeld,
+    probeDetail(
+      foldHeld,
+      foldRows,
+      `${SCALE_SWEEP_STEPS / 2} mirror pair(s) of a dial swept -2..+2, worst ${foldWorst.toExponential(3)} against a float64 ` +
+        `floor of ${SCALE_FOLD_FLOOR.toExponential(3)}: the times are ` +
+        `${foldCells.map((cell) => cell.time.toFixed(3)).join(' ')} and the posed flag ` +
+        `${foldCells.map((cell) => cell.flag.toFixed(2)).join(' ')}°. ⇒ the lower half of the sweep is the upper half in ` +
+        `reverse, to the bit. The SAME dial read \`local: true\` is on its own signed mapping at every cell, its closest ` +
+        `mirror pair ${foldTwinGap.toExponential(3)} apart — so what folds is the reader and not the fixture`,
+      (count) => `${count} clause(s) of the world-scale fold did not hold:`,
+    ),
+    'issue #657: the refusal below is a sentence about what a consumer will see, and this is where it is read off a ' +
+      'skeleton rather than off `FromScaleX.value`. It is deliberately posed on a dial whose window starts at 0 — a ' +
+      'shape the rule still accepts — for two reasons: the fold belongs to the READER and not to the range, so a ' +
+      'control that needed a refused rig could not exist after the rule; and it is the answer to "why not just ' +
+      'document it", since this dial is documented, legal and still poses two positions the same',
+  );
+
+  const foldRefusal = (patch: Record<string, unknown> = {}): string | null =>
+    refusal(sliderPairDirs(worldScaleDial(patch)), sliderPairMotion());
+  const foldedX = foldRefusal();
+  const foldedY = foldRefusal({ property: 'scaleY' });
+  say(
+    'PS152_A_WORLD_SCALE_RANGE_THAT_DIPS_BELOW_0_IS_REFUSED_WITH_THE_MIRROR_IT_WOULD_POSE',
+    foldedX !== null &&
+      foldedY !== null &&
+      foldedX.includes('run from -2.000 to 2.000') &&
+      foldedX.includes('`FromScaleX.value` as `Math.sqrt(a² + c²)`') &&
+      foldedY.includes('`FromScaleY.value` as `Math.sqrt(b² + d²)`') &&
+      foldedX.includes('the bone at -2.000 is read as 2.000 and maps to time 1.000s — the time the bone at 2.000 maps to') &&
+      foldedX.includes('Positions below 0 read as the mirror of positions above it') &&
+      // …and the consequence, computed off the same window: the 2.000 below 0
+      // mirrors onto 0.000..2.000, which is the second half of the animation.
+      foldedX.includes('2.000 of the range below 0 repeats 0.000..2.000, which is 0.500s..1.000s of the animation, in reverse.') &&
+      foldedX.includes('"local": true') &&
+      foldedX.includes('does not dip below 0') &&
+      // The circle's two refusals and this one are three, and none of them says
+      // another's thing — the same check `PS37` makes of the pair, extended to
+      // the reader that arrived after it.
+      !foldedX.includes('below 0°') &&
+      !foldedX.includes('is dead') &&
+      !foldedX.includes('does not cross 0°') &&
+      wrapped !== null &&
+      !wrapped.includes('the mirror of positions above it') &&
+      !wrapped.includes('does not dip below 0'),
+    foldedX === null || foldedY === null
+      ? `the compile went through: scaleX ${foldedX === null ? 'compiled' : 'refused'}, scaleY ${foldedY === null ? 'compiled' : 'refused'}`
+      : `refused with: ${foldedX} — and the scaleY dial with: ${foldedY}`,
+    'the reader is `Math.sqrt(a² + c²)` with the driven field in both terms, so the range below 0 is not wrong by a ' +
+      'little, it is a second copy of the range above it: the author sets -2 and the runtime reads +2. The message has ' +
+      'to carry the mirror rather than a dead arc, because "dead" is what the circle means and it would send an author ' +
+      'looking for the frame their lower half pins to — there is no such frame, it is playing the upper half backwards. ' +
+      'Each property names its OWN reader and its own two matrix terms, since `scaleY` is `sqrt(b² + d²)` and a message ' +
+      'that named `a² + c²` on both would be a copy that drifted the moment it was written',
+  );
+
+  // The two shapes that must keep building, and the line between them. A window
+  // whose bottom is exactly 0 is legal because the floor is REACHED — a bone
+  // whose own scale or whose parent's is 0 reads exactly 0 — and `local: true`
+  // is the repair the message names, which is only worth naming if it works.
+  const bottomAtZero = pairGate(worldScaleDial({ to: 0 }), { swing: scaleSweep(-2, 2) });
+  const readLocally = pairGate(worldScaleDial({ local: true }), { swing: scaleSweep(-2, 2) });
+  const signedDialCells = scaleCells(worldScaleDial({ local: true }), -2, 2);
+  const signedDialWanted = signedDialCells.map((_, i) => SCALE_DIAL.to + (drivenAt(i, -2, 2) - SCALE_DIAL.from) * SCALE_DIAL.scale);
+  const signedDialWorst = Math.max(...signedDialCells.map((cell, i) => Math.abs(cell.time - signedDialWanted[i])));
+  // A thousandth of a unit below the floor, which is a thousand times the slack
+  // the boundary carries and still the smallest edit that crosses the line.
+  const justBelow = foldRefusal({ to: SCALE_DIAL.scale / 1000 });
+  say(
+    'PS153_A_WINDOW_WHOSE_BOTTOM_IS_EXACTLY_0_IS_LEFT_ALONE_AND_THE_REPAIR_THE_MESSAGE_NAMES_DRIVES_THE_NEGATIVE_HALF_TOO',
+    bottomAtZero.failures.length === 0 &&
+      readLocally.failures.length === 0 &&
+      bottomAtZero.passed.includes('A37_SLIDER_CONSTRAINT_EFFECTIVE') &&
+      signedDialWorst <= SCALE_FOLD_FLOOR &&
+      justBelow !== null &&
+      justBelow.includes('run from -0.001 to 3.999'),
+    `the 0.000..4.000 window gates green (${bottomAtZero.passed.length} assertions ran) and the same mapping read ` +
+      `\`local: true\` gates green and applies ${signedDialCells.map((cell) => cell.time.toFixed(3)).join(' ')}s across -2..+2, ` +
+      `its own signed mapping to ${signedDialWorst.toExponential(3)}; a window 0.001 lower is ` +
+      `${justBelow === null ? 'still accepted' : `refused: ${justBelow.slice(0, 160)}…`}`,
+    'a refusal is only worth having if the forms it points at build, and this pair is the whole of what the rule leaves ' +
+      'standing: the floor is reached rather than approached, so a squash axis written 0..4 is correct and untouched, ' +
+      'and `local: true` reads `source.scaleX` signed — the negative half arrives as itself and maps to the first half ' +
+      'of the animation instead of onto the second. The third case is the line: the boundary carries 1e-6 of outward ' +
+      'slack for the division that places it, so what has to be shown is that a window a THOUSANDTH below 0 is still ' +
+      'refused — a slack that swallowed a real range would be a rule that quietly stopped being one',
+  );
+
+  // The other branch, and the arithmetic it is easy to get wrong.
+  const underTheFloor = foldRefusal({ to: 1.5 });
+  // Posed: a dial whose window the reader's output never enters holds ONE frame.
+  // The window here is 2.000..6.000 — legal — and the sweep stays inside ±3, so
+  // every cell whose magnitude is under 2 maps to a time below the animation.
+  const outsideCells = scaleCells(worldScaleDial({ from: 4 }), -3, 3);
+  const outsideWanted = outsideCells.map((_, i) =>
+    Math.max(0, SCALE_DIAL.to + (Math.abs(drivenAt(i, -3, 3)) - 4) * SCALE_DIAL.scale),
+  );
+  const outsideWorst = Math.max(...outsideCells.map((cell, i) => Math.abs(cell.time - outsideWanted[i])));
+  const outsideHeld = outsideCells.filter((cell) => cell.time === 0).length;
+  say(
+    'PS154_A_WINDOW_LYING_WHOLLY_BELOW_0_IS_TOLD_ITS_OWN_WIDTH_AND_THE_ONE_FRAME_IT_HOLDS',
+    underTheFloor !== null &&
+      underTheFloor.includes('run from -6.000 to -2.000') &&
+      underTheFloor.includes('the bone at -6.000 is read as 6.000 and maps to time 3.000s') &&
+      underTheFloor.includes('the whole 4.000 of this range is below 0') &&
+      underTheFloor.includes("reaches none of the animation's 1s") &&
+      underTheFloor.includes('holds the frame at 1.000s') &&
+      // the width is the part of the range under the floor, not the reach to its
+      // far end — `-lowest` here is 6.000, which is the READING and already in
+      // the sentence twice
+      !underTheFloor.includes('6.000 of this range') &&
+      // …and it does not also print the straddling sentence, which would be two
+      // consequences for one range
+      !underTheFloor.includes('repeats') &&
+      foldedX !== null &&
+      !foldedX.includes('reaches none') &&
+      outsideWorst <= SCALE_FOLD_FLOOR &&
+      outsideHeld > 0,
+    underTheFloor === null
+      ? 'a window lying wholly below 0 compiled'
+      : `refused with: ${underTheFloor} — and posed, a legal 2.000..6.000 window swept -3..+3 applies ` +
+        `${outsideCells.map((cell) => cell.time.toFixed(4)).join(' ')}s, its own folded-and-clamped mapping to ` +
+        `${outsideWorst.toExponential(3)} with ${outsideHeld} of ${outsideCells.length} cell(s) held on frame 0.000s`,
+    'issue #434 paid for this arithmetic one reader over: the distance from the boundary to the FAR end equals the ' +
+      'width below it only while the range straddles the boundary, and a range lying wholly outside was told a width ' +
+      'wider than itself. The same trap is here and it is worse disguised — `-lowest` is 6.000, a number the sentence ' +
+      'already prints as the READING, so a wrong width would look like a figure that had been checked. The posed half ' +
+      'is what makes the branch a measurement rather than a claim: a dial whose window the reader never enters is not ' +
+      'merely mapped oddly, it holds one frame at every position a consumer can turn it to, and that is the state this ' +
+      'range would ship in',
+  );
+
+  // =========================================================================
+  // the reader this rule deliberately does NOT reach (#657's second question)
+  // =========================================================================
+  //
+  // 🚨 `shearY` is the other world reader §3.5.2.1 calls bounded, and the card
+  // asks whether it wants the same treatment. Measured, it does not, and the
+  // reason is in the reading rather than in the range: `FromShearY.value` is
+  // `(atan2(d, b) - atan2(c, a)) · radDeg - 90`, a DIFFERENCE of two angles, so
+  // it keeps its sign and wraps — where a magnitude folds. And the seam it wraps
+  // at is `90 - θx`, the bone's own world x-axis angle, which is not a fact the
+  // compiler holds: a consumer may turn that bone with any animation. A range
+  // rule of the circle's shape would therefore have to name a seam it cannot
+  // know, so the three orientations below are what a rule is NOT written on.
+  const SHEAR_DIAL = { from: 0, to: 0.5, scale: 0.001 };
+  const shearRun = (rotation: number, from: number, to: number, steps: number): { reading: number[]; refused: string | null } => {
+    const dirs = writeProbeRig({
+      bones: [...SLIDER_PAIR_BONES, { name: 'shear-dial', parent: 'root', x: 0, y: 80, rotation }],
+      constraints: [pairSlider('shear', 'yaw-pose', 'shear-dial', { property: 'shearY', local: false, ...SHEAR_DIAL })],
+    });
+    const motion = sliderPairMotion({
+      swing: { duration: 1, loop: false, tracks: [{ bone: 'shear-dial', property: 'sheary', keys: [{ t: 0, v: [from] }, { t: 1, v: [to] }] }] },
+    });
+    const refused = refusal(dirs, motion);
+    if (refused !== null) return { reading: [], refused };
+    const data = timelinePosable(dirs, motion).data;
+    // The applied time run back through the slider's own mapping IS the reading,
+    // and the window is 1000 units wide, so both sides of the seam sit inside
+    // the animation and neither is clamped.
+    const reading = Array.from({ length: steps + 1 }, (_, i) => {
+      const time = poseAtSample(data, 'swing', steps, i).findConstraint('shear', Slider)!.appliedPose.time;
+      return (time - SHEAR_DIAL.to) / SHEAR_DIAL.scale + SHEAR_DIAL.from;
+    });
+    return { reading, refused: null };
+  };
+  /**
+   * How close a reading has to sit to one of the two branches to be called that
+   * branch.
+   *
+   * ⚠️ It is a separation threshold and NOT a floor anything attains, so it is
+   * not derived and must not be read as a bound: the two branches are a whole
+   * turn apart, and what the run prints is how far the worst cell actually sat
+   * from the branch it was assigned — the float32-π residue of the two `atan2`
+   * readings and the angles feeding them, which is five orders under this.
+   */
+  const SHEAR_READ_FLOOR = 1e-3;
+  const SHEAR_STEPS = 12;
+  const shearRows: string[] = [];
+  const shearSays: string[] = [];
+  let shearVerdicts = 0;
+  for (const rotation of [0, 45, -60]) {
+    const seam = 90 - rotation;
+    const run = shearRun(rotation, seam - 6, seam + 6, SHEAR_STEPS);
+    if (run.refused !== null) {
+      shearVerdicts++;
+      shearSays.push(`a dial on a bone at ${rotation}° is refused: ${run.refused.slice(0, 120)}…`);
+      continue;
+    }
+    let worst = 0;
+    let drop = 0;
+    for (let i = 0; i <= SHEAR_STEPS; i++) {
+      const driven = seam - 6 + (12 * i) / SHEAR_STEPS;
+      // Below the seam the reading is the driven value; at it and above, one
+      // whole turn down. The sample AT the seam is left out of the comparison —
+      // `atan2` returns ±180 there and which one is a rounding — but it is still
+      // required to be on one of the two branches.
+      const asIs = Math.abs(run.reading[i] - driven);
+      const wrappedDown = Math.abs(run.reading[i] - (driven - 360));
+      if (driven < seam - SHEAR_READ_FLOOR) {
+        worst = Math.max(worst, asIs);
+        if (asIs > SHEAR_READ_FLOOR) {
+          shearRows.push(`bone at ${rotation}°, driven ${driven.toFixed(3)}: read as ${run.reading[i].toFixed(4)}, which is not the driven value`);
+        }
+      } else if (driven > seam + SHEAR_READ_FLOOR) {
+        worst = Math.max(worst, wrappedDown);
+        drop = Math.max(drop, asIs);
+        if (wrappedDown > SHEAR_READ_FLOOR) {
+          shearRows.push(
+            `bone at ${rotation}°, driven ${driven.toFixed(3)}: read as ${run.reading[i].toFixed(4)}, which is neither the driven ` +
+              'value nor one turn below it — the seam is somewhere else',
+          );
+        }
+      } else if (Math.min(asIs, wrappedDown) > SHEAR_READ_FLOOR) {
+        shearRows.push(`bone at ${rotation}°, driven ${driven.toFixed(3)} sits on the seam and read as ${run.reading[i].toFixed(4)}, on neither branch`);
+      }
+    }
+    if (Math.abs(drop - 360) > SHEAR_READ_FLOOR) {
+      shearRows.push(`bone at ${rotation}°: the readings above the seam are ${drop.toFixed(4)} below the driven value, and a turn is 360`);
+    }
+    shearSays.push(`bone at ${rotation}° wraps at ${seam.toFixed(3)}°, by ${drop.toFixed(3)}, both branches to ${worst.toExponential(3)}`);
+  }
+  // The refutation the scale rule needs: this reader is SIGNED, so the fold's own
+  // prediction is wrong here by the whole span. ±60 with the bone unrotated sits
+  // well inside the window on both sides of 0.
+  const signed = shearRun(0, -60, 60, 2);
+  const signedFolded = signed.refused === null && Math.abs(signed.reading[0] - Math.abs(-60)) <= SHEAR_READ_FLOOR;
+  if (signed.refused === null && Math.abs(signed.reading[0] + 60) > SHEAR_READ_FLOOR) {
+    shearRows.push(`the bone at -60° shear reads ${signed.reading[0].toFixed(4)}, which is neither its own value nor its magnitude`);
+  }
+  if (signedFolded) {
+    shearRows.push('the bone at -60° shear reads +60, so this reader folds after all and the scale rule above is written one property short');
+  }
+  const shearHeld = shearRows.length === 0;
+  say(
+    'PS155_THE_WORLD_SHEARY_READER_WRAPS_AT_A_SEAM_THAT_MOVES_WITH_THE_BONE_RATHER_THAN_FOLDING_AT_A_FIXED_VALUE',
+    shearHeld,
+    probeDetail(
+      shearHeld,
+      shearRows,
+      `${shearSays.length} orientation(s) swept ±6° across their own seam at ${SHEAR_STEPS} cells each: ${shearSays.join('; ')}. ` +
+        `⇒ the reading is the driven value below the seam and one whole turn below it above, the seam sits at 90° - the ` +
+        `bone's own rotation, and the same reader hands back ${signed.refused === null ? signed.reading[0].toFixed(3) : 'nothing'} ` +
+        `for a bone sheared -60 — its own value, signed, where a scale reader would return +60. ` +
+        `${shearVerdicts} of the ${shearSays.length} orientation(s) are refused by the compiler today`,
+      (count) => `${count} clause(s) of the shearY reading did not hold:`,
+    ),
+    'issue #657 asks whether `shearY` wants the scale rule, and this is the measurement that says no — twice over. It ' +
+      'does not FOLD: the reader is a difference of two `atan2` calls, so it keeps its sign and a bone sheared -60 reads ' +
+      '-60, where a scale reader returns +60. And what it does instead cannot be refused from a rig spec: the wrap is at ' +
+      '`90° - θx`, the bone\'s own world x-axis angle, which any animation a consumer writes may move — so a range rule ' +
+      'would have to name a seam the compiler does not hold, and would pass the hazardous case (a range wholly inside ' +
+      'the union window, on a bone that turns) while refusing safe ones. ⛔ The compiler\'s verdict is PRINTED rather ' +
+      'than asserted, because a later rule on this reader would be an improvement and a clause requiring today\'s ' +
+      'silence would go red on it',
+  );
+
   return bad;
 }
 

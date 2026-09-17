@@ -2103,15 +2103,25 @@ runtime says so. [measured] against `spine-core` 4.3.13, one reader at a time �
   parent's is 0 reads exactly 0 — so a range whose bottom is exactly 0 is fine.
   🚨 One that dips below it is not *dead*, it **folds**: −2 and +2 read the same
   number, select the same frame and pose the same face, so the axis doubles back
-  on itself about the point it should have passed through. Unlike the `rotate`
-  circle (§3.5.2.2) nothing refuses it — the range compiles and gates green.
-  [measured] `PS138` in `selftest.ts` sweeps both halves and poses them.
+  on itself about the point it should have passed through. Such a range is
+  **refused at compile** (§3.5.2.2, beside the `rotate` circle). [measured]
+  `PS138` sweeps both halves and poses them; `PS151` poses the fold on a dial the
+  refusal leaves standing — a legal `0`..`4` window turned below 0 by a consumer
+  applies the same time at −2 and +2 to the bit, while the same mapping read
+  `local: true` is on its own signed mapping at every cell.
 - **`shearY` under `local: false` wraps like `rotate` does, and worse.** It is a
   difference of two `atan2` calls, so at any one bone orientation the readable
   window is 360° wide — `(−270 − θx, 90 − θx]`, where `θx` is the bone's world
   x-axis angle. The bound in the table is the union over every orientation. ⇒ the
   seam is **not at a fixed value of the driven field**; it is wherever the bone is
   pointing. Prefer `local: true` for a shear axis.
+  ⚠️ **Nothing refuses a `shearY` range, and that is deliberate.** The reader
+  keeps its sign — it does not fold the way the two `scale` readers do — and what
+  it does instead is not a fact a rig spec holds: [measured] `PS155` sweeps three
+  orientations across their own seams and each wraps by exactly one turn at
+  `90° − θx` (90°, 45° and 150° for a dial bone at 0°, 45° and −60°), which any
+  animation a consumer writes can move. A range rule here would have to name a
+  seam the compiler cannot know, and would pass the case that actually breaks.
 - **The bounds are not round numbers because `MathUtils.PI` is `3.1415927`** — the
   float32 π of the reference runtime. Every degree in spine-core passes through
   `180 / 3.1415927`, so a full turn converts as `359.99999468178214` and a bone at
@@ -2232,6 +2242,37 @@ bone is the number you authored — 500° included — because `FromRotate`'s wr
 not on that path at all. The alternative each refusal leaves open is to move the
 range inside the circle (a neutral at 180°, say), which is the only form
 `local: false` can express.
+
+🚨 **The two world `scale` dials have a floor at 0, and a range dipping below it
+is refused too — for a different reason than the circle's.** `FromScaleX.value`
+is `Math.sqrt(a² + c²)` and `FromScaleY.value` is `Math.sqrt(b² + d²)`, a
+**magnitude** with the driven field in both terms, so the positions below 0 are
+not unreachable, they are *already taken*: [measured] with `from: 0, to: 0.5,
+scale: 0.25` over a 1 s animation the window is −2..+2, and the dial at −2.000,
+−1.500, −1.000 and −0.500 applies **1.000000 s, 0.875000 s, 0.750000 s and
+0.625000 s** — the same six decimals +2.000, +1.500, +1.000 and +0.500 apply, and
+the same posed face. The refusal names the arc that is written twice:
+
+> Positions below 0 read as the mirror of positions above it: 2.000 of the range below 0 repeats 0.000..2.000, which is 0.500s..1.000s of the animation, in reverse.
+
+- **A bottom of exactly 0 is legal**, because that floor is *reached*: a 0..4
+  window builds, gates green and sweeps the whole animation. A window a
+  thousandth of a unit below it is refused.
+- **A range lying wholly below 0 gets its own sentence** — *"the whole 4.000 of
+  this range is below 0, so it reaches none of the animation's 1s"* — and that
+  figure is the width **under** the floor, not the reach to the far end, the same
+  distinction [#434](https://github.com/firejune/rigc/issues/434) drew for the
+  circle.
+- **`loop: true` changes nothing here**, unlike the circle: a fold is not a
+  clamp, so there is no loop branch in the message. [measured] the same ±1.500
+  pair applies 1.875000 s either way.
+- **The repairs** are `"local": true`, which reads `source.scaleX` signed so the
+  negative half drives the *first* half of the animation ([measured] −2 →
+  0.000 s, +2 → 1.000 s), or moving the range so it does not dip below 0.
+
+[measured] `PS151`–`PS154` in `selftest.ts`. `shearY` has no such rule and
+§3.5.2.1 says why: that reader keeps its sign and wraps at a seam the bone's own
+orientation places, which a rig spec does not hold.
 
 ⚠️ **An artifact can still carry a dead range** — one exported from the editor,
 hand-edited, or built by an older rigc. `A39` reports that from the artifact side
@@ -4114,6 +4155,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `rig constraint "X": declares "property" but no "bone"` | §3.5.2 — name the driving bone, or key `slider.<name>.time` instead |
 | `rig constraint "X": drives off bone "Y" rotate with "local": false, and the driving values that reach animation "A" (0s..Ds) run from −15.000° to 15.000° … the whole part of the range below 0° is dead` | §3.5.2 — add `"local": true`, which reads the bone's own rotation signed and unwrapped, or move the range so it does not cross 0°. A world rotation is wrapped into `[0, 360]` before the slider maps it, so the negative half of the range is unreachable and pins to one frame |
 | `… run from 300.000° to 500.000° … the whole part of the range past 360° is dead` | §3.5.2 — the same wall at the other end, and the same first repair: `"local": true`, or move the range so it does not run past 360°. `[0, 360]` is the whole of what that reader returns, so a bone turned to 500° is read as 140° and selects a time far from the one the range asked for. Ending *exactly* on 360° is fine — that is the full turn, and it misses nothing: the wrap rounds, so a bone a hair below 0° is read as exactly 360 |
+| `rig constraint "X": drives off bone "Y" scaleX with "local": false, … run from -2.000 to 2.000 … Positions below 0 read as the mirror of positions above it: 2.000 of the range below 0 repeats 0.000..2.000` | §3.5.2 — a world scale reading is `Math.sqrt(a² + c²)`, a magnitude, so the half of the range below 0 is the half above it played backwards. Add `"local": true`, which reads `source.scaleX` signed, or move the range so it does not dip below 0. A bottom of exactly 0 is fine — that floor is reached, not approached |
+| `… run from -6.000 to -2.000 … the whole 4.000 of this range is below 0, so it reaches none of the animation's 1s` | §3.5.2 — the same floor with the range wholly under it: every value the reader can return maps past the animation, so the dial holds one frame at every position. The figure is the width below 0, not the reach to the far end |
 | `skin "S" activates bone "B", but that bone does not declare \`"skin": true\`` | §3.4.1 — the list and the flag are one switch; add the flag or drop the list |
 | `bone "B" declares \`"skin": true\` but no skin activates it` | §3.4.1 — the other half: list it in the skin it belongs to, or drop the flag |
 | `skin "S": uses the long form … and also has a key "X"` | §3.4.1 — move the slot inside `attachments` |
