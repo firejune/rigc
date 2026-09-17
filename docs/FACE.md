@@ -1403,6 +1403,15 @@ shift through the vertex's coordinate instead of its index, so the next
 renumbering cannot move it. A `vertices` run is positional by format — that is
 `fromVertex`'s whole job — and a *generator* of one has no reason to be.
 
+🔒 **And that repair is now measured rather than asserted.** `bun run selftest`
+runs this script again against a rig whose vertices have been renumbered every
+way the compiler accepts — the outline rotated along its own walk, the outline
+reflected, the interior reordered — and requires the run it writes to come back
+as the same geometry once the renumbering is undone, while the run's own
+positions have visibly moved. Nothing here declares that property: the subject
+is any script on any page whose product is a `vertices` run, read off the
+product.
+
 **What comes back from both:**
 
 | | good | (a) one band inverted | (b) mesh folded |
