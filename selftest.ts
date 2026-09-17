@@ -14601,7 +14601,15 @@ function runContourMeshSuite(): number {
           gridSays,
         `a contour at margin ${CONTOUR_MARGIN} over an opaque sheet: ${traced.depth?.undrawn} of ` +
           `${traced.vertices} vertices sample a texel the part does not draw, and the emitted mesh declares hull ` +
-          `${emittedMesh.hull} of ${emittedVertices} vertices — every one of them outline, which is what the ` +
+          // ⚠️ The clause reads its own term (issue #638). "every one of them
+          // outline" IS `emittedMesh.hull === emittedVertices`, and stating it
+          // flat printed it over `hull 14 of 15 vertices` on the run where the
+          // term fell — both operands on the line, four words away.
+          `${emittedMesh.hull} of ${emittedVertices} vertices — ${
+            emittedMesh.hull === emittedVertices
+              ? 'every one of them outline'
+              : `NOT every one of them outline — ${emittedVertices - emittedMesh.hull} short`
+          }, which is what the ` +
           `report attributes the count to${contourSays ? '' : ' — BUT IT DOES NOT SAY SO'}. The whole-window grid ` +
           `beside it says the sheet clause and not the topology one${gridSays ? '' : ' — IT DOES NOT'}, and the ` +
           'interior lattice says neither, because it has nothing to report',
@@ -17631,6 +17639,14 @@ function runDeformWindingSuite(): number {
   // wrap makes it the one most likely to be disturbed — and both must still name
   // `rotate`, drive `rotate`, and carry no discovery clause at all.
   const rotateReaches = [...drivenSurvey.keys, ...wrappedSurvey.keys].map((k) => k.reach);
+  // ⚠️ `RD02`'s line: the three readings the clause asserts, bound once in front
+  // of BOTH branches (issue #638). The sentence used to state all three flat —
+  // "every one still reports `rotate`, drives `rotate`, and adds no clause" —
+  // on a line that then quotes two labels, so a run where the labels carried a
+  // discovery clause printed the clause and the denial of it in one sentence.
+  const namesRotate = rotateReaches.filter((r) => r.property === 'rotate').length;
+  const drivesOwn = rotateReaches.filter((r) => r.drive === null).length;
+  const addsNoClause = rotateReaches.filter((r) => !/driven through/.test(r.label)).length;
   say(
     'DW25_EVERY_ROTATE_SLIDER_STILL_NAMES_ROTATE_AND_SAYS_NOTHING_EXTRA',
     rotateReaches.length === 6 &&
@@ -17641,7 +17657,12 @@ function runDeformWindingSuite(): number {
       drivenSurvey.keys.every((k) => k.reach.label.includes('off knob.rotate (local)')) &&
       wrappedSurvey.keys.every((k) => k.reach.label.includes('off knob.rotate (world)')),
     `${rotateReaches.length} rotate key reach(es) across DW20's \`local: true\` dial and DW21's \`local: false\` ` +
-      `one: every one still reports \`rotate\`, drives \`rotate\`, and adds no clause — ` +
+      `one: ${
+        namesRotate === rotateReaches.length && drivesOwn === rotateReaches.length && addsNoClause === rotateReaches.length
+          ? 'every one still reports `rotate`, drives `rotate`, and adds no clause'
+          : `${namesRotate} still report \`rotate\`, ${drivesOwn} drive it through no second field, and ` +
+            `${addsNoClause} add no clause`
+      } — ` +
       `"${drivenSurvey.keys[0]?.reach.label ?? '?'}" and "${wrappedSurvey.keys[0]?.reach.label ?? '?'}"`,
     'the ranked probe and the artifact cross-check have to leave the answer they already got right exactly where ' +
       'it was. A rule that fixed the three world scale readers by disturbing the six rotate ones would be the ' +
@@ -21308,9 +21329,21 @@ function runMeshRungSuite(): number | null {
       }
     }
     ok = meshes > 0 && drawn > 0;
+    // ⚠️ The red branch reads BOTH of its terms (issue #638). It said "the export
+    // loaded but nothing reached the plate" whichever term fell, and the two are
+    // measured on different frames — `meshes` off frame 0, `drawn` off the
+    // mid-shot — so the run where nothing posed AS A MESH and the plate was
+    // covered anyway printed that sentence beside its own refutation: `posed 0
+    // mesh(es) and drew 1523 px — … nothing reached the plate`.
     detail = ok
       ? `posed ${meshes} mesh attachment(s) and drew ${drawn} px of a mid-shot frame at ${viewport?.width}x${viewport?.height}`
-      : `posed ${meshes} mesh(es) and drew ${drawn} px — the export loaded but nothing reached the plate`;
+      : `posed ${meshes} mesh(es) and drew ${drawn} px — the export loaded and ${
+          meshes === 0
+            ? drawn === 0
+              ? 'neither posed as a mesh nor reached the plate'
+              : 'reached the plate, but nothing in it posed as a mesh'
+            : 'posed meshes, but nothing reached the plate'
+        }`;
   } catch (err) {
     detail = `it still refuses: ${(err as Error).message}`;
   }
@@ -39803,6 +39836,18 @@ function runRunTallySuite(live: RunTally): number {
   // — `B12`'s shape (#636), and `TY14`'s own origin sentence says this is the
   // sharpest of these negatives. The reading is spelled INLINE so the sweep can
   // see the repair.
+  //
+  // ⚠️ The other two clauses of the same sentence were the same defect and were
+  // left standing then (issue #638). "faults in no way" and "all N of them
+  // filled by a value" are `repairedScan.scan.written.length === 0` and
+  // `repairedScan.scan.derived === repairedScan.scan.openings` written flat, and
+  // one plant printed both false beside their own operands — `faults in no way
+  // over 5 opening(s), all 3 of them filled by a value` — while the comment
+  // clause three words later, the one already conditioned, told the truth.
+  // 🔑 The two cannot be separated in one direction and can in the other:
+  // `scanSummaryFigures` increments `derived` OR pushes to `written` for the
+  // same opening, so a typed figure moves both, while an opening followed by
+  // neither a digit nor the end of the chunk moves `derived` alone.
   say(
     'TY11_A_PLANTED_FIGURE_FAULTS_WHILE_THE_PROSE_BESIDE_IT_DOES_NOT',
     plantedScan.scan.written.length === 1 &&
@@ -39813,8 +39858,16 @@ function runRunTallySuite(live: RunTally): number {
       commented.scan.written.length === 0,
     `the planted miniature faults exactly once, on …${plantedScan.scan.written[0] ?? 'nothing'}…, and its ` +
       `${plantedScan.scan.openings} clause opening(s) leave the quoted \`v + 360 === 360\` and the "2 of them" ` +
-      `alone; the same text with that one figure interpolated faults in no way over ${repairedScan.scan.openings} ` +
-      `opening(s), all ${repairedScan.scan.derived} of them filled by a value; and a COMMENT quoting the stale ` +
+      `alone; the same text with that one figure interpolated ${
+        repairedScan.scan.written.length === 0
+          ? 'faults in no way'
+          : `faults ${repairedScan.scan.written.length} time(s): ${repairedScan.scan.written.map((one) => `…${one}…`).join(' | ')}`
+      } over ${repairedScan.scan.openings} ` +
+      `opening(s), ${
+        repairedScan.scan.derived === repairedScan.scan.openings
+          ? `all ${repairedScan.scan.derived}`
+          : `only ${repairedScan.scan.derived}`
+      } of them filled by a value; and a COMMENT quoting the stale ` +
       `figure faults ${
         commented.scan.written.length === 0
           ? 'in no way either'
