@@ -97,6 +97,7 @@ import {
   PhysicsConstraint,
   PhysicsConstraintPose,
   PhysicsConstraintTimeline,
+  Property,
   Sequence,
   Skeleton,
   SkeletonJson,
@@ -14391,6 +14392,1401 @@ function runPathAndSliderSuite(): number {
       'than described, so the control cannot pass on a sweep that never leaves the duration, and the plant is the ' +
       'flag itself: with it removed the same readings land on the held arithmetic, which is the other half of the ' +
       'refusal `PS42` already states for the circle',
+  );
+
+  // --- the residual #644 left, item by item (#652) --------------------------
+  //
+  // ⭐ #644 closed on five branches and counted what it had NOT reached: four
+  // `local: false` reader configurations, 21 of the motion vocabulary's 30
+  // timeline spellings, and three branches of the slider format no card had
+  // touched. The controls below are that list, and the arithmetic is still the
+  // one `PS128` states — what changes is the reading, the target, or how many
+  // dials there are.
+  //
+  // 🔒 Two shapes are refused here exactly as they are above: a prediction taken
+  // by applying the same animation through spine-core, and a tolerance wide
+  // enough to make one unnecessary. Where a reading is inexact the bound is
+  // derived from the runtime's own published constants and the LOCAL twin of the
+  // same rig has to come in at the float64 floor, which is what makes it a bound
+  // rather than slack.
+
+  /** Where the flag's sibling sits, stated ONCE so a bone kind's setup and the rig spec cannot disagree. */
+  const VANE_PLACE = { x: 24, y: 0 };
+  /**
+   * The bones every control below shares.
+   *
+   * 🚨 `turn-a` and `turn-b` are TURNED, and that is the whole reason they
+   * exist: a world `scaleX` reading is `sqrt(a² + c²)`, and on a bone at
+   * rotation 0 that is `|scaleX|` EXACTLY — the root's own shear enters `a`
+   * multiplied by the bone's own sine, which is zero there. A residue that is
+   * not measurable on the fixture is a bound nobody can check.
+   */
+  const RESIDUAL_BONES = [
+    ...SLIDER_KIND_BONES,
+    { name: 'turn-a', parent: 'root', x: 10, y: 0, rotation: 40 },
+    { name: 'turn-b', parent: 'root', x: 30, y: 0, rotation: 25 },
+    { name: 'breath-dial', parent: 'root', x: -60, y: 0 },
+    { name: 'vane', parent: 'root', x: VANE_PLACE.x, y: VANE_PLACE.y, length: 16 },
+    { name: 'rider', parent: 'root', x: 0, y: 0, length: 20 },
+  ];
+  /** `s644Build` and `s644Gate` one bone list over, for the controls that need a turned dial or a fourth one. */
+  const residualBuild = (
+    dials: ComposedDial[],
+    patches: Array<Record<string, unknown>> = [],
+    eased?: string,
+  ): SkeletonData =>
+    timelinePosable(
+      writeProbeRig({ bones: RESIDUAL_BONES, constraints: dials.map((dial, i) => s644Slider(dial, patches[i] ?? {})) }),
+      s644Motion(dials, eased),
+    ).data;
+  const residualGate = (dials: ComposedDial[]): ReturnType<typeof validate> =>
+    gateProbe(
+      writeProbeRig({ bones: RESIDUAL_BONES, constraints: dials.map((dial) => s644Slider(dial)) }),
+      s644Motion(dials),
+    );
+
+  // =========================================================================
+  // 1. the four `local: false` readers #644 did not reach (#652 item 1)
+  // =========================================================================
+  //
+  // 🚨 `PS133` posed world `rotate` and world `x`. The other four are the ones
+  // whose mapping the guide calls non-affine — `sqrt` for the two scales, a
+  // difference of two `atan2` calls for `shearY` — and the question the card
+  // asks is what that does to the BOUND.
+  //
+  // ⭐ Measured, it does nothing to the bound and everything to the DOMAIN. A
+  // `sqrt` is not a curve in the reading: `sqrt(a² + c²)` with the driven field
+  // in both terms is `|value|`, so the negative half of a world scale axis is
+  // not a second half — it is the positive half again, which is the circle's own
+  // shape one reader over. `shearY` folds the same way at 360°, at a seam that
+  // moves with the bone's orientation. So each residue below is still ONE
+  // float32-π term, derived from the runtime's published constants:
+  //
+  //   * `y` — `worldY = parent.c × X + parent.d × Y + parent.worldY`, and the
+  //     root's `c` is `sinDeg(0)`, which is 0 exactly, while its `d` is
+  //     `sinDeg(90)`, which is short of 1 by that constant's own residue;
+  //   * `scaleX` / `scaleY` — the root's `b` enters through the bone's own sine
+  //     and cosine, each at most 1, so one root-shear per unit of scale;
+  //   * `shearY` — TWO `atan2` readings, each perturbed by at most the root's
+  //     shear in radians, so two of that term in degrees.
+  const WORLD_RESIDUE: Record<'y' | 'scaleX' | 'scaleY' | 'shearY', (span: number) => number> = {
+    y: (span) => span * Math.abs(1 - MathUtils.sinDeg(90)),
+    scaleX: (span) => span * SLIDER_ROOT_SHEAR,
+    scaleY: (span) => span * SLIDER_ROOT_SHEAR,
+    shearY: () => 2 * MathUtils.radDeg * SLIDER_ROOT_SHEAR,
+  };
+  type WorldResidualProperty = keyof typeof WORLD_RESIDUE;
+  interface WorldResidualDial extends ComposedDial {
+    property: WorldResidualProperty;
+  }
+  /** The largest magnitude this dial's own range asks the reader for — from the mapping, not from a sweep. */
+  const readerSpan = (dial: ComposedDial): number => Math.max(Math.abs(dial.dial.from), Math.abs(dialTop(dial.dial)));
+  /** The reading residue carried through each dial's mapping and ramp, per property, summed — `PS133`'s shape with this card's four readers in it. */
+  const residualWorldBound = (dials: WorldResidualDial[]): number =>
+    Math.max(
+      ...(['rotate', 'x'] as const).map((field) =>
+        dials.reduce(
+          (sum, dial) =>
+            sum + (WORLD_RESIDUE[dial.property](readerSpan(dial)) * Math.abs(dial.dial.scale) * Math.abs(dial[field])) / GRID_DURATION,
+          0,
+        ),
+      ),
+    ) + s644FloatFloor(dials);
+
+  /**
+   * One pair, the axis whose reader folds, and the axis that has to prove the
+   * fold is the reader's.
+   *
+   * `move` is the displacement applied to one axis of the grid and `back` is
+   * what the reader returns for the displaced value. Applied to the FOLDING
+   * axis, the cells have to stay inside the bound; applied to the other axis of
+   * the same pair, the same pair of functions has to be far outside it — without
+   * that half, "it aliases" is a sentence about a rig where the dial does
+   * nothing.
+   */
+  interface WorldFold {
+    what: string;
+    folds: number;
+    control: number;
+    move: (value: number) => number;
+    back: (value: number) => number;
+    /** True when the displaced reading crosses the reader's `atan2` branch, which costs ONE more float32-π term than an in-range cell does. */
+    wraps: boolean;
+  }
+  /** The in-range bound plus that branch term, carried through the folding dial's own mapping — derived, not widened. */
+  const residualFoldBound = (dials: WorldResidualDial[], fold: WorldFold): number =>
+    residualWorldBound(dials) +
+    (fold.wraps
+      ? Math.max(
+          ...(['rotate', 'x'] as const).map(
+            (field) => (SLIDER_WRAP_RESIDUE * Math.abs(dials[fold.folds].dial.scale) * Math.abs(dials[fold.folds][field])) / GRID_DURATION,
+          ),
+        )
+      : 0);
+  const WORLD_RESIDUAL_PAIRS: Array<{ dials: [WorldResidualDial, WorldResidualDial]; fold: WorldFold }> = [
+    {
+      dials: [
+        { name: 'yaw', bone: 'yaw-dial', property: 'y', dial: { from: 0, to: 0, scale: 0.02 }, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 8, local: false },
+        { name: 'pitch', bone: 'turn-b', property: 'scaleX', dial: { from: 1, to: 0, scale: 0.5 }, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 10, local: false },
+      ],
+      fold: {
+        what: 'a world scale reading is `sqrt(a² + c²)`, so the dial negated reads its own magnitude',
+        folds: 1,
+        control: 0,
+        move: (value) => -value,
+        back: (value) => Math.abs(value),
+        wraps: false,
+      },
+    },
+    {
+      dials: [
+        { name: 'yaw', bone: 'turn-a', property: 'scaleY', dial: { from: 1, to: 0, scale: 0.25 }, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 8, local: false },
+        { name: 'pitch', bone: 'turn-b', property: 'shearY', dial: { from: 0, to: 0, scale: 0.02 }, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 10, local: false },
+      ],
+      fold: {
+        what: 'a world `shearY` reading is a difference of two `atan2` calls, so a whole turn below the range reads as the range',
+        folds: 1,
+        control: 0,
+        move: (value) => value - 360,
+        back: (value) => value + 360,
+        wraps: true,
+      },
+    },
+  ];
+
+  const residualReaderRows: string[] = [];
+  const residualReaderSays: string[] = [];
+  for (const { dials: pair, fold } of WORLD_RESIDUAL_PAIRS) {
+    const dials: WorldResidualDial[] = [...pair];
+    const rows = s644Rows(dials);
+    const floor = s644FloatFloor(dials);
+    const bound = residualWorldBound(dials);
+    const gate = residualGate(dials);
+    const data = residualBuild(dials);
+    const cells = s644Sweep(data, dials, rows);
+    const worst = s644Error(s644Worst(cells));
+    const label = `${pair[0].property} x ${pair[1].property}`;
+    // The same two mappings and amplitudes read locally: the lower half of the bound.
+    const twin = dials.map((dial) => ({ ...dial, local: true }));
+    const twinWorst = s644Error(s644Worst(s644Sweep(residualBuild(twin), twin, rows)));
+    // The fold, and the axis that has to refuse the same prediction.
+    const displaced = (index: number): number[][] => rows.map((at) => at.map((value, i) => (i === index ? fold.move(value) : value)));
+    const readBack = (index: number) => (at: number[]): number[] => at.map((value, i) => (i === index ? fold.back(value) : value));
+    const foldedCells = s644Sweep(data, dials, displaced(fold.folds), undefined, readBack(fold.folds));
+    const controlCells = s644Sweep(data, dials, displaced(fold.control), undefined, readBack(fold.control));
+    const foldedWorst = s644Error(s644Worst(foldedCells));
+    const controlWorst = s644Error(s644Worst(controlCells));
+    // The plant, data: the later slider left at the format default, which has its
+    // own closed form — the same sum with the first dial's weight set to 0.
+    const plantData = residualBuild(dials, [{}, { additive: false }]);
+    const plantAsErasing = s644Sweep(plantData, dials, rows, [0, 1]);
+    const plantAsSum = s644Sweep(plantData, dials, rows);
+    if (gate.failures.length > 0 || !gate.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')) {
+      residualReaderRows.push(
+        `${label}: the fixture does not gate green, so every cell of it reads a rig the validator refuses: ` +
+          `${gate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ') || 'A40 did not run on it'}`,
+      );
+    }
+    for (const cell of cells.filter((one) => s644Error(one) > bound).slice(0, 3)) {
+      residualReaderRows.push(`${label} — ${s644Says(dials, cell)}, past the ${bound.toExponential(3)} the readers can account for`);
+    }
+    if (worst <= floor) {
+      residualReaderRows.push(
+        `${label}: the world readers cost this grid ${worst.toExponential(3)}, at or under the float64 floor of ` +
+          `${floor.toExponential(3)} — the bound above is then satisfied by a fixture that never tests it`,
+      );
+    }
+    if (twinWorst > floor) {
+      residualReaderRows.push(
+        `${label}: the same two mappings read \`local: true\` are off by ${twinWorst.toExponential(3)}, past the float64 floor ` +
+          `of ${floor.toExponential(3)} — so the gap above is not the world reader's`,
+      );
+    }
+    const folded = residualFoldBound(dials, fold);
+    if (foldedWorst > folded) {
+      residualReaderRows.push(
+        `${label}: ${fold.what} — but predicted from what the reader returns the displaced cells are off by ` +
+          `${foldedWorst.toExponential(3)}, past the ${folded.toExponential(3)} bound`,
+      );
+    }
+    if (controlWorst <= folded) {
+      residualReaderRows.push(
+        `${label}: the SAME displacement on the \`${pair[fold.control].property}\` axis is off by only ` +
+          `${controlWorst.toExponential(3)}, inside the bound — so this pair's fold is not a property of its reader and the clause above names nothing`,
+      );
+    }
+    if (plantAsErasing.filter((cell) => s644Error(cell) > bound).length > 0) {
+      residualReaderRows.push(
+        `${label}: with the later slider at the format default the grid is not the erasing arithmetic either — ` +
+          `${s644Says(dials, s644Worst(plantAsErasing))}`,
+      );
+    }
+    if (plantAsSum.filter((cell) => s644Error(cell) > bound).length === 0) {
+      residualReaderRows.push(`${label}: the later slider left at the format default moved no cell, so this comparison is one that plant is blind to`);
+    }
+    residualReaderSays.push(
+      `${label} worst ${worst.toExponential(3)} over ${cells.length} cells against a derived reader bound of ${bound.toExponential(3)} ` +
+        `(float64 floor ${floor.toExponential(3)}, the same two mappings read \`local: true\` ${twinWorst.toExponential(3)}); ` +
+        `${displaced(fold.folds).length} displaced cell(s) of the \`${pair[fold.folds].property}\` axis read back at ` +
+        `${foldedWorst.toExponential(3)} while the same displacement on \`${pair[fold.control].property}\` is ${controlWorst.toExponential(3)} away; ` +
+        `the format default on the later slider moves ${plantAsSum.filter((cell) => s644Error(cell) > bound).length} of ${plantAsSum.length} cells onto the erasing arithmetic`,
+    );
+  }
+  const residualReadersHeld = residualReaderRows.length === 0;
+  say(
+    'PS138_THE_FOUR_WORLD_READERS_LEFT_COMPOSE_BY_THE_SAME_SUM_AND_THEIR_NON_AFFINE_HALF_IS_A_FOLD_RATHER_THAN_A_CURVE',
+    residualReadersHeld,
+    probeDetail(
+      residualReadersHeld,
+      residualReaderRows,
+      `${WORLD_RESIDUAL_PAIRS.length} pairs of \`local: false\` dials — the four readers #644 did not reach, two per pair — ` +
+        `each swept at ${s644Rows([...WORLD_RESIDUAL_PAIRS[0].dials]).length} cells of its own two mappings: ${residualReaderSays.join('; ')}. ` +
+        '⇒ the composition is the same closed-form sum, the residue is ONE float32-π term per reader derived from ' +
+        '`sinDeg(90)` and `cosDeg(90)`, and what `sqrt` and the `atan2` window do is FOLD the axis rather than bend it — ' +
+        'the displaced half is not unreachable, it poses as the half it aliases onto',
+      (count) => `${count} clause(s) of the world-reading measurement did not hold:`,
+    ),
+    'issue #652 item 1: `PS133` posed two of the twelve `property` x `local` configurations under two dials and #644\'s ' +
+      'own §10 named the four it left — the ones whose world mapping is not affine, which is the reason to expect ' +
+      'something there. What was unmeasured is two things of opposite kind: whether the composition is still the sum ' +
+      '(it is), and what the non-affinity costs. The second is the finding: it costs nothing in the bound and it ' +
+      'takes away half the domain, so a squash axis authored through negative scale gets the mirror of the dial ' +
+      'without a word from anything. Each pair carries its own negative control — the same displacement on the OTHER ' +
+      'axis, which must not read back — because "it aliases" is unfalsifiable on a dial that moves nothing',
+  );
+
+  // =========================================================================
+  // 2. a dial that moves another dial's authority (#652 item 2)
+  // =========================================================================
+  //
+  // 🚨 A slider's own `mix` is a timeline, and `SliderMixTimeline.additive` is
+  // TRUE — so one slider's animation can key another slider's authority, and
+  // nothing in this tree had ever posed it. What it decides is whether
+  // authority itself composes, which is a sentence `docs/FACE.md` §8 was not
+  // allowed to write until there was a measurement under it.
+  //
+  // ⭐ It composes, and it composes as a PRODUCT rather than a sum — the driven
+  // dial's whole contribution is scaled by the driving dial's reading:
+  //
+  //     posed = setup + share_driver x amp_driver              the driver's own ramp
+  //                   + share_driver x share_driven x amp_driven
+  //
+  // ⚠️ And it only composes DOWNWARD through the `constraints` array. A slider
+  // reads its own `appliedPose.mix` when its turn comes, and the array is the
+  // update order, so a dial that keys the mix of a slider EARLIER than itself
+  // writes a value that slider has already stopped reading: the pose is reset
+  // from the constraint's own pose on the next frame and the second axis is
+  // dead at every cell, with a green gate over it. That is the same rule
+  // `PS135` measured for a target that ignores `add`, arrived at for a
+  // completely different reason — there it is who writes last, here it is who
+  // READS last.
+  //
+  // 🔒 A40 does not compare such a pair at all: a slider whose `mix` is keyed
+  // leaves its `authoritative` set by construction. The verdict is printed
+  // rather than asserted, because a version of A40 that did reach this case
+  // would be an improvement and a clause requiring today's SKIP would go red on
+  // it.
+  const AUTHORITY_TOP = 1;
+  /** `gridRamp` with extra tracks on the same animation — the driver keys the flag AND the other slider's mix. */
+  const rampCarrying = (rotate: number, x: number, extra: Array<Record<string, unknown>>): Record<string, unknown> => ({
+    duration: GRID_DURATION,
+    loop: false,
+    tracks: [
+      { bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [rotate] }] },
+      { bone: 'flag', property: 'translate', keys: [{ t: 0, v: [0, 0] }, { t: GRID_DURATION, v: [x, 0] }] },
+      ...extra,
+    ],
+  });
+  const AUTHORITY_DRIVER: ComposedDial = {
+    name: 'yaw', bone: 'yaw-dial', property: 'rotate', dial: GRID_YAW, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 8,
+  };
+  const AUTHORITY_DRIVEN: ComposedDial = {
+    name: 'pitch', bone: 'pitch-dial', property: 'rotate', dial: GRID_PITCH, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 10,
+  };
+  const authorityMotion = (): Record<string, unknown> => ({
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      [`${AUTHORITY_DRIVER.name}-pose`]: rampCarrying(AUTHORITY_DRIVER.rotate, AUTHORITY_DRIVER.x, [
+        { slider: AUTHORITY_DRIVEN.name, property: 'mix', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [AUTHORITY_TOP] }] },
+      ]),
+      [`${AUTHORITY_DRIVEN.name}-pose`]: rampCarrying(AUTHORITY_DRIVEN.rotate, AUTHORITY_DRIVEN.x, []),
+    },
+  });
+  /** The pair in one array order, with whatever the case patches over the driven slider. */
+  const authorityRun = (
+    order: ComposedDial[],
+    drivenPatch: Record<string, unknown>,
+  ): { data: SkeletonData; report: ReturnType<typeof validate> } => {
+    const dirs = writeProbeRig({
+      bones: RESIDUAL_BONES,
+      constraints: order.map((dial) => s644Slider(dial, dial === AUTHORITY_DRIVEN ? drivenPatch : {})),
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(authorityMotion(), null, 2)}\n`);
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return {
+      data: posableFromText(built.skeletonText, built.atlasText, dirs.outDir).data,
+      report: validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: dirs.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      }),
+    };
+  };
+  const AUTHORITY_DIALS = [AUTHORITY_DRIVER, AUTHORITY_DRIVEN];
+  const authorityRows = s644Rows(AUTHORITY_DIALS);
+  const authorityFloor = s644FloatFloor(AUTHORITY_DIALS);
+  /**
+   * The closed form, with one weight per dial: the driver at 1, the driven at
+   * whatever authority it was handed. A plant states its own weights and the
+   * comparison is then the arithmetic rather than "something moved".
+   */
+  const authorityCells = (
+    data: SkeletonData,
+    drivenWeight: (at: number[]) => number,
+  ): Array<{ at: number[]; rotate: number; x: number; wantRotate: number; wantX: number; mix: number }> => {
+    const setup = data.findBone('flag')!.setupPose;
+    return authorityRows.map((at) => {
+      const skeleton = s644Skeleton(data, AUTHORITY_DIALS, at);
+      const flag = skeleton.bones.find((bone) => bone.data.name === 'flag')!.appliedPose;
+      const driver = s644Share(at[0], AUTHORITY_DRIVER);
+      const driven = s644Share(at[1], AUTHORITY_DRIVEN) * drivenWeight(at);
+      return {
+        at,
+        rotate: flag.rotation,
+        x: flag.x,
+        wantRotate: setup.rotation + driver * AUTHORITY_DRIVER.rotate + driven * AUTHORITY_DRIVEN.rotate,
+        wantX: setup.x + driver * AUTHORITY_DRIVER.x + driven * AUTHORITY_DRIVEN.x,
+        mix: skeleton.findConstraint(AUTHORITY_DRIVEN.name, Slider)!.appliedPose.mix,
+      };
+    });
+  };
+  const authorityOff = (
+    cells: ReturnType<typeof authorityCells>,
+  ): Array<{ at: number[]; rotate: number; x: number; wantRotate: number; wantX: number; mix: number }> =>
+    cells.filter((cell) => Math.max(Math.abs(cell.rotate - cell.wantRotate), Math.abs(cell.x - cell.wantX)) > authorityFloor);
+  const authoritySays = (cell: ReturnType<typeof authorityCells>[number]): string =>
+    `${AUTHORITY_DIALS.map((dial, i) => `${dial.name} ${cell.at[i].toFixed(3)}°`).join(' x ')}: flag rotate posed ` +
+    `${cell.rotate.toFixed(6)}° and the arithmetic requires ${cell.wantRotate.toFixed(6)}°; flag x posed ` +
+    `${cell.x.toFixed(6)} and requires ${cell.wantX.toFixed(6)} (driven mix ${cell.mix.toFixed(6)})`;
+
+  const declared = authorityRun([AUTHORITY_DRIVER, AUTHORITY_DRIVEN], { mix: 0 });
+  const authorityDeclared = authorityCells(declared.data, (at) => s644Share(at[0], AUTHORITY_DRIVER));
+  // The array order swapped: the driven slider reads its mix BEFORE the driver
+  // writes it, so its own closed form is the driver's contribution alone.
+  const swapped = authorityRun([AUTHORITY_DRIVEN, AUTHORITY_DRIVER], { mix: 0 });
+  const authoritySwapped = authorityCells(swapped.data, () => 0);
+  // The plant, data: the driven slider's own `mix` left at the format default.
+  // Its authority is then `1 + share_driver`, which is not the product.
+  const authorityPlant = authorityRun([AUTHORITY_DRIVER, AUTHORITY_DRIVEN], {});
+  const authorityPlanted = authorityCells(authorityPlant.data, (at) => 1 + s644Share(at[0], AUTHORITY_DRIVER));
+  const authorityAsPlain = authorityCells(declared.data, () => 1);
+  const authorityMixOff = authorityDeclared.filter(
+    (cell) => Math.abs(cell.mix - s644Share(cell.at[0], AUTHORITY_DRIVER) * AUTHORITY_TOP) > authorityFloor,
+  );
+  const authorityProbes: string[] = [
+    ...(declared.report.failures.length === 0
+      ? []
+      : [`the fixture does not gate green: ${declared.report.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+    ...authorityOff(authorityDeclared).slice(0, 3).map(authoritySays),
+    ...(authorityMixOff.length === 0
+      ? []
+      : [`${authorityMixOff.length} of ${authorityDeclared.length} cells put the driven slider's own \`mix\` somewhere other than the driving dial's reading`]),
+    ...(authorityOff(authorityAsPlain).length > 0
+      ? []
+      : ['the product and the plain sum agree on every cell of this grid, so nothing here distinguishes composed authority from two ordinary dials']),
+    ...(authorityOff(authoritySwapped).length === 0
+      ? []
+      : [`with the array order swapped the grid is not the driver alone either — ${authoritySays(authorityOff(authoritySwapped)[0])}`]),
+    ...(authorityOff(authorityPlanted).length === 0
+      ? []
+      : [`with the driven slider's \`mix\` left at the format default the grid is not \`1 + share\` authority either — ${authoritySays(authorityOff(authorityPlanted)[0])}`]),
+    ...(authorityOff(authorityCells(authorityPlant.data, (at) => s644Share(at[0], AUTHORITY_DRIVER))).length > 0
+      ? []
+      : ['the format default on the driven slider moved no cell, so this comparison is one that plant is blind to']),
+  ];
+  const authorityHeld = authorityProbes.length === 0;
+  const authoritySkip = declared.report.skipped.find((one) => one.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET');
+  say(
+    'PS139_A_SLIDER_THAT_KEYS_ANOTHER_SLIDERS_MIX_MULTIPLIES_IT_AND_ONLY_DOWNWARD_THROUGH_THE_CONSTRAINTS_ARRAY',
+    authorityHeld,
+    probeDetail(
+      authorityHeld,
+      authorityProbes,
+      `${authorityDeclared.length} cells of two dials where the first keys the second's own \`mix\` from 0 to ` +
+        `${AUTHORITY_TOP}: the pose is \`setup + share_driver x amp_driver + share_driver x share_driven x amp_driven\` at ` +
+        `every one of them, worst ${Math.max(...authorityDeclared.map((cell) => Math.max(Math.abs(cell.rotate - cell.wantRotate), Math.abs(cell.x - cell.wantX)))).toExponential(3)} ` +
+        `against a float64 floor of ${authorityFloor.toExponential(3)}, and the driven slider's own \`mix\` reads back as the ` +
+        `driving dial's own reading at every cell. Two dials with no such key would be the plain sum, which differs on ` +
+        `${authorityOff(authorityAsPlain).length} of ${authorityAsPlain.length} cells. ⚠️ With the \`constraints\` array order SWAPPED the ` +
+        `driven dial is dead — the pose is the driver's contribution alone at every cell — and with the driven slider's ` +
+        `\`mix\` left at the format default its authority is \`1 + share\` instead of \`share\`. A40 ${authoritySkip ? `SKIPS this rig: ${authoritySkip.reason}` : 'did not skip this rig'}`,
+      (count) => `${count} reading(s) of composed authority are not the arithmetic:`,
+    ),
+    'issue #652 item 2: the card asks whether authority itself composes, and says nothing in FACE §8 may claim it does ' +
+      'until this is posed. It does, as a product — which is a different shape from every other composition in this ' +
+      'file, where two dials ADD. The order clause is the one a face author cannot guess: a dial that moves the ' +
+      'authority of a slider earlier in the array writes a number that slider has already read past, so the second ' +
+      'axis is silently dead. Nothing gates that, because a slider whose `mix` is keyed leaves A40\'s population by ' +
+      'construction — which is measured here as the SKIP it prints rather than asserted, so a stronger A40 would not ' +
+      'turn this control red',
+  );
+
+  // =========================================================================
+  // 3. the time-driven slider (#652 item 3), and the spelling that refutes A40's message
+  // =========================================================================
+  //
+  // 🚨 `slider.<name>.time` is the OTHER shape of the constraint — no bone, and
+  // the time is the slider's own pose value. Two things about it were
+  // unmeasured and one of them contradicts a sentence this repository ships.
+  //
+  // ⭐ **`SliderTimeline.additive` is false and its `apply` honours `add`
+  // anyway.** Most non-additive timelines either hardcode `false` in the call
+  // (`PathConstraintSpacingTimeline`), zero `add` first
+  // (`PhysicsConstraintTimeline`) or never read it at all
+  // (`IkConstraintTimeline`, `RGBATimeline`); this one passes the argument
+  // straight through to `getAbsoluteValue`. So two additive sliders keying one
+  // slider's `time` SUM — measured below — while `A40` reads
+  // `Timeline.additive`, refuses the rig, and says in so many words that
+  // `"additive": true` *would NOT compose these*. The refusal is a false
+  // positive and the sentence is false.
+  // ⚠️ **It is not the only one, and this comment claimed it was until the
+  // census measured otherwise.** `PathConstraintMixTimeline` honours `add` the
+  // same way (`PS143`), so the count belongs to a run rather than to a sentence
+  // here — which is why the figure below is the census's and this paragraph
+  // states no number.
+  // ⚠️ The refusal is REPORTED here and not asserted: a repaired A40 must not
+  // turn this control red. What is asserted is the arithmetic.
+  //
+  // ⭐ And the bone-less branch takes neither of `Slider.update`'s two time
+  // repairs: `Math.max(0, time)` and the loop wrap are both inside
+  // `if (bone !== null)`. A driven time below zero is therefore applied as
+  // itself, where `Animation.apply` leaves the pose untouched — which is NOT
+  // the same as frame 0 whenever the animation's first key differs from the
+  // setup pose, and that is the second fixture.
+  const TIME_DRIVEN_TO = [0.4, 0.25];
+  const TIME_DRIVEN_ROTATE = 60;
+  const TIME_DRIVEN_X = -16;
+  const TIME_DRIVEN_DIALS: ComposedDial[] = [
+    { name: 'yaw', bone: 'yaw-dial', property: 'rotate', dial: GRID_YAW, rotate: 0, x: 0, steps: 8 },
+    { name: 'pitch', bone: 'pitch-dial', property: 'rotate', dial: GRID_PITCH, rotate: 0, x: 0, steps: 10 },
+  ];
+  /** The carried slider: bone-less, so its time is a pose value and nothing else. */
+  const carriedSlider = { name: 'carried', type: 'slider', animation: 'carried-pose', additive: true, time: 0 };
+  const timeDrivenRun = (
+    place: 'after' | 'before',
+    to: number[],
+    first: number,
+  ): { data: SkeletonData; report: ReturnType<typeof validate> } => {
+    const sliders = TIME_DRIVEN_DIALS.map((dial) => s644Slider(dial));
+    const constraints = place === 'after' ? [...sliders, carriedSlider] : [carriedSlider, ...sliders];
+    const dirs = writeProbeRig({ bones: RESIDUAL_BONES, constraints });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-motion/1',
+          archetype: 'static_probe',
+          cut: 'static_probe',
+          easings: {},
+          animations: {
+            ...Object.fromEntries(
+              TIME_DRIVEN_DIALS.map((dial, i) => [
+                `${dial.name}-pose`,
+                {
+                  duration: GRID_DURATION,
+                  loop: false,
+                  tracks: [{ slider: 'carried', property: 'time', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [to[i]] }] }],
+                },
+              ]),
+            ),
+            'carried-pose': {
+              duration: GRID_DURATION,
+              loop: false,
+              tracks: [
+                { bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [first] }, { t: GRID_DURATION, v: [TIME_DRIVEN_ROTATE] }] },
+                { bone: 'flag', property: 'translate', keys: [{ t: 0, v: [0, 0] }, { t: GRID_DURATION, v: [TIME_DRIVEN_X, 0] }] },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return {
+      data: posableFromText(built.skeletonText, built.atlasText, dirs.outDir).data,
+      report: validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: dirs.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      }),
+    };
+  };
+  const timeDrivenRows = s644Rows(TIME_DRIVEN_DIALS);
+  /**
+   * 🚨 The float64 floor is not the floor here, and the reason is one the rest
+   * of this file has never had to name: `Timeline.frames` is a **Float32Array**
+   * (`Utils.newFloatArray`), so a driven time a motion spec states at six
+   * decimals is read back at float32 precision. `Math.fround` is exactly that
+   * rounding, so the cost is derived from the fixture's own keyed values rather
+   * than measured — and the ramp then multiplies it by its own rate.
+   */
+  const timeDrivenFloor = (to: number[], first: number): number =>
+    (Math.abs(TIME_DRIVEN_ROTATE) + Math.abs(TIME_DRIVEN_X)) * Number.EPSILON * GRID_FLOAT_OPS +
+    (to.reduce((sum, one) => sum + Math.abs(Math.fround(one) - one), 0) *
+      Math.max(Math.abs(TIME_DRIVEN_ROTATE - first), Math.abs(TIME_DRIVEN_X))) /
+      GRID_DURATION;
+  /** What the carried animation puts on the flag at a driven time — the format's own 2-key ramp, held past its end and absent before its start. */
+  const carriedPose = (time: number, first: number): { rotate: number; x: number } | null => {
+    if (time < 0) return null;
+    const t = Math.min(1, time / GRID_DURATION);
+    return { rotate: first + (TIME_DRIVEN_ROTATE - first) * t, x: TIME_DRIVEN_X * t };
+  };
+  const timeDrivenSweep = (
+    data: SkeletonData,
+    weights: number[],
+    to: number[],
+    first: number,
+  ): Array<{ at: number[]; time: number; rotate: number; x: number; wantRotate: number; wantX: number }> => {
+    const setup = data.findBone('flag')!.setupPose;
+    return timeDrivenRows.map((at) => {
+      const skeleton = s644Skeleton(data, TIME_DRIVEN_DIALS, at);
+      const flag = skeleton.bones.find((bone) => bone.data.name === 'flag')!.appliedPose;
+      const time = TIME_DRIVEN_DIALS.reduce((sum, dial, i) => sum + weights[i] * s644Share(at[i], dial) * to[i], 0);
+      const applied = carriedPose(time, first);
+      return {
+        at,
+        time: skeleton.findConstraint('carried', Slider)!.appliedPose.time,
+        rotate: flag.rotation,
+        x: flag.x,
+        wantRotate: setup.rotation + (applied === null ? 0 : applied.rotate),
+        wantX: setup.x + (applied === null ? 0 : applied.x),
+      };
+    });
+  };
+  const timeDrivenOff = (cells: ReturnType<typeof timeDrivenSweep>, floor: number): ReturnType<typeof timeDrivenSweep> =>
+    cells.filter((cell) => Math.max(Math.abs(cell.rotate - cell.wantRotate), Math.abs(cell.x - cell.wantX)) > floor);
+  const timeDrivenSays = (cell: ReturnType<typeof timeDrivenSweep>[number]): string =>
+    `${TIME_DRIVEN_DIALS.map((dial, i) => `${dial.name} ${cell.at[i].toFixed(3)}°`).join(' x ')}: the carried slider holds time ` +
+    `${cell.time.toFixed(6)}, flag rotate posed ${cell.rotate.toFixed(6)}° and the arithmetic requires ` +
+    `${cell.wantRotate.toFixed(6)}°; flag x posed ${cell.x.toFixed(6)} and requires ${cell.wantX.toFixed(6)}`;
+
+  const SUM_FLOOR = timeDrivenFloor(TIME_DRIVEN_TO, 0);
+  const timeAfter = timeDrivenRun('after', TIME_DRIVEN_TO, 0);
+  const timeAsSum = timeDrivenSweep(timeAfter.data, [1, 1], TIME_DRIVEN_TO, 0);
+  const timeAsLater = timeDrivenSweep(timeAfter.data, [0, 1], TIME_DRIVEN_TO, 0);
+  const timeBefore = timeDrivenRun('before', TIME_DRIVEN_TO, 0);
+  const timeAsDead = timeDrivenSweep(timeBefore.data, [0, 0], TIME_DRIVEN_TO, 0);
+  const timeDrivenPlant = timeDrivenRun('after', [TIME_DRIVEN_TO[1], TIME_DRIVEN_TO[1]], 0);
+  // The unclamped branch: a driven time that goes negative, over an animation
+  // whose FIRST key is not the setup pose, so "held at frame 0" and "not applied
+  // at all" are two different numbers rather than one.
+  const UNCLAMPED_FIRST = 10;
+  const UNCLAMPED_TO = [-0.5, 1.5];
+  const unclamped = timeDrivenRun('after', UNCLAMPED_TO, UNCLAMPED_FIRST);
+  const unclampedCells = timeDrivenSweep(unclamped.data, [1, 1], UNCLAMPED_TO, UNCLAMPED_FIRST);
+  const unclampedNegative = unclampedCells.filter((cell) => cell.time < 0);
+  const unclampedFloor = timeDrivenFloor(UNCLAMPED_TO, UNCLAMPED_FIRST);
+  const unclampedAsClamped = unclampedCells.map((cell) => {
+    const held = carriedPose(Math.max(0, cell.time), UNCLAMPED_FIRST)!;
+    return Math.abs(cell.rotate - (unclamped.data.findBone('flag')!.setupPose.rotation + held.rotate));
+  });
+  const timeDrivenProbes: string[] = [
+    ...timeDrivenOff(timeAsSum, SUM_FLOOR).slice(0, 3).map(timeDrivenSays),
+    ...(timeDrivenOff(timeAsLater, SUM_FLOOR).length > 0
+      ? []
+      : ['"the later slider alone" and the sum agree on every cell of this grid, so the measurement refutes nothing']),
+    ...(timeDrivenOff(timeAsDead, SUM_FLOOR).length === 0
+      ? []
+      : [`with the carried slider FIRST in the array the grid is not the setup pose either — ${timeDrivenSays(timeDrivenOff(timeAsDead, SUM_FLOOR)[0])}`]),
+    ...(timeDrivenSweep(timeBefore.data, [1, 1], TIME_DRIVEN_TO, 0).filter(
+      (cell) => Math.max(Math.abs(cell.rotate - cell.wantRotate), Math.abs(cell.x - cell.wantX)) > SUM_FLOOR,
+    ).length > 0
+      ? []
+      : ['the array order moved no cell, so the order clause is about nothing']),
+    ...(timeDrivenOff(timeDrivenSweep(timeDrivenPlant.data, [1, 1], TIME_DRIVEN_TO, 0), SUM_FLOOR).length > 0
+      ? []
+      : ['the two driven times made equal moved no cell, so this comparison cannot see which slider wrote what']),
+    ...(unclampedNegative.length > 0
+      ? []
+      : ['no cell of the unclamped fixture drives the carried time below zero, so the clause about that branch is about no cell']),
+    ...timeDrivenOff(unclampedCells, unclampedFloor).slice(0, 2).map(timeDrivenSays),
+    ...(Math.max(...unclampedAsClamped) > unclampedFloor
+      ? []
+      : ['a carried time clamped at zero would pose the same as one that is not, so this fixture cannot see the missing clamp']),
+  ];
+  const timeDrivenHeld = timeDrivenProbes.length === 0;
+  const timeDrivenRefusal = timeAfter.report.failures.find((one) => one.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET');
+  say(
+    'PS140_A_BONE_LESS_SLIDERS_TIME_IS_THE_SUM_OF_EVERY_DIAL_KEYING_IT_AND_TAKES_NEITHER_OF_THE_BONE_BRANCHS_REPAIRS',
+    timeDrivenHeld,
+    probeDetail(
+      timeDrivenHeld,
+      timeDrivenProbes,
+      `${timeAsSum.length} cells of two additive dials whose animations both key one bone-less slider's \`time\`: the ` +
+        `carried time is the SUM of what each dial reaches (${TIME_DRIVEN_TO.map((one) => one.toFixed(2)).join(' and ')}) and the flag is that ` +
+        `animation posed at it, worst ${Math.max(...timeAsSum.map((cell) => Math.max(Math.abs(cell.rotate - cell.wantRotate), Math.abs(cell.x - cell.wantX)))).toExponential(3)} ` +
+        `against a float32-frame floor of ${SUM_FLOOR.toExponential(3)}. "The later slider alone" — which is what A40 ` +
+        `predicts — differs on ${timeDrivenOff(timeAsLater, SUM_FLOOR).length} of ${timeAsLater.length} cells. ⚠️ A40 ` +
+        `${timeDrivenRefusal ? 'REFUSES this rig anyway' : 'does not refuse this rig'}, reading \`Timeline.additive\`, which is false for ` +
+        '`SliderTimeline` although its `apply` passes `add` through to `getAbsoluteValue` — reported and not gated, so a ' +
+        `repair cannot turn this red. With the carried slider FIRST in the array every cell is the setup pose while its ` +
+        `stored time still shows the sum. ⭐ ${unclampedNegative.length} cell(s) of a second fixture drive the time BELOW zero, where ` +
+        `the bone-less branch has no \`Math.max(0, time)\`: the animation is not applied at all, which is ` +
+        `${Math.max(...unclampedAsClamped).toExponential(3)} away from the frame a clamp would hold`,
+      (count) => `${count} reading(s) of a driven slider time are not the arithmetic:`,
+    ),
+    'issue #652 item 3: the bone-less slider is a branch of the format no card had posed, and it turned out to carry ' +
+      'one of the two measured contradictions in this card. The guide\'s closed list of what supports additive ' +
+      'application, and A40\'s message about it, both come from `Timeline.additive`; `SliderTimeline` is one of the ' +
+      'classes where that flag and the `apply` disagree (`PS143` counts them), so a correct rig is refused with a ' +
+      'sentence about the runtime that the runtime does not do. The clause that matters for an author is the other ' +
+      'one: on this branch there is no clamp and no wrap, so a driven time below zero leaves the pose exactly as it ' +
+      'found it',
+  );
+
+  // =========================================================================
+  // 4. `skinRequired` sliders under a skin switch — A40's second exclusion (#652 item 3)
+  // =========================================================================
+  //
+  // 🚨 `A40` has three shapes it deliberately stays silent about, and one of
+  // them is a pair of `skinRequired` sliders no skin activates together. That
+  // silence was reasoned rather than posed: nothing here had ever switched a
+  // skin and read the bone back. What the card asks is what the excluded case
+  // actually DOES.
+  //
+  // ⭐ It does three different things, and the third is the one nobody names.
+  // `Skeleton.updateCache` leaves a `skinRequired` constraint inactive unless
+  // the current skin lists it, so under a skin that lists one, the pose is that
+  // slider ALONE at its own closed form — however the other one is flagged —
+  // and under a skin that lists NEITHER, every dial on the rig is dead and the
+  // bone sits at its setup pose with both dials turned to their tops.
+  //
+  // 🔒 The plant is the exclusion itself: the same two sliders listed in ONE
+  // skin overlap, and `A40` has to refuse them by name. Without that half this
+  // would be a control over a rig where the flags happen not to matter.
+  const SKIN_DIALS: ComposedDial[] = [
+    { name: 'yaw', bone: 'yaw-dial', property: 'rotate', dial: GRID_YAW, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 8 },
+    { name: 'pitch', bone: 'pitch-dial', property: 'rotate', dial: GRID_PITCH, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 10 },
+  ];
+  /** The two named skins and what each one switches on — the whole of what this control varies. */
+  const skinRun = (members: Record<string, string[]>): { data: SkeletonData; report: ReturnType<typeof validate> } => {
+    const skins: Record<string, unknown> = { default: PROBE_BLOCK_ONLY_SKIN };
+    for (const [name, sliders] of Object.entries(members)) {
+      skins[name] = {
+        attachments: { marker: { marker: { image: 'marker.png' } } },
+        ...(sliders.length > 0 ? { slider: sliders } : {}),
+      };
+    }
+    const dirs = writeProbeRig({
+      bones: RESIDUAL_BONES,
+      skins,
+      // The later slider is left at the format default deliberately: if these two
+      // ever met, A40 would have something to say, and it says nothing.
+      constraints: [s644Slider(SKIN_DIALS[0], { skin: true }), s644Slider(SKIN_DIALS[1], { skin: true, additive: false })],
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(s644Motion(SKIN_DIALS), null, 2)}\n`);
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return {
+      data: posableFromText(built.skeletonText, built.atlasText, dirs.outDir).data,
+      report: validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: dirs.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      }),
+    };
+  };
+  const skinRows = s644Rows(SKIN_DIALS);
+  const skinFloor = s644FloatFloor(SKIN_DIALS);
+  /** The same sweep `s644Sweep` takes, with a skin chosen first and one weight per dial. */
+  const skinSweep = (data: SkeletonData, skin: string, weights: number[]): S644Cell[] => {
+    const setup = data.findBone('flag')!.setupPose;
+    return skinRows.map((at) => {
+      const skeleton = new Skeleton(data);
+      skeleton.setSkin(skin);
+      skeleton.setupPose();
+      for (const [i, dial] of SKIN_DIALS.entries()) s644SetDial(skeleton, dial.bone, dial.property, at[i]);
+      skeleton.update(0);
+      skeleton.updateWorldTransform(Physics.update);
+      const flag = skeleton.bones.find((bone) => bone.data.name === 'flag')!.appliedPose;
+      const share = SKIN_DIALS.map((dial, i) => weights[i] * s644Share(at[i], dial));
+      return {
+        at,
+        rotate: flag.rotation,
+        x: flag.x,
+        wantRotate: setup.rotation + SKIN_DIALS.reduce((sum, dial, i) => sum + share[i] * dial.rotate, 0),
+        wantX: setup.x + SKIN_DIALS.reduce((sum, dial, i) => sum + share[i] * dial.x, 0),
+      };
+    });
+  };
+  const apart = skinRun({ calm: ['yaw'], tense: ['pitch'] });
+  const together = skinRun({ calm: ['yaw', 'pitch'], tense: [] });
+  const SKIN_EXPECTED: Array<[string, number[]]> = [
+    ['calm', [1, 0]],
+    ['tense', [0, 1]],
+    ['default', [0, 0]],
+  ];
+  const skinProbes: string[] = [
+    ...(apart.report.failures.length === 0
+      ? []
+      : [`two sliders no skin activates together do not gate green: ${apart.report.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+    ...(apart.report.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
+      ? []
+      : ['A40 did not RUN on the disjoint rig, so its silence there is an absence rather than a comparison']),
+    ...SKIN_EXPECTED.flatMap(([skin, weights]) => {
+      const cells = skinSweep(apart.data, skin, weights);
+      const off = cells.filter((cell) => s644Error(cell) > skinFloor);
+      return off.length === 0 ? [] : [`skin "${skin}" — ${off.length} of ${cells.length} cells: ${s644Says(SKIN_DIALS, s644Worst(cells))}`];
+    }),
+    // The vacuity clause: two dials that posed the same would make every reading
+    // above true whichever slider the skin switched on.
+    ...(skinSweep(apart.data, 'calm', [0, 1]).filter((cell) => s644Error(cell) > skinFloor).length > 0
+      ? []
+      : ['the two dials pose identically on this grid, so "the skin decides which one runs" is a sentence about nothing']),
+    ...(together.report.failures.some((one) => one.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
+      ? []
+      : [
+          'the same two sliders listed in ONE skin are not refused by A40, so the exclusion above is not what is keeping it quiet — it said ' +
+            `[${together.report.failures.map((f) => f.assertion).join(', ') || 'nothing'}]`,
+        ]),
+    ...(skinSweep(together.data, 'calm', [0, 1]).filter((cell) => s644Error(cell) > skinFloor).length === 0
+      ? []
+      : ['under the skin that lists both, the pose is not the later slider alone either, so the refusal and the pose disagree']),
+  ];
+  const skinHeld = skinProbes.length === 0;
+  say(
+    'PS141_TWO_SKIN_REQUIRED_SLIDERS_NO_SKIN_ACTIVATES_TOGETHER_POSE_ONE_DIAL_EACH_AND_NONE_AT_ALL_UNDER_A_THIRD_SKIN',
+    skinHeld,
+    probeDetail(
+      skinHeld,
+      skinProbes,
+      `two \`skinRequired\` sliders, the later one at the format default, over ${skinRows.length} cells of both dials under ` +
+        `each of ${SKIN_EXPECTED.length} skins: under "calm" the pose is the first dial's own closed form, under "tense" the second's, ` +
+        'and under the default skin — which lists neither — both dials are dead and the bone holds its setup pose with ' +
+        'both of them turned to the top of their ranges. A40 RAN on that rig and refused nothing, which is its second ' +
+        'exclusion working; the same two sliders listed in ONE skin are refused by name, and there the pose is the ' +
+        'later slider alone because that is what the format default does',
+      (count) => `${count} reading(s) of a skin-switched pair are not the rule:`,
+    ),
+    'issue #652 item 3: A40 states three shapes it must stay silent about and this is the only one nothing had posed — ' +
+      'the silence stood on reading `Skeleton.updateCache` rather than on a bone anybody read back. What a face author ' +
+      'needs from it is not the silence but the third state: a skin that switches on NEITHER dial leaves the whole ' +
+      'axis dead with a green gate over it, which looks exactly like a rig whose sliders do not work. The plant is the ' +
+      'exclusion itself, so the control cannot pass on a validator that had simply stopped refusing anything',
+  );
+
+  // =========================================================================
+  // 5. four dials (#652 item 3)
+  // =========================================================================
+  //
+  // 📐 **The density, and why.** `PS134` argues three axes at 5 x 6 x 7; a
+  // fourth axis keeps every one of that argument's three reasons and adds
+  // nothing to them, so the only question is whether the sum survives one more
+  // term. Each axis runs from the bottom of its own mapping to the top with its
+  // two endpoints and three or more points strictly inside, the four lengths
+  // are pairwise different over different spans so no cell's quadruple of times
+  // repeats another's, and the total is larger than the cube's — a fourth dial
+  // is not measured more thinly than the third was.
+  //
+  // ⭐ What four states and three cannot is the same middle plant one term
+  // longer: a non-additive slider at index 1 erases the dial before it and is
+  // then added to by BOTH dials after it, so the surviving arithmetic names
+  // which dials are dead rather than merely differing from the sum.
+  const QUAD_BREATH_ROTATE = 9;
+  const QUAD_BREATH_X = -5;
+  const QUAD_DIALS: ComposedDial[] = [
+    { name: 'yaw', bone: 'yaw-dial', property: 'rotate', dial: GRID_YAW, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 4 },
+    { name: 'pitch', bone: 'pitch-dial', property: 'rotate', dial: GRID_PITCH, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 5 },
+    { name: 'roll', bone: 'roll-dial', property: 'rotate', dial: { from: 10, to: 0, scale: 0.005 }, rotate: SLIDER_ROLL_ROTATE, x: SLIDER_ROLL_X, steps: 6 },
+    { name: 'breath', bone: 'breath-dial', property: 'rotate', dial: { from: -8, to: 0, scale: 0.04 }, rotate: QUAD_BREATH_ROTATE, x: QUAD_BREATH_X, steps: 7 },
+  ];
+  const quadFloor = s644FloatFloor(QUAD_DIALS);
+  const quadRows = s644Rows(QUAD_DIALS);
+  const quadAxes = QUAD_DIALS.map((dial) => dialSamples(dial.dial, dial.steps));
+  const quadCorner = (cell: S644Cell): boolean =>
+    cell.at.every((value, i) => value === quadAxes[i][0] || value === quadAxes[i][quadAxes[i].length - 1]);
+  const quadGate = residualGate(QUAD_DIALS);
+  const quadCells = s644Sweep(residualBuild(QUAD_DIALS), QUAD_DIALS, quadRows);
+  const quadOff = quadCells.filter((cell) => s644Error(cell) > quadFloor);
+  const quadMiddleData = residualBuild(QUAD_DIALS, [{}, { additive: false }, {}, {}]);
+  const quadAsErasing = s644Sweep(quadMiddleData, QUAD_DIALS, quadRows, [0, 1, 1, 1]);
+  const quadAsSum = s644Sweep(quadMiddleData, QUAD_DIALS, quadRows);
+  const quadEased = s644Sweep(residualBuild(QUAD_DIALS, [], 'roll'), QUAD_DIALS, quadRows);
+  const quadEasedMoved = quadEased.filter((cell) => s644Error(cell) > quadFloor);
+  const quadCorners = quadRows.filter((at) => at.every((value, i) => value === quadAxes[i][0] || value === quadAxes[i][quadAxes[i].length - 1]));
+  const quadProbes: string[] = [
+    ...(quadGate.failures.length === 0 && quadGate.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
+      ? []
+      : [`the four-dial fixture does not gate green: ${quadGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ') || 'A40 did not run on it'}`]),
+    ...quadOff.slice(0, 3).map((cell) => s644Says(QUAD_DIALS, cell)),
+    ...(quadAsErasing.filter((cell) => s644Error(cell) > quadFloor).length === 0
+      ? []
+      : [
+          `with the slider at index 1 at the format default the grid is not the erasing arithmetic either — ` +
+            `${quadAsErasing.filter((cell) => s644Error(cell) > quadFloor).length} of ${quadAsErasing.length} cells: ${s644Says(QUAD_DIALS, s644Worst(quadAsErasing))}`,
+        ]),
+    ...(quadAsSum.filter((cell) => s644Error(cell) > quadFloor).length > 0
+      ? []
+      : ['the slider at index 1 left at the format default moved no cell, so this comparison is one that plant is blind to']),
+    ...(quadEasedMoved.length > 0
+      ? []
+      : ['an easing on the third dial\'s own animation moved no cell, so the interior of this grid is measuring nothing a corner does not']),
+    ...(quadEasedMoved.filter(quadCorner).length === 0
+      ? []
+      : [`the easing plant moved ${quadEasedMoved.filter(quadCorner).length} of the grid's ${quadCorners.length} corners, and the whole reason it is here is that a bezier meets its chord at both ends`]),
+  ];
+  const quadHeld = quadProbes.length === 0;
+  say(
+    'PS142_FOUR_ADDITIVE_SLIDERS_ARE_THE_SAME_SUM_AND_A_NON_ADDITIVE_ONE_AMONG_THEM_STILL_NAMES_WHICH_DIALS_ARE_DEAD',
+    quadHeld,
+    probeDetail(
+      quadHeld,
+      quadProbes,
+      `${quadAxes.map((axis) => axis.length).join(' x ')} = ${quadCells.length} readings of four dials, each from the bottom of ` +
+        `its own mapping to the top: flag rotate and flag x are the closed-form sum at every one of them, worst ` +
+        `${s644Error(s644Worst(quadCells)).toExponential(3)} against a float64 floor of ${quadFloor.toExponential(3)} and a ` +
+        `six-decimal emit bound of ${s644EmitBound(QUAD_DIALS).toExponential(3)}. The two plants: the slider at index 1 at the format ` +
+        `default moves ${quadAsSum.filter((cell) => s644Error(cell) > quadFloor).length} of ${quadAsSum.length} cells away from the sum and lands on the ` +
+        `erasing arithmetic — the first dial dead, the third and fourth still adding — to ` +
+        `${s644Error(s644Worst(quadAsErasing)).toExponential(3)}; an \`"ease": "${GRID_EASE}"\` on the third dial's animation moves ` +
+        `${quadEasedMoved.length} of ${quadEased.length} cells and ${quadEasedMoved.filter(quadCorner).length} of the grid's ${quadCorners.length} corners`,
+      (count) => `${count} reading(s) of the four-dial grid are not the arithmetic:`,
+    ),
+    'issue #652 item 3: #644 stopped at three and named "more than three dials" as untouched, which is a real gap only ' +
+      'if a fourth term can behave differently from a third. It cannot, and saying so needs the measurement rather ' +
+      'than the induction — a parameter face is where a consumer will actually put four, and the arithmetic that ' +
+      'holds for three holding for four is the whole of what lets them. The erasing plant is what keeps this from ' +
+      'being an assertion about a rig where every flag is already right',
+  );
+
+  // =========================================================================
+  // 6. every spelling of the vocabulary, posed (#652 item 4)
+  // =========================================================================
+  //
+  // ⭐ #644 posed nine of the motion vocabulary's spellings under two sliders
+  // and #652 asks for the other 21 "as a table rather than an estimate". A
+  // table of what each timeline's `Timeline.additive` says would be a reading of
+  // the runtime's source; this poses all thirty instead and reads the rule off
+  // the skeleton, so the column beside the flag is a measurement and the two can
+  // be compared.
+  //
+  // 🚨 They do not agree, and the disagreement is the finding. `A40` decides by
+  // `Timeline.additive`, and a class whose `apply` passes `add` through while
+  // that flag is false composes anyway — so the rig is refused with a sentence
+  // about the runtime that the runtime does not do. ⭐ The first draft of this
+  // comment named ONE such class; the run named two, which is the whole reason
+  // the column is measured rather than transcribed. The count is PRINTED and
+  // not gated, so a repaired `A40` cannot turn this control red; `PS140` holds
+  // the arithmetic for one of them.
+  //
+  // 🔒 What IS gated, and is safe either way: every spelling whose timeline
+  // declares itself additive poses as the sum, no observable spelling poses as
+  // something that is neither closed form, the two keyed values differ on every
+  // one of them so the two forms are distinguishable, and with the later slider
+  // left at the format default every observable spelling collapses to that
+  // slider alone.
+  type VaneField = 'rotation' | 'x' | 'y' | 'scaleX' | 'scaleY' | 'shearX' | 'shearY';
+  interface SpellingCase extends S644Kind {
+    /** The spelling as a motion spec writes it. */
+    spelling: string;
+    /** False when a slider-applied timeline leaves nothing a pose can read back. */
+    observable: boolean;
+    /** Constraints that must sit AFTER the two dials, which is the only place a driven slider can read what they wrote. */
+    after?: Array<Record<string, unknown>>;
+    /** Animations beside the two the dials apply. */
+    extra?: Record<string, unknown>;
+    /** Every number this fixture writes into a key, where the ends of the ramp are not the values `alone` reports. */
+    keyed?: number[];
+  }
+  /**
+   * 🚨 The floor for a census row is NOT the float64 one, and the reason is
+   * structural rather than about any one spelling: `Timeline.frames` is a
+   * **Float32Array** (`Utils.newFloatArray`), so every number a motion spec
+   * keys is stored at float32 precision and read back from there. `0.85` comes
+   * back 2.4e-8 away from itself, which is six orders above float64 noise and
+   * has nothing to do with the composition. `Math.fround` IS that rounding, so
+   * the cost is derived from each fixture's own keyed values — two frames per
+   * dial, each able to carry one rounding.
+   */
+  const keyedNumbers = (kind: SpellingCase): number[] => kind.keyed ?? [...kind.setup, ...kind.alone(0, 1), ...kind.alone(1, 1)];
+  const spellingFloor = (kind: SpellingCase): number =>
+    s644KindFloor(kind) +
+    2 * SLIDER_KIND_DIALS.length * Math.max(0, ...keyedNumbers(kind).map((one) => Math.abs(Math.fround(one) - one)));
+  const vaneRead = (fields: VaneField[]) => (skeleton: Skeleton): number[] => {
+    const pose = skeleton.bones.find((bone) => bone.data.name === 'vane')!.appliedPose;
+    return fields.map((field) => pose[field]);
+  };
+  /**
+   * One bone spelling.
+   *
+   * `identity` is the value a key states for "no change" — 0 for the relative
+   * families and 1 for the scales — and it is what makes ONE `alone` cover both:
+   * a bone timeline's keyed value is an offset from the setup either way, so the
+   * closed form is `setup + share x (keyed - identity)` for all ten.
+   */
+  const boneCase = (spelling: string, property: string, identity: number[], setup: number[], to: number[][], fields: VaneField[]): SpellingCase => ({
+    spelling,
+    observable: true,
+    kind: `bone "vane" ${property}`,
+    rig: { bones: RESIDUAL_BONES },
+    before: [],
+    animation: (which) => ({
+      duration: GRID_DURATION,
+      loop: false,
+      tracks: [{ bone: 'vane', property, keys: [{ t: 0, v: identity }, { t: GRID_DURATION, v: to[which] }] }],
+    }),
+    setup,
+    alone: (which, share) => setup.map((base, i) => base + share * (to[which][i] - identity[i])),
+    describe: (values) => `${property} [${values.map((one) => one.toFixed(6)).join(', ')}]`,
+    read: vaneRead(fields),
+    keyed: [...identity, ...to[0], ...to[1]],
+  });
+  /** One constraint spelling whose key states an absolute value: the closed form is `setup + share x (keyed - setup)`, and an ADDITIVE one needs a setup of 0 for the two readings to be the same arithmetic. */
+  const constraintCase = (
+    spelling: string,
+    kindName: string,
+    property: string,
+    target: 'physics' | 'path' | 'slider',
+    name: string,
+    setup: number[],
+    to: number[][],
+    read: (skeleton: Skeleton) => number[],
+    extra: Partial<SpellingCase> = {},
+  ): SpellingCase => ({
+    spelling,
+    observable: true,
+    kind: kindName,
+    rig: { bones: RESIDUAL_BONES },
+    before: [],
+    animation: (which) => ({
+      duration: GRID_DURATION,
+      loop: false,
+      tracks: [{ [target]: name, property, keys: [{ t: 0, v: setup }, { t: GRID_DURATION, v: to[which] }] }],
+    }),
+    setup,
+    alone: (which, share) => setup.map((base, i) => base + share * (to[which][i] - base)),
+    describe: (values) => `${property} [${values.map((one) => one.toFixed(6)).join(', ')}]`,
+    read,
+    keyed: [...setup, ...to[0], ...to[1]],
+    ...extra,
+  });
+  const JIGGLE = { name: 'jiggle', type: 'physics', bone: 'tip', x: 1, y: 1, inertia: 0.5, strength: 100, damping: 0.85, mass: 1, wind: 0, gravity: 0, mix: 1 };
+  const physicsCase = (spelling: string, property: string, setup: number[], to: number[][], read: (pose: PhysicsConstraintPose) => number[]): SpellingCase => ({
+    ...constraintCase(spelling, `constraint "jiggle" physics ${property}`, property, 'physics', 'jiggle', setup, to, (skeleton) =>
+      read(skeleton.findConstraint('jiggle', PhysicsConstraint)!.appliedPose),
+    ),
+    before: [JIGGLE],
+  });
+  const PATH_SPINE = { type: 'path', vertexCount: 9, vertices: [-30, 0, 0, 0, 30, 0, 60, 0, 90, 0, 120, 0, 150, 0, 180, 0, 210, 0] };
+  const RIDE = {
+    name: 'ride', type: 'path', bones: ['rider'], slot: 'track',
+    positionMode: 'percent', spacingMode: 'percent', rotateMode: 'tangent',
+    position: 0, spacing: 0, mixRotate: 0, mixX: 0, mixY: 0,
+  };
+  const pathPoseOf = (skeleton: Skeleton): PathConstraint['appliedPose'] => skeleton.findConstraint('ride', PathConstraint)!.appliedPose;
+  const pathCase = (spelling: string, property: string, setup: number[], to: number[][], read: (pose: ReturnType<typeof pathPoseOf>) => number[]): SpellingCase => ({
+    ...constraintCase(spelling, `constraint "ride" path ${property}`, property, 'path', 'ride', setup, to, (skeleton) => read(pathPoseOf(skeleton))),
+    rig: {
+      bones: RESIDUAL_BONES,
+      slots: [
+        { name: 'block', bone: 'block', attachment: 'block' },
+        { name: 'marker', bone: 'block', attachment: 'marker' },
+        { name: 'track', bone: 'root', attachment: 'track' },
+      ],
+      skins: { default: { ...PROBE_DEFAULT_SKIN, track: { track: PATH_SPINE } } },
+    },
+    before: [RIDE],
+  });
+  /** The third slider a driven-slider spelling writes into — and it sits AFTER the dials, which is the only order in which it reads what they wrote (`PS139`, `PS140`). */
+  const carriedFor = (patch: Record<string, unknown>): Array<Record<string, unknown>> => [
+    { name: 'carried', type: 'slider', animation: 'carried-pose', additive: true, time: 0, ...patch },
+  ];
+  const CARRIED_POSE = {
+    duration: GRID_DURATION,
+    loop: false,
+    tracks: [{ bone: 'vane', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [12] }] }],
+  };
+
+  const SPELLING_CENSUS: SpellingCase[] = [
+    boneCase('bone rotate', 'rotate', [0], [0], [[30], [75]], ['rotation']),
+    boneCase('bone translate', 'translate', [0, 0], [VANE_PLACE.x, VANE_PLACE.y], [[12, 3], [-20, 5]], ['x', 'y']),
+    boneCase('bone translatex', 'translatex', [0], [VANE_PLACE.x], [[12], [-20]], ['x']),
+    boneCase('bone translatey', 'translatey', [0], [VANE_PLACE.y], [[7], [-3]], ['y']),
+    boneCase('bone scale', 'scale', [1, 1], [1, 1], [[1.4, 0.8], [0.6, 1.5]], ['scaleX', 'scaleY']),
+    boneCase('bone scalex', 'scalex', [1], [1], [[1.4], [0.6]], ['scaleX']),
+    boneCase('bone scaley', 'scaley', [1], [1], [[0.8], [1.5]], ['scaleY']),
+    boneCase('bone shear', 'shear', [0, 0], [0, 0], [[10, 6], [-4, 8]], ['shearX', 'shearY']),
+    boneCase('bone shearx', 'shearx', [0], [0], [[10], [-4]], ['shearX']),
+    boneCase('bone sheary', 'sheary', [0], [0], [[6], [9]], ['shearY']),
+    { spelling: 'slot rgba', observable: true, ...SLIDER_IGNORES_ADD[0] },
+    { spelling: 'slot attachment', observable: true, ...SLIDER_IGNORES_ADD[1] },
+    { spelling: 'drawOrder', observable: true, ...SLIDER_IGNORES_ADD[2] },
+    { spelling: 'ik', observable: true, ...SLIDER_IGNORES_ADD[3] },
+    { spelling: 'deform', observable: true, ...SLIDER_SUPPORTS_ADD[0] },
+    { spelling: 'physics wind', observable: true, ...SLIDER_SUPPORTS_ADD[1] },
+    { spelling: 'transform', observable: true, ...SLIDER_SUPPORTS_ADD[2] },
+    {
+      // 🚨 A slider applies its animation with `firedEvents` NULL, so an events
+      // timeline a slider carries fires nothing at all — there is no value for a
+      // pose to read and no composition for two sliders to have. A40 refuses the
+      // pair anyway, which is a refusal over a property no pose can tell apart.
+      spelling: 'events',
+      observable: false,
+      kind: "the skeleton's events",
+      rig: { bones: RESIDUAL_BONES, events: { ping: {}, pong: {} } },
+      before: [],
+      animation: (which) => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [],
+        events: [{ t: 0, name: which === 0 ? 'ping' : 'pong' }, { t: GRID_DURATION, name: which === 0 ? 'ping' : 'pong' }],
+      }),
+      setup: [],
+      alone: () => [],
+      describe: () => 'nothing a pose can read',
+      read: () => [],
+    },
+    physicsCase('physics inertia', 'inertia', [0.5], [[0.9], [0.2]], (pose) => [pose.inertia]),
+    physicsCase('physics strength', 'strength', [100], [[140], [60]], (pose) => [pose.strength]),
+    physicsCase('physics damping', 'damping', [0.85], [[0.4], [0.6]], (pose) => [pose.damping]),
+    // ⚠️ `mass` is the one whose keyed value is not what the pose stores —
+    // `PhysicsConstraintMassTimeline.set` writes `1 / value` — so the reading is
+    // inverted back here rather than compared against a second table.
+    physicsCase('physics mass', 'mass', [1], [[2], [4]], (pose) => [1 / pose.massInverse]),
+    physicsCase('physics gravity', 'gravity', [0], [[-9], [4]], (pose) => [pose.gravity]),
+    physicsCase('physics mix', 'mix', [1], [[0.5], [0.25]], (pose) => [pose.mix]),
+    {
+      // `reset` is an event with no value: its `apply` calls `constraint.reset`
+      // and writes nothing a pose holds.
+      spelling: 'physics reset',
+      observable: false,
+      kind: 'constraint "jiggle" physics reset',
+      rig: { bones: RESIDUAL_BONES },
+      before: [JIGGLE],
+      animation: () => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [{ physics: 'jiggle', property: 'reset', keys: [{ t: 0, v: null }, { t: GRID_DURATION, v: null }] }],
+      }),
+      setup: [],
+      alone: () => [],
+      describe: () => 'nothing a pose can read',
+      read: () => [],
+    },
+    pathCase('path position', 'position', [0], [[0.4], [0.25]], (pose) => [pose.position]),
+    pathCase('path spacing', 'spacing', [0], [[0.4], [0.25]], (pose) => [pose.spacing]),
+    pathCase('path mix', 'mix', [0, 0, 0], [[0.5, 0.25, 0.75], [0.2, 0.6, 0.3]], (pose) => [pose.mixRotate, pose.mixX, pose.mixY]),
+    {
+      ...constraintCase('slider time', 'constraint "carried" slider time', 'time', 'slider', 'carried', [0], [[0.4], [0.25]], (skeleton) => [
+        skeleton.findConstraint('carried', Slider)!.appliedPose.time,
+      ]),
+      after: carriedFor({}),
+      extra: { 'carried-pose': CARRIED_POSE },
+    },
+    {
+      ...constraintCase('slider mix', 'constraint "carried" slider mix', 'mix', 'slider', 'carried', [0], [[0.6], [0.3]], (skeleton) => [
+        skeleton.findConstraint('carried', Slider)!.appliedPose.mix,
+      ]),
+      after: carriedFor({ mix: 0 }),
+      extra: { 'carried-pose': CARRIED_POSE },
+    },
+  ];
+
+  /** `s644KindRun` with one more seat: constraints that have to sit after the dials. */
+  const spellingRun = (
+    kind: SpellingCase,
+    patches: Array<Record<string, unknown>> = [],
+  ): { data: SkeletonData; report: ReturnType<typeof validate> } => {
+    const dirs = writeProbeRig({
+      bones: SLIDER_KIND_BONES,
+      ...kind.rig,
+      constraints: [
+        ...kind.before,
+        ...SLIDER_KIND_DIALS.map((dial, seat) => s644Slider(dial, patches[seat] ?? {})),
+        ...(kind.after ?? []),
+      ],
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-motion/1',
+          archetype: 'static_probe',
+          cut: 'static_probe',
+          easings: {},
+          animations: {
+            ...Object.fromEntries(SLIDER_KIND_DIALS.map((dial, which) => [`${dial.name}-pose`, kind.animation(which)])),
+            ...(kind.extra ?? {}),
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return {
+      data: posableFromText(built.skeletonText, built.atlasText, dirs.outDir).data,
+      report: validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: dirs.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      }),
+    };
+  };
+  /** Which of the two closed forms a fixture landed on, or neither. */
+  const ruleOf = (kind: SpellingCase, data: SkeletonData): { rule: string; worst: number; apart: number } => {
+    const floor = spellingFloor(kind);
+    let sum = 0;
+    let later = 0;
+    let apart = 0;
+    for (const at of s644KindRows) {
+      const shares = s644Shares(at);
+      const got = kind.read(s644Skeleton(data, SLIDER_KIND_DIALS, at));
+      const asSum = kind.setup.map((base, i) => base + (kind.alone(0, shares[0])[i] - base) + (kind.alone(1, shares[1])[i] - base));
+      const asLater = kind.alone(1, shares[1]);
+      sum = Math.max(sum, s644Apart(got, asSum));
+      later = Math.max(later, s644Apart(got, asLater));
+      apart = Math.max(apart, s644Apart(asSum, asLater));
+    }
+    if (sum <= floor) return { rule: 'the sum', worst: sum, apart };
+    if (later <= floor) return { rule: 'the later slider alone', worst: later, apart };
+    return { rule: 'NEITHER closed form', worst: Math.min(sum, later), apart };
+  };
+
+  const censusRows: string[] = [];
+  const censusTable: string[] = [];
+  const censusFamilies = new Set<string>();
+  let censusDisagree = 0;
+  for (const kind of SPELLING_CENSUS) {
+    const { data, report } = spellingRun(kind);
+    const animation = data.animations.find((one) => one.name === `${SLIDER_KIND_DIALS[1].name}-pose`);
+    const timelines = animation === undefined ? [] : animation.timelines;
+    if (timelines.length !== 1) {
+      censusRows.push(`${kind.spelling}: the second dial's animation carries ${timelines.length} timeline(s), so there is no one flag to read`);
+      continue;
+    }
+    const timeline = timelines[0];
+    const declares = timeline.additive;
+    for (const id of timeline.propertyIds) censusFamilies.add(String(Property[Number(id.split('|')[0])] ?? id));
+    if (!kind.observable) {
+      censusTable.push(`${kind.spelling} (${timeline.constructor.name}, additive ${String(declares)}) — nothing a pose can read`);
+      continue;
+    }
+    const measured = ruleOf(kind, data);
+    if (measured.rule === 'NEITHER closed form') {
+      censusRows.push(`${kind.spelling}: two additive sliders put it ${measured.worst.toExponential(3)} from the nearer of the two closed forms`);
+    }
+    if (measured.apart <= spellingFloor(kind)) {
+      censusRows.push(`${kind.spelling}: the sum and the later slider alone are the same numbers on this fixture, so its rule cannot be read off a pose`);
+    }
+    if (declares && measured.rule !== 'the sum') {
+      censusRows.push(`${kind.spelling}: \`${timeline.constructor.name}.additive\` is true and two additive sliders give ${measured.rule}`);
+    }
+    if (!declares && measured.rule === 'the sum') censusDisagree++;
+    // The plant, data: the later slider at the format default. Every observable
+    // spelling has to collapse to that slider's own closed form.
+    const planted = ruleOf(kind, spellingRun(kind, [{}, { additive: false }]).data);
+    if (planted.rule !== 'the later slider alone') {
+      censusRows.push(`${kind.spelling}: with the later slider at the format default the target is ${planted.rule} rather than that slider alone`);
+    }
+    censusTable.push(
+      `${kind.spelling} (${timeline.constructor.name}, additive ${String(declares)}) — ${measured.rule} to ${measured.worst.toExponential(3)}` +
+        `${declares === (measured.rule === 'the sum') ? '' : ' ⚠️ CONTRADICTS the flag'}; A40 ${report.failures.some((one) => one.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET') ? 'refuses' : 'accepts'}`,
+    );
+  }
+  const censusHeld = censusRows.length === 0;
+  say(
+    'PS143_EVERY_SPELLING_OF_THE_MOTION_VOCABULARY_POSED_UNDER_TWO_ADDITIVE_SLIDERS_LANDS_ON_ONE_OF_TWO_CLOSED_FORMS',
+    censusHeld,
+    probeDetail(
+      censusHeld,
+      censusRows,
+      `${SPELLING_CENSUS.length} spellings, each compiled under two additive sliders keying it to two different values and read at ` +
+        `${s644KindRows.length} cells of the two dials: ${censusTable.join('; ')}. ⇒ every observable one is exactly the sum or exactly ` +
+        `the later slider in the array, never something between; every spelling whose timeline declares itself additive is the sum; ` +
+        `${censusDisagree} spelling(s) that declare themselves NON-additive are the sum anyway, which is what A40 cannot see; and with ` +
+        'the later slider left at the format default every observable one collapses to that slider alone',
+      (count) => `${count} spelling(s) of the vocabulary are not one of the two rules:`,
+    ),
+    'issue #652 item 4: the card asks for the 21 unposed spellings "as a table rather than an estimate", and a table of ' +
+      '`Timeline.additive` would be a transcription of the runtime rather than a measurement of it. All thirty are posed ' +
+      'here instead, so the flag and the behaviour sit in the same row and can disagree — which one pair does. The ' +
+      'gated half is chosen to survive a repair: an additive timeline must add, no spelling may land between the two ' +
+      'forms, and the plant has to collapse every one of them, while the count of flag-versus-behaviour disagreements ' +
+      'is printed so that fixing A40 improves the output instead of reddening it',
+  );
+
+  // =========================================================================
+  // 7. what a rig spec cannot reach at all (#652 item 4)
+  // =========================================================================
+  //
+  // ⭐ `PS135` published `sequence` as a named absence because no rig spec
+  // reaches one. That was one spelling, asserted. The population is derivable:
+  // the runtime's own `Property` enum is every timeline family Spine 4.3 has,
+  // the census above is every family a motion spec can key, and the difference
+  // is the set a rig spec cannot reach — each of which is then offered to the
+  // compiler on every target a track can name and has to be refused by all of
+  // them.
+  //
+  // 🔸 **What this does NOT derive, named rather than implied.** The families
+  // are derivable; the SPELLINGS are not, and the reason is in the refusals
+  // themselves. A slot, physics, path or slider track that names a property the
+  // compiler does not know is refused with the list it does know — so those
+  // fifteen spellings can be read off the tool. A BONE track is not: it is
+  // refused as *"bone X cannot take slot property Y"*, which names the wrong
+  // family for a spelling that belongs to none and enumerates nothing. The five
+  // animation-level families are in the unknown-key message beside `duration`,
+  // `loop`, `note` and `tracks`, which no rule here separates. So the four
+  // enumerating families are checked against the census both ways and the rest
+  // are stated.
+  const TRACK_TARGETS: Array<[string, Record<string, unknown>]> = [
+    ['bone', { bone: 'vane' }],
+    ['slot', { slot: 'marker' }],
+    ['physics', { physics: 'jiggle' }],
+    ['path', { path: 'ride' }],
+    ['slider', { slider: 'carried' }],
+  ];
+  const unreachedDirs = writeProbeRig({
+    bones: RESIDUAL_BONES,
+    slots: [
+      { name: 'block', bone: 'block', attachment: 'block' },
+      { name: 'marker', bone: 'block', attachment: 'marker' },
+      { name: 'track', bone: 'root', attachment: 'track' },
+    ],
+    skins: { default: { ...PROBE_DEFAULT_SKIN, track: { track: PATH_SPINE } } },
+    constraints: [RIDE, JIGGLE, ...carriedFor({})],
+  });
+  /** Offer one spelling on one target and hand back the refusal, or null when it compiled. */
+  const offerSpelling = (target: Record<string, unknown>, property: string): string | null => {
+    const motionPath = join(unreachedDirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-motion/1',
+          archetype: 'static_probe',
+          cut: 'static_probe',
+          easings: {},
+          animations: {
+            'carried-pose': CARRIED_POSE,
+            probe: { duration: GRID_DURATION, loop: false, tracks: [{ ...target, property, keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [1] }] }] },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    try {
+      compile({ rigPath: unreachedDirs.rigPath, motionPath, outDir: unreachedDirs.outDir, imagesDir: unreachedDirs.dir });
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+  /** The list a refusal prints of what it DOES know — the only place four of the five families state their own vocabulary. */
+  const knownFrom = (refusal: string | null): string[] => {
+    const match = refusal === null ? null : /\(it has: ([^)]+)\)/.exec(refusal);
+    return match === null ? [] : match[1].split(', ');
+  };
+  const runtimeFamilies: string[] = [];
+  for (let i = 0; ; i++) {
+    const name = Property[i];
+    if (typeof name !== 'string') break;
+    runtimeFamilies.push(name);
+  }
+  const unreachedFamilies = runtimeFamilies.filter((name) => !censusFamilies.has(name));
+  /** The spellings the census keys under one target family, read off the census rather than restated. */
+  const censusSpellings = (family: string): string[] =>
+    SPELLING_CENSUS.filter((one) => one.spelling.startsWith(`${family} `)).map((one) => one.spelling.slice(family.length + 1));
+  const ENUMERATING = ['slot', 'physics', 'path', 'slider'];
+  const unreachedRows: string[] = [];
+  const unreachedSays: string[] = [];
+  const quoted: string[] = [];
+  for (const family of unreachedFamilies) {
+    const accepted = TRACK_TARGETS.filter(([, target]) => offerSpelling(target, family) === null).map(([label]) => label);
+    if (accepted.length > 0) {
+      unreachedRows.push(`"${family}" is not in the census and yet compiles as a ${accepted.join(' / ')} track, so the census is missing a spelling rather than the format being out of reach`);
+    }
+    if (quoted.length === 0) {
+      const refusal = offerSpelling(TRACK_TARGETS[1][1], family);
+      if (refusal !== null) quoted.push(`${family} offered as a slot track: ${refusal.split(': ').slice(1).join(': ')}`);
+    }
+    unreachedSays.push(family);
+  }
+  if (unreachedFamilies.length === 0) {
+    unreachedRows.push('the census reaches every family the runtime declares, so there is nothing here this control can measure and its plant would be about nothing');
+  }
+  // The four families whose own refusal states their vocabulary, both ways.
+  for (const label of ENUMERATING) {
+    const expected = censusSpellings(label);
+    const target = TRACK_TARGETS.find(([name]) => name === label);
+    const known = knownFrom(target === undefined ? null : offerSpelling(target[1], 'wobble'));
+    const missing = expected.filter((one) => !known.includes(one));
+    const extraSpellings = known.filter((one) => !expected.includes(one));
+    if (known.length === 0) {
+      unreachedRows.push(`a ${label} track spelled wrongly is no longer refused with the list of what this compiler knows, so the ${label} vocabulary is no longer readable off the tool`);
+      continue;
+    }
+    if (missing.length > 0 || extraSpellings.length > 0) {
+      unreachedRows.push(
+        `the ${label} vocabulary the compiler prints is [${known.join(', ')}] and the census keys [${expected.join(', ')}]` +
+          `${missing.length > 0 ? ` — ${missing.join(', ')} is not in the compiler's list` : ''}` +
+          `${extraSpellings.length > 0 ? ` — ${extraSpellings.join(', ')} is in it and not in the census` : ''}`,
+      );
+    }
+  }
+  // The plant, in memory: a family dropped from the census has to appear here.
+  const plantedFamilies = new Set(censusFamilies);
+  const droppedFamily = [...censusFamilies].sort()[0];
+  plantedFamilies.delete(droppedFamily);
+  if (runtimeFamilies.filter((name) => !plantedFamilies.has(name)).length !== unreachedFamilies.length + 1) {
+    unreachedRows.push('a family removed from the census does not come back as unreached, so this derivation cannot see one going missing');
+  }
+  const unreachedHeld = unreachedRows.length === 0;
+  say(
+    'PS144_THE_TIMELINE_FAMILIES_A_RIG_SPEC_CANNOT_REACH_ARE_A_DERIVED_POPULATION_AND_EVERY_ONE_IS_REFUSED_BY_NAME',
+    unreachedHeld,
+    probeDetail(
+      unreachedHeld,
+      unreachedRows,
+      `the runtime declares ${runtimeFamilies.length} timeline families and the census above keys ${censusFamilies.size} of them, so ` +
+        `${unreachedFamilies.length} are out of a rig spec's reach: ${unreachedSays.join(', ')}. Each was offered to the compiler on all ` +
+        `${TRACK_TARGETS.length} targets a track can name and refused by every one — ${quoted[0] ?? 'no refusal was printed'}. ` +
+        `And the vocabulary itself is read off the refusals where it can be: a wrongly spelled slot, physics, path or slider ` +
+        `track is refused with the list of timelines that target does have, which covers ` +
+        `${ENUMERATING.reduce((count, family) => count + censusSpellings(family).length, 0)} of the ${SPELLING_CENSUS.length} spellings and is ` +
+        'compared against the census both ways; a BONE track is refused as taking a "slot property", which names the wrong ' +
+        'family for a spelling that belongs to none and enumerates nothing, and the five animation-level families share one ' +
+        'unknown-key message with `duration`, `loop`, `note` and `tracks`, which no rule here separates — so the rest of the ' +
+        'vocabulary is stated by this file rather than read off the tool',
+      (count) => `${count} clause(s) of the reachability derivation did not hold:`,
+    ),
+    'issue #652 item 4 asks which spellings a rig spec cannot reach and for the output of one. `PS135` answered that for ' +
+      '`sequence` by asserting it; this derives the whole set instead, from the runtime\'s own enum against what the ' +
+      'census actually keyed, and then makes each member answer for itself on every target rather than trusting the ' +
+      'subtraction. The clause that keeps the subtraction honest is the reverse one — a family that is missing from the ' +
+      'census because nobody wrote its spelling would show up here as unreached AND compile, which is a different fault ' +
+      'from a family the format has and rigc does not emit',
   );
   return bad;
 }

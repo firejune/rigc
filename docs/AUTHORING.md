@@ -1900,6 +1900,14 @@ dial, the gate swings.
 { "name": "reveal", "type": "slider", "animation": "curtain", "time": 0 }
 ```
 
+⚠️ **This branch takes neither of the repairs the bone branch takes.**
+`Slider.update` applies `Math.max(0, time)` and the `loop` wrap *inside* its
+`if (bone !== null)`, so a bone-less slider's time is used exactly as the
+timeline left it: a negative time is not clamped to the first frame, it is a time
+before the animation starts, where `Animation.apply` leaves the pose it found
+untouched. That is the same picture as the first frame only when the first frame
+*is* the rest pose. [measured] `PS140` in `selftest.ts`.
+
 | Field | Meaning |
 | --- | --- |
 | `animation` | **required.** An animation the **motion spec** declares |
@@ -2006,21 +2014,40 @@ it, on every frame, with the gate green — the second reason to write
 later one. `PS130` in `selftest.ts` poses both models rather than quoting the
 runtime, and [`docs/FACE.md`](FACE.md) §8 is the same rule on a face's two axes.
 
-⚠️ **And `"additive": true` is not always available.** The list that supports
-additive application at all is the closed one: bone, deform, transform-constraint,
-path `position`, physics `wind`/`gravity`, and a slider's own `mix`. **Everything
-else ignores the flag** — a slot colour, an attachment swap, a draw order and a
-sequence, and also an **ik constraint's mix**, a path's `spacing`, and every
-physics timeline except those two — so two sliders sharing one of those overwrite
-each other whatever you write. ⚠️ The four spelled out here used to read as the
-whole of the complement and they are examples of it; `A40` was never reading a
-list, it reads the runtime's own `Timeline.additive`, which is why it refuses the
-ik case this sentence did not name.
+⚠️ **And `"additive": true` is not always available.** The list `Timeline.additive`
+declares is the closed one: bone, deform, transform-constraint, path `position`,
+physics `wind`/`gravity`, and a slider's own `mix`. Most of the rest ignore the
+flag — a slot colour, an attachment swap, a draw order and a sequence, and also an
+**ik constraint's mix**, a path's `spacing`, and every physics timeline except
+those two — so two sliders sharing one of those overwrite each other whatever you
+write. ⚠️ The four spelled out here used to read as the whole of the complement
+and they are examples of it; `A40` was never reading a list, it reads the
+runtime's own `Timeline.additive`, which is why it refuses the ik case this
+sentence did not name.
 
-⇒ **And "overwrite each other" has a direction, measured**: the slider **later in
-the `constraints` array** puts its own animation's value there and the earlier one
-contributes nothing at all, at every reading of either dial, with both flags set
-to `true`. Swap the two array entries and the answer swaps with them — it is the
+🚨 **That flag is what `A40` reads, and on two timelines it is not what the
+runtime does.** `PathConstraintMixTimeline` and `SliderTimeline` declare
+themselves non-additive and their `apply` passes the `add` argument straight
+through anyway — every other non-additive timeline either hardcodes `false` in
+the call, zeroes `add` first, or never reads it — so two additive sliders keying
+one path constraint's `mix`, or one slider's `time`, **do** compose, and they
+compose as the same sum as everything else on this list. `A40` refuses both
+today, with a message stating that `"additive": true` would not compose them,
+which for these two is false. [measured] `PS143` in `selftest.ts` poses all
+thirty spellings of the motion vocabulary under two additive sliders and prints
+the flag beside the behaviour; `PS140` holds the `time` case to the sum. ⇒ until
+that is repaired, key such a property from one slider — not because the runtime
+cannot compose it, but because the build will not pass.
+
+⇒ **And the `constraints` array decides twice, for two different reasons.**
+*Overwriting* has a direction: the slider **later in the array** puts its own
+animation's value there and the earlier one contributes nothing at all, at every
+reading of either dial, with both flags set to `true`. And the array is also the
+**update order**, so a slider that keys another slider's `mix` or `time` is read
+by that slider only if it comes **first** — a dial that drives the authority of an
+earlier slider writes a value nothing reads again, and the driven axis is dead
+with a green gate over it (`A40` does not compare a pair whose `mix` is keyed at
+all). [measured] `PS139` and `PS140` in `selftest.ts`. Swap the two array entries and the answer swaps with them — it is the
 array that decides, not the flags and not which animation the file names first
 (`PS135` in `selftest.ts` poses four such targets both ways; `PS136` poses the
 three that do compose, and they are the same sum §3.5.2 states, over each target's
@@ -2061,8 +2088,12 @@ runtime says so. [measured] against `spine-core` 4.3.13, one reader at a time �
   `Math.sqrt(a² + c²)`, so a bone at `scaleX: −1` reads **`+1`**, not `−1`: a
   squash axis driven through negative scale gets the mirror of the dial you wrote.
   The floor `0` is *reached*, not approached — a bone whose own scale or whose
-  parent's is 0 reads exactly 0 — so a range whose bottom is exactly 0 is fine and
-  one that dips below it is dead.
+  parent's is 0 reads exactly 0 — so a range whose bottom is exactly 0 is fine.
+  🚨 One that dips below it is not *dead*, it **folds**: −2 and +2 read the same
+  number, select the same frame and pose the same face, so the axis doubles back
+  on itself about the point it should have passed through. Unlike the `rotate`
+  circle (§3.5.2.2) nothing refuses it — the range compiles and gates green.
+  [measured] `PS138` in `selftest.ts` sweeps both halves and poses them.
 - **`shearY` under `local: false` wraps like `rotate` does, and worse.** It is a
   difference of two `atan2` calls, so at any one bone orientation the readable
   window is 360° wide — `(−270 − θx, 90 − θx]`, where `θx` is the bone's world
