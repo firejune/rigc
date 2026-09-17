@@ -182,6 +182,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A39_DEFORM_KEEPS_TRIANGLE_WINDING: 'archetype',
   A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET: 'validity',
   A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP: 'validity',
+  A42_DRIVEN_SLIDERS_UPDATE_AFTER_THEIR_DRIVER: 'validity',
 };
 
 /**
@@ -3176,6 +3177,111 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
       stats.sliderSharedTargets = shared;
+    });
+
+    // --- A42: a dial that drives a slider the array already ran -------------
+    //
+    // 🚨 The hole A40 leaves, and it leaves it BY CONSTRUCTION. A40's population
+    // is the sliders at full authority whose own `mix` nothing keys, so the one
+    // pair this rule is about — a slider whose `mix` IS keyed — is excluded
+    // before any timeline is looked at. Between them the two rules ask different
+    // questions about the same array: A40 asks who writes a shared property
+    // last, this asks whether anybody reads what was written at all.
+    //
+    // `Skeleton.updateCache` walks `constraints` in order and each `Slider.sort`
+    // pushes itself onto the update cache as it is reached, so the array IS the
+    // update order. `Slider.update` then opens with
+    //
+    //   const p = this.appliedPose;
+    //   if (p.mix === 0) return;
+    //   … animation.apply(skeleton, p.time, p.time, data.loop, null, p.mix, …)
+    //
+    // — both `mix` and `time` are read off the applied pose BEFORE the animation
+    // runs. So a slider that keys another slider's `mix` or `time` is read by
+    // that slider only when the driven one comes LATER in the array; written the
+    // other way round the value lands in a pose whose only reader has already
+    // run, and `Posed.resetConstrained` copies `pose` back over it before the
+    // next frame. The dial turns, the pose holds the number, and nothing moves.
+    //
+    // ⭐ The runtime repairs this for BONES and not for constraints, which is
+    // why an author cannot reason it out from the bone case. `Slider.sort`
+    // clears `sorted` on every bone its animation keys and re-sorts them, so
+    // those bones always update after the slider; for a constraint it calls
+    // `skeleton.constrained(constraints[t.constraintIndex])`, which only swaps
+    // the pose the constraint will be read through and moves nothing in the
+    // update cache.
+    //
+    // 🔒 Keying its OWN `mix` or `time` is the same failure with the indices
+    // equal, and it is the one A37 cannot see: A37 asks whether any animation
+    // keys the slider's `mix` and the slider's own animation is one of them, so
+    // a slider muted at setup that keys its own `mix` up reports green and is
+    // dead forever — `update` returns on `mix === 0` before the animation that
+    // would raise it is ever applied.
+    //
+    // [measured, issue #658] Two dials, the second keying the first's `mix`
+    // 0 -> 1: in the declared order the flag bone runs 0.000000° to 105.000000°
+    // over the grid and the driven dial's own travel is 18.750000° per row; with
+    // the two array entries swapped that travel is 0.000000° at every row while
+    // the driven slider's `mix` still reads back 0.250000 .. 1.000000. The gate
+    // was green on both.
+    check('A42_DRIVEN_SLIDERS_UPDATE_AFTER_THEIR_DRIVER', () => {
+      const sliders = data.constraints.filter((c) => c instanceof SliderData);
+      if (!sliders.length) {
+        return skip('A42_DRIVEN_SLIDERS_UPDATE_AFTER_THEIR_DRIVER', 'the skeleton declares no slider constraint');
+      }
+      /** `sliderTime` / `sliderMix` in the words a motion spec writes them. */
+      const drivenProperty = (timeline: Timeline): 'time' | 'mix' | null => {
+        for (const id of timeline.propertyIds) {
+          const property = Property[Number(id.split('|')[0])];
+          if (property === 'sliderTime') return 'time';
+          if (property === 'sliderMix') return 'mix';
+        }
+        return null;
+      };
+      let pairs = 0;
+      for (const driver of sliders) {
+        const driverIndex = data.constraints.indexOf(driver);
+        for (const timeline of driver.animation?.timelines ?? []) {
+          const property = drivenProperty(timeline);
+          if (property === null || !isConstraintTimeline(timeline)) continue;
+          const drivenIndex = timeline.constraintIndex;
+          const driven = data.constraints[drivenIndex];
+          if (!(driven instanceof SliderData)) continue;
+          pairs++;
+          if (drivenIndex > driverIndex) continue;
+          const animation = `animation "${driver.animation?.name}"`;
+          fail(
+            'A42_DRIVEN_SLIDERS_UPDATE_AFTER_THEIR_DRIVER',
+            drivenIndex === driverIndex
+              ? `slider "${driver.name}" (constraints[${driverIndex}]) keys its own \`${property}\` in ${animation}. ` +
+                  '`Slider.update` reads `appliedPose.' +
+                  `${property}\` as the ${property === 'mix' ? 'alpha it applies that animation with' : 'time it applies that animation at'}, ` +
+                  'before the animation runs, so the key is written after its only reader and `Posed.resetConstrained` ' +
+                  `puts the pose back before the next frame${
+                    property === 'mix'
+                      ? ' — and at `mix` 0 `update` returns before applying anything at all, so the key that would raise it is unreachable'
+                      : ''
+                  }. Key \`slider.${driver.name}.${property}\` from a slider EARLIER in \`constraints\`, or state the ` +
+                  `\`${property}\` this slider should start at in the rig spec`
+              : `slider "${driver.name}" (constraints[${driverIndex}]) keys \`${property}\` of slider "${driven.name}" ` +
+                  `(constraints[${drivenIndex}]) in ${animation}, and "${driven.name}" updates FIRST. The \`constraints\` ` +
+                  'array is the update order (`Skeleton.updateCache` walks it and each `Slider.sort` pushes itself as it ' +
+                  `is reached) and \`Slider.update\` reads its own \`appliedPose.${property}\` before applying anything, ` +
+                  `so that key is written after the only read of it and \`Posed.resetConstrained\` discards it before ` +
+                  `the next frame: the axis "${driven.name}" drives is dead at every reading of "${driver.name}"'s dial, ` +
+                  `although its pose still holds the number. Move "${driver.name}" before "${driven.name}" in ` +
+                  `\`constraints\`, or key \`slider.${driven.name}.${property}\` from a slider that already is`,
+          );
+        }
+      }
+      if (pairs === 0) {
+        return skip(
+          'A42_DRIVEN_SLIDERS_UPDATE_AFTER_THEIR_DRIVER',
+          `no animation applied by one of the ${sliders.length} slider constraint${sliders.length === 1 ? '' : 's'} keys a ` +
+            "slider's `mix` or `time`, so no slider here drives another",
+        );
+      }
+      stats.sliderDrivenSliders = pairs;
     });
 
     // --- A38: a per-skin member list and its `skin: true` flag agree --------
