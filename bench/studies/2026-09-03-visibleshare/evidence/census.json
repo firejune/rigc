@@ -34,7 +34,7 @@
    "px": 0.16,
    "deg": 0.27,
    "scale": 0.031,
-   "basis": "PS01/PS02's worst known-answer readback error, re-baselined in #306 (0.16 px / 0.27° / 3.1% scale)"
+   "basis": "PO01/PO02's worst known-answer readback error, re-baselined in #306 (0.16 px / 0.27° / 3.1% scale)"
   },
   {
    "name": "control-1px",

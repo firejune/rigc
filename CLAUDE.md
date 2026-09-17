@@ -284,7 +284,7 @@ Three rules hold that together and none of them is optional:
   already has a judgment about. ⚠️ The run's *total* count of positive controls
   was **deleted** rather than derived, because "positive control" is a role and
   not a token on the line: `M16` and `M19` carry the word only because a **control
-  bone** is a rig concept, while `T04` and `PS25` are positive controls whose names
+  bone** is a rig concept, while `PT04` and `PS25` are positive controls whose names
   say nothing at all. Six, seventeen and twenty-nine were each a reading of it and
   none of them was the number. Whether every suite *has* one is an invariant rather
   than a figure, and nothing enforces it yet.

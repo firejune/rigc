@@ -90,7 +90,7 @@ band is not a smaller experiment than #322's, it is the same size of experiment.
 The ladder keeps three wider rungs so a flat result at the floor cannot pass for a
 measurement — `polish-floor-2x` (a pattern search that stopped at step `d` sits
 within about one step of its optimum), `pr322-scale` (sized from the sweep above so
-the induced residual change brackets 0.0008), `readback-floor` (PS01/PS02's worst
+the induced residual change brackets 0.0008), `readback-floor` (PO01/PO02's worst
 known-answer readback, re-baselined in #306: 0.16 px / 0.27° / 3.1 %) and
 `control-1px`, which is outside every band on purpose.
 

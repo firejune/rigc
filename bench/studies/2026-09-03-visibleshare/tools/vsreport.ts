@@ -175,7 +175,7 @@ function bandReport(band: BandRaw): string[] {
     'The two bands this study perturbs inside of, and where they came from:',
     '  polish floor   0.05 px / 0.1° / 0.1% scale  — src/pose.ts level-0 polish `floor`, the step at which',
     '                                                the pattern search stops halving and returns',
-    '  readback floor 0.16 px / 0.27° / 3.1% scale — PS01/PS02 worst known-answer readback, #306 re-baseline',
+    '  readback floor 0.16 px / 0.27° / 3.1% scale — PO01/PO02 worst known-answer readback, #306 re-baseline',
     '',
     "For scale: PR #322's accidental objective change moved rear-bracer's anchor residual by 0.0008.",
     '',

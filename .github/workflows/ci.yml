@@ -167,8 +167,11 @@ jobs:
   # 🚨 **That paragraph described a rule the code did not implement (issue
   # #513).** A removal was declared by its name's FIRST SEGMENT, and the first
   # segment is a family word for a large minority of the names this scan catches:
-  # every positive control in the suite answers to `CONTROL`, and a suite code is
-  # no safer, because `T01` names a different control in three different suites.
+  # every positive control in the suite answers to `CONTROL`, and a suite code was
+  # no safer either: `T01` named a different control in three different suites
+  # until #584 gave two of them their own prefixes and `TY17` began refusing a
+  # code that names more than one. The rule below does not lean on that gate, and
+  # must not: it reads the base revision, which may predate it.
   # Writing one word therefore permitted removing any member of its family — the
   # relaxation refused in the prose above was present in the code, arrived at by
   # how the code was extracted rather than by a decision anybody made. A rule that
