@@ -128,11 +128,13 @@ import { RIG_KEYS, parseRigSpec } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
   buildGridMesh,
+  checkHullOrder,
   contourOvershootBound,
   CONTOUR_MIN_COVERAGE,
   measureContourFit,
   signedArea,
   traceAlphaOutline,
+  traceOutline,
 } from './src/mesh.ts';
 import {
   boneDistance,
@@ -39985,7 +39987,16 @@ function main(): void {
     'emptying would leave a clean tree; and the runner is planted on every script it verifies — each verdict ' +
     "flipped, each script's write dropped, and the products rotated so each build reads what its neighbour " +
     "wrote — while taking a script's LABEL off must fault NOTHING and drop it silently, which is the one the " +
-    'floor exists for)';
+    'floor exists for. Issue #479 adds the half that comparison cannot reach: a verdict claim is falsifiable only ' +
+    "where a page's verdict differs from the build a script would produce doing nothing, so a script that goes " +
+    'QUIET is caught and one that stays GREEN while doing something else is not. Every script whose PRODUCT is a ' +
+    '`vertices` run — a property of the artifact, so the population is derived rather than picked out of the ' +
+    'comment that states it — is run again against a rig renumbered every way `checkHullOrder` leaves open, which ' +
+    'is the dihedral maps of the outline walk times any permutation of the interior that rule says nothing about, ' +
+    'each one re-asked of that rule and rebuilt green through the command its own page states. The two sides are ' +
+    'measured together: the script must write the same geometry after un-permuting while the run it wrote has ' +
+    'visibly moved at its own positions, and a product replayed at fixed positions whatever the rig says must ' +
+    'fault under every one of them)';
   // Not one figure below is written out any more (issue #451). The four that
   // were are settled by the ruling *a suite's figure counts every case it
   // prints, its own positive control included*, which is the only reading that
@@ -41925,6 +41936,745 @@ function runDocScriptSuite(): number {
       'it must go quiet, because a script that stops being labelled stops being one this suite can hold to ' +
       'anything, and only a floor can see that — which is why the floor that says the plant RAN is a row here ' +
       'rather than a conjunct nothing prints',
+  );
+
+  // --- DS04–DS06: the renumbering a stated script's product has to survive --
+  //
+  // ⭐ **What the three cases above cannot see, and it is the more expensive
+  // class.** `DS02` compares a page's VERDICT against a run's gutter line, so a
+  // claim is falsifiable exactly where the page's verdict differs from the
+  // build the script would produce doing nothing at all. For §9.2's build (b)
+  // it does — the page says `A39 FAIL` — and for (a) it does not. Script (a) as
+  // it shipped 2026-09-04 → 09-11 put through `DS02`'s own comparison reports
+  // `A35 PASS`, `A39 PASS`, exit 0, artifact written: **exactly what the page
+  // states for it**. A script that goes QUIET is caught above; a script that
+  // stays GREEN while doing something else is not, and that is the one #471
+  // cost a week.
+  //
+  // **The property, and why it is read off the product rather than off a
+  // sentence.** §9.2's own comment states it in words — *a `vertices` run is
+  // positional, so a script that assumes the list's order rather than reading
+  // it breaks in silence the day the list is renumbered* — and issue #479
+  // refused to gate that sentence, because a subject picked out of one comment
+  // in one document is a hand-kept list wearing a derivation. So the subject
+  // here is not the sentence. It is **every script whose product is a
+  // `vertices` run**, which is a property of the artifact the script writes and
+  // is read off that artifact every run.
+  //
+  // ⚠️ **That population is ONE script today, and the size is not the
+  // objection.** What makes a population hand-kept is that a member was chosen,
+  // and nothing is chosen here: the day a second page's script writes a motion
+  // spec with a positional run it joins without an edit, and the day §9.2's
+  // stops writing one the floor below goes red rather than the case going
+  // quiet. The alternative issue #479 records — the property becomes something
+  // a script DECLARES, the way a block declares itself unreproducible to
+  // `GT01` — was rejected for the reverse reason: `GT01`'s marker is an OPT-OUT
+  // of a population already derived, and a declaration here would be an
+  // OPT-IN. A script that assumes its list's order and declares nothing is
+  // precisely the defect, so the gate's subject would become the author's
+  // memory. #471's script would not have declared.
+  //
+  // 🔒 **The renumbering is derived from the refusal, not from the mesh.**
+  // `checkHullOrder` states two clauses and nothing else: the outline vertices
+  // are the first `hull` of the list, and they trace the walk in order — either
+  // direction, since it is the same polygon. Read as a specification rather
+  // than as two error messages, that says the accepted relabelings are exactly
+  // **any dihedral map of the outline walk onto itself, times any permutation
+  // at all of the interior**, because the interior is what neither clause
+  // mentions. The family below is one representative per generator of that
+  // group plus their composite, built from `traceOutline`'s own walk — and it
+  // is re-asked of the permuted list through `checkHullOrder` itself, so the
+  // day a clause is added about the interior this window REFUSES by name
+  // instead of quietly permuting something the compiler no longer accepts.
+  //
+  // ⚠️ `checkHullOrder` is not the only reader of a vertex list — `meshEdges`,
+  // the deform runs, `A21` and `A39` all index into it — so passing that
+  // function is not the claim. Each renumbering is BUILT, through the page's
+  // own command, and `DS04` holds it to green with its artifact on disk.
+  //
+  // **Two-sided, and the negative half is the load-bearing one.** A permutation
+  // check that faults on everything is the "test only refusals" failure: what
+  // makes the positive reading mean anything is that a script which resolves
+  // each shift through the vertex's own coordinate reports **0 of N** under
+  // every one of these, while the run it writes has visibly moved (`DS05`
+  // prints both figures side by side, and a renumbering that moved the product
+  // in no way is a row rather than a pass).
+  //
+  // ⚠️ **Cost, measured rather than guessed.** One baseline run of each
+  // subject, then a script run and a build per renumbering, then a script run
+  // per renumbering for the plant — **thirteen subprocesses** on this tree,
+  // about the same again as the four rounds above.
+  /**
+   * The phrase the moved-offset row is recognised by. It is a `const` and not
+   * a repeated literal because the plant below has to name the row it needs
+   * rather than take any new fault — which is the defect that clause shipped
+   * with for one run.
+   */
+  const MOVED_OFFSET_ROW = 'differ after un-permuting';
+  const renumberRoot = mkdtempSync(join(tmpdir(), 'rigc-doc-renumber-'));
+  const construction: string[] = [];
+  const invariance: string[] = [];
+  const plantMisses: string[] = [];
+  const told: string[] = [];
+  const measured: string[] = [];
+  const refused: string[] = [];
+  let subjectCount = 0;
+  let familyNames: string[] = [];
+  let permutedMeshes = 0;
+  let plantsRun = 0;
+
+  /** A parsed JSON object, as much of one as this window reads. */
+  const asObject = (value: unknown): Record<string, unknown> | null =>
+    typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+  /** A list of numbers, or null where the field is something else. */
+  const asNumbers = (value: unknown): number[] | null =>
+    Array.isArray(value) && value.every((one) => typeof one === 'number') ? (value as number[]) : null;
+  /** Whatever `JSON.parse` makes of this text, or null where it makes nothing. */
+  const asJson = (text: string): unknown => {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return null;
+    }
+  };
+
+  /** Every authored mesh of a parsed rig spec, under the path that names it. */
+  const meshesOfRig = (node: unknown, path: readonly string[] = []): Array<{ at: string[]; att: Record<string, unknown> }> => {
+    const here = asObject(node);
+    if (here === null) return [];
+    const mine =
+      asNumbers(here.vertices) !== null && asNumbers(here.triangles) !== null ? [{ at: [...path], att: here }] : [];
+    return [...mine, ...Object.keys(here).flatMap((key) => meshesOfRig(here[key], [...path, key]))];
+  };
+
+  /**
+   * Every renumbering `checkHullOrder`'s two clauses leave open for one mesh,
+   * as `newIndexOf[old]` maps. The walk and the interior both come out of
+   * `traceOutline`, so nothing here knows a number about any particular mesh.
+   */
+  const renumberingsOf = (att: Record<string, unknown>): Map<string, number[]> => {
+    const count = (asNumbers(att.vertices) ?? []).length / 2;
+    const outline = traceOutline(count, asNumbers(att.triangles) ?? []);
+    checkHullOrder(outline, count);
+    const { hull, walk } = outline;
+    const onWalk = new Set(walk);
+    const interior = [...Array(count).keys()].filter((one) => !onWalk.has(one));
+    const inside = interior.length;
+    const map = (turn: number, flip: boolean, mirror: boolean): number[] => {
+      const out = [...Array(count).keys()];
+      walk.forEach((vertex, at) => {
+        out[vertex] = walk[flip ? (hull - at + turn) % hull : (at + turn) % hull];
+      });
+      interior.forEach((vertex, at) => {
+        out[vertex] = inside === 0 ? vertex : interior[mirror ? inside - 1 - at : at];
+      });
+      return out;
+    };
+    return new Map([
+      ['the outline rotated one step along its walk', map(1, false, false)],
+      ['the outline reflected', map(0, true, false)],
+      ['the interior reversed', map(0, false, true)],
+      ['the outline rotated and the interior reversed', map(1, false, true)],
+    ]);
+  };
+
+  /** One mesh renumbered in place — every field that indexes its vertex list moved with it. */
+  const renumberMesh = (att: Record<string, unknown>, newIndexOf: readonly number[]): void => {
+    const vertices = asNumbers(att.vertices) ?? [];
+    const uvs = asNumbers(att.uvs);
+    const weights = Array.isArray(att.weights) ? (att.weights as unknown[]) : null;
+    const movedVertices = [...vertices];
+    const movedUvs = uvs === null ? null : [...uvs];
+    const movedWeights = weights === null ? null : [...weights];
+    for (let i = 0; i < newIndexOf.length; i++) {
+      const to = newIndexOf[i];
+      movedVertices[2 * to] = vertices[2 * i];
+      movedVertices[2 * to + 1] = vertices[2 * i + 1];
+      if (uvs !== null && movedUvs !== null) {
+        movedUvs[2 * to] = uvs[2 * i];
+        movedUvs[2 * to + 1] = uvs[2 * i + 1];
+      }
+      if (weights !== null && movedWeights !== null) movedWeights[to] = weights[i];
+    }
+    att.vertices = movedVertices;
+    if (movedUvs !== null) att.uvs = movedUvs;
+    if (movedWeights !== null) att.weights = movedWeights;
+    att.triangles = (asNumbers(att.triangles) ?? []).map((one) => newIndexOf[one]);
+    const edges = asNumbers(att.edges);
+    if (edges !== null) att.edges = edges.map((one) => 2 * newIndexOf[one / 2]);
+  };
+
+  /** One positional deform key of a motion spec, as the fields a comparison needs. */
+  interface DocDeformRun {
+    /** `animation/slot/key`, which is what pairs a key with itself across two runs. */
+    where: string;
+    skin: string;
+    slot: string;
+    attachment: string | null;
+    from: number;
+    values: number[];
+  }
+
+  /** Every `vertices` key a motion spec states, or null where it is not one. */
+  const deformRunsOf = (text: string): DocDeformRun[] | null => {
+    const spec = asObject(asJson(text));
+    const animations = spec === null ? null : asObject(spec.animations);
+    if (animations === null) return null;
+    const out: DocDeformRun[] = [];
+    for (const name of Object.keys(animations)) {
+      const body = asObject(animations[name]);
+      const tracks = body === null || !Array.isArray(body.deform) ? [] : (body.deform as unknown[]);
+      for (const one of tracks) {
+        const track = asObject(one);
+        const keys = track === null || !Array.isArray(track.keys) ? [] : (track.keys as unknown[]);
+        keys.forEach((rawKey, at) => {
+          const key = asObject(rawKey);
+          const values = key === null ? null : asNumbers(key.vertices);
+          if (key === null || values === null) return;
+          out.push({
+            where: `${name}/${String(track?.slot ?? '')}/key${at}`,
+            skin: typeof track?.skin === 'string' ? track.skin : 'default',
+            slot: typeof track?.slot === 'string' ? track.slot : '',
+            attachment: typeof track?.attachment === 'string' ? track.attachment : null,
+            from: typeof key.fromVertex === 'number' ? key.fromVertex : 0,
+            values,
+          });
+        });
+      }
+    }
+    return out;
+  };
+
+  /** The authored mesh one deform key indexes into, under the rig's own skin/slot/attachment path. */
+  const meshPathOf = (rig: unknown, run: DocDeformRun): string[] | null => {
+    const skins = asObject(asObject(rig)?.skins);
+    const slot = asObject(asObject(skins?.[run.skin])?.[run.slot]);
+    if (slot === null) return null;
+    const authored = Object.keys(slot).filter((name) => {
+      const att = asObject(slot[name]);
+      return att !== null && asNumbers(att.vertices) !== null && asNumbers(att.triangles) !== null;
+    });
+    const wanted = run.attachment ?? (authored.length === 1 ? authored[0] : null);
+    return wanted !== null && authored.includes(wanted) ? ['skins', run.skin, run.slot, wanted] : null;
+  };
+
+  /** One deform key as a full per-vertex offset table, zero where the run does not reach. */
+  const offsetTable = (run: DocDeformRun, count: number): Array<[number, number]> => {
+    const out: Array<[number, number]> = [...Array(count)].map((): [number, number] => [0, 0]);
+    for (let i = 0; run.from + i < count && i * 2 + 1 < run.values.length; i++) {
+      out[run.from + i] = [run.values[i * 2], run.values[i * 2 + 1]];
+    }
+    return out;
+  };
+
+  /**
+   * Two products compared offset by offset, each one read at the index the
+   * renumbering moved it to. `missing` is a key the second run does not state
+   * at all, which is a different failure from a key whose numbers moved.
+   */
+  const compareProducts = (
+    was: readonly DocDeformRun[],
+    now: readonly DocDeformRun[] | null,
+    mapOf: (run: DocDeformRun) => readonly number[] | null,
+  ): { differ: number; total: number; worst: number; missing: number } => {
+    let differ = 0;
+    let total = 0;
+    let worst = 0;
+    let missing = 0;
+    for (const run of was) {
+      const map = mapOf(run);
+      const mate = now?.find((one) => one.where === run.where) ?? null;
+      if (map === null || mate === null) {
+        missing++;
+        continue;
+      }
+      const before = offsetTable(run, map.length);
+      const after = offsetTable(mate, map.length);
+      for (let i = 0; i < map.length; i++) {
+        total++;
+        const dx = Math.abs(after[map[i]][0] - before[i][0]);
+        const dy = Math.abs(after[map[i]][1] - before[i][1]);
+        if (dx > 1e-9 || dy > 1e-9) differ++;
+        worst = Math.max(worst, dx, dy);
+      }
+    }
+    return { differ, total, worst, missing };
+  };
+
+  /**
+   * One script run into a directory of its own, with the product it wrote.
+   *
+   * ⚠️ The redirect is applied to the source AND to the path the product is
+   * read back from, and that is not symmetry for its own sake. The first
+   * version of the plant below wrote into the round's directory and looked for
+   * its product under the literal `/tmp/` the page spells, where nothing was:
+   * the plant then faulted as a MISSING key rather than as a moved offset, so
+   * `DS06` printed green over a clause that had never run. It was found by
+   * planting a plant that is not broken — the real script in the plant's
+   * place — and watching `DS06` stay green where it had to go red.
+   *
+   * 🚨 **The redirect rewrites a page's own literal and nothing else, and the
+   * rule that keeps it that way is ORDER: `here` runs on page text FIRST, and
+   * a path already resolved inside `dir` is spliced in AFTER it, never
+   * through it.** A rewrite of the prefix `/tmp/` is not idempotent, because
+   * on a machine where `os.tmpdir()` IS `/tmp` the replacement text starts
+   * with the pattern: running it over `<dir>/rig.json` yields
+   * `<dir>/<dir-relative>/rig.json`. CI on ubuntu found exactly that, on a
+   * tree whose macOS runs were green because `os.tmpdir()` there is under
+   * `/var/folders/…` and the two never collided.
+   *
+   * ⭐ So this suite has to be run BOTH ways before it is believed, and the
+   * second way is one environment variable:
+   * `TMPDIR=/tmp/rigc-ci-sim bun run selftest` (create the directory first;
+   * Bun's `os.tmpdir()` honours it). A green run under the default tmpdir is
+   * half the measurement on this platform.
+   */
+  const runScriptInto = (
+    script: DocScript,
+    source: string,
+    dir: string,
+    rig: { from: string; to: string } | null,
+  ): { status: number | null; product: string | null } => {
+    const here = (text: string): string => text.split(docScratchPrefix()).join(`${dir}/`);
+    const edited = rig === null ? here(source) : here(source).split(rig.from).join(rig.to);
+    const ran = spawnSync(process.execPath, ['-e', edited], { cwd: root, encoding: 'utf8' });
+    const at = here(script.writes[0] ?? '');
+    return { status: ran.status, product: at !== '' && existsSync(at) ? readFileSync(at, 'utf8') : null };
+  };
+
+  try {
+    // --- the population: a script whose PRODUCT is a positional run ---------
+    interface RenumberSubject {
+      script: DocScript;
+      /** The `--rig` its own command names, which is what its run indexes into. */
+      rig: string;
+      rigText: string;
+      /** Where the compiler would look for that rig's art — `src/compile.ts`'s own rule. */
+      images: string;
+      runs: DocDeformRun[];
+      product: string;
+      meshes: Map<string, string[]>;
+    }
+    const subjects: RenumberSubject[] = [];
+    for (const script of verified) {
+      const rigAt = script.argv.indexOf('--rig');
+      const rig = rigAt >= 0 ? (script.argv[rigAt + 1] ?? null) : null;
+      if (rig === null || !existsSync(join(root, rig))) {
+        told.push(
+          `${script.where}: its command names ` +
+            `${rig === null ? 'no `--rig`, so nothing says which vertex list its run indexes into' : `\`--rig ${rig}\`, which the repository does not carry`}`,
+        );
+        continue;
+      }
+      const dir = mkdtempSync(join(renumberRoot, 'base-'));
+      const first = runScriptInto(script, script.source, dir, null);
+      const runs = first.product === null ? null : deformRunsOf(first.product);
+      if (first.status !== 0 || first.product === null || runs === null) {
+        told.push(`${script.where}: it wrote no product this window can read (exit ${String(first.status)})`);
+        continue;
+      }
+      if (runs.length === 0) {
+        told.push(`${script.where}: its product states no \`vertices\` key, so it writes no positional run to renumber under`);
+        continue;
+      }
+      const copied = script.reads.find((path) => {
+        const at = join(root, path);
+        return existsSync(at) && (deformRunsOf(readFileSync(at, 'utf8')) ?? []).length > 0;
+      });
+      if (copied !== undefined) {
+        told.push(
+          `${script.where}: it reads \`${copied}\`, which states a \`vertices\` key itself, so a run it writes may ` +
+            'be a copy rather than something it computed and this window cannot tell the two apart',
+        );
+        continue;
+      }
+      if (first.product.includes(docScratchPrefix())) {
+        told.push(`${script.where}: its product names \`${docScratchPrefix()}\`, which the plant below cannot carry through a redirect`);
+        continue;
+      }
+      const rigText = readFileSync(join(root, rig), 'utf8');
+      const parsed = asJson(rigText);
+      const meshes = new Map<string, string[]>();
+      const unresolved: string[] = [];
+      for (const run of runs) {
+        const at = meshPathOf(parsed, run);
+        if (at === null) unresolved.push(run.where);
+        else meshes.set(run.where, at);
+      }
+      if (unresolved.length > 0) {
+        told.push(
+          `${script.where}: \`${rig}\` states no single authored mesh for ${unresolved.join(', ')}, so there is no ` +
+            'vertex list to un-permute its offsets against',
+        );
+        continue;
+      }
+      const declared = asObject(parsed)?.images;
+      subjects.push({
+        script,
+        rig,
+        rigText,
+        images: resolve(dirname(join(root, rig)), typeof declared === 'string' ? declared : '.'),
+        runs,
+        product: first.product,
+        meshes,
+      });
+    }
+    subjectCount = subjects.length;
+
+    // --- the construction, re-asked of the compiler's own rule --------------
+    const identityOf = (count: number): number[] => [...Array(count).keys()];
+    for (const subject of subjects) {
+      const rig = asJson(subject.rigText);
+      const all = meshesOfRig(rig);
+      if (familyNames.length === 0 && all.length > 0) {
+        try {
+          familyNames = [...renumberingsOf(all[0].att).keys()];
+        } catch (err) {
+          construction.push(`${subject.script.where}: \`${subject.rig}\` states a mesh this window cannot read an outline off — ${(err as Error).message}`);
+        }
+      }
+      // 🔒 The two clauses, each planted against itself. A map that lifts an
+      // interior vertex into the hull block and a map that swaps two
+      // neighbours on the walk must BOTH be refused, on every authored mesh of
+      // every subject — which is what says the family above is legal because
+      // of the rule rather than in spite of it.
+      for (const { at, att } of all) {
+        const count = (asNumbers(att.vertices) ?? []).length / 2;
+        let walk: number[] = [];
+        let hull = 0;
+        try {
+          const outline = traceOutline(count, asNumbers(att.triangles) ?? []);
+          walk = outline.walk;
+          hull = outline.hull;
+        } catch (err) {
+          construction.push(`${subject.script.where}: \`${at.join('/')}\` has no outline to derive a renumbering from — ${(err as Error).message}`);
+          continue;
+        }
+        const interior = [...Array(count).keys()].filter((one) => !walk.includes(one));
+        for (const [what, illegal] of [
+          [
+            'an interior vertex lifted into the hull block',
+            ((): number[] => {
+              const out = identityOf(count);
+              if (interior.length === 0) return out;
+              out[walk[0]] = interior[0];
+              out[interior[0]] = walk[0];
+              return out;
+            })(),
+          ],
+          [
+            'two neighbours swapped on the outline walk',
+            ((): number[] => {
+              const out = identityOf(count);
+              if (hull < 3) return out;
+              out[walk[0]] = walk[1];
+              out[walk[1]] = walk[0];
+              return out;
+            })(),
+          ],
+        ] as ReadonlyArray<readonly [string, number[]]>) {
+          if (illegal.every((to, from) => to === from)) {
+            construction.push(`${subject.script.where}: \`${at.join('/')}\` admits no map with ${what}, so that clause is untested on it`);
+            continue;
+          }
+          const copy = asObject(asJson(JSON.stringify(att)));
+          if (copy === null) continue;
+          renumberMesh(copy, illegal);
+          try {
+            const again = traceOutline(count, asNumbers(copy.triangles) ?? []);
+            checkHullOrder(again, count);
+            construction.push(
+              `${subject.script.where}: \`${at.join('/')}\` with ${what} is ACCEPTED by \`checkHullOrder\`, so the ` +
+                'family below is no longer the set the compiler leaves open and this window is permuting by habit',
+            );
+          } catch (err) {
+            refused.push(`${what} → ${(err as Error).message.split('.')[0]}`);
+          }
+        }
+      }
+    }
+
+    // --- every renumbering: run it, build it, and compare the products ------
+    interface RenumberRound {
+      subject: RenumberSubject;
+      name: string;
+      maps: Map<string, number[]>;
+      moved: number;
+      product: DocDeformRun[] | null;
+    }
+    const rounds: RenumberRound[] = [];
+    for (const subject of subjects) {
+      for (const name of familyNames) {
+        const rig = asJson(subject.rigText);
+        const maps = new Map<string, number[]>();
+        let moved = 0;
+        for (const { at, att } of meshesOfRig(rig)) {
+          let map: number[] | undefined;
+          try {
+            map = renumberingsOf(att).get(name);
+          } catch (err) {
+            construction.push(`${subject.script.where}: ${name} of \`${at.join('/')}\` could not be built — ${(err as Error).message}`);
+            continue;
+          }
+          if (map === undefined) continue;
+          maps.set(at.join('/'), map);
+          renumberMesh(att, map);
+          moved += map.filter((to, from) => to !== from).length;
+          permutedMeshes++;
+          try {
+            const count = (asNumbers(att.vertices) ?? []).length / 2;
+            checkHullOrder(traceOutline(count, asNumbers(att.triangles) ?? []), count);
+          } catch (err) {
+            construction.push(
+              `${subject.script.where}: ${name} of \`${at.join('/')}\` is not a renumbering the compiler accepts — ` +
+                `${(err as Error).message}. The rule this window derives the family from has moved`,
+            );
+          }
+        }
+        if (moved === 0) {
+          construction.push(
+            `${subject.script.where}: ${name} moved no vertex of \`${subject.rig}\`, so the comparison under it ` +
+              'would hold whatever the script did',
+          );
+        }
+        const dir = mkdtempSync(join(renumberRoot, 'perm-'));
+        const rigPath = join(dir, 'rig.json');
+        writeFileSync(rigPath, JSON.stringify(rig, null, 2));
+        const ran = runScriptInto(subject.script, subject.script.source, dir, { from: subject.rig, to: rigPath });
+        // ⚠️ Redirect first, splice second — see `runScriptInto`. Swapping
+        // the rig in before the redirect fed `<dir>/rig.json` back through a
+        // rewrite of `/tmp/` and doubled it wherever `os.tmpdir()` is `/tmp`.
+        const argv = subject.script.argv
+          .map((token) => token.split(docScratchPrefix()).join(`${dir}/`))
+          .map((token, at) => (subject.script.argv[at] === subject.rig ? rigPath : token));
+        const built = spawnSync(process.execPath, ['cli.ts', ...argv, '--images', subject.images], {
+          cwd: root,
+          encoding: 'utf8',
+        });
+        const out = (subject.script.out ?? '').split(docScratchPrefix()).join(`${dir}/`);
+        const wrote = out !== '' && existsSync(out);
+        if (built.status !== 0 || !wrote) {
+          construction.push(
+            `${subject.script.where}: \`${subject.rig}\` with ${name} exited ${String(built.status)} and ` +
+              `${wrote ? 'wrote' : 'wrote nothing'} through the command its page states, so this renumbering is not ` +
+              `one the whole compiler accepts${built.stderr.trim() === '' ? '' : ` — ${built.stderr.trim().split('\n')[0]}`}`,
+          );
+        }
+        const product = ran.product === null ? null : deformRunsOf(ran.product);
+        rounds.push({ subject, name, maps, moved, product });
+        if (ran.status !== 0) {
+          invariance.push(`${subject.script.where}: under ${name} the script itself exited ${String(ran.status)} rather than running to the end`);
+        }
+      }
+    }
+
+    /**
+     * What one round disagrees with its own unpermuted product about. `mapOf`
+     * is the un-permutation; handing it the identity is what the third plant
+     * below does, and it must not come back empty.
+     */
+    const judgeRound = (round: RenumberRound, mapOf: (run: DocDeformRun) => readonly number[] | null): string[] => {
+      const seen = compareProducts(round.subject.runs, round.product, mapOf);
+      const rows: string[] = [];
+      if (seen.missing > 0) {
+        rows.push(
+          `${round.subject.script.where}: under ${round.name} its product states ${seen.missing} fewer \`vertices\` ` +
+            'key(s) than the same script wrote on the tree as it stands',
+        );
+      }
+      if (seen.differ > 0) {
+        rows.push(
+          `${round.subject.script.where}: under ${round.name} ${seen.differ} of ${seen.total} offset(s) ` +
+            `${MOVED_OFFSET_ROW}, worst ${seen.worst.toFixed(4)} — so it wrote the same numbers at the same ` +
+            'POSITIONS in a ' +
+            'list whose positions moved, which is a script assuming its vertex list rather than reading it',
+        );
+      }
+      return rows;
+    };
+    const unpermute = (round: RenumberRound) => (run: DocDeformRun): readonly number[] | null =>
+      round.maps.get((round.subject.meshes.get(run.where) ?? []).join('/')) ?? null;
+
+    for (const round of rounds) {
+      invariance.push(...judgeRound(round, unpermute(round)));
+      const moved = compareProducts(round.subject.runs, round.product, (run) => {
+        const map = unpermute(round)(run);
+        return map === null ? null : identityOf(map.length);
+      });
+      if (moved.differ === 0) {
+        invariance.push(
+          `${round.subject.script.where}: under ${round.name} the product it wrote is the same at every position as ` +
+            'the one it wrote unpermuted, so nothing was measured and the clause above holds vacuously',
+        );
+      }
+      measured.push(
+        `${round.subject.script.where} \`(${round.subject.script.label ?? ''})\` under ${round.name}: ` +
+          `${judgeRound(round, unpermute(round)).length === 0 ? '0' : 'some'} of ` +
+          `${compareProducts(round.subject.runs, round.product, unpermute(round)).total} offset(s) differ after ` +
+          `un-permuting, with ${round.moved} index/indices moved and the run itself ${moved.differ} of ${moved.total} ` +
+          'different at its own positions',
+      );
+    }
+
+    // --- the plants ---------------------------------------------------------
+    //
+    // ⭐ The first is the defect itself, generalised rather than transcribed:
+    // a script that writes its run at fixed positions whatever the rig says.
+    // It is built out of the subject's OWN product, so nothing broken is
+    // written into this file and the plant cannot go stale against the script
+    // it plants on. §9.2's script as it shipped 2026-09-04 is one instance of
+    // it — measured on that exact source, 16 to 46 of 50 offsets differ.
+    for (const subject of subjects) {
+      const mine = rounds.filter((round) => round.subject === subject);
+      for (const round of mine) {
+        const dir = mkdtempSync(join(renumberRoot, 'plant-'));
+        const rig = asJson(subject.rigText);
+        for (const { at: where, att } of meshesOfRig(rig)) {
+          const map = round.maps.get(where.join('/'));
+          if (map !== undefined) renumberMesh(att, map);
+        }
+        const rigPath = join(dir, 'rig.json');
+        writeFileSync(rigPath, JSON.stringify(rig, null, 2));
+        // The page's OWN literal, redirected once inside `runScriptInto` —
+        // the same order rule. Pre-redirecting it here is what doubled the
+        // path under a `/tmp` tmpdir, and the product it carries is refused
+        // above if it names the prefix itself.
+        const positional =
+          `await Bun.write(${JSON.stringify(subject.script.writes[0] ?? '')}, ${JSON.stringify(subject.product)});`;
+        plantsRun++;
+        const ran = runScriptInto(subject.script, positional, dir, { from: subject.rig, to: rigPath });
+        const planted: RenumberRound = { ...round, product: ran.product === null ? null : deformRunsOf(ran.product) };
+        // 🔒 The row it has to raise is named, not merely counted. The first
+        // version of this clause took ANY new fault, and the one it got was
+        // `missing` — the plant's product was being looked for where it had
+        // not been written — so the offsets clause it exists for never ran and
+        // the case printed green over it.
+        const raised = raisedBy(judgeRound(planted, unpermute(planted)), { was: invariance });
+        if (!raised.some((one) => one.includes(MOVED_OFFSET_ROW))) {
+          plantMisses.push(
+            `${subject.script.where}: a product written at fixed positions under ${round.name} — not faulted as ` +
+              `a moved offset (${raised.length === 0 ? 'nothing was raised at all' : raised.join('; ')})`,
+          );
+        }
+      }
+      // The identity renumbering: the non-vacuity row above has to fire on it,
+      // or a family that quietly stopped permuting anything would read green.
+      const first = mine[0];
+      if (first !== undefined) {
+        const idle: RenumberRound = {
+          ...first,
+          name: 'the identity renumbering',
+          maps: new Map([...first.maps].map(([where, map]) => [where, identityOf(map.length)])),
+          moved: 0,
+          product: subject.runs,
+        };
+        plantsRun++;
+        const still = compareProducts(subject.runs, idle.product, (run) => {
+          const map = unpermute(idle)(run);
+          return map === null ? null : identityOf(map.length);
+        });
+        if (still.differ !== 0) {
+          plantMisses.push(`${subject.script.where}: a renumbering that permutes nothing — not caught by the non-vacuity row`);
+        }
+        // And the un-permutation itself: compare a real round at raw positions
+        // and it has to go red, or the comparison is not doing the work its
+        // figure claims.
+        plantsRun++;
+        if (
+          raisedBy(
+            judgeRound(first, (run) => {
+              const map = unpermute(first)(run);
+              return map === null ? null : identityOf(map.length);
+            }),
+            { was: invariance },
+          ).length === 0
+        ) {
+          plantMisses.push(`${subject.script.where}: the comparison run without un-permuting — not faulted`);
+        }
+      }
+    }
+  } finally {
+    rmSync(renumberRoot, { recursive: true, force: true });
+  }
+
+  const constructionProbes = [
+    ...construction,
+    ...floorProbes(
+      [
+        [subjectCount, 1, `${subjectCount} stated script(s) write a \`vertices\` run this window can renumber under`],
+        [familyNames.length, 4, `${familyNames.length} renumbering(s) came out of \`checkHullOrder\`'s two clauses`],
+        [permutedMeshes, 4, `${permutedMeshes} authored mesh/meshes were renumbered across them`],
+        [refused.length, 2, `${refused.length} illegal map(s) were refused by the compiler's own rule`],
+      ],
+      'so one step of this construction came back thinner than it has ever been, and the two cases below would be ' +
+        'measuring a renumbering nothing derived',
+    ),
+  ];
+  say(
+    'DS04_THE_RENUMBERINGS_A_STATED_SCRIPTS_PRODUCT_IS_MEASURED_UNDER_ARE_THE_ONES_THE_COMPILER_ACCEPTS',
+    constructionProbes.length === 0,
+    probeDetail(
+      constructionProbes.length === 0,
+      constructionProbes,
+      `${subjectCount} of the ${verified.length} verified script(s) write a \`vertices\` run — ` +
+        `${told.length} do not and say why: ${told.join('; ')}. Each is renumbered ${familyNames.length} way(s) ` +
+        `{${familyNames.join('; ')}}, ${permutedMeshes} authored mesh/meshes in all, every one re-asked of ` +
+        '`checkHullOrder` and rebuilt green through the command its own page states; and the two clauses that rule ' +
+        `states are planted against themselves — ${[...new Set(refused)].join(' | ')}`,
+    ),
+    'issue #479 refused to gate this on the sentence §9.2 states it in, because a subject picked out of one ' +
+      'comment is a hand-kept list wearing a derivation. So the subject is the PRODUCT — a script that writes a ' +
+      '`vertices` run — and the population is one today without being chosen: a second page that writes one joins ' +
+      'with no edit here, and the floor goes red if this one stops. The renumbering is derived the same way: ' +
+      "`checkHullOrder` says the outline comes first and traces its walk in order, and says NOTHING about the " +
+      'interior, so the accepted set is the dihedral maps of that walk times any permutation of the interior. ' +
+      'Deriving it rather than hardcoding "rotate inside the perimeter block" is what makes it break by REFUSING ' +
+      'the day a clause is added — and passing that one function is not the claim, because `meshEdges`, the ' +
+      'deform runs, `A21` and `A39` read the same list, which is why each renumbering is built rather than argued',
+  );
+
+  say(
+    'DS05_A_STATED_SCRIPT_THAT_WRITES_A_VERTICES_RUN_WRITES_THE_SAME_GEOMETRY_UNDER_EVERY_ONE_OF_THEM',
+    invariance.length === 0 && measured.length > 0,
+    probeDetail(
+      invariance.length === 0 && measured.length > 0,
+      [
+        ...invariance,
+        ...(measured.length > 0 ? [] : ['not one renumbering was measured, so this line would be a pass over nothing at all']),
+      ],
+      `${measured.length} measurement(s) — ${measured.join('; ')}`,
+    ),
+    'this is the half `DS02` cannot reach: a verdict claim is falsifiable only where the page\'s verdict differs ' +
+      'from the build the script would produce doing nothing, so a script that goes QUIET is caught above and one ' +
+      'that stays GREEN while doing something else is not. A run is positional by format — that is `fromVertex`\'s ' +
+      'whole job — and a GENERATOR of one has no reason to be, so the property under test is that renumbering the ' +
+      'rig moves the product with it. ⚠️ The second figure on each line is the load-bearing one: it says the run ' +
+      'DID move at its own positions, so 0 of N after un-permuting is a measurement rather than a tautology',
+  );
+
+  say(
+    'DS06_A_SCRIPT_THAT_WRITES_ITS_RUN_AT_FIXED_POSITIONS_IS_FAULTED_BY_THE_RENUMBERING',
+    plantMisses.length === 0 && plantsRun >= 6,
+    probeDetail(
+      plantMisses.length === 0 && plantsRun >= 6,
+      [
+        ...plantMisses,
+        ...floorProbes(
+          [[plantsRun, 6, `${plantsRun} plant(s) were applied over ${subjectCount} subject(s)`]],
+          'so a plant stopped being APPLIED rather than stopped being caught',
+        ),
+      ],
+      `${plantsRun} plant(s) over ${subjectCount} subject(s) — a product written at fixed positions whatever the rig ` +
+        `says faulted under each of the ${familyNames.length} renumbering(s); a renumbering that permutes nothing is ` +
+        'caught by the non-vacuity row rather than passing; and the comparison run WITHOUT its un-permutation ' +
+        'faults, which is what says the un-permutation is doing the work its figure claims',
+    ),
+    'a permutation check that faults on everything is the "test only refusals" failure this repository already has ' +
+      'a judgement about, so the two sides are stated together: the repaired script reports 0 of N under every ' +
+      'legal renumbering and the positional one does not. The plant is built out of the subject\'s OWN product ' +
+      'rather than transcribed from the script that shipped 2026-09-04, because a broken script written into this ' +
+      'file goes stale against the page the day the page is edited, and what the defect IS — the same numbers at ' +
+      'the same positions whatever the rig says — is exactly what a product replayed verbatim is',
   );
 
   return bad;
