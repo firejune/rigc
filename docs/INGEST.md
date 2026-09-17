@@ -253,7 +253,7 @@ rigc diff
 
   skeleton (reported)   (no mean)   over 2 measures  — the stage, which no reading of the frames could decide
       1.000  stage_present                1/1         both sides declare a setup-pose stage, or neither does  — …
-      1.000  stage_box                    4/4         the stage is the same box (x, y, width, height, exactly as stated)  — …
+      1.000  stage_box                    4/4         the stage is the same box (x, y, width, height — the extent as stated, an omitted origin as the 0 it means)  — …
 
   bones                 mean 1.000  over 8 measures
       1.000  count                        3/3         how many bones
@@ -290,9 +290,20 @@ that one did.
 
 ⚠️ **The one exception is the skeleton's own declared box**, and it is an exception to
 the sentence and not to the rule: `skeleton.stage_box` compares four world numbers,
-but they are numbers an exporter *wrote into the header* rather than a pose anything
+but they are numbers an exporter *declared in the header* rather than a pose anything
 measured, and the block they sit in gates nothing. Moving a pivot does not move them
 either.
+
+⭐ **Declared is not the same as written down, and for the origin it is the
+difference between a green round trip and a false finding**
+([#620](https://github.com/firejune/rigc/issues/620)). The editor omits a header
+field at its default, so a stage sitting at `0,0` exports as a `width` and a
+`height` and no `x`/`y` at all — there is no other spelling for it. The measure
+reads that omission as the `0` it means, which is why a rigc build whose stage is at
+the origin and its own export of that build read `stage_box` **4/4**; reading the
+four "exactly as stated" scored the same box **2/4**. The extent is still read
+exactly as stated: it is what decides whether there is a stage at all, so a missing
+`width` is an absent stage rather than a stage of width zero.
 
 ⛔ **And its ratios are not a score.** [`src/diff.ts`](../src/diff.ts) says so in the
 type itself (*"Unweighted mean of the measures below. NOT a quality score"*), and the

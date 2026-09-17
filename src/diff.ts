@@ -1021,7 +1021,11 @@ function diffEvents(c: Json, r: Json): DiffSection {
  */
 interface StageFacts {
   present: boolean;
-  /** The four fields as stated, `null` where the header omits one. */
+  /**
+   * The four fields as the header MEANS them: the extent exactly as stated, and
+   * the origin of a declared stage as stated or `0` where it is omitted. See
+   * `stageFacts` for why the second half is a reading and not a fallback.
+   */
   box: Array<number | null>;
 }
 
@@ -1035,11 +1039,48 @@ const STAGE_FIELDS = ['x', 'y', 'width', 'height'] as const;
  * own. It is also what the compiler requires and what `A14_NO_FULL_FRAME_MESH`
  * and `A19_OVERLAY_PNGS_HAVE_ALPHA` measure against, so the three agree on the
  * word by construction rather than by memory.
+ *
+ * ⭐ **Inside a declared stage, an omitted `x`/`y` IS `0`** (issue #620). That is
+ * a reading of the format, not a value invented for a gap — the distinction this
+ * file lives or dies by — and four measurements carry it, none of them anybody's
+ * word for the convention:
+ *
+ * - **This tree had already decided it, one file over.** `compile.ts` assembles
+ *   the header as `header.x = rig.skeleton?.x ?? 0`, under the same guard: only
+ *   when the extent is there. So a rig spec that omits its origin emits `0`, and
+ *   reading the same omission in a file as absence made the compiler and the
+ *   comparison disagree about one value in one header. This measure is not
+ *   adopting the editor's convention so much as stopping contradicting the
+ *   emitter it is pointed at.
+ * - **The header's writer omits a field at its default.** All twelve exports
+ *   under `examples/` omit `referenceScale`, whose default the parser itself
+ *   spells two lines below the four raw assignments (`SkeletonJson.js:74`,
+ *   `getValue(skeletonMap, "referenceScale", 100)`), and none of the 389 bone
+ *   `x`/`y`/`rotation`/`shearX`/`shearY` values those same files DO write is an
+ *   explicit `0`. A stage at the origin therefore has no spelling but the
+ *   omission, so reading the omission as absence reads a value the format cannot
+ *   express.
+ * - **The binary reader supplies it unconditionally.** `SkeletonBinary.js:69-72`
+ *   reads the four as four floats with no key to be missing, so one skeleton's
+ *   origin is `0` in a `.skel` and absent in a `.json`. A measure that called
+ *   those two different boxes would be reporting the container.
+ * - **The JSON reader's silence is an oversight rather than a meaning.**
+ *   `SkeletonJson.js:70-73` is `skeletonData.x = skeletonMap.x`, a raw
+ *   assignment that overwrites `SkeletonData`'s own `0` with `undefined`. The
+ *   line beside it does the same to `fps`, whose default is `30` and which every
+ *   one of the twelve omits — so taking `undefined` for a meaning would say the
+ *   editor has never exported a frame rate.
+ *
+ * ⚠️ **The default is the ORIGIN's alone**, and the guard is the paragraph above
+ * it: the extent is what declares a stage, so defaulting it would turn the
+ * stage-less header of issue #578 into a `0x0` stage at `0,0` and answer the
+ * question instead of reading it.
  */
 function stageFacts(root: Json): StageFacts {
   const header = isObj(root.skeleton) ? root.skeleton : {};
   const box = STAGE_FIELDS.map((k) => num(header[k]));
-  return { present: num(header.width) !== null && num(header.height) !== null, box };
+  const present = box[2] !== null && box[3] !== null;
+  return { present, box: present ? [box[0] ?? 0, box[1] ?? 0, box[2], box[3]] : box };
 }
 
 /**
@@ -1072,7 +1113,7 @@ function diffHeader(c: Json, r: Json): DiffReported {
       ),
       measure(
         'skeleton.stage_box',
-        'the stage is the same box (x, y, width, height, exactly as stated)',
+        'the stage is the same box (x, y, width, height — the extent as stated, an omitted origin as the 0 it means)',
         agreed,
         both ? STAGE_FIELDS.length : 0,
         both
