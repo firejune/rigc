@@ -433,6 +433,16 @@ no field of the file). `bun run selftest` holds every rig this repository builds
 that on every run, which is the one gate here that compares an emitted file against
 a file rigc did not write.
 
+📊 **And it holds the twelve editor exports to the weaker claim that is available for
+them** ([#594](https://github.com/firejune/rigc/issues/594)). Every
+`examples/*/export/*.json` is ingested with `--art none`, rebuilt through the pack
+beside it, and `diff`ed against the file it was read from: **12 of 12 come back with 0
+blockers and 1.000 on all 49 ratio-bearing measures and all 5 reported ones.** Byte
+identity is not the claim there and the reason is the input, not the round trip — §2.3
+has the three kinds of difference, measured. ⚠️ Which pack is "the one beside it" is
+resolved rather than guessed, for §0.2's reason: `spineboy/export` holds two, and
+`spineboy-run.atlas` covers neither skeleton in it.
+
 **What it will not do is invent.** Everything the spec format cannot hold is a
 finding with a code — `BLOCK` for a construct the rebuild will be missing, `JUDGE`
 for the two values a skeleton does not carry, `LOSS` for the one number rigc
@@ -440,11 +450,18 @@ re-derives on purpose. A blocker exits non-zero and still writes both files.
 
 **Two values are not in a skeleton**, so `ingest` asks rather than guesses:
 
-- **the stage** (`skeleton.width`/`height`) — an editor export carries none, and
-  `--stage x,y,w,h` is how you supply it. Posing the rig would give the *animated*
-  extent, which is a different number from the setup box, so it is not derived. It
-  is also the value that costs least to get wrong: no measure `diff` reports reads
-  the skeleton header at all, so an absurd box is green everywhere;
+- **the stage** (`skeleton.width`/`height`) — `--stage x,y,w,h` is how you supply one
+  when the file has none. ⚠️ **This page said an editor export carries none until
+  [#594](https://github.com/firejune/rigc/issues/594) measured it: all twelve exports in
+  the fetched corpus carry a stage**, `ingest` reads it straight through, and not one of
+  them needed the flag. What holds without qualification is that the box cannot be
+  *derived* — posing the rig gives the *animated* extent, which is a different number
+  from the setup box — so a skeleton that really declares none is a `NO_STAGE` blocker
+  rather than a guess. It is also the value that costs least to get wrong: `diff`
+  reports it as two measures of its own (`stage_present`, `stage_box`, since
+  [#578](https://github.com/firejune/rigc/issues/578)) and they are `(reported)`, so
+  nothing on the ladder reads them and an absurd box is green nearly everywhere. The
+  corpus half of the selftest's `IG` suite is the one gate that does read them;
 - **each animation's duration** — the format has no such field. The largest key time
   is used, stated in the motion spec's `note`, and recorded as a finding per
   animation. Edit it if you know the real number.
@@ -571,6 +588,25 @@ State the ambition in the right units, because three different things get called
 | **Structural agreement** — same bones, slots, attachments, timelines, key counts, curve kinds | ✅ yes, and `diff` measures it | the 3-timing transcription reads **1.000 on all 49 measures**. Aim here first |
 | **Geometric agreement** — the same drawn pixels, allowing for the atlas | ✅ yes, and `check` measures it | see below |
 | **Byte-identical JSON** | ⛔ **no, and not because of the geometry** | rigc writes defaults explicitly where the editor omits them, and the editor writes bookkeeping rigc has no field for. SPEC_COVERAGE records the count on rung 6: a field-by-field comparison against the reference export leaves **49 differences, every one benign** — 39 explicit defaults, 3 editor bookkeeping keys, 1 runtime version string, and 6 bone `icon` values, which was the only thing the rig spec could not say at all |
+
+⚠️ **The third row holds for `ingest` too, and it is worth knowing in which direction.**
+`build(ingest(x))` is byte-identical for a skeleton **rigc** emitted — that is the
+contract `bun run selftest` gates on every run — and it is not, for a skeleton the
+editor emitted. Measured over all twelve corpus exports, a field-by-field walk of the
+rebuild against its source produces differences of exactly three kinds, in every file:
+
+| Kind | Example, candidate vs reference | Why |
+| --- | --- | --- |
+| **header bookkeeping**, 3 per file | `skeleton.hash: undefined vs "VFWbaK2UoCM"`, `skeleton.audio: undefined vs null`, `skeleton.spine: "4.3.13" vs "4.3.75-beta"` | the rig spec has no field for `hash` or `audio`, and the version is the runtime rigc links. `ingest` reports all three as findings — `HEADER_BOOKKEEPING` and `HEADER_REDERIVED` |
+| **an omitted default written out** | `…rotate[0].time: 0 vs undefined` | the editor omits a zero `time`; rigc writes it. AUTHORING §10.5's *do not imitate the exporter's omissions*, from the other side |
+| **the emitted precision** | `…curve[0]: 0.066667 vs 0.06666667`, `uvs[0]: 0 vs 2.554152e-7` | rigc emits six decimals |
+
+⇒ **So the corpus gate is `diff` at 1.000 rather than a byte comparison**, and it is
+worth being exact about what that does and does not cover. `diff` compares structure —
+counts, names, parentage, order, timeline kinds, key counts, curve kinds — and **not
+the values inside the keys**, which is why the precision row above is invisible to it.
+On rigc's own rigs byte identity covers both; on a foreign export the values are held
+by `check` (pixels) or by nothing, depending on what you render.
 
 The geometric row needs a real number, because a naive reading of `check` makes an
 exact transcription look wrong. Here is the 3-timing transcription against frames

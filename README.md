@@ -557,6 +557,15 @@ claim on purpose, and the weakening is measured rather than assumed: it comes ba
 equal as a **multiset of region blocks**, because the order the pages are collected in
 is in no field of the skeleton.
 
+**And over twelve skeletons nobody here wrote.** The same run ingests every editor
+export in the fetched example corpus, rebuilds it through the pack beside it and
+`diff`s the result against the source: **12 of 12, no blockers, 1.000 on every measure
+the report carries.** Byte identity is not the claim there and the reason is the input
+rather than the round trip — an editor header carries `hash` and `audio`, which the rig
+spec has no field for — so the contract is the structural one `diff` measures.
+[INGEST.md §2.3](docs/INGEST.md) has the three kinds of difference that remain, with
+what each is worth.
+
 **What it reads is skeleton JSON and nothing else** — no `.spine` project, no binary
 `.skel`, no atlas, no art. So it never invents, and the things it cannot get out of
 the file are **findings** with codes rather than plausible values: a construct the
@@ -568,11 +577,13 @@ One thing it drops on purpose and says so: a path attachment's `lengths`, which 
 
 ⚠️ **Two values are not in a skeleton at all.**
 
-- **The stage.** `skeleton.width`/`height`: rigc always writes one and an editor
-  export carries none, so without `--stage x,y,w,h` the missing box is refused by
-  name. It is not derivable — posing the rig gives the *animated* extent, which is a
-  different number from the setup box — and it is the value that costs nothing to get
-  wrong, because no measure `diff` reports reads the skeleton header at all.
+- **The stage.** `skeleton.width`/`height`: rigc always writes one, and a skeleton that
+  carries none is refused by name unless `--stage x,y,w,h` supplies it. It is not
+  derivable — posing the rig gives the *animated* extent, which is a different number
+  from the setup box. ⚠️ This said *"an editor export carries none"* until #594 measured
+  it: **all twelve exports in the example corpus carry a stage** and none of them needs
+  the flag. It is still the value that costs least to get wrong, because `diff` reports
+  the box and gates nothing on it.
 - **An animation's duration.** The format has no such field. The largest key time is
   the only derivable answer and it is what a runtime plays to; it is wrong for an
   animation that holds its last pose past its last key, so it is recorded as a finding

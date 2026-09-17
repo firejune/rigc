@@ -35682,10 +35682,12 @@ function runIngestSuite(): number {
     `no --stage: ${refused.length} NO_STAGE blocker and no width written. --stage ${JSON.stringify(supplied)}: ` +
       `${judged.length} NO_STAGE judgement, header ${JSON.stringify(wrote)}. A skeleton that HAS a stage: ` +
       `${blockerless.length} NO_STAGE finding(s)`,
-    'the one value a decompiler cannot read out of a skeleton, and the one that costs nothing to get wrong — ' +
-      '`diff` has no skeleton-header measure at all, so an absurd box reads 1.000 on every measure there is. ' +
-      'Three-sided because the middle state is the trap: recording it as a JUDGEMENT rather than silently ' +
-      'accepting the caller\'s number is the whole difference between a transcription and an invention',
+    'the one value a decompiler cannot read out of a skeleton, and the one that costs least to get wrong — ' +
+      'this sentence said `diff` has no skeleton-header measure at all until #594 read the report: since #578 it ' +
+      'carries `stage_present` and `stage_box`, and they are `(reported)`, so nothing on the ladder consults them ' +
+      'and an absurd box is green everywhere a rung is scored. Three-sided because the middle state is the trap: ' +
+      'recording it as a JUDGEMENT rather than silently accepting the caller\'s number is the whole difference ' +
+      'between a transcription and an invention',
   );
 
   // --- IG07: the other judgement, and the one thing rigc re-derives ----------
@@ -36070,7 +36072,267 @@ function runIngestSuite(): number {
     );
   }
 
+  // --- IG16–IG18: the corpus half — twelve skeletons nobody here wrote -------
+  //
+  // ⭐ The strongest reference this file has, and the one every case above is
+  // structurally unable to reach. `IG00` holds every rig THIS REPOSITORY builds
+  // to byte identity, which is a real contract and a narrow one: each of those
+  // skeletons came out of `src/emit.ts`, so what it proves is that the
+  // decompiler inverts the emitter — including any habit the two share. The
+  // twelve exports under `examples/` were written by the Spine editor. Nobody
+  // here chose their field order, their float spellings, which constructs they
+  // use, or how densely they are keyed.
+  //
+  // 🚨 So the contract here is `diff` at 1.000 and NOT byte identity, and that
+  // is a property of the input rather than a weakening chosen for comfort. An
+  // editor export's header carries `hash` and `audio`, which the rig spec has no
+  // field for and which `ingest` reports as HEADER_BOOKKEEPING; its `spine`
+  // string is the editor's own build, which a rebuild restates as the version
+  // rigc links (HEADER_REDERIVED). A byte comparison would differ on those three
+  // fields for all twelve files and would be measuring the header, not the round
+  // trip. `diff` is what compares the rest, measure by measure and by name.
+  //
+  // ⚠️ Every ratio-bearing measure gates, INCLUDING the `(reported)` ones that
+  // gate nowhere else in this tree. That is not an oversight of `docs/GATE.md`'s
+  // *What never gates*: that rule is about grading a TRANSCRIPTION, where a
+  // measure no reading of the frames could decide must not decide a rung. Here
+  // the reference is the very file the specs were read from, so `mesh_edges`
+  // moving is not a candidate's entitlement — it is an edge list the decompiler
+  // lost, and this is the one suite in a position to say so.
+  //
+  // ⚠️ Fetched, not tracked. An absent `examples/` is a HOLE and never a pass,
+  // the way `IG11` and the `diff`, `bonedist`, `check` and mesh suites report
+  // one. ⚠️ Measured, because the card assumed otherwise: a run with no corpus
+  // exits **0**, not 2 — `tallyFaults`' per-suite floor fires on a suite that
+  // says it RAN and then prints nothing, and a suite that says it did not run
+  // and prints a SKIP saying so is an accounted-for state. A fresh clone with no
+  // corpus is a green run by design (CLAUDE.md *The selftest and its fixtures*),
+  // and nothing here changes that.
+  const corpus = corpusExports();
+  if (corpus.length === 0) {
+    console.log(`  SKIP  IG16–IG18 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
+    console.log('          run `bun run fetch-examples` and re-run this suite.');
+    console.log(
+      '          ⚠️ This is a HOLE in this run, not a pass — not one skeleton written outside this repository ' +
+        'was ingested, rebuilt or diffed here.',
+    );
+  } else {
+    /** Every export a case line was actually printed for. `IG17` is what reads it. */
+    const readExports: string[] = [];
+    /** Measure id → how many exports compared something (`total > 0`) under it. `IG18`. */
+    const exercised = new Map<string, number>();
+    /** Every ratio-bearing measure id the report defines, in the order it defines them. */
+    const gatingIds: string[] = [];
+    /** The same for the `(reported)` ones, kept apart so IG18 states both without a literal. */
+    const reportedIds: string[] = [];
+    /** How much each export actually gave the ratio-bearing measures to compare. IG18's spread. */
+    const density: Array<{ label: string; over: number; of: number }> = [];
+    for (const entry of corpus) {
+      const source = JSON.parse(readFileSync(entry.path, 'utf8')) as Record<string, unknown>;
+      const decompiled = ingest(source, {
+        name: entry.name,
+        art: 'none',
+        source: basename(entry.path),
+        version: packageVersion(),
+      });
+      const blockers = decompiled.findings.filter((f) => f.kind === 'blocker');
+      const root = mkdtempSync(join(tmpdir(), `rigc-corpus-${entry.name}-`));
+      const specDir = join(root, 'S');
+      mkdirSync(specDir, { recursive: true });
+      const rigPath = join(specDir, 'rig.json');
+      const motionPath = join(specDir, 'motion.json');
+      writeFileSync(rigPath, `${JSON.stringify(decompiled.rig, null, 2)}\n`);
+      writeFileSync(motionPath, `${JSON.stringify(decompiled.motion, null, 2)}\n`);
+
+      // Which pack is "the example's own" is decided by RESOLVING against each
+      // one in turn, never by matching its filename against the skeleton's —
+      // `docs/INGEST.md` §0.2 is a whole section on why that heuristic is wrong,
+      // and `spineboy/export` is the directory that proves it: two atlases, and
+      // `spineboy-run.atlas` packs only what one animation needs. A refusal is
+      // kept per candidate so a run where NO pack resolves prints what each one
+      // said instead of the last one.
+      let built: CompileResult | null = null;
+      let pack = '';
+      const refusals: string[] = [];
+      for (const [index, candidate] of entry.packs.entries()) {
+        const outDir = join(root, `B${index}`);
+        mkdirSync(outDir, { recursive: true });
+        try {
+          built = compile({ rigPath, motionPath, outDir, atlasInPath: candidate });
+          pack = basename(candidate);
+          // The gate the by-hand loop ran as `rigc build`: compiled twice, so
+          // A18's determinism claim is made over floats nobody in this
+          // repository chose, and judged under `spine` — the profile for foreign
+          // data, since the other rulebook is this project's own renderer policy
+          // (`docs/INGEST.md` §3.3).
+          const verdict = validate({
+            skeletonText: built.skeletonText,
+            atlasText: built.atlasText,
+            atlasDir: outDir,
+            declaredDurations: built.declaredDurations,
+            rig: built.rig,
+            reEmit: (() => {
+              const second = compile({ rigPath, motionPath, outDir: join(root, `R${index}`), atlasInPath: candidate });
+              return { skeletonText: second.skeletonText, atlasText: second.atlasText };
+            })(),
+            profile: 'spine',
+          });
+          if (verdict.failures.length > 0) {
+            // The FIRST failure and a count, never all of them: a pack that
+            // covers none of the skeleton fails one assertion per attachment,
+            // and fifty of those on one line is how a real message gets lost.
+            refusals.push(
+              `${basename(candidate)}: compiled, then failed ${verdict.failures.length} assertion(s), the first ` +
+                `${verdict.failures[0].assertion}: ${verdict.failures[0].detail.slice(0, 160)}`,
+            );
+            built = null;
+            pack = '';
+            continue;
+          }
+          break;
+        } catch (err) {
+          refusals.push(`${basename(candidate)}: ${(err as Error).message.split('\n')[0].slice(0, 160)}`);
+        }
+      }
+      /** The packs that did not cover it, by name. The reasons are the FAIL branch's business. */
+      const declined = refusals.map((line) => line.slice(0, line.indexOf(':')));
+
+      const report = built === null ? null : diffSkeletons(JSON.parse(built.skeletonText), source);
+      const gating = report === null ? [] : report.sections.flatMap((s) => [...s.measures, ...(s.nameAgnostic?.measures ?? [])]);
+      const moved = report === null ? [] : [...movedMeasures(report), ...movedAgnosticMeasures(report)];
+      const movedReported = report === null ? [] : movedReportedMeasures(report);
+      const reported = report === null ? [] : [...report.sections.flatMap((s) => s.reported?.measures ?? []), ...report.header.measures];
+      const substantive = gating.filter((m) => m.total > 0);
+      for (const [into, measures] of [[gatingIds, gating], [reportedIds, reported]] as const) {
+        for (const m of measures) {
+          if (!into.includes(m.id)) into.push(m.id);
+          if (m.total > 0) exercised.set(m.id, (exercised.get(m.id) ?? 0) + 1);
+        }
+      }
+      if (report !== null) density.push({ label: entry.label, over: substantive.length, of: gating.length });
+      const figures = report === null ? '' : report.sections.map((s) => `${s.name} ${s.ratio.toFixed(3)}`).join(' · ');
+      say(
+        `IG16_AN_EDITOR_EXPORT_REBUILDS_FROM_ITS_DECOMPILED_SPECS_AT_1_000_ON_EVERY_MEASURE[${entry.label}]`,
+        blockers.length === 0 && built !== null && moved.length === 0 && movedReported.length === 0,
+        built === null
+          ? `${decompiled.findings.length} finding(s), ${blockers.length} blocker(s)` +
+              (blockers.length === 0 ? '' : `: ${blockers.map((f) => `${f.code} at ${f.where}`).join('; ')}`) +
+              `; NO REBUILD — ${entry.packs.length} pack(s) beside the export, each refused: ${refusals.join(' | ')}`
+          : `${decompiled.findings.length} finding(s), ${blockers.length} blocker(s)` +
+              (blockers.length === 0 ? '' : `: ${blockers.map((f) => `${f.code} at ${f.where}`).join('; ')}`) +
+              `; rebuilt green through ${pack} (${entry.packs.length} pack(s) beside the export` +
+              (declined.length === 0 ? '' : `, ${declined.length} of which does not cover it: ${declined.join(', ')}`) +
+              '); ' +
+              `${gating.length - moved.length}/${gating.length} ratio-bearing measure(s) at 1.000, ` +
+              `${substantive.length} of them over something; ${reported.length - movedReported.length}/${reported.length} ` +
+              `reported measure(s) at 1.000; ${figures}` +
+              (moved.length === 0 ? '' : `\n          MOVED: ${moved.join(', ')}`) +
+              (movedReported.length === 0 ? '' : `\n          MOVED (reported): ${movedReported.join(', ')}`),
+        'the measurement issue #594 was opened to write down, which until now lived in a pull request body and so, ' +
+          'by this repository\'s own rule about a decision nobody wrote into the tree, had not happened. One line ' +
+          'per export, naming the pack it resolved through and any blocker by code, so that a file the decompiler ' +
+          'cannot yet carry reads as known-by-name rather than as noise. The count of measures that compared ' +
+          'SOMETHING is printed beside the total because `diff` scores an empty comparison 1.000 by definition: on ' +
+          'a rig with no mesh and no constraint a third of this line is vacuous, and IG18 is what holds the corpus ' +
+          'as a whole to putting something in front of every measure',
+      );
+      readExports.push(entry.label);
+    }
+
+    // --- IG17: the positive control the card asked for ------------------------
+    //
+    // Derived from the directory at BOTH ends: `corpusExports` walks it, and this
+    // walks it again and compares against the labels the loop actually printed a
+    // line for. Two-sided, because the two failures are different — an export the
+    // loop dropped (a `continue` on a shape nobody anticipated) and an export
+    // measured twice (a directory walked once per pack, say) are the same count
+    // apart in opposite directions, and only the multiset catches both.
+    const onDisk: string[] = [];
+    for (const example of readdirSync(INGEST_CORPUS_ROOT).sort()) {
+      const dir = join(INGEST_CORPUS_ROOT, example, 'export');
+      if (!existsSync(dir)) continue;
+      for (const file of readdirSync(dir).sort()) if (file.endsWith('.json')) onDisk.push(`${example}/${file}`);
+    }
+    const missed = onDisk.filter((label) => !readExports.includes(label));
+    const twice = readExports.filter((label, at) => readExports.indexOf(label) !== at);
+    say(
+      'IG17_EVERY_SKELETON_IN_THE_CORPUS_DIRECTORY_WAS_READ_AND_EACH_OF_THEM_EXACTLY_ONCE',
+      onDisk.length > 0 && missed.length === 0 && twice.length === 0,
+      `${onDisk.length} \`export/*.json\` file(s) under ${INGEST_CORPUS_ROOT}, ${readExports.length} case line(s) ` +
+        `printed above` +
+        (missed.length === 0 ? '' : `; NOT READ: ${missed.join(', ')}`) +
+        (twice.length === 0 ? '' : `; READ TWICE: ${twice.join(', ')}`),
+      'the control this half would be worthless without: every clause above is about the exports that WERE read, ' +
+        'so a loop that quietly stopped at the first directory would print nothing but passes. The expected set is ' +
+        'the directory rather than a number kept here, which is what makes `fetch-examples` adding a thirteenth ' +
+        'export a thirteenth case line and not an edit to this file',
+    );
+
+    // --- IG18: what stops "1.000 on everything" from being vacuous ------------
+    const defined = [...gatingIds, ...reportedIds];
+    const never = defined.filter((id) => (exercised.get(id) ?? 0) === 0);
+    const thin = defined.filter((id) => (exercised.get(id) ?? 0) < corpus.length);
+    const ranked = [...density].sort((a, b) => a.over - b.over);
+    const leanest = ranked[0];
+    const densest = ranked[ranked.length - 1];
+    say(
+      'IG18_EVERY_MEASURE_THE_REPORT_DEFINES_IS_COMPARED_OVER_SOMETHING_BY_AT_LEAST_ONE_EXPORT',
+      defined.length > 0 && density.length > 0 && never.length === 0,
+      `${defined.length - never.length}/${defined.length} measure(s) the report defines ` +
+        `(${gatingIds.length} ratio-bearing + ${reportedIds.length} reported) compared something on at least one ` +
+        `export; ${thin.length} of them are vacuous on at least one` +
+        (leanest === undefined || densest === undefined
+          ? ''
+          : `. The spread over this corpus: ${leanest.label} compared ${leanest.over} of ${leanest.of} ` +
+            `ratio-bearing measure(s), ${densest.label} ${densest.over} of ${densest.of}`) +
+        (never.length === 0 ? '' : `; VACUOUS ON EVERY EXPORT: ${never.join(', ')}`),
+      '`diff` scores a comparison of nothing against nothing as 1.000 — `ratioOf` returns 1 when the total is 0 — ' +
+        'so IG16\'s green is worth exactly what the corpus put in front of each measure, and on the leanest export ' +
+        'a large minority of that line is vacuous by construction (no mesh, no constraint, no event). The spread is ' +
+        'printed rather than described so that nobody has to keep it in step: this goes red the day the corpus ' +
+        'stops carrying a construct, which is a different day from any measure breaking',
+    );
+  }
+
   return bad;
+}
+
+/** The fetched example corpus, which is the only art in this file rigc did not make. */
+const INGEST_CORPUS_ROOT = resolve(import.meta.dir, 'examples');
+
+/** One editor export in that corpus: what to call it, where it is, and the packs beside it. */
+interface CorpusExport {
+  /** `spineboy/spineboy-pro.json` — what the case line is keyed on. */
+  label: string;
+  /** The rig spec's `name`: the export's own basename, as `ingest` defaults it. */
+  name: string;
+  path: string;
+  /** Every `.atlas` in the same directory, sorted. Which one is right is resolved, not guessed. */
+  packs: string[];
+}
+
+/**
+ * Every JSON skeleton in an `export` directory under `examples`, in a stable
+ * order — or nothing at all.
+ *
+ * ⚠️ Empty is the ordinary outcome, not a fault: `examples/` is fetched by
+ * `bun run fetch-examples` and git-ignored, so a fresh clone and CI both run
+ * this file without it. The caller reports a HOLE; nothing here throws.
+ */
+function corpusExports(): CorpusExport[] {
+  if (!existsSync(INGEST_CORPUS_ROOT)) return [];
+  const out: CorpusExport[] = [];
+  for (const example of readdirSync(INGEST_CORPUS_ROOT).sort()) {
+    const dir = join(INGEST_CORPUS_ROOT, example, 'export');
+    if (!existsSync(dir)) continue;
+    const files = readdirSync(dir).sort();
+    const packs = files.filter((f) => f.endsWith('.atlas')).map((f) => join(dir, f));
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      out.push({ label: `${example}/${file}`, name: basename(file, '.json'), path: join(dir, file), packs });
+    }
+  }
+  return out;
 }
 
 /**
