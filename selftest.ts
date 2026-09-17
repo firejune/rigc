@@ -28,8 +28,17 @@
  * [`fixtures/public.ts`](fixtures/public.ts). Three of them, one per shape the
  * assertions care about: `overlay_probe`, `articulated_probe` and
  * `contained_probe`. Two further suites build their own even smaller rigs inline
- * (static rigs, draw-order timelines), and two more measure against the official
- * Spine example corpus that `bun run fetch-examples` downloads.
+ * (static rigs, draw-order timelines).
+ *
+ * Other suites measure against the official Spine example corpus that
+ * `bun run fetch-examples` downloads. How many is deliberately not stated here.
+ * The count that used to close this sentence said `two`; when it was finally
+ * measured the corpus-absent run printed a HOLE under seven suite headers, and
+ * an EIGHTH suite turned out to read the corpus without printing one at all
+ * (issue #617) — so the figure was wrong, and the thing it was wrong about was
+ * not the one anybody was counting. The run prints the list itself now, because
+ * a suite that reads the corpus reports its absence BY NAME — a HOLE, never a
+ * pass — and `TY20` holds those two readings of the tree against each other.
  *
  * ## What `--cuts` adds
  *
@@ -58,12 +67,17 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
-// The one gate in this file that reads this file as CODE rather than as text,
-// and the reason it is worth a parser: what it has to find is the condition
-// GOVERNING a row, and that condition reaches the row through an `if`, through
-// the branch of a ternary spread into a probe list, and through an early return
-// above it. A window of lines cannot tell those apart, and a gate that guesses
-// at its own population is the shape this repository refuses everywhere else.
+// Imported for the gates that read this file as CODE rather than as text, and
+// the reason each is worth a parser: one has to find the condition GOVERNING a
+// row, and that condition reaches the row through an `if`, through the branch of
+// a ternary spread into a probe list, and through an early return above it; the
+// other has to find a path this file BUILDS and a sentence it PRINTS, in a file
+// whose comments discuss both far more often than any line emits either. A
+// window of lines cannot tell those apart, and a gate that guesses at its own
+// population is the shape this repository refuses everywhere else.
+// ⚠️ This sentence opened with `The one gate` while there were two. The count is
+// removed rather than raised, for the same reason #617 took one out of the header
+// above: nothing derived it, and the next one to arrive would find it stale too.
 // Dev-only — `selftest.ts` ships in no package, and `bunx tsc` already makes
 // this a first-class dependency of the tree.
 import ts from 'typescript';
@@ -12384,6 +12398,20 @@ function runPathAndSliderSuite(): number {
       'a truncated list would agree with a truncated prediction for the wrong reason, and the floor on how many ' +
       'candidates loaded is what stops that dropping everything',
   );
+  // 🚨 The floor above is met by the two probes written just here, so an absent
+  // corpus takes this case from twelve editor exports down to rigc's own art and
+  // still prints PASS — measured at 195 lookups over 14 candidates with
+  // `examples/` on disk and 6 over 2 without it, the same verdict both times
+  // (issue #617). Every other suite that reads the corpus says so out loud; this
+  // one did not, and the header's stale count was only the symptom of it. A
+  // detail line rather than a verdict, because the case is not vacuous without
+  // the corpus — it measured less, and the run has to say which.
+  if (!existsSync(a08CorpusDir)) {
+    console.log(
+      `          ⚠️ This is a HOLE in this run, not a pass — \`examples/\` is absent, so the join above was ` +
+        `measured over the ${a08JoinsMeasured} candidate(s) this file wrote and not one skeleton the editor did.`,
+    );
+  }
 
   // --- issue #577: the attachment `type` a spec may say, and the `path` it gets
   //
@@ -38675,6 +38703,286 @@ function runRunTallySuite(live: RunTally): number {
       'in brackets, and `CONTROL_…` is a role a dozen suites answer to. A rule that faulted on any of them would ' +
       'need a list of suites to excuse, and the list is the defect being gated for. The two independence clauses ' +
       'are why both halves are landed together: either one alone reports a tree the other would refuse',
+  );
+
+  // --- TY20: every suite that reads the example corpus reports its absence --
+  //
+  // This file's header used to state how many suites measure against the
+  // fetched Spine example corpus. It said `two more`; the tree had seven, and
+  // the sentence had been wrong across two landings before anybody counted
+  // (issue #617). The number is gone rather than retyped, for the reason this
+  // file already holds against every figure in its summary: a count nothing
+  // derives drifts, and replacing a stale one with a fresh one buys a year.
+  //
+  // ⭐ The count was the symptom. What it could not see is the negative half —
+  // a suite that READS the corpus and says nothing when it is missing prints a
+  // green case over a measurement that quietly shrank. `PS127` was exactly
+  // that: 195 lookups over 14 candidates with `examples/` on disk, 6 over 2
+  // without it, PASS both times and not a word about the difference. A header
+  // that had stated `eight` would have been just as green.
+  //
+  // So the two readings of the tree are derived here and compared. A suite is a
+  // corpus reader when it BUILDS a path under `examples/` — a matching literal
+  // handed to `resolve` or `join` — directly or through a top-level declaration
+  // it reads, which is the hop that matters: most of them hold the path in a
+  // top-level constant declared nowhere near the body that reads it, so a walk
+  // stopping at the function body would see almost none. It is NOT a reader when
+  // it merely names the directory: `everySpec` skips `examples` by name while
+  // walking this repository's own specs, and a scan reading that as a corpus
+  // read would enrol two suites that never open the corpus at all.
+  //
+  // 🔒 Reachability is transitive and reporting is not, and that asymmetry is
+  // the rule rather than an artefact of the walk: the HOLE is a line the suite
+  // prints, under its own header, in the run an absent corpus produced. A HOLE
+  // sentence sitting in a helper the suite does not call on that branch is text
+  // in the tree, not a line in the run, and reading it as one would let the
+  // defect back in wearing a helper's name.
+  /** One top-level declaration of a file, as the corpus scan reads it. */
+  interface CorpusDecl {
+    /** Every identifier its body mentions — the edges the reachability walk follows. */
+    refs: Set<string>;
+    /** It BUILDS a path under the corpus: a matching literal handed to a path builder. */
+    builds: boolean;
+    /** Its own code carries the word a suite reports an absent corpus with. */
+    reports: boolean;
+  }
+  interface CorpusScan {
+    /** How many top-level declarations the walk read — 0 is a scan that saw nothing. */
+    declarations: number;
+    /** Every suite `main()` registers with the tally, in registration order. */
+    registered: string[];
+    /** Suite → the declarations through which it reaches a path built under the corpus. */
+    readers: Map<string, string[]>;
+    /** Corpus readers carrying no HOLE sentence of their own. */
+    silent: string[];
+  }
+  /** A path segment naming the fetched corpus, wherever it sits in the literal. */
+  const CORPUS_SEGMENT = /(^|\/)examples(\/|$)/;
+  /**
+   * The word a suite reports an absent corpus with.
+   *
+   * Not in `VERDICT_GUTTER` or `QUIET_GUTTER` and deliberately so: it is never a
+   * gutter word, only a detail line ten spaces in, so the tally must not count it
+   * and this scan must still be able to find it.
+   */
+  const HOLE_WORD = 'HOLE';
+  /** The functions that turn such a literal into a path — naming it is not reading it. */
+  const PATH_BUILDERS = new Set(['resolve', 'join']);
+  const scanCorpusSuites = (text: string): CorpusScan => {
+    const tree = ts.createSourceFile('selftest.ts', text, ts.ScriptTarget.Latest, true);
+    const decls = new Map<string, CorpusDecl>();
+    // Read off the AST rather than the characters, because a comment emits
+    // nothing: this file talks about HOLEs and about `examples/` in prose far
+    // more often than it prints either, and the two suites nearest this one say
+    // so in comments alone.
+    const emitted = (node: ts.Node): string | null => {
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+      const kind = node.kind;
+      if (kind === ts.SyntaxKind.TemplateHead || kind === ts.SyntaxKind.TemplateMiddle || kind === ts.SyntaxKind.TemplateTail) {
+        return (node as ts.TemplateLiteralLikeNode).text;
+      }
+      return null;
+    };
+    const read = (root: ts.Node, into: CorpusDecl): void => {
+      const visit = (node: ts.Node): void => {
+        const literal = emitted(node);
+        if (literal !== null) {
+          if (literal.includes(HOLE_WORD)) into.reports = true;
+          const call = node.parent;
+          if (
+            CORPUS_SEGMENT.test(literal) &&
+            call !== undefined &&
+            ts.isCallExpression(call) &&
+            ts.isIdentifier(call.expression) &&
+            PATH_BUILDERS.has(call.expression.text) &&
+            call.arguments.indexOf(node as ts.Expression) >= 0
+          ) {
+            into.builds = true;
+          }
+        }
+        if (ts.isIdentifier(node)) into.refs.add(node.text);
+        ts.forEachChild(node, visit);
+      };
+      ts.forEachChild(root, visit);
+    };
+    // ⚠️ Not `declare` — bun's transpiler reads `declare(...)` at statement
+    // position as a `declare` modifier and ERASES the call, which is silent:
+    // the walk then reports every suite clean over an empty map. Measured on
+    // the run this was written: 47 registrations found, 0 declarations read.
+    const record = (name: string, body: ts.Node): void => {
+      const decl: CorpusDecl = { refs: new Set(), builds: false, reports: false };
+      read(body, decl);
+      decls.set(name, decl);
+    };
+    for (const statement of tree.statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) record(statement.name.text, statement);
+      else if (ts.isVariableStatement(statement)) {
+        for (const one of statement.declarationList.declarations) {
+          if (ts.isIdentifier(one.name)) record(one.name.text, one);
+        }
+      }
+    }
+    // The registry `main()` actually walks, in both spellings it uses:
+    // `tally.of('key', runThing)` and `tally.of('key', () => runThing(tally))`.
+    const registered: string[] = [];
+    const registry = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'of' &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === 'tally'
+      ) {
+        const argument = node.arguments[1];
+        if (argument !== undefined) {
+          const named: string[] = [];
+          if (ts.isIdentifier(argument)) named.push(argument.text);
+          else {
+            const walk = (inner: ts.Node): void => {
+              if (ts.isIdentifier(inner) && decls.has(inner.text)) named.push(inner.text);
+              ts.forEachChild(inner, walk);
+            };
+            walk(argument);
+          }
+          const first = named[0];
+          if (first !== undefined && !registered.includes(first)) registered.push(first);
+        }
+      }
+      ts.forEachChild(node, registry);
+    };
+    registry(tree);
+    const readers = new Map<string, string[]>();
+    for (const suite of registered) {
+      const seen = new Set<string>();
+      const stack = [suite];
+      const through: string[] = [];
+      while (stack.length > 0) {
+        const name = stack.pop();
+        if (name === undefined || seen.has(name)) continue;
+        seen.add(name);
+        const decl = decls.get(name);
+        if (decl === undefined) continue;
+        if (decl.builds) through.push(name);
+        for (const next of decl.refs) if (!seen.has(next)) stack.push(next);
+      }
+      if (through.length > 0) readers.set(suite, through.sort());
+    }
+    return {
+      declarations: decls.size,
+      registered,
+      readers,
+      silent: [...readers.keys()].filter((suite) => decls.get(suite)?.reports !== true),
+    };
+  };
+
+  const corpus = scanCorpusSuites(source);
+  const ty20Probes = [
+    ...corpus.silent.map(
+      (suite) =>
+        `${suite} reaches a path built under \`examples/\` through ${(corpus.readers.get(suite) ?? []).join(', ')} and ` +
+        'prints no HOLE, so an absent corpus takes its measurement down without a word',
+    ),
+    ...floorProbes(
+      [
+        [corpus.declarations, 1, `${corpus.declarations} top-level declaration(s) were read out of this file`],
+        [corpus.registered.length, 1, `${corpus.registered.length} suite(s) were found registered with the tally`],
+        [corpus.readers.size, 1, `${corpus.readers.size} registered suite(s) reach a path built under \`examples/\``],
+      ],
+      'a walk that stopped matching would report a clean tree over nothing at all',
+    ),
+  ];
+  const ty20Held = ty20Probes.length === 0;
+  say(
+    'TY20_EVERY_SUITE_THAT_READS_THE_EXAMPLE_CORPUS_REPORTS_ITS_ABSENCE_AS_A_HOLE',
+    ty20Held,
+    probeDetail(
+      ty20Held,
+      ty20Probes,
+      `${corpus.registered.length} suite(s) registered with the tally, ${corpus.readers.size} of which reach a path ` +
+        `built under \`examples/\` — ${[...corpus.readers.keys()].sort().join(', ')} — and every one of them carries ` +
+        'the HOLE sentence it prints when the corpus is not on disk',
+    ),
+    'this is what the header stopped counting: the list is printed by the run that derived it, so nothing states a ' +
+      'number anybody has to trust. The floors are the two-sided half — the population comes off the registry and ' +
+      'the corpus comes off path literals, and either scan going quiet would report every suite clean',
+  );
+
+  // --- TY21: the corpus scan planted, and the shapes it must not fault on ---
+  //
+  // On miniatures rather than the real file, for `TY11`'s reason. What they
+  // carry is the one defect and the four ways a declaration is NOT it: the HOLE
+  // printed, the corpus reached through a constant rather than in the body, the
+  // directory named in order to be SKIPPED, and a registry the walk cannot find.
+  const corpusMiniature = (declarations: string, body: string, registration: string): string =>
+    [
+      declarations,
+      'function aSuite(): number {',
+      body,
+      '  return 0;',
+      '}',
+      'function main(): void {',
+      `  ${registration}`,
+      '}',
+      '',
+      'main();',
+      '',
+    ].join('\n');
+  const REACHES = "  const dir = resolve(here, 'examples/6-arcs/export');\n  if (!existsSync(dir)) return 0;";
+  const SAYS_SO = `\n  console.log('          ⚠️ This is a ${HOLE_WORD} in this run, not a pass.');`;
+  const REGISTERED = "tally.of('a-suite', aSuite);";
+  const silentPlant = scanCorpusSuites(corpusMiniature('', REACHES, REGISTERED));
+  const reportingPlant = scanCorpusSuites(corpusMiniature('', REACHES + SAYS_SO, REGISTERED));
+  const wrappedPlant = scanCorpusSuites(corpusMiniature('', REACHES, "tally.of('a-suite', () => aSuite());"));
+  const constantPlant = scanCorpusSuites(
+    corpusMiniature(
+      "const PLANTED_CORPUS = resolve(here, 'examples/6-arcs/export');",
+      '  if (!existsSync(PLANTED_CORPUS)) return 0;',
+      REGISTERED,
+    ),
+  );
+  const skippingPlant = scanCorpusSuites(
+    corpusMiniature('', "  for (const name of readdirSync(here)) if (name === 'examples') continue;", REGISTERED),
+  );
+  const unregisteredPlant = scanCorpusSuites(corpusMiniature('', REACHES, "console.log('nothing was registered');"));
+  const ty21Probes = [
+    ...(silentPlant.silent.join() === 'aSuite' ? [] : [`a suite building a corpus path with no HOLE was named [${silentPlant.silent.join(', ')}]`]),
+    ...(reportingPlant.readers.size === 1 && reportingPlant.silent.length === 0
+      ? []
+      : [
+          `the same suite with the HOLE sentence was read as ${reportingPlant.readers.size} reader(s) and ` +
+            `${reportingPlant.silent.length} silent one(s)`,
+        ]),
+    ...(wrappedPlant.silent.join() === 'aSuite' ? [] : [`the arrow spelling of the registration was read as [${wrappedPlant.silent.join(', ')}]`]),
+    ...(constantPlant.silent.join() === 'aSuite' && constantPlant.readers.get('aSuite')?.join() === 'PLANTED_CORPUS'
+      ? []
+      : [`the corpus reached through a constant was attributed to [${constantPlant.readers.get('aSuite')?.join(', ') ?? 'nothing'}]`]),
+    ...(skippingPlant.readers.size === 0 && skippingPlant.registered.join() === 'aSuite'
+      ? []
+      : [`a suite naming \`examples\` only to skip it was read as ${skippingPlant.readers.size} corpus reader(s)`]),
+    ...(unregisteredPlant.registered.length === 0 && unregisteredPlant.readers.size === 0
+      ? []
+      : [`a file registering no suite was read as ${unregisteredPlant.registered.length} registration(s)`]),
+  ];
+  const ty21Held = ty21Probes.length === 0;
+  say(
+    'TY21_A_SUITE_READING_THE_CORPUS_WITHOUT_A_HOLE_FAULTS_WHILE_ONE_THAT_SKIPS_IT_BY_NAME_DOES_NOT',
+    ty21Held,
+    probeDetail(
+      ty21Held,
+      ty21Probes,
+      `a miniature suite resolving \`examples/6-arcs/export\` faults as [${silentPlant.silent.join(', ')}] and so does ` +
+        `the same body registered through an arrow [${wrappedPlant.silent.join(', ')}] and the same path held in a ` +
+        `constant [${constantPlant.silent.join(', ')}] via ${constantPlant.readers.get('aSuite')?.join(', ') ?? 'nothing'}; ` +
+        `the same suite printing the HOLE sentence faults in no way (${reportingPlant.readers.size} reader(s), ` +
+        `${reportingPlant.silent.length} silent), a suite naming \`examples\` only to SKIP it is no reader ` +
+        `(${skippingPlant.readers.size}) while still being registered (${skippingPlant.registered.join(', ')}), and a ` +
+        `file registering nothing reports ${unregisteredPlant.registered.length} registration(s) rather than a clean tree`,
+    ),
+    'the skipping case is the sharpest negative and the reason the scan wants a path BUILDER rather than the ' +
+      "directory's name: `everySpec` walks this repository for its committed specs and steps over `examples` by " +
+      'name, and a scan reading characters would enrol every suite that calls it. The constant case is the hop the ' +
+      'real tree needs: most of the corpus suites hold the path in a constant declared nowhere near the body ' +
+      'that reads it, so a walk stopping at the body would see almost none of them',
   );
 
   return bad;
