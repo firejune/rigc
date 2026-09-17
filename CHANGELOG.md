@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.25.0](https://github.com/firejune/rigc/compare/v0.24.0...v0.25.0) (2026-09-17)
+
+
+### Features
+
+* **diff:** the corpus round trip compares the values inside the structure, with the format's defaults read off the parser ([#615](https://github.com/firejune/rigc/issues/615)) ([#628](https://github.com/firejune/rigc/issues/628)) ([898b251](https://github.com/firejune/rigc/commit/898b251716e09eebafb932fc6dc3358dc8d51dff))
+
+
+### Bug Fixes
+
+* **cli:** `--stage` is for a skeleton that declares none, not for editor exports as a class, and the help text is held to the corpus that refuted it ([#616](https://github.com/firejune/rigc/issues/616)) ([#627](https://github.com/firejune/rigc/issues/627)) ([d2306d1](https://github.com/firejune/rigc/commit/d2306d1970aab7593656c3efb9fbc17abcb73e58))
+* **diff:** an omitted `x`/`y` inside a declared stage is the `0` it means, so a rigc build and its own editor export stop reading the same box as half moved ([#620](https://github.com/firejune/rigc/issues/620)) ([#623](https://github.com/firejune/rigc/issues/623)) ([6018caa](https://github.com/firejune/rigc/commit/6018caaf887234dd7ba12c4f9561c3aca681deaf))
+* **tools:** step 5 quotes both renderers, and a rig neither side can draw is a named SKIP rather than a bare exit=1 ([#621](https://github.com/firejune/rigc/issues/621)) ([#630](https://github.com/firejune/rigc/issues/630)) ([5d0e869](https://github.com/firejune/rigc/commit/5d0e86977054ee0bf798be63d479dc09fc64c8f4))
+
+
+### Instrument
+
+* **selftest:** a control code names one control and a prefix has one numbering authority, gated by TY17-TY19 over the run's own case lines, after the 38 collisions behind [#584](https://github.com/firejune/rigc/issues/584) were measured and repaired ([#584](https://github.com/firejune/rigc/issues/584)) ([#625](https://github.com/firejune/rigc/issues/625)) ([2e13150](https://github.com/firejune/rigc/commit/2e1315084b8a4b130126f8fffec1f949b8685c49))
+* **selftest:** the header stops counting the suites that read the example corpus, and a control derives that list instead - finding an eighth suite that read it silently ([#617](https://github.com/firejune/rigc/issues/617)) ([#629](https://github.com/firejune/rigc/issues/629)) ([c12efa7](https://github.com/firejune/rigc/commit/c12efa7f990b6a77481ebab7bf90ebe347e619de))
+
 ## [0.24.0](https://github.com/firejune/rigc/compare/v0.23.0...v0.24.0) (2026-09-17)
 
 
