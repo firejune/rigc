@@ -11021,7 +11021,14 @@ function runPathAndSliderSuite(): number {
     stripped.length === Object.keys(FOUR_SKINS).length &&
       strippedShared.length === 1 &&
       strippedShared[0] === `marker: "marker" x${markerFillers}`,
-    `with the \`name\` field removed the same skeleton reports ${strippedShared.length} collision(s)` +
+    // ⚠️ The anti-vacuity floor is on the line rather than only in the verdict.
+    // `stripped` is empty whenever the four-skin rig was REFUSED, and the
+    // sentence then reported "0 collision(s)" about a skeleton that was never
+    // emitted — measured by pointing the emit at a directory with no art
+    // (issue #498).
+    `${stripped.length} of the ${Object.keys(FOUR_SKINS).length} declared skin(s) were stripped and re-read; fewer ` +
+      'than all of them means the rig was refused and there is no skeleton here to report on. With the ' +
+      `\`name\` field removed the same skeleton reports ${strippedShared.length} collision(s)` +
       (strippedShared.length ? `: ${strippedShared.join('; ')}` : '') +
       `, against ${fourShared.length} for the emit as it ships — over ${markerFillers} filler(s) of "marker" read ` +
       'off the fixture rather than counted',
@@ -20234,7 +20241,15 @@ function runMeshOutlineSuite(): number {
       euler.includes('the triangles do not tile the outline') &&
       pinched !== null &&
       pinched.includes("the triangles' outline is not one closed loop"),
-    `a doubled interior triangle: ${euler === null ? 'COMPILED' : `refused with: ${euler}`} | a doubled boundary triangle: ` +
+    // ⚠️ `inner` is on the line because it is the floor the two readings beside
+    // it are taken over, and it cannot fall alone: at −1 the interior slice is
+    // empty, so the "doubled" mesh IS the unmodified one and compiles. The old
+    // sentence said `a doubled interior triangle: COMPILED` on that run —
+    // asserting both that a triangle had been doubled and that it was interior,
+    // on a run where neither happened (issue #498).
+    `the grid's first all-interior triangle is at index ${inner} of ${tris.length / 3}, and the floor is 0 — below ` +
+      `it the slice is empty and nothing is doubled. A doubled interior triangle: ` +
+      `${euler === null ? 'COMPILED' : `refused with: ${euler}`} | a doubled boundary triangle: ` +
       `${pinched === null ? 'COMPILED' : `refused with: ${pinched}`}`,
     "Euler's count and a closed boundary walk are the two things the derivation can check about the interior; " +
       'a doubled triangle, an unused vertex or a pinched outline all load through spine-core without a word',
@@ -22003,25 +22018,37 @@ function runPackerSuite(): number {
   // block.png is 12x8 and marker.png is 6x6; a 16x16 page holds one padded cell
   // and not two, so this is the smallest possible spill.
   const spilled = packAtlas(packInputsOf(spillResult.images), { pageSize: 16, padding: 1 });
-  const spillOverlaps = spilled.placements.some((a) =>
-    spilled.placements.some(
-      (b) =>
-        a !== b &&
-        a.page === b.page &&
-        a.x < b.x + b.width &&
-        b.x < a.x + a.width &&
-        a.y < b.y + b.height &&
-        b.y < a.y + a.height,
-    ),
+  // ⚠️ The PAIRS that share a rectangle rather than the boolean that used to
+  // stand here: a bound boolean gives the sentence below nothing to print, and
+  // it printed `2 part(s) on a 16x16 page -> 2 page(s): block@skeleton.png,
+  // marker@skeleton.png` — the spill reported as done — on a run where the two
+  // regions were laid over each other (issue #498). Measured by making the
+  // packer record every placement's page as 0.
+  const overlapping = spilled.placements.flatMap((a) =>
+    spilled.placements
+      .filter(
+        (b) =>
+          a !== b &&
+          a.page === b.page &&
+          a.x < b.x + b.width &&
+          b.x < a.x + a.width &&
+          a.y < b.y + b.height &&
+          b.y < a.y + a.height,
+      )
+      .map((b) => `${a.region} over ${b.region} on ${spilled.pages[a.page].name}`),
   );
   say(
     'PK08_A_SET_THAT_WILL_NOT_FIT_SPILLS_TO_ANOTHER_PAGE',
     spilled.pages.length === 2 &&
       spilled.placements.length === spillResult.images.length &&
-      !spillOverlaps &&
+      overlapping.length === 0 &&
       parseAtlasText(spilled.atlasText).pages.length === 2,
     `${spillResult.images.length} part(s) on a 16x16 page -> ${spilled.pages.length} page(s): ` +
-      spilled.placements.map((p) => `${p.region}@${spilled.pages[p.page].name}`).join(', '),
+      spilled.placements
+        .map((p) => `${p.region}@${spilled.pages[p.page].name} at ${p.x},${p.y} ${p.width}x${p.height}`)
+        .join(', ') +
+      `; ${overlapping.length} pair(s) share a rectangle and the floor is 0` +
+      (overlapping.length === 0 ? '' : ` — ${overlapping.join('; ')}`),
     'the alternative to a second page is overlapping two regions, which loads clean and draws one part over ' +
       'another',
   );
@@ -32764,10 +32791,18 @@ function runGalleryTranscriptSuite(): number {
     say(
       'GT65_THE_PROSE_FIGURE_SCAN_FAULTS_A_PLANT_AND_LEAVES_A_QUOTED_ONE_ALONE',
       plants.length === 0 && pages.length >= 2,
-      plants.length === 0
+      // ⚠️ The page count is bound in front of BOTH branches, because it is the
+      // floor this whole probe stands on and the clean branch had no value for
+      // it: with the gallery README set reduced to one page on disk the old
+      // sentence printed `on gallery/walk/README.md: "…" faults in prose by page
+      // and line, …` — the everything-is-fine line, on the run where the set it
+      // scans had collapsed (issue #498). GT64 one case above prints the same
+      // count, which is what makes the pair readable.
+      `over ${pages.length} page(s), and the floor is 2 — one page is a plant with nothing beside it: ` +
+      (plants.length === 0
         ? `on ${victim[0]}: "${PLANTED}" faults in prose by page and line, the same sentence inside a fence does ` +
           `not and joins the ${plantedQuoted.inside} quoted pairing(s) instead, and "${FOREIGN.trim()}" faults nowhere`
-        : plants.join('\n          '),
+        : plants.join('\n          ')),
       'a scan that faults everything and a scan that faults nothing both leave GT64 printing PASS. The middle ' +
         'plant is the load-bearing one: the repair for #609 is to move these figures INTO quoted blocks, so a rule ' +
         'that faulted them there would forbid the fix it exists to protect',
@@ -36647,14 +36682,23 @@ function runIngestSuite(): number {
   // --- IG02: page order, which is the one thing the skeleton does not hold ---
   const measured = [...looseTrips.entries()];
   const permuted = measured.filter(([, trip]) => trip.a.atlasText !== trip.b.atlasText);
-  const multisetEqual = measured.every(
-    ([, trip]) => JSON.stringify(atlasRegionBlocks(trip.a.atlasText)) === JSON.stringify(atlasRegionBlocks(trip.b.atlasText)),
+  // ⚠️ The count of rebuilds that came back UNEQUAL, rather than the boolean it
+  // used to be: `every` hands back a term with no value behind it, and the
+  // sentence below then stated "every one equal as a multiset" on the one run
+  // where they were not (issue #498). Planted by giving `ingest` a second
+  // placeholder the first one's image, the old line read `10 loose rebuild(s):
+  // every one equal as a multiset of region blocks, 5 of them in a DIFFERENT
+  // page order (…)` while three of the ten differed by a whole block.
+  const differing = measured.filter(
+    ([, trip]) => JSON.stringify(atlasRegionBlocks(trip.a.atlasText)) !== JSON.stringify(atlasRegionBlocks(trip.b.atlasText)),
   );
   say(
     'IG02_THE_ATLASES_PAGE_ORDER_IS_THE_ONE_THING_A_DECOMPILED_SPEC_CANNOT_KNOW',
-    measured.length > 0 && multisetEqual && permuted.length > 0,
-    `${measured.length} loose rebuild(s): every one equal as a multiset of region blocks, ` +
-      `${permuted.length} of them in a DIFFERENT page order (${permuted.map(([name]) => name).join(', ')})`,
+    measured.length > 0 && differing.length === 0 && permuted.length > 0,
+    `${measured.length} loose rebuild(s), ${measured.length - differing.length} of them equal as a multiset of ` +
+      `region blocks and the floor is all ${measured.length}` +
+      (differing.length === 0 ? '' : ` — NOT equal on ${differing.map(([name]) => name).join(', ')}`) +
+      `; ${permuted.length} of them in a DIFFERENT page order (${permuted.map(([name]) => name).join(', ')})`,
     'this is why the contract says "as a multiset" for the atlas and "byte for byte" for the skeleton, and the ' +
       'asymmetry is measured rather than assumed: `build` collects images in the order the rig spec\'s skins table ' +
       'names slots, a decompiled spec names them in the order the EMITTED skeleton does, and that order is in no ' +
