@@ -25058,25 +25058,33 @@ function writeStubEditor(path: string, ran: string, banner: string[], extra: str
 }
 
 /**
- * The lines the tool quoted from the editor, under the step heading they were
- * printed beneath.
+ * The lines one `## …` step of the report printed, its heading excluded.
  *
  * Read off the report by SECTION rather than by searching the whole of stdout,
- * because "the editor's words reached the report" and "they were attached to the
- * step that went wrong" are two claims and only the second one is worth
- * anything: the `--version` banner is already echoed at the top of every run, so
- * a check that merely found the string somewhere would pass on a tool that
- * printed nothing new at all.
+ * because "the words reached the report" and "they were attached to the step
+ * that went wrong" are two claims and only the second one is worth anything: the
+ * `--version` banner is already echoed at the top of every run, so a check that
+ * merely found a string somewhere would pass on a tool that printed nothing new
+ * at all.
  */
-function quotedEditorOutput(stdout: string, heading: string): string[] {
+function reportBlock(stdout: string, heading: string): string[] {
   const lines = stdout.split('\n');
   const from = lines.findIndex((l) => l.startsWith(heading));
   if (from < 0) return [];
-  const quoted: string[] = [];
-  for (let i = from + 1; i < lines.length && !lines[i].startsWith('## '); i++) {
-    if (lines[i].startsWith('    | ')) quoted.push(lines[i].slice(6));
-  }
-  return quoted;
+  const block: string[] = [];
+  for (let i = from + 1; i < lines.length && !lines[i].startsWith('## '); i++) block.push(lines[i]);
+  return block;
+}
+
+/**
+ * The lines the tool quoted from a CHILD — the editor in steps 1-2, `rigc
+ * render` and `rigc check` in step 5 (issue #621) — under the step heading they
+ * were printed beneath.
+ */
+function quotedChildOutput(stdout: string, heading: string): string[] {
+  return reportBlock(stdout, heading)
+    .filter((l) => l.startsWith('    | '))
+    .map((l) => l.slice(6));
 }
 
 /** An XML `Info.plist` declaring one `CFBundleName`, the way a real .app carries it. */
@@ -25268,7 +25276,7 @@ function runEditorRoundtripSuite(): number {
     writeBundlePlist(bundle, 'Spine');
     const out = join(root, 'out-loud');
     const loud = runRoundtrip(['--build', build, '--out', out, '--editor', editor]);
-    const quoted = quotedEditorOutput(loud.stdout, '## 1 import');
+    const quoted = quotedChildOutput(loud.stdout, '## 1 import');
     const logged = existsSync(join(out, 'roundtrip.log')) ? readFileSync(join(out, 'roundtrip.log'), 'utf8') : '';
     say(
       'ERT07_A_FAILED_STEP_QUOTES_THE_EDITOR_UNDER_THAT_STEP_AND_KEEPS_THE_REFUSAL',
@@ -25299,10 +25307,10 @@ function runEditorRoundtripSuite(): number {
       'ERT08_A_FAILED_STEP_ON_A_SILENT_EDITOR_SAYS_SO_RATHER_THAN_PRINTING_NOTHING',
       hush.status === 1 &&
         hush.stdout.includes('the editor printed nothing on stdout or stderr') &&
-        quotedEditorOutput(hush.stdout, '## 1 import').length === 0,
+        quotedChildOutput(hush.stdout, '## 1 import').length === 0,
       `exit=${String(hush.status)}, named the silence = ` +
         `${hush.stdout.includes('the editor printed nothing on stdout or stderr')}, ` +
-        `${quotedEditorOutput(hush.stdout, '## 1 import').length} line(s) quoted`,
+        `${quotedChildOutput(hush.stdout, '## 1 import').length} line(s) quoted`,
       'an unstated silence is what the tool already did, and it is indistinguishable from the bug — this is the ' +
         'one case where printing nothing would be the wrong answer even though there is nothing to print',
     );
@@ -25319,8 +25327,8 @@ function runEditorRoundtripSuite(): number {
     ]);
     writeBundlePlist(halfBundle, 'Spine');
     const halfRun = runRoundtrip(['--build', build, '--out', join(root, 'out-half'), '--editor', half]);
-    const underImport = quotedEditorOutput(halfRun.stdout, '## 1 import');
-    const underExport = quotedEditorOutput(halfRun.stdout, '## 2 export');
+    const underImport = quotedChildOutput(halfRun.stdout, '## 1 import');
+    const underExport = quotedChildOutput(halfRun.stdout, '## 2 export');
     say(
       'ERT09_A_STEP_THAT_DID_WHAT_IT_WAS_FOR_QUOTES_NOTHING_AND_THE_ONE_AFTER_IT_DOES',
       halfRun.status === 1 &&
@@ -25878,6 +25886,233 @@ function runEditorRoundtripSuite(): number {
         'the empty list, which reads exactly like a block that is all 1.000 — and this tool can be handed one ' +
         'without anybody breaking anything: `rigcCommand()` falls back to the INSTALLED `rigc` outside a ' +
         'checkout, and an install predating #578 writes no header at all',
+    );
+  }
+
+  // --- ERT66-68: step 5 on a rig with nothing to draw — issue #621 ----------
+  //
+  // 🚨 A rig whose only attachment is a `boundingbox` draws nothing, and since
+  // #608 that is a build rigc writes: the atlas is the empty file and `validate`
+  // is green on it. Step 5 rendered both sides, threw both renderers' words
+  // away, printed a bare `exit=1` off the `check` that then had no frames to
+  // read, and the tool exited 1 on a correct rig. Two defects in one line — the
+  // silence this repository exists to remove, and a red that is not a finding.
+  //
+  // ⭐ These run the WHOLE tool through `--exported`, which is the route that
+  // needs no editor: the export is a file, and every measurement after step 2
+  // runs against it. Three builds' worth of fixture, all three written here, so
+  // nothing outside this block has to hold a shape for them.
+  //
+  // 🔒 ERT68 is the load-bearing one and it is aimed at the recognition rule
+  // rather than at the verdict. `render`'s refusal is a `UsageError`, so its
+  // exit code is 2 — and so is every OTHER usage error, including the export
+  // declaring a different skin from the build. A tool that read a 2 as "nothing
+  // to draw" would report the skin the editor renamed as a SKIP, and the run
+  // would come back green having measured nothing. Both children exit 2 there;
+  // only one of them is the refusal.
+  {
+    const s621 = join(root, 's621');
+    mkdirSync(s621, { recursive: true });
+    writeProbePng(join(s621, 'block.png'), 12, 8, [40, 60, 90, 255]);
+    const spec = (name: string, body: Record<string, unknown>): string => {
+      const path = join(s621, name);
+      writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+      return path;
+    };
+    const motionFor = (rig: string): string =>
+      spec(`${rig}.motion.json`, { spec: 'rigc-motion/1', archetype: rig, cut: rig, easings: {}, animations: {} });
+
+    // The rig the card is about. Two NAMED skins rather than one default,
+    // because the per-skin roll-up only prints for a rig that declares more than
+    // one block — and "never as a pass, never as MAE 0" is a claim about that
+    // roll-up. rigc emits an empty `default` beside them, so this build declares
+    // three skins and none of them draws.
+    const boxRig = spec('hitbox_probe.rig.json', {
+      spec: 'rigc-rig/1',
+      name: 'hitbox_probe',
+      skeleton: { width: 64, height: 64 },
+      bones: [{ name: 'root' }, { name: 'body', parent: 'root', x: 0, y: 0 }],
+      slots: [{ name: 'hit', bone: 'body', attachment: 'hit' }],
+      skins: {
+        base: { hit: { hit: { type: 'boundingbox', vertexCount: 4, vertices: [-8, -8, 8, -8, 8, 8, -8, 8] } } },
+        alt: { hit: { hit: { type: 'boundingbox', vertexCount: 3, vertices: [-4, -4, 4, -4, 0, 6] } } },
+      },
+    });
+    // The other side of ERT67: one region attachment, so `render` draws.
+    const drawRig = spec('drawn_probe.rig.json', {
+      spec: 'rigc-rig/1',
+      name: 'drawn_probe',
+      skeleton: { width: 64, height: 64 },
+      bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }],
+      slots: [{ name: 'block', bone: 'block', attachment: 'block' }],
+      skins: { default: { block: { block: { image: 'block.png' } } } },
+    });
+    const boxBuild = join(s621, 'box-build');
+    const drawBuild = join(s621, 'draw-build');
+    // `--copy-images` for the reason the tool refuses without it: an ordinary
+    // build's atlas names its pages by a path back to the art directory, and the
+    // round trip copies that atlas to another depth.
+    const boxBuilt = runCli(['build', '--rig', boxRig, '--motion', motionFor('hitbox_probe'), '--images', s621, '--out', boxBuild, '--copy-images']);
+    const drawBuilt = runCli(['build', '--rig', drawRig, '--motion', motionFor('drawn_probe'), '--images', s621, '--out', drawBuild, '--copy-images']);
+    const boxSkeleton = join(boxBuild, 'skeleton.json');
+
+    // ERT66 — both sides have nothing to draw. The export is the build's own
+    // skeleton, which is the identity an editor that changed nothing would
+    // return, so every other step is green and the exit code is the claim.
+    const identity = join(s621, 'identity-export.json');
+    if (existsSync(boxSkeleton)) copyFileSync(boxSkeleton, identity);
+    const bothOut = join(s621, 'out-both');
+    const both = runRoundtrip(['--build', boxBuild, '--out', bothOut, '--exported', identity]);
+    const SKIPPED = 'SKIP  neither side draws a frame, so the check is not measured';
+    const NOT_MEASURED = 'NOT MEASURED — neither side draws a frame under this skin';
+    /**
+     * A block's own SKIP VERDICT, which is a line of its own at a fixed indent.
+     *
+     * ⚠️ Not `includes('SKIP')`, which was the first spelling and was wrong in
+     * the direction that matters: the one-sided FAIL sentence ends *"so it is a
+     * failure and never a SKIP"*, so the substring search read the verdict that
+     * says it is not a skip as one. Measured — ERT67 went red on a correct tool.
+     */
+    const skipped = (block: string[]): boolean => block.some((l) => /^ {2}SKIP\b/.test(l));
+    const skinsOf = (path: string): string[] =>
+      existsSync(path) ? skinsDeclaredBy(path) : [];
+    const boxSkins = skinsOf(boxSkeleton);
+    const headingOf = (i: number, of: number, skin: string): string => `## 5.${i + 1}/${of} skin "${skin}"`;
+    const bothProbes = [
+      ...(boxBuilt.status === 0 ? [] : [`the boundingbox build did not compile: ${(boxBuilt.stderr.trim().split('\n')[0] ?? '').slice(0, 200)}`]),
+      // More than one skin, or the roll-up this case reads never prints.
+      ...(boxSkins.length > 1 ? [] : [`the build declares ${boxSkins.length} skin(s), so step 5 prints no per-skin roll-up to read`]),
+      ...boxSkins.flatMap((skin, i) => {
+        const block = reportBlock(both.stdout, headingOf(i, boxSkins.length, skin));
+        const quoted = quotedChildOutput(both.stdout, headingOf(i, boxSkins.length, skin));
+        return [
+          ...(block.some((l) => l.includes(SKIPPED)) ? [] : [`skin "${skin}" did not report the SKIP: ${JSON.stringify(block.join(' / ').slice(0, 200))}`]),
+          // Both renderers, quoted — defect one. Two lines, one per side.
+          ...(quoted.filter((l) => l.includes('there is nothing to draw')).length === 2
+            ? []
+            : [`skin "${skin}" quoted ${quoted.length} child line(s) and ${quoted.filter((l) => l.includes('there is nothing to draw')).length} of them the refusal`]),
+        ];
+      }),
+      // The roll-up, and the two shapes it must never take.
+      ...(both.stdout.split(NOT_MEASURED).length - 1 === boxSkins.length
+        ? []
+        : [`the roll-up printed ${both.stdout.split(NOT_MEASURED).length - 1} "not measured" row(s) for ${boxSkins.length} skin(s)`]),
+      ...(both.stdout.includes('worst mean MAE') ? ['the roll-up printed an MAE for a block where nothing was compared'] : []),
+      ...(both.stdout.includes('check exit=') ? ['the roll-up printed a `check` exit code for a block where `check` never ran'] : []),
+      ...(both.status === 0 ? [] : [`the tool exited ${String(both.status)} on a rig every other step passed`]),
+    ];
+    const bothHeld = bothProbes.length === 0;
+    say(
+      'ERT66_A_RIG_NEITHER_SIDE_CAN_DRAW_IS_A_NAMED_SKIP_AND_NOT_A_RED_ROUND_TRIP',
+      bothHeld,
+      probeDetail(
+        bothHeld,
+        bothProbes,
+        `${boxSkins.length} skin block(s), each quoting both renderers' refusal and reporting the SKIP by name; ` +
+          `the roll-up shows every one as not measured and none as a figure; exit=${String(both.status)}`,
+      ),
+      'the question step 5 asks is whether what comes back still PLAYS the same, and a rig that draws nothing on ' +
+        'both sides gives `check` nothing to compare — so the honest answer is the one this tree gives everywhere ' +
+        'else, a SKIP by name, never a pass and never a red. A round trip ending red on a correct rig is the shape ' +
+        '#608 removed from `build`, one tool further out',
+    );
+
+    // ERT67 — one side only, which is the loss the round trip exists to find.
+    // The build draws and the export does not, so the SKIP above must not fire:
+    // it is guarded by `&&` and never by `||`.
+    const oneOut = join(s621, 'out-one');
+    const one = runRoundtrip(['--build', drawBuild, '--out', oneOut, '--exported', boxSkeleton]);
+    const drawSkins = skinsOf(join(drawBuild, 'skeleton.json'));
+    const oneHeading = drawSkins.length === 1 ? headingOf(0, 1, drawSkins[0]) : '## 5 ';
+    const oneBlock = reportBlock(one.stdout, oneHeading);
+    const oneQuoted = quotedChildOutput(one.stdout, oneHeading);
+    const oneProbes = [
+      ...(drawBuilt.status === 0 ? [] : [`the drawable build did not compile: ${(drawBuilt.stderr.trim().split('\n')[0] ?? '').slice(0, 200)}`]),
+      ...(oneBlock.length > 0 ? [] : [`no step-5 block was printed under ${JSON.stringify(oneHeading)}`]),
+      ...(oneBlock.some((l) => l.includes('FAIL  the export has nothing to draw and the build draws'))
+        ? []
+        : [`the block did not name the one-sided loss: ${JSON.stringify(oneBlock.join(' / ').slice(0, 240))}`]),
+      ...(skipped(oneBlock) ? ['a block with one side drawing reported a SKIP'] : []),
+      // The refusing child's own sentence, under the step that ran it.
+      ...(oneQuoted.some((l) => l.includes('there is nothing to draw'))
+        ? []
+        : [`the refusing renderer was not quoted — ${oneQuoted.length} child line(s) under the heading`]),
+      // Exactly one side refused, so exactly one side is quoted.
+      ...(oneQuoted.filter((l) => l.includes('there is nothing to draw')).length === 1
+        ? []
+        : [`${oneQuoted.filter((l) => l.includes('there is nothing to draw')).length} side(s) quoted the refusal where one was expected`]),
+      ...(one.status === 0 ? ['the tool exited 0 on a round trip where one side came back with nothing to draw'] : []),
+    ];
+    const oneHeld = oneProbes.length === 0;
+    say(
+      'ERT67_ONE_SIDE_WITH_NOTHING_TO_DRAW_IS_A_NAMED_FAILURE_AND_NEVER_THE_SKIP',
+      oneHeld,
+      probeDetail(
+        oneHeld,
+        oneProbes,
+        'the build draws and the export does not: the block names which side is blank, quotes that side alone, ' +
+          `reports no SKIP, and the tool exits ${String(one.status)}`,
+      ),
+      '"nothing to draw" is an honest answer about a RIG and the loss itself about one SIDE of a round trip — an ' +
+        'editor that drops every attachment in a skin says exactly this, and a SKIP guarded by `||` rather than ' +
+        '`&&` would report that as not measured and exit green',
+    );
+
+    // ERT68 — two children, both exit 2, and only one of them is the refusal.
+    // The export declares a skin the build does not, which is a `UsageError`
+    // like the refusal and carries its exit code and none of its words.
+    const renamedSkin = boxSkins.find((s) => s !== 'default' && s !== '(unnamed)') ?? 'base';
+    const renamed = join(s621, 'renamed-export.json');
+    if (existsSync(boxSkeleton)) {
+      const skeleton = JSON.parse(readFileSync(boxSkeleton, 'utf8')) as { skins?: Array<{ name?: unknown }> };
+      for (const skin of skeleton.skins ?? []) if (skin.name === renamedSkin) skin.name = `${renamedSkin}_renamed`;
+      writeFileSync(renamed, `${JSON.stringify(skeleton, null, 2)}\n`);
+    }
+    const renamedOut = join(s621, 'out-renamed');
+    const gone = runRoundtrip(['--build', boxBuild, '--out', renamedOut, '--exported', renamed]);
+    const goneIndex = boxSkins.indexOf(renamedSkin);
+    const goneHeading = headingOf(goneIndex, boxSkins.length, renamedSkin);
+    const goneBlock = reportBlock(gone.stdout, goneHeading);
+    const goneQuoted = quotedChildOutput(gone.stdout, goneHeading);
+    const logged = existsSync(join(renamedOut, 'roundtrip.log'))
+      ? readFileSync(join(renamedOut, 'roundtrip.log'), 'utf8')
+      : '';
+    const exits = goneBlock.filter((l) => /^ {2}render .* exit=/.test(l));
+    const goneProbes = [
+      ...(goneIndex >= 0 ? [] : [`the build declares no skin to rename — it declares [${boxSkins.join(', ')}]`]),
+      // Both children are usage errors, which is the whole point of the case.
+      ...(exits.length === 2 && exits.every((l) => l.trimEnd().endsWith('exit=2'))
+        ? []
+        : [`the two renderers reported ${JSON.stringify(exits.map((l) => l.trim()))}, and this case needs both at exit=2`]),
+      ...(goneBlock.some((l) => l.includes('FAIL')) ? [] : [`the block did not fail: ${JSON.stringify(goneBlock.join(' / ').slice(0, 240))}`]),
+      ...(skipped(goneBlock) ? ['a block whose two children exited 2 for different reasons reported a SKIP'] : []),
+      // Each child said its own thing, and both reached the report.
+      ...(goneQuoted.some((l) => l.includes(`no skin "${renamedSkin}"`))
+        ? []
+        : [`the skin refusal was not quoted — the block quoted ${JSON.stringify(goneQuoted)}`]),
+      ...(goneQuoted.some((l) => l.includes('there is nothing to draw'))
+        ? []
+        : ['the other child, which refused with nothing to draw, was not quoted beside it']),
+      // And it survives the run, which is where #541's card says to read it.
+      ...(logged.includes(`no skin "${renamedSkin}"`) ? [] : ['the quoted refusal did not reach roundtrip.log']),
+      ...(gone.status === 0 ? ['the tool exited 0 on a run where a skin the build declares was not in the export'] : []),
+      // The skins the rename left alone are still the SKIP, on the same run —
+      // so this is not passed by a tool that stopped skipping altogether.
+      ...(gone.stdout.includes(SKIPPED) ? [] : ['no other skin on the same run reported the SKIP, so this case cannot tell the two verdicts apart']),
+    ];
+    const goneHeld = goneProbes.length === 0;
+    say(
+      'ERT68_A_USAGE_ERROR_THAT_IS_NOT_THE_REFUSAL_IS_QUOTED_AND_STAYS_RED_AT_THE_SAME_EXIT_CODE',
+      goneHeld,
+      probeDetail(
+        goneHeld,
+        goneProbes,
+        `skin "${renamedSkin}" is missing from the export: both renderers exit 2, the block quotes each child's ` +
+          `own sentence and fails by name, roundtrip.log carries them, the untouched skins still SKIP, exit=${String(gone.status)}`,
+      ),
+      'the refusal is recognised by its exit code AND its sentence, and this is the case that makes the second ' +
+        'clause worth writing: `cli.ts` exits 2 on every usage error there is, so a tool reading the code alone ' +
+        'would report a skin the editor renamed as "not measured" and come back green having compared nothing',
     );
   }
 
@@ -39239,7 +39474,12 @@ function main(): void {
     'ordinary editor at an unfamiliar path NOT refused, run, and failing on what it actually did wrong, because ' +
     '`--editor` exists for that caller and a suite of nothing but refusals would pass a tool that refuses ' +
     'everything. Then the clause both messages were missing: `--exported`, the measurement that needs no editor, ' +
-    'named in the two refusals printed at exactly the moment somebody needs it)';
+    'named in the two refusals printed at exactly the moment somebody needs it. And, over that same route, the ' +
+    'measuring half itself on a rig with nothing to draw (issue #621): a boundingbox-only build round-tripped ' +
+    'whole, where both sides refuse and step 5 quotes each renderer and reports a SKIP by name rather than a bare ' +
+    'exit code; the same refusal on ONE side only, which is the loss the trip exists to find and stays red; and ' +
+    'a skin the export does not declare, whose two children exit on the same code as the refusal and carry none ' +
+    'of its words, so the code alone can never be the signal)';
   const shippedDocs =
     ", + " + n('shipped-doc') + " shipped-doc link controls (issue #333 — every relative link in every `.md` the `files` allowlist " +
     'ships, plus the README npm forces in beside it, resolving to a path that ALSO ships: the class found three ' +

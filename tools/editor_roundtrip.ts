@@ -9,6 +9,12 @@
  * emitter defects (#368 `hull`/`edges`, #369 hold curves, #370
  * `skeleton.images`) before proving that a human edit survives the trip.
  *
+ * ⭐ Every step quotes what its child said when that child did not do what it was
+ * for (#541, and step 5 since #621). A skin NEITHER side can draw is a SKIP
+ * naming that rather than a red — `check` had nothing to compare, and `validate`
+ * and `diff` have already measured the rig — while a skin only ONE side draws is
+ * the divergence this whole file exists to find and stays a failure.
+ *
  * It ran from a shell script in a local scratch directory. A tool nobody can
  * find is not a tool, hence this file.
  *
@@ -308,6 +314,107 @@ function editorSaid(ran: Ran): string[] {
   return lines;
 }
 
+/**
+ * The line a rigc child REFUSED on, out of the stream it printed it on.
+ *
+ * ⚠️ Not `editorSaid`, which quotes both streams whole. A rigc refusal is a
+ * `UsageError` and `cli.ts` prints the entire usage under one — some sixty lines
+ * of correct prose that would bury the one sentence somebody needs. Every
+ * refusal rigc prints starts, at column zero, with its own name and a colon:
+ * `rigc:`, `rigc check error:`, `rigc compile error:`. The usage block has
+ * neither shape — its `rigc <command> …` lines are indented, and its unindented
+ * ones carry no colon — so none of them is mistaken for one.
+ */
+function refusalLines(text: string): string[] {
+  return text.split('\n').filter((line) => /^rigc\b[^\n]*:/.test(line));
+}
+
+/**
+ * What one rigc child said, under the step that ran it.
+ *
+ * 🚨 Issue #621, and it is `editorSaid`'s defect one surface over. Step 5 was
+ * the one step that printed a child's exit code and threw its words away: on a
+ * rig whose only attachment is a `boundingbox` it reported a bare `exit=1`, and
+ * the renderer's own refusal — *"posed no drawable attachment in any animation
+ * or in its setup pose — there is nothing to draw"* — reached nobody. A reader
+ * of that log cannot tell a crashed renderer from a rig with no frames, which is
+ * the same silence this file already has a judgment about.
+ *
+ * ⭐ The fallback is the half that keeps the fix from being the defect again one
+ * level down: a child that dies with a stack trace prints no `rigc…:` line at
+ * all, so when nothing matched, the tail of stderr is quoted rather than
+ * nothing.
+ */
+function rigcSaid(what: string, ran: Ran): string[] {
+  const said = [
+    ...refusalLines(ran.stderr),
+    // `check` reports its failures on stdout, in the FAIL lines `verdictLines`
+    // keeps for the green path.
+    ...ran.stdout.split('\n').filter((line) => /^\s*FAIL/.test(line)),
+  ];
+  if (said.length === 0) {
+    said.push(...ran.stderr.replace(/\s+$/, '').split('\n').slice(-6).filter((line) => line !== ''));
+  }
+  const head = `  ${what}  exit=${String(ran.status)}${ran.timedOut ? '  TIMED OUT' : ''}`;
+  // Silence is a finding, for the reason `editorSaid` states: "it said nothing"
+  // and "this harness threw its words away" look identical from the outside.
+  if (said.length === 0) return [head, '    | it printed nothing on stdout or stderr'];
+  return [head, ...said.map((line) => `    | ${line.trimEnd()}`)];
+}
+
+/**
+ * The clause `rigc render` refuses on when the skeleton draws nothing, and the
+ * exit code it leaves it with.
+ *
+ * ⚠️ The clause is the part of that message that does not move: `cli.ts` splices
+ * ` under skin "x"` in after "setup pose" when `--skin` was passed, and ends on
+ * `— there is nothing to draw` either way.
+ */
+const NOTHING_TO_DRAW = 'posed no drawable attachment in any animation or in its setup pose';
+
+/** `cli.ts` exits 2 on a `UsageError`, which is what that refusal is. */
+const RIGC_USAGE_EXIT = 2;
+
+/**
+ * Did this `render` call refuse because there was nothing to draw?
+ *
+ * 🔒 **Both signals, and the second one is why** (issue #621). The exit code
+ * alone is every `UsageError` there is — an unknown flag, a candidate that is
+ * not there, a `--skin` the skeleton does not declare — so reading a 2 as
+ * "nothing to draw" would turn the export dropping a skin the build declares
+ * into a SKIP, which is the one outcome this must never produce. The sentence
+ * alone is a string found on a stream however the child exited, including a path
+ * that echoed it and then did something else.
+ *
+ * ⛔ What was rejected: reading the two skeletons here and deciding for
+ * ourselves whether either draws. That is a second implementation of
+ * `framingViewport` — atlas resolution, the setup pose and every animation — and
+ * two answers that need not agree is a checker agreeing with itself. The verdict
+ * belongs to the child that refused.
+ *
+ * ⛔ Also rejected, and it is the more structural signal: an exit code of its own
+ * from `cli.ts` for this refusal. `src/render.ts` emits no code at all —
+ * `framingViewport` returns null and `cli.ts` turns that into a `UsageError` — so
+ * that is a change to rigc's CLI contract rather than to this harness, and it is
+ * wider than the card it would be landing under.
+ */
+function nothingToDraw(ran: Ran): boolean {
+  return !ran.timedOut && ran.status === RIGC_USAGE_EXIT && ran.stderr.includes(NOTHING_TO_DRAW);
+}
+
+/**
+ * Step 5's verdict when NEITHER side draws (issue #621).
+ *
+ * The question this step asks is *does what comes back still play the same*. A
+ * rig that draws nothing on both sides gives `check` nothing to compare, and the
+ * honest answer to a question with no measurement behind it is the one this file
+ * gives everywhere else: SKIP by name, never a pass and never a red. `validate`
+ * and `diff` have already measured the rig — this is the shape #608 removed from
+ * `build`, one tool further out.
+ */
+const NOTHING_MEASURED =
+  'neither side draws a frame, so the check is not measured; `diff` and `validate` carry this rig';
+
 function run(cmd: string, args: string[], timeoutS: number): Ran {
   const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: timeoutS * 1000 });
   return {
@@ -496,6 +603,16 @@ export function skinsDeclaredBy(path: string): string[] {
   }
   return out;
 }
+
+/**
+ * How one step-5 block ended (issue #621).
+ *
+ * Three states rather than an exit code, because `check` not having run and
+ * `check` having returned 0 are different facts and used to print the same:
+ * `measured` is the only one that carries a figure, and `not measured` is the
+ * only one that does not fail the run.
+ */
+export type BlockVerdict = 'measured' | 'not measured' | 'no frames';
 
 /** One render-and-check block of step 5: which skin, where its frames go. */
 export interface SkinBlock {
@@ -901,21 +1018,63 @@ function main(): void {
   // export dropped altogether then reads as a block whose check fails by name,
   // where enumerating the export's own skins would quietly stop looking for it.
   const blocks = skinBlocks(skinsDeclaredBy(source), opts.out, opts.fps);
-  const checks: Array<{ skin: string | null; status: number | null; mae: number | null }> = [];
+  const checks: Array<{ skin: string | null; verdict: BlockVerdict; status: number | null; mae: number | null }> = [];
   for (const block of blocks) {
     emit('');
     emit(block.heading);
-    run(rigc.cmd, [...rigc.prefix, 'render', '--candidate', opts.build, '--fps', String(opts.fps), ...block.args, '--out', block.buildFrames], 900);
-    run(rigc.cmd, [...rigc.prefix, 'render', '--candidate', cand, '--fps', String(opts.fps), ...block.args, '--out', block.exportFrames], 900);
+    const args = ['--fps', String(opts.fps), ...block.args];
+    const drawBuild = run(rigc.cmd, [...rigc.prefix, 'render', '--candidate', opts.build, ...args, '--out', block.buildFrames], 900);
+    const drawExport = run(rigc.cmd, [...rigc.prefix, 'render', '--candidate', cand, ...args, '--out', block.exportFrames], 900);
+    // 🚨 Both renderers are quoted the moment either did not do what it was for
+    // (issue #621) — the rule steps 1 and 2 have followed since #541, and step 5
+    // was the one step that did not.
+    for (const [what, ran] of [
+      ['render (the build)', drawBuild],
+      ['render (the export)', drawExport],
+    ] as const) {
+      if (ran.status !== 0 || ran.timedOut) for (const line of rigcSaid(what, ran)) emit(line);
+    }
+    const buildBlank = nothingToDraw(drawBuild);
+    const exportBlank = nothingToDraw(drawExport);
+    const buildDrew = drawBuild.status === 0 && !drawBuild.timedOut;
+    const exportDrew = drawExport.status === 0 && !drawExport.timedOut;
+
+    if (buildBlank && exportBlank) {
+      emit(`  SKIP  ${NOTHING_MEASURED}`);
+      checks.push({ skin: block.skin, verdict: 'not measured', status: null, mae: null });
+      continue;
+    }
+    // 🔒 One side only, and it stays red. "Nothing to draw" is an honest answer
+    // about a RIG; about one side of a round trip it is the loss the trip exists
+    // to find, so the SKIP above is guarded by `&&` and never by `||`.
+    if ((buildBlank && exportDrew) || (exportBlank && buildDrew)) {
+      const blank = buildBlank ? 'the build' : 'the export';
+      const drawn = buildBlank ? 'the export' : 'the build';
+      emit(
+        `  FAIL  ${blank} has nothing to draw and ${drawn} draws — one side drawing where the other does not IS ` +
+          'the divergence this step measures, so it is a failure and never a SKIP',
+      );
+      checks.push({ skin: block.skin, verdict: 'no frames', status: null, mae: null });
+      continue;
+    }
+    if (!buildDrew || !exportDrew) {
+      emit(
+        '  FAIL  a render did not do what it was for, so there is no frame set to compare — `check` is not run, ' +
+          'because with a frame set missing its message would name the directory rather than the refusal above',
+      );
+      checks.push({ skin: block.skin, verdict: 'no frames', status: null, mae: null });
+      continue;
+    }
     const check = run(
       rigc.cmd,
       [...rigc.prefix, 'check', '--candidate', cand, '--frames', block.buildFrames, ...block.args, '--json', block.checkJson],
       900,
     );
     emit(`  exit=${check.status}`);
+    if (check.status !== 0 || check.timedOut) for (const line of rigcSaid('check', check)) emit(line);
     for (const line of verdictLines(check.stdout)) emit(`  ${line}`);
     for (const line of checkFigures(block.checkJson)) emit(`  ${line}`);
-    checks.push({ skin: block.skin, status: check.status, mae: worstMeanMae(block.checkJson) });
+    checks.push({ skin: block.skin, verdict: 'measured', status: check.status, mae: worstMeanMae(block.checkJson) });
   }
   // The roll-up, so a loss in one skin of many is a line somebody reads rather
   // than a row buried in the block above it. The mark is on the LARGEST figure
@@ -923,22 +1082,41 @@ function main(): void {
   // against and this tool does not get to invent one, but "these skins did not
   // come back the same" is a fact the run itself produced.
   if (blocks.length > 1) {
-    const figures = checks.map((c) => c.mae).filter((v): v is number => v !== null);
+    // ⚠️ Off the MEASURED blocks only (issue #621). A skin nobody could render
+    // has no figure, and folding it in as one would put a number in the column a
+    // reader looks at for a block where nothing was compared.
+    const figures = checks.filter((c) => c.verdict === 'measured').map((c) => c.mae).filter((v): v is number => v !== null);
     const worst = figures.length === 0 ? null : Math.max(...figures);
     const agreed = figures.length === checks.length && new Set(figures).size === 1;
     emit('');
     emit(`  per skin  ${checks.length} block(s)`);
-    for (const { skin, status, mae } of checks) {
+    for (const { skin, verdict, status, mae } of checks) {
+      // 🔒 Never a pass and never an MAE of 0: a block that measured nothing
+      // says so in the column the figures would have been in.
+      if (verdict !== 'measured') {
+        emit(
+          `    ${String(skin).padEnd(20)} ` +
+            (verdict === 'not measured'
+              ? 'NOT MEASURED — neither side draws a frame under this skin'
+              : '⚠️ NOT MEASURED — a render did not do what it was for, and this skin is red for it'),
+        );
+        continue;
+      }
       emit(
         `    ${String(skin).padEnd(20)} check exit=${status}  worst mean MAE ` +
           `${mae === null ? '(no report)' : mae.toFixed(4)}` +
           `${status === 0 ? '' : '   ⚠️ this skin did not come back'}` +
-          `${!agreed && mae !== null && mae === worst ? `   ⚠️ the worst of the ${checks.length} skins` : ''}`,
+          // The mark compares figures, so it needs two of them: crowning the one
+          // skin that WAS measured "the worst" says nothing and reads as a loss.
+          `${!agreed && figures.length > 1 && mae !== null && mae === worst ? `   ⚠️ the worst of the ${figures.length} measured skins` : ''}`,
       );
     }
     if (agreed) emit(`    ⤷ every skin came back at the same figure, so no skin is carrying a difference the others are not.`);
   }
-  const checksClean = checks.every((c) => c.status === 0);
+  // 🔒 `not measured` is the one verdict that does not fail the run: nothing was
+  // compared, and a round trip that ends red on a correct rig is the shape #608
+  // removed from `build` (issue #621).
+  const checksClean = checks.every((c) => c.verdict === 'not measured' || (c.verdict === 'measured' && c.status === 0));
 
   emit('');
   emit('## 6 what the editor rewrote');

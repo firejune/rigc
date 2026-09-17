@@ -950,7 +950,12 @@ pointing into it is not.
 ⚠️ **`rigc render` still refuses such a build**, by name and before it draws
 anything: `… posed no drawable attachment in any animation or in its setup pose —
 there is nothing to draw`. That is the honest division — the rig is valid Spine
-data, and there is no picture of it.
+data, and there is no picture of it. `rigc check` says the same thing one step
+on, since it has no frames to compare; `tools/editor_roundtrip.ts` quotes both
+renderers and reports its step 5 as a **SKIP** naming that, and the round trip
+comes back green on the strength of `validate` and `diff`
+([#621](https://github.com/firejune/rigc/issues/621)). A skin only **one** side
+can draw is the other case entirely, and stays red.
 
 **Region attachment** ([Spine: region attachments](http://esotericsoftware.com/spine-regions)),
 the default `type`:
