@@ -9650,10 +9650,24 @@ function runPathAndSliderSuite(): number {
 
   const weighted = pairGate([yawSlider({ mix: 0.5 }), pitchSlider({ mix: 0.5 })]);
   const weightedSkip = weighted.skipped.find((s) => s.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET');
+  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498), and `S01`'s shape
+  // one suite over: exactly one term of three went unread — that the gate came
+  // back with nothing failing — and the other two have a branch that names
+  // them. Planted with A37's mix floor raised so a half-mixed pair faults on
+  // A37, the old detail printed `SKIP: 0 of the 2 slider constraints apply at
+  // full authority …`, which is TRUE, COMPLETE and this control's own success
+  // sentence: the skip is reported and the two failures standing beside it are
+  // not, which is the whole subject.
   say(
     'PS33_two_sliders_BELOW_full_authority_are_left_alone',
     weighted.failures.length === 0 && weightedSkip !== undefined && weightedSkip.reason.includes('full authority'),
-    weightedSkip ? `SKIP: ${weightedSkip.reason}` : 'A40 had an opinion about a pair of half-mixed sliders',
+    `${weightedSkip ? `SKIP: ${weightedSkip.reason}` : 'A40 had an opinion about a pair of half-mixed sliders'}` +
+      ` — ${
+        weighted.failures.length === 0
+          ? 'and nothing else on this rig failed'
+          : `while ${weighted.failures.length} assertion(s) DID fail on the same rig: ` +
+            `${weighted.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`
+      }`,
     'at mix < 1 the apply is `current + (value + setup - current) * alpha` — a lerp FROM the pose it found, so the earlier ' +
       'slider still contributes. The erasure this rule refuses is only total at full authority, and a rule that fired here ' +
       'would be refusing a legitimate weighting',
@@ -15987,9 +16001,8 @@ function runDeformWindingSuite(): number {
   // The same agreement DR03 asserts, in the one situation that can break it: the
   // rollup's totals are what the gate ran on, and a key nothing gated is in
   // neither figure.
-  const fadedRollup = /reversed (\d+), collapsed \d+, over (\d+) key\(s\) and (\d+) triangle sample\(s\)/.exec(
-    fadedBlock.find((l) => l.includes('triangle sample(s)')) ?? '',
-  );
+  const fadedRollupLine = fadedBlock.find((l) => l.includes('triangle sample(s)')) ?? '';
+  const fadedRollup = /reversed (\d+), collapsed \d+, over (\d+) key\(s\) and (\d+) triangle sample\(s\)/.exec(fadedRollupLine);
   say(
     'DW06_A_KEY_THAT_DRAWS_NO_PIXELS_IS_MEASURED_REPORTED_AND_NOT_GATED',
     faded.failures.length === 0 &&
@@ -16005,14 +16018,29 @@ function runDeformWindingSuite(): number {
       Number(fadedRollup[1]) === 0 &&
       Number(fadedRollup[2]) === Number(faded.stats.deformKeysMeasured) &&
       Number(fadedRollup[3]) === Number(faded.stats.deformTrianglesMeasured),
-    faded.failures.length === 0
+    // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Two terms went
+    // unread and both are readings of ONE value — the rollup match — so
+    // printing it once names either of them outright, where a list would be two
+    // rows restating the same line (`TY01`'s precedent, #636). The reading is
+    // spelled INLINE rather than behind a bound constant, so the structural
+    // sweep can see the repair. Planted with one word of `cli.ts`'s rollup
+    // reworded, the old detail reported A39, the key counts, `deformNotDrawn`,
+    // `deformNotDrawnReversed`, the skip line and the winding line — everything
+    // except the rollup, which was the term that fell.
+    (faded.failures.length === 0
       ? `the same 40° fold with the slot keyed to alpha 0 across it: ${A39} ` +
           `${faded.passed.includes(A39) ? 'PASSES' : 'did NOT run'} on the ${faded.stats.deformKeysMeasured} key(s) ` +
           `that draw and reports deformKeysNotDrawn=${faded.stats.deformKeysNotDrawn} ` +
           `deformNotDrawn=${faded.stats.deformNotDrawn} ` +
           `deformNotDrawnReversed=${faded.stats.deformNotDrawnReversed} — the same ${refusedCount} reversals DW01 ` +
           `refuses. The block says "${fadedSkip.trim()}" and still prints "${fadedWinding.trim()}"`
-      : `[${faded.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+      : `[${faded.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`) +
+      `; ${
+        fadedRollup === null
+          ? `NO rollup reading off "${fadedRollupLine.trim() || '(no line carries "triangle sample(s)" at all)'}"`
+          : `rollup reversed ${fadedRollup[1]} (has to be 0) over ${fadedRollup[2]} key(s) and ${fadedRollup[3]} ` +
+            `triangle sample(s)`
+      }`,
     'a face past its turn ceiling fades the far part out (#392, #399) — A39\'s own message says the mesh "draws ' +
       'its texture backwards there", and that sentence is false when the slot draws nothing, so the assertion was ' +
       'measuring something other than what it says',
@@ -16926,13 +16954,24 @@ function runDeformWindingSuite(): number {
       // not gated at all. A silence in one frame is not a verdict in the other.
       perSlider('dial2').filter((k) => k.dial?.unreachable === true).length === 2 &&
       String(twoGate.stats.deformFrames) === 'turn:slider/dial,turn:slider/dial2',
-    twoHits.length >= 1
+    // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Exactly one term
+    // of five went unread — the stats line naming both frames — and the four
+    // siblings each have a branch that reads them, so a list would rewrite four
+    // right branches to repair one wrong one (#502's `DW35` argument). The
+    // reading is spelled INLINE so the sweep can see it. Planted with the frame
+    // list joined on `"; "` instead of `","`, the old sentence was true in
+    // every clause it printed and said nothing at all about `deformFrames`,
+    // while `DW22` one case up printed `deformFrames reads … where both reaches
+    // want …` on the same run.
+    (twoHits.length >= 1
       ? `two sliders applying one animation: every key is measured twice, once per dial. Through "dial" all ` +
           `${perSlider('dial').length} are reachable and the fold at key 1 is refused BY FRAME — ` +
           `"${twoHits[0].detail.slice(0, 110)}…" — while through "dial2", which cannot cross 0°, ` +
           `${perSlider('dial2').filter((k) => k.dial?.unreachable === true).length} of them are unreachable and ` +
           'gated by nothing'
-      : `${A39} fired ${twoHits.length} time(s) over ${twoSurvey.keys.length} key measurement(s)`,
+      : `${A39} fired ${twoHits.length} time(s) over ${twoSurvey.keys.length} key measurement(s)`) +
+      `; deformFrames reads "${String(twoGate.stats.deformFrames)}" where the two reaches want ` +
+      '"turn:slider/dial,turn:slider/dial2"',
     'an animation reached two ways has two frames, and a fold only one dial can reach is still a fold — a survey ' +
       'that measured the first frame and stopped would report a pass earned somewhere else',
   );
@@ -17639,12 +17678,23 @@ function runDeformWindingSuite(): number {
       Object.keys(dialStats(agreedGate)).length === 0 &&
       // and neither does the `explain` label, which is where DW27 and DW28 read
       agreedSurvey.keys.every((k) => k.reach.label === 'applied by slider "dial" off knob.x (world)'),
-    agreedGate.failures.length === 0
+    // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). One term of five
+    // went unread — the `explain` label every key reports — and the other four
+    // each have a branch that names them. The reading is the SET of labels, so
+    // it names an odd one out rather than restating one string per key, and it
+    // is spelled INLINE so the sweep can see it. Planted with one word of the
+    // label reworded in `src/deformmeasure.ts`, the old sentence stayed true in
+    // every clause and the label appeared nowhere on it, while `DW27` and
+    // `DW28` printed `no DEFORM frame line names the slider read off …` on the
+    // same run.
+    (agreedGate.failures.length === 0
       ? `the same \`x\` slider with the dial bone's parent unturned: local x moves the reading and nothing else ` +
           `does, so the two answers agree and the ${Object.keys(agreedGate.stats).length} stats readings this ` +
           `build prints include ${Number(agreedGate.stats.deformKeysMeasured)} measured keys in frame ` +
           `"${agreedGate.stats.deformFrames}" and not one deformDial… reading`
-      : `[${agreedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`,
+      : `[${agreedGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`).join('; ')}]`) +
+      `; every key's \`explain\` label is {${[...new Set(agreedSurvey.keys.map((k) => k.reach.label))].join(' | ')}}, ` +
+      'against the one reach this rig has: applied by slider "dial" off knob.x (world)',
     '🔒 a gate that only tested the loud case would pass a tool that shouts on every rig. The silence is the half ' +
       'of this that has to be checked, and it is only a control at all because the rig it is checked on carries ' +
       'the very thing it must stay quiet about',
@@ -20572,13 +20622,26 @@ function runMeshCheckSuite(): number | null {
   const skipped = new Map(faithfulGate.skipped.map((x) => [x.assertion, x.reason]));
   const topology = ['A21_MESH_RIM_PINNED', 'A28_RIBBON_ROWS_SHARE_WEIGHTS'];
   const missing = topology.filter((name) => !skipped.has(name));
+  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). One term of two
+  // went unread and the row it belongs on already exists — the repair is to
+  // print what each rule DID rather than to assert the SKIP the verdict is
+  // asking about. Planted with A21's authored-geometry skip clause disabled so
+  // it records a vacuous pass instead, the old sentence printed
+  // `A21_MESH_RIM_PINNED SKIP (undefined…)`: the word SKIP typed into the line
+  // and the `…` the truncation of `undefined`, on the one run where the vacuous
+  // pass this control exists to refuse was standing. The reading is spelled
+  // INLINE so the sweep can see the repair.
   bad += say(
     'MR08_AUTHORED_MESHES_SKIP_THE_GENERATOR_TOPOLOGY_RULES',
     faithfulGate.failures.length === 0 && missing.length === 0,
-    faithfulGate.failures.length === 0
-      ? `green under spine-html; ${topology.map((n) => `${n} SKIP (${skipped.get(n)?.slice(0, 48)}…)`).join('; ')}`
-      : `${faithfulGate.failures.length} failure(s) on correct foreign geometry: ` +
-          `[${[...new Set(faithfulGate.failures.map((x) => x.assertion))].join(', ')}]`,
+    `${
+      faithfulGate.failures.length === 0
+        ? 'green under spine-html'
+        : `${faithfulGate.failures.length} failure(s) on correct foreign geometry: ` +
+          `[${[...new Set(faithfulGate.failures.map((x) => x.assertion))].join(', ')}]`
+    }; ${topology
+      .map((n) => (missing.includes(n) ? `${n} did NOT skip` : `${n} SKIP (${skipped.get(n)?.slice(0, 48)}…)`))
+      .join('; ')}`,
     'an assertion that calls correct foreign data broken is worse than one that says it has nothing to measure',
   );
 
@@ -21790,11 +21853,25 @@ function runPackerSuite(): number {
   // --- PK02: the exact claim -------------------------------------------------
   const lossless = PACK_FIXTURES.map(([name, fixture]) => [name, losslessReport(fixture, DEFAULT_PADDING)] as const);
   const losslessWrong = lossless.flatMap(([name, r]) => r.wrong.map((w) => `${name}/${w}`));
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). This is the shape
+  // that helper is FOR and the only site in this tranche that is: the verdict is
+  // one list's emptiness and its contents are what a FAIL has to print. Planted
+  // with the packer sampling one source column over as it extrudes a cell, the
+  // old detail printed `15 region(s) across 3 fixtures lifted back off their
+  // page and compared byte for byte against the loose PNG` — the claim itself,
+  // with zero data, on the run where all 15 differed. `P01`/`B01`'s shape, which
+  // this card ranked fourth and #507 repaired one surface over.
+  const losslessHeld = losslessWrong.length === 0;
   say(
     'PK02_EVERY_PACKED_REGION_IS_A_LOSSLESS_COPY',
-    losslessWrong.length === 0,
-    `${lossless.reduce((n, [, r]) => n + r.regions, 0)} region(s) across ${lossless.length} fixtures lifted back ` +
-      'off their page and compared byte for byte against the loose PNG',
+    losslessHeld,
+    probeDetail(
+      losslessHeld,
+      losslessWrong,
+      `${lossless.reduce((n, [, r]) => n + r.regions, 0)} region(s) across ${lossless.length} fixtures lifted back ` +
+        'off their page and compared byte for byte against the loose PNG',
+      (count) => `${count} region(s) are not the bytes they were packed from:`,
+    ),
     'this is the whole promise of the feature: packing is an arrangement of bytes, and a packer that resampled, ' +
       'scaled, trimmed or turned anything would be changing the art while claiming to move it',
   );
@@ -23192,15 +23269,28 @@ function runAtlasReaderSuite(): number | null {
     }
   }
   const declaredScales = atlases.flatMap((p) => atlasScales(readFileSync(p, 'utf8')).filter((s) => s !== 1));
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498), and the reason is
+  // that the list already existed — one statement further down. The verdict is
+  // one list's emptiness and the disagreements were printed by a `console.log`
+  // AFTER the case line, capped at five, outside the detail the FAIL prints.
+  // Planted with `parseAtlasText` reading a page scale 1% off the line it came
+  // from, the old detail printed `9 declared scale(s) across 10 atlas file(s):
+  // 0.4, 0.5` — true, and silent about the ten readers that disagreed. Folding
+  // the stray print into the detail is what `PKR03` two cases up already does.
+  const scaleReadersHeld = scaleReaders.length === 0;
   say(
     'PKR04_THE_PAGE_PARSER_AND_ATLASSCALES_READ_THE_SAME_SCALE_LINES',
-    scaleReaders.length === 0 && declaredScales.length > 0,
-    `${declaredScales.length} declared scale(s) across ${atlases.length} atlas file(s): ` +
-      `${[...new Set(declaredScales)].sort((a, b) => a - b).join(', ')}`,
+    scaleReadersHeld && declaredScales.length > 0,
+    probeDetail(
+      scaleReadersHeld,
+      scaleReaders,
+      `${declaredScales.length} declared scale(s) across ${atlases.length} atlas file(s): ` +
+        `${[...new Set(declaredScales)].sort((a, b) => a - b).join(', ')}`,
+      (count) => `${count} atlas file(s) whose two readers disagree:`,
+    ),
     'one line, two consumers, and the importer DIVIDES by it — the reader that feeds a size must not differ from ' +
       'the reader that reports one',
   );
-  if (scaleReaders.length > 0) console.log(`          ${scaleReaders.slice(0, 5).join('; ')}`);
 
   // ⭐ The measurement the fix for #267 actually stands on: for every corpus
   // region that has its loose drawing beside it, does the descaled region size
@@ -23241,11 +23331,24 @@ function runAtlasReaderSuite(): number | null {
       }
     }
   }
+  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498), and this site is
+  // the one that sharpened the rule. Its printing branch DOES carry the term's
+  // value — `worst residual ${worstResidual} px` is the reading `recovery` is
+  // built from — so the discriminator sorts it as a trace, and a plant proved
+  // the reader can see what fell. What the plant ALSO showed is that the clause
+  // beside that value was a constant asserting the verdict: on a run whose
+  // worst residual was 16.6 px it still read `every one inside the pack's own
+  // rounding`. A value on the line and a false clause next to it is a lesser
+  // defect than a silence, and it takes a different repair — condition the
+  // clause on the value already printed rather than add a value.
   say(
     'PKR05_DESCALING_A_REGION_RECOVERS_THE_DRAWINGS_OWN_SIZE',
     recovery.length === 0 && scaledRegions > 0,
     `${recovered} region(s) checked against the loose drawing beside them, ${scaledRegions} of them on a scaled ` +
-      `page; worst residual ${worstResidual} px, every one inside the pack's own rounding (0.5/scale)`,
+      `page; worst residual ${worstResidual} px, ` +
+      (recovery.length === 0
+        ? "every one inside the pack's own rounding (0.5/scale)"
+        : `and ${recovery.length} of them OUTSIDE the pack's own rounding (0.5/scale)`),
     'issue #267: `--atlas-in` took the texel count as the world size, so importing any of the nine corpus atlases ' +
       'that declare a `scale:` halved every attachment — green, and with nothing in the report saying so',
   );
@@ -36808,15 +36911,27 @@ function runIngestSuite(): number {
   const missed = expected.filter(([code, kind]) => !plantedResult.findings.some((f) => f.code === code && f.kind === kind));
   const cleanCodes = new Set(probeTrip.findings.map((f) => f.code));
   const spurious = expected.filter(([code]) => cleanCodes.has(code));
+  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). One term of three
+  // went unread — that every finding carries a sentence and a place — and the
+  // other two already have a clause each. Planted with every ingest finding's
+  // `where` emptied, the old detail printed `12 construct(s) planted in a real
+  // skeleton, 12 reported under the code and kind they are owed; the unplanted
+  // skeleton raises 0 of them`: complete, true, and silent about the third of
+  // the control's own title that fell — `CUR01`'s shape (#633). The reading is
+  // spelled INLINE so the sweep can see the repair.
+  const mute = plantedResult.findings.filter((f) => !(f.detail.length > 30 && f.where.length > 0));
   say(
     'IG08_A_CONSTRUCT_THE_SPEC_CANNOT_HOLD_IS_A_FINDING_WITH_A_CODE_A_KIND_AND_A_SENTENCE',
-    missed.length === 0 &&
-      spurious.length === 0 &&
-      plantedResult.findings.every((f) => f.detail.length > 30 && f.where.length > 0),
+    missed.length === 0 && spurious.length === 0 && mute.length === 0,
     `${expected.length} construct(s) planted in a real skeleton, ${expected.length - missed.length} reported under ` +
       'the code and kind they are owed' +
       (missed.length === 0 ? '' : ` — MISSED ${missed.map(([code, kind]) => `${code}/${kind}`).join(', ')}`) +
-      `; the unplanted skeleton raises ${spurious.length} of them`,
+      `; the unplanted skeleton raises ${spurious.length} of them; ${
+        mute.length === 0
+          ? `all ${plantedResult.findings.length} carry a sentence and a place`
+          : `${mute.length} of ${plantedResult.findings.length} carry no sentence or no place: ` +
+            `${mute.map((f) => `${f.code} where=${JSON.stringify(f.where)} detail=${f.detail.length} char(s)`).join(', ')}`
+      }`,
     'the product of a decompiler is its refusals: a construct approximated is a rig that gates green and is not ' +
       'the one that was read. Each is planted into an emitted skeleton rather than a hand-written stub, so the ' +
       'finding has to survive a file that is correct in every other respect — and the clean run is the other ' +
@@ -38781,12 +38896,21 @@ function runRunTallySuite(live: RunTally): number {
   // --- TY03: the floor, red-first on a suite that went to zero --------------
   const emptied = [block({ key: 'alpha', controls: 2 }), block({ key: 'beta', controls: 0 }), healthy[2]];
   const emptiedFaults = tallyFaults(emptied, gutterOf('PASS', 'PASS', 'SKIP'), 2);
+  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). One term of three
+  // went unread — the negative half, that the healthy set faults in no way —
+  // and it was stated as a CONSTANT CLAUSE that IS the term: "the healthy set
+  // faults in no way" is the assertion, not a reading of it. Planted with the
+  // healthy set's "beta" emptied, the old line printed that clause word for
+  // word on the run where the healthy set faulted. `B12`'s shape (#636), in the
+  // suite that exists to refuse exactly this.
+  const healthyFaults = tallyFaults(healthy, healthyGutter, healthyTotal);
   say(
     'TY03_A_SUITE_THAT_RAN_AND_MEASURED_NOTHING_IS_NAMED',
-    tallyFaults(healthy, healthyGutter, healthyTotal).length === 0 &&
+    healthyFaults.length === 0 &&
       emptiedFaults.length === 1 &&
       emptiedFaults[0].includes('"beta"'),
-    `the healthy set faults in no way; the same set with "beta" emptied faults once — ${emptiedFaults[0] ?? 'nothing'}`,
+    `the healthy set faults in ${healthyFaults.length === 0 ? 'no way' : `${healthyFaults.length} way(s) — ${healthyFaults.join('; ')}`}` +
+      `; the same set with "beta" emptied faults once — ${emptiedFaults[0] ?? 'nothing'}`,
     'two-sided on purpose: a floor that only ever reports is satisfied by a checker that reports on everything, and ' +
       'the run this gate protects is green almost always',
   );
@@ -38996,6 +39120,15 @@ function runRunTallySuite(live: RunTally): number {
   const plantedScan = scanSummaryFigures(planted);
   const repairedScan = scanSummaryFigures(repaired);
   const commented = scanSummaryFigures(`// states 6, run prints 11: , + 4 static-rig controls\n${repaired}`);
+  // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). One term of six
+  // went unread — the comment case — and it was stated as a CONSTANT CLAUSE
+  // that IS the term: "a COMMENT quoting the stale figure faults in no way
+  // either" asserts the verdict instead of reading it. Planted with the summary
+  // scanner keeping a `//` comment as text instead of blanking it away, the old
+  // line printed that clause word for word on the run where the comment faulted
+  // — `B12`'s shape (#636), and `TY14`'s own origin sentence says this is the
+  // sharpest of these negatives. The reading is spelled INLINE so the sweep can
+  // see the repair.
   say(
     'TY11_A_PLANTED_FIGURE_FAULTS_WHILE_THE_PROSE_BESIDE_IT_DOES_NOT',
     plantedScan.scan.written.length === 1 &&
@@ -39008,7 +39141,11 @@ function runRunTallySuite(live: RunTally): number {
       `${plantedScan.scan.openings} clause opening(s) leave the quoted \`v + 360 === 360\` and the "2 of them" ` +
       `alone; the same text with that one figure interpolated faults in no way over ${repairedScan.scan.openings} ` +
       `opening(s), all ${repairedScan.scan.derived} of them filled by a value; and a COMMENT quoting the stale ` +
-      'figure faults in no way either',
+      `figure faults ${
+        commented.scan.written.length === 0
+          ? 'in no way either'
+          : `${commented.scan.written.length} time(s): ${commented.scan.written.map((one) => `…${one}…`).join(' | ')}`
+      }`,
     'the negative control is the whole design: a scanner that refused every literal number in this summary would ' +
       'be red on "26.25 degrees" and "[0, 360)" and would then need an exception table beside it, which is the ' +
       'defect this file gates for everywhere else. The comment case is the third side — a comment emits nothing, ' +
