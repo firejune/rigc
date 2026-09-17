@@ -4452,6 +4452,148 @@ function runRigSuite(): number {
     );
   }
 
+  // --- a bone track naming a timeline the emitter does not have (issue #656) -
+  //
+  // ⭐ The same shape as the four above, one family over, and the same reason
+  // they are cases here rather than rows in `RIG_MUTANTS`: these break the
+  // MOTION spec, and the summary prints that array's length as *"broken rig
+  // specs the compiler refused by name"*.
+  //
+  // 🚨 What was wrong: the bone dispatch WAS already a table (`BONE_TRACKS`),
+  // so nothing silent ever reached disk — a property that missed it was
+  // refused. It was refused as *"bone X cannot take slot property Y"*, which
+  // names the SLOT family for a spelling that in nine cases out of ten belongs
+  // to no family at all, and enumerates nothing. It was the one target family
+  // whose refusal offered no way forward, which is also why the spelling census
+  // (`PS143`, `PS144`) had to STATE the ten bone spellings: the other four
+  // families print their own vocabulary and the bone family printed none.
+  //
+  // 🔒 The last case is the negative side, and it is what stops the repair from
+  // reading "refuse anything whose keys do not fit": a LEGAL bone property with
+  // a key of the wrong arity has to keep its own message. The positive control
+  // is first for this suite's own reason — the probe writes a copy of the
+  // fixture's motion spec with one animation added, so a harness that refused
+  // everything would make all four refusals pass while measuring the copy.
+  {
+    const motionSource = JSON.parse(readFileSync(opts.motionPath, 'utf8')) as { animations: Record<string, unknown> };
+    const probeMotion = join(dir, 'bone.motion.json');
+    const probeAnimation = 'bone_track_probe';
+    /** Compile the fixture with one animation added, holding one bone track. */
+    const withBoneTrack = (property: string, values: number[][]): { message: string | null; skeletonText: string | null } => {
+      const motion = JSON.parse(JSON.stringify(motionSource)) as { animations: Record<string, unknown> };
+      motion.animations[probeAnimation] = {
+        duration: values.length - 1,
+        loop: false,
+        tracks: [{ bone: 'plunger', property, keys: values.map((v, i) => ({ t: i, v })) }],
+      };
+      writeFileSync(probeMotion, `${JSON.stringify(motion, null, 2)}\n`);
+      try {
+        return { message: null, skeletonText: compile({ ...opts, motionPath: probeMotion }).skeletonText };
+      } catch (err) {
+        return {
+          message: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`,
+          skeletonText: null,
+        };
+      }
+    };
+    /** The emitted keys of the probe animation's bone timelines, whatever they were called. */
+    const probeBoneTimelines = (skeletonText: string | null): Record<string, unknown[]> => {
+      if (skeletonText === null) return {};
+      const skeleton = JSON.parse(skeletonText) as {
+        animations?: Record<string, { bones?: Record<string, Record<string, unknown[]>> }>;
+      };
+      return skeleton.animations?.[probeAnimation]?.bones?.plunger ?? {};
+    };
+    const TEN = '(it has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate)';
+
+    const legalBone = withBoneTrack('rotate', [[0], [30]]);
+    const legalBoneKeys = probeBoneTimelines(legalBone.skeletonText).rotate;
+    bad += reportCase(
+      'CONTROL_A_MOTION_SPEC_THAT_ADDS_A_LEGAL_BONE_TRACK_STILL_COMPILES',
+      legalBone.message === null && Array.isArray(legalBoneKeys) && legalBoneKeys.length === 2,
+      legalBone.message === null
+        ? `the copy with one rotate track added compiled, and the emitted animation carries bones.plunger.rotate with ${
+            Array.isArray(legalBoneKeys) ? legalBoneKeys.length : 0
+          } key(s): ${JSON.stringify(legalBoneKeys ?? null)}`
+        : `the copy did not compile at all: ${legalBone.message}`,
+      'the four refusals below are measured on this same probe, so a harness that refused every spec it wrote — a ' +
+        'bad copy, a path that no longer resolves — would make all four of them pass for reasons that have nothing ' +
+        'to do with the property name. This is the case that fails instead',
+    );
+
+    const unknownBone = withBoneTrack('wobble', [[0], [1]]);
+    bad += reportCase(
+      'RF26_a_bone_track_names_a_timeline_the_emitter_does_not_have',
+      unknownBone.message !== null &&
+        unknownBone.message.includes('bone "plunger" has no timeline "wobble"') &&
+        unknownBone.message.includes(TEN),
+      unknownBone.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeBoneTimelines(unknownBone.skeletonText))}`
+        : `refused with: ${unknownBone.message}`,
+      'the ten are quoted here rather than read out of `BONE_TRACKS`, for the reason `RF23` quotes the slot pair: a ' +
+        'control that derived the list from the emitter would agree with the emitter whatever the emitter said. ' +
+        'Typed, it is the interface `docs/AUTHORING.md` §4.4 promises, and widening the table without moving that ' +
+        'page turns this red. What is derived instead is the CENSUS: `PS144` reads the same ten off this same ' +
+        'message and compares them against the spellings it poses, both ways',
+    );
+
+    const slotOnBone = withBoneTrack('rgba', [
+      [0, 0, 0, 0],
+      [1, 0, 0, 1],
+    ]);
+    bad += reportCase(
+      'RF27_a_slot_timeline_keyed_on_a_bone_names_the_field_that_carries_it',
+      slotOnBone.message !== null &&
+        slotOnBone.message.includes('bone "plunger" has no timeline "rgba"') &&
+        slotOnBone.message.includes(TEN) &&
+        slotOnBone.message.includes('"rgba" is a slot timeline — put the name in "slot"') &&
+        !slotOnBone.message.includes('cannot take slot property'),
+      slotOnBone.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeBoneTimelines(slotOnBone.skeletonText))}`
+        : `refused with: ${slotOnBone.message}`,
+      'the two spellings the message it replaced was RIGHT about. `rgba` and `attachment` really are slot ' +
+        'timelines, so "cannot take slot property" said something true here and something false on every other ' +
+        'name — the redirect survives as a clause read off `SLOT_TRACKS`, beside the list, rather than as the ' +
+        'whole sentence. The negative half of this case is what keeps the old wording from coming back for the ' +
+        'two inputs it fitted',
+    );
+
+    const unknownShaped = withBoneTrack('wobble', [
+      [0, 0],
+      [1, 1],
+    ]);
+    bad += reportCase(
+      'RF28_the_bone_property_is_refused_before_any_key_is_shaped',
+      unknownShaped.message !== null &&
+        unknownShaped.message.includes('has no timeline "wobble"') &&
+        !unknownShaped.message.includes('key value must be an array'),
+      unknownShaped.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeBoneTimelines(unknownShaped.skeletonText))}`
+        : `refused with: ${unknownShaped.message}`,
+      'the ordering clause, and it is the one `RF24` measures on the slot side. A track naming a property the ' +
+        'emitter has no shape for has no shape to be missing fields from, so a message about its keys would be ' +
+        'about a shape nobody chose — two numbers is a legal arity for `translate` and for no timeline called ' +
+        '`wobble`. The refusal is raised in `resolveTargets`, before the keys are read at all',
+    );
+
+    const wrongArity = withBoneTrack('rotate', [
+      [0, 0],
+      [30, 0],
+    ]);
+    bad += reportCase(
+      'RF29_a_legal_bone_track_with_the_wrong_key_arity_keeps_its_own_message',
+      wrongArity.message !== null &&
+        wrongArity.message.includes('key value must be an array of 1 number(s)') &&
+        !wrongArity.message.includes('has no timeline'),
+      wrongArity.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeBoneTimelines(wrongArity.skeletonText))}`
+        : `refused with: ${wrongArity.message}`,
+      'the negative side. A property refusal that also swallowed this one would read as the same repair from the ' +
+        'outside — every broken bone track refused by name — while having replaced a message about the key with ' +
+        'one about the property, on the one input where the key really is the fault',
+    );
+  }
+
   return bad;
 }
 
@@ -15649,16 +15791,20 @@ function runPathAndSliderSuite(): number {
   // them.
   //
   // 🔸 **What this does NOT derive, named rather than implied.** The families
-  // are derivable; the SPELLINGS are not, and the reason is in the refusals
-  // themselves. A slot, physics, path or slider track that names a property the
-  // compiler does not know is refused with the list it does know — so those
-  // fifteen spellings can be read off the tool. A BONE track is not: it is
-  // refused as *"bone X cannot take slot property Y"*, which names the wrong
-  // family for a spelling that belongs to none and enumerates nothing. The five
-  // animation-level families are in the unknown-key message beside `duration`,
-  // `loop`, `note` and `tracks`, which no rule here separates. So the four
-  // enumerating families are checked against the census both ways and the rest
-  // are stated.
+  // are derivable; not every SPELLING is, and the reason is in the refusals
+  // themselves. A bone, slot, physics, path or slider track that names a
+  // property the compiler does not know is refused with the list it does know —
+  // so those twenty-five spellings can be read off the tool, and they are,
+  // against the census both ways. ⭐ The bone family was the exception until
+  // issue #656 and is the reason this comment used to stop at fifteen: it was
+  // refused as *"bone X cannot take slot property Y"*, which named the wrong
+  // family for a spelling that belongs to none and enumerated nothing, so its
+  // ten had to be stated here with nothing to check them against. What is still
+  // stated is the five animation-level families: they are in the unknown-key
+  // message beside `duration`, `loop`, `note` and `tracks`, which no rule here
+  // separates — a list of the keys an animation OBJECT may carry is not a list
+  // of timeline families, and splitting it into two would put the timeline half
+  // in a second table nothing dispatches on.
   const TRACK_TARGETS: Array<[string, Record<string, unknown>]> = [
     ['bone', { bone: 'vane' }],
     ['slot', { slot: 'marker' }],
@@ -15718,7 +15864,15 @@ function runPathAndSliderSuite(): number {
   /** The spellings the census keys under one target family, read off the census rather than restated. */
   const censusSpellings = (family: string): string[] =>
     SPELLING_CENSUS.filter((one) => one.spelling.startsWith(`${family} `)).map((one) => one.spelling.slice(family.length + 1));
-  const ENUMERATING = ['slot', 'physics', 'path', 'slider'];
+  // ⭐ `bone` joined this list in issue #656, and that is the whole of the
+  // derivation the census gained: the ten bone spellings it poses are now read
+  // back off the compiler's own refusal and compared against it both ways,
+  // instead of being a list this file keeps privately. What it does NOT do is
+  // BUILD the census from that list — the fixtures carry keyed values no
+  // refusal can state, and a census generated from the compiler would agree
+  // with the compiler whatever it said, which is the comparison below written
+  // as a tautology.
+  const ENUMERATING = ['bone', 'slot', 'physics', 'path', 'slider'];
   const unreachedRows: string[] = [];
   const unreachedSays: string[] = [];
   const quoted: string[] = [];
@@ -15772,13 +15926,13 @@ function runPathAndSliderSuite(): number {
       `the runtime declares ${runtimeFamilies.length} timeline families and the census above keys ${censusFamilies.size} of them, so ` +
         `${unreachedFamilies.length} are out of a rig spec's reach: ${unreachedSays.join(', ')}. Each was offered to the compiler on all ` +
         `${TRACK_TARGETS.length} targets a track can name and refused by every one — ${quoted[0] ?? 'no refusal was printed'}. ` +
-        `And the vocabulary itself is read off the refusals where it can be: a wrongly spelled slot, physics, path or slider ` +
-        `track is refused with the list of timelines that target does have, which covers ` +
+        `And the vocabulary itself is read off the refusals where it can be: a wrongly spelled bone, slot, physics, path or ` +
+        `slider track is refused with the list of timelines that target does have, which covers ` +
         `${ENUMERATING.reduce((count, family) => count + censusSpellings(family).length, 0)} of the ${SPELLING_CENSUS.length} spellings and is ` +
-        'compared against the census both ways; a BONE track is refused as taking a "slot property", which names the wrong ' +
-        'family for a spelling that belongs to none and enumerates nothing, and the five animation-level families share one ' +
-        'unknown-key message with `duration`, `loop`, `note` and `tracks`, which no rule here separates — so the rest of the ' +
-        'vocabulary is stated by this file rather than read off the tool',
+        `compared against the census both ways (${ENUMERATING.map((family) => `${family} ${censusSpellings(family).length}`).join(', ')}). ` +
+        'The bone family is in that list since issue #656 and its ten used to be stated here, because the refusal it had named ' +
+        'the SLOT family and enumerated nothing. What is still stated is the five animation-level families, which share one ' +
+        'unknown-key message with `duration`, `loop`, `note` and `tracks` that no rule here separates',
       (count) => `${count} clause(s) of the reachability derivation did not hold:`,
     ),
     'issue #652 item 4 asks which spellings a rig spec cannot reach and for the output of one. `PS135` answered that for ' +
