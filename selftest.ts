@@ -13191,6 +13191,1085 @@ function runPathAndSliderSuite(): number {
       'question "how much of the residue is ours" has to have an answer. Here it is all of it, and the fixture that ' +
       'follows the page\'s advice has none',
   );
+
+
+  // --- the five branches of the format no cell of that grid enters (#644) ---
+  //
+  // ⭐ `PS128`–`PS131` above sweep ONE shape: two additive `local: true` sliders
+  // reading `rotate`, non-looping, over bone timelines. That is the shape a face
+  // is written in, and it is not the shape the FORMAT allows — five branches of
+  // it are on no cell of that grid, and issue #644 is the list. Each control
+  // below takes one of them, and every prediction is the same arithmetic
+  // `PS128` states, read at whatever the branch changes:
+  //
+  //     time_i     = to_i + (reading_i - from_i) x scale_i          §3.5.2's map
+  //     share_i    = min(1, max(0, time_i) / duration)              a LINEAR 2-key ramp
+  //                = ((time_i % duration) + duration) % duration    when the slider LOOPS
+  //     posed      = setup + SUM_i  share_i x amplitude_i           every slider additive
+  //
+  // 🔒 Nothing in it reads what the runtime produced: `reading_i` is the number
+  // the dial bone is posed at, the mapping is the rig spec's own fields, the
+  // amplitudes are the motion spec's own keys, and the setup is the emitted
+  // skeleton's. The two ways to break that rule are both refused here — a
+  // prediction taken by applying the same animation through spine-core, and a
+  // tolerance wide enough to make one unnecessary.
+  type S644Property = 'rotate' | 'x' | 'y' | 'scaleX' | 'scaleY' | 'shearY';
+  /** One dial of a grid: the constraint that reads it, and the animation's own two amplitudes. */
+  interface ComposedDial {
+    name: string;
+    bone: string;
+    property: S644Property;
+    dial: SliderDial;
+    /** The `rotate` and `x` a key of this dial's animation states at its own t=1. */
+    rotate: number;
+    x: number;
+    /** Sample count is `steps + 1`; the axes are deliberately different lengths. */
+    steps: number;
+    loop?: boolean;
+    local?: boolean;
+  }
+  /** The third dial's bone. `tilt` is not reused: `sliderPairMotion` keys it, and a fixture that shares a bone with another suite's animation is one nobody can reason about. */
+  const SLIDER_BONES = [...SLIDER_PAIR_BONES, { name: 'roll-dial', parent: 'root', x: -20, y: 0 }];
+  /**
+   * §3.5.2.1's map from a `property` to the pose field the reader returns — the
+   * table this file is allowed to state, because it is the FORMAT's rule and not
+   * a measurement. `rotate` is the one spelling that differs between the two.
+   */
+  const s644SetDial = (skeleton: Skeleton, bone: string, property: S644Property, value: number): void => {
+    const pose = skeleton.bones.find((one) => one.data.name === bone)!.pose;
+    switch (property) {
+      case 'rotate': pose.rotation = value; break;
+      case 'x': pose.x = value; break;
+      case 'y': pose.y = value; break;
+      case 'scaleX': pose.scaleX = value; break;
+      case 'scaleY': pose.scaleY = value; break;
+      case 'shearY': pose.shearY = value; break;
+    }
+  };
+  /** One slider of the pair/trio, with whatever the case is about patched over it. */
+  const s644Slider = (dial: ComposedDial, patch: Record<string, unknown> = {}): Record<string, unknown> => ({
+    name: dial.name,
+    type: 'slider',
+    animation: `${dial.name}-pose`,
+    bone: dial.bone,
+    property: dial.property,
+    local: dial.local ?? true,
+    additive: true,
+    ...(dial.loop === true ? { loop: true } : {}),
+    ...dial.dial,
+    ...patch,
+  });
+  /** The motion spec a set of dials reads: one two-key ramp each, over a rotation AND a translation. */
+  const s644Motion = (dials: ComposedDial[], eased?: string): Record<string, unknown> => ({
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: { [GRID_EASE]: [0.9, 0, 1, 0.35] },
+    animations: Object.fromEntries(
+      dials.map((dial) => [`${dial.name}-pose`, gridRamp(dial.rotate, dial.x, dial.name === eased ? GRID_EASE : undefined)]),
+    ),
+  });
+  const s644Build = (dials: ComposedDial[], patches: Array<Record<string, unknown>> = [], eased?: string): SkeletonData =>
+    timelinePosable(
+      writeProbeRig({ bones: SLIDER_BONES, constraints: dials.map((dial, i) => s644Slider(dial, patches[i] ?? {})) }),
+      s644Motion(dials, eased),
+    ).data;
+  const s644Gate = (dials: ComposedDial[]): ReturnType<typeof validate> =>
+    gateProbe(
+      writeProbeRig({ bones: SLIDER_BONES, constraints: dials.map((dial) => s644Slider(dial)) }),
+      s644Motion(dials),
+    );
+
+  /** `time = to + (reading - from) x scale`, before the runtime clamps or wraps it. */
+  const s644Time = (reading: number, dial: SliderDial): number => dial.to + (reading - dial.from) * dial.scale;
+  /**
+   * How much of a dial's animation has been reached at a reading — the ONE place
+   * the two `Slider.update` branches differ.
+   *
+   * `loop: false` is `Math.max(0, time)` and then a 2-key ramp that holds its
+   * last frame; `loop: true` is `duration + (time % duration)`, which is a
+   * POSITIVE modulo once `Animation.apply`'s own `time %= duration` has run over
+   * it, so nothing is ever held and the frame at `duration` is unreachable.
+   */
+  const s644Share = (reading: number, dial: ComposedDial): number => {
+    const time = s644Time(reading, dial.dial);
+    if (dial.loop !== true) return Math.min(1, Math.max(0, time) / GRID_DURATION);
+    return (((time % GRID_DURATION) + GRID_DURATION) % GRID_DURATION) / GRID_DURATION;
+  };
+  /** The cartesian product of every dial's own samples — the grid, from the mappings and nothing else. */
+  const s644Rows = (dials: ComposedDial[], axes?: number[][]): number[][] => {
+    let rows: number[][] = [[]];
+    for (const [i, dial] of dials.entries()) {
+      const axis = axes?.[i] ?? dialSamples(dial.dial, dial.steps);
+      rows = rows.flatMap((row) => axis.map((value) => [...row, value]));
+    }
+    return rows;
+  };
+  interface S644Cell {
+    at: number[];
+    rotate: number;
+    x: number;
+    wantRotate: number;
+    wantX: number;
+  }
+  /**
+   * Pose the dials at one row and read the shared bone back.
+   *
+   * By putting the driving bones at a reading and running the constraints, which
+   * is what a consumer holding a value does — `PS128`'s own reason, and the only
+   * way to reach a grid at all.
+   */
+  const s644Skeleton = (data: SkeletonData, dials: ComposedDial[], at: number[]): Skeleton => {
+    const skeleton = new Skeleton(data);
+    skeleton.setupPose();
+    for (const [i, dial] of dials.entries()) s644SetDial(skeleton, dial.bone, dial.property, at[i]);
+    skeleton.update(0);
+    skeleton.updateWorldTransform(Physics.update);
+    return skeleton;
+  };
+  const s644Posed = (data: SkeletonData, dials: ComposedDial[], at: number[]): { rotate: number; x: number } => {
+    const flag = s644Skeleton(data, dials, at).bones.find((bone) => bone.data.name === 'flag')!.appliedPose;
+    return { rotate: flag.rotation, x: flag.x };
+  };
+  /**
+   * The grid, with one weight per dial.
+   *
+   * ⭐ The weights are what let a PLANT state its own closed form rather than
+   * only "something moved": a later slider left at the format default makes the
+   * weights of every dial before it 0, and the control then requires the pose to
+   * be THAT arithmetic at every cell.
+   */
+  const s644Sweep = (
+    data: SkeletonData,
+    dials: ComposedDial[],
+    rows: number[][],
+    weights: number[] = dials.map(() => 1),
+    readings?: (at: number[]) => number[],
+  ): S644Cell[] => {
+    const setup = data.findBone('flag')!.setupPose;
+    return rows.map((at) => {
+      const posed = s644Posed(data, dials, at);
+      const read = readings?.(at) ?? at;
+      const share = dials.map((dial, i) => weights[i] * s644Share(read[i], dial));
+      return {
+        at,
+        rotate: posed.rotate,
+        x: posed.x,
+        wantRotate: setup.rotation + dials.reduce((sum, dial, i) => sum + share[i] * dial.rotate, 0),
+        wantX: setup.x + dials.reduce((sum, dial, i) => sum + share[i] * dial.x, 0),
+      };
+    });
+  };
+  const s644Error = (cell: S644Cell): number =>
+    Math.max(Math.abs(cell.rotate - cell.wantRotate), Math.abs(cell.x - cell.wantX));
+  const s644Worst = (cells: S644Cell[]): S644Cell =>
+    cells.reduce((worst, cell) => (s644Error(cell) > s644Error(worst) ? cell : worst), cells[0]);
+  /** The sentence a FAIL prints: the cell, the value found and the value required, per property. */
+  const s644Says = (dials: ComposedDial[], cell: S644Cell): string =>
+    `${dials.map((dial, i) => `${dial.name} ${dial.property} ${cell.at[i].toFixed(3)}`).join(' x ')}: flag rotate posed ` +
+    `${cell.rotate.toFixed(6)}° and the arithmetic requires ${cell.wantRotate.toFixed(6)}°; flag x posed ` +
+    `${cell.x.toFixed(6)} and requires ${cell.wantX.toFixed(6)} (off by ${s644Error(cell).toExponential(3)})`;
+  /** Float64 noise over the chain: the largest magnitude it carries times `PS128`'s own op count. */
+  const s644FloatFloor = (dials: ComposedDial[]): number =>
+    dials.reduce((sum, dial) => sum + Math.abs(dial.rotate) + Math.abs(dial.x), 0) * Number.EPSILON * GRID_FLOAT_OPS;
+  /** What the six-decimal emit can cost these dials, reported beside the cells and never used as a tolerance (`PS131` owns it). */
+  const s644EmitBound = (dials: ComposedDial[]): number =>
+    Math.max(
+      ...(['rotate', 'x'] as const).map((field) =>
+        dials.reduce(
+          (sum, dial) => sum + ((dialTop(dial.dial) - dial.dial.from) * GRID_HALF_ULP6 * Math.abs(dial[field])) / GRID_DURATION,
+          0,
+        ),
+      ),
+    );
+  // =========================================================================
+  // 1. five of the six `property` readings (#644 item 1)
+  // =========================================================================
+  const SLIDER_READER_PAIRS: Array<[ComposedDial, ComposedDial]> = [
+    [
+      { name: 'yaw', bone: 'yaw-dial', property: 'x', dial: { from: 0, to: 0, scale: 0.02 }, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 8 },
+      { name: 'pitch', bone: 'pitch-dial', property: 'scaleX', dial: { from: 1, to: 0, scale: 0.5 }, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 10 },
+    ],
+    [
+      { name: 'yaw', bone: 'yaw-dial', property: 'y', dial: { from: 0, to: 0, scale: 0.01 }, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 8 },
+      { name: 'pitch', bone: 'pitch-dial', property: 'scaleY', dial: { from: 1, to: 0, scale: 0.25 }, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 10 },
+    ],
+    [
+      { name: 'yaw', bone: 'yaw-dial', property: 'shearY', dial: { from: 0, to: 0, scale: 0.005 }, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 8 },
+      { name: 'pitch', bone: 'pitch-dial', property: 'x', dial: { from: 0, to: 0, scale: 0.04 }, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 10 },
+    ],
+  ];
+  const readerRows: string[] = [];
+  const readerSays: string[] = [];
+  for (const pair of SLIDER_READER_PAIRS) {
+    const dials = [...pair];
+    const rows = s644Rows(dials);
+    const floor = s644FloatFloor(dials);
+    const gate = s644Gate(dials);
+    const cells = s644Sweep(s644Build(dials), dials, rows);
+    const off = cells.filter((cell) => s644Error(cell) > floor);
+    const label = `${pair[0].property} x ${pair[1].property}`;
+    if (gate.failures.length > 0) {
+      readerRows.push(`${label}: the fixture does not gate green, so every cell of it is a reading of a rig the validator refuses: ${gate.failures.map((f) => f.assertion).join(', ')}`);
+    }
+    if (off.length > 0) readerRows.push(`${label} — ${off.length} of ${cells.length} cells: ${s644Says(dials, s644Worst(cells))}`);
+    readerSays.push(`${label} worst ${s644Error(s644Worst(cells)).toExponential(3)} over ${cells.length} cells (floor ${floor.toExponential(3)}, emit bound ${s644EmitBound(dials).toExponential(3)})`);
+  }
+  // The plants, both DATA: the later slider's own flag, and the pair of
+  // `property` fields exchanged between the two dials — which leaves each
+  // slider reading a field this sweep never moves, so what it reads is the
+  // bone's setup value and its contribution is a constant.
+  const readerPlants: Array<{ what: string; cells: S644Cell[]; floor: number; dials: ComposedDial[] }> = [];
+  {
+    const dials = [...SLIDER_READER_PAIRS[0]];
+    const rows = s644Rows(dials);
+    const floor = s644FloatFloor(dials);
+    readerPlants.push({
+      what: 'the later slider left at the format default (`"additive": false`)',
+      cells: s644Sweep(s644Build(dials, [{}, { additive: false }]), dials, rows),
+      floor,
+      dials,
+    });
+    const swapped: ComposedDial[] = [
+      { ...dials[0], property: dials[1].property },
+      { ...dials[1], property: dials[0].property },
+    ];
+    readerPlants.push({
+      what: 'the two `property` fields exchanged between the dials, the rig otherwise identical',
+      // Built from the swapped rig, swept at the ORIGINAL dials — so the poser
+      // still moves `x` and `scaleX` and the sliders read the other one.
+      cells: s644Sweep(s644Build(swapped), dials, rows),
+      floor,
+      dials,
+    });
+  }
+  for (const plant of readerPlants) {
+    const moved = plant.cells.filter((cell) => s644Error(cell) > plant.floor);
+    if (moved.length === 0) {
+      readerRows.push(`${plant.what}: every cell still read the arithmetic, so this plant is one the comparison above is blind to`);
+      continue;
+    }
+    readerSays.push(`${plant.what} — ${moved.length} of ${plant.cells.length} cells leave the arithmetic, worst ${s644Error(s644Worst(plant.cells)).toExponential(3)}`);
+  }
+  const readersHeld = readerRows.length === 0;
+  say(
+    'PS132_THE_OTHER_FIVE_PROPERTY_READINGS_COMPOSE_BY_THE_SAME_ARITHMETIC_AS_ROTATE',
+    readersHeld,
+    probeDetail(
+      readersHeld,
+      readerRows,
+      `${SLIDER_READER_PAIRS.length} pairs of unlike readers, each swept at ${s644Rows([...SLIDER_READER_PAIRS[0]]).length} cells of ` +
+        `its own two mappings: ${readerSays.join('; ')}. ⇒ under \`local: true\` every one of the six readers is ` +
+        '`source.<field> + offsets[...]` with `Slider.offsets` all zero, so the map from the property to the time stays ' +
+        'affine and ONE arithmetic covers all six',
+      (count) => `${count} reading(s) of the grid are not the arithmetic:`,
+    ),
+    'issue #644 item 1: `AUTHORING §3.5.2` lists six properties a dial can be read by and every slider in `PS128`\'s ' +
+      'grid reads `rotate`. The readers themselves are gated by the slider-reader suite; their COMPOSITION was not, ' +
+      'and a composition claim taken on one reader is a claim about that reader. The two plants are what keep this ' +
+      'from being a rule about nothing: the first is the flag `A40` refuses, and the second exchanges the two ' +
+      '`property` fields, which a control that ignored the reader entirely would pass',
+  );
+
+  // =========================================================================
+  // 2. `local: false` — the world-reading form (#644 item 2)
+  // =========================================================================
+  //
+  // 🚨 A world reader cannot return the number the dial was set to, and the two
+  // reasons are both the reference runtime's float32 π (`MathUtils.PI` is
+  // `3.1415927`, AUTHORING §3.5.2.1):
+  //
+  //  * the ROOT's own matrix is not the identity — its `b` is `cosDeg(90)`,
+  //    which is 2.3e-8 rather than 0 — and every child's `a` inherits that
+  //    times its own `sin`, so `atan2` reads an angle a little past the one the
+  //    bone holds. `radDeg x |cosDeg(90)|` bounds it, at `sin² = 1`;
+  //  * a reading that passes π lands on the far side of `atan2`'s branch and
+  //    comes back through `+= 360`, where `radDeg x 2π` is not 360 —
+  //    `360 x (1 - π / MathUtils.PI)` is exactly what is left over.
+  //
+  // ⭐ Both terms are CLOSED FORM off the runtime's own published constant, and
+  // neither is a number anybody measured. What makes them a floor rather than a
+  // free tolerance is the other half of this control: the same two mappings and
+  // the same two amplitudes read `local: true` have to come in at or under the
+  // float64 floor, and the world ones have to come in ABOVE it. A tolerance is
+  // satisfied by a rig where the reader costs nothing; this one names the rig
+  // where it costs nothing and requires it to be the local one.
+  const SLIDER_WRAP_RESIDUE = 360 * (1 - Math.PI / MathUtils.PI);
+  const SLIDER_ROOT_SHEAR = Math.abs(MathUtils.cosDeg(90));
+  /** How far a world reading can sit from the number the bone was posed at, in the property's own unit. */
+  const s644WorldReading = (dial: ComposedDial, boneY: number): number =>
+    dial.property === 'rotate' ? SLIDER_WRAP_RESIDUE + MathUtils.radDeg * SLIDER_ROOT_SHEAR : SLIDER_ROOT_SHEAR * Math.abs(boneY);
+  /** That reading error carried through the mapping and the ramp, per property, and summed over the dials. */
+  const s644WorldBound = (dials: ComposedDial[], bonesY: number[]): number =>
+    Math.max(
+      ...(['rotate', 'x'] as const).map((field) =>
+        dials.reduce(
+          (sum, dial, i) => sum + (s644WorldReading(dial, bonesY[i]) * Math.abs(dial.dial.scale) * Math.abs(dial[field])) / GRID_DURATION,
+          0,
+        ),
+      ),
+    ) + s644FloatFloor(dials);
+  /** `FromRotate.value`'s own range: `[0, 360)`, reached by a modulo and not by one subtraction (`PS44`). */
+  const s644Circle = (value: number): number => ((value % 360) + 360) % 360;
+
+  // The yaw dial's range is 40°..240°, inside the circle so the rig compiles at
+  // all (`PS34`–`PS46` refuse both ends of it), and past 180° so the wrap term
+  // above is on cells rather than only in the arithmetic. The second dial reads
+  // a world `x` off a bone at y = 0, where the root's shear term is exactly
+  // zero — so ONE of the two readers is exact and the other cannot be, which is
+  // what the world form actually looks like.
+  const SLIDER_WORLD: ComposedDial[] = [
+    { name: 'yaw', bone: 'yaw-dial', property: 'rotate', dial: { from: 40, to: 0, scale: 0.005 }, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 8, local: false },
+    { name: 'pitch', bone: 'roll-dial', property: 'x', dial: { from: 0, to: 0, scale: 0.02 }, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 10, local: false },
+  ];
+  const SLIDER_WORLD_BONE_Y = SLIDER_WORLD.map((dial) => {
+    const bone = SLIDER_BONES.find((one) => one.name === dial.bone);
+    return bone === undefined || bone.y === undefined ? 0 : bone.y;
+  });
+  const worldFloor = s644FloatFloor(SLIDER_WORLD);
+  const worldTolerance = s644WorldBound(SLIDER_WORLD, SLIDER_WORLD_BONE_Y);
+  const worldGate = s644Gate(SLIDER_WORLD);
+  const worldData = s644Build(SLIDER_WORLD);
+  const worldRows = s644Rows(SLIDER_WORLD);
+  const worldCells = s644Sweep(worldData, SLIDER_WORLD, worldRows);
+  const worldWorst = s644Error(s644Worst(worldCells));
+  // The same two mappings and amplitudes, read locally. Nothing else moves.
+  const localTwin = SLIDER_WORLD.map((dial) => ({ ...dial, local: true }));
+  const localCells = s644Sweep(s644Build(localTwin), localTwin, worldRows);
+  const localWorst = s644Error(s644Worst(localCells));
+  // The cells that cross the circle: every yaw sample one whole turn below it,
+  // which is a bone position no reader can return. Derived from the sample and
+  // the reader's own period, not written out.
+  const aliasRows = worldRows.map((at) => [at[0] - 360, ...at.slice(1)]);
+  const aliasAsRead = s644Sweep(worldData, SLIDER_WORLD, aliasRows, undefined, (at) => [s644Circle(at[0]), ...at.slice(1)]);
+  const aliasAsPosed = s644Sweep(worldData, SLIDER_WORLD, aliasRows);
+  const aliasReadWorst = s644Error(s644Worst(aliasAsRead));
+  const aliasPosedWorst = s644Error(s644Worst(aliasAsPosed));
+  const outside = aliasRows.filter((at) => at[0] < 0 || at[0] > 360).length;
+  const worldPlantCells = s644Sweep(s644Build(SLIDER_WORLD, [{}, { additive: false }]), SLIDER_WORLD, worldRows);
+  const worldPlantMoved = worldPlantCells.filter((cell) => s644Error(cell) > worldTolerance).length;
+  const worldRowsSaid: string[] = [
+    ...(worldGate.failures.length === 0 && worldGate.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
+      ? []
+      : [`the world fixture does not gate green, so every cell below reads a rig the validator refuses: ${worldGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+    ...worldCells
+      .filter((cell) => s644Error(cell) > worldTolerance)
+      .slice(0, 3)
+      .map((cell) => s644Says(SLIDER_WORLD, cell)),
+    ...(worldWorst > worldFloor
+      ? []
+      : [`the world readers cost this grid ${worldWorst.toExponential(3)}, at or under the float64 floor of ${worldFloor.toExponential(3)} — the bound above is then satisfied by a fixture that never tests it`]),
+    ...(localWorst <= worldFloor
+      ? []
+      : [`the same two mappings read \`local: true\` are off by ${localWorst.toExponential(3)}, past the float64 floor of ${worldFloor.toExponential(3)} — so the gap above is not the world reader's`]),
+    ...(aliasReadWorst <= worldTolerance
+      ? []
+      : [`predicted from the reading the circle returns, the ${outside} cell(s) outside it are off by ${aliasReadWorst.toExponential(3)}, past the ${worldTolerance.toExponential(3)} the reader can account for`]),
+    ...(aliasPosedWorst > worldTolerance
+      ? []
+      : [`predicted from the number the bone was POSED at, the ${outside} cell(s) outside the circle are off by only ${aliasPosedWorst.toExponential(3)} — the absence names nothing, because both readings pose the same`]),
+    ...(worldPlantMoved > 0
+      ? []
+      : ['the later slider left at the format default moved no cell of the world grid, so this comparison is one that plant is blind to']),
+  ];
+  const worldHeld = worldRowsSaid.length === 0;
+  say(
+    'PS133_TWO_WORLD_READING_SLIDERS_COMPOSE_AS_THE_LOCAL_ONES_DO_AND_A_CELL_OUTSIDE_THE_CIRCLE_IS_NAMED',
+    worldHeld,
+    probeDetail(
+      worldHeld,
+      worldRowsSaid,
+      `${worldCells.length} cells of two \`local: false\` dials — a world \`rotate\` over ${SLIDER_WORLD[0].dial.from.toFixed(3)}°..` +
+        `${dialTop(SLIDER_WORLD[0].dial).toFixed(3)}° (inside the circle, and past 180° where the wrap term lands) and a world ` +
+        `\`x\` off a bone at y = ${SLIDER_WORLD_BONE_Y[1]} — are the same closed-form sum, worst ${worldWorst.toExponential(3)} ` +
+        `against a derived reader bound of ${worldTolerance.toExponential(3)} (wrap ${SLIDER_WRAP_RESIDUE.toExponential(3)}°, root shear ` +
+        `${(MathUtils.radDeg * SLIDER_ROOT_SHEAR).toExponential(3)}°) and ABOVE the ${worldFloor.toExponential(3)} float64 floor. ` +
+        `The same two mappings read \`local: true\` are off by ${localWorst.toExponential(3)} — so the bound is the reader's and not slack. ` +
+        `⚠️ NAMED ABSENCE — ${outside} further cell(s) put the yaw bone one whole turn below its own range, at ` +
+        `${aliasRows[0][0].toFixed(3)}°..${aliasRows[aliasRows.length - 1][0].toFixed(3)}°, which \`FromRotate\` cannot return: each is read as ` +
+        `its value mod 360 and poses as that cell instead, to ${aliasReadWorst.toExponential(3)}, while the reading the number ` +
+        `asks for would be off by ${aliasPosedWorst.toExponential(3)}. The plant, on the same grid: the later slider at the ` +
+        `format default moves ${worldPlantMoved} of ${worldPlantCells.length} cells`,
+      (count) => `${count} clause(s) of the world-reading measurement did not hold:`,
+    ),
+    'issue #644 item 2: every slider in `PS128`\'s grid is `local: true`, and the world form is a different reader with ' +
+      'a family of its own (`PS34`–`PS46`, the circle a `rotate` dial has to stay inside). Two things were unmeasured ' +
+      'and they are opposite in kind: whether the COMPOSITION is still the sum (it is), and what the circle does to a ' +
+      'grid whose cells leave it (they alias — the dial one turn away is not a second position, it is the same one). ' +
+      'The alias is published as a named absence rather than skipped, because a cell a gate silently drops is a cell ' +
+      'nobody knows was not measured',
+  );
+
+  // =========================================================================
+  // 3. more than two dials (#644 item 3)
+  // =========================================================================
+  //
+  // ⭐ **Why three is not two plus one.** A non-additive slider in the MIDDLE of
+  // three is a state no two-dial rig has: it erases everything before it and is
+  // then added to by everything after it, so the pose is neither the sum nor
+  // the last dial alone. The cube measures that as its own closed form — the
+  // same arithmetic with the weights of the erased dials set to 0 — rather than
+  // as "something moved".
+  //
+  // 📐 **The density, and why.** 5 x 6 x 7 = 210 readings, each axis from the
+  // bottom of its own mapping to the top: every axis carries its two endpoints
+  // and three or more points strictly inside, the three lengths are pairwise
+  // different over different spans so no cell's triple of times repeats
+  // another's, and the total is larger than the 99 of the two-dial grid — the
+  // third dial is not measured more thinly than the pair was.
+  const SLIDER_ROLL_ROTATE = -18;
+  const SLIDER_ROLL_X = 7;
+  const SLIDER_TRIO: ComposedDial[] = [
+    { name: 'yaw', bone: 'yaw-dial', property: 'rotate', dial: GRID_YAW, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 4 },
+    { name: 'pitch', bone: 'pitch-dial', property: 'rotate', dial: GRID_PITCH, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 5 },
+    { name: 'roll', bone: 'roll-dial', property: 'rotate', dial: { from: 10, to: 0, scale: 0.005 }, rotate: SLIDER_ROLL_ROTATE, x: SLIDER_ROLL_X, steps: 6 },
+  ];
+  const trioFloor = s644FloatFloor(SLIDER_TRIO);
+  const trioRows = s644Rows(SLIDER_TRIO);
+  const trioAxes = SLIDER_TRIO.map((dial) => dialSamples(dial.dial, dial.steps));
+  const trioCorner = (cell: S644Cell): boolean =>
+    cell.at.every((value, i) => value === trioAxes[i][0] || value === trioAxes[i][trioAxes[i].length - 1]);
+  const trioGate = s644Gate(SLIDER_TRIO);
+  const trioCells = s644Sweep(s644Build(SLIDER_TRIO), SLIDER_TRIO, trioRows);
+  const trioOff = trioCells.filter((cell) => s644Error(cell) > trioFloor);
+  // Plant 1: the MIDDLE slider at the format default. Its own closed form is
+  // the same sum with the weights of every dial before it set to 0.
+  const middleData = s644Build(SLIDER_TRIO, [{}, { additive: false }, {}]);
+  const middleAsErasing = s644Sweep(middleData, SLIDER_TRIO, trioRows, [0, 1, 1]);
+  const middleAsSum = s644Sweep(middleData, SLIDER_TRIO, trioRows);
+  const middleOff = middleAsErasing.filter((cell) => s644Error(cell) > trioFloor);
+  const middleMoved = middleAsSum.filter((cell) => s644Error(cell) > trioFloor);
+  // Plant 2: an easing on the middle animation, which every corner of the cube
+  // reads as correct — `PS129`'s argument, one dimension up.
+  const easedCells = s644Sweep(s644Build(SLIDER_TRIO, [], 'pitch'), SLIDER_TRIO, trioRows);
+  const easedMoved = easedCells.filter((cell) => s644Error(cell) > trioFloor);
+  const easedCorners = easedMoved.filter(trioCorner);
+  const trioSaid: string[] = [
+    ...(trioGate.failures.length === 0 && trioGate.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
+      ? []
+      : [`the three-dial fixture does not gate green: ${trioGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+    ...trioOff.slice(0, 3).map((cell) => s644Says(SLIDER_TRIO, cell)),
+    ...(middleOff.length === 0
+      ? []
+      : [`with the middle slider at the format default the cube is not the erasing arithmetic either — ${middleOff.length} of ${middleAsErasing.length} cells: ${s644Says(SLIDER_TRIO, s644Worst(middleAsErasing))}`]),
+    ...(middleMoved.length > 0
+      ? []
+      : ['the middle slider left at the format default moved no cell of the cube, so this comparison is one that plant is blind to']),
+    ...(easedMoved.length > 0
+      ? []
+      : ['an easing on the middle dial\'s own animation moved no cell of the cube, so the interior of a cube is measuring nothing a corner does not']),
+    ...(easedCorners.length === 0
+      ? []
+      : [`the easing plant moved ${easedCorners.length} of the cube's corners, and the whole reason it is here is that a bezier meets its chord at both ends`]),
+  ];
+  const trioHeld = trioSaid.length === 0;
+  say(
+    'PS134_THREE_ADDITIVE_SLIDERS_ARE_THE_SAME_SUM_AND_A_NON_ADDITIVE_ONE_IN_THE_MIDDLE_IS_A_SHAPE_TWO_CANNOT_MAKE',
+    trioHeld,
+    probeDetail(
+      trioHeld,
+      trioSaid,
+      `${trioAxes.map((axis) => axis.length).join(' x ')} = ${trioCells.length} readings of three dials, each from the bottom of ` +
+        `its own mapping to the top: flag rotate and flag x are the closed-form sum at every one of them, worst ` +
+        `${s644Error(s644Worst(trioCells)).toExponential(3)} against a float64 floor of ${trioFloor.toExponential(3)} and a ` +
+        `six-decimal emit bound of ${s644EmitBound(SLIDER_TRIO).toExponential(3)}. The two plants: the MIDDLE slider at the format ` +
+        `default moves ${middleMoved.length} of ${middleAsSum.length} cells away from the sum and lands on the erasing ` +
+        `arithmetic — the first dial dead, the third still adding — at every one of them to ` +
+        `${s644Error(s644Worst(middleAsErasing)).toExponential(3)}; an \`"ease": "${GRID_EASE}"\` on that same middle animation moves ` +
+        `${easedMoved.length} of ${easedCells.length} cells and ${easedCorners.length} of the cube's ${trioRows.filter((at) => at.every((value, i) => value === trioAxes[i][0] || value === trioAxes[i][trioAxes[i].length - 1])).length} corners`,
+      (count) => `${count} reading(s) of the cube are not the arithmetic:`,
+    ),
+    'issue #644 item 3: the sum over two says nothing about three until it is posed, and the card names the reason — a ' +
+      'parameter face is `angle x angle x breath` rather than two axes. What three can state and two cannot is the ' +
+      'middle plant: at the format default a middle slider is neither the sum nor the last dial alone, and the ' +
+      'arithmetic it lands on names which dials are dead. That is measured as its own closed form rather than as a ' +
+      'difference, so the control says what the rig DOES and not only that it changed',
+  );
+
+  // =========================================================================
+  // 4. shared targets that are not a bone transform (#644 item 4)
+  // =========================================================================
+  //
+  // 🚨 `A40`'s second clause says a slot colour, an attachment swap, a draw
+  // order or a sequence IGNORES `add` — so `"additive": true` does not compose
+  // them — and the rest of the timelines a slider can key were never posed under
+  // two dials at all. The two controls below are the two halves of that, and
+  // they differ in what can be claimed:
+  //
+  //  * where the timeline ignores the flag there is no arithmetic to hold it to,
+  //    so the RULE is measured instead: the later slider in the `constraints`
+  //    array puts its own animation there and the earlier one changes nothing —
+  //    at every cell, both flags set to `true`. ⭐ The rejected readings are
+  //    driven rather than argued: the same two sliders with the ARRAY ORDER
+  //    swapped answer the other way, which refutes "the first wins", "the
+  //    animation named first in the file wins" and "the flags decide it" in one
+  //    measurement;
+  //  * where it supports the flag the closed form is the same sum `PS128`
+  //    states, over the kind's own setup value.
+  //
+  // ⚠️ **`sequence` is a named absence and not a measurement.** No rig spec
+  // compiles to a sequence timeline — rigc's motion vocabulary has no such
+  // track — so two sliders cannot share one today, and the clause below says so
+  // by compiling the nearest spelling and reporting what the gate does with it.
+  const SLIDER_KIND_BONES = [
+    ...SLIDER_BONES,
+    { name: 'thigh', parent: 'root', x: 0, y: 0, length: 20 },
+    { name: 'shin', parent: 'thigh', x: 20, y: 0, length: 20 },
+    { name: 'foot-target', parent: 'root', x: 30, y: -10 },
+    { name: 'aim', parent: 'root', x: 0, y: 30, rotation: 40 },
+    { name: 'tip', parent: 'block', x: 12, y: 0 },
+  ];
+  /** The mesh the deform kind keys, and the setup geometry its closed form is written against. */
+  const SLIDER_MESH_VERTICES = [0, 0, 12, 0, 12, 8, 0, 8];
+  const SLIDER_MESH = {
+    type: 'mesh',
+    image: 'block.png',
+    path: 'block',
+    uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+    triangles: [0, 1, 2, 0, 2, 3],
+    vertices: SLIDER_MESH_VERTICES,
+    hull: 4,
+    width: 12,
+    height: 8,
+  };
+  /** One shared target a slider's animation can key, and the closed form of ONE slider on it. */
+  interface S644Kind {
+    /** What this target is, in the words `A40`'s own message uses. */
+    kind: string;
+    /** Extra rig blocks — slots, skins — merged over the probe rig. */
+    rig: Record<string, unknown>;
+    /** Constraints that are not the sliders, which go first in the array. */
+    before: Array<Record<string, unknown>>;
+    /** The animation slider `which` applies. */
+    animation: (which: number) => Record<string, unknown>;
+    /** The target's setup value, read off the rig spec and never off a pose. */
+    setup: number[];
+    /** What slider `which` ALONE puts there when its dial has reached `share` of its animation. */
+    alone: (which: number, share: number) => number[];
+    /** The value in words, for the sentence a FAIL prints. */
+    describe: (values: number[]) => string;
+    /** What the target holds after a pose. */
+    read: (skeleton: Skeleton) => number[];
+  }
+  const SLIDER_RGBA_TO: number[][] = [
+    [1, 0, 0, 1],
+    [0, 0, 1, 1],
+  ];
+  const SLIDER_RGBA_SETUP = [1, 1, 1, 1];
+  const SLIDER_SWAP_AT = 0.5;
+  const SLIDER_IK_TO = [1, 0.25];
+  const SLIDER_WIND_TO = [24, -9];
+  const SLIDER_TRANSFORM_TO = [0.5, 0.25];
+  const SLIDER_DEFORM_TO: number[][] = [
+    [3, 0],
+    [0, 6],
+  ];
+  /** The one vertex the deform keys, and where its pair sits in the attachment's own array. */
+  const SLIDER_DEFORM_VERTEX = 1;
+  /**
+   * The keys a stepped kind is written with, and the ONE table its closed form
+   * reads: `[time, state]`, where the state is 1 for the attachment shown / the
+   * slot moved and 0 for the other. The third key repeats the second because a
+   * motion spec's declared duration has to equal its last key time.
+   */
+  const s644SwapKeys = (which: number): Array<[number, number]> =>
+    which === 0
+      ? [[0, 1], [SLIDER_SWAP_AT, 0], [GRID_DURATION, 0]]
+      : [[0, 0], [SLIDER_SWAP_AT, 1], [GRID_DURATION, 1]];
+  /** A stepped timeline's value at a time: the last key at or before it. That is the FORMAT's rule for attachment and draw-order timelines, not a reading of one. */
+  const s644Stepped = (keys: Array<[number, number]>, time: number): number => {
+    let held = keys[0][1];
+    for (const [at, value] of keys) if (time >= at) held = value;
+    return held;
+  };
+  const SLIDER_IGNORES_ADD: S644Kind[] = [
+    {
+      kind: 'slot "marker" rgb',
+      rig: {},
+      before: [],
+      animation: (which) => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [{ slot: 'marker', property: 'rgba', keys: [{ t: 0, v: SLIDER_RGBA_SETUP }, { t: GRID_DURATION, v: SLIDER_RGBA_TO[which] }] }],
+      }),
+      setup: SLIDER_RGBA_SETUP,
+      alone: (which, share) => SLIDER_RGBA_SETUP.map((at, i) => at + (SLIDER_RGBA_TO[which][i] - at) * share),
+      describe: (values) => `rgba ${values.map((v) => v.toFixed(4)).join('/')}`,
+      read: (skeleton) => {
+        const colour = skeleton.slots.find((slot) => slot.data.name === 'marker')!.appliedPose.color;
+        return [colour.r, colour.g, colour.b, colour.a];
+      },
+    },
+    {
+      kind: 'slot "marker" attachment',
+      rig: {},
+      before: [],
+      animation: (which) => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [
+          {
+            slot: 'marker',
+            property: 'attachment',
+            keys: s644SwapKeys(which).map(([t, shown]) => ({ t, v: shown === 1 ? 'marker' : null })),
+          },
+        ],
+      }),
+      setup: [1],
+      alone: (which, share) => [s644Stepped(s644SwapKeys(which), share * GRID_DURATION)],
+      describe: (values) => `attachment ${values[0] === 1 ? '"marker"' : 'none'}`,
+      read: (skeleton) => [skeleton.slots.find((slot) => slot.data.name === 'marker')!.appliedPose.attachment === null ? 0 : 1],
+    },
+    {
+      kind: "the skeleton's drawOrder",
+      rig: {},
+      before: [],
+      animation: (which) => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [],
+        // A key with no `offsets` restores the setup order, which is the
+        // parser's own encoding — so `0` below is the setup and `1` is `block`
+        // one place later, and the closed form reads the same two numbers.
+        drawOrder: s644SwapKeys(which === 0 ? 1 : 0).map(([t, moved]) => ({ t, ...(moved === 1 ? { offsets: [{ slot: 'block', offset: 1 }] } : {}) })),
+      }),
+      setup: [0],
+      alone: (which, share) => [s644Stepped(s644SwapKeys(which === 0 ? 1 : 0), share * GRID_DURATION)],
+      describe: (values) => `slot "block" drawn at index ${values[0]}`,
+      read: (skeleton) => [skeleton.drawOrder.appliedPose.findIndex((slot) => slot.data.name === 'block')],
+    },
+    {
+      kind: 'constraint "leg-ik" ikConstraint',
+      rig: {},
+      before: [{ name: 'leg-ik', type: 'ik', bones: ['thigh', 'shin'], target: 'foot-target', mix: 0 }],
+      animation: (which) => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [],
+        ik: [{ constraint: 'leg-ik', keys: [{ t: 0, mix: 0 }, { t: GRID_DURATION, mix: SLIDER_IK_TO[which] }] }],
+      }),
+      setup: [0],
+      alone: (which, share) => [SLIDER_IK_TO[which] * share],
+      describe: (values) => `ik mix ${values[0].toFixed(6)}`,
+      read: (skeleton) => [skeleton.findConstraint('leg-ik', IkConstraint)!.appliedPose.mix],
+    },
+  ];
+  const SLIDER_SUPPORTS_ADD: S644Kind[] = [
+    {
+      kind: 'slot "flat" deform of "flat"',
+      rig: {
+        slots: [
+          { name: 'block', bone: 'block', attachment: 'block' },
+          { name: 'flat', bone: 'root', attachment: 'flat' },
+        ],
+        skins: { default: { block: { block: { image: 'block.png' } }, flat: { flat: SLIDER_MESH } } },
+      },
+      before: [],
+      animation: (which) => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [],
+        deform: [
+          {
+            slot: 'flat',
+            attachment: 'flat',
+            keys: [
+              { t: 0, fromVertex: SLIDER_DEFORM_VERTEX, vertices: [0, 0] },
+              { t: GRID_DURATION, fromVertex: SLIDER_DEFORM_VERTEX, vertices: SLIDER_DEFORM_TO[which] },
+            ],
+          },
+        ],
+      }),
+      setup: SLIDER_MESH_VERTICES,
+      alone: (which, share) =>
+        SLIDER_MESH_VERTICES.map((at, i) =>
+          i === SLIDER_DEFORM_VERTEX * 2 || i === SLIDER_DEFORM_VERTEX * 2 + 1
+            ? at + SLIDER_DEFORM_TO[which][i - SLIDER_DEFORM_VERTEX * 2] * share
+            : at,
+        ),
+      describe: (values) => `deform [${values.map((v) => v.toFixed(3)).join(', ')}]`,
+      read: (skeleton) => Array.from(skeleton.slots.find((slot) => slot.data.name === 'flat')!.appliedPose.deform),
+    },
+    {
+      kind: 'constraint "jiggle" physicsWind',
+      rig: {},
+      before: [
+        { name: 'jiggle', type: 'physics', bone: 'tip', x: 1, y: 1, inertia: 0.5, strength: 100, damping: 0.85, mass: 1, wind: 0, gravity: 0, mix: 1 },
+      ],
+      animation: (which) => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [{ physics: 'jiggle', property: 'wind', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [SLIDER_WIND_TO[which]] }] }],
+      }),
+      setup: [0],
+      alone: (which, share) => [SLIDER_WIND_TO[which] * share],
+      describe: (values) => `wind ${values[0].toFixed(6)}`,
+      read: (skeleton) => [skeleton.findConstraint('jiggle', PhysicsConstraint)!.appliedPose.wind],
+    },
+    {
+      kind: 'constraint "aim-shin" transformConstraintRotate',
+      rig: {},
+      before: [
+        { name: 'aim-shin', type: 'transform', bones: ['shin'], source: 'aim', properties: { rotate: { to: { rotate: {} } } }, mixRotate: 0 },
+      ],
+      animation: (which) => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [],
+        transform: [{ constraint: 'aim-shin', keys: [{ t: 0, mixRotate: 0 }, { t: GRID_DURATION, mixRotate: SLIDER_TRANSFORM_TO[which] }] }],
+      }),
+      setup: [0],
+      alone: (which, share) => [SLIDER_TRANSFORM_TO[which] * share],
+      describe: (values) => `mixRotate ${values[0].toFixed(9)}`,
+      read: (skeleton) => [skeleton.findConstraint('aim-shin', TransformConstraint)!.appliedPose.mixRotate],
+    },
+  ];
+  /** The two dials every kind is read at: three readings each, from the bottom of the mapping to the top. */
+  const SLIDER_KIND_DIALS: ComposedDial[] = [
+    { name: 'yaw', bone: 'yaw-dial', property: 'rotate', dial: GRID_YAW, rotate: 0, x: 0, steps: 2 },
+    { name: 'pitch', bone: 'pitch-dial', property: 'rotate', dial: GRID_PITCH, rotate: 0, x: 0, steps: 2 },
+  ];
+  /** Compile one kind's rig once, and hand back both the gate's report and a posable skeleton. */
+  const s644KindRun = (
+    kind: S644Kind,
+    order: number[],
+    patches: Array<Record<string, unknown>> = [],
+  ): { data: SkeletonData; report: ReturnType<typeof validate> } => {
+    const dirs = writeProbeRig({
+      bones: SLIDER_KIND_BONES,
+      ...kind.rig,
+      constraints: [
+        ...kind.before,
+        ...order.map((which, seat) => s644Slider(SLIDER_KIND_DIALS[which], patches[seat] ?? {})),
+      ],
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-motion/1',
+          archetype: 'static_probe',
+          cut: 'static_probe',
+          easings: {},
+          animations: Object.fromEntries(order.map((which) => [`${SLIDER_KIND_DIALS[which].name}-pose`, kind.animation(which)])),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return {
+      data: posableFromText(built.skeletonText, built.atlasText, dirs.outDir).data,
+      report: validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: dirs.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      }),
+    };
+  };
+  /** The largest magnitude a kind's own values carry, which is what its float64 floor is off. */
+  const s644KindFloor = (kind: S644Kind): number =>
+    Math.max(...[...kind.setup, ...kind.alone(0, 1), ...kind.alone(1, 1)].map((value) => Math.abs(value)), 1) *
+    Number.EPSILON *
+    GRID_FLOAT_OPS;
+  const s644KindRows = s644Rows(SLIDER_KIND_DIALS);
+  /** The share each dial of a row has reached — the same map and ramp every control here uses. */
+  const s644Shares = (at: number[]): number[] => SLIDER_KIND_DIALS.map((dial, i) => s644Share(at[i], dial));
+  const s644Apart = (a: number[], b: number[]): number =>
+    Math.max(...a.map((value, i) => Math.abs(value - (b[i] ?? Number.NaN))));
+
+  const ignoreRows: string[] = [];
+  const ignoreSays: string[] = [];
+  for (const kind of SLIDER_IGNORES_ADD) {
+    const floor = s644KindFloor(kind);
+    // 🔒 The clause that keeps "the later one alone" from being unfalsifiable:
+    // two animations that put the SAME value there would satisfy it whichever
+    // slider won, so the fixture has to make them differ somewhere on the grid.
+    const apart = Math.max(
+      ...s644KindRows.flatMap((at) => s644Shares(at).map((share) => s644Apart(kind.alone(0, share), kind.alone(1, share)))),
+    );
+    if (apart <= floor) {
+      ignoreRows.push(
+        `${kind.kind}: the two animations put the same value there at every cell of the grid, so "the later slider alone" and ` +
+          '"the earlier slider alone" are the same sentence and this kind distinguishes nothing',
+      );
+    }
+    const orders: Array<[string, number[]]> = [
+      ['as declared', [0, 1]],
+      ['with the array order swapped', [1, 0]],
+    ];
+    const seen: string[] = [];
+    for (const [label, order] of orders) {
+      const { data, report } = s644KindRun(kind, order);
+      const later = order[order.length - 1];
+      let worst = 0;
+      let worstSaid = '';
+      for (const at of s644KindRows) {
+        const shares = s644Shares(at);
+        const got = kind.read(s644Skeleton(data, SLIDER_KIND_DIALS, at));
+        const want = kind.alone(later, shares[later]);
+        const apart = s644Apart(got, want);
+        if (apart > worst) {
+          worst = apart;
+          worstSaid =
+            `${SLIDER_KIND_DIALS.map((dial, i) => `${dial.name} ${at[i].toFixed(3)}°`).join(' x ')}: ${kind.kind} holds ` +
+            `${kind.describe(got)} and slider "${SLIDER_KIND_DIALS[later].name}" alone requires ${kind.describe(want)}`;
+        }
+      }
+      if (worst > floor) {
+        ignoreRows.push(`${kind.kind} ${label} — ${worstSaid} (off by ${worst.toExponential(3)}, floor ${floor.toExponential(3)})`);
+      }
+      // The strict half of "the earlier one contributes nothing": with the later
+      // dial held, every reading of the earlier one has to give the same value.
+      let spread = 0;
+      for (const held of dialSamples(SLIDER_KIND_DIALS[later].dial, SLIDER_KIND_DIALS[later].steps)) {
+        const values = dialSamples(SLIDER_KIND_DIALS[1 - later].dial, SLIDER_KIND_DIALS[1 - later].steps).map((moving) => {
+          const at = later === 0 ? [held, moving] : [moving, held];
+          return kind.read(s644Skeleton(data, SLIDER_KIND_DIALS, at));
+        });
+        for (const value of values) spread = Math.max(spread, s644Apart(value, values[0]));
+      }
+      if (spread > floor) {
+        ignoreRows.push(
+          `${kind.kind} ${label}: the EARLIER dial moves it by as much as ${spread.toExponential(3)}, so "the later one alone" is not what this target holds`,
+        );
+      }
+      const named = report.failures.filter((failure) => failure.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET' && failure.detail.includes(kind.kind));
+      if (named.length === 0) {
+        ignoreRows.push(
+          `${kind.kind} ${label}: A40 did not refuse this rig by that name, and the rule measured here is the one it exists to refuse — it said [${report.failures.map((f) => f.assertion).join(', ') || 'nothing'}]`,
+        );
+      }
+      seen.push(`${label}: ${kind.describe(kind.alone(later, 1))} at the top of "${SLIDER_KIND_DIALS[later].name}"`);
+    }
+    ignoreSays.push(`${kind.kind} — ${seen.join('; ')}`);
+  }
+  // The absence, stated by compiling the nearest spelling a rig spec has.
+  let sequenceSaid = 'compiled a sequence timeline';
+  {
+    const dirs = writeProbeRig({
+      bones: SLIDER_KIND_BONES,
+      constraints: [s644Slider(SLIDER_KIND_DIALS[0])],
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-motion/1',
+          archetype: 'static_probe',
+          cut: 'static_probe',
+          easings: {},
+          animations: {
+            'yaw-pose': {
+              duration: GRID_DURATION,
+              loop: false,
+              tracks: [{ slot: 'marker', property: 'sequence', keys: [{ t: 0, v: [0, 0, 0, 0] }, { t: GRID_DURATION, v: [1, 0, 0, 0] }] }],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    try {
+      const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+      const report = validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: dirs.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      });
+      sequenceSaid =
+        report.failures.length === 0
+          ? 'compiled and gated green, so a sequence timeline IS reachable and this absence is no longer one'
+          : `compiled an rgba-shaped timeline under that name and the gate refused it: ${report.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`;
+    } catch (error) {
+      sequenceSaid = `refused at compile: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+  if (sequenceSaid.includes('gated green')) {
+    ignoreRows.push(`the sequence absence: a slot track spelled \`sequence\` ${sequenceSaid}`);
+  }
+  const ignoreHeld = ignoreRows.length === 0;
+  say(
+    'PS135_A_SHARED_TARGET_THAT_IGNORES_ADD_IS_WHAT_THE_LAST_SLIDER_IN_THE_ARRAY_PUTS_THERE_AND_THE_FLAGS_DO_NOT_MOVE_IT',
+    ignoreHeld,
+    probeDetail(
+      ignoreHeld,
+      ignoreRows,
+      `${SLIDER_IGNORES_ADD.length} kinds of shared target that ignore \`add\`, each under two sliders BOTH declaring ` +
+        `\`"additive": true\`, read at ${s644KindRows.length} cells of the two dials and then again with the ` +
+        `\`constraints\` array order swapped: ${ignoreSays.join('; ')}. At every cell the target is what the LAST slider ` +
+        'in the array puts there, the earlier dial moves it by nothing at all, and the winner follows the array rather ' +
+        `than the flags or the animation names. A40 refuses every one of them by name. ⚠️ NAMED ABSENCE — \`sequence\`: ` +
+        `no rig spec reaches a sequence timeline, and the nearest spelling ${sequenceSaid}`,
+      (count) => `${count} reading(s) of a shared non-bone target are not the rule:`,
+    ),
+    'issue #644 item 4: `A40` enumerates four timelines that ignore the flag and the tree posed none of them — the ' +
+      'refusal stood on the runtime\'s `Timeline.additive` rather than on a pose anybody took. What a face author ' +
+      'needs is not that it is refused but WHAT happens, because the answer decides which dial to key the property ' +
+      'from: the last one in the array wins the whole property, so a second dial on a slot colour silently owns it. ' +
+      'The swapped order is the control that makes that a measurement rather than a reading of the source — "the ' +
+      'first wins" and "the animation named first wins" both predict the same answer twice, and this gets two',
+  );
+
+  const addRows: string[] = [];
+  const addSays: string[] = [];
+  for (const kind of SLIDER_SUPPORTS_ADD) {
+    const floor = s644KindFloor(kind);
+    const { data, report } = s644KindRun(kind, [0, 1]);
+    let worst = 0;
+    let worstSaid = '';
+    for (const at of s644KindRows) {
+      const shares = s644Shares(at);
+      const got = kind.read(s644Skeleton(data, SLIDER_KIND_DIALS, at));
+      const want = kind.setup.map((base, i) => base + (kind.alone(0, shares[0])[i] - base) + (kind.alone(1, shares[1])[i] - base));
+      const apart = s644Apart(got, want);
+      if (apart > worst) {
+        worst = apart;
+        worstSaid =
+          `${SLIDER_KIND_DIALS.map((dial, i) => `${dial.name} ${at[i].toFixed(3)}°`).join(' x ')}: ${kind.kind} holds ` +
+          `${kind.describe(got)} and the sum requires ${kind.describe(want)}`;
+      }
+    }
+    if (worst > floor) addRows.push(`${kind.kind} — ${worstSaid} (off by ${worst.toExponential(3)}, floor ${floor.toExponential(3)})`);
+    if (report.failures.length > 0) {
+      addRows.push(`${kind.kind}: two additive sliders on it do not gate green — ${report.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`);
+    }
+    // The plant, on the same fixture: the later slider at the format default.
+    // Its own closed form is the later slider alone, and it has to differ from
+    // the sum somewhere or this kind distinguishes nothing.
+    const plant = s644KindRun(kind, [0, 1], [{}, { additive: false }]);
+    let plantWorst = 0;
+    let plantApart = 0;
+    for (const at of s644KindRows) {
+      const shares = s644Shares(at);
+      const got = kind.read(s644Skeleton(plant.data, SLIDER_KIND_DIALS, at));
+      const alone = kind.alone(1, shares[1]);
+      const sum = kind.setup.map((base, i) => kind.alone(0, shares[0])[i] + kind.alone(1, shares[1])[i] - base);
+      plantWorst = Math.max(plantWorst, s644Apart(got, alone));
+      plantApart = Math.max(plantApart, s644Apart(alone, sum));
+    }
+    if (plantWorst > floor) {
+      addRows.push(`${kind.kind}: with the later slider at the format default the target is not that slider alone either — off by ${plantWorst.toExponential(3)}`);
+    }
+    if (plantApart <= floor) {
+      addRows.push(`${kind.kind}: "the later slider alone" and "the sum" are the same numbers on this fixture, so the plant distinguishes nothing`);
+    }
+    addSays.push(
+      `${kind.kind} worst ${worst.toExponential(3)} (floor ${floor.toExponential(3)}), and at the format default it collapses to the later slider alone, ` +
+        `which is ${plantApart.toExponential(3)} away from the sum`,
+    );
+  }
+  const addHeld = addRows.length === 0;
+  say(
+    'PS136_A_SHARED_TARGET_THAT_SUPPORTS_ADD_IS_THE_SAME_CLOSED_FORM_SUM_OVER_ITS_OWN_SETUP_VALUE',
+    addHeld,
+    probeDetail(
+      addHeld,
+      addRows,
+      `${SLIDER_SUPPORTS_ADD.length} kinds of shared target that support \`add\` — a mesh deform, a physics wind and a ` +
+        `transform constraint's rotate mix — under two additive sliders at ${s644KindRows.length} cells each: ` +
+        `${addSays.join('; ')}. Every one of them gates green, which is the other half of A40's own claim`,
+      (count) => `${count} reading(s) of a shared additive target are not the sum:`,
+    ),
+    'the same card item, from the side where an arithmetic exists. `A40` names four kinds it refuses and passes ' +
+      'everything else, and "everything else" had been posed nowhere: a deform, a constraint mix and a physics value ' +
+      'under two dials are the three the card names. They are the same sum as a bone transform, over each target\'s ' +
+      'own setup value — which is what makes a breath dial and a yaw dial able to share a mesh. The plant is the ' +
+      'flag, and it is required to land on the OTHER closed form rather than merely to move',
+  );
+
+  // =========================================================================
+  // 5. `loop: true` (#644 item 5)
+  // =========================================================================
+  //
+  // 🚨 `Slider.update` has two branches and `PS128`'s grid is on one of them.
+  // `loop: false` is `Math.max(0, time)` — a floor, and the last frame is held
+  // above the duration. `loop: true` is `duration + (time % duration)`, which
+  // `Animation.apply` then takes `% duration` of, so the pair is a POSITIVE
+  // MODULO: nothing is ever held, a negative time wraps up rather than clamping
+  // to zero, and ⭐ the frame at `duration` is unreachable — a dial at the top
+  // of its own range shows the animation's FIRST frame, not its last.
+  const SLIDER_LOOP: ComposedDial[] = [
+    { name: 'yaw', bone: 'yaw-dial', property: 'rotate', dial: GRID_YAW, rotate: GRID_YAW_ROTATE, x: GRID_YAW_X, steps: 24, loop: true },
+    { name: 'pitch', bone: 'pitch-dial', property: 'rotate', dial: GRID_PITCH, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 10 },
+  ];
+  /**
+   * The looping axis, derived from the dial's own mapping: one duration below
+   * the bottom of the range to two above the top, so the sweep crosses the wrap
+   * three times and lands on it exactly four.
+   */
+  const loopSpan = dialTop(SLIDER_LOOP[0].dial) - SLIDER_LOOP[0].dial.from;
+  const loopAxis = Array.from(
+    { length: SLIDER_LOOP[0].steps + 1 },
+    (_, i) => SLIDER_LOOP[0].dial.from - loopSpan + (4 * loopSpan * i) / SLIDER_LOOP[0].steps,
+  );
+  const loopRows = s644Rows(SLIDER_LOOP, [loopAxis, dialSamples(SLIDER_LOOP[1].dial, SLIDER_LOOP[1].steps)]);
+  const loopFloor = s644FloatFloor(SLIDER_LOOP);
+  const loopGate = s644Gate(SLIDER_LOOP);
+  const loopData = s644Build(SLIDER_LOOP);
+  const loopCells = s644Sweep(loopData, SLIDER_LOOP, loopRows);
+  const loopOff = loopCells.filter((cell) => s644Error(cell) > loopFloor);
+  // The other branch, as a model and as a rig: `loop: false` on the same
+  // mapping is `Math.max(0, time)` and a held last frame.
+  const heldDials = SLIDER_LOOP.map((dial) => ({ ...dial, loop: false }));
+  const asHeld = s644Sweep(loopData, heldDials, loopRows);
+  const heldApart = asHeld.filter((cell) => s644Error(cell) > loopFloor);
+  const plantCells = s644Sweep(s644Build(heldDials), heldDials, loopRows);
+  const plantOff = plantCells.filter((cell) => s644Error(cell) > loopFloor);
+  // The wrap itself: the readings whose time is a whole number of durations.
+  const onTheWrap = loopRows.filter((at) => Number.isInteger(s644Time(at[0], SLIDER_LOOP[0].dial)));
+  const wrapWrong = onTheWrap.filter((at) => s644Share(at[0], SLIDER_LOOP[0]) !== 0);
+  const loopSaid: string[] = [
+    ...(loopGate.failures.length === 0 && loopGate.passed.includes('A37_SLIDER_CONSTRAINT_EFFECTIVE')
+      ? []
+      : [`the looping fixture does not gate green: ${loopGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ') || 'A37 did not run on it'}`]),
+    ...loopOff.slice(0, 3).map((cell) => s644Says(SLIDER_LOOP, cell)),
+    ...(heldApart.length > 0
+      ? []
+      : ['the held model and the wrapping model agree on every cell of this sweep, so nothing here is on the `loop` branch at all']),
+    ...(plantOff.length === 0
+      ? []
+      : [`with \`"loop": true\` removed from the rig spec the same sweep is not the held arithmetic either — ${plantOff.length} of ${plantCells.length} cells: ${s644Says(heldDials, s644Worst(plantCells))}`]),
+    ...(onTheWrap.length > 0
+      ? []
+      : ['no reading of this sweep lands exactly on a whole duration, so the clause below about the unreachable last frame is about no cell']),
+    ...(wrapWrong.length === 0
+      ? []
+      : [`${wrapWrong.length} reading(s) whose time is a whole number of durations do not wrap to the animation's first frame`]),
+  ];
+  const loopHeld = loopSaid.length === 0;
+  say(
+    'PS137_A_LOOPING_SLIDER_IS_A_POSITIVE_MODULO_OF_ITS_OWN_TIME_AND_NEVER_REACHES_ITS_LAST_FRAME',
+    loopHeld,
+    probeDetail(
+      loopHeld,
+      loopSaid,
+      `${loopAxis.length} x ${dialSamples(SLIDER_LOOP[1].dial, SLIDER_LOOP[1].steps).length} = ${loopCells.length} readings, the looping dial ` +
+        `swept from ${loopAxis[0].toFixed(3)}° to ${loopAxis[loopAxis.length - 1].toFixed(3)}° — one duration below its own range and two ` +
+        `above it — against \`((time % duration) + duration) % duration\`: worst ${s644Error(s644Worst(loopCells)).toExponential(3)} ` +
+        `against a float64 floor of ${loopFloor.toExponential(3)}. The branch is load-bearing on ${heldApart.length} of ` +
+        `${loopCells.length} cells, where \`Math.max(0, time)\` and a held last frame would give something else (worst ` +
+        `${s644Error(s644Worst(asHeld)).toExponential(3)}), and removing \`"loop": true\` from the rig spec lands the same sweep ` +
+        `on that held arithmetic exactly. ⭐ ${onTheWrap.length} reading(s) put the time on a whole number of durations — the top of ` +
+        "the dial among them — and every one of them poses the animation's FIRST frame",
+      (count) => `${count} reading(s) of the looping sweep are not the wrap:`,
+    ),
+    'issue #644 item 5: `Slider.update`\'s `duration + (time % duration)` is on no cell of `PS128`\'s grid, and it is ' +
+      'not a corner case — it is the branch a face axis takes if anybody writes `"loop": true`, and what it does to ' +
+      'the TOP of the dial is the opposite of what the other branch does. The held model is measured beside it rather ' +
+      'than described, so the control cannot pass on a sweep that never leaves the duration, and the plant is the ' +
+      'flag itself: with it removed the same readings land on the held arithmetic, which is the other half of the ' +
+      'refusal `PS42` already states for the circle',
+  );
   return bad;
 }
 
