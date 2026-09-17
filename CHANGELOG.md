@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.25.1](https://github.com/firejune/rigc/compare/v0.25.0...v0.25.1) (2026-09-17)
+
+
+### Bug Fixes
+
+* **ingest:** an omitted stage origin is written and named, and a `--stage` beside a declared one is refused rather than ignored ([#622](https://github.com/firejune/rigc/issues/622), [#626](https://github.com/firejune/rigc/issues/626)) ([#631](https://github.com/firejune/rigc/issues/631)) ([2ad0489](https://github.com/firejune/rigc/commit/2ad0489f21c6349ee02c3527c9355f75ab07dd6c))
+
+
+### Instrument
+
+* **selftest:** a doc script's `vertices` run is measured under every renumbering the compiler accepts, so a script that stays green while doing something else is faulted ([#479](https://github.com/firejune/rigc/issues/479)) ([#635](https://github.com/firejune/rigc/issues/635)) ([0cd3eff](https://github.com/firejune/rigc/commit/0cd3effc882faafd35f356b6f95556d12d5ab8de))
+
 ## [0.25.0](https://github.com/firejune/rigc/compare/v0.24.0...v0.25.0) (2026-09-17)
 
 
