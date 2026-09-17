@@ -4732,6 +4732,42 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
         // time = to + (value - from) * 0, so the slider holds one frame forever.
         throw new CompileError(`${where}: scale is 0, so the bone's property cannot move the slider's time at all`);
       }
+      // The window of driving values that can reach a frame at all, and the two
+      // functions every figure in the two reader clauses below comes off.
+      //
+      // ⭐ **One copy, read by both readers** (issue #657). The circle owned
+      // this arithmetic while it was the only reader with a bound; the world
+      // `scale` readers have a floor at 0 and the same mapping carries them
+      // there, so the second clause reads these numbers instead of computing its
+      // own. That is the rule this clause has already paid for twice — #417
+      // tested one end because its fixture only left the circle at that end, and
+      // #431 wrapped by one subtraction because every fixture sat within a turn
+      // — and a second copy with a sign edited is exactly the shape both took.
+      const fromValue = spec.from === undefined ? 0 : needNumber(spec.from, 'from');
+      const toTime = spec.to === undefined ? 0 : needNumber(spec.to, 'to');
+      const perUnit = spec.scale === undefined ? 1 : needNumber(spec.scale, 'scale');
+      const duration = ctx.animationDurations.get(animation) ?? 0;
+      /** The driving value that maps to the animation's first frame, and to its last. */
+      const atStart = fromValue - toTime / perUnit;
+      const atEnd = fromValue + (duration - toTime) / perUnit;
+      const lowest = Math.min(atStart, atEnd);
+      const highest = Math.max(atStart, atEnd);
+      /**
+       * The time this mapping puts a driving value at, before the runtime
+       * touches it — the one arithmetic every figure below comes off.
+       *
+       * ⚠️ **Computed, not asserted** (issue #423). The circle's clause used to
+       * end *"— outside the animation's Ds. With `loop`: false that is
+       * `Math.max(0, time)` holding the last frame; with `loop`: true it wraps
+       * to some other frame"*, which states a consequence rather than measuring
+       * one — and is flatly false for a range spanning a full turn, where the
+       * wrapped reading lands INSIDE the animation. It also printed both loop
+       * modes and left the reader to pick. A message that hedges is a message
+       * that has not measured.
+       */
+      const timeAt = (value: number): number => toTime + (value - fromValue) * perUnit;
+      /** That time clamped into the animation — the frame a pose actually holds. */
+      const intoFrame = (time: number): number => Math.min(Math.max(time, 0), duration);
       // ⚠️ `local: false` reads the bone's WORLD rotation, and `FromRotate.value`
       // (`TransformConstraintData.js`) ends
       //
@@ -4787,15 +4823,6 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
       // or the whole turn 0°..360° — is how you write this axis under
       // `local: false` and it works.
       if (property === 'rotate' && spec.local !== true) {
-        const fromValue = spec.from === undefined ? 0 : needNumber(spec.from, 'from');
-        const toTime = spec.to === undefined ? 0 : needNumber(spec.to, 'to');
-        const perUnit = spec.scale === undefined ? 1 : needNumber(spec.scale, 'scale');
-        const duration = ctx.animationDurations.get(animation) ?? 0;
-        /** The driving value that maps to the animation's first frame, and to its last. */
-        const atStart = fromValue - toTime / perUnit;
-        const atEnd = fromValue + (duration - toTime) / perUnit;
-        const lowest = Math.min(atStart, atEnd);
-        const highest = Math.max(atStart, atEnd);
         // Which end of the circle the range leaves. One record, so the end, its
         // reading, the time it lands on and the two clauses that name the side
         // are derived once rather than twice.
@@ -4851,20 +4878,6 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
            * tracks the closed form to 3.3e-8s.
            */
           const readAs = ((dead.end % 360) + 360) % 360;
-          /**
-           * The time this mapping puts a driving value at, before the runtime
-           * touches it — the one arithmetic every figure below comes off.
-           *
-           * ⚠️ **Computed, not asserted** (issue #423). This clause used to end
-           * *"— outside the animation's Ds. With `loop`: false that is
-           * `Math.max(0, time)` holding the last frame; with `loop`: true it
-           * wraps to some other frame"*, which states a consequence rather than
-           * measuring one — and is flatly false for a range spanning a full
-           * turn, where the wrapped reading lands INSIDE the animation. It also
-           * printed both loop modes and left the reader to pick. A message that
-           * hedges is a message that has not measured.
-           */
-          const timeAt = (value: number): number => toTime + (value - fromValue) * perUnit;
           const lands = timeAt(readAs);
           // `[0, 360)` is the whole of what `FromRotate.value` returns (issue
           // #417), so the readings that reach the animation at all are that
@@ -4875,7 +4888,6 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
           const reachLo = Math.max(0, lowest);
           const reachHi = Math.min(360, highest);
           const reaches = reachLo <= reachHi;
-          const intoFrame = (time: number): number => Math.min(Math.max(time, 0), duration);
           const reachA = intoFrame(timeAt(reachLo));
           const reachB = intoFrame(timeAt(reachHi));
           const span = `${Math.min(reachA, reachB).toFixed(3)}s..${Math.max(reachA, reachB).toFixed(3)}s`;
@@ -4968,6 +4980,78 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
               `that is the form a face axis wants — or ${dead.repair}.`,
           );
         }
+      }
+      // ⚠️ `local: false` reads the bone's WORLD scale, and `FromScaleX.value`
+      // / `FromScaleY.value` (`TransformConstraintData.js`) are
+      //
+      //   const a = source.a / skeleton.scaleX, c = source.c / skeleton.scaleY;
+      //   return Math.sqrt(a * a + c * c) + offsets[TransformConstraintData.SCALEX];
+      //
+      // — a MAGNITUDE. The driven field is in both terms, so the reading is
+      // `|value|` and `[0, ∞)` is the whole of what that reader can return. The
+      // floor is REACHED rather than approached (a bone whose own scale, or
+      // whose parent's, is 0 reads exactly 0), which is why a range whose bottom
+      // is exactly 0 stays legal and only one that dips below it is refused.
+      //
+      // 🚨 **Below the floor the axis does not go dead, it FOLDS** (issue #657),
+      // and that is why this is a second clause rather than the circle with
+      // another property name in it. A reading the range cannot reach is one
+      // frame pinned; a reading it reaches TWICE is two dial positions posing
+      // the same face, so the message has to name the mirror rather than a dead
+      // arc. Measured through spine-core on `from: 0, to: 0.5, scale: 0.25` over
+      // a 1 s animation — driving window −2..+2 — the applied time at −2.000,
+      // −1.500, −1.000 and −0.500 is 1.000000s, 0.875000s, 0.750000s and
+      // 0.625000s: the same six decimals the dial at +2.000, +1.500, +1.000 and
+      // +0.500 applies, with the posed bone matching to the digit. The same rig
+      // read `local: true` sweeps −2 → +2 monotonically from 0.000000s, which is
+      // what makes that repair worth naming.
+      //
+      // ⭐ **No loop branch, and that is measured rather than economised.** The
+      // circle's consequence turns on `Slider.loop` because a held frame is held
+      // only under `Math.max(0, time)`; a fold is not a clamp, so `loop: true`
+      // cannot undo it — the same ±1.500 pair applies 1.875000s either way.
+      if ((property === 'scaleX' || property === 'scaleY') && spec.local !== true && lowest < -SLIDER_WRAP_SLACK) {
+        /** What the reader returns for a bone parked at the bottom of the range: the magnitude. */
+        const readAs = Math.abs(lowest);
+        const lands = timeAt(readAs);
+        // The readings that reach the animation are `[0, ∞)` met with the
+        // driving window — the circle's `reachLo`/`reachHi` with the ceiling
+        // taken out, off the same two numbers the message has already printed.
+        const reaches = highest >= 0;
+        /**
+         * How much of the range lies below the floor: the WIDTH of
+         * `[lowest, highest]` under 0, not the distance to its far end.
+         *
+         * 🚨 `-lowest` is that distance, and the two are equal only while the
+         * range STRADDLES the floor — the same trap issue #434 paid for one
+         * reader over, where a range lying wholly outside was told a width wider
+         * than itself. A `-6..-2` window is 4.000 below the floor and `-lowest`
+         * would print 6.000, which is `readAs` again with a different name on it.
+         */
+        const below = Math.min(0, highest) - lowest;
+        // The arc an author writes twice: the part of the range above 0 that the
+        // part below 0 mirrors onto. Both ends are inside `[lowest, highest]` —
+        // 0 because the range straddles it and this is the `reaches` branch, the
+        // top because it is `highest` or less — so both map INTO the animation
+        // and neither needs clamping.
+        const mirrorTop = Math.min(highest, -lowest);
+        const mirrorA = timeAt(0);
+        const mirrorB = timeAt(mirrorTop);
+        const consequence = reaches
+          ? `${below.toFixed(3)} of the range below 0 repeats 0.000..${mirrorTop.toFixed(3)}, which is ` +
+            `${Math.min(mirrorA, mirrorB).toFixed(3)}s..${Math.max(mirrorA, mirrorB).toFixed(3)}s of the animation, in reverse.`
+          : `the whole ${below.toFixed(3)} of this range is below 0, so it reaches none of the animation's ${duration}s — ` +
+            `every value the reader can return maps past it and the pose holds the frame at ${intoFrame(timeAt(0)).toFixed(3)}s.`;
+        throw new CompileError(
+          `${where}: drives off bone "${String(spec.bone)}" ${property} with "local": false, and the driving values ` +
+            `that reach animation "${animation}" (0s..${duration}s) run from ${lowest.toFixed(3)} to ${highest.toFixed(3)}. ` +
+            `A world scale is read through \`From${property === 'scaleX' ? 'ScaleX' : 'ScaleY'}.value\` as ` +
+            `\`Math.sqrt(${property === 'scaleX' ? 'a² + c²' : 'b² + d²'})\`, a magnitude, so the bone at ` +
+            `${lowest.toFixed(3)} is read as ${readAs.toFixed(3)} and maps to time ${lands.toFixed(3)}s — the time the ` +
+            `bone at ${readAs.toFixed(3)} maps to. Positions below 0 read as the mirror of positions above it: ` +
+            `${consequence} Nothing at runtime reports it. Add \`"local": true\` to read the bone's own scale signed and ` +
+            'unfolded — that is the form a squash axis wants — or move the range so it does not dip below 0.',
+        );
       }
       for (const field of timeSide) {
         if (spec[field] !== undefined) {
