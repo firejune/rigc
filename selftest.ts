@@ -4595,6 +4595,218 @@ function runRigSuite(): number {
     );
   }
 
+  // --- a group naming a timeline no table has (issue #661) -------------------
+  //
+  // ⭐ The third family of the same shape, and the one target a track can name
+  // that is not a family at all: a group's members are bones, slots OR physics
+  // constraints, and which of the three they are is decided by the PROPERTY.
+  // `constraintFamilyOf` asks `property in PHYSICS_TRACKS`, `resolveTargets`
+  // asks `property in BONE_TRACKS`, and what neither claims falls through to the
+  // slot branch. A property in no table therefore left the dispatch with no
+  // family, and what the author read was about a member: `animation "A" targets
+  // unknown slot "rim_grip_a"` for a group of bones and a misspelled bone
+  // property — a bone refused for not being a slot, on a file that named neither.
+  //
+  // 🚨 The slot-group half is the one the card understates. Its members ARE
+  // slots, so it reached `compileTrack` and got issue #650's refusal — `slot
+  // "pool" has no timeline "tint" (it has: attachment, rgba)`, which names one
+  // table and one member for a track that named a group and whose family the
+  // compiler never determined. Refused by name, and by the wrong name.
+  //
+  // 🔒 The last two cases are the negative side. One holds the ORDER against the
+  // group's own existence check — a group the file does not declare keeps
+  // `unknown group "G"`, because "group G has no timeline P" would otherwise
+  // assert a group that is not there — and the other holds it against the member
+  // checks, which is the whole of what moved: the property is now refused before
+  // any member is resolved against the rig. The three positive controls are
+  // first for this suite's own reason: each of the three legal families still
+  // compiles on the same probe, so a harness that refused everything cannot make
+  // the refusals pass.
+  {
+    const motionSource = JSON.parse(readFileSync(opts.motionPath, 'utf8')) as { animations: Record<string, unknown> };
+    const probeMotion = join(dir, 'group.motion.json');
+    const probeAnimation = 'group_track_probe';
+    const grips = ['rim_grip_a', 'rim_grip_b', 'rim_grip_c', 'rim_grip_d'];
+    const washes = ['pool', 'collar'];
+    const settles = ['mass_a_settle', 'rim_a_settle', 'trail_a_hang'];
+    const strangers = ['nothing_a', 'nothing_b'];
+    /** Compile the fixture with one group declared and one track naming a group. */
+    const withGroupTrack = (
+      declared: string,
+      members: string[],
+      property: string,
+      values: number[][],
+      named = declared,
+    ): { message: string | null; skeletonText: string | null } => {
+      const motion = JSON.parse(JSON.stringify(motionSource)) as {
+        animations: Record<string, unknown>;
+        groups?: Record<string, string[]>;
+      };
+      motion.groups = { ...(motion.groups ?? {}), [declared]: members };
+      motion.animations[probeAnimation] = {
+        duration: values.length - 1,
+        loop: false,
+        tracks: [{ group: named, property, keys: values.map((v, i) => ({ t: i, v })) }],
+      };
+      writeFileSync(probeMotion, `${JSON.stringify(motion, null, 2)}\n`);
+      try {
+        return { message: null, skeletonText: compile({ ...opts, motionPath: probeMotion }).skeletonText };
+      } catch (err) {
+        return {
+          message: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`,
+          skeletonText: null,
+        };
+      }
+    };
+    /** The probe animation's timelines under one of the three family keys the emitter writes. */
+    const probeGroupTimelines = (
+      skeletonText: string | null,
+      family: 'bones' | 'slots' | 'physics',
+    ): Record<string, Record<string, unknown[]>> => {
+      if (skeletonText === null) return {};
+      const skeleton = JSON.parse(skeletonText) as {
+        animations?: Record<string, Partial<Record<'bones' | 'slots' | 'physics', Record<string, Record<string, unknown[]>>>>>;
+      };
+      return skeleton.animations?.[probeAnimation]?.[family] ?? {};
+    };
+    /** Every member that came back carrying the property, so a control cannot pass on one member of four. */
+    const keyedMembers = (timelines: Record<string, Record<string, unknown[]>>, property: string, keys: number): string[] =>
+      Object.keys(timelines).filter((member) => (timelines[member]?.[property] ?? []).length === keys);
+    const BONE_LIST = 'a bone group has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate';
+    const SLOT_LIST = 'a slot group has: attachment, rgba';
+    const PHYSICS_LIST = 'a physics constraint group has: inertia, strength, damping, mass, wind, gravity, mix, reset';
+    /** The whole message, on the group and property a case wrote. */
+    const namesGroup = (message: string | null, group: string, property: string): boolean =>
+      message !== null &&
+      message.includes(`group "${group}" has no timeline "${property}"`) &&
+      message.includes(BONE_LIST) &&
+      message.includes(SLOT_LIST) &&
+      message.includes(PHYSICS_LIST);
+
+    const legalBones = withGroupTrack('grips', grips, 'rotate', [[0], [30]]);
+    const legalBoneMembers = keyedMembers(probeGroupTimelines(legalBones.skeletonText, 'bones'), 'rotate', 2);
+    bad += reportCase(
+      'CONTROL_A_MOTION_SPEC_THAT_ADDS_A_LEGAL_BONE_GROUP_TRACK_STILL_COMPILES',
+      legalBones.message === null && legalBoneMembers.length === grips.length,
+      legalBones.message === null
+        ? `the copy with one rotate track on a group of ${grips.length} bones compiled, and the emitted animation carries a 2-key rotate on ${
+            legalBoneMembers.length
+          } of them: ${legalBoneMembers.join(', ')}`
+        : `the copy did not compile at all: ${legalBones.message}`,
+      'the five refusals below are measured on this same probe, so a harness that refused every spec it wrote — a ' +
+        'bad copy, a path that no longer resolves — would make all five of them pass for reasons that have nothing ' +
+        'to do with the property name. Every member is counted rather than the animation being looked at, because a ' +
+        'group track that keyed one member of four would be a different defect wearing this one\'s green',
+    );
+
+    const legalSlots = withGroupTrack('washes', washes, 'rgba', [
+      [0, 0, 0, 0],
+      [1, 1, 1, 1],
+    ]);
+    const legalSlotMembers = keyedMembers(probeGroupTimelines(legalSlots.skeletonText, 'slots'), 'rgba', 2);
+    bad += reportCase(
+      'CONTROL_A_MOTION_SPEC_THAT_ADDS_A_LEGAL_SLOT_GROUP_TRACK_STILL_COMPILES',
+      legalSlots.message === null && legalSlotMembers.length === washes.length,
+      legalSlots.message === null
+        ? `the copy with one rgba track on a group of ${washes.length} slots compiled, and the emitted animation carries a 2-key rgba on ${
+            legalSlotMembers.length
+          } of them: ${legalSlotMembers.join(', ')}`
+        : `the copy did not compile at all: ${legalSlots.message}`,
+      'the same control one family over, and it is the one that makes the slot half of the repair measurable: a ' +
+        'group of slots is legal, so the refusal below it is about the property and not about the members',
+    );
+
+    const legalPhysics = withGroupTrack('settles', settles, 'inertia', [[0], [1]]);
+    const legalPhysicsMembers = keyedMembers(probeGroupTimelines(legalPhysics.skeletonText, 'physics'), 'inertia', 2);
+    bad += reportCase(
+      'CONTROL_A_MOTION_SPEC_THAT_ADDS_A_LEGAL_PHYSICS_GROUP_TRACK_STILL_COMPILES',
+      legalPhysics.message === null && legalPhysicsMembers.length === settles.length,
+      legalPhysics.message === null
+        ? `the copy with one inertia track on a group of ${settles.length} physics constraints compiled, and the emitted animation carries a 2-key inertia on ${
+            legalPhysicsMembers.length
+          } of them: ${legalPhysicsMembers.join(', ')}`
+        : `the copy did not compile at all: ${legalPhysics.message}`,
+      'the third family a group can be, and the one the message would have left out if it printed two lists. This ' +
+        'control is what makes that third list more than a courtesy: a group of physics constraints compiles, so an ' +
+        'author who misspells one of its timelines is an author the refusal has to answer',
+    );
+
+    const unknownOnBones = withGroupTrack('grips', grips, 'wobble', [[0], [1]]);
+    bad += reportCase(
+      'RF30_a_group_of_bones_names_a_timeline_no_table_has',
+      namesGroup(unknownOnBones.message, 'grips', 'wobble') && !(unknownOnBones.message ?? '').includes('targets unknown slot'),
+      unknownOnBones.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeGroupTimelines(unknownOnBones.skeletonText, 'bones'))}`
+        : `refused with: ${unknownOnBones.message}`,
+      'the input issue #661 was found through, and the negative half is the point: what it said before was ' +
+        '`targets unknown slot "rim_grip_a"` — a bone named for not being a slot, on a track that named neither, ' +
+        'because a property in no table leaves the dispatch with no family and the slot branch is where it lands. ' +
+        'The three lists are quoted here rather than read out of the tables, for the reason `RF23` and `RF26` quote ' +
+        'theirs: a control that derived them from the emitter would agree with the emitter whatever it said',
+    );
+
+    const unknownOnSlots = withGroupTrack('washes', washes, 'tint', [
+      [0, 0, 0, 0],
+      [1, 1, 1, 1],
+    ]);
+    bad += reportCase(
+      'RF31_a_group_of_slots_gets_the_same_message_and_it_names_the_group_rather_than_a_member',
+      namesGroup(unknownOnSlots.message, 'washes', 'tint') && !(unknownOnSlots.message ?? '').includes('slot "pool" has no timeline'),
+      unknownOnSlots.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeGroupTimelines(unknownOnSlots.skeletonText, 'slots'))}`
+        : `refused with: ${unknownOnSlots.message}`,
+      'the half the card reads as the same defect and is not: a group of slots reached issue #650\'s refusal and ' +
+        'was told `slot "pool" has no timeline "tint" (it has: attachment, rgba)` — true of the member, and about a ' +
+        'family the compiler never determined, on a file that wrote `"group": "washes"`. The negative clause is ' +
+        'what keeps that sentence from coming back: a message may not answer a group by picking one of its members',
+    );
+
+    const misspeltPhysics = withGroupTrack('settles', settles, 'inertai', [[0], [1]]);
+    bad += reportCase(
+      'RF32_a_group_of_physics_constraints_gets_the_third_list_the_two_family_shape_would_have_left_out',
+      namesGroup(misspeltPhysics.message, 'settles', 'inertai') && !(misspeltPhysics.message ?? '').includes('targets unknown slot'),
+      misspeltPhysics.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeGroupTimelines(misspeltPhysics.skeletonText, 'physics'))}`
+        : `refused with: ${misspeltPhysics.message}`,
+      'the case that decides how many lists the message prints. A `group` may name physics constraints — that is ' +
+        'the form `constraintFamilyOf` reads `PHYSICS_TRACKS` for — so a misspelled physics timeline lands here ' +
+        'with the other two, and a message that printed a bone list and a slot list would have handed this author ' +
+        'two vocabularies and withheld the one they wanted. A correctly spelled physics timeline never reaches the ' +
+        'refusal at all: the control above compiles it',
+    );
+
+    const unknownOnStrangers = withGroupTrack('ghosts', strangers, 'wobble', [[0], [1]]);
+    const legalOnStrangers = withGroupTrack('ghosts', strangers, 'rotate', [[0], [1]]);
+    bad += reportCase(
+      'RF33_the_group_property_is_refused_before_a_member_is_resolved_against_the_rig',
+      namesGroup(unknownOnStrangers.message, 'ghosts', 'wobble') &&
+        !(unknownOnStrangers.message ?? '').includes('unknown bone') &&
+        (legalOnStrangers.message ?? '').includes('keys unknown bone'),
+      `${unknownOnStrangers.message === null ? 'compiled' : `unknown property: ${unknownOnStrangers.message}`} — and the same group with a ` +
+        `legal property: ${legalOnStrangers.message ?? 'compiled'}`,
+      'the ordering clause, and for a group it is stronger than the one `RF28` holds on a bone track: the members ' +
+        'here are in neither the rig\'s bones nor its slots, so the old dispatch had a member to complain about ' +
+        'before it had a property. Both halves are measured in one case because either alone is satisfiable by a ' +
+        'refusal that says nothing — a legal property on the same group still names the member it cannot find, ' +
+        'which is what makes the first half an ordering rather than a blanket',
+    );
+
+    const strayName = withGroupTrack('grips', grips, 'wobble', [[0], [1]], 'grps');
+    bad += reportCase(
+      'RF34_an_unknown_group_name_keeps_its_own_message',
+      strayName.message !== null &&
+        strayName.message.includes('unknown group "grps"') &&
+        !strayName.message.includes('has no timeline'),
+      strayName.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeGroupTimelines(strayName.skeletonText, 'bones'))}`
+        : `refused with: ${strayName.message}`,
+      'the other negative side, and the reason the new refusal is raised after the group lookup rather than before ' +
+        'it. `group "grps" has no timeline "wobble"` would be a sentence about a group the file does not declare — ' +
+        'it would answer a typo in the target with a lecture about properties, and imply the target resolved. Two ' +
+        'things are wrong in this spec and the one named is the one that has to change first',
+    );
+  }
+
   return bad;
 }
 

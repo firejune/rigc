@@ -2497,11 +2497,24 @@ time puts it here.
 | `transform` | transform constraint timelines — §4.10. Same reason |
 | `deform` | deform timelines — §4.11. Same reason |
 
-`groups` (`name → [member, …]`) lets one track target several bones or slots at
-once; `lag` shifts every key of a track, and `stagger` adds a per-member delay in
-member order. **Member order is load-bearing** — it is what `stagger` counts and
-what a per-member value map is read against — so a group that names a member
-twice is a compile error, and so is one that names none.
+`groups` (`name → [member, …]`) lets one track target several bones, slots or
+physics constraints at once; `lag` shifts every key of a track, and `stagger`
+adds a per-member delay in member order. **Member order is load-bearing** — it is
+what `stagger` counts and what a per-member value map is read against — so a
+group that names a member twice is a compile error, and so is one that names none.
+
+⭐ **Which of the three a group's members are is decided by the `property`, not
+by the group.** A group declares names and nothing else; the compiler reads the
+property first — a physics timeline makes the members physics constraints, one of
+a bone's ten makes them bones, and `attachment`/`rgba` makes them slots — and then
+resolves every member against the rig as that. So a `group` is the one target
+where the property picks the family rather than the other way round (§4.4's ⭐ is
+about the three **constraint** families, which are picked by the field), and a
+property that is in none of the three tables is refused naming the group and all
+three vocabularies rather than being read as any of them
+([#661](https://github.com/firejune/rigc/issues/661); §4.4). A group whose members
+are not all of one family is not refused as such: the first member that is not
+what the property made it is the one named.
 
 A group track's keys need not give every member the same value: `v` may be a map
 keyed by member name, or a `derive` model the compiler evaluates per member.
@@ -2517,6 +2530,12 @@ families have a timeline called `mix`, so `{ "physics": "hair", "property": "mix
 and `{ "path": "ride", "property": "mix" }` are different timelines with the same
 property name — which is why the constraint's name goes in a field named after its
 type rather than in a shared `constraint` key.
+
+⚠️ **`group` is the one exception, and the reason it is one is that it names no
+family:** a group is a list of member names, so the property is all there is to
+read — it decides whether those members are bones, slots or physics constraints
+(§4.3), and a property in none of those three tables is refused with all three
+lists rather than resolved as any of them.
 
 Three families are **not** tracks and sit beside `tracks` instead — `ik` (§4.9),
 `transform` (§4.10) and `deform` (§4.11). The reason is the key rather than the
@@ -2599,6 +2618,33 @@ needs 4 channels, got 1`, a message about a key you had not written.
   refuses the last two in a file rigc did not write (SPEC_COVERAGE §2.1).
   `sequence` is a timeline on an **attachment**, not on a slot, and rigc does
   not emit that either.
+
+⚠️ **A `group` track's `property` is one of those two lists or the physics one,
+and anything else is a compile error** — `animation "A" group "G" has no timeline
+"P" (a bone group has: …; a slot group has: …; a physics constraint group has:
+…)`, §5.1's row. It is the only refusal on this page that prints **three** lists,
+and the reason is §4.3's: a group's family is decided by the property, so a
+property no table claims leaves the compiler with no family to answer for. All
+three come from the objects the dispatch reads — `BONE_TRACKS`, `SLOT_TRACKS` and
+`PHYSICS_TRACKS` in `src/compile.ts` — and the refusal is raised in
+`resolveTargets`, after the group's own existence check and before any member is
+resolved against the rig.
+
+- Until [#661](https://github.com/firejune/rigc/issues/661) a group of **bones**
+  with a misspelled bone property read `animation "A" targets unknown slot "M"`:
+  with no table claiming the property the track fell through to the slot branch,
+  and what you were told was that the first member is not a slot — on a file that
+  named neither a slot nor that member. A group of **slots** got §4.4's slot row
+  instead (`slot "M" has no timeline "P" (it has: attachment, rgba)`), which is
+  true of the member and names one family out of three on a track whose family
+  nothing had determined.
+- **A constraint property never reaches it.** `position`, `spacing` and `time` are
+  refused first with the field their constraint's name goes in (§4.12), and a
+  physics timeline spelled correctly is not an error at all — a group of physics
+  constraints is how several are tuned in one track.
+- `RF30`–`RF34` in `selftest.ts` quote this message; the three lists are typed
+  there rather than read off the tables, so widening any of the three without
+  moving this page turns them red.
 
 **A physics constraint's six tuning timelines override §4.6's table for the
 length of an animation.** `{ "physics": "hair", "property": "wind", "keys": […] }`
@@ -4184,6 +4230,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A": "position" is a path constraint timeline, and this track names no constraint` | §4.12 — put the name in `"path"` |
 | `rgba value needs 4 channels, got 3` | §4.4 — an `rgba` key is `[r, g, b, a]`. It names no animation, slot or key time, and the only input that reaches it is a slot `rgba` key: the setup pose's `color` is refused earlier, by its own row, with the slot named |
 | `animation "A" bone "B" has no timeline "P" (it has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate)` | §4.4 — a bone has exactly ten timelines and `P` is none of them. Fix the spelling — the single-axis ones are lower-case (`translatex`, not `translateX`). A **constraint** property is refused first, by its own row, naming the field its constraint's name goes in. When `P` is a slot timeline the message says so and where to put the name: `. "rgba" is a slot timeline — put the name in "slot"`. Before [#656](https://github.com/firejune/rigc/issues/656) all of them read `bone "B" cannot take slot property "P"`, which named the slot family whatever you had written and listed nothing |
+| `animation "A" group "G" has no timeline "P" (a bone group has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate; a slot group has: attachment, rgba; a physics constraint group has: inertia, strength, damping, mass, wind, gravity, mix, reset)` | §4.3, §4.4 — a group's family is decided by the property, and `P` is in none of the three tables, so there is no family to resolve the members as. Fix the spelling and the group becomes whichever family the property names. The group is refused before its members are looked up, so a member the rig does not declare is a **later** message; an unknown group NAME is an earlier one. Before [#661](https://github.com/firejune/rigc/issues/661) a group of bones read `animation "A" targets unknown slot "M"` and a group of slots got the slot row below, naming one family out of three |
 | `animation "A" slot "X" has no timeline "P" (it has: attachment, rgba)` | §4.4 — a slot has exactly two timelines and `P` is neither. Fix the spelling; a bone or constraint property written on a slot track is refused by its own row instead. Before [#650](https://github.com/firejune/rigc/issues/650) every other name compiled as an **rgba** timeline called `P`, and what you saw was `A00_ROUNDTRIP_PARSE` on the emitted file — or, for the one-channel spelling, `rgba value needs 4 channels, got 1` |
 | `N pair(s) of animation names have no one order: … "turn" / "Turn" (case) — they are one name in two cases, and which of them the editor puts first is not measured; rename one of them so they differ by more than letter case` | **R10** — rename until no pair is left. The kind in brackets says which of the editor comparator's four UNMEASURED choices decides the pair: `case` (a pure case tie), `number` (one number written two ways, or a run of digits against a word) or `separator` (make the first character that differs a letter or a digit). rigc keys `animations` in the editor's own comparator — natural and case-insensitive ([#539](https://github.com/firejune/rigc/issues/539), [#543](https://github.com/firejune/rigc/issues/543)) — so a pair that comparator settles is emitted rather than refused, and only the four choices nobody has measured are a compile error; on those, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
 | `N pair(s) of skin names have no one order: … "Zulu" / "mike" (case) — folded to one case "Zulu" and "mike" order the other way round, so whether the editor folds SKIN names decides this pair` | **R11** — rename until no pair is left. The same shape as the row above with a **wider** family: #539 measured the editor's comparator for animation names and thereby ruled codepoint out, and nothing has ruled anything out for skin names, so a pair the candidates could disagree about is refused even where the animation rule would emit it. `Zulu`/`mike` and `mike10`/`mike2` build as animation names and are refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) |
