@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.2](https://github.com/firejune/rigc/compare/v0.25.1...v0.25.2) (2026-09-17)
+
+
+### Documentation
+
+* **authoring:** the `mix` rule the additive table leaves out, in the guide an agent authors from ([#645](https://github.com/firejune/rigc/issues/645)) ([f29ea17](https://github.com/firejune/rigc/commit/f29ea17b790a178f9be99f3bf74dec4acf352d9c))
+
 ## [0.25.1](https://github.com/firejune/rigc/compare/v0.25.0...v0.25.1) (2026-09-17)
 
 
