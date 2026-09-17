@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.25.3](https://github.com/firejune/rigc/compare/v0.25.2...v0.25.3) (2026-09-17)
+
+
+### Bug Fixes
+
+* **compile:** a slot track's property is refused by name, before any key is shaped ([#650](https://github.com/firejune/rigc/issues/650)) ([#654](https://github.com/firejune/rigc/issues/654)) ([9bc1fd4](https://github.com/firejune/rigc/commit/9bc1fd47dd0fae95638387ef8350a132163fc168))
+
+
+### Instrument
+
+* **selftest:** the five branches of the slider format no cell of the grid enters, each posed against its own closed form ([#644](https://github.com/firejune/rigc/issues/644)) ([#651](https://github.com/firejune/rigc/issues/651)) ([826388d](https://github.com/firejune/rigc/commit/826388d76f6a5796d8d1aaefd1da3e74be112591))
+
 ## [0.25.2](https://github.com/firejune/rigc/compare/v0.25.1...v0.25.2) (2026-09-17)
 
 
