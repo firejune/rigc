@@ -44,7 +44,7 @@
  * break `A18_DETERMINISTIC_EMIT` the first time anybody rebuilt from an ingested
  * spec.
  */
-import { SPINE_VERSION } from './compile.ts';
+import { SLOT_TRACKS as EMITTED_SLOT_TRACKS, SPINE_VERSION } from './compile.ts';
 import { MOTION_SPEC_VERSION, parseMotionSpec } from './motion.ts';
 import { parseRigSpec, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
 import type { MotionSpec } from './types.ts';
@@ -347,8 +347,18 @@ const HEADER_REDERIVED = ['spine'];
 /** The attachment types this module inverts. Everything else is refused by name. */
 const ATTACHMENT_TYPES = ['region', 'mesh', 'boundingbox', 'clipping', 'path'];
 
-/** The two slot timelines the motion spec carries (`compileTrack`'s two branches). */
-const SLOT_TRACKS = ['rgba', 'attachment'];
+/**
+ * The slot timelines the motion spec carries — `compileTrack`'s own table,
+ * rather than a second list of the same two names.
+ *
+ * ⚠️ It was that second list until issue #650, spelled `['rgba', 'attachment']`
+ * with a comment saying where it had been copied from. The copy was true, which
+ * is the point: the emitter had no list at all — one `if` and a fall-through —
+ * so this module's blocker was the only place in `src/` that said what a slot
+ * track may be, and it said it about a compiler that accepted anything. Now
+ * there is one list and both sides read it.
+ */
+const SLOT_TRACKS = Object.keys(EMITTED_SLOT_TRACKS);
 
 /**
  * Everything this module has a branch for, as the branches themselves state it.

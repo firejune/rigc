@@ -4329,6 +4329,128 @@ function runRigSuite(): number {
     }
   }
 
+  // --- a slot track naming a timeline the emitter does not have (issue #650) -
+  //
+  // ⭐ These four break the MOTION spec, and they are cases at the end of this
+  // suite rather than rows in `RIG_MUTANTS` for one reason: the summary prints
+  // that array's length as *"broken rig specs the compiler refused by name"*,
+  // and a motion spec counted there would make that sentence false for every
+  // one it counted. The suite is still the right home — it is the one that asks
+  // whether an INPUT Spine's own parser would swallow is refused by name here,
+  // where the file that has to change can be named.
+  //
+  // 🚨 What was silent: `compileTrack` dispatched `attachment` and fell THROUGH
+  // to rgba, so every other property name was a legal spelling of an rgba
+  // timeline. `{"slot": "pool", "property": "sequence", "v": [0,0,0,0]}`
+  // compiled, wrote `slots.pool.sequence` with rgba-shaped keys, and reached
+  // the gate — which refused the file by name (`A00_ROUNDTRIP_PARSE: threw:
+  // Invalid timeline type for a slot: undefined`, and `A05_CURVE_ARRAY_LENGTH:
+  // … unchecked slot timeline "sequence"`), so nothing wrong was ever written.
+  // What the author got at COMPILE time for the one-channel spelling of the
+  // same mistake was `rgba value needs 4 channels, got 1`: a message telling
+  // them to add three channels to a key they never wrote.
+  //
+  // 🔒 The last case is the negative side, and it is what stops the repair from
+  // being "refuse anything that is not in the table": a REAL rgba key with the
+  // wrong channel count has to keep its own message. The positive control is
+  // first for this suite's own reason — the probe writes a copy of the fixture's
+  // motion spec with one animation added, so a harness that refused everything
+  // would make all three refusals pass while measuring the copy.
+  {
+    const motionSource = JSON.parse(readFileSync(opts.motionPath, 'utf8')) as { animations: Record<string, unknown> };
+    const probeMotion = join(dir, 'probe.motion.json');
+    const probeAnimation = 'slot_track_probe';
+    /** Compile the fixture with one animation added, holding one slot track. */
+    const withSlotTrack = (property: string, values: number[][]): { message: string | null; skeletonText: string | null } => {
+      const motion = JSON.parse(JSON.stringify(motionSource)) as { animations: Record<string, unknown> };
+      motion.animations[probeAnimation] = {
+        duration: values.length - 1,
+        loop: false,
+        tracks: [{ slot: 'pool', property, keys: values.map((v, i) => ({ t: i, v })) }],
+      };
+      writeFileSync(probeMotion, `${JSON.stringify(motion, null, 2)}\n`);
+      try {
+        return { message: null, skeletonText: compile({ ...opts, motionPath: probeMotion }).skeletonText };
+      } catch (err) {
+        return {
+          message: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`,
+          skeletonText: null,
+        };
+      }
+    };
+    /** The emitted keys of the probe animation's slot timeline, whatever it was called. */
+    const probeTimelines = (skeletonText: string | null): Record<string, unknown[]> => {
+      if (skeletonText === null) return {};
+      const skeleton = JSON.parse(skeletonText) as {
+        animations?: Record<string, { slots?: Record<string, Record<string, unknown[]>> }>;
+      };
+      return skeleton.animations?.[probeAnimation]?.slots?.pool ?? {};
+    };
+
+    const legal = withSlotTrack('rgba', [
+      [0, 0, 0, 0],
+      [1, 0, 0, 1],
+    ]);
+    const legalKeys = probeTimelines(legal.skeletonText).rgba;
+    bad += reportCase(
+      'CONTROL_A_MOTION_SPEC_THAT_ADDS_A_LEGAL_SLOT_TRACK_STILL_COMPILES',
+      legal.message === null && Array.isArray(legalKeys) && legalKeys.length === 2,
+      legal.message === null
+        ? `the copy with one rgba track added compiled, and the emitted animation carries slots.pool.rgba with ${
+            Array.isArray(legalKeys) ? legalKeys.length : 0
+          } key(s): ${JSON.stringify(legalKeys ?? null)}`
+        : `the copy did not compile at all: ${legal.message}`,
+      'the three refusals below are measured on this same probe, so a harness that refused every spec it wrote — a ' +
+        'bad copy, a path that no longer resolves — would make all three of them pass for reasons that have ' +
+        'nothing to do with the property name. This is the case that fails instead',
+    );
+
+    const unknownFour = withSlotTrack('sequence', [
+      [0, 0, 0, 0],
+      [1, 0, 0, 0],
+    ]);
+    const namesIt = (message: string | null): boolean =>
+      message !== null && message.includes('has no timeline "sequence"') && message.includes('(it has: attachment, rgba)');
+    bad += reportCase(
+      'RF23_a_slot_track_names_a_timeline_the_emitter_does_not_have',
+      namesIt(unknownFour.message),
+      unknownFour.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeTimelines(unknownFour.skeletonText))}`
+        : `refused with: ${unknownFour.message}`,
+      'the accepted pair is quoted here rather than read out of `SLOT_TRACKS`, and that is deliberate: a control ' +
+        "that derived the list from the emitter would agree with the emitter whatever the emitter said. Typed, it " +
+        'is the interface an author is promised, and widening the table without saying so in `docs/AUTHORING.md` ' +
+        'turns this red',
+    );
+
+    const unknownOne = withSlotTrack('sequence', [[0], [1]]);
+    bad += reportCase(
+      'RF24_the_one_channel_spelling_of_the_same_mistake_names_the_property_and_not_the_channels',
+      namesIt(unknownOne.message) && !(unknownOne.message ?? '').includes('rgba value needs 4 channels'),
+      unknownOne.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeTimelines(unknownOne.skeletonText))}`
+        : `refused with: ${unknownOne.message}`,
+      'this is the spelling issue #650 was found through. The author wrote one number because the property they ' +
+        'meant takes one, and the tool told them their rgba key was three channels short — the subject of the ' +
+        'message was a key nobody had written. A refusal raised before any key is shaped cannot say that',
+    );
+
+    const shortRgba = withSlotTrack('rgba', [
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+    bad += reportCase(
+      'RF25_a_real_rgba_key_with_the_wrong_channel_count_keeps_its_own_message',
+      shortRgba.message !== null && shortRgba.message.includes('rgba value needs 4 channels, got 3'),
+      shortRgba.message === null
+        ? `compiled, and the emitted animation carries ${JSON.stringify(probeTimelines(shortRgba.skeletonText))}`
+        : `refused with: ${shortRgba.message}`,
+      'the negative side. A property refusal that also swallowed this one would read as the same repair from the ' +
+        'outside — every broken slot track refused by name — while having replaced a message about the channels ' +
+        'with one about the property, on the one input where the channels really are the fault',
+    );
+  }
+
   return bad;
 }
 
