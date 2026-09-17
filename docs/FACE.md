@@ -1180,6 +1180,31 @@ breaks the moment the two share a target — in the worked example both `turn` a
 `tilt` key `headroll`. §7's paragraph on sliders is the mechanism and
 `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` is the refusal.
 
+✅ **And the space between the two dials is measured rather than inferred**
+([#399](https://github.com/firejune/rigc/issues/399)). Two additive sliders posed
+at a grid of *both* values — and over a rotation and a translation, so the claim
+is not one property's — are the closed-form sum at every cell of it, to float64:
+each slider maps its own reading to a time by §3.5.2's rule, its animation is read
+there, and the two contributions add. ⭐ That is a property of the **interior**
+and not of the corners, which is the whole reason it needed a grid: `PS129` drives
+the same comparison with an `ease` on one of the two animations, and every corner
+of the space still reads as correct while most of the inside has moved. ⇒ **a
+lookup table wants linear keys for a second reason** — not only that the face
+would drift while the value sat still, but that a curve is invisible to any check
+that reads an axis at its ends.
+
+⚠️ **And `mix` below 1 is not what it looks like when the later slider is not
+additive.** An additive slider scales its whole contribution by its own `mix`, so
+two of them at any pair of mixes are still the sum — which is why `A40` skipping
+below full authority is right: what happens there is a weighting, not the erasure
+it refuses. A **non-additive** slider at `mix` α applies
+`current + (value + setup − current) × α`, a lerp *from the pose it found*, so the
+earlier slider is not erased — it is attenuated by `1 − α`. A pitch dial turned
+halfway down takes that share of the yaw with it, on every frame, with the gate
+green. ⇒ write `"additive": true` on **every** slider that shares a target and
+not only on the later one, which is what the paragraph above already asks for and
+this is the second reason for.
+
 ✅ **The editor half, measured.** This paragraph said *unknown* until the round
 trip was taken with `tools/editor_roundtrip.ts` on a licensed editor (data
 version 4.3.26) against a 4.3.13 build of

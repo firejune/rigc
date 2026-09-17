@@ -12688,6 +12688,509 @@ function runPathAndSliderSuite(): number {
       'control: without it this would be a rule against meshes',
   );
 
+  // --- the INTERIOR of the two-value space (issue #399) ---------------------
+  //
+  // ⭐ `PS25` above poses at ONE sample and varies the CONFIGURATION, which is
+  // what settles the rule — erasure against sum, decided by the constraints-array
+  // order and the later slider's flag. `gallery/look` reads its two dials at
+  // their extremes, which is four corners. Neither reaches the claim a parameter
+  // face actually rests on: that every point BETWEEN them is the arithmetic
+  // AUTHORING §3.5.2 states. Issue #399 asked for the grid and nothing here had
+  // swept one, so the linearity of the interior stood on the runtime's formula
+  // rather than on a measurement taken in this repository.
+  //
+  // The arithmetic, in full, because the whole of these four controls is a
+  // comparison against it:
+  //
+  //     time_i     = max(0, to_i + (value_i - from_i) x scale_i)   §3.5.2's map
+  //     contrib_i  = amplitude_i x min(1, time_i / duration)       a LINEAR 2-key ramp
+  //     posed      = setup + SUM_i  mix_i x contrib_i              every slider additive
+  //
+  // 🔒 The prediction is closed form and reads nothing the runtime produced: the
+  // amplitudes are the fixture's own keys, the mapping is the rig spec's own
+  // fields, and the setup is the emitted skeleton's. A prediction taken by
+  // applying the same animation through spine-core would be the gate agreeing
+  // with itself, which is the one shape this file refuses.
+  //
+  // 📐 **The grid, and why this density.** Nine readings of the yaw dial and
+  // eleven of the pitch — 99 cells — at even steps from the bottom of each dial
+  // to the top, so each axis carries its two endpoints, its neutral, and seven
+  // and nine points strictly inside. Issue #399 asks for 5x5 interior plus the
+  // four corners and the two axes: the shorter axis meets that and the longer one
+  // exceeds it. The two are deliberately DIFFERENT lengths over different spans,
+  // so no cell's pair of times repeats another's and a mapping applied to the
+  // wrong dial moves a number in every cell rather than in some. ⭐ The samples
+  // are derived from each dial's own mapping rather than written out, so a
+  // fixture whose `scale` moves re-derives its grid instead of sweeping past the
+  // end of its own animation.
+  //
+  // ⚠️ **The interior is where the measurement lives, and `PS129` is why.**
+  // Measured there: the format's default on the later slider is caught by two of
+  // the four corners and invisible at the other two, and an `ease` on one
+  // animation is caught by NONE of them — a bezier between two keys meets the
+  // chord at both ends, so an axis read only at its extremes cannot see what it
+  // does to everything between.
+  interface SliderDial {
+    from: number;
+    to: number;
+    scale: number;
+  }
+  /** Both fixture animations are one second long, which is what makes `time` and `t` the same number. */
+  const GRID_DURATION = 1;
+  /** Exact at six decimals, deliberately: `PS131` is where a `scale` that is not takes its own measurement. */
+  const GRID_YAW: SliderDial = { from: -50, to: 0, scale: 0.01 };
+  const GRID_PITCH: SliderDial = { from: -25, to: 0, scale: 0.02 };
+  /** The two ramps the two sliders apply — rotation and translation, so no claim below is one property's. */
+  const GRID_YAW_ROTATE = 30;
+  const GRID_YAW_X = 12;
+  const GRID_PITCH_ROTATE = 75;
+  const GRID_PITCH_X = -20;
+  const GRID_EASE = 'lateBloom';
+
+  /** The dial reading that maps to the END of the animation, from the mapping and nowhere else. */
+  const dialTop = (dial: SliderDial): number => dial.from + (GRID_DURATION - dial.to) / dial.scale;
+  /** `steps + 1` readings from the bottom of the dial to the top, both endpoints included. */
+  const dialSamples = (dial: SliderDial, steps: number): number[] =>
+    Array.from({ length: steps + 1 }, (_, i) => dial.from + ((dialTop(dial) - dial.from) * i) / steps);
+  const GRID_YAWS = dialSamples(GRID_YAW, 8);
+  const GRID_PITCHES = dialSamples(GRID_PITCH, 10);
+
+  const gridRamp = (rotate: number, x: number, ease?: string): Record<string, unknown> => {
+    const first = ease === undefined ? {} : { ease };
+    return {
+      duration: GRID_DURATION,
+      loop: false,
+      tracks: [
+        { bone: 'flag', property: 'rotate', keys: [{ t: 0, v: [0], ...first }, { t: GRID_DURATION, v: [rotate] }] },
+        { bone: 'flag', property: 'translate', keys: [{ t: 0, v: [0, 0], ...first }, { t: GRID_DURATION, v: [x, 0] }] },
+      ],
+    };
+  };
+  /** The motion spec both dials read. `yawEase` is `PS129`'s second plant and nothing else touches it. */
+  const gridMotion = (yawEase?: string): Record<string, unknown> => ({
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: { [GRID_EASE]: [0.9, 0, 1, 0.35] },
+    animations: {
+      'yaw-pose': gridRamp(GRID_YAW_ROTATE, GRID_YAW_X, yawEase),
+      'pitch-pose': gridRamp(GRID_PITCH_ROTATE, GRID_PITCH_X),
+    },
+  });
+  const gridSlider = (
+    name: string,
+    animation: string,
+    bone: string,
+    dial: SliderDial,
+    patch: Record<string, unknown>,
+  ): Record<string, unknown> => ({ name, type: 'slider', animation, bone, property: 'rotate', local: true, additive: true, ...dial, ...patch });
+  /** The pair, in constraints order, with whatever each case is about patched over each one. */
+  const gridPair = (
+    yawPatch: Record<string, unknown> = {},
+    pitchPatch: Record<string, unknown> = {},
+    yawDial: SliderDial = GRID_YAW,
+  ): Array<Record<string, unknown>> => [
+    gridSlider('yaw', 'yaw-pose', 'yaw-dial', yawDial, yawPatch),
+    gridSlider('pitch', 'pitch-pose', 'pitch-dial', GRID_PITCH, pitchPatch),
+  ];
+  const gridBuild = (constraints: Array<Record<string, unknown>>, yawEase?: string): SkeletonData =>
+    timelinePosable(sliderPairDirs(constraints), gridMotion(yawEase)).data;
+
+  /**
+   * Pose by putting the two driving bones at a reading and running the
+   * constraints — which is what a consumer holding a value does, and the only
+   * way to reach a cell of a GRID: an animation that drives both dials traces a
+   * path through the two-value space and can never leave it.
+   */
+  const posedFlag = (data: SkeletonData, yaw: number, pitch: number): { rotate: number; x: number } => {
+    const skeleton = new Skeleton(data);
+    skeleton.setupPose();
+    skeleton.bones.find((bone) => bone.data.name === 'yaw-dial')!.pose.rotation = yaw;
+    skeleton.bones.find((bone) => bone.data.name === 'pitch-dial')!.pose.rotation = pitch;
+    skeleton.update(0);
+    skeleton.updateWorldTransform(Physics.update);
+    const flag = skeleton.bones.find((bone) => bone.data.name === 'flag')!.appliedPose;
+    return { rotate: flag.rotation, x: flag.x };
+  };
+
+  const dialTime = (value: number, dial: SliderDial): number => Math.max(0, dial.to + (value - dial.from) * dial.scale);
+  const gridContribution = (value: number, dial: SliderDial, amplitude: number): number =>
+    amplitude * Math.min(1, dialTime(value, dial) / GRID_DURATION);
+
+  interface GridCell {
+    yaw: number;
+    pitch: number;
+    rotate: number;
+    x: number;
+    wantRotate: number;
+    wantX: number;
+  }
+  interface GridSweep {
+    data: SkeletonData;
+    yawDial?: SliderDial;
+    yaws?: number[];
+    yawMix?: number;
+    pitchMix?: number;
+  }
+  const gridSweep = (opts: GridSweep): GridCell[] => {
+    const yawDial = opts.yawDial ?? GRID_YAW;
+    const yaws = opts.yaws ?? GRID_YAWS;
+    const yawMix = opts.yawMix ?? 1;
+    const pitchMix = opts.pitchMix ?? 1;
+    const setup = opts.data.findBone('flag')!.setupPose;
+    const cells: GridCell[] = [];
+    for (const yaw of yaws) {
+      for (const pitch of GRID_PITCHES) {
+        const posed = posedFlag(opts.data, yaw, pitch);
+        cells.push({
+          yaw,
+          pitch,
+          rotate: posed.rotate,
+          x: posed.x,
+          wantRotate:
+            setup.rotation +
+            yawMix * gridContribution(yaw, yawDial, GRID_YAW_ROTATE) +
+            pitchMix * gridContribution(pitch, GRID_PITCH, GRID_PITCH_ROTATE),
+          wantX:
+            setup.x + yawMix * gridContribution(yaw, yawDial, GRID_YAW_X) + pitchMix * gridContribution(pitch, GRID_PITCH, GRID_PITCH_X),
+        });
+      }
+    }
+    return cells;
+  };
+  const cellError = (cell: GridCell): number =>
+    Math.max(Math.abs(cell.rotate - cell.wantRotate), Math.abs(cell.x - cell.wantX));
+  const worstCell = (cells: GridCell[]): GridCell =>
+    cells.reduce((worst, cell) => (cellError(cell) > cellError(worst) ? cell : worst), cells[0]);
+  /** The sentence a FAIL prints: the cell, the value found and the value required, per property. */
+  const cellSays = (cell: GridCell): string =>
+    `yaw ${cell.yaw.toFixed(3)}° x pitch ${cell.pitch.toFixed(3)}°: flag rotate posed ${cell.rotate.toFixed(6)}° and the ` +
+    `arithmetic requires ${cell.wantRotate.toFixed(6)}°; flag x posed ${cell.x.toFixed(6)} and requires ` +
+    `${cell.wantX.toFixed(6)} (off by ${cellError(cell).toExponential(3)})`;
+
+  // 🔒 **The two floors, both derived and neither measured.**
+  //
+  //  * `GRID_EMIT_FLOOR` — rigc rounds every number it emits to six decimals, so
+  //    an emitted `scale` can sit half a unit of the sixth decimal from the one
+  //    the spec states. That moves the slider's time by at most
+  //    `(top - from) x 5e-7` and the pose by that times the ramp's own rate, and
+  //    the two sliders add. It is the most the emit can cost an author who
+  //    reasons from the numbers they wrote.
+  //  * `GRID_FLOAT_FLOOR` — float64 noise over the same chain: the largest
+  //    magnitude it carries times an op count. A comparison whose tolerance were
+  //    the emit floor would pass a rig whose interior was wrong by a thousandth
+  //    of a degree, so the cells are held to THIS one and the emit floor is
+  //    reported beside them — and driven, by `PS131`, where it is what stands
+  //    between the authored mapping and the pose.
+  const GRID_HALF_ULP6 = 0.5e-6;
+  const gridEmitFloor = (yawDial: SliderDial, yawAmplitude: number, pitchAmplitude: number): number =>
+    ((dialTop(yawDial) - yawDial.from) * GRID_HALF_ULP6 * Math.abs(yawAmplitude)) / GRID_DURATION +
+    ((dialTop(GRID_PITCH) - GRID_PITCH.from) * GRID_HALF_ULP6 * Math.abs(pitchAmplitude)) / GRID_DURATION;
+  const gridEmitBound = (yawDial: SliderDial): number =>
+    Math.max(
+      gridEmitFloor(yawDial, GRID_YAW_ROTATE, GRID_PITCH_ROTATE),
+      gridEmitFloor(yawDial, GRID_YAW_X, GRID_PITCH_X),
+    );
+  const GRID_FLOAT_OPS = 8;
+  const GRID_FLOAT_FLOOR =
+    (Math.abs(GRID_YAW_ROTATE) + Math.abs(GRID_PITCH_ROTATE) + Math.abs(GRID_YAW_X) + Math.abs(GRID_PITCH_X)) *
+    Number.EPSILON *
+    GRID_FLOAT_OPS;
+
+  const gridGate = gateProbe(sliderPairDirs(gridPair()), gridMotion());
+  const gridData = gridBuild(gridPair());
+  const gridCells = gridSweep({ data: gridData });
+  const gridProbes = [
+    ...(gridGate.failures.length === 0 && gridGate.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
+      ? []
+      : [
+          'the fixture these four controls sweep does not gate green, so every cell below is a reading of a rig the ' +
+            `validator refuses: [${gridGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]` +
+            `${gridGate.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET') ? '' : ' — and A40 did not run on it'}`,
+        ]),
+    ...gridCells.filter((cell) => cellError(cell) > GRID_FLOAT_FLOOR).map(cellSays),
+  ];
+  const gridHeld = gridProbes.length === 0;
+  say(
+    'PS128_TWO_ADDITIVE_SLIDERS_ARE_THE_ARITHMETIC_AT_EVERY_CELL_OF_THE_GRID_AND_NOT_ONLY_AT_ITS_CORNERS',
+    gridHeld,
+    probeDetail(
+      gridHeld,
+      gridProbes,
+      `${GRID_YAWS.length} x ${GRID_PITCHES.length} = ${gridCells.length} readings of the two dials, each from the ` +
+        `bottom of its own mapping to the top (yaw ${GRID_YAWS[0].toFixed(3)}°..${GRID_YAWS[GRID_YAWS.length - 1].toFixed(3)}° ` +
+        `at scale ${GRID_YAW.scale}, pitch ${GRID_PITCHES[0].toFixed(3)}°..${GRID_PITCHES[GRID_PITCHES.length - 1].toFixed(3)}° ` +
+        `at scale ${GRID_PITCH.scale}): flag rotate and flag x are the closed-form sum at every one of them, worst ` +
+        `${cellError(worstCell(gridCells)).toExponential(3)} against a float64 floor of ` +
+        `${GRID_FLOAT_FLOOR.toExponential(3)} and a six-decimal emit bound of ${gridEmitBound(GRID_YAW).toExponential(3)}. ` +
+        `The worst cell is ${cellSays(worstCell(gridCells))}`,
+      (count) => `${count} of the grid's cells are not the arithmetic:`,
+    ),
+    'issue #399 turned on ONE measurement and this is it: two sliders posed at a grid of the two values. Every ' +
+      'sentence this repository has about composing sliders was taken at a single sample (`PS25`) or at the four ' +
+      'corners (`gallery/look`), and a claim about the INTERIOR taken at neither is the runtime\'s formula repeated ' +
+      'rather than a thing measured here. The comparison is against arithmetic stated in this file — the map, a ' +
+      'linear ramp read at the mapped time, and a sum — so nothing in it can be satisfied by the runtime agreeing ' +
+      'with itself; and it covers two property kinds, because a rotation-only claim would not have caught a ' +
+      'translation that composed differently',
+  );
+
+  // --- the two ways that interior moves, both driven (issue #399) -----------
+  //
+  // 🚨 The plants break DATA and not the predicate, and they are chosen for what
+  // the CORNERS can see, because the corners are what the tree already had:
+  //
+  //  * the later slider left at the format's own default — `A40`'s subject, and
+  //    the shape `PS26` gates from the artifact side. Two of the four corners
+  //    still read the arithmetic exactly: at the bottom of the yaw dial the
+  //    erased contribution is zero, so erasing it is invisible.
+  //  * an `ease` on the first slider's own animation, which leaves BOTH its keys
+  //    where they were. Every corner reads an endpoint of the bezier, and a
+  //    bezier meets its chord at both ends — so all four corners are exact and
+  //    the whole of the plant is inside.
+  const gridCorners: Array<[number, number]> = [
+    [GRID_YAWS[0], GRID_PITCHES[0]],
+    [GRID_YAWS[GRID_YAWS.length - 1], GRID_PITCHES[0]],
+    [GRID_YAWS[0], GRID_PITCHES[GRID_PITCHES.length - 1]],
+    [GRID_YAWS[GRID_YAWS.length - 1], GRID_PITCHES[GRID_PITCHES.length - 1]],
+  ];
+  const isCorner = (cell: GridCell): boolean =>
+    gridCorners.some(([yaw, pitch]) => yaw === cell.yaw && pitch === cell.pitch);
+  const gridPlants: Array<{ what: string; cells: GridCell[]; cornersBlind: boolean }> = [
+    {
+      what: 'the later slider left at the format default (`"additive": false`)',
+      cells: gridSweep({ data: gridBuild(gridPair({}, { additive: false })) }),
+      cornersBlind: false,
+    },
+    {
+      what: `an \`"ease": "${GRID_EASE}"\` on the first slider's own animation, both keys left where they were`,
+      cells: gridSweep({ data: gridBuild(gridPair(), GRID_EASE) }),
+      cornersBlind: true,
+    },
+  ];
+  const plantRows: string[] = [];
+  const plantSays: string[] = [];
+  for (const plant of gridPlants) {
+    const moved = plant.cells.filter((cell) => cellError(cell) > GRID_FLOAT_FLOOR);
+    const cornersMoved = moved.filter(isCorner);
+    if (moved.length === 0) {
+      plantRows.push(`${plant.what}: every cell of the grid still read the arithmetic, so this plant is one PS128 is blind to`);
+      continue;
+    }
+    if (cornersMoved.length >= gridCorners.length) {
+      plantRows.push(
+        `${plant.what}: all ${gridCorners.length} corners moved, so this plant says nothing about what the interior is for`,
+      );
+    }
+    if (plant.cornersBlind && cornersMoved.length > 0) {
+      plantRows.push(
+        `${plant.what}: ${cornersMoved.length} of the ${gridCorners.length} corners moved, and the whole reason this ` +
+          'plant is here is that a bezier meets its chord at both ends',
+      );
+    }
+    plantSays.push(
+      `${plant.what} — ${moved.length} of ${plant.cells.length} cells leave the arithmetic, ${cornersMoved.length} of ` +
+        `${gridCorners.length} corners among them; worst ${cellSays(worstCell(plant.cells))}`,
+    );
+  }
+  const plantsHeld = plantRows.length === 0;
+  say(
+    'PS129_THE_TWO_WAYS_THE_INTERIOR_MOVES_ARE_BOTH_DRIVEN_AND_ONE_OF_THEM_IS_INVISIBLE_AT_EVERY_CORNER',
+    plantsHeld,
+    probeDetail(plantsHeld, plantRows, plantSays.join('\n          '), (count) => `${count} plant(s) behaved wrongly:`),
+    'a comparison nobody has seen refuse is a sentence, and this one would have been: it is a tolerance over a ' +
+      'sum, so a tolerance set too wide passes everything and reports a clean grid. Both plants edit the fixture\'s ' +
+      'own data rather than the predicate — one rig spec flag, one motion spec key — and the second is the whole ' +
+      'argument for measuring an interior at all: it is a legal edit that every corner of the space reads as ' +
+      'correct. ⚠️ The first is deliberately the one `A40` already refuses, which makes its corner count the ' +
+      'answer to a question the tree could not otherwise ask — how much of that refusal a four-corner reading ' +
+      'would have found on its own',
+  );
+
+  // --- mix below 1, measured rather than quoted (issue #399) ----------------
+  //
+  // 🚨 Issue #399's first comment said several sliders compose "scaled cleanly by
+  // `mix`" and NOTHING in this tree measured it: `PS33` asserts only that `A40`
+  // SKIPS below full authority, quoting the runtime's lerp as its rationale. The
+  // two halves below are what that sentence is worth.
+  //
+  //  * **Additive, at any mix**: `getRelativeValue` returns `current + value x
+  //    alpha`, so a slider's whole contribution scales by its own `mix` and the
+  //    two still add. Measured over the same grid at six pairs of mixes, `mix: 0`
+  //    included — where `Slider.update` returns before applying anything, which
+  //    is the same number the formula gives and a different code path.
+  //  * **Non-additive, at a fraction**: `current + (value + setup - current) x
+  //    alpha` is a lerp FROM the pose it found, so the EARLIER slider survives —
+  //    attenuated by `1 - alpha`. That is a weighting rather than the erasure
+  //    `A40` refuses, so ⇒ **the skip stays**; but `mix x contribution` is NOT
+  //    what it computes, and the cross-term is measured here rather than assumed.
+  const GRID_MIXES: Array<[number, number]> = [
+    [1, 1],
+    [0.5, 1],
+    [1, 0.25],
+    [0.5, 0.25],
+    [0.25, 0.5],
+    [0, 1],
+  ];
+  const mixRows: string[] = [];
+  const mixSays: string[] = [];
+  for (const [yawMix, pitchMix] of GRID_MIXES) {
+    const cells = gridSweep({
+      data: gridBuild(gridPair({ mix: yawMix }, { mix: pitchMix })),
+      yawMix,
+      pitchMix,
+    });
+    const off = cells.filter((cell) => cellError(cell) > GRID_FLOAT_FLOOR);
+    if (off.length > 0) mixRows.push(`mix ${yawMix} / ${pitchMix} — ${off.length} of ${cells.length} cells: ${cellSays(worstCell(cells))}`);
+    mixSays.push(`${yawMix}/${pitchMix} worst ${cellError(worstCell(cells)).toExponential(3)}`);
+  }
+  // The other half: a LATER slider that is not additive, below full authority.
+  const GRID_LERP_MIX = 0.5;
+  const lerpData = gridBuild(gridPair({}, { additive: false, mix: GRID_LERP_MIX }));
+  const lerpSetup = lerpData.findBone('flag')!.setupPose;
+  let lerpWorst = 0;
+  let scaledWorst = 0;
+  let scaledAt = '';
+  for (const yaw of GRID_YAWS) {
+    for (const pitch of GRID_PITCHES) {
+      const posed = posedFlag(lerpData, yaw, pitch);
+      const earlier = gridContribution(yaw, GRID_YAW, GRID_YAW_ROTATE);
+      const later = gridContribution(pitch, GRID_PITCH, GRID_PITCH_ROTATE);
+      const lerp = (lerpSetup.rotation + earlier) * (1 - GRID_LERP_MIX) + GRID_LERP_MIX * (lerpSetup.rotation + later);
+      const scaled = lerpSetup.rotation + earlier + GRID_LERP_MIX * later;
+      lerpWorst = Math.max(lerpWorst, Math.abs(posed.rotate - lerp));
+      if (Math.abs(posed.rotate - scaled) > scaledWorst) {
+        scaledWorst = Math.abs(posed.rotate - scaled);
+        scaledAt = `yaw ${yaw.toFixed(3)}° x pitch ${pitch.toFixed(3)}°: posed ${posed.rotate.toFixed(6)}°, the lerp ` +
+          `requires ${lerp.toFixed(6)}° and "mix x contribution" would require ${scaled.toFixed(6)}°`;
+      }
+    }
+  }
+  if (lerpWorst > GRID_FLOAT_FLOOR) {
+    mixRows.push(
+      `a non-additive later slider at mix ${GRID_LERP_MIX} is not the lerp either — worst ` +
+        `${lerpWorst.toExponential(3)} against a float64 floor of ${GRID_FLOAT_FLOOR.toExponential(3)}`,
+    );
+  }
+  if (scaledWorst <= GRID_FLOAT_FLOOR) {
+    mixRows.push(
+      `a non-additive later slider at mix ${GRID_LERP_MIX} read the SAME as "mix x contribution" over the whole grid, ` +
+        'so this half distinguishes nothing and the sentence under it would be unfalsifiable',
+    );
+  }
+  const mixHeld = mixRows.length === 0;
+  say(
+    'PS130_AN_ADDITIVE_SLIDER_SCALES_ITS_WHOLE_CONTRIBUTION_BY_MIX_AND_A_NON_ADDITIVE_ONE_LERPS_INSTEAD',
+    mixHeld,
+    probeDetail(
+      mixHeld,
+      mixRows,
+      `over the same grid, with each \`mix\` declared in the rig spec: ${mixSays.join(', ')} — every pair exact to ` +
+        `the float64 floor of ${GRID_FLOAT_FLOOR.toExponential(3)}, mix 0 included, where the runtime returns before ` +
+        `applying anything at all. And the other model: a NON-additive later slider at mix ${GRID_LERP_MIX} is the ` +
+        `runtime's lerp to ${lerpWorst.toExponential(3)}, while "mix x contribution" is wrong by as much as ` +
+        `${scaledWorst.toFixed(6)}° — ${scaledAt}. ⇒ the earlier slider is not erased below full authority, it is ` +
+        `attenuated by 1 - mix, which is a weighting and not the erasure A40 refuses`,
+      (count) => `${count} mix reading(s) are not what this control claims:`,
+    ),
+    'issue #399\'s own first comment claims sliders compose "scaled cleanly by `mix`" and the tree measured that ' +
+      'nowhere — `PS33` gates only that A40 SKIPS below full authority, and quotes the lerp as its rationale rather ' +
+      'than posing anything at a fraction. Both halves are here because they answer different questions: the ' +
+      'additive half makes the claim true as stated, and the non-additive half is what the SKIP is worth. It shows ' +
+      'the skip is right — the earlier slider survives, so refusing it would refuse a legitimate weighting — and ' +
+      'that the arithmetic an author would guess is not the one that runs: at mix 0.5 the earlier dial loses half ' +
+      'of itself as a side effect of the later one, which is in no document and is a number rather than an opinion',
+  );
+
+  // --- what the six-decimal emit costs an author (issue #399) ---------------
+  //
+  // ⭐ `FACE.md` §8 says `scale` is chosen FOR THE ENDPOINT, because rigc rounds
+  // every emitted number to six decimals and a `scale` that is not exact there
+  // moves the top of the dial. `PS128`'s fixture takes that advice, which is
+  // exactly why it cannot measure the cost of not taking it — so this one states
+  // the same rig at `1/90`, the shape §3.5.2's own example uses, and asks what
+  // the whole gap between the numbers an author wrote and the pose they get is.
+  //
+  // 🔒 Two-sided, and the lower bound is the half that matters: without it this
+  // is a tolerance, and a tolerance is satisfied by a rig where the emit costs
+  // nothing at all — which `PS128`'s own fixture is, measured below as the plant.
+  const GRID_INEXACT_YAW: SliderDial = { from: -45, to: 0, scale: 1 / 90 };
+  const inexactDirs = sliderPairDirs(gridPair({}, {}, GRID_INEXACT_YAW));
+  const inexactMotionPath = join(inexactDirs.dir, 'probe.motion.json');
+  writeFileSync(inexactMotionPath, `${JSON.stringify(gridMotion(), null, 2)}\n`);
+  const inexactBuilt = compile({
+    rigPath: inexactDirs.rigPath,
+    motionPath: inexactMotionPath,
+    outDir: inexactDirs.outDir,
+    imagesDir: inexactDirs.dir,
+  });
+  const emittedYawScale = (
+    JSON.parse(inexactBuilt.skeletonText) as { constraints: Array<{ name: string; scale?: number }> }
+  ).constraints.find((constraint) => constraint.name === 'yaw')!.scale!;
+  const inexactData = posableFromText(inexactBuilt.skeletonText, inexactBuilt.atlasText, inexactDirs.outDir).data;
+  const inexactYaws = dialSamples(GRID_INEXACT_YAW, 8);
+  const asAuthored = gridSweep({ data: inexactData, yawDial: GRID_INEXACT_YAW, yaws: inexactYaws });
+  const asEmitted = gridSweep({
+    data: inexactData,
+    yawDial: { ...GRID_INEXACT_YAW, scale: emittedYawScale },
+    yaws: inexactYaws,
+  });
+  const authoredWorst = cellError(worstCell(asAuthored));
+  const emittedWorst = cellError(worstCell(asEmitted));
+  const inexactBound = gridEmitBound(GRID_INEXACT_YAW);
+  // The plant: the same comparison on `PS128`'s own fixture, whose `scale` IS
+  // exact at six decimals. Its gap has to vanish, or the lower bound below is
+  // measuring something other than the rounding.
+  const exactGap = cellError(worstCell(gridCells));
+  const emitRows = [
+    ...(authoredWorst <= inexactBound
+      ? []
+      : [
+          `predicted from the \`scale\` the spec states, the grid is off by ${authoredWorst.toExponential(3)}, past the ` +
+            `${inexactBound.toExponential(3)} a six-decimal emit can account for — so something other than the rounding moved it`,
+        ]),
+    ...(authoredWorst > GRID_FLOAT_FLOOR
+      ? []
+      : [
+          `the emit cost this rig ${authoredWorst.toExponential(3)}, at or under the float64 floor of ` +
+            `${GRID_FLOAT_FLOOR.toExponential(3)} — the bound above is then satisfied by a fixture that never tests it`,
+        ]),
+    ...(emittedWorst <= GRID_FLOAT_FLOOR
+      ? []
+      : [
+          `predicted from the \`scale\` rigc EMITTED, the grid is still off by ${emittedWorst.toExponential(3)}, so the ` +
+            'rounding is not the whole of the gap and something else is in it',
+        ]),
+    ...(exactGap <= GRID_FLOAT_FLOOR
+      ? []
+      : [
+          `PS128's fixture, whose \`scale\` is exact at six decimals, shows a gap of ${exactGap.toExponential(3)} under ` +
+            'the same comparison — so the lower bound above is not the rounding speaking',
+        ]),
+  ];
+  const emitHeld = emitRows.length === 0;
+  say(
+    'PS131_THE_WHOLE_GAP_BETWEEN_THE_MAPPING_AN_AUTHOR_WROTE_AND_THE_POSE_IS_THE_SIX_DECIMAL_EMIT',
+    emitHeld,
+    probeDetail(
+      emitHeld,
+      emitRows,
+      `the same pair with the yaw dial at 1/90 — which rigc emits as ${emittedYawScale} — swept over ` +
+        `${asAuthored.length} cells: against the \`scale\` the spec STATES the worst cell is off by ` +
+        `${authoredWorst.toExponential(3)}, inside the ${inexactBound.toExponential(3)} the rounding can account for ` +
+        `and well above the ${GRID_FLOAT_FLOOR.toExponential(3)} float64 floor; against the \`scale\` rigc EMITTED it ` +
+        `is off by ${emittedWorst.toExponential(3)}. ⇒ the rounding is the whole of the gap and none of it is the ` +
+        `composition. The plant is PS128's own fixture, exact at six decimals, whose gap is ${exactGap.toExponential(3)}`,
+      (count) => `${count} clause(s) of the emit-cost measurement did not hold:`,
+    ),
+    'FACE §8 tells an author to pick a `scale` that is exact at six decimals and says why, and the number it costs ' +
+      'to ignore that was nowhere in the tree — the page states the consequence (`1/60` ships as `0.016667`, and a ' +
+      '60° turn then applies at 1.00002 s) without a reading of what it does to the pose. This is that reading, and ' +
+      'it is what makes PS128\'s exactness mean something: a grid that agreed to a thousandth of a degree would be ' +
+      'reported the same way by a runtime that composed sliders correctly and by one that did not quite, so the ' +
+      'question "how much of the residue is ours" has to have an answer. Here it is all of it, and the fixture that ' +
+      'follows the page\'s advice has none',
+  );
   return bad;
 }
 
@@ -44764,5 +45267,371 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       'the same breath as the firing half',
   );
 
+  // --- DQ05: the figures a page states BESIDE a gated transcript ------------
+  //
+  // 🚨 `docs/FACE.md` §8 states a slider's range in prose — a ceiling, a whole
+  // degree, a seconds-per-degree and a duration — immediately beside a
+  // transcript `DQ02` re-runs and compares line for line. The transcript is
+  // gated and the four figures next to it were typed: this repository's own
+  // `✅ applied` antipattern with a gate standing over it, filed on issue #399
+  // rather than lost. Every one of them is derivable, and the page says so in
+  // its own words: the ceiling is what `build` measures on that rig's depth
+  // mesh, `max` is the largest whole degree strictly inside it, `from` is its
+  // negative, and the animation runs `2 x max x scale`.
+  //
+  // 🔒 **The population is a rule and not a list**: a paragraph outside a fence
+  // that quotes a slider constraint's `"from"`, `"max"` and `"scale"` inline.
+  // A page that stops stating a range leaves the population, and so does one
+  // that stops stating any figure this can compare — both report SKIP rather
+  // than a pass, because a tree that improves must not go red and a gate with
+  // nothing to measure must not print green.
+  //
+  // ⭐ **Which rig the paragraph is about is derived too.** The four quoted
+  // fields have to name exactly one slider in one tracked gallery example, so a
+  // paragraph quoting numbers no rig declares faults by name instead of being
+  // compared against whatever happened to compile. The MESH is derived the same
+  // way: the page's own ceiling figure has to be one a depth mesh of that rig
+  // reports on both yaw ends, which is what makes the stated `±19.32°` the thing
+  // under test rather than an input to it.
+  //
+  // ⚠️ **One correction to the shape #399 proposed.** It asks for
+  // `max === Math.floor(ceiling)`, and the page's own rule is *the largest whole
+  // degree strictly INSIDE the ceiling* — the two differ at a ceiling that lands
+  // on a whole degree, where `floor` returns the ceiling itself and nothing is
+  // strictly inside it. This derives the strict one and faults when the page's
+  // `floor(…)` spelling stops agreeing with it, rather than gating the spelling
+  // and inheriting its edge.
+  interface RangeFigure {
+    what: string;
+    stated: string;
+    derived: string;
+  }
+  interface RangeStatement {
+    where: string;
+    figures: RangeFigure[];
+    faults: string[];
+  }
+  interface RangeScan {
+    statements: RangeStatement[];
+    /** Paragraphs that name a slider `max` and do NOT quote the whole constraint. */
+    near: string[];
+  }
+  /** Fenced lines blanked, line numbering kept, so a paragraph still knows where it is. */
+  const outsideFences = (text: string): string[] => {
+    const lines = text.split('\n');
+    let fenced = false;
+    return lines.map((line) => {
+      if (line.trimStart().startsWith('```')) {
+        fenced = !fenced;
+        return '';
+      }
+      return fenced ? '' : line;
+    });
+  };
+  /** The four figures the prose states, each optional: a page may state fewer and must not state a wrong one. */
+  const RANGE_FIGURES: ReadonlyArray<{ what: string; pattern: RegExp }> = [
+    { what: 'the ceiling', pattern: /the ceiling is \*\*±([\d.]+)°\*\*/ },
+    { what: 'the range', pattern: /the range is \*\*(-?[\d.]+)\*\*/ },
+    { what: 'the seconds per degree', pattern: /\*\*([\d.]+) s per degree\*\*/ },
+    { what: 'the duration', pattern: /= \*\*([\d.]+) s\*\*/ },
+  ];
+  const quotedField = (text: string, field: string): number | null => {
+    const found = new RegExp(`"${field}":\\s*(-?[0-9.]+)`).exec(text);
+    return found === null ? null : Number(found[1]);
+  };
+  /** The largest whole degree strictly inside a ceiling — the page's own rule, not `floor`. */
+  const strictlyInside = (ceiling: number): number => (Number.isInteger(ceiling) ? ceiling - 1 : Math.floor(ceiling));
+  /**
+   * float64 noise over a derivation of two multiplications, which is what these
+   * comparisons have to sit above.
+   *
+   * ⚠️ Not a tolerance chosen to make a case pass: `2 x 19 x 0.05` is
+   * `1.9000000000000001` in binary floating point and a page that states `1.9`
+   * states the right number. What a stale figure moves is a decimal digit, which
+   * is fifteen orders of magnitude above this.
+   */
+  const rangeNoise = (value: number): number => Math.max(Math.abs(value), 1) * Number.EPSILON * 8;
+  /** The same number without the binary tail, for a line a person reads. */
+  const tidy = (value: number): string => String(Number(value.toPrecision(12)));
+
+  const galleryDir = join(root, 'gallery');
+  const gallerySliders: Array<{ example: string; rigPath: string; motionPath: string; slider: Record<string, unknown> }> = [];
+  if (existsSync(galleryDir)) {
+    for (const example of galleryExampleNames(galleryDir)) {
+      const rigPath = join(galleryDir, example, 'rig.json');
+      const spec = JSON.parse(readFileSync(rigPath, 'utf8')) as { constraints?: Array<Record<string, unknown>> };
+      for (const constraint of spec.constraints ?? []) {
+        if (constraint.type === 'slider') {
+          gallerySliders.push({ example, rigPath, motionPath: join(galleryDir, example, 'motion.json'), slider: constraint });
+        }
+      }
+    }
+  }
+  const rangeBuilds = new Map<string, CompileResult>();
+  const buildOnce = (rigPath: string, motionPath: string): CompileResult => {
+    const already = rangeBuilds.get(rigPath);
+    if (already !== undefined) return already;
+    const fresh = compile({ rigPath, motionPath, outDir: mkdtempSync(join(tmpdir(), 'rigc-range-')) });
+    rangeBuilds.set(rigPath, fresh);
+    return fresh;
+  };
+
+  /** A paragraph naming a slider `max` at all, quoted or bare — the near-miss population. */
+  const NAMES_A_MAX = /"?max"?:\s*-?[0-9.]+/;
+  const RANGE_TOKENS = ['"from":', '"max":', '"scale":'];
+  const scanSliderRanges = (pages: Map<string, string>): RangeScan => {
+    const statements: RangeStatement[] = [];
+    const near: string[] = [];
+    for (const [file, text] of pages) {
+      const lines = outsideFences(text);
+      let start = 0;
+      const paragraphs: Array<{ line: number; body: string }> = [];
+      for (let i = 0; i <= lines.length; i++) {
+        if (i === lines.length || lines[i].trim() === '') {
+          if (i > start) paragraphs.push({ line: start + 1, body: lines.slice(start, i).join(' ') });
+          start = i + 1;
+        }
+      }
+      for (const paragraph of paragraphs) {
+        const body = paragraph.body;
+        const missing = RANGE_TOKENS.filter((token) => !body.includes(token));
+        if (missing.length > 0) {
+          // 🔒 Published rather than faulted, and `DQ01`'s reason: a partial scan
+          // that says what it did not reach is not what this family refuses to
+          // be — a silent one is. A second spelling of the same claim would need
+          // its own phrase rules, which is the exception table this repository
+          // has a judgment about, so it is named here instead of reached.
+          if (NAMES_A_MAX.test(body)) {
+            near.push(`${file}:${paragraph.line} names a slider max and quotes no ${missing.join(' / ')}, so it is not compared`);
+          }
+          continue;
+        }
+        const where = `${file}:${paragraph.line}`;
+        const faults: string[] = [];
+        const figures: RangeFigure[] = [];
+        const quoted = {
+          from: quotedField(body, 'from'),
+          to: quotedField(body, 'to'),
+          scale: quotedField(body, 'scale'),
+          max: quotedField(body, 'max'),
+        };
+        if (quoted.from === null || quoted.to === null || quoted.scale === null || quoted.max === null) {
+          faults.push(`${where}  quotes a slider constraint whose from/to/scale/max could not all be read from the paragraph`);
+          statements.push({ where, figures, faults });
+          continue;
+        }
+        const owners = gallerySliders.filter(
+          (candidate) =>
+            candidate.slider.from === quoted.from &&
+            candidate.slider.to === quoted.to &&
+            candidate.slider.scale === quoted.scale &&
+            candidate.slider.max === quoted.max,
+        );
+        if (owners.length !== 1) {
+          faults.push(
+            `${where}  quotes "from": ${quoted.from}, "to": ${quoted.to}, "scale": ${quoted.scale}, "max": ${quoted.max}, ` +
+              `and ${owners.length} slider(s) in the tracked gallery declare exactly that` +
+              `${owners.length === 0 ? ' — the page states a constraint no example carries' : `: ${owners.map((o) => `${o.example}/${String(o.slider.name)}`).join(', ')}`}`,
+          );
+          statements.push({ where, figures, faults });
+          continue;
+        }
+        const owner = owners[0];
+        const built = buildOnce(owner.rigPath, owner.motionPath);
+        const ceilings = built.meshes.flatMap((mesh) =>
+          mesh.depth === undefined
+            ? []
+            : [{ slot: mesh.slot, positive: mesh.depth.ceiling.yaw.positive, negative: mesh.depth.ceiling.yaw.negative }],
+        );
+        const statedCeiling = RANGE_FIGURES[0].pattern.exec(body);
+        let ceiling: number | null = null;
+        if (statedCeiling !== null) {
+          // The page's own precision decides the comparison: it states two
+          // decimals, so two decimals of the measured ceiling is what has to
+          // agree with it. Reading the precision off the figure is what keeps
+          // this from being a rule about how a page must spell a number.
+          const decimals = statedCeiling[1].split('.')[1]?.length ?? 0;
+          const symmetric = ceilings.find(
+            (entry) =>
+              entry.positive !== null &&
+              entry.negative !== null &&
+              entry.positive.degrees.toFixed(decimals) === statedCeiling[1] &&
+              entry.negative.degrees.toFixed(decimals) === statedCeiling[1],
+          );
+          if (symmetric === undefined) {
+            faults.push(
+              `${where}  states the ceiling as ±${statedCeiling[1]}°, and no depth mesh of ${owner.example} reports that ` +
+                `on both yaw ends — ${ceilings.map((entry) => `${entry.slot} +${entry.positive?.degrees.toFixed(2) ?? 'none'} / -${entry.negative?.degrees.toFixed(2) ?? 'none'}`).join(', ') || 'the rig compiles no depth mesh at all'}`,
+            );
+          } else {
+            ceiling = symmetric.positive!.degrees;
+            figures.push({
+              what: `${RANGE_FIGURES[0].what} (${owner.example} mesh "${symmetric.slot}")`,
+              stated: `±${statedCeiling[1]}°`,
+              derived: `±${ceiling.toFixed(5)}° measured, ±${ceiling.toFixed(decimals)}° at the page's own precision`,
+            });
+          }
+        }
+        if (ceiling !== null) {
+          const inside = strictlyInside(ceiling);
+          if (quoted.max !== inside) {
+            faults.push(
+              `${where}  quotes "max": ${quoted.max}, and the largest whole degree strictly inside the ${ceiling.toFixed(5)}° ` +
+                `ceiling ${owner.example} measures is ${inside}`,
+            );
+          }
+          if (Math.floor(ceiling) !== inside) {
+            faults.push(
+              `${where}  spells the rule \`floor(…)\` over a ceiling of exactly ${ceiling}°, where floor gives ${Math.floor(ceiling)} ` +
+                `and the largest whole degree STRICTLY inside is ${inside} — the spelling and the rule beside it have parted`,
+            );
+          }
+          if (quoted.from !== -quoted.max) {
+            faults.push(`${where}  quotes "from": ${quoted.from} beside "max": ${quoted.max}, and the range the page derives is symmetric`);
+          }
+          figures.push({ what: 'the quoted "max"', stated: String(quoted.max), derived: String(inside) });
+        }
+        const derivedDuration = 2 * quoted.max * quoted.scale;
+        const declared = built.declaredDurations[String(owner.slider.animation)];
+        if (declared !== undefined && Math.abs(declared - derivedDuration) > rangeNoise(derivedDuration)) {
+          faults.push(
+            `${where}  derives a duration of 2 x ${quoted.max} x ${quoted.scale} = ${tidy(derivedDuration)}s, and animation ` +
+              `"${String(owner.slider.animation)}" of ${owner.example} declares ${declared}s`,
+          );
+        }
+        for (const rule of RANGE_FIGURES.slice(1)) {
+          const found = rule.pattern.exec(body);
+          if (found === null) continue;
+          const derived =
+            rule.what === 'the range' ? quoted.max : rule.what === 'the seconds per degree' ? quoted.scale : derivedDuration;
+          if (Math.abs(Number(found[1]) - derived) > rangeNoise(derived)) {
+            faults.push(`${where}  states ${rule.what} as ${found[1]}, and the rig it quotes derives ${tidy(derived)}`);
+          }
+          figures.push({ what: rule.what, stated: found[1], derived: tidy(derived) });
+        }
+        statements.push({ where, figures, faults });
+      }
+    }
+    return { statements, near };
+  };
+
+  // ⚠️ EVERY tracked page, `gallery/` included — the suite's own `docs` map
+  // drops those, and a path filter is not a rule. What decides membership here
+  // has to be what a paragraph says, or a claim could move one directory and
+  // leave the population without anything saying so.
+  const rangePages = new Map<string, string>();
+  if (treeFault === null) {
+    for (const path of listed.stdout.toString('utf8').split('\u0000')) {
+      if (path.endsWith('.md') && existsSync(join(root, path))) rangePages.set(path, readFileSync(join(root, path), 'utf8'));
+    }
+  }
+  const rangeScan = scanSliderRanges(rangePages);
+  const rangeStatements = rangeScan.statements;
+  const rangeChecked = rangeStatements.reduce((n, statement) => n + statement.figures.length, 0);
+  if (rangeStatements.length === 0 || rangeChecked === 0) {
+    console.log(
+      '  SKIP  DQ05_EVERY_FIGURE_A_PAGE_STATES_BESIDE_A_SLIDER_RANGE_IS_ONE_THE_RIG_IT_QUOTES_DERIVES  ' +
+        `(over ${rangePages.size} tracked page(s), ${rangeStatements.length} paragraph(s) quote a slider constraint ` +
+        `inline and ${rangeChecked} of their figures are ones this gate can derive, so it measured nothing` +
+        `${rangeScan.near.length === 0 ? '' : `; ${rangeScan.near.length} paragraph(s) name a slider max and are not reached: ${rangeScan.near.join('; ')}`})`,
+    );
+  } else {
+    // Red-first, `DQ03`'s shape and for `DQ03`'s reason: the plants edit the
+    // page's own TEXT in memory rather than on disk, so the working copy is
+    // never touched and the scanner is asked the question a stale page asks.
+    // Five have to fault; the sixth has to fault NOTHING, because a paragraph
+    // that stops quoting a constraint has left the population and a gate that
+    // went red on that would go red exactly when a page improved.
+    const bumpMatch = (text: string, pattern: RegExp): string | null => {
+      const found = pattern.exec(text);
+      if (found === null) return null;
+      return (
+        text.slice(0, found.index) +
+        found[0].replace(found[1], String(Number(found[1]) + 1)) +
+        text.slice(found.index + found[0].length)
+      );
+    };
+    const rangePlants: Array<{ what: string; edit: (text: string) => string | null; faults: boolean }> = [
+      ...RANGE_FIGURES.map((rule) => ({
+        what: `${rule.what}, as the page states it, moved by one`,
+        edit: (text: string): string | null => bumpMatch(text, rule.pattern),
+        faults: true,
+      })),
+      {
+        what: 'the `"max"` the paragraph quotes, moved by one',
+        edit: (text: string): string | null => bumpMatch(text, /"max":\s*(-?[0-9.]+)/),
+        faults: true,
+      },
+      {
+        what: 'the `"scale"` key that makes the paragraph a range statement, removed',
+        edit: (text: string): string | null => {
+          const without = text.replace(/"scale":\s*-?[0-9.]+,\s*/, '');
+          return without === text ? null : without;
+        },
+        faults: false,
+      },
+    ];
+    const rangeRows: string[] = [];
+    const rangeDrove: string[] = [];
+    for (const statement of rangeStatements) {
+      const file = statement.where.slice(0, statement.where.lastIndexOf(':'));
+      const text = rangePages.get(file) ?? '';
+      for (const plant of rangePlants) {
+        const edited = plant.edit(text);
+        if (edited === null) {
+          rangeRows.push(`${statement.where}: ${plant.what} — the edit matched nothing, so this plant was never made`);
+          continue;
+        }
+        const pages = new Map(rangePages);
+        pages.set(file, edited);
+        const after = scanSliderRanges(pages).statements.flatMap((entry) => entry.faults);
+        if (plant.faults && after.length === 0) {
+          rangeRows.push(`${statement.where}: ${plant.what} — the scan came back clean over the edited page`);
+        }
+        if (!plant.faults && after.length > 0) {
+          rangeRows.push(
+            `${statement.where}: ${plant.what} — the scan raised ${after.length} fault(s) over a page that simply ` +
+              `stopped stating a range: ${after.join('; ')}`,
+          );
+        }
+        rangeDrove.push(`${plant.what} -> ${after.length} fault(s)`);
+      }
+    }
+    const rangeFaults = rangeStatements.flatMap((statement) => statement.faults);
+    const rangeProbes = [...rangeFaults, ...rangeRows];
+    const rangeHeld = rangeProbes.length === 0;
+    say(
+      'DQ05_EVERY_FIGURE_A_PAGE_STATES_BESIDE_A_SLIDER_RANGE_IS_ONE_THE_RIG_IT_QUOTES_DERIVES',
+      rangeHeld,
+      probeDetail(
+        rangeHeld,
+        rangeProbes,
+        `${rangeStatements.length} paragraph(s) quote a slider constraint inline, over ${rangePages.size} tracked page(s) ` +
+          `and ${gallerySliders.length} slider(s) the gallery declares; ${rangeChecked} figure(s) were derived and compared:\n          ` +
+          rangeStatements
+            .map(
+              (statement) =>
+                `${statement.where} — ${statement.figures.map((figure) => `${figure.what} ${figure.stated} (derived ${figure.derived})`).join(', ')}`,
+            )
+            .join('\n          ') +
+          `\n          and each is driven: ${rangeDrove.join('; ')}` +
+          (rangeScan.near.length === 0
+            ? '\n          no other paragraph in the tree names a slider max, so nothing states this claim in a spelling ' +
+              'the rule does not reach'
+            : `\n          ⚠️ NOT REACHED — ${rangeScan.near.length} paragraph(s) state the same kind of claim in a ` +
+              `spelling this rule does not compare, and this run did not check them: ${rangeScan.near.join('; ')}`),
+        (count) => `${count} figure(s) or plant(s) did not answer:`,
+      ),
+      'the transcript beside this paragraph is machine-compared and the prose over it was typed, which is the exact ' +
+        'pairing this repository has a settled judgment about — a checklist cannot catch a figure going stale, ' +
+        'because the checklist is the thing that is wrong. Everything here is derived from two files nobody types: ' +
+        'the ceiling `build` measures on the rig\'s own depth mesh, and the constraint that rig declares. ⚠️ The ' +
+        'population rule is the care: it is what a paragraph QUOTES, so a page that stops making the claim leaves ' +
+        'quietly and this SKIPs, and a page that keeps the claim over numbers no gallery rig declares is named ' +
+        'rather than compared against whatever compiled. ⛔ What is deliberately NOT asserted is that any page ' +
+        'still states a range at all — that clause would go red on the day the last hand-typed figure left the tree, ' +
+        'which is the state this gate exists to reach',
+    );
+  }
   return { failures: bad, holes: scan.holes.length };
 }
