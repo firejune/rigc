@@ -2362,7 +2362,7 @@ a deform). Folding them in would make `v` mean four different things depending o
 | `slot` | `rgba` | `[r, g, b, a]` in 0..1 |
 | `slot` | `attachment` | the attachment name, or `null` for "show nothing" |
 | `physics` | `inertia`, `strength`, `damping`, `mass`, `wind`, `gravity` | `[value]` — the constraint's own tuning, keyed over time |
-| `physics` | `mix` | `[mix]`, 0..1 — the constraint's authority |
+| `physics` | `mix` | `[mix]`, **0 or more** — the constraint's authority |
 | `physics` | `reset` | `null` — the key *is* the event |
 | `path` | `position`, `spacing` | `[value]` — see §4.12 |
 | `path` | `mix` | `[mixRotate, mixX, mixY]` — one timeline, three channels |
@@ -2389,11 +2389,24 @@ a delta from the constraint's own setting.
   somebody else's file means **0**.
 - ⚠️ `mass` is the one whose keyed number is not what the runtime stores. The
   key states a mass and the pose holds `1 / mass`, so a `mass` key of `0` is an
-  infinite inverse mass — the constraint stops moving. `A23` refuses that in the
-  §4.6 table and does **not** look at timeline keys, so this one is on you.
-- `A23_PHYSICS_CONSTRAINT_EFFECTIVE` likewise judges the constraint at rest. A
-  `mix` timeline that sits at 0 for a whole animation, or a `damping` timeline
-  outside `(0, 1)`, is valid Spine that no gate here names.
+  infinite inverse mass — the constraint stops moving.
+- **Four of the seven are bounded, and a key outside its bound is a compile
+  error** ([#610](https://github.com/firejune/rigc/issues/610)). `mass` and
+  `strength` must be `> 0`, `damping` must be strictly inside `(0, 1)`, and `mix`
+  must be `0` or more. `A23_PHYSICS_CONSTRAINT_EFFECTIVE` applies the same four to
+  a file rigc did not write, naming the animation, the constraint, the key time
+  and the value — so the compiler is where a spec you wrote is refused, and the
+  assertion is where an import is.
+- 🚫 **`inertia`, `wind` and `gravity` are bounded nowhere, and neither is the top
+  of `mix`.** The runtime documents no range for the first three, and
+  `PhysicsConstraintPose` documents `mix` as "a percentage (0+)" — so a negative
+  wind is the other direction and a `mix` of `1.5` is an over-mix. Both are real
+  and both compile.
+- ⚠️ **A `mix` key of exactly `0` is legal where a setup `mix` of `0` is not**, and
+  the difference is not an inconsistency. `PhysicsConstraint.update` opens with
+  `if (mix === 0) return;`, so muting a constraint for a stretch of an animation is
+  what a mix timeline is for; a constraint muted *at rest* does nothing at all
+  unless some animation rescues it, which is the silence `A23` was built for.
 
 On a track that names a `group`, one key's `v` may instead be a **map keyed by
 member name**, whose entries are each exactly the `v` above — or a `derive`
@@ -2683,7 +2696,8 @@ mass?, wind?, gravity?, mix?, fps?, limit? }`. These are emitted into the 4.3
 `constraints` array. Seven of them — the six tuning numbers and `mix` — can also
 be **keyed over time** as `tracks` entries naming this constraint (§4.4); this
 table is the value at rest, and a timeline overrides it while it plays. `mass: 0` becomes an infinite inverse mass and `damping ≥ 1`
-never settles — both are `A23`. Every field but `bone` and `note` must be a finite
+never settles — both are `A23`, here and on every timeline key that states them
+([#610](https://github.com/firejune/rigc/issues/610)). Every field but `bone` and `note` must be a finite
 number: a non-number is rounded to `NaN` and emitted as `null`, which the runtime
 reads as **zero**, so `"mass": "heavy"` used to ship a constraint that never
 settles with no word from anybody (#307).
@@ -3881,6 +3895,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A" slot "X" attachment: key at Ns is Ms past the declared duration Ds` | §4.5 — the key is past the end of the animation and nothing will sample it. Move the key onto `duration`, or raise `duration` |
 | `animation "A" keys unknown bone "X"` | the track's `bone` is not in the rig |
 | `animation "A" bone "X" translatex: key value must be an array of 1 number(s)` | the value shape must match the property (§4.4) |
+| `animation "A" physics constraint "C" mass key at t=… is 0 (massInverse Infinity); must be > 0 — …` | §4.4 — a keyed physics value the runtime cannot use. The message names the bound and the `PhysicsConstraint.js` lines that make it one: `mass` and `strength` are `> 0`, `damping` is inside `(0, 1)`, `mix` is `0` or more, and `inertia`/`wind`/`gravity` are bounded nowhere ([#610](https://github.com/firejune/rigc/issues/610)) |
 | `a key carries both a named easing and a raw curve; pick one` | R6 |
 | `last key carries an easing but has nothing to ease to` | drop `ease`/`curve` from the final key |
 | `key times must strictly increase (at t=…)` | including after `lag` and `stagger` |
@@ -4025,7 +4040,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, or a binding at weight 0. **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A21_MESH_RIM_PINNED` | archetype | a generated ring's rim, a ribbon's entry row, or a contour's outline (which is all of it) is not pinned to its anchor bone at weight 1 |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | a mesh UV outside its region, or a UV array that disagrees with the vertex count. **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
-| `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | a physics constraint that drives no component, is muted by `mix: 0`, has `mass: 0`, has `strength: 0`, or has `damping` outside `(0, 1)` so it never settles. **SKIP** when the skeleton declares no physics constraint ([#580](https://github.com/firejune/rigc/issues/580)) — the same sentence `A36` and `A37` have always printed for their own constraint types |
+| `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | a physics constraint that drives no component, is muted by `mix: 0`, has `mass: 0`, has `strength: 0`, or has `damping` outside `(0, 1)` so it never settles — **at rest, and on every physics timeline key** ([#610](https://github.com/firejune/rigc/issues/610)). The timeline arm reads each key through the runtime's own `PhysicsConstraint*Timeline.set`, so a keyed `mass` is judged as the `massInverse` it becomes, and the detail names the animation, the constraint, the key time, the value and the bound. One difference between the two arms, and the runtime is the reason for it: a **key** of `mix: 0` is accepted, because `update` opens with `if (mix === 0) return;` and muting a constraint for a stretch is what a mix timeline is for — the editor's own `sack-pro` example keys it there on 24 of its 36 mix keys. `inertia`, `wind`, `gravity` and the top of `mix` are bounded nowhere, at rest or keyed. **SKIP** when the skeleton declares no physics constraint ([#580](https://github.com/firejune/rigc/issues/580)) — the same sentence `A36` and `A37` have always printed for their own constraint types |
 | `A24_AXIS_SPACE_STROKE` | archetype | a bone under the rig's `axisBone` was keyed with a screen-space Y component, or the axis bone itself was keyed. **SKIP** when the rig declares no axis bone, and also when no animation keys that bone or anything under it ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | a bone the rig declares `detached` is a descendant of the bone it must never hang under |
 | `A26_SLOT_DRAW_ORDER` | archetype | the emitted slots are not the rig's slot table — a slot is out of order, is not in the table at all, or is in the table and missing from the skeleton (§3.3). **SKIP** when the rig declares no canonical slot order. ⚠️ A skeleton with **no** slot beside a rig that declares some is **not** a skip, and it is the one rule in this family where an empty loop is not a vacuous pass ([#580](https://github.com/firejune/rigc/issues/580)): the completeness clause reads it as every declared slot lost and names them, which is the maximal case of what [#575](https://github.com/firejune/rigc/issues/575) filed |
