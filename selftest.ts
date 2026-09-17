@@ -24664,6 +24664,210 @@ function runCliSuite(): number {
     );
   }
 
+  // --- CLI74-CLI76: the stage belongs to the file, not to the editor --------
+  //
+  // `--stage`'s help said, in substance, that an editor export carries no
+  // `skeleton` box and that the flag is how a caller supplies one (issue #616).
+  // Issue #594 measured the corpus and it is false of every file in it: all
+  // twelve `examples/*/export/*.json` declare `x`, `y`, `width` and `height`,
+  // `ingest` takes `ingestHeader`'s early return on each of them, and `--stage`
+  // was used nowhere — by hand or in the `IG` suite.
+  //
+  // ⭐ The claim that survives is about the FILE and not about the editor: a
+  // skeleton JSON need not carry the stage, and when it does not rigc cannot
+  // derive one — posing the rig gives the ANIMATED extent, which is a different
+  // number from the setup box. An editor export MAY be such a file: a rigc build
+  // declaring no stage (issue #578) came back from a Spine 4.3.26 round trip with
+  // a header of `hash`, `spine`, `images`, `audio` and no box at all, so the
+  // editor preserves an absence rather than inventing a stage (issue #616).
+  //
+  // 🔒 The two halves fail in opposite directions, which is why one case holds
+  // both. Refusing the pairing alone is satisfied by DELETING the sentence, and
+  // the deletion takes the underivability with it — the one thing a caller who
+  // really has no stage has to be told. Requiring the clause alone is satisfied
+  // by the retired text, which already carried it. What separates the two is the
+  // hedge: *an editor export MAY carry none* is the measured claim and *an editor
+  // export carries none* is the retired one, the same words but one.
+  //
+  // ⚠️ Read off `--help` rather than off `FLAG_MEANINGS`, for CLI71's reason: a
+  // wording that stops reaching the page fails here while the source still
+  // carries it.
+  {
+    const surfaces = [
+      { where: 'rigc --help', text: runCli(['--help']).stdout },
+      { where: 'rigc ingest --help', text: runCli(['ingest', '--help']).stdout },
+    ];
+
+    /** The meaning column of the `--stage` row, as `rigc ingest --help` prints it. */
+    const stageRow =
+      surfaces[1].text
+        .split('\n')
+        .map((line) => /^ {2}--stage(?: \S+)? {2,}(\S.*)$/.exec(line.replace(/\s+$/, ''))?.[1] ?? '')
+        .find((meaning) => meaning !== '') ?? '';
+
+    // A clause, because the pairing is a claim made in one breath: a hedge three
+    // sentences away does not make *an editor export carries none* any less of an
+    // assertion, and splitting on the punctuation the help wraps its clauses in
+    // is what stops one rescuing the other.
+    const clausesOf = (text: string): string[] =>
+      text
+        .replace(/\s+/g, ' ')
+        .split(/(?<=[.;:!?])\s+|\s+—\s+|\s*[()]\s*/)
+        .map((clause) => clause.trim())
+        .filter((clause) => clause !== '');
+    const EXPORT = /\bexports?\b/i;
+    const ABSENCE = /\bcarr(?:y|ies)\s+(?:none|no\b)|\bno\s+stage\b|\bnever\s+(?:does|carries|has)\b/i;
+    const HEDGE = /\bmay\b|\bmight\b|\bcan\b|\bneed not\b/i;
+    const pairings = (read: ReadonlyArray<{ where: string; text: string }>): string[] =>
+      read.flatMap(({ where, text }) =>
+        clausesOf(text)
+          .filter((clause) => EXPORT.test(clause) && ABSENCE.test(clause) && !HEDGE.test(clause))
+          .map((clause) => `${where} tells a caller an editor export has no stage, unhedged: "${clause}"`),
+      );
+
+    // ⛔ Written down, and the one thing here not derived from the tree: they are
+    // what a caller who really has no stage needs the row to say, and a scan for
+    // the flag's own name would read straight past a row that had stopped saying
+    // any of it.
+    const REQUIRED: ReadonlyArray<{ what: string; test: RegExp }> = [
+      { what: 'that rigc cannot derive a stage', test: /\bcannot be derived\b|\bnot derivable\b|\bnever derived\b/i },
+      { what: 'what posing gives instead', test: /\banimated\b/i },
+      { what: 'which file the flag is for', test: /\bdeclares none\b|\bcarries none\b|\bhas none\b/i },
+    ];
+
+    const stageProbes = [
+      ...(stageRow === ''
+        ? ['`rigc ingest --help` printed no `--stage` row — this case cannot conclude anything']
+        : REQUIRED.filter(({ test }) => !test.test(stageRow)).map(({ what }) => `the --stage row does not say ${what}`)),
+      ...pairings(surfaces),
+    ];
+    const stageHeld = stageProbes.length === 0;
+    say(
+      'CLI74_THE_STAGE_HELP_SAYS_A_SKELETON_MAY_LACK_A_STAGE_AND_NOT_THAT_AN_EDITOR_EXPORT_DOES',
+      stageHeld,
+      probeDetail(
+        stageHeld,
+        stageProbes,
+        `the --stage row (${stageRow.length} characters) says all ${REQUIRED.length} of: ` +
+          `${REQUIRED.map(({ what }) => what).join(', ')}; and across ${surfaces.length} help surface(s) ` +
+          `(${surfaces.map(({ where }) => where).join(', ')}, ` +
+          `${surfaces.reduce((n, surface) => n + clausesOf(surface.text).length, 0)} clause(s) read) not one pairs ` +
+          'an editor export with an absent stage without hedging it',
+        (count) => `${count} thing(s) the --stage help says or fails to say:`,
+      ),
+      'issue #616: the row said an editor export carries no stage and the flag is how you supply one, which #594 ' +
+        'measured false of all twelve exports in the corpus — they declare the box and `ingest` reads it straight ' +
+        'through. The true sentence is narrower and it is about the file: a skeleton JSON need not carry a stage, ' +
+        'and when it does not there is nothing to derive one from. ⚠️ Both halves, because either alone is ' +
+        'satisfied by the defect pointed the other way — a deleted sentence carries no false pairing, and the ' +
+        'retired sentence carried every required clause',
+    );
+
+    // The positive control. Three plants, and the third is the one that decides
+    // whether this rule reads an assertion or a word: the measured claim is the
+    // retired sentence with `MAY` in it, so a rule that faulted it would be
+    // faulting `export` and reporting it as a judgement about stages.
+    const RETIRED_ROW = 'An editor export carries none and rigc refuses a compile without one';
+    const RETIRED_OVERVIEW = 'setup stage (--stage; an export carries none) and how the spec reaches the art';
+    const HEDGED = 'An editor export MAY carry none, and every one measured here carries a box';
+    const struck = stageRow.replace(new RegExp(REQUIRED[0].test.source, 'i'), 'is derived from the art');
+
+    // 🔒 Both marks, because a plant is made into a surface that can carry a
+    // fault of its OWN: the overview plant goes into the real `rigc --help`, so a
+    // pairing already standing there would satisfy the row that reports this
+    // plant going unnoticed. The baseline is the same surface under the same
+    // label, which is what makes the subtraction exact — nothing here moves a
+    // clause, it only adds one (issue #506).
+    const planted = (text: string): string[] => pairings([{ where: 'plant', text }]);
+    const rowStanding = planted(stageRow);
+    const overviewStanding = planted(surfaces[0].text);
+    const stagePlants = [
+      ...(raisedBy(planted(`${stageRow} ${RETIRED_ROW}.`), { was: rowStanding, at: 'plant' }).length > 0
+        ? []
+        : ['the retired sentence planted back into the --stage row was not faulted']),
+      ...(raisedBy(planted(`${surfaces[0].text}\n${RETIRED_OVERVIEW}`), { was: overviewStanding, at: 'plant' }).length > 0
+        ? []
+        : ['the retired parenthetical planted back into `rigc --help`\'s ingest paragraph was not faulted']),
+      ...(raisedBy(planted(`${stageRow} ${HEDGED}.`), { was: rowStanding, at: 'plant' }).length === 0
+        ? []
+        : [
+            'the hedged sentence — the claim the corpus supports — was faulted too, so this rule reads the word ' +
+              '"export" rather than what the clause asserts about one',
+          ]),
+      ...(struck === stageRow
+        ? ['the underivability clause could not be struck from the row, so the required half was never planted']
+        : REQUIRED.some(({ test }) => !test.test(struck))
+          ? []
+          : ['the row with its underivability clause struck still satisfied every required clause']),
+    ];
+    const plantsHeld = stagePlants.length === 0;
+    say(
+      'CLI75_THE_STAGE_HELP_RULE_FAULTS_THE_RETIRED_SENTENCE_AND_LEAVES_THE_HEDGED_ONE_ALONE',
+      plantsHeld,
+      probeDetail(
+        plantsHeld,
+        stagePlants,
+        'the retired row sentence and the retired overview parenthetical are each faulted where they used to ' +
+          'stand, the same sentence hedged with "MAY" is not, and the row with its underivability clause struck ' +
+          `fails ${REQUIRED.filter(({ test }) => !test.test(struck)).length} of ${REQUIRED.length} required ` +
+          'clause(s); none of the four plants is in the tree',
+      ),
+      'CLI74 passing means nothing until it has been seen to fail, and a one-sided plant would not have been ' +
+        'enough here: a rule that faulted every mention of an editor export would fault the corrected sentence ' +
+        'too and print the same PASS on a tree that had simply stopped talking about exports',
+    );
+
+    // --- CLI76: the measurement the sentence rests on -------------------------
+    //
+    // ⚠️ Fetched, not tracked — an absent `examples/` is a HOLE here and never a
+    // pass, the way `IG11` and `IG16` report one.
+    //
+    // 🔒 Not a second ingest run. `IG16` already ingests every export in this
+    // corpus and gates `blockers.length === 0`, which covers a `NO_STAGE` blocker
+    // without naming it; what was missing is the fact underneath, said out loud
+    // where the sentence lives. So this reads the twelve headers and nothing
+    // else, and it is what stops CLI74 being a rule about vocabulary: the day an
+    // export in this corpus stops declaring a box, the help's hedged sentence
+    // stops being a hedge and this goes red, rather than CLI74 staying green on a
+    // word list.
+    const stageCorpus = corpusExports();
+    if (stageCorpus.length === 0) {
+      console.log(`  SKIP  CLI76 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
+      console.log('          run `bun run fetch-examples` and re-run this suite.');
+      console.log(
+        '          ⚠️ This is a HOLE in this run, not a pass — the sentence CLI74 holds was measured against a ' +
+          'word list and against no editor export at all.',
+      );
+    } else {
+      const STAGE_FIELDS = ['x', 'y', 'width', 'height'] as const;
+      const corpusProbes: string[] = [];
+      for (const entry of stageCorpus) {
+        const head = ((JSON.parse(readFileSync(entry.path, 'utf8')) as Record<string, unknown>).skeleton ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const missing = STAGE_FIELDS.filter((field) => typeof head[field] !== 'number');
+        if (missing.length > 0) corpusProbes.push(`${entry.label} declares no ${missing.join('/')}`);
+      }
+      const corpusHeld = corpusProbes.length === 0;
+      say(
+        'CLI76_EVERY_EDITOR_EXPORT_IN_THE_CORPUS_DECLARES_THE_STAGE_THE_HELP_ONCE_SAID_IT_LACKS',
+        corpusHeld,
+        probeDetail(
+          corpusHeld,
+          corpusProbes,
+          `${stageCorpus.length} editor export(s) under ${INGEST_CORPUS_ROOT}, and every one declares all ` +
+            `${STAGE_FIELDS.length} of skeleton.${STAGE_FIELDS.join('/')} — so \`ingest\` takes the early return ` +
+            'on each, no NO_STAGE finding can arise, and --stage is needed by none of them',
+          (count) => `${count} export(s) carry no stage, which the --stage help may now say of them:`,
+        ),
+        'the measurement issue #594 made, and issue #616 is the last place it had not reached. It is the fact the ' +
+          'help sentence is about, kept beside the sentence: `IG16` is the run that ingests these twelve and gates ' +
+          'no blocker, and this names why a NO_STAGE blocker is not among them without ingesting anything twice',
+      );
+    }
+  }
+
   return bad;
 }
 

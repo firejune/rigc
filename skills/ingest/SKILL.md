@@ -34,9 +34,10 @@ rigc build --rig specs/rig.json --motion specs/motion.json --images parts/ --out
 ```
 
 It reads the skeleton — **only** the skeleton — and writes the rig spec and motion
-spec that rebuild it, byte for byte. Two values are not in the file and it refuses
-rather than guessing them: the **stage** (`--stage`, an editor export carries none)
-and each animation's **duration** (the largest key time, recorded as a finding).
+spec that rebuild it, byte for byte. Two values it refuses rather than guessing: the
+**stage** (`--stage`, for a skeleton that declares none — an editor export *may* be
+one, though every one in the example corpus carries a box) and each animation's
+**duration** (the largest key time, recorded as a finding).
 Read `findings.json`: a `BLOCK` line means the rebuild will be missing something and
 the command exits non-zero. Keep the `note` both specs carry. INGEST §2.0.
 

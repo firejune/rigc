@@ -2961,9 +2961,11 @@ const FLAG_MEANINGS: Record<string, string> = {
     '--images <dir>` on every rebuild), `none` states width/height only for `build --atlas-in <pack>` to ' +
     'resolve (default: loose)',
   stage:
-    "the setup bounding box — `skeleton.x,y,width,height`. An editor export carries none and rigc refuses a " +
-    'compile without one; posing the rig gives the ANIMATED extent, which is a different number, so this is the ' +
-    "caller's value and is never derived. Without it the missing stage is reported as a blocker",
+    'the setup bounding box — `skeleton.x,y,width,height` — for a skeleton that declares none. It cannot be ' +
+    'derived: posing the rig gives the ANIMATED extent, which is a different number from the setup box, so this ' +
+    "is the caller's value, and without it the missing stage is reported as a blocker. ⚠️ An editor export MAY " +
+    'carry none; every editor export measured for this project carries one and ingest reads it straight through, ' +
+    'so the flag is for a file that really has none rather than for editor exports as a class',
   help: "show this command's flags and exit",
 };
 
@@ -3312,9 +3314,10 @@ const USAGE = [
   'The contract is an equality, not a rulebook: build(ingest(x)) is x, byte for byte.',
   'It reads the skeleton and nothing else — no .spine project, no binary .skel, no',
   'atlas — so two things are the caller\'s and are refused rather than guessed: the',
-  'setup stage (--stage; an export carries none) and how the spec reaches the art',
-  '(--art). --images <dir> is the third and the only optional one: it WRITES the rig',
-  'spec\'s own images directory, relative to --out, so the rebuild needs no flag.',
+  'setup stage (--stage, only when the skeleton itself declares none) and how the spec',
+  'reaches the art (--art). --images <dir> is the third and the only optional one: it',
+  'WRITES the rig spec\'s own images directory, relative to --out, so the rebuild needs',
+  'no flag.',
   'Everything the spec format cannot hold is printed as a named finding and',
   'exits non-zero, with both files still written, because a spec plus a list of what',
   'is missing from it beats no spec at all.',
