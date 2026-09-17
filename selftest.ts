@@ -5365,7 +5365,16 @@ function runStaticRigSuite(): number {
   say(
     'S01_A09_SKIPS_INSTEAD_OF_PASSING_VACUOUSLY',
     skip !== undefined && !report.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
-    skip ? `skipped: ${skip.reason}` : 'A09 did not skip — it looked at zero animations and called that a pass',
+    // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Exactly one term
+    // of two went unread — the pass list — and the other has a branch that
+    // names it, so a list would rewrite a correct branch to repair one wrong
+    // one. The reading is spelled INLINE rather than behind a bound constant,
+    // so the structural sweep can see the repair. Planted with `check()`
+    // recording a skipped assertion as passed as well, this printed
+    // `skipped: …` — the control's own success sentence, on the one run where
+    // the vacuous pass it exists to refuse was standing beside the skip.
+    `${skip ? `skipped: ${skip.reason}` : 'A09 did not skip — it looked at zero animations and called that a pass'}` +
+      `; A09 ${report.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC') ? 'is ALSO in `passed`' : 'is in no pass list'}`,
     'both of A09’s loops iterate over animations; with none, "ran and held" and "never looked" are the same report',
   );
 
@@ -5398,7 +5407,10 @@ function runStaticRigSuite(): number {
   say(
     'S04_A13_SKIPS_WHEN_THE_RIG_DECLARED_NO_BUDGET',
     budget !== undefined && !policy.passed.includes('A13_MESH_BUDGET'),
-    budget ? `skipped: ${budget.reason}` : 'A13 looked at a rig with no budget and called that a pass',
+    // ⚠️ `RD02`'s line, for `S01`'s reason and on `S01`'s plant: one unread
+    // term, a correct sibling branch, and the reading spelled inline.
+    `${budget ? `skipped: ${budget.reason}` : 'A13 looked at a rig with no budget and called that a pass'}` +
+      `; A13 ${policy.passed.includes('A13_MESH_BUDGET') ? 'is ALSO in `passed`' : 'is in no pass list'}`,
     'the numbers used to be constants in the validator, which failed correct foreign data against one project\'s canvas',
   );
 
@@ -5475,7 +5487,10 @@ function runStaticRigSuite(): number {
   say(
     'S08_A41_SKIPS_RATHER_THAN_PASSING_A_RIG_WITH_NO_PHYSICS_AT_ALL',
     vacuous !== undefined && !nothingToLose.passed.includes(EDITOR),
-    vacuous ? `skipped: ${vacuous.reason}` : 'A41 looked at a rig with no physics constraint and called that a pass',
+    // ⚠️ `RD02`'s line, for `S01`'s reason and on `S01`'s plant: one unread
+    // term, a correct sibling branch, and the reading spelled inline.
+    `${vacuous ? `skipped: ${vacuous.reason}` : 'A41 looked at a rig with no physics constraint and called that a pass'}` +
+      `; A41 ${nothingToLose.passed.includes(EDITOR) ? 'is ALSO in `passed`' : 'is in no pass list'}`,
     'a declaration is not a measurement: "this rig is for the editor" and "this rig has been checked against the ' +
       'editor" print the same green unless the empty case skips',
   );
@@ -9555,13 +9570,34 @@ function runPathAndSliderSuite(): number {
 
   const alone = pairGate([yawSlider()]);
   const aloneSkip = alone.skipped.find((s) => s.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET');
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Two of the four
+  // terms went unread — the failure list and the pass list — and the sentence
+  // that printed instead was the SKIP itself, which is the control's own
+  // success claim. Planted with `check()` recording a skipped assertion as
+  // passed as well, this printed `SKIP: the skeleton declares 1 slider
+  // constraint…` on the run where A40 was in the skips AND in `passed`.
+  const aloneProbes = [
+    ...(alone.failures.length === 0
+      ? []
+      : [`the single-slider rig failed ${alone.failures.length}: ${alone.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+    ...(aloneSkip === undefined ? ['A40 reported no skip at all on a single-slider rig'] : []),
+    ...(aloneSkip !== undefined && !aloneSkip.reason.includes('1 slider constraint')
+      ? [`the skip does not name the count it turned on: "${aloneSkip.reason}"`]
+      : []),
+    ...(alone.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
+      ? ['A40 is in `passed` as well as in the skips — the vacuous pass beside the skip, which is the whole subject']
+      : []),
+  ];
+  const aloneHeld = aloneProbes.length === 0;
   say(
     'PS30_one_non_additive_slider_leaves_A40_with_nothing_to_compare',
-    alone.failures.length === 0 &&
-      aloneSkip !== undefined &&
-      aloneSkip.reason.includes('1 slider constraint') &&
-      !alone.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET'),
-    aloneSkip ? `SKIP: ${aloneSkip.reason}` : 'A40 did not report a skip on a single-slider rig',
+    aloneHeld,
+    probeDetail(
+      aloneHeld,
+      aloneProbes,
+      aloneSkip ? `SKIP: ${aloneSkip.reason}` : 'A40 did not report a skip on a single-slider rig',
+      (count) => `${count} way(s) the single-slider rig is not the clean skip:`,
+    ),
     'a lone non-additive slider is the ordinary case and must stay legal — and an assertion with nothing to look at reports ' +
       'SKIP, never a pass, or the count says a rig was checked for something nobody could check',
   );
@@ -35255,7 +35291,10 @@ function runChainFitSuite(): number {
     // over a part with nothing scoreable and the answer is the rig's prediction.
     // If that were within tolerance too, CF17 would be measuring the composition
     // rather than the relocation.
-    const floorOff = ['tuck', 'tip'].map((slot) => relocRow(run(2, 0), slot));
+    // The report is bound rather than re-run per slot, because the floor it
+    // states is a reading the line below has to carry (issue #498).
+    const floorOffReport = run(2, 0);
+    const floorOff = ['tuck', 'tip'].map((slot) => relocRow(floorOffReport, slot));
     const inert =
       floorOff[0].refusal === 'no-match' &&
       floorOff[0].share === 0 &&
@@ -35267,9 +35306,21 @@ function runChainFitSuite(): number {
     say(
       'CF18_THE_RELOCATION_IS_WHAT_BUYS_THAT_ANSWER_AND_THE_FLOOR_IS_WHAT_ASKS_FOR_IT',
       inert,
-      `--min-visible 0 on the same frame: ${floorOff.map(relocSay).join('  ·  ')} — the rig predicts \`tuck\` ` +
-        `entirely covered (share 0.0%), so with no floor to trip nothing is relocated, the masked search has ` +
-        'nothing to score, and both parts land where the candidate\'s own setup put them',
+      // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). The verdict is
+      // one bound boolean over six readings and the sentence already carried
+      // five of them through `relocSay`; exactly one VALUE went unread — the
+      // floor the report says it searched at — and it reached the line as the
+      // TYPED `0` of the flag that was asked for. `CF07`'s defect at a second
+      // site, found beside it in #633. Planted with `??` written as `||` in
+      // `src/chainfit.ts`, the old line printed `share 18.9% REFUSED occluded`
+      // and then asserted `entirely covered (share 0.0%)` two clauses later —
+      // so the typed share goes too, and the tolerance readings with it.
+      `asked for --min-visible 0 and the report states ${floorOffReport.search.minVisible} on the same frame: ` +
+        `${floorOff.map(relocSay).join('  ·  ')} — the rig predicts \`tuck\` entirely covered, so with no floor ` +
+        'to trip nothing is relocated, the masked search has nothing to score, and both parts land where the ' +
+        `candidate's own setup put them: inside tolerance tuck=${String(floorOff[0].delta !== null && chainFitWithin(floorOff[0].delta))}, ` +
+        `tip=${String(floorOff[1].delta !== null && chainFitWithin(floorOff[1].delta))} (both have to be false, or ` +
+        'the relocation bought nothing)',
       'this is what makes CF17 a measurement of the fallback rather than of the chain composition: the relocation ' +
         'is worth 32 px on the occluded part and 55 px on its child, and the floor is the only thing that asks ' +
         'for it. It is also the fixture stating condition 1 — the share at the rig\'s own prediction — as a ' +
@@ -35693,8 +35744,14 @@ function runBallotSuite(): number {
       help.stdout.includes('--record') &&
       help.stdout.includes('--ledger') &&
       topLevel.stderr.includes('rigc vote'),
+    // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). One term of six
+    // went unread and the clause standing in for it was a compile-time constant
+    // — `P04`'s own defect at a second site, found beside it in #633. Planted
+    // with the bare invocation writing its usage to stdout, the old line
+    // printed `, named in the bare-invocation usage` on the run where nothing
+    // was: the sentence WAS the term. Spelled inline, so the sweep sees it.
     `mismatched animation exit=${String(mismatched.status)}, \`vote --help\` ${help.status === 0 ? 'ok' : 'FAILED'}, ` +
-      'named in the bare-invocation usage',
+      `the bare-invocation usage ${topLevel.stderr.includes('rigc vote') ? 'names' : 'does NOT name'} \`rigc vote\``,
     'a ballot whose panes play different animations is unfalsifiable from the outside — the voter cannot see which is which',
   );
 
@@ -35781,9 +35838,18 @@ function runLoopSeamSuite(): number {
       whole?.every === 1 &&
       samplingOf(2.4, 15).lands &&
       samplingOf(1.5, 26).lands,
+    // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Two of the nine
+    // terms went unread and both are `samplingOf(…).lands` — booleans with no
+    // figures to compare, and the seven readings already on the line are
+    // correct, so a list would rewrite seven right branches to repair two.
+    // Planted with `samplingOf` summing where it subtracts, the old line
+    // printed every figure above and was TRUE in all of them: the two readings
+    // that fell were simply not on it, which is `CUR01`'s silence and not a
+    // false sentence.
     `3.2 reduces to ${reduced?.numerator}/${reduced?.denominator}; 2.4 lands on multiples of ${wave?.every} ` +
       `(first at or above 12 fps: ${wave?.nextAtOrAbove}), 1.5 on multiples of ${gaze?.every} ` +
-      `(first at or above 25 fps: ${gaze?.nextAtOrAbove}), 4 on every integer rate (${whole?.every})`,
+      `(first at or above 25 fps: ${gaze?.nextAtOrAbove}), 4 on every integer rate (${whole?.every}); ` +
+      `samplingOf lands=${String(samplingOf(2.4, 15).lands)} at 2.4/15 and lands=${String(samplingOf(1.5, 26).lands)} at 1.5/26`,
     'a refusal that only said "this rate does not work" would leave the reader searching. The two rates it ' +
       'names here are the ones the gallery now measures `wave` and `gaze` at, and samplingOf confirms both land',
   );
@@ -38682,10 +38748,18 @@ function runRunTallySuite(live: RunTally): number {
       gutterWord(gutterLines(failLines)[0]) === FAIL_GUTTER &&
       VERDICT_GUTTER.includes('PASS') &&
       VERDICT_GUTTER.includes(FAIL_GUTTER),
+    // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Two terms went
+    // unread and both are readings of ONE value — the vocabulary constant — so
+    // printing it once names either of them outright, where a list would be two
+    // rows restating the same array. Planted with `FAIL` taken out of
+    // `VERDICT_GUTTER`, the old line printed `{PASS} and {FAIL}` and the
+    // sentence around it was true in every clause: the term that fell was the
+    // tally's own vocabulary, which was nowhere on it.
     `a green case prints ${passLines.length} line(s) and a red one ${failLines.length}, of which exactly one each ` +
       `is a case line — {${gutterLines(passLines).map((line) => gutterWord(line)).join(', ')}} and ` +
       `{${gutterLines(failLines).map((line) => gutterWord(line)).join(', ')}} — and its detail and origin lines ` +
-      'are not counted',
+      `are not counted; the tally's verdict vocabulary is {${VERDICT_GUTTER.join(', ')}}, of which ${FAIL_GUTTER} ` +
+      'is the failing word',
     'the count is taken off the printed line, so the shape of that line is the derivation: if a case line moved to ' +
       'a different indent or a different word, every count in the summary would fall and nothing would go red',
   );
@@ -39978,7 +40052,8 @@ function main(): void {
     'are a legal deform. The population is derived from `git ls-files` down to a script whose fence also states ' +
     'the rigc command that reads its product, and every script that falls out of that carries the reason — ' +
     'material the repository does not have, no product under a name the page spells, no command beside it — ' +
-    'because 9 scripts with 2 of them runnable is a thin population that has to be visible rather than implied. ' +
+    'because a population this thin, with only a few of its scripts runnable, has to be visible rather than ' +
+    'implied — the counts are the run\'s own and are printed beside it (issue #634). ' +
     'The claim is a VERDICT and never a figure: a fence labels a script `(a)`, a table on the page opens a ' +
     "column on `(a)`, and a row naming one assertion states that assertion's verdict in it, which is compared " +
     "against the run's own gutter line — with the tool's emit rule under it, read off the exit status and the " +
@@ -41119,10 +41194,13 @@ function runSliderReaderSuite(): number {
 //  5. the fence gives it no `(x)` label, or no table of its own page opens a
 //     column on that label, or that column states no assertion verdict.
 //
-// ⚠️ Measured on this tree: **9 scripts in 8 fences of 5 documents, 2 of them
-// verified.** That is a thin population and it is stated rather than hidden —
-// `DS01`'s floor is what makes it loud if it goes thinner, and the reasons above
-// are what a later reader needs in order to widen it deliberately.
+// ⚠️ **The population is thin, and it is stated rather than hidden** — `DS01`
+// prints the counts it derives on every run (documents, fences, scripts, and
+// which of them are verified), its floor is what makes it loud if it goes
+// thinner, and the reasons above are what a later reader needs in order to
+// widen it deliberately. 🔸 A hand-kept restatement of those counts stood here
+// and had drifted from the run; it is deleted rather than retyped, for the
+// reason issue #634 gives and #617 landed against in the file header.
 //
 // **How a claim is read, and why it is a verdict and never a figure.** A fence
 // labels a script `# (a) …`; a table on the same page opens a column on `(a)`;
@@ -41750,11 +41828,14 @@ function runDocScriptSuite(): number {
       'derivations stand between a document and a claim here — the fence, the script, the command that reads its ' +
       'product, the label, and the table column that opens on that label — and any one of them emptying leaves ' +
       'the check below reporting a clean tree over nothing. The out-of-reach set is printed rather than counted ' +
-      'because it is the part a later reader has to widen deliberately: 9 scripts in this tree and 2 of them ' +
-      'runnable is a thin population, and the honest response to that is to say which seven and why, not to ' +
-      'stretch the grammar until the number looks better. ⚠️ Every floor here is a row in that same list rather ' +
-      'than a conjunct of the verdict, for issue #493\'s reason: the sentence above is the one a run failing on a ' +
-      'floor used to print, and it carries all eight figures without carrying one of the floors they are held to',
+      'because it is the part a later reader has to widen deliberately: the scripts this tree states are a thin ' +
+      'population and only a few of them are runnable, and the honest response to that is to say which ones are ' +
+      'out of reach and why, not to stretch the grammar until the number looks better. ⚠️ Three cardinals stood ' +
+      'in this sentence and two of them had drifted from the population the sentence above derives on every run, ' +
+      'so they are deleted rather than retyped (issue #634) — and the cardinal that stood in "all eight figures" ' +
+      'below went with them, for the same reason. ⚠️ Every floor here is a row in that same list rather than a conjunct of ' +
+      'the verdict, for issue #493\'s reason: the sentence above is the one a run failing on a floor used to ' +
+      'print, and it carries every figure without carrying one of the floors they are held to',
   );
 
   // --- DS02: the claims themselves ------------------------------------------
