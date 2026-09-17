@@ -613,7 +613,12 @@ export, every `diff` measure that moved, `check`'s mean MAE and worst drift per
 animation **for each skin the build declares** — one render-and-check block per
 skin, with a per-skin roll-up under them, because a rig's contested art lives in
 its named skins and a single un-skinned check draws none of it — and a
-field-by-field list of what the editor rewrote. On its first
+field-by-field list of what the editor rewrote. Every step quotes what its child
+said when that child did not do what it was for, the renderers included; a skin
+**neither** side can draw — a hit-box rig, say — is a **SKIP** naming that, not a
+red, because `check` had nothing to compare and `diff` and `validate` have
+already measured the rig. One side drawing where the other does not is the
+divergence the trip exists to find and stays a failure. On its first
 run it found three emitter defects — [#368](https://github.com/firejune/rigc/issues/368),
 [#369](https://github.com/firejune/rigc/issues/369),
 [#370](https://github.com/firejune/rigc/issues/370) — and then showed that a
