@@ -1992,6 +1992,20 @@ one wins today. ⛔ rigc does **not** set the flag for you. The compiler never
 invents a value that is not in the spec, and a rig whose composition was chosen by
 the tool is one nobody can reason about.
 
+⚠️ **And below full authority it is a weighting rather than a quieter erasure**
+([#399](https://github.com/firejune/rigc/issues/399)). An additive slider scales
+its whole contribution by its own `mix`, so two of them at any pair of mixes are
+still the sum — which is why `A40` skipping below full authority is right: what
+happens there is a weighting, not the erasure it refuses. A **non-additive**
+slider at `mix` α applies `current + (value + setup − current) × α`, a lerp *from
+the pose it found*, so the earlier slider is not erased — it is attenuated by
+`1 − α`. `mix × contribution` is not the arithmetic there, so a later dial turned
+part of the way down takes that share of every earlier slider on the target with
+it, on every frame, with the gate green — the second reason to write
+`"additive": true` on **every** slider that shares a target and not only on the
+later one. `PS130` in `selftest.ts` poses both models rather than quoting the
+runtime, and [`docs/FACE.md`](FACE.md) §8 is the same rule on a face's two axes.
+
 ⚠️ **And `"additive": true` is not always available.** Only some timelines support
 additive application at all: bone, deform, transform-constraint, path `position`,
 physics `wind`/`gravity`, and a slider's own `mix`. A **slot colour, an attachment
