@@ -11129,7 +11129,14 @@ function runPathAndSliderSuite(): number {
     pathless.failures.length === 0
       ? 'deleting `path` from every named attachment gated GREEN, so the restatement is decoration'
       : `${pathless.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')} — and the same rig with its ` +
-        `paths intact gated green (${pathlessGreen.passed.length} assertions ran, ${pathlessGreen.failures.length} failed)`,
+        // ⚠️ The green half's clause is conditioned on its own failure count
+        // (issue #638). It read `gated green (N assertions ran, M failed)` with
+        // the refutation inside its own parentheses.
+        (pathlessGreen.failures.length === 0
+          ? `paths intact gated green (${pathlessGreen.passed.length} assertions ran, ${pathlessGreen.failures.length} failed)`
+          : `paths intact did NOT gate green — ${pathlessGreen.passed.length} assertion(s) passed and ` +
+            `${pathlessGreen.failures.length} failed (${pathlessGreen.failures.map((f) => f.assertion).join(', ')}), ` +
+            'so the control half proves nothing'),
     'this is the one part of the naming change an existing gate CAN see, and it sees it because the parser resolves ' +
       'a texture by `path` and `path` defaults to `name`. The green half is the control: without it the case would ' +
       'pass on a rig that was broken before anything was deleted',
@@ -15924,12 +15931,22 @@ function runDeformWindingSuite(): number {
       },
     }),
   );
-  const skipReason = exempt.skipped.find((s) => s.assertion === A39)?.reason ?? '';
+  // ⚠️ The row and the reason are bound apart because the sentence below has to
+  // tell "skipped for another reason" from "never skipped at all" (issue #639).
+  // `?? ''` collapses both into the same empty string, and the line that printed
+  // it read `SKIP — ""` over a run where A39 had reported no skip.
+  const skipRow = exempt.skipped.find((s) => s.assertion === A39);
+  const skipReason = skipRow?.reason ?? '';
   say(
     'DW04_A_DECLARED_FOLD_IS_EXEMPT_AND_SKIPS_RATHER_THAN_PASSES',
     exempt.failures.length === 0 && !exempt.passed.includes(A39) && /deformMayFold/.test(skipReason),
     exempt.failures.length === 0
-      ? `the same 40° fold under \`invariants.deformMayFold\` gates green, and ${A39} reports SKIP — "${skipReason}"`
+      ? `the same 40° fold under \`invariants.deformMayFold\` gates green, and ${A39} ` +
+        (/deformMayFold/.test(skipReason)
+          ? `reports SKIP — "${skipReason}"`
+          : skipRow === undefined
+            ? 'is in no skip row at all, so nothing here reports the exemption'
+            : `reports a SKIP whose reason does not name deformMayFold — "${skipReason}"`)
       : `[${exempt.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'legitimate art DOES flip a triangle — a page turning over, a cloth creasing back — and the author is the ' +
       'only one who knows; SKIP rather than PASS because an exempted rule has not checked anything',
@@ -20891,8 +20908,17 @@ function runCopyImagesSuite(): number {
   bad += reportCase(
     'CPI01_DEFAULT_BUILD_STILL_POINTS_OUTSIDE_OUT',
     stillEscapes,
-    `${result.images.length} page(s), e.g. "${result.images[0]?.page}" — --copy-images is opt-in, so a build ` +
-      'with no flag emits the same paths it always did',
+    // ⚠️ The clause is conditioned on the verdict's own reading (issue #638): it
+    // used to assert "the same paths it always did" whatever the page beside it
+    // said, so a build whose default had flipped printed the flipped path and
+    // the sentence that it had not.
+    `${result.images.length} page(s), e.g. "${result.images[0]?.page}" — ` +
+      (stillEscapes
+        ? '--copy-images is opt-in, so a build with no flag emits the same paths it always did'
+        : result.images.length === 0
+          ? 'the build emitted no page at all, so there is nothing here that could point outside --out'
+          : `${result.images.filter((img) => !img.page.startsWith('..')).length} of them no longer point outside ` +
+            '--out, so this is not the path a build with no flag always emitted'),
     'issue #217 IS this path; a fix that flipped it by default would silently change every existing build with ' +
       'no flag to say so',
   );
@@ -35417,7 +35443,12 @@ function runChainFitSuite(): number {
           ? `a later pass discarded what the first one found:\n          ${moved.join('\n          ')}`
           : `\`tuck\` relocated to a hinge no masked search ran for and kept it across 3 pass counts: ` +
             `${first.map(relocSay).join('  ·  ')}`) +
-        `  ·  --passes 1 / 2 / 3 agree to the digit on both parts`,
+        // ⚠️ Conditioned on `moved` rather than appended to every branch (issue
+        // #638): the constant clause printed "agree to the digit" underneath the
+        // rows saying which readings had moved, in one sentence.
+        (moved.length === 0
+          ? '  ·  --passes 1 / 2 / 3 agree to the digit on both parts'
+          : `  ·  --passes 1 / 2 / 3 do NOT agree — ${moved.length} later reading(s) moved off the first pass's answer`),
       'the defect #287 repaired: the fallback reset the bone to hinge 0 instead of to the seed it started from, ' +
         'which on pass 0 is the same thing and on every later pass throws away the relocation pass 0 found — and ' +
         'it reset the bone while restoring its parts, so `tip` inherited a placement its own parent disagreed ' +
